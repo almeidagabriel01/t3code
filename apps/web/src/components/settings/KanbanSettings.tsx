@@ -1,29 +1,13 @@
 import type { KanbanBoardState } from "@t3tools/client-runtime/state/kanban";
-import type {
-  KanbanAutomations,
-  KanbanPriority,
-  KanbanTemplate,
-  KanbanTemplateId,
-} from "@t3tools/contracts";
+import type { KanbanAutomations, KanbanTemplate, KanbanTemplateId } from "@t3tools/contracts";
 import { PencilIcon, PlusIcon, Trash2Icon } from "lucide-react";
 import { useState } from "react";
 
 import { useSidebarProjectGroups } from "../../hooks/useSidebarProjectGroups";
 import { requestConfirmDialog } from "../../confirmDialog";
 import { Button } from "../ui/button";
-import {
-  Dialog,
-  DialogFooter,
-  DialogHeader,
-  DialogPanel,
-  DialogPopup,
-  DialogTitle,
-} from "../ui/dialog";
-import { Input } from "../ui/input";
-import { Label } from "../ui/label";
 import { Switch } from "../ui/switch";
-import { Textarea } from "../ui/textarea";
-import { boardScopeKey, collectGlobalBoards, KANBAN_PRIORITIES } from "../kanban/kanban.logic";
+import { boardScopeKey, collectGlobalBoards } from "../kanban/kanban.logic";
 import { OptionSelect, PromptDialog } from "../kanban/kanbanDialogs";
 import { useKanbanGlobalLayout } from "../kanban/kanbanPreferences";
 import {
@@ -33,6 +17,7 @@ import {
   TemplateIcon,
 } from "../kanban/kanbanPresentation";
 import { useKanbanActions, useKanbanCanEdit, useKanbanStates } from "../kanban/useKanban";
+import { KanbanDefaultTemplateEditor, TemplateDialog } from "./KanbanDefaultTemplateEditor";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import { ScopedSwitch } from "./ScopedSwitch";
@@ -62,113 +47,9 @@ const AUTOMATION_ROWS: ReadonlyArray<{
     key: "definitionOfDone",
     label: "Definition of done",
     description:
-      "Agents and automations can only move a card into Review or Done once its checklist is complete and a summary comment exists. Dragging by hand still works, with a warning.",
+      "Agents and the run-completed automation can only move a card into Review, and agents into Done, once its checklist is complete and a summary comment exists. A merged pull request still moves its card to Done. Dragging by hand always works, with a warning.",
   },
 ];
-
-const TEMPLATE_ICONS = ["bug", "sparkles", "wrench", "broom", "tag"].map((value) => ({
-  value,
-  label: value,
-}));
-
-const lines = (text: string) =>
-  text
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
-
-function TemplateDialog(props: {
-  readonly template: KanbanTemplate | null;
-  readonly onSubmit: (template: Omit<KanbanTemplate, "id" | "labelIds">) => void;
-  readonly onClose: () => void;
-}) {
-  const { template } = props;
-  const [name, setName] = useState(template?.name ?? "");
-  const [icon, setIcon] = useState(template?.icon ?? "tag");
-  const [color, setColor] = useState(template?.color ?? "slate");
-  const [priority, setPriority] = useState<KanbanPriority>(template?.priority ?? "none");
-  const [checklist, setChecklist] = useState((template?.checklist ?? []).join("\n"));
-  const [criteria, setCriteria] = useState((template?.acceptanceCriteria ?? []).join("\n"));
-  return (
-    <Dialog open onOpenChange={(open) => !open && props.onClose()}>
-      <DialogPopup className="max-w-lg">
-        <DialogHeader>
-          <DialogTitle>{template ? "Edit template" : "New template"}</DialogTitle>
-        </DialogHeader>
-        <DialogPanel>
-          <div className="grid gap-3">
-            <div className="grid gap-1.5">
-              <Label htmlFor="kanban-template-name">Name</Label>
-              <Input
-                id="kanban-template-name"
-                autoFocus
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-              />
-            </div>
-            <div className="grid grid-cols-3 gap-2">
-              <OptionSelect label="Icon" value={icon} options={TEMPLATE_ICONS} onChange={setIcon} />
-              <OptionSelect
-                label="Color"
-                value={color}
-                options={KANBAN_COLOR_NAMES.map((value) => ({ value, label: value }))}
-                onChange={setColor}
-              />
-              <OptionSelect
-                label="Priority"
-                value={priority}
-                options={KANBAN_PRIORITIES.map((value) => ({
-                  value,
-                  label: PRIORITY_LABELS[value],
-                }))}
-                onChange={setPriority}
-              />
-            </div>
-            <div className="grid gap-1.5">
-              <Label htmlFor="kanban-template-checklist">Checklist (one item per line)</Label>
-              <Textarea
-                id="kanban-template-checklist"
-                rows={4}
-                value={checklist}
-                onChange={(event) => setChecklist(event.target.value)}
-              />
-            </div>
-            <div className="grid gap-1.5">
-              <Label htmlFor="kanban-template-criteria">Acceptance criteria (one per line)</Label>
-              <Textarea
-                id="kanban-template-criteria"
-                rows={3}
-                value={criteria}
-                onChange={(event) => setCriteria(event.target.value)}
-              />
-            </div>
-          </div>
-        </DialogPanel>
-        <DialogFooter variant="bare">
-          <Button variant="outline" onClick={props.onClose}>
-            Cancel
-          </Button>
-          <Button
-            disabled={name.trim().length === 0}
-            onClick={() => {
-              props.onSubmit({
-                name: name.trim(),
-                icon,
-                color,
-                priority,
-                checklist: lines(checklist),
-                acceptanceCriteria: lines(criteria),
-              });
-              props.onClose();
-            }}
-          >
-            Save
-          </Button>
-        </DialogFooter>
-      </DialogPopup>
-    </Dialog>
-  );
-}
 
 function BoardSettings(props: {
   readonly environmentId: Parameters<typeof useKanbanActions>[0];
@@ -413,10 +294,6 @@ export function KanbanSettingsPanel() {
             />
           }
         />
-        <SettingsRow
-          title="Default columns and templates"
-          description="New boards start with Backlog, To do, In progress, Review and Done, plus Bug, Feature, Refactor and Chore templates. Edit a board's columns on the board itself and its templates below."
-        />
         {boards.length === 0 ? (
           <SettingsRow
             title="No boards yet"
@@ -478,6 +355,12 @@ export function KanbanSettingsPanel() {
           }
         />
       </SettingsSection>
+      <KanbanDefaultTemplateEditor
+        key={JSON.stringify(settings.kanbanDefaultTemplate)}
+        saved={settings.kanbanDefaultTemplate}
+        disabled={false}
+        onSave={(kanbanDefaultTemplate) => updateSettings({ kanbanDefaultTemplate })}
+      />
       {selected ? (
         <BoardSettings
           key={selected.board.id}

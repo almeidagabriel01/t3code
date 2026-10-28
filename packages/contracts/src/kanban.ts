@@ -98,6 +98,81 @@ export const KanbanAutomations = Schema.Struct({
 });
 export type KanbanAutomations = typeof KanbanAutomations.Type;
 
+const KanbanTemplateDraft = Schema.Struct({
+  name: KanbanName,
+  icon: KanbanColor,
+  color: KanbanColor,
+  priority: KanbanPriority,
+  checklist: Schema.Array(KanbanText),
+  acceptanceCriteria: Schema.Array(KanbanText),
+});
+
+/** The columns and card templates a new board starts with. */
+export const KanbanDefaultTemplate = Schema.Struct({
+  columns: Schema.Array(
+    Schema.Struct({
+      name: KanbanName,
+      color: KanbanColor,
+      role: KanbanColumnRole,
+      wipLimit: Schema.NullOr(PositiveInt),
+    }),
+  ).check(Schema.isMinLength(1), Schema.isMaxLength(30)),
+  cardTemplates: Schema.Array(KanbanTemplateDraft).check(Schema.isMaxLength(30)),
+}).check(
+  Schema.makeFilter(
+    (template) => {
+      const roles = template.columns.map((column) => column.role).filter((role) => role !== "none");
+      return new Set(roles).size === roles.length || "Each role can belong to one column only.";
+    },
+    { identifier: "KanbanDefaultTemplateRoles" },
+  ),
+);
+export type KanbanDefaultTemplate = typeof KanbanDefaultTemplate.Type;
+
+export const BUILT_IN_KANBAN_TEMPLATE: KanbanDefaultTemplate = {
+  columns: [
+    { name: "Backlog", color: "slate", role: "backlog", wipLimit: null },
+    { name: "To do", color: "blue", role: "todo", wipLimit: null },
+    { name: "In progress", color: "amber", role: "in-progress", wipLimit: null },
+    { name: "Review", color: "violet", role: "review", wipLimit: null },
+    { name: "Done", color: "green", role: "done", wipLimit: null },
+  ],
+  cardTemplates: [
+    {
+      name: "Bug",
+      icon: "bug",
+      color: "red",
+      priority: "high",
+      checklist: ["Reproduce the bug", "Find the root cause", "Fix it", "Add a regression test"],
+      acceptanceCriteria: ["The bug no longer reproduces", "A test covers the failing case"],
+    },
+    {
+      name: "Feature",
+      icon: "sparkles",
+      color: "blue",
+      priority: "medium",
+      checklist: ["Clarify the behavior", "Implement", "Add tests", "Update docs if needed"],
+      acceptanceCriteria: ["The feature works as described", "Tests cover the new behavior"],
+    },
+    {
+      name: "Refactor",
+      icon: "wrench",
+      color: "violet",
+      priority: "low",
+      checklist: ["Confirm current behavior with tests", "Refactor", "Run the full checks"],
+      acceptanceCriteria: ["Behavior is unchanged", "Checks pass"],
+    },
+    {
+      name: "Chore",
+      icon: "broom",
+      color: "slate",
+      priority: "low",
+      checklist: ["Do the work", "Verify nothing else broke"],
+      acceptanceCriteria: ["The chore is complete"],
+    },
+  ],
+};
+
 export const KanbanEstimate = Schema.Struct({
   value: Schema.Number.check(Schema.isFinite(), Schema.isGreaterThanOrEqualTo(0)),
   unit: Schema.Literals(["points", "hours"]),
@@ -202,7 +277,7 @@ export type KanbanStreamItem = typeof KanbanStreamItem.Type;
 export const KanbanSubscribeInput = Schema.Struct({});
 export type KanbanSubscribeInput = typeof KanbanSubscribeInput.Type;
 
-/** Everything but `threadId` is derived at read time; Phase 2 fills it, null until then. */
+/** Everything but `threadId` is derived from the projection at read time; null when the thread is gone. */
 export const KanbanLinkedThread = Schema.Struct({
   threadId: ThreadId,
   title: Schema.NullOr(Schema.String),

@@ -21,6 +21,7 @@ import {
   dueAtToInput,
   inputToDueAt,
   moveChecklistItem,
+  validateDefaultTemplate,
   dropToMove,
   EMPTY_FILTERS,
   filterGlobalCards,
@@ -285,5 +286,34 @@ describe("card helpers", () => {
     expect(
       describeCardEvent({ kind: "dod-refused", payload: { missing: ["a", "b"] } }, name),
     ).toContain("a, b");
+  });
+});
+
+describe("validateDefaultTemplate", () => {
+  const column = (name: string, role: KanbanColumn["role"]) => ({
+    name,
+    color: "slate",
+    role,
+    wipLimit: null,
+  });
+  it("accepts one column per role and any number without one", () => {
+    expect(
+      validateDefaultTemplate({
+        columns: [column("A", "backlog"), column("B", "none"), column("C", "none")],
+        cardTemplates: [],
+      }),
+    ).toBeNull();
+  });
+  it("rejects no columns, blank names and a repeated role", () => {
+    expect(validateDefaultTemplate({ columns: [], cardTemplates: [] })).toMatch(/at least one/);
+    expect(validateDefaultTemplate({ columns: [column(" ", "none")], cardTemplates: [] })).toMatch(
+      /name/,
+    );
+    expect(
+      validateDefaultTemplate({
+        columns: [column("A", "done"), column("B", "done")],
+        cardTemplates: [],
+      }),
+    ).toMatch(/Only one column.*Done/);
   });
 });

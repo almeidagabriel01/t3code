@@ -1,4 +1,5 @@
 import {
+  BUILT_IN_KANBAN_TEMPLATE,
   KanbanAutomations,
   KanbanChecklistItem,
   KanbanEstimate,
@@ -28,6 +29,7 @@ import {
   type KanbanColumnMoveInput,
   type KanbanColumnRole,
   type KanbanColumnUpdateInput,
+  type KanbanDefaultTemplate,
   type KanbanGetCardInput,
   type KanbanGetCardResult,
   type KanbanLabelDeleteInput,
@@ -55,14 +57,29 @@ import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
+import * as ServerSettings from "../serverSettings.ts";
+import * as UsageService from "../usage/UsageService.ts";
+import { aggregateCardUsage, type KanbanPricingTables } from "./cardUsage.ts";
 import { checkDefinitionOfDone } from "./definitionOfDone.ts";
-import {
-  DEFAULT_KANBAN_AUTOMATIONS,
-  DEFAULT_KANBAN_COLUMNS,
-  DEFAULT_KANBAN_TEMPLATES,
-} from "./defaults.ts";
+import { DEFAULT_KANBAN_AUTOMATIONS } from "./defaults.ts";
+import { readThreadFacts } from "./threadFacts.ts";
 
 type KanbanResult = Effect.Effect<KanbanMutationResult, KanbanError>;
+
+/** Rates for pricing card usage; the default prices nothing, so cost reads as unknown. */
+export class KanbanPricing extends Context.Reference<Effect.Effect<KanbanPricingTables>>(
+  "t3/kanban/KanbanPricing",
+  {
+    defaultValue: () =>
+      Effect.succeed({ rates: new Map(), overrides: new Map(), aliases: new Map() }),
+  },
+) {}
+
+/** Where `board.ensure` reads the columns and card templates a new board starts with. */
+export class KanbanTemplateSource extends Context.Reference<Effect.Effect<KanbanDefaultTemplate>>(
+  "t3/kanban/KanbanTemplateSource",
+  { defaultValue: () => Effect.succeed(BUILT_IN_KANBAN_TEMPLATE) },
+) {}
 
 export class KanbanService extends Context.Service<
   KanbanService,
@@ -104,6 +121,15 @@ export class KanbanService extends Context.Service<
     readonly cardComment: (input: KanbanCardCommentInput) => KanbanResult;
     readonly cardLinkThread: (input: KanbanCardThreadLinkInput) => KanbanResult;
     readonly cardUnlinkThread: (input: KanbanCardThreadLinkInput) => KanbanResult;
+    /** The card a thread is linked to, with its board, archived or not. */
+    readonly cardForThread: (
+      threadId: ThreadId,
+    ) => Effect.Effect<
+      { readonly card: KanbanCard; readonly board: KanbanBoard } | null,
+      KanbanError
+    >;
+    /** Every thread linked to a card. */
+    readonly linkedThreadIds: Effect.Effect<ReadonlyArray<ThreadId>, KanbanError>;
   }
 >()("t3/kanban/KanbanService") {}
 
@@ -302,6 +328,8 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const crypto = yield* Crypto.Crypto;
+    const pricing = yield* KanbanPricing;
+    const templateSource = yield* KanbanTemplateSource;
     const writeLock = yield* Semaphore.make(1);
     const deltas = yield* PubSub.unbounded<KanbanStreamItem>();
 
@@ -439,6 +467,16 @@ export const layer = Layer.effect(
         }>`
           SELECT event_id, kind, actor, payload_json, created_at FROM kanban_card_events
           WHERE card_id = ${input.cardId} ORDER BY created_at ASC, rowid ASC`;
+        const factsByThread = yield* readThreadFacts(sql, card.linkedThreadIds);
+        const facts = [...factsByThread.values()];
+        const usage =
+          facts.length === 0
+            ? null
+            : aggregateCardUsage({
+                turns: facts.flatMap((thread) => thread.turns),
+                runs: facts.flatMap((thread) => thread.runs),
+                pricing: yield* pricing,
+              });
         return {
           card,
           activity: events.map((event): KanbanCardEvent => ({
@@ -449,18 +487,25 @@ export const layer = Layer.effect(
             payload: payloadJson.parse(event.payload_json),
             createdAt: event.created_at,
           })),
-          // Thread title/status/branch/PR and cost/time are derived in Phase 2.
-          threads: card.linkedThreadIds.map((threadId) => ({
-            threadId,
-            title: null,
-            status: null,
-            branch: null,
-            worktreePath: null,
-            pullRequests: [],
-          })),
-          costUsd: null,
-          totalTokens: null,
-          durationMs: null,
+          threads: card.linkedThreadIds.map((threadId) => {
+            const facts = factsByThread.get(threadId);
+            const latest = facts?.runs.at(-1);
+            return {
+              threadId,
+              title: facts?.title ?? null,
+              status: latest?.status ?? null,
+              branch: facts?.branch ?? null,
+              worktreePath: facts?.worktreePath ?? null,
+              pullRequests: (facts?.pullRequests ?? []).map((pr) => ({
+                url: pr.url,
+                number: pr.number,
+                state: pr.state,
+              })),
+            };
+          }),
+          costUsd: usage?.costUsd ?? null,
+          totalTokens: usage?.totalTokens ?? null,
+          durationMs: usage?.durationMs ?? null,
         } satisfies KanbanGetCardResult;
       },
       toKanbanError,
@@ -612,16 +657,17 @@ export const layer = Layer.effect(
           yield* sql`
             INSERT INTO kanban_boards (board_id, project_id, title, automations_json, created_at, updated_at)
             VALUES (${boardId}, ${input.projectId}, 'Board', ${automationsJson.stringify(DEFAULT_KANBAN_AUTOMATIONS)}, ${at}, ${at})`;
-          const keys = generateSpreadPinOrderKeys(DEFAULT_KANBAN_COLUMNS.length);
-          for (const [index, column] of DEFAULT_KANBAN_COLUMNS.entries()) {
+          const template = yield* templateSource;
+          const keys = generateSpreadPinOrderKeys(template.columns.length);
+          for (const [index, column] of template.columns.entries()) {
             yield* sql`
               INSERT INTO kanban_columns (column_id, board_id, name, color, order_key, wip_limit, role)
-              VALUES (${yield* newId}, ${boardId}, ${column.name}, ${column.color}, ${keys[index]!}, NULL, ${column.role})`;
+              VALUES (${yield* newId}, ${boardId}, ${column.name}, ${column.color}, ${keys[index]!}, ${column.wipLimit}, ${column.role})`;
           }
-          for (const template of DEFAULT_KANBAN_TEMPLATES) {
+          for (const card of template.cardTemplates) {
             yield* sql`
               INSERT INTO kanban_templates (template_id, board_id, name, icon, color, checklist_json, acceptance_criteria_json, label_ids_json, priority)
-              VALUES (${yield* newId}, ${boardId}, ${template.name}, ${template.icon}, ${template.color}, ${textList.stringify(template.checklist)}, ${textList.stringify(template.acceptanceCriteria)}, '[]', ${template.priority})`;
+              VALUES (${yield* newId}, ${boardId}, ${card.name}, ${card.icon}, ${card.color}, ${textList.stringify(card.checklist)}, ${textList.stringify(card.acceptanceCriteria)}, '[]', ${card.priority})`;
           }
           return {
             result: { boardId: boardId as KanbanBoardId },
@@ -1332,6 +1378,23 @@ export const layer = Layer.effect(
         }),
       );
 
+    const cardForThread: KanbanService["Service"]["cardForThread"] = Effect.fn(
+      "KanbanService.cardForThread",
+    )(function* (threadId) {
+      const links = yield* sql<{ readonly card_id: string }>`
+        SELECT card_id FROM kanban_card_thread_links WHERE thread_id = ${threadId}`;
+      if (links[0] === undefined) return null;
+      const card = yield* loadCard(links[0].card_id);
+      return { card, board: yield* loadBoard(card.boardId) };
+    }, toKanbanError);
+
+    const linkedThreadIds: KanbanService["Service"]["linkedThreadIds"] = sql<{
+      readonly thread_id: string;
+    }>`SELECT thread_id FROM kanban_card_thread_links ORDER BY linked_at ASC, thread_id ASC`.pipe(
+      Effect.map((rows) => rows.map((row) => row.thread_id as ThreadId)),
+      toKanbanError,
+    );
+
     return KanbanService.of({
       subscribe,
       getCard,
@@ -1356,6 +1419,32 @@ export const layer = Layer.effect(
       cardComment,
       cardLinkThread,
       cardUnlinkThread,
+      cardForThread,
+      linkedThreadIds,
     });
   }),
+);
+
+/** Production wiring: rates from the usage service and the template from server settings. */
+export const layerLive = layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      Layer.effect(
+        KanbanPricing,
+        Effect.gen(function* () {
+          return (yield* UsageService.UsageService).pricingTables;
+        }),
+      ),
+      Layer.effect(
+        KanbanTemplateSource,
+        Effect.gen(function* () {
+          const settings = yield* ServerSettings.ServerSettingsService;
+          return settings.getSettings.pipe(
+            Effect.map((current) => current.kanbanDefaultTemplate ?? BUILT_IN_KANBAN_TEMPLATE),
+            Effect.orElseSucceed(() => BUILT_IN_KANBAN_TEMPLATE),
+          );
+        }),
+      ),
+    ),
+  ),
 );

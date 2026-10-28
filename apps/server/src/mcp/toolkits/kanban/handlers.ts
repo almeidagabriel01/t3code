@@ -274,6 +274,9 @@ const run = Effect.fn("mcp.kanban.run")(
             at: event.createdAt,
             payload: event.payload,
           })),
+          costUsd: detail.costUsd,
+          totalTokens: detail.totalTokens,
+          durationMs: detail.durationMs,
           threads: detail.threads.map((thread) => ({
             threadId: thread.threadId,
             title: thread.title,

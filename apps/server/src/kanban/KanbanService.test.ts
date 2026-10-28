@@ -13,6 +13,7 @@ import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as Kanban from "./KanbanService.ts";
@@ -409,4 +410,203 @@ it.effect("checked moves skip the check when the board turns the definition of d
     });
     assert.ok("moved" in moved);
   }).pipe(Effect.provide(TestLayer)),
+);
+
+const seedThread = Effect.fn("seedThread")(function* (
+  threadId: string,
+  input: {
+    readonly title: string;
+    readonly pullRequests?: ReadonlyArray<unknown>;
+    readonly turns: ReadonlyArray<{ readonly usage: unknown; readonly status?: string }>;
+  },
+) {
+  const sql = yield* SqlClient.SqlClient;
+  const json = (value: unknown) => JSON.stringify(value);
+  yield* sql`INSERT INTO orchestration_v2_projection_threads ${sql.insert({
+    thread_id: threadId,
+    project_id: "p1",
+    title: input.title,
+    default_provider: "codex",
+    runtime_mode: "full-access",
+    interaction_mode: "default",
+    created_at: "2026-01-01T00:00:00.000Z",
+    updated_at: "2026-01-01T00:00:00.000Z",
+    payload_json: json({
+      title: input.title,
+      branch: "feature/x",
+      worktreePath: "/tmp/wt",
+      pullRequests: input.pullRequests ?? [],
+    }),
+  })}`;
+  yield* sql`INSERT INTO orchestration_v2_projection_runs ${sql.insert({
+    run_id: `${threadId}-run`,
+    thread_id: threadId,
+    ordinal: 1,
+    provider: "codex",
+    status: "completed",
+    requested_at: "2026-01-01T00:00:00.000Z",
+    payload_json: json({
+      startedAt: "2026-01-01T00:00:00.000Z",
+      completedAt: "2026-01-01T00:02:00.000Z",
+      modelSelection: { instanceId: "codex", model: "test-model" },
+    }),
+  })}`;
+  yield* sql`INSERT INTO orchestration_v2_projection_run_attempts ${sql.insert({
+    attempt_id: `${threadId}-attempt`,
+    thread_id: threadId,
+    run_id: `${threadId}-run`,
+    attempt_ordinal: 1,
+    root_node_id: "node",
+    provider: "codex",
+    provider_thread_id: `${threadId}-pt`,
+    status: "completed",
+    payload_json: "{}",
+  })}`;
+  for (const [index, turn] of input.turns.entries()) {
+    yield* sql`INSERT INTO orchestration_v2_projection_provider_turns ${sql.insert({
+      provider_turn_id: `${threadId}-turn-${index}`,
+      thread_id: threadId,
+      provider_thread_id: `${threadId}-pt`,
+      node_id: "node",
+      run_attempt_id: `${threadId}-attempt`,
+      ordinal: index + 1,
+      status: turn.status ?? "completed",
+      payload_json: json({
+        // The context-window snapshot must not be mistaken for billed tokens.
+        tokenUsage: { usedTokens: 999_999, updatedAt: "2026-01-01T00:00:00.000Z" },
+        turnTokenUsage: turn.usage,
+      }),
+    })}`;
+  }
+});
+
+const complete = {
+  usageStatus: "complete",
+  usageScope: "main_agent",
+  hasSubagents: false,
+  inputTokens: 1000,
+  outputTokens: 500,
+};
+const rates = new Map([
+  [
+    "test-model",
+    {
+      inputCostPerToken: 1e-6,
+      outputCostPerToken: 2e-6,
+      cacheReadCostPerToken: 1e-7,
+      cacheCreationCostPerToken: 1e-6,
+      fast: null,
+      ultrafast: null,
+    },
+  ],
+]);
+const layerWith = <A, E>(configuration: Layer.Layer<A, E>) =>
+  Kanban.layer.pipe(
+    Layer.provide(configuration),
+    Layer.provideMerge(Layer.merge(SqlitePersistence.layerMemory, NodeCrypto.layer)),
+  );
+const PricedLayer = layerWith(
+  Layer.succeed(
+    Kanban.KanbanPricing,
+    Effect.succeed({ rates, overrides: new Map(), aliases: new Map() }),
+  ),
+);
+
+it.effect("getCard derives thread info, tokens, cost and run time from the projection", () =>
+  Effect.gen(function* () {
+    const { kanban, boardId } = yield* setup;
+    const created = yield* kanban.cardCreate({ commandId: cmd(), boardId, title: "Ship" });
+    const cardId = created.cardId!;
+    yield* seedThread("t-1", {
+      title: "Work on Ship",
+      turns: [{ usage: complete }, { usage: complete }],
+      pullRequests: [
+        {
+          host: "github.com",
+          repository: "a/b",
+          number: 7,
+          url: "https://github.com/a/b/pull/7",
+          source: "created",
+          snapshot: { state: "merged" },
+        },
+      ],
+    });
+    yield* kanban.cardLinkThread({ commandId: cmd(), cardId, threadId: ThreadId.make("t-1") });
+    yield* kanban.cardLinkThread({ commandId: cmd(), cardId, threadId: ThreadId.make("gone") });
+    const detail = yield* kanban.getCard({ cardId });
+    assert.deepEqual(
+      detail.threads.find((thread) => thread.threadId === "t-1"),
+      {
+        threadId: ThreadId.make("t-1"),
+        title: "Work on Ship",
+        status: "completed",
+        branch: "feature/x",
+        worktreePath: "/tmp/wt",
+        pullRequests: [{ url: "https://github.com/a/b/pull/7", number: 7, state: "merged" }],
+      },
+    );
+    assert.strictEqual(detail.threads.find((thread) => thread.threadId === "gone")!.title, null);
+    assert.strictEqual(detail.totalTokens, 3000);
+    assert.closeTo(detail.costUsd!, 0.004, 1e-9);
+    assert.strictEqual(detail.durationMs, 120_000);
+  }).pipe(Effect.provide(PricedLayer)),
+);
+
+it.effect("getCard leaves cost unknown when a turn has no usage, and counts nothing unlinked", () =>
+  Effect.gen(function* () {
+    const { kanban, boardId } = yield* setup;
+    const { cardId } = yield* kanban.cardCreate({ commandId: cmd(), boardId, title: "A" });
+    const empty = yield* kanban.getCard({ cardId: cardId! });
+    assert.deepEqual([empty.costUsd, empty.totalTokens, empty.durationMs], [null, null, null]);
+    yield* seedThread("t-2", { title: "T", turns: [{ usage: complete }, { usage: undefined }] });
+    yield* kanban.cardLinkThread({
+      commandId: cmd(),
+      cardId: cardId!,
+      threadId: ThreadId.make("t-2"),
+    });
+    const detail = yield* kanban.getCard({ cardId: cardId! });
+    assert.strictEqual(detail.costUsd, null);
+    assert.strictEqual(detail.totalTokens, 1500);
+  }).pipe(Effect.provide(PricedLayer)),
+);
+
+it.effect("new boards start from the configured default template", () =>
+  Effect.gen(function* () {
+    const { board } = yield* setup;
+    assert.deepEqual(
+      board.columns.map((column) => [column.name, column.role, column.wipLimit]),
+      [
+        ["Ideas", "backlog", null],
+        ["Shipping", "done", 3],
+      ],
+    );
+    assert.deepEqual(
+      board.templates.map((template) => template.name),
+      ["Spike"],
+    );
+  }).pipe(
+    Effect.provide(
+      layerWith(
+        Layer.succeed(
+          Kanban.KanbanTemplateSource,
+          Effect.succeed({
+            columns: [
+              { name: "Ideas", color: "slate", role: "backlog", wipLimit: null },
+              { name: "Shipping", color: "green", role: "done", wipLimit: 3 },
+            ],
+            cardTemplates: [
+              {
+                name: "Spike",
+                icon: "tag",
+                color: "slate",
+                priority: "low",
+                checklist: [],
+                acceptanceCriteria: [],
+              },
+            ],
+          } as never),
+        ),
+      ),
+    ),
+  ),
 );

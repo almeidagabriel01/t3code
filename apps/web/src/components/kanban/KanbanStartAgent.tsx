@@ -3,13 +3,14 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { KanbanBoardState } from "@t3tools/client-runtime/state/kanban";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
-  DEFAULT_RUNTIME_MODE,
   type EnvironmentId,
   type KanbanCard,
   type ModelSelection,
   type ProviderInstanceId,
+  type RuntimeMode,
 } from "@t3tools/contracts";
 import { formatComposerContextReference } from "@t3tools/shared/composerContextReferences";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { useNavigate } from "@tanstack/react-router";
 import { BotIcon } from "lucide-react";
 import { useState } from "react";
@@ -24,6 +25,7 @@ import {
 } from "../../providerInstances";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { useProject } from "../../state/entities";
+import { DEFAULT_INTERACTION_MODE } from "../../types";
 import {
   EMPTY_SERVER_PROVIDERS,
   environmentServerConfigsAtom,
@@ -33,6 +35,7 @@ import { threadEnvironment } from "../../state/threads";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { withMessageContext } from "../ChatView.logic";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
+import { runtimeModeConfig, runtimeModeOptions } from "../chat/runtimeModeConfig";
 import { scheduledTaskDefaultModel } from "../settings/scheduledTasksSettings.logic";
 import { Button } from "../ui/button";
 import {
@@ -48,6 +51,7 @@ import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { Switch } from "../ui/switch";
 import { kanbanCardContextRecord } from "./kanban.logic";
+import { OptionSelect } from "./kanbanDialogs";
 import { reportKanbanError, useKanbanActions } from "./useKanban";
 
 function LaunchForm(props: {
@@ -74,6 +78,7 @@ function LaunchForm(props: {
     ),
   );
   const [picked, setPicked] = useState<ModelSelection | null>(null);
+  const [pickedRuntimeMode, setPickedRuntimeMode] = useState<RuntimeMode | null>(null);
   const [useWorktree, setUseWorktree] = useState(false);
   const [baseBranch, setBaseBranch] = useState("main");
   const [launching, setLaunching] = useState(false);
@@ -93,6 +98,12 @@ function LaunchForm(props: {
     activeModel,
   );
 
+  // What a new thread in this project would start with.
+  const runtimeMode =
+    pickedRuntimeMode ??
+    resolveProjectSettings(settings, board.projectId, project ?? undefined).settings
+      .defaultRuntimeMode;
+
   const launch = async () => {
     if (selection === null || project === null || launching) return;
     setLaunching(true);
@@ -103,8 +114,7 @@ function LaunchForm(props: {
       contextId: record.contextId,
       label: record.label,
     });
-    const interactionMode = "default" as const;
-    const runtimeMode = DEFAULT_RUNTIME_MODE;
+    const interactionMode = DEFAULT_INTERACTION_MODE;
     const title = `#${card.number} ${card.title}`;
     const result = await startTurn({
       environmentId,
@@ -188,6 +198,19 @@ function LaunchForm(props: {
                 onInstanceModelChange={(instanceId, model) => setPicked({ instanceId, model })}
               />
             </div>
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <Label>Permissions</Label>
+            <OptionSelect
+              label="Permissions"
+              value={runtimeMode}
+              disabled={launching}
+              options={runtimeModeOptions.map((value) => ({
+                value,
+                label: runtimeModeConfig[value].label,
+              }))}
+              onChange={setPickedRuntimeMode}
+            />
           </div>
           <div className="flex items-center justify-between gap-3">
             <Label htmlFor="kanban-worktree">New worktree</Label>

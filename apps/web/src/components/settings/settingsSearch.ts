@@ -550,6 +550,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["kanban board agent project ask thread"],
   },
   {
+    id: "kanban-default-template",
+    title: "Default columns for new boards",
+    to: "/settings/kanban",
+    searchTerms: [
+      "kanban board default template columns roles wip limit new boards reset built-in",
+    ],
+  },
+  {
     id: "kanban-templates",
     title: "Card templates",
     to: "/settings/kanban",

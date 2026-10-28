@@ -100,6 +100,8 @@ import {
 } from "../ThreadStatusIndicators";
 import { resolveSnoozePresets, type SnoozePreset } from "../Sidebar.snooze";
 import { useThreadShell } from "../../state/entities";
+import { KanbanThreadCardBadge } from "../kanban/KanbanThreadCardBadge";
+import { useThreadKanbanCard } from "../../state/kanban";
 import { ProjectFavicon, type ProjectFaviconProject } from "../ProjectFavicon";
 import { ThreadSearchMatchExcerpt } from "../ThreadSearchMatch";
 import { makeWorkspaceFileDropHandlers } from "../chat/workspaceFileDrop";
@@ -1095,6 +1097,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     )
   ) : null;
 
+  const hasKanbanCard = useThreadKanbanCard(thread.environmentId, thread.id) !== null;
   if (variant === "slim") {
     return (
       <li
@@ -1143,6 +1146,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             {title}
             {pinIndicator}
             {terminalStatusIcon}
+            <KanbanThreadCardBadge environmentId={thread.environmentId} threadId={thread.id} />
             {isRegeneratingTitle ? (
               <span role="status" className="sr-only">
                 Regenerating title
@@ -1261,6 +1265,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const diff = latestRunDiff(thread);
   // Only the provider icon would remain, so the row drops the line instead of leaving it blank.
   const metaLineEmpty =
+    !hasKanbanCard &&
     !thread.branch &&
     !showsScratchMachine &&
     prBadge === null &&
@@ -1508,6 +1513,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                   <span className="flex-1" />
                 )}
                 {terminalStatusIcon}
+                <KanbanThreadCardBadge environmentId={thread.environmentId} threadId={thread.id} />
                 {prBadge}
                 {diff ? (
                   <span className="shrink-0 font-mono">

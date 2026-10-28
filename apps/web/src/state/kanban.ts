@@ -1,7 +1,16 @@
 import { useAtomValue } from "@effect/atom-react";
-import { createKanbanEnvironmentAtoms } from "@t3tools/client-runtime/state/kanban";
-import { AuthOrchestrationReadScope, type EnvironmentId } from "@t3tools/contracts";
-import { Atom } from "effect/reactivity";
+import {
+  createKanbanEnvironmentAtoms,
+  selectKanbanThreadCards,
+} from "@t3tools/client-runtime/state/kanban";
+import {
+  AuthOrchestrationReadScope,
+  type EnvironmentId,
+  type KanbanCard,
+  type ThreadId,
+} from "@t3tools/contracts";
+import * as Option from "effect/Option";
+import { Atom, AsyncResult } from "effect/reactivity";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 import { environmentAtomList } from "./environmentAtomList";
@@ -49,4 +58,34 @@ const providerEntriesAtom = Atom.make((get) => {
 
 export function useProviderEntry(environmentId: EnvironmentId, instanceId: string) {
   return useAtomValue(providerEntriesAtom).get(environmentId)?.get(instanceId);
+}
+
+const threadCardsAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make((get) => {
+    if (
+      get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities.kanban !== true
+    ) {
+      return null;
+    }
+    const state = Option.getOrNull(
+      AsyncResult.value(get(kanbanEnvironment.live({ environmentId, input: null }))),
+    );
+    return state === null ? null : selectKanbanThreadCards(state);
+  }).pipe(Atom.withLabel(`web-kanban-thread-cards:${environmentId}`)),
+);
+
+/** Card objects keep their identity until that card changes, so a row only re-renders for its own. */
+const threadCardAtom = Atom.family((threadKey: string) =>
+  Atom.make((get): KanbanCard | null => {
+    const [environmentId, threadId] = threadKey.split("\n") as [EnvironmentId, ThreadId];
+    return get(threadCardsAtom(environmentId))?.get(threadId) ?? null;
+  }).pipe(Atom.withLabel(`web-kanban-thread-card:${threadKey}`)),
+);
+
+/** The card a thread is linked to, if its environment has boards. */
+export function useThreadKanbanCard(
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+): KanbanCard | null {
+  return useAtomValue(threadCardAtom(`${environmentId}\n${threadId}`));
 }

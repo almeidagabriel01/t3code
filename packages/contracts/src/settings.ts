@@ -21,6 +21,7 @@ import {
 } from "./baseSchemas.ts";
 import { UsageLimitSourceId } from "./usageLimitSourceId.ts";
 import { EnvironmentMachineKind, ThreadEnvMode, WorktreeSubmodules } from "./environment.ts";
+import { KanbanDefaultTemplate } from "./kanban.ts";
 import { KeybindingShortcut } from "./keybindings.ts";
 import {
   CustomModelSetting,
@@ -1229,6 +1230,10 @@ export const ServerSettings = Schema.Struct({
   kanbanAgentDefaultBoard: Schema.Literals(["thread-project", "ask"]).pipe(
     Schema.withDecodingDefault(Effect.succeed("thread-project" as const)),
   ),
+  /** Columns and card templates new boards start with; null is the built-in set. */
+  kanbanDefaultTemplate: Schema.NullOr(KanbanDefaultTemplate).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   sidebarAutoSettleKeepPullRequests: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
@@ -1577,6 +1582,7 @@ export const ServerSettingsPatch = Schema.Struct({
   linkedEnvironmentsEnabled: Schema.optionalKey(Schema.Boolean),
   kanbanAgentToolEnabled: Schema.optionalKey(Schema.Boolean),
   kanbanAgentDefaultBoard: Schema.optionalKey(Schema.Literals(["thread-project", "ask"])),
+  kanbanDefaultTemplate: Schema.optionalKey(Schema.NullOr(KanbanDefaultTemplate)),
   backgroundActivity: Schema.optionalKey(
     Schema.Struct({
       schemaVersion: Schema.optionalKey(Schema.Literal(1)),

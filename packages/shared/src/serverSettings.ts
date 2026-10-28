@@ -387,6 +387,8 @@ export function applyServerSettingsPatch(
     sourceControlHosts: sourceControlHostsPatch,
     usagePriceOverrides: usagePriceOverridesPatch,
     usageModelAliases: usageModelAliasesPatch,
+    // Replaced whole: deepMerge would merge its column list entry by entry.
+    kanbanDefaultTemplate: kanbanDefaultTemplatePatch,
     // Entry replacement: deepMerge would keep keys the client meant to clear.
     projectSettingsOverrides: projectSettingsOverridesPatch,
     projectAgentBrowserAccessOverrides: _legacyBrowserAccess,
@@ -593,6 +595,9 @@ export function applyServerSettingsPatch(
             usageModelAliasesPatch,
           ),
         }
+      : {}),
+    ...(kanbanDefaultTemplatePatch !== undefined
+      ? { kanbanDefaultTemplate: kanbanDefaultTemplatePatch }
       : {}),
     ...(patch.sourceControlWriterModelSelection !== undefined
       ? { sourceControlWriterModelSelection: patch.sourceControlWriterModelSelection }

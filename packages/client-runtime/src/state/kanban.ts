@@ -7,6 +7,7 @@ import {
   type KanbanColumnId,
   type KanbanStreamItem,
   type ProjectId,
+  type ThreadId,
 } from "@t3tools/contracts";
 import * as Stream from "effect/Stream";
 import { Atom } from "effect/reactivity";
@@ -161,6 +162,17 @@ export function selectKanbanColumns(board: KanbanBoardState) {
     else cards.push(card);
   }
   return board.columns.map((column) => ({ column, cards: cardsByColumn.get(column.id) ?? [] }));
+}
+
+/** The card each linked thread belongs to; a thread links to at most one card. */
+export function selectKanbanThreadCards(state: KanbanState): ReadonlyMap<ThreadId, KanbanCard> {
+  const byThread = new Map<ThreadId, KanbanCard>();
+  for (const board of state.boards.values()) {
+    for (const card of board.cards.values()) {
+      for (const threadId of card.linkedThreadIds) byThread.set(threadId, card);
+    }
+  }
+  return byThread;
 }
 
 export function createKanbanEnvironmentAtoms<R, E>(

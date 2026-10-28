@@ -13,6 +13,7 @@ import {
   EMPTY_KANBAN_STATE,
   kanbanStateStream,
   selectKanbanColumns,
+  selectKanbanThreadCards,
   type KanbanState,
 } from "./kanban.ts";
 
@@ -147,4 +148,33 @@ describe("kanbanStateStream", () => {
       );
     }),
   );
+});
+
+describe("selectKanbanThreadCards", () => {
+  it("maps each linked thread to its card and follows later deltas", () => {
+    const linked = (id: string, threadIds: ReadonlyArray<string>): KanbanCard =>
+      ({ ...card(id, "c1", "m"), linkedThreadIds: threadIds }) as never;
+    let state = apply(
+      EMPTY_KANBAN_STATE,
+      snapshot(1, [linked("k1", ["t1", "t2"]), linked("k2", []), linked("k3", ["t3"])]),
+    );
+    assert.deepEqual(
+      [...selectKanbanThreadCards(state)].map(([threadId, found]) => [threadId, found.id]),
+      [
+        ["t1", "k1"],
+        ["t2", "k1"],
+        ["t3", "k3"],
+      ],
+    );
+    state = apply(state, { kind: "card.upserted", sequence: 2, card: linked("k2", ["t1"]) });
+    state = apply(state, {
+      kind: "card.removed",
+      sequence: 3,
+      boardId: "b1" as never,
+      cardId: "k3" as never,
+    });
+    const map = selectKanbanThreadCards(state);
+    assert.equal(map.get("t1" as never)?.id, "k2");
+    assert.equal(map.has("t3" as never), false);
+  });
 });

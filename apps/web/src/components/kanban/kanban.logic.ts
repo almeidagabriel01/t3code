@@ -9,6 +9,7 @@ import type {
   KanbanColumn,
   KanbanColumnId,
   KanbanColumnRole,
+  KanbanDefaultTemplate,
   KanbanPriority,
   ProjectId,
 } from "@t3tools/contracts";
@@ -355,6 +356,21 @@ export function findCardInBoards(boards: ReadonlyArray<GlobalBoard>, cardId: str
   for (const { environmentId, board } of boards) {
     const card = board.cards.get(cardId as KanbanCardId);
     if (card !== undefined) return { environmentId, board, card };
+  }
+  return null;
+}
+
+/** A reason the default template cannot be saved, or null. */
+export function validateDefaultTemplate(template: KanbanDefaultTemplate): string | null {
+  if (template.columns.length === 0) return "Add at least one column.";
+  if (template.columns.some((column) => column.name.trim().length === 0)) {
+    return "Every column needs a name.";
+  }
+  const seen = new Set<KanbanColumnRole>();
+  for (const { role } of template.columns) {
+    if (role === "none") continue;
+    if (seen.has(role)) return `Only one column can have the ${KANBAN_ROLE_LABELS[role]} role.`;
+    seen.add(role);
   }
   return null;
 }
