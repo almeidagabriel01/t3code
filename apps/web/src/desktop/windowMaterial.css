@@ -33,6 +33,7 @@ html[data-desktop-client]:is(
   :is(
     [data-app-sidebar] [data-slot="sidebar-inner"],
     [data-destination-rail],
+    [data-slot="status-bar"],
     [data-chat-header],
     [data-workspace-page-header]
   ) {
