@@ -55,6 +55,7 @@ import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
+import { checkDefinitionOfDone } from "./definitionOfDone.ts";
 import {
   DEFAULT_KANBAN_AUTOMATIONS,
   DEFAULT_KANBAN_COLUMNS,
@@ -87,6 +88,16 @@ export class KanbanService extends Context.Service<
     readonly cardCreate: (input: KanbanCardCreateInput) => KanbanResult;
     readonly cardUpdate: (input: KanbanCardUpdateInput) => KanbanResult;
     readonly cardMove: (input: KanbanCardMoveInput) => KanbanResult;
+    /**
+     * The move agents and automation make: into a review or done column it must pass the board's
+     * definition of done. A refusal is a recorded outcome, not an error. `summary` becomes a comment.
+     */
+    readonly cardMoveChecked: (
+      input: KanbanCardMoveInput & { readonly summary?: string | undefined },
+    ) => Effect.Effect<
+      { readonly moved: KanbanMutationResult } | { readonly refused: ReadonlyArray<string> },
+      KanbanError
+    >;
     readonly cardArchive: (input: KanbanCardIdInput) => KanbanResult;
     readonly cardUnarchive: (input: KanbanCardIdInput) => KanbanResult;
     readonly cardDelete: (input: KanbanCardIdInput) => KanbanResult;
@@ -1116,46 +1127,97 @@ export const layer = Layer.effect(
         }),
       );
 
-    const cardMove: KanbanService["Service"]["cardMove"] = (input) =>
-      mutate(
-        input.commandId,
-        Effect.gen(function* () {
-          const row = yield* findCardRow(input.cardId);
-          if (row.archived_at !== null) {
-            return yield* new KanbanError({
-              kind: "invalid",
-              message: "Unarchive the card before moving it.",
-            });
-          }
-          const target = yield* findColumn(input.columnId);
-          if (target.board_id !== row.board_id) {
-            return yield* new KanbanError({
-              kind: "invalid",
-              message: "The column belongs to another board.",
-            });
-          }
-          const plan = yield* placeOrFail(
-            yield* liveCardsOf(target.column_id, row.card_id),
-            { beforeId: input.beforeCardId, afterId: input.afterCardId },
-            row.card_id,
-          );
-          yield* writeCardKeys(plan.rewrites);
-          yield* sql`
+    const moveOutcome = Effect.fn("KanbanService.moveOutcome")(function* (
+      input: KanbanCardMoveInput,
+    ) {
+      const row = yield* findCardRow(input.cardId);
+      if (row.archived_at !== null) {
+        return yield* new KanbanError({
+          kind: "invalid",
+          message: "Unarchive the card before moving it.",
+        });
+      }
+      const target = yield* findColumn(input.columnId);
+      if (target.board_id !== row.board_id) {
+        return yield* new KanbanError({
+          kind: "invalid",
+          message: "The column belongs to another board.",
+        });
+      }
+      const plan = yield* placeOrFail(
+        yield* liveCardsOf(target.column_id, row.card_id),
+        { beforeId: input.beforeCardId, afterId: input.afterCardId },
+        row.card_id,
+      );
+      yield* writeCardKeys(plan.rewrites);
+      yield* sql`
             UPDATE kanban_cards
             SET column_id = ${target.column_id}, order_key = ${plan.key}, updated_at = ${yield* nowIso}
             WHERE card_id = ${row.card_id}`;
-          if (target.column_id !== row.column_id) {
-            yield* addEvent(row.card_id, "moved", actorOf(input), {
-              fromColumnId: row.column_id,
-              toColumnId: target.column_id,
-            });
-          }
-          return {
-            result: { cardId: input.cardId, boardId: row.board_id as KanbanBoardId },
-            deltas: yield* cardDeltas([row.card_id, ...plan.rewrites.map((item) => item.id)]),
-          } satisfies Outcome;
-        }),
-      );
+      if (target.column_id !== row.column_id) {
+        yield* addEvent(row.card_id, "moved", actorOf(input), {
+          fromColumnId: row.column_id,
+          toColumnId: target.column_id,
+        });
+      }
+      return {
+        result: { cardId: input.cardId, boardId: row.board_id as KanbanBoardId },
+        deltas: yield* cardDeltas([row.card_id, ...plan.rewrites.map((item) => item.id)]),
+      } satisfies Outcome;
+    });
+
+    const cardMove: KanbanService["Service"]["cardMove"] = (input) =>
+      mutate(input.commandId, moveOutcome(input));
+
+    const cardMoveChecked: KanbanService["Service"]["cardMoveChecked"] = Effect.fn(
+      "KanbanService.cardMoveChecked",
+    )(function* (input) {
+      const checked = yield* Effect.gen(function* () {
+        const row = yield* findCardRow(input.cardId);
+        const target = yield* findColumn(input.columnId);
+        const boards = yield* sql<BoardRow>`
+          SELECT * FROM kanban_boards WHERE board_id = ${row.board_id}`;
+        return {
+          row,
+          verdict:
+            target.column_id === row.column_id || boards[0] === undefined
+              ? ({ ok: true } as const)
+              : checkDefinitionOfDone({
+                  enabled: automationsJson.parse(boards[0].automations_json).definitionOfDone,
+                  targetRole: target.role as KanbanColumnRole,
+                  checklist: checklistJson.parse(row.checklist_json),
+                  summary: input.summary,
+                }),
+        };
+      }).pipe(toKanbanError);
+      const { row, verdict } = checked;
+      if (!verdict.ok) {
+        const { missing } = verdict;
+        yield* mutate(
+          input.commandId,
+          Effect.gen(function* () {
+            yield* addEvent(row.card_id, "dod-refused", actorOf(input), { missing });
+            return {
+              result: { cardId: input.cardId, boardId: row.board_id as KanbanBoardId },
+              deltas: [],
+            } satisfies Outcome;
+          }),
+        );
+        return { refused: missing };
+      }
+      const summary = input.summary?.trim();
+      return {
+        moved: yield* mutate(
+          input.commandId,
+          Effect.gen(function* () {
+            if (summary !== undefined && summary !== "") {
+              yield* addEvent(row.card_id, "comment", actorOf(input), { body: summary });
+            }
+            return yield* moveOutcome(input);
+          }),
+        ),
+      };
+    });
 
     const cardArchive: KanbanService["Service"]["cardArchive"] = (input) =>
       mutate(
@@ -1287,6 +1349,7 @@ export const layer = Layer.effect(
       cardCreate,
       cardUpdate,
       cardMove,
+      cardMoveChecked,
       cardArchive,
       cardUnarchive,
       cardDelete,

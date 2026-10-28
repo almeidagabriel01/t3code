@@ -321,3 +321,92 @@ it.effect("subscribe emits a snapshot, then ordered deltas without gaps", () =>
     );
   }).pipe(Effect.provide(TestLayer)),
 );
+
+it.effect("checked moves into review need a finished checklist and a summary", () =>
+  Effect.gen(function* () {
+    const { kanban, boardId, column } = yield* setup;
+    const created = yield* kanban.cardCreate({
+      commandId: cmd(),
+      boardId,
+      title: "A",
+      checklist: [
+        { text: "one", done: true },
+        { text: "two", done: false },
+      ],
+    });
+    const cardId = created.cardId!;
+    const review = column("review").id;
+    const actor = "agent:thread-1" as const;
+
+    const refused = yield* kanban.cardMoveChecked({
+      commandId: cmd(),
+      cardId,
+      columnId: review,
+      actor,
+      summary: "Did it",
+    });
+    assert.deepEqual(refused, { refused: ["checklist item not done: two"] });
+    const stuck = yield* kanban.getCard({ cardId });
+    assert.equal(stuck.card.columnId, column("backlog").id);
+    assert.deepEqual(
+      stuck.activity.map((event) => event.kind),
+      ["created", "dod-refused"],
+    );
+
+    // A user's plain move is not checked.
+    yield* kanban.cardMove({ commandId: cmd(), cardId, columnId: review });
+    yield* kanban.cardMove({ commandId: cmd(), cardId, columnId: column("todo").id });
+
+    yield* kanban.cardUpdate({
+      commandId: cmd(),
+      cardId,
+      checklist: stuck.card.checklist.map((item) => ({ ...item, done: true })),
+    });
+    const noSummary = yield* kanban.cardMoveChecked({
+      commandId: cmd(),
+      cardId,
+      columnId: review,
+      actor,
+    });
+    assert.deepEqual(noSummary, {
+      refused: ["a completion summary (the `summary` field)"],
+    });
+    const moved = yield* kanban.cardMoveChecked({
+      commandId: cmd(),
+      cardId,
+      columnId: review,
+      actor,
+      summary: "Did it",
+    });
+    assert.ok("moved" in moved);
+    const done = yield* kanban.getCard({ cardId });
+    assert.equal(done.card.columnId, review);
+    assert.deepEqual(
+      done.activity.filter((event) => event.kind === "comment").map((event) => event.payload),
+      [{ body: "Did it" }],
+    );
+  }).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("checked moves skip the check when the board turns the definition of done off", () =>
+  Effect.gen(function* () {
+    const { kanban, boardId, column } = yield* setup;
+    yield* kanban.boardUpdate({
+      commandId: cmd(),
+      boardId,
+      automations: { definitionOfDone: false },
+    });
+    const created = yield* kanban.cardCreate({
+      commandId: cmd(),
+      boardId,
+      title: "A",
+      checklist: [{ text: "one", done: false }],
+    });
+    const moved = yield* kanban.cardMoveChecked({
+      commandId: cmd(),
+      cardId: created.cardId!,
+      columnId: column("done").id,
+    });
+    assert.ok("moved" in moved);
+  }).pipe(Effect.provide(TestLayer)),
+);

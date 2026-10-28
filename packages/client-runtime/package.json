@@ -195,6 +195,10 @@
       "types": "./src/state/itemSupport.ts",
       "default": "./src/state/itemSupport.ts"
     },
+    "./state/kanban": {
+      "types": "./src/state/kanban.ts",
+      "default": "./src/state/kanban.ts"
+    },
     "./state/models": {
       "types": "./src/state/models.ts",
       "default": "./src/state/models.ts"
@@ -282,10 +286,6 @@
     "./state/usage-access": {
       "types": "./src/state/usageAccess.ts",
       "default": "./src/state/usageAccess.ts"
-    },
-    "./state/kanban": {
-      "types": "./src/state/kanban.ts",
-      "default": "./src/state/kanban.ts"
     },
     "./state/shared-settings": {
       "types": "./src/state/sharedSettings.ts",

@@ -144,7 +144,6 @@ export function kanbanStateStream<E, R>(
   return run();
 }
 
-/** @public consumed by the Phase 1B web board UI */
 export function selectKanbanBoardByProject(
   state: KanbanState,
   projectId: ProjectId,
@@ -164,7 +163,6 @@ export function selectKanbanColumns(board: KanbanBoardState) {
   return board.columns.map((column) => ({ column, cards: cardsByColumn.get(column.id) ?? [] }));
 }
 
-/** @public consumed by the Phase 1B web board UI */
 export function createKanbanEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {

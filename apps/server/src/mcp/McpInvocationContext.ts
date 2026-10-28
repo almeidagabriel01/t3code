@@ -103,6 +103,8 @@ export interface McpInvocationScope {
   readonly client: McpClientCaller | undefined;
   /** False while the Linked environments beta is off here; `/mcp` reads it per request. */
   readonly linkedEnvironments?: boolean;
+  /** The `kanbanAgentToolEnabled` and `kanbanAgentDefaultBoard` settings, read per request. */
+  readonly kanban?: { readonly enabled: boolean; readonly defaultBoard: "thread-project" | "ask" };
 }
 
 export class McpInvocationContext extends Context.Service<
@@ -125,6 +127,13 @@ export const hiddenWhileLinksOff = (): boolean => {
   const fiber = Fiber.getCurrent();
   const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
   return scope?.linkedEnvironments !== false;
+};
+
+/** `McpSchema.EnabledWhen` for `t3_kanban`, hidden while `kanbanAgentToolEnabled` is off. */
+export const hiddenWhileKanbanOff = (): boolean => {
+  const fiber = Fiber.getCurrent();
+  const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
+  return scope?.kanban?.enabled !== false;
 };
 
 export type McpCapabilityError<C extends McpCapability> = C extends "preview"

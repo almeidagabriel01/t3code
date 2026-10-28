@@ -46,6 +46,8 @@ import { PreviewControlsToolkit } from "./toolkits/previewControls/tools.ts";
 import * as PreviewControlsHandlers from "./toolkits/previewControls/handlers.ts";
 import { EnvironmentToolkit } from "./toolkits/environment/tools.ts";
 import * as EnvironmentHandlers from "./toolkits/environment/handlers.ts";
+import { KanbanToolkit } from "./toolkits/kanban/tools.ts";
+import * as KanbanHandlers from "./toolkits/kanban/handlers.ts";
 import { ProjectToolkit } from "./toolkits/project/tools.ts";
 import * as ProjectHandlers from "./toolkits/project/handlers.ts";
 import { AttachmentToolkit } from "./toolkits/attachment/tools.ts";
@@ -195,9 +197,18 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
   const registry = yield* McpSessionRegistry.McpSessionRegistry;
   const clients = yield* Effect.serviceOption(McpClientAuthenticator);
   const serverSettings = yield* ServerSettings.ServerSettingsService;
-  const linksEnabled = serverSettings.getSettings.pipe(
-    Effect.map((settings) => settings.linkedEnvironmentsEnabled),
-    Effect.orElseSucceed(() => false),
+  const requestSettings = serverSettings.getSettings.pipe(
+    Effect.map((settings) => ({
+      linkedEnvironments: settings.linkedEnvironmentsEnabled,
+      kanban: {
+        enabled: settings.kanbanAgentToolEnabled,
+        defaultBoard: settings.kanbanAgentDefaultBoard,
+      },
+    })),
+    Effect.orElseSucceed(() => ({
+      linkedEnvironments: false,
+      kanban: { enabled: true, defaultBoard: "thread-project" as const },
+    })),
   );
   return Effect.fn("McpHttpServer.authenticateRequest")(function* (httpEffect) {
     const request = yield* HttpServerRequest.HttpServerRequest;
@@ -223,12 +234,13 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
     }
     const limited = withModeLimit(invocation, request);
     if (limited === undefined) return invalidModeLimit;
-    const linkedEnvironments = yield* linksEnabled;
+    const { linkedEnvironments, kanban } = yield* requestSettings;
     if (limited.client?.linked === true && !linkedEnvironments) return linkedEnvironmentsOff;
     return yield* httpEffect.pipe(
       Effect.provideService(McpInvocationContext.McpInvocationContext, {
         ...limited,
         linkedEnvironments,
+        kanban,
       }),
       Effect.map(normalizeMcpHttpResponse),
     );
@@ -1106,6 +1118,8 @@ const layerEnvironmentToolkit = toolkitRegistration(
 
 export const layerProjectRegistration = toolkitRegistration(ProjectToolkit, ProjectHandlers.layer);
 
+const layerKanbanToolkit = toolkitRegistration(KanbanToolkit, KanbanHandlers.layer);
+
 export const layerAttachmentToolkit = toolkitRegistration(
   AttachmentToolkit,
   AttachmentHandlers.layer,
@@ -1146,6 +1160,7 @@ export const layerTools = Layer.mergeAll(
   layerThreadToolkit,
   layerAttachmentToolkit,
   layerProjectRegistration,
+  layerKanbanToolkit,
   layerEnvironmentToolkit,
   layerPreviewControlsRegistration,
   layerWorktreeToolkitRegistration,

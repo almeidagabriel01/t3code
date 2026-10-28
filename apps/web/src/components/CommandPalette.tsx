@@ -70,8 +70,10 @@ import {
   SquarePenIcon,
   TextSearchIcon,
   UserPlusIcon,
+  SquareKanbanIcon,
 } from "lucide-react";
 import { openThreadFind } from "./chat/threadFindStore";
+import { useKanbanEnvironmentIds } from "../state/kanban";
 import {
   useDeferredValue,
   useEffect,
@@ -416,6 +418,7 @@ function OpenCommandPaletteDialog(props: {
     reportFailure: false,
   });
   const { environments } = useEnvironments();
+  const kanbanSupported = useKanbanEnvironmentIds().length > 0;
   const desktopLocalBootstraps = useDesktopLocalBootstraps();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const availableSettingsSearchItems = useAvailableSettingsSearchItems();
@@ -1563,6 +1566,49 @@ function OpenCommandPaletteDialog(props: {
         });
       },
     });
+  }
+
+  if (kanbanSupported) {
+    actionItems.push({
+      kind: "action",
+      value: "action:kanban-global",
+      searchTerms: ["board", "kanban", "cards", "tasks", "all", "global"],
+      title: "Open global board",
+      icon: <SquareKanbanIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        await navigate({ to: "/kanban" });
+      },
+    });
+    if (contextualProjectGroup) {
+      actionItems.push({
+        kind: "action",
+        value: "action:kanban-board",
+        searchTerms: ["board", "kanban", "cards", "tasks"],
+        title: "Open board",
+        description: contextualProjectGroup.displayName,
+        icon: <SquareKanbanIcon className={ITEM_ICON_CLASS} />,
+        run: async () => {
+          await navigate({
+            to: "/kanban",
+            search: { projectKey: contextualProjectGroup.projectKey },
+          });
+        },
+      });
+      actionItems.push({
+        kind: "action",
+        value: "action:kanban-new-card",
+        searchTerms: ["board", "kanban", "card", "task", "issue", "new", "add", "create"],
+        title: "New card",
+        description: contextualProjectGroup.displayName,
+        icon: <SquareKanbanIcon className={ITEM_ICON_CLASS} />,
+        run: async () => {
+          await navigate({
+            to: "/kanban",
+            search: { projectKey: contextualProjectGroup.projectKey, new: true },
+          });
+        },
+      });
+    }
   }
 
   const rootGroups = buildRootGroups({ actionItems, recentThreadItems });

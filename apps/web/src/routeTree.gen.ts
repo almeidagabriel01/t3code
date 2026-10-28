@@ -21,6 +21,7 @@ import { Route as ChatUsageRouteImport } from './routes/_chat.usage'
 import { Route as ChatSettingsRouteImport } from './routes/_chat.settings'
 import { Route as ChatPullRequestsRouteImport } from './routes/_chat.pull-requests'
 import { Route as ChatNewRouteImport } from './routes/_chat.new'
+import { Route as ChatKanbanRouteImport } from './routes/_chat.kanban'
 import { Route as ChatSettingsWorktreesRouteImport } from './routes/_chat.settings.worktrees'
 import { Route as ChatSettingsThreadsRouteImport } from './routes/_chat.settings.threads'
 import { Route as ChatSettingsStorageRouteImport } from './routes/_chat.settings.storage'
@@ -34,6 +35,7 @@ import { Route as ChatSettingsOpenSourceLicensesRouteImport } from './routes/_ch
 import { Route as ChatSettingsMaintenanceRouteImport } from './routes/_chat.settings.maintenance'
 import { Route as ChatSettingsLabsRouteImport } from './routes/_chat.settings.labs'
 import { Route as ChatSettingsKeybindingsRouteImport } from './routes/_chat.settings.keybindings'
+import { Route as ChatSettingsKanbanRouteImport } from './routes/_chat.settings.kanban'
 import { Route as ChatSettingsIntegrationsRouteImport } from './routes/_chat.settings.integrations'
 import { Route as ChatSettingsGeneralRouteImport } from './routes/_chat.settings.general'
 import { Route as ChatSettingsDiffsRouteImport } from './routes/_chat.settings.diffs'
@@ -109,6 +111,11 @@ const ChatNewRoute = ChatNewRouteImport.update({
   path: '/new',
   getParentRoute: () => ChatRoute,
 } as any)
+const ChatKanbanRoute = ChatKanbanRouteImport.update({
+  id: '/kanban',
+  path: '/kanban',
+  getParentRoute: () => ChatRoute,
+} as any)
 const ChatSettingsWorktreesRoute = ChatSettingsWorktreesRouteImport.update({
   id: '/worktrees',
   path: '/worktrees',
@@ -175,6 +182,11 @@ const ChatSettingsLabsRoute = ChatSettingsLabsRouteImport.update({
 const ChatSettingsKeybindingsRoute = ChatSettingsKeybindingsRouteImport.update({
   id: '/keybindings',
   path: '/keybindings',
+  getParentRoute: () => ChatSettingsRoute,
+} as any)
+const ChatSettingsKanbanRoute = ChatSettingsKanbanRouteImport.update({
+  id: '/kanban',
+  path: '/kanban',
   getParentRoute: () => ChatSettingsRoute,
 } as any)
 const ChatSettingsIntegrationsRoute =
@@ -262,6 +274,7 @@ export interface FileRoutesByFullPath {
   '/guest': typeof GuestRoute
   '/pair': typeof PairRoute
   '/welcome': typeof WelcomeRoute
+  '/kanban': typeof ChatKanbanRoute
   '/new': typeof ChatNewRoute
   '/pull-requests': typeof ChatPullRequestsRoute
   '/settings': typeof ChatSettingsRouteWithChildren
@@ -282,6 +295,7 @@ export interface FileRoutesByFullPath {
   '/settings/diffs': typeof ChatSettingsDiffsRoute
   '/settings/general': typeof ChatSettingsGeneralRoute
   '/settings/integrations': typeof ChatSettingsIntegrationsRoute
+  '/settings/kanban': typeof ChatSettingsKanbanRoute
   '/settings/keybindings': typeof ChatSettingsKeybindingsRoute
   '/settings/labs': typeof ChatSettingsLabsRoute
   '/settings/maintenance': typeof ChatSettingsMaintenanceRoute
@@ -302,6 +316,7 @@ export interface FileRoutesByTo {
   '/guest': typeof GuestRoute
   '/pair': typeof PairRoute
   '/welcome': typeof WelcomeRoute
+  '/kanban': typeof ChatKanbanRoute
   '/new': typeof ChatNewRoute
   '/pull-requests': typeof ChatPullRequestsRoute
   '/settings': typeof ChatSettingsRouteWithChildren
@@ -323,6 +338,7 @@ export interface FileRoutesByTo {
   '/settings/diffs': typeof ChatSettingsDiffsRoute
   '/settings/general': typeof ChatSettingsGeneralRoute
   '/settings/integrations': typeof ChatSettingsIntegrationsRoute
+  '/settings/kanban': typeof ChatSettingsKanbanRoute
   '/settings/keybindings': typeof ChatSettingsKeybindingsRoute
   '/settings/labs': typeof ChatSettingsLabsRoute
   '/settings/maintenance': typeof ChatSettingsMaintenanceRoute
@@ -345,6 +361,7 @@ export interface FileRoutesById {
   '/guest': typeof GuestRoute
   '/pair': typeof PairRoute
   '/welcome': typeof WelcomeRoute
+  '/_chat/kanban': typeof ChatKanbanRoute
   '/_chat/new': typeof ChatNewRoute
   '/_chat/pull-requests': typeof ChatPullRequestsRoute
   '/_chat/settings': typeof ChatSettingsRouteWithChildren
@@ -366,6 +383,7 @@ export interface FileRoutesById {
   '/_chat/settings/diffs': typeof ChatSettingsDiffsRoute
   '/_chat/settings/general': typeof ChatSettingsGeneralRoute
   '/_chat/settings/integrations': typeof ChatSettingsIntegrationsRoute
+  '/_chat/settings/kanban': typeof ChatSettingsKanbanRoute
   '/_chat/settings/keybindings': typeof ChatSettingsKeybindingsRoute
   '/_chat/settings/labs': typeof ChatSettingsLabsRoute
   '/_chat/settings/maintenance': typeof ChatSettingsMaintenanceRoute
@@ -389,6 +407,7 @@ export interface FileRouteTypes {
     | '/guest'
     | '/pair'
     | '/welcome'
+    | '/kanban'
     | '/new'
     | '/pull-requests'
     | '/settings'
@@ -409,6 +428,7 @@ export interface FileRouteTypes {
     | '/settings/diffs'
     | '/settings/general'
     | '/settings/integrations'
+    | '/settings/kanban'
     | '/settings/keybindings'
     | '/settings/labs'
     | '/settings/maintenance'
@@ -429,6 +449,7 @@ export interface FileRouteTypes {
     | '/guest'
     | '/pair'
     | '/welcome'
+    | '/kanban'
     | '/new'
     | '/pull-requests'
     | '/settings'
@@ -450,6 +471,7 @@ export interface FileRouteTypes {
     | '/settings/diffs'
     | '/settings/general'
     | '/settings/integrations'
+    | '/settings/kanban'
     | '/settings/keybindings'
     | '/settings/labs'
     | '/settings/maintenance'
@@ -471,6 +493,7 @@ export interface FileRouteTypes {
     | '/guest'
     | '/pair'
     | '/welcome'
+    | '/_chat/kanban'
     | '/_chat/new'
     | '/_chat/pull-requests'
     | '/_chat/settings'
@@ -492,6 +515,7 @@ export interface FileRouteTypes {
     | '/_chat/settings/diffs'
     | '/_chat/settings/general'
     | '/_chat/settings/integrations'
+    | '/_chat/settings/kanban'
     | '/_chat/settings/keybindings'
     | '/_chat/settings/labs'
     | '/_chat/settings/maintenance'
@@ -603,6 +627,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatNewRouteImport
       parentRoute: typeof ChatRoute
     }
+    '/_chat/kanban': {
+      id: '/_chat/kanban'
+      path: '/kanban'
+      fullPath: '/kanban'
+      preLoaderRoute: typeof ChatKanbanRouteImport
+      parentRoute: typeof ChatRoute
+    }
     '/_chat/settings/worktrees': {
       id: '/_chat/settings/worktrees'
       path: '/worktrees'
@@ -692,6 +723,13 @@ declare module '@tanstack/react-router' {
       path: '/keybindings'
       fullPath: '/settings/keybindings'
       preLoaderRoute: typeof ChatSettingsKeybindingsRouteImport
+      parentRoute: typeof ChatSettingsRoute
+    }
+    '/_chat/settings/kanban': {
+      id: '/_chat/settings/kanban'
+      path: '/kanban'
+      fullPath: '/settings/kanban'
+      preLoaderRoute: typeof ChatSettingsKanbanRouteImport
       parentRoute: typeof ChatSettingsRoute
     }
     '/_chat/settings/integrations': {
@@ -816,6 +854,7 @@ interface ChatSettingsRouteChildren {
   ChatSettingsDiffsRoute: typeof ChatSettingsDiffsRoute
   ChatSettingsGeneralRoute: typeof ChatSettingsGeneralRoute
   ChatSettingsIntegrationsRoute: typeof ChatSettingsIntegrationsRoute
+  ChatSettingsKanbanRoute: typeof ChatSettingsKanbanRoute
   ChatSettingsKeybindingsRoute: typeof ChatSettingsKeybindingsRoute
   ChatSettingsLabsRoute: typeof ChatSettingsLabsRoute
   ChatSettingsMaintenanceRoute: typeof ChatSettingsMaintenanceRoute
@@ -845,6 +884,7 @@ const ChatSettingsRouteChildren: ChatSettingsRouteChildren = {
   ChatSettingsDiffsRoute: ChatSettingsDiffsRoute,
   ChatSettingsGeneralRoute: ChatSettingsGeneralRoute,
   ChatSettingsIntegrationsRoute: ChatSettingsIntegrationsRoute,
+  ChatSettingsKanbanRoute: ChatSettingsKanbanRoute,
   ChatSettingsKeybindingsRoute: ChatSettingsKeybindingsRoute,
   ChatSettingsLabsRoute: ChatSettingsLabsRoute,
   ChatSettingsMaintenanceRoute: ChatSettingsMaintenanceRoute,
@@ -865,6 +905,7 @@ const ChatSettingsRouteWithChildren = ChatSettingsRoute._addFileChildren(
 )
 
 interface ChatRouteChildren {
+  ChatKanbanRoute: typeof ChatKanbanRoute
   ChatNewRoute: typeof ChatNewRoute
   ChatPullRequestsRoute: typeof ChatPullRequestsRoute
   ChatSettingsRoute: typeof ChatSettingsRouteWithChildren
@@ -875,6 +916,7 @@ interface ChatRouteChildren {
 }
 
 const ChatRouteChildren: ChatRouteChildren = {
+  ChatKanbanRoute: ChatKanbanRoute,
   ChatNewRoute: ChatNewRoute,
   ChatPullRequestsRoute: ChatPullRequestsRoute,
   ChatSettingsRoute: ChatSettingsRouteWithChildren,

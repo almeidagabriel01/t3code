@@ -28,6 +28,7 @@ import { isSidebarUtilityPage, useNavigateToMainApp } from "./mainAppLocation";
 import { SidebarThreadUndoNotice } from "./SidebarThreadUndoNotice";
 import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
 import { SidebarUpdateArchitectureWarning, SidebarUpdatePill } from "./SidebarUpdatePill";
+import { SidebarKanbanShortcut } from "../kanban/SidebarKanbanButtons";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { observeResize } from "~/lib/observeResize";
 
@@ -263,6 +264,7 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter({
       <SidebarProviderUpdatePill />
       <SidebarUpdateArchitectureWarning />
       <SidebarArchiveShortcut />
+      <SidebarKanbanShortcut />
       <SidebarUtilityMenu />
     </SidebarFooter>
   );

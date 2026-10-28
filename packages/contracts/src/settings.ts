@@ -1216,6 +1216,12 @@ export const ServerSettings = Schema.Struct({
    * and tasks on another machine; tasks already running there finish.
    */
   linkedEnvironmentsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Off hides `t3_kanban` from agents. */
+  kanbanAgentToolEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** Which board an agent's `t3_kanban` call uses when it names no project and no card. */
+  kanbanAgentDefaultBoard: Schema.Literals(["thread-project", "ask"]).pipe(
+    Schema.withDecodingDefault(Effect.succeed("thread-project" as const)),
+  ),
   sidebarAutoSettleKeepPullRequests: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
@@ -1562,6 +1568,8 @@ export const ServerSettingsPatch = Schema.Struct({
   snoozeLimitedThreads: Schema.optionalKey(Schema.Boolean),
   guestSharingEnabled: Schema.optionalKey(Schema.Boolean),
   linkedEnvironmentsEnabled: Schema.optionalKey(Schema.Boolean),
+  kanbanAgentToolEnabled: Schema.optionalKey(Schema.Boolean),
+  kanbanAgentDefaultBoard: Schema.optionalKey(Schema.Literals(["thread-project", "ask"])),
   backgroundActivity: Schema.optionalKey(
     Schema.Struct({
       schemaVersion: Schema.optionalKey(Schema.Literal(1)),

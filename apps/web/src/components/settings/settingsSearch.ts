@@ -29,6 +29,7 @@ export type SettingsPath =
   | "/settings/browser"
   | "/settings/devices"
   | "/settings/scheduled-tasks"
+  | "/settings/kanban"
   | "/settings/source-control"
   | "/settings/worktrees"
   | "/settings/status-bar"
@@ -98,6 +99,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/browser": "Browser",
   "/settings/devices": "Devices",
   "/settings/scheduled-tasks": "Scheduled tasks",
+  "/settings/kanban": "Kanban",
   "/settings/source-control": "Source control",
   "/settings/worktrees": "Worktrees",
   "/settings/status-bar": "Status bar",
@@ -134,6 +136,7 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
       "/settings/browser",
       "/settings/devices",
       "/settings/scheduled-tasks",
+      "/settings/kanban",
     ],
   },
   {
@@ -485,6 +488,48 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Resource manager sort",
     to: "/settings/status-bar",
     searchTerms: ["status bar memory cpu name order terminals projects"],
+  },
+  {
+    id: "kanban-default-layout",
+    title: "Global board layout",
+    to: "/settings/kanban",
+    searchTerms: ["kanban board all projects by status by project swimlanes"],
+  },
+  {
+    id: "kanban-automations",
+    title: "Board automations",
+    to: "/settings/kanban",
+    searchTerms: ["kanban board move card thread started run completed pull request merged"],
+  },
+  {
+    id: "kanban-definition-of-done",
+    title: "Definition of done",
+    to: "/settings/kanban",
+    searchTerms: ["kanban board checklist review done summary comment"],
+  },
+  {
+    id: "kanban-agent-tool",
+    title: "Let agents use the board",
+    to: "/settings/kanban",
+    searchTerms: ["kanban board agent tool t3_kanban mcp enable disable"],
+  },
+  {
+    id: "kanban-agent-default-board",
+    title: "Default board for agents",
+    to: "/settings/kanban",
+    searchTerms: ["kanban board agent project ask thread"],
+  },
+  {
+    id: "kanban-templates",
+    title: "Card templates",
+    to: "/settings/kanban",
+    searchTerms: ["kanban board bug feature refactor chore checklist"],
+  },
+  {
+    id: "kanban-labels",
+    title: "Board labels",
+    to: "/settings/kanban",
+    searchTerms: ["kanban board tags colors"],
   },
   {
     id: "guest-links",
@@ -1217,6 +1262,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/connections": "connections",
   "/settings/access": "connections",
   "/settings/scheduled-tasks": null,
+  "/settings/kanban": null,
   "/settings/maintenance": null,
   "/settings/labs": null,
   "/settings/about": null,
