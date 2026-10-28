@@ -2,7 +2,11 @@ import { EnvironmentId, ProjectId, ProviderInstanceId, RunId, ThreadId } from "@
 import { describe, expect, it } from "vite-plus/test";
 
 import { makeThreadFixture } from "../../test-fixtures";
-import { collectUsageSessions, groupSessionsByProject } from "./usageSessions.logic";
+import {
+  collectAccountSessions,
+  collectUsageSessions,
+  groupSessionsByProject,
+} from "@t3tools/client-runtime/state/usageSessions";
 
 const env = EnvironmentId.make("env-a");
 const instanceId = ProviderInstanceId.make("codex");
@@ -29,6 +33,31 @@ const running = {
   updatedAt: ago(1),
   activityStartedAt: ago(12),
 } as const;
+
+describe("collectAccountSessions", () => {
+  it("merges every instance the account signs in as, across environments", () => {
+    const other = ProviderInstanceId.make("codex-work");
+    const envB = EnvironmentId.make("env-b");
+    const sessions = collectAccountSessions({
+      threads: [
+        thread("a", { updatedAt: ago(5) }),
+        thread("b", {
+          environmentId: envB,
+          providerInstanceId: other,
+          modelSelection: { instanceId: other, model: "m" },
+          updatedAt: ago(10),
+        }),
+        thread("unrelated", { environmentId: envB, updatedAt: ago(2) }),
+      ],
+      instances: [
+        { environmentId: env, instanceId },
+        { environmentId: envB, instanceId: other },
+      ],
+      now,
+    });
+    expect(sessions.map((s) => s.title)).toEqual(["a", "b"]);
+  });
+});
 
 describe("collectUsageSessions", () => {
   it("orders waiting, working, then recent and times each from its own start", () => {

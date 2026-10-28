@@ -101,8 +101,13 @@ export function KanbanBoardView(props: {
         )}
         onMoveCard={moveCard}
         onMoveColumn={(columnId, position) => actions.moveColumn({ columnId, ...position })}
-        onAddCard={(columnId: KanbanColumnId, title) =>
-          void actions.createCard({ boardId: board.id, columnId, title })
+        onAddCard={(columnId: KanbanColumnId, title, type) =>
+          void actions.createCard({
+            boardId: board.id,
+            columnId,
+            title,
+            ...(type === null ? {} : { type }),
+          })
         }
         trailing={
           props.canEdit ? (

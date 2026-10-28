@@ -1,6 +1,7 @@
+import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
-import { pacePresentation, poolPacePresentation, type UsagePaceSettings } from "./usagePace";
+import { pacePresentation, poolPacePresentation, type UsagePaceSettings } from "./usagePace.ts";
 
 const settings: UsagePaceSettings = {
   pace: true,
@@ -18,7 +19,7 @@ const window = {
   windowDurationMins: 300,
   resetsAt: "2026-09-03T14:00:00.000Z",
 } as const;
-const formatAt = (ms: number) => new Date(ms).toISOString();
+const formatAt = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(ms));
 
 describe("pacePresentation", () => {
   it("mirrors the tick and the figures when the bar shows what is left", () => {

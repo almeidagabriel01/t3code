@@ -11,6 +11,7 @@ import type {
   KanbanBoardId,
   KanbanCard,
   KanbanColumnId,
+  KanbanTemplate,
   ProjectId,
 } from "@t3tools/contracts";
 
@@ -35,6 +36,7 @@ export interface BoardViewColumn {
     readonly environmentId: EnvironmentId;
     readonly boardId: KanbanBoardId;
     readonly columnId: KanbanColumnId;
+    readonly templates: ReadonlyArray<KanbanTemplate>;
   } | null;
 }
 
@@ -55,7 +57,12 @@ export function buildBoardColumns(
       color: column.color,
       wipLimit: column.wipLimit,
       cards: cards.map((card) => ({ environmentId, board, card, projectId: null })),
-      addTo: { environmentId, boardId: board.id, columnId: column.id },
+      addTo: {
+        environmentId,
+        boardId: board.id,
+        columnId: column.id,
+        templates: board.templates,
+      },
     }));
   }
   const boardById = new Map(boards.map((entry) => [entry.board.id, entry]));

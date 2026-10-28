@@ -1,10 +1,10 @@
 import type { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import type { EnvironmentThreadShell } from "./shell.ts";
 import {
   formatWorkingDurationLabel,
   resolveThreadWorkingStartedAt,
   threadRuntimeIsActive,
-} from "@t3tools/client-runtime/state/models";
+} from "./models.ts";
 
 export type UsageSessionState = "waiting" | "working" | "recent";
 
@@ -41,15 +41,46 @@ export function collectUsageSessions(input: {
   readonly environmentIds: ReadonlyArray<EnvironmentId>;
   readonly now: number;
 }): ReadonlyArray<UsageSession> {
-  const { instanceId, environmentIds, now } = input;
+  const { instanceId, environmentIds } = input;
+  return collectSessionsWhere({
+    threads: input.threads,
+    now: input.now,
+    matches: (thread) =>
+      environmentIds.includes(thread.environmentId) &&
+      (thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId) === instanceId,
+  });
+}
+
+/** One account can sign in as several provider instances across environments. */
+export function collectAccountSessions(input: {
+  readonly threads: ReadonlyArray<EnvironmentThreadShell>;
+  readonly instances: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly instanceId: ProviderInstanceId;
+  }>;
+  readonly now: number;
+}): ReadonlyArray<UsageSession> {
+  return collectSessionsWhere({
+    threads: input.threads,
+    now: input.now,
+    matches: (thread) => {
+      const instanceId = thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId;
+      return input.instances.some(
+        (entry) => entry.environmentId === thread.environmentId && entry.instanceId === instanceId,
+      );
+    },
+  });
+}
+
+function collectSessionsWhere(input: {
+  readonly threads: ReadonlyArray<EnvironmentThreadShell>;
+  readonly matches: (thread: EnvironmentThreadShell) => boolean;
+  readonly now: number;
+}): ReadonlyArray<UsageSession> {
+  const { now } = input;
   return input.threads
     .flatMap((thread) => {
-      if (
-        thread.deletedAt !== null ||
-        thread.archivedAt !== null ||
-        !environmentIds.includes(thread.environmentId) ||
-        (thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId) !== instanceId
-      ) {
+      if (thread.deletedAt !== null || thread.archivedAt !== null || !input.matches(thread)) {
         return [];
       }
       const state = sessionState(thread, now);

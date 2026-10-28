@@ -209,6 +209,11 @@ it("applies checklist edits by id or text and reports ambiguity", () => {
     done: true,
   });
   expect(applyChecklistOps(items, [{ item: "write" }]).error).toContain("Several");
+  const ticked = applyChecklistOps(
+    [{ text: "Ship it", done: false }],
+    [{ text: "ship it", done: true }],
+  );
+  expect(ticked.items).toEqual([{ text: "Ship it", done: true }]);
   expect(applyChecklistOps(items, [{ item: "nope" }]).error).toContain("No checklist items");
   expect(applyChecklistOps(items, [{ done: true }]).error).toContain("needs `text`");
 });

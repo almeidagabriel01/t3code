@@ -1,16 +1,24 @@
-import type { StaticScreenProps } from "@react-navigation/native";
+import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import {
   collectGlobalBoards,
   definitionOfDoneWarning,
   describeCardEvent,
+  dueAtToInput,
   findCardInBoards,
+  inputToDueAt,
+  KANBAN_PRIORITIES,
   KANBAN_PRIORITY_LABELS,
 } from "@t3tools/client-runtime/state/kanbanLogic";
+import type { KanbanBoardState } from "@t3tools/client-runtime/state/kanban";
 import {
   EnvironmentId,
   KanbanCardId,
+  type KanbanCard,
   type KanbanChecklistItem,
   type KanbanColumnId,
+  type KanbanLabelId,
+  type KanbanPriority,
+  type KanbanTemplateId,
 } from "@t3tools/contracts";
 import type { MenuAction } from "@react-native-menu/menu";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -32,6 +40,38 @@ import { useOpenLinkedThread } from "../threads/useOpenLinkedThread";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { KanbanLabelChip } from "./KanbanCardTile";
 import { useKanbanActions } from "./useKanbanActions";
+import { useStartKanbanAgent } from "./useStartKanbanAgent";
+
+type ChecklistInputItem = Omit<KanbanChecklistItem, "id"> & {
+  readonly id?: KanbanChecklistItem["id"];
+};
+
+const NO_TYPE = "__none__";
+
+function PropertyPill(props: {
+  readonly label: string;
+  readonly value: string;
+  readonly disabled: boolean;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`${props.label}, ${props.value}`}
+      disabled={props.disabled}
+      className="min-h-9 flex-row items-center gap-2 rounded-full bg-secondary px-4 active:opacity-70"
+    >
+      <Text textRole="footnote" className="text-foreground-muted">
+        {props.label}
+      </Text>
+      <Text textRole="footnote" className="font-t3-medium text-foreground">
+        {props.value}
+      </Text>
+      {props.disabled ? null : (
+        <SymbolView name="chevron.down" size={12} tintColorClassName="accent-chevron" />
+      )}
+    </Pressable>
+  );
+}
 
 function Section(props: { readonly title: string; readonly children: React.ReactNode }) {
   return (
@@ -48,45 +88,84 @@ function Checklist(props: {
   readonly title: string;
   readonly items: ReadonlyArray<KanbanChecklistItem>;
   readonly disabled: boolean;
-  readonly onChange: (items: ReadonlyArray<KanbanChecklistItem>) => void;
+  readonly onChange: (items: ReadonlyArray<ChecklistInputItem>) => void;
 }) {
   const done = props.items.filter((item) => item.done).length;
+  if (props.items.length === 0 && props.disabled) return null;
   return (
-    <Section title={`${props.title} ${done}/${props.items.length}`}>
+    <Section
+      title={
+        props.items.length === 0 ? props.title : `${props.title} ${done}/${props.items.length}`
+      }
+    >
       <View className="overflow-hidden rounded-2xl bg-grouped-card">
         {props.items.map((item, index) => (
-          <Pressable
+          <View
             key={item.id}
-            accessibilityRole="checkbox"
-            accessibilityState={{ checked: item.done, disabled: props.disabled }}
-            disabled={props.disabled}
-            onPress={() =>
-              props.onChange(
-                props.items.map((entry) =>
-                  entry === item ? { ...entry, done: !entry.done } : entry,
-                ),
-              )
-            }
             className={
               index === 0
-                ? "flex-row items-center gap-3 px-4 py-3 active:opacity-70"
-                : "flex-row items-center gap-3 border-t border-border-subtle px-4 py-3 active:opacity-70"
+                ? "flex-row items-center"
+                : "flex-row items-center border-t border-border-subtle"
             }
           >
-            <SymbolView
-              name={item.done ? "checkmark.circle.fill" : "circle"}
-              size={20}
-              tintColorClassName={item.done ? "accent-primary" : "accent-icon-muted"}
-            />
-            <Text
-              textRole="body"
-              className={item.done ? "flex-1 text-foreground-muted" : "flex-1 text-foreground"}
+            <Pressable
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: item.done, disabled: props.disabled }}
+              disabled={props.disabled}
+              onPress={() =>
+                props.onChange(
+                  props.items.map((entry) =>
+                    entry === item ? { ...entry, done: !entry.done } : entry,
+                  ),
+                )
+              }
+              className="min-w-0 flex-1 flex-row items-center gap-3 px-4 py-3 active:opacity-70"
             >
-              {item.text}
-            </Text>
-          </Pressable>
+              <SymbolView
+                name={item.done ? "checkmark.circle.fill" : "circle"}
+                size={20}
+                tintColorClassName={item.done ? "accent-primary" : "accent-icon-muted"}
+              />
+              <Text
+                textRole="body"
+                className={item.done ? "flex-1 text-foreground-muted" : "flex-1 text-foreground"}
+              >
+                {item.text}
+              </Text>
+            </Pressable>
+            {props.disabled ? null : (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Remove ${item.text}`}
+                hitSlop={8}
+                onPress={() => props.onChange(props.items.filter((entry) => entry !== item))}
+                className="px-4 py-3 active:opacity-70"
+              >
+                <SymbolView name="xmark" size={14} tintColorClassName="accent-icon-muted" />
+              </Pressable>
+            )}
+          </View>
         ))}
       </View>
+      {props.disabled ? null : (
+        <Button
+          label="Add item"
+          icon="plus"
+          tone="text"
+          onPress={() =>
+            Dialog.prompt({
+              title: `Add to ${props.title.toLowerCase()}`,
+              placeholder: "Text",
+              initialValue: "",
+              confirmText: "Add",
+              onConfirm: (value) => {
+                const text = value.trim();
+                if (text.length > 0) props.onChange([...props.items, { text, done: false }]);
+              },
+            })
+          }
+        />
+      )}
     </Section>
   );
 }
@@ -96,26 +175,11 @@ export function KanbanCardRouteScreen({
 }: StaticScreenProps<{ environmentId: string; cardId: string }>) {
   const environmentId = EnvironmentId.make(route.params.environmentId);
   const cardId = KanbanCardId.make(route.params.cardId);
-  const insets = useSafeAreaInsets();
   const states = useKanbanStates();
   const found = useMemo(
     () => findCardInBoards(collectGlobalBoards(states), cardId),
     [states, cardId],
   );
-  const actions = useKanbanActions(environmentId);
-  const query = useEnvironmentQuery(kanbanEnvironment.card({ environmentId, input: { cardId } }));
-  const refreshedFor = useRef(found?.card.updatedAt);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- activity and linked threads come from getCard, so a card change must refetch it
-  useEffect(() => {
-    const updatedAt = found?.card.updatedAt;
-    if (refreshedFor.current === updatedAt) return;
-    refreshedFor.current = updatedAt;
-    query.refresh();
-  }, [found?.card.updatedAt, query]);
-  const openThread = useOpenLinkedThread();
-  const markdownStyles = useMarkdownPreviewStyles();
-  const [comment, setComment] = useState("");
-
   if (found === null || found.environmentId !== environmentId) {
     return (
       <SettingsScreen title="Card">
@@ -127,7 +191,40 @@ export function KanbanCardRouteScreen({
       </SettingsScreen>
     );
   }
-  const { board, card } = found;
+  return (
+    <KanbanCardDetail
+      environmentId={environmentId}
+      cardId={cardId}
+      board={found.board}
+      card={found.card}
+    />
+  );
+}
+
+function KanbanCardDetail(props: {
+  readonly environmentId: EnvironmentId;
+  readonly cardId: KanbanCardId;
+  readonly board: KanbanBoardState;
+  readonly card: KanbanCard;
+}) {
+  const { environmentId, cardId, board, card } = props;
+  const insets = useSafeAreaInsets();
+  const navigation = useNavigation();
+  const actions = useKanbanActions(environmentId);
+  const agent = useStartKanbanAgent(environmentId, board, card);
+  const query = useEnvironmentQuery(kanbanEnvironment.card({ environmentId, input: { cardId } }));
+  const refreshedFor = useRef(card.updatedAt);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- activity and linked threads come from getCard, so a card change must refetch it
+  useEffect(() => {
+    if (refreshedFor.current === card.updatedAt) return;
+    refreshedFor.current = card.updatedAt;
+    query.refresh();
+  }, [card.updatedAt, query]);
+  const openThread = useOpenLinkedThread();
+  const markdownStyles = useMarkdownPreviewStyles();
+  const [comment, setComment] = useState("");
+  const [editingDescription, setEditingDescription] = useState<string | null>(null);
+
   const disabled = !actions.canEdit;
   const column = board.columns.find((entry) => entry.id === card.columnId);
   const template = board.templates.find((entry) => entry.id === card.type);
@@ -163,15 +260,46 @@ export function KanbanCardRouteScreen({
       )}
     </Pressable>
   );
+  const toggleLabel = (labelId: KanbanLabelId) =>
+    void actions.updateCard({
+      cardId,
+      labelIds: card.labelIds.includes(labelId)
+        ? card.labelIds.filter((id) => id !== labelId)
+        : [...card.labelIds, labelId],
+    });
+  const editDue = () =>
+    Dialog.prompt({
+      title: "Due date",
+      message: "YYYY-MM-DD, or empty to clear.",
+      initialValue: dueAtToInput(card.dueAt),
+      confirmText: "Save",
+      onConfirm: (value) => {
+        const text = value.trim();
+        const dueAt = text === "" ? null : inputToDueAt(text);
+        if (text !== "" && dueAt === null) {
+          Dialog.alert("Invalid date", "Use the format YYYY-MM-DD.");
+          return;
+        }
+        void actions.updateCard({ cardId, dueAt });
+      },
+    });
+  const confirmDelete = () =>
+    Dialog.confirm({
+      title: `Delete #${card.number}?`,
+      message: "The card, its comments and its activity are removed for good.",
+      confirmText: "Delete",
+      destructive: true,
+      onConfirm: () => {
+        navigation.goBack();
+        void actions.deleteCard({ cardId });
+      },
+    });
   const submitComment = async () => {
     const body = comment.trim();
     if (body.length === 0) return;
     if (await actions.commentOnCard({ cardId, body })) setComment("");
   };
   const meta = [
-    template?.name,
-    card.priority === "none" ? null : KANBAN_PRIORITY_LABELS[card.priority],
-    card.dueAt === null ? null : `Due ${new Date(card.dueAt).toLocaleDateString()}`,
     card.estimate === null ? null : `${card.estimate.value} ${card.estimate.unit}`,
     result?.costUsd == null ? null : `$${result.costUsd.toFixed(2)}`,
     result?.durationMs == null
@@ -227,6 +355,80 @@ export function KanbanCardRouteScreen({
               <KanbanLabelChip key={label.id} name={label.name} color={label.color} />
             ))}
           </View>
+          <View className="flex-row flex-wrap items-center gap-2">
+            <Menu
+              actions={KANBAN_PRIORITIES.map((value) => ({
+                id: value,
+                title: KANBAN_PRIORITY_LABELS[value],
+                state: value === card.priority ? ("on" as const) : ("off" as const),
+              }))}
+              onPressAction={({ nativeEvent }) =>
+                void actions.updateCard({
+                  cardId,
+                  priority: nativeEvent.event as KanbanPriority,
+                })
+              }
+            >
+              <PropertyPill
+                label="Priority"
+                value={KANBAN_PRIORITY_LABELS[card.priority]}
+                disabled={disabled}
+              />
+            </Menu>
+            <Menu
+              actions={[
+                {
+                  id: NO_TYPE,
+                  title: "No type",
+                  state: card.type === null ? ("on" as const) : ("off" as const),
+                },
+                ...board.templates.map((entry) => ({
+                  id: entry.id,
+                  title: entry.name,
+                  state: entry.id === card.type ? ("on" as const) : ("off" as const),
+                })),
+              ]}
+              onPressAction={({ nativeEvent }) =>
+                void actions.updateCard({
+                  cardId,
+                  type:
+                    nativeEvent.event === NO_TYPE ? null : (nativeEvent.event as KanbanTemplateId),
+                })
+              }
+            >
+              <PropertyPill label="Type" value={template?.name ?? "None"} disabled={disabled} />
+            </Menu>
+            {board.labels.length > 0 ? (
+              <Menu
+                actions={board.labels.map((label) => ({
+                  id: label.id,
+                  title: label.name,
+                  state: card.labelIds.includes(label.id) ? ("on" as const) : ("off" as const),
+                }))}
+                onPressAction={({ nativeEvent }) => toggleLabel(nativeEvent.event as KanbanLabelId)}
+              >
+                <PropertyPill
+                  label="Labels"
+                  value={labels.length === 0 ? "None" : String(labels.length)}
+                  disabled={disabled}
+                />
+              </Menu>
+            ) : null}
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Due date"
+              disabled={disabled}
+              onPress={editDue}
+              className="min-h-9 flex-row items-center gap-2 rounded-full bg-secondary px-4 active:opacity-70"
+            >
+              <Text textRole="footnote" className="text-foreground-muted">
+                Due
+              </Text>
+              <Text textRole="footnote" className="font-t3-medium text-foreground">
+                {card.dueAt === null ? "None" : new Date(card.dueAt).toLocaleDateString()}
+              </Text>
+            </Pressable>
+          </View>
           {meta.length > 0 ? (
             <Text textRole="footnote" className="text-foreground-muted">
               {meta.join(" · ")}
@@ -234,68 +436,144 @@ export function KanbanCardRouteScreen({
           ) : null}
         </View>
 
-        {card.description.trim().length > 0 ? (
+        {editingDescription !== null ? (
+          <Section title="Description">
+            <RNTextInput
+              accessibilityLabel="Description"
+              autoFocus
+              multiline
+              value={editingDescription}
+              onChangeText={setEditingDescription}
+              placeholderTextColorClassName="accent-foreground-muted"
+              className="min-h-32 rounded-2xl bg-grouped-card px-4 py-3 font-sans text-base text-foreground"
+            />
+            <View className="flex-row gap-2">
+              <Button label="Cancel" tone="secondary" onPress={() => setEditingDescription(null)} />
+              <Button
+                label="Save"
+                tone="primary"
+                onPress={() => {
+                  void actions.updateCard({ cardId, description: editingDescription });
+                  setEditingDescription(null);
+                }}
+              />
+            </View>
+          </Section>
+        ) : card.description.trim().length > 0 ? (
           <Section title="Description">
             <SelectableMarkdownText
               markdown={card.description}
               textStyle={markdownStyles.nativeTextStyle}
               onLinkPress={(href) => void Linking.openURL(href)}
             />
+            {disabled ? null : (
+              <Button
+                label="Edit description"
+                icon="pencil"
+                tone="text"
+                onPress={() => setEditingDescription(card.description)}
+              />
+            )}
           </Section>
-        ) : null}
-
-        {card.checklist.length > 0 ? (
-          <Checklist
-            title="Checklist"
-            items={card.checklist}
-            disabled={disabled}
-            onChange={(checklist) => void actions.updateCard({ cardId, checklist })}
+        ) : disabled ? null : (
+          <Button
+            label="Add description"
+            icon="plus"
+            tone="text"
+            onPress={() => setEditingDescription("")}
           />
-        ) : null}
-        {card.acceptanceCriteria.length > 0 ? (
-          <Checklist
-            title="Acceptance criteria"
-            items={card.acceptanceCriteria}
-            disabled={disabled}
-            onChange={(acceptanceCriteria) =>
-              void actions.updateCard({ cardId, acceptanceCriteria })
-            }
-          />
-        ) : null}
+        )}
 
-        {card.linkedThreadIds.length > 0 ? (
+        <Checklist
+          title="Checklist"
+          items={card.checklist}
+          disabled={disabled}
+          onChange={(checklist) => void actions.updateCard({ cardId, checklist })}
+        />
+        <Checklist
+          title="Acceptance criteria"
+          items={card.acceptanceCriteria}
+          disabled={disabled}
+          onChange={(acceptanceCriteria) => void actions.updateCard({ cardId, acceptanceCriteria })}
+        />
+
+        {card.linkedThreadIds.length > 0 || !disabled ? (
           <Section title="Agents">
-            <View className="overflow-hidden rounded-2xl bg-grouped-card">
-              {card.linkedThreadIds.map((threadId, index) => {
-                const derived = result?.threads.find((thread) => thread.threadId === threadId);
-                return (
-                  <Pressable
-                    key={threadId}
-                    accessibilityRole="button"
-                    onPress={() => openThread({ environmentId, threadId })}
-                    className={
-                      index === 0
-                        ? "flex-row items-center gap-3 px-4 py-3 active:opacity-70"
-                        : "flex-row items-center gap-3 border-t border-border-subtle px-4 py-3 active:opacity-70"
-                    }
-                  >
-                    <Text textRole="body" numberOfLines={1} className="flex-1 text-foreground">
-                      {derived?.title ?? "Open thread"}
-                    </Text>
-                    {derived?.status ? (
-                      <Text textRole="caption" className="text-foreground-muted">
-                        {derived.status}
-                      </Text>
-                    ) : null}
-                    <SymbolView
-                      name="chevron.right"
-                      size={14}
-                      tintColorClassName="accent-chevron"
-                    />
-                  </Pressable>
-                );
-              })}
-            </View>
+            {card.linkedThreadIds.length > 0 ? (
+              <View className="overflow-hidden rounded-2xl bg-grouped-card">
+                {card.linkedThreadIds.map((threadId, index) => {
+                  const derived = result?.threads.find((thread) => thread.threadId === threadId);
+                  return (
+                    <View
+                      key={threadId}
+                      className={
+                        index === 0
+                          ? "flex-row items-center"
+                          : "flex-row items-center border-t border-border-subtle"
+                      }
+                    >
+                      <Pressable
+                        accessibilityRole="button"
+                        onPress={() => openThread({ environmentId, threadId })}
+                        className="min-w-0 flex-1 flex-row items-center gap-3 px-4 py-3 active:opacity-70"
+                      >
+                        <Text textRole="body" numberOfLines={1} className="flex-1 text-foreground">
+                          {derived?.title ?? "Open thread"}
+                        </Text>
+                        {derived?.status ? (
+                          <Text textRole="caption" className="text-foreground-muted">
+                            {derived.status}
+                          </Text>
+                        ) : null}
+                        <SymbolView
+                          name="chevron.right"
+                          size={14}
+                          tintColorClassName="accent-chevron"
+                        />
+                      </Pressable>
+                      {disabled ? null : (
+                        <Pressable
+                          accessibilityRole="button"
+                          accessibilityLabel="Unlink thread"
+                          hitSlop={8}
+                          onPress={() => void actions.unlinkCardThread({ cardId, threadId })}
+                          className="px-4 py-3 active:opacity-70"
+                        >
+                          <SymbolView
+                            name="xmark"
+                            size={14}
+                            tintColorClassName="accent-icon-muted"
+                          />
+                        </Pressable>
+                      )}
+                    </View>
+                  );
+                })}
+              </View>
+            ) : null}
+            {disabled ? null : (
+              <View className="flex-row flex-wrap gap-2">
+                <Button
+                  label="Start with agent"
+                  icon="sparkles"
+                  tone="secondary"
+                  loading={agent.starting}
+                  disabled={!agent.ready}
+                  onPress={() => void agent.start()}
+                />
+                <Button
+                  label="Link thread"
+                  icon="link"
+                  tone="secondary"
+                  onPress={() =>
+                    navigation.navigate("SettingsKanbanLinkThread", {
+                      environmentId,
+                      cardId,
+                    })
+                  }
+                />
+              </View>
+            )}
           </Section>
         ) : null}
 
@@ -340,6 +618,20 @@ export function KanbanCardRouteScreen({
             </View>
           )}
         </Section>
+        {disabled ? null : (
+          <View className="flex-row flex-wrap gap-2">
+            <Button
+              label="Archive"
+              icon="archivebox"
+              tone="secondary"
+              onPress={() => {
+                navigation.goBack();
+                void actions.archiveCard({ cardId });
+              }}
+            />
+            <Button label="Delete" icon="trash" tone="danger" onPress={confirmDelete} />
+          </View>
+        )}
       </ScrollView>
     </SettingsScreen>
   );

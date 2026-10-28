@@ -5,7 +5,7 @@ import {
   isWipExceeded,
   kanbanColor,
 } from "@t3tools/client-runtime/state/kanbanLogic";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, KanbanTemplateId } from "@t3tools/contracts";
 import type { MenuAction } from "@react-native-menu/menu";
 import { useMemo, useState } from "react";
 import { FlatList, Pressable, View } from "react-native";
@@ -25,30 +25,51 @@ import { ALL_PROJECTS, buildBoardColumns, type BoardViewColumn } from "./kanbanB
 import { KanbanCardTile } from "./KanbanCardTile";
 import { useKanbanActions } from "./useKanbanActions";
 
+const NO_TEMPLATE = "__blank__";
+
 function AddCardButton(props: { readonly addTo: NonNullable<BoardViewColumn["addTo"]> }) {
   const { addTo } = props;
   const { canEdit, createCard } = useKanbanActions(addTo.environmentId);
   if (!canEdit) return null;
-  return (
+  const add = (type: KanbanTemplateId | null) =>
+    Dialog.prompt({
+      title: "New card",
+      placeholder: "Title",
+      initialValue: "",
+      confirmText: "Add",
+      onConfirm: (value) => {
+        const title = value.trim();
+        if (title.length > 0) {
+          void createCard({
+            boardId: addTo.boardId,
+            columnId: addTo.columnId,
+            title,
+            ...(type === null ? {} : { type }),
+          });
+        }
+      },
+    });
+  const button = (
     <Button
       label="Add card"
       icon="plus"
       tone="text"
-      onPress={() =>
-        Dialog.prompt({
-          title: "New card",
-          placeholder: "Title",
-          initialValue: "",
-          confirmText: "Add",
-          onConfirm: (value) => {
-            const title = value.trim();
-            if (title.length > 0) {
-              void createCard({ boardId: addTo.boardId, columnId: addTo.columnId, title });
-            }
-          },
-        })
-      }
+      onPress={() => (addTo.templates.length === 0 ? add(null) : undefined)}
     />
+  );
+  if (addTo.templates.length === 0) return button;
+  return (
+    <Menu
+      actions={[
+        { id: NO_TEMPLATE, title: "Blank card" },
+        ...addTo.templates.map((template) => ({ id: template.id, title: template.name })),
+      ]}
+      onPressAction={({ nativeEvent }) =>
+        add(nativeEvent.event === NO_TEMPLATE ? null : (nativeEvent.event as KanbanTemplateId))
+      }
+    >
+      {button}
+    </Menu>
   );
 }
 
@@ -133,6 +154,8 @@ export function KanbanBoardRouteScreen() {
   const activeScope = options.some((option) => option.key === scope) ? scope : ALL_PROJECTS;
   const columns = useMemo(() => buildBoardColumns(boards, activeScope), [boards, activeScope]);
   const now = useNowMinuteMs();
+  const navigation = useNavigation();
+  const archiveTarget = columns[0]?.addTo ?? null;
   const actions: MenuAction[] = [
     { id: ALL_PROJECTS, title: "All projects", state: activeScope === ALL_PROJECTS ? "on" : "off" },
     ...options.map((option) => ({
@@ -192,6 +215,19 @@ export function KanbanBoardRouteScreen() {
                   <SymbolView name="chevron.down" size={12} tintColorClassName="accent-chevron" />
                 </Pressable>
               </Menu>
+              {archiveTarget === null ? null : (
+                <Button
+                  label="Archived"
+                  icon="archivebox"
+                  tone="text"
+                  onPress={() =>
+                    navigation.navigate("SettingsKanbanArchive", {
+                      environmentId: archiveTarget.environmentId,
+                      boardId: archiveTarget.boardId,
+                    })
+                  }
+                />
+              )}
             </View>
             {width > 0 ? (
               <FlatList

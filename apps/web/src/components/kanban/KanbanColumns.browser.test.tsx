@@ -117,6 +117,6 @@ describe("KanbanColumns", () => {
     await userEvent.click(page.getByRole("button", { name: "Add a card" }).first());
     await userEvent.fill(page.getByLabelText("Card title"), "Ship it");
     await userEvent.keyboard("{Enter}");
-    expect(onAddCard).toHaveBeenCalledWith("todo", "Ship it");
+    expect(onAddCard).toHaveBeenCalledWith("todo", "Ship it", null);
   });
 });

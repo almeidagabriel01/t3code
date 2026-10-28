@@ -126,6 +126,8 @@ import { SettingsProjectGroupingRouteScreen } from "./features/settings/Settings
 import { SettingsProjectOverviewRouteScreen } from "./features/settings/SettingsProjectOverviewRouteScreen";
 import { KanbanBoardRouteScreen } from "./features/kanban/KanbanBoardRouteScreen";
 import { KanbanCardRouteScreen } from "./features/kanban/KanbanCardRouteScreen";
+import { KanbanArchiveRouteScreen } from "./features/kanban/KanbanArchiveRouteScreen";
+import { KanbanLinkThreadRouteScreen } from "./features/kanban/KanbanLinkThreadRouteScreen";
 import { UsageLimitAccountScreen } from "./features/usage/UsageLimitsPooled";
 import { UsageRouteScreen } from "./features/usage/UsageRouteScreen";
 import { SettingsAboutRouteScreen } from "./features/settings/SettingsAboutRouteScreen";
@@ -463,6 +465,14 @@ const SETTINGS_SCREENS = {
   SettingsKanbanCard: createNativeStackScreen({
     screen: KanbanCardRouteScreen,
     options: { ...SETTINGS_PAGE_OPTIONS, title: "Card" },
+  }),
+  SettingsKanbanArchive: createNativeStackScreen({
+    screen: KanbanArchiveRouteScreen,
+    options: { ...SETTINGS_PAGE_OPTIONS, title: "Archived cards" },
+  }),
+  SettingsKanbanLinkThread: createNativeStackScreen({
+    screen: KanbanLinkThreadRouteScreen,
+    options: { ...SETTINGS_PAGE_OPTIONS, title: "Link thread" },
   }),
   SettingsUsage: createNativeStackScreen({
     screen: UsageRouteScreen,

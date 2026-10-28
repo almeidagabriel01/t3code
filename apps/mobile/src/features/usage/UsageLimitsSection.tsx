@@ -13,7 +13,6 @@ import {
   formatDuration,
   formatResetsIn,
   limitsNotice,
-  paceOf,
   paceRemainingPercent,
   remainingPercent,
 } from "@t3tools/shared/usageLimits";
@@ -34,9 +33,8 @@ import {
   limitsRefreshFailuresAtom,
   refreshEnvironmentLimits,
 } from "./usageLimitsRefresh";
+import { PaceDetail, useUsagePaceSettings } from "./usagePaceSettings";
 import { usageProviderKind, useProviderColors } from "./usageProviders";
-
-const PACE_LABEL = { ahead: "ahead of pace", on: "on pace", under: "under pace" } as const;
 
 type Driver = ServerProvider["driver"];
 
@@ -53,8 +51,8 @@ function WindowRow(props: {
 }) {
   const { window, now } = props;
   const remaining = remainingPercent(window);
-  const timeLeft = paceRemainingPercent(window, now);
-  const pace = paceOf(window, now);
+  const paceSettings = useUsagePaceSettings();
+  const timeLeft = paceSettings.pace ? paceRemainingPercent(window, now) : null;
   const resetsIn = formatResetsIn(window, now);
   const [barWidth, setBarWidth] = useState(0);
   const tickX =
@@ -122,12 +120,10 @@ function WindowRow(props: {
           />
         ) : null}
       </View>
-      {pace || resetsIn ? (
-        <View className="flex-row justify-between gap-3">
-          <Text className="text-xs text-foreground-tertiary">{pace ? PACE_LABEL[pace] : ""}</Text>
-          <Text className="text-xs tabular-nums text-foreground-tertiary">{resetsIn ?? ""}</Text>
-        </View>
-      ) : null}
+      <View className="flex-row justify-between gap-3">
+        <PaceDetail window={window} now={now} settings={paceSettings} />
+        <Text className="text-xs tabular-nums text-foreground-tertiary">{resetsIn ?? ""}</Text>
+      </View>
     </View>
   );
 }

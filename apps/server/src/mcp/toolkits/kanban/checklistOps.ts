@@ -16,7 +16,16 @@ export const applyChecklistOps = <T extends Item>(
   ops: ReadonlyArray<ChecklistOp>,
 ): { readonly items: ReadonlyArray<Item>; readonly error?: string } => {
   let next: Item[] = items.map(({ id, text, done }) => ({ ...(id ? { id } : {}), text, done }));
-  for (const op of ops) {
+  for (const rawOp of ops) {
+    // Models often tick an item by sending `{text, done}` without `item`; treat an exact text match as that edit.
+    const op =
+      typeof rawOp !== "string" &&
+      rawOp.item === undefined &&
+      rawOp.done !== undefined &&
+      rawOp.text !== undefined &&
+      next.some((item) => item.text.trim().toLowerCase() === rawOp.text!.trim().toLowerCase())
+        ? { item: rawOp.text, done: rawOp.done }
+        : rawOp;
     if (typeof op === "string" || op.item === undefined) {
       const text = typeof op === "string" ? op : op.text;
       if (text === undefined || text.trim() === "")

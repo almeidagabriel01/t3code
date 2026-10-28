@@ -346,6 +346,7 @@ function UsageScreen(props: {
               <UsageLimitsSection
                 now={limits.now}
                 failedLabels={limits.failedLabels}
+                onRetry={() => void limits.refresh()}
                 selectedEnvironmentIds={selectedEnvironmentIds}
                 wide={wide}
                 cursorPrompt={

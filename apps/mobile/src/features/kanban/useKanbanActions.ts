@@ -34,5 +34,10 @@ export function useKanbanActions(environmentId: EnvironmentId) {
     updateCard: useKanbanCommand(kanbanEnvironment.updateCard, environmentId),
     moveCard: useKanbanCommand(kanbanEnvironment.moveCard, environmentId),
     commentOnCard: useKanbanCommand(kanbanEnvironment.commentOnCard, environmentId),
+    archiveCard: useKanbanCommand(kanbanEnvironment.archiveCard, environmentId),
+    unarchiveCard: useKanbanCommand(kanbanEnvironment.unarchiveCard, environmentId),
+    deleteCard: useKanbanCommand(kanbanEnvironment.deleteCard, environmentId),
+    linkCardThread: useKanbanCommand(kanbanEnvironment.linkCardThread, environmentId),
+    unlinkCardThread: useKanbanCommand(kanbanEnvironment.unlinkCardThread, environmentId),
   };
 }

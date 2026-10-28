@@ -37,7 +37,7 @@ import {
   poolPacePresentation,
   selectUsagePaceSettings,
   windowBand,
-} from "../../lib/usagePace";
+} from "@t3tools/shared/usagePace";
 import { cn } from "../../lib/utils";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";

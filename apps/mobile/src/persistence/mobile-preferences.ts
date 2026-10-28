@@ -116,6 +116,11 @@ export interface Preferences {
   readonly projectGroupingMode?: SidebarProjectGroupingMode;
   readonly planModeEnabled?: boolean;
   readonly workingShelfEnabled?: boolean;
+  /** Unset means the shared client default. */
+  readonly usagePaceEnabled?: boolean;
+  readonly usageProjectionEnabled?: boolean;
+  readonly usageDailyBudgetEnabled?: boolean;
+  readonly usageShowSessions?: boolean;
   readonly useLastProjectForNewThreads?: boolean;
   readonly lastThreadProject?: typeof ThreadProject.Type;
   readonly modelFavorites?: ReadonlyArray<{
@@ -196,6 +201,10 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     projectGroupingMode?: SidebarProjectGroupingMode;
     planModeEnabled?: boolean;
     workingShelfEnabled?: boolean;
+    usagePaceEnabled?: boolean;
+    usageProjectionEnabled?: boolean;
+    usageDailyBudgetEnabled?: boolean;
+    usageShowSessions?: boolean;
     useLastProjectForNewThreads?: boolean;
     lastThreadProject?: typeof ThreadProject.Type;
     modelFavorites?: Preferences["modelFavorites"];
@@ -323,6 +332,14 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (typeof parsed.workingShelfEnabled === "boolean") {
     preferences.workingShelfEnabled = parsed.workingShelfEnabled;
+  }
+  for (const key of [
+    "usagePaceEnabled",
+    "usageProjectionEnabled",
+    "usageDailyBudgetEnabled",
+    "usageShowSessions",
+  ] as const) {
+    if (typeof parsed[key] === "boolean") preferences[key] = parsed[key];
   }
   if (typeof parsed.useLastProjectForNewThreads === "boolean") {
     preferences.useLastProjectForNewThreads = parsed.useLastProjectForNewThreads;

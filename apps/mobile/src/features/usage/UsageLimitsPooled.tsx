@@ -6,6 +6,7 @@ import {
   collectExternalUsageLinks,
   collectLimitNotices,
   collectLimitPools,
+  providerAccountKeys,
   cursorUsageWindowDetails,
   displayLimitWindows,
   formatResetsIn,
@@ -26,6 +27,14 @@ import { ProviderIcon } from "../../components/ProviderIcon";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { environmentPresentations } from "../../state/presentation";
 import { ResetCredits } from "./UsageLimitsSection";
+import { PaceDetail, UsagePaceSettingsSection, useUsagePaceSettings } from "./usagePaceSettings";
+import {
+  collectAccountSessions,
+  groupSessionsByProject,
+} from "@t3tools/client-runtime/state/usageSessions";
+import { poolPacePresentation } from "@t3tools/shared/usagePace";
+import { useProjects, useThreadShells } from "../../state/entities";
+import { useOpenLinkedThread } from "../threads/useOpenLinkedThread";
 import { usageProviderKind, useProviderColors } from "./usageProviders";
 
 const DRIVER_LABEL: Partial<Record<string, string>> = {
@@ -34,7 +43,6 @@ const DRIVER_LABEL: Partial<Record<string, string>> = {
   grok: "Grok",
   antigravity: "Antigravity",
 };
-const PACE_LABEL = { ahead: "Ahead of pace", on: "On pace", under: "Under pace" } as const;
 
 function accountName(account: LimitAccount) {
   if (account.displayName) return account.displayName;
@@ -187,6 +195,8 @@ function PoolWindowCard({
   const inlineReset = wide && segmentWidth >= 150;
   const inlineName = wide && segmentWidth >= 220;
   const nextRefill = pool.resets.find((reset) => reset.restoresPercent > 0);
+  const paceSettings = useUsagePaceSettings();
+  const poolPace = poolPacePresentation({ shares: pool.paceShares, settings: paceSettings });
   const openAccount = (account: LimitAccount) =>
     navigation.navigate("SettingsUsageAccount", {
       accountKey: account.key,
@@ -207,8 +217,21 @@ function PoolWindowCard({
             <Text className="text-sm text-foreground-muted">left</Text>
           </View>
         </View>
-        {pool.pace ? (
-          <Text className="text-xs text-foreground-tertiary">{PACE_LABEL[pool.pace]}</Text>
+        {poolPace ? (
+          <View className={wide ? "gap-0.5" : "items-end gap-0.5"}>
+            <Text
+              className={
+                poolPace.deficit
+                  ? "text-xs text-danger-foreground"
+                  : "text-xs text-foreground-tertiary"
+              }
+            >
+              {poolPace.paceText}
+            </Text>
+            {poolPace.projectionText ? (
+              <Text className="text-xs text-foreground-tertiary">{poolPace.projectionText}</Text>
+            ) : null}
+          </View>
         ) : null}
       </View>
       {description ? <Text className="text-xs text-foreground-muted">{description}</Text> : null}
@@ -402,10 +425,12 @@ export function UsageLimitsSection({
   failedLabels,
   selectedEnvironmentIds,
   cursorPrompt,
+  onRetry,
   wide = false,
 }: {
   readonly now: number;
   readonly failedLabels: readonly string[];
+  readonly onRetry?: () => void;
   readonly selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null;
   readonly cursorPrompt?: ReactNode;
   readonly wide?: boolean;
@@ -511,9 +536,19 @@ export function UsageLimitsSection({
                 {failedLabels.join(", ")} could not refresh limits. Showing the last known values.
               </Text>
             ) : null}
+            {failedLabels.length > 0 && onRetry ? (
+              <Pressable
+                accessibilityRole="button"
+                onPress={onRetry}
+                className="min-h-9 justify-center self-start active:opacity-70"
+              >
+                <Text className="text-sm font-t3-medium text-warning-foreground">Retry</Text>
+              </Pressable>
+            ) : null}
           </View>
         </View>
       ) : null}
+      <UsagePaceSettingsSection />
     </View>
   );
 }
@@ -545,6 +580,30 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
   const evenPace = window ? paceRemainingPercent(window, now) : null;
   const reset = pool?.resets.find((candidate) => candidate.member.account.key === accountKey);
   const [revealed, setRevealed] = useState(false);
+  const paceSettings = useUsagePaceSettings();
+  const threads = useThreadShells();
+  const projects = useProjects();
+  const openThread = useOpenLinkedThread();
+  const keys = providerAccountKeys(selected);
+  const resolvedKey = keys.get(account?.key ?? "") ?? null;
+  const sessions =
+    account && paceSettings.showSessions
+      ? collectAccountSessions({
+          threads,
+          now,
+          instances: [...selected].flatMap(([environmentId, presentation]) =>
+            (presentation.serverConfig?.providers ?? []).flatMap((provider) => {
+              const key = `${environmentId}:${provider.instanceId}`;
+              return key === account.key || (resolvedKey !== null && keys.get(key) === resolvedKey)
+                ? [{ environmentId, instanceId: provider.instanceId }]
+                : [];
+            }),
+          ),
+        })
+      : [];
+  const projectTitles = new Map(
+    projects.map((project) => [`${project.environmentId}:${project.id}`, project.title]),
+  );
   return (
     <SettingsScreen title="Account">
       <ScrollView
@@ -602,12 +661,52 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
                   Even pace: {evenPace}% left by now
                 </Text>
               ) : null}
+              <PaceDetail window={window} now={now} settings={paceSettings} />
               {reset && reset.restoresPercent > 0 ? (
                 <Text className="text-sm text-foreground-muted">
                   Restores {reset.restoresPercent}% of the pool
                 </Text>
               ) : null}
             </View>
+            {sessions.length > 0 ? (
+              <View className="gap-3 rounded-[24px] border-continuous bg-grouped-card p-4">
+                <Text className="text-sm font-t3-medium text-foreground">
+                  Sessions ({sessions.length})
+                </Text>
+                {groupSessionsByProject(sessions).map((group) => (
+                  <View key={group.projectKey} className="gap-1">
+                    <Text className="text-xs font-t3-medium text-foreground-muted">
+                      {projectTitles.get(group.projectKey) ?? "Project"}
+                    </Text>
+                    {group.sessions.map((session) => (
+                      <Pressable
+                        key={`${session.environmentId}:${session.threadId}`}
+                        accessibilityRole="button"
+                        onPress={() =>
+                          openThread({
+                            environmentId: session.environmentId,
+                            threadId: session.threadId,
+                          })
+                        }
+                        className="min-h-9 flex-row items-center gap-2 active:opacity-70"
+                      >
+                        <Text numberOfLines={1} className="min-w-0 flex-1 text-sm text-foreground">
+                          {session.title}
+                        </Text>
+                        <Text className="text-xs text-foreground-muted">
+                          {session.state === "waiting"
+                            ? "Waiting"
+                            : session.state === "working"
+                              ? "Working"
+                              : ""}{" "}
+                          {session.elapsed}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                ))}
+              </View>
+            ) : null}
             <View className="gap-2 rounded-[24px] border-continuous bg-grouped-card p-4">
               <Text className="text-sm font-t3-medium text-foreground">
                 {account.environments.length ? "Signed in" : "Source"}

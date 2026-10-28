@@ -28,6 +28,7 @@ import type {
   KanbanColumnId,
   KanbanLabel,
   KanbanTemplate,
+  KanbanTemplateId,
 } from "@t3tools/contracts";
 import { GripVerticalIcon, PlusIcon } from "lucide-react";
 import { memo, useState, type ReactNode } from "react";
@@ -43,6 +44,7 @@ import {
   type ColumnCards,
 } from "@t3tools/client-runtime/state/kanbanLogic";
 import { KanbanCardTile } from "./KanbanCardTile";
+import { TemplateIcon } from "./kanbanPresentation";
 
 export interface ColumnWithCards {
   readonly column: KanbanColumn;
@@ -116,9 +118,13 @@ function ColumnBody(props: {
   );
 }
 
-function QuickAdd(props: { readonly onAdd: (title: string) => void }) {
+function QuickAdd(props: {
+  readonly templates: ReadonlyArray<KanbanTemplate>;
+  readonly onAdd: (title: string, type: KanbanTemplateId | null) => void;
+}) {
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState("");
+  const [type, setType] = useState<KanbanTemplateId | null>(null);
   if (!open) {
     return (
       <Button
@@ -134,27 +140,53 @@ function QuickAdd(props: { readonly onAdd: (title: string) => void }) {
       </Button>
     );
   }
+  const close = () => {
+    setTitle("");
+    setType(null);
+    setOpen(false);
+  };
   return (
-    <Input
-      size="sm"
-      autoFocus
-      aria-label="Card title"
-      placeholder="Title, then Enter"
-      value={title}
-      onChange={(event) => setTitle(event.target.value)}
-      onBlur={() => title.trim().length === 0 && setOpen(false)}
-      onKeyDown={(event) => {
-        if (event.key === "Escape") {
-          setTitle("");
-          setOpen(false);
+    <div
+      className="grid gap-1.5"
+      onBlur={(event) => {
+        if (title.trim().length === 0 && !event.currentTarget.contains(event.relatedTarget)) {
+          close();
         }
-        if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
-        const trimmed = title.trim();
-        if (trimmed.length === 0) return;
-        props.onAdd(trimmed);
-        setTitle("");
       }}
-    />
+    >
+      <Input
+        size="sm"
+        autoFocus
+        aria-label="Card title"
+        placeholder="Title, then Enter"
+        value={title}
+        onChange={(event) => setTitle(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") close();
+          if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
+          const trimmed = title.trim();
+          if (trimmed.length === 0) return;
+          props.onAdd(trimmed, type);
+          setTitle("");
+        }}
+      />
+      {props.templates.length > 0 ? (
+        <div className="flex flex-wrap gap-1" role="group" aria-label="Card template">
+          {props.templates.map((template) => (
+            <Button
+              key={template.id}
+              variant={type === template.id ? "secondary" : "ghost-muted"}
+              size="xs"
+              aria-pressed={type === template.id}
+              onClick={() => setType(type === template.id ? null : template.id)}
+            >
+              <TemplateIcon template={template} />
+              {template.name}
+            </Button>
+          ))}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -163,7 +195,8 @@ function SortableColumn(props: {
   readonly canEdit: boolean;
   readonly header: ReactNode;
   readonly tileProps: Omit<Parameters<typeof KanbanCardTile>[0], "card">;
-  readonly onAddCard: (columnId: KanbanColumnId, title: string) => void;
+  readonly templates: ReadonlyArray<KanbanTemplate>;
+  readonly onAddCard: KanbanColumnsProps["onAddCard"];
 }) {
   const { column, cards } = props.entry;
   const {
@@ -210,7 +243,12 @@ function SortableColumn(props: {
         disabled={!props.canEdit}
         tileProps={props.tileProps}
       />
-      {props.canEdit ? <QuickAdd onAdd={(title) => props.onAddCard(column.id, title)} /> : null}
+      {props.canEdit ? (
+        <QuickAdd
+          templates={props.templates}
+          onAdd={(title, type) => props.onAddCard(column.id, title, type)}
+        />
+      ) : null}
     </section>
   );
 }
@@ -229,7 +267,11 @@ export interface KanbanColumnsProps {
     columnId: KanbanColumnId,
     position: { beforeColumnId: KanbanColumnId } | { afterColumnId: KanbanColumnId },
   ) => Promise<unknown>;
-  readonly onAddCard: (columnId: KanbanColumnId, title: string) => void;
+  readonly onAddCard: (
+    columnId: KanbanColumnId,
+    title: string,
+    type: KanbanTemplateId | null,
+  ) => void;
   readonly onStartAgent?: ((card: KanbanCard) => void) | undefined;
   readonly onLinkThread?: ((card: KanbanCard) => void) | undefined;
 }
@@ -343,6 +385,7 @@ export function KanbanColumns(props: KanbanColumnsProps) {
               canEdit={props.canEdit}
               header={props.renderHeader(entry.column, entry.cards.length)}
               tileProps={tileProps}
+              templates={props.templates}
               onAddCard={props.onAddCard}
             />
           ))}

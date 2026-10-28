@@ -9,7 +9,7 @@ import {
   usageBand,
   usagePace,
   type UsageBand,
-} from "@t3tools/shared/usageLimits";
+} from "./usageLimits.ts";
 
 export const selectUsagePaceSettings = (settings: ClientSettings) => ({
   pace: settings.usagePaceEnabled,

@@ -21,7 +21,7 @@ import {
   windowBand,
   type PaceView,
   type UsagePaceSettings,
-} from "../../lib/usagePace";
+} from "@t3tools/shared/usagePace";
 import { useProjects, useThreadShells } from "../../state/entities";
 import { serverEnvironment } from "../../state/server";
 import { buildThreadRouteParams } from "../../threadRoutes";
@@ -43,7 +43,7 @@ import {
   groupSessionsByProject,
   type UsageSession,
   type UsageSessionState,
-} from "./usageSessions.logic";
+} from "@t3tools/client-runtime/state/usageSessions";
 import { useUsageItems } from "./useUsageItems";
 import { useMinuteNow } from "./useMinuteNow";
 
