@@ -4,7 +4,7 @@ import type {
   PullRequestListResult,
 } from "@t3tools/contracts";
 
-import type { PullRequestTabStatusSeed } from "~/components/RightPanelTabs";
+import type { PullRequestTabStatusSeed } from "~/components/RightPanelTab";
 import { pullRequestSurfaceId } from "~/rightPanelStore";
 import {
   filterPullRequestsByInvolvement,
