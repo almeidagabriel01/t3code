@@ -462,6 +462,7 @@ export const ClientSettingsSchema = Schema.Struct({
   legacySidebarEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   sidebarWorkingShelfEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   sidebarShowSubagents: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  sidebarShowUsageButton: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   sidebarAgentActivityDisplayMode: SidebarAgentActivityDisplayMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("compact")),
   ),
@@ -1734,6 +1735,7 @@ export const ClientSettingsPatch = Schema.Struct({
   legacySidebarEnabled: Schema.optionalKey(Schema.Boolean),
   sidebarWorkingShelfEnabled: Schema.optionalKey(Schema.Boolean),
   sidebarShowSubagents: Schema.optionalKey(Schema.Boolean),
+  sidebarShowUsageButton: Schema.optionalKey(Schema.Boolean),
   sidebarAgentActivityDisplayMode: Schema.optionalKey(SidebarAgentActivityDisplayMode),
   projectHoverCardProperties: Schema.optionalKey(Schema.Array(ProjectHoverCardProperty)),
   statusBarVisible: Schema.optionalKey(Schema.Boolean),

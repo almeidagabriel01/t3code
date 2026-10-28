@@ -366,7 +366,7 @@ function SidebarProjectGroup(props: ProjectGroupProps) {
           {expanded ? null : <ProjectNotificationDot threads={group.openThreads} />}
         </button>
         <SidebarProjectHoverCard project={project} portCount={props.portCounts.get(scope) ?? 0} />
-        <span className="flex items-center gap-1 opacity-0 transition-opacity group-focus-within/project-header:opacity-100 group-hover/project-header:opacity-100 max-sm:opacity-100">
+        <span className="flex items-center gap-1">
           <SidebarProjectBoardButton project={project} />
           <SidebarProjectNewThreadButton project={project} />
         </span>

@@ -5,35 +5,8 @@ import type { MouseEvent } from "react";
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import { useKanbanEnvironmentIds } from "../../state/kanban";
 import { Button } from "../ui/button";
-import { SidebarMenu, SidebarMenuButton, SidebarMenuItem, useSidebar } from "../ui/sidebar";
+import { useSidebar } from "../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { isSidebarUtilityPage } from "../sidebar/mainAppLocation";
-import { useLocation } from "@tanstack/react-router";
-
-export function SidebarKanbanShortcut() {
-  const navigate = useNavigate();
-  const { isMobile, setOpenMobile } = useSidebar();
-  const supported = useKanbanEnvironmentIds().length > 0;
-  const isOnUtilityPage = useLocation({
-    select: (location) => isSidebarUtilityPage(location.pathname),
-  });
-  if (!supported || isOnUtilityPage) return null;
-  return (
-    <SidebarMenu>
-      <SidebarMenuItem>
-        <SidebarMenuButton
-          onClick={() => {
-            if (isMobile) setOpenMobile(false);
-            void navigate({ to: "/kanban" });
-          }}
-        >
-          <SquareKanbanIcon />
-          <span>Board</span>
-        </SidebarMenuButton>
-      </SidebarMenuItem>
-    </SidebarMenu>
-  );
-}
 
 export function SidebarProjectBoardButton({
   project,

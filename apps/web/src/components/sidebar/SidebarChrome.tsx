@@ -1,9 +1,15 @@
-import { ArchiveIcon, ArrowLeftIcon, ChartNoAxesColumnIcon, SettingsIcon } from "lucide-react";
+import {
+  ArchiveIcon,
+  ArrowLeftIcon,
+  ChartNoAxesColumnIcon,
+  SettingsIcon,
+  SquareKanbanIcon,
+} from "lucide-react";
 import type { ReactNode } from "react";
 import { memo } from "react";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 
-import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
+import { useClientSettings, useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { usePullRequestsSupported } from "../../state/environments";
 import { T3Wordmark } from "../T3Wordmark";
@@ -28,7 +34,7 @@ import { isSidebarUtilityPage, useNavigateToMainApp } from "./mainAppLocation";
 import { SidebarThreadUndoNotice } from "./SidebarThreadUndoNotice";
 import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
 import { SidebarUpdateArchitectureWarning, SidebarUpdatePill } from "./SidebarUpdatePill";
-import { SidebarKanbanShortcut } from "../kanban/SidebarKanbanButtons";
+import { useKanbanEnvironmentIds } from "../../state/kanban";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { observeResize } from "~/lib/observeResize";
 
@@ -165,6 +171,8 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
     select: (location) => isSidebarUtilityPage(location.pathname),
   });
   const pullRequestsSupported = usePullRequestsSupported();
+  const kanbanSupported = useKanbanEnvironmentIds().length > 0;
+  const showUsageButton = useClientSettings((settings) => settings.sidebarShowUsageButton);
   const closeMobileSidebar = () => {
     if (isMobile) {
       setOpenMobile(false);
@@ -183,10 +191,12 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   };
 
   const handleUsageClick = () => {
-    if (isMobile) {
-      setOpenMobile(false);
-    }
+    closeMobileSidebar();
     void navigate({ to: "/usage" });
+  };
+  const handleBoardClick = () => {
+    closeMobileSidebar();
+    void navigate({ to: "/kanban" });
   };
 
   const handleBackClick = () => {
@@ -217,11 +227,20 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
               onClick={handlePullRequestsClick}
             />
           ) : null}
-          <SidebarUtilityItem
-            icon={<ChartNoAxesColumnIcon />}
-            label="Usage"
-            onClick={handleUsageClick}
-          />
+          {kanbanSupported ? (
+            <SidebarUtilityItem
+              icon={<SquareKanbanIcon />}
+              label="Board"
+              onClick={handleBoardClick}
+            />
+          ) : null}
+          {showUsageButton ? (
+            <SidebarUtilityItem
+              icon={<ChartNoAxesColumnIcon />}
+              label="Usage"
+              onClick={handleUsageClick}
+            />
+          ) : null}
         </>
       )}
       <SidebarUpdatePill />
@@ -264,7 +283,6 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter({
       <SidebarProviderUpdatePill />
       <SidebarUpdateArchitectureWarning />
       <SidebarArchiveShortcut />
-      <SidebarKanbanShortcut />
       <SidebarUtilityMenu />
     </SidebarFooter>
   );

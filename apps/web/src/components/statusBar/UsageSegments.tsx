@@ -8,7 +8,7 @@ import type {
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { ChevronRightIcon, RefreshCwIcon, SettingsIcon } from "lucide-react";
+import { ChevronRightIcon, SettingsIcon } from "lucide-react";
 import { Fragment, useEffect, useState } from "react";
 
 import { cn } from "../../lib/utils";
@@ -28,6 +28,7 @@ import { buildThreadRouteParams } from "../../threadRoutes";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
+import { RefreshIcon } from "../ui/refresh-icon";
 import { Button } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { formatCompactCountdown, selectBarWindows } from "./statusBar.logic";
@@ -77,11 +78,17 @@ function useUsageRefresh(environmentIds: ReadonlyArray<EnvironmentId>) {
     const timer = setInterval(run, AUTO_REFRESH_MS);
     return () => clearInterval(timer);
   }, [key, refreshProviders]);
-  return () => {
-    for (const environmentId of environmentIds) {
-      void refreshUsageLimits(environmentId, () => refreshProviders({ environmentId, input: {} }));
-    }
+  const [refreshing, setRefreshing] = useState(false);
+  const refresh = () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    void Promise.allSettled(
+      environmentIds.map((environmentId) =>
+        refreshUsageLimits(environmentId, () => refreshProviders({ environmentId, input: {} })),
+      ),
+    ).finally(() => setRefreshing(false));
   };
+  return { refresh, refreshing };
 }
 
 function PaceBar({
@@ -480,7 +487,7 @@ function UsageSegmentsBody() {
   const hidden = useClientSettings((settings) => settings.statusBarHiddenItems);
   const mode = useClientSettings((settings) => settings.statusBarUsageMode);
   const display = useClientSettings((settings) => settings.statusBarUsagePercentage);
-  const refresh = useUsageRefresh(environmentIds);
+  const { refresh, refreshing } = useUsageRefresh(environmentIds);
   const items = allItems.filter((item) => isStatusBarItemShown(hidden, item.entry.instanceId));
   if (items.length === 0) return null;
   return (
@@ -519,8 +526,14 @@ function UsageSegmentsBody() {
           </div>
         </PopoverPopup>
       </Popover>
-      <Button variant="ghost-muted" size="icon-micro" aria-label="Refresh usage" onClick={refresh}>
-        <RefreshCwIcon aria-hidden />
+      <Button
+        variant="ghost-muted"
+        size="icon-micro"
+        aria-label={refreshing ? "Refreshing usage" : "Refresh usage"}
+        aria-busy={refreshing}
+        onClick={refresh}
+      >
+        <RefreshIcon refreshing={refreshing} />
       </Button>
     </div>
   );

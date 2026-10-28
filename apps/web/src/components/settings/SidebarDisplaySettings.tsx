@@ -14,7 +14,10 @@ import { searchableSetting } from "./settingsSearch";
 
 type SidebarDisplayValues = Pick<
   ClientSettings,
-  "sidebarShowSubagents" | "sidebarAgentActivityDisplayMode" | "projectHoverCardProperties"
+  | "sidebarShowSubagents"
+  | "sidebarShowUsageButton"
+  | "sidebarAgentActivityDisplayMode"
+  | "projectHoverCardProperties"
 >;
 
 const ACTIVITY_MODE_LABELS: Record<SidebarAgentActivityDisplayMode, string> = {
@@ -47,6 +50,19 @@ export function SidebarDisplaySettingsRows({
               updateSettings({ sidebarShowSubagents: Boolean(checked) })
             }
             aria-label="Show subagents"
+          />
+        }
+      />
+      <SettingsRow
+        {...searchableSetting("sidebar-usage-button")}
+        description="Show the Usage shortcut next to Settings at the bottom of the sidebar."
+        control={
+          <Switch
+            checked={settings.sidebarShowUsageButton}
+            onCheckedChange={(checked) =>
+              updateSettings({ sidebarShowUsageButton: Boolean(checked) })
+            }
+            aria-label="Usage button"
           />
         }
       />
