@@ -403,6 +403,14 @@ describe("destination rail client settings", () => {
     expect(decodeClientSettings({}).destinationRail).toEqual({ order: [], shown: [], hidden: [] });
   });
 
+  it("still decodes settings saved with the removed Usage button toggle", () => {
+    expect(decodeClientSettings({ sidebarShowUsageButton: false }).destinationRail).toEqual({
+      order: [],
+      shown: [],
+      hidden: [],
+    });
+  });
+
   it("keeps ids this version does not know", () => {
     const saved = { order: ["future-item", "running"], shown: ["future-item"], hidden: ["usage"] };
     const settings = decodeClientSettings({ destinationRail: saved });
