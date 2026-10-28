@@ -1233,9 +1233,8 @@ export default function FilePreviewPanel({
       </div>
     );
   }
-
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
+    <div data-glass-layer className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
       {breadcrumbPath !== null && breadcrumbTrail !== null ? (
         <div className={FILE_SURFACE_SUBHEADER_CLASS} data-surface-subheader>
           <ScrollArea

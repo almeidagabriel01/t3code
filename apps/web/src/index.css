@@ -2,6 +2,7 @@
 @layer theme, base, clerk, components, utilities;
 @import "tailwindcss";
 @import "./desktop/windowMaterial.css";
+@import "./appearance/liquidGlass.css";
 
 @custom-variant dark (&:is(.dark, .dark *));
 @custom-variant light (&:not(.dark, .dark *));

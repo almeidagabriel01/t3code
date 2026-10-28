@@ -703,6 +703,7 @@ export function ServerBrowserSurface(props: {
     <div
       className={cn("relative flex flex-col overflow-hidden", className)}
       data-server-browser-surface={tabId}
+      data-glass-layer
     >
       <div
         className={cn(
