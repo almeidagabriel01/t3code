@@ -385,6 +385,7 @@ export function applyServerSettingsPatch(
     // Merged per entry below; its `null` removals must not reach deepMerge.
     usageLimitSources: usageLimitSourcesPatch,
     providerBudgets: providerBudgetsPatch,
+    folderProjects: folderProjectsPatch,
     sourceControlHosts: sourceControlHostsPatch,
     usagePriceOverrides: usagePriceOverridesPatch,
     usageModelAliases: usageModelAliasesPatch,
@@ -585,6 +586,9 @@ export function applyServerSettingsPatch(
       ? {
           providerBudgets: mergeSettingsEntries(current.providerBudgets, providerBudgetsPatch),
         }
+      : {}),
+    ...(folderProjectsPatch !== undefined
+      ? { folderProjects: mergeSettingsEntries(current.folderProjects, folderProjectsPatch) }
       : {}),
     ...(usagePriceOverridesPatch !== undefined
       ? {

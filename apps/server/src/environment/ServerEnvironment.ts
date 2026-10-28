@@ -241,6 +241,7 @@ export const make = Effect.gen(function* () {
       usageLimitSources: true,
       providerWorkspaceSnapshotsOnDemand: true,
       providerBudgets: true,
+      folderProjects: true,
       usagePriceOverrides: true,
       usageModelAliases: true,
       threadPinning: true,

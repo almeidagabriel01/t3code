@@ -1,7 +1,8 @@
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import type { ScopedThreadRef } from "@t3tools/contracts";
-import { CheckCheckIcon, ChevronDownIcon } from "lucide-react";
+import { useAtomValue } from "@effect/atom-react";
+import { CheckCheckIcon, ChevronDownIcon, FolderOpenIcon } from "lucide-react";
 import { SortableContext, useSortable, type SortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useState, type ReactNode } from "react";
@@ -17,6 +18,7 @@ import {
   type SidebarSection,
 } from "../Sidebar.logic";
 import { ProjectFavicon } from "../ProjectFavicon";
+import { folderProjectKeysAtom } from "../../hooks/useSidebarProjectGroups";
 import { useUiStateStore } from "../../uiStateStore";
 import { useClientSettings } from "../../hooks/useSettings";
 import { countLivePortsByProject, resolveSubagentDisplay } from "./sidebarDisplay.logic";
@@ -335,6 +337,9 @@ function SidebarProjectGroup(props: ProjectGroupProps) {
         </button>
       </li>
     ) : null;
+  const isFolder = useAtomValue(folderProjectKeysAtom, (keys) =>
+    project.memberProjects.some((member) => keys.has(`${member.environmentId}:${member.id}`)),
+  );
   return (
     <li
       ref={setNodeRef}
@@ -360,7 +365,11 @@ function SidebarProjectGroup(props: ProjectGroupProps) {
             aria-hidden
             className={cn("size-3.5 shrink-0 text-icon-muted", !expanded && "-rotate-90")}
           />
-          <ProjectFavicon project={project} className="size-4 shrink-0" />
+          {isFolder ? (
+            <FolderOpenIcon aria-hidden className="size-4 shrink-0 text-icon-muted" />
+          ) : (
+            <ProjectFavicon project={project} className="size-4 shrink-0" />
+          )}
           <Tooltip>
             <TooltipTrigger
               render={

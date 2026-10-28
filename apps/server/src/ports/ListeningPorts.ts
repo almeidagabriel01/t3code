@@ -149,8 +149,9 @@ export const attributeToProject = (
   cwd: string | null,
   roots: ReadonlyArray<{ readonly projectId: ProjectId; readonly workspaceRoot: string }>,
 ): ProjectId | null => {
-  if (cwd === null) return null;
-  const target = trimSeparators(cwd);
+  const target = cwd === null ? null : trimSeparators(cwd);
+  // launchd starts daemons in /, so a project opened at the root would claim all of them.
+  if (target === null || target === "/") return null;
   let best: { projectId: ProjectId; length: number } | null = null;
   for (const { projectId, workspaceRoot } of roots) {
     const root = trimSeparators(workspaceRoot);

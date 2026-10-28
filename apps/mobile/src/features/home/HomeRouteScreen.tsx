@@ -13,7 +13,10 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell
 import { resolveScratchProjectScopeKey } from "@t3tools/client-runtime/state/project-grouping";
 
 import { NativeStackScreenOptions } from "../../native/StackHeader";
+import { useAtomValue } from "@effect/atom-react";
+import { hideIdleFolderProjects } from "@t3tools/client-runtime/state/projects";
 import { useProjects } from "../../state/entities";
+import { folderProjectKeysAtom } from "../../state/server";
 import { environmentThreadShells } from "../../state/threads";
 import { usePendingNewTasks } from "../../state/use-pending-new-tasks";
 import { useWorkspaceState } from "../../state/workspace";
@@ -45,12 +48,16 @@ export function HomeRouteScreen() {
   const { layout, panes, primarySidebarSearchQuery, setPrimarySidebarSearchQuery, startNewTask } =
     useAdaptiveWorkspaceLayout();
   const selectDetail = useSelectWorkspaceDetail();
-  const projects = useProjects();
   // Stop rebuilding the streaming thread list while Thread covers Home.
   const visible = useHomeRouteVisible();
   const threads = useAtomValueWhileVisible(
     environmentThreadShells.navigationThreadShellsAtom,
     visible,
+  );
+  const projects = hideIdleFolderProjects(
+    useProjects(),
+    useAtomValue(folderProjectKeysAtom),
+    new Set(threads.map((thread) => `${thread.environmentId}:${thread.projectId}`)),
   );
   const { environments: workspaceEnvironments, state: catalogState } = useWorkspaceState();
   const { savedConnectionsById } = useSavedRemoteConnections();

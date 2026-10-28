@@ -144,6 +144,21 @@ export function isScratchProject(
   );
 }
 
+/** Projects opened with Open folder stay out of lists until they hold a thread or a draft. */
+export function hideIdleFolderProjects<
+  P extends { readonly environmentId: string; readonly id: string },
+>(
+  projects: ReadonlyArray<P>,
+  folderProjectKeys: ReadonlySet<string>,
+  activeProjectKeys: ReadonlySet<string>,
+): ReadonlyArray<P> {
+  if (folderProjectKeys.size === 0) return projects;
+  return projects.filter((project) => {
+    const key = `${project.environmentId}:${project.id}`;
+    return !folderProjectKeys.has(key) || activeProjectKeys.has(key);
+  });
+}
+
 export function inferProjectTitleFromPath(value: string): string {
   const normalized = normalizeProjectPathForDispatch(value);
   const absolutePath = splitAbsolutePath(normalized);

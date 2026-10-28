@@ -60,6 +60,7 @@ import {
   FileSearchIcon,
   FolderGit2Icon,
   FolderIcon,
+  FolderOpenIcon,
   FolderPlusIcon,
   MessageSquareDashedIcon,
   LinkIcon,
@@ -487,6 +488,12 @@ function OpenCommandPaletteDialog(props: {
     null,
   );
   const [isPickingProjectFolder, setIsPickingProjectFolder] = useState(false);
+  // Open folder reuses the add-project browse view and marks what it creates as a folder.
+  const [openAsFolder, setOpenAsFolder] = useState(false);
+  const markFolderProject = useAtomCommand(serverEnvironment.updateSettings, {
+    label: "mark folder project",
+    reportFailure: false,
+  });
   const [addProjectCloneFlow, setAddProjectCloneFlow] = useState<AddProjectCloneFlow | null>(null);
   const [newProjectFlow, setNewProjectFlow] = useState<{
     readonly environmentId: EnvironmentId;
@@ -1431,9 +1438,27 @@ function OpenCommandPaletteDialog(props: {
     icon: <FolderPlusIcon className={ITEM_ICON_CLASS} />,
     keepOpen: true,
     run: async () => {
+      setOpenAsFolder(false);
       openAddProjectFlow();
     },
   });
+
+  if (defaultAddProjectEnvironmentId !== null) {
+    const folderEnvironmentId = defaultAddProjectEnvironmentId;
+    actionItems.push({
+      kind: "action",
+      value: "action:open-folder",
+      searchTerms: ["open folder", "folder", "directory", "terminal", "root", "path"],
+      title: "Open folder…",
+      description: "Start a thread in any folder without adding a project",
+      icon: <FolderOpenIcon className={ITEM_ICON_CLASS} />,
+      keepOpen: true,
+      run: async () => {
+        setOpenAsFolder(true);
+        await startAddProjectBrowse(folderEnvironmentId);
+      },
+    });
+  }
 
   if (wslAddProjectEnvironmentOption) {
     actionItems.push({
@@ -1803,6 +1828,13 @@ function OpenCommandPaletteDialog(props: {
         );
       }
       return;
+    }
+    if (openAsFolder) {
+      // Older servers ignore the key; the folder then stays an ordinary project.
+      void markFolderProject({
+        environmentId: input.environmentId,
+        input: { patch: { folderProjects: { [projectId]: true } } },
+      });
     }
 
     const navigationResult = await settlePromise(() =>

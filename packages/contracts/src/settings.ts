@@ -1347,6 +1347,11 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
 
+  /** Projects opened with Open folder; clients hide them while they have no active thread. */
+  folderProjects: Schema.Record(ProjectId, Schema.Literal(true)).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
+
   usagePriceOverrides: Schema.Record(TrimmedNonEmptyString, UsageModelPriceOverride).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
@@ -1661,6 +1666,7 @@ export const ServerSettingsPatch = Schema.Struct({
   providerBudgets: Schema.optionalKey(
     Schema.Record(ProviderInstanceId, Schema.NullOr(ProviderBudget)),
   ),
+  folderProjects: Schema.optionalKey(Schema.Record(ProjectId, Schema.NullOr(Schema.Literal(true)))),
 
   usagePriceOverrides: Schema.optionalKey(
     Schema.Record(TrimmedNonEmptyString, Schema.NullOr(UsageModelPriceOverride)),

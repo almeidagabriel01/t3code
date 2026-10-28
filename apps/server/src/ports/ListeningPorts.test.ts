@@ -105,6 +105,13 @@ describe("attributeToProject", () => {
     expect(attributeToProject("/work/app/other", roots)).toBe("outer");
   });
 
+  it("leaves system daemons, which run from /, out of a project opened at the root", () => {
+    const withRoot = [...roots, { projectId: ProjectId.make("root"), workspaceRoot: "/" }];
+    expect(attributeToProject("/", withRoot)).toBeNull();
+    expect(attributeToProject("/tmp/server", withRoot)).toBe("root");
+    expect(attributeToProject("/work/app/src", withRoot)).toBe("outer");
+  });
+
   it("does not match on a shared name prefix or without a cwd", () => {
     expect(attributeToProject("/work/application", roots)).toBeNull();
     expect(attributeToProject("/work/app-two/x", roots)).toBe("sibling");
