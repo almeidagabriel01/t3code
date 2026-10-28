@@ -24,7 +24,11 @@ import {
   usageTone,
   type UsageTone,
 } from "./statusBar.logic";
-import { displayedPercent, isStatusBarItemShown } from "./statusBarItems.logic";
+import {
+  displayedPercent,
+  isStatusBarItemShown,
+  STATUS_BAR_USAGE_ITEM,
+} from "./statusBarItems.logic";
 import type { UsageItem } from "./usageItems.logic";
 import { useUsageItems } from "./useUsageItems";
 import { useMinuteNow } from "./useMinuteNow";
@@ -118,7 +122,7 @@ function ChipSummary({
   );
 }
 
-function ItemIcon({ item }: { readonly item: UsageItem }) {
+export function ItemIcon({ item }: { readonly item: UsageItem }) {
   const { entry } = item;
   return (
     <ProviderInstanceIcon
@@ -231,7 +235,7 @@ function RosterRow({
   );
 }
 
-export function UsageSegments() {
+function UsageSegmentsBody() {
   const { environmentIds, items: allItems } = useUsageItems();
   const hidden = useClientSettings((settings) => settings.statusBarHiddenItems);
   const mode = useClientSettings((settings) => settings.statusBarUsageMode);
@@ -270,4 +274,9 @@ export function UsageSegments() {
       </Button>
     </div>
   );
+}
+
+export function UsageSegments() {
+  const hidden = useClientSettings((settings) => settings.statusBarHiddenItems);
+  return isStatusBarItemShown(hidden, STATUS_BAR_USAGE_ITEM) ? <UsageSegmentsBody /> : null;
 }

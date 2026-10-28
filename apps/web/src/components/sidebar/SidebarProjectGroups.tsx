@@ -21,7 +21,7 @@ import { useUiStateStore } from "../../uiStateStore";
 import { useClientSettings } from "../../hooks/useSettings";
 import { countLivePortsByProject, resolveSubagentDisplay } from "./sidebarDisplay.logic";
 import { useListeningPorts } from "../statusBar/useListeningPorts";
-import { SidebarMenuButton } from "../ui/sidebar";
+import { SidebarMenuSub, SidebarMenuSubButton } from "../ui/sidebar";
 import { SidebarNotificationDot } from "./SidebarNotificationDot";
 import { SidebarProjectHoverCard } from "./SidebarProjectHoverCard";
 import type { useSidebarProjectLayout } from "./useSidebarProjectLayout";
@@ -151,6 +151,7 @@ type ProjectGroupProps = {
   entry: ProjectLayout;
   items: readonly SidebarListItem[];
   portCounts: ReadonlyMap<string, number>;
+  first: boolean;
   drag: SidebarProjectDrag | null;
   dragSortingStrategy: SortingStrategy;
   threadByKey: ReadonlyMap<string, EnvironmentThreadShell>;
@@ -263,28 +264,33 @@ function SidebarProjectGroup(props: ProjectGroupProps) {
             marker="settled-header"
             data-testid="sidebar-settled-header"
             className={cn(
-              "mx-0.5 mt-1 rounded-md border-t border-sidebar-border/50 pt-1",
+              "rounded-md",
+              group.settledThreads.length === 0 && "h-0",
               dragTargetSection === "settled" && "bg-primary/5 text-primary",
             )}
           >
-            <SidebarMenuButton
-              aria-expanded={entry.settledExpanded}
-              data-testid="sidebar-settled-shelf-toggle"
-              onClick={() => props.onToggleSettled(scope)}
-            >
-              <CheckCheckIcon />
-              <span>Settled</span>
-              <span className="ms-auto font-normal tabular-nums">
-                {group.settledThreads.length}
-              </span>
-              <ChevronDownIcon
-                aria-hidden
-                className={cn(
-                  "size-3 shrink-0 transition-transform",
-                  !entry.settledExpanded && "-rotate-90",
-                )}
-              />
-            </SidebarMenuButton>
+            {group.settledThreads.length === 0 ? null : (
+              <SidebarMenuSubButton
+                size="sm"
+                aria-expanded={entry.settledExpanded}
+                data-testid="sidebar-settled-shelf-toggle"
+                onClick={() => props.onToggleSettled(scope)}
+                render={<button type="button" />}
+              >
+                <CheckCheckIcon className="size-3" />
+                <span className="text-sidebar-muted-foreground">Settled</span>
+                <span className="ms-auto rounded-full bg-sidebar-row-hover px-1.5 text-3xs tabular-nums text-sidebar-muted-foreground">
+                  {group.settledThreads.length}
+                </span>
+                <ChevronDownIcon
+                  aria-hidden
+                  className={cn(
+                    "size-3 shrink-0 transition-transform",
+                    !entry.settledExpanded && "-rotate-90",
+                  )}
+                />
+              </SidebarMenuSubButton>
+            )}
           </SortableSidebarMarker>
         );
       case "settled-placeholder": {
@@ -309,11 +315,32 @@ function SidebarProjectGroup(props: ProjectGroupProps) {
       }
     }
   };
+  const settledStart = items.findIndex(
+    (item) => item.kind === "marker" && item.marker === "settled-placeholder",
+  );
+  const settledItems = settledStart < 0 ? [] : items.slice(settledStart + 1);
+  const showMore =
+    expanded && entry.settledExpanded && entry.hasMoreSettled ? (
+      <li className="list-none">
+        <button
+          type="button"
+          onClick={() => props.onShowMoreSettled(scope)}
+          className="flex h-7 w-full cursor-pointer items-center gap-2 rounded-md px-2 text-left text-xs text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
+        >
+          <ChevronDownIcon aria-hidden className="size-3 shrink-0" />
+          Show more
+        </button>
+      </li>
+    ) : null;
   return (
     <li
       ref={setNodeRef}
       data-testid="sidebar-project-group"
-      className={cn("list-none", isDragging && "relative z-20 opacity-80")}
+      className={cn(
+        "list-none",
+        !props.first && "mt-2 border-t border-sidebar-border/40 pt-2",
+        isDragging && "relative z-20 opacity-80",
+      )}
       style={{ transform: CSS.Translate.toString(transform), transition }}
     >
       <div className="flex items-center gap-1 pe-1">
@@ -331,7 +358,7 @@ function SidebarProjectGroup(props: ProjectGroupProps) {
             className={cn("size-3.5 shrink-0 text-icon-muted", !expanded && "-rotate-90")}
           />
           <ProjectFavicon project={project} className="size-4 shrink-0" />
-          <span className="min-w-0 flex-1 truncate text-sm font-medium text-sidebar-foreground/90">
+          <span className="min-w-0 flex-1 truncate text-sm font-semibold text-sidebar-foreground">
             {project.displayName}
           </span>
           {expanded ? null : <ProjectNotificationDot threads={group.openThreads} />}
@@ -342,28 +369,24 @@ function SidebarProjectGroup(props: ProjectGroupProps) {
         items={items.map(sidebarListItemId)}
         strategy={drag === null ? idleSortingStrategy : props.dragSortingStrategy}
       >
-        <ul ref={attachList} role="presentation" className="relative flex flex-col gap-px">
-          {items.flatMap(renderItem)}
-          {expanded && entry.settledExpanded && entry.hasMoreSettled ? (
+        <SidebarMenuSub ref={attachList} role="presentation" className="relative mx-1">
+          {items.slice(0, settledStart + 1).flatMap(renderItem)}
+          {settledItems.length > 0 || showMore ? (
             <li className="list-none">
-              <button
-                type="button"
-                onClick={() => props.onShowMoreSettled(scope)}
-                className="flex h-8 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-left text-xs text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
-              >
-                <ChevronDownIcon aria-hidden className="size-4 shrink-0" />
-                Show more
-              </button>
+              <SidebarMenuSub className="mx-1 mt-px">
+                {settledItems.flatMap(renderItem)}
+                {showMore}
+              </SidebarMenuSub>
             </li>
           ) : null}
-        </ul>
+        </SidebarMenuSub>
       </SortableContext>
     </li>
   );
 }
 
 export function SidebarProjectGroups(
-  props: Omit<ProjectGroupProps, "entry" | "items" | "portCounts"> & {
+  props: Omit<ProjectGroupProps, "entry" | "items" | "portCounts" | "first"> & {
     layout: readonly ProjectLayout[];
     itemsByScope: ReadonlyMap<string, readonly SidebarListItem[]>;
   },
@@ -378,9 +401,10 @@ export function SidebarProjectGroups(
     ports,
     layout.map((entry) => entry.project),
   );
-  return layout.map((entry) => (
+  return layout.map((entry, index) => (
     <SidebarProjectGroup
       key={entry.project.projectKey}
+      first={index === 0}
       {...rest}
       portCounts={portCounts}
       entry={entry}

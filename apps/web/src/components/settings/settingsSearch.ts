@@ -439,10 +439,28 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["show hide footer bottom bar usage ports resources"],
   },
   {
-    id: "status-bar-items",
-    title: "Status bar items",
+    id: "status-bar-segment-usage",
+    title: "Usage segment",
     to: "/settings/status-bar",
-    searchTerms: ["indicators providers usage ports resource usage footer"],
+    searchTerms: ["status bar show hide provider limits countdown"],
+  },
+  {
+    id: "status-bar-segment-ports",
+    title: "Ports segment",
+    to: "/settings/status-bar",
+    searchTerms: ["status bar show hide listening ports"],
+  },
+  {
+    id: "status-bar-segment-resources",
+    title: "Resource usage segment",
+    to: "/settings/status-bar",
+    searchTerms: ["status bar show hide memory cpu terminals"],
+  },
+  {
+    id: "status-bar-items",
+    title: "Status bar accounts",
+    to: "/settings/status-bar",
+    searchTerms: ["usage providers accounts claude codex instances choose which"],
   },
   {
     id: "status-bar-usage-mode",

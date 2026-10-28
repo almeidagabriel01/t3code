@@ -13,8 +13,10 @@ import {
   isStatusBarItemShown,
   STATUS_BAR_PORTS_ITEM,
   STATUS_BAR_RESOURCE_ITEM,
+  STATUS_BAR_USAGE_ITEM,
   toggleStatusBarItem,
 } from "../statusBar/statusBarItems.logic";
+import { AccountPicker } from "../statusBar/AccountPicker";
 import { useUsageItems } from "../statusBar/useUsageItems";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
@@ -81,7 +83,41 @@ function LabeledSelect<T extends string>({
   );
 }
 
-function StatusBarSettingsSection({
+function SegmentRow({
+  search,
+  description,
+  id,
+  label,
+  settings,
+  updateSettings,
+}: {
+  readonly search: ReturnType<typeof searchableSetting>;
+  readonly description: string;
+  readonly id: string;
+  readonly label: string;
+  readonly settings: StatusBarSettingsValues;
+  readonly updateSettings: (patch: ClientSettingsPatch) => void;
+}) {
+  return (
+    <SettingsRow
+      {...search}
+      description={description}
+      control={
+        <Switch
+          checked={isStatusBarItemShown(settings.statusBarHiddenItems, id)}
+          onCheckedChange={() =>
+            updateSettings({
+              statusBarHiddenItems: toggleStatusBarItem(settings.statusBarHiddenItems, id),
+            })
+          }
+          aria-label={label}
+        />
+      }
+    />
+  );
+}
+
+function StatusBarSettingsSections({
   settings,
   updateSettings,
 }: {
@@ -89,98 +125,119 @@ function StatusBarSettingsSection({
   readonly updateSettings: (patch: ClientSettingsPatch) => void;
 }) {
   const { items } = useUsageItems();
-  const toggleItem = (id: string) =>
-    updateSettings({
-      statusBarHiddenItems: toggleStatusBarItem(settings.statusBarHiddenItems, id),
-    });
-  const itemSwitches = [
-    ...items.map((item) => ({
-      id: item.entry.instanceId as string,
-      label: `${item.entry.displayName}${item.environmentLabel === null ? "" : ` · ${item.environmentLabel}`}`,
-    })),
-    { id: STATUS_BAR_RESOURCE_ITEM, label: "Resource usage" },
-    { id: STATUS_BAR_PORTS_ITEM, label: "Ports" },
-  ];
+  const segment = { settings, updateSettings };
 
   return (
-    <SettingsSection id="status-bar" title="Status bar">
-      <SettingsRow
-        {...searchableSetting("status-bar-visible")}
-        description="Show usage, ports and resources along the bottom of the window. Right-click the bar to choose its items."
-        control={
-          <Switch
-            checked={settings.statusBarVisible}
-            onCheckedChange={(checked) => updateSettings({ statusBarVisible: Boolean(checked) })}
-            aria-label="Status bar"
-          />
-        }
-      />
-      <SettingsRow
-        {...searchableSetting("status-bar-items")}
-        description="Choose which indicators the bar shows. New providers show by default."
-      >
-        <div className="flex flex-col gap-2 pt-2">
-          {itemSwitches.map(({ id, label }) => (
-            <label key={id} className="flex items-center justify-between gap-3 text-sm">
-              <span className="min-w-0 truncate">{label}</span>
-              <Switch
-                checked={isStatusBarItemShown(settings.statusBarHiddenItems, id)}
-                onCheckedChange={() => toggleItem(id)}
-                aria-label={label}
-              />
-            </label>
-          ))}
-        </div>
-      </SettingsRow>
-      <SettingsRow
-        {...searchableSetting("status-bar-usage-mode")}
-        description="Verbose shows a meter with each limit window. Compact shows only the tightest one."
-        control={
-          <LabeledSelect
-            label="Usage display"
-            value={settings.statusBarUsageMode}
-            labels={USAGE_MODE_LABELS}
-            onChange={(statusBarUsageMode) => updateSettings({ statusBarUsageMode })}
-          />
-        }
-      />
-      <SettingsRow
-        {...searchableSetting("status-bar-usage-percentage")}
-        description="Show how much of each limit is used, or how much is left."
-        control={
-          <LabeledSelect
-            label="Usage percentage"
-            value={settings.statusBarUsagePercentage}
-            labels={USAGE_PERCENTAGE_LABELS}
-            onChange={(statusBarUsagePercentage) => updateSettings({ statusBarUsagePercentage })}
-          />
-        }
-      />
-      <SettingsRow
-        {...searchableSetting("status-bar-ports-count")}
-        description="What the ports count includes. The list always shows both."
-        control={
-          <LabeledSelect
-            label="Ports count"
-            value={settings.statusBarPortsCount}
-            labels={PORTS_COUNT_LABELS}
-            onChange={(statusBarPortsCount) => updateSettings({ statusBarPortsCount })}
-          />
-        }
-      />
-      <SettingsRow
-        {...searchableSetting("status-bar-resource-sort")}
-        description="How the resource manager orders projects and terminals when it opens."
-        control={
-          <LabeledSelect
-            label="Resource manager sort"
-            value={settings.statusBarResourceSort}
-            labels={RESOURCE_SORT_LABELS}
-            onChange={(statusBarResourceSort) => updateSettings({ statusBarResourceSort })}
-          />
-        }
-      />
-    </SettingsSection>
+    <>
+      <SettingsSection id="status-bar" title="Status bar">
+        <SettingsRow
+          {...searchableSetting("status-bar-visible")}
+          description="Show a bar along the bottom of the window. Right-click it to choose what it shows."
+          control={
+            <Switch
+              checked={settings.statusBarVisible}
+              onCheckedChange={(checked) => updateSettings({ statusBarVisible: Boolean(checked) })}
+              aria-label="Status bar"
+            />
+          }
+        />
+        <SegmentRow
+          {...segment}
+          search={searchableSetting("status-bar-segment-usage")}
+          id={STATUS_BAR_USAGE_ITEM}
+          label="Usage"
+          description="Provider usage limits and reset countdowns."
+        />
+        <SegmentRow
+          {...segment}
+          search={searchableSetting("status-bar-segment-ports")}
+          id={STATUS_BAR_PORTS_ITEM}
+          label="Ports"
+          description="Listening ports, with the processes that hold them."
+        />
+        <SegmentRow
+          {...segment}
+          search={searchableSetting("status-bar-segment-resources")}
+          id={STATUS_BAR_RESOURCE_ITEM}
+          label="Resource usage"
+          description="Memory, CPU and running terminals."
+        />
+      </SettingsSection>
+
+      <SettingsSection id="status-bar-usage" title="Usage">
+        <SettingsRow
+          {...searchableSetting("status-bar-items")}
+          description="Choose which accounts the usage segment shows. New accounts show by default."
+        >
+          <div className="pt-2">
+            <AccountPicker
+              items={items}
+              hidden={settings.statusBarHiddenItems}
+              display={settings.statusBarUsagePercentage}
+              onToggle={(id) =>
+                updateSettings({
+                  statusBarHiddenItems: toggleStatusBarItem(settings.statusBarHiddenItems, id),
+                })
+              }
+            />
+          </div>
+        </SettingsRow>
+        <SettingsRow
+          {...searchableSetting("status-bar-usage-mode")}
+          description="Verbose shows a meter with each limit window. Compact shows only the tightest one."
+          control={
+            <LabeledSelect
+              label="Usage display"
+              value={settings.statusBarUsageMode}
+              labels={USAGE_MODE_LABELS}
+              onChange={(statusBarUsageMode) => updateSettings({ statusBarUsageMode })}
+            />
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("status-bar-usage-percentage")}
+          description="Show how much of each limit is used, or how much is left."
+          control={
+            <LabeledSelect
+              label="Usage percentage"
+              value={settings.statusBarUsagePercentage}
+              labels={USAGE_PERCENTAGE_LABELS}
+              onChange={(statusBarUsagePercentage) => updateSettings({ statusBarUsagePercentage })}
+            />
+          }
+        />
+      </SettingsSection>
+
+      <SettingsSection id="status-bar-ports" title="Ports">
+        <SettingsRow
+          {...searchableSetting("status-bar-ports-count")}
+          description="What the ports count includes. The list always shows both."
+          control={
+            <LabeledSelect
+              label="Ports count"
+              value={settings.statusBarPortsCount}
+              labels={PORTS_COUNT_LABELS}
+              onChange={(statusBarPortsCount) => updateSettings({ statusBarPortsCount })}
+            />
+          }
+        />
+      </SettingsSection>
+
+      <SettingsSection id="status-bar-resources" title="Resource manager">
+        <SettingsRow
+          {...searchableSetting("status-bar-resource-sort")}
+          description="How the resource manager orders projects and terminals when it opens."
+          control={
+            <LabeledSelect
+              label="Resource manager sort"
+              value={settings.statusBarResourceSort}
+              labels={RESOURCE_SORT_LABELS}
+              onChange={(statusBarResourceSort) => updateSettings({ statusBarResourceSort })}
+            />
+          }
+        />
+      </SettingsSection>
+    </>
   );
 }
 
@@ -189,7 +246,7 @@ export function StatusBarSettingsPanel() {
   const updateSettings = useUpdateScopedSettings();
   return (
     <SettingsPageContainer>
-      <StatusBarSettingsSection settings={settings} updateSettings={updateSettings} />
+      <StatusBarSettingsSections settings={settings} updateSettings={updateSettings} />
     </SettingsPageContainer>
   );
 }

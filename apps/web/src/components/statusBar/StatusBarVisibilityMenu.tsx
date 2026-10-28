@@ -8,6 +8,8 @@ import {
 import {
   Menu,
   MenuCheckboxItem,
+  MenuGroup,
+  MenuGroupLabel,
   MenuItem,
   MenuPopup,
   MenuRadioGroup,
@@ -18,9 +20,16 @@ import {
   isStatusBarItemShown,
   STATUS_BAR_PORTS_ITEM,
   STATUS_BAR_RESOURCE_ITEM,
+  STATUS_BAR_USAGE_ITEM,
   toggleStatusBarItem,
 } from "./statusBarItems.logic";
 import { useUsageItems } from "./useUsageItems";
+
+const SEGMENTS = [
+  { id: STATUS_BAR_USAGE_ITEM, label: "Usage" },
+  { id: STATUS_BAR_PORTS_ITEM, label: "Ports" },
+  { id: STATUS_BAR_RESOURCE_ITEM, label: "Resource usage" },
+] as const;
 
 export interface StatusBarMenuPoint {
   readonly x: number;
@@ -60,46 +69,57 @@ export function StatusBarVisibilityMenu({
         }}
       >
         <div className="flex flex-col p-1">
-          {items.map((item) => (
-            <MenuCheckboxItem
-              key={item.key}
-              checked={isStatusBarItemShown(hidden, item.entry.instanceId)}
-              onCheckedChange={() => void toggleStatusBarItemSetting(item.entry.instanceId)}
+          <MenuGroup>
+            <MenuGroupLabel>Segments</MenuGroupLabel>
+            {SEGMENTS.map(({ id, label }) => (
+              <MenuCheckboxItem
+                key={id}
+                checked={isStatusBarItemShown(hidden, id)}
+                onCheckedChange={() => void toggleStatusBarItemSetting(id)}
+              >
+                {label}
+              </MenuCheckboxItem>
+            ))}
+          </MenuGroup>
+          {items.length === 0 ? null : (
+            <>
+              <MenuSeparator />
+              <MenuGroup>
+                <MenuGroupLabel>Accounts</MenuGroupLabel>
+                {items.map((item) => (
+                  <MenuCheckboxItem
+                    key={item.key}
+                    checked={isStatusBarItemShown(hidden, item.entry.instanceId)}
+                    onCheckedChange={() => void toggleStatusBarItemSetting(item.entry.instanceId)}
+                  >
+                    {item.entry.displayName}
+                    {item.environmentLabel === null ? "" : ` · ${item.environmentLabel}`}
+                  </MenuCheckboxItem>
+                ))}
+              </MenuGroup>
+            </>
+          )}
+          <MenuSeparator />
+          <MenuGroup>
+            <MenuGroupLabel>Usage display</MenuGroupLabel>
+            <MenuRadioGroup
+              value={mode}
+              onValueChange={(value) =>
+                void updateClientSettings({
+                  statusBarUsageMode: value === "compact" ? "compact" : "verbose",
+                })
+              }
             >
-              {item.entry.displayName}
-              {item.environmentLabel === null ? "" : ` · ${item.environmentLabel}`}
-            </MenuCheckboxItem>
-          ))}
-          <MenuCheckboxItem
-            checked={isStatusBarItemShown(hidden, STATUS_BAR_RESOURCE_ITEM)}
-            onCheckedChange={() => void toggleStatusBarItemSetting(STATUS_BAR_RESOURCE_ITEM)}
-          >
-            Resource usage
-          </MenuCheckboxItem>
-          <MenuCheckboxItem
-            checked={isStatusBarItemShown(hidden, STATUS_BAR_PORTS_ITEM)}
-            onCheckedChange={() => void toggleStatusBarItemSetting(STATUS_BAR_PORTS_ITEM)}
-          >
-            Ports
-          </MenuCheckboxItem>
+              <MenuRadioItem value="verbose">Verbose</MenuRadioItem>
+              <MenuRadioItem value="compact">Compact</MenuRadioItem>
+            </MenuRadioGroup>
+          </MenuGroup>
           <MenuSeparator />
-          <MenuRadioGroup
-            value={mode}
-            onValueChange={(value) =>
-              void updateClientSettings({
-                statusBarUsageMode: value === "compact" ? "compact" : "verbose",
-              })
-            }
-          >
-            <MenuRadioItem value="verbose">Verbose usage</MenuRadioItem>
-            <MenuRadioItem value="compact">Compact usage</MenuRadioItem>
-          </MenuRadioGroup>
-          <MenuSeparator />
-          <MenuItem onClick={() => void navigate({ to: "/settings/status-bar" })}>
-            Status bar settings…
-          </MenuItem>
           <MenuItem onClick={() => void updateClientSettings({ statusBarVisible: false })}>
             Hide status bar
+          </MenuItem>
+          <MenuItem onClick={() => void navigate({ to: "/settings/status-bar" })}>
+            Status bar settings…
           </MenuItem>
         </div>
       </MenuPopup>
