@@ -189,16 +189,22 @@ export type SidebarListMarker =
   | "snoozed-header"
   | "settled-header";
 
-export function sidebarMarkerId(marker: SidebarListMarker): string {
-  return `${SIDEBAR_MARKER_PREFIX}${marker}`;
+/** `scope` names the project group whose list owns the marker; dnd ids must be unique across groups. */
+export function sidebarMarkerId(marker: SidebarListMarker, scope?: string): string {
+  return `${SIDEBAR_MARKER_PREFIX}${scope === undefined ? "" : `${scope}:`}${marker}`;
 }
 
 export type SidebarListItem =
-  | { readonly kind: "thread"; readonly key: string; readonly section: SidebarSection }
-  | { readonly kind: "marker"; readonly marker: SidebarListMarker };
+  | {
+      readonly kind: "thread";
+      readonly key: string;
+      readonly section: SidebarSection;
+      readonly scope?: string;
+    }
+  | { readonly kind: "marker"; readonly marker: SidebarListMarker; readonly scope?: string };
 
 export function sidebarListItemId(item: SidebarListItem): string {
-  return item.kind === "thread" ? item.key : sidebarMarkerId(item.marker);
+  return item.kind === "thread" ? item.key : sidebarMarkerId(item.marker, item.scope);
 }
 
 function sectionAtSidebarSlot(items: readonly SidebarListItem[], index: number): SidebarSection {
@@ -705,11 +711,28 @@ export function hasUnseenCompletion(thread: ThreadStatusInput): boolean {
   if (!thread.latestRun?.completedAt) return false;
   const completedAt = Date.parse(thread.latestRun.completedAt);
   if (Number.isNaN(completedAt)) return false;
-  if (!thread.lastVisitedAt) return false;
+  if (!thread.lastVisitedAt) return true;
 
   const lastVisitedAt = Date.parse(thread.lastVisitedAt);
   if (Number.isNaN(lastVisitedAt)) return true;
   return completedAt > lastVisitedAt;
+}
+
+/** The dot class for a thread that needs attention, or null once it was opened. */
+export function resolveSidebarNotificationDotClass(thread: ThreadStatusInput): string | null {
+  return hasSidebarNotification(thread)
+    ? (resolveThreadStatusPill({ thread })?.dotClass ?? null)
+    : null;
+}
+
+export function hasSidebarNotification(thread: ThreadStatusInput): boolean {
+  return (
+    thread.hasPendingApprovals ||
+    thread.hasPendingUserInput ||
+    thread.pendingSubagentRequest != null ||
+    hasUnseenFailure(thread) ||
+    hasUnseenCompletion(thread)
+  );
 }
 
 /** Unopened threads' failures still count as unseen, unlike completions. */
@@ -1075,8 +1098,8 @@ export function resolveThreadStatusPill(input: {
   if (thread.hasPendingUserInput || thread.pendingSubagentRequest === "user_input") {
     return {
       label: "Awaiting Input",
-      colorClass: "text-indigo-600 dark:text-indigo-300/90",
-      dotClass: "bg-indigo-500 dark:bg-indigo-300/90",
+      colorClass: "text-amber-600 dark:text-amber-300/90",
+      dotClass: "bg-amber-500 dark:bg-amber-300/90",
       pulse: false,
     };
   }

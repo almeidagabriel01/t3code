@@ -1243,6 +1243,16 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:process-diagnostics",
       tag: WS_METHODS.serverGetProcessDiagnostics,
     }),
+    listeningPorts: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:listening-ports",
+      tag: WS_METHODS.serverListListeningPorts,
+      idleTtlMs: 0,
+      staleTimeMs: 2_000,
+    }),
+    killListeningPort: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:kill-listening-port",
+      tag: WS_METHODS.serverKillListeningPort,
+    }),
     hostResources: createEnvironmentQueryAtomFamily(runtime, {
       label: "environment-data:server:host-resources",
       idleTtlMs: 0,

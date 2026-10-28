@@ -22,6 +22,8 @@ beforeEach(() => {
   useClosedViewStore.setState({ entries: [] });
   useRightPanelStore.setState({
     byThreadKey: {},
+    panelOpen: false,
+    lastFixedKind: "files",
     threadPanelVisibilityByThreadKey: {},
     userActionRevisionByThreadKey: {},
     closeRevisionByThreadKey: {},
@@ -375,6 +377,7 @@ describe("rightPanelStore", () => {
 
   it("offers each completed diff once across dismissal, panel changes, and reload", async () => {
     const store = useRightPanelStore.getState();
+    store.show(refA);
     expect(store.openProactive(refA, completedDiff, store.getUserActionRevision(refA))).toBe(true);
     expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("diff");
 
@@ -520,6 +523,8 @@ describe("rightPanelStore", () => {
           surfaces: [{ id: "browser:tab-a", kind: "preview", resourceId: "tab-a" }],
         },
       },
+      panelOpen: false,
+      lastFixedKind: "files",
       threadPanelVisibilityByThreadKey: {},
     });
   });
@@ -551,6 +556,8 @@ describe("rightPanelStore", () => {
           ],
         },
       },
+      panelOpen: true,
+      lastFixedKind: "files",
       threadPanelVisibilityByThreadKey: {},
     });
   });
@@ -595,6 +602,8 @@ describe("rightPanelStore", () => {
           ],
         },
       },
+      panelOpen: true,
+      lastFixedKind: "files",
       threadPanelVisibilityByThreadKey: {},
     });
   });
@@ -627,6 +636,8 @@ describe("rightPanelStore", () => {
       }),
     ).toEqual({
       byThreadKey: { "env-1:thread-A": panelState },
+      panelOpen: true,
+      lastFixedKind: "files",
       threadPanelVisibilityByThreadKey: {},
     });
   });
@@ -657,7 +668,7 @@ describe("rightPanelStore", () => {
     ).toEqual({
       byThreadKey: {
         "env-1:thread-A": {
-          isOpen: false,
+          isOpen,
           activeSurfaceId: null,
           surfaces: [],
         },
@@ -667,6 +678,8 @@ describe("rightPanelStore", () => {
           surfaces: [{ id: "diff", kind: "diff" }],
         },
       },
+      panelOpen: isOpen,
+      lastFixedKind: "files",
       threadPanelVisibilityByThreadKey: {},
     });
   });
@@ -681,6 +694,8 @@ describe("rightPanelStore", () => {
       }),
     ).toEqual({
       byThreadKey: {},
+      panelOpen: false,
+      lastFixedKind: "files",
       threadPanelVisibilityByThreadKey: {
         "env-1:thread-A": { inlineOpen: false, popoverOpen: false },
       },
@@ -937,7 +952,7 @@ describe("rightPanelStore", () => {
     useRightPanelStore.getState().openFile(refB, "conductor.json");
     useRightPanelStore.getState().reconcileFileSurfaces(refB, false);
     expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refB)).toEqual({
-      isOpen: false,
+      isOpen: true,
       activeSurfaceId: null,
       surfaces: [],
     });
@@ -1120,12 +1135,12 @@ describe("rightPanelStore", () => {
     });
   });
 
-  it("closing the final terminal pane removes its surface and closes the panel", () => {
+  it("closing the final terminal pane removes its surface and keeps the panel open", () => {
     useRightPanelStore.getState().openTerminal(refA, "term-1");
     useRightPanelStore.getState().closeTerminal(refA, "terminal:term-1", "term-1");
 
     expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
-      isOpen: false,
+      isOpen: true,
       activeSurfaceId: null,
       surfaces: [],
     });
@@ -1181,12 +1196,12 @@ describe("rightPanelStore", () => {
     });
   });
 
-  it("hides the panel when browser reconciliation removes its last session tab", () => {
+  it("keeps the panel open when browser reconciliation removes its last session tab", () => {
     const store = useRightPanelStore.getState();
     store.openBrowser(refA, "tab-a");
     store.reconcileBrowserSurfaces(refA, []);
     expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
-      isOpen: false,
+      isOpen: true,
       activeSurfaceId: null,
       surfaces: [],
     });
@@ -1219,5 +1234,70 @@ describe("rightPanelStore", () => {
     store.reconcileBrowserSurfaces(refA, ["tab-a", "tab-b"]);
     expect(surfaceIds()).toEqual(["browser:tab-a", "terminal:term-1", "diff", "browser:tab-b"]);
     expect(store.getUserActionRevision(refA)).toBe(revision);
+  });
+
+  it("shares one open preference across threads and survives reload", async () => {
+    const store = useRightPanelStore.getState();
+    store.open(refA, "diff");
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refB).isOpen,
+    ).toBe(true);
+    await reloadRightPanelStore();
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refB).isOpen,
+    ).toBe(true);
+
+    store.close(refB);
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).isOpen,
+    ).toBe(false);
+    await reloadRightPanelStore();
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).isOpen,
+    ).toBe(false);
+  });
+
+  it("adds a proactive diff without opening a panel the user closed", () => {
+    const store = useRightPanelStore.getState();
+    expect(store.openProactive(refA, completedDiff, store.getUserActionRevision(refA))).toBe(false);
+    const state = useRightPanelStore.getState();
+    expect(state.panelOpen).toBe(false);
+    expect(selectThreadRightPanelState(state.byThreadKey, refA)).toMatchObject({
+      isOpen: false,
+      activeSurfaceId: "diff",
+    });
+    store.toggleVisibility(refA);
+    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("diff");
+  });
+
+  it("remembers the last fixed tab and fills an open empty thread", () => {
+    const store = useRightPanelStore.getState();
+    store.open(refA, "diff");
+    store.openFile(refA, "src/app.ts");
+    expect(useRightPanelStore.getState().lastFixedKind).toBe("files");
+    store.ensureActiveSurface(refB, useRightPanelStore.getState().lastFixedKind);
+    expect(selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refB)).toEqual({
+      id: "files",
+      kind: "files",
+    });
+  });
+
+  it("derives the global preference when migrating v14 state", () => {
+    const migrated = migratePersistedRightPanelState({
+      byThreadKey: {
+        "env-1:thread-A": {
+          isOpen: false,
+          activeSurfaceId: "diff",
+          surfaces: [{ id: "diff", kind: "diff" }],
+        },
+        "env-1:thread-B": {
+          isOpen: true,
+          activeSurfaceId: "diff",
+          surfaces: [{ id: "diff", kind: "diff" }],
+        },
+      },
+    });
+    expect(migrated.panelOpen).toBe(true);
+    expect(Object.values(migrated.byThreadKey).map((entry) => entry.isOpen)).toEqual([true, true]);
   });
 });

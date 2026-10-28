@@ -33,6 +33,7 @@ export function createSidebarCollisionDetection(
   options: {
     items?: readonly SidebarListItem[];
     activationY?: number | null;
+    scope?: string;
   } = {},
 ): CollisionDetection {
   const validity = new Map<string, boolean>();
@@ -45,7 +46,7 @@ export function createSidebarCollisionDetection(
     const items = options.items;
     const source = items?.find((item) => item.kind === "thread" && item.key === args.active.id);
     const boundary = args.droppableContainers
-      .find((container) => container.id === sidebarMarkerId("pinned-divider"))
+      .find((container) => container.id === sidebarMarkerId("pinned-divider", options.scope))
       ?.node.current?.querySelector(".sidebar-drag-boundary-label")
       ?.getBoundingClientRect();
     if (items && boundary && source?.kind === "thread" && pointer) {
@@ -58,7 +59,9 @@ export function createSidebarCollisionDetection(
         else if (pointer.y > previousY && pointer.y >= boundary.top) boundarySection = "active";
         const nextHeader = (["working-header", "snoozed-header", "settled-header"] as const)
           .map((marker) =>
-            args.droppableContainers.find((container) => container.id === sidebarMarkerId(marker)),
+            args.droppableContainers.find(
+              (container) => container.id === sidebarMarkerId(marker, options.scope),
+            ),
           )
           .find((container) => container !== undefined);
         const activeBottom = nextHeader?.node.current?.getBoundingClientRect().top;
@@ -167,7 +170,9 @@ export function createSidebarSortingStrategy(input: {
     }
     groups.settled = visible.map((key) => ({ kind: "thread", key, section: "settled" }));
     const projected: SidebarListItem[] = [];
-    const marker = (name: SidebarListMarker) => projected.push({ kind: "marker", marker: name });
+    const scope = active.scope;
+    const marker = (name: SidebarListMarker) =>
+      projected.push({ kind: "marker", marker: name, ...(scope === undefined ? {} : { scope }) });
     const section = (name: "active" | "settled") => {
       if (groups[name].length > 0) projected.push(...groups[name]);
       else marker(`${name}-placeholder`);

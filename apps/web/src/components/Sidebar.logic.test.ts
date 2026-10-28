@@ -8,6 +8,7 @@ import {
   archiveSelectedThreadEntries,
   deleteSelectedThreadEntries,
   getFallbackThreadIdAfterDelete,
+  hasSidebarNotification,
   hasUnseenCompletion,
   resolveSidebarRowThreadId,
   isSidebarThreadWorking,
@@ -498,7 +499,7 @@ describe("resolveThreadStatusPill", () => {
     ).toMatchObject({ label: "Plan Ready", pulse: false });
   });
 
-  it("does not manufacture completed state without a client visit marker", () => {
+  it("treats a completed thread without a visit marker as unseen", () => {
     expect(
       resolveThreadStatusPill({
         thread: {
@@ -511,7 +512,7 @@ describe("resolveThreadStatusPill", () => {
           },
         },
       }),
-    ).toBeNull();
+    ).toMatchObject({ label: "Completed" });
   });
 
   it("shows completed when there is an unseen completion and no active blocker", () => {
@@ -1030,6 +1031,35 @@ describe("unseen completion with background work", () => {
     ).toBe(expected.receded);
     expect(isSidebarThreadWorking(thread)).toBe(expected.receded);
     expect(resolveThreadStatusPill({ thread })).toMatchObject({ label: expected.pill });
+  });
+});
+
+describe("sidebar notification", () => {
+  const completed = (lastVisitedAt: string | null) =>
+    presentThreadShell(localEnvironmentId, {
+      ...makeThreadFixture().source,
+      latestRunId: RunId.make("run-notified"),
+      status: "completed",
+      latestRunCompletedAt: DateTime.makeUnsafe("2026-06-20T01:00:00.000Z"),
+      lastVisitedAt: lastVisitedAt === null ? null : DateTime.makeUnsafe(lastVisitedAt),
+    });
+
+  it("treats a never-visited completed thread as unseen", () => {
+    const thread = completed(null);
+    expect(hasUnseenCompletion(thread)).toBe(true);
+    expect(hasSidebarNotification(thread)).toBe(true);
+    expect(resolveThreadStatusPill({ thread })).toMatchObject({ label: "Completed" });
+  });
+
+  it("clears once the thread was visited after completion", () => {
+    const thread = completed("2026-06-20T02:00:00.000Z");
+    expect(hasUnseenCompletion(thread)).toBe(false);
+    expect(hasSidebarNotification(thread)).toBe(false);
+  });
+
+  it("notifies for a pending approval even after a visit", () => {
+    const thread = { ...completed("2026-06-20T02:00:00.000Z"), hasPendingApprovals: true };
+    expect(hasSidebarNotification(thread)).toBe(true);
   });
 });
 

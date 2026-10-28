@@ -162,6 +162,12 @@ import {
   ReviewDiffPreviewResult,
 } from "./review.ts";
 import { KeybindingsConfigError } from "./keybindings.ts";
+import {
+  KillListeningPortError,
+  KillListeningPortInput,
+  KillListeningPortResult,
+  ListeningPortList,
+} from "./listeningPorts.ts";
 import { OrchestrationSearchThreadsError } from "./threadSearch.ts";
 import {
   ProviderUploadFeedbackError,
@@ -520,6 +526,8 @@ export const WS_METHODS = {
   serverGetTraceDiagnostics: "server.getTraceDiagnostics",
   serverGetProcessDiagnostics: "server.getProcessDiagnostics",
   serverGetHostResources: "server.getHostResources",
+  serverListListeningPorts: "server.listListeningPorts",
+  serverKillListeningPort: "server.killListeningPort",
   serverGetProcessResourceHistory: "server.getProcessResourceHistory",
   serverGetResourceTelemetryHistory: "server.getResourceTelemetryHistory",
   serverRetryResourceTelemetry: "server.retryResourceTelemetry",
@@ -911,6 +919,18 @@ const WsServerGetProcessDiagnosticsRpc = Rpc.make(WS_METHODS.serverGetProcessDia
   payload: Schema.Struct({}),
   success: ServerProcessDiagnosticsResult,
   error: EnvironmentAuthorizationError,
+});
+
+const WsServerListListeningPortsRpc = Rpc.make(WS_METHODS.serverListListeningPorts, {
+  payload: Schema.Struct({}),
+  success: ListeningPortList,
+  error: EnvironmentAuthorizationError,
+});
+
+const WsServerKillListeningPortRpc = Rpc.make(WS_METHODS.serverKillListeningPort, {
+  payload: KillListeningPortInput,
+  success: KillListeningPortResult,
+  error: Schema.Union([KillListeningPortError, EnvironmentAuthorizationError]),
 });
 
 const WsServerGetHostResourcesRpc = Rpc.make(WS_METHODS.serverGetHostResources, {
@@ -2009,6 +2029,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetTraceDiagnosticsRpc,
   WsServerGetProcessDiagnosticsRpc,
   WsServerGetHostResourcesRpc,
+  WsServerListListeningPortsRpc,
+  WsServerKillListeningPortRpc,
   WsServerGetProcessResourceHistoryRpc,
   WsServerGetResourceTelemetryHistoryRpc,
   WsServerRetryResourceTelemetryRpc,

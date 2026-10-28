@@ -104,6 +104,9 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverGetProcessDiagnostics]: AuthDiagnosticsReadScope,
   // Thread load balancing reads host load, so it needs thread scope rather than diagnostics scope.
   [WS_METHODS.serverGetHostResources]: AuthOrchestrationReadScope,
+  // Lists every host process holding a port, not just this server's.
+  [WS_METHODS.serverListListeningPorts]: AuthDiagnosticsReadScope,
+  [WS_METHODS.serverKillListeningPort]: AuthTerminalOperateScope,
   [WS_METHODS.serverGetProcessResourceHistory]: AuthDiagnosticsReadScope,
   [WS_METHODS.serverGetResourceTelemetryHistory]: AuthDiagnosticsReadScope,
   [WS_METHODS.serverRetryResourceTelemetry]: AuthDiagnosticsReadScope,

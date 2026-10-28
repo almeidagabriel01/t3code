@@ -1,6 +1,7 @@
 import { usePreviewPanelInlineSize } from "../../hooks/usePreviewPanelInlineSize";
 import { RightPanelSheet } from "../RightPanelSheet";
 import { RightPanelTabs, type RightPanelTabsProps } from "../RightPanelTabs";
+import { RightPanelFixedTabs } from "./RightPanelFixedTabs";
 
 type ChatRightPanelProps = Omit<RightPanelTabsProps, "mode" | "inlineSize" | "maximized"> & {
   readonly sheet: boolean;
@@ -31,8 +32,36 @@ export function ChatRightPanel(props: ChatRightPanelProps) {
     container: workspaceLayoutElement,
     widthStorageKey,
   });
+  const fixedTabs = (
+    <>
+      <RightPanelFixedTabs
+        surfaces={tabs.surfaces}
+        activeSurfaceId={tabs.activeSurfaceId}
+        onActivate={tabs.onActivate}
+        onAdd={{
+          files: tabs.onAddFiles,
+          diff: tabs.onAddDiff,
+          terminal: tabs.onAddTerminal,
+          preview: tabs.onAddBrowser,
+          "pull-requests": tabs.onAddPullRequests,
+        }}
+        available={{
+          files: tabs.filesAvailable,
+          diff: tabs.diffAvailable,
+          terminal: tabs.terminalAvailable,
+          preview: tabs.browserAvailable,
+          "pull-requests": tabs.pullRequestsAvailable,
+        }}
+      />
+      {tabs.children}
+    </>
+  );
   if (!sheet) {
-    return <RightPanelTabs {...tabs} mode="inline" maximized={maximized} inlineSize={inlineSize} />;
+    return (
+      <RightPanelTabs {...tabs} mode="inline" maximized={maximized} inlineSize={inlineSize}>
+        {fixedTabs}
+      </RightPanelTabs>
+    );
   }
   return (
     <RightPanelSheet
@@ -45,7 +74,9 @@ export function ChatRightPanel(props: ChatRightPanelProps) {
         mode="sheet"
         inlineSize={inlineSize}
         layoutControls={layoutControls}
-      />
+      >
+        {fixedTabs}
+      </RightPanelTabs>
     </RightPanelSheet>
   );
 }

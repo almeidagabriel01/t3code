@@ -1,4 +1,4 @@
-import { ArrowLeftIcon, ChartNoAxesColumnIcon, SettingsIcon } from "lucide-react";
+import { ArchiveIcon, ArrowLeftIcon, ChartNoAxesColumnIcon, SettingsIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { memo } from "react";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
@@ -228,6 +228,30 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   );
 });
 
+function SidebarArchiveShortcut() {
+  const navigate = useNavigate();
+  const { isMobile, setOpenMobile } = useSidebar();
+  const isOnUtilityPage = useLocation({
+    select: (location) => isSidebarUtilityPage(location.pathname),
+  });
+  if (isOnUtilityPage) return null;
+  return (
+    <SidebarMenu>
+      <SidebarMenuItem>
+        <SidebarMenuButton
+          onClick={() => {
+            if (isMobile) setOpenMobile(false);
+            void navigate({ to: "/settings/archived" });
+          }}
+        >
+          <ArchiveIcon />
+          <span>Archived</span>
+        </SidebarMenuButton>
+      </SidebarMenuItem>
+    </SidebarMenu>
+  );
+}
+
 export const SidebarChromeFooter = memo(function SidebarChromeFooter({
   showUndoNotice = false,
 }: {
@@ -238,6 +262,7 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter({
       {showUndoNotice ? <SidebarThreadUndoNotice /> : null}
       <SidebarProviderUpdatePill />
       <SidebarUpdateArchitectureWarning />
+      <SidebarArchiveShortcut />
       <SidebarUtilityMenu />
     </SidebarFooter>
   );

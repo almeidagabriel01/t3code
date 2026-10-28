@@ -11,14 +11,15 @@ import {
 import { SIDEBAR_SORTABLE_DRAG_DISABLED } from "./SidebarThreadRow";
 import { SidebarThreadUndoNotice } from "./SidebarThreadUndoNotice";
 
-function SortableSidebarMarker(props: {
+export function SortableSidebarMarker(props: {
   marker: SidebarListMarker;
+  scope: string;
   className?: string;
   children?: ReactNode;
   "data-testid"?: string;
 }) {
   const { setNodeRef, transform, transition } = useSortable({
-    id: sidebarMarkerId(props.marker),
+    id: sidebarMarkerId(props.marker, props.scope),
     disabled: SIDEBAR_SORTABLE_DRAG_DISABLED,
     animateLayoutChanges: animateSidebarLayoutChanges,
   });
@@ -27,6 +28,7 @@ function SortableSidebarMarker(props: {
       ref={setNodeRef}
       data-thread-selection-safe
       data-testid={props["data-testid"]}
+      data-sidebar-scope={props.scope}
       className={cn("list-none", props.className)}
       style={{
         transform: CSS.Translate.toString(transform),
@@ -41,6 +43,7 @@ function SortableSidebarMarker(props: {
 
 export function SidebarSectionPlaceholder(props: {
   marker: "active-placeholder" | "settled-placeholder";
+  scope: string;
   label: string;
   showHint: boolean;
   isDropTarget: boolean;
@@ -48,6 +51,7 @@ export function SidebarSectionPlaceholder(props: {
   return (
     <SortableSidebarMarker
       marker={props.marker}
+      scope={props.scope}
       data-testid={`sidebar-${props.marker}`}
       className="relative mx-0.5 -mb-px h-0"
     >
@@ -67,6 +71,7 @@ export function SidebarSectionPlaceholder(props: {
 
 export function SidebarDragBoundary(props: {
   marker: "pinned-header" | "pinned-divider";
+  scope: string;
   label: string;
   visible: boolean;
   isDropTarget: boolean;
@@ -74,6 +79,7 @@ export function SidebarDragBoundary(props: {
   return (
     <SortableSidebarMarker
       marker={props.marker}
+      scope={props.scope}
       data-testid={`sidebar-${props.marker}`}
       className="pointer-events-none relative mx-0.5 -mb-px h-0"
     >
@@ -102,6 +108,7 @@ export function SidebarDragBoundary(props: {
 
 export function SidebarSectionHeader(props: {
   marker: "working-header" | "snoozed-header" | "settled-header";
+  scope: string;
   label: string;
   /** A muted trailing count. */
   count: number;
@@ -121,6 +128,7 @@ export function SidebarSectionHeader(props: {
   return (
     <SortableSidebarMarker
       marker={props.marker}
+      scope={props.scope}
       data-testid={`sidebar-${props.marker}`}
       className={cn("relative mx-0.5 h-8", props.className)}
     >
