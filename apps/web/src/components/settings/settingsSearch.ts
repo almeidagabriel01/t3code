@@ -432,12 +432,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["sidebar child agents nested threads"],
   },
   {
-    id: "sidebar-usage-button",
-    title: "Usage button",
-    to: "/settings/general",
-    searchTerms: ["sidebar footer usage shortcut hide limits"],
-  },
-  {
     id: "sidebar-agent-activity",
     title: "Agent activity",
     to: "/settings/general",

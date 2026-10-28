@@ -139,6 +139,22 @@ choice.
 While this is on, the active list is ordered by when each thread last came back to you, so you
 cannot drag or move threads within it. Your saved order returns when you turn it off.
 
+## Get around with the rail
+
+On web and desktop, the icon rail on the left edge of the window holds **Home**, which starts a
+new thread, and **Settings**, plus **Running**, **Board**, **Pull requests**, **Usage**,
+**Scheduled tasks**, and **Archived**. Click the page you are on to go back to your thread. In
+narrow windows these shortcuts move to the bottom of the sidebar.
+
+**Running** lists every thread that is working or needs you, grouped by project; its badge
+counts them. Threads that need you come first.
+
+Select **+** at the bottom of the rail to show or hide items and move them up or down. Home and
+Settings always stay. **Add provider** appears on its own while your main machine has no working
+provider, and opens the same setup as **Settings → Providers**. An item you turn on or off stays
+that way; **Reset to defaults** returns to the automatic choice. Hidden pages stay reachable
+from the command palette.
+
 ## Settle finished work
 
 Choose **Settle thread** from its menu to move finished work out of the active list

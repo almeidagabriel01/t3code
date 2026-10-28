@@ -185,11 +185,22 @@ async function installLocalUpdate(
   }
 }
 
-export function SidebarUpdatePill() {
-  return <SidebarUpdateControl />;
+/**
+ * `rail` is the idle and available button beside the rail's Settings; a running pass's
+ * progress capsule needs width, so beside the rail it shows in the footer (`footer-progress`).
+ */
+export type SidebarUpdatePlacement = "footer" | "rail" | "footer-progress";
+
+export function SidebarUpdatePill({
+  placement = "footer",
+}: {
+  readonly placement?: SidebarUpdatePlacement;
+}) {
+  return <SidebarUpdateControl placement={placement} />;
 }
 
-function SidebarUpdateControl() {
+function SidebarUpdateControl({ placement }: { readonly placement: SidebarUpdatePlacement }) {
+  const inRail = placement === "rail";
   const state = useDesktopUpdateState();
   const [isActionPending, setIsActionPending] = useState(false);
   const [isConfirmingEverything, setIsConfirmingEverything] = useState(false);
@@ -389,6 +400,7 @@ function SidebarUpdateControl() {
       downloadPercent={state?.downloadPercent ?? null}
       isCheckAnimating={showCheckIcon && !prefersReducedMotion}
       onCheckAnimationIteration={handleCheckAnimationIteration}
+      size={inRail ? "md" : "sm"}
       status={iconStatus}
     />
   );
@@ -405,6 +417,7 @@ function SidebarUpdateControl() {
   );
 
   if (run !== null) {
+    if (inRail) return null;
     const local: UpdateRunLocalState =
       run.localVersion === null
         ? null
@@ -439,23 +452,33 @@ function SidebarUpdateControl() {
     );
   }
 
+  if (placement === "footer-progress") return null;
+
   const updateButton = (
     <button
       type="button"
       aria-label={idleTooltip?.detail ? `${tooltip}: ${idleTooltip.detail}` : tooltip}
       aria-disabled={isInteractionDisabled || undefined}
       className={cn(
-        "inline-flex size-8 items-center justify-center rounded-full outline-hidden ring-ring transition-colors focus-visible:ring-2 focus-visible:ring-inset",
+        "inline-flex items-center justify-center outline-hidden ring-ring transition-colors focus-visible:ring-2 focus-visible:ring-inset",
+        // The rail's accent fill means "current page", so waiting updates keep the control fill.
+        inRail ? "size-10 shrink-0 rounded-lg" : "size-8 rounded-full",
         isInteractionDisabled ? "cursor-not-allowed" : "cursor-pointer",
         showUpdateIconState
           ? cn(
               "bg-sidebar-control-surface text-sidebar-foreground",
-              !isInteractionDisabled && "hover:bg-sidebar-row-hover",
+              !isInteractionDisabled && (inRail ? "hover:bg-accent" : "hover:bg-sidebar-row-hover"),
             )
-          : cn(
-              "text-(--sidebar-icon-color)",
-              !isInteractionDisabled && "hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
-            ),
+          : inRail
+            ? cn(
+                "text-sidebar-muted-foreground",
+                !isInteractionDisabled && "hover:bg-accent hover:text-accent-foreground",
+              )
+            : cn(
+                "text-(--sidebar-icon-color)",
+                !isInteractionDisabled &&
+                  "hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
+              ),
         disabled && !showUpdateIconState && "opacity-60",
       )}
       onClick={handleAction}
@@ -486,8 +509,8 @@ function SidebarUpdateControl() {
     </button>
   );
 
-  return (
-    <SidebarMenuItem className="ml-auto shrink-0">
+  const control = (
+    <>
       <Popover
         handle={releaseNotesPopoverHandle}
         open={releaseNotesOpen && showReleaseNotesPopover}
@@ -524,7 +547,7 @@ function SidebarUpdateControl() {
           {!showReleaseNotesPopover ? (
             <TooltipPopup
               align="center"
-              side="top"
+              side={inRail ? "right" : "top"}
               variant={showUpdateDetails ? "glass" : "default"}
             >
               {idleTooltip?.detail ? (
@@ -540,7 +563,7 @@ function SidebarUpdateControl() {
         </Tooltip>
         {showReleaseNotesPopover && state ? (
           <PopoverPopup
-            align="center"
+            align={inRail ? "end" : "center"}
             aria-label="Nightly update release notes"
             initialFocus={false}
             onKeyDownCapture={(event) => {
@@ -552,7 +575,7 @@ function SidebarUpdateControl() {
               }
             }}
             ref={releaseNotesPopupRef}
-            side="top"
+            side={inRail ? "right" : "top"}
             tooltipStyle
           >
             <SidebarUpdateReleaseNotes
@@ -564,6 +587,12 @@ function SidebarUpdateControl() {
         ) : null}
       </Popover>
       {confirmDialog}
-    </SidebarMenuItem>
+    </>
+  );
+
+  return inRail ? (
+    <div className="flex shrink-0">{control}</div>
+  ) : (
+    <SidebarMenuItem className="ml-auto shrink-0">{control}</SidebarMenuItem>
   );
 }

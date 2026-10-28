@@ -9,7 +9,7 @@ import type { ReactNode } from "react";
 import { memo } from "react";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 
-import { useClientSettings, useEnvironmentIdentificationMode } from "../../hooks/useSettings";
+import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { usePullRequestsSupported } from "../../state/environments";
 import { T3Wordmark } from "../T3Wordmark";
@@ -38,6 +38,7 @@ import { SidebarUpdateArchitectureWarning, SidebarUpdatePill } from "./SidebarUp
 import { useKanbanEnvironmentIds } from "../../state/kanban";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { observeResize } from "~/lib/observeResize";
+import { useDestinationRailVisible } from "./DestinationRail";
 
 export const SidebarChromeHeader = memo(function SidebarChromeHeader({
   isElectron,
@@ -183,7 +184,6 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   const showBack = isSidebarUtilityPage(pathname) && !onPullRequests && !onBoard;
   const pullRequestsSupported = usePullRequestsSupported();
   const kanbanSupported = useKanbanEnvironmentIds().length > 0;
-  const showUsageButton = useClientSettings((settings) => settings.sidebarShowUsageButton);
   const closeMobileSidebar = () => {
     if (isMobile) {
       setOpenMobile(false);
@@ -249,13 +249,11 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
               onClick={handleBoardClick}
             />
           ) : null}
-          {showUsageButton ? (
-            <SidebarUtilityItem
-              icon={<ChartNoAxesColumnIcon />}
-              label="Usage"
-              onClick={handleUsageClick}
-            />
-          ) : null}
+          <SidebarUtilityItem
+            icon={<ChartNoAxesColumnIcon />}
+            label="Usage"
+            onClick={handleUsageClick}
+          />
         </>
       )}
       <SidebarForkUpdatePill />
@@ -293,13 +291,24 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter({
 }: {
   showUndoNotice?: boolean;
 }) {
+  // On narrow windows the rail folds into this footer; beside the rail the footer keeps only
+  // notices and a running update pass, whose progress needs the sidebar's width.
+  const railVisible = useDestinationRailVisible();
   return (
     <SidebarFooter>
       {showUndoNotice ? <SidebarThreadUndoNotice /> : null}
       <SidebarProviderUpdatePill />
       <SidebarUpdateArchitectureWarning />
-      <SidebarArchiveShortcut />
-      <SidebarUtilityMenu />
+      {railVisible ? (
+        <SidebarMenu className="flex-row items-center empty:hidden">
+          <SidebarUpdatePill placement="footer-progress" />
+        </SidebarMenu>
+      ) : (
+        <>
+          <SidebarArchiveShortcut />
+          <SidebarUtilityMenu />
+        </>
+      )}
     </SidebarFooter>
   );
 });
