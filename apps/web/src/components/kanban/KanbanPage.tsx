@@ -191,7 +191,11 @@ export function KanbanPage() {
 
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none">
-      <WorkspacePageHeader electron={isElectron} className="relative bg-background">
+      <WorkspacePageHeader
+        electron={isElectron}
+        className="relative bg-background"
+        data-glass-layer
+      >
         <WorkspaceBreadcrumb ariaLabel="Board">
           <h1 className="truncate">Board</h1>
           <span className="flex min-w-0 items-center gap-1.5 text-xs font-normal text-muted-foreground">
