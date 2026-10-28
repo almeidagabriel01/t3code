@@ -12,6 +12,7 @@ import { commands, page, userEvent } from "vite-plus/test/browser";
 import "~/index.css";
 
 import { AppRoot } from "~/AppRoot";
+import { isMacPlatform } from "~/lib/utils";
 import { __setClientSettingsForTests } from "~/hooks/useSettings";
 import { getRouter, type AppRouter } from "~/router";
 import {
@@ -234,7 +235,9 @@ it("app-switch-thread", async () => {
 
 // Through the diff.toggle shortcut, the same handler as the header's diff button.
 const toggleDiff = (to: "open" | "close") => async () => {
-  await userEvent.keyboard("{Control>}d{/Control}");
+  await userEvent.keyboard(
+    isMacPlatform(navigator.platform) ? "{Meta>}d{/Meta}" : "{Control>}d{/Control}",
+  );
   const diff = page.getByRole("group", { name: "Diff layout" });
   if (to === "open") await expect.element(diff).toBeVisible();
   else await expect.element(diff).not.toBeInTheDocument();
