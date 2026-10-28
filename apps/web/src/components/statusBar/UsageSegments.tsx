@@ -166,7 +166,10 @@ function ChipWindow({
   readonly settings: UsagePaceSettings;
 }) {
   const resets = countdown ? formatCompactCountdown(window.resetsAt, now) : null;
-  const view = pacePresentation({ window, now, display, settings, formatAt: () => "" });
+  const paceInBar = useClientSettings((current) => current.statusBarUsagePaceVisible);
+  const view = paceInBar
+    ? pacePresentation({ window, now, display, settings, formatAt: () => "" })
+    : null;
   return (
     <span className={cn("whitespace-nowrap", BAND_TEXT[windowBand(window, settings)])}>
       {countdown ? "" : `${window.label} `}
@@ -193,6 +196,7 @@ function ChipSummary({
 }) {
   const now = useMinuteNow();
   const settings = useClientSettings(selectUsagePaceSettings);
+  const paceInBar = useClientSettings((current) => current.statusBarUsagePaceVisible);
   const tightest = limits.windows.reduce((a, b) => (b.usedPercent > a.usedPercent ? b : a));
   const { primary, extra } = selectBarWindows(limits.windows);
   const shown =
@@ -215,7 +219,7 @@ function ChipSummary({
         <PaceBar
           usedPercent={displayedPercent(tightest.usedPercent, display)}
           fillClass={BAND_FILL[windowBand(tightest, settings)]}
-          tickPercent={tightestPace?.tickPercent ?? null}
+          tickPercent={paceInBar ? (tightestPace?.tickPercent ?? null) : null}
           className="w-12"
         />
       ) : null}
@@ -332,8 +336,7 @@ function RosterMetric({
       </span>
       {view === null ? null : (
         <span className="pl-15.5 text-3xs text-muted-foreground tabular-nums">
-          {view.expectedText} · you&apos;re{" "}
-          <span className={deltaTone(view)}>{view.deltaText}</span>
+          {view.expectedText} · <span className={deltaTone(view)}>{view.paceText}</span>
           {details.map((line) => ` · ${line}`).join("")}
         </span>
       )}

@@ -490,6 +490,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["usage expected pace marker tick deficit reserve points ahead behind"],
   },
   {
+    id: "status-bar-usage-pace-in-bar",
+    title: "Pace in the status bar",
+    to: "/settings/status-bar",
+    searchTerms: ["usage expected pace bottom bar chip marker popover only"],
+  },
+  {
     id: "status-bar-usage-projection",
     title: "Usage projection",
     to: "/settings/status-bar",

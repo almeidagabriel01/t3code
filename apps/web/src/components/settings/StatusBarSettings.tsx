@@ -38,6 +38,7 @@ type StatusBarSettingsValues = Pick<
   | "statusBarPortsCount"
   | "statusBarResourceSort"
   | "usagePaceEnabled"
+  | "statusBarUsagePaceVisible"
   | "usageProjectionEnabled"
   | "usageDailyBudgetEnabled"
   | "usageShowSessions"
@@ -291,6 +292,15 @@ function StatusBarSettingsSections({
           checked={settings.usagePaceEnabled}
           onChange={(usagePaceEnabled) => updateSettings({ usagePaceEnabled })}
         />
+        {settings.usagePaceEnabled ? (
+          <ToggleRow
+            search={searchableSetting("status-bar-usage-pace-in-bar")}
+            label="Pace in the status bar"
+            description="Also show the pace marker and how far over or under pace you are in the bar itself. Off keeps it in the usage popover only."
+            checked={settings.statusBarUsagePaceVisible}
+            onChange={(statusBarUsagePaceVisible) => updateSettings({ statusBarUsagePaceVisible })}
+          />
+        ) : null}
         <ToggleRow
           search={searchableSetting("status-bar-usage-projection")}
           label="Usage projection"

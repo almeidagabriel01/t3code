@@ -845,10 +845,10 @@ export function usagePace(window: ServerProviderUsageWindow, now: number): Usage
   };
 }
 
-/** "+8 pts", "−12 pts", "+0.5 pts"; one decimal, trailing .0 dropped. */
+/** "+8%", "−12%", "+0.5%" of the limit; one decimal, trailing .0 dropped. */
 export function formatPaceDelta(points: number): string {
   const magnitude = Math.abs(points);
-  if (magnitude < 0.1) return "<0.1 pts";
+  if (magnitude < 0.1) return "<0.1%";
   const text = String(Math.round(magnitude * 10) / 10);
-  return `${points > 0 ? "+" : "−"}${text} pts`;
+  return `${points > 0 ? "+" : "−"}${text}%`;
 }

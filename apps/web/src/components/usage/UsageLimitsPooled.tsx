@@ -209,8 +209,8 @@ function SegmentPopover({
         ) : null}
         {timeLeft !== null && pace ? (
           <Row label="Even pace">
-            {timeLeft}% left by now · you&apos;re{" "}
-            <span className={pace.deficit ? "text-warning" : "text-success"}>{pace.deltaText}</span>
+            {timeLeft}% left by now ·{" "}
+            <span className={pace.deficit ? "text-warning" : "text-success"}>{pace.paceText}</span>
           </Row>
         ) : null}
         {pace?.projectionText ? <Row label="Projection">{pace.projectionText}</Row> : null}
@@ -595,8 +595,8 @@ function PoolWindowCard({
         </span>
         {pace ? (
           <span className="text-xs text-muted-foreground tabular-nums">
-            <span className={pace.deficit ? "text-warning" : "text-success"}>{pace.deltaText}</span>{" "}
-            vs even pace{pace.projectionText ? ` · ${pace.projectionText}` : ""}
+            <span className={pace.deficit ? "text-warning" : "text-success"}>{pace.paceText}</span>
+            {pace.projectionText ? ` · ${pace.projectionText}` : ""}
           </span>
         ) : null}
         {nextRefill && pool.columns.length > 1 ? (

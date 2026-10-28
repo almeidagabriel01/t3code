@@ -27,7 +27,8 @@ describe("pacePresentation", () => {
     expect([used.tickPercent, left.tickPercent]).toEqual([60, 40]);
     expect(used.expectedText).toBe("Expected 60%");
     expect(left.expectedText).toBe("Expected 40%");
-    expect(used.deltaText).toBe("−30 pts");
+    expect(used.deltaText).toBe("−30%");
+    expect(used.paceText).toBe("30% under pace");
     expect(used.deficit).toBe(false);
     expect(used.projectionText).toBe("≈50% at reset");
     expect(left.projectionText).toBe("≈50% at reset");
@@ -75,7 +76,8 @@ describe("pacePresentation", () => {
 describe("poolPacePresentation", () => {
   it("projects from the pooled shares", () => {
     expect(poolPacePresentation({ shares: { used: 80, elapsed: 0.6 }, settings })).toEqual({
-      deltaText: "+20 pts",
+      deltaText: "+20%",
+      paceText: "20% over pace",
       deficit: true,
       projectionText: "On course to run out",
     });

@@ -38,11 +38,18 @@ export function windowBand(window: ServerProviderUsageWindow, settings: UsagePac
 const shown = (usedShare: number, display: StatusBarUsagePercentage) =>
   Math.round(display === "remaining" ? 100 - usedShare : usedShare);
 
+const paceText = (deltaPoints: number) =>
+  Math.abs(deltaPoints) < 0.1
+    ? "on pace"
+    : `${Math.round(Math.abs(deltaPoints) * 10) / 10}% ${deltaPoints > 0 ? "over" : "under"} pace`;
+
 export interface PaceView {
   /** Where the tick sits on a bar that fills with the displayed share, 0..100. */
   readonly tickPercent: number;
-  /** "+8 pts" or "−12 pts"; positive means spending faster than the window elapses. */
+  /** "+8%" or "−12%"; positive means spending faster than the window elapses. */
   readonly deltaText: string;
+  /** "8% over pace", "12% under pace" or "on pace". */
+  readonly paceText: string;
   readonly deficit: boolean;
   readonly expectedText: string;
   readonly projectionText: string | null;
@@ -65,6 +72,7 @@ export function pacePresentation(input: {
   return {
     tickPercent: display === "remaining" ? 100 - expected : expected,
     deltaText: formatPaceDelta(pace.deltaPoints),
+    paceText: paceText(pace.deltaPoints),
     deficit: pace.deltaPoints > 0,
     expectedText: `Expected ${shown(expected, display)}%`,
     projectionText:
@@ -84,12 +92,13 @@ export function pacePresentation(input: {
 export function poolPacePresentation(input: {
   readonly shares: { readonly used: number; readonly elapsed: number } | null;
   readonly settings: UsagePaceSettings;
-}): Pick<PaceView, "deltaText" | "deficit" | "projectionText"> | null {
+}): Pick<PaceView, "deltaText" | "paceText" | "deficit" | "projectionText"> | null {
   const { shares, settings } = input;
   if (!settings.pace || shares === null) return null;
   const atReset = settings.projection ? projectedAtReset(shares.used, shares.elapsed) : null;
   return {
     deltaText: formatPaceDelta(shares.used - shares.elapsed * 100),
+    paceText: paceText(shares.used - shares.elapsed * 100),
     deficit: shares.used > shares.elapsed * 100,
     projectionText:
       atReset === null

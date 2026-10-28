@@ -26,6 +26,7 @@ import { SidebarNotificationDot } from "./SidebarNotificationDot";
 import { SidebarProjectBoardButton } from "../kanban/SidebarKanbanButtons";
 import { SidebarProjectNewThreadButton } from "./SidebarProjectNewThreadButton";
 import { SidebarProjectHoverCard } from "./SidebarProjectHoverCard";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type { useSidebarProjectLayout } from "./useSidebarProjectLayout";
 import {
   SIDEBAR_SORTABLE_DRAG_DISABLED,
@@ -360,16 +361,23 @@ function SidebarProjectGroup(props: ProjectGroupProps) {
             className={cn("size-3.5 shrink-0 text-icon-muted", !expanded && "-rotate-90")}
           />
           <ProjectFavicon project={project} className="size-4 shrink-0" />
-          <span className="min-w-0 flex-1 truncate text-sm font-semibold text-sidebar-foreground">
-            {project.displayName}
-          </span>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <span className="min-w-0 flex-1 truncate text-sm font-semibold text-sidebar-foreground" />
+              }
+            >
+              {project.displayName}
+            </TooltipTrigger>
+            <TooltipPopup side="top">{project.displayName}</TooltipPopup>
+          </Tooltip>
           {expanded ? null : <ProjectNotificationDot threads={group.openThreads} />}
         </button>
-        <SidebarProjectHoverCard project={project} portCount={props.portCounts.get(scope) ?? 0} />
         <span className="flex items-center gap-1">
           <SidebarProjectBoardButton project={project} />
           <SidebarProjectNewThreadButton project={project} />
         </span>
+        <SidebarProjectHoverCard project={project} portCount={props.portCounts.get(scope) ?? 0} />
       </div>
       <SortableContext
         items={items.map(sidebarListItemId)}

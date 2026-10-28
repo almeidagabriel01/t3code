@@ -1330,10 +1330,10 @@ describe("usage pace", () => {
   });
 
   it("formats deltas and bands", () => {
-    expect(formatPaceDelta(8)).toBe("+8 pts");
-    expect(formatPaceDelta(-12.04)).toBe("−12 pts");
-    expect(formatPaceDelta(2.26)).toBe("+2.3 pts");
-    expect(formatPaceDelta(0.01)).toBe("<0.1 pts");
+    expect(formatPaceDelta(8)).toBe("+8%");
+    expect(formatPaceDelta(-12.04)).toBe("−12%");
+    expect(formatPaceDelta(2.26)).toBe("+2.3%");
+    expect(formatPaceDelta(0.01)).toBe("<0.1%");
     expect([10, 50, 69, 70].map((used) => usageBand(used, 50, 70))).toEqual([
       "ok",
       "watch",
