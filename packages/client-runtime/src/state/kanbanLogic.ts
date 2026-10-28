@@ -120,6 +120,7 @@ export interface GlobalFilters {
   readonly priority: KanbanPriority | null;
   readonly type: string | null;
   readonly hasAgent: boolean;
+  readonly hideSubtasks: boolean;
   readonly text: string;
 }
 
@@ -129,6 +130,7 @@ export const EMPTY_FILTERS: GlobalFilters = {
   priority: null,
   type: null,
   hasAgent: false,
+  hideSubtasks: false,
   text: "",
 };
 
@@ -154,6 +156,7 @@ export function filterGlobalCards(
     }
     if (filters.priority !== null && card.priority !== filters.priority) return false;
     if (filters.hasAgent && card.linkedThreadIds.length === 0) return false;
+    if (filters.hideSubtasks && card.parentCardId !== null) return false;
     const board = boardById.get(entry.boardId);
     if (filters.type !== null) {
       const name = board?.templates.find((template) => template.id === card.type)?.name;
@@ -316,6 +319,48 @@ export function kanbanCardContextRecord(
     priority: card.priority,
     labels: labelNames.slice(0, 50),
   };
+}
+
+export interface SubtaskTileInfo {
+  readonly subtasksDone?: number;
+  readonly subtasksTotal?: number;
+  readonly parentNumber?: number;
+  readonly parentTitle?: string;
+}
+
+/** One pass over the board; the lookup it returns is what a tile shows about its subtasks and parent. */
+export function subtaskTileInfo(
+  board: Pick<KanbanBoardState, "cards" | "columns">,
+): (card: KanbanCard) => SubtaskTileInfo {
+  const doneColumns = new Set(
+    board.columns.filter((column) => column.role === "done").map((column) => column.id),
+  );
+  const progress = new Map<KanbanCardId, { done: number; total: number }>();
+  for (const card of board.cards.values()) {
+    if (card.parentCardId === null) continue;
+    const entry = progress.get(card.parentCardId) ?? { done: 0, total: 0 };
+    entry.total += 1;
+    if (doneColumns.has(card.columnId)) entry.done += 1;
+    progress.set(card.parentCardId, entry);
+  }
+  return (card) => {
+    const own = progress.get(card.id);
+    const parent = card.parentCardId === null ? undefined : board.cards.get(card.parentCardId);
+    return {
+      ...(own === undefined ? {} : { subtasksDone: own.done, subtasksTotal: own.total }),
+      ...(parent === undefined ? {} : { parentNumber: parent.number, parentTitle: parent.title }),
+    };
+  };
+}
+
+/** The first message of an agent started on a card; a subtask also names its parent. */
+export function kanbanStartText(
+  reference: string,
+  parent: Pick<KanbanCard, "number" | "title"> | undefined,
+): string {
+  return parent === undefined
+    ? `Work on card ${reference}`
+    : `Work on card ${reference}, a subtask of #${parent.number} "${parent.title}"`;
 }
 
 /** `YYYY-MM-DD` of the local calendar day; empty for no due date. */

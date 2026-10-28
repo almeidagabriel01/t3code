@@ -1118,7 +1118,9 @@ const layerEnvironmentToolkit = toolkitRegistration(
 
 export const layerProjectRegistration = toolkitRegistration(ProjectToolkit, ProjectHandlers.layer);
 
-const layerKanbanToolkit = toolkitRegistration(KanbanToolkit, KanbanHandlers.layer);
+const layerKanbanToolkit = toolkitRegistration(KanbanToolkit, KanbanHandlers.layer).pipe(
+  Layer.provide(OrchestratorMcpService.layer),
+);
 
 export const layerAttachmentToolkit = toolkitRegistration(
   AttachmentToolkit,

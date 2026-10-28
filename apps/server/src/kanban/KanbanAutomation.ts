@@ -1,6 +1,7 @@
 import {
   CommandId,
   type KanbanActor,
+  type KanbanCardId,
   type OrchestrationV2DomainEvent,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -17,6 +18,7 @@ import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import { forkParked } from "../serverActivation.ts";
 import {
   decideKanbanAutomation,
+  decideSubtaskRollup,
   triggersForRun,
   triggersForThread,
   type TriggerWithKey,
@@ -36,6 +38,7 @@ export class KanbanAutomation extends Context.Service<
 
 type Work =
   | { readonly kind: "sweep" }
+  | { readonly kind: "subtask"; readonly parentId: KanbanCardId; readonly subtaskId: KanbanCardId }
   | { readonly kind: "threads"; readonly threadIds: ReadonlyArray<ThreadId> }
   | { readonly kind: "event"; readonly event: OrchestrationV2DomainEvent };
 
@@ -76,6 +79,25 @@ const make = Effect.gen(function* () {
         ? kanban.cardMoveChecked(input)
         : kanban.cardMove(input);
     }
+  });
+
+  // The id names the subtask whose move triggered it, so a replay of the same move is one move.
+  const rollUpSubtasks = Effect.fn("KanbanAutomation.rollUpSubtasks")(function* (
+    parentId: KanbanCardId,
+    subtaskId: KanbanCardId,
+  ) {
+    const family = yield* kanban.cardFamily(parentId);
+    if (family === null) return;
+    const decision = decideSubtaskRollup(family.card, family.subtasks, family.board);
+    if (decision.type === "skip") return;
+    yield* kanban.cardMove({
+      commandId: CommandId.make(
+        `server:kanban-auto:subtasks-done:${parentId}:${subtaskId}:${family.subtasks.map((s) => s.updatedAt).join(",")}`,
+      ),
+      actor: AUTOMATION,
+      cardId: parentId,
+      columnId: decision.columnId,
+    });
   });
 
   const unlinkThread = Effect.fn("KanbanAutomation.unlinkThread")(function* (threadId: ThreadId) {
@@ -133,7 +155,9 @@ const make = Effect.gen(function* () {
       ? handleEvent(work.event)
       : work.kind === "threads"
         ? syncThreads(work.threadIds)
-        : kanban.linkedThreadIds.pipe(Effect.flatMap(syncThreads))
+        : work.kind === "subtask"
+          ? rollUpSubtasks(work.parentId, work.subtaskId)
+          : kanban.linkedThreadIds.pipe(Effect.flatMap(syncThreads))
     ).pipe(Effect.catchCause(logSkipped("kanban automation skipped"))),
   );
 
@@ -153,11 +177,15 @@ const make = Effect.gen(function* () {
       yield* forkParked(
         Effect.gen(function* () {
           const linked = new Map<string, ReadonlySet<string>>();
+          const columnOf = new Map<string, string>();
           yield* worker.enqueue({ kind: "sweep" });
           yield* Stream.runForEach(kanban.subscribe(), (item) => {
             if (item.kind === "snapshot") {
               for (const board of item.boards) {
-                for (const card of board.cards) linked.set(card.id, new Set(card.linkedThreadIds));
+                for (const card of board.cards) {
+                  linked.set(card.id, new Set(card.linkedThreadIds));
+                  columnOf.set(card.id, card.columnId);
+                }
               }
               return Effect.void;
             }
@@ -168,10 +196,24 @@ const make = Effect.gen(function* () {
             if (item.kind !== "card.upserted") return Effect.void;
             const known = linked.get(item.card.id);
             linked.set(item.card.id, new Set(item.card.linkedThreadIds));
+            const movedFrom = columnOf.get(item.card.id);
+            columnOf.set(item.card.id, item.card.columnId);
             const added = item.card.linkedThreadIds.filter((id) => !known?.has(id));
-            return added.length > 0
-              ? worker.enqueue({ kind: "threads", threadIds: added })
-              : Effect.void;
+            return Effect.all(
+              [
+                added.length > 0
+                  ? worker.enqueue({ kind: "threads", threadIds: added })
+                  : Effect.void,
+                item.card.parentCardId !== null && movedFrom !== item.card.columnId
+                  ? worker.enqueue({
+                      kind: "subtask",
+                      parentId: item.card.parentCardId,
+                      subtaskId: item.card.id,
+                    })
+                  : Effect.void,
+              ],
+              { discard: true },
+            );
           });
         }).pipe(Effect.catchCause(logSkipped("kanban automation link stream failed"))),
       );

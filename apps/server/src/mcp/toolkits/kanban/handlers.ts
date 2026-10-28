@@ -16,8 +16,10 @@ import * as Stream from "effect/Stream";
 
 import * as KanbanService from "../../../kanban/KanbanService.ts";
 import * as Project from "../../../project/ProjectService.ts";
+import { startableSubtasks, subtaskProgress, subtasksOf } from "@t3tools/shared/kanbanSubtasks";
 import { assertNotLinked } from "../../linkOrigin.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
+import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
 import { loadCaller, newCommandId, resolveProjectId, unavailable } from "../../threadAccess.ts";
 import { applyChecklistOps } from "./checklistOps.ts";
 import { type KanbanParameters, KanbanToolkit } from "./tools.ts";
@@ -41,7 +43,21 @@ const eq = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLower
 const columnName = (board: KanbanBoardSnapshot, columnId: string) =>
   board.columns.find((column) => column.id === columnId)?.name ?? columnId;
 
-const compactCard = (board: KanbanBoardSnapshot, card: KanbanCard): Out => ({
+/** Agents start at most this many subagents per call; the rest are reported as pending. */
+const MAX_STARTED_SUBTASKS = 8;
+
+const compactCard = (board: KanbanBoardSnapshot, card: KanbanCard): Out => {
+  const subtasks = subtasksOf(board.cards, card.id);
+  const parent = board.cards.find((candidate) => candidate.id === card.parentCardId);
+  const { done, total } = subtaskProgress(subtasks, board.columns);
+  return {
+    ...baseCard(board, card),
+    ...(parent === undefined ? {} : { parent: `#${parent.number} ${parent.title}` }),
+    ...(total === 0 ? {} : { subtasks: `${done}/${total} done` }),
+  };
+};
+
+const baseCard = (board: KanbanBoardSnapshot, card: KanbanCard): Out => ({
   id: card.id,
   number: card.number,
   title: card.title,
@@ -52,8 +68,21 @@ const compactCard = (board: KanbanBoardSnapshot, card: KanbanCard): Out => ({
   threads: card.linkedThreadIds.length,
 });
 
+const subtaskBrief = (card: KanbanCard, parent: KanbanCard) =>
+  `Work on kanban card #${card.number} "${card.title}", a subtask of #${parent.number} "${parent.title}". This thread is linked to it: read it with t3_kanban read_card, tick checklist items as you finish, then move it to review with a summary.\n\n${card.description.slice(0, 4_000)}`.trim();
+
 const fullCard = (board: KanbanBoardSnapshot, card: KanbanCard): Out => ({
   ...compactCard(board, card),
+  ...(subtasksOf(board.cards, card.id).length === 0
+    ? {}
+    : {
+        subtaskList: subtasksOf(board.cards, card.id).map((subtask) => ({
+          number: subtask.number,
+          title: subtask.title,
+          column: columnName(board, subtask.columnId),
+          threads: subtask.linkedThreadIds.length,
+        })),
+      }),
   description: card.description,
   type: board.templates.find((template) => template.id === card.type)?.name ?? null,
   checklist: card.checklist.map(({ id, text, done }) => ({ id, text, done })),
@@ -134,9 +163,12 @@ const run = Effect.fn("mcp.kanban.run")(
       );
     });
 
-    const locateCard = Effect.fn("mcp.kanban.locateCard")(function* (ensure: string | false) {
+    const locateCard = Effect.fn("mcp.kanban.locateCard")(function* (
+      ensure: string | false,
+      cardRef: string | undefined = input.card,
+    ) {
       const boards = yield* snapshot();
-      const ref = input.card?.trim();
+      const ref = cardRef?.trim();
       if (ref === undefined || ref === "") {
         for (const board of boards) {
           const card = board.cards.find((candidate) =>
@@ -299,7 +331,9 @@ const run = Effect.fn("mcp.kanban.run")(
     switch (action) {
       case "create_card": {
         const title = yield* need(input.title, "title", action);
-        const board = yield* projectBoard(base);
+        const parent =
+          input.parent === undefined ? undefined : yield* locateCard(base, input.parent);
+        const board = parent?.board ?? (yield* projectBoard(base));
         const column = yield* resolveColumn(board, input.column ?? "todo").pipe(
           Effect.catch((error) =>
             input.column === undefined && board.columns[0] !== undefined
@@ -317,6 +351,7 @@ const run = Effect.fn("mcp.kanban.run")(
           columnId: KanbanColumnId.make(column.id),
           title,
           actor,
+          ...(parent === undefined ? {} : { parentCardId: parent.card.id }),
           ...(input.description === undefined ? {} : { description: input.description }),
           ...(input.type === undefined ? {} : { type: yield* templateId(board, input.type) }),
           ...(input.priority === undefined ? {} : { priority: input.priority }),
@@ -408,6 +443,47 @@ const run = Effect.fn("mcp.kanban.run")(
           actor,
         });
         return { commented: card.number } satisfies Out;
+      }
+      case "start_agents": {
+        const { board, card } = yield* locateCard(base);
+        const orchestrator = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const open = startableSubtasks(subtasksOf(board.cards, card.id), board.columns);
+        const started: Array<Json> = [];
+        for (const subtask of open.slice(0, MAX_STARTED_SUBTASKS)) {
+          const outcome = yield* orchestrator
+            .delegateTask(context.scope, {
+              task: subtaskBrief(subtask, card),
+              title: `#${subtask.number} ${subtask.title}`,
+              mode: "async",
+              ...(input.isolation === undefined ? {} : { isolation: input.isolation }),
+              clientRequestId: `${base}:${subtask.id}` as never,
+            })
+            .pipe(Effect.result);
+          if (outcome._tag === "Failure") {
+            started.push({ card: subtask.number, error: outcome.failure.message });
+            continue;
+          }
+          const childThreadId = outcome.success.childThreadId;
+          if (childThreadId !== null) {
+            yield* kanban.cardLinkThread({
+              commandId: commandId(`agent:${subtask.id}`),
+              cardId: subtask.id,
+              threadId: childThreadId,
+              actor,
+            });
+          }
+          started.push({
+            card: subtask.number,
+            threadId: childThreadId,
+            taskId: outcome.success.taskId,
+          });
+        }
+        return {
+          parent: card.number,
+          started,
+          notStarted: Math.max(0, open.length - MAX_STARTED_SUBTASKS),
+          ...(open.length === 0 ? { note: "No open subtask without a thread." } : {}),
+        } satisfies Out;
       }
       case "link_thread":
       case "unlink_thread": {

@@ -275,6 +275,10 @@
       "types": "./src/threadLinks.ts",
       "import": "./src/threadLinks.ts"
     },
+    "./kanbanSubtasks": {
+      "types": "./src/kanbanSubtasks.ts",
+      "import": "./src/kanbanSubtasks.ts"
+    },
     "./composerContextReferences": {
       "types": "./src/composerContextReferences.ts",
       "import": "./src/composerContextReferences.ts"

@@ -9,7 +9,11 @@ import type {
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 
 import { toastManager } from "../ui/toast";
-import { definitionOfDoneWarning, type CardMove } from "@t3tools/client-runtime/state/kanbanLogic";
+import {
+  definitionOfDoneWarning,
+  subtaskTileInfo,
+  type CardMove,
+} from "@t3tools/client-runtime/state/kanbanLogic";
 import { KanbanColumnHeader } from "./KanbanColumnHeader";
 import { KanbanColumns } from "./KanbanColumns";
 import type { KanbanProjectInfo } from "./KanbanProjectBadge";
@@ -40,6 +44,7 @@ export function KanbanBoardView(props: {
   const [startFor, setStartFor] = useState<KanbanCard | null>(null);
   const [linkFor, setLinkFor] = useState<KanbanCard | null>(null);
   const { visibleCardIds } = props;
+  const tileInfo = subtaskTileInfo(board);
   const columns = (() => {
     const all = selectKanbanColumns(board);
     return visibleCardIds === undefined
@@ -85,7 +90,10 @@ export function KanbanBoardView(props: {
         labels={board.labels}
         templates={board.templates}
         canEdit={props.canEdit}
-        tileFor={props.project ? () => ({ project: props.project }) : undefined}
+        tileFor={(card) => ({
+          ...(props.project ? { project: props.project } : {}),
+          ...tileInfo(card),
+        })}
         onOpenCard={props.onOpenCard}
         onStartAgent={setStartFor}
         onLinkThread={setLinkFor}
@@ -113,7 +121,7 @@ export function KanbanBoardView(props: {
         <KanbanStartAgentDialog
           environmentId={environmentId}
           board={board}
-          card={startFor}
+          cards={[startFor]}
           onClose={() => setStartFor(null)}
         />
       ) : null}

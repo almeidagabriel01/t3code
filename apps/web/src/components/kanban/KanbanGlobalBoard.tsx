@@ -20,6 +20,7 @@ import {
   groupCardsByProject,
   groupCardsByRole,
   KANBAN_ROLE_LABELS,
+  subtaskTileInfo,
   type GlobalFilters,
 } from "@t3tools/client-runtime/state/kanbanLogic";
 import { KanbanBoardView } from "./KanbanBoardView";
@@ -94,6 +95,9 @@ export function KanbanGlobalBoard(props: {
   const allCards = collectGlobalCards(boards);
   const cards = filterGlobalCards(allCards, boards, filters);
   const boardById = new Map(boards.map((entry) => [entry.board.id, entry]));
+  const tileInfoByBoard = new Map(
+    boards.map((entry) => [entry.board.id, subtaskTileInfo(entry.board)]),
+  );
 
   if (boards.length === 0) {
     return (
@@ -133,6 +137,7 @@ export function KanbanGlobalBoard(props: {
             tileFor={(card) => {
               const source = boardById.get(card.boardId);
               return {
+                ...(source ? tileInfoByBoard.get(source.board.id)?.(card) : undefined),
                 environmentId: source?.environmentId ?? boards[0]!.environmentId,
                 labels: source?.board.labels ?? [],
                 templates: source?.board.templates ?? [],

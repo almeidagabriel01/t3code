@@ -334,3 +334,27 @@ it.effect("sweeps when a thread is linked after its run already started", () =>
     }).pipe(Effect.provide(layer));
   }),
 );
+
+it.effect("moves the parent to review when its last subtask reaches done", () =>
+  Effect.gen(function* () {
+    const { activation, events, layer } = yield* makeFixture;
+    yield* Effect.gen(function* () {
+      const { kanban, reactor, boardId, column, settle } = yield* setup;
+      yield* reactor.start();
+      yield* Deferred.succeed(activation, undefined);
+      yield* settle(events);
+      const parent = (yield* kanban.cardCreate({ commandId: cmd(), boardId, title: "Parent" }))
+        .cardId!;
+      const [a, b] = [
+        (yield* kanban.cardCreate({ commandId: cmd(), boardId, title: "A", parentCardId: parent }))
+          .cardId!,
+        (yield* kanban.cardCreate({ commandId: cmd(), boardId, title: "B", parentCardId: parent }))
+          .cardId!,
+      ];
+      yield* kanban.cardMove({ commandId: cmd(), cardId: a, columnId: column("done").id });
+      yield* kanban.cardMove({ commandId: cmd(), cardId: b, columnId: column("done").id });
+      yield* awaitCard(kanban, parent, (card) => card.columnId === column("review").id);
+      yield* reactor.drain;
+    }).pipe(Effect.provide(layer));
+  }),
+);

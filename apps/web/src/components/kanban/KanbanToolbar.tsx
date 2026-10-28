@@ -4,7 +4,7 @@ import {
   EMPTY_FILTERS,
   KANBAN_PRIORITIES,
 } from "@t3tools/client-runtime/state/kanbanLogic";
-import { BotIcon, ChevronDownIcon, SearchIcon, XIcon } from "lucide-react";
+import { BotIcon, ChevronDownIcon, ListTreeIcon, SearchIcon, XIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { ProjectFavicon } from "../ProjectFavicon";
@@ -76,6 +76,7 @@ function activeFilterCount(filters: GlobalFilters): number {
     (filters.priority !== null ? 1 : 0) +
     (filters.type !== null ? 1 : 0) +
     (filters.hasAgent ? 1 : 0) +
+    (filters.hideSubtasks ? 1 : 0) +
     (filters.text.trim().length > 0 ? 1 : 0)
   );
 }
@@ -168,6 +169,15 @@ export function KanbanToolbar(props: {
           >
             <BotIcon />
             Has agent
+          </Button>
+          <Button
+            size="xs"
+            variant={filters.hideSubtasks ? "secondary" : "outline"}
+            aria-pressed={filters.hideSubtasks}
+            onClick={() => patch({ hideSubtasks: !filters.hideSubtasks })}
+          >
+            <ListTreeIcon />
+            Hide subtasks
           </Button>
           {active > 0 ? (
             <Button size="xs" variant="ghost-muted" onClick={() => props.onFilters(EMPTY_FILTERS)}>

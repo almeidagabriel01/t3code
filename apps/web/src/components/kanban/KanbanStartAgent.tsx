@@ -6,6 +6,7 @@ import {
   type EnvironmentId,
   type KanbanCard,
   type ModelSelection,
+  type ProjectId,
   type ProviderInstanceId,
   type RuntimeMode,
 } from "@t3tools/contracts";
@@ -52,17 +53,21 @@ import {
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { Switch } from "../ui/switch";
-import { kanbanCardContextRecord } from "@t3tools/client-runtime/state/kanbanLogic";
+import {
+  kanbanCardContextRecord,
+  kanbanStartText,
+} from "@t3tools/client-runtime/state/kanbanLogic";
 import { OptionSelect } from "./kanbanDialogs";
 import { reportKanbanError, useKanbanActions } from "./useKanban";
 
 function LaunchForm(props: {
   readonly environmentId: EnvironmentId;
   readonly board: KanbanBoardState;
-  readonly card: KanbanCard;
+  readonly cards: ReadonlyArray<KanbanCard>;
   readonly onClose: () => void;
 }) {
-  const { environmentId, board, card } = props;
+  const { environmentId, board, cards } = props;
+  const many = cards.length > 1;
   const navigate = useNavigate();
   const actions = useKanbanActions(environmentId);
   const startTurn = useOrchestrationCommand(threadEnvironment.startTurn, {
@@ -107,9 +112,7 @@ function LaunchForm(props: {
     resolveProjectSettings(settings, board.projectId, project ?? undefined).settings
       .defaultRuntimeMode;
 
-  const launch = async () => {
-    if (selection === null || project === null || launching) return;
-    setLaunching(true);
+  const launchOne = async (card: KanbanCard, selection: ModelSelection, projectId: ProjectId) => {
     const threadId = newThreadId();
     const record = kanbanCardContextRecord(card, board);
     const reference = formatComposerContextReference({
@@ -119,6 +122,7 @@ function LaunchForm(props: {
     });
     const interactionMode = DEFAULT_INTERACTION_MODE;
     const title = `#${card.number} ${card.title}`;
+    const parent = card.parentCardId === null ? undefined : board.cards.get(card.parentCardId);
     const result = await startTurn({
       environmentId,
       input: {
@@ -128,7 +132,7 @@ function LaunchForm(props: {
           role: "user",
           attachments: [],
           ...withMessageContext({
-            text: `Work on card ${reference}`,
+            text: kanbanStartText(reference, parent),
             context: { version: 1, records: [record] },
             supportsInlineMessageContext:
               appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment
@@ -142,7 +146,7 @@ function LaunchForm(props: {
         createdAt: new Date().toISOString(),
         bootstrap: {
           createThread: {
-            projectId: project.id,
+            projectId,
             title,
             modelSelection: selection,
             runtimeMode,
@@ -151,7 +155,7 @@ function LaunchForm(props: {
             worktreePath: null,
             createdAt: new Date().toISOString(),
           },
-          ...(useWorktree && baseBranch.trim().length > 0
+          ...(useWorktree && baseBranch.trim().length > 0 && project !== null
             ? {
                 prepareWorktree: {
                   projectCwd: project.workspaceRoot,
@@ -164,24 +168,38 @@ function LaunchForm(props: {
       },
     });
     if (result._tag === "Failure") {
-      setLaunching(false);
       reportKanbanError("Could not start the agent", squashAtomCommandFailure(result));
-      return;
+      return null;
     }
     await actions.linkCardThread({ cardId: card.id, threadId });
+    return threadId;
+  };
+
+  const launch = async () => {
+    if (selection === null || project === null || launching) return;
+    setLaunching(true);
+    let last: Awaited<ReturnType<typeof launchOne>> = null;
+    for (const card of cards) {
+      last = (await launchOne(card, selection, project.id)) ?? last;
+    }
     props.onClose();
-    void navigate({
-      to: "/$environmentId/$threadId",
-      params: scopeThreadRef(environmentId, threadId),
-    });
+    // One thread opens right away; a batch stays on the board where the agents show up.
+    if (last !== null && !many) {
+      void navigate({
+        to: "/$environmentId/$threadId",
+        params: scopeThreadRef(environmentId, last),
+      });
+    }
   };
 
   return (
     <>
       <DialogHeader>
-        <DialogTitle>Start with agent</DialogTitle>
+        <DialogTitle>{many ? "Start agents" : "Start with agent"}</DialogTitle>
         <DialogDescription>
-          Launch a thread for #{card.number} with the card as context, and link it to the card.
+          {many
+            ? `Launch ${cards.length} threads, one per subtask, each with its card as context and linked to it.`
+            : `Launch a thread for #${cards[0]?.number} with the card as context, and link it to the card.`}
         </DialogDescription>
       </DialogHeader>
       <DialogPanel>
@@ -271,7 +289,7 @@ function LaunchForm(props: {
 export function KanbanStartAgentDialog(props: {
   readonly environmentId: EnvironmentId;
   readonly board: KanbanBoardState;
-  readonly card: KanbanCard;
+  readonly cards: ReadonlyArray<KanbanCard>;
   readonly onClose: () => void;
 }) {
   return (

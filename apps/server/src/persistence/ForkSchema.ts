@@ -97,6 +97,12 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
       UNIQUE (board_id, number)
     )
   `;
+  // Added after the table first shipped, so older databases get it here.
+  const cardColumns = yield* sql<{ readonly name: string }>`PRAGMA table_info(kanban_cards)`;
+  if (!cardColumns.some((column) => column.name === "parent_card_id")) {
+    yield* sql`ALTER TABLE kanban_cards ADD COLUMN parent_card_id TEXT`;
+  }
+  yield* sql`CREATE INDEX IF NOT EXISTS kanban_cards_parent_idx ON kanban_cards(parent_card_id)`;
   // Board snapshot and column neighbour lookups: live cards per column in order.
   yield* sql`
     CREATE INDEX IF NOT EXISTS kanban_cards_column_order_idx
