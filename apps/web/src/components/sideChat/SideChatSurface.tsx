@@ -7,7 +7,8 @@ import {
 import type { ThreadId } from "@t3tools/contracts";
 import { lazy, Suspense, useEffect, useEffectEvent, useRef, useState } from "react";
 
-import { ExternalLinkIcon, RotateCcwIcon } from "lucide-react";
+import { MessageSquarePlusIcon, RotateCcwIcon } from "lucide-react";
+import { useRightPanelStore } from "~/rightPanelStore";
 import { newMessageId, newThreadId } from "~/lib/utils";
 import { useThreadShells } from "~/state/entities";
 import { threadEnvironment } from "~/state/threads";
@@ -67,11 +68,15 @@ export function SideChatSurface({ parent, onOpenThread }: SideChatSurfaceProps) 
     reportFailure: false,
   });
   const deleteThread = useOrchestrationCommand(threadEnvironment.delete, { reportFailure: false });
+  const updateMetadata = useOrchestrationCommand(threadEnvironment.updateMetadata, {
+    reportFailure: false,
+  });
 
   // A side chat this tab started whose shell has not arrived yet.
   const [startedThreadId, setStartedThreadId] = useState<ThreadId | null>(null);
   const [error, setError] = useState<string | null>(null);
   const startingRef = useRef(false);
+  const promotingRef = useRef(false);
 
   const createSideChat = async () => {
     const title = `Side chat: ${parent.title}`;
@@ -113,7 +118,7 @@ export function SideChatSurface({ parent, onOpenThread }: SideChatSurfaceProps) 
     setStartedThreadId(threadId);
   };
   const start = useEffectEvent(() => {
-    if (startingRef.current) return;
+    if (startingRef.current || promotingRef.current) return;
     startingRef.current = true;
     setError(null);
     void createSideChat().finally(() => {
@@ -160,6 +165,26 @@ export function SideChatSurface({ parent, onOpenThread }: SideChatSurfaceProps) 
     }
     setStartedThreadId(null);
     setError(null);
+  };
+
+  // Once unlinked the thread stops matching, so promotingRef keeps this surface from forking a
+  // fresh side chat before the tab closes.
+  const promote = async () => {
+    if (sideThreadId === null || promotingRef.current) return;
+    promotingRef.current = true;
+    const result = await updateMetadata({
+      environmentId,
+      input: { threadId: sideThreadId, detachSideChat: true },
+    });
+    if (result._tag === "Failure") {
+      promotingRef.current = false;
+      if (!isAtomCommandInterrupted(result)) {
+        setError(failureMessage(result, "Could not turn the side chat into a thread."));
+      }
+      return;
+    }
+    useRightPanelStore.getState().closeSurface(parentRef, "side-chat");
+    onOpenThread(sideThreadId);
   };
 
   const parentStatus = sideChatParentStatus(parent);
@@ -212,17 +237,15 @@ export function SideChatSurface({ parent, onOpenThread }: SideChatSurfaceProps) 
               <Button
                 variant="ghost"
                 size="icon-xs"
-                aria-label="Open side chat as a full thread"
+                aria-label="Turn side chat into a thread"
                 disabled={sideThread === null}
-                onClick={() => {
-                  if (sideThread !== null) onOpenThread(sideThread.id);
-                }}
+                onClick={() => void promote()}
               />
             }
           >
-            <ExternalLinkIcon />
+            <MessageSquarePlusIcon />
           </TooltipTrigger>
-          <TooltipPopup side="bottom">Open as a full thread</TooltipPopup>
+          <TooltipPopup side="bottom">Turn into thread</TooltipPopup>
         </Tooltip>
       </div>
       <div className="relative flex min-h-0 flex-1">

@@ -20,6 +20,7 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
 import * as Result from "effect/Result";
@@ -877,6 +878,55 @@ it.effect("keeps delegated child pull-request links independent of the parent", 
     const parentAfterChildLink = yield* projections.getThreadProjection(parentThreadId);
     assert.deepEqual(parentAfterChildLink.thread.linkedPullRequest, parentPullRequest);
     assert.deepEqual(parentAfterChildLink.thread.pullRequests, parent.thread.pullRequests);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("turns a side chat into a normal thread and rejects other threads", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const parentThreadId = ThreadId.make("thread:side-parent");
+    const sideThreadId = ThreadId.make("thread:side-chat");
+    const projectId = ProjectId.make("project:side");
+    const create = (threadId: ThreadId, sideChatOf?: ThreadId) =>
+      orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(`create-${threadId}`),
+        threadId,
+        projectId,
+        title: threadId,
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+        ...(sideChatOf === undefined ? {} : { sideChatOf }),
+      });
+    yield* create(parentThreadId);
+    yield* create(sideThreadId, parentThreadId);
+    const detach = (threadId: ThreadId, id: string) =>
+      orchestrator.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make(id),
+        threadId,
+        detachSideChat: true,
+      });
+
+    assert.isFalse(Exit.isSuccess(yield* Effect.exit(detach(parentThreadId, "detach-parent"))));
+
+    assert.equal(
+      (yield* projections.getThreadProjection(sideThreadId)).thread.sideChatOf,
+      parentThreadId,
+    );
+    yield* detach(sideThreadId, "detach-side");
+    const promoted = yield* projections.getThreadProjection(sideThreadId);
+    assert.isNull(promoted.thread.sideChatOf ?? null);
+    const shell = yield* projections.getThreadShell(sideThreadId);
+    assert.isUndefined(shell?.sideChatOf);
+
+    assert.isFalse(Exit.isSuccess(yield* Effect.exit(detach(sideThreadId, "detach-again"))));
   }).pipe(Effect.provide(layerTest)),
 );
 
