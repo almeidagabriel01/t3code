@@ -140,7 +140,9 @@ it.layer(NodeServices.layer)("build-npm-launcher", (it) => {
           cwd: root,
           env,
         });
-        assert.equal(first.stdout.trim(), `stub serve a b launcher=${launcher}`, first.stderr);
+        // The launcher reports its real path (macOS temp dirs are symlinked).
+        const realLauncher = yield* fs.realPath(launcher);
+        assert.equal(first.stdout.trim(), `stub serve a b launcher=${realLauncher}`, first.stderr);
         assert.equal(first.exitCode, 7);
         const versionDir = path.join(home, "runtime/versions", VERSION);
         assert.equal(

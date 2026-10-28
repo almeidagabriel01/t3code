@@ -1149,7 +1149,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         });
 
         assert.isFalse(
-          commands.some((command) => command.options.env?.ELECTRON_RUN_AS_NODE === "1"),
+          // Match the executable: ELECTRON_RUN_AS_NODE can also leak in from the host env.
+          commands.some((command) => command.command.endsWith(fixture.appExecutableName)),
         );
         assert.isTrue(
           commands.some(

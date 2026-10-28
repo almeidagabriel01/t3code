@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import type * as FileSystem from "effect/FileSystem";
 import type * as Path from "effect/Path";
 import * as EffectAcpErrors from "effect-acp/errors";
@@ -35,10 +36,16 @@ const resolveClientFilePath = Effect.fn("AntigravityClientFiles.resolveClientFil
             Effect.orElseSucceed(() => true),
           );
           if (entryExists) return yield* outside;
-          const parent = yield* input.fileSystem
-            .realPath(path.dirname(resolved))
-            .pipe(Effect.orElseSucceed(() => path.dirname(resolved)));
-          return path.join(parent, path.basename(resolved));
+          // Not-yet-created directories still resolve through their nearest existing ancestor.
+          let ancestor = path.dirname(resolved);
+          let rest = path.basename(resolved);
+          while (ancestor !== path.dirname(ancestor)) {
+            const real = yield* Effect.option(input.fileSystem.realPath(ancestor));
+            if (Option.isSome(real)) return path.join(real.value, rest);
+            rest = path.join(path.basename(ancestor), rest);
+            ancestor = path.dirname(ancestor);
+          }
+          return resolved;
         }),
       ),
     );

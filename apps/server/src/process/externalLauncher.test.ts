@@ -448,7 +448,11 @@ it.effect("keeps the macOS VS Code Insiders bundle out of stable VS Code", () =>
       ),
     );
 
-    assert.notInclude(editors, "vscode");
+    // The scan also reads the real /Applications, so a stable VS Code on the host is legitimate.
+    const hostHasStable = yield* fs.exists(
+      "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code",
+    );
+    if (!hostHasStable) assert.notInclude(editors, "vscode");
     assert.include(editors, "vscode-insiders");
     assert.equal(spawned?.command, path.join(bin, "code-insiders"));
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
