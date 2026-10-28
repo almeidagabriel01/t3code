@@ -323,6 +323,7 @@ export const make = Effect.gen(function* () {
       yield* logWindowWarning("saved main window bounds could not be restored; using defaults");
     }
     if (yield* Ref.get(desktopState.quitting)) return Option.none();
+    const materialOptions = yield* material.windowOptions;
     const window = yield* electronWindow.create({
       ...initialBounds,
       minWidth: 840,
@@ -330,6 +331,7 @@ export const make = Effect.gen(function* () {
       show: false,
       autoHideMenuBar: true,
       ...(environment.platform === "darwin" ? { disableAutoHideCursor: true } : {}),
+      ...materialOptions,
       backgroundColor: getInitialWindowBackgroundColor(shouldUseDarkColors),
       ...iconOption,
       title: environment.displayName,
@@ -351,7 +353,9 @@ export const make = Effect.gen(function* () {
       return Option.none();
     }
 
-    yield* material.attach(window).pipe(Effect.provideService(Scope.Scope, materialScope));
+    yield* material
+      .attach(window, materialOptions)
+      .pipe(Effect.provideService(Scope.Scope, materialScope));
     yield* rendererHistory.register(window.webContents, { surface: "main" });
     if (environment.platform === "darwin") {
       window.setAutoHideCursor(false);
