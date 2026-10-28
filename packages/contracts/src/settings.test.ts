@@ -397,3 +397,24 @@ describe("server model preferences", () => {
     expect(decodeServerSettingsPatch(input)).toEqual(input);
   });
 });
+
+describe("destination rail client settings", () => {
+  it("decodes settings saved before the rail was customizable", () => {
+    expect(decodeClientSettings({}).destinationRail).toEqual({ order: [], shown: [], hidden: [] });
+  });
+
+  it("still decodes settings saved with the removed Usage button toggle", () => {
+    expect(decodeClientSettings({ sidebarShowUsageButton: false }).destinationRail).toEqual({
+      order: [],
+      shown: [],
+      hidden: [],
+    });
+  });
+
+  it("keeps ids this version does not know", () => {
+    const saved = { order: ["future-item", "running"], shown: ["future-item"], hidden: ["usage"] };
+    const settings = decodeClientSettings({ destinationRail: saved });
+    expect(settings.destinationRail).toEqual(saved);
+    expect(encodeClientSettings(settings).destinationRail).toEqual(saved);
+  });
+});

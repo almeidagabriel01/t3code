@@ -52,6 +52,7 @@ import {
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import {
   ArrowLeftIcon,
+  ActivityIcon,
   ChartNoAxesColumnIcon,
   PanelBottomIcon,
   CheckIcon,
@@ -1511,6 +1512,17 @@ function OpenCommandPaletteDialog(props: {
       },
     });
   }
+
+  actionItems.push({
+    kind: "action",
+    value: "action:running",
+    searchTerms: ["running", "working", "busy", "agents", "activity", "needs you", "waiting"],
+    title: "Open running",
+    icon: <ActivityIcon className={ITEM_ICON_CLASS} />,
+    run: async () => {
+      await navigate({ to: "/running" });
+    },
+  });
 
   actionItems.push({
     kind: "action",

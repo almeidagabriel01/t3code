@@ -19,6 +19,7 @@ import { Route as ChatIndexRouteImport } from './routes/_chat.index'
 import { Route as ProjectsProjectKeyRouteImport } from './routes/projects.$projectKey'
 import { Route as ChatUsageRouteImport } from './routes/_chat.usage'
 import { Route as ChatSettingsRouteImport } from './routes/_chat.settings'
+import { Route as ChatRunningRouteImport } from './routes/_chat.running'
 import { Route as ChatPullRequestsRouteImport } from './routes/_chat.pull-requests'
 import { Route as ChatNewRouteImport } from './routes/_chat.new'
 import { Route as ChatKanbanRouteImport } from './routes/_chat.kanban'
@@ -100,6 +101,11 @@ const ChatUsageRoute = ChatUsageRouteImport.update({
 const ChatSettingsRoute = ChatSettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
+  getParentRoute: () => ChatRoute,
+} as any)
+const ChatRunningRoute = ChatRunningRouteImport.update({
+  id: '/running',
+  path: '/running',
   getParentRoute: () => ChatRoute,
 } as any)
 const ChatPullRequestsRoute = ChatPullRequestsRouteImport.update({
@@ -283,6 +289,7 @@ export interface FileRoutesByFullPath {
   '/kanban': typeof ChatKanbanRoute
   '/new': typeof ChatNewRoute
   '/pull-requests': typeof ChatPullRequestsRoute
+  '/running': typeof ChatRunningRoute
   '/settings': typeof ChatSettingsRouteWithChildren
   '/usage': typeof ChatUsageRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
@@ -326,6 +333,7 @@ export interface FileRoutesByTo {
   '/kanban': typeof ChatKanbanRoute
   '/new': typeof ChatNewRoute
   '/pull-requests': typeof ChatPullRequestsRoute
+  '/running': typeof ChatRunningRoute
   '/settings': typeof ChatSettingsRouteWithChildren
   '/usage': typeof ChatUsageRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
@@ -372,6 +380,7 @@ export interface FileRoutesById {
   '/_chat/kanban': typeof ChatKanbanRoute
   '/_chat/new': typeof ChatNewRoute
   '/_chat/pull-requests': typeof ChatPullRequestsRoute
+  '/_chat/running': typeof ChatRunningRoute
   '/_chat/settings': typeof ChatSettingsRouteWithChildren
   '/_chat/usage': typeof ChatUsageRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
@@ -419,6 +428,7 @@ export interface FileRouteTypes {
     | '/kanban'
     | '/new'
     | '/pull-requests'
+    | '/running'
     | '/settings'
     | '/usage'
     | '/projects/$projectKey'
@@ -462,6 +472,7 @@ export interface FileRouteTypes {
     | '/kanban'
     | '/new'
     | '/pull-requests'
+    | '/running'
     | '/settings'
     | '/usage'
     | '/projects/$projectKey'
@@ -507,6 +518,7 @@ export interface FileRouteTypes {
     | '/_chat/kanban'
     | '/_chat/new'
     | '/_chat/pull-requests'
+    | '/_chat/running'
     | '/_chat/settings'
     | '/_chat/usage'
     | '/projects/$projectKey'
@@ -623,6 +635,13 @@ declare module '@tanstack/react-router' {
       path: '/settings'
       fullPath: '/settings'
       preLoaderRoute: typeof ChatSettingsRouteImport
+      parentRoute: typeof ChatRoute
+    }
+    '/_chat/running': {
+      id: '/_chat/running'
+      path: '/running'
+      fullPath: '/running'
+      preLoaderRoute: typeof ChatRunningRouteImport
       parentRoute: typeof ChatRoute
     }
     '/_chat/pull-requests': {
@@ -929,6 +948,7 @@ interface ChatRouteChildren {
   ChatKanbanRoute: typeof ChatKanbanRoute
   ChatNewRoute: typeof ChatNewRoute
   ChatPullRequestsRoute: typeof ChatPullRequestsRoute
+  ChatRunningRoute: typeof ChatRunningRoute
   ChatSettingsRoute: typeof ChatSettingsRouteWithChildren
   ChatUsageRoute: typeof ChatUsageRoute
   ChatIndexRoute: typeof ChatIndexRoute
@@ -940,6 +960,7 @@ const ChatRouteChildren: ChatRouteChildren = {
   ChatKanbanRoute: ChatKanbanRoute,
   ChatNewRoute: ChatNewRoute,
   ChatPullRequestsRoute: ChatPullRequestsRoute,
+  ChatRunningRoute: ChatRunningRoute,
   ChatSettingsRoute: ChatSettingsRouteWithChildren,
   ChatUsageRoute: ChatUsageRoute,
   ChatIndexRoute: ChatIndexRoute,

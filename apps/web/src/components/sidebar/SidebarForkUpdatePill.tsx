@@ -8,39 +8,66 @@ import { useForkUpdatesEnvironmentId, useForkUpdateStatus } from "../forkUpdates
 import { SidebarMenuItem } from "../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type { EnvironmentId } from "@t3tools/contracts";
+import { cn } from "../../lib/utils";
 
-function ForkUpdatePill({ environmentId }: { readonly environmentId: EnvironmentId }) {
+type ForkUpdatePlacement = "footer" | "rail";
+
+function ForkUpdatePill({
+  environmentId,
+  placement,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly placement: ForkUpdatePlacement;
+}) {
+  const inRail = placement === "rail";
   const dismissedTag = useClientSettings((settings) => settings.forkUpdatesDismissedTag);
   const { status } = useForkUpdateStatus(environmentId);
   if (status === null || !shouldNotifyForkUpdate(status, dismissedTag)) return null;
   const tag = status.upstreamTag!;
   const label = `T3 Code ${tag} is out upstream (${status.channel}). Update your fork.`;
 
-  return (
-    <SidebarMenuItem className="ml-auto flex shrink-0 items-center">
+  const control = (
+    <>
       <Tooltip>
         <TooltipTrigger
           render={
             <Link
               to="/settings/fork-updates"
               aria-label={label}
-              className="inline-flex size-8 items-center justify-center rounded-full bg-sidebar-control-surface text-sidebar-foreground outline-hidden ring-ring transition-colors hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-inset"
+              className={cn(
+                "inline-flex items-center justify-center bg-sidebar-control-surface text-sidebar-foreground outline-hidden ring-ring transition-colors focus-visible:ring-2 focus-visible:ring-inset",
+                inRail
+                  ? "size-10 rounded-lg hover:bg-accent"
+                  : "size-8 rounded-full hover:bg-sidebar-row-hover",
+              )}
             >
-              <GitForkIcon className="size-4" />
+              <GitForkIcon className={inRail ? "size-5" : "size-4"} />
             </Link>
           }
         />
-        <TooltipPopup side="top">{label}</TooltipPopup>
+        <TooltipPopup side={inRail ? "right" : "top"}>{label}</TooltipPopup>
       </Tooltip>
       <button
         type="button"
         aria-label={`Dismiss ${tag}`}
-        className="inline-flex size-5 cursor-pointer items-center justify-center rounded-full text-(--sidebar-icon-color) hover:text-sidebar-foreground"
+        className={cn(
+          "inline-flex cursor-pointer items-center justify-center rounded-full text-(--sidebar-icon-color) hover:text-sidebar-foreground",
+          // The rail has no room beside the button, so dismiss sits on its corner while hovered.
+          inRail
+            ? "absolute -top-1 -right-1 size-4 bg-background opacity-0 group-hover/fork-update:opacity-100 focus-visible:opacity-100"
+            : "size-5",
+        )}
         onClick={() => void updateClientSettings({ forkUpdatesDismissedTag: tag })}
       >
         <XIcon className="size-3" />
       </button>
-    </SidebarMenuItem>
+    </>
+  );
+
+  return inRail ? (
+    <div className="group/fork-update relative flex shrink-0">{control}</div>
+  ) : (
+    <SidebarMenuItem className="ml-auto flex shrink-0 items-center">{control}</SidebarMenuItem>
   );
 }
 
@@ -69,8 +96,14 @@ function useAfterStartupDelay() {
 }
 
 /** Hidden unless the local server holds a fork checkout that is behind a newer upstream release. */
-export function SidebarForkUpdatePill() {
+export function SidebarForkUpdatePill({
+  placement = "footer",
+}: {
+  readonly placement?: ForkUpdatePlacement;
+}) {
   const environmentId = useForkUpdatesEnvironmentId();
   const ready = useAfterStartupDelay();
-  return environmentId === null || !ready ? null : <ForkUpdatePill environmentId={environmentId} />;
+  return environmentId === null || !ready ? null : (
+    <ForkUpdatePill environmentId={environmentId} placement={placement} />
+  );
 }

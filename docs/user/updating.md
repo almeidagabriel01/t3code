@@ -1,20 +1,21 @@
 # Updating T3 Code
 
 The app you use and the server running your agents can be on different machines.
-When a server is behind your web or desktop app, the update button at the bottom
-of the sidebar and **Settings → Environments** offer to update it.
+When a server is behind your web or desktop app, the update button and
+**Settings → Environments** offer to update it.
 
 ## Update everything at once
 
-The update button at the bottom of the sidebar updates every connected machine
-in one step. It updates outdated providers, then servers that are behind, then
+The update button sits above Settings in the icon rail on the left edge of the
+window; in narrow windows it is at the bottom of the sidebar. It updates every
+connected machine in one step. It updates outdated providers, then servers that are behind, then
 the desktop app you are using. Servers move to the
 version your desktop app is installing, or to your web app's version. A
 background service stays on its current release channel. A remote desktop app
 installs the latest release from its own channel. Hover the button to see what
 it will update.
 
-While it runs, the button widens to show progress. It names a machine that is
+While it runs, a progress pill at the bottom of the sidebar shows how it is going. It names a machine that is
 taking longer than usual, and offers **Retry** for a server that failed. Click
 it to see every machine. The desktop app restarts once each server has started
 its own restart, after a short countdown. Choose **Later** to keep working and

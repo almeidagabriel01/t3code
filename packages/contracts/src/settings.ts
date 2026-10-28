@@ -336,6 +336,18 @@ export type ModelPreferences = {
   readonly providerModelPreferences: typeof ProviderModelPreferences.Type;
 };
 
+/**
+ * Which destination-rail items a person showed, hid, or reordered. Ids are plain strings,
+ * not a literal union, so a client never fails to decode ids added by another app version.
+ * An id in neither list follows the client's context default.
+ */
+export const DestinationRailPreferences = Schema.Struct({
+  order: Schema.Array(TrimmedNonEmptyString).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  shown: Schema.Array(TrimmedNonEmptyString).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  hidden: Schema.Array(TrimmedNonEmptyString).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+});
+export type DestinationRailPreferences = typeof DestinationRailPreferences.Type;
+
 export const ClientSettingsSchema = Schema.Struct({
   notificationMode: NotificationMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("off" as const)),
@@ -468,7 +480,7 @@ export const ClientSettingsSchema = Schema.Struct({
   legacySidebarEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   sidebarWorkingShelfEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   sidebarShowSubagents: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
-  sidebarShowUsageButton: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  destinationRail: DestinationRailPreferences.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   sidebarAgentActivityDisplayMode: SidebarAgentActivityDisplayMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("compact")),
   ),
@@ -1768,7 +1780,7 @@ export const ClientSettingsPatch = Schema.Struct({
   legacySidebarEnabled: Schema.optionalKey(Schema.Boolean),
   sidebarWorkingShelfEnabled: Schema.optionalKey(Schema.Boolean),
   sidebarShowSubagents: Schema.optionalKey(Schema.Boolean),
-  sidebarShowUsageButton: Schema.optionalKey(Schema.Boolean),
+  destinationRail: Schema.optionalKey(DestinationRailPreferences),
   sidebarAgentActivityDisplayMode: Schema.optionalKey(SidebarAgentActivityDisplayMode),
   projectHoverCardProperties: Schema.optionalKey(Schema.Array(ProjectHoverCardProperty)),
   forkUpdatesFolder: Schema.optionalKey(Schema.String),
