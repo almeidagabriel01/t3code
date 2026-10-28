@@ -50,6 +50,8 @@ import {
   useUpdateScopedSettings,
 } from "./useScopedSettings";
 import { useScopedModelDisabledReason } from "./useScopedModelAvailability";
+import { SidebarDisplaySettingsRows } from "./SidebarDisplaySettings";
+import { StatusBarSettingsSection } from "./StatusBarSettings";
 import { useOptionalSettingsScope, useSettingsScope } from "./SettingsScopeContext";
 import { scopedIdleCompaction } from "./scopedSettings";
 import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
@@ -436,6 +438,21 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.sidebarWorkingShelfEnabled !== DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled
       ? ["Working section"]
       : []),
+    ...(settings.sidebarShowSubagents !== DEFAULT_UNIFIED_SETTINGS.sidebarShowSubagents ||
+    settings.sidebarAgentActivityDisplayMode !==
+      DEFAULT_UNIFIED_SETTINGS.sidebarAgentActivityDisplayMode ||
+    settings.projectHoverCardProperties.join() !==
+      DEFAULT_UNIFIED_SETTINGS.projectHoverCardProperties.join()
+      ? ["Sidebar display"]
+      : []),
+    ...(settings.statusBarVisible !== DEFAULT_UNIFIED_SETTINGS.statusBarVisible ||
+    settings.statusBarHiddenItems.length > 0 ||
+    settings.statusBarUsageMode !== DEFAULT_UNIFIED_SETTINGS.statusBarUsageMode ||
+    settings.statusBarUsagePercentage !== DEFAULT_UNIFIED_SETTINGS.statusBarUsagePercentage ||
+    settings.statusBarPortsCount !== DEFAULT_UNIFIED_SETTINGS.statusBarPortsCount ||
+    settings.statusBarResourceSort !== DEFAULT_UNIFIED_SETTINGS.statusBarResourceSort
+      ? ["Status bar"]
+      : []),
     ...(settings.sidebarAutoSettleAfterDays !== DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays
       ? ["Auto-settle inactive threads"]
       : []),
@@ -603,6 +620,15 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarProjectSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder,
       sidebarWorkingShelfEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled,
+      sidebarShowSubagents: DEFAULT_UNIFIED_SETTINGS.sidebarShowSubagents,
+      sidebarAgentActivityDisplayMode: DEFAULT_UNIFIED_SETTINGS.sidebarAgentActivityDisplayMode,
+      projectHoverCardProperties: DEFAULT_UNIFIED_SETTINGS.projectHoverCardProperties,
+      statusBarVisible: DEFAULT_UNIFIED_SETTINGS.statusBarVisible,
+      statusBarHiddenItems: DEFAULT_UNIFIED_SETTINGS.statusBarHiddenItems,
+      statusBarUsageMode: DEFAULT_UNIFIED_SETTINGS.statusBarUsageMode,
+      statusBarUsagePercentage: DEFAULT_UNIFIED_SETTINGS.statusBarUsagePercentage,
+      statusBarPortsCount: DEFAULT_UNIFIED_SETTINGS.statusBarPortsCount,
+      statusBarResourceSort: DEFAULT_UNIFIED_SETTINGS.statusBarResourceSort,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleKeepPullRequests: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleKeepPullRequests,
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
@@ -870,7 +896,10 @@ export function GeneralSettingsPanel() {
             />
           }
         />
+        <SidebarDisplaySettingsRows settings={settings} updateSettings={updateSettings} />
       </SettingsSection>
+
+      <StatusBarSettingsSection settings={settings} updateSettings={updateSettings} />
 
       <SettingsSection id="confirmations" title="Confirmations">
         <SettingsRow

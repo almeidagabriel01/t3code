@@ -1,7 +1,8 @@
-import { useAtomValue } from "@effect/atom-react";
 import { refreshUsageLimits } from "@t3tools/client-runtime/state/usage";
 import type {
   EnvironmentId,
+  StatusBarUsageMode,
+  StatusBarUsagePercentage,
   ServerProviderUsageLimits,
   ServerProviderUsageWindow,
 } from "@t3tools/contracts";
@@ -11,7 +12,7 @@ import { RefreshCwIcon } from "lucide-react";
 import { Fragment, useEffect } from "react";
 
 import { cn } from "../../lib/utils";
-import { environmentPresentations } from "../../state/presentation";
+import { useClientSettings } from "../../hooks/useSettings";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
@@ -23,7 +24,9 @@ import {
   usageTone,
   type UsageTone,
 } from "./statusBar.logic";
-import { collectUsageItems, type UsageItem } from "./usageItems.logic";
+import { displayedPercent, isStatusBarItemShown } from "./statusBarItems.logic";
+import type { UsageItem } from "./usageItems.logic";
+import { useUsageItems } from "./useUsageItems";
 import { useMinuteNow } from "./useMinuteNow";
 
 const AUTO_REFRESH_MS = 5 * 60_000;
@@ -73,19 +76,30 @@ function MiniBar({ usedPercent }: { readonly usedPercent: number }) {
   );
 }
 
-const windowPercent = (window: ServerProviderUsageWindow) => Math.round(window.usedPercent);
-
-function ChipSummary({ limits }: { readonly limits: ServerProviderUsageLimits }) {
+function ChipSummary({
+  limits,
+  mode,
+  display,
+}: {
+  readonly limits: ServerProviderUsageLimits;
+  readonly mode: StatusBarUsageMode;
+  readonly display: StatusBarUsagePercentage;
+}) {
   const now = useMinuteNow();
+  const tightest = limits.windows.reduce((a, b) => (b.usedPercent > a.usedPercent ? b : a));
   const { primary, extra } = selectBarWindows(limits.windows);
-  const shown = [
-    ...primary.map((window) => ({ window, countdown: true })),
-    ...extra.map((window) => ({ window, countdown: false })),
-  ];
-  const tightest = Math.max(...limits.windows.map((window) => window.usedPercent));
+  const shown =
+    mode === "compact"
+      ? [{ window: tightest, countdown: true }]
+      : [
+          ...primary.map((window) => ({ window, countdown: true })),
+          ...extra.map((window) => ({ window, countdown: false })),
+        ];
   return (
     <>
-      <MiniBar usedPercent={tightest} />
+      {mode === "verbose" ? (
+        <MiniBar usedPercent={displayedPercent(tightest.usedPercent, display)} />
+      ) : null}
       <span className="flex items-center gap-1 tabular-nums">
         {shown.map(({ window, countdown }, position) => {
           const resets = countdown ? formatCompactCountdown(window.resetsAt, now) : null;
@@ -94,7 +108,7 @@ function ChipSummary({ limits }: { readonly limits: ServerProviderUsageLimits })
               {position > 0 ? <span className="text-muted-foreground/50">·</span> : null}
               <span className={cn("whitespace-nowrap", TONE_TEXT[usageTone(window.usedPercent)])}>
                 {countdown ? "" : `${window.label} `}
-                {windowPercent(window)}%{resets ? ` ${resets}` : ""}
+                {displayedPercent(window.usedPercent, display)}%{resets ? ` ${resets}` : ""}
               </span>
             </Fragment>
           );
@@ -121,7 +135,15 @@ function ItemIcon({ item }: { readonly item: UsageItem }) {
   );
 }
 
-function UsageChip({ item }: { readonly item: UsageItem }) {
+function UsageChip({
+  item,
+  mode,
+  display,
+}: {
+  readonly item: UsageItem;
+  readonly mode: StatusBarUsageMode;
+  readonly display: StatusBarUsagePercentage;
+}) {
   const usable = item.limits !== undefined && limitsNotice(item.limits) === null;
   return (
     <span className="inline-flex items-center gap-1.5">
@@ -130,7 +152,7 @@ function UsageChip({ item }: { readonly item: UsageItem }) {
         <span className="max-w-20 truncate text-muted-foreground">{item.environmentLabel}</span>
       )}
       {usable && item.limits !== undefined ? (
-        <ChipSummary limits={item.limits} />
+        <ChipSummary limits={item.limits} mode={mode} display={display} />
       ) : (
         <span className="text-muted-foreground/50">--</span>
       )}
@@ -141,9 +163,11 @@ function UsageChip({ item }: { readonly item: UsageItem }) {
 function RosterMetric({
   window,
   now,
+  display,
 }: {
   readonly window: ServerProviderUsageWindow;
   readonly now: number;
+  readonly display: StatusBarUsagePercentage;
 }) {
   const resets = formatCompactCountdown(window.resetsAt, now);
   return (
@@ -152,11 +176,11 @@ function RosterMetric({
       <span className="h-[5px] w-7 overflow-hidden rounded-full bg-muted">
         <span
           className="block h-full rounded-full bg-muted-foreground/60"
-          style={{ width: `${Math.min(100, Math.max(0, window.usedPercent))}%` }}
+          style={{ width: `${displayedPercent(window.usedPercent, display)}%` }}
         />
       </span>
       <span className={cn("text-2xs tabular-nums", TONE_TEXT[usageTone(window.usedPercent)])}>
-        {windowPercent(window)}%
+        {displayedPercent(window.usedPercent, display)}%
       </span>
       {resets === null ? null : (
         <span className="text-3xs tabular-nums text-muted-foreground">{resets}</span>
@@ -165,7 +189,13 @@ function RosterMetric({
   );
 }
 
-function RosterRow({ item }: { readonly item: UsageItem }) {
+function RosterRow({
+  item,
+  display,
+}: {
+  readonly item: UsageItem;
+  readonly display: StatusBarUsagePercentage;
+}) {
   const now = useMinuteNow();
   const notice =
     item.limits === undefined
@@ -190,7 +220,7 @@ function RosterRow({ item }: { readonly item: UsageItem }) {
       {windows.length > 0 ? (
         <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 pl-7.5">
           {windows.map((window) => (
-            <RosterMetric key={window.id} window={window} now={now} />
+            <RosterMetric key={window.id} window={window} now={now} display={display} />
           ))}
         </div>
       ) : null}
@@ -202,12 +232,12 @@ function RosterRow({ item }: { readonly item: UsageItem }) {
 }
 
 export function UsageSegments() {
-  const all = useAtomValue(environmentPresentations.presentationsWithProvidersAtom);
-  const connected = new Map(
-    [...all].filter(([, presentation]) => presentation.connection.phase === "connected"),
-  );
-  const refresh = useUsageRefresh([...connected.keys()]);
-  const items = collectUsageItems(connected);
+  const { environmentIds, items: allItems } = useUsageItems();
+  const hidden = useClientSettings((settings) => settings.statusBarHiddenItems);
+  const mode = useClientSettings((settings) => settings.statusBarUsageMode);
+  const display = useClientSettings((settings) => settings.statusBarUsagePercentage);
+  const refresh = useUsageRefresh(environmentIds);
+  const items = allItems.filter((item) => isStatusBarItemShown(hidden, item.entry.instanceId));
   if (items.length === 0) return null;
   return (
     <div className="flex min-w-0 items-center gap-1.5">
@@ -217,7 +247,7 @@ export function UsageSegments() {
         >
           <span className="flex items-center gap-3">
             {items.map((item) => (
-              <UsageChip key={item.key} item={item} />
+              <UsageChip key={item.key} item={item} mode={mode} display={display} />
             ))}
           </span>
         </PopoverTrigger>
@@ -230,7 +260,7 @@ export function UsageSegments() {
               </Link>
             </div>
             {items.map((item) => (
-              <RosterRow key={item.key} item={item} />
+              <RosterRow key={item.key} item={item} display={display} />
             ))}
           </div>
         </PopoverPopup>

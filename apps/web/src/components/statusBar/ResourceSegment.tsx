@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 
+import { useClientSettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { useProjects, useThreadShells } from "../../state/entities";
 import { usePrimaryEnvironmentId } from "../../state/environments";
@@ -38,6 +39,7 @@ import {
   type ResourceUsage,
 } from "./resourceUsage.logic";
 import { formatMemory, sparklinePoints } from "./statusBar.logic";
+import { isStatusBarItemShown, STATUS_BAR_RESOURCE_ITEM } from "./statusBarItems.logic";
 import { useCloseTerminal } from "./useKillTarget";
 import {
   useEnvironmentResources,
@@ -436,7 +438,8 @@ function ResourceManager({
 }: {
   readonly resources: ReadonlyArray<EnvironmentResources>;
 }) {
-  const [sort, setSort] = useState<SortOption>("memory");
+  const defaultSort = useClientSettings((settings) => settings.statusBarResourceSort);
+  const [sort, setSort] = useState<SortOption>(defaultSort);
   const projects = useProjects();
   const threads = useThreadShells();
   const snapshots = useEnvironmentSnapshots(resources.map(({ environmentId }) => environmentId));
@@ -512,7 +515,7 @@ function PrimaryMemory() {
   );
 }
 
-export function ResourceSegment() {
+function ResourceSegmentBody() {
   const [open, setOpen] = useState(false);
   const resources = useEnvironmentResources();
   const terminalCount = resources.reduce(
@@ -541,4 +544,9 @@ export function ResourceSegment() {
       </PopoverPopup>
     </Popover>
   );
+}
+
+export function ResourceSegment() {
+  const hidden = useClientSettings((settings) => settings.statusBarHiddenItems);
+  return isStatusBarItemShown(hidden, STATUS_BAR_RESOURCE_ITEM) ? <ResourceSegmentBody /> : null;
 }

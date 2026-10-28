@@ -53,6 +53,7 @@ import { useLocation, useNavigate } from "@tanstack/react-router";
 import {
   ArrowLeftIcon,
   ChartNoAxesColumnIcon,
+  PanelBottomIcon,
   CheckIcon,
   ChevronRightIcon,
   CornerLeftUpIcon,
@@ -93,7 +94,7 @@ import {
   copyPromptLink,
   promptLinkRepositoryOf,
 } from "./promptLinks/copyPromptLink";
-import { useClientSettings } from "../hooks/useSettings";
+import { getClientSettings, updateClientSettings, useClientSettings } from "../hooks/useSettings";
 import { useStableCallback } from "../hooks/useStableCallback";
 import { readLocalApi } from "../localApi";
 import { desktopLocalBackendId } from "../connection/desktopLocal";
@@ -390,6 +391,7 @@ function OpenCommandPaletteDialog(props: {
     setHighlightedItemValue(null);
   }
   const clientSettings = useClientSettings(selectCommandPaletteClientSettings);
+  const statusBarVisible = useClientSettings((settings) => settings.statusBarVisible);
   const createProject = useAtomCommand(projectEnvironment.create, {
     reportFailure: false,
   });
@@ -1491,6 +1493,27 @@ function OpenCommandPaletteDialog(props: {
     shortcutCommand: "usage.open",
     run: async () => {
       await navigate({ to: "/usage" });
+    },
+  });
+
+  actionItems.push({
+    kind: "action",
+    value: "action:status-bar",
+    searchTerms: [
+      "status",
+      "bar",
+      "footer",
+      "usage",
+      "ports",
+      "resources",
+      "show",
+      "hide",
+      "toggle",
+    ],
+    title: statusBarVisible ? "Hide status bar" : "Show status bar",
+    icon: <PanelBottomIcon className={ITEM_ICON_CLASS} />,
+    run: async () => {
+      await updateClientSettings({ statusBarVisible: !getClientSettings().statusBarVisible });
     },
   });
 

@@ -3,6 +3,7 @@ import { attributeTerminalUsage, type ResourceUsage } from "../statusBar/resourc
 import type { ProjectId } from "@t3tools/contracts";
 import { CopyIcon, PlugIcon, SquareIcon, SquareTerminalIcon } from "lucide-react";
 
+import { useClientSettings } from "../../hooks/useSettings";
 import { useThreadShells } from "../../state/entities";
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import { Button } from "../ui/button";
@@ -131,7 +132,7 @@ function TerminalRow(props: {
   );
 }
 
-function RunningTerminals(props: { memberKeys: ReadonlySet<string> }) {
+function RunningTerminals(props: { memberKeys: ReadonlySet<string>; showResources: boolean }) {
   const resources = useEnvironmentResources(true);
   const threads = useThreadShells();
   const projectByThread = new Map(
@@ -155,7 +156,9 @@ function RunningTerminals(props: { memberKeys: ReadonlySet<string> }) {
         key: `${session.target.threadId}:${session.target.terminalId}`,
       })),
   );
-  const snapshots = useEnvironmentSnapshots([...new Set(rows.map((row) => row.environmentId))]);
+  const snapshots = useEnvironmentSnapshots(
+    props.showResources ? [...new Set(rows.map((row) => row.environmentId))] : [],
+  );
   if (rows.length === 0) return null;
   return (
     <Section
@@ -191,18 +194,26 @@ function ProjectHoverContent(props: { project: SidebarProjectSnapshot }) {
   const memberKeys = new Set(
     project.memberProjects.map((member) => `${member.environmentId}:${member.id}`),
   );
+  const properties = useClientSettings((settings) => settings.projectHoverCardProperties);
   return (
     <div className="flex max-h-[70vh] flex-col gap-3 overflow-y-auto p-3">
       <div className="min-w-0">
         <div className="break-words text-sm font-semibold leading-snug text-foreground">
           {project.displayName}
         </div>
-        <div className="mt-1 break-words font-mono text-2xs leading-snug text-muted-foreground">
-          {project.workspaceRoot}
-        </div>
+        {properties.includes("path") ? (
+          <div className="mt-1 break-words font-mono text-2xs leading-snug text-muted-foreground">
+            {project.workspaceRoot}
+          </div>
+        ) : null}
       </div>
-      <RunningTerminals memberKeys={memberKeys} />
-      <LivePorts memberIds={memberIds} />
+      {properties.includes("terminals") ? (
+        <RunningTerminals
+          memberKeys={memberKeys}
+          showResources={properties.includes("resources")}
+        />
+      ) : null}
+      {properties.includes("ports") ? <LivePorts memberIds={memberIds} /> : null}
     </div>
   );
 }
@@ -211,6 +222,8 @@ export function SidebarProjectHoverCard(props: {
   project: SidebarProjectSnapshot;
   children: ReactElement;
 }) {
+  const enabled = useClientSettings((settings) => settings.projectHoverCardProperties.length > 0);
+  if (!enabled) return props.children;
   return (
     <PreviewCard>
       <PreviewCardTrigger delay={400} closeDelay={150} render={props.children} />

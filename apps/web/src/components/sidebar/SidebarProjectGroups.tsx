@@ -4,7 +4,7 @@ import type { ScopedThreadRef } from "@t3tools/contracts";
 import { CheckCheckIcon, ChevronDownIcon } from "lucide-react";
 import { SortableContext, useSortable, type SortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 import {
@@ -18,6 +18,8 @@ import {
 } from "../Sidebar.logic";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { useUiStateStore } from "../../uiStateStore";
+import { useClientSettings } from "../../hooks/useSettings";
+import { resolveSubagentDisplay } from "./sidebarDisplay.logic";
 import { SidebarMenuButton } from "../ui/sidebar";
 import { SidebarNotificationDot } from "./SidebarNotificationDot";
 import { SidebarProjectHoverCard } from "./SidebarProjectHoverCard";
@@ -89,6 +91,52 @@ function SubagentRow(props: {
   );
 }
 
+function SubagentRows(props: {
+  children: readonly EnvironmentThreadShell[];
+  onOpen: (threadRef: ScopedThreadRef) => void;
+}) {
+  const show = useClientSettings((settings) => settings.sidebarShowSubagents);
+  const mode = useClientSettings((settings) => settings.sidebarAgentActivityDisplayMode);
+  const [expanded, setExpanded] = useState(false);
+  const display = resolveSubagentDisplay({
+    count: props.children.length,
+    show,
+    mode,
+    expanded,
+  });
+  if (display === "hidden") return null;
+  return (
+    <>
+      {display === "summary" || display === "summary-and-rows" ? (
+        <li className="list-none">
+          <button
+            type="button"
+            aria-expanded={expanded}
+            data-testid="sidebar-subagent-summary"
+            onClick={() => setExpanded((value) => !value)}
+            className="flex h-7 w-full cursor-pointer items-center gap-2 rounded-md ps-8 pe-2.5 text-left text-xs text-sidebar-muted-foreground outline-none hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+          >
+            <span
+              aria-hidden
+              className={cn("size-1.5 shrink-0 rounded-full", subagentDotClass(props.children[0]!))}
+            />
+            <span className="min-w-0 flex-1 truncate">{`${props.children.length} agents`}</span>
+            <ChevronDownIcon
+              aria-hidden
+              className={cn("size-3 shrink-0", !expanded && "-rotate-90")}
+            />
+          </button>
+        </li>
+      ) : null}
+      {display === "rows" || display === "summary-and-rows"
+        ? props.children.map((child) => (
+            <SubagentRow key={threadKeyOf(child)} thread={child} onOpen={props.onOpen} />
+          ))
+        : null}
+    </>
+  );
+}
+
 export type SidebarProjectDrag = {
   readonly projectKey: string;
   /** The dragged thread's section, null while the drag leaves the list. */
@@ -144,9 +192,9 @@ function SidebarProjectGroup(props: ProjectGroupProps) {
     if (thread === undefined) return [];
     return [
       props.renderThreadRow(thread, section),
-      ...(props.subagentChildrenByParent.get(key) ?? []).map((child) => (
-        <SubagentRow key={threadKeyOf(child)} thread={child} onOpen={props.onOpenSubagent} />
-      )),
+      <SubagentRows key={`${key}:subagents`} onOpen={props.onOpenSubagent}>
+        {props.subagentChildrenByParent.get(key) ?? []}
+      </SubagentRows>,
     ];
   };
   const renderItem = (item: SidebarListItem): ReactNode => {

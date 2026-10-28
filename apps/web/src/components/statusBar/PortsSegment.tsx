@@ -2,11 +2,13 @@ import type { EnvironmentId, ListeningPort, ProjectId } from "@t3tools/contracts
 import { ChevronDownIcon, ChevronRightIcon, PlugIcon } from "lucide-react";
 import { useState } from "react";
 
+import { useClientSettings } from "../../hooks/useSettings";
 import { useProjects } from "../../state/entities";
 import { useEnvironments } from "../../state/environments";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
+import { isStatusBarItemShown, STATUS_BAR_PORTS_ITEM } from "./statusBarItems.logic";
 import { PortRow } from "./LivePortsList";
 import { useEnvironmentListeningPorts } from "./useListeningPorts";
 
@@ -104,7 +106,8 @@ function EnvironmentPorts({
   );
 }
 
-export function PortsSegment() {
+function PortsSegmentBody() {
+  const countAll = useClientSettings((settings) => settings.statusBarPortsCount) === "all";
   const [open, setOpen] = useState(false);
   const { environments } = useEnvironments();
   const connected = environments.filter(({ connection }) => connection.phase === "connected");
@@ -116,6 +119,7 @@ export function PortsSegment() {
   if (readable.length === 0) return null;
   const all = readable.flatMap(({ environmentId }) => portsByEnvironment.get(environmentId) ?? []);
   const projectCount = all.filter((port) => port.projectId !== null).length;
+  const shownCount = countAll ? all.length : projectCount;
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -124,12 +128,12 @@ export function PortsSegment() {
           <Button
             variant="status-bar"
             size="status-bar"
-            aria-label={`Ports, ${projectCount} project ${projectCount === 1 ? "port" : "ports"}`}
+            aria-label={`Ports, ${shownCount} ${shownCount === 1 ? "port" : "ports"}`}
           />
         }
       >
         <PlugIcon aria-hidden />
-        <span className="font-medium tabular-nums">{projectCount}</span>
+        <span className="font-medium tabular-nums">{shownCount}</span>
       </PopoverTrigger>
       <PopoverPopup side="top" align="end" padding="none" className="w-[24rem]">
         <PortsPanel
@@ -185,4 +189,9 @@ function PortsPanel({
       </div>
     </div>
   );
+}
+
+export function PortsSegment() {
+  const hidden = useClientSettings((settings) => settings.statusBarHiddenItems);
+  return isStatusBarItemShown(hidden, STATUS_BAR_PORTS_ITEM) ? <PortsSegmentBody /> : null;
 }

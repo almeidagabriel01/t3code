@@ -59,6 +59,20 @@ const DEFAULT_DIFF_LAYOUT: DiffLayout = "stacked";
 
 export const SidebarProjectSortOrder = Schema.Literals(["updated_at", "created_at", "manual"]);
 export type SidebarProjectSortOrder = typeof SidebarProjectSortOrder.Type;
+export const SidebarAgentActivityDisplayMode = Schema.Literals(["compact", "full"]);
+export type SidebarAgentActivityDisplayMode = typeof SidebarAgentActivityDisplayMode.Type;
+export const PROJECT_HOVER_CARD_PROPERTIES = ["path", "terminals", "resources", "ports"] as const;
+export const ProjectHoverCardProperty = Schema.Literals(PROJECT_HOVER_CARD_PROPERTIES);
+export type ProjectHoverCardProperty = typeof ProjectHoverCardProperty.Type;
+export const StatusBarUsageMode = Schema.Literals(["verbose", "compact"]);
+export type StatusBarUsageMode = typeof StatusBarUsageMode.Type;
+export const StatusBarUsagePercentage = Schema.Literals(["used", "remaining"]);
+export type StatusBarUsagePercentage = typeof StatusBarUsagePercentage.Type;
+export const StatusBarPortsCount = Schema.Literals(["project", "all"]);
+export type StatusBarPortsCount = typeof StatusBarPortsCount.Type;
+export const StatusBarResourceSort = Schema.Literals(["memory", "cpu", "name"]);
+export type StatusBarResourceSort = typeof StatusBarResourceSort.Type;
+
 export const DEFAULT_SIDEBAR_PROJECT_SORT_ORDER: SidebarProjectSortOrder = "updated_at";
 
 export const SidebarThreadSortOrder = Schema.Literals(["updated_at", "created_at"]);
@@ -445,6 +459,29 @@ export const ClientSettingsSchema = Schema.Struct({
   showSkillsInSlashMenu: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   legacySidebarEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   sidebarWorkingShelfEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  sidebarShowSubagents: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  sidebarAgentActivityDisplayMode: SidebarAgentActivityDisplayMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed("compact")),
+  ),
+  projectHoverCardProperties: Schema.Array(ProjectHoverCardProperty).pipe(
+    Schema.withDecodingDefault(Effect.succeed([...PROJECT_HOVER_CARD_PROPERTIES])),
+  ),
+  statusBarVisible: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  statusBarHiddenItems: Schema.Array(Schema.String).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  statusBarUsageMode: StatusBarUsageMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed("verbose")),
+  ),
+  statusBarUsagePercentage: StatusBarUsagePercentage.pipe(
+    Schema.withDecodingDefault(Effect.succeed("used")),
+  ),
+  statusBarPortsCount: StatusBarPortsCount.pipe(
+    Schema.withDecodingDefault(Effect.succeed("project")),
+  ),
+  statusBarResourceSort: StatusBarResourceSort.pipe(
+    Schema.withDecodingDefault(Effect.succeed("memory")),
+  ),
   sidebarProjectGroupingMode: SidebarProjectGroupingMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE)),
   ),
@@ -1675,6 +1712,15 @@ export const ClientSettingsPatch = Schema.Struct({
   showSkillsInSlashMenu: Schema.optionalKey(Schema.Boolean),
   legacySidebarEnabled: Schema.optionalKey(Schema.Boolean),
   sidebarWorkingShelfEnabled: Schema.optionalKey(Schema.Boolean),
+  sidebarShowSubagents: Schema.optionalKey(Schema.Boolean),
+  sidebarAgentActivityDisplayMode: Schema.optionalKey(SidebarAgentActivityDisplayMode),
+  projectHoverCardProperties: Schema.optionalKey(Schema.Array(ProjectHoverCardProperty)),
+  statusBarVisible: Schema.optionalKey(Schema.Boolean),
+  statusBarHiddenItems: Schema.optionalKey(Schema.Array(Schema.String)),
+  statusBarUsageMode: Schema.optionalKey(StatusBarUsageMode),
+  statusBarUsagePercentage: Schema.optionalKey(StatusBarUsagePercentage),
+  statusBarPortsCount: Schema.optionalKey(StatusBarPortsCount),
+  statusBarResourceSort: Schema.optionalKey(StatusBarResourceSort),
   sidebarProjectGroupingMode: Schema.optionalKey(SidebarProjectGroupingMode),
   sidebarProjectGroupingOverrides: Schema.optionalKey(
     Schema.Record(TrimmedNonEmptyString, SidebarProjectGroupingMode),
