@@ -5,7 +5,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type { ThreadId } from "@t3tools/contracts";
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { ExternalLinkIcon, RotateCcwIcon } from "lucide-react";
 import { newMessageId, newThreadId } from "~/lib/utils";
@@ -16,11 +16,25 @@ import { useOrchestrationCommand } from "~/state/use-orchestration-command";
 import { BackgroundThreadContext } from "../chat/backgroundThread";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { findSideChatThread } from "./sideChat.logic";
+import {
+  findSideChatThread,
+  sideChatParentStatus,
+  type SideChatParentTone,
+} from "./sideChat.logic";
 import { useSideChatStore } from "./sideChatStore";
 
 // ChatView imports this surface through its right panel, so load it lazily to break the cycle.
 const ChatView = lazy(() => import("../ChatView"));
+
+const PARENT_TONE_CLASSES: Record<SideChatParentTone, { text: string; dot: string }> = {
+  active: { text: "text-info-foreground", dot: "bg-info" },
+  attention: {
+    text: "text-amber-600 dark:text-amber-300/90",
+    dot: "bg-amber-500 dark:bg-amber-300/90",
+  },
+  idle: { text: "text-muted-foreground", dot: "bg-muted-foreground/60" },
+  error: { text: "text-red-600 dark:text-red-300/90", dot: "bg-red-500 dark:bg-red-300/90" },
+};
 
 function failureMessage(result: Parameters<typeof squashAtomCommandFailure>[0], fallback: string) {
   const error = squashAtomCommandFailure(result);
@@ -29,8 +43,8 @@ function failureMessage(result: Parameters<typeof squashAtomCommandFailure>[0], 
 
 /**
  * The side chat tab in a thread's right panel. Its thread is forked from the parent's latest
- * settled turn, so the side agent sees the conversation while nothing it says reaches the
- * parent's history, and it renders with the ordinary chat view and composer.
+ * completed turn when there is one, and the server adds the parent's live state to every side
+ * prompt, so the side agent follows the parent while nothing it says reaches the parent's history.
  */
 export interface SideChatSurfaceProps {
   readonly parent: EnvironmentThreadShell;
@@ -40,13 +54,10 @@ export interface SideChatSurfaceProps {
 
 export function SideChatSurface({ parent, onOpenThread }: SideChatSurfaceProps) {
   const environmentId = parent.environmentId;
-  const parentRef = useMemo(
-    () => scopeThreadRef(environmentId, parent.id),
-    [environmentId, parent.id],
-  );
+  const parentRef = scopeThreadRef(environmentId, parent.id);
   const parentKey = scopedThreadKey(parentRef);
   const shells = useThreadShells();
-  const sideThread = useMemo(() => findSideChatThread(shells, parentRef), [shells, parentRef]);
+  const sideThread = findSideChatThread(shells, parentRef);
 
   const forkAsSideChat = useOrchestrationCommand(threadEnvironment.forkAsSideChat, {
     reportFailure: false,
@@ -62,60 +73,64 @@ export function SideChatSurface({ parent, onOpenThread }: SideChatSurfaceProps) 
   const [error, setError] = useState<string | null>(null);
   const startingRef = useRef(false);
 
-  const start = useCallback(async () => {
+  const createSideChat = async () => {
+    const title = `Side chat: ${parent.title}`;
+    if (parent.latestRun !== null) {
+      const targetThreadId = newThreadId();
+      const forked = await forkAsSideChat({
+        environmentId,
+        input: { sourceThreadId: parent.id, targetThreadId, title },
+      });
+      if (forked._tag === "Success") {
+        setStartedThreadId(targetThreadId);
+        return;
+      }
+      if (isAtomCommandInterrupted(forked)) return;
+      // No completed turn to fork yet: start empty and rely on the parent's live state, which
+      // the server sends with every side prompt.
+    }
+    const threadId = newThreadId();
+    const created = await createThread({
+      environmentId,
+      input: {
+        threadId,
+        projectId: parent.projectId,
+        title,
+        modelSelection: parent.modelSelection,
+        runtimeMode: parent.runtimeMode,
+        interactionMode: "default",
+        branch: parent.branch,
+        worktreePath: parent.worktreePath,
+        sideChatOf: parent.id,
+      },
+    });
+    if (created._tag === "Failure") {
+      if (!isAtomCommandInterrupted(created)) {
+        setError(failureMessage(created, "Could not start the side chat."));
+      }
+      return;
+    }
+    setStartedThreadId(threadId);
+  };
+  const start = useEffectEvent(() => {
     if (startingRef.current) return;
     startingRef.current = true;
     setError(null);
-    const title = `Side chat: ${parent.title}`;
-    try {
-      if (parent.latestRun !== null) {
-        const targetThreadId = newThreadId();
-        const forked = await forkAsSideChat({
-          environmentId,
-          input: { sourceThreadId: parent.id, targetThreadId, title },
-        });
-        if (forked._tag === "Success") {
-          setStartedThreadId(targetThreadId);
-          return;
-        }
-        if (isAtomCommandInterrupted(forked)) return;
-        // No settled turn to fork yet (the first one may still be running): start fresh.
-      }
-      const threadId = newThreadId();
-      const created = await createThread({
-        environmentId,
-        input: {
-          threadId,
-          projectId: parent.projectId,
-          title,
-          modelSelection: parent.modelSelection,
-          runtimeMode: parent.runtimeMode,
-          interactionMode: "default",
-          branch: parent.branch,
-          worktreePath: parent.worktreePath,
-          sideChatOf: parent.id,
-        },
-      });
-      if (created._tag === "Failure") {
-        if (!isAtomCommandInterrupted(created)) {
-          setError(failureMessage(created, "Could not start the side chat."));
-        }
-        return;
-      }
-      setStartedThreadId(threadId);
-    } finally {
+    void createSideChat().finally(() => {
       startingRef.current = false;
-    }
-  }, [createThread, environmentId, forkAsSideChat, parent]);
+    });
+  });
 
   const needsThread = sideThread === null && startedThreadId === null && error === null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- creates the side chat thread on the server when the tab has none
   useEffect(() => {
-    if (needsThread) void start();
-  }, [needsThread, start]);
+    if (needsThread) start();
+  }, [needsThread]);
 
   // `/side <question>` asks once the side chat exists.
   const pendingPrompt = useSideChatStore((state) => state.pendingPrompts[parentKey] ?? null);
   const sideThreadId = sideThread?.id ?? null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- sends a queued `/side` question once its server thread exists
   useEffect(() => {
     if (pendingPrompt === null || sideThreadId === null) return;
     const prompt = useSideChatStore.getState().takePendingPrompt(parentKey);
@@ -136,7 +151,7 @@ export function SideChatSurface({ parent, onOpenThread }: SideChatSurfaceProps) 
   }, [environmentId, parent.runtimeMode, parentKey, pendingPrompt, sideThreadId, startThreadTurn]);
 
   // Side chats are disposable: starting over discards this one and forks the thread again.
-  const startOver = useCallback(async () => {
+  const startOver = async () => {
     if (sideThreadId === null) return;
     const result = await deleteThread({ environmentId, input: { threadId: sideThreadId } });
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
@@ -145,14 +160,36 @@ export function SideChatSurface({ parent, onOpenThread }: SideChatSurfaceProps) 
     }
     setStartedThreadId(null);
     setError(null);
-  }, [deleteThread, environmentId, sideThreadId]);
+  };
+
+  const parentStatus = sideChatParentStatus(parent);
+  const parentTone = PARENT_TONE_CLASSES[parentStatus.tone];
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-side-chat-surface>
-      <div className="flex h-9 shrink-0 items-center gap-1 border-b border-border px-3">
-        <p className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-          Not added to {parent.title}
-        </p>
+      <div className="flex h-9 shrink-0 items-center gap-2 border-b border-border px-3">
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <p className="flex min-w-0 flex-1 items-baseline gap-1 text-xs text-muted-foreground" />
+            }
+          >
+            <span className="shrink-0">Side chat of</span>
+            <span className="min-w-0 truncate font-medium text-foreground">{parent.title}</span>
+          </TooltipTrigger>
+          <TooltipPopup side="bottom">
+            Sees the main thread's latest messages and status. Nothing said here is added to it.
+          </TooltipPopup>
+        </Tooltip>
+        <span
+          role="status"
+          aria-label={`Main thread: ${parentStatus.label}`}
+          className={`inline-flex shrink-0 items-center gap-1 text-2xs ${parentTone.text}`}
+          data-side-chat-parent-status={parentStatus.tone}
+        >
+          <span aria-hidden className={`size-1.5 rounded-full ${parentTone.dot}`} />
+          {parentStatus.label}
+        </span>
         <Tooltip>
           <TooltipTrigger
             render={
