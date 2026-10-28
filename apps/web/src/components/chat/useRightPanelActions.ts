@@ -14,6 +14,7 @@ import {
 import { useDiffPanelStore } from "../../diffPanelStore";
 import { type ThreadPanelPresentation } from "../../rightPanelLayout";
 import {
+  selectActiveMainFileSurface,
   selectActiveRightPanel,
   type RightPanelSurface,
   useRightPanelStore,
@@ -305,8 +306,16 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     },
     "threadPanel.toggle": () => toggleThreadPanel(),
     "rightPanel.close": ({ event }) => {
-      if (!activeRightPanelSurface) return false;
-      if (!event.repeat) closeRightPanelSurface(activeRightPanelSurface);
+      const mainFile = activeThreadRef
+        ? selectActiveMainFileSurface(useRightPanelStore.getState().byThreadKey, activeThreadRef)
+        : null;
+      const panelFocused = document.activeElement?.closest("[data-right-panel-surface-content]");
+      const target =
+        mainFile && (!activeRightPanelSurface || !panelFocused)
+          ? mainFile
+          : activeRightPanelSurface;
+      if (!target) return false;
+      if (!event.repeat) closeRightPanelSurface(target);
     },
     "diff.toggle": () => onToggleDiff(),
   } satisfies ChatShortcutCommands;

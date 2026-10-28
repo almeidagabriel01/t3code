@@ -4,8 +4,10 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   formatCompactCountdown,
   formatMemory,
+  portAddress,
   selectBarWindows,
   sparklinePoints,
+  usageTone,
 } from "./statusBar.logic";
 
 const NOW = Date.parse("2026-10-27T12:00:00.000Z");
@@ -52,5 +54,20 @@ describe("sparklinePoints", () => {
   it("draws nothing without a line to draw", () => {
     expect(sparklinePoints([4], 100, 20)).toBe("");
     expect(sparklinePoints([], 100, 20)).toBe("");
+  });
+});
+
+describe("usageTone", () => {
+  it("escalates with consumption", () => {
+    expect([10, 75, 90].map(usageTone)).toEqual(["normal", "warning", "urgent"]);
+  });
+});
+
+describe("portAddress", () => {
+  it("names loopback and wildcard binds localhost and keeps real hosts", () => {
+    expect(portAddress("*", 3000)).toBe("localhost:3000");
+    expect(portAddress("::1", 3000)).toBe("localhost:3000");
+    expect(portAddress("192.168.1.5", 80)).toBe("192.168.1.5:80");
+    expect(portAddress("fe80:0:0:0:1:2:3:4", 80)).toBe("[fe80:0:0:0:1:2:3:4]:80");
   });
 });

@@ -131,15 +131,17 @@ export function useRightPanelSurfaceClose(input: {
       },
     );
   });
+  // The panel strip shows no file tabs, so its bulk closes leave them alone.
+  const panelSurfaces = surfaces.filter((entry) => entry.kind !== "file");
   const closeOtherSurfaces = useStableCallback((surface: RightPanelSurface) =>
-    closeSurfaces(surfaces.filter((entry) => entry.id !== surface.id)),
+    closeSurfaces(panelSurfaces.filter((entry) => entry.id !== surface.id)),
   );
   const closeSurfacesToRight = useStableCallback((surface: RightPanelSurface) => {
-    const surfaceIndex = surfaces.findIndex((entry) => entry.id === surface.id);
+    const surfaceIndex = panelSurfaces.findIndex((entry) => entry.id === surface.id);
     if (surfaceIndex < 0) return;
-    closeSurfaces(surfaces.slice(surfaceIndex + 1));
+    closeSurfaces(panelSurfaces.slice(surfaceIndex + 1));
   });
-  const closeAllSurfaces = useStableCallback(() => closeSurfaces(surfaces));
+  const closeAllSurfaces = useStableCallback(() => closeSurfaces(panelSurfaces));
 
   return { closeSurface, closeOtherSurfaces, closeSurfacesToRight, closeAllSurfaces };
 }

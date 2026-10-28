@@ -257,9 +257,8 @@ describe("root reopen shortcut", () => {
       await act(() => {
         press();
       });
-      expect(
-        selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, ref).activeSurfaceId,
-      ).toBe(
+      const restored = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, ref);
+      expect(kind === "file" ? restored.activeMainId : restored.activeSurfaceId).toBe(
         kind === "browser" ? "browser:new-tab" : kind === "file" ? "file:src/app.ts" : "files",
       );
       expect(useClosedViewStore.getState().entries).toEqual([]);

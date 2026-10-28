@@ -58,6 +58,7 @@ export interface RightPanelFileProps {
 
 export function RightPanelSurfaceContent(props: {
   readonly surface: RightPanelSurface | null;
+  readonly inMainArea?: boolean;
   readonly activeSurfaceId: string | null;
   readonly threadRef: ScopedThreadRef;
   readonly environmentId: EnvironmentId;
@@ -214,6 +215,7 @@ export function RightPanelSurfaceContent(props: {
             onPendingChange={files.onPendingChange}
             selectedFilePending={surface.kind === "file" && files.pendingSurfaceIds.has(surface.id)}
             workspaceMutationId={props.workspaceMutationId}
+            hideExplorer={props.inMainArea === true}
           />
         </Suspense>
       );

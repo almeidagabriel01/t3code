@@ -8,6 +8,7 @@ import {
   migratePersistedRightPanelState,
   pullRequestSurface,
   pullRequestSurfaceId,
+  selectActiveMainFileSurface,
   selectActiveRightPanel,
   selectActiveRightPanelSurface,
   selectThreadPanelVisibility,
@@ -54,12 +55,13 @@ describe("rightPanelStore", () => {
     store.open(refA, "diff");
     store.closeSurface(refA, pr.id);
     store.closeSurfacesToRight(refA, "device");
-    store.closeOtherSurfaces(refA, "file:src/app.ts");
+    store.open(refA, "files");
+    store.closeOtherSurfaces(refA, "device");
     expect(
       useClosedViewStore
         .getState()
         .entries.map((entry) => (entry.kind === "panel-tab" ? entry.surface.id : null)),
-    ).toEqual(["device", "diff", pr.id]);
+    ).toEqual(["files", "diff", pr.id]);
   });
 
   it("reopens the active tab first after a bulk close", () => {
@@ -359,9 +361,10 @@ describe("rightPanelStore", () => {
 
   it("refocuses an existing diff for a later turn after a manual choice", () => {
     const store = useRightPanelStore.getState();
+    store.show(refA);
     store.openProactive(refA, completedDiff, store.getUserActionRevision(refA));
     const firstTurnRevision = store.getUserActionRevision(refA);
-    store.openFile(refA, "src/app.ts");
+    store.open(refA, "files");
     expect(store.openProactive(refA, completedDiff, firstTurnRevision)).toBe(false);
 
     const nextTurnRevision = store.getUserActionRevision(refA);
@@ -390,7 +393,7 @@ describe("rightPanelStore", () => {
     store.openFile(refA, "src/app.ts");
     await reloadRightPanelStore();
     expect(store.openProactive(refA, completedDiff, store.getUserActionRevision(refA))).toBe(false);
-    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("file");
+    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("files");
 
     store.closeAllSurfaces(refA);
     await reloadRightPanelStore();
@@ -451,19 +454,20 @@ describe("rightPanelStore", () => {
   it("keeps manual choices scoped to their thread and environment", () => {
     const otherEnvironment = scopeThreadRef("env-2" as EnvironmentId, refA.threadId);
     const store = useRightPanelStore.getState();
+    store.show(refA);
     const revision = store.getUserActionRevision(refA);
     store.openFile(refB, "src/app.ts");
     store.openFile(otherEnvironment, "src/app.ts");
 
     expect(store.openProactive(refA, completedDiff, revision)).toBe(true);
-    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refB)).toBe("file");
-    expect(
-      selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, otherEnvironment),
-    ).toBe("file");
+    const { byThreadKey } = useRightPanelStore.getState();
+    expect(selectActiveMainFileSurface(byThreadKey, refB)?.id).toBe("file:src/app.ts");
+    expect(selectActiveMainFileSurface(byThreadKey, otherEnvironment)?.id).toBe("file:src/app.ts");
   });
 
   it("does not treat resource reconciliation as a manual choice", () => {
     const store = useRightPanelStore.getState();
+    store.show(refA);
     store.openFile(refA, "src/app.ts");
     const revision = store.getUserActionRevision(refA);
     store.reconcileBrowserSurfaces(refA, ["agent-browser"]);
@@ -737,10 +741,11 @@ describe("rightPanelStore", () => {
     const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
     expect(state.activeSurfaceId).toBe("files");
     expect(state.surfaces.map((surface) => surface.id)).toEqual(["file:README.md", "files"]);
+    expect(state.activeMainId).toBe("file:README.md");
     store.closeSurface(refA, "files");
     expect(
       selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).activeSurfaceId,
-    ).toBe("file:README.md");
+    ).toBeNull();
     store.openFile(refA, ".");
     expect(
       selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).activeSurfaceId,
@@ -755,7 +760,7 @@ describe("rightPanelStore", () => {
     store.openFile(refA, "apps/web/src");
 
     store.navigateFolder(refA, "file:apps/web/src", "apps", "apps/web/src");
-    expect(state().activeSurfaceId).toBe("file:apps");
+    expect(state().activeMainId).toBe("file:apps");
     expect(state().surfaces).toEqual([
       expect.objectContaining({ id: "file:README.md" }),
       expect.objectContaining({
@@ -774,7 +779,7 @@ describe("rightPanelStore", () => {
     });
 
     store.navigateFolder(refA, "files", "apps/web/src", "apps/web/src");
-    expect(state().activeSurfaceId).toBe("file:apps/web/src");
+    expect(state().activeMainId).toBe("file:apps/web/src");
     expect(state().surfaces[1]).toEqual({
       id: "file:apps/web/src",
       kind: "file",
@@ -791,7 +796,7 @@ describe("rightPanelStore", () => {
 
     store.navigateFolder(refA, "file:apps/web/src", "apps", "apps/web/src");
     const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
-    expect(state.activeSurfaceId).toBe("file:apps");
+    expect(state.activeMainId).toBe("file:apps");
     expect(state.surfaces).toEqual([
       { id: "file:apps", kind: "file", relativePath: "apps", revealLine: null, revealRequestId: 1 },
     ]);
@@ -804,7 +809,7 @@ describe("rightPanelStore", () => {
     store.openFile(refA, "src/app.ts", 40);
 
     store.navigateFolder(refA, "file:src/app.ts", "src", "src/app.ts", true);
-    expect(state().activeSurfaceId).toBe("file:src");
+    expect(state().activeMainId).toBe("file:src");
     expect(state().surfaces).toEqual([
       {
         id: "file:src/app.ts",
@@ -817,7 +822,7 @@ describe("rightPanelStore", () => {
     ]);
 
     store.navigateFolder(refA, "file:src", "src/app.ts", "src/app.ts");
-    expect(state().activeSurfaceId).toBe("file:src/app.ts");
+    expect(state().activeMainId).toBe("file:src/app.ts");
     expect(state().surfaces).toEqual([
       {
         id: "file:src/app.ts",
@@ -840,7 +845,7 @@ describe("rightPanelStore", () => {
     );
   });
 
-  it("replaces the standalone explorer with peer file surfaces", () => {
+  it("keeps the files explorer in the panel beside peer file surfaces", () => {
     useRightPanelStore.getState().open(refA, "files");
     useRightPanelStore.getState().openFile(refA, "src/index.ts");
     useRightPanelStore.getState().openFile(refA, "src/index.ts");
@@ -848,8 +853,10 @@ describe("rightPanelStore", () => {
 
     expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
       isOpen: true,
-      activeSurfaceId: "file:README.md",
+      activeSurfaceId: "files",
+      activeMainId: "file:README.md",
       surfaces: [
+        { id: "files", kind: "files" },
         {
           id: "file:src/index.ts",
           kind: "file",
@@ -906,8 +913,9 @@ describe("rightPanelStore", () => {
     useRightPanelStore.getState().openFile(refA, "src/index.ts", 87);
 
     expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
-      isOpen: true,
-      activeSurfaceId: "file:src/index.ts",
+      isOpen: false,
+      activeSurfaceId: null,
+      activeMainId: "file:src/index.ts",
       surfaces: [
         {
           id: "file:src/index.ts",
@@ -922,8 +930,9 @@ describe("rightPanelStore", () => {
     useRightPanelStore.getState().openFile(refA, "src/index.ts");
 
     expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
-      isOpen: true,
-      activeSurfaceId: "file:src/index.ts",
+      isOpen: false,
+      activeSurfaceId: null,
+      activeMainId: "file:src/index.ts",
       surfaces: [
         {
           id: "file:src/index.ts",
@@ -972,8 +981,9 @@ describe("rightPanelStore", () => {
     useRightPanelStore.getState().reconcileFileSurfaces(refA, false);
 
     expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
-      isOpen: true,
-      activeSurfaceId: "attachment:thread-A-attachment-pdf",
+      isOpen: false,
+      activeSurfaceId: null,
+      activeMainId: "attachment:thread-A-attachment-pdf",
       surfaces: [
         {
           id: "attachment:thread-A-attachment-pdf",
@@ -1163,10 +1173,16 @@ describe("rightPanelStore", () => {
 
     useRightPanelStore.getState().closeSurfacesToRight(refA, "browser:tab-a");
 
-    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA),
+    ).toMatchObject({
       isOpen: true,
       activeSurfaceId: "browser:tab-a",
-      surfaces: [{ id: "browser:tab-a", kind: "preview", resourceId: "tab-a" }],
+      activeMainId: "file:src/index.ts",
+      surfaces: [
+        { id: "browser:tab-a", kind: "preview", resourceId: "tab-a" },
+        { id: "file:src/index.ts", kind: "file" },
+      ],
     });
   });
 
@@ -1274,11 +1290,11 @@ describe("rightPanelStore", () => {
     const store = useRightPanelStore.getState();
     store.open(refA, "diff");
     store.openFile(refA, "src/app.ts");
-    expect(useRightPanelStore.getState().lastFixedKind).toBe("files");
+    expect(useRightPanelStore.getState().lastFixedKind).toBe("diff");
     store.ensureActiveSurface(refB, useRightPanelStore.getState().lastFixedKind);
     expect(selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refB)).toEqual({
-      id: "files",
-      kind: "files",
+      id: "diff",
+      kind: "diff",
     });
   });
 
@@ -1299,5 +1315,54 @@ describe("rightPanelStore", () => {
     });
     expect(migrated.panelOpen).toBe(true);
     expect(Object.values(migrated.byThreadKey).map((entry) => entry.isOpen)).toEqual([true, true]);
+  });
+
+  it("shows opened files in the main area without opening or retargeting the panel", () => {
+    const store = useRightPanelStore.getState();
+    store.open(refA, "files");
+    store.openFile(refA, "src/a.ts");
+    store.openFile(refA, "src/b.ts");
+    let state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(state.activeSurfaceId).toBe("files");
+    expect(state.activeMainId).toBe("file:src/b.ts");
+
+    store.closeSurface(refA, "file:src/b.ts");
+    state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(state.activeMainId).toBe("file:src/a.ts");
+    store.showChat(refA);
+    expect(selectActiveMainFileSurface(useRightPanelStore.getState().byThreadKey, refA)).toBeNull();
+    store.activateSurface(refA, "file:src/a.ts");
+    expect(selectActiveMainFileSurface(useRightPanelStore.getState().byThreadKey, refA)?.id).toBe(
+      "file:src/a.ts",
+    );
+
+    store.closeAllSurfaces(refA);
+    state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(state.surfaces.map((surface) => surface.id)).toEqual(["file:src/a.ts"]);
+  });
+
+  it("moves a persisted active file surface to the main area", () => {
+    const migrated = migratePersistedRightPanelState({
+      byThreadKey: {
+        "env-1:thread-A": {
+          isOpen: true,
+          activeSurfaceId: "file:a.ts",
+          surfaces: [
+            { id: "diff", kind: "diff" },
+            {
+              id: "file:a.ts",
+              kind: "file",
+              relativePath: "a.ts",
+              revealLine: null,
+              revealRequestId: 1,
+            },
+          ],
+        },
+      },
+    });
+    expect(migrated.byThreadKey["env-1:thread-A"]).toMatchObject({
+      activeSurfaceId: "diff",
+      activeMainId: "file:a.ts",
+    });
   });
 });

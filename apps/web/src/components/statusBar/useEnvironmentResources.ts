@@ -4,7 +4,6 @@ import {
   AuthDiagnosticsReadScope,
   AuthTerminalReadScope,
   type EnvironmentId,
-  type ListeningPort,
   type ResourceTelemetrySnapshot,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
@@ -16,13 +15,11 @@ import { serverEnvironment } from "../../state/server";
 import { useEnvironmentsWithScope } from "../../state/session";
 import { selectKnownTerminalSessions } from "../../state/terminalSessions";
 import { terminalEnvironment } from "../../state/terminal";
-import { useEnvironmentListeningPorts } from "./useListeningPorts";
 
 export interface EnvironmentResources {
   readonly environmentId: EnvironmentId;
   readonly label: string;
   readonly terminals: ReadonlyArray<KnownTerminalSession>;
-  readonly ports: ReadonlyArray<ListeningPort>;
 }
 
 const telemetryAtoms = environmentAtomList("status-bar-telemetry", (environmentId) =>
@@ -36,14 +33,15 @@ const valueOrNull = <A>(result: AsyncResult.AsyncResult<A, unknown> | undefined)
   result === undefined ? null : Option.getOrNull(AsyncResult.value(result));
 
 /** Every connected environment, each limited to the data its session grants. */
-export function useEnvironmentResources(fast: boolean): ReadonlyArray<EnvironmentResources> {
+export function useEnvironmentResources(
+  _deprecatedFast?: boolean,
+): ReadonlyArray<EnvironmentResources> {
   const { environments } = useEnvironments();
   const connected = environments.filter(({ connection }) => connection.phase === "connected");
   const ids = connected.map(({ environmentId }) => environmentId);
   const terminalReaders = useEnvironmentsWithScope(connected, AuthTerminalReadScope);
   const terminalIds = ids.filter((id) => terminalReaders.has(id));
   const terminalMetadata = useAtomValue(terminalAtoms(environmentIdsKey(terminalIds)));
-  const ports = useEnvironmentListeningPorts(ids, fast);
 
   return connected.map(({ environmentId, label }) => ({
     environmentId,
@@ -53,7 +51,6 @@ export function useEnvironmentResources(fast: boolean): ReadonlyArray<Environmen
       environmentId,
       null,
     ),
-    ports: ports.get(environmentId) ?? [],
   }));
 }
 

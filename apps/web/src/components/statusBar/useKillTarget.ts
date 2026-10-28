@@ -29,19 +29,20 @@ const reportFailure = (title: string, error: unknown) =>
 const confirmKill = (message: string) =>
   ensureLocalApi().dialogs.confirm(message, { variant: "destructive" });
 
+/** Kills straight away, as Orca does: a port is cheap to restart and the row's trash icon is the intent. */
 export function useKillListeningPort(environmentId: EnvironmentId | null) {
   const canKill = useAtomValue(serverEnvironment.killListeningPort.permissionAtom(environmentId));
   const command = useAtomCommand(serverEnvironment.killListeningPort, { reportFailure: false });
   const kill = async (port: ListeningPort) => {
     if (environmentId === null || port.pid === null) return;
-    const name = port.processName ?? "this process";
-    if (!(await confirmKill(`Kill ${name} (pid ${port.pid}) listening on port ${port.port}?`))) {
+    const result = await command({ environmentId, input: { pid: port.pid, port: port.port } });
+    if (result._tag === "Failure") {
+      if (!isAtomCommandInterrupted(result)) {
+        reportFailure("Could not stop process", squashAtomCommandFailure(result));
+      }
       return;
     }
-    const result = await command({ environmentId, input: { pid: port.pid, port: port.port } });
-    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-      reportFailure("Could not kill process", squashAtomCommandFailure(result));
-    }
+    toastManager.add({ type: "success", title: `Stopped process on ${port.port}` });
   };
   return { canKill, kill };
 }

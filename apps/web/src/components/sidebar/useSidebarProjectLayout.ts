@@ -74,6 +74,7 @@ export function useSidebarProjectLayout(input: {
         settledLimit,
         visibleOpen: visible.open,
         visibleSettled: visible.settled,
+        reachableSettled: visible.reachable,
         hasMoreSettled: visible.settled.length < group.settledThreads.length,
       },
     ];
@@ -100,7 +101,7 @@ export function useSidebarProjectLayout(input: {
         over.memberProjects.map((member) => member.physicalProjectKey),
       );
     },
-    visibleThreads: layout.flatMap((entry) => [...entry.visibleOpen, ...entry.visibleSettled]),
+    visibleThreads: layout.flatMap((entry) => [...entry.visibleOpen, ...entry.reachableSettled]),
     toggleProject: (project: SidebarProjectSnapshot, expanded: boolean) =>
       setProjectExpanded(projectExpansionKeys(project), !expanded),
     toggleSettled: (projectKey: string) =>

@@ -1,4 +1,3 @@
-import { CollapsibleSectionHeader } from "../ui/collapsible-section-header";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { type ReactNode } from "react";
@@ -9,7 +8,6 @@ import {
   type SidebarListMarker,
 } from "../Sidebar.logic";
 import { SIDEBAR_SORTABLE_DRAG_DISABLED } from "./SidebarThreadRow";
-import { SidebarThreadUndoNotice } from "./SidebarThreadUndoNotice";
 
 export function SortableSidebarMarker(props: {
   marker: SidebarListMarker;
@@ -102,48 +100,6 @@ export function SidebarDragBoundary(props: {
           />
         </div>
       ) : null}
-    </SortableSidebarMarker>
-  );
-}
-
-export function SidebarSectionHeader(props: {
-  marker: "working-header" | "snoozed-header" | "settled-header";
-  scope: string;
-  label: string;
-  /** A muted trailing count. */
-  count: number;
-  className?: string;
-  dragging?: boolean;
-  isDropTarget?: boolean;
-  toggle: { expanded: boolean; onToggle: () => void };
-  /** The first shelf at the bottom of the list hosts the undo notice just above itself. */
-  hostsUndoNotice?: boolean;
-}) {
-  const shelf =
-    props.marker === "working-header"
-      ? "working"
-      : props.marker === "snoozed-header"
-        ? "snoozed"
-        : "settled";
-  return (
-    <SortableSidebarMarker
-      marker={props.marker}
-      scope={props.scope}
-      data-testid={`sidebar-${props.marker}`}
-      className={cn("relative mx-0.5 h-8", props.className)}
-    >
-      {props.hostsUndoNotice ? (
-        <SidebarThreadUndoNotice className="absolute inset-x-0 bottom-full bg-sidebar surface-grain" />
-      ) : null}
-      <CollapsibleSectionHeader
-        onClick={props.toggle.onToggle}
-        expanded={props.toggle.expanded}
-        tone={props.isDropTarget ? "accent" : props.dragging ? "emphasized" : "muted"}
-        data-testid={`sidebar-${shelf}-shelf-toggle`}
-        accessory={<span className="font-normal tabular-nums">{props.count}</span>}
-      >
-        {props.label}
-      </CollapsibleSectionHeader>
     </SortableSidebarMarker>
   );
 }

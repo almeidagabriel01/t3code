@@ -7,24 +7,33 @@ import {
   type ResourceTelemetrySnapshot,
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { ChevronRightIcon, SquareIcon } from "lucide-react";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
+import {
+  ChevronDownIcon,
+  ChevronRightIcon,
+  MemoryStickIcon,
+  TerminalIcon,
+  XIcon,
+} from "lucide-react";
 import { useEffect, useState } from "react";
 
+import { cn } from "../../lib/utils";
+import { useProjects, useThreadShells } from "../../state/entities";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useEnvironmentQuery, useEnvironmentQuerySelector } from "../../state/query";
-import { useProjects, useThreadShells } from "../../state/entities";
 import { serverEnvironment } from "../../state/server";
 import { useEnvironmentScope } from "../../state/session";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
-import { LivePortsList } from "./LivePortsList";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
+  addUsage,
   appBreakdown,
   attributeTerminalUsage,
+  EMPTY_USAGE,
   type AppProcessGroup,
   type ResourceUsage,
 } from "./resourceUsage.logic";
@@ -36,6 +45,8 @@ import {
   type EnvironmentResources,
 } from "./useEnvironmentResources";
 
+type SortOption = "name" | "cpu" | "memory";
+
 const APP_GROUP_LABEL: Record<AppProcessGroup, string> = {
   main: "Desktop main",
   renderer: "Renderers",
@@ -44,17 +55,20 @@ const APP_GROUP_LABEL: Record<AppProcessGroup, string> = {
 };
 const UNATTRIBUTED = "Unattributed";
 
-function UsageText({ usage }: { readonly usage: ResourceUsage | null }) {
-  if (usage === null) return null;
-  return (
-    <span className="shrink-0 tabular-nums text-muted-foreground">
-      {formatMemory(usage.rssBytes)} · {Math.round(usage.cpuPercent)}%
-    </span>
-  );
-}
+const CPU_COLUMN = "w-12 text-right";
+const MEM_COLUMN = "w-16 text-right";
+const GUTTER = "flex w-5 shrink-0 items-center justify-end";
+const METRICS = "flex shrink-0 items-center tabular-nums";
 
-function SectionTitle({ children }: { readonly children: string }) {
-  return <span className="font-medium text-foreground">{children}</span>;
+const formatCpu = (cpuPercent: number) => `${Math.round(cpuPercent)}%`;
+
+function Metrics({ usage }: { readonly usage: ResourceUsage | null }) {
+  return (
+    <div className={cn(METRICS, "text-2xs text-muted-foreground")}>
+      <span className={CPU_COLUMN}>{usage === null ? "--" : formatCpu(usage.cpuPercent)}</span>
+      <span className={MEM_COLUMN}>{usage === null ? "--" : formatMemory(usage.rssBytes)}</span>
+    </div>
+  );
 }
 
 function HostTotals({ environmentId }: { readonly environmentId: EnvironmentId }) {
@@ -64,9 +78,9 @@ function HostTotals({ environmentId }: { readonly environmentId: EnvironmentId }
   ).data;
   if (host === null) return null;
   return (
-    <div className="flex justify-between text-muted-foreground">
+    <div className="flex justify-between px-3 py-1 text-2xs tabular-nums text-muted-foreground">
       <span>Host</span>
-      <span className="tabular-nums">
+      <span>
         {host.cpuUtilization === null ? "" : `${Math.round(host.cpuUtilization * 100)}% CPU · `}
         {formatMemory(host.availableMemoryBytes)} free of {formatMemory(host.totalMemoryBytes)}
       </span>
@@ -120,7 +134,7 @@ function ResourceHistory({ environmentId }: { readonly environmentId: Environmen
   const buckets = history.data?.buckets ?? [];
   if (buckets.length < 2) return null;
   return (
-    <div className="flex items-center justify-between text-muted-foreground">
+    <div className="flex items-center justify-between px-3 py-1 text-2xs text-muted-foreground">
       <span>Last 5 min</span>
       <Sparkline label="Memory history" values={buckets.map((bucket) => bucket.maxRssBytes)} />
       <Sparkline label="CPU history" values={buckets.map((bucket) => bucket.avgCpuPercent)} />
@@ -128,22 +142,138 @@ function ResourceHistory({ environmentId }: { readonly environmentId: Environmen
   );
 }
 
+function ChevronToggle({ open }: { readonly open: boolean }) {
+  return open ? (
+    <ChevronDownIcon aria-hidden className="size-3 text-muted-foreground" />
+  ) : (
+    <ChevronRightIcon aria-hidden className="size-3 text-muted-foreground" />
+  );
+}
+
+const byMetric =
+  (sort: SortOption, usageOf: (key: string) => ResourceUsage | undefined) =>
+  (a: string, b: string) => {
+    if (sort === "name") return a.localeCompare(b);
+    const left = usageOf(a) ?? EMPTY_USAGE;
+    const right = usageOf(b) ?? EMPTY_USAGE;
+    return sort === "cpu" ? right.cpuPercent - left.cpuPercent : right.rssBytes - left.rssBytes;
+  };
+
+function TerminalRow({
+  label,
+  detail,
+  busy,
+  usage,
+  onOpen,
+  onClose,
+}: {
+  readonly label: string;
+  readonly detail: string;
+  readonly busy: boolean;
+  readonly usage: ResourceUsage | null;
+  readonly onOpen: () => void;
+  readonly onClose: (() => void) | null;
+}) {
+  return (
+    <div className="group/row flex items-center gap-2 py-1.5 pl-10 pr-3 hover:bg-muted/60">
+      <TerminalIcon aria-hidden className="size-3 shrink-0 text-muted-foreground" />
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <button
+              type="button"
+              onClick={onOpen}
+              className="min-w-0 flex-1 truncate text-start text-2xs text-muted-foreground outline-none hover:text-foreground focus-visible:text-foreground"
+            />
+          }
+        >
+          {label}
+          {busy ? <span className="text-foreground/70"> · running</span> : null}
+        </TooltipTrigger>
+        <TooltipPopup side="top">{detail}</TooltipPopup>
+      </Tooltip>
+      <Metrics usage={usage} />
+      <span
+        className={cn(
+          GUTTER,
+          "opacity-0 group-focus-within/row:opacity-100 group-hover/row:opacity-100 pointer-coarse:opacity-100",
+        )}
+      >
+        {onClose === null ? null : (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="ghost-destructive"
+                  size="icon-micro"
+                  aria-label={`End terminal ${label}`}
+                  onClick={onClose}
+                />
+              }
+            >
+              <XIcon aria-hidden />
+            </TooltipTrigger>
+            <TooltipPopup side="top">End terminal</TooltipPopup>
+          </Tooltip>
+        )}
+      </span>
+    </div>
+  );
+}
+
+function ProjectGroup({
+  title,
+  count,
+  usage,
+  children,
+}: {
+  readonly title: string;
+  readonly count: number;
+  readonly usage: ResourceUsage | null;
+  readonly children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(true);
+  return (
+    <div className="border-t border-border/50">
+      <Collapsible open={open} onOpenChange={setOpen}>
+        <CollapsibleTrigger className="flex w-full items-center py-2 pl-2 pr-3 hover:bg-muted/50">
+          <span className="flex w-5 shrink-0 items-center justify-center">
+            <ChevronToggle open={open} />
+          </span>
+          <span className="min-w-0 flex-1 truncate text-start text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
+            {title}
+            <span className="font-normal normal-case"> ({count})</span>
+          </span>
+          <Metrics usage={usage} />
+          <span className={GUTTER} aria-hidden />
+        </CollapsibleTrigger>
+        <CollapsiblePanel animate={false}>
+          <div className="border-t border-border/30">{children}</div>
+        </CollapsiblePanel>
+      </Collapsible>
+    </div>
+  );
+}
+
 function EnvironmentSection({
   resources,
   snapshot,
-  showLabel,
+  sort,
+  label,
   projectIdByThread,
   projectTitleById,
 }: {
   readonly resources: EnvironmentResources;
   readonly snapshot: ResourceTelemetrySnapshot | null;
-  readonly showLabel: boolean;
+  readonly sort: SortOption;
+  readonly label: string | null;
   readonly projectIdByThread: ReadonlyMap<string, ProjectId>;
   readonly projectTitleById: ReadonlyMap<ProjectId, string>;
 }) {
   const { environmentId } = resources;
   const navigate = useNavigate();
   const { canClose, close } = useCloseTerminal(environmentId);
+  const [appOpen, setAppOpen] = useState(false);
   const running = resources.terminals.filter((session) => session.state.status === "running");
   const rows = running.map((session) => ({
     session,
@@ -160,117 +290,143 @@ function EnvironmentSection({
   );
   const groups = new Map<ProjectId | null, Array<(typeof rows)[number]>>();
   for (const row of rows) groups.set(row.projectId, [...(groups.get(row.projectId) ?? []), row]);
-  const projectGroups = [...groups].toSorted(
-    ([a], [b]) =>
-      (attributed.projects.get(b)?.rssBytes ?? 0) - (attributed.projects.get(a)?.rssBytes ?? 0),
-  );
+  const titleOf = (projectId: ProjectId | null) =>
+    projectId === null ? UNATTRIBUTED : (projectTitleById.get(projectId) ?? UNATTRIBUTED);
+  const groupKeys = [...groups.keys()].map((projectId) => projectId ?? "");
+  const orderedGroups = groupKeys
+    .toSorted(
+      byMetric(sort, (key) => attributed.projects.get(key === "" ? null : (key as ProjectId))),
+    )
+    .map((key) => (key === "" ? null : (key as ProjectId)));
   const app = snapshot === null ? null : appBreakdown(snapshot.processes, attributed.claimed);
+  const appTotal = app === null ? null : [...app.values()].reduce(addUsage, EMPTY_USAGE);
 
   return (
-    <div className="flex flex-col gap-3">
-      {showLabel ? (
-        <span className="text-sm font-medium text-foreground">{resources.label}</span>
-      ) : null}
+    <div>
+      {label === null ? null : (
+        <div className="border-b border-border/50 bg-muted/30 px-3 py-1 text-3xs font-medium uppercase tracking-wide text-muted-foreground">
+          {label}
+        </div>
+      )}
       <HostTotals environmentId={environmentId} />
       <ResourceHistory environmentId={environmentId} />
-      <section className="flex flex-col gap-1">
-        <SectionTitle>{`Terminals (${running.length})`}</SectionTitle>
-        {running.length === 0 ? <span className="text-muted-foreground">None running.</span> : null}
-        {projectGroups.map(([projectId, group]) => (
-          <Collapsible key={projectId ?? UNATTRIBUTED}>
-            <CollapsibleTrigger className="flex w-full items-center gap-1 text-left">
-              <ChevronRightIcon
-                aria-hidden
-                className="size-3 transition-transform in-data-panel-open:rotate-90"
-              />
-              <span className="min-w-0 flex-1 truncate">
-                {projectId === null
-                  ? UNATTRIBUTED
-                  : (projectTitleById.get(projectId) ?? UNATTRIBUTED)}
-                <span className="text-muted-foreground"> ({group.length})</span>
+      {orderedGroups.length === 0 ? (
+        <div className="px-3 py-4 text-center text-xs text-muted-foreground">
+          Nothing running right now
+        </div>
+      ) : null}
+      {orderedGroups.map((projectId) => {
+        const group = groups.get(projectId) ?? [];
+        const ordered = group.toSorted((a, b) =>
+          byMetric(sort, (key) => attributed.terminals.get(key))(a.key, b.key),
+        );
+        return (
+          <ProjectGroup
+            key={projectId ?? UNATTRIBUTED}
+            title={titleOf(projectId)}
+            count={group.length}
+            usage={snapshot === null ? null : (attributed.projects.get(projectId) ?? null)}
+          >
+            {ordered.map(({ session, key }) => {
+              const summary = session.state.summary;
+              const name = summary?.label || session.target.terminalId;
+              return (
+                <TerminalRow
+                  key={key}
+                  label={name}
+                  detail={summary?.cwd ?? name}
+                  busy={session.state.hasRunningSubprocess}
+                  usage={snapshot === null ? null : (attributed.terminals.get(key) ?? null)}
+                  onOpen={() =>
+                    void navigate({
+                      to: "/$environmentId/$threadId",
+                      params: buildThreadRouteParams(
+                        scopeThreadRef(environmentId, session.target.threadId),
+                      ),
+                    })
+                  }
+                  onClose={
+                    canClose
+                      ? () =>
+                          void close(
+                            {
+                              threadId: session.target.threadId,
+                              terminalId: session.target.terminalId,
+                            },
+                            name,
+                          )
+                      : null
+                  }
+                />
+              );
+            })}
+          </ProjectGroup>
+        );
+      })}
+      {app === null || appTotal === null ? null : (
+        <div className="border-t border-border/50">
+          <Collapsible open={appOpen} onOpenChange={setAppOpen}>
+            <CollapsibleTrigger className="flex w-full items-center py-2 pl-2 pr-3 hover:bg-muted/50">
+              <span className="flex w-5 shrink-0 items-center justify-center">
+                <ChevronToggle open={appOpen} />
               </span>
-              <UsageText
-                usage={snapshot === null ? null : (attributed.projects.get(projectId) ?? null)}
-              />
+              <span className="min-w-0 flex-1 truncate text-start text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
+                T3 Code
+              </span>
+              <Metrics usage={appTotal} />
+              <span className={GUTTER} aria-hidden />
             </CollapsibleTrigger>
-            <CollapsiblePanel>
-              <ul className="flex flex-col gap-0.5 ps-4 pt-0.5">
-                {group.map(({ session, key }) => {
-                  const summary = session.state.summary;
-                  const label = summary?.label || session.target.terminalId;
-                  return (
-                    <li key={key} className="flex items-center gap-1">
-                      <Button
-                        variant="ghost-muted"
-                        size="micro"
-                        className="min-w-0 flex-1 justify-start"
-                        onClick={() =>
-                          void navigate({
-                            to: "/$environmentId/$threadId",
-                            params: buildThreadRouteParams(
-                              scopeThreadRef(environmentId, session.target.threadId),
-                            ),
-                          })
-                        }
-                      >
-                        <span className="truncate">
-                          {label}
-                          {summary ? ` · ${summary.cwd}` : ""}
-                        </span>
-                      </Button>
-                      <span className="text-muted-foreground">
-                        {session.state.hasRunningSubprocess ? "busy" : "idle"}
-                      </span>
-                      <UsageText
-                        usage={snapshot === null ? null : (attributed.terminals.get(key) ?? null)}
-                      />
-                      {canClose ? (
-                        <Button
-                          variant="ghost-destructive"
-                          size="icon-micro"
-                          aria-label={`Close terminal ${label}`}
-                          onClick={() =>
-                            void close(
-                              {
-                                threadId: session.target.threadId,
-                                terminalId: session.target.terminalId,
-                              },
-                              label,
-                            )
-                          }
-                        >
-                          <SquareIcon aria-hidden />
-                        </Button>
-                      ) : null}
-                    </li>
-                  );
-                })}
-              </ul>
+            <CollapsiblePanel animate={false}>
+              <div className="border-t border-border/30">
+                {[...app].map(([group, usage]) => (
+                  <div key={group} className="flex items-center gap-2 py-1.5 pl-10 pr-3">
+                    <span className="min-w-0 flex-1 truncate text-2xs text-muted-foreground">
+                      {APP_GROUP_LABEL[group]} ({usage.processCount})
+                    </span>
+                    <Metrics usage={usage} />
+                    <span className={GUTTER} aria-hidden />
+                  </div>
+                ))}
+              </div>
             </CollapsiblePanel>
           </Collapsible>
-        ))}
-      </section>
-      {app === null ? null : (
-        <section className="flex flex-col gap-0.5">
-          <SectionTitle>App</SectionTitle>
-          {[...app].map(([group, usage]) => (
-            <div key={group} className="flex justify-between">
-              <span className="text-muted-foreground">
-                {APP_GROUP_LABEL[group]} ({usage.processCount})
-              </span>
-              <UsageText usage={usage} />
-            </div>
-          ))}
-        </section>
+        </div>
       )}
-      <section className="flex flex-col gap-1">
-        <SectionTitle>{`Ports (${resources.ports.length})`}</SectionTitle>
-        <LivePortsList
-          environmentId={environmentId}
-          ports={resources.ports}
-          projectTitleById={projectTitleById}
-        />
-      </section>
+    </div>
+  );
+}
+
+function SortHeader({
+  sort,
+  onSort,
+}: {
+  readonly sort: SortOption;
+  readonly onSort: (sort: SortOption) => void;
+}) {
+  const cell = (option: SortOption, className: string, text: string) => (
+    <button
+      type="button"
+      aria-pressed={sort === option}
+      onClick={() => onSort(option)}
+      className={cn(
+        className,
+        "transition-colors hover:text-foreground",
+        sort === option ? "font-semibold text-foreground" : "text-muted-foreground/80",
+      )}
+    >
+      {text}
+    </button>
+  );
+  return (
+    <div className="flex shrink-0 items-center justify-between border-b border-border/50 bg-muted/30 px-3 py-1 text-3xs uppercase tracking-wide">
+      {cell("name", "", "Name")}
+      <div className="flex items-center gap-2">
+        <div className={METRICS}>
+          {cell("cpu", CPU_COLUMN, "CPU")}
+          {cell("memory", MEM_COLUMN, "Memory")}
+        </div>
+        <span className={GUTTER} aria-hidden />
+      </div>
     </div>
   );
 }
@@ -280,6 +436,7 @@ function ResourceManager({
 }: {
   readonly resources: ReadonlyArray<EnvironmentResources>;
 }) {
+  const [sort, setSort] = useState<SortOption>("memory");
   const projects = useProjects();
   const threads = useThreadShells();
   const snapshots = useEnvironmentSnapshots(resources.map(({ environmentId }) => environmentId));
@@ -289,19 +446,45 @@ function ResourceManager({
   const projectIdByThread = new Map(
     threads.map((thread) => [`${thread.environmentId}:${thread.id}`, thread.projectId] as const),
   );
+  const totals = [...snapshots.values()].reduce<ResourceUsage>(
+    (sum, { groups }) =>
+      addUsage(sum, {
+        rssBytes: groups.allT3.currentRssBytes,
+        cpuPercent: groups.allT3.currentCpuPercent,
+        processCount: groups.allT3.processCount,
+      }),
+    EMPTY_USAGE,
+  );
   return (
-    <div className="flex flex-col gap-4 text-xs">
-      <span className="text-sm font-medium text-foreground">Resource manager</span>
-      {resources.map((environment) => (
-        <EnvironmentSection
-          key={environment.environmentId}
-          resources={environment}
-          snapshot={snapshots.get(environment.environmentId) ?? null}
-          showLabel={resources.length > 1}
-          projectIdByThread={projectIdByThread}
-          projectTitleById={projectTitleById}
-        />
-      ))}
+    <div className="flex min-h-0 w-full flex-1 flex-col">
+      <div className="flex items-center gap-1.5 border-b border-border px-3 py-1.5 text-2xs font-medium text-foreground">
+        <MemoryStickIcon aria-hidden className="size-3 shrink-0 text-muted-foreground" />
+        <span className="truncate">Resource Manager</span>
+      </div>
+      {snapshots.size === 0 ? null : (
+        <div className="flex items-baseline gap-3 border-b border-border px-3 py-2 text-xs tabular-nums">
+          <span className="font-medium text-foreground">{formatCpu(totals.cpuPercent)}</span>
+          <span className="text-muted-foreground/50">·</span>
+          <span className="font-medium text-foreground">
+            {formatMemory(totals.rssBytes)}{" "}
+            <span className="font-normal text-muted-foreground">memory</span>
+          </span>
+        </div>
+      )}
+      <SortHeader sort={sort} onSort={setSort} />
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        {resources.map((environment) => (
+          <EnvironmentSection
+            key={environment.environmentId}
+            resources={environment}
+            snapshot={snapshots.get(environment.environmentId) ?? null}
+            sort={sort}
+            label={resources.length > 1 ? environment.label : null}
+            projectIdByThread={projectIdByThread}
+            projectTitleById={projectTitleById}
+          />
+        ))}
+      </div>
     </div>
   );
 }
@@ -321,31 +504,39 @@ function PrimaryMemory() {
       : serverEnvironment.resourceTelemetry({ environmentId, input: {} }),
     selectMemoryLabel,
   );
-  return label === null ? null : <span>{label}</span>;
+  return label === null ? null : (
+    <>
+      <span className="font-medium tabular-nums">{label}</span>
+      <span className="text-muted-foreground/50">·</span>
+    </>
+  );
 }
 
 export function ResourceSegment() {
   const [open, setOpen] = useState(false);
-  const resources = useEnvironmentResources(open);
+  const resources = useEnvironmentResources();
   const terminalCount = resources.reduce(
     (sum, { terminals }) =>
       sum + terminals.filter((session) => session.state.status === "running").length,
     0,
   );
-  const portCount = resources.reduce((sum, { ports }) => sum + ports.length, 0);
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
-        render={<Button variant="ghost-muted" size="micro" aria-label="Resource manager" />}
+        render={<Button variant="status-bar" size="status-bar" aria-label="Resource Manager" />}
       >
-        <span className="flex items-center gap-2 tabular-nums">
-          <PrimaryMemory />
-          <span>{terminalCount} term</span>
-          <span>{portCount} ports</span>
-        </span>
+        <MemoryStickIcon aria-hidden />
+        <PrimaryMemory />
+        <TerminalIcon aria-hidden />
+        <span className="tabular-nums">{terminalCount}</span>
       </PopoverTrigger>
-      <PopoverPopup side="top" align="end" width="lg">
+      <PopoverPopup
+        side="top"
+        align="end"
+        padding="none"
+        className="h-[min(40rem,var(--available-height))] w-[26rem]"
+      >
         <ResourceManager resources={resources} />
       </PopoverPopup>
     </Popover>

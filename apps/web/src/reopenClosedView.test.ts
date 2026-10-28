@@ -58,7 +58,7 @@ describe("reopenClosedView", () => {
     );
     expect(reopened).toBe(true);
     const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, threadRef);
-    expect(state.isOpen).toBe(true);
+    expect(state.activeMainId).toBe("file:src/app.ts");
     expect(state.surfaces).toMatchObject([{ id: "file:src/app.ts", revealLine: 18 }]);
     expect(openPreview).not.toHaveBeenCalled();
   });

@@ -36,7 +36,8 @@ export function planNextReopen(
     }
     const alreadyOpen =
       entry.kind === "panel-tab"
-        ? owner.panel.isOpen && owner.panel.surfaces.some((s) => s.id === entry.surface.id)
+        ? (owner.panel.isOpen || entry.surface.kind === "file") &&
+          owner.panel.surfaces.some((s) => s.id === entry.surface.id)
         : owner.panel.surfaces.some(
             (s) => s.kind === "preview" && s.resourceId === entry.snapshot.tabId,
           );

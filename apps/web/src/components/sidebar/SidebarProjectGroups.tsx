@@ -1,7 +1,7 @@
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import type { ScopedThreadRef } from "@t3tools/contracts";
-import { ChevronDownIcon } from "lucide-react";
+import { CheckCheckIcon, ChevronDownIcon } from "lucide-react";
 import { SortableContext, useSortable, type SortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import type { ReactNode } from "react";
@@ -18,8 +18,9 @@ import {
 } from "../Sidebar.logic";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { useUiStateStore } from "../../uiStateStore";
+import { SidebarMenuButton } from "../ui/sidebar";
 import { SidebarNotificationDot } from "./SidebarNotificationDot";
-import { SidebarProjectPorts } from "./SidebarProjectPorts";
+import { SidebarProjectHoverCard } from "./SidebarProjectHoverCard";
 import type { useSidebarProjectLayout } from "./useSidebarProjectLayout";
 import {
   SIDEBAR_SORTABLE_DRAG_DISABLED,
@@ -28,7 +29,6 @@ import {
 } from "./SidebarThreadRow";
 import {
   SidebarDragBoundary,
-  SidebarSectionHeader,
   SidebarSectionPlaceholder,
   SortableSidebarMarker,
 } from "./SidebarListMarkers";
@@ -207,19 +207,35 @@ function SidebarProjectGroup(props: ProjectGroupProps) {
         );
       case "settled-header":
         return (
-          <SidebarSectionHeader
+          <SortableSidebarMarker
             key={markerKey}
             scope={scope}
             marker="settled-header"
-            label="Settled"
-            count={group.settledThreads.length}
-            dragging={from !== null}
-            isDropTarget={dragTargetSection === "settled"}
-            toggle={{
-              expanded: entry.settledExpanded,
-              onToggle: () => props.onToggleSettled(scope),
-            }}
-          />
+            data-testid="sidebar-settled-header"
+            className={cn(
+              "mx-0.5 mt-1 rounded-md border-t border-sidebar-border/50 pt-1",
+              dragTargetSection === "settled" && "bg-primary/5 text-primary",
+            )}
+          >
+            <SidebarMenuButton
+              aria-expanded={entry.settledExpanded}
+              data-testid="sidebar-settled-shelf-toggle"
+              onClick={() => props.onToggleSettled(scope)}
+            >
+              <CheckCheckIcon />
+              <span>Settled</span>
+              <span className="ms-auto font-normal tabular-nums">
+                {group.settledThreads.length}
+              </span>
+              <ChevronDownIcon
+                aria-hidden
+                className={cn(
+                  "size-3 shrink-0 transition-transform",
+                  !entry.settledExpanded && "-rotate-90",
+                )}
+              />
+            </SidebarMenuButton>
+          </SortableSidebarMarker>
         );
       case "settled-placeholder": {
         const settledCount = openCount("settled");
@@ -250,30 +266,29 @@ function SidebarProjectGroup(props: ProjectGroupProps) {
       className={cn("list-none", isDragging && "relative z-20 opacity-80")}
       style={{ transform: CSS.Translate.toString(transform), transition }}
     >
-      <div className="flex items-center gap-1 pe-1">
-        <button
-          type="button"
-          ref={setActivatorNodeRef}
-          aria-expanded={expanded}
-          onClick={() => props.onToggleProject(project, expanded)}
-          className="flex h-8 min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md px-2 text-left outline-none hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-          {...attributes}
-          {...listeners}
-        >
-          <ChevronDownIcon
-            aria-hidden
-            className={cn("size-3.5 shrink-0 text-icon-muted", !expanded && "-rotate-90")}
-          />
-          <ProjectFavicon project={project} className="size-4 shrink-0" />
-          <span className="min-w-0 flex-1 truncate text-sm font-medium text-sidebar-foreground/90">
-            {project.displayName}
-          </span>
-          {expanded ? null : <ProjectNotificationDot threads={group.openThreads} />}
-        </button>
-        <SidebarProjectPorts
-          projectIds={new Set(project.memberProjects.map((member) => member.id))}
-        />
-      </div>
+      <SidebarProjectHoverCard project={project}>
+        <div className="flex items-center gap-1 pe-1">
+          <button
+            type="button"
+            ref={setActivatorNodeRef}
+            aria-expanded={expanded}
+            onClick={() => props.onToggleProject(project, expanded)}
+            className="flex h-8 min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md px-2 text-left outline-none hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+            {...attributes}
+            {...listeners}
+          >
+            <ChevronDownIcon
+              aria-hidden
+              className={cn("size-3.5 shrink-0 text-icon-muted", !expanded && "-rotate-90")}
+            />
+            <ProjectFavicon project={project} className="size-4 shrink-0" />
+            <span className="min-w-0 flex-1 truncate text-sm font-medium text-sidebar-foreground/90">
+              {project.displayName}
+            </span>
+            {expanded ? null : <ProjectNotificationDot threads={group.openThreads} />}
+          </button>
+        </div>
+      </SidebarProjectHoverCard>
       <SortableContext
         items={items.map(sidebarListItemId)}
         strategy={drag === null ? idleSortingStrategy : props.dragSortingStrategy}

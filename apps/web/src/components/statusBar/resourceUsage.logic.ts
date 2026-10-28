@@ -6,9 +6,9 @@ export interface ResourceUsage {
   readonly processCount: number;
 }
 
-const EMPTY_USAGE: ResourceUsage = { rssBytes: 0, cpuPercent: 0, processCount: 0 };
+export const EMPTY_USAGE: ResourceUsage = { rssBytes: 0, cpuPercent: 0, processCount: 0 };
 
-const addUsage = (a: ResourceUsage, b: ResourceUsage): ResourceUsage => ({
+export const addUsage = (a: ResourceUsage, b: ResourceUsage): ResourceUsage => ({
   rssBytes: a.rssBytes + b.rssBytes,
   cpuPercent: a.cpuPercent + b.cpuPercent,
   processCount: a.processCount + b.processCount,

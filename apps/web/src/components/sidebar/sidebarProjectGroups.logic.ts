@@ -59,7 +59,10 @@ export function groupThreadsByProject<T extends ProjectBound>(input: {
   }));
 }
 
-/** The threads a project group renders; a collapsed group keeps only the open route thread reachable. */
+/**
+ * What a project group renders, plus what stays reachable (keyboard, handlers) for the open
+ * route thread. A settled thread only renders inside an expanded Settled group.
+ */
 export function resolveVisibleProjectThreads<T>(input: {
   readonly group: SidebarProjectThreadGroup<T>;
   readonly getKey: (thread: T) => string;
@@ -67,18 +70,28 @@ export function resolveVisibleProjectThreads<T>(input: {
   readonly settledExpanded: boolean;
   readonly settledLimit: number;
   readonly routeThreadKey: string | null;
-}): { readonly open: readonly T[]; readonly settled: readonly T[] } {
+}): {
+  readonly open: readonly T[];
+  readonly settled: readonly T[];
+  readonly reachable: readonly T[];
+} {
   const { group, getKey, routeThreadKey } = input;
   const routeOnly = (threads: readonly T[]) =>
     routeThreadKey === null ? [] : threads.filter((thread) => getKey(thread) === routeThreadKey);
   const settled = (() => {
-    if (!input.expanded || !input.settledExpanded) return routeOnly(group.settledThreads);
+    if (!input.expanded || !input.settledExpanded) return [];
     const head = group.settledThreads.slice(0, input.settledLimit);
     return routeThreadKey !== null && !head.some((thread) => getKey(thread) === routeThreadKey)
       ? [...head, ...routeOnly(group.settledThreads)]
       : head;
   })();
-  return { open: input.expanded ? group.openThreads : routeOnly(group.openThreads), settled };
+  const reachable =
+    settled.length === 0 && routeThreadKey !== null ? routeOnly(group.settledThreads) : settled;
+  return {
+    open: input.expanded ? group.openThreads : routeOnly(group.openThreads),
+    settled,
+    reachable,
+  };
 }
 
 const PROJECT_DRAG_PREFIX = "sidebar-project:";

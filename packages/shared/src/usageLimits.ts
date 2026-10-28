@@ -168,6 +168,25 @@ export interface LimitAccount {
   readonly limits: ServerProviderUsageLimits;
 }
 
+/** Each native provider's account key by `environmentId:instanceId`, null when it has no readable identity. */
+export function providerAccountKeys(
+  presentations: LimitPresentations,
+): ReadonlyMap<string, string | null> {
+  const resolveKey = accountKeyResolver(
+    [...presentations.values()].flatMap((presentation) =>
+      (presentation.serverConfig?.providers ?? []).filter((p) => p.enabled).map(nativeReport),
+    ),
+  );
+  return new Map(
+    [...presentations].flatMap(([environmentId, presentation]) =>
+      (presentation.serverConfig?.providers ?? []).map(
+        (provider) =>
+          [`${environmentId}:${provider.instanceId}`, resolveKey(nativeReport(provider))] as const,
+      ),
+    ),
+  );
+}
+
 export function collectLimitAccounts(presentations: LimitPresentations): readonly LimitAccount[] {
   const accounts = new Map<string, LimitAccount>();
   const creditSources = new Map<string, LimitAccount>();

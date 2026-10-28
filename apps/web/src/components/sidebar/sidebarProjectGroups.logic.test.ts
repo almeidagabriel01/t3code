@@ -83,11 +83,27 @@ describe("resolveVisibleProjectThreads", () => {
     });
   });
 
-  it("keeps the route thread reachable when its group or shelf is collapsed", () => {
+  it("never renders a settled route thread while Settled is collapsed, but keeps it reachable", () => {
+    const collapsed = resolveVisibleProjectThreads({
+      group,
+      getKey: (t) => t.id,
+      expanded: true,
+      settledExpanded: false,
+      settledLimit: 2,
+      routeThreadKey: "s3",
+    });
+    expect(collapsed.settled).toEqual([]);
+    expect(collapsed.reachable.map((t) => t.id)).toEqual(["s3"]);
+  });
+
+  it("keeps the open route thread reachable when its project is collapsed", () => {
     expect(resolve({ expanded: false, routeThreadKey: "a2" })).toEqual({
       open: ["a2"],
       settled: [],
     });
+  });
+
+  it("shows the route thread inside an expanded Settled group beyond the page", () => {
     expect(resolve({ routeThreadKey: "s3", settledExpanded: true }).settled).toEqual([
       "s1",
       "s2",
