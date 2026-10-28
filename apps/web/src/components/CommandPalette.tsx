@@ -51,6 +51,7 @@ import {
 } from "@t3tools/contracts";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import {
+  BellIcon,
   ArrowLeftIcon,
   ChartNoAxesColumnIcon,
   PanelBottomIcon,
@@ -73,6 +74,7 @@ import {
   UserPlusIcon,
   SquareKanbanIcon,
 } from "lucide-react";
+import { useSidebarActivityToggle } from "./sidebar/SidebarViewToggles";
 import { openThreadFind } from "./chat/threadFindStore";
 import { useKanbanEnvironmentIds } from "../state/kanban";
 import {
@@ -365,6 +367,7 @@ function OpenCommandPaletteDialog(props: {
   const navigate = useNavigate();
   const pathname = useLocation({ select: (location) => location.pathname });
   const { openChildSearch, setOpen } = props;
+  const { activityActive, toggleActivity } = useSidebarActivityToggle();
   // Keyed by palette session: the intent and restored search only seed this
   // mount, and closing must not change what the closing palette shows.
   const [initialSearch] = useState(
@@ -1158,6 +1161,16 @@ function OpenCommandPaletteDialog(props: {
   };
 
   const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
+
+  actionItems.push({
+    kind: "action",
+    value: "action:toggle-sidebar-activity",
+    searchTerms: ["sidebar", "activity", "priority", "projects", "view", "bell"],
+    title: activityActive ? "Show projects in sidebar" : "Show activity in sidebar",
+    icon: <BellIcon className={ITEM_ICON_CLASS} />,
+    shortcutCommand: "sidebar.toggleActivity",
+    run: async () => toggleActivity(),
+  });
 
   if (projects.length > 0) {
     const activeProjectTitle =

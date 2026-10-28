@@ -184,9 +184,15 @@ import {
   sidebarThreadKeyAtY,
   sortInboxThreadsByReturn,
   sortPinnedThreadsForSidebar,
+  sortPriorityThreadsForSidebar,
   sortThreadsForSidebar,
   sortWorkingThreadsBySend,
+  holdSidebarPriorityRank,
+  resolveSidebarPriorityRank,
+  resolveSidebarThreadPresentation,
+  resolveSidebarWokeAtForRow,
   useSnoozeWakeClock,
+  type SidebarPriorityHolds,
   useThreadJumpHintsVisible,
   type SidebarListItem,
   type SidebarSection,
@@ -233,7 +239,10 @@ import {
   type SidebarSweepAction,
 } from "./sidebar/SidebarThreadRow";
 import { SidebarDraftBlock } from "./sidebar/SidebarDraftBlock";
-import { SidebarProjectGroups } from "./sidebar/SidebarProjectGroups";
+import { SidebarProjectGroups, SubagentRows } from "./sidebar/SidebarProjectGroups";
+import { SidebarPriorityHeader } from "./sidebar/SidebarPriorityHeader";
+import { useSidebarActivityToggle } from "./sidebar/SidebarViewToggles";
+import { useSidebarPriorityRead } from "./sidebar/useSidebarPriorityRead";
 import {
   buildProjectListItems,
   groupListItemsByScope,
@@ -322,6 +331,12 @@ interface SidebarThreadPartitionInput {
   readonly serverConfigs: ReadonlyMap<EnvironmentId, EnvironmentServerConfig>;
   readonly optimisticDrop: SidebarOptimisticDrop | null;
   readonly workingShelfEnabled: boolean;
+  /** Activity routes Priority rows out of the project roster; Projects only counts them. */
+  readonly activityActive: boolean;
+  readonly localLastVisitedAtByKey: Readonly<Record<string, string | undefined>>;
+  readonly priorityHolds: SidebarPriorityHolds;
+  readonly acknowledgedWakes: ReadonlySet<string>;
+  readonly priorityReleases: ReadonlySet<string>;
   // Snooze wakes, the queued-turn grace and the Working shelf's exit grace depend
   // on the clock, so the minute tick, the precise snooze-wake tick and the inbox
   // tracker's expiry version are inputs: a new key repartitions.
@@ -330,6 +345,20 @@ interface SidebarThreadPartitionInput {
 
 function threadShellKey(thread: Pick<SidebarThreadSummary, "environmentId" | "id">): string {
   return scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+}
+
+function sameKeys(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean {
+  if (left.size !== right.size) return false;
+  for (const key of left) if (!right.has(key)) return false;
+  return true;
+}
+
+function sameHolds(left: SidebarPriorityHolds, right: SidebarPriorityHolds): boolean {
+  if (left.size !== right.size) return false;
+  for (const [key, settledOverride] of left) {
+    if (!right.has(key) || right.get(key) !== settledOverride) return false;
+  }
+  return true;
 }
 
 const nowIso = () => new Date().toISOString();
@@ -376,6 +405,7 @@ function useSidebarThreads(input: {
   readonly delegatedUnderParent: ReadonlySet<string>;
   readonly routeRowThreadKey: string | null;
   readonly projectGroups: readonly SidebarProjectSnapshot[];
+  readonly activityActive: boolean;
 }) {
   const {
     projectScopeKey,
@@ -386,8 +416,13 @@ function useSidebarThreads(input: {
     delegatedUnderParent,
     routeRowThreadKey,
     projectGroups,
+    activityActive,
   } = input;
   const workingShelfEnabled = useClientSettings((s) => s.sidebarWorkingShelfEnabled);
+  const localLastVisitedAtByKey = useUiStateStore((state) => state.threadLastVisitedAtById);
+  const [priorityHolds, setPriorityHolds] = useState<SidebarPriorityHolds>(() => new Map());
+  const [acknowledgedWakes, setAcknowledgedWakes] = useState<ReadonlySet<string>>(() => new Set());
+  const [priorityReleases, setPriorityReleases] = useState<ReadonlySet<string>>(() => new Set());
   const inboxReturnsVersion = useSyncExternalStore(
     inboxReturns.subscribe,
     inboxReturns.getSnapshot,
@@ -417,11 +452,37 @@ function useSidebarThreads(input: {
     serverConfigs,
     optimisticDrop,
     workingShelfEnabled,
+    activityActive,
+    localLastVisitedAtByKey,
+    priorityHolds,
+    acknowledgedWakes,
+    priorityReleases,
     clockKey: `${nowMinute}:${snoozeWakeClock}:${inboxReturnsVersion}`,
   });
+  if (!sameKeys(partition.acknowledgedWakes, acknowledgedWakes)) {
+    setAcknowledgedWakes(partition.acknowledgedWakes);
+  }
+  // Leaving Activity empties Priority, so the holds clear and read rows move out on return.
+  const nextPriorityHolds: SidebarPriorityHolds = new Map(
+    partition.priorityThreads.map((thread) => [threadShellKey(thread), thread.settledOverride]),
+  );
+  if (!sameHolds(nextPriorityHolds, priorityHolds)) {
+    setPriorityHolds(nextPriorityHolds);
+    setPriorityReleases((current) =>
+      [...current].every((key) => nextPriorityHolds.has(key))
+        ? current
+        : new Set([...current].filter((key) => nextPriorityHolds.has(key))),
+    );
+  }
 
-  const { pinnedThreads, activeThreads, workingThreads, snoozedThreads, settledThreads } =
-    partition;
+  const {
+    priorityThreads,
+    pinnedThreads,
+    activeThreads,
+    workingThreads,
+    snoozedThreads,
+    settledThreads,
+  } = partition;
   // Older settled threads load in pages; the shelf lists them only as far as they are loaded.
   const olderSettledShelf = useOlderSettledShelf({
     scopes: olderSettledScopes([...serverConfigs.keys()], scopedProjectKeys),
@@ -442,9 +503,10 @@ function useSidebarThreads(input: {
     ),
     routeThreadKey: routeRowThreadKey,
   });
-  const orderedThreads = projectLayout.visibleThreads;
+  const orderedThreads = [...priorityThreads, ...projectLayout.visibleThreads];
   const sectionByThreadKey = new Map<string, SidebarSection>();
   for (const [list, section] of [
+    [priorityThreads, "priority"],
     [pinnedThreads, "pinned"],
     [activeThreads, "active"],
     [workingThreads, "working"],
@@ -457,7 +519,16 @@ function useSidebarThreads(input: {
     ...partition,
     threads,
     workingShelfEnabled,
+    releasePriorityThreads: (keys: readonly string[]) =>
+      setPriorityReleases((current) => new Set([...current, ...keys])),
+    restorePriorityThread: (key: string) =>
+      setPriorityReleases((current) => {
+        const next = new Set(current);
+        next.delete(key);
+        return next;
+      }),
     searchableThreads: [
+      ...priorityThreads,
       ...pinnedThreads,
       ...activeThreads,
       ...workingThreads,
@@ -499,8 +570,17 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
     serverConfigs,
     optimisticDrop,
     workingShelfEnabled,
+    activityActive,
+    localLastVisitedAtByKey,
+    priorityHolds,
+    priorityReleases,
   } = input;
   const preciseNow = new Date().toISOString();
+  const acknowledged = new Set(input.acknowledgedWakes);
+  const wokeAtByThreadKey = new Map<string, string | null>();
+  const priority: EnvironmentThreadShell[] = [];
+  const priorityRanks = new Map<string, number>();
+  let priorityCount = 0;
   const visible = filterSidebarV2VisibleThreads(threads, scopedProjectKeys, delegatedUnderParent);
   const inboxObservation = inboxReturns.observe(workingShelfEnabled ? threads : null);
   const pinned: EnvironmentThreadShell[] = [];
@@ -542,18 +622,52 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
           : { ...projected, snoozedAt: thread.snoozedAt, snoozedUntil: thread.snoozedUntil },
       );
     } else {
-      const section = resolveSidebarThreadSection({
+      const wokeAt = resolveSidebarWokeAtForRow({
+        key: threadKey,
+        rawWokeAt: threadWokeAt(thread, { now: preciseNow }),
+        settledOverride: thread.settledOverride,
+        heldSettledOverride: priorityHolds.has(threadKey)
+          ? priorityHolds.get(threadKey)
+          : undefined,
+        acknowledged,
+      });
+      wokeAtByThreadKey.set(threadKey, wokeAt);
+      const rank = holdSidebarPriorityRank({
+        rank: resolveSidebarPriorityRank({
+          thread,
+          localLastVisitedAt: localLastVisitedAtByKey[threadKey],
+          wokeAt,
+        }),
+        key: threadKey,
+        settledOverride: thread.settledOverride,
+        holds: priorityHolds,
+        released: priorityReleases.has(threadKey),
+      });
+      const lifecycle = {
         snoozed: supportsSnooze && effectiveSnoozed(thread, { now: preciseNow }),
         settled: supportsSettlement && thread.settledOverride === "settled",
         pinned: thread.pinnedAt != null,
+      };
+      if (resolveSidebarThreadSection({ ...lifecycle, priority: rank !== null }) === "priority") {
+        priorityCount += 1;
+      }
+      const section = resolveSidebarThreadSection({
+        ...lifecycle,
+        priority: activityActive && rank !== null,
       });
-      (section === "snoozed"
-        ? snoozed
-        : section === "settled"
-          ? settled
-          : section === "pinned"
-            ? pinned
-            : inbox(thread)
+      if (section === "priority") {
+        priorityRanks.set(threadKey, rank ?? 2);
+        draggable.delete(threadKey);
+      }
+      (section === "priority"
+        ? priority
+        : section === "snoozed"
+          ? snoozed
+          : section === "settled"
+            ? settled
+            : section === "pinned"
+              ? pinned
+              : inbox(thread)
       ).push(thread);
     }
   }
@@ -581,6 +695,8 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
             preferredIds: optimisticDrop.order,
             getId: (thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
           }),
+    priorityThreads: sortPriorityThreadsForSidebar(priority, priorityRanks),
+    priorityCount,
     workingThreads: sortWorkingThreadsBySend(working),
     snoozedThreads: snoozed.toSorted(
       (left, right) =>
@@ -590,6 +706,8 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
     settledThreads: sortSettledThreads(settled),
     visibleThreads: visible,
     snoozeNow: preciseNow,
+    wokeAtByThreadKey,
+    acknowledgedWakes: acknowledged,
   };
 }
 
@@ -773,6 +891,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     projectScopeItems,
   } = useSidebarLookups();
   const delegatedUnderParent = useDelegatedUnderParent();
+  const { activityActive } = useSidebarActivityToggle();
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -1087,6 +1206,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
 
   const {
     workingShelfEnabled,
+    priorityThreads,
+    priorityCount,
+    wokeAtByThreadKey,
+    releasePriorityThreads,
+    restorePriorityThread,
     pinnedThreads,
     draggableThreadKeys,
     activeReorderableThreadKeys,
@@ -1120,6 +1244,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     delegatedUnderParent,
     routeRowThreadKey,
     projectGroups: scopedProjectGroup === null ? projectGroups : [scopedProjectGroup],
+    activityActive,
+  });
+  const priorityRead = useSidebarPriorityRead({
+    priorityThreads,
+    wokeAtByThreadKey,
+    snoozeNow,
+    releasePriorityThreads,
+    restorePriorityThread,
   });
   const subagentChildrenByParent = activeSubagentChildrenByParent(threads);
 
@@ -1571,6 +1703,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         return (
           thread !== undefined &&
           sectionByThreadKeyRef.current.get(key) === originSection &&
+          (originSection !== "priority" ||
+            resolveSidebarThreadPresentation({
+              snoozed: false,
+              settled: thread.settledOverride === "settled",
+            }).action === action) &&
           (action === "unsnooze"
             ? capabilities?.threadSnooze === true
             : capabilities?.threadSettlement === true)
@@ -2735,7 +2872,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   return (
     <>
       <ThreadContextDragGhost />
-      <SidebarChromeHeader isElectron={isElectron} />
+      <SidebarChromeHeader isElectron={isElectron} priorityCount={priorityCount} />
       <SidebarContent
         className="min-h-full"
         fixedHeader={
@@ -2987,7 +3124,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                     role="presentation"
                     className={cn(
                       "relative flex flex-col gap-px",
-                      sidebarListItems.length > 0 && "flex-1",
+                      sidebarListItems.length + priorityThreads.length > 0 && "flex-1",
                       actionSweep !== null && "**:pointer-events-none",
                     )}
                   >
@@ -3000,7 +3137,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           scopeThreadRef(thread.environmentId, thread.id),
                         );
                         const isCard =
-                          section === "active" || section === "pinned" || section === "working";
+                          section === "active" ||
+                          section === "pinned" ||
+                          section === "working" ||
+                          section === "priority";
                         const rowVariant = isCard ? "card" : "slim";
                         return (
                           <SortableThreadRow
@@ -3008,6 +3148,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             sortableId={threadKey}
                             contextDrag={isContextDrag}
                             sortableDisabled={
+                              section === "priority" ||
                               renamingThreadKey === threadKey ||
                               !draggableThreadKeys.has(threadKey) ||
                               optimisticDrop !== null
@@ -3015,11 +3156,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             thread={thread}
                             variant={rowVariant}
                             variantAction={
-                              section === "snoozed"
-                                ? "unsnooze"
-                                : section === "settled"
-                                  ? "unsettle"
-                                  : "settle"
+                              resolveSidebarThreadPresentation({
+                                snoozed: section === "snoozed",
+                                settled:
+                                  section === "settled" ||
+                                  (section === "priority" && thread.settledOverride === "settled"),
+                              }).action
                             }
                             settlementSupported={
                               serverConfigs.get(thread.environmentId)?.environment.capabilities
@@ -3052,7 +3194,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                   })
                                 : null
                             }
-                            wokeAt={threadWokeAt(thread, { now: snoozeNow })}
+                            wokeAt={
+                              wokeAtByThreadKey.has(threadKey)
+                                ? (wokeAtByThreadKey.get(threadKey) ?? null)
+                                : threadWokeAt(thread, { now: snoozeNow })
+                            }
                             isActive={routeRowThreadKey === threadKey}
                             revealRef={
                               routeRowThreadKey === threadKey ? revealActiveRow : undefined
@@ -3104,7 +3250,29 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           />
                         );
                       };
-                      const items: ReactNode[] = [
+                      const items: ReactNode[] = [];
+                      if (priorityThreads.length > 0) {
+                        items.push(
+                          <SidebarPriorityHeader
+                            key="priority-header"
+                            count={priorityThreads.length}
+                            canMarkAllRead={priorityRead.canMarkAllRead}
+                            onMarkAllRead={priorityRead.markAllRead}
+                            canClearRead={priorityRead.canClearRead}
+                            onClearRead={priorityRead.clearRead}
+                          />,
+                        );
+                        for (const thread of priorityThreads) {
+                          const key = threadShellKey(thread);
+                          items.push(
+                            renderThreadRow(thread, "priority"),
+                            <SubagentRows key={`${key}:subagents`} onOpen={navigateToThread}>
+                              {subagentChildrenByParent.get(key) ?? []}
+                            </SubagentRows>,
+                          );
+                        }
+                      }
+                      items.push(
                         <SidebarDraftBlock
                           key="draft-sessions"
                           projectByKey={projectByKey}
@@ -3114,7 +3282,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           onNavigateToDraft={navigateToDraft}
                           onDraftContextMenu={handleDraftContextMenu}
                         />,
-                      ];
+                      );
                       items.push(
                         <SidebarProjectGroups
                           key="project-groups"
@@ -3174,7 +3342,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           ) : null}
           {!isSearchingThreads &&
           visibleDraftSessionCount === 0 &&
-          pinnedThreads.length +
+          priorityThreads.length +
+            pinnedThreads.length +
             activeThreads.length +
             workingThreads.length +
             snoozedThreads.length +

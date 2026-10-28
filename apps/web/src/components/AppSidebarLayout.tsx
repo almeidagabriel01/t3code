@@ -42,6 +42,7 @@ import {
 } from "../panelAnimations";
 import { BackgroundThreadAnnouncer } from "./BackgroundThreadAnnouncer";
 import LegacyThreadSidebar from "./LegacySidebar";
+import { useSidebarActivityToggle } from "./sidebar/SidebarViewToggles";
 import ThreadSidebar from "./Sidebar";
 import { SidebarBrandWidthProbe } from "./sidebar/SidebarChrome";
 import { STATUS_BAR_HEIGHT, StatusBar } from "./statusBar/StatusBar";
@@ -293,6 +294,7 @@ function SidebarControl() {
   const usagePageOpen = useLocation({ select: (location) => location.pathname === "/usage" });
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { toggleSidebar, isMobile, mobileSheetMounted } = useSidebar();
+  const { toggleActivity } = useSidebarActivityToggle();
   const isSidebarVisible = useSidebarVisibility();
   const environmentIdentificationMode = useEnvironmentIdentificationMode();
   const stageBackdropVariant = useSidebarStageBackdropVariant(environmentIdentificationMode);
@@ -319,26 +321,25 @@ function SidebarControl() {
         // the toggle stays available everywhere else.
         return;
       }
-      if (
-        resolveShortcutCommand(event, keybindings, { context: { usagePageOpen } }) !==
-        "sidebar.toggle"
-      )
-        return;
+      const command = resolveShortcutCommand(event, keybindings, { context: { usagePageOpen } });
+      if (command !== "sidebar.toggle" && command !== "sidebar.toggleActivity") return;
 
       event.preventDefault();
       event.stopPropagation();
-      toggleSidebar();
+      if (command === "sidebar.toggleActivity") toggleActivity();
+      else toggleSidebar();
     };
 
     window.addEventListener("keydown", onKeyDown, true);
     const unsubscribe = window.desktopBridge?.onMenuAction((action) => {
       if (action === "sidebar.toggle") toggleSidebar();
+      else if (action === "sidebar.toggleActivity") toggleActivity();
     });
     return () => {
       window.removeEventListener("keydown", onKeyDown, true);
       unsubscribe?.();
     };
-  }, [keybindings, toggleSidebar, usagePageOpen]);
+  }, [keybindings, toggleActivity, toggleSidebar, usagePageOpen]);
 
   // The control lives as long as the shell, so it carries the shell's commands. Created
   // once so re-renders never re-register them.

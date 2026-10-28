@@ -38,11 +38,15 @@ import { SidebarUpdateArchitectureWarning, SidebarUpdatePill } from "./SidebarUp
 import { useKanbanEnvironmentIds } from "../../state/kanban";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { observeResize } from "~/lib/observeResize";
+import { SidebarViewToggles } from "./SidebarViewToggles";
 
 export const SidebarChromeHeader = memo(function SidebarChromeHeader({
   isElectron,
+  priorityCount,
 }: {
   isElectron: boolean;
+  /** Shows the Activity bell; only the thread sidebar has Priority. */
+  priorityCount?: number;
 }) {
   const stageLabel = useEnvironmentStageLabel();
   const environmentIdentificationMode = useEnvironmentIdentificationMode();
@@ -80,6 +84,9 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
           </div>
         ) : null}
       </div>
+      {priorityCount !== undefined ? (
+        <SidebarViewToggles onBackdrop={backdropVariant !== null} priorityCount={priorityCount} />
+      ) : null}
     </div>
   );
 });
@@ -98,12 +105,16 @@ export function SidebarBrandWidthProbe({
   return (
     <div
       aria-hidden="true"
-      className="pointer-events-none invisible fixed top-0 left-0 flex w-max border-r border-transparent pr-3"
+      className="pointer-events-none invisible fixed top-0 left-0 flex w-max items-center gap-2 border-r border-transparent pr-3"
       ref={observeWidth}
     >
       <div className="ml-[var(--workspace-titlebar-content-left)] flex">
         <SidebarBrandMark onBackdrop={false} />
       </div>
+      <span className="flex items-center gap-1">
+        <span className="size-8 sm:size-7" />
+        <span className="w-6" />
+      </span>
     </div>
   );
 }

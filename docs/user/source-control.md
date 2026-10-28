@@ -299,8 +299,9 @@ it yourself, use the row menu in the **Linked pull requests** panel. In the thre
 watched pull request shows an eye; click it to stop watching.
 
 A watched thread counts as working between wakes, so it stays in the **Working** section and does
-not auto-settle. Agents stop watching when they hand the work back to you, and the thread then
-returns to your inbox.
+not auto-settle. In the sidebar's **Activity** view on web and desktop, it appears in **Priority**
+instead; **Mark all as read** does not stop a watch. Agents stop watching when they hand the work
+back to you, and the thread then returns to your inbox.
 
 Cross-repository links use a project on the same host. Azure DevOps reviews require a project checked
 out from the matching organization and repository.

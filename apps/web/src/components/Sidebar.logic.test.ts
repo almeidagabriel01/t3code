@@ -36,7 +36,17 @@ import {
   type SidebarListMarker,
   type SidebarSection,
   resolveSidebarDropVerb,
+  holdSidebarPriorityRank,
+  isSidebarThreadWoke,
+  resolveSidebarPriorityRank,
+  resolveSidebarThreadPresentation,
+  resolveSidebarThreadSection,
+  resolveSidebarWokeAtForRow,
+  selectSidebarMarkReadTargets,
+  sortPriorityThreadsForSidebar,
 } from "./Sidebar.logic";
+import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import { EnvironmentId, ProjectId, ProviderInstanceId, RunId, ThreadId } from "@t3tools/contracts";
 
@@ -1386,5 +1396,224 @@ describe("resolveSidebarRouteReveal", () => {
         findThread,
       }),
     ).toEqual({ pendingKey: hiddenKey, widensScope: false });
+  });
+});
+
+describe("Activity Priority", () => {
+  const before = "2026-03-09T10:04:00.000Z";
+  const after = "2026-03-09T10:06:00.000Z";
+  const keyOf = (thread: Thread) =>
+    scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+  const runtimeOf = (status: "running" | "idle") =>
+    presentThreadShell(localEnvironmentId, {
+      ...makeThreadFixture().source,
+      id: ThreadId.make(`runtime-${status}`),
+      latestRunId: RunId.make(`run-${status}`),
+      status,
+    }).runtime;
+  const rank = (thread: Thread, wokeAt: string | null = null) =>
+    resolveSidebarPriorityRank({ thread, wokeAt });
+  const section = (thread: Thread) =>
+    resolveSidebarThreadSection({
+      snoozed: effectiveSnoozed(thread, { now: "2026-03-09T10:10:00.000Z" }),
+      settled: thread.settledOverride === "settled",
+      pinned: thread.pinnedAt != null,
+      priority: rank(thread) !== null,
+    });
+
+  it("keeps snoozed work out of Priority, including pinned settled work", () => {
+    const thread = makeThread({
+      runtime: runtimeOf("running"),
+      snoozedAt: before,
+      snoozedUntil: "2026-03-09T12:00:00.000Z",
+      settledOverride: "settled",
+      pinnedAt: before,
+    });
+    expect(rank(thread)).toBe(1);
+    expect(section(thread)).toBe("snoozed");
+  });
+
+  it("returns settled unread work to Settled after a visit without changing lifecycle", () => {
+    const thread = makeThread({
+      settledOverride: "settled",
+      settledAt: before,
+      latestRun: makeLatestRun(),
+      lastVisitedAt: before,
+      pinnedAt: before,
+    });
+    expect(section(thread)).toBe("priority");
+    expect(rank(thread)).toBe(2);
+    expect(section({ ...thread, lastVisitedAt: after })).toBe("settled");
+  });
+
+  it.each(["hasPendingApprovals", "hasPendingUserInput"] as const)(
+    "ranks %s ahead of running or unread work",
+    (field) => {
+      const thread = makeThread({
+        [field]: true,
+        runtime: runtimeOf("running"),
+        latestRun: makeLatestRun(),
+        lastVisitedAt: before,
+      });
+      expect(rank(thread)).toBe(0);
+    },
+  );
+
+  it("brings in a parent whose delegated task needs an approval or an answer", () => {
+    expect(rank(makeThread({ pendingSubagentRequest: "approval" }))).toBe(0);
+    expect(rank(makeThread({ pendingSubagentRequest: "user_input" }))).toBe(0);
+  });
+
+  it.each(["running", "idle"] as const)("includes %s work without unread completion", (status) => {
+    expect(rank(makeThread({ runtime: runtimeOf(status) }))).toBe(1);
+  });
+
+  it("uses server visits authoritatively and falls back to local visits on older servers", () => {
+    const thread = makeThread({ latestRun: makeLatestRun(), lastVisitedAt: before });
+    const input = { thread, localLastVisitedAt: after, wokeAt: null };
+    expect(resolveSidebarPriorityRank(input)).toBe(2);
+    expect(
+      resolveSidebarPriorityRank({ ...input, thread: { ...thread, lastVisitedAt: after } }),
+    ).toBeNull();
+    expect(
+      resolveSidebarPriorityRank({
+        ...input,
+        localLastVisitedAt: before,
+        thread: { ...thread, lastVisitedAt: undefined },
+      }),
+    ).toBe(2);
+  });
+
+  it("includes unacknowledged wakes, including settled rows, but not malformed wakes", () => {
+    const thread = makeThread({ lastVisitedAt: before, settledOverride: "settled" });
+    expect(rank(thread, after)).toBe(2);
+    expect(rank({ ...thread, lastVisitedAt: after }, after)).toBeNull();
+    expect(rank(thread, "invalid")).toBeNull();
+    expect(isSidebarThreadWoke(after, "invalid")).toBe(true);
+  });
+
+  it("marks only unread or woke threads in operable environments", () => {
+    const readOnlyEnvironment = EnvironmentId.make("read-only");
+    const writableUnread = makeThread({ latestRun: makeLatestRun(), lastVisitedAt: before });
+    const readOnlyUnread = makeThread({
+      environmentId: readOnlyEnvironment,
+      latestRun: makeLatestRun(),
+      lastVisitedAt: before,
+    });
+    const writableRead = makeThread({
+      id: ThreadId.make("already-read"),
+      latestRun: makeLatestRun(),
+      lastVisitedAt: after,
+    });
+    const woke = makeThread({ id: ThreadId.make("woke-only"), lastVisitedAt: before });
+    expect(
+      selectSidebarMarkReadTargets({
+        threads: [readOnlyUnread, writableUnread, writableRead, woke],
+        localLastVisitedAtByKey: {},
+        wokeAtByKey: new Map([
+          [keyOf(woke), after],
+          [keyOf(writableRead), after],
+        ]),
+        canOperate: (thread) => thread.environmentId === localEnvironmentId,
+      }),
+    ).toEqual([writableUnread, woke]);
+  });
+
+  it("clears a wake when the row is settled and restores it when unsettled", () => {
+    const acknowledged = new Set<string>();
+    const row = (
+      key: string,
+      settledOverride: "settled" | null,
+      heldSettledOverride: "settled" | null | undefined,
+      rawWokeAt: string | null = after,
+    ) =>
+      resolveSidebarWokeAtForRow({
+        key,
+        rawWokeAt,
+        settledOverride,
+        heldSettledOverride,
+        acknowledged,
+      });
+    expect(row("settling", "settled", null)).toBeNull();
+    expect(row("settling", "settled", "settled")).toBeNull();
+    expect(row("settling", null, "settled")).toBe(after);
+    expect(row("already", "settled", "settled")).toBe(after);
+    expect(row("gone", "settled", null, null)).toBeNull();
+    expect(acknowledged.has("gone")).toBe(false);
+  });
+
+  it("keeps a read Priority row until Activity is shown again, unless its settled state changes", () => {
+    const holds = new Map([
+      ["read", null],
+      ["settled", "settled" as const],
+    ]);
+    const hold = (key: string, rank: 0 | 1 | 2 | null, settledOverride: "settled" | null) =>
+      holdSidebarPriorityRank({ rank, key, settledOverride, holds });
+    expect(hold("read", null, null)).toBe(2);
+    expect(hold("settled", null, "settled")).toBe(2);
+    expect(hold("read", 0, null)).toBe(0);
+    expect(hold("read", null, "settled")).toBeNull();
+    expect(hold("settled", null, null)).toBeNull();
+    expect(hold("never-shown", null, null)).toBeNull();
+    expect(
+      holdSidebarPriorityRank({
+        rank: null,
+        key: "read",
+        settledOverride: null,
+        holds,
+        released: true,
+      }),
+    ).toBeNull();
+  });
+
+  it("sorts attention, work and unread by creation time with stable scoped-key ties", () => {
+    const thread = (id: string, createdAt: string, overrides: ThreadFixtureOverrides = {}) =>
+      makeThread({ id: ThreadId.make(id), createdAt, updatedAt: createdAt, ...overrides });
+    const attention = thread("attention", before, { hasPendingApprovals: true });
+    const working = thread("working", after, { runtime: runtimeOf("running") });
+    const unread = thread("unread", after, { latestRun: makeLatestRun(), lastVisitedAt: before });
+    const tie = thread("z-attention", before, { hasPendingUserInput: true });
+    const threads = [tie, unread, working, attention];
+    const ranks = new Map(threads.map((thread) => [keyOf(thread), rank(thread)!]));
+    const ordered = sortPriorityThreadsForSidebar(threads, ranks);
+    expect(ordered.map((thread) => thread.id)).toEqual([
+      "attention",
+      "z-attention",
+      "working",
+      "unread",
+    ]);
+    const streamed = threads.map((candidate) =>
+      candidate === attention ? { ...candidate, updatedAt: "2999-01-01T00:00:00.000Z" } : candidate,
+    );
+    expect(sortPriorityThreadsForSidebar(streamed, ranks).map((thread) => thread.id)).toEqual(
+      ordered.map((thread) => thread.id),
+    );
+  });
+
+  it("uses lifecycle for row actions independently of Priority", () => {
+    expect(resolveSidebarThreadPresentation({ settled: false, snoozed: false }).action).toBe(
+      "settle",
+    );
+    expect(resolveSidebarThreadPresentation({ settled: true, snoozed: false }).action).toBe(
+      "unsettle",
+    );
+    expect(resolveSidebarThreadPresentation({ settled: true, snoozed: true }).action).toBe(
+      "unsnooze",
+    );
+  });
+
+  it("never drags into or out of Priority", () => {
+    expect(resolveSidebarDropVerb("active", "priority")).toBeNull();
+    expect(
+      planSidebarThreadDrop({
+        activeKey: "priority",
+        activeSection: "priority",
+        target: { section: "active", pinnedOrder: [], activeOrder: ["priority", "active"] },
+        pinnedOrder: [],
+        pinnedKeysById: new Map(),
+        activeOrder: ["active"],
+        activeKeysById: new Map(),
+      }),
+    ).toEqual({ kind: "none" });
   });
 });
