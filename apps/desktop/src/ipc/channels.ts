@@ -128,3 +128,4 @@ export const COMPLETE_LEGACY_LOCAL_STORAGE_CHANNEL = "desktop:complete-legacy-lo
 
 export const GET_WINDOW_MATERIAL_STATE_CHANNEL = "desktop:get-window-material-state";
 export const WINDOW_MATERIAL_STATE_CHANNEL = "desktop:window-material-state-changed";
+export const RELAUNCH_FOR_WINDOW_MATERIAL_CHANNEL = "desktop:relaunch-for-window-material";
