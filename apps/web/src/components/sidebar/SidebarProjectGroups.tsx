@@ -271,13 +271,13 @@ function SidebarProjectGroup(props: ProjectGroupProps) {
           >
             {group.settledThreads.length === 0 ? null : (
               <SidebarMenuSubButton
-                size="sm"
+                className="w-full"
                 aria-expanded={entry.settledExpanded}
                 data-testid="sidebar-settled-shelf-toggle"
                 onClick={() => props.onToggleSettled(scope)}
                 render={<button type="button" />}
               >
-                <CheckCheckIcon className="size-3" />
+                <CheckCheckIcon className="size-3.5" />
                 <span className="text-sidebar-muted-foreground">Settled</span>
                 <span className="ms-auto rounded-full bg-sidebar-row-hover px-1.5 text-3xs tabular-nums text-sidebar-muted-foreground">
                   {group.settledThreads.length}
@@ -285,7 +285,7 @@ function SidebarProjectGroup(props: ProjectGroupProps) {
                 <ChevronDownIcon
                   aria-hidden
                   className={cn(
-                    "size-3 shrink-0 transition-transform",
+                    "size-3.5 shrink-0 transition-transform",
                     !entry.settledExpanded && "-rotate-90",
                   )}
                 />
