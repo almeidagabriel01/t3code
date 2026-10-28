@@ -7,6 +7,13 @@ import type {
   StatusBarUsagePercentage,
 } from "@t3tools/contracts";
 
+import {
+  NumberField,
+  NumberFieldDecrement,
+  NumberFieldGroup,
+  NumberFieldIncrement,
+  NumberFieldInput,
+} from "../ui/number-field";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import {
@@ -30,6 +37,12 @@ type StatusBarSettingsValues = Pick<
   | "statusBarUsagePercentage"
   | "statusBarPortsCount"
   | "statusBarResourceSort"
+  | "usagePaceEnabled"
+  | "usageProjectionEnabled"
+  | "usageDailyBudgetEnabled"
+  | "usageShowSessions"
+  | "usageWatchThreshold"
+  | "usageCriticalThreshold"
 >;
 
 const USAGE_MODE_LABELS: Record<StatusBarUsageMode, string> = {
@@ -80,6 +93,71 @@ function LabeledSelect<T extends string>({
         ))}
       </SelectPopup>
     </Select>
+  );
+}
+
+function ThresholdField({
+  label,
+  value,
+  min,
+  max,
+  onChange,
+}: {
+  readonly label: string;
+  readonly value: number;
+  readonly min: number;
+  readonly max: number;
+  readonly onChange: (value: number) => void;
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="text-xs text-muted-foreground">{label}</span>
+      <NumberField
+        value={value}
+        min={min}
+        max={max}
+        step={5}
+        size="sm"
+        className="w-28"
+        onValueChange={(next) => {
+          if (next !== null && Number.isInteger(next)) onChange(next);
+        }}
+      >
+        <NumberFieldGroup>
+          <NumberFieldDecrement aria-label={`Decrease ${label} threshold`} />
+          <NumberFieldInput aria-label={`${label} threshold in percent`} />
+          <NumberFieldIncrement aria-label={`Increase ${label} threshold`} />
+        </NumberFieldGroup>
+      </NumberField>
+    </div>
+  );
+}
+
+function ToggleRow({
+  search,
+  description,
+  label,
+  checked,
+  onChange,
+}: {
+  readonly search: ReturnType<typeof searchableSetting>;
+  readonly description: string;
+  readonly label: string;
+  readonly checked: boolean;
+  readonly onChange: (checked: boolean) => void;
+}) {
+  return (
+    <SettingsRow
+      {...search}
+      description={description}
+      control={
+        <Switch
+          checked={checked}
+          onCheckedChange={(next) => onChange(Boolean(next))}
+          aria-label={label}
+        />
+      }
+    />
   );
 }
 
@@ -205,6 +283,56 @@ function StatusBarSettingsSections({
               onChange={(statusBarUsagePercentage) => updateSettings({ statusBarUsagePercentage })}
             />
           }
+        />
+        <ToggleRow
+          search={searchableSetting("status-bar-usage-pace")}
+          label="Usage pace"
+          description="Mark where even spending would be on each limit, and show how far ahead or behind you are."
+          checked={settings.usagePaceEnabled}
+          onChange={(usagePaceEnabled) => updateSettings({ usagePaceEnabled })}
+        />
+        <ToggleRow
+          search={searchableSetting("status-bar-usage-projection")}
+          label="Usage projection"
+          description="Project where each limit lands at reset, or when it runs out, once a fifteenth of the window has passed."
+          checked={settings.usageProjectionEnabled}
+          onChange={(usageProjectionEnabled) => updateSettings({ usageProjectionEnabled })}
+        />
+        <ToggleRow
+          search={searchableSetting("status-bar-usage-daily-budget")}
+          label="Daily budget"
+          description="For weekly limits, show how much of the budget allowed through today you have used."
+          checked={settings.usageDailyBudgetEnabled}
+          onChange={(usageDailyBudgetEnabled) => updateSettings({ usageDailyBudgetEnabled })}
+        />
+        <SettingsRow
+          {...searchableSetting("status-bar-usage-thresholds")}
+          description="Bars turn amber past the watch level and red past the critical level. Watch stays below critical."
+          control={
+            <div className="flex flex-wrap items-center gap-3">
+              <ThresholdField
+                label="Watch"
+                value={settings.usageWatchThreshold}
+                min={1}
+                max={settings.usageCriticalThreshold - 1}
+                onChange={(usageWatchThreshold) => updateSettings({ usageWatchThreshold })}
+              />
+              <ThresholdField
+                label="Critical"
+                value={settings.usageCriticalThreshold}
+                min={settings.usageWatchThreshold + 1}
+                max={100}
+                onChange={(usageCriticalThreshold) => updateSettings({ usageCriticalThreshold })}
+              />
+            </div>
+          }
+        />
+        <ToggleRow
+          search={searchableSetting("status-bar-usage-sessions")}
+          label="Sessions per account"
+          description="List the threads using each account in the usage popover."
+          checked={settings.usageShowSessions}
+          onChange={(usageShowSessions) => updateSettings({ usageShowSessions })}
         />
       </SettingsSection>
 

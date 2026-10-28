@@ -13,6 +13,7 @@ import {
   type LimitPoolWindow,
   paceRemainingPercent,
   remainingPercent,
+  usageBand,
 } from "@t3tools/shared/usageLimits";
 import type { Popover as PopoverPrimitive } from "@base-ui/react/popover";
 import { AlertTriangleIcon, ExternalLinkIcon, TicketIcon } from "lucide-react";
@@ -28,7 +29,15 @@ import {
 } from "react";
 
 import { ensureLocalApi } from "../../localApi";
-import { usePrimarySettings } from "../../hooks/useSettings";
+import { useClientSettings, usePrimarySettings } from "../../hooks/useSettings";
+import {
+  BAND_FILL,
+  BAND_TEXT,
+  pacePresentation,
+  poolPacePresentation,
+  selectUsagePaceSettings,
+  windowBand,
+} from "../../lib/usagePace";
 import { cn } from "../../lib/utils";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
@@ -148,9 +157,17 @@ function SegmentPopover({
   readonly onRedeem: () => void;
 }) {
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
+  const paceSettings = useClientSettings(selectUsagePaceSettings);
   const remaining = remainingPercent(window);
   const timeLeft = paceRemainingPercent(window, now);
   const resetsIn = formatResetsIn(window, now);
+  const pace = pacePresentation({
+    window,
+    now,
+    display: "remaining",
+    settings: paceSettings,
+    formatAt: (ms) => formatUpcomingTimestamp(new Date(ms).toISOString(), timestampFormat, now),
+  });
   const where =
     account.environments.length > 0
       ? account.environments.map((environment) => environment.label).join(", ")
@@ -190,7 +207,14 @@ function SegmentPopover({
             {resetsIn ? ` · ${resetsIn.replace("resets in ", "in ")}` : ""}
           </Row>
         ) : null}
-        {timeLeft !== null ? <Row label="Even pace">{timeLeft}% left by now</Row> : null}
+        {timeLeft !== null && pace ? (
+          <Row label="Even pace">
+            {timeLeft}% left by now · you&apos;re{" "}
+            <span className={pace.deficit ? "text-warning" : "text-success"}>{pace.deltaText}</span>
+          </Row>
+        ) : null}
+        {pace?.projectionText ? <Row label="Projection">{pace.projectionText}</Row> : null}
+        {pace?.dailyText ? <Row label="Daily">{pace.dailyText}</Row> : null}
         {reset && reset.restoresPercent > 0 ? (
           <Row label="Restores">+{reset.restoresPercent}% of pool</Row>
         ) : null}
@@ -343,8 +367,10 @@ function SegmentTriggers({
   const popover = use(SegmentPopoverContext) ?? undefined;
   const payload: SegmentPayload = { account, window, reset, redeem };
   const remaining = remainingPercent(window);
-  const timeLeft = paceRemainingPercent(window, now);
+  const paceSettings = useClientSettings(selectUsagePaceSettings);
+  const timeLeft = paceSettings.pace ? paceRemainingPercent(window, now) : null;
   const [segmentRef, paceMark] = usePaceMark(timeLeft);
+  const band = windowBand(window, paceSettings);
   const resetsIn = formatResetsIn(window, now);
   const credits = account.limits.resetCredits?.availableCount ?? 0;
   return (
@@ -368,8 +394,14 @@ function SegmentTriggers({
           <div className="absolute inset-0" style={paceMark?.gap}>
             <div
               aria-hidden
-              className="absolute inset-y-0 left-0 rounded-md opacity-35"
-              style={{ width: `${remaining}%`, backgroundColor: color }}
+              className={cn(
+                "absolute inset-y-0 left-0 rounded-md opacity-35",
+                band !== "ok" && BAND_FILL[band],
+              )}
+              style={{
+                width: `${remaining}%`,
+                ...(band === "ok" ? { backgroundColor: color } : {}),
+              }}
             />
             {remaining < 100 && reset && refillPercent > 0 ? (
               <div
@@ -541,12 +573,19 @@ function PoolWindowCard({
   readonly description?: string | undefined;
 }) {
   const nextRefill = pool.resets.find((reset) => reset.restoresPercent > 0);
+  const paceSettings = useClientSettings(selectUsagePaceSettings);
+  const pace = poolPacePresentation({ shares: pool.paceShares, settings: paceSettings });
   return (
     <div className="grid items-center gap-x-6 gap-y-3 rounded-lg border border-border/60 p-4 md:grid-cols-[11rem_minmax(0,1fr)]">
       <div className="flex flex-col gap-1">
         <span className="text-sm font-medium text-foreground">{label ?? pool.label}</span>
         <span className="flex items-baseline gap-2">
-          <span className="text-3xl font-semibold text-foreground tabular-nums">
+          <span
+            className={cn(
+              "text-3xl font-semibold text-foreground tabular-nums",
+              BAND_TEXT[usageBand(pool.usedPercent, paceSettings.watch, paceSettings.critical)],
+            )}
+          >
             {pool.remainingPercent}%
           </span>
           <span className="inline-flex items-center gap-2 text-sm text-muted-foreground">
@@ -554,6 +593,12 @@ function PoolWindowCard({
             {pool.pace ? <PaceIcon pace={pool.pace} /> : null}
           </span>
         </span>
+        {pace ? (
+          <span className="text-xs text-muted-foreground tabular-nums">
+            <span className={pace.deficit ? "text-warning" : "text-success"}>{pace.deltaText}</span>{" "}
+            vs even pace{pace.projectionText ? ` · ${pace.projectionText}` : ""}
+          </span>
+        ) : null}
         {nextRefill && pool.columns.length > 1 ? (
           <span className="text-xs font-medium text-foreground tabular-nums">
             ↻ +{nextRefill.restoresPercent}%

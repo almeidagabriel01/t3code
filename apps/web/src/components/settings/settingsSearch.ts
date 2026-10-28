@@ -478,6 +478,36 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["status bar used remaining left limit"],
   },
   {
+    id: "status-bar-usage-pace",
+    title: "Usage pace",
+    to: "/settings/status-bar",
+    searchTerms: ["usage expected pace marker tick deficit reserve points ahead behind"],
+  },
+  {
+    id: "status-bar-usage-projection",
+    title: "Usage projection",
+    to: "/settings/status-bar",
+    searchTerms: ["usage projection forecast at reset runs out"],
+  },
+  {
+    id: "status-bar-usage-daily-budget",
+    title: "Daily budget",
+    to: "/settings/status-bar",
+    searchTerms: ["usage weekly daily budget allowance today"],
+  },
+  {
+    id: "status-bar-usage-thresholds",
+    title: "Usage thresholds",
+    to: "/settings/status-bar",
+    searchTerms: ["usage watch critical threshold color warning percent"],
+  },
+  {
+    id: "status-bar-usage-sessions",
+    title: "Sessions per account",
+    to: "/settings/status-bar",
+    searchTerms: ["usage sessions threads account working waiting roster"],
+  },
+  {
     id: "status-bar-ports-count",
     title: "Ports count",
     to: "/settings/status-bar",

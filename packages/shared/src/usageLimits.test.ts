@@ -19,6 +19,9 @@ import {
   elapsedShare,
   paceOf,
   paceRemainingPercent,
+  formatPaceDelta,
+  usageBand,
+  usagePace,
   usesChatGptSharing,
 } from "./usageLimits.ts";
 
@@ -1288,5 +1291,54 @@ describe("ChatGPT sharing presentation", () => {
         auth: { status: "unauthenticated", subscriptionSharing: true },
       }),
     ).toBe(false);
+  });
+});
+
+describe("usage pace", () => {
+  it("measures the deficit against elapsed time and projects the run-out", () => {
+    const pace = usagePace({ ...window, usedPercent: 80 }, now)!;
+    expect(pace.elapsed).toBeCloseTo(0.6);
+    expect(pace.deltaPoints).toBeCloseTo(20);
+    expect(pace.projection!.atResetPercent).toBeCloseTo(133.33);
+    expect(pace.projection!.runsOutAt).toBe(Date.parse("2026-09-03T12:45:00.000Z"));
+    expect(pace.dailyBudgetPercent).toBeNull();
+  });
+
+  it("projects the share at reset when pace stays under the limit", () => {
+    const pace = usagePace({ ...window, usedPercent: 30 }, now)!;
+    expect(pace.deltaPoints).toBeCloseTo(-30);
+    expect(pace.projection).toEqual({ atResetPercent: 50, runsOutAt: null });
+  });
+
+  it("withholds projection before a fifteenth of the window and without a live reset", () => {
+    const early = { ...window, resetsAt: "2026-09-03T16:50:00.000Z" };
+    expect(usagePace(early, now)!.projection).toBeNull();
+    expect(usagePace({ ...window, resetsAt: "2026-09-03T11:00:00.000Z" }, now)).toBeNull();
+    expect(usagePace({ ...window, windowDurationMins: undefined }, now)).toBeNull();
+  });
+
+  it("budgets weekly windows by day", () => {
+    const weekly = {
+      ...window,
+      kind: "weekly",
+      usedPercent: 30,
+      windowDurationMins: 7 * 1440,
+      resetsAt: "2026-09-08T12:00:00.000Z",
+    } as const;
+    // two days elapsed: day index 2, allowed 3/7
+    expect(usagePace(weekly, now)!.dailyBudgetPercent).toBeCloseTo(70);
+  });
+
+  it("formats deltas and bands", () => {
+    expect(formatPaceDelta(8)).toBe("+8 pts");
+    expect(formatPaceDelta(-12.04)).toBe("−12 pts");
+    expect(formatPaceDelta(2.26)).toBe("+2.3 pts");
+    expect(formatPaceDelta(0.01)).toBe("<0.1 pts");
+    expect([10, 50, 69, 70].map((used) => usageBand(used, 50, 70))).toEqual([
+      "ok",
+      "watch",
+      "watch",
+      "critical",
+    ]);
   });
 });

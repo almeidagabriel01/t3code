@@ -50,12 +50,6 @@ export function sparklinePoints(
     .join(" ");
 }
 
-export type UsageTone = "urgent" | "warning" | "normal";
-
-export function usageTone(usedPercent: number): UsageTone {
-  return usedPercent >= 90 ? "urgent" : usedPercent >= 75 ? "warning" : "normal";
-}
-
 const WILDCARD_HOSTS = new Set(["*", "0.0.0.0", "::"]);
 
 /** What a client on the listener's machine would type: wildcard and loopback binds read as localhost. */

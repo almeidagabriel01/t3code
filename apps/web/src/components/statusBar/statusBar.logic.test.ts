@@ -7,7 +7,6 @@ import {
   portAddress,
   selectBarWindows,
   sparklinePoints,
-  usageTone,
 } from "./statusBar.logic";
 
 const NOW = Date.parse("2026-10-27T12:00:00.000Z");
@@ -54,12 +53,6 @@ describe("sparklinePoints", () => {
   it("draws nothing without a line to draw", () => {
     expect(sparklinePoints([4], 100, 20)).toBe("");
     expect(sparklinePoints([], 100, 20)).toBe("");
-  });
-});
-
-describe("usageTone", () => {
-  it("escalates with consumption", () => {
-    expect([10, 75, 90].map(usageTone)).toEqual(["normal", "warning", "urgent"]);
   });
 });
 

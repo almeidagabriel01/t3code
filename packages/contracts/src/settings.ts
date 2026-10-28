@@ -72,6 +72,7 @@ export const StatusBarPortsCount = Schema.Literals(["project", "all"]);
 export type StatusBarPortsCount = typeof StatusBarPortsCount.Type;
 export const StatusBarResourceSort = Schema.Literals(["memory", "cpu", "name"]);
 export type StatusBarResourceSort = typeof StatusBarResourceSort.Type;
+export const UsageThreshold = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 }));
 
 export const DEFAULT_SIDEBAR_PROJECT_SORT_ORDER: SidebarProjectSortOrder = "updated_at";
 
@@ -482,6 +483,12 @@ export const ClientSettingsSchema = Schema.Struct({
   statusBarResourceSort: StatusBarResourceSort.pipe(
     Schema.withDecodingDefault(Effect.succeed("memory")),
   ),
+  usagePaceEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  usageProjectionEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  usageDailyBudgetEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  usageShowSessions: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  usageWatchThreshold: UsageThreshold.pipe(Schema.withDecodingDefault(Effect.succeed(50))),
+  usageCriticalThreshold: UsageThreshold.pipe(Schema.withDecodingDefault(Effect.succeed(70))),
   sidebarProjectGroupingMode: SidebarProjectGroupingMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE)),
   ),
@@ -1729,6 +1736,12 @@ export const ClientSettingsPatch = Schema.Struct({
   statusBarUsagePercentage: Schema.optionalKey(StatusBarUsagePercentage),
   statusBarPortsCount: Schema.optionalKey(StatusBarPortsCount),
   statusBarResourceSort: Schema.optionalKey(StatusBarResourceSort),
+  usagePaceEnabled: Schema.optionalKey(Schema.Boolean),
+  usageProjectionEnabled: Schema.optionalKey(Schema.Boolean),
+  usageDailyBudgetEnabled: Schema.optionalKey(Schema.Boolean),
+  usageShowSessions: Schema.optionalKey(Schema.Boolean),
+  usageWatchThreshold: Schema.optionalKey(UsageThreshold),
+  usageCriticalThreshold: Schema.optionalKey(UsageThreshold),
   sidebarProjectGroupingMode: Schema.optionalKey(SidebarProjectGroupingMode),
   sidebarProjectGroupingOverrides: Schema.optionalKey(
     Schema.Record(TrimmedNonEmptyString, SidebarProjectGroupingMode),

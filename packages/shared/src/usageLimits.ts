@@ -344,6 +344,8 @@ export interface LimitPoolWindow {
   readonly remainingPercent: number;
   readonly usedPercent: number;
   readonly pace: LimitPace | null;
+  /** Mean spend and elapsed share of the members that have reset clocks. */
+  readonly paceShares: { readonly used: number; readonly elapsed: number } | null;
   readonly resets: ReadonlyArray<{
     readonly member: LimitPoolMember;
     readonly at: number;
@@ -523,6 +525,7 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
       usedPercent: Math.round(usedPercent),
       remainingPercent: Math.round(100 - usedPercent),
       pace: meanElapsed === null ? null : paceOfShares(timedUsed, meanElapsed),
+      paceShares: meanElapsed === null ? null : { used: timedUsed, elapsed: meanElapsed },
       resets,
     };
   });
@@ -791,4 +794,61 @@ export function collectProviderUsageLimits(
     }
   }
   return { createdAt: DateTime.formatIso(DateTime.makeUnsafe(now)), accounts, notices };
+}
+
+export type UsageBand = "ok" | "watch" | "critical";
+
+export function usageBand(usedPercent: number, watch: number, critical: number): UsageBand {
+  return usedPercent >= critical ? "critical" : usedPercent >= watch ? "watch" : "ok";
+}
+
+export interface UsagePace {
+  /** Share of the window elapsed, 0..1. */
+  readonly elapsed: number;
+  /** Used percent minus elapsed percent; positive is a deficit (burning too fast). */
+  readonly deltaPoints: number;
+  /** Null until 1/15 of the window has elapsed, so early noise does not extrapolate. */
+  readonly projection: {
+    readonly atResetPercent: number;
+    readonly runsOutAt: number | null;
+  } | null;
+  /** Weekly windows only: used share of the budget allowed through today (day index + 1 of 7). */
+  readonly dailyBudgetPercent: number | null;
+}
+
+const MIN_PROJECTION_ELAPSED = 1 / 15;
+
+export function projectedAtReset(usedPercent: number, elapsed: number): number | null {
+  return elapsed >= MIN_PROJECTION_ELAPSED ? Math.max(0, usedPercent) / elapsed : null;
+}
+
+export function usagePace(window: ServerProviderUsageWindow, now: number): UsagePace | null {
+  const resetsAt = resetMillis(window);
+  if (resetsAt === null || resetsAt <= now || window.windowDurationMins === undefined) return null;
+  const length = window.windowDurationMins * MINUTE;
+  if (length <= 0) return null;
+  const elapsed = 1 - Math.min((resetsAt - now) / length, 1);
+  const used = Math.max(0, window.usedPercent);
+  let projection: UsagePace["projection"] = null;
+  const atResetPercent = projectedAtReset(used, elapsed);
+  if (atResetPercent !== null) {
+    const runsOutAt =
+      atResetPercent > 100 ? resetsAt - length + (length * elapsed * 100) / used : null;
+    projection = { atResetPercent, runsOutAt };
+  }
+  const dayIndex = Math.min(6, Math.floor(elapsed * 7));
+  return {
+    elapsed,
+    deltaPoints: used - elapsed * 100,
+    projection,
+    dailyBudgetPercent: window.kind === "weekly" ? used / ((dayIndex + 1) / 7) : null,
+  };
+}
+
+/** "+8 pts", "−12 pts", "+0.5 pts"; one decimal, trailing .0 dropped. */
+export function formatPaceDelta(points: number): string {
+  const magnitude = Math.abs(points);
+  if (magnitude < 0.1) return "<0.1 pts";
+  const text = String(Math.round(magnitude * 10) / 10);
+  return `${points > 0 ? "+" : "−"}${text} pts`;
 }

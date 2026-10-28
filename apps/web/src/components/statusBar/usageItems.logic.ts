@@ -23,6 +23,8 @@ export type UsagePresentations = ReadonlyMap<
 export interface UsageItem {
   readonly key: string;
   readonly environmentId: EnvironmentId;
+  /** Every connected environment this account is signed in on. */
+  readonly environmentIds: ReadonlyArray<EnvironmentId>;
   readonly entry: ProviderInstanceEntry;
   /** Undefined when the instance reported nothing; it still shows, as unavailable. */
   readonly limits: ServerProviderUsageLimits | undefined;
@@ -41,6 +43,7 @@ export function collectUsageItems(presentations: UsagePresentations): ReadonlyAr
   const accountKeys = providerAccountKeys(presentations);
   const items = new Map<string, UsageItem>();
   const labels = new Map<string, string[]>();
+  const environmentsByKey = new Map<string, EnvironmentId[]>();
 
   for (const [environmentId, presentation] of presentations) {
     const config = presentation.serverConfig;
@@ -67,11 +70,13 @@ export function collectUsageItems(presentations: UsagePresentations): ReadonlyAr
         account === null
           ? `${environmentId}:${entry.instanceId}`
           : `${account}|${entry.instanceId}`;
+      environmentsByKey.set(key, [...(environmentsByKey.get(key) ?? []), environmentId]);
       labels.set(key, [...(labels.get(key) ?? []), presentation.entry.target.label]);
       if (items.has(key)) continue;
       items.set(key, {
         key,
         environmentId,
+        environmentIds: [],
         entry,
         limits,
         showBadge: shouldShowInstanceBadge(entry, entries),
@@ -81,6 +86,7 @@ export function collectUsageItems(presentations: UsagePresentations): ReadonlyAr
   }
   return [...items].map(([key, item]) => ({
     ...item,
+    environmentIds: environmentsByKey.get(key) ?? [],
     environmentLabel: labelEnvironments ? [...new Set(labels.get(key))].join(", ") : null,
   }));
 }

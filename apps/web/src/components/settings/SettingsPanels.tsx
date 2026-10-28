@@ -449,7 +449,13 @@ export function useSettingsRestore(onRestored?: () => void) {
     settings.statusBarUsageMode !== DEFAULT_UNIFIED_SETTINGS.statusBarUsageMode ||
     settings.statusBarUsagePercentage !== DEFAULT_UNIFIED_SETTINGS.statusBarUsagePercentage ||
     settings.statusBarPortsCount !== DEFAULT_UNIFIED_SETTINGS.statusBarPortsCount ||
-    settings.statusBarResourceSort !== DEFAULT_UNIFIED_SETTINGS.statusBarResourceSort
+    settings.statusBarResourceSort !== DEFAULT_UNIFIED_SETTINGS.statusBarResourceSort ||
+    settings.usagePaceEnabled !== DEFAULT_UNIFIED_SETTINGS.usagePaceEnabled ||
+    settings.usageProjectionEnabled !== DEFAULT_UNIFIED_SETTINGS.usageProjectionEnabled ||
+    settings.usageDailyBudgetEnabled !== DEFAULT_UNIFIED_SETTINGS.usageDailyBudgetEnabled ||
+    settings.usageShowSessions !== DEFAULT_UNIFIED_SETTINGS.usageShowSessions ||
+    settings.usageWatchThreshold !== DEFAULT_UNIFIED_SETTINGS.usageWatchThreshold ||
+    settings.usageCriticalThreshold !== DEFAULT_UNIFIED_SETTINGS.usageCriticalThreshold
       ? ["Status bar"]
       : []),
     ...(settings.sidebarAutoSettleAfterDays !== DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays
@@ -628,6 +634,12 @@ export function useSettingsRestore(onRestored?: () => void) {
       statusBarUsagePercentage: DEFAULT_UNIFIED_SETTINGS.statusBarUsagePercentage,
       statusBarPortsCount: DEFAULT_UNIFIED_SETTINGS.statusBarPortsCount,
       statusBarResourceSort: DEFAULT_UNIFIED_SETTINGS.statusBarResourceSort,
+      usagePaceEnabled: DEFAULT_UNIFIED_SETTINGS.usagePaceEnabled,
+      usageProjectionEnabled: DEFAULT_UNIFIED_SETTINGS.usageProjectionEnabled,
+      usageDailyBudgetEnabled: DEFAULT_UNIFIED_SETTINGS.usageDailyBudgetEnabled,
+      usageShowSessions: DEFAULT_UNIFIED_SETTINGS.usageShowSessions,
+      usageWatchThreshold: DEFAULT_UNIFIED_SETTINGS.usageWatchThreshold,
+      usageCriticalThreshold: DEFAULT_UNIFIED_SETTINGS.usageCriticalThreshold,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleKeepPullRequests: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleKeepPullRequests,
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
