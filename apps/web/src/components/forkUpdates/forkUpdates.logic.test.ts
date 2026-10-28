@@ -14,5 +14,6 @@ describe("shouldNotifyForkUpdate", () => {
     expect(shouldNotifyForkUpdate({ ...status, headTag: "v1.1.0" }, "")).toBe(false);
     expect(shouldNotifyForkUpdate({ ...status, available: false }, "")).toBe(false);
     expect(shouldNotifyForkUpdate({ ...status, behind: 0 }, "")).toBe(false);
+    expect(shouldNotifyForkUpdate({ ...status, upstreamTag: null }, "")).toBe(false);
   });
 });

@@ -2,9 +2,11 @@ import type {
   ClientSettings,
   ClientSettingsPatch,
   StatusBarPortsCount,
+  StatusBarPortsRefresh,
   StatusBarResourceSort,
   StatusBarUsageMode,
   StatusBarUsagePercentage,
+  StatusBarUsageRefresh,
 } from "@t3tools/contracts";
 
 import {
@@ -37,6 +39,8 @@ type StatusBarSettingsValues = Pick<
   | "statusBarUsagePercentage"
   | "statusBarPortsCount"
   | "statusBarResourceSort"
+  | "statusBarUsageRefresh"
+  | "statusBarPortsRefresh"
   | "usagePaceEnabled"
   | "statusBarUsagePaceVisible"
   | "usageProjectionEnabled"
@@ -57,6 +61,20 @@ const USAGE_PERCENTAGE_LABELS: Record<StatusBarUsagePercentage, string> = {
 const PORTS_COUNT_LABELS: Record<StatusBarPortsCount, string> = {
   project: "Project ports",
   all: "All ports",
+};
+const USAGE_REFRESH_LABELS: Record<StatusBarUsageRefresh, string> = {
+  "1m": "Every minute",
+  "2m": "Every 2 minutes",
+  "5m": "Every 5 minutes",
+  "15m": "Every 15 minutes",
+  "30m": "Every 30 minutes",
+  manual: "Manual",
+};
+const PORTS_REFRESH_LABELS: Record<StatusBarPortsRefresh, string> = {
+  "10s": "Every 10 seconds",
+  "30s": "Every 30 seconds",
+  "1m": "Every minute",
+  "5m": "Every 5 minutes",
 };
 const RESOURCE_SORT_LABELS: Record<StatusBarResourceSort, string> = {
   memory: "Memory",
@@ -262,6 +280,18 @@ function StatusBarSettingsSections({
           </div>
         </SettingsRow>
         <SettingsRow
+          {...searchableSetting("status-bar-usage-refresh")}
+          description="How often usage limits are checked in the background. Usage also updates live while agents run. Paused while the window is hidden."
+          control={
+            <LabeledSelect
+              label="Refresh usage"
+              value={settings.statusBarUsageRefresh}
+              labels={USAGE_REFRESH_LABELS}
+              onChange={(statusBarUsageRefresh) => updateSettings({ statusBarUsageRefresh })}
+            />
+          }
+        />
+        <SettingsRow
           {...searchableSetting("status-bar-usage-mode")}
           description="Verbose shows a meter with each limit window. Compact shows only the tightest one."
           control={
@@ -347,6 +377,18 @@ function StatusBarSettingsSections({
       </SettingsSection>
 
       <SettingsSection id="status-bar-ports" title="Ports">
+        <SettingsRow
+          {...searchableSetting("status-bar-ports-refresh")}
+          description="How often listening ports are checked in the background. An open ports list refreshes every few seconds."
+          control={
+            <LabeledSelect
+              label="Refresh ports"
+              value={settings.statusBarPortsRefresh}
+              labels={PORTS_REFRESH_LABELS}
+              onChange={(statusBarPortsRefresh) => updateSettings({ statusBarPortsRefresh })}
+            />
+          }
+        />
         <SettingsRow
           {...searchableSetting("status-bar-ports-count")}
           description="What the ports count includes. The list always shows both."

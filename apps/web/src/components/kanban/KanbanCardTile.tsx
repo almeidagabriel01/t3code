@@ -62,6 +62,8 @@ export interface KanbanCardTileProps {
   readonly labels: ReadonlyArray<KanbanLabel>;
   readonly templates: ReadonlyArray<KanbanTemplate>;
   readonly project?: KanbanProjectInfo | undefined;
+  /** The accent strip shows whenever `project` is set; the badge row only where projects are mixed. */
+  readonly showProjectBadge?: boolean | undefined;
   readonly onOpen: (card: KanbanCard) => void;
   /** Present when the viewer can edit; adds the agent quick action. */
   readonly onStartAgent?: ((card: KanbanCard) => void) | undefined;
@@ -91,7 +93,7 @@ export const KanbanCardTile = memo(function KanbanCardTile(props: KanbanCardTile
           )}
         />
       ) : null}
-      {props.project ? <KanbanProjectBadge info={props.project} /> : null}
+      {props.project && props.showProjectBadge ? <KanbanProjectBadge info={props.project} /> : null}
       <div className="flex min-h-5 items-center gap-1.5 text-xs text-muted-foreground">
         {template ? <TemplateIcon template={template} /> : null}
         <span className="tabular-nums">#{card.number}</span>

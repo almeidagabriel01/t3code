@@ -130,7 +130,9 @@ function ResourceHistory({ environmentId }: { readonly environmentId: Environmen
   const { refresh } = history;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- timer that re-reads server-retained history while the popover shows it
   useEffect(() => {
-    const timer = setInterval(refresh, HISTORY_REFRESH_MS);
+    const timer = setInterval(() => {
+      if (!document.hidden) refresh();
+    }, HISTORY_REFRESH_MS);
     return () => clearInterval(timer);
   }, [refresh]);
   const buckets = history.data?.buckets ?? [];

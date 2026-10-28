@@ -43,7 +43,7 @@ export function cursorKeychainAccessEnvironments<
     : environments.filter((environment) => environment.needsCursorKeychainAccess);
 }
 
-const limitsRefreshAfter = new Map<EnvironmentId, number>();
+const limitsRefreshedAt = new Map<EnvironmentId, number>();
 const limitsRefreshes = new Map<EnvironmentId, Promise<unknown>>();
 
 export async function refreshUsageLimits<A>(
@@ -51,6 +51,7 @@ export async function refreshUsageLimits<A>(
   refresh: () => Promise<A>,
   automatic = false,
   afterPending = false,
+  minIntervalMs = 5 * 60_000,
 ): Promise<A | undefined> {
   const pending = limitsRefreshes.get(environmentId);
   if (pending !== undefined) {
@@ -58,19 +59,19 @@ export async function refreshUsageLimits<A>(
       try {
         await pending;
       } catch {}
-      return refreshUsageLimits(environmentId, refresh, false, true);
+      return refreshUsageLimits(environmentId, refresh, false, true, minIntervalMs);
     }
     return automatic ? undefined : ((await pending) as A);
   }
-  const refreshAfter = limitsRefreshAfter.get(environmentId) ?? 0;
+  const refreshedAt = limitsRefreshedAt.get(environmentId) ?? 0;
   // @effect-diagnostics-next-line globalDate:off
-  if (automatic && Date.now() < refreshAfter) return;
+  if (automatic && Date.now() < refreshedAt + minIntervalMs) return;
   const current = Promise.resolve()
     .then(refresh)
     .finally(() => {
       limitsRefreshes.delete(environmentId);
       // @effect-diagnostics-next-line globalDate:off
-      limitsRefreshAfter.set(environmentId, Date.now() + 5 * 60_000);
+      limitsRefreshedAt.set(environmentId, Date.now());
     });
   limitsRefreshes.set(environmentId, current);
   return await current;

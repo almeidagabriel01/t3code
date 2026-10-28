@@ -10,11 +10,13 @@ import type {
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { ChevronRightIcon, SettingsIcon } from "lucide-react";
-import { Fragment, useEffect, useState } from "react";
+import { RegistryContext } from "@effect/atom-react";
+import { Fragment, useContext, useEffect, useState } from "react";
 
 import { cn } from "../../lib/utils";
 import { observeVisibleAnimation } from "../../lib/visibleAnimation";
 import { usePrimarySettings, useClientSettings } from "../../hooks/useSettings";
+import { shouldRefreshUsage, USAGE_REFRESH_MS } from "@t3tools/shared/statusBarRefresh";
 import { budgetPercent, budgetPeriodLabel } from "@t3tools/shared/providerBudget";
 import {
   BAND_FILL,
@@ -44,7 +46,7 @@ import {
   STATUS_BAR_USAGE_ITEM,
 } from "./statusBarItems.logic";
 import { isApiKeyItem, limitsStatus, type UsageItem } from "./usageItems.logic";
-import { formatUsd, useInstanceSpend } from "./useInstanceSpend";
+import { formatUsd, TIME_ZONE, useInstanceSpend } from "./useInstanceSpend";
 import {
   collectUsageSessions,
   groupSessionsByProject,
@@ -53,8 +55,6 @@ import {
 } from "@t3tools/client-runtime/state/usageSessions";
 import { useUsageItems } from "./useUsageItems";
 import { useMinuteNow } from "./useMinuteNow";
-
-const AUTO_REFRESH_MS = 5 * 60_000;
 
 const DELTA_TEXT = { deficit: "text-warning", reserve: "text-success" } as const;
 const SESSIONS_SHOWN = 8;
@@ -65,26 +65,49 @@ const SESSION_STATE: Record<UsageSessionState, { label: string; dot: string }> =
 };
 
 function useUsageRefresh(environmentIds: ReadonlyArray<EnvironmentId>) {
+  const registry = useContext(RegistryContext);
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
+  const intervalMs = USAGE_REFRESH_MS[useClientSettings((s) => s.statusBarUsageRefresh)];
   const key = environmentIds.join("\n");
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- timer that pulls usage through the throttled refresh path
   useEffect(() => {
     if (key === "") return;
-    const run = () => {
-      for (const environmentId of key.split("\n") as EnvironmentId[]) {
+    const ids = key.split("\n") as EnvironmentId[];
+    let lastRefreshAt = 0;
+    const run = (initial = false) => {
+      const now = Date.now();
+      if (
+        !initial &&
+        !shouldRefreshUsage({ intervalMs, hidden: document.hidden, lastRefreshAt, now })
+      ) {
+        return;
+      }
+      lastRefreshAt = now;
+      for (const environmentId of ids) {
         void refreshUsageLimits(
           environmentId,
           () => refreshProviders({ environmentId, input: {} }),
           true,
+          false,
+          intervalMs ?? undefined,
+        );
+        registry.refresh(
+          serverEnvironment.instanceSpend({ environmentId, input: { timeZone: TIME_ZONE } }),
         );
       }
     };
-    run();
-    const timer = setInterval(run, AUTO_REFRESH_MS);
-    return () => clearInterval(timer);
-  }, [key, refreshProviders]);
+    run(true);
+    if (intervalMs === null) return;
+    const check = () => run();
+    const timer = setInterval(check, Math.min(intervalMs, 30_000));
+    document.addEventListener("visibilitychange", check);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", check);
+    };
+  }, [key, intervalMs, refreshProviders, registry]);
   const [refreshing, setRefreshing] = useState(false);
   const refresh = () => {
     if (refreshing) return;

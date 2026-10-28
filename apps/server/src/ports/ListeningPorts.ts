@@ -218,6 +218,22 @@ const isAlive = (pid: number): boolean => {
   }
 };
 
+/** Looks up only pids not seen in an earlier scan and forgets pids that stopped listening. */
+export const cachedCwds = Effect.fn("ListeningPorts.cachedCwds")(function* (
+  cache: Map<number, string | null>,
+  pids: ReadonlyArray<number>,
+  lookup: (pids: ReadonlyArray<number>) => Effect.Effect<ReadonlyMap<number, string>>,
+) {
+  for (const pid of cache.keys()) if (!pids.includes(pid)) cache.delete(pid);
+  const fresh = pids.filter((pid) => !cache.has(pid));
+  if (fresh.length > 0) {
+    const found = yield* lookup(fresh);
+    // ponytail: a reused pid keeps the old cwd until it leaves the listener set once
+    for (const pid of fresh) cache.set(pid, found.get(pid) ?? null);
+  }
+  return cache;
+});
+
 /** @public */
 export const make = Effect.gen(function* ListeningPortsMake() {
   const processRunner = yield* ProcessRunner.ProcessRunner;
@@ -326,10 +342,12 @@ export const make = Effect.gen(function* ListeningPortsMake() {
       : ((platform === "linux" ? null : yield* lsofListeners()) ?? (yield* linuxListeners()));
   });
 
+  const cwdCache = new Map<number, string | null>();
+
   const list = Effect.fn("ListeningPorts.list")(function* () {
     const listeners = yield* scan();
     const pids = [...new Set(listeners.flatMap((l) => (l.pid === null ? [] : [l.pid])))];
-    const cwds = yield* cwdsFor(pids);
+    const cwds = yield* cachedCwds(cwdCache, pids, cwdsFor);
     const roots = yield* projects.list().pipe(
       Effect.map((rows) =>
         rows.map(({ projectId, workspaceRoot }) => ({ projectId, workspaceRoot })),

@@ -6,7 +6,7 @@ import { serverEnvironment } from "../../state/server";
 import type { InstanceBudgetStatus } from "@t3tools/contracts";
 import type { UsageItem } from "./usageItems.logic";
 
-const TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
+export const TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
 const usd = new Intl.NumberFormat(undefined, { style: "currency", currency: "USD" });
 export const formatUsd = (value: number) => usd.format(value);

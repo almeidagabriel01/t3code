@@ -457,6 +457,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["fork upstream merge update checkout path git"],
   },
   {
+    id: "fork-updates-channel",
+    title: "Fork update channel",
+    to: "/settings/fork-updates",
+    desktopOnly: true,
+    searchTerms: ["stable nightly release channel upstream tag"],
+  },
+  {
     id: "fork-updates-status",
     title: "Fork updates",
     to: "/settings/fork-updates",
@@ -540,6 +547,18 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Sessions per account",
     to: "/settings/status-bar",
     searchTerms: ["usage sessions threads account working waiting roster"],
+  },
+  {
+    id: "status-bar-usage-refresh",
+    title: "Refresh usage",
+    to: "/settings/status-bar",
+    searchTerms: ["status bar usage limits poll interval automatic manual minutes background"],
+  },
+  {
+    id: "status-bar-ports-refresh",
+    title: "Refresh ports",
+    to: "/settings/status-bar",
+    searchTerms: ["status bar listening ports poll interval seconds background"],
   },
   {
     id: "status-bar-ports-count",

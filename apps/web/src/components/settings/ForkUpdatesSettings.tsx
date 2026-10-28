@@ -9,6 +9,7 @@ import {
 } from "../forkUpdates/useForkUpdates";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 
@@ -19,7 +20,7 @@ function describeStatus(status: ForkUpdateStatus): string {
     status.behind === 0
       ? "Up to date with upstream."
       : `${status.behind} commit${status.behind === 1 ? "" : "s"} behind upstream.`;
-  return `Fork ${head}. Upstream ${upstream}. ${behind}`;
+  return `Fork ${head}. Latest ${status.channel} ${upstream}. ${behind}`;
 }
 
 function conflictText(status: ForkUpdateStatus): string | null {
@@ -30,9 +31,10 @@ function conflictText(status: ForkUpdateStatus): string | null {
 
 function ForkUpdatesSections({ environmentId }: { readonly environmentId: EnvironmentId }) {
   const folder = useClientSettings((settings) => settings.forkUpdatesFolder);
+  const channel = useClientSettings((settings) => settings.forkUpdatesChannel);
   const [draft, setDraft] = useState(folder);
   const { status, checking, check } = useForkUpdateStatus(environmentId);
-  const startAgent = useStartForkAgent(environmentId, status?.available ? status.path : null);
+  const startAgent = useStartForkAgent(environmentId, status);
   const conflict = status === null ? null : conflictText(status);
 
   return (
@@ -51,6 +53,37 @@ function ForkUpdatesSections({ environmentId }: { readonly environmentId: Enviro
               if (draft !== folder) void updateClientSettings({ forkUpdatesFolder: draft.trim() });
             }}
           />
+        }
+      />
+      <SettingsRow
+        {...searchableSetting("fork-updates-channel")}
+        description="Stable and nightly are different apps. Auto follows the version your fork is built from."
+        control={
+          <Select
+            value={channel}
+            onValueChange={(next) => {
+              if (next === "auto" || next === "stable" || next === "nightly") {
+                void updateClientSettings({ forkUpdatesChannel: next });
+              }
+            }}
+          >
+            <SelectTrigger size="sm" className="w-32 shrink-0" aria-label="Update channel">
+              <SelectValue>
+                {channel === "auto" ? "Auto" : channel === "stable" ? "Stable" : "Nightly"}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectPopup align="end" alignItemWithTrigger={false}>
+              <SelectItem hideIndicator value="auto">
+                Auto
+              </SelectItem>
+              <SelectItem hideIndicator value="stable">
+                Stable
+              </SelectItem>
+              <SelectItem hideIndicator value="nightly">
+                Nightly
+              </SelectItem>
+            </SelectPopup>
+          </Select>
         }
       />
       <SettingsRow

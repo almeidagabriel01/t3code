@@ -2,7 +2,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - sequential git/vp/macOS commands; plain node keeps it readable.
 // @effect-diagnostics globalConsole:off - CLI output for a human.
 /**
- * Merges upstream/main into main, builds the desktop DMG and optionally pushes and installs it.
+ * Merges the latest upstream tag of a channel (stable or nightly) into main, builds the desktop DMG and optionally pushes and installs it.
  * Exit codes: 0 ok, 1 failed, 2 merge conflicts (merge aborted, repo left clean).
  */
 import * as NodeChildProcess from "node:child_process";
@@ -11,18 +11,53 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
+import {
+  findAppBundle,
+  inferChannel,
+  latestChannelTag,
+  parseMountPoint,
+  type ForkUpdateChannel,
+} from "@t3tools/shared/forkUpdateTags";
+
 export interface ForkUpdateOptions {
   readonly dryRun: boolean;
   readonly push: boolean;
   readonly install: boolean;
   readonly rebuild: boolean;
+  /** Null means infer from the fork's desktop version. */
+  readonly channel: ForkUpdateChannel | null;
+  /** Merge upstream/main instead of the latest channel tag. */
+  readonly targetMain: boolean;
 }
 
 export function parseArgs(argv: ReadonlyArray<string>): ForkUpdateOptions {
-  const flags = new Set(argv);
-  for (const flag of flags) {
-    if (!["--dry-run", "--push", "--install", "--rebuild"].includes(flag)) {
-      throw new Error(`Unknown option '${flag}'. Use --dry-run, --push, --install, --rebuild.`);
+  const flags = new Set<string>();
+  let channel: ForkUpdateChannel | null = null;
+  let targetMain = false;
+  const value = (name: string, index: number) => {
+    const arg = argv[index]!;
+    return arg.startsWith(`${name}=`) ? arg.slice(name.length + 1) : argv[index + 1];
+  };
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i]!;
+    const name = arg.split("=")[0]!;
+    if (name === "--channel") {
+      const given = value(name, i);
+      if (given !== "stable" && given !== "nightly") {
+        throw new Error(`--channel must be 'stable' or 'nightly', got '${given ?? ""}'.`);
+      }
+      channel = given;
+      if (!arg.includes("=")) i++;
+    } else if (name === "--target") {
+      if (value(name, i) !== "main") throw new Error("--target only accepts 'main'.");
+      targetMain = true;
+      if (!arg.includes("=")) i++;
+    } else if (["--dry-run", "--push", "--install", "--rebuild"].includes(arg)) {
+      flags.add(arg);
+    } else {
+      throw new Error(
+        `Unknown option '${arg}'. Use --dry-run, --push, --install, --rebuild, --channel stable|nightly, --target main.`,
+      );
     }
   }
   return {
@@ -30,6 +65,8 @@ export function parseArgs(argv: ReadonlyArray<string>): ForkUpdateOptions {
     push: flags.has("--push"),
     install: flags.has("--install"),
     rebuild: flags.has("--rebuild"),
+    channel,
+    targetMain,
   };
 }
 
@@ -94,30 +131,47 @@ function mustGit(description: string, ...args: ReadonlyArray<string>) {
 }
 
 // The app quits, which also ends this process and any terminal hosting it, so install runs detached.
+// $2 is the bundle name found inside the DMG (e.g. "T3 Code (Beta)"); quit by name, never by pattern.
 const INSTALL_SCRIPT = `
-APP="/Applications/T3 Code.app"
-running() { [ "$(osascript -e 'application "T3 Code" is running')" = true ]; }
-if running; then osascript -e 'tell application "T3 Code" to quit'; fi
+NAME="$2"
+APP="/Applications/$NAME.app"
+running() { [ "$(osascript -e "application \\"$NAME\\" is running")" = true ]; }
+if running; then osascript -e "tell application \\"$NAME\\" to quit"; fi
 i=0; while running && [ "$i" -lt 30 ]; do sleep 1; i=$((i+1)); done
-if running; then echo "T3 Code did not quit; aborting install."; exit 1; fi
-MNT=$(hdiutil attach -nobrowse -readonly "$1" | awk -F'\\t' '/\\/Volumes\\//{print $NF}' | tail -1)
-SRC=$(ls -d "$MNT"/*.app | head -1)
-rm -r "$APP" && ditto "$SRC" "$APP"
+if running; then echo "$NAME did not quit; aborting install."; exit 1; fi
+MNT=$(hdiutil attach -nobrowse -readonly "$1" | awk -F'\\t' '/Volumes/{print $NF}' | tail -1)
+rm -r "$APP" && ditto "$MNT/$NAME.app" "$APP"
 hdiutil detach "$MNT" -quiet
 xattr -dr com.apple.quarantine "$APP"
-open -a "T3 Code"
+open -a "$NAME"
 echo "Installed $1"
 `;
 
+function readAppName(dmgPath: string): string {
+  const attach = capture("hdiutil", ["attach", "-nobrowse", "-readonly", dmgPath]);
+  const mount = parseMountPoint(attach.stdout);
+  if (attach.status !== 0 || mount === null) throw new Stop(`Cannot mount ${dmgPath}.`);
+  try {
+    const bundle = findAppBundle(NodeFS.readdirSync(mount));
+    if (bundle === null) throw new Stop(`Expected exactly one .app inside ${dmgPath}.`);
+    return bundle.slice(0, -".app".length);
+  } finally {
+    capture("hdiutil", ["detach", mount, "-quiet"]);
+  }
+}
+
 function installDmg(dmgPath: string) {
+  const appName = readAppName(dmgPath);
   const logPath = NodePath.join(NodeOS.tmpdir(), "t3code-fork-install.log");
   const out = NodeFS.openSync(logPath, "a");
-  const child = NodeChildProcess.spawn("/bin/sh", ["-c", INSTALL_SCRIPT, "sh", dmgPath], {
+  const child = NodeChildProcess.spawn("/bin/sh", ["-c", INSTALL_SCRIPT, "sh", dmgPath, appName], {
     detached: true,
     stdio: ["ignore", out, out],
   });
   child.unref();
-  log(`Installer continues after T3 Code quits (log: ${logPath}). It reopens the app when done.`);
+  log(
+    `Installer continues after ${appName} quits (log: ${logPath}). It reopens the app when done.`,
+  );
 }
 
 function run(options: ForkUpdateOptions) {
@@ -137,11 +191,26 @@ function run(options: ForkUpdateOptions) {
   log("Fetching upstream and origin");
   mustGit("git fetch upstream failed", "fetch", "upstream", "--tags");
   mustGit("git fetch origin failed", "fetch", "origin");
-  const behind = parseCount(mustGit("Cannot count", "rev-list", "--count", "main..upstream/main"));
-  log(`${behind} new upstream commit(s)`);
+
+  let ref = "upstream/main";
+  if (!options.targetMain) {
+    const version = String(
+      JSON.parse(NodeFS.readFileSync("apps/desktop/package.json", "utf8")).version ?? "",
+    );
+    const channel = options.channel ?? inferChannel(version);
+    const tag = latestChannelTag(
+      mustGit("Cannot list tags", "tag", "--list", "v*").split("\n"),
+      channel,
+    );
+    if (tag === null) throw new Stop(`No ${channel} tag found upstream.`);
+    log(`Channel ${channel}${options.channel ? "" : ` (inferred from ${version})`}: target ${tag}`);
+    ref = tag;
+  }
+  const behind = parseCount(mustGit("Cannot count", "rev-list", "--count", `main..${ref}`));
+  log(`${behind} new commit(s) in ${ref}`);
 
   if (options.dryRun) {
-    const predict = git("merge-tree", "--write-tree", "--name-only", "main", "upstream/main");
+    const predict = git("merge-tree", "--write-tree", "--name-only", "main", ref);
     log(
       behind === 0
         ? "Dry run: nothing to merge."
@@ -149,7 +218,7 @@ function run(options: ForkUpdateOptions) {
     );
     log(
       `Dry run: would ${[
-        behind > 0 ? "merge upstream/main" : null,
+        behind > 0 ? `merge ${ref}` : null,
         "vp i",
         "build the DMG",
         options.push ? "push origin main" : null,
@@ -167,8 +236,8 @@ function run(options: ForkUpdateOptions) {
   }
 
   if (behind > 0) {
-    log("Merging upstream/main into main");
-    if (git("merge", "--no-edit", "upstream/main").status !== 0) {
+    log(`Merging ${ref} into main`);
+    if (git("merge", "--no-edit", ref).status !== 0) {
       const files = parseConflictFiles(git("diff", "--name-only", "--diff-filter=U").stdout);
       git("merge", "--abort");
       if (files.length === 0) throw new Stop("Merge failed; it was aborted. Repo is clean.");
@@ -201,7 +270,7 @@ function run(options: ForkUpdateOptions) {
   log(`Built ${dmgPath}`);
 
   if (options.install) installDmg(dmgPath);
-  else log("Done. Re-run with --install to replace /Applications/T3 Code.app.");
+  else log("Done. Re-run with --install to replace the installed app.");
 }
 
 if (process.argv[1] === NodeURL.fileURLToPath(import.meta.url)) {

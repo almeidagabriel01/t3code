@@ -1313,7 +1313,6 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:instance-spend",
       tag: WS_METHODS.serverGetInstanceSpend,
       staleTimeMs: 60_000,
-      refreshIntervalMs: 5 * 60_000,
     }),
     resourceTelemetry: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:server:resource-telemetry",

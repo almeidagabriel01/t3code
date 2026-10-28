@@ -1,4 +1,5 @@
 import { GitForkIcon, XIcon } from "lucide-react";
+import { useEffect, useState } from "react";
 import { Link } from "@tanstack/react-router";
 
 import { updateClientSettings, useClientSettings } from "../../hooks/useSettings";
@@ -13,7 +14,7 @@ function ForkUpdatePill({ environmentId }: { readonly environmentId: Environment
   const { status } = useForkUpdateStatus(environmentId);
   if (status === null || !shouldNotifyForkUpdate(status, dismissedTag)) return null;
   const tag = status.upstreamTag!;
-  const label = `T3 Code ${tag} is out upstream. Update your fork.`;
+  const label = `T3 Code ${tag} is out upstream (${status.channel}). Update your fork.`;
 
   return (
     <SidebarMenuItem className="ml-auto flex shrink-0 items-center">
@@ -43,8 +44,33 @@ function ForkUpdatePill({ environmentId }: { readonly environmentId: Environment
   );
 }
 
+const FIRST_CHECK_DELAY_MS = 2 * 60_000;
+
+/** True once the delay passed with the page visible, so app start never runs `git fetch`. */
+function useAfterStartupDelay() {
+  const [ready, setReady] = useState(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- timer and visibility are external
+  useEffect(() => {
+    let elapsed = false;
+    const open = () => {
+      if (elapsed && !document.hidden) setReady(true);
+    };
+    const timer = setTimeout(() => {
+      elapsed = true;
+      open();
+    }, FIRST_CHECK_DELAY_MS);
+    document.addEventListener("visibilitychange", open);
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener("visibilitychange", open);
+    };
+  }, []);
+  return ready;
+}
+
 /** Hidden unless the local server holds a fork checkout that is behind a newer upstream release. */
 export function SidebarForkUpdatePill() {
   const environmentId = useForkUpdatesEnvironmentId();
-  return environmentId === null ? null : <ForkUpdatePill environmentId={environmentId} />;
+  const ready = useAfterStartupDelay();
+  return environmentId === null || !ready ? null : <ForkUpdatePill environmentId={environmentId} />;
 }

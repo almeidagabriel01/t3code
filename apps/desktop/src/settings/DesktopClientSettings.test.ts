@@ -76,6 +76,8 @@ const clientSettings: ClientSettings = {
   statusBarUsagePercentage: "used",
   statusBarPortsCount: "project",
   statusBarResourceSort: "memory",
+  statusBarUsageRefresh: "5m",
+  statusBarPortsRefresh: "30s",
   usagePaceEnabled: true,
   usageProjectionEnabled: true,
   usageDailyBudgetEnabled: false,

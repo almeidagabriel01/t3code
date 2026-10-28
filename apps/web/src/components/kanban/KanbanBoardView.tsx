@@ -12,6 +12,7 @@ import { toastManager } from "../ui/toast";
 import { definitionOfDoneWarning, type CardMove } from "@t3tools/client-runtime/state/kanbanLogic";
 import { KanbanColumnHeader } from "./KanbanColumnHeader";
 import { KanbanColumns } from "./KanbanColumns";
+import type { KanbanProjectInfo } from "./KanbanProjectBadge";
 import { KanbanLinkThreadDialog } from "./KanbanLinkDialogs";
 import { KanbanStartAgentDialog } from "./KanbanStartAgent";
 import { useKanbanActions } from "./useKanban";
@@ -28,6 +29,7 @@ export function KanbanBoardView(props: {
   readonly board: KanbanBoardState;
   readonly canEdit: boolean;
   readonly focusNewCard?: boolean;
+  readonly project?: KanbanProjectInfo | undefined;
   /** Hides every other card, as the global board's filters do. */
   readonly visibleCardIds?: ReadonlySet<KanbanCardId> | undefined;
   readonly onOpenCard: (card: KanbanCard) => void;
@@ -83,6 +85,7 @@ export function KanbanBoardView(props: {
         labels={board.labels}
         templates={board.templates}
         canEdit={props.canEdit}
+        tileFor={props.project ? () => ({ project: props.project }) : undefined}
         onOpenCard={props.onOpenCard}
         onStartAgent={setStartFor}
         onLinkThread={setLinkFor}

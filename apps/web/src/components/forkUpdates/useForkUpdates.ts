@@ -1,7 +1,11 @@
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { AuthDiagnosticsReadScope, type EnvironmentId } from "@t3tools/contracts";
+import {
+  AuthDiagnosticsReadScope,
+  type EnvironmentId,
+  type ForkUpdateStatus,
+} from "@t3tools/contracts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { useNavigate } from "@tanstack/react-router";
 import * as Option from "effect/Option";
@@ -35,11 +39,12 @@ export function useForkUpdatesEnvironmentId(): EnvironmentId | null {
   return environmentId !== null && granted.has(environmentId) ? environmentId : null;
 }
 
-/** Refreshes on its own every 6 hours while mounted, so the sidebar pill keeps it polled. */
+/** Refreshes on its own every 6 hours while mounted. Mounting runs `git fetch` on the server. */
 export function useForkUpdateStatus(environmentId: EnvironmentId) {
   const registry = useContext(RegistryContext);
   const path = useClientSettings((settings) => settings.forkUpdatesFolder);
-  const atom = serverEnvironment.forkUpdateStatus({ environmentId, input: { path } });
+  const channel = useClientSettings((settings) => settings.forkUpdatesChannel);
+  const atom = serverEnvironment.forkUpdateStatus({ environmentId, input: { path, channel } });
   const result = useAtomValue(atom);
   return {
     status: Option.getOrNull(AsyncResult.value(result)),
@@ -48,22 +53,23 @@ export function useForkUpdateStatus(environmentId: EnvironmentId) {
   };
 }
 
-const MERGE_PROMPT = (path: string) =>
-  `In ${path}, merge upstream/main into main and keep this fork working.
+const MERGE_PROMPT = (path: string, channel: string, tag: string) =>
+  `In ${path}, merge the upstream ${channel} release ${tag} into main and keep this fork working.
 
-1. \`git fetch upstream\`, then \`git merge upstream/main\` (merge, never rebase: main is published).
+1. \`git fetch upstream --tags\`, then \`git merge ${tag}\` (merge, never rebase: main is published; never merge upstream/main).
 2. Resolve every conflict preserving this fork's features (kanban, status bar and provider budgets, the fork DB schema in apps/server/src/persistence/ForkSchema.ts, fork updates). Prefer upstream for everything else.
 3. Run \`vp run check:changed\` and fix what fails.
 4. Commit the merge.
-5. Run \`vp run fork:update --push --install --rebuild\`. It builds the app, pushes main and replaces /Applications/T3 Code.app, so the app quits and reopens at the end. Report the result first if you can.`;
+5. Run \`vp run fork:update --channel ${channel} --push --install --rebuild\`. It builds the app, pushes main and replaces the installed app, so the app quits and reopens at the end. Report the result first if you can.`;
 
-const UPDATE_PROMPT = (path: string) =>
-  `In ${path}, run \`vp run fork:update --push --install\`. The build takes several minutes, so run it in the background and watch its output. If it exits with code 2 the merge conflicted and was aborted: say so and stop. Otherwise report the result; the app quits and reopens when the install finishes.`;
+const UPDATE_PROMPT = (path: string, channel: string) =>
+  `In ${path}, run \`vp run fork:update --channel ${channel} --push --install\`. The build takes several minutes, so run it in the background and watch its output. If it exits with code 2 the merge conflicted and was aborted: say so and stop. Otherwise report the result; the app quits and reopens when the install finishes.`;
 
 export type ForkAgentTask = "update" | "resolve";
 
 /** Starts a thread in the project whose workspace root is the fork folder. Null when no such project exists. */
-export function useStartForkAgent(environmentId: EnvironmentId, path: string | null) {
+export function useStartForkAgent(environmentId: EnvironmentId, status: ForkUpdateStatus | null) {
+  const path = status?.available ? status.path : null;
   const navigate = useNavigate();
   const startTurn = useOrchestrationCommand(threadEnvironment.startTurn, {
     label: "fork update agent",
@@ -80,7 +86,7 @@ export function useStartForkAgent(environmentId: EnvironmentId, path: string | n
   const providers =
     useAtomValue(serverEnvironment.providersValueAtom(environmentId)) ?? EMPTY_SERVER_PROVIDERS;
 
-  if (project === null) return null;
+  if (project === null || status === null) return null;
   return async (task: ForkAgentTask) => {
     const entries = sortProviderInstanceEntries(
       applyProviderInstanceSettings(deriveProviderInstanceEntries(providers), settings, project.id),
@@ -106,8 +112,12 @@ export function useStartForkAgent(environmentId: EnvironmentId, path: string | n
           role: "user",
           text:
             task === "update"
-              ? UPDATE_PROMPT(project.workspaceRoot)
-              : MERGE_PROMPT(project.workspaceRoot),
+              ? UPDATE_PROMPT(project.workspaceRoot, status.channel)
+              : MERGE_PROMPT(
+                  project.workspaceRoot,
+                  status.channel,
+                  status.upstreamTag ?? "the latest tag",
+                ),
           attachments: [],
         },
         modelSelection: selection,

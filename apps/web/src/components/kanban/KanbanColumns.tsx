@@ -44,6 +44,7 @@ import {
   type ColumnCards,
 } from "@t3tools/client-runtime/state/kanbanLogic";
 import { KanbanCardTile } from "./KanbanCardTile";
+import { boardPanRef } from "./boardPan";
 import { TemplateIcon } from "./kanbanPresentation";
 
 export interface ColumnWithCards {
@@ -382,7 +383,7 @@ export function KanbanColumns(props: KanbanColumnsProps) {
         items={displayed.map((entry) => `${COLUMN_PREFIX}${entry.column.id}`)}
         strategy={horizontalListSortingStrategy}
       >
-        <div className="flex h-full items-start gap-3 overflow-x-auto p-4">
+        <div ref={boardPanRef} className="flex h-full items-start gap-3 overflow-x-auto p-4">
           {displayed.map((entry) => (
             <SortableColumn
               key={entry.column.id}

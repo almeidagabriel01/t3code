@@ -38,14 +38,37 @@ describe("ForkUpdates", () => {
     assert.strictEqual(resolveForkPath("", "/home/u"), "/home/u/Documents/DEV/t3code");
   });
 
-  it.effect("reports behind count, tags and predicted conflicts", () =>
+  const answers = {
+    "remote get-url upstream": result(0, "url"),
+    "fetch upstream --tags --quiet": result(0),
+    "show main:apps/desktop/package.json": result(0, '{"version":"0.1.3"}'),
+    "tag --list v*": result(
+      0,
+      "v0.1.2\nv0.1.3\nv0.1.4-nightly.20261028.3824\nv0.1.4-preview.20261027.1\n",
+    ),
+    "tag --list v* --merged main": result(0, "v0.1.2\nv0.1.3\n"),
+    "log -1 --format=%H%x09%s main": result(0, "h1\tsubject\n"),
+    "rev-list --count main..v0.1.3": result(0, "0\n"),
+    "rev-parse v0.1.3^{commit}": result(0, "u1\n"),
+  };
+
+  it.effect("follows the stable channel and ignores newer nightly tags", () =>
     Effect.gen(function* () {
-      const status = yield* (yield* ForkUpdates).status({ path: "/repo" });
-      assert.strictEqual(status.available, true);
+      const status = yield* (yield* ForkUpdates).status({ path: "/repo", channel: "auto" });
+      assert.strictEqual(status.channel, "stable");
+      assert.strictEqual(status.upstreamTag, "v0.1.3");
+      assert.strictEqual(status.headTag, "v0.1.3");
+      assert.strictEqual(status.behind, 0);
+    }).pipe(Effect.provide(layer.pipe(Layer.provide(runnerFor(answers))))),
+  );
+
+  it.effect("reports behind count and predicted conflicts against the channel tag", () =>
+    Effect.gen(function* () {
+      const status = yield* (yield* ForkUpdates).status({ path: "/repo", channel: "nightly" });
+      assert.strictEqual(status.channel, "nightly");
+      assert.strictEqual(status.upstreamTag, "v0.1.4-nightly.20261028.3824");
+      assert.strictEqual(status.headTag, null);
       assert.strictEqual(status.behind, 3);
-      assert.strictEqual(status.headSha, "h1");
-      assert.strictEqual(status.headTag, "v1.0.0");
-      assert.strictEqual(status.upstreamTag, "v1.1.0");
       assert.strictEqual(status.wouldConflict, true);
       assert.deepStrictEqual(status.conflictFiles, ["a.ts"]);
     }).pipe(
@@ -53,14 +76,13 @@ describe("ForkUpdates", () => {
         layer.pipe(
           Layer.provide(
             runnerFor({
-              "remote get-url upstream": result(0, "url"),
-              "rev-list --count main..upstream/main": result(0, "3\n"),
-              "log -1 --format=%H%x09%s main": result(0, "h1\tsubject\n"),
-              "merge-tree --write-tree --name-only main upstream/main": result(1, "t\na.ts\n\nmsg"),
-              "describe --tags --abbrev=0 main": result(0, "v1.0.0\n"),
-              "describe --tags --abbrev=0 upstream/main": result(0, "v1.1.0\n"),
-              "rev-parse upstream/main": result(0, "u1\n"),
-              "fetch upstream --tags --quiet": result(0),
+              ...answers,
+              "rev-list --count main..v0.1.4-nightly.20261028.3824": result(0, "3\n"),
+              "merge-tree --write-tree --name-only main v0.1.4-nightly.20261028.3824": result(
+                1,
+                "t\na.ts\n\nmsg",
+              ),
+              "rev-parse v0.1.4-nightly.20261028.3824^{commit}": result(0, "u2\n"),
             }),
           ),
         ),
@@ -70,7 +92,7 @@ describe("ForkUpdates", () => {
 
   it.effect("is unavailable without an upstream remote", () =>
     Effect.gen(function* () {
-      const status = yield* (yield* ForkUpdates).status({ path: "/nope" });
+      const status = yield* (yield* ForkUpdates).status({ path: "/nope", channel: "auto" });
       assert.strictEqual(status.available, false);
     }).pipe(Effect.provide(layer.pipe(Layer.provide(runnerFor({}))))),
   );

@@ -1,8 +1,11 @@
 import { ProjectId } from "@t3tools/contracts";
-import { describe, expect, it } from "vite-plus/test";
+import * as Effect from "effect/Effect";
+import { it } from "@effect/vitest";
+import { describe, expect } from "vite-plus/test";
 
 import {
   attributeToProject,
+  cachedCwds,
   decideKill,
   parseParentTable,
   protectedPids,
@@ -145,4 +148,23 @@ describe("decideKill", () => {
     expect([...pids].toSorted((a, b) => a - b)).toEqual(expect.arrayContaining([10, 20, 30]));
     expect(pids.has(40)).toBe(false);
   });
+});
+
+describe("cachedCwds", () => {
+  it.effect("looks up each pid once and forgets pids that disappear", () =>
+    Effect.gen(function* () {
+      const calls: Array<ReadonlyArray<number>> = [];
+      const lookup = (pids: ReadonlyArray<number>) => {
+        calls.push(pids);
+        return Effect.succeed(new Map(pids.map((pid) => [pid, `/cwd/${pid}`] as const)));
+      };
+      const cache = new Map<number, string | null>();
+      yield* cachedCwds(cache, [1, 2], lookup);
+      yield* cachedCwds(cache, [1, 2], lookup);
+      expect(calls).toEqual([[1, 2]]);
+      yield* cachedCwds(cache, [2, 3], lookup);
+      expect(calls).toEqual([[1, 2], [3]]);
+      expect([...cache.keys()]).toEqual([2, 3]);
+    }),
+  );
 });

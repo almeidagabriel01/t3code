@@ -219,6 +219,10 @@
       "types": "./src/qrCode.ts",
       "import": "./src/qrCode.ts"
     },
+    "./forkUpdateTags": {
+      "types": "./src/forkUpdateTags.ts",
+      "import": "./src/forkUpdateTags.ts"
+    },
     "./cliArgs": {
       "types": "./src/cliArgs.ts",
       "import": "./src/cliArgs.ts"
@@ -378,6 +382,10 @@
     "./providerBudget": {
       "types": "./src/providerBudget.ts",
       "import": "./src/providerBudget.ts"
+    },
+    "./statusBarRefresh": {
+      "types": "./src/statusBarRefresh.ts",
+      "import": "./src/statusBarRefresh.ts"
     },
     "./usagePace": {
       "types": "./src/usagePace.ts",

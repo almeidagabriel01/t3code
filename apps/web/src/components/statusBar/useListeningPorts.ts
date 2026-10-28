@@ -9,12 +9,14 @@ import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 import { useContext, useEffect } from "react";
 
+import { PORTS_REFRESH_MS } from "@t3tools/shared/statusBarRefresh";
+
+import { useClientSettings } from "../../hooks/useSettings";
 import { environmentAtomList, environmentIdsKey } from "../../state/environmentAtomList";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { serverEnvironment } from "../../state/server";
 import { useEnvironmentsWithScope } from "../../state/session";
 
-const SLOW_POLL_MS = 30_000;
 const FAST_POLL_MS = 3_000;
 const NO_PORTS: ReadonlyArray<ListeningPort> = [];
 
@@ -38,6 +40,7 @@ export function useEnvironmentListeningPorts(
   const readable = environmentIds.filter((environmentId) => granted.has(environmentId));
   const key = environmentIdsKey(readable);
   const results = useAtomValue(portsAtoms(key));
+  const slowPollMs = PORTS_REFRESH_MS[useClientSettings((s) => s.statusBarPortsRefresh)];
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- timer that re-pulls an on-demand host listing
   useEffect(() => {
@@ -50,9 +53,9 @@ export function useEnvironmentListeningPorts(
       }
     };
     if (fast) refresh();
-    const timer = setInterval(refresh, fast ? FAST_POLL_MS : SLOW_POLL_MS);
+    const timer = setInterval(refresh, fast ? FAST_POLL_MS : slowPollMs);
     return () => clearInterval(timer);
-  }, [key, fast, registry]);
+  }, [key, fast, slowPollMs, registry]);
 
   return new Map(
     readable.map((environmentId, index) => [

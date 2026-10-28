@@ -25,6 +25,7 @@ import {
 } from "@t3tools/client-runtime/state/kanbanLogic";
 import { KanbanArchive } from "./KanbanArchive";
 import { KanbanBoardView } from "./KanbanBoardView";
+import type { KanbanProjectInfo } from "./KanbanProjectBadge";
 import { KanbanCardDetail } from "./KanbanCardDetail";
 import { KanbanGlobalBoard } from "./KanbanGlobalBoard";
 import { KanbanToolbar } from "./KanbanToolbar";
@@ -45,6 +46,7 @@ function Message(props: { readonly title: string; readonly description: string }
 function ProjectBoard(props: {
   readonly environmentId: EnvironmentId;
   readonly projectId: ProjectId;
+  readonly projectInfo: KanbanProjectInfo | undefined;
   readonly state: KanbanState | null;
   readonly focusNewCard: boolean;
   readonly view: "board" | "archive";
@@ -114,6 +116,7 @@ function ProjectBoard(props: {
             board={board}
             canEdit={canEdit}
             focusNewCard={props.focusNewCard}
+            project={props.projectInfo}
             visibleCardIds={visibleCardIds}
             onOpenCard={props.onOpenCard}
           />
@@ -218,6 +221,7 @@ export function KanbanPage() {
               key={member.physicalProjectKey}
               environmentId={member.environmentId}
               projectId={member.id}
+              projectInfo={projects.get(boardScopeKey(member.environmentId, member.id))}
               state={memberState ?? null}
               focusNewCard={search.new === true}
               view={view}

@@ -19,6 +19,7 @@ import {
   TrimmedNonEmptyString,
   TrimmedString,
 } from "./baseSchemas.ts";
+import { ForkUpdateChannelSetting } from "./forkUpdates.ts";
 import { ProviderBudget } from "./usage.ts";
 import { UsageLimitSourceId } from "./usageLimitSourceId.ts";
 import { EnvironmentMachineKind, ThreadEnvMode, WorktreeSubmodules } from "./environment.ts";
@@ -72,6 +73,10 @@ export const StatusBarUsagePercentage = Schema.Literals(["used", "remaining"]);
 export type StatusBarUsagePercentage = typeof StatusBarUsagePercentage.Type;
 export const StatusBarPortsCount = Schema.Literals(["project", "all"]);
 export type StatusBarPortsCount = typeof StatusBarPortsCount.Type;
+export const StatusBarUsageRefresh = Schema.Literals(["1m", "2m", "5m", "15m", "30m", "manual"]);
+export type StatusBarUsageRefresh = typeof StatusBarUsageRefresh.Type;
+export const StatusBarPortsRefresh = Schema.Literals(["10s", "30s", "1m", "5m"]);
+export type StatusBarPortsRefresh = typeof StatusBarPortsRefresh.Type;
 export const StatusBarResourceSort = Schema.Literals(["memory", "cpu", "name"]);
 export type StatusBarResourceSort = typeof StatusBarResourceSort.Type;
 export const UsageThreshold = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 }));
@@ -472,6 +477,9 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   forkUpdatesFolder: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   forkUpdatesDismissedTag: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  forkUpdatesChannel: ForkUpdateChannelSetting.pipe(
+    Schema.withDecodingDefault(Effect.succeed("auto" as const)),
+  ),
   statusBarVisible: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   statusBarHiddenItems: Schema.Array(Schema.String).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
@@ -487,6 +495,12 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   statusBarResourceSort: StatusBarResourceSort.pipe(
     Schema.withDecodingDefault(Effect.succeed("memory")),
+  ),
+  statusBarUsageRefresh: StatusBarUsageRefresh.pipe(
+    Schema.withDecodingDefault(Effect.succeed("5m" as const)),
+  ),
+  statusBarPortsRefresh: StatusBarPortsRefresh.pipe(
+    Schema.withDecodingDefault(Effect.succeed("30s" as const)),
   ),
   usagePaceEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   statusBarUsagePaceVisible: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -1753,12 +1767,15 @@ export const ClientSettingsPatch = Schema.Struct({
   projectHoverCardProperties: Schema.optionalKey(Schema.Array(ProjectHoverCardProperty)),
   forkUpdatesFolder: Schema.optionalKey(Schema.String),
   forkUpdatesDismissedTag: Schema.optionalKey(Schema.String),
+  forkUpdatesChannel: Schema.optionalKey(ForkUpdateChannelSetting),
   statusBarVisible: Schema.optionalKey(Schema.Boolean),
   statusBarHiddenItems: Schema.optionalKey(Schema.Array(Schema.String)),
   statusBarUsageMode: Schema.optionalKey(StatusBarUsageMode),
   statusBarUsagePercentage: Schema.optionalKey(StatusBarUsagePercentage),
   statusBarPortsCount: Schema.optionalKey(StatusBarPortsCount),
   statusBarResourceSort: Schema.optionalKey(StatusBarResourceSort),
+  statusBarUsageRefresh: Schema.optionalKey(StatusBarUsageRefresh),
+  statusBarPortsRefresh: Schema.optionalKey(StatusBarPortsRefresh),
   usagePaceEnabled: Schema.optionalKey(Schema.Boolean),
   statusBarUsagePaceVisible: Schema.optionalKey(Schema.Boolean),
   usageProjectionEnabled: Schema.optionalKey(Schema.Boolean),

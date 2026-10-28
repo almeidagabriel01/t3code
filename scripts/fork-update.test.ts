@@ -9,7 +9,12 @@ describe("fork-update helpers", () => {
       push: true,
       install: true,
       rebuild: false,
+      channel: null,
+      targetMain: false,
     });
+    assert.strictEqual(parseArgs(["--channel", "nightly"]).channel, "nightly");
+    assert.strictEqual(parseArgs(["--channel=stable", "--target", "main"]).targetMain, true);
+    assert.throws(() => parseArgs(["--channel", "preview"]), /--channel/);
     assert.throws(() => parseArgs(["--force"]), /Unknown option/);
   });
 

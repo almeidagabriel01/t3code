@@ -450,6 +450,8 @@ export function useSettingsRestore(onRestored?: () => void) {
     settings.statusBarUsagePercentage !== DEFAULT_UNIFIED_SETTINGS.statusBarUsagePercentage ||
     settings.statusBarPortsCount !== DEFAULT_UNIFIED_SETTINGS.statusBarPortsCount ||
     settings.statusBarResourceSort !== DEFAULT_UNIFIED_SETTINGS.statusBarResourceSort ||
+    settings.statusBarUsageRefresh !== DEFAULT_UNIFIED_SETTINGS.statusBarUsageRefresh ||
+    settings.statusBarPortsRefresh !== DEFAULT_UNIFIED_SETTINGS.statusBarPortsRefresh ||
     settings.usagePaceEnabled !== DEFAULT_UNIFIED_SETTINGS.usagePaceEnabled ||
     settings.usageProjectionEnabled !== DEFAULT_UNIFIED_SETTINGS.usageProjectionEnabled ||
     settings.usageDailyBudgetEnabled !== DEFAULT_UNIFIED_SETTINGS.usageDailyBudgetEnabled ||
@@ -634,6 +636,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       statusBarUsagePercentage: DEFAULT_UNIFIED_SETTINGS.statusBarUsagePercentage,
       statusBarPortsCount: DEFAULT_UNIFIED_SETTINGS.statusBarPortsCount,
       statusBarResourceSort: DEFAULT_UNIFIED_SETTINGS.statusBarResourceSort,
+      statusBarUsageRefresh: DEFAULT_UNIFIED_SETTINGS.statusBarUsageRefresh,
+      statusBarPortsRefresh: DEFAULT_UNIFIED_SETTINGS.statusBarPortsRefresh,
       usagePaceEnabled: DEFAULT_UNIFIED_SETTINGS.usagePaceEnabled,
       usageProjectionEnabled: DEFAULT_UNIFIED_SETTINGS.usageProjectionEnabled,
       usageDailyBudgetEnabled: DEFAULT_UNIFIED_SETTINGS.usageDailyBudgetEnabled,

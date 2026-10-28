@@ -74,6 +74,7 @@ function Lane(props: {
           environmentId={props.lane.environmentId}
           board={props.lane.board}
           canEdit={canEdit}
+          project={props.info}
           visibleCardIds={visible}
           onOpenCard={props.onOpenCard}
         />
@@ -135,6 +136,7 @@ export function KanbanGlobalBoard(props: {
                 environmentId: source?.environmentId ?? boards[0]!.environmentId,
                 labels: source?.board.labels ?? [],
                 templates: source?.board.templates ?? [],
+                showProjectBadge: true,
                 project: source
                   ? props.projects.get(boardScopeKey(source.environmentId, source.board.projectId))
                   : undefined,

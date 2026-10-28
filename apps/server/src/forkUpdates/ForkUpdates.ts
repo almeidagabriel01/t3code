@@ -4,13 +4,14 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as NodeOS from "node:os";
+import { inferChannel, latestChannelTag } from "@t3tools/shared/forkUpdateTags";
 
 import * as ProcessRunner from "../processRunner.ts";
 
 export class ForkUpdates extends Context.Service<
   ForkUpdates,
   {
-    /** Read-only git inspection (plus `git fetch upstream`). Never touches the worktree. Failures yield `available: false`. */
+    /** Read-only git inspection (plus `git fetch upstream --tags`) of the latest tag of the chosen channel. Never touches the worktree. Failures yield `available: false`. */
     readonly status: (input: ForkUpdateStatusInput) => Effect.Effect<ForkUpdateStatus>;
   }
 >()("t3/forkUpdates/ForkUpdates") {}
@@ -49,6 +50,7 @@ const make = Effect.gen(function* ForkUpdatesMake() {
     const unavailable: ForkUpdateStatus = {
       available: false,
       path,
+      channel: input.channel === "nightly" ? "nightly" : "stable",
       headSha: null,
       headSubject: null,
       headTag: null,
@@ -64,11 +66,30 @@ const make = Effect.gen(function* ForkUpdatesMake() {
     // Offline fetches fail; the refs already on disk still answer.
     yield* git(path, ["fetch", "upstream", "--tags", "--quiet"], FETCH_TIMEOUT);
 
-    const behindText = yield* out(path, ["rev-list", "--count", "main..upstream/main"]);
+    const desktopPackage = yield* out(path, ["show", "main:apps/desktop/package.json"]);
+    const desktopVersion = (() => {
+      try {
+        return String(JSON.parse(desktopPackage ?? "{}").version ?? "");
+      } catch {
+        return "";
+      }
+    })();
+    const channel = input.channel === "auto" ? inferChannel(desktopVersion) : input.channel;
+    const allTags = (yield* out(path, ["tag", "--list", "v*"]))?.split("\n") ?? [];
+    const mergedTags =
+      (yield* out(path, ["tag", "--list", "v*", "--merged", "main"]))?.split("\n") ?? [];
+    const upstreamTag = latestChannelTag(allTags, channel);
+    const headTag = latestChannelTag(mergedTags, channel);
+
+    const head = yield* out(path, ["log", "-1", "--format=%H%x09%s", "main"]);
+    if (head === null) return unavailable;
+    const [headSha = null, headSubject = null] = head.split("\t");
+    if (upstreamTag === null) {
+      return { ...unavailable, available: true, channel, headSha, headSubject, headTag };
+    }
+    const behindText = yield* out(path, ["rev-list", "--count", `main..${upstreamTag}`]);
     if (behindText === null) return unavailable;
     const behind = Number.parseInt(behindText, 10) || 0;
-    const head = yield* out(path, ["log", "-1", "--format=%H%x09%s", "main"]);
-    const [headSha = null, headSubject = null] = head?.split("\t") ?? [];
 
     let wouldConflict: boolean | null = null;
     let conflictFiles: ReadonlyArray<string> = [];
@@ -78,7 +99,7 @@ const make = Effect.gen(function* ForkUpdatesMake() {
         "--write-tree",
         "--name-only",
         "main",
-        "upstream/main",
+        upstreamTag,
       ]);
       if (merge?.code === 0) wouldConflict = false;
       else if (merge?.code === 1) {
@@ -90,11 +111,12 @@ const make = Effect.gen(function* ForkUpdatesMake() {
     return {
       available: true,
       path,
+      channel,
       headSha,
       headSubject,
-      headTag: yield* out(path, ["describe", "--tags", "--abbrev=0", "main"]),
-      upstreamSha: yield* out(path, ["rev-parse", "upstream/main"]),
-      upstreamTag: yield* out(path, ["describe", "--tags", "--abbrev=0", "upstream/main"]),
+      headTag,
+      upstreamSha: yield* out(path, ["rev-parse", `${upstreamTag}^{commit}`]),
+      upstreamTag,
       behind,
       wouldConflict,
       conflictFiles,
