@@ -118,6 +118,7 @@ export function createSidebarSortingStrategy(input: {
     const target = resolveSidebarDropTarget(items, active.key, sidebarListItemId(over));
     if (!target) return [];
     const groups: Record<SidebarSection, ThreadItem[]> = {
+      priority: [],
       pinned: [],
       active: [],
       working: [],

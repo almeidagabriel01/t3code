@@ -1,8 +1,10 @@
+import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import {
   hasSidebarNotification,
   hasUnseenCompletion,
   hasUnseenFailure,
+  resolveSidebarThreadStatus,
   type SidebarThreadStatus,
 } from "@t3tools/client-runtime/state/thread-attention";
 import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
@@ -170,15 +172,20 @@ export const animateSidebarLayoutChanges: AnimateLayoutChanges = (args) =>
   args.isSorting ? defaultAnimateLayoutChanges(args) : false;
 
 // Snoozed rows cannot accept drops without a wake time. Working rows only drag out as chat context.
+// Priority follows live attention, so it is neither a drag source nor a destination.
 
-export type SidebarSection = "pinned" | "active" | "working" | "snoozed" | "settled";
+export type SidebarSection = "priority" | "pinned" | "active" | "working" | "snoozed" | "settled";
 
+/** Snooze wins until its wake boundary. Priority overlays lifecycle;
+ * otherwise settlement wins over a stale pin. */
 export function resolveSidebarThreadSection(input: {
   readonly snoozed: boolean;
   readonly settled: boolean;
   readonly pinned: boolean;
+  readonly priority?: boolean;
 }): SidebarSection {
   if (input.snoozed) return "snoozed";
+  if (input.priority) return "priority";
   if (input.settled) return "settled";
   if (input.pinned) return "pinned";
   return "active";
@@ -243,7 +250,7 @@ export function resolveSidebarDropTarget(
   const moved = items.filter((_, index) => index !== activeIndex);
   moved.splice(overIndex, 0, items[activeIndex]!);
   const section = sectionAtSidebarSlot(moved, overIndex);
-  if (section === "working" || section === "snoozed") return null;
+  if (section === "working" || section === "snoozed" || section === "priority") return null;
   const pinnedOrder: string[] = [];
   const activeOrder: string[] = [];
   let currentSection: SidebarSection = "pinned";
@@ -291,7 +298,8 @@ export function resolveSidebarDropVerb(
   from: SidebarSection,
   to: SidebarSection | null,
 ): SidebarDropVerb | null {
-  if (to === null || to === from || to === "working" || to === "snoozed") return null;
+  if (to === null || to === from || to === "working" || to === "snoozed" || to === "priority")
+    return null;
   if (to === "pinned") return "pin";
   if (to === "settled") return "settle";
   if (from === "pinned") return "unpin";
@@ -350,7 +358,7 @@ export function planSidebarThreadDrop(input: {
     activeKeysById,
     activeReorderableKeys,
   } = input;
-  if (activeSection === "working") return { kind: "none" };
+  if (activeSection === "working" || activeSection === "priority") return { kind: "none" };
   if (input.supportsSettlement === false && (target.section === "settled" || activeSettled)) {
     return { kind: "none" };
   }
@@ -711,6 +719,138 @@ export function resolveThreadLastVisitedAt(
   // servers.
   if (serverLastVisitedAt === undefined) return localLastVisitedAt;
   return serverLastVisitedAt ?? undefined;
+}
+
+/** A visit acknowledges a wake without changing the thread's lifecycle. */
+export function isSidebarThreadWoke(
+  wokeAt: string | null,
+  lastVisitedAt: string | undefined,
+): boolean {
+  if (wokeAt === null || !Number.isFinite(Date.parse(wokeAt))) return false;
+  const visited = lastVisitedAt === undefined ? NaN : Date.parse(lastVisitedAt);
+  return !Number.isFinite(visited) || visited < Date.parse(wokeAt);
+}
+
+/**
+ * Priority is a display overlay; its rank never changes pinning or settlement. A subagent's
+ * pending request already reaches its parent through `pendingSubagentRequest`.
+ */
+export function resolveSidebarPriorityRank(input: {
+  readonly thread: ThreadStatusInput;
+  readonly localLastVisitedAt?: string | undefined;
+  readonly wokeAt: string | null;
+}): 0 | 1 | 2 | null {
+  const status = resolveSidebarThreadStatus({
+    ...input.thread,
+    blockedOnThreadWait: input.thread.blockedOnThreadWait === true,
+  });
+  if (status === "approval" || status === "input") return 0;
+  if (status === "working" || status === "waiting") return 1;
+  const lastVisitedAt = resolveThreadLastVisitedAt(
+    input.thread.lastVisitedAt,
+    input.localLastVisitedAt,
+  );
+  return hasUnseenCompletion({ ...input.thread, lastVisitedAt }) ||
+    isSidebarThreadWoke(input.wokeAt, lastVisitedAt)
+    ? 2
+    : null;
+}
+
+/** Settled state each Priority row had when Activity last showed it, by scoped thread key. */
+export type SidebarPriorityHolds = ReadonlyMap<string, SidebarThreadSummary["settledOverride"]>;
+
+/**
+ * Reading a thread does not pull its row out of Priority while Activity stays open; it leaves
+ * when Activity is shown again. Settling or unsettling the row is the user's own move, so a
+ * changed settled state ends the hold.
+ */
+export function holdSidebarPriorityRank(input: {
+  readonly rank: 0 | 1 | 2 | null;
+  readonly key: string;
+  readonly settledOverride: SidebarThreadSummary["settledOverride"];
+  readonly holds: SidebarPriorityHolds;
+  /** Mark all as read drops the row once it no longer qualifies, instead of holding it. */
+  readonly released?: boolean;
+}): 0 | 1 | 2 | null {
+  if (input.released) return input.rank;
+  if (input.rank !== null || !input.holds.has(input.key)) return input.rank;
+  return input.holds.get(input.key) === input.settledOverride ? 2 : null;
+}
+
+/**
+ * Settling acknowledges a wake. The acknowledgement sticks until the shell stops
+ * reporting one, so a later hold cannot put the Woke pill back. Un-settling restores it.
+ */
+export function resolveSidebarWokeAtForRow(input: {
+  readonly key: string;
+  readonly rawWokeAt: string | null;
+  readonly settledOverride: SidebarThreadSummary["settledOverride"];
+  readonly heldSettledOverride: SidebarThreadSummary["settledOverride"] | undefined;
+  readonly acknowledged: Set<string>;
+}): string | null {
+  const settling =
+    input.heldSettledOverride !== undefined &&
+    input.heldSettledOverride !== input.settledOverride &&
+    input.settledOverride === "settled";
+  if (settling) input.acknowledged.add(input.key);
+  if (input.settledOverride !== "settled" || input.rawWokeAt === null) {
+    input.acknowledged.delete(input.key);
+  }
+  return input.acknowledged.has(input.key) ? null : input.rawWokeAt;
+}
+
+/** Writable unread completions and woke-only rows are targets of Priority's bulk visit. */
+export function selectSidebarMarkReadTargets<
+  T extends ThreadStatusInput & Pick<SidebarThreadSummary, "environmentId" | "id">,
+>(input: {
+  readonly threads: readonly T[];
+  readonly localLastVisitedAtByKey: Readonly<Record<string, string | undefined>>;
+  readonly wokeAtByKey?: ReadonlyMap<string, string | null>;
+  readonly canOperate: (thread: T) => boolean;
+}): T[] {
+  return input.threads.filter((thread) => {
+    if (!input.canOperate(thread)) return false;
+    const key = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+    const lastVisitedAt = resolveThreadLastVisitedAt(
+      thread.lastVisitedAt,
+      input.localLastVisitedAtByKey[key],
+    );
+    return (
+      hasUnseenCompletion({ ...thread, lastVisitedAt }) ||
+      isSidebarThreadWoke(input.wokeAtByKey?.get(key) ?? null, lastVisitedAt)
+    );
+  });
+}
+
+/**
+ * Cache ranks before sorting. Within a rank, newer threads come first by
+ * creation time: updatedAt moves on every streamed event of a running thread,
+ * so ordering by it would swap working rows while they stream.
+ */
+export function sortPriorityThreadsForSidebar<
+  T extends Pick<SidebarThreadSummary, "environmentId" | "id" | "createdAt">,
+>(threads: readonly T[], ranks: ReadonlyMap<string, number>): T[] {
+  const key = (thread: T) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+  return threads.toSorted(
+    (left, right) =>
+      (ranks.get(key(left)) ?? 2) - (ranks.get(key(right)) ?? 2) ||
+      firstValidTimestampMs(right.createdAt) - firstValidTimestampMs(left.createdAt) ||
+      key(left).localeCompare(key(right)),
+  );
+}
+
+/** Row controls follow lifecycle even inside Priority. */
+export function resolveSidebarThreadPresentation(input: {
+  readonly snoozed: boolean;
+  readonly settled: boolean;
+}) {
+  return {
+    action: input.snoozed
+      ? ("unsnooze" as const)
+      : input.settled
+        ? ("unsettle" as const)
+        : ("settle" as const),
+  };
 }
 
 /** The dot class for a thread that needs attention, or null once it was opened. */

@@ -97,7 +97,7 @@ function SubagentRow(props: {
   );
 }
 
-function SubagentRows(props: {
+export function SubagentRows(props: {
   children: readonly EnvironmentThreadShell[];
   onOpen: (threadRef: ScopedThreadRef) => void;
 }) {

@@ -122,6 +122,30 @@ rename a thread, regenerate its title, or link and unlink a pull request. These 
 appear on web, desktop, and mobile without requiring the originating browser to remain
 open.
 
+### Follow Priority in Activity
+
+On web and desktop, the sidebar opens in **Projects**. Choose the bell at the top of the sidebar, or
+press `mod+alt+u`, to switch to **Activity**, which shows **Priority** above your projects. The
+sidebar remembers your choice on that device, and the bell shows how many threads are in Priority.
+Priority holds threads with work in progress, pending approvals or answers, unread completions, or
+an unacknowledged return from snooze. A delegated task needing approval or an answer brings its
+parent here too, and the parent row shows **Approval** or **Input**. Pinned and settled threads can
+appear in Priority; when they no longer need attention, they return to their previous section.
+Threads in Priority cannot be dragged.
+
+A thread you read stays in Priority while you keep Activity open, so rows do not move while you
+work through them. Switch to Projects and back to move read threads out. Settling a thread clears
+an unacknowledged wake and moves the row right away. Unsettling moves it right away too.
+
+Choose **Mark all as read** from Priority's menu to acknowledge unread completions and
+unacknowledged wakes on connections you can change. Those rows leave Priority. Work in progress
+and pending requests stay.
+
+When Priority holds threads you already read, or unread completions and wakes on connections you
+can change, **Clear read threads** appears beside its menu. It marks those unread threads read and
+moves all of them out of Priority at once. Work in progress, pending requests, and unread threads
+on connections you cannot change stay. Nothing is archived or deleted.
+
 ### Fold working threads (beta)
 
 Threads that are working or waiting on work they will resume from move into a collapsed
