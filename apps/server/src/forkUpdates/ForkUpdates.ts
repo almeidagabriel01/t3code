@@ -16,7 +16,7 @@ export class ForkUpdates extends Context.Service<
   }
 >()("t3/forkUpdates/ForkUpdates") {}
 
-const DEFAULT_FORK_PATH = "~/Documents/DEV/t3code";
+const DEFAULT_FORK_PATH = "~/DEV/Pessoal/t3code";
 const FETCH_TIMEOUT = Duration.seconds(60);
 const GIT_TIMEOUT = Duration.seconds(15);
 

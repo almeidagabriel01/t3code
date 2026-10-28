@@ -41,12 +41,12 @@ function ForkUpdatesSections({ environmentId }: { readonly environmentId: Enviro
     <SettingsSection id="fork-updates" title="Fork updates">
       <SettingsRow
         {...searchableSetting("fork-updates-folder")}
-        description="Your fork's git checkout on this machine. Leave empty for ~/Documents/DEV/t3code."
+        description="Your fork's git checkout on this machine. Leave empty for ~/DEV/Pessoal/t3code."
         control={
           <Input
             className="w-72"
             value={draft}
-            placeholder="~/Documents/DEV/t3code"
+            placeholder="~/DEV/Pessoal/t3code"
             aria-label="Fork checkout folder"
             onChange={(event) => setDraft(event.target.value)}
             onBlur={() => {

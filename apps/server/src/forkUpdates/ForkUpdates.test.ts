@@ -35,7 +35,7 @@ describe("ForkUpdates", () => {
 
   it("expands the home folder and falls back to the default", () => {
     assert.strictEqual(resolveForkPath("~/x", "/home/u"), "/home/u/x");
-    assert.strictEqual(resolveForkPath("", "/home/u"), "/home/u/Documents/DEV/t3code");
+    assert.strictEqual(resolveForkPath("", "/home/u"), "/home/u/DEV/Pessoal/t3code");
   });
 
   const answers = {
