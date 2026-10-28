@@ -7,16 +7,12 @@ import type {
   DesktopPreviewTabState,
   DesktopSnapShotEvent,
 } from "@t3tools/contracts";
-import { DesktopWindowMaterialState } from "@t3tools/contracts/desktopWindowMaterial";
-import * as Schema from "effect/Schema";
-import * as Option from "effect/Option";
+import type { DesktopWindowMaterialState } from "@t3tools/contracts/desktopWindowMaterial";
 import { exposeClerkBridge } from "@clerk/electron/preload";
 import { contextBridge, ipcRenderer, webFrame, webUtils } from "electron";
 
 import * as IpcChannels from "./ipc/channels.ts";
 import { mergeLegacyLocalStorage } from "./legacyLocalStorageMerge.ts";
-
-const decodeWindowMaterialState = Schema.decodeUnknownOption(DesktopWindowMaterialState);
 
 const SNAP_SHOT_EVENT_TYPES = new Set([
   "requested",
@@ -255,18 +251,14 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ipcRenderer.removeListener(IpcChannels.QUIT_SHORTCUT_CHANNEL, wrappedListener);
     };
   },
-  getWindowMaterialState: async () => {
-    const decoded = decodeWindowMaterialState(
-      await ipcRenderer.invoke(IpcChannels.GET_WINDOW_MATERIAL_STATE_CHANNEL),
-    );
-    if (Option.isNone(decoded)) throw new Error("Invalid desktop window material state.");
-    return decoded.value;
-  },
+  // Sandboxed preloads cannot require npm modules, so the renderer gets the main process's value as is.
+  getWindowMaterialState: () =>
+    ipcRenderer.invoke(
+      IpcChannels.GET_WINDOW_MATERIAL_STATE_CHANNEL,
+    ) as Promise<DesktopWindowMaterialState>,
   onWindowMaterialStateChanged: (listener) => {
-    const wrappedListener = (_event: Electron.IpcRendererEvent, value: unknown) => {
-      const decoded = decodeWindowMaterialState(value);
-      if (Option.isSome(decoded)) listener(decoded.value);
-    };
+    const wrappedListener = (_event: Electron.IpcRendererEvent, value: unknown) =>
+      listener(value as DesktopWindowMaterialState);
     ipcRenderer.on(IpcChannels.WINDOW_MATERIAL_STATE_CHANNEL, wrappedListener);
     return () =>
       ipcRenderer.removeListener(IpcChannels.WINDOW_MATERIAL_STATE_CHANNEL, wrappedListener);

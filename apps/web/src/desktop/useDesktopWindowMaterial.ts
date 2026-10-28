@@ -1,5 +1,10 @@
-import type { DesktopWindowMaterialState } from "@t3tools/contracts";
+import { DesktopWindowMaterialState } from "@t3tools/contracts";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { useEffect, useState } from "react";
+
+// The sandboxed preload passes the main process's value through; malformed states are dropped here.
+const decodeWindowMaterialState = Schema.decodeUnknownOption(DesktopWindowMaterialState);
 
 // Older desktop builds lack the material bridge; their clients keep the CSS-only settings.
 export function hasDesktopWindowMaterialApi(): boolean {
@@ -16,8 +21,10 @@ export function useDesktopWindowMaterial() {
   useEffect(() => {
     if (!bridge?.getWindowMaterialState || !bridge.onWindowMaterialStateChanged) return;
     let disposed = false;
-    const accept = (next: DesktopWindowMaterialState) => {
-      if (disposed) return;
+    const accept = (value: unknown) => {
+      const decoded = decodeWindowMaterialState(value);
+      if (disposed || Option.isNone(decoded)) return;
+      const next = decoded.value;
       setState((current) => (current && current.revision >= next.revision ? current : next));
     };
     // Pushes can overtake the initial IPC response.
