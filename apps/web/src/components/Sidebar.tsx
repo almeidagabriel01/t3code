@@ -548,7 +548,13 @@ function useSidebarThreads(input: {
     settledShelfExpanded,
     orderedThreadKeys: orderedThreads.map(threadShellKey),
     threadByKey: new Map(orderedThreads.map((thread) => [threadShellKey(thread), thread] as const)),
-    settledThreadKeys: new Set(settledThreads.map(threadShellKey)),
+    // Settled rows shown in Priority keep their lifecycle for menus and bulk actions.
+    settledThreadKeys: new Set(
+      [
+        ...settledThreads,
+        ...priorityThreads.filter((thread) => thread.settledOverride === "settled"),
+      ].map(threadShellKey),
+    ),
     snoozedThreadKeys: new Set(snoozedThreads.map(threadShellKey)),
     sectionByThreadKey,
     pinnedKeys: pinnedThreads.map(threadShellKey),
