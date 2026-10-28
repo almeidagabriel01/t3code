@@ -15,10 +15,14 @@ import { cn } from "../../lib/utils";
 import { useQuietThreadShell } from "../../state/entities";
 import { useProviderEntry } from "../../state/kanban";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
-import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Spinner } from "../ui/spinner";
+import {
+  KanbanProjectBadge,
+  projectAccentClassName,
+  type KanbanProjectInfo,
+} from "./KanbanProjectBadge";
 import { formatDueLabel, isDueOverdue } from "./kanbanFormat";
 import { LabelChip, PriorityIcon, ProgressBar, TemplateIcon } from "./kanbanPresentation";
 
@@ -57,7 +61,7 @@ export interface KanbanCardTileProps {
   readonly environmentId: EnvironmentId;
   readonly labels: ReadonlyArray<KanbanLabel>;
   readonly templates: ReadonlyArray<KanbanTemplate>;
-  readonly projectLabel?: string | undefined;
+  readonly project?: KanbanProjectInfo | undefined;
   readonly onOpen: (card: KanbanCard) => void;
   /** Present when the viewer can edit; adds the agent quick action. */
   readonly onStartAgent?: ((card: KanbanCard) => void) | undefined;
@@ -76,16 +80,21 @@ export const KanbanCardTile = memo(function KanbanCardTile(props: KanbanCardTile
     <div
       data-testid="kanban-card"
       data-card-id={card.id}
-      className="group/card relative flex w-full flex-col gap-2 rounded-lg border border-border bg-card p-3 text-left shadow-xs/5 hover:border-foreground/20 focus-within:ring-2 focus-within:ring-inset focus-within:ring-ring"
+      className="group/card relative flex w-full flex-col gap-2 overflow-hidden rounded-lg border border-border bg-card p-3 text-left shadow-xs/5 hover:border-foreground/20 focus-within:ring-2 focus-within:ring-inset focus-within:ring-ring"
     >
+      {props.project ? (
+        <span
+          aria-hidden
+          className={cn(
+            "absolute inset-y-0 start-0 w-0.5 bg-current",
+            projectAccentClassName(props.project),
+          )}
+        />
+      ) : null}
+      {props.project ? <KanbanProjectBadge info={props.project} /> : null}
       <div className="flex min-h-5 items-center gap-1.5 text-xs text-muted-foreground">
         {template ? <TemplateIcon template={template} /> : null}
         <span className="tabular-nums">#{card.number}</span>
-        {props.projectLabel ? (
-          <Badge variant="outline" size="sm">
-            {props.projectLabel}
-          </Badge>
-        ) : null}
         <span className="ms-auto flex items-center gap-1.5">
           {card.blockedBy.length > 0 ? (
             <BanIcon aria-label="Blocked" className="size-3.5 text-warning-foreground" />

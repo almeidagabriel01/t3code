@@ -16,6 +16,7 @@ import { Spinner } from "../ui/spinner";
 import {
   boardScopeKey,
   collectGlobalBoards,
+  collectGlobalCards,
   findCardInBoards,
 } from "@t3tools/client-runtime/state/kanbanLogic";
 import { KanbanArchive } from "./KanbanArchive";
@@ -111,10 +112,14 @@ export function KanbanPage() {
     states.some((entry) => entry.environmentId === member.environmentId),
   );
   const member = members.find((entry) => entry.physicalProjectKey === memberKey) ?? members[0];
-  const projectNames = new Map(
+  const projects = new Map(
     groups.flatMap((entry) =>
       entry.memberProjects.map(
-        (m) => [boardScopeKey(m.environmentId, m.id), entry.displayName] as const,
+        (m) =>
+          [
+            boardScopeKey(m.environmentId, m.id),
+            { name: entry.displayName, projectKey: entry.projectKey, project: m },
+          ] as const,
       ),
     ),
   );
@@ -140,13 +145,19 @@ export function KanbanPage() {
     void navigate({ search: ({ card: _closed, ...rest }) => rest, replace: true });
   };
 
-  const title = group ? `${group.displayName} board` : search.projectKey ? "Board" : "All boards";
+  const title = group ? `${group.displayName} board` : "Board";
+  const subtitle = search.projectKey
+    ? null
+    : `All projects · ${boards.length} ${boards.length === 1 ? "board" : "boards"} · ${collectGlobalCards(boards).length} cards`;
 
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none">
       <WorkspacePageHeader electron={isElectron} className="relative bg-background">
         <WorkspaceBreadcrumb ariaLabel="Board">
           <h1 className="truncate">{title}</h1>
+          {subtitle ? (
+            <span className="truncate text-xs font-normal text-muted-foreground">{subtitle}</span>
+          ) : null}
         </WorkspaceBreadcrumb>
         <div className="ms-auto flex items-center gap-1">
           {members.length > 1 ? (
@@ -204,7 +215,7 @@ export function KanbanPage() {
             />
           )
         ) : (
-          <KanbanGlobalBoard states={states} projectNames={projectNames} onOpenCard={openCard} />
+          <KanbanGlobalBoard states={states} projects={projects} onOpenCard={openCard} />
         )}
       </div>
       {detail ? (

@@ -26,6 +26,24 @@ const v2TableCount = Effect.gen(function* () {
 });
 
 describe("runMigrations", () => {
+  it.effect("drops an old fork record that took the next upstream id and keeps fork tables", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const [nextId, nextName] = migrationManifest.at(-1)!;
+      yield* runMigrations({ toMigrationInclusive: nextId - 1 });
+      yield* sql`INSERT INTO effect_sql_migrations (migration_id, name) VALUES (${nextId}, 'Kanban')`;
+
+      yield* runMigrations();
+      yield* runMigrations();
+
+      assert.deepStrictEqual((yield* history).at(-1), [nextId, nextName]);
+      const tables = yield* sql`
+        SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'kanban_cards'
+      `;
+      assert.strictEqual(tables.length, 1);
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  );
+
   it.effect("refuses to start when another migration took a V2 id", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;

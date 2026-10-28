@@ -1,11 +1,10 @@
-import type { EnvironmentId, KanbanCard, KanbanCardId, ProjectId } from "@t3tools/contracts";
+import type { KanbanCard, KanbanCardId, KanbanColumnRole } from "@t3tools/contracts";
+import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 
+import { ArrowUpRightIcon } from "lucide-react";
+import { ProjectFavicon } from "../ProjectFavicon";
 import { Button } from "../ui/button";
-import { Input } from "../ui/input";
-import { Menu, MenuCheckboxItem, MenuPopup, MenuTrigger } from "../ui/menu";
-import { Switch } from "../ui/switch";
-import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import {
   boardScopeKey,
   collectGlobalBoards,
@@ -14,29 +13,54 @@ import {
   filterGlobalCards,
   groupCardsByProject,
   groupCardsByRole,
-  KANBAN_PRIORITIES,
   KANBAN_ROLE_LABELS,
   type GlobalFilters,
 } from "@t3tools/client-runtime/state/kanbanLogic";
 import { KanbanBoardView } from "./KanbanBoardView";
 import { KanbanCardTile } from "./KanbanCardTile";
-import { OptionSelect } from "./kanbanDialogs";
+import { KanbanGlobalFilters } from "./KanbanGlobalFilters";
+import type { KanbanProjectInfo } from "./KanbanProjectBadge";
 import { useKanbanGlobalLayout } from "./kanbanPreferences";
-import { PRIORITY_LABELS } from "./kanbanPresentation";
+import { ColorDot } from "./kanbanPresentation";
 import { useKanbanCanEdit, type KanbanEnvironmentState } from "./useKanban";
 
-const ANY = "__any__";
+const ROLE_COLORS: Record<KanbanColumnRole, string> = {
+  backlog: "slate",
+  todo: "blue",
+  "in-progress": "amber",
+  review: "violet",
+  done: "green",
+  none: "slate",
+};
 
 function Lane(props: {
-  readonly title: string;
   readonly lane: ReturnType<typeof groupCardsByProject>[number];
+  readonly info: KanbanProjectInfo | undefined;
   readonly onOpenCard: (card: KanbanCard) => void;
 }) {
   const canEdit = useKanbanCanEdit(props.lane.environmentId);
   const visible = new Set<KanbanCardId>(props.lane.cards.map((entry) => entry.card.id));
+  const title = props.info?.name ?? props.lane.board.title;
   return (
-    <section className="grid gap-1" aria-label={props.title}>
-      <h2 className="px-4 pt-4 text-sm font-semibold">{props.title}</h2>
+    <section className="flex flex-col border-b" aria-label={title}>
+      <header className="flex items-center gap-2 px-4 pt-3">
+        {props.info ? <ProjectFavicon project={props.info.project} className="size-5" /> : null}
+        <h2 className="truncate text-sm font-semibold">{title}</h2>
+        <span className="text-xs text-muted-foreground tabular-nums">
+          {props.lane.cards.length} {props.lane.cards.length === 1 ? "card" : "cards"}
+        </span>
+        {props.info ? (
+          <Button
+            size="xs"
+            variant="ghost-muted"
+            className="ms-auto"
+            render={<Link to="/kanban" search={{ projectKey: props.info.projectKey }} />}
+          >
+            Open board
+            <ArrowUpRightIcon />
+          </Button>
+        ) : null}
+      </header>
       <div className="h-[26rem]">
         <KanbanBoardView
           environmentId={props.lane.environmentId}
@@ -52,7 +76,7 @@ function Lane(props: {
 
 export function KanbanGlobalBoard(props: {
   readonly states: ReadonlyArray<KanbanEnvironmentState>;
-  readonly projectNames: ReadonlyMap<string, string>;
+  readonly projects: ReadonlyMap<string, KanbanProjectInfo>;
   readonly onOpenCard: (card: KanbanCard) => void;
 }) {
   const [filters, setFilters] = useState<GlobalFilters>(EMPTY_FILTERS);
@@ -60,13 +84,7 @@ export function KanbanGlobalBoard(props: {
   const boards = collectGlobalBoards(props.states);
   const allCards = collectGlobalCards(boards);
   const cards = filterGlobalCards(allCards, boards, filters);
-  const nameOf = (environmentId: EnvironmentId, projectId: ProjectId, fallback: string) =>
-    props.projectNames.get(boardScopeKey(environmentId, projectId)) ?? fallback;
-  const labelNames = [...new Set(boards.flatMap(({ board }) => board.labels.map((l) => l.name)))];
-  const typeNames = [...new Set(boards.flatMap(({ board }) => board.templates.map((t) => t.name)))];
   const boardById = new Map(boards.map((entry) => [entry.board.id, entry]));
-  const patch = (next: Partial<GlobalFilters>) =>
-    setFilters((current) => ({ ...current, ...next }));
 
   if (boards.length === 0) {
     return (
@@ -78,127 +96,53 @@ export function KanbanGlobalBoard(props: {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex flex-wrap items-center gap-2 border-b bg-background px-4 py-2">
-        <Input
-          size="sm"
-          type="search"
-          aria-label="Search cards"
-          placeholder="Search cards"
-          className="w-48"
-          value={filters.text}
-          onChange={(event) => patch({ text: event.target.value })}
-        />
-        <Menu>
-          <MenuTrigger render={<Button size="xs" variant="outline" />}>
-            Projects{filters.projects.length > 0 ? ` (${filters.projects.length})` : ""}
-          </MenuTrigger>
-          <MenuPopup align="start">
-            {boards.map(({ environmentId, board }) => {
-              const key = boardScopeKey(environmentId, board.projectId);
-              return (
-                <MenuCheckboxItem
-                  key={key}
-                  checked={filters.projects.includes(key)}
-                  onCheckedChange={(checked) =>
-                    patch({
-                      projects: checked
-                        ? [...filters.projects, key]
-                        : filters.projects.filter((entry) => entry !== key),
-                    })
-                  }
-                >
-                  {nameOf(environmentId, board.projectId, board.title)}
-                </MenuCheckboxItem>
-              );
-            })}
-          </MenuPopup>
-        </Menu>
-        <OptionSelect
-          label="Label"
-          value={filters.label ?? ANY}
-          options={[
-            { value: ANY, label: "Any label" },
-            ...labelNames.map((v) => ({ value: v, label: v })),
-          ]}
-          onChange={(value) => patch({ label: value === ANY ? null : value })}
-        />
-        <OptionSelect
-          label="Priority"
-          value={filters.priority ?? ANY}
-          options={[
-            { value: ANY, label: "Any priority" },
-            ...KANBAN_PRIORITIES.map((value) => ({
-              value: value as string,
-              label: PRIORITY_LABELS[value],
-            })),
-          ]}
-          onChange={(value) =>
-            patch({ priority: value === ANY ? null : (value as GlobalFilters["priority"]) })
-          }
-        />
-        <OptionSelect
-          label="Type"
-          value={filters.type ?? ANY}
-          options={[
-            { value: ANY, label: "Any type" },
-            ...typeNames.map((v) => ({ value: v, label: v })),
-          ]}
-          onChange={(value) => patch({ type: value === ANY ? null : value })}
-        />
-        <label className="flex items-center gap-1.5 text-sm">
-          <Switch
-            checked={filters.hasAgent}
-            onCheckedChange={(checked) => patch({ hasAgent: Boolean(checked) })}
-            aria-label="Has linked agent"
-          />
-          Has agent
-        </label>
-        <ToggleGroup
-          aria-label="Layout"
-          className="ms-auto"
-          value={[layout]}
-          onValueChange={(next) => {
-            const value = next[0];
-            if (value === "merged" || value === "lanes") setLayout(value);
-          }}
-        >
-          <Toggle value="merged">By status</Toggle>
-          <Toggle value="lanes">By project</Toggle>
-        </ToggleGroup>
-      </div>
+      <KanbanGlobalFilters
+        filters={filters}
+        boards={boards}
+        projects={props.projects}
+        layout={layout}
+        onFilters={setFilters}
+        onLayout={setLayout}
+      />
       <div className="min-h-0 flex-1 overflow-auto">
         {layout === "merged" ? (
-          <div className="flex items-start gap-3 p-4">
+          <div className="flex h-full w-max min-w-full items-start gap-3 p-4">
             {groupCardsByRole(cards).map((column) => (
               <section
                 key={column.role}
                 aria-label={KANBAN_ROLE_LABELS[column.role]}
-                className="flex w-72 shrink-0 flex-col gap-2 rounded-xl bg-muted/40 p-2"
+                className="flex max-h-full w-72 shrink-0 flex-col gap-2 rounded-xl bg-muted/40 p-2"
               >
-                <h3 className="flex items-baseline gap-1.5 px-1 pt-0.5 text-sm font-semibold">
-                  {column.role === "none" ? "Other columns" : KANBAN_ROLE_LABELS[column.role]}{" "}
+                <h3 className="flex items-center gap-1.5 px-1 pt-0.5 text-sm font-semibold">
+                  <ColorDot color={ROLE_COLORS[column.role]} />
+                  {column.role === "none" ? "Other columns" : KANBAN_ROLE_LABELS[column.role]}
                   <span className="text-xs font-normal text-muted-foreground tabular-nums">
                     {column.cards.length}
                   </span>
                 </h3>
-                {column.cards.map((entry) => {
-                  const source = boardById.get(entry.boardId);
-                  return (
-                    <KanbanCardTile
-                      key={entry.card.id}
-                      card={entry.card}
-                      environmentId={entry.environmentId}
-                      labels={source?.board.labels ?? []}
-                      templates={source?.board.templates ?? []}
-                      projectLabel={nameOf(
-                        entry.environmentId,
-                        entry.projectId,
-                        source?.board.title ?? "",
-                      )}
-                      onOpen={props.onOpenCard}
-                    />
-                  );
-                })}
+                <div className="flex min-h-0 flex-col gap-2 overflow-y-auto p-0.5">
+                  {column.cards.length === 0 ? (
+                    <p className="rounded-lg border border-dashed px-3 py-6 text-center text-xs text-muted-foreground">
+                      No cards
+                    </p>
+                  ) : null}
+                  {column.cards.map((entry) => {
+                    const source = boardById.get(entry.boardId);
+                    return (
+                      <KanbanCardTile
+                        key={entry.card.id}
+                        card={entry.card}
+                        environmentId={entry.environmentId}
+                        labels={source?.board.labels ?? []}
+                        templates={source?.board.templates ?? []}
+                        project={props.projects.get(
+                          boardScopeKey(entry.environmentId, entry.projectId),
+                        )}
+                        onOpen={props.onOpenCard}
+                      />
+                    );
+                  })}
+                </div>
               </section>
             ))}
           </div>
@@ -207,7 +151,7 @@ export function KanbanGlobalBoard(props: {
             <Lane
               key={lane.key}
               lane={lane}
-              title={nameOf(lane.environmentId, lane.board.projectId, lane.board.title)}
+              info={props.projects.get(lane.key)}
               onOpenCard={props.onOpenCard}
             />
           ))
