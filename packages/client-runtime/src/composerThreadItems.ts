@@ -4,6 +4,7 @@ import type {
   ScopedThreadRef,
   ThreadId,
 } from "@t3tools/contracts";
+import { isSideChatThread } from "@t3tools/contracts";
 import { foldSearchQuery, rankSearchItems, scoreThreadSearch } from "@t3tools/shared/paletteSearch";
 
 import type { EnvironmentThreadShell } from "./state/models.ts";
@@ -12,7 +13,7 @@ import { threadSearchSubject, type ThreadSearchShell } from "./state/threadSearc
 const COMPOSER_THREAD_RESULT_LIMIT = 5;
 
 export type ComposerThreadCandidate = ThreadSearchShell &
-  Pick<EnvironmentThreadShell, "archivedAt" | "lineage">;
+  Pick<EnvironmentThreadShell, "archivedAt" | "lineage" | "sideChatOf">;
 
 export interface ComposerThreadItem {
   readonly id: string;
@@ -42,7 +43,8 @@ export function matchComposerThreadItems(input: {
       shell.environmentId === input.environmentId &&
       shell.id !== input.excludeThreadId &&
       shell.archivedAt === null &&
-      shell.lineage.relationshipToParent !== "subagent",
+      shell.lineage.relationshipToParent !== "subagent" &&
+      !isSideChatThread(shell),
   );
   return rankSearchItems(candidates, (shell, options) =>
     scoreThreadSearch(query, threadSearchSubject(shell, null), input.now, {
