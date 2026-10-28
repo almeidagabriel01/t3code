@@ -7,11 +7,16 @@ import type {
   DesktopPreviewTabState,
   DesktopSnapShotEvent,
 } from "@t3tools/contracts";
+import { DesktopWindowMaterialState } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
+import * as Option from "effect/Option";
 import { exposeClerkBridge } from "@clerk/electron/preload";
 import { contextBridge, ipcRenderer, webFrame, webUtils } from "electron";
 
 import * as IpcChannels from "./ipc/channels.ts";
 import { mergeLegacyLocalStorage } from "./legacyLocalStorageMerge.ts";
+
+const decodeWindowMaterialState = Schema.decodeUnknownOption(DesktopWindowMaterialState);
 
 const SNAP_SHOT_EVENT_TYPES = new Set([
   "requested",
@@ -249,6 +254,22 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     return () => {
       ipcRenderer.removeListener(IpcChannels.QUIT_SHORTCUT_CHANNEL, wrappedListener);
     };
+  },
+  getWindowMaterialState: async () => {
+    const decoded = decodeWindowMaterialState(
+      await ipcRenderer.invoke(IpcChannels.GET_WINDOW_MATERIAL_STATE_CHANNEL),
+    );
+    if (Option.isNone(decoded)) throw new Error("Invalid desktop window material state.");
+    return decoded.value;
+  },
+  onWindowMaterialStateChanged: (listener) => {
+    const wrappedListener = (_event: Electron.IpcRendererEvent, value: unknown) => {
+      const decoded = decodeWindowMaterialState(value);
+      if (Option.isSome(decoded)) listener(decoded.value);
+    };
+    ipcRenderer.on(IpcChannels.WINDOW_MATERIAL_STATE_CHANNEL, wrappedListener);
+    return () =>
+      ipcRenderer.removeListener(IpcChannels.WINDOW_MATERIAL_STATE_CHANNEL, wrappedListener);
   },
   getWindowFullscreenState: () =>
     ipcRenderer.sendSync(IpcChannels.GET_WINDOW_FULLSCREEN_STATE_CHANNEL) === true,

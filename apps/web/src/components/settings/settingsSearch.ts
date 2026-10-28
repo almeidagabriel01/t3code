@@ -4,6 +4,8 @@ import { isMacPlatform, isWindowsPlatform, normalizeSearchText } from "~/lib/uti
 import { STATIC_KEYBINDING_COMMANDS, type KeybindingCommand } from "@t3tools/contracts";
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
+import { GLASS_SETTINGS_SEARCH_ITEMS } from "./settingsSearchGlassItems";
+import { hasDesktopWindowMaterialApi } from "../../desktop/useDesktopWindowMaterial";
 import {
   sourceControlClients,
   type SourceControlDefinition,
@@ -71,6 +73,7 @@ export interface SettingsSearchItem {
   readonly peerLinksOnly?: boolean;
   readonly secondary?: boolean;
   readonly requiresThreadAutoSettlement?: boolean;
+  readonly requiresDesktopWindowMaterial?: boolean;
 }
 
 export interface SettingsSearchAvailability {
@@ -310,13 +313,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/appearance",
     searchTerms: ["colors borders interface"],
   },
-  {
-    // Prefixed because the slider control already owns the `glass-opacity` id.
-    id: "setting-glass-opacity",
-    title: "Glass opacity",
-    to: "/settings/appearance",
-    searchTerms: ["transparent transparency solid menus dialogs composer"],
-  },
+  ...GLASS_SETTINGS_SEARCH_ITEMS,
   {
     id: "diff-color-scheme",
     title: "Diff colors",
@@ -1513,6 +1510,7 @@ export function settingsForThisPlatform(
   return items.filter(
     (item) =>
       (isElectron || item.desktopOnly !== true) &&
+      (!item.requiresDesktopWindowMaterial || hasDesktopWindowMaterialApi()) &&
       (!item.releaseChannelOnly || isElectron || HOSTED_APP_CHANNEL !== null) &&
       (!item.macOnly || isMacPlatform(platform)) &&
       (!item.windowsOnly || isWindowsPlatform(platform)),
