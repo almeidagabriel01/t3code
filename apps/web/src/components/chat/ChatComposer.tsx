@@ -357,6 +357,8 @@ export interface ChatComposerHandle {
 }
 
 export interface ChatComposerProps {
+  /** Offers `/side`, which the send handler turns into a side chat question. */
+  sideChatAvailable?: boolean;
   composerDraftTarget: ScopedThreadRef | DraftId;
   environmentId: EnvironmentId;
   canOperateThread: boolean;
@@ -541,6 +543,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activeThread,
     promptHistoryMessages,
     isServerThread: _isServerThread,
+    sideChatAvailable = false,
     isLocalDraftThread: _isLocalDraftThread,
     forceExpandedOnMobile,
     projectSelectionRequired,
@@ -1160,6 +1163,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     pullRequestRepository,
     threadPullRequests,
     planModeUiEnabled,
+    sideChatAvailable,
     compactSlashCommandAvailable,
     selectedProvider,
     selectedProviderSkills,
@@ -1939,6 +1943,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           setComposerHighlightedItemId(null);
           setIsComposerModelPickerOpen(true);
         }
+        return;
+      }
+      if (item.command === "side") {
+        // Leave the command in place so the question can follow it.
+        const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "/side ", {
+          expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
+        });
+        if (applied) setComposerHighlightedItemId(null);
         return;
       }
       if (!planModeUiEnabled) return;

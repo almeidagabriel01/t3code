@@ -58,6 +58,8 @@ export interface ThreadForkServiceV2Shape {
     readonly transferId: ContextTransferId;
     readonly targetThreadId: ThreadId;
     readonly title?: string;
+    /** Makes the fork a hidden side chat of the source thread. */
+    readonly sideChat?: boolean;
     readonly createdBy: OrchestrationV2Actor;
     readonly creationSource: OrchestrationV2CreationSource;
     readonly createdAt: DateTime.Utc;
@@ -80,8 +82,10 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
           cause: forkableSourceRunStatusError(input.sourceRun),
         });
       }
+      // A fork is a side chat only when asked, even when its source is one.
+      const { sideChatOf: _sourceSideChatOf, ...sourceThread } = input.sourceProjection.thread;
       const targetThread: OrchestrationV2AppThread = {
-        ...input.sourceProjection.thread,
+        ...sourceThread,
         // PR context follows the conversation; watching remains the source thread's responsibility.
         pullRequests: input.sourceProjection.thread.pullRequests?.map(
           ({ watch: _watch, ...link }) => link,
@@ -96,6 +100,7 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
           relationshipToParent: "fork",
           rootThreadId: input.sourceProjection.thread.lineage.rootThreadId,
         },
+        ...(input.sideChat === true ? { sideChatOf: input.sourceProjection.thread.id } : {}),
         forkedFrom: {
           type: "run",
           threadId: input.sourceProjection.thread.id,

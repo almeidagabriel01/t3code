@@ -29,6 +29,7 @@ import {
   sortSettledThreads,
 } from "@t3tools/client-runtime/state/thread-sort";
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import { isSideChatThread } from "@t3tools/contracts";
 
 import type { ThreadListProvider } from "../../state/thread-list-environments";
 import type { ThreadMoveAvailability } from "./threadOrder";
@@ -230,7 +231,11 @@ export function getThreadListV2OrderedSection(input: {
 }): EnvironmentThreadShell[] {
   const queuedThreadKeys = input.queuedThreadKeys?.size ? input.queuedThreadKeys : undefined;
   const threads = input.threads.filter((thread) => {
-    if (thread.archivedAt !== null || thread.lineage.relationshipToParent === "subagent")
+    if (
+      thread.archivedAt !== null ||
+      thread.lineage.relationshipToParent === "subagent" ||
+      isSideChatThread(thread)
+    )
       return false;
     if (
       (input.settlementEnvironmentIds?.has(thread.environmentId) ?? true) &&
@@ -656,6 +661,7 @@ export function buildThreadListV2Items(input: {
     (thread) =>
       thread.archivedAt === null &&
       thread.lineage.relationshipToParent !== "subagent" &&
+      !isSideChatThread(thread) &&
       (input.environmentId === null || thread.environmentId === input.environmentId) &&
       (projectKeys === null || projectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
   );

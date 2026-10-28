@@ -7,7 +7,7 @@ import {
   type EnvironmentThreadSearchMatch,
   type ShownOrder,
 } from "@t3tools/client-runtime/state/thread-search";
-import { THREAD_JUMP_KEYBINDING_COMMANDS } from "@t3tools/contracts";
+import { isSideChatThread, THREAD_JUMP_KEYBINDING_COMMANDS } from "@t3tools/contracts";
 import {
   foldSearchQuery,
   PALETTE_MESSAGE_LIMIT,
@@ -404,7 +404,9 @@ export function CommandPalette(props: {
     const threadItems: CommandPaletteItem[] = threads
       .filter(
         (thread) =>
-          thread.archivedAt === null && thread.lineage.relationshipToParent !== "subagent",
+          thread.archivedAt === null &&
+          thread.lineage.relationshipToParent !== "subagent" &&
+          !isSideChatThread(thread),
       )
       .map((thread) => {
         const project = projectByKey.get(scopedProjectKey(thread.environmentId, thread.projectId));

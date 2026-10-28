@@ -12,6 +12,7 @@ import { AsyncResult } from "effect/reactivity";
 import {
   archiveSelectedThreadEntries,
   deleteSelectedThreadEntries,
+  filterSidebarV2VisibleThreads,
   getFallbackThreadIdAfterDelete,
   resolveSidebarRowThreadId,
   isSidebarThreadWorking,
@@ -217,6 +218,12 @@ describe("sidebar thread lineage helpers", () => {
     const loopA = subagentOf("thread-loop-a", ThreadId.make("thread-loop-b"));
     const loopB = subagentOf("thread-loop-b", loopA.id);
     expect(resolveSidebarRowThreadId(loopA.id, environmentId, [loopA, loopB])).toBe(loopA.id);
+  });
+
+  it("keeps side chats out of the thread list; they open beside their parent", () => {
+    const parent = makeThreadFixture({ id: ThreadId.make("parent") });
+    const sideChat = { ...makeThreadFixture({ id: ThreadId.make("side") }), sideChatOf: parent.id };
+    expect(filterSidebarV2VisibleThreads([parent, sideChat], null, new Set())).toEqual([parent]);
   });
 });
 

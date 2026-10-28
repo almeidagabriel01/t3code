@@ -27,6 +27,7 @@ import {
   type InterruptThreadTurnInput,
   type MarkThreadUnreadInput,
   type ForkThreadFromRunInput,
+  type ForkThreadAsSideChatInput,
   type MergeThreadBackInput,
   type PromoteQueuedRunInput,
   type ResumeThreadQueueInput,
@@ -64,6 +65,7 @@ import {
   editQueuedRun,
   interruptThreadTurn,
   forkThreadFromRun,
+  forkThreadAsSideChat,
   markThreadUnread,
   mergeThreadBack,
   promoteQueuedRun,
@@ -111,6 +113,7 @@ export type {
   InterruptThreadTurnInput,
   MarkThreadUnreadInput,
   ForkThreadFromRunInput,
+  ForkThreadAsSideChatInput,
   MergeThreadBackInput,
   PromoteQueuedRunInput,
   LinkThreadPullRequestInput,
@@ -373,6 +376,15 @@ export function createThreadEnvironmentAtoms<R, E>(
     forkFromRun: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:fork-from-run",
       execute: (input: ForkThreadFromRunInput) => forkThreadFromRun(input),
+      scheduler,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.sourceThreadId]),
+      },
+    }),
+    forkAsSideChat: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:fork-as-side-chat",
+      execute: (input: ForkThreadAsSideChatInput) => forkThreadAsSideChat(input),
       scheduler,
       concurrency: {
         mode: "serial",

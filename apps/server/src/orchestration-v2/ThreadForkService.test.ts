@@ -84,9 +84,12 @@ function makeSourceRun(status: OrchestrationV2Run["status"]): OrchestrationV2Run
   };
 }
 
-function makeSourceProjection(sourceRun: OrchestrationV2Run): OrchestrationV2ThreadProjection {
+function makeSourceProjection(
+  sourceRun: OrchestrationV2Run,
+  sourceThread: OrchestrationV2AppThread = makeSourceThread(),
+): OrchestrationV2ThreadProjection {
   return {
-    thread: makeSourceThread(),
+    thread: sourceThread,
     runs: [sourceRun],
     attempts: [],
     nodes: [],
@@ -110,11 +113,13 @@ function makeSourceProjection(sourceRun: OrchestrationV2Run): OrchestrationV2Thr
 const planFork = (
   sourceRun: OrchestrationV2Run,
   sourceProjection = makeSourceProjection(sourceRun),
+  options: { readonly sideChat?: boolean } = {},
 ) =>
   Effect.gen(function* () {
     const service = yield* ThreadForkService.ThreadForkServiceV2;
     return yield* service.plan({
       sourceProjection,
+      ...(options.sideChat === undefined ? {} : { sideChat: options.sideChat }),
       sourceRun,
       sourceProviderThread: undefined,
       canonicalSourcePoint: {
@@ -240,5 +245,30 @@ it.effect("rejects in-progress and rolled-back fork sources", () =>
       assert.equal(error.targetThreadId, targetThreadId);
       assert.equal(error.cause, ThreadForkService.forkableSourceRunStatusError(sourceRun));
     }
+  }),
+);
+
+it.effect("makes a side-chat fork a side chat of its source", () =>
+  Effect.gen(function* () {
+    const sourceRun = makeSourceRun("completed");
+    const sideChat = yield* planFork(sourceRun, makeSourceProjection(sourceRun), {
+      sideChat: true,
+    });
+    assert.equal(sideChat.targetThread.sideChatOf, sourceThreadId);
+
+    const fork = yield* planFork(makeSourceRun("completed"));
+    assert.isUndefined(fork.targetThread.sideChatOf);
+  }),
+);
+
+it.effect("does not carry side-chat status into an ordinary fork of a side chat", () =>
+  Effect.gen(function* () {
+    const sourceThread = {
+      ...makeSourceThread(),
+      sideChatOf: ThreadId.make("thread:side-chat-parent"),
+    };
+    const sourceRun = makeSourceRun("completed");
+    const fork = yield* planFork(sourceRun, makeSourceProjection(sourceRun, sourceThread));
+    assert.isUndefined(fork.targetThread.sideChatOf);
   }),
 );

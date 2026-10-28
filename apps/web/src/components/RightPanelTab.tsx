@@ -22,7 +22,15 @@ import {
 import { restrictToFirstScrollableAncestor, restrictToHorizontalAxis } from "@dnd-kit/modifiers";
 import { horizontalListSortingStrategy, SortableContext, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { Smartphone, FileDiff, Files, Globe2, TerminalSquare, X } from "lucide-react";
+import {
+  Smartphone,
+  FileDiff,
+  Files,
+  Globe2,
+  MessagesSquareIcon,
+  TerminalSquare,
+  X,
+} from "lucide-react";
 import { Volume2, VolumeOff } from "lucide";
 import { type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 
@@ -136,6 +144,8 @@ function SurfaceIcon({
       );
     case "pull-requests":
       return <PullRequestGlyph.link className="size-3 shrink-0" />;
+    case "side-chat":
+      return <MessagesSquareIcon className="size-3 shrink-0" />;
     case "device":
       return surface.target?.platform === "ios" ? (
         <AppleIcon className="size-3 shrink-0" />

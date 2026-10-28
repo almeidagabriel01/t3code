@@ -10,7 +10,11 @@ import {
   type EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
-import { type EnvironmentId, type SidebarProjectGroupingMode } from "@t3tools/contracts";
+import {
+  type EnvironmentId,
+  isSideChatThread,
+  type SidebarProjectGroupingMode,
+} from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { use, useEffect, useRef, useState, type ComponentProps } from "react";
 import {
@@ -373,6 +377,7 @@ export function HomeScreen(props: HomeScreenProps) {
       thread.archivedAt === null &&
       thread.settledOverride !== "settled" &&
       thread.lineage.relationshipToParent !== "subagent" &&
+      !isSideChatThread(thread) &&
       // Older servers keep no visit time, so a finished run would never clear.
       hasSidebarNotification(
         thread.lastVisitedAt === undefined ? { ...thread, latestRun: null } : thread,

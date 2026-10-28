@@ -7,6 +7,7 @@ import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
 import type { AnyRouter } from "@tanstack/react-router";
 import type { EnvironmentId, OrchestrationV2ThreadShell, ThreadId } from "@t3tools/contracts";
 import type { ClientSettings } from "@t3tools/contracts/settings";
+import { isSideChatThread } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import type { AtomRegistry } from "effect/reactivity";
 import {
@@ -184,7 +185,9 @@ export function startThreadNotifications(
     const delegatedUnderParent = registry.get(environmentThreadShells.delegatedUnderParentAtom);
     const changed: Array<[NotificationState | undefined, NotificationState]> = [];
     for (const rawThread of threads) {
+      // A side chat answers in its open panel.
       if (
+        isSideChatThread(rawThread) ||
         isShownUnderParent(
           { environmentId, threadId: rawThread.id },
           rawThread.lineage,
