@@ -42,6 +42,8 @@ export function SidebarViewToggles(props: {
             <Button
               variant={props.onBackdrop ? "media-navigation" : "ghost"}
               size="icon-sm"
+              // media-navigation is absolutely placed for the sidebar trigger; the bell sits in the row.
+              className="relative top-auto translate-y-0"
               aria-label={activityName}
               aria-pressed={activityActive}
               data-pressed={activityActive ? "" : undefined}

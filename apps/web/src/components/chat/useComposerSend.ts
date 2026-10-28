@@ -752,6 +752,17 @@ export function useComposerSend(input: ComposerSendInput) {
       composerEnvironmentContexts.length === 0
         ? parseSideChatCommand(trimmed)
         : null;
+    // A draft has no conversation to ask about; sending `/side` there would start a thread with it.
+    if (!sideChatCommand && parseSideChatCommand(trimmed) !== null) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "info",
+          title: "Side chat needs a conversation",
+          description: "Send a message first, then ask with /side.",
+        }),
+      );
+      return;
+    }
     if (sideChatCommand && activeThread !== undefined && activeThreadKey !== null) {
       if (sideChatCommand.prompt !== "") {
         useSideChatStore.getState().setPendingPrompt(activeThreadKey, sideChatCommand.prompt);
