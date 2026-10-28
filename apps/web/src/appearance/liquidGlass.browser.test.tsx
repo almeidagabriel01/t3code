@@ -122,8 +122,7 @@ function FloatingOverTranscript() {
       <ComposerSurface.Shell>
         <ComposerSurface.Main />
       </ComposerSurface.Shell>
-      <ComposerBanner.Surface placement="floating" />
-      <ComposerBanner.Peek />
+      <ComposerBanner.Surface />
     </div>
   );
 }
@@ -138,12 +137,7 @@ it("keeps floating surfaces over the transcript near-opaque at the lowest glass 
   const floor = 234;
   await vi.waitFor(() => {
     expect(alpha(element(screen.container, '[data-glass-pane="pane"]'))).toBeLessThan(128);
-    for (const selector of [
-      ".surface-glass",
-      ".alert-glass",
-      ".dropdown-glass",
-      '[data-slot="composer-banner-peek"]',
-    ]) {
+    for (const selector of [".surface-glass", ".alert-glass", ".dropdown-glass"]) {
       expect(alpha(element(screen.container, selector)), selector).toBeGreaterThanOrEqual(floor);
     }
     for (const selector of ['[data-slot="composer-shell"]', "[data-composer-banner-surface]"]) {

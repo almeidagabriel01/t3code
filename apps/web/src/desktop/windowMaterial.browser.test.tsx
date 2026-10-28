@@ -41,7 +41,6 @@ function Shell() {
         <ComposerSurface.ContextStrip />
       </ComposerSurface.Shell>
       <ComposerBanner.Surface />
-      <ComposerBanner.Peek />
     </>
   );
 }
@@ -125,7 +124,6 @@ function assertOpaque(container: HTMLElement) {
     ".dialog-glass",
     ".dialog-backdrop",
     ".dropdown-glass",
-    '[data-slot="composer-banner-peek"]',
     "[data-chat-composer-main-surface]",
   ]) {
     const node = element(container, selector);

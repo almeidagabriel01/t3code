@@ -10,6 +10,7 @@ export function DesktopWindowMaterialSync() {
   const { available, state } = useDesktopWindowMaterial();
   const glassOpacity = useClientSettings((settings) => settings.glassOpacity);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mirrors the applied window material onto the document root while mounted
   useEffect(() => {
     if (!available) return;
     const root = document.documentElement;

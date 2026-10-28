@@ -6,10 +6,9 @@ export type BackdropSaveError = "not-image" | "too-large" | "unreadable";
 
 const STORE_NAME = "images";
 const IMAGE_KEY = "custom";
-let database: Promise<IDBDatabase> | undefined;
-
+// Each caller owns and closes the connection it opens.
 function openDatabase() {
-  return (database ??= new Promise<IDBDatabase>((resolve, reject) => {
+  return new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open("t3code:glass-backdrop", 1);
     request.addEventListener("upgradeneeded", () => {
       if (!request.result.objectStoreNames.contains(STORE_NAME)) {
@@ -21,8 +20,9 @@ function openDatabase() {
     request.addEventListener("blocked", () =>
       reject(new Error("Glass backdrop store is blocked.")),
     );
-  }));
+  });
 }
+
 const listeners = new Set<() => void>();
 
 function notify() {

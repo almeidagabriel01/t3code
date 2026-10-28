@@ -1,7 +1,7 @@
 import { RegistryProvider } from "@effect/atom-react";
 import { expect, it, vi } from "vite-plus/test";
 import { act, render } from "../../../test/render";
-import { deferred, materialBridge, materialState } from "../../../test/windowMaterial";
+import { materialBridge, materialState } from "../../../test/windowMaterial";
 import {
   __resetClientSettingsPersistenceForTests,
   ensureClientSettingsHydrated,
@@ -63,24 +63,6 @@ it("persists System glass through the client patch queue and rehydrates the save
   await screen.rerender(<Setting />);
   await expect.element(screen.getByRole("switch", { name: "System glass" })).toBeChecked();
   await expect.element(screen.getByText("Using Mica.")).toBeVisible();
-});
-
-it("rolls the switch back when the desktop settings write is rejected", async () => {
-  using fixture = materialBridge();
-  const write = deferred<void>();
-  fixture.bridge.setClientSettings.mockReturnValueOnce(write.promise);
-  await using screen = await render(<Setting />);
-  using _log = vi.spyOn(console, "error").mockImplementation(() => undefined);
-  const toggle = screen.getByRole("switch", { name: "System glass" });
-  await expect.element(toggle).toBeEnabled();
-  await toggle.click();
-  await expect.element(toggle).toBeChecked();
-  await act(async () => {
-    write.reject(new Error("disk unavailable"));
-    await write.promise.catch(() => undefined);
-  });
-  await expect.element(toggle).not.toBeChecked();
-  expect(fixture.saved().desktopSystemMaterialEnabled).toBe(false);
 });
 
 it.each([

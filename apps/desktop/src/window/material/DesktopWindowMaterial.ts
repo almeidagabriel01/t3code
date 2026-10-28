@@ -5,6 +5,7 @@ import {
   type DesktopWindowMaterialReason,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -29,6 +30,10 @@ export class WindowMaterialSenderError extends Schema.TaggedError<WindowMaterial
   "WindowMaterialSenderError",
   { senderId: Schema.Number },
 ) {}
+
+class WindowMaterialNativeError extends Data.TaggedError("WindowMaterialNativeError")<{
+  readonly cause: unknown;
+}> {}
 
 export class DesktopWindowMaterial extends Context.Service<
   DesktopWindowMaterial,
@@ -162,27 +167,38 @@ export const make = Effect.gen(function* () {
         disableSync(entry, "native-failed");
         return;
       }
-      try {
-        entry.attachment = adapter.attachSync(entry.window, appearance());
-        entry.window.setBackgroundColor("#00000000");
-        // macOS computes a transparent window's shadow from its painted shape.
-        if (entry.transparent) entry.window.invalidateShadow();
-        updateOverlay(entry, true);
-        publish(entry, "active");
-      } catch (cause) {
-        disableSync(entry, "native-failed");
-        yield* Effect.logWarning("Could not attach desktop window material.", cause);
-      }
+      yield* Effect.try({
+        try: () => {
+          entry.attachment = adapter.attachSync(entry.window, appearance());
+          entry.window.setBackgroundColor("#00000000");
+          // macOS computes a transparent window's shadow from its painted shape.
+          if (entry.transparent) entry.window.invalidateShadow();
+          updateOverlay(entry, true);
+          publish(entry, "active");
+        },
+        catch: (cause) => new WindowMaterialNativeError({ cause }),
+      }).pipe(
+        Effect.catch((error) => {
+          disableSync(entry, "native-failed");
+          return Effect.logWarning("Could not attach desktop window material.", error.cause);
+        }),
+      );
     } else {
-      try {
-        entry.attachment.updateSync(appearance());
-        entry.window.setBackgroundColor("#00000000");
-        updateOverlay(entry, true);
-        publish(entry, "active");
-      } catch (cause) {
-        disableSync(entry, "native-failed");
-        yield* Effect.logWarning("Could not update desktop window material.", cause);
-      }
+      const attachment = entry.attachment;
+      yield* Effect.try({
+        try: () => {
+          attachment.updateSync(appearance());
+          entry.window.setBackgroundColor("#00000000");
+          updateOverlay(entry, true);
+          publish(entry, "active");
+        },
+        catch: (cause) => new WindowMaterialNativeError({ cause }),
+      }).pipe(
+        Effect.catch((error) => {
+          disableSync(entry, "native-failed");
+          return Effect.logWarning("Could not update desktop window material.", error.cause);
+        }),
+      );
     }
   });
 

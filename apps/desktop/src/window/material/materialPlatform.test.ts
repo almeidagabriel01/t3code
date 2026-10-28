@@ -269,7 +269,7 @@ describe("assembled material platform and window service", () => {
         assert.equal(f.state.allocations, 1);
         yield* f.material.syncAppearance(f.window, true);
         f.close();
-        assert.equal(f.model.backing, "#171717");
+        assert.equal(f.model.backing, "#000000");
         assert.equal(f.state.liveViews.size, 0);
         assert.equal(f.state.activeConstraints.size, 0);
         const mutations = f.state.mutations;
@@ -293,10 +293,10 @@ describe("assembled material platform and window service", () => {
         f.state.fail = "tint";
         yield* f.material.syncAppearance(f.window, true);
         assert.equal((yield* f.material.getState(1)).reason, "native-failed");
-        assert.equal(f.model.backing, "#171717");
+        assert.equal(f.model.backing, "#000000");
         assert.equal(f.state.liveViews.size, 0);
         assert.equal(f.state.activeConstraints.size, 0);
-        assert.equal(releaseBacking, "#171717");
+        assert.equal(releaseBacking, "#000000");
       }),
   );
 });

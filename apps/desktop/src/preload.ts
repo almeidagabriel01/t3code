@@ -7,7 +7,7 @@ import type {
   DesktopPreviewTabState,
   DesktopSnapShotEvent,
 } from "@t3tools/contracts";
-import { DesktopWindowMaterialState } from "@t3tools/contracts";
+import { DesktopWindowMaterialState } from "@t3tools/contracts/desktopWindowMaterial";
 import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
 import { exposeClerkBridge } from "@clerk/electron/preload";

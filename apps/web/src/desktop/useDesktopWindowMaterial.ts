@@ -12,6 +12,7 @@ export function useDesktopWindowMaterial() {
   const available = hasDesktopWindowMaterialApi();
   const [state, setState] = useState<DesktopWindowMaterialState | null>(null);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to the desktop bridge's window material pushes while mounted
   useEffect(() => {
     if (!bridge?.getWindowMaterialState || !bridge.onWindowMaterialStateChanged) return;
     let disposed = false;

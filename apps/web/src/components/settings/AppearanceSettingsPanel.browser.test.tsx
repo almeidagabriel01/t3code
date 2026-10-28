@@ -57,6 +57,7 @@ vi.mock("../sidebar/brandChannel", () => ({
 }));
 vi.mock("./ThemeSettings", () => ({ ThemeLibrary: () => null }));
 vi.mock("./TypographySettings", () => ({ TypographySection: () => null }));
+vi.mock("./AdvancedSettings", () => ({ AdvancedSettings: () => null }));
 vi.mock("./DesktopWindowMaterialSetting", () => ({ DesktopWindowMaterialSetting: () => null }));
 vi.mock("./settingsLayout", () => ({
   SettingsPageContainer: ({ children }: { children: import("react").ReactNode }) => <>{children}</>,
