@@ -25,6 +25,7 @@ export const COMPOSER_CONTEXT_KINDS = [
   "skill",
   "thread",
   "environment",
+  "kanban-card",
 ] as const;
 export type KnownComposerContextKind = (typeof COMPOSER_CONTEXT_KINDS)[number];
 
@@ -224,6 +225,27 @@ export const EnvironmentContextRecord = Schema.Struct({
 });
 export type EnvironmentContextRecord = typeof EnvironmentContextRecord.Type;
 
+/** A board card the thread works on; the agent reads the fields as context and updates the card through t3_kanban. */
+export const KanbanCardContextRecord = Schema.Struct({
+  ...recordBase,
+  kind: Schema.Literal("kanban-card"),
+  cardId: TrimmedNonEmptyString.check(Schema.isMaxLength(CONTEXT_ID_MAX_CHARS)),
+  boardId: TrimmedNonEmptyString.check(Schema.isMaxLength(CONTEXT_ID_MAX_CHARS)),
+  number: PositiveInt,
+  title: ShortString,
+  description: BoundedString(COMPOSER_CONTEXT_REVIEW_TEXT_MAX_CHARS),
+  checklist: Schema.Array(
+    Schema.Struct({ text: BoundedString(2_048), done: Schema.Boolean }),
+  ).check(Schema.isMaxLength(200)),
+  acceptanceCriteria: Schema.Array(
+    Schema.Struct({ text: BoundedString(2_048), done: Schema.Boolean }),
+  ).check(Schema.isMaxLength(200)),
+  type: NullableShortString,
+  priority: ShortString,
+  labels: Schema.Array(ShortString).check(Schema.isMaxLength(50)),
+});
+export type KanbanCardContextRecord = typeof KanbanCardContextRecord.Type;
+
 const isJson = Schema.is(Schema.Json);
 
 /** Excludes known discriminators so malformed known records fail their own schema. */
@@ -255,6 +277,7 @@ export const KnownComposerContextRecord = Schema.Union([
   SkillContextRecord,
   ThreadContextRecord,
   EnvironmentContextRecord,
+  KanbanCardContextRecord,
 ]);
 export type KnownComposerContextRecord = typeof KnownComposerContextRecord.Type;
 

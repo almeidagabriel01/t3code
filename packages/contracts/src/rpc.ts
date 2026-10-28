@@ -377,6 +377,32 @@ import {
   ScheduledTaskUpsertInput,
   ScheduledTaskMutationResult,
 } from "./scheduledTask.ts";
+import {
+  KanbanBoardEnsureInput,
+  KanbanBoardUpdateInput,
+  KanbanCardCommentInput,
+  KanbanCardCreateInput,
+  KanbanCardIdInput,
+  KanbanCardMoveInput,
+  KanbanCardThreadLinkInput,
+  KanbanCardUpdateInput,
+  KanbanColumnCreateInput,
+  KanbanColumnDeleteInput,
+  KanbanColumnMoveInput,
+  KanbanColumnUpdateInput,
+  KanbanError,
+  KanbanGetCardInput,
+  KanbanGetCardResult,
+  KanbanLabelDeleteInput,
+  KanbanLabelUpsertInput,
+  KanbanListArchivedInput,
+  KanbanListArchivedResult,
+  KanbanMutationResult,
+  KanbanStreamItem,
+  KanbanSubscribeInput,
+  KanbanTemplateDeleteInput,
+  KanbanTemplateUpsertInput,
+} from "./kanban.ts";
 import { SecretRequestAnswerInput, SecretRequestError } from "./secretRequest.ts";
 import {
   ProjectCloneActionInput,
@@ -550,6 +576,29 @@ export const WS_METHODS = {
   guestShareCreate: "guestShare.create",
   scheduledTasksListWebhookDeliveries: "scheduledTasks.listWebhookDeliveries",
   scheduledTasksGetWebhookDelivery: "scheduledTasks.getWebhookDelivery",
+
+  kanbanSubscribe: "kanban.subscribe",
+  kanbanGetCard: "kanban.getCard",
+  kanbanListArchived: "kanban.listArchived",
+  kanbanBoardEnsure: "kanban.boardEnsure",
+  kanbanBoardUpdate: "kanban.boardUpdate",
+  kanbanColumnCreate: "kanban.columnCreate",
+  kanbanColumnUpdate: "kanban.columnUpdate",
+  kanbanColumnMove: "kanban.columnMove",
+  kanbanColumnDelete: "kanban.columnDelete",
+  kanbanLabelUpsert: "kanban.labelUpsert",
+  kanbanLabelDelete: "kanban.labelDelete",
+  kanbanTemplateUpsert: "kanban.templateUpsert",
+  kanbanTemplateDelete: "kanban.templateDelete",
+  kanbanCardCreate: "kanban.cardCreate",
+  kanbanCardUpdate: "kanban.cardUpdate",
+  kanbanCardMove: "kanban.cardMove",
+  kanbanCardArchive: "kanban.cardArchive",
+  kanbanCardUnarchive: "kanban.cardUnarchive",
+  kanbanCardDelete: "kanban.cardDelete",
+  kanbanCardComment: "kanban.cardComment",
+  kanbanCardLinkThread: "kanban.cardLinkThread",
+  kanbanCardUnlinkThread: "kanban.cardUnlinkThread",
 
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
@@ -1878,6 +1927,139 @@ const WsSubscribeServerLifecycleRpc = Rpc.make(WS_METHODS.subscribeServerLifecyc
   stream: true,
 });
 
+const WsKanbanSubscribeRpc = Rpc.make(WS_METHODS.kanbanSubscribe, {
+  payload: KanbanSubscribeInput,
+  success: KanbanStreamItem,
+  error: Schema.Union([KanbanError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
+const WsKanbanGetCardRpc = Rpc.make(WS_METHODS.kanbanGetCard, {
+  payload: KanbanGetCardInput,
+  success: KanbanGetCardResult,
+  error: Schema.Union([KanbanError, EnvironmentAuthorizationError]),
+});
+
+const WsKanbanListArchivedRpc = Rpc.make(WS_METHODS.kanbanListArchived, {
+  payload: KanbanListArchivedInput,
+  success: KanbanListArchivedResult,
+  error: Schema.Union([KanbanError, EnvironmentAuthorizationError]),
+});
+
+const WsKanbanBoardEnsureRpc = Rpc.make(WS_METHODS.kanbanBoardEnsure, {
+  payload: KanbanBoardEnsureInput,
+  success: KanbanMutationResult,
+  error: Schema.Union([KanbanError, EnvironmentAuthorizationError]),
+});
+
+const WsKanbanBoardUpdateRpc = Rpc.make(WS_METHODS.kanbanBoardUpdate, {
+  payload: KanbanBoardUpdateInput,
+  success: KanbanMutationResult,
+  error: Schema.Union([KanbanError, EnvironmentAuthorizationError]),
+});
+
+const WsKanbanColumnCreateRpc = Rpc.make(WS_METHODS.kanbanColumnCreate, {
+  payload: KanbanColumnCreateInput,
+  success: KanbanMutationResult,
+  error: Schema.Union([KanbanError, EnvironmentAuthorizationError]),
+});
+
+const WsKanbanColumnUpdateRpc = Rpc.make(WS_METHODS.kanbanColumnUpdate, {
+  payload: KanbanColumnUpdateInput,
+  success: KanbanMutationResult,
+  error: Schema.Union([KanbanError, EnvironmentAuthorizationError]),
+});
+
+const WsKanbanColumnMoveRpc = Rpc.make(WS_METHODS.kanbanColumnMove, {
+  payload: KanbanColumnMoveInput,
+  success: KanbanMutationResult,
+  error: Schema.Union([KanbanError, EnvironmentAuthorizationError]),
+});
+
+const WsKanbanColumnDeleteRpc = Rpc.make(WS_METHODS.kanbanColumnDelete, {
+  payload: KanbanColumnDeleteInput,
+  success: KanbanMutationResult,
+  error: Schema.Union([KanbanError, EnvironmentAuthorizationError]),
+});
+
+const WsKanbanLabelUpsertRpc = Rpc.make(WS_METHODS.kanbanLabelUpsert, {
+  payload: KanbanLabelUpsertInput,
+  success: KanbanMutationResult,
+  error: Schema.Union([KanbanError, EnvironmentAuthorizationError]),
+});
+
+const WsKanbanLabelDeleteRpc = Rpc.make(WS_METHODS.kanbanLabelDelete, {
+  payload: KanbanLabelDeleteInput,
+  success: KanbanMutationResult,
+  error: Schema.Union([KanbanError, EnvironmentAuthorizationError]),
+});
+
+const WsKanbanTemplateUpsertRpc = Rpc.make(WS_METHODS.kanbanTemplateUpsert, {
+  payload: KanbanTemplateUpsertInput,
+  success: KanbanMutationResult,
+  error: Schema.Union([KanbanError, EnvironmentAuthorizationError]),
+});
+
+const WsKanbanTemplateDeleteRpc = Rpc.make(WS_METHODS.kanbanTemplateDelete, {
+  payload: KanbanTemplateDeleteInput,
+  success: KanbanMutationResult,
+  error: Schema.Union([KanbanError, EnvironmentAuthorizationError]),
+});
+
+const WsKanbanCardCreateRpc = Rpc.make(WS_METHODS.kanbanCardCreate, {
+  payload: KanbanCardCreateInput,
+  success: KanbanMutationResult,
+  error: Schema.Union([KanbanError, EnvironmentAuthorizationError]),
+});
+
+const WsKanbanCardUpdateRpc = Rpc.make(WS_METHODS.kanbanCardUpdate, {
+  payload: KanbanCardUpdateInput,
+  success: KanbanMutationResult,
+  error: Schema.Union([KanbanError, EnvironmentAuthorizationError]),
+});
+
+const WsKanbanCardMoveRpc = Rpc.make(WS_METHODS.kanbanCardMove, {
+  payload: KanbanCardMoveInput,
+  success: KanbanMutationResult,
+  error: Schema.Union([KanbanError, EnvironmentAuthorizationError]),
+});
+
+const WsKanbanCardArchiveRpc = Rpc.make(WS_METHODS.kanbanCardArchive, {
+  payload: KanbanCardIdInput,
+  success: KanbanMutationResult,
+  error: Schema.Union([KanbanError, EnvironmentAuthorizationError]),
+});
+
+const WsKanbanCardUnarchiveRpc = Rpc.make(WS_METHODS.kanbanCardUnarchive, {
+  payload: KanbanCardIdInput,
+  success: KanbanMutationResult,
+  error: Schema.Union([KanbanError, EnvironmentAuthorizationError]),
+});
+
+const WsKanbanCardDeleteRpc = Rpc.make(WS_METHODS.kanbanCardDelete, {
+  payload: KanbanCardIdInput,
+  success: KanbanMutationResult,
+  error: Schema.Union([KanbanError, EnvironmentAuthorizationError]),
+});
+
+const WsKanbanCardCommentRpc = Rpc.make(WS_METHODS.kanbanCardComment, {
+  payload: KanbanCardCommentInput,
+  success: KanbanMutationResult,
+  error: Schema.Union([KanbanError, EnvironmentAuthorizationError]),
+});
+
+const WsKanbanCardLinkThreadRpc = Rpc.make(WS_METHODS.kanbanCardLinkThread, {
+  payload: KanbanCardThreadLinkInput,
+  success: KanbanMutationResult,
+  error: Schema.Union([KanbanError, EnvironmentAuthorizationError]),
+});
+
+const WsKanbanCardUnlinkThreadRpc = Rpc.make(WS_METHODS.kanbanCardUnlinkThread, {
+  payload: KanbanCardThreadLinkInput,
+  success: KanbanMutationResult,
+  error: Schema.Union([KanbanError, EnvironmentAuthorizationError]),
+});
+
 const WsScheduledTasksListRpc = Rpc.make(WS_METHODS.scheduledTasksList, {
   payload: ScheduledTaskListInput,
   success: ScheduledTaskListResult,
@@ -2048,6 +2230,28 @@ export const WsRpcGroup = RpcGroup.make(
   WsSecretsAnswerRequestRpc,
   WsScheduledTasksListWebhookDeliveriesRpc,
   WsScheduledTasksGetWebhookDeliveryRpc,
+  WsKanbanSubscribeRpc,
+  WsKanbanGetCardRpc,
+  WsKanbanListArchivedRpc,
+  WsKanbanBoardEnsureRpc,
+  WsKanbanBoardUpdateRpc,
+  WsKanbanColumnCreateRpc,
+  WsKanbanColumnUpdateRpc,
+  WsKanbanColumnMoveRpc,
+  WsKanbanColumnDeleteRpc,
+  WsKanbanLabelUpsertRpc,
+  WsKanbanLabelDeleteRpc,
+  WsKanbanTemplateUpsertRpc,
+  WsKanbanTemplateDeleteRpc,
+  WsKanbanCardCreateRpc,
+  WsKanbanCardUpdateRpc,
+  WsKanbanCardMoveRpc,
+  WsKanbanCardArchiveRpc,
+  WsKanbanCardUnarchiveRpc,
+  WsKanbanCardDeleteRpc,
+  WsKanbanCardCommentRpc,
+  WsKanbanCardLinkThreadRpc,
+  WsKanbanCardUnlinkThreadRpc,
   WsServerReportClientActivityRpc,
   WsServerReportHostPowerStateRpc,
   WsServerGetBackgroundPolicyRpc,

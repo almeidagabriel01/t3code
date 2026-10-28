@@ -118,6 +118,21 @@ const knownRecords: Record<(typeof COMPOSER_CONTEXT_KINDS)[number], Record<strin
     label: "vps",
     environmentId: "environment-vps",
   },
+  "kanban-card": {
+    ...base,
+    kind: "kanban-card",
+    label: "#12 Fix login",
+    cardId: "card-1",
+    boardId: "board-1",
+    number: 12,
+    title: "Fix login",
+    description: "Users cannot log in.",
+    checklist: [{ text: "Reproduce", done: true }],
+    acceptanceCriteria: [{ text: "Login works", done: false }],
+    type: "bug",
+    priority: "high",
+    labels: ["auth"],
+  },
 };
 
 describe("ComposerContextRecord", () => {

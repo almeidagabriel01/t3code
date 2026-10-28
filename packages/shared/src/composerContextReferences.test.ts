@@ -276,6 +276,35 @@ describe("provider projection", () => {
     expect(projected).not.toMatch(/https?:/);
   });
 
+  it("projects a kanban card with its checklist state", () => {
+    const projected = projectComposerContextForProvider({
+      text: "Work on [#12 Fix login](t3-context://v1/kanban-card/card_1)",
+      records: [
+        {
+          version: 1,
+          kind: "kanban-card",
+          contextId: ctx("card_1"),
+          label: "#12 Fix login",
+          cardId: "card-1",
+          boardId: "board-1",
+          number: 12,
+          title: "Fix login",
+          description: "Users cannot log in.",
+          checklist: [{ text: "Reproduce", done: true }],
+          acceptanceCriteria: [{ text: "Login works", done: false }],
+          type: "bug",
+          priority: "high",
+          labels: ["auth"],
+        },
+      ],
+    });
+    expect(projected).toContain('<context kind="kanban-card" id="card_1">');
+    expect(projected).toContain("card: #12 Fix login");
+    expect(projected).toContain("- [x] Reproduce");
+    expect(projected).toContain("- [ ] Login works");
+    expect(projected).toContain("labels: auth");
+  });
+
   it("marks duplicate identities unavailable instead of choosing one payload", () => {
     const projected = projectComposerContextForProvider({
       text: "[log](t3-context://v1/terminal/ctx_t)",

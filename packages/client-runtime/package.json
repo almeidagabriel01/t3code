@@ -283,6 +283,10 @@
       "types": "./src/state/usageAccess.ts",
       "default": "./src/state/usageAccess.ts"
     },
+    "./state/kanban": {
+      "types": "./src/state/kanban.ts",
+      "default": "./src/state/kanban.ts"
+    },
     "./state/shared-settings": {
       "types": "./src/state/sharedSettings.ts",
       "default": "./src/state/sharedSettings.ts"

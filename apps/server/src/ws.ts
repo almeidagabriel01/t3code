@@ -123,6 +123,7 @@ import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts"
 import * as DocumentText from "./provider/DocumentText.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
+import * as Kanban from "./kanban/KanbanService.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
 import * as GuestShareService from "./guest/GuestShareService.ts";
 import {
@@ -1284,6 +1285,7 @@ export const layerWsRpc = (
       const commandOutputHub = yield* CommandOutputHub.CommandOutputHub;
       const providerSessionManager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
+      const kanban = yield* Kanban.KanbanService;
       const secretRequests = yield* SecretRequests.SecretRequests;
       const guestShares = yield* GuestShareService.GuestShareService;
       const pullRequests = yield* PullRequestService.PullRequestService;
@@ -2183,6 +2185,28 @@ export const layerWsRpc = (
               Effect.as(commandOutputHub.subscribe(input)),
             ),
           ),
+        [WS_METHODS.kanbanSubscribe]: (_input) => kanban.subscribe(),
+        [WS_METHODS.kanbanGetCard]: (input) => kanban.getCard(input),
+        [WS_METHODS.kanbanListArchived]: (input) => kanban.listArchived(input),
+        [WS_METHODS.kanbanBoardEnsure]: (input) => kanban.boardEnsure(input),
+        [WS_METHODS.kanbanBoardUpdate]: (input) => kanban.boardUpdate(input),
+        [WS_METHODS.kanbanColumnCreate]: (input) => kanban.columnCreate(input),
+        [WS_METHODS.kanbanColumnUpdate]: (input) => kanban.columnUpdate(input),
+        [WS_METHODS.kanbanColumnMove]: (input) => kanban.columnMove(input),
+        [WS_METHODS.kanbanColumnDelete]: (input) => kanban.columnDelete(input),
+        [WS_METHODS.kanbanLabelUpsert]: (input) => kanban.labelUpsert(input),
+        [WS_METHODS.kanbanLabelDelete]: (input) => kanban.labelDelete(input),
+        [WS_METHODS.kanbanTemplateUpsert]: (input) => kanban.templateUpsert(input),
+        [WS_METHODS.kanbanTemplateDelete]: (input) => kanban.templateDelete(input),
+        [WS_METHODS.kanbanCardCreate]: (input) => kanban.cardCreate(input),
+        [WS_METHODS.kanbanCardUpdate]: (input) => kanban.cardUpdate(input),
+        [WS_METHODS.kanbanCardMove]: (input) => kanban.cardMove(input),
+        [WS_METHODS.kanbanCardArchive]: (input) => kanban.cardArchive(input),
+        [WS_METHODS.kanbanCardUnarchive]: (input) => kanban.cardUnarchive(input),
+        [WS_METHODS.kanbanCardDelete]: (input) => kanban.cardDelete(input),
+        [WS_METHODS.kanbanCardComment]: (input) => kanban.cardComment(input),
+        [WS_METHODS.kanbanCardLinkThread]: (input) => kanban.cardLinkThread(input),
+        [WS_METHODS.kanbanCardUnlinkThread]: (input) => kanban.cardUnlinkThread(input),
         [WS_METHODS.scheduledTasksList]: (_input) =>
           scheduledTasks.list().pipe(Effect.map(withVisibleWebhookUrls)),
         [WS_METHODS.scheduledTasksSubscribe]: (_input) =>
