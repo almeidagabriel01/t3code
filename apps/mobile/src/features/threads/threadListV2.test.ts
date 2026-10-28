@@ -718,6 +718,30 @@ function makePendingTask(id: string): PendingNewTask {
   };
 }
 
+describe("buildThreadListV2ListItems subagents", () => {
+  it("nests active subagents under their parent and moves the divider after them", () => {
+    const parent = makeThread({ id: ThreadId.make("parent"), title: "parent" });
+    const next = makeThread({ id: ThreadId.make("next"), title: "next" });
+    const child = makeThread({ id: ThreadId.make("child"), title: "child" });
+    const layout = buildThreadListV2Items({
+      threads: [parent, next],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+    });
+    const items = buildThreadListV2ListItems({
+      items: layout.items,
+      pendingTasks: [],
+      subagentsByParent: new Map([[`${environmentId}:${layout.items[0]!.thread.id}`, [child]]]),
+    });
+    const order = items.map((item) => (item.type === "v2-subagent" ? "child" : item.type));
+    expect(order.filter((type) => type === "child")).toEqual(["child"]);
+    const childIndex = order.indexOf("child");
+    expect(items[childIndex - 1]).toMatchObject({ type: "v2-thread", showTrailingDivider: false });
+    expect(items[childIndex]).toMatchObject({ type: "v2-subagent", showTrailingDivider: true });
+  });
+});
+
 describe("buildThreadListV2ListItems", () => {
   const layout = buildThreadListV2Items({
     threads: [

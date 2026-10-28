@@ -1,4 +1,5 @@
-import { priceUsage, type RateTable } from "../usage/usagePricing.ts";
+import type { RateTable } from "../usage/usagePricing.ts";
+import { priceTurnUsd } from "../usage/turnPricing.ts";
 
 export interface KanbanPricingTables {
   readonly rates: RateTable;
@@ -49,26 +50,8 @@ export function aggregateCardUsage(input: {
       continue;
     }
     if (costUsd === null) continue;
-    const model = input.pricing.aliases.get(turn.model) ?? turn.model;
-    const cached = usage.cachedInputTokens ?? 0;
-    const created = usage.cacheCreationTokens ?? 0;
-    const priced = priceUsage(
-      input.pricing.rates,
-      {
-        model,
-        totals: {
-          uncachedInputTokens: Math.max(0, (usage.inputTokens ?? 0) - cached - created),
-          cachedInputTokens: cached,
-          cacheCreationTokens: created,
-          outputTokens: usage.outputTokens ?? 0,
-          reasoningTokens: usage.reasoningTokens ?? 0,
-        },
-        speed: "standard",
-        reportedCostUsd: null,
-      },
-      input.pricing.overrides,
-    );
-    costUsd = priced.costSource === "unpriced" ? null : costUsd + priced.costUsd;
+    const cost = priceTurnUsd(input.pricing, turn.model, usage);
+    costUsd = cost === null ? null : costUsd + cost;
   }
   let durationMs = 0;
   for (const run of input.runs) {

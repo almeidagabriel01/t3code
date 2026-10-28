@@ -8,6 +8,8 @@ export interface HomeListFilterMenuEnvironment {
 export interface HomeListFilterMenuProject {
   readonly key: string;
   readonly label: string;
+  /** A thread in the project needs the user; shown as a dot after the label. */
+  readonly needsAttention?: boolean;
 }
 
 type HomeListFilterMenuAction = {

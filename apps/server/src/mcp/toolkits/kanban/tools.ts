@@ -21,7 +21,7 @@ const KANBAN_ACTIONS = [
   "unlink_thread",
 ] as const;
 
-/** A string adds an item; an object edits the item named by `item` (id or text), or adds when it has none. */
+/** A string adds an item; an object edits or, with `remove`, deletes the item named by `item` (id or text), or adds when it has none. */
 export const ChecklistInput = Schema.Array(
   Schema.Union([
     Schema.String,
@@ -29,6 +29,7 @@ export const ChecklistInput = Schema.Array(
       item: Schema.optional(Schema.String),
       text: Schema.optional(Schema.String),
       done: Schema.optional(Schema.Boolean),
+      remove: Schema.optional(Schema.Boolean),
     }),
   ]),
 );
@@ -58,7 +59,7 @@ export type KanbanParameters = typeof KanbanParameters.Type;
 
 const KanbanTool = Tool.make("t3_kanban", {
   description:
-    "The project's kanban board. Use when the user asks to create, plan, track, or update tasks or cards, or this thread is linked to a card (first message has a `kanban-card` context). Not for ordinary coding. Board: this project, or `project` (id or name). `card`: id or #number; omitted = this thread's card. `column`: id, name, or role. `checklist`, `acceptanceCriteria`: a string adds an item; `{item, done, text}` edits one by id or text. Moving into review/done needs every checklist item done and a `summary`. In a card thread: read the card, tick items as you finish, comment progress, then move to review with a summary.",
+    "The project's kanban board. Use when the user asks to create, plan, track, or update tasks or cards, or this thread is linked to a card (first message has a `kanban-card` context). Not for ordinary coding. Board: this project, or `project` (id or name). `card`: id or #number; omitted = this thread's card. `column`: id, name, or role. `checklist`, `acceptanceCriteria`: a string adds an item; `{item, done, text}` edits one by id or text; `{item, remove: true}` deletes it. Moving into review/done needs every checklist item done and a `summary`. In a card thread: read the card, tick items as you finish, comment progress, then move to review with a summary.",
   parameters: KanbanParameters,
   success: Schema.Record(Schema.String, Schema.Json),
   failure: OrchestratorMcpFailure,

@@ -7,6 +7,7 @@ import {
   snoozeWakeLabel,
   threadWokeAt,
 } from "@t3tools/client-runtime/state/thread-settled";
+import { resolveSidebarThreadStatus } from "@t3tools/client-runtime/state/thread-attention";
 import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { resolveThreadProviderStack } from "@t3tools/client-runtime/state/models";
@@ -32,6 +33,7 @@ import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import type { ThreadListProvider } from "../../state/thread-list-environments";
 import type { ThreadMoveAvailability } from "./threadOrder";
 
+import { scopedThreadKey } from "../../lib/scopedEntities";
 import { relativeTime } from "../../lib/time";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 
@@ -196,44 +198,9 @@ export function resolveThreadListV2WokeAt(
     : null;
 }
 
-export function resolveThreadListV2Status(
-  thread: Pick<
-    EnvironmentThreadShell,
-    | "hasPendingApprovals"
-    | "hasPendingUserInput"
-    | "pendingSubagentRequest"
-    | "pendingGuestMessageCount"
-    | "runtime"
-    | "blockedOnThreadWait"
-  >,
-): ThreadListV2Status {
-  if (thread.hasPendingApprovals || thread.pendingSubagentRequest === "approval") {
-    return "approval";
-  }
-  if (thread.hasPendingUserInput || thread.pendingSubagentRequest === "user_input") {
-    return "input";
-  }
-  // A guest is waiting on the owner; the agent's own requests come first.
-  if ((thread.pendingGuestMessageCount ?? 0) > 0) {
-    return "request";
-  }
-  if (thread.runtime?.status === "running" && thread.blockedOnThreadWait === true) {
-    return "waiting";
-  }
-  if (
-    thread.runtime !== null &&
-    ["preparing", "queued", "starting", "running", "waiting"].includes(thread.runtime.status)
-  ) {
-    return "working";
-  }
-  if (thread.runtime?.status === "idle") {
-    return "waiting";
-  }
-  if (thread.runtime?.status === "failed") {
-    return thread.runtime.lastErrorClass === "usage_limit" ? "limited" : "failed";
-  }
-  return "ready";
-}
+export const resolveThreadListV2Status: (
+  thread: Parameters<typeof resolveSidebarThreadStatus>[0],
+) => ThreadListV2Status = resolveSidebarThreadStatus;
 
 function parseTimestampMs(isoDate: string): number {
   const parsed = Date.parse(isoDate);
@@ -364,8 +331,16 @@ export interface ThreadListV2SettledShelfListItem {
   readonly disabled: boolean;
 }
 
+export interface ThreadListV2SubagentListItem {
+  readonly type: "v2-subagent";
+  readonly key: string;
+  readonly thread: EnvironmentThreadShell;
+  readonly showTrailingDivider: boolean;
+}
+
 export type ThreadListV2ListItem =
   | ThreadListV2ThreadListItem
+  | ThreadListV2SubagentListItem
   | ThreadListV2PendingListItem
   | ThreadListV2WorkingShelfListItem
   | ThreadListV2SnoozedShelfListItem
@@ -376,6 +351,7 @@ export function isThreadListV2ListItem(value: {
 }): value is ThreadListV2ListItem {
   return (
     value.type === "v2-thread" ||
+    value.type === "v2-subagent" ||
     value.type === "v2-pending" ||
     value.type === "v2-working-shelf" ||
     value.type === "v2-snoozed-shelf" ||
@@ -405,6 +381,13 @@ export function threadListV2ListItemsAreEqual(
         previous.hasQueuedMessages === item.hasQueuedMessages &&
         previous.canMoveUp === item.canMoveUp &&
         previous.canMoveDown === item.canMoveDown
+      );
+    case "v2-subagent":
+      return (
+        previous.type === "v2-subagent" &&
+        previous.key === item.key &&
+        previous.thread === item.thread &&
+        previous.showTrailingDivider === item.showTrailingDivider
       );
     case "v2-pending":
       return (
@@ -475,6 +458,8 @@ export function buildThreadListV2ListItems(input: {
   readonly queuedThreadKeys?: ReadonlySet<string>;
   readonly moveAvailability?: ReadonlyMap<string, ThreadMoveAvailability>;
   readonly shelfPreferencesLoading?: boolean;
+  /** Active subagents by scoped parent key, nested under the parent's row. */
+  readonly subagentsByParent?: ReadonlyMap<string, ReadonlyArray<EnvironmentThreadShell>>;
 }): ThreadListV2ListItem[] {
   const queuedThreadKeys = input.queuedThreadKeys?.size ? input.queuedThreadKeys : undefined;
   const threadItems = input.items.map((item): ThreadListV2ListItem => {
@@ -556,9 +541,34 @@ export function buildThreadListV2ListItems(input: {
     });
     result.push(...threadItems.slice(settledShelfHeaderIndex));
   }
-  return result.map((entry, index) => {
+  const withSubagents =
+    input.subagentsByParent === undefined || input.subagentsByParent.size === 0
+      ? result
+      : result.flatMap((entry): ThreadListV2ListItem[] => {
+          if (entry.type !== "v2-thread") return [entry];
+          const { thread } = entry.item;
+          const children = input.subagentsByParent?.get(
+            scopedThreadKey(thread.environmentId, thread.id),
+          );
+          return [
+            entry,
+            ...(children ?? []).map((child): ThreadListV2ListItem => ({
+              type: "v2-subagent",
+              key: `v2-subagent:${child.environmentId}:${child.id}`,
+              thread: child,
+              showTrailingDivider: false,
+            })),
+          ];
+        });
+  return withSubagents.map((entry, index) => {
+    if (entry.type === "v2-subagent") {
+      const showTrailingDivider = withSubagents[index + 1]?.type === "v2-thread";
+      return showTrailingDivider === entry.showTrailingDivider
+        ? entry
+        : { ...entry, showTrailingDivider };
+    }
     if (entry.type !== "v2-thread" && entry.type !== "v2-pending") return entry;
-    const next = result[index + 1];
+    const next = withSubagents[index + 1];
     const showTrailingDivider =
       next?.type === "v2-thread" || (next?.type === "v2-pending" && !next.showPendingDivider);
     return showTrailingDivider === entry.showTrailingDivider

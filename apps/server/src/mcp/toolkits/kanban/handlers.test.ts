@@ -214,6 +214,17 @@ it("applies checklist edits by id or text and reports ambiguity", () => {
     [{ text: "ship it", done: true }],
   );
   expect(ticked.items).toEqual([{ text: "Ship it", done: true }]);
+  expect(applyChecklistOps(items, [{ item: "c", remove: true }]).items).toEqual([
+    items[0],
+    items[1],
+  ]);
+  expect(applyChecklistOps(items, [{ item: "write", remove: true }]).items).toEqual([
+    items[1],
+    items[2],
+  ]);
+  expect(applyChecklistOps(items, [{ item: "nope", remove: true }]).error).toContain(
+    "No checklist",
+  );
   expect(applyChecklistOps(items, [{ item: "nope" }]).error).toContain("No checklist items");
   expect(applyChecklistOps(items, [{ done: true }]).error).toContain("needs `text`");
 });

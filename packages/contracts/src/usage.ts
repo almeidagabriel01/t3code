@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 
 import { ForwardCompatibleArray, NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ProviderInstanceId } from "./providerInstance.ts";
 
 /** Bump for incompatible UsageSummary changes; skipped unknown array variants need no bump. */
 export const USAGE_CONTRACT_VERSION = 6 as const;
@@ -142,3 +143,18 @@ export class UsageReadError extends Schema.TaggedError<UsageReadError>()("UsageR
     return `Usage read failed (${this.reason}): ${this.detail}`;
   }
 }
+
+export const InstanceSpendInput = Schema.Struct({ timeZone: TrimmedNonEmptyString });
+export type InstanceSpendInput = typeof InstanceSpendInput.Type;
+
+/** Money spent through one provider instance, priced from T3's own turns; for API-key billing. */
+export const InstanceSpend = Schema.Struct({
+  providerInstanceId: ProviderInstanceId,
+  todayUsd: Schema.Number,
+  /** Rolling last 30 days, including today. */
+  periodUsd: Schema.Number,
+  /** Some turns in the period had no usage or no known rate, so the totals are a floor. */
+  partial: Schema.Boolean,
+});
+export const InstanceSpendResult = Schema.Struct({ instances: Schema.Array(InstanceSpend) });
+export type InstanceSpendResult = typeof InstanceSpendResult.Type;

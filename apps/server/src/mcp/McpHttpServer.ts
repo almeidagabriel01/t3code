@@ -1153,6 +1153,33 @@ export const layerMcpTransport = McpServer.layerHttp({
   allowSessionTermination: true,
 }).pipe(Layer.provide(layerMcpAuthMiddleware));
 
+/** Emits once per flip of the setting that hides `t3_kanban`, never for the starting value. */
+export const kanbanToolToggles = (
+  initial: boolean,
+  changes: Stream.Stream<{ readonly kanbanAgentToolEnabled: boolean }>,
+) =>
+  Stream.concat(
+    Stream.make(initial),
+    changes.pipe(Stream.map((s) => s.kanbanAgentToolEnabled)),
+  ).pipe(Stream.changes, Stream.drop(1));
+
+/** Running sessions only re-list tools on `tools/list_changed`; `t3_kanban` visibility is per request. */
+const layerKanbanListChanged = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const settings = yield* ServerSettings.ServerSettingsService;
+    const server = yield* McpServer.McpServer;
+    const changes = yield* settings.subscribeChanges;
+    const initial = yield* settings.getSettings.pipe(
+      Effect.map((current) => current.kanbanAgentToolEnabled),
+      Effect.orElseSucceed(() => true),
+    );
+    yield* kanbanToolToggles(initial, changes).pipe(
+      Stream.runForEach(() => server.notifications["notifications/tools/list_changed"]({})),
+      Effect.forkScoped,
+    );
+  }),
+);
+
 /** Every tool the T3 MCP server advertises. AgentContextBudget.test.ts measures this set. */
 export const layerTools = Layer.mergeAll(
   layerPreviewToolkit,
@@ -1169,4 +1196,6 @@ export const layerTools = Layer.mergeAll(
   layerHtmlToolkit,
 );
 
-export const layer = layerTools.pipe(Layer.provideMerge(layerMcpTransport));
+export const layer = Layer.mergeAll(layerTools, layerKanbanListChanged).pipe(
+  Layer.provideMerge(layerMcpTransport),
+);

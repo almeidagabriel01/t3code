@@ -20,6 +20,10 @@ export type UsagePresentations = ReadonlyMap<
   }
 >;
 
+/** API-key instances have no subscription limits; their cost is what matters. */
+export const isApiKeyItem = (snapshot: ProviderInstanceEntry["snapshot"]) =>
+  snapshot.auth.type === "apiKey";
+
 export interface UsageItem {
   readonly key: string;
   readonly environmentId: EnvironmentId;
@@ -62,7 +66,12 @@ export function collectUsageItems(presentations: UsagePresentations): ReadonlyAr
     );
     for (const entry of entries) {
       const limits = entry.snapshot.usageLimits;
-      if (!entry.enabled || (limits === undefined && !driversWithUsage.has(entry.driverKind))) {
+      if (
+        !entry.enabled ||
+        (limits === undefined &&
+          !driversWithUsage.has(entry.driverKind) &&
+          !isApiKeyItem(entry.snapshot))
+      ) {
         continue;
       }
       const account = accountKeys.get(`${environmentId}:${entry.instanceId}`) ?? null;

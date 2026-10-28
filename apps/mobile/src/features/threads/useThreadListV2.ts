@@ -1,3 +1,4 @@
+import { activeSubagentChildrenByParent } from "@t3tools/client-runtime/state/thread-attention";
 import type { OlderSettledScope } from "@t3tools/client-runtime/state/threads";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useMemo, useSyncExternalStore } from "react";
@@ -163,6 +164,10 @@ export function useThreadListV2(input: {
     queuedThreadKeys: input.queuedThreadKeys,
     moveAvailability,
     shelfPreferencesLoading: !input.shelfPreferencesLoaded,
+    // A search lists only matches; nesting subagents under them would bury the results.
+    ...(searchQuery.length === 0
+      ? { subagentsByParent: activeSubagentChildrenByParent(threads) }
+      : {}),
   });
   return { layout, items, contentOnlyThreadKeys, olderSettledShelf };
 }

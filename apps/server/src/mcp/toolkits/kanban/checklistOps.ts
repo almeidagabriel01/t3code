@@ -6,6 +6,7 @@ export type ChecklistOp =
       readonly item?: string | undefined;
       readonly text?: string | undefined;
       readonly done?: boolean | undefined;
+      readonly remove?: boolean | undefined;
     };
 
 type Item = Pick<KanbanChecklistItem, "text" | "done"> & { readonly id?: string };
@@ -37,6 +38,11 @@ export const applyChecklistOps = <T extends Item>(
     const byId = next.filter((item) => item.id === op.item);
     const matches =
       byId.length > 0 ? byId : next.filter((item) => item.text.trim().toLowerCase() === key);
+    if (op.remove === true && matches.length > 0) {
+      // Same-text duplicates are the case this exists for, so drop the first rather than demand an id.
+      next = next.filter((item) => item !== matches[0]);
+      continue;
+    }
     if (matches.length !== 1) {
       return {
         items: next,

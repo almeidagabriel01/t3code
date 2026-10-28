@@ -157,6 +157,39 @@ it.effect("seeds template checklists and keeps checklist ids stable on update", 
   }).pipe(Effect.provide(TestLayer)),
 );
 
+it.effect("setting a type later seeds an empty card from the template", () =>
+  Effect.gen(function* () {
+    const { kanban, boardId, board } = yield* setup;
+    const bug = board.templates.find((t) => t.name === "Bug")!;
+    const created = yield* kanban.cardCreate({ commandId: cmd(), boardId, title: "Crash" });
+    yield* kanban.cardUpdate({ commandId: cmd(), cardId: created.cardId!, type: bug.id });
+    const card = (yield* kanban.getCard({ cardId: created.cardId! })).card;
+    assert.deepEqual(
+      card.checklist.map((i) => i.text),
+      bug.checklist,
+    );
+    assert.deepEqual(
+      card.acceptanceCriteria.map((i) => i.text),
+      bug.acceptanceCriteria,
+    );
+    assert.equal(card.priority, bug.priority);
+    assert.deepEqual(card.labelIds, bug.labelIds);
+
+    const mine = yield* kanban.cardCreate({
+      commandId: cmd(),
+      boardId,
+      title: "Own list",
+      checklist: [{ text: "mine", done: false }],
+    });
+    yield* kanban.cardUpdate({ commandId: cmd(), cardId: mine.cardId!, type: bug.id });
+    const kept = (yield* kanban.getCard({ cardId: mine.cardId! })).card;
+    assert.deepEqual(
+      kept.checklist.map((i) => i.text),
+      ["mine"],
+    );
+  }).pipe(Effect.provide(TestLayer)),
+);
+
 it.effect("deleting a column moves live and archived cards to the target", () =>
   Effect.gen(function* () {
     const { kanban, boardId, column } = yield* setup;

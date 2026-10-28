@@ -1099,21 +1099,51 @@ export const layer = Layer.effect(
             return yield* notFound("template", input.type);
           }
           if (input.labelIds !== undefined) yield* assertLabels(board.id, input.labelIds);
-          const checklist =
-            input.checklist === undefined ? undefined : yield* withChecklistIds(input.checklist);
-          const criteria =
-            input.acceptanceCriteria === undefined
-              ? undefined
-              : yield* withChecklistIds(input.acceptanceCriteria);
+          // A newly set type fills only what is still empty, as card.create would.
+          const template =
+            input.type != null && input.type !== row.type
+              ? board.templates.find((candidate) => candidate.id === input.type)
+              : undefined;
+          const seedList = (
+            provided: typeof input.checklist,
+            currentJson: string,
+            texts: ReadonlyArray<string> | undefined,
+          ) =>
+            provided !== undefined
+              ? withChecklistIds(provided)
+              : texts !== undefined &&
+                  texts.length > 0 &&
+                  checklistJson.parse(currentJson).length === 0
+                ? seedChecklist(texts)
+                : Effect.void;
+          const checklist = yield* seedList(
+            input.checklist,
+            row.checklist_json,
+            template?.checklist,
+          );
+          const criteria = yield* seedList(
+            input.acceptanceCriteria,
+            row.acceptance_criteria_json,
+            template?.acceptanceCriteria,
+          );
+          const seedLabels =
+            input.labelIds === undefined &&
+            template !== undefined &&
+            labelIdList.parse(row.label_ids_json).length === 0
+              ? template.labelIds
+              : undefined;
+          if (seedLabels !== undefined) yield* assertLabels(board.id, seedLabels);
+          const labelIds = input.labelIds ?? seedLabels;
           const next = {
             title: input.title ?? row.title,
             description: input.description ?? row.description,
             type: input.type === undefined ? row.type : input.type,
-            priority: input.priority ?? row.priority,
+            priority:
+              input.priority ??
+              (row.priority === "none" ? template?.priority : undefined) ??
+              row.priority,
             label_ids_json:
-              input.labelIds === undefined
-                ? row.label_ids_json
-                : labelIdList.stringify(input.labelIds),
+              labelIds === undefined ? row.label_ids_json : labelIdList.stringify(labelIds),
             due_at: input.dueAt === undefined ? row.due_at : input.dueAt,
             estimate_json:
               input.estimate === undefined

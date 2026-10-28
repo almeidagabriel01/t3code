@@ -12,6 +12,7 @@ import { ChevronRightIcon, SettingsIcon } from "lucide-react";
 import { Fragment, useEffect, useState } from "react";
 
 import { cn } from "../../lib/utils";
+import { observeVisibleAnimation } from "../../lib/visibleAnimation";
 import { usePrimarySettings, useClientSettings } from "../../hooks/useSettings";
 import {
   BAND_FILL,
@@ -30,6 +31,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { RefreshIcon } from "../ui/refresh-icon";
 import { Button } from "../ui/button";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { formatCompactCountdown, selectBarWindows } from "./statusBar.logic";
 import {
@@ -37,7 +39,8 @@ import {
   isStatusBarItemShown,
   STATUS_BAR_USAGE_ITEM,
 } from "./statusBarItems.logic";
-import { limitsStatus, type UsageItem } from "./usageItems.logic";
+import { isApiKeyItem, limitsStatus, type UsageItem } from "./usageItems.logic";
+import { formatUsd, useInstanceSpend } from "./useInstanceSpend";
 import {
   collectUsageSessions,
   groupSessionsByProject,
@@ -259,6 +262,63 @@ export function ItemIcon({ item }: { readonly item: UsageItem }) {
   );
 }
 
+/** Thin arc around the icon while any thread on this instance is working. */
+function ItemIconWithActivity({ item }: { readonly item: UsageItem }) {
+  const threads = useThreadShells();
+  const now = useMinuteNow();
+  const working = collectUsageSessions({
+    threads,
+    instanceId: item.entry.instanceId,
+    environmentIds: item.environmentIds,
+    now,
+  }).filter((session) => session.state === "working").length;
+  if (working === 0) return <ItemIcon item={item} />;
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            role="img"
+            aria-label={`${item.entry.displayName} working`}
+            className="relative inline-flex"
+          />
+        }
+      >
+        <ItemIcon item={item} />
+        <span
+          aria-hidden
+          ref={observeVisibleAnimation}
+          className="pointer-events-none absolute -inset-0.5 rounded-full border border-transparent border-t-primary motion-safe:visible-animate-spin"
+        />
+      </TooltipTrigger>
+      <TooltipPopup side="top">{working} working</TooltipPopup>
+    </Tooltip>
+  );
+}
+
+function ApiKeyChipValue({ item }: { readonly item: UsageItem }) {
+  const spend = useInstanceSpend(item);
+  return (
+    <span className="tabular-nums">
+      {formatUsd(spend.todayUsd)}
+      {spend.partial ? "+" : ""} today
+    </span>
+  );
+}
+
+function ApiKeyRosterDetail({ item }: { readonly item: UsageItem }) {
+  const spend = useInstanceSpend(item);
+  return (
+    <div className="flex flex-col gap-0.5 pl-7.5 text-2xs text-muted-foreground">
+      <span className="tabular-nums">
+        Today {formatUsd(spend.todayUsd)} · Last 30 days {formatUsd(spend.periodUsd)}
+        {spend.partial ? " · partial, some usage could not be priced" : ""}
+      </span>
+      <span>API key, billed per use</span>
+    </div>
+  );
+}
+
 function UsageChip({
   item,
   mode,
@@ -272,11 +332,13 @@ function UsageChip({
   const status = limitsStatus(item, now);
   return (
     <span className="inline-flex items-center gap-1.5">
-      <ItemIcon item={item} />
+      <ItemIconWithActivity item={item} />
       {item.environmentLabel === null ? null : (
         <span className="max-w-20 truncate text-muted-foreground">{item.environmentLabel}</span>
       )}
-      {status.kind === "none" ? (
+      {isApiKeyItem(item.entry.snapshot) ? (
+        <ApiKeyChipValue item={item} />
+      ) : status.kind === "none" ? (
         <span className="text-muted-foreground/50">--</span>
       ) : (
         <span
@@ -443,7 +505,7 @@ function RosterRow({
     <div className="flex flex-col gap-1 border-b border-border/50 px-3 py-2 last:border-b-0">
       <div className="flex items-center gap-2.5">
         <span className="flex size-5 shrink-0 items-center justify-center rounded-md border border-border bg-secondary">
-          <ItemIcon item={item} />
+          <ItemIconWithActivity item={item} />
         </span>
         <span className="min-w-0 truncate text-sm font-medium text-foreground">
           {item.entry.displayName}
@@ -462,7 +524,9 @@ function RosterRow({
           </span>
         ) : null}
       </div>
-      {status.kind === "none" ? (
+      {isApiKeyItem(item.entry.snapshot) ? (
+        <ApiKeyRosterDetail item={item} />
+      ) : status.kind === "none" ? (
         <div className="flex items-center gap-2 pl-7.5">
           <span className="min-w-0 flex-1 text-2xs text-muted-foreground">{status.message}</span>
           {status.canRetry ? (

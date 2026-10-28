@@ -1221,3 +1221,15 @@ it.effect(
       }),
     ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
+
+it.effect("signals a tool list change only when the kanban setting flips", () =>
+  Effect.gen(function* () {
+    const flips = yield* McpHttpServer.kanbanToolToggles(
+      true,
+      Stream.fromIterable(
+        [true, false, false, true].map((kanbanAgentToolEnabled) => ({ kanbanAgentToolEnabled })),
+      ),
+    ).pipe(Stream.runCollect);
+    expect(flips).toEqual([false, true]);
+  }),
+);

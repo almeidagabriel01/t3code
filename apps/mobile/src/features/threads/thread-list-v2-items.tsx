@@ -332,6 +332,62 @@ export const ThreadListV2ShowMoreRow = memo(function ThreadListV2ShowMoreRow(pro
   );
 });
 
+/** An active subagent nested under its parent's row; finished ones leave the list. */
+export const ThreadListV2SubagentRow = memo(function ThreadListV2SubagentRow(props: {
+  readonly thread: EnvironmentThreadShell;
+  readonly pane?: "screen" | "sidebar";
+  readonly showTrailingDivider?: boolean;
+  readonly onSelectThread: (thread: EnvironmentThreadShell) => void;
+}) {
+  const { thread } = props;
+  const sidebarPane = props.pane === "sidebar";
+  const statusLabel = STATUS_LABEL_BY_STATUS[resolveThreadListV2Status(thread)];
+  const handlePress = useCallback(() => props.onSelectThread(thread), [props, thread]);
+  return (
+    <View>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`Open subagent ${thread.title}`}
+        onPress={handlePress}
+        className={cn(
+          "flex-row items-center gap-2 pb-2 pl-9 pt-0.5",
+          sidebarPane ? "pr-3" : "pr-5",
+        )}
+        style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
+      >
+        {statusLabel ? (
+          <SymbolView
+            name={statusLabel.icon}
+            size={12}
+            tintColorClassName={statusLabel.iconTintClassName}
+            type="monochrome"
+          />
+        ) : null}
+        <Text
+          numberOfLines={1}
+          className={cn(
+            "min-w-0 flex-1 text-xs",
+            sidebarPane ? "text-drawer-foreground-muted" : "text-foreground-muted",
+          )}
+        >
+          {thread.title}
+        </Text>
+        <Text
+          className={cn(
+            "text-xs tabular-nums",
+            sidebarPane ? "text-drawer-foreground-muted" : "text-foreground-muted",
+          )}
+        >
+          <ThreadListV2Duration startedAt={resolveThreadWorkingStartedAt(thread)} />
+        </Text>
+      </Pressable>
+      {props.showTrailingDivider ? (
+        <View className={cn("ml-5 h-px", sidebarPane ? "bg-drawer-border" : "bg-border")} />
+      ) : null}
+    </View>
+  );
+});
+
 const PENDING_TASK_MENU_ACTIONS: MenuAction[] = [
   { id: "delete", title: "Delete", image: "trash", attributes: { destructive: true } },
 ];

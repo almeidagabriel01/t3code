@@ -1,4 +1,10 @@
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
+import {
+  hasSidebarNotification,
+  hasUnseenCompletion,
+  hasUnseenFailure,
+  type SidebarThreadStatus,
+} from "@t3tools/client-runtime/state/thread-attention";
 import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
@@ -707,42 +713,11 @@ export function resolveThreadLastVisitedAt(
   return serverLastVisitedAt ?? undefined;
 }
 
-export function hasUnseenCompletion(thread: ThreadStatusInput): boolean {
-  if (!thread.latestRun?.completedAt) return false;
-  const completedAt = Date.parse(thread.latestRun.completedAt);
-  if (Number.isNaN(completedAt)) return false;
-  if (!thread.lastVisitedAt) return true;
-
-  const lastVisitedAt = Date.parse(thread.lastVisitedAt);
-  if (Number.isNaN(lastVisitedAt)) return true;
-  return completedAt > lastVisitedAt;
-}
-
 /** The dot class for a thread that needs attention, or null once it was opened. */
 export function resolveSidebarNotificationDotClass(thread: ThreadStatusInput): string | null {
   return hasSidebarNotification(thread)
     ? (resolveThreadStatusPill({ thread })?.dotClass ?? null)
     : null;
-}
-
-export function hasSidebarNotification(thread: ThreadStatusInput): boolean {
-  return (
-    thread.hasPendingApprovals ||
-    thread.hasPendingUserInput ||
-    thread.pendingSubagentRequest != null ||
-    hasUnseenFailure(thread) ||
-    hasUnseenCompletion(thread)
-  );
-}
-
-/** Unopened threads' failures still count as unseen, unlike completions. */
-function hasUnseenFailure(thread: ThreadStatusInput): boolean {
-  if (thread.latestRun?.status !== "failed") return false;
-  if (!thread.lastVisitedAt) return true;
-  const completedAt = Date.parse(thread.latestRun.completedAt ?? "");
-  const lastVisitedAt = Date.parse(thread.lastVisitedAt);
-  if (Number.isNaN(completedAt) || Number.isNaN(lastVisitedAt)) return true;
-  return completedAt > lastVisitedAt;
 }
 
 export function shouldClearThreadSelectionOnMouseDown(target: HTMLElement | null): boolean {
@@ -861,16 +836,6 @@ export function isContextMenuPointerDown(input: {
   return input.isMac && input.button === 0 && input.ctrlKey;
 }
 
-export type SidebarThreadStatus =
-  | "approval"
-  | "input"
-  | "request"
-  | "working"
-  | "waiting"
-  | "failed"
-  | "limited"
-  | "ready";
-
 export function shouldRecedeSidebarThread(input: {
   status: SidebarThreadStatus;
   isUnread: boolean;
@@ -891,45 +856,6 @@ export function shouldRecedeSidebarThread(input: {
     return !input.isUnread && !input.isWoke;
   }
   return false;
-}
-
-type SidebarThreadStatusInput = Pick<
-  SidebarThreadSummary,
-  | "hasPendingApprovals"
-  | "hasPendingUserInput"
-  | "pendingSubagentRequest"
-  | "pendingGuestMessageCount"
-  | "runtime"
-  | "blockedOnThreadWait"
->;
-
-export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): SidebarThreadStatus {
-  if (thread.hasPendingApprovals || thread.pendingSubagentRequest === "approval") {
-    return "approval";
-  }
-  if (thread.hasPendingUserInput || thread.pendingSubagentRequest === "user_input") {
-    return "input";
-  }
-  // A guest is waiting on the owner; the agent's own requests come first.
-  if ((thread.pendingGuestMessageCount ?? 0) > 0) {
-    return "request";
-  }
-  if (thread.runtime?.status === "running" && thread.blockedOnThreadWait === true) {
-    return "waiting";
-  }
-  if (
-    thread.runtime !== null &&
-    ["preparing", "queued", "starting", "running", "waiting"].includes(thread.runtime.status)
-  ) {
-    return "working";
-  }
-  if (thread.runtime?.status === "idle") {
-    return "waiting";
-  }
-  if (thread.runtime?.status === "failed") {
-    return thread.runtime.lastErrorClass === "usage_limit" ? "limited" : "failed";
-  }
-  return "ready";
 }
 
 export type SidebarV2TopStatusKind =

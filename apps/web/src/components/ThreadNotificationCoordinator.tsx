@@ -29,7 +29,10 @@ import {
   threadNotificationTag,
   unlockNotificationAudio,
 } from "../threadNotifications";
-import { resolveSidebarThreadStatus, type SidebarThreadStatus } from "./Sidebar.logic";
+import {
+  resolveSidebarThreadStatus,
+  type SidebarThreadStatus,
+} from "@t3tools/client-runtime/state/thread-attention";
 import {
   createThreadNotificationGate,
   type ThreadNotificationKind,

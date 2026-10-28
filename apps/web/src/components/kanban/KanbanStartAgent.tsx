@@ -10,6 +10,7 @@ import {
   type RuntimeMode,
 } from "@t3tools/contracts";
 import { formatComposerContextReference } from "@t3tools/shared/composerContextReferences";
+import { createModelSelection } from "@t3tools/shared/model";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { useNavigate } from "@tanstack/react-router";
 import { BotIcon } from "lucide-react";
@@ -35,6 +36,7 @@ import { threadEnvironment } from "../../state/threads";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { withMessageContext } from "../ChatView.logic";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
+import { TraitsPicker } from "../chat/TraitsPicker";
 import { runtimeModeConfig, runtimeModeOptions } from "../chat/runtimeModeConfig";
 import { scheduledTaskDefaultModel } from "../settings/scheduledTasksSettings.logic";
 import { Button } from "../ui/button";
@@ -91,6 +93,7 @@ function LaunchForm(props: {
   const activeInstanceId =
     selection?.instanceId ?? entries[0]?.instanceId ?? ("" as ProviderInstanceId);
   const activeModel = selection?.model ?? "";
+  const activeEntry = entries.find((entry) => entry.instanceId === activeInstanceId);
   const modelOptionsByInstance = getCustomModelOptionsByInstance(
     settings,
     providers,
@@ -195,10 +198,30 @@ function LaunchForm(props: {
                 instanceEntries={entries}
                 modelOptionsByInstance={modelOptionsByInstance}
                 isComposerOwned={false}
-                onInstanceModelChange={(instanceId, model) => setPicked({ instanceId, model })}
+                onInstanceModelChange={(instanceId, model) =>
+                  setPicked(createModelSelection(instanceId, model))
+                }
               />
             </div>
           </div>
+          {activeEntry !== undefined && selection !== null ? (
+            <div className="flex items-center justify-between gap-3">
+              <Label>Effort</Label>
+              <TraitsPicker
+                provider={activeEntry.driverKind}
+                instanceId={activeEntry.instanceId}
+                models={activeEntry.models}
+                model={selection.model}
+                modelOptions={selection.options ?? []}
+                allowPromptInjectedEffort={false}
+                planModeEnabled={false}
+                disabled={launching}
+                onModelOptionsChange={(options) =>
+                  setPicked(createModelSelection(selection.instanceId, selection.model, options))
+                }
+              />
+            </div>
+          ) : null}
           <div className="flex items-center justify-between gap-3">
             <Label>Permissions</Label>
             <OptionSelect

@@ -71,7 +71,7 @@ export function ThreadListFilters(
           },
           ...props.projects.map((project) => ({
             id: JSON.stringify(project.key),
-            title: project.label,
+            title: project.needsAttention ? `${project.label} •` : project.label,
             state: project.key === props.selectedProjectKey ? ("on" as const) : ("off" as const),
           })),
         ]}

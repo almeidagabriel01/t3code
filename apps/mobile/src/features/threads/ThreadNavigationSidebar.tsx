@@ -70,6 +70,7 @@ import {
   ThreadListV2SettledShelfHeader,
   ThreadListV2ShowMoreRow,
   ThreadListV2SnoozedShelfHeader,
+  ThreadListV2SubagentRow,
   ThreadListV2WorkingShelfHeader,
 } from "./thread-list-v2-items";
 import { useThreadRowProviderInstanceResolver } from "./thread-provider-instance";
@@ -610,6 +611,15 @@ function ThreadNavigationSidebarPane(
           />
         );
       }
+      case "v2-subagent":
+        return (
+          <ThreadListV2SubagentRow
+            pane="sidebar"
+            thread={item.thread}
+            showTrailingDivider={item.showTrailingDivider}
+            onSelectThread={handleSelectThread}
+          />
+        );
       case "v2-working-shelf":
         return (
           <ThreadListV2WorkingShelfHeader

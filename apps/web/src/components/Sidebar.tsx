@@ -241,7 +241,7 @@ import {
   projectDragId,
   projectKeyFromDragId,
 } from "./sidebar/sidebarProjectGroups.logic";
-import { activeSubagentChildrenByParent } from "./sidebar/sidebarSubagents.logic";
+import { activeSubagentChildrenByParent } from "@t3tools/client-runtime/state/thread-attention";
 import { useSidebarProjectLayout } from "./sidebar/useSidebarProjectLayout";
 
 function sameSidebarProviderEntries(

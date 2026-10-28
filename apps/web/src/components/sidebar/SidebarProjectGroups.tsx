@@ -6,11 +6,11 @@ import { SortableContext, useSortable, type SortingStrategy } from "@dnd-kit/sor
 import { CSS } from "@dnd-kit/utilities";
 import { useState, type ReactNode } from "react";
 
+import { resolveSidebarThreadStatus } from "@t3tools/client-runtime/state/thread-attention";
 import { cn } from "~/lib/utils";
 import {
   resolveSidebarNotificationDotClass,
   resolveThreadLastVisitedAt,
-  resolveSidebarThreadStatus,
   resolveWorkingStartedAt,
   sidebarListItemId,
   type SidebarListItem,

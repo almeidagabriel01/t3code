@@ -52,6 +52,7 @@ import { useThreadListSearchMatches } from "../threads/useThreadListSearchMatche
 import { useThreadListV2 } from "../threads/useThreadListV2";
 import { useThreadListNow } from "../threads/use-thread-list-now";
 import { useThreadJumpShortcuts } from "../keyboard/threadKeyboardShortcuts";
+import { hasSidebarNotification } from "@t3tools/client-runtime/state/thread-attention";
 import { usePendingThreadOrder } from "../../state/thread-order";
 import { threadListEnvironmentsAtom } from "../../state/server";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
@@ -60,6 +61,7 @@ import {
   ThreadListV2PendingRow,
   ThreadListV2Row,
   ThreadListV2SettledShelfHeader,
+  ThreadListV2SubagentRow,
   ThreadListV2ShowMoreRow,
   ThreadListV2SnoozedShelfHeader,
   ThreadListV2WorkingShelfHeader,
@@ -366,6 +368,19 @@ export function HomeScreen(props: HomeScreenProps) {
     environmentId: props.selectedEnvironmentId,
     projectGroupingMode: props.projectGroupingMode,
   });
+  const attentionProjectKeys = new Set(
+    props.threads.flatMap((thread) =>
+      thread.archivedAt === null &&
+      thread.settledOverride !== "settled" &&
+      thread.lineage.relationshipToParent !== "subagent" &&
+      // Older servers keep no visit time, so a finished run would never clear.
+      hasSidebarNotification(
+        thread.lastVisitedAt === undefined ? { ...thread, latestRun: null } : thread,
+      )
+        ? [scopedProjectKey(thread.environmentId, thread.projectId)]
+        : [],
+    ),
+  );
   const hasSearchQuery = props.searchQuery.trim().length > 0;
   const projectByKey = (() => {
     const map = new Map<string, EnvironmentProject>();
@@ -522,6 +537,16 @@ export function HomeScreen(props: HomeScreenProps) {
           onSwipeableWillOpen={handleSwipeableWillOpen}
           simultaneousSwipeGesture={homeScrollGesture}
           activationKey={item.key}
+        />
+      );
+    }
+    if (item.type === "v2-subagent") {
+      return (
+        <ThreadListV2SubagentRow
+          pane={primaryColumn ? "sidebar" : "screen"}
+          thread={item.thread}
+          showTrailingDivider={item.showTrailingDivider}
+          onSelectThread={selectThread}
         />
       );
     }
@@ -709,7 +734,13 @@ export function HomeScreen(props: HomeScreenProps) {
         <ThreadListFilters
           gutter={primaryColumn ? 8 : 0}
           environments={props.environments}
-          projects={projectScopes.map((scope) => ({ key: scope.key, label: scope.title }))}
+          projects={projectScopes.map((scope) => ({
+            key: scope.key,
+            label: scope.title,
+            needsAttention: scope.projectRefs.some((ref) =>
+              attentionProjectKeys.has(scopedProjectKey(ref.environmentId, ref.projectId)),
+            ),
+          }))}
           selectedEnvironmentId={props.selectedEnvironmentId}
           selectedProjectKey={props.selectedProjectKey}
           onEnvironmentChange={props.onEnvironmentChange}
