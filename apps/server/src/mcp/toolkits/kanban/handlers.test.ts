@@ -18,6 +18,7 @@ import * as SqlitePersistence from "../../../persistence/Sqlite.ts";
 import * as Project from "../../../project/ProjectService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
+import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
 import * as KanbanHandlers from "./handlers.ts";
 import { applyChecklistOps } from "./checklistOps.ts";
 import { KanbanToolkit, type KanbanParameters } from "./tools.ts";
@@ -25,6 +26,8 @@ import { KanbanToolkit, type KanbanParameters } from "./tools.ts";
 const projectId = ProjectId.make("project-a");
 const otherProjectId = ProjectId.make("project-b");
 const providerInstanceId = ProviderInstanceId.make("codex");
+
+const delegated: Array<{ task: string; title?: string | undefined }> = [];
 
 const dependencies = (
   threadId: ThreadId,
@@ -53,6 +56,15 @@ const dependencies = (
           runtimeMode: "full-access",
           interactionMode: "default",
         } as unknown as OrchestrationV2ThreadShell),
+    }),
+    Layer.mock(OrchestratorMcpService.OrchestratorMcpService)({
+      delegateTask: (_scope, input) => {
+        delegated.push(input);
+        return Effect.succeed({
+          taskId: `task-${delegated.length}`,
+          childThreadId: `child-${delegated.length}`,
+        } as never);
+      },
     }),
     Layer.mock(Project.ProjectService)({
       listShells: () =>
@@ -272,4 +284,41 @@ it.effect("the ask setting needs a project unless the thread's card is linked", 
       boards: [{ project: "Alpha" }],
     });
   }).pipe(Effect.scoped),
+);
+
+it.effect("an agent splits a card into subtasks and starts a subagent for each open one", () =>
+  Effect.gen(function* () {
+    delegated.length = 0;
+    const { call, kanban } = yield* harness();
+    const parent = yield* call({ action: "create_card", title: "Big feature" });
+    const first = yield* call({ action: "create_card", title: "Backend", parent: "#1" });
+    yield* call({ action: "create_card", title: "Frontend", parent: "#1", description: "Wire it" });
+    const done = yield* call({ action: "create_card", title: "Docs", parent: "#1" });
+    expect(first).toMatchObject({ number: 2, parent: "#1 Big feature" });
+    expect(parent).toMatchObject({ number: 1 });
+
+    const nested = yield* call({ action: "create_card", title: "Nope", parent: "#2" });
+    expect(nested).toMatchObject({ code: "invalid_request" });
+
+    yield* call({ action: "move_card", card: "#4", column: "done", summary: "ok" });
+    expect(done).toMatchObject({ number: 4 });
+    const read = yield* call({ action: "read_card", card: "#1" });
+    expect(read).toMatchObject({ subtasks: "1/3 done" });
+    expect(read.subtaskList.map((item: { number: number }) => item.number)).toEqual([2, 3, 4]);
+
+    const started = yield* call({ action: "start_agents", card: "#1", isolation: "worktree" });
+    expect(started.started).toMatchObject([
+      { card: 2, threadId: "child-1" },
+      { card: 3, threadId: "child-2" },
+    ]);
+    expect(delegated.map((entry) => entry.title)).toEqual(["#2 Backend", "#3 Frontend"]);
+    expect(delegated[1]!.task).toContain("a subtask of #1");
+    expect(delegated[1]!.task).toContain("Wire it");
+
+    // Linked subtasks are not started twice.
+    const again = yield* call({ action: "start_agents", card: "#1" });
+    expect(again).toMatchObject({ started: [], note: "No open subtask without a thread." });
+    const family = (yield* kanban.cardFamily((read as { id: never }).id))!;
+    expect(family.subtasks.map((card) => card.linkedThreadIds.length)).toEqual([1, 1, 0]);
+  }),
 );

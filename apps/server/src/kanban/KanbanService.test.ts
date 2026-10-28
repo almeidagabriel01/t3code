@@ -643,3 +643,96 @@ it.effect("new boards start from the configured default template", () =>
     ),
   ),
 );
+
+it.effect("subtasks stay one level deep on the parent's board and can be detached", () =>
+  Effect.gen(function* () {
+    const { kanban, boardId } = yield* setup;
+    const parent = (yield* kanban.cardCreate({ commandId: cmd(), boardId, title: "P" })).cardId!;
+    const child = (yield* kanban.cardCreate({
+      commandId: cmd(),
+      boardId,
+      title: "C",
+      parentCardId: parent,
+    })).cardId!;
+    assert.equal((yield* kanban.getCard({ cardId: child })).card.parentCardId, parent);
+
+    const nested = yield* kanban
+      .cardCreate({ commandId: cmd(), boardId, title: "G", parentCardId: child })
+      .pipe(Effect.flip);
+    assert.ok(isKanbanError(nested) && nested.kind === "invalid");
+    const other = (yield* kanban.cardCreate({ commandId: cmd(), boardId, title: "O" })).cardId!;
+    const lonely = yield* kanban
+      .cardUpdate({ commandId: cmd(), cardId: parent, parentCardId: other })
+      .pipe(Effect.flip);
+    assert.ok(isKanbanError(lonely), "a card with subtasks cannot become a subtask");
+
+    // The reverse state: detach, then attach again.
+    yield* kanban.cardUpdate({ commandId: cmd(), cardId: child, parentCardId: null });
+    assert.equal((yield* kanban.getCard({ cardId: child })).card.parentCardId, null);
+    yield* kanban.cardUpdate({ commandId: cmd(), cardId: child, parentCardId: parent });
+    const family = (yield* kanban.cardFamily(parent))!;
+    assert.deepEqual(
+      family.subtasks.map((card) => card.id),
+      [child],
+    );
+  }).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("archiving a parent archives its subtasks and unarchiving restores only those", () =>
+  Effect.gen(function* () {
+    const { kanban, boardId } = yield* setup;
+    const parent = (yield* kanban.cardCreate({ commandId: cmd(), boardId, title: "P" })).cardId!;
+    const mk = (title: string) =>
+      kanban
+        .cardCreate({ commandId: cmd(), boardId, title, parentCardId: parent })
+        .pipe(Effect.map((r) => r.cardId!));
+    const early = yield* mk("early");
+    const kept = yield* mk("kept");
+    yield* kanban.cardArchive({ commandId: cmd(), cardId: early });
+    yield* kanban.cardArchive({ commandId: cmd(), cardId: parent });
+    assert.deepEqual((yield* snapshotBoard(kanban, boardId)).cards, []);
+
+    yield* kanban.cardUnarchive({ commandId: cmd(), cardId: parent });
+    const board = yield* snapshotBoard(kanban, boardId);
+    assert.deepEqual(board.cards.map((card) => card.id).toSorted(), [parent, kept].toSorted());
+    assert.notEqual((yield* kanban.getCard({ cardId: early })).card.archivedAt, null);
+  }).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("deleting a parent keeps its subtasks as ordinary cards", () =>
+  Effect.gen(function* () {
+    const { kanban, boardId } = yield* setup;
+    const parent = (yield* kanban.cardCreate({ commandId: cmd(), boardId, title: "P" })).cardId!;
+    const child = (yield* kanban.cardCreate({
+      commandId: cmd(),
+      boardId,
+      title: "C",
+      parentCardId: parent,
+    })).cardId!;
+    yield* kanban.cardDelete({ commandId: cmd(), cardId: parent });
+    assert.equal((yield* kanban.getCard({ cardId: child })).card.parentCardId, null);
+  }).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("a parent's definition of done also needs every subtask done", () =>
+  Effect.gen(function* () {
+    const { kanban, boardId, column } = yield* setup;
+    const parent = (yield* kanban.cardCreate({ commandId: cmd(), boardId, title: "P" })).cardId!;
+    const child = (yield* kanban.cardCreate({
+      commandId: cmd(),
+      boardId,
+      title: "Wire it",
+      parentCardId: parent,
+    })).cardId!;
+    const move = () =>
+      kanban.cardMoveChecked({
+        commandId: cmd(),
+        cardId: parent,
+        columnId: column("review").id,
+        summary: "All done",
+      });
+    assert.deepEqual(yield* move(), { refused: ["subtask not done: #2 Wire it"] });
+    yield* kanban.cardMove({ commandId: cmd(), cardId: child, columnId: column("done").id });
+    assert.ok("moved" in (yield* move()));
+  }).pipe(Effect.provide(TestLayer)),
+);

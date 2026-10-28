@@ -1,5 +1,8 @@
 import type { KanbanBoardState } from "@t3tools/client-runtime/state/kanban";
-import { kanbanCardContextRecord } from "@t3tools/client-runtime/state/kanbanLogic";
+import {
+  kanbanCardContextRecord,
+  kanbanStartText,
+} from "@t3tools/client-runtime/state/kanbanLogic";
 import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_SERVER_SETTINGS,
@@ -87,7 +90,10 @@ export function useStartKanbanAgent(
         projectCwd: project.workspaceRoot,
         titleText: `#${card.number} ${card.title}`,
         ...serializeComposerMessageForServer(
-          `Work on card ${reference}`,
+          kanbanStartText(
+            reference,
+            card.parentCardId === null ? undefined : board.cards.get(card.parentCardId),
+          ),
           { version: 1, records: [record] },
           config?.environment.capabilities.inlineMessageContext === true,
         ),

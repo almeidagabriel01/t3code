@@ -44,3 +44,14 @@ it("passes a finished checklist with a summary, and an empty checklist with one"
     { ok: true },
   );
 });
+
+it("also needs every subtask done", () => {
+  const verdict = checkDefinitionOfDone({
+    enabled: true,
+    targetRole: "review",
+    checklist: [],
+    summary: "ok",
+    openSubtasks: ["#4 Wire it"],
+  });
+  assert.deepEqual(verdict, { ok: false, missing: ["subtask not done: #4 Wire it"] });
+});

@@ -141,7 +141,7 @@ export function KanbanLinkedAgents(props: {
         <KanbanStartAgentDialog
           environmentId={props.environmentId}
           board={props.board}
-          card={card}
+          cards={[card]}
           onClose={() => setDialog(null)}
         />
       ) : null}

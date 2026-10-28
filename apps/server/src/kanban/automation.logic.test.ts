@@ -1,7 +1,12 @@
 import { assert, it } from "@effect/vitest";
 import type { KanbanAutomations, KanbanColumn } from "@t3tools/contracts";
 
-import { decideKanbanAutomation, triggersForRun, triggersForThread } from "./automation.logic.ts";
+import {
+  decideKanbanAutomation,
+  decideSubtaskRollup,
+  triggersForRun,
+  triggersForThread,
+} from "./automation.logic.ts";
 
 const on: KanbanAutomations = {
   threadStarted: true,
@@ -103,4 +108,27 @@ it("derives triggers from thread state, ignoring runs that did not complete", ()
   ]);
   assert.deepEqual(triggersForRun({ id: "run-9", status: "queued" }), []);
   assert.deepEqual(triggersForThread({ runs: [], pullRequests: [] }), []);
+});
+
+it("moves the parent to review only once every subtask is done, never backwards", () => {
+  const done = [card("done"), card("done")];
+  assert.deepEqual(decideSubtaskRollup(card("doing"), done, board), {
+    type: "move",
+    columnId: "review" as KanbanColumn["id"],
+    checkDefinitionOfDone: false,
+  });
+  assert.equal(
+    decideSubtaskRollup(card("doing"), [card("done"), card("todo")], board).type,
+    "skip",
+  );
+  assert.equal(decideSubtaskRollup(card("doing"), [], board).type, "skip");
+  assert.equal(decideSubtaskRollup(card("review"), done, board).type, "skip");
+  assert.equal(decideSubtaskRollup(card("done"), done, board).type, "skip");
+  assert.equal(
+    decideSubtaskRollup(card("doing"), done, {
+      ...board,
+      automations: { ...on, runCompleted: false },
+    }).type,
+    "skip",
+  );
 });

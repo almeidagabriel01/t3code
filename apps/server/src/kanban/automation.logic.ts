@@ -58,6 +58,25 @@ export function decideKanbanAutomation(
   return { type: "move", columnId: target.id, checkDefinitionOfDone: trigger === "run-completed" };
 }
 
+/**
+ * Review once every live subtask is done. Same guard rails as the thread triggers, and it rides
+ * the run-completed switch because it is the same promise: finished work reaches Review.
+ */
+export function decideSubtaskRollup(
+  parent: { readonly columnId: string; readonly archivedAt: string | null },
+  subtasks: ReadonlyArray<{ readonly columnId: string }>,
+  board: {
+    readonly columns: ReadonlyArray<Pick<KanbanColumn, "id" | "role">>;
+    readonly automations: KanbanAutomations;
+  },
+): KanbanAutomationDecision {
+  if (subtasks.length === 0) return skip("no subtasks");
+  const doneIds = new Set<string>(board.columns.filter((c) => c.role === "done").map((c) => c.id));
+  if (!subtasks.every((subtask) => doneIds.has(subtask.columnId))) return skip("subtasks open");
+  const decision = decideKanbanAutomation("run-completed", parent, board);
+  return decision.type === "move" ? { ...decision, checkDefinitionOfDone: false } : decision;
+}
+
 export interface ThreadAutomationFacts {
   readonly runs: ReadonlyArray<{
     readonly id: string;

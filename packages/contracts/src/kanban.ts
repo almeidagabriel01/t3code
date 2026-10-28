@@ -210,6 +210,8 @@ export const KanbanCard = Schema.Struct({
   blocks: Schema.Array(KanbanCardId),
   blockedBy: Schema.Array(KanbanCardId),
   linkedThreadIds: Schema.Array(ThreadId),
+  /** One level deep: a subtask never has subtasks of its own. */
+  parentCardId: Schema.NullOr(KanbanCardId),
   archivedAt: Schema.NullOr(IsoDateTime),
   createdBy: KanbanActor,
   createdAt: IsoDateTime,
@@ -419,6 +421,8 @@ export const KanbanCardCreateInput = Schema.Struct({
   estimate: Schema.optionalKey(Schema.NullOr(KanbanEstimate)),
   checklist: Schema.optionalKey(ChecklistInput),
   acceptanceCriteria: Schema.optionalKey(ChecklistInput),
+  /** Makes the card a subtask of this card (same board, itself not a subtask). */
+  parentCardId: Schema.optionalKey(KanbanCardId),
 });
 export const KanbanCardUpdateInput = Schema.Struct({
   ...command,
@@ -435,6 +439,8 @@ export const KanbanCardUpdateInput = Schema.Struct({
   /** Replaces the set; the other card's `blockedBy` follows. */
   blocks: Schema.optionalKey(Schema.Array(KanbanCardId)),
   blockedBy: Schema.optionalKey(Schema.Array(KanbanCardId)),
+  /** A card id attaches the card as a subtask; null detaches it. */
+  parentCardId: Schema.optionalKey(Schema.NullOr(KanbanCardId)),
 });
 export const KanbanCardMoveInput = Schema.Struct({
   ...command,

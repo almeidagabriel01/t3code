@@ -10,6 +10,7 @@ import {
   KANBAN_PRIORITIES,
   KANBAN_PRIORITY_LABELS,
 } from "@t3tools/client-runtime/state/kanbanLogic";
+import { subtaskProgress, subtasksOf } from "@t3tools/shared/kanbanSubtasks";
 import type { KanbanBoardState } from "@t3tools/client-runtime/state/kanban";
 import {
   EnvironmentId,
@@ -171,6 +172,67 @@ function Checklist(props: {
   );
 }
 
+function SubtaskRow(props: {
+  readonly environmentId: EnvironmentId;
+  readonly board: KanbanBoardState;
+  readonly subtask: KanbanCard;
+  readonly disabled: boolean;
+  readonly first: boolean;
+  readonly onOpen: () => void;
+  readonly onDetach: () => void;
+}) {
+  const { subtask, board } = props;
+  const agent = useStartKanbanAgent(props.environmentId, board, subtask);
+  const column = board.columns.find((entry) => entry.id === subtask.columnId);
+  return (
+    <View
+      className={
+        props.first
+          ? "flex-row items-center"
+          : "flex-row items-center border-t border-border-subtle"
+      }
+    >
+      <Pressable
+        accessibilityRole="button"
+        onPress={props.onOpen}
+        className="min-w-0 flex-1 flex-row items-center gap-3 px-4 py-3 active:opacity-70"
+      >
+        <Text textRole="body" numberOfLines={1} className="flex-1 text-foreground">
+          #{subtask.number} {subtask.title}
+        </Text>
+        <Text textRole="caption" className="text-foreground-muted">
+          {column?.name ?? ""}
+        </Text>
+      </Pressable>
+      {props.disabled ? null : (
+        <>
+          {subtask.linkedThreadIds.length === 0 ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Start agent for #${subtask.number}`}
+              disabled={!agent.ready || agent.starting}
+              hitSlop={8}
+              onPress={() => void agent.start()}
+              className="px-3 py-3 active:opacity-70"
+            >
+              <SymbolView name="sparkles" size={16} tintColorClassName="accent-icon-muted" />
+            </Pressable>
+          ) : null}
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Detach #${subtask.number}`}
+            hitSlop={8}
+            onPress={props.onDetach}
+            className="px-3 py-3 active:opacity-70"
+          >
+            <SymbolView name="xmark" size={14} tintColorClassName="accent-icon-muted" />
+          </Pressable>
+        </>
+      )}
+    </View>
+  );
+}
+
 export function KanbanCardRouteScreen({
   route,
 }: StaticScreenProps<{ environmentId: string; cardId: string }>) {
@@ -233,6 +295,9 @@ function KanbanCardDetail(props: {
   const columnName = (id: string) =>
     board.columns.find((entry) => entry.id === id)?.name ?? "a column";
   const result = query.data;
+  const parentCard = card.parentCardId === null ? undefined : board.cards.get(card.parentCardId);
+  const subtasks = subtasksOf(board.cards.values(), cardId);
+  const subtaskCount = subtaskProgress(subtasks, board.columns);
 
   const moveTo = async (columnId: KanbanColumnId) => {
     const target = board.columns.find((entry) => entry.id === columnId);
@@ -495,6 +560,84 @@ function KanbanCardDetail(props: {
           disabled={disabled}
           onChange={(acceptanceCriteria) => void actions.updateCard({ cardId, acceptanceCriteria })}
         />
+
+        {card.parentCardId !== null ? (
+          <Section title="Subtask of">
+            <Button
+              label={
+                parentCard ? `#${parentCard.number} ${parentCard.title}` : "Parent not on the board"
+              }
+              tone="secondary"
+              disabled={parentCard === undefined}
+              onPress={() =>
+                navigation.navigate("SettingsKanbanCard", {
+                  environmentId,
+                  cardId: card.parentCardId!,
+                })
+              }
+            />
+            {disabled ? null : (
+              <Button
+                label="Detach from parent"
+                tone="text"
+                onPress={() => void actions.updateCard({ cardId, parentCardId: null })}
+              />
+            )}
+          </Section>
+        ) : subtasks.length > 0 || !disabled ? (
+          <Section
+            title={
+              subtasks.length === 0
+                ? "Subtasks"
+                : `Subtasks ${subtaskCount.done}/${subtaskCount.total} done`
+            }
+          >
+            {subtasks.length > 0 ? (
+              <View className="overflow-hidden rounded-2xl bg-grouped-card">
+                {subtasks.map((subtask, index) => (
+                  <SubtaskRow
+                    key={subtask.id}
+                    environmentId={environmentId}
+                    board={board}
+                    subtask={subtask}
+                    disabled={disabled}
+                    first={index === 0}
+                    onOpen={() =>
+                      navigation.navigate("SettingsKanbanCard", {
+                        environmentId,
+                        cardId: subtask.id,
+                      })
+                    }
+                    onDetach={() =>
+                      void actions.updateCard({ cardId: subtask.id, parentCardId: null })
+                    }
+                  />
+                ))}
+              </View>
+            ) : null}
+            {disabled ? null : (
+              <Button
+                label="Add subtask"
+                icon="plus"
+                tone="text"
+                onPress={() =>
+                  Dialog.prompt({
+                    title: "Add subtask",
+                    placeholder: "Title",
+                    initialValue: "",
+                    confirmText: "Add",
+                    onConfirm: (value) => {
+                      const title = value.trim();
+                      if (title.length > 0) {
+                        void actions.createCard({ boardId: board.id, title, parentCardId: cardId });
+                      }
+                    },
+                  })
+                }
+              />
+            )}
+          </Section>
+        ) : null}
 
         {card.linkedThreadIds.length > 0 || !disabled ? (
           <Section title="Agents">

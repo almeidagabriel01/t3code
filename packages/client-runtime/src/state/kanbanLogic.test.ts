@@ -32,6 +32,7 @@ import {
   isWipExceeded,
   kanbanCardContextRecord,
   shouldDeliverKanbanCard,
+  subtaskTileInfo,
 } from "./kanbanLogic.ts";
 
 const cardId = (id: string) => id as KanbanCardId;
@@ -68,6 +69,7 @@ function card(id: string, columnIdValue: string, extra: Partial<KanbanCard> = {}
     blocks: [],
     blockedBy: [],
     linkedThreadIds: [],
+    parentCardId: null,
     archivedAt: null,
     createdBy: "user",
     createdAt: "2026-01-01T00:00:00.000Z",
@@ -225,6 +227,24 @@ describe("global aggregation", () => {
     expect(only({ text: "login" })).toEqual(["3"]);
   });
 
+  it("hides subtasks on request", () => {
+    const withSubtask = collectGlobalBoards([
+      {
+        environmentId: env1,
+        state: state([
+          board("p1", "b1", [card("1", "todo"), card("2", "todo", { parentCardId: cardId("1") })]),
+        ]),
+      },
+    ]);
+    const shown = (hideSubtasks: boolean) =>
+      filterGlobalCards(collectGlobalCards(withSubtask), withSubtask, {
+        ...EMPTY_FILTERS,
+        hideSubtasks,
+      }).map((e) => e.card.id);
+    expect(shown(false)).toEqual(["1", "2"]);
+    expect(shown(true)).toEqual(["1"]);
+  });
+
   it("finds a card on any board", () => {
     expect(findCardInBoards(boards, cardId("3"))?.environmentId).toBe("e2");
     expect(findCardInBoards(boards, cardId("nope"))).toBeNull();
@@ -340,5 +360,23 @@ describe("shouldDeliverKanbanCard", () => {
     ).toBe(true);
     expect(shouldDeliverKanbanCard("c1", [withCard("c2")])).toBe(true);
     expect(shouldDeliverKanbanCard("c1", [{}, withCard("c1")])).toBe(false);
+  });
+});
+
+describe("subtask tiles", () => {
+  it("counts live subtasks in done columns and names the parent", () => {
+    const cards = new Map(
+      [
+        card("1", "todo"),
+        card("2", "done", { parentCardId: cardId("1") }),
+        card("3", "todo", { parentCardId: cardId("1") }),
+      ].map((entry) => [entry.id, entry]),
+    );
+    const info = subtaskTileInfo({
+      cards,
+      columns: [column("todo", "todo"), column("done", "done")],
+    });
+    expect(info(cards.get(cardId("1"))!)).toEqual({ subtasksDone: 1, subtasksTotal: 2 });
+    expect(info(cards.get(cardId("3"))!)).toEqual({ parentNumber: 1, parentTitle: "Card 1" });
   });
 });

@@ -53,6 +53,7 @@ import { toastManager } from "../ui/toast";
 import { KanbanCardRelations } from "./KanbanCardRelations";
 import { KanbanChecklist } from "./KanbanChecklist";
 import { KanbanLinkedAgents } from "./KanbanLinkedAgents";
+import { KanbanSubtasks } from "./KanbanSubtasks";
 import { PromptDialog } from "./kanbanDialogs";
 import {
   ColorDot,
@@ -358,6 +359,16 @@ export function KanbanCardDetail(props: {
                 disabled={disabled}
                 onSave={(description) => void patch({ description })}
               />
+
+              {archived ? null : (
+                <KanbanSubtasks
+                  environmentId={environmentId}
+                  board={board}
+                  card={card}
+                  disabled={disabled}
+                  onOpenCard={props.onOpenCard}
+                />
+              )}
 
               <KanbanChecklist
                 title="Checklist"

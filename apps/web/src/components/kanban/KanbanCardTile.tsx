@@ -7,7 +7,15 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import { checklistProgress } from "@t3tools/client-runtime/state/kanbanLogic";
-import { BanIcon, BotIcon, CalendarDaysIcon, LinkIcon, ListChecksIcon } from "lucide-react";
+import {
+  BanIcon,
+  BotIcon,
+  CalendarDaysIcon,
+  CornerDownRightIcon,
+  LinkIcon,
+  ListChecksIcon,
+  ListTreeIcon,
+} from "lucide-react";
 import { memo } from "react";
 
 import { useNowMinute } from "../../hooks/useNowMinute";
@@ -64,6 +72,10 @@ export interface KanbanCardTileProps {
   readonly project?: KanbanProjectInfo | undefined;
   /** The accent strip shows whenever `project` is set; the badge row only where projects are mixed. */
   readonly showProjectBadge?: boolean | undefined;
+  readonly subtasksDone?: number | undefined;
+  readonly subtasksTotal?: number | undefined;
+  readonly parentNumber?: number | undefined;
+  readonly parentTitle?: string | undefined;
   readonly onOpen: (card: KanbanCard) => void;
   /** Present when the viewer can edit; adds the agent quick action. */
   readonly onStartAgent?: ((card: KanbanCard) => void) | undefined;
@@ -77,7 +89,12 @@ export const KanbanCardTile = memo(function KanbanCardTile(props: KanbanCardTile
   const progress = checklistProgress(card.checklist);
   const now = Date.parse(useNowMinute());
   const overdue = card.dueAt !== null && isDueOverdue(card.dueAt, now);
-  const hasFooter = progress.total > 0 || card.dueAt !== null || card.linkedThreadIds.length > 0;
+  const subtasksTotal = props.subtasksTotal ?? 0;
+  const hasFooter =
+    progress.total > 0 ||
+    subtasksTotal > 0 ||
+    card.dueAt !== null ||
+    card.linkedThreadIds.length > 0;
   return (
     <div
       data-testid="kanban-card"
@@ -138,6 +155,14 @@ export const KanbanCardTile = memo(function KanbanCardTile(props: KanbanCardTile
       >
         {card.title}
       </button>
+      {props.parentNumber !== undefined ? (
+        <span className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
+          <CornerDownRightIcon aria-hidden className="size-3 shrink-0" />
+          <span className="truncate">
+            #{props.parentNumber} {props.parentTitle}
+          </span>
+        </span>
+      ) : null}
       {labels.length > 0 ? (
         <div className="flex flex-wrap gap-1">
           {labels.map((label) => (
@@ -153,6 +178,14 @@ export const KanbanCardTile = memo(function KanbanCardTile(props: KanbanCardTile
               <ProgressBar done={progress.done} total={progress.total} />
               <span className="tabular-nums">
                 {progress.done}/{progress.total}
+              </span>
+            </span>
+          ) : null}
+          {subtasksTotal > 0 ? (
+            <span className="inline-flex items-center gap-1.5">
+              <ListTreeIcon aria-label="Subtasks" className="size-3.5" />
+              <span className="tabular-nums">
+                {props.subtasksDone ?? 0}/{subtasksTotal}
               </span>
             </span>
           ) : null}

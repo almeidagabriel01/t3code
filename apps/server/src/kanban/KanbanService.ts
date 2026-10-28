@@ -115,6 +115,16 @@ export class KanbanService extends Context.Service<
       { readonly moved: KanbanMutationResult } | { readonly refused: ReadonlyArray<string> },
       KanbanError
     >;
+    /** A card with its board and live subtasks; null when the card is gone. */
+    readonly cardFamily: (cardId: KanbanCardId) => Effect.Effect<
+      {
+        readonly card: KanbanCard;
+        readonly board: KanbanBoard;
+        readonly subtasks: ReadonlyArray<KanbanCard>;
+      } | null,
+      KanbanError
+    >;
+    /** Archiving a parent archives its subtasks with it; unarchiving restores those. */
     readonly cardArchive: (input: KanbanCardIdInput) => KanbanResult;
     readonly cardUnarchive: (input: KanbanCardIdInput) => KanbanResult;
     readonly cardDelete: (input: KanbanCardIdInput) => KanbanResult;
@@ -156,6 +166,15 @@ const payloadJson = jsonColumn(Schema.Json);
 const resultJson = jsonColumn(KanbanMutationResult);
 
 const isKanbanError = Schema.is(KanbanError);
+
+const archivedSubtasks = (json: string): ReadonlyArray<string> => {
+  const payload = payloadJson.parse(json);
+  const ids =
+    payload !== null && typeof payload === "object" && !Array.isArray(payload)
+      ? (payload as { subtaskIds?: unknown }).subtaskIds
+      : undefined;
+  return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === "string") : [];
+};
 
 /** Longer keys come from repeated appends; respreading the column keeps them short. */
 const MAX_ORDER_KEY_LENGTH = 16;
@@ -211,6 +230,7 @@ interface CardRow {
   readonly checklist_json: string;
   readonly acceptance_criteria_json: string;
   readonly archived_at: string | null;
+  readonly parent_card_id: string | null;
   readonly created_by: string;
   readonly created_at: string;
   readonly updated_at: string;
@@ -261,6 +281,7 @@ const toCard = (
   blocks: blocks as ReadonlyArray<KanbanCardId>,
   blockedBy: blockedBy as ReadonlyArray<KanbanCardId>,
   linkedThreadIds: threadIds as ReadonlyArray<ThreadId>,
+  parentCardId: row.parent_card_id as KanbanCardId | null,
   archivedAt: row.archived_at,
   createdBy: row.created_by as KanbanActor,
   createdAt: row.created_at,
@@ -990,6 +1011,29 @@ export const layer = Layer.effect(
     const seedChecklist = (texts: ReadonlyArray<string>) =>
       withChecklistIds(texts.map((text) => ({ text, done: false })));
 
+    /** A subtask lives on its parent's board and never nests: the parent cannot be one itself. */
+    const assertCanParent = Effect.fn("KanbanService.assertCanParent")(function* (
+      boardId: string,
+      parentId: string,
+      childId?: string,
+    ) {
+      const parent = yield* findCardRow(parentId);
+      const refuse = (message: string) => new KanbanError({ kind: "invalid", message });
+      if (parent.board_id !== boardId) return yield* refuse("The parent is on another board.");
+      if (parent.archived_at !== null) return yield* refuse("The parent card is archived.");
+      if (parent.parent_card_id !== null) {
+        return yield* refuse("A subtask cannot have subtasks: pick a top-level card as parent.");
+      }
+      if (childId !== undefined) {
+        if (childId === parentId) return yield* refuse("A card cannot be its own subtask.");
+        const children = yield* sql<{ readonly n: number }>`
+          SELECT COUNT(*) AS n FROM kanban_cards WHERE parent_card_id = ${childId}`;
+        if (children[0]!.n > 0) {
+          return yield* refuse("A card with subtasks cannot become a subtask.");
+        }
+      }
+    });
+
     const cardCreate: KanbanService["Service"]["cardCreate"] = (input) =>
       mutate(
         input.commandId,
@@ -1014,6 +1058,9 @@ export const layer = Layer.effect(
           }
           const labelIds = input.labelIds ?? template?.labelIds ?? [];
           yield* assertLabels(board.id, labelIds);
+          if (input.parentCardId !== undefined) {
+            yield* assertCanParent(board.id, input.parentCardId);
+          }
           const checklist = yield* input.checklist === undefined
             ? seedChecklist(template?.checklist ?? [])
             : withChecklistIds(input.checklist);
@@ -1030,8 +1077,8 @@ export const layer = Layer.effect(
           const at = yield* nowIso;
           const actor = actorOf(input);
           yield* sql`
-            INSERT INTO kanban_cards (card_id, board_id, column_id, order_key, number, title, description, type, priority, label_ids_json, due_at, estimate_json, checklist_json, acceptance_criteria_json, archived_at, created_by, created_at, updated_at)
-            VALUES (${cardId}, ${board.id}, ${column.id}, ${plan.key}, ${number}, ${input.title}, ${input.description ?? ""}, ${input.type ?? null}, ${input.priority ?? template?.priority ?? "none"}, ${labelIdList.stringify(labelIds)}, ${input.dueAt ?? null}, ${input.estimate == null ? null : estimateJson.stringify(input.estimate)}, ${checklistJson.stringify(checklist)}, ${checklistJson.stringify(acceptanceCriteria)}, NULL, ${actor}, ${at}, ${at})`;
+            INSERT INTO kanban_cards (card_id, board_id, column_id, order_key, number, title, description, type, priority, label_ids_json, due_at, estimate_json, checklist_json, acceptance_criteria_json, archived_at, parent_card_id, created_by, created_at, updated_at)
+            VALUES (${cardId}, ${board.id}, ${column.id}, ${plan.key}, ${number}, ${input.title}, ${input.description ?? ""}, ${input.type ?? null}, ${input.priority ?? template?.priority ?? "none"}, ${labelIdList.stringify(labelIds)}, ${input.dueAt ?? null}, ${input.estimate == null ? null : estimateJson.stringify(input.estimate)}, ${checklistJson.stringify(checklist)}, ${checklistJson.stringify(acceptanceCriteria)}, NULL, ${input.parentCardId ?? null}, ${actor}, ${at}, ${at})`;
           yield* addEvent(cardId, "created", actor, { title: input.title, columnId: column.id });
           return {
             result: {
@@ -1099,6 +1146,9 @@ export const layer = Layer.effect(
             return yield* notFound("template", input.type);
           }
           if (input.labelIds !== undefined) yield* assertLabels(board.id, input.labelIds);
+          if (input.parentCardId != null && input.parentCardId !== row.parent_card_id) {
+            yield* assertCanParent(board.id, input.parentCardId, row.card_id);
+          }
           // A newly set type fills only what is still empty, as card.create would.
           const template =
             input.type != null && input.type !== row.type
@@ -1145,6 +1195,8 @@ export const layer = Layer.effect(
             label_ids_json:
               labelIds === undefined ? row.label_ids_json : labelIdList.stringify(labelIds),
             due_at: input.dueAt === undefined ? row.due_at : input.dueAt,
+            parent_card_id:
+              input.parentCardId === undefined ? row.parent_card_id : input.parentCardId,
             estimate_json:
               input.estimate === undefined
                 ? row.estimate_json
@@ -1166,6 +1218,7 @@ export const layer = Layer.effect(
               ["priority", next.priority !== row.priority],
               ["labelIds", next.label_ids_json !== row.label_ids_json],
               ["dueAt", next.due_at !== row.due_at],
+              ["parentCardId", next.parent_card_id !== row.parent_card_id],
               ["estimate", next.estimate_json !== row.estimate_json],
               ["checklist", next.checklist_json !== row.checklist_json],
               [
@@ -1190,7 +1243,7 @@ export const layer = Layer.effect(
           if (fields.length === 0) return { result, deltas: [] } satisfies Outcome;
           yield* sql`
             UPDATE kanban_cards
-            SET title = ${next.title}, description = ${next.description}, type = ${next.type}, priority = ${next.priority},
+            SET title = ${next.title}, description = ${next.description}, type = ${next.type}, priority = ${next.priority}, parent_card_id = ${next.parent_card_id},
                 label_ids_json = ${next.label_ids_json}, due_at = ${next.due_at}, estimate_json = ${next.estimate_json},
                 checklist_json = ${next.checklist_json}, acceptance_criteria_json = ${next.acceptance_criteria_json},
                 updated_at = ${yield* nowIso}
@@ -1253,6 +1306,11 @@ export const layer = Layer.effect(
         const target = yield* findColumn(input.columnId);
         const boards = yield* sql<BoardRow>`
           SELECT * FROM kanban_boards WHERE board_id = ${row.board_id}`;
+        const open = yield* sql<{ readonly number: number; readonly title: string }>`
+          SELECT c.number AS number, c.title AS title FROM kanban_cards c
+          JOIN kanban_columns col ON col.column_id = c.column_id
+          WHERE c.parent_card_id = ${row.card_id} AND c.archived_at IS NULL AND col.role <> 'done'
+          ORDER BY c.number ASC`;
         return {
           row,
           verdict:
@@ -1263,6 +1321,7 @@ export const layer = Layer.effect(
                   targetRole: target.role as KanbanColumnRole,
                   checklist: checklistJson.parse(row.checklist_json),
                   summary: input.summary,
+                  openSubtasks: open.map((subtask) => `#${subtask.number} ${subtask.title}`),
                 }),
         };
       }).pipe(toKanbanError);
@@ -1305,6 +1364,18 @@ export const layer = Layer.effect(
       };
     });
 
+    const cardFamily: KanbanService["Service"]["cardFamily"] = Effect.fn(
+      "KanbanService.cardFamily",
+    )(function* (cardId) {
+      const rows = yield* sql<CardRow>`SELECT * FROM kanban_cards WHERE card_id = ${cardId}`;
+      if (rows[0] === undefined) return null;
+      const children = yield* sql<CardRow>`
+          SELECT * FROM kanban_cards WHERE parent_card_id = ${cardId} AND archived_at IS NULL
+          ORDER BY number ASC`;
+      const [card, ...subtasks] = yield* hydrateCards([rows[0], ...children]);
+      return { card: card!, board: yield* loadBoard(rows[0].board_id), subtasks };
+    }, toKanbanError);
+
     const cardArchive: KanbanService["Service"]["cardArchive"] = (input) =>
       mutate(
         input.commandId,
@@ -1313,11 +1384,22 @@ export const layer = Layer.effect(
           const result = { cardId: input.cardId, boardId: row.board_id as KanbanBoardId };
           if (row.archived_at !== null) return { result, deltas: [] } satisfies Outcome;
           const at = yield* nowIso;
-          yield* sql`UPDATE kanban_cards SET archived_at = ${at}, updated_at = ${at} WHERE card_id = ${row.card_id}`;
-          yield* addEvent(row.card_id, "archived", actorOf(input), {});
+          const subtaskIds = (yield* sql<{ readonly card_id: string }>`
+            SELECT card_id FROM kanban_cards WHERE parent_card_id = ${row.card_id} AND archived_at IS NULL`).map(
+            (subtask) => subtask.card_id,
+          );
+          for (const id of [row.card_id, ...subtaskIds]) {
+            yield* sql`UPDATE kanban_cards SET archived_at = ${at}, updated_at = ${at} WHERE card_id = ${id}`;
+          }
+          // Unarchiving restores exactly these, not subtasks someone archived earlier.
+          yield* addEvent(row.card_id, "archived", actorOf(input), { subtaskIds });
           return {
             result,
-            deltas: [{ kind: "card.removed", boardId: result.boardId, cardId: input.cardId }],
+            deltas: [row.card_id, ...subtaskIds].map((cardId): DeltaBody => ({
+              kind: "card.removed",
+              boardId: result.boardId,
+              cardId: cardId as KanbanCardId,
+            })),
           } satisfies Outcome;
         }),
       );
@@ -1329,20 +1411,33 @@ export const layer = Layer.effect(
           const row = yield* findCardRow(input.cardId);
           const result = { cardId: input.cardId, boardId: row.board_id as KanbanBoardId };
           if (row.archived_at === null) return { result, deltas: [] } satisfies Outcome;
-          const plan = yield* placeOrFail(
-            yield* liveCardsOf(row.column_id, row.card_id),
-            {},
-            row.card_id,
-          );
-          yield* writeCardKeys(plan.rewrites);
-          yield* sql`
-            UPDATE kanban_cards SET archived_at = NULL, order_key = ${plan.key}, updated_at = ${yield* nowIso}
-            WHERE card_id = ${row.card_id}`;
+          const archivedEvent = (yield* sql<{ readonly payload_json: string }>`
+            SELECT payload_json FROM kanban_card_events
+            WHERE card_id = ${row.card_id} AND kind = 'archived'
+            ORDER BY created_at DESC, rowid DESC LIMIT 1`)[0];
+          const together: ReadonlyArray<string> =
+            archivedEvent === undefined ? [] : archivedSubtasks(archivedEvent.payload_json);
+          const touched = new Set<string>();
+          // Only those still archived under this parent (one may have been deleted or detached since).
+          const restorable =
+            together.length === 0
+              ? []
+              : (yield* sql<{ readonly card_id: string }>`
+                  SELECT card_id FROM kanban_cards
+                  WHERE card_id IN ${sql.in(together)} AND parent_card_id = ${row.card_id}
+                    AND archived_at IS NOT NULL`).map((subtask) => subtask.card_id);
+          for (const id of [row.card_id, ...restorable]) {
+            const card = yield* findCardRow(id);
+            const plan = yield* placeOrFail(yield* liveCardsOf(card.column_id, id), {}, id);
+            yield* writeCardKeys(plan.rewrites);
+            yield* sql`
+              UPDATE kanban_cards SET archived_at = NULL, order_key = ${plan.key}, updated_at = ${yield* nowIso}
+              WHERE card_id = ${id}`;
+            touched.add(id);
+            for (const item of plan.rewrites) touched.add(item.id);
+          }
           yield* addEvent(row.card_id, "unarchived", actorOf(input), {});
-          return {
-            result,
-            deltas: yield* cardDeltas([row.card_id, ...plan.rewrites.map((item) => item.id)]),
-          } satisfies Outcome;
+          return { result, deltas: yield* cardDeltas(touched) } satisfies Outcome;
         }),
       );
 
@@ -1352,6 +1447,12 @@ export const layer = Layer.effect(
         Effect.gen(function* () {
           const row = yield* findCardRow(input.cardId);
           const relations = yield* relationsOf(row.card_id);
+          // Subtasks outlive the parent as ordinary cards.
+          const orphans = (yield* sql<{ readonly card_id: string }>`
+            SELECT card_id FROM kanban_cards WHERE parent_card_id = ${row.card_id}`).map(
+            (subtask) => subtask.card_id,
+          );
+          yield* sql`UPDATE kanban_cards SET parent_card_id = NULL WHERE parent_card_id = ${row.card_id}`;
           // Cascades remove the card's events, thread links, and relation edges.
           yield* sql`DELETE FROM kanban_cards WHERE card_id = ${row.card_id}`;
           const boardId = row.board_id as KanbanBoardId;
@@ -1359,7 +1460,7 @@ export const layer = Layer.effect(
             result: { cardId: input.cardId, boardId },
             deltas: [
               { kind: "card.removed", boardId, cardId: input.cardId },
-              ...(yield* cardDeltas([...relations.blocks, ...relations.blockedBy])),
+              ...(yield* cardDeltas([...relations.blocks, ...relations.blockedBy, ...orphans])),
             ],
           } satisfies Outcome;
         }),
@@ -1453,6 +1554,7 @@ export const layer = Layer.effect(
       cardUpdate,
       cardMove,
       cardMoveChecked,
+      cardFamily,
       cardArchive,
       cardUnarchive,
       cardDelete,
