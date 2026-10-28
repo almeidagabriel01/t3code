@@ -17,6 +17,7 @@ import {
   collectGlobalBoards,
   collectGlobalCards,
   definitionOfDoneWarning,
+  formatCardDuration,
   describeCardEvent,
   dueAtToInput,
   inputToDueAt,
@@ -30,6 +31,7 @@ import {
   groupCardsByRole,
   isWipExceeded,
   kanbanCardContextRecord,
+  shouldDeliverKanbanCard,
 } from "./kanbanLogic.ts";
 
 const cardId = (id: string) => id as KanbanCardId;
@@ -315,5 +317,28 @@ describe("validateDefaultTemplate", () => {
         cardTemplates: [],
       }),
     ).toMatch(/Only one column.*Done/);
+  });
+});
+
+describe("formatCardDuration", () => {
+  it("does not round short runs up to a minute", () => {
+    expect(formatCardDuration(5_000)).toBe("<1 min");
+    expect(formatCardDuration(59_999)).toBe("<1 min");
+    expect(formatCardDuration(60_000)).toBe("1 min");
+    expect(formatCardDuration(150_000)).toBe("3 min");
+  });
+});
+
+describe("shouldDeliverKanbanCard", () => {
+  const withCard = (cardId: string) => ({
+    context: { records: [{ kind: "kanban-card", cardId }] },
+  });
+  it("delivers until a message carries that card", () => {
+    expect(shouldDeliverKanbanCard("c1", [])).toBe(true);
+    expect(
+      shouldDeliverKanbanCard("c1", [{}, { context: { records: [{ kind: "mention" }] } }]),
+    ).toBe(true);
+    expect(shouldDeliverKanbanCard("c1", [withCard("c2")])).toBe(true);
+    expect(shouldDeliverKanbanCard("c1", [{}, withCard("c1")])).toBe(false);
   });
 });

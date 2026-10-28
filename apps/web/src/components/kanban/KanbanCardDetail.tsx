@@ -3,6 +3,7 @@ import {
   definitionOfDoneWarning,
   describeCardEvent,
   dueAtToInput,
+  formatCardDuration,
   inputToDueAt,
   KANBAN_PRIORITIES,
 } from "@t3tools/client-runtime/state/kanbanLogic";
@@ -628,7 +629,7 @@ export function KanbanCardDetail(props: {
                   {result.durationMs !== null ? (
                     <PropertyRow label="Agent time">
                       <span className="text-sm tabular-nums">
-                        {Math.max(1, Math.round(result.durationMs / 60_000))} min
+                        {formatCardDuration(result.durationMs)}
                       </span>
                     </PropertyRow>
                   ) : null}

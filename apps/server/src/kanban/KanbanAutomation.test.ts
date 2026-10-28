@@ -149,6 +149,15 @@ it.effect("moves linked cards along run and pull request events, never backwards
         1,
       );
 
+      // A later completed run with the same missing items is not new information.
+      yield* Queue.offer(events, runEvent("t1", "run-1b", "completed"));
+      yield* settle(events);
+      assert.strictEqual(
+        (yield* kanban.getCard({ cardId })).activity.filter((item) => item.kind === "dod-refused")
+          .length,
+        1,
+      );
+
       // A failed run is not completed work.
       yield* kanban.boardUpdate({
         commandId: cmd(),

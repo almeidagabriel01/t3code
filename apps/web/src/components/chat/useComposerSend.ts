@@ -14,6 +14,7 @@ import {
   withMessageContext,
   makeThreadErrorSetter,
 } from "../ChatView.logic";
+import { readThreadKanbanCardRecord } from "../../state/kanban";
 import { isUsageLimitsCommand } from "@t3tools/shared/usageLimits";
 import {
   AuthOrchestrationOperateScope,
@@ -1280,6 +1281,7 @@ export function useComposerSend(input: ComposerSendInput) {
           ? scopeThreadRef(environmentId, threadIdForSend)
           : null;
       if (backgroundThreadRef) beginBackgroundDraftSubmissionByRef(backgroundThreadRef);
+      const linkedKanbanCard = readThreadKanbanCardRecord(environmentId, threadIdForSend);
       const startPromise = startThreadTurn({
         environmentId,
         input: {
@@ -1300,6 +1302,7 @@ export function useComposerSend(input: ComposerSendInput) {
                   .capabilities.inlineMessageContext === true,
             }),
           },
+          ...(linkedKanbanCard ? { kanbanCard: linkedKanbanCard } : {}),
           modelSelection: ctxSelectedModelSelection,
           titleSeed: title,
           runtimeMode,

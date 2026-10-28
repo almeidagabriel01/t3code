@@ -40,6 +40,7 @@ import {
   forgetAcknowledgedThreadMessage,
 } from "./acknowledged-thread-messages";
 import { appAtomRegistry } from "./atom-registry";
+import { readThreadKanbanCardRecord } from "./kanban";
 import { restoredNewTaskDraftKey } from "./new-task-draft-key";
 import {
   clearPendingThreadCreationOutcome,
@@ -863,6 +864,11 @@ export function createThreadOutboxDelivery(): {
       currentConfig.providers,
     );
     if (!hasAccess()) return true;
+    const linkedCard = readThreadKanbanCardRecord(
+      queuedMessage.environmentId,
+      queuedMessage.threadId,
+    );
+    const kanbanCard = linkedCard ? { kanbanCard: linkedCard } : {};
     const deliveryResult = await runDeliveryCommand(threadEnvironment.startTurn, {
       environmentId: queuedMessage.environmentId,
       input: {
@@ -883,6 +889,7 @@ export function createThreadOutboxDelivery(): {
           ),
           attachments: prepared.attachments,
         },
+        ...kanbanCard,
         modelSelection: sendSettings.modelSelection,
         titleSeed: deriveThreadTitleSeed({
           text: queuedMessage.text,

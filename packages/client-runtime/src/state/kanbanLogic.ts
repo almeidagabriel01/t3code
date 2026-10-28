@@ -1,4 +1,5 @@
 // @effect-diagnostics globalDate:off - Local calendar-day conversion for date inputs, outside an Effect runtime.
+import { formatComposerContextReference } from "@t3tools/shared/composerContextReferences";
 import type {
   EnvironmentId,
   KanbanBoardId,
@@ -12,6 +13,7 @@ import type {
   KanbanColumnRole,
   KanbanDefaultTemplate,
   KanbanPriority,
+  OrchestrationMessageContext,
   ProjectId,
 } from "@t3tools/contracts";
 import type { KanbanBoardState, KanbanState } from "./kanban.ts";
@@ -398,4 +400,62 @@ export function validateDefaultTemplate(template: KanbanDefaultTemplate): string
     seen.add(role);
   }
   return null;
+}
+
+/** "<1 min" under a minute, else whole minutes. */
+export function formatCardDuration(durationMs: number): string {
+  return durationMs < 60_000 ? "<1 min" : `${Math.round(durationMs / 60_000)} min`;
+}
+
+/**
+ * A thread linked after it started never saw its card, so the next message carries it. Once a
+ * message of the thread holds the card's record, the agent has it and later messages stay plain.
+ */
+export function shouldDeliverKanbanCard(
+  cardId: string,
+  messages: ReadonlyArray<{
+    readonly context?: { readonly records: ReadonlyArray<{ readonly kind: string }> } | undefined;
+  }>,
+): boolean {
+  return !messages.some((message) =>
+    message.context?.records.some(
+      (record) =>
+        record.kind === "kanban-card" && (record as { cardId?: string }).cardId === cardId,
+    ),
+  );
+}
+
+/** Adds the card record and a reference to it to an outgoing user message. */
+export function withKanbanCardContext(
+  message: { readonly text: string; readonly context: OrchestrationMessageContext | undefined },
+  record: KanbanCardContextRecord,
+): { readonly text: string; readonly context: OrchestrationMessageContext } {
+  const reference = formatComposerContextReference({
+    kind: "kanban-card",
+    contextId: record.contextId,
+    label: record.label,
+  });
+  return {
+    text: `${message.text}\n\n${reference}`,
+    context: {
+      version: 1,
+      ...message.context,
+      records: [...(message.context?.records ?? []), record],
+    },
+  };
+}
+
+/** The context record of the card a thread is linked to, or undefined when it has none. */
+export function kanbanCardRecordForThread(
+  state: KanbanState | null,
+  threadId: string,
+): KanbanCardContextRecord | undefined {
+  for (const board of state?.boards.values() ?? []) {
+    for (const card of board.cards.values()) {
+      if (card.archivedAt === null && card.linkedThreadIds.some((id) => id === threadId)) {
+        return kanbanCardContextRecord(card, board);
+      }
+    }
+  }
+  return undefined;
 }

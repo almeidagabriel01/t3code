@@ -1242,7 +1242,17 @@ export const layer = Layer.effect(
         yield* mutate(
           input.commandId,
           Effect.gen(function* () {
-            yield* addEvent(row.card_id, "dod-refused", actorOf(input), { missing });
+            const actor = actorOf(input);
+            // Automation retries on every completed run; log only when the reasons changed.
+            const last =
+              actor === "automation"
+                ? (yield* sql<{ readonly payload_json: string }>`
+                    SELECT payload_json FROM kanban_card_events
+                    WHERE card_id = ${row.card_id} AND kind = 'dod-refused'
+                    ORDER BY created_at DESC, rowid DESC LIMIT 1`)[0]
+                : undefined;
+            const same = last?.payload_json === payloadJson.stringify({ missing });
+            if (!same) yield* addEvent(row.card_id, "dod-refused", actor, { missing });
             return {
               result: { cardId: input.cardId, boardId: row.board_id as KanbanBoardId },
               deltas: [],

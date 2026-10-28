@@ -4,6 +4,7 @@ import {
   definitionOfDoneWarning,
   describeCardEvent,
   dueAtToInput,
+  formatCardDuration,
   findCardInBoards,
   inputToDueAt,
   KANBAN_PRIORITIES,
@@ -302,9 +303,7 @@ function KanbanCardDetail(props: {
   const meta = [
     card.estimate === null ? null : `${card.estimate.value} ${card.estimate.unit}`,
     result?.costUsd == null ? null : `$${result.costUsd.toFixed(2)}`,
-    result?.durationMs == null
-      ? null
-      : `${Math.max(1, Math.round(result.durationMs / 60_000))} min`,
+    result?.durationMs == null ? null : formatCardDuration(result.durationMs),
   ].filter((entry) => entry !== null && entry !== undefined);
 
   return (

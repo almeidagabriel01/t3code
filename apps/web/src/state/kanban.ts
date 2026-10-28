@@ -9,10 +9,12 @@ import {
   type KanbanCard,
   type ThreadId,
 } from "@t3tools/contracts";
+import { kanbanCardRecordForThread } from "@t3tools/client-runtime/state/kanbanLogic";
 import * as Option from "effect/Option";
 import { Atom, AsyncResult } from "effect/reactivity";
 
 import { connectionAtomRuntime } from "../connection/runtime";
+import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentAtomList } from "./environmentAtomList";
 import { environmentServerConfigsAtom } from "./server";
 import { deriveProviderEntriesByEnvironment } from "../providerInstances";
@@ -93,4 +95,18 @@ export function useThreadKanbanCard(
 /** Every thread of the environment that is linked to a card, with that card. */
 export function useThreadCardMap(environmentId: EnvironmentId) {
   return useAtomValue(threadCardsAtom(environmentId));
+}
+
+/** The card record a send should carry for a thread linked to a card, read at dispatch time. */
+export function readThreadKanbanCardRecord(environmentId: EnvironmentId, threadId: ThreadId) {
+  if (
+    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
+      .kanban !== true
+  ) {
+    return undefined;
+  }
+  const state = Option.getOrNull(
+    AsyncResult.value(appAtomRegistry.get(kanbanEnvironment.live({ environmentId, input: null }))),
+  );
+  return kanbanCardRecordForThread(state, threadId);
 }

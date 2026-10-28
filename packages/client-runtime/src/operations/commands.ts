@@ -9,6 +9,7 @@ import {
   WS_METHODS,
   type ChatAttachment,
   MessageId,
+  type KanbanCardContextRecord,
   type ModelSelection,
   type NodeId,
   type OrchestrationV2Command,
@@ -34,6 +35,7 @@ import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 
+import { shouldDeliverKanbanCard, withKanbanCardContext } from "../state/kanbanLogic.ts";
 import { getInitialServerConfig, request } from "../rpc/client.ts";
 
 interface CommandMetadata {
@@ -172,6 +174,8 @@ export interface StartThreadTurnInput extends ThreadCommandInput {
     readonly context?: import("@t3tools/contracts").OrchestrationMessageContext;
     readonly idleCompaction?: import("@t3tools/contracts").OrchestrationV2IdleCompaction;
   };
+  /** The card this thread is linked to; delivered with the first message after linking. */
+  readonly kanbanCard?: KanbanCardContextRecord;
   readonly modelSelection?: ModelSelection;
   readonly titleSeed?: string;
   readonly runtimeMode: RuntimeMode;
@@ -673,11 +677,26 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
     input.message.messageId,
     input.message.attachments,
   );
-  const context = remapComposerContextAttachments(
+  const remappedContext = remapComposerContextAttachments(
     input.message.context,
     input.message.attachments,
     attachments,
   );
+  // A thread linked to a card after it started has not seen the card yet.
+  const withCard =
+    input.kanbanCard !== undefined &&
+    input.bootstrap?.createThread === undefined &&
+    shouldDeliverKanbanCard(
+      input.kanbanCard.cardId,
+      (yield* getProjection(input.threadId)).messages,
+    )
+      ? withKanbanCardContext(
+          { text: input.message.text, context: remappedContext },
+          input.kanbanCard,
+        )
+      : null;
+  const text = withCard?.text ?? input.message.text;
+  const context = withCard?.context ?? remappedContext;
   const bootstrap = input.bootstrap?.createThread;
   const prepareWorktree = input.bootstrap?.prepareWorktree;
   if (bootstrap !== undefined || prepareWorktree !== undefined) {
@@ -720,7 +739,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
       workspaceStrategy,
       initialMessage: {
         messageId: input.message.messageId,
-        text: input.message.text,
+        text,
         ...(context ? { context } : {}),
         attachments,
       },
@@ -739,7 +758,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
       ...(input.manualContinuationOfRunId === undefined
         ? {}
         : { manualContinuationOfRunId: input.manualContinuationOfRunId }),
-      text: input.message.text,
+      text,
       ...(context ? { context } : {}),
       ...(input.message.idleCompaction === undefined
         ? {}
@@ -803,7 +822,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
     creationSource: input.creationSource ?? "web",
     threadId: input.threadId,
     messageId: input.message.messageId,
-    text: input.message.text,
+    text,
     ...(context ? { context } : {}),
     ...(input.message.idleCompaction === undefined
       ? {}
