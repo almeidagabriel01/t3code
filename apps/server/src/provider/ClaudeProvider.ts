@@ -630,7 +630,11 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   const authMetadata =
     claudeAuthMetadata({
       subscriptionType: capabilities.subscriptionType,
-      authMethod: capabilities.tokenSource,
+      // An API key in the environment wins over a claude.ai login for requests.
+      authMethod:
+        capabilities.apiKeySource && capabilities.apiKeySource !== "none"
+          ? "apiKey"
+          : capabilities.tokenSource,
     }) ??
     apiProviderAuthMetadata(capabilities.apiProvider) ??
     (customApiEndpoint ? { type: "customEndpoint", label: "Custom API endpoint" } : undefined);

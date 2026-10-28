@@ -2394,6 +2394,28 @@ it.layer(
       ),
     );
 
+    it.effect("reports API key auth when a key is set next to a claude.ai login", () =>
+      Effect.gen(function* () {
+        const status = yield* checkClaudeProviderStatus(
+          defaultClaudeSettings,
+          claudeCapabilities({
+            tokenSource: "claude.ai",
+            apiKeySource: "ANTHROPIC_API_KEY",
+            apiProvider: "firstParty",
+          }),
+        );
+        assert.strictEqual(status.auth.type, "apiKey");
+      }).pipe(
+        Effect.provide(
+          layerMockSpawner((args) => {
+            const joined = args.join(" ");
+            if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+            throw new Error(`Unexpected args: ${joined}`);
+          }),
+        ),
+      ),
+    );
+
     it.effect("keeps a CLI that says nothing about its account authenticated", () =>
       Effect.gen(function* () {
         const status = yield* checkClaudeProviderStatus(
