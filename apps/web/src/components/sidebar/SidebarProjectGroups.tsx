@@ -345,13 +345,13 @@ function SidebarProjectGroup(props: ProjectGroupProps) {
       )}
       style={{ transform: CSS.Translate.toString(transform), transition }}
     >
-      <div className="flex items-center gap-1 pe-1">
+      <div className="group/project-header flex items-center gap-1 rounded-md pe-1 focus-within:bg-sidebar-row-hover hover:bg-sidebar-row-hover">
         <button
           type="button"
           ref={setActivatorNodeRef}
           aria-expanded={expanded}
           onClick={() => props.onToggleProject(project, expanded)}
-          className="flex h-8 min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md px-2 text-left outline-none hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+          className="flex h-8 min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md px-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
           {...attributes}
           {...listeners}
         >
@@ -366,8 +366,10 @@ function SidebarProjectGroup(props: ProjectGroupProps) {
           {expanded ? null : <ProjectNotificationDot threads={group.openThreads} />}
         </button>
         <SidebarProjectHoverCard project={project} portCount={props.portCounts.get(scope) ?? 0} />
-        <SidebarProjectBoardButton project={project} />
-        <SidebarProjectNewThreadButton project={project} />
+        <span className="flex items-center gap-1 opacity-0 transition-opacity group-focus-within/project-header:opacity-100 group-hover/project-header:opacity-100 max-sm:opacity-100">
+          <SidebarProjectBoardButton project={project} />
+          <SidebarProjectNewThreadButton project={project} />
+        </span>
       </div>
       <SortableContext
         items={items.map(sidebarListItemId)}

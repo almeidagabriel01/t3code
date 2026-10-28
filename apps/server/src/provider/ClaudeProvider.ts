@@ -43,6 +43,7 @@ import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageL
 import {
   type ClaudeScopedLimitNames,
   claudeUsageResponseToLimits,
+  readableSubscriptionLimits,
   recordClaudeUsageResponse,
 } from "./claudeUsageLimits.ts";
 import {
@@ -634,7 +635,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     apiProviderAuthMetadata(capabilities.apiProvider) ??
     (customApiEndpoint ? { type: "customEndpoint", label: "Custom API endpoint" } : undefined);
   const usageCheckedAt = capabilities.usageCheckedAt ?? checkedAt;
-  const usageLimits = !capabilities.usage
+  const reportedUsageLimits = !capabilities.usage
     ? makeUnavailableUsageLimits({ checkedAt, reason: "probeFailed" })
     : scopedLimitNames
       ? yield* recordClaudeUsageResponse(scopedLimitNames, {
@@ -645,6 +646,10 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
           response: capabilities.usage,
           checkedAt: usageCheckedAt,
         }).limits;
+  const usageLimits = readableSubscriptionLimits(
+    reportedUsageLimits,
+    capabilities.subscriptionType,
+  );
   const resetCredits =
     resolveResetCredits &&
     capabilities.subscriptionType &&

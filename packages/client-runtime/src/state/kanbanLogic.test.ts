@@ -1,4 +1,4 @@
-import type { KanbanBoardState } from "@t3tools/client-runtime/state/kanban";
+import type { KanbanBoardState } from "./kanban.ts";
 import type {
   EnvironmentId,
   KanbanBoardId,
@@ -30,7 +30,7 @@ import {
   groupCardsByRole,
   isWipExceeded,
   kanbanCardContextRecord,
-} from "./kanban.logic";
+} from "./kanbanLogic.ts";
 
 const cardId = (id: string) => id as KanbanCardId;
 const columnId = (id: string) => id as KanbanColumnId;

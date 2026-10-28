@@ -1,11 +1,12 @@
+import { checklistProgress, moveChecklistItem } from "@t3tools/client-runtime/state/kanbanLogic";
 import type { KanbanChecklistItem } from "@t3tools/contracts";
-import { ArrowDownIcon, ArrowUpIcon, XIcon } from "lucide-react";
+import { ArrowDownIcon, ArrowUpIcon, PlusIcon, XIcon } from "lucide-react";
 import { useState } from "react";
 
+import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
-import { Input } from "../ui/input";
-import { checklistProgress, moveChecklistItem } from "./kanban.logic";
+import { ProgressBar, QuietInput } from "./kanbanPresentation";
 
 type Item = Pick<KanbanChecklistItem, "id" | "text" | "done">;
 
@@ -25,14 +26,17 @@ export function KanbanChecklist(props: {
       <h3 className="flex items-center gap-2 text-sm font-semibold">
         {props.title}
         {total > 0 ? (
-          <span className="text-xs font-normal text-muted-foreground">
-            {done}/{total}
+          <span className="flex items-center gap-1.5 text-xs font-normal text-muted-foreground">
+            <ProgressBar done={done} total={total} />
+            <span className="tabular-nums">
+              {done}/{total}
+            </span>
           </span>
         ) : null}
       </h3>
-      <ul className="grid gap-1">
+      <ul className="grid">
         {items.map((item, index) => (
-          <li key={item.id} className="group flex items-center gap-2">
+          <li key={item.id} className="group flex items-center gap-2 rounded-md py-0.5">
             <Checkbox
               checked={item.done}
               disabled={props.disabled}
@@ -45,12 +49,12 @@ export function KanbanChecklist(props: {
                 )
               }
             />
-            <Input
+            <QuietInput
               key={item.text}
-              size="sm"
               defaultValue={item.text}
               disabled={props.disabled}
               aria-label="Item text"
+              className={cn("flex-1", item.done && "text-muted-foreground line-through")}
               onBlur={(event) => {
                 const text = event.target.value.trim();
                 if (text.length > 0 && text !== item.text) {
@@ -92,20 +96,23 @@ export function KanbanChecklist(props: {
         ))}
       </ul>
       {props.disabled ? null : (
-        <Input
-          size="sm"
-          value={draft}
-          aria-label={`Add to ${props.title.toLowerCase()}`}
-          placeholder="Add an item"
-          onChange={(event) => setDraft(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
-            const text = draft.trim();
-            if (text.length === 0) return;
-            onChange([...items, { text, done: false }]);
-            setDraft("");
-          }}
-        />
+        <div className="flex items-center gap-2 text-muted-foreground">
+          <PlusIcon className="size-4 shrink-0" />
+          <QuietInput
+            value={draft}
+            aria-label={`Add to ${props.title.toLowerCase()}`}
+            placeholder="Add an item"
+            className="flex-1"
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
+              const text = draft.trim();
+              if (text.length === 0) return;
+              onChange([...items, { text, done: false }]);
+              setDraft("");
+            }}
+          />
+        </div>
       )}
     </section>
   );

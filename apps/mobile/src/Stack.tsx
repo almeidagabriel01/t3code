@@ -124,6 +124,8 @@ import {
 } from "./features/settings/SettingsOpenSourceLicensesRouteScreen";
 import { SettingsProjectGroupingRouteScreen } from "./features/settings/SettingsProjectGroupingRouteScreen";
 import { SettingsProjectOverviewRouteScreen } from "./features/settings/SettingsProjectOverviewRouteScreen";
+import { KanbanBoardRouteScreen } from "./features/kanban/KanbanBoardRouteScreen";
+import { KanbanCardRouteScreen } from "./features/kanban/KanbanCardRouteScreen";
 import { UsageLimitAccountScreen } from "./features/usage/UsageLimitsPooled";
 import { UsageRouteScreen } from "./features/usage/UsageRouteScreen";
 import { SettingsAboutRouteScreen } from "./features/settings/SettingsAboutRouteScreen";
@@ -452,6 +454,15 @@ const SETTINGS_SCREENS = {
       ...SETTINGS_PAGE_OPTIONS,
       title: "License notice",
     },
+  }),
+  SettingsKanban: createNativeStackScreen({
+    screen: KanbanBoardRouteScreen,
+    linking: "settings/kanban",
+    options: { ...SETTINGS_PAGE_OPTIONS, title: "Board" },
+  }),
+  SettingsKanbanCard: createNativeStackScreen({
+    screen: KanbanCardRouteScreen,
+    options: { ...SETTINGS_PAGE_OPTIONS, title: "Card" },
   }),
   SettingsUsage: createNativeStackScreen({
     screen: UsageRouteScreen,

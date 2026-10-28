@@ -199,6 +199,10 @@
       "types": "./src/state/kanban.ts",
       "default": "./src/state/kanban.ts"
     },
+    "./state/kanbanLogic": {
+      "types": "./src/state/kanbanLogic.ts",
+      "default": "./src/state/kanbanLogic.ts"
+    },
     "./state/models": {
       "types": "./src/state/models.ts",
       "default": "./src/state/models.ts"

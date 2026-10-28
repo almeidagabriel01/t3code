@@ -11,8 +11,13 @@ import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
 import { SidebarInset } from "../ui/sidebar";
+import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Spinner } from "../ui/spinner";
-import { boardScopeKey, collectGlobalBoards, findCardInBoards } from "./kanban.logic";
+import {
+  boardScopeKey,
+  collectGlobalBoards,
+  findCardInBoards,
+} from "@t3tools/client-runtime/state/kanbanLogic";
 import { KanbanArchive } from "./KanbanArchive";
 import { KanbanBoardView } from "./KanbanBoardView";
 import { KanbanCardDetail } from "./KanbanCardDetail";
@@ -157,20 +162,17 @@ export function KanbanPage() {
           ) : null}
           {search.projectKey ? (
             <>
-              <Button
-                size="xs"
-                variant={view === "board" ? "secondary" : "ghost-muted"}
-                onClick={() => setView("board")}
+              <ToggleGroup
+                aria-label="Board view"
+                value={[view]}
+                onValueChange={(next) => {
+                  const value = next[0];
+                  if (value === "board" || value === "archive") setView(value);
+                }}
               >
-                Board
-              </Button>
-              <Button
-                size="xs"
-                variant={view === "archive" ? "secondary" : "ghost-muted"}
-                onClick={() => setView("archive")}
-              >
-                Archive
-              </Button>
+                <Toggle value="board">Board</Toggle>
+                <Toggle value="archive">Archive</Toggle>
+              </ToggleGroup>
               <Button size="xs" variant="ghost-muted" onClick={() => void navigate({ search: {} })}>
                 All boards
               </Button>

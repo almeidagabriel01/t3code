@@ -20,9 +20,10 @@ function CardPicker(props: {
     .slice(0, MAX_RESULTS);
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger render={<Button size="xs" variant="ghost-muted" />}>
+      <PopoverTrigger
+        render={<Button size="icon-xs" variant="ghost-muted" aria-label="Add relation" />}
+      >
         <PlusIcon />
-        Add
       </PopoverTrigger>
       <PopoverPopup align="start">
         <div className="grid w-64 gap-2">
@@ -72,8 +73,8 @@ function RelationList(props: {
 }) {
   return (
     <div className="grid gap-1">
-      <div className="flex items-center justify-between">
-        <h4 className="text-xs font-medium text-muted-foreground">{props.title}</h4>
+      <div className="flex min-h-7 items-center justify-between text-xs text-muted-foreground">
+        {props.title}
         {props.disabled ? null : (
           <CardPicker
             candidates={props.candidates.filter((card) => !props.ids.includes(card.id))}
@@ -84,24 +85,33 @@ function RelationList(props: {
       {props.ids.map((id) => {
         const card = props.cards.get(id);
         return (
-          <div key={id} className="flex items-center gap-1 text-sm">
+          <div key={id} className="group flex items-center gap-1 text-sm">
             <button
               type="button"
-              className="min-w-0 flex-1 truncate text-left hover:underline"
+              className="min-w-0 flex-1 cursor-pointer truncate text-left hover:underline"
               disabled={card === undefined}
               onClick={() => card && props.onOpenCard(card)}
             >
-              {card ? `#${card.number} ${card.title}` : "Card not on the board"}
+              {card ? (
+                <>
+                  <span className="text-muted-foreground tabular-nums">#{card.number}</span>{" "}
+                  {card.title}
+                </>
+              ) : (
+                "Card not on the board"
+              )}
             </button>
             {props.disabled ? null : (
-              <Button
-                size="icon-xs"
-                variant="ghost-destructive"
-                aria-label="Remove relation"
-                onClick={() => props.onChange(props.ids.filter((entry) => entry !== id))}
-              >
-                <XIcon />
-              </Button>
+              <span className="opacity-0 group-focus-within:opacity-100 group-hover:opacity-100">
+                <Button
+                  size="icon-xs"
+                  variant="ghost-destructive"
+                  aria-label="Remove relation"
+                  onClick={() => props.onChange(props.ids.filter((entry) => entry !== id))}
+                >
+                  <XIcon />
+                </Button>
+              </span>
             )}
           </div>
         );
@@ -129,7 +139,6 @@ export function KanbanCardRelations(props: {
   };
   return (
     <section className="grid gap-2" aria-label="Relations">
-      <h3 className="text-sm font-semibold">Relations</h3>
       <RelationList
         {...shared}
         title="Blocked by"

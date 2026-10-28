@@ -223,3 +223,16 @@ export const recordClaudeUsageResponse = (
   const { limits, names } = claudeUsageResponseToLimits(input);
   return Ref.set(namesRef, names).pipe(Effect.as(limits));
 };
+
+/**
+ * `rate_limits_available: false` is also what the CLI reports when its usage endpoint hiccups, so
+ * a subscription account is never "unsupported": the read failed and the last good windows stay.
+ */
+export function readableSubscriptionLimits(
+  limits: ServerProviderUsageLimits,
+  subscriptionType: string | undefined,
+): ServerProviderUsageLimits {
+  return limits.unavailable?.reason === "unsupported" && subscriptionType
+    ? makeUnavailableUsageLimits({ checkedAt: limits.checkedAt, reason: "probeFailed" })
+    : limits;
+}

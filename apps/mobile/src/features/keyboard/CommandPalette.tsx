@@ -42,6 +42,7 @@ import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
 import { useNativeLayoutMetrics } from "../../native/native-layout-metrics";
 import { T3KeyboardCommands } from "../../native/T3KeyboardCommands";
 import { useProjects, useThreadShell, useThreadShells } from "../../state/entities";
+import { useHasKanbanEnvironments } from "../../state/kanban";
 import { useThreadSearch } from "../../state/queries";
 import { requestThreadMessageJump } from "../threads/threadMessageJump";
 import { threadEnvironment } from "../../state/threads";
@@ -82,6 +83,7 @@ const ACTION_ICONS: Record<string, AppSymbolName> = {
   appearance: "paintbrush",
   environments: "desktopcomputer",
   usage: "chart.bar.xaxis",
+  kanban: "square.grid.2x2",
   archive: "archivebox",
   files: "doc.text",
   terminal: "terminal",
@@ -215,6 +217,7 @@ export function CommandPalette(props: {
   const selectDetail = useSelectWorkspaceDetail();
   const runCommand = props.onCommand;
   const projects = useProjects();
+  const hasBoards = useHasKanbanEnvironments();
   const threads = useThreadShells();
   const activeThreadRef = useMemo(() => parseActiveThreadPath(props.pathname), [props.pathname]);
   const activeThread = useThreadShell(activeThreadRef);
@@ -316,6 +319,17 @@ export function CommandPalette(props: {
         searchTerms: ["limits", "accounts", "quota"],
         run: () => openSettings(navigation, "SettingsUsage"),
       },
+      ...(hasBoards
+        ? [
+            {
+              key: "kanban",
+              kind: "action" as const,
+              title: "Board",
+              searchTerms: ["kanban", "cards", "tasks"],
+              run: () => openSettings(navigation, "SettingsKanban"),
+            },
+          ]
+        : []),
       {
         key: "archive",
         kind: "action",
@@ -430,6 +444,7 @@ export function CommandPalette(props: {
     activeThread,
     activeThreadRef,
     environments.length,
+    hasBoards,
     navigation,
     projects,
     runCommand,

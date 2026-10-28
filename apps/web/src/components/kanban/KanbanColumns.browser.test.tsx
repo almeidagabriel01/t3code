@@ -114,7 +114,8 @@ describe("KanbanColumns", () => {
   it("adds a card from the column quick add on Enter", async () => {
     const { ui, onAddCard } = setup();
     await using _screen = await render(ui, { router: false });
-    await userEvent.fill(page.getByLabelText("Add a card").first(), "Ship it");
+    await userEvent.click(page.getByRole("button", { name: "Add a card" }).first());
+    await userEvent.fill(page.getByLabelText("Card title"), "Ship it");
     await userEvent.keyboard("{Enter}");
     expect(onAddCard).toHaveBeenCalledWith("todo", "Ship it");
   });

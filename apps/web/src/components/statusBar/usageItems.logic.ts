@@ -1,5 +1,5 @@
 import type { EnvironmentId, ServerConfig, ServerProviderUsageLimits } from "@t3tools/contracts";
-import { providerAccountKeys } from "@t3tools/shared/usageLimits";
+import { limitsNotice, providerAccountKeys } from "@t3tools/shared/usageLimits";
 
 import {
   applyProviderInstanceSettings,
@@ -89,4 +89,40 @@ export function collectUsageItems(presentations: UsagePresentations): ReadonlyAr
     environmentIds: environmentsByKey.get(key) ?? [],
     environmentLabel: labelEnvironments ? [...new Set(labels.get(key))].join(", ") : null,
   }));
+}
+
+/** Limits older than this, with nothing newer behind them, are shown as last known. */
+export const STALE_AFTER_MS = 15 * 60_000;
+
+export type LimitsStatus =
+  | {
+      readonly kind: "live" | "stale";
+      readonly windows: ServerProviderUsageLimits["windows"];
+      readonly checkedAt: string;
+    }
+  | { readonly kind: "none"; readonly message: string; readonly canRetry: boolean };
+
+/** Last-known windows win over any notice; with none, say what actually happened. */
+export function limitsStatus(item: Pick<UsageItem, "limits" | "entry">, now: number): LimitsStatus {
+  const { limits, entry } = item;
+  if (limits !== undefined && limits.windows.length > 0) {
+    const stale =
+      limits.unavailable !== undefined || now - Date.parse(limits.checkedAt) > STALE_AFTER_MS;
+    return {
+      kind: stale ? "stale" : "live",
+      windows: limits.windows,
+      checkedAt: limits.checkedAt,
+    };
+  }
+  if (limits?.unavailable?.reason === "unsupported") {
+    return { kind: "none", message: limitsNotice(limits) ?? "", canRetry: false };
+  }
+  return {
+    kind: "none",
+    message:
+      limits?.unavailable?.message ??
+      (limits === undefined ? entry.snapshot.message : undefined) ??
+      `${entry.displayName} didn't report limits right now.`,
+    canRetry: true,
+  };
 }

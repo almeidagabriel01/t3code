@@ -50,7 +50,7 @@ import {
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { Switch } from "../ui/switch";
-import { kanbanCardContextRecord } from "./kanban.logic";
+import { kanbanCardContextRecord } from "@t3tools/client-runtime/state/kanbanLogic";
 import { OptionSelect } from "./kanbanDialogs";
 import { reportKanbanError, useKanbanActions } from "./useKanban";
 
@@ -245,26 +245,17 @@ function LaunchForm(props: {
   );
 }
 
-export function KanbanStartAgentButton(props: {
+export function KanbanStartAgentDialog(props: {
   readonly environmentId: EnvironmentId;
   readonly board: KanbanBoardState;
   readonly card: KanbanCard;
-  readonly disabled: boolean;
+  readonly onClose: () => void;
 }) {
-  const [open, setOpen] = useState(false);
   return (
-    <>
-      <Button size="sm" disabled={props.disabled} onClick={() => setOpen(true)}>
-        <BotIcon />
-        Start with agent
-      </Button>
-      {open ? (
-        <Dialog open onOpenChange={(next) => !next && setOpen(false)}>
-          <DialogPopup className="max-w-md">
-            <LaunchForm {...props} onClose={() => setOpen(false)} />
-          </DialogPopup>
-        </Dialog>
-      ) : null}
-    </>
+    <Dialog open onOpenChange={(next) => !next && props.onClose()}>
+      <DialogPopup className="max-w-md">
+        <LaunchForm {...props} />
+      </DialogPopup>
+    </Dialog>
   );
 }

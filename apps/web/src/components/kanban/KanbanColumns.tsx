@@ -29,10 +29,11 @@ import type {
   KanbanLabel,
   KanbanTemplate,
 } from "@t3tools/contracts";
-import { GripVerticalIcon } from "lucide-react";
+import { GripVerticalIcon, PlusIcon } from "lucide-react";
 import { memo, useState, type ReactNode } from "react";
 
 import { cn } from "../../lib/utils";
+import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import {
   applyMoveLocally,
@@ -40,7 +41,7 @@ import {
   isWipExceeded,
   type CardMove,
   type ColumnCards,
-} from "./kanban.logic";
+} from "@t3tools/client-runtime/state/kanbanLogic";
 import { KanbanCardTile } from "./KanbanCardTile";
 
 export interface ColumnWithCards {
@@ -94,8 +95,8 @@ function ColumnBody(props: {
     <div
       ref={setNodeRef}
       className={cn(
-        "flex min-h-16 flex-1 flex-col gap-2 overflow-y-auto rounded-md p-1",
-        isOver && "bg-accent/40",
+        "flex min-h-12 flex-1 flex-col gap-2 overflow-y-auto rounded-lg p-0.5",
+        isOver && "bg-accent/50",
       )}
     >
       <SortableContext
@@ -116,17 +117,37 @@ function ColumnBody(props: {
 }
 
 function QuickAdd(props: { readonly onAdd: (title: string) => void }) {
+  const [open, setOpen] = useState(false);
   const [title, setTitle] = useState("");
+  if (!open) {
+    return (
+      <Button
+        variant="ghost-muted"
+        size="sm"
+        data-quick-add
+        aria-label="Add a card"
+        className="justify-start"
+        onClick={() => setOpen(true)}
+      >
+        <PlusIcon />
+        Add card
+      </Button>
+    );
+  }
   return (
     <Input
       size="sm"
-      data-quick-add
-      aria-label="Add a card"
-      placeholder="+ Add a card"
+      autoFocus
+      aria-label="Card title"
+      placeholder="Title, then Enter"
       value={title}
       onChange={(event) => setTitle(event.target.value)}
+      onBlur={() => title.trim().length === 0 && setOpen(false)}
       onKeyDown={(event) => {
-        if (event.key === "Escape") event.currentTarget.blur();
+        if (event.key === "Escape") {
+          setTitle("");
+          setOpen(false);
+        }
         if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
         const trimmed = title.trim();
         if (trimmed.length === 0) return;
@@ -163,18 +184,18 @@ function SortableColumn(props: {
       data-wip-exceeded={exceeded || undefined}
       style={{ transform: CSS.Translate.toString(transform), transition }}
       className={cn(
-        "flex max-h-full w-72 shrink-0 flex-col gap-2 rounded-xl border border-border/60 bg-muted/30 p-2",
-        exceeded && "border-warning/50",
+        "group/col flex max-h-full w-72 shrink-0 flex-col gap-2 rounded-xl bg-muted/40 p-2",
+        exceeded && "ring-1 ring-inset ring-warning/40",
         isDragging && "opacity-60",
       )}
     >
-      <header className="flex items-center gap-1">
+      <header className="flex items-center gap-1.5 px-1 pt-0.5">
         {props.canEdit ? (
           <button
             type="button"
             ref={setActivatorNodeRef}
             aria-label={`Reorder column ${column.name}`}
-            className="cursor-grab text-muted-foreground"
+            className="-ms-1 cursor-grab text-muted-foreground opacity-0 group-hover/col:opacity-100 focus-visible:opacity-100"
             {...attributes}
             {...listeners}
           >
@@ -209,6 +230,8 @@ export interface KanbanColumnsProps {
     position: { beforeColumnId: KanbanColumnId } | { afterColumnId: KanbanColumnId },
   ) => Promise<unknown>;
   readonly onAddCard: (columnId: KanbanColumnId, title: string) => void;
+  readonly onStartAgent?: ((card: KanbanCard) => void) | undefined;
+  readonly onLinkThread?: ((card: KanbanCard) => void) | undefined;
 }
 
 interface Optimistic {
@@ -254,6 +277,8 @@ export function KanbanColumns(props: KanbanColumnsProps) {
     labels: props.labels,
     templates: props.templates,
     onOpen: props.onOpenCard,
+    onStartAgent: props.canEdit ? props.onStartAgent : undefined,
+    onLinkThread: props.canEdit ? props.onLinkThread : undefined,
   };
 
   const columnCards: ReadonlyArray<ColumnCards> = displayed.map((entry) => ({

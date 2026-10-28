@@ -89,3 +89,8 @@ export function useThreadKanbanCard(
 ): KanbanCard | null {
   return useAtomValue(threadCardAtom(`${environmentId}\n${threadId}`));
 }
+
+/** Every thread of the environment that is linked to a card, with that card. */
+export function useThreadCardMap(environmentId: EnvironmentId) {
+  return useAtomValue(threadCardsAtom(environmentId));
+}

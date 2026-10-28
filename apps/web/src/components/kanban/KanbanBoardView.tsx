@@ -11,10 +11,12 @@ import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 
 import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
-import { definitionOfDoneWarning, type CardMove } from "./kanban.logic";
+import { definitionOfDoneWarning, type CardMove } from "@t3tools/client-runtime/state/kanbanLogic";
 import { KanbanColumnHeader } from "./KanbanColumnHeader";
 import { KanbanColumns } from "./KanbanColumns";
 import { PromptDialog } from "./kanbanDialogs";
+import { KanbanLinkThreadDialog } from "./KanbanLinkDialogs";
+import { KanbanStartAgentDialog } from "./KanbanStartAgent";
 import { useKanbanActions } from "./useKanban";
 
 function isEditable(target: EventTarget) {
@@ -37,6 +39,8 @@ export function KanbanBoardView(props: {
   const actions = useKanbanActions(environmentId);
   const root = useRef<HTMLDivElement>(null);
   const [addingColumn, setAddingColumn] = useState(false);
+  const [startFor, setStartFor] = useState<KanbanCard | null>(null);
+  const [linkFor, setLinkFor] = useState<KanbanCard | null>(null);
   const { visibleCardIds } = props;
   const columns = (() => {
     const all = selectKanbanColumns(board);
@@ -50,15 +54,14 @@ export function KanbanBoardView(props: {
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- focuses the DOM quick-add field once when opened via the New card command
   useEffect(() => {
-    if (props.focusNewCard)
-      root.current?.querySelector<HTMLInputElement>("[data-quick-add]")?.focus();
+    if (props.focusNewCard) root.current?.querySelector<HTMLElement>("[data-quick-add]")?.click();
   }, [props.focusNewCard]);
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key.toLowerCase() !== "n" || event.metaKey || event.ctrlKey || event.altKey) return;
     if (isEditable(event.target)) return;
     event.preventDefault();
-    root.current?.querySelector<HTMLInputElement>("[data-quick-add]")?.focus();
+    root.current?.querySelector<HTMLElement>("[data-quick-add]")?.click();
   };
 
   const moveCard = async (move: CardMove, _from: KanbanColumn, to: KanbanColumn) => {
@@ -85,6 +88,8 @@ export function KanbanBoardView(props: {
         templates={board.templates}
         canEdit={props.canEdit}
         onOpenCard={props.onOpenCard}
+        onStartAgent={setStartFor}
+        onLinkThread={setLinkFor}
         renderHeader={(column, count) => (
           <KanbanColumnHeader
             environmentId={environmentId}
@@ -104,7 +109,7 @@ export function KanbanBoardView(props: {
             <Button
               variant="ghost-muted"
               size="sm"
-              className="shrink-0"
+              className="shrink-0 justify-start"
               onClick={() => setAddingColumn(true)}
             >
               <PlusIcon />
@@ -113,6 +118,22 @@ export function KanbanBoardView(props: {
           ) : null
         }
       />
+      {startFor ? (
+        <KanbanStartAgentDialog
+          environmentId={environmentId}
+          board={board}
+          card={startFor}
+          onClose={() => setStartFor(null)}
+        />
+      ) : null}
+      {linkFor ? (
+        <KanbanLinkThreadDialog
+          environmentId={environmentId}
+          board={board}
+          card={linkFor}
+          onClose={() => setLinkFor(null)}
+        />
+      ) : null}
       {addingColumn ? (
         <PromptDialog
           title="Add column"

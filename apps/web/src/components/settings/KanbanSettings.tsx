@@ -7,7 +7,7 @@ import { useSidebarProjectGroups } from "../../hooks/useSidebarProjectGroups";
 import { requestConfirmDialog } from "../../confirmDialog";
 import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
-import { boardScopeKey, collectGlobalBoards } from "../kanban/kanban.logic";
+import { boardScopeKey, collectGlobalBoards } from "@t3tools/client-runtime/state/kanbanLogic";
 import { OptionSelect, PromptDialog } from "../kanban/kanbanDialogs";
 import { useKanbanGlobalLayout } from "../kanban/kanbanPreferences";
 import {

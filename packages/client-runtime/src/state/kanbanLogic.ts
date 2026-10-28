@@ -1,3 +1,4 @@
+// @effect-diagnostics globalDate:off - Local calendar-day conversion for date inputs, outside an Effect runtime.
 import type {
   EnvironmentId,
   KanbanBoardId,
@@ -13,7 +14,7 @@ import type {
   KanbanPriority,
   ProjectId,
 } from "@t3tools/contracts";
-import type { KanbanBoardState, KanbanState } from "@t3tools/client-runtime/state/kanban";
+import type { KanbanBoardState, KanbanState } from "./kanban.ts";
 
 export const KANBAN_PRIORITIES: ReadonlyArray<KanbanPriority> = [
   "urgent",
@@ -40,6 +41,30 @@ export const KANBAN_ROLE_LABELS: Record<KanbanColumnRole, string> = {
   done: "Done",
   none: "No role",
 };
+
+export const KANBAN_PRIORITY_LABELS: Record<KanbanPriority, string> = {
+  urgent: "Urgent",
+  high: "High",
+  medium: "Medium",
+  low: "Low",
+  none: "No priority",
+};
+
+export const KANBAN_COLORS: Record<string, string> = {
+  slate: "#64748b",
+  blue: "#3b82f6",
+  amber: "#f59e0b",
+  violet: "#8b5cf6",
+  green: "#22c55e",
+  red: "#ef4444",
+  pink: "#ec4899",
+  teal: "#14b8a6",
+  orange: "#f97316",
+};
+
+export function kanbanColor(color: string): string {
+  return KANBAN_COLORS[color] ?? (/^#[0-9a-f]{3,8}$/i.test(color) ? color : KANBAN_COLORS.slate!);
+}
 
 export interface GlobalCard {
   readonly environmentId: EnvironmentId;

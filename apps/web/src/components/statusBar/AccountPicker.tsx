@@ -1,17 +1,17 @@
 import type { StatusBarUsagePercentage } from "@t3tools/contracts";
-import { limitsNotice } from "@t3tools/shared/usageLimits";
 
 import { cn } from "../../lib/utils";
 import { CheckboxMark } from "../ui/checkbox";
 import { isStatusBarItemShown, usagePreview } from "./statusBarItems.logic";
-import type { UsageItem } from "./usageItems.logic";
+import { limitsStatus, type UsageItem } from "./usageItems.logic";
 import { ItemIcon } from "./UsageSegments";
+import { useMinuteNow } from "./useMinuteNow";
 
-function accountSummary(item: UsageItem, display: StatusBarUsagePercentage): string {
-  if (item.limits === undefined) return item.entry.snapshot.message ?? "No usage reported.";
-  return (
-    limitsNotice(item.limits) ?? usagePreview(item.limits.windows, display) ?? "No usage reported."
-  );
+function accountSummary(item: UsageItem, display: StatusBarUsagePercentage, now: number): string {
+  const status = limitsStatus(item, now);
+  return status.kind === "none"
+    ? status.message
+    : (usagePreview(status.windows, display) ?? "No usage reported.");
 }
 
 /** One checkbox tile per provider instance; the tile is the button, so it is a single tab stop. */
@@ -26,6 +26,7 @@ export function AccountPicker({
   readonly display: StatusBarUsagePercentage;
   readonly onToggle: (id: string) => void;
 }) {
+  const now = useMinuteNow();
   if (items.length === 0) {
     return <p className="text-xs text-muted-foreground">No accounts report usage yet.</p>;
   }
@@ -34,7 +35,7 @@ export function AccountPicker({
       {items.map((item) => {
         const id = item.entry.instanceId;
         const checked = isStatusBarItemShown(hidden, id);
-        const usable = item.limits !== undefined && limitsNotice(item.limits) === null;
+        const usable = limitsStatus(item, now).kind === "live";
         return (
           <button
             key={item.key}
@@ -61,7 +62,7 @@ export function AccountPicker({
                 )}
               </span>
               <span className="truncate text-xs tabular-nums text-muted-foreground">
-                {accountSummary(item, display)}
+                {accountSummary(item, display, now)}
               </span>
             </span>
           </button>

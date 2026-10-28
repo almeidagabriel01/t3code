@@ -6,10 +6,9 @@ import type {
   ServerProviderUsageLimits,
   ServerProviderUsageWindow,
 } from "@t3tools/contracts";
-import { limitsNotice } from "@t3tools/shared/usageLimits";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { ChevronRightIcon, RefreshCwIcon } from "lucide-react";
+import { ChevronRightIcon, RefreshCwIcon, SettingsIcon } from "lucide-react";
 import { Fragment, useEffect, useState } from "react";
 
 import { cn } from "../../lib/utils";
@@ -37,7 +36,7 @@ import {
   isStatusBarItemShown,
   STATUS_BAR_USAGE_ITEM,
 } from "./statusBarItems.logic";
-import type { UsageItem } from "./usageItems.logic";
+import { limitsStatus, type UsageItem } from "./usageItems.logic";
 import {
   collectUsageSessions,
   groupSessionsByProject,
@@ -258,17 +257,29 @@ function UsageChip({
   readonly mode: StatusBarUsageMode;
   readonly display: StatusBarUsagePercentage;
 }) {
-  const usable = item.limits !== undefined && limitsNotice(item.limits) === null;
+  const now = useMinuteNow();
+  const status = limitsStatus(item, now);
   return (
     <span className="inline-flex items-center gap-1.5">
       <ItemIcon item={item} />
       {item.environmentLabel === null ? null : (
         <span className="max-w-20 truncate text-muted-foreground">{item.environmentLabel}</span>
       )}
-      {usable && item.limits !== undefined ? (
-        <ChipSummary limits={item.limits} mode={mode} display={display} />
-      ) : (
+      {status.kind === "none" ? (
         <span className="text-muted-foreground/50">--</span>
+      ) : (
+        <span
+          className={cn(
+            "inline-flex items-center gap-1.5",
+            status.kind === "stale" && "opacity-60",
+          )}
+        >
+          <ChipSummary
+            limits={{ checkedAt: status.checkedAt, windows: status.windows }}
+            mode={mode}
+            display={display}
+          />
+        </span>
       )}
     </span>
   );
@@ -408,17 +419,15 @@ function RosterSessions({ item, now }: { readonly item: UsageItem; readonly now:
 function RosterRow({
   item,
   display,
+  onRetry,
 }: {
   readonly item: UsageItem;
   readonly display: StatusBarUsagePercentage;
+  readonly onRetry: () => void;
 }) {
   const now = useMinuteNow();
   const showSessions = useClientSettings((settings) => settings.usageShowSessions);
-  const notice =
-    item.limits === undefined
-      ? (item.entry.snapshot.message ?? "No usage reported.")
-      : limitsNotice(item.limits);
-  const windows = item.limits?.windows ?? [];
+  const status = limitsStatus(item, now);
   const plan = item.entry.snapshot.auth.label;
   return (
     <div className="flex flex-col gap-1 border-b border-border/50 px-3 py-2 last:border-b-0">
@@ -433,17 +442,34 @@ function RosterRow({
             <span className="font-normal text-muted-foreground"> · {item.environmentLabel}</span>
           )}
         </span>
+        {status.kind === "stale" ? (
+          <span className="ml-auto shrink-0 text-3xs text-muted-foreground">
+            as of{" "}
+            {new Date(status.checkedAt).toLocaleTimeString([], {
+              hour: "numeric",
+              minute: "2-digit",
+            })}
+          </span>
+        ) : null}
       </div>
-      {windows.length > 0 ? (
-        <div className="flex flex-col gap-1.5 pl-7.5">
-          {windows.map((window) => (
+      {status.kind === "none" ? (
+        <div className="flex items-center gap-2 pl-7.5">
+          <span className="min-w-0 flex-1 text-2xs text-muted-foreground">{status.message}</span>
+          {status.canRetry ? (
+            <Button variant="ghost-muted" size="micro" onClick={onRetry}>
+              Retry
+            </Button>
+          ) : null}
+        </div>
+      ) : (
+        <div
+          className={cn("flex flex-col gap-1.5 pl-7.5", status.kind === "stale" && "opacity-60")}
+        >
+          {status.windows.map((window) => (
             <RosterMetric key={window.id} window={window} now={now} display={display} />
           ))}
         </div>
-      ) : null}
-      {notice !== null ? (
-        <span className="pl-7.5 text-2xs text-muted-foreground">{notice}</span>
-      ) : null}
+      )}
       {showSessions ? <RosterSessions item={item} now={now} /> : null}
     </div>
   );
@@ -473,12 +499,22 @@ function UsageSegmentsBody() {
           <div className="flex w-full flex-col">
             <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-1.5">
               <span className="text-2xs font-medium text-foreground">Usage</span>
-              <Link to="/usage" className="text-2xs text-muted-foreground hover:text-foreground">
-                Open usage page
-              </Link>
+              <div className="flex items-center gap-1">
+                <Link to="/usage" className="text-2xs text-muted-foreground hover:text-foreground">
+                  Open usage page
+                </Link>
+                <Button
+                  variant="ghost-muted"
+                  size="icon-micro"
+                  aria-label="Status bar settings"
+                  render={<Link to="/settings/status-bar" hash="status-bar-usage" />}
+                >
+                  <SettingsIcon aria-hidden />
+                </Button>
+              </div>
             </div>
             {items.map((item) => (
-              <RosterRow key={item.key} item={item} display={display} />
+              <RosterRow key={item.key} item={item} display={display} onRetry={refresh} />
             ))}
           </div>
         </PopoverPopup>

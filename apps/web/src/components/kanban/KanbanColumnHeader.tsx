@@ -21,7 +21,11 @@ import {
   MenuSubTrigger,
   MenuTrigger,
 } from "../ui/menu";
-import { isWipExceeded, KANBAN_ROLE_LABELS, KANBAN_ROLES } from "./kanban.logic";
+import {
+  isWipExceeded,
+  KANBAN_ROLE_LABELS,
+  KANBAN_ROLES,
+} from "@t3tools/client-runtime/state/kanbanLogic";
 import { ChoiceDialog, PromptDialog } from "./kanbanDialogs";
 import { ColorDot, KANBAN_COLOR_NAMES } from "./kanbanPresentation";
 import { useKanbanActions } from "./useKanban";
@@ -49,19 +53,23 @@ export function KanbanColumnHeader(props: {
   return (
     <>
       <ColorDot color={column.color} />
-      <h3 className="min-w-0 flex-1 truncate text-sm font-semibold">{column.name}</h3>
-      {column.role !== "none" ? (
-        <Badge variant="outline" size="sm">
-          {KANBAN_ROLE_LABELS[column.role]}
+      <h3 className="min-w-0 truncate text-sm font-semibold">{column.name}</h3>
+      {exceeded ? (
+        <Badge variant="warning" size="sm" aria-label="WIP limit exceeded">
+          {props.count}/{column.wipLimit}
         </Badge>
-      ) : null}
-      <Badge
-        variant={exceeded ? "warning" : "secondary"}
-        size="sm"
-        aria-label={exceeded ? "WIP limit exceeded" : undefined}
-      >
-        {column.wipLimit === null ? props.count : `${props.count}/${column.wipLimit}`}
-      </Badge>
+      ) : (
+        <span className="text-xs text-muted-foreground tabular-nums">
+          {column.wipLimit === null ? props.count : `${props.count}/${column.wipLimit}`}
+        </span>
+      )}
+      {column.role !== "none" ? (
+        <span className="ms-auto truncate text-2xs text-muted-foreground/70">
+          {KANBAN_ROLE_LABELS[column.role]}
+        </span>
+      ) : (
+        <span className="ms-auto" />
+      )}
       {props.canEdit ? (
         <Menu>
           <MenuTrigger

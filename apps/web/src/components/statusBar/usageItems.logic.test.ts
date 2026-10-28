@@ -1,7 +1,12 @@
 import type { EnvironmentId, ServerProvider } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { collectUsageItems, type UsagePresentations } from "./usageItems.logic";
+import {
+  collectUsageItems,
+  limitsStatus,
+  STALE_AFTER_MS,
+  type UsagePresentations,
+} from "./usageItems.logic";
 
 const limits = (usedPercent: number) => ({
   checkedAt: "2026-10-27T12:00:00.000Z",
@@ -103,5 +108,48 @@ describe("collectUsageItems", () => {
     );
     expect(items).toHaveLength(1);
     expect(items[0]?.environmentLabel).toBe("Local, Remote");
+  });
+});
+
+describe("limitsStatus", () => {
+  const now = Date.parse("2026-10-27T12:00:00.000Z");
+  const entry = { displayName: "Claude", snapshot: {} } as never;
+  const windows = limits(22).windows as never;
+
+  it("shows live windows, and stale ones once they age or the last read failed", () => {
+    const fresh = { checkedAt: new Date(now - 60_000).toISOString(), windows };
+    expect(limitsStatus({ entry, limits: fresh }, now).kind).toBe("live");
+    const old = { checkedAt: new Date(now - STALE_AFTER_MS - 1).toISOString(), windows };
+    expect(limitsStatus({ entry, limits: old }, now).kind).toBe("stale");
+    const failed = { ...fresh, unavailable: { reason: "probeFailed" as const } };
+    expect(limitsStatus({ entry, limits: failed }, now).kind).toBe("stale");
+  });
+
+  it("keeps last-known windows rather than the unsupported notice", () => {
+    const kept = { ...limits(22), unavailable: { reason: "unsupported" as const } };
+    expect(limitsStatus({ entry, limits: kept as never }, now).kind).toBe("stale");
+  });
+
+  it("says nothing was reported, with a retry, when there is no data", () => {
+    const empty = {
+      checkedAt: "2026-10-27T12:00:00.000Z",
+      windows: [],
+      unavailable: { reason: "probeFailed" as const },
+    };
+    expect(limitsStatus({ entry, limits: empty as never }, now)).toEqual({
+      kind: "none",
+      message: "Claude didn't report limits right now.",
+      canRetry: true,
+    });
+  });
+
+  it("calls a genuinely unsupported account unsupported, without a retry", () => {
+    const unsupported = {
+      checkedAt: "2026-10-27T12:00:00.000Z",
+      windows: [],
+      unavailable: { reason: "unsupported" as const },
+    };
+    const status = limitsStatus({ entry, limits: unsupported as never }, now);
+    expect(status).toMatchObject({ kind: "none", canRetry: false });
   });
 });

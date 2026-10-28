@@ -14,7 +14,7 @@ import {
   KANBAN_ROLES,
   moveChecklistItem,
   validateDefaultTemplate,
-} from "../kanban/kanban.logic";
+} from "@t3tools/client-runtime/state/kanbanLogic";
 import { OptionSelect } from "../kanban/kanbanDialogs";
 import { KANBAN_COLOR_NAMES, PRIORITY_LABELS } from "../kanban/kanbanPresentation";
 import { Button } from "../ui/button";

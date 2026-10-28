@@ -5,6 +5,7 @@ import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Menu, MenuCheckboxItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Switch } from "../ui/switch";
+import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import {
   boardScopeKey,
   collectGlobalBoards,
@@ -16,7 +17,7 @@ import {
   KANBAN_PRIORITIES,
   KANBAN_ROLE_LABELS,
   type GlobalFilters,
-} from "./kanban.logic";
+} from "@t3tools/client-runtime/state/kanbanLogic";
 import { KanbanBoardView } from "./KanbanBoardView";
 import { KanbanCardTile } from "./KanbanCardTile";
 import { OptionSelect } from "./kanbanDialogs";
@@ -35,7 +36,7 @@ function Lane(props: {
   const visible = new Set<KanbanCardId>(props.lane.cards.map((entry) => entry.card.id));
   return (
     <section className="grid gap-1" aria-label={props.title}>
-      <h2 className="px-4 pt-3 text-sm font-semibold">{props.title}</h2>
+      <h2 className="px-4 pt-4 text-sm font-semibold">{props.title}</h2>
       <div className="h-[26rem]">
         <KanbanBoardView
           environmentId={props.lane.environmentId}
@@ -77,7 +78,7 @@ export function KanbanGlobalBoard(props: {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex flex-wrap items-center gap-2 border-b px-4 py-2">
+      <div className="flex flex-wrap items-center gap-2 border-b bg-background px-4 py-2">
         <Input
           size="sm"
           type="search"
@@ -152,22 +153,18 @@ export function KanbanGlobalBoard(props: {
           />
           Has agent
         </label>
-        <span className="ms-auto flex gap-1">
-          <Button
-            size="xs"
-            variant={layout === "merged" ? "secondary" : "ghost-muted"}
-            onClick={() => setLayout("merged")}
-          >
-            By status
-          </Button>
-          <Button
-            size="xs"
-            variant={layout === "lanes" ? "secondary" : "ghost-muted"}
-            onClick={() => setLayout("lanes")}
-          >
-            By project
-          </Button>
-        </span>
+        <ToggleGroup
+          aria-label="Layout"
+          className="ms-auto"
+          value={[layout]}
+          onValueChange={(next) => {
+            const value = next[0];
+            if (value === "merged" || value === "lanes") setLayout(value);
+          }}
+        >
+          <Toggle value="merged">By status</Toggle>
+          <Toggle value="lanes">By project</Toggle>
+        </ToggleGroup>
       </div>
       <div className="min-h-0 flex-1 overflow-auto">
         {layout === "merged" ? (
@@ -176,11 +173,13 @@ export function KanbanGlobalBoard(props: {
               <section
                 key={column.role}
                 aria-label={KANBAN_ROLE_LABELS[column.role]}
-                className="flex w-72 shrink-0 flex-col gap-2 rounded-xl border border-border/60 bg-muted/30 p-2"
+                className="flex w-72 shrink-0 flex-col gap-2 rounded-xl bg-muted/40 p-2"
               >
-                <h3 className="px-1 text-sm font-semibold">
+                <h3 className="flex items-baseline gap-1.5 px-1 pt-0.5 text-sm font-semibold">
                   {column.role === "none" ? "Other columns" : KANBAN_ROLE_LABELS[column.role]}{" "}
-                  <span className="font-normal text-muted-foreground">{column.cards.length}</span>
+                  <span className="text-xs font-normal text-muted-foreground tabular-nums">
+                    {column.cards.length}
+                  </span>
                 </h3>
                 {column.cards.map((entry) => {
                   const source = boardById.get(entry.boardId);

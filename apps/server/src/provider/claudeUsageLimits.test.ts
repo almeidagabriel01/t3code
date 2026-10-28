@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { claudeRateLimitEventToUpdate, claudeUsageResponseToLimits } from "./claudeUsageLimits.ts";
+import {
+  claudeRateLimitEventToUpdate,
+  claudeUsageResponseToLimits,
+  readableSubscriptionLimits,
+} from "./claudeUsageLimits.ts";
 
 const checkedAt = "2026-07-18T10:00:00.000Z";
 const noNames = { overageIncluded: undefined } as const;
@@ -267,5 +271,21 @@ describe("claudeRateLimitEventToUpdate", () => {
         },
       ],
     });
+  });
+});
+
+describe("readableSubscriptionLimits", () => {
+  const unsupported = {
+    checkedAt: "2026-10-28T00:00:00.000Z",
+    windows: [],
+    unavailable: { reason: "unsupported" as const },
+  };
+
+  it("treats a subscription account's unavailable limits as a failed read", () => {
+    expect(readableSubscriptionLimits(unsupported, "max").unavailable?.reason).toBe("probeFailed");
+  });
+
+  it("keeps unsupported for accounts without a subscription", () => {
+    expect(readableSubscriptionLimits(unsupported, undefined)).toBe(unsupported);
   });
 });

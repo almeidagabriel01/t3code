@@ -1,10 +1,13 @@
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { SquareKanbanIcon } from "lucide-react";
-import type { MouseEvent, PointerEvent } from "react";
+import { LinkIcon, SquareKanbanIcon } from "lucide-react";
+import { useState, type MouseEvent, type PointerEvent } from "react";
 
-import { useThreadKanbanCard } from "../../state/kanban";
-import { InlineButton } from "../ui/button";
+import { useQuietThreadShell } from "../../state/entities";
+import { useKanbanEnvironmentIds, useThreadKanbanCard } from "../../state/kanban";
+import { Button, InlineButton } from "../ui/button";
+import { KanbanLinkCardDialog } from "./KanbanLinkDialogs";
+import { useKanbanCanEdit } from "./useKanban";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 /** `#N` for a thread linked to a board card; opens that card. Renders nothing for other threads. */
@@ -13,10 +16,49 @@ export function KanbanThreadCardBadge(props: {
   readonly threadId: ThreadId;
   readonly projectKey?: string | undefined;
   readonly showTitle?: boolean;
+  /** Offers "Link to card" when the thread has none. */
+  readonly allowLink?: boolean;
 }) {
   const card = useThreadKanbanCard(props.environmentId, props.threadId);
   const navigate = useNavigate();
-  if (card === null) return null;
+  const [linking, setLinking] = useState(false);
+  const shell = useQuietThreadShell({
+    environmentId: props.environmentId,
+    threadId: props.threadId,
+  });
+  const supported = useKanbanEnvironmentIds().includes(props.environmentId);
+  const canEdit = useKanbanCanEdit(props.environmentId);
+  if (card === null) {
+    if (props.allowLink !== true || !supported || !canEdit || shell === null) return null;
+    return (
+      <>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                size="xs"
+                variant="ghost-muted"
+                aria-label="Link to board card"
+                onClick={() => setLinking(true)}
+              />
+            }
+          >
+            <LinkIcon />
+            Link to card
+          </TooltipTrigger>
+          <TooltipPopup side="bottom">Link this thread to a board card</TooltipPopup>
+        </Tooltip>
+        {linking ? (
+          <KanbanLinkCardDialog
+            environmentId={props.environmentId}
+            threadId={props.threadId}
+            projectId={shell.projectId}
+            onClose={() => setLinking(false)}
+          />
+        ) : null}
+      </>
+    );
+  }
   const open = (event: MouseEvent) => {
     event.preventDefault();
     event.stopPropagation();
