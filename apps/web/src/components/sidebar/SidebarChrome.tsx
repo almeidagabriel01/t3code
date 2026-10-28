@@ -33,6 +33,7 @@ import { readPullRequestListPreferences } from "../pullRequest/pullRequestListPr
 import { isSidebarUtilityPage, useNavigateToMainApp } from "./mainAppLocation";
 import { SidebarThreadUndoNotice } from "./SidebarThreadUndoNotice";
 import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
+import { SidebarForkUpdatePill } from "./SidebarForkUpdatePill";
 import { SidebarUpdateArchitectureWarning, SidebarUpdatePill } from "./SidebarUpdatePill";
 import { useKanbanEnvironmentIds } from "../../state/kanban";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
@@ -243,6 +244,7 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
           ) : null}
         </>
       )}
+      <SidebarForkUpdatePill />
       <SidebarUpdatePill />
     </SidebarMenu>
   );

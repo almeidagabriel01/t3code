@@ -1,4 +1,10 @@
-import type { KanbanCard, KanbanCardId, KanbanColumnRole } from "@t3tools/contracts";
+import type {
+  KanbanCard,
+  KanbanCardId,
+  KanbanColumn,
+  KanbanColumnId,
+  KanbanColumnRole,
+} from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 
@@ -17,11 +23,11 @@ import {
   type GlobalFilters,
 } from "@t3tools/client-runtime/state/kanbanLogic";
 import { KanbanBoardView } from "./KanbanBoardView";
-import { KanbanCardTile } from "./KanbanCardTile";
-import { KanbanGlobalFilters } from "./KanbanGlobalFilters";
+import { KanbanColumnHeader } from "./KanbanColumnHeader";
+import { KanbanColumns } from "./KanbanColumns";
+import { KanbanToolbar } from "./KanbanToolbar";
 import type { KanbanProjectInfo } from "./KanbanProjectBadge";
 import { useKanbanGlobalLayout } from "./kanbanPreferences";
-import { ColorDot } from "./kanbanPresentation";
 import { useKanbanCanEdit, type KanbanEnvironmentState } from "./useKanban";
 
 const ROLE_COLORS: Record<KanbanColumnRole, string> = {
@@ -32,6 +38,8 @@ const ROLE_COLORS: Record<KanbanColumnRole, string> = {
   done: "green",
   none: "slate",
 };
+
+const noop = () => Promise.resolve();
 
 function Lane(props: {
   readonly lane: ReturnType<typeof groupCardsByProject>[number];
@@ -96,7 +104,7 @@ export function KanbanGlobalBoard(props: {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <KanbanGlobalFilters
+      <KanbanToolbar
         filters={filters}
         boards={boards}
         projects={props.projects}
@@ -104,59 +112,61 @@ export function KanbanGlobalBoard(props: {
         onFilters={setFilters}
         onLayout={setLayout}
       />
-      <div className="min-h-0 flex-1 overflow-auto">
-        {layout === "merged" ? (
-          <div className="flex h-full w-max min-w-full items-start gap-3 p-4">
-            {groupCardsByRole(cards).map((column) => (
-              <section
-                key={column.role}
-                aria-label={KANBAN_ROLE_LABELS[column.role]}
-                className="flex max-h-full w-72 shrink-0 flex-col gap-2 rounded-xl bg-muted/40 p-2"
-              >
-                <h3 className="flex items-center gap-1.5 px-1 pt-0.5 text-sm font-semibold">
-                  <ColorDot color={ROLE_COLORS[column.role]} />
-                  {column.role === "none" ? "Other columns" : KANBAN_ROLE_LABELS[column.role]}
-                  <span className="text-xs font-normal text-muted-foreground tabular-nums">
-                    {column.cards.length}
-                  </span>
-                </h3>
-                <div className="flex min-h-0 flex-col gap-2 overflow-y-auto p-0.5">
-                  {column.cards.length === 0 ? (
-                    <p className="rounded-lg border border-dashed px-3 py-6 text-center text-xs text-muted-foreground">
-                      No cards
-                    </p>
-                  ) : null}
-                  {column.cards.map((entry) => {
-                    const source = boardById.get(entry.boardId);
-                    return (
-                      <KanbanCardTile
-                        key={entry.card.id}
-                        card={entry.card}
-                        environmentId={entry.environmentId}
-                        labels={source?.board.labels ?? []}
-                        templates={source?.board.templates ?? []}
-                        project={props.projects.get(
-                          boardScopeKey(entry.environmentId, entry.projectId),
-                        )}
-                        onOpen={props.onOpenCard}
-                      />
-                    );
-                  })}
-                </div>
-              </section>
-            ))}
-          </div>
-        ) : (
-          groupCardsByProject(boards, cards).map((lane) => (
+      {layout === "merged" ? (
+        <div className="min-h-0 flex-1">
+          <KanbanColumns
+            environmentId={boards[0]!.environmentId}
+            columns={groupCardsByRole(cards).map((group) => ({
+              column: {
+                id: group.role as string as KanbanColumnId,
+                name: group.role === "none" ? "Other columns" : KANBAN_ROLE_LABELS[group.role],
+                color: ROLE_COLORS[group.role],
+                role: "none",
+                wipLimit: null,
+              } as KanbanColumn,
+              cards: group.cards.map((entry) => entry.card),
+            }))}
+            labels={[]}
+            templates={[]}
+            canEdit={false}
+            tileFor={(card) => {
+              const source = boardById.get(card.boardId);
+              return {
+                environmentId: source?.environmentId ?? boards[0]!.environmentId,
+                labels: source?.board.labels ?? [],
+                templates: source?.board.templates ?? [],
+                project: source
+                  ? props.projects.get(boardScopeKey(source.environmentId, source.board.projectId))
+                  : undefined,
+              };
+            }}
+            renderHeader={(column, count) => (
+              <KanbanColumnHeader
+                environmentId={boards[0]!.environmentId}
+                column={column}
+                siblings={[]}
+                count={count}
+                canEdit={false}
+              />
+            )}
+            onOpenCard={props.onOpenCard}
+            onMoveCard={noop}
+            onMoveColumn={noop}
+            onAddCard={noop}
+          />
+        </div>
+      ) : (
+        <div className="min-h-0 flex-1 overflow-auto">
+          {groupCardsByProject(boards, cards).map((lane) => (
             <Lane
               key={lane.key}
               lane={lane}
               info={props.projects.get(lane.key)}
               onOpenCard={props.onOpenCard}
             />
-          ))
-        )}
-      </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

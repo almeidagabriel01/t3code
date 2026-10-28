@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import { ForwardCompatibleArray, NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
@@ -147,6 +148,35 @@ export class UsageReadError extends Schema.TaggedError<UsageReadError>()("UsageR
 export const InstanceSpendInput = Schema.Struct({ timeZone: TrimmedNonEmptyString });
 export type InstanceSpendInput = typeof InstanceSpendInput.Type;
 
+export const BudgetPeriod = Schema.Literals(["daily", "weekly", "monthly"]);
+export type BudgetPeriod = typeof BudgetPeriod.Type;
+
+/** User-entered cap; there is no provider API for a credit balance. */
+export const ProviderBudget = Schema.Struct({
+  amountUsd: Schema.Number.check(Schema.isFinite(), Schema.isGreaterThan(0)),
+  period: BudgetPeriod,
+  warnAtPercent: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 })).pipe(
+    Schema.withDecodingDefault(Effect.succeed(80)),
+  ),
+  blockWhenExceeded: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** IANA zone, stored with the budget so every client and the server agree where a period starts. */
+  timeZone: TrimmedNonEmptyString,
+});
+export type ProviderBudget = typeof ProviderBudget.Type;
+
+export const InstanceBudgetStatus = Schema.Struct({
+  period: BudgetPeriod,
+  amountUsd: Schema.Number,
+  spentUsd: Schema.Number,
+  warnAtPercent: Schema.Number,
+  resetsAt: Schema.String,
+  timeZone: Schema.String,
+  state: Schema.Literals(["ok", "warn", "exceeded"]),
+  /** Exceeded and configured to refuse new turns. */
+  blocking: Schema.Boolean,
+});
+export type InstanceBudgetStatus = typeof InstanceBudgetStatus.Type;
+
 /** Money spent through one provider instance, priced from T3's own turns; for API-key billing. */
 export const InstanceSpend = Schema.Struct({
   providerInstanceId: ProviderInstanceId,
@@ -155,6 +185,7 @@ export const InstanceSpend = Schema.Struct({
   periodUsd: Schema.Number,
   /** Some turns in the period had no usage or no known rate, so the totals are a floor. */
   partial: Schema.Boolean,
+  budget: Schema.optionalKey(InstanceBudgetStatus),
 });
 export const InstanceSpendResult = Schema.Struct({ instances: Schema.Array(InstanceSpend) });
 export type InstanceSpendResult = typeof InstanceSpendResult.Type;

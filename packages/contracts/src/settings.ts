@@ -19,6 +19,7 @@ import {
   TrimmedNonEmptyString,
   TrimmedString,
 } from "./baseSchemas.ts";
+import { ProviderBudget } from "./usage.ts";
 import { UsageLimitSourceId } from "./usageLimitSourceId.ts";
 import { EnvironmentMachineKind, ThreadEnvMode, WorktreeSubmodules } from "./environment.ts";
 import { KanbanDefaultTemplate } from "./kanban.ts";
@@ -469,6 +470,8 @@ export const ClientSettingsSchema = Schema.Struct({
   projectHoverCardProperties: Schema.Array(ProjectHoverCardProperty).pipe(
     Schema.withDecodingDefault(Effect.succeed([...PROJECT_HOVER_CARD_PROPERTIES])),
   ),
+  forkUpdatesFolder: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  forkUpdatesDismissedTag: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   statusBarVisible: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   statusBarHiddenItems: Schema.Array(Schema.String).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
@@ -1326,6 +1329,10 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
 
+  providerBudgets: Schema.Record(ProviderInstanceId, ProviderBudget).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
+
   usagePriceOverrides: Schema.Record(TrimmedNonEmptyString, UsageModelPriceOverride).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
@@ -1636,6 +1643,11 @@ export const ServerSettingsPatch = Schema.Struct({
   ),
   cursorKeychainUsageEnabled: Schema.optionalKey(Schema.Boolean),
 
+  // Replaces the instance's budget; null removes it.
+  providerBudgets: Schema.optionalKey(
+    Schema.Record(ProviderInstanceId, Schema.NullOr(ProviderBudget)),
+  ),
+
   usagePriceOverrides: Schema.optionalKey(
     Schema.Record(TrimmedNonEmptyString, Schema.NullOr(UsageModelPriceOverride)),
   ),
@@ -1739,6 +1751,8 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarShowUsageButton: Schema.optionalKey(Schema.Boolean),
   sidebarAgentActivityDisplayMode: Schema.optionalKey(SidebarAgentActivityDisplayMode),
   projectHoverCardProperties: Schema.optionalKey(Schema.Array(ProjectHoverCardProperty)),
+  forkUpdatesFolder: Schema.optionalKey(Schema.String),
+  forkUpdatesDismissedTag: Schema.optionalKey(Schema.String),
   statusBarVisible: Schema.optionalKey(Schema.Boolean),
   statusBarHiddenItems: Schema.optionalKey(Schema.Array(Schema.String)),
   statusBarUsageMode: Schema.optionalKey(StatusBarUsageMode),

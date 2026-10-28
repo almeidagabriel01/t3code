@@ -203,6 +203,7 @@ import {
 import { parseBase64DataUrl } from "./imageMime.ts";
 import { deletePendingAttachment, issueAttachmentUploadUrl } from "./assets/AttachmentUpload.ts";
 import * as ListeningPorts from "./ports/ListeningPorts.ts";
+import * as ForkUpdates from "./forkUpdates/ForkUpdates.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as KnownWorkspaces from "./workspace/KnownWorkspaces.ts";
@@ -1335,6 +1336,7 @@ export const layerWsRpc = (
       const previewManager = yield* PreviewManager.PreviewManager;
       const portDiscovery = yield* PortScanner.PortDiscovery;
       const listeningPorts = yield* ListeningPorts.ListeningPorts;
+      const forkUpdates = yield* ForkUpdates.ForkUpdates;
       const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
       const modelManifest = yield* ModelManifest.ModelManifest;
       const providerLatestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
@@ -2601,6 +2603,7 @@ export const layerWsRpc = (
         [WS_METHODS.serverGetProcessDiagnostics]: (_input) => processDiagnostics.read,
         [WS_METHODS.serverGetHostResources]: (_input) => hostResources.read,
         [WS_METHODS.serverListListeningPorts]: (_input) => listeningPorts.list(),
+        [WS_METHODS.serverForkUpdateStatus]: (input) => forkUpdates.status(input),
         [WS_METHODS.serverKillListeningPort]: (input) => listeningPorts.kill(input),
         [WS_METHODS.serverGetProcessResourceHistory]: (input) =>
           processResourceMonitor.readHistory(input),

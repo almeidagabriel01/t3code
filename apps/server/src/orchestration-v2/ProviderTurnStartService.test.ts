@@ -47,6 +47,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnStart from "./ProviderTurnStartService.ts";
+import { ProviderBudgetGate } from "../usage/providerBudget.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
 
@@ -271,6 +272,7 @@ function makeLocalCommandHarness(input: {
   readonly previousNativeSession?: boolean;
   readonly previousMessages?: ReadonlyArray<string>;
   readonly logoutFailure?: string;
+  readonly budgetRefusal?: { readonly message: string; readonly resetsAt: string };
   readonly openFailure?: unknown;
   readonly ensureThreadFailure?: unknown;
   readonly historyReadFailureAfterFallback?: unknown;
@@ -753,6 +755,9 @@ function makeLocalCommandHarness(input: {
         Layer.mock(RuntimePolicy.RuntimePolicyV2)({
           resolve: resolveRuntimePolicy,
         }),
+        Layer.succeed(ProviderBudgetGate, () =>
+          Effect.succeed(Option.fromNullishOr(input.budgetRefusal)),
+        ),
       ),
     ),
   );
@@ -1284,6 +1289,29 @@ effectIt.effect("terminalizes a starting run when its provider session cannot op
           class: "provider_error",
           message: "DESCRIPTION is not valid ACP JSON",
         },
+      },
+    ]);
+  }),
+);
+
+effectIt.effect("refuses a turn on an instance whose blocking budget is exceeded", () =>
+  Effect.gen(function* () {
+    const message =
+      "Claude API reached its $200.00 monthly budget. It resets on Nov 1, or raise the budget in Settings → Providers.";
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      budgetRefusal: { message, resetsAt: "2026-11-01T00:00:00.000Z" },
+    });
+
+    yield* harness.start;
+
+    expect(harness.open).not.toHaveBeenCalled();
+    expect(harness.startRootRun).not.toHaveBeenCalled();
+    expect(harness.projection().runs.at(-1)).toMatchObject({ status: "failed" });
+    expect(harness.projection().turnItems).toMatchObject([
+      {
+        type: "error",
+        failure: { class: "usage_limit", message, resetAt: "2026-11-01T00:00:00.000Z" },
       },
     ]);
   }),

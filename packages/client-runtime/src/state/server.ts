@@ -1249,6 +1249,13 @@ export function createServerEnvironmentAtoms<R, E>(
       idleTtlMs: 0,
       staleTimeMs: 2_000,
     }),
+    forkUpdateStatus: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:fork-update-status",
+      tag: WS_METHODS.serverForkUpdateStatus,
+      idleTtlMs: 0,
+      staleTimeMs: 5 * 60_000,
+      refreshIntervalMs: 6 * 60 * 60_000,
+    }),
     killListeningPort: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:kill-listening-port",
       tag: WS_METHODS.serverKillListeningPort,

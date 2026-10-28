@@ -79,6 +79,7 @@ import * as DeviceService from "./device/DeviceService.ts";
 import * as DeviceHubProxy from "./device/DeviceHubProxy.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import * as ListeningPorts from "./ports/ListeningPorts.ts";
+import * as ForkUpdates from "./forkUpdates/ForkUpdates.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as ServerBrowser from "./preview/ServerBrowser.ts";
 import * as PreviewAgentActivity from "./preview/PreviewAgentActivity.ts";
@@ -445,6 +446,8 @@ const layerListeningPorts = ListeningPorts.layer.pipe(
   Layer.provide(ProjectStore.layer),
 );
 
+const layerForkUpdates = ForkUpdates.layer.pipe(Layer.provide(ProcessRunner.layer));
+
 const layerTerminal = TerminalManager.layer.pipe(
   Layer.provide(layerPtyAdapter),
   Layer.provide(layerPortScanner),
@@ -521,6 +524,7 @@ const layerScheduledTaskWebhookOrigin = Layer.effect(
 );
 
 const layerOrchestrationV2Runtime = RuntimeLayer.layerProduction.pipe(
+  Layer.provide(InstanceSpend.layerBudgetGate),
   Layer.provide(layerScheduledTaskWebhookOrigin),
   Layer.provide(ProviderEventIngestor.layerAnalytics),
   Layer.provide(layerCheckpointStore),
@@ -641,7 +645,9 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   Layer.provideMerge(layerSourceControlProviderRegistry),
   Layer.provideMerge(layerGit),
   Layer.provideMerge(layerVcs),
-  Layer.provideMerge(Layer.mergeAll(layerTerminal, layerPreview, layerDevice, layerListeningPorts)),
+  Layer.provideMerge(
+    Layer.mergeAll(layerTerminal, layerPreview, layerDevice, layerListeningPorts, layerForkUpdates),
+  ),
   Layer.provideMerge(layerPersistence),
   Layer.provideMerge(
     Layer.mergeAll(Keybindings.layer, EnvironmentTheme.layer, UsageLimitSources.layer),

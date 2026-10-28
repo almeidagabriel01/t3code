@@ -1,0 +1,107 @@
+import type { ForkUpdateStatus, ForkUpdateStatusInput } from "@t3tools/contracts";
+import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as NodeOS from "node:os";
+
+import * as ProcessRunner from "../processRunner.ts";
+
+export class ForkUpdates extends Context.Service<
+  ForkUpdates,
+  {
+    /** Read-only git inspection (plus `git fetch upstream`). Never touches the worktree. Failures yield `available: false`. */
+    readonly status: (input: ForkUpdateStatusInput) => Effect.Effect<ForkUpdateStatus>;
+  }
+>()("t3/forkUpdates/ForkUpdates") {}
+
+const DEFAULT_FORK_PATH = "~/Documents/DEV/t3code";
+const FETCH_TIMEOUT = Duration.seconds(60);
+const GIT_TIMEOUT = Duration.seconds(15);
+
+export const resolveForkPath = (input: string, home: string): string => {
+  const raw = input.trim() === "" ? DEFAULT_FORK_PATH : input.trim();
+  return raw === "~" ? home : raw.replace(/^~\//, `${home}/`);
+};
+
+/** `git merge-tree --write-tree --name-only` prints the tree id, then the conflicted paths, then a blank line. */
+export const parseMergeTreeConflicts = (stdout: string): ReadonlyArray<string> => {
+  const [, ...rest] = stdout.split("\n");
+  const end = rest.indexOf("");
+  return (end === -1 ? rest : rest.slice(0, end)).filter((line) => line.length > 0);
+};
+
+const make = Effect.gen(function* ForkUpdatesMake() {
+  const processRunner = yield* ProcessRunner.ProcessRunner;
+
+  const git = (cwd: string, args: ReadonlyArray<string>, timeout = GIT_TIMEOUT) =>
+    processRunner
+      .run({ command: "git", args, cwd, timeout, maxOutputBytes: 1024 * 1024 })
+      .pipe(Effect.orElseSucceed(() => null));
+
+  const out = (cwd: string, args: ReadonlyArray<string>) =>
+    git(cwd, args).pipe(
+      Effect.map((result) => (result?.code === 0 ? result.stdout.trim() || null : null)),
+    );
+
+  const status = Effect.fn("ForkUpdates.status")(function* (input: ForkUpdateStatusInput) {
+    const path = resolveForkPath(input.path, NodeOS.homedir());
+    const unavailable: ForkUpdateStatus = {
+      available: false,
+      path,
+      headSha: null,
+      headSubject: null,
+      headTag: null,
+      upstreamSha: null,
+      upstreamTag: null,
+      behind: 0,
+      wouldConflict: null,
+      conflictFiles: [],
+    };
+    const upstreamUrl = yield* out(path, ["remote", "get-url", "upstream"]);
+    if (upstreamUrl === null) return unavailable;
+
+    // Offline fetches fail; the refs already on disk still answer.
+    yield* git(path, ["fetch", "upstream", "--tags", "--quiet"], FETCH_TIMEOUT);
+
+    const behindText = yield* out(path, ["rev-list", "--count", "main..upstream/main"]);
+    if (behindText === null) return unavailable;
+    const behind = Number.parseInt(behindText, 10) || 0;
+    const head = yield* out(path, ["log", "-1", "--format=%H%x09%s", "main"]);
+    const [headSha = null, headSubject = null] = head?.split("\t") ?? [];
+
+    let wouldConflict: boolean | null = null;
+    let conflictFiles: ReadonlyArray<string> = [];
+    if (behind > 0) {
+      const merge = yield* git(path, [
+        "merge-tree",
+        "--write-tree",
+        "--name-only",
+        "main",
+        "upstream/main",
+      ]);
+      if (merge?.code === 0) wouldConflict = false;
+      else if (merge?.code === 1) {
+        wouldConflict = true;
+        conflictFiles = parseMergeTreeConflicts(merge.stdout);
+      }
+    }
+
+    return {
+      available: true,
+      path,
+      headSha,
+      headSubject,
+      headTag: yield* out(path, ["describe", "--tags", "--abbrev=0", "main"]),
+      upstreamSha: yield* out(path, ["rev-parse", "upstream/main"]),
+      upstreamTag: yield* out(path, ["describe", "--tags", "--abbrev=0", "upstream/main"]),
+      behind,
+      wouldConflict,
+      conflictFiles,
+    } satisfies ForkUpdateStatus;
+  });
+
+  return ForkUpdates.of({ status });
+});
+
+export const layer = Layer.effect(ForkUpdates, make);

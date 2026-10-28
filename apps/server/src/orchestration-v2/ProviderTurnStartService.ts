@@ -54,6 +54,7 @@ import {
   makeProviderFailure,
 } from "@t3tools/provider-core/server/failure";
 import * as RunExecutionService from "./RunExecutionService.ts";
+import { ProviderBudgetGate } from "../usage/providerBudget.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
 import {
   isRestartNoteContinuation,
@@ -155,6 +156,7 @@ export const layer: Layer.Layer<
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
     const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
     const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
+    const budgetGate = yield* ProviderBudgetGate;
     const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
 
     const recreateMissingWorktree = Effect.fn("ProviderTurnStartService.recreateMissingWorktree")(
@@ -613,6 +615,29 @@ export const layer: Layer.Layer<
             }
           }
         }
+      }
+      // Refused before any session opens; a turn already running is never touched.
+      const budgetRefusal = Option.getOrUndefined(yield* budgetGate(run.providerInstanceId));
+      if (budgetRefusal !== undefined) {
+        const now = yield* DateTime.now;
+        yield* settleRunBeforeStart({
+          signal: "budget-exceeded",
+          status: "failed",
+          now,
+          providerInstanceId: run.providerInstanceId,
+          itemProviderThreadId: providerThread.id,
+          item: {
+            type: "error",
+            title: "Spending budget reached",
+            failure: makeProviderFailure({
+              class: "usage_limit",
+              message: budgetRefusal.message,
+              resetAt: budgetRefusal.resetsAt,
+              retryable: false,
+            }),
+          },
+        });
+        return;
       }
       const selectInheritedBackgroundItems = (
         current: ProjectionStore.ProjectionRuntimeRecoveryState,

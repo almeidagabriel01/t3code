@@ -3,6 +3,7 @@ import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 
 import { serverEnvironment } from "../../state/server";
+import type { InstanceBudgetStatus } from "@t3tools/contracts";
 import type { UsageItem } from "./usageItems.logic";
 
 const TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -24,6 +25,7 @@ export function useInstanceSpend(item: UsageItem) {
       todayUsd: 0,
       periodUsd: 0,
       partial: false,
+      budget: undefined as InstanceBudgetStatus | undefined,
     }
   );
 }

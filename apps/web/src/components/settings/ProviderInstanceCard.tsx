@@ -58,6 +58,7 @@ import {
   reconcileRowsDraft,
   seedRowsDraft,
 } from "./ProviderSettingsForm";
+import { ProviderBudgetSection } from "./ProviderBudgetSection";
 import { ProviderModelsSection } from "./ProviderModelsSection";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { ProviderAccentColorPicker } from "./ProviderAccentColorPicker";
@@ -1227,6 +1228,13 @@ export function ProviderInstanceCard({
           onChange={updateGenericEnvironment}
         />
       </SettingsSection>
+      {environmentId !== undefined && mode === "editor" ? (
+        <ProviderBudgetSection
+          environmentId={environmentId}
+          instanceId={instanceId}
+          readOnly={readOnly || !canWriteSettings}
+        />
+      ) : null}
       {environmentId !== undefined && liveProvider?.driver === "acpRegistry" ? (
         <AcpSessionManagementSection
           environmentId={environmentId}

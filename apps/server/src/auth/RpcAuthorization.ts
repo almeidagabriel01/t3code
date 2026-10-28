@@ -106,6 +106,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverGetHostResources]: AuthOrchestrationReadScope,
   // Lists every host process holding a port, not just this server's.
   [WS_METHODS.serverListListeningPorts]: AuthDiagnosticsReadScope,
+  // Runs git (including a fetch) in a folder on the host.
+  [WS_METHODS.serverForkUpdateStatus]: AuthDiagnosticsReadScope,
   [WS_METHODS.serverKillListeningPort]: AuthTerminalOperateScope,
   [WS_METHODS.serverGetProcessResourceHistory]: AuthDiagnosticsReadScope,
   [WS_METHODS.serverGetResourceTelemetryHistory]: AuthDiagnosticsReadScope,

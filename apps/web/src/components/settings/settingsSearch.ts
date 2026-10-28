@@ -33,6 +33,7 @@ export type SettingsPath =
   | "/settings/source-control"
   | "/settings/worktrees"
   | "/settings/status-bar"
+  | "/settings/fork-updates"
   | "/settings/connections"
   | "/settings/access"
   | "/settings/maintenance"
@@ -103,6 +104,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/source-control": "Source control",
   "/settings/worktrees": "Worktrees",
   "/settings/status-bar": "Status bar",
+  "/settings/fork-updates": "Fork updates",
   "/settings/connections": "Environments",
   "/settings/access": "Sharing & access",
   "/settings/maintenance": "Maintenance",
@@ -146,7 +148,13 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
   { heading: "Connections", paths: ["/settings/connections", "/settings/access"] },
   {
     heading: null,
-    paths: ["/settings/maintenance", "/settings/labs", "/settings/about", "/settings/archived"],
+    paths: [
+      "/settings/fork-updates",
+      "/settings/maintenance",
+      "/settings/labs",
+      "/settings/about",
+      "/settings/archived",
+    ],
   },
 ];
 
@@ -440,6 +448,20 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Project hover card",
     to: "/settings/general",
     searchTerms: ["sidebar hover preview ports terminals resources path"],
+  },
+  {
+    id: "fork-updates-folder",
+    title: "Fork checkout folder",
+    to: "/settings/fork-updates",
+    desktopOnly: true,
+    searchTerms: ["fork upstream merge update checkout path git"],
+  },
+  {
+    id: "fork-updates-status",
+    title: "Fork updates",
+    to: "/settings/fork-updates",
+    desktopOnly: true,
+    searchTerms: ["upstream behind release check update now resolve agent conflict merge"],
   },
   {
     id: "status-bar-visible",
@@ -931,6 +953,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "provider-budget",
+    title: "Spending budget",
+    to: "/settings/providers",
+    searchTerms: [
+      "provider budget spend cost limit cap dollars usd daily weekly monthly warn block exceeded api key instance",
+    ],
+    providerSettingsOnly: true,
+  },
+  {
     id: "usage-providers",
     title: "Usage providers",
     to: "/settings/providers",
@@ -1309,6 +1340,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/source-control": "environment-defaults",
   "/settings/worktrees": "project-defaults",
   "/settings/status-bar": null,
+  "/settings/fork-updates": null,
   "/settings/connections": "connections",
   "/settings/access": "connections",
   "/settings/scheduled-tasks": null,

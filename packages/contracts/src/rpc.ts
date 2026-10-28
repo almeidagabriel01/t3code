@@ -168,6 +168,7 @@ import {
   KillListeningPortResult,
   ListeningPortList,
 } from "./listeningPorts.ts";
+import { ForkUpdateStatus, ForkUpdateStatusInput } from "./forkUpdates.ts";
 import { OrchestrationSearchThreadsError } from "./threadSearch.ts";
 import {
   ProviderUploadFeedbackError,
@@ -560,6 +561,7 @@ export const WS_METHODS = {
   serverGetProcessDiagnostics: "server.getProcessDiagnostics",
   serverGetHostResources: "server.getHostResources",
   serverListListeningPorts: "server.listListeningPorts",
+  serverForkUpdateStatus: "server.forkUpdateStatus",
   serverKillListeningPort: "server.killListeningPort",
   serverGetProcessResourceHistory: "server.getProcessResourceHistory",
   serverGetResourceTelemetryHistory: "server.getResourceTelemetryHistory",
@@ -981,6 +983,12 @@ const WsServerGetProcessDiagnosticsRpc = Rpc.make(WS_METHODS.serverGetProcessDia
 const WsServerListListeningPortsRpc = Rpc.make(WS_METHODS.serverListListeningPorts, {
   payload: Schema.Struct({}),
   success: ListeningPortList,
+  error: EnvironmentAuthorizationError,
+});
+
+const WsServerForkUpdateStatusRpc = Rpc.make(WS_METHODS.serverForkUpdateStatus, {
+  payload: ForkUpdateStatusInput,
+  success: ForkUpdateStatus,
   error: EnvironmentAuthorizationError,
 });
 
@@ -2226,6 +2234,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetProcessDiagnosticsRpc,
   WsServerGetHostResourcesRpc,
   WsServerListListeningPortsRpc,
+  WsServerForkUpdateStatusRpc,
   WsServerKillListeningPortRpc,
   WsServerGetProcessResourceHistoryRpc,
   WsServerGetResourceTelemetryHistoryRpc,

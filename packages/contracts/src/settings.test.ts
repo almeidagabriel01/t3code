@@ -115,6 +115,33 @@ describe("ServerSettings usage price overrides", () => {
   });
 });
 
+describe("ServerSettings provider budgets", () => {
+  it("defaults warn threshold and blocking, and rejects non-positive amounts", () => {
+    const patch = decodeServerSettingsPatch({
+      providerBudgets: { a: { amountUsd: 10, period: "weekly", timeZone: "UTC" }, b: null },
+    });
+    expect(Object.values(patch.providerBudgets ?? {})[0]).toEqual({
+      amountUsd: 10,
+      period: "weekly",
+      warnAtPercent: 80,
+      blockWhenExceeded: false,
+      timeZone: "UTC",
+    });
+    for (const bad of [
+      { amountUsd: 0 },
+      { amountUsd: -1 },
+      { period: "yearly" },
+      { warnAtPercent: 0 },
+    ]) {
+      expect(() =>
+        decodeServerSettingsPatch({
+          providerBudgets: { a: { amountUsd: 10, period: "daily", timeZone: "UTC", ...bad } },
+        }),
+      ).toThrow();
+    }
+  });
+});
+
 describe("custom model settings", () => {
   const capabilities = {
     optionDescriptors: [

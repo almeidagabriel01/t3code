@@ -375,6 +375,10 @@
       "types": "./src/usageLimits.ts",
       "import": "./src/usageLimits.ts"
     },
+    "./providerBudget": {
+      "types": "./src/providerBudget.ts",
+      "import": "./src/providerBudget.ts"
+    },
     "./usagePace": {
       "types": "./src/usagePace.ts",
       "import": "./src/usagePace.ts"

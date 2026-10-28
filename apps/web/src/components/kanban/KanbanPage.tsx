@@ -1,11 +1,12 @@
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { selectKanbanBoardByProject, type KanbanState } from "@t3tools/client-runtime/state/kanban";
 import type { EnvironmentId, KanbanCard, ProjectId } from "@t3tools/contracts";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { useSidebarProjectGroups } from "../../hooks/useSidebarProjectGroups";
 import { isElectron } from "../../env";
-import { cn } from "../../lib/utils";
+import { ProjectFavicon } from "../ProjectFavicon";
+import { PlusIcon } from "lucide-react";
 import { WorkspaceBreadcrumb } from "../WorkspaceBreadcrumb";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { Button } from "../ui/button";
@@ -17,13 +18,17 @@ import {
   boardScopeKey,
   collectGlobalBoards,
   collectGlobalCards,
+  EMPTY_FILTERS,
+  filterGlobalCards,
   findCardInBoards,
+  type GlobalFilters,
 } from "@t3tools/client-runtime/state/kanbanLogic";
 import { KanbanArchive } from "./KanbanArchive";
 import { KanbanBoardView } from "./KanbanBoardView";
 import { KanbanCardDetail } from "./KanbanCardDetail";
 import { KanbanGlobalBoard } from "./KanbanGlobalBoard";
-import { OptionSelect } from "./kanbanDialogs";
+import { KanbanToolbar } from "./KanbanToolbar";
+import { OptionSelect, PromptDialog } from "./kanbanDialogs";
 import { useKanbanActions, useKanbanCanEdit, useKanbanStates } from "./useKanban";
 
 function Message(props: { readonly title: string; readonly description: string }) {
@@ -43,6 +48,7 @@ function ProjectBoard(props: {
   readonly state: KanbanState | null;
   readonly focusNewCard: boolean;
   readonly view: "board" | "archive";
+  readonly actions: ReactNode;
   readonly onOpenCard: (card: KanbanCard) => void;
 }) {
   const { environmentId, state } = props;
@@ -50,6 +56,8 @@ function ProjectBoard(props: {
   const actions = useKanbanActions(environmentId);
   const board = state === null ? undefined : selectKanbanBoardByProject(state, props.projectId);
   const ensuring = useRef(false);
+  const [filters, setFilters] = useState<GlobalFilters>(EMPTY_FILTERS);
+  const [addingColumn, setAddingColumn] = useState(false);
   const missing = state !== null && board === undefined;
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the server creates a project's board the first time it is opened
@@ -61,37 +69,66 @@ function ProjectBoard(props: {
     });
   }, [missing, canEdit, actions, props.projectId]);
 
-  if (board === undefined) {
-    return state === null ? (
-      <div className="flex flex-1 items-center justify-center">
-        <Spinner />
+  const boards = board === undefined ? [] : [{ environmentId, board }];
+  const showBoard = board !== undefined && props.view === "board";
+  const visibleCardIds =
+    filters === EMPTY_FILTERS
+      ? undefined
+      : new Set(
+          filterGlobalCards(collectGlobalCards(boards), boards, filters).map((c) => c.card.id),
+        );
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <KanbanToolbar filters={showBoard ? filters : null} boards={boards} onFilters={setFilters}>
+        {showBoard && canEdit ? (
+          <Button size="xs" variant="outline" onClick={() => setAddingColumn(true)}>
+            <PlusIcon />
+            Add column
+          </Button>
+        ) : null}
+        {props.actions}
+      </KanbanToolbar>
+      <div className="flex min-h-0 flex-1 flex-col">
+        {board === undefined ? (
+          state !== null && !canEdit ? (
+            <Message
+              title="No board yet"
+              description="This project has no board, and you cannot create one here."
+            />
+          ) : (
+            <div className="flex flex-1 items-center justify-center">
+              <Spinner />
+            </div>
+          )
+        ) : props.view === "archive" ? (
+          <KanbanArchive
+            environmentId={environmentId}
+            board={board}
+            canEdit={canEdit}
+            onOpenCard={props.onOpenCard}
+          />
+        ) : (
+          <KanbanBoardView
+            environmentId={environmentId}
+            board={board}
+            canEdit={canEdit}
+            focusNewCard={props.focusNewCard}
+            visibleCardIds={visibleCardIds}
+            onOpenCard={props.onOpenCard}
+          />
+        )}
       </div>
-    ) : canEdit ? (
-      <div className="flex flex-1 items-center justify-center">
-        <Spinner />
-      </div>
-    ) : (
-      <Message
-        title="No board yet"
-        description="This project has no board, and you cannot create one here."
-      />
-    );
-  }
-  return props.view === "archive" ? (
-    <KanbanArchive
-      environmentId={environmentId}
-      board={board}
-      canEdit={canEdit}
-      onOpenCard={props.onOpenCard}
-    />
-  ) : (
-    <KanbanBoardView
-      environmentId={environmentId}
-      board={board}
-      canEdit={canEdit}
-      focusNewCard={props.focusNewCard}
-      onOpenCard={props.onOpenCard}
-    />
+      {addingColumn && board ? (
+        <PromptDialog
+          title="Add column"
+          label="Name"
+          submitLabel="Add"
+          onClose={() => setAddingColumn(false)}
+          onSubmit={(name) => void actions.createColumn({ boardId: board.id, name })}
+        />
+      ) : null}
+    </div>
   );
 }
 
@@ -145,53 +182,26 @@ export function KanbanPage() {
     void navigate({ search: ({ card: _closed, ...rest }) => rest, replace: true });
   };
 
-  const title = group ? `${group.displayName} board` : "Board";
-  const subtitle = search.projectKey
-    ? null
-    : `All projects · ${boards.length} ${boards.length === 1 ? "board" : "boards"} · ${collectGlobalCards(boards).length} cards`;
+  const cardCount = collectGlobalCards(boards).length;
+  const cards = (count: number) => `${count} ${count === 1 ? "card" : "cards"}`;
+  const projectCards = memberBoard?.cards.size ?? 0;
 
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none">
       <WorkspacePageHeader electron={isElectron} className="relative bg-background">
         <WorkspaceBreadcrumb ariaLabel="Board">
-          <h1 className="truncate">{title}</h1>
-          {subtitle ? (
-            <span className="truncate text-xs font-normal text-muted-foreground">{subtitle}</span>
-          ) : null}
+          <h1 className="truncate">Board</h1>
+          <span className="flex min-w-0 items-center gap-1.5 text-xs font-normal text-muted-foreground">
+            {group && member ? <ProjectFavicon project={member} className="size-4" /> : null}
+            <span className="truncate">
+              {group
+                ? `${group.displayName} · ${cards(projectCards)}`
+                : `All projects · ${boards.length} ${boards.length === 1 ? "board" : "boards"} · ${cards(cardCount)}`}
+            </span>
+          </span>
         </WorkspaceBreadcrumb>
-        <div className="ms-auto flex items-center gap-1">
-          {members.length > 1 ? (
-            <OptionSelect
-              label="Environment"
-              value={member?.physicalProjectKey ?? ""}
-              options={members.map((entry) => ({
-                value: entry.physicalProjectKey,
-                label: entry.environmentLabel ?? entry.workspaceRoot,
-              }))}
-              onChange={setMemberKey}
-            />
-          ) : null}
-          {search.projectKey ? (
-            <>
-              <ToggleGroup
-                aria-label="Board view"
-                value={[view]}
-                onValueChange={(next) => {
-                  const value = next[0];
-                  if (value === "board" || value === "archive") setView(value);
-                }}
-              >
-                <Toggle value="board">Board</Toggle>
-                <Toggle value="archive">Archive</Toggle>
-              </ToggleGroup>
-              <Button size="xs" variant="ghost-muted" onClick={() => void navigate({ search: {} })}>
-                All boards
-              </Button>
-            </>
-          ) : null}
-        </div>
       </WorkspacePageHeader>
-      <div className={cn("flex min-h-0 flex-1 flex-col overflow-hidden")}>
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         {states.length === 0 ? (
           <Message
             title="Boards are not available"
@@ -211,6 +221,39 @@ export function KanbanPage() {
               state={memberState ?? null}
               focusNewCard={search.new === true}
               view={view}
+              actions={
+                <>
+                  {members.length > 1 ? (
+                    <OptionSelect
+                      label="Environment"
+                      value={member.physicalProjectKey}
+                      options={members.map((entry) => ({
+                        value: entry.physicalProjectKey,
+                        label: entry.environmentLabel ?? entry.workspaceRoot,
+                      }))}
+                      onChange={setMemberKey}
+                    />
+                  ) : null}
+                  <ToggleGroup
+                    aria-label="Board view"
+                    value={[view]}
+                    onValueChange={(next) => {
+                      const value = next[0];
+                      if (value === "board" || value === "archive") setView(value);
+                    }}
+                  >
+                    <Toggle value="board">Board</Toggle>
+                    <Toggle value="archive">Archive</Toggle>
+                  </ToggleGroup>
+                  <Button
+                    size="xs"
+                    variant="ghost-muted"
+                    onClick={() => void navigate({ search: {} })}
+                  >
+                    All boards
+                  </Button>
+                </>
+              }
               onOpenCard={openCard}
             />
           )

@@ -552,6 +552,25 @@ describe("serverSettings helpers", () => {
     expect(Object.keys(removed.usageLimitSources)).toEqual([hubB]);
   });
 
+  it("replaces and removes one provider budget without touching others", () => {
+    const budget = {
+      amountUsd: 200,
+      period: "monthly",
+      warnAtPercent: 80,
+      blockWhenExceeded: true,
+      timeZone: "UTC",
+    } as const;
+    const added = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      providerBudgets: { a: budget, b: budget },
+    } as never);
+    const replaced = applyServerSettingsPatch(added, {
+      providerBudgets: { a: { ...budget, amountUsd: 5 } },
+    } as never);
+    expect(replaced.providerBudgets).toEqual({ a: { ...budget, amountUsd: 5 }, b: budget });
+    const removed = applyServerSettingsPatch(replaced, { providerBudgets: { a: null } } as never);
+    expect(removed.providerBudgets).toEqual({ b: budget });
+  });
+
   it("replaces and removes individual usage prices without clobbering other models", () => {
     const prices = { inputCostPerMillionTokens: 2, outputCostPerMillionTokens: 8 };
     const current = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {

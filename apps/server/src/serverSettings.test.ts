@@ -1829,3 +1829,33 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(layerServerSettings())),
   );
 });
+
+it("drops a removed instance's budget but keeps it when a default instance is reset", () => {
+  const budget = {
+    amountUsd: 5,
+    period: "daily",
+    warnAtPercent: 80,
+    blockWhenExceeded: false,
+    timeZone: "UTC",
+  } as const;
+  const custom = ProviderInstanceId.make("claude-api");
+  const builtin = ProviderInstanceId.make("claudeAgent");
+  const base: ServerSettings = {
+    ...DEFAULT_SERVER_SETTINGS,
+    providerInstances: {
+      [custom]: { driver: ProviderDriverKind.make("claudeAgent") },
+      [builtin]: { driver: ProviderDriverKind.make("claudeAgent") },
+    },
+    providerBudgets: { [custom]: budget, [builtin]: budget },
+  };
+  const afterCustom = ServerSettingsModule.applyProviderInstanceMutation(base, {
+    operation: "remove",
+    instanceId: custom,
+  });
+  assert.deepStrictEqual(Object.keys(afterCustom.providerBudgets), [builtin]);
+  const afterReset = ServerSettingsModule.applyProviderInstanceMutation(base, {
+    operation: "remove",
+    instanceId: builtin,
+  });
+  assert.deepStrictEqual(Object.keys(afterReset.providerBudgets).sort(), [builtin, custom].sort());
+});

@@ -1,6 +1,7 @@
 import { refreshUsageLimits } from "@t3tools/client-runtime/state/usage";
 import type {
   EnvironmentId,
+  InstanceBudgetStatus,
   StatusBarUsageMode,
   StatusBarUsagePercentage,
   ServerProviderUsageLimits,
@@ -14,6 +15,7 @@ import { Fragment, useEffect, useState } from "react";
 import { cn } from "../../lib/utils";
 import { observeVisibleAnimation } from "../../lib/visibleAnimation";
 import { usePrimarySettings, useClientSettings } from "../../hooks/useSettings";
+import { budgetPercent, budgetPeriodLabel } from "@t3tools/shared/providerBudget";
 import {
   BAND_FILL,
   BAND_TEXT,
@@ -30,7 +32,9 @@ import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { RefreshIcon } from "../ui/refresh-icon";
+import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
+import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { formatCompactCountdown, selectBarWindows } from "./statusBar.logic";
@@ -296,13 +300,94 @@ function ItemIconWithActivity({ item }: { readonly item: UsageItem }) {
   );
 }
 
+const BUDGET_TEXT = { ok: "", warn: "text-warning", exceeded: "text-destructive" } as const;
+const BUDGET_FILL = { ok: "bg-primary", warn: "bg-warning", exceeded: "bg-destructive" } as const;
+
 function ApiKeyChipValue({ item }: { readonly item: UsageItem }) {
   const spend = useInstanceSpend(item);
   return (
-    <span className="tabular-nums">
+    <span className={cn("tabular-nums", BUDGET_TEXT[spend.budget?.state ?? "ok"])}>
       {formatUsd(spend.todayUsd)}
       {spend.partial ? "+" : ""} today
     </span>
+  );
+}
+
+/** One toast per instance, period and state, remembered across reloads. */
+function useBudgetToast(item: UsageItem, budget: InstanceBudgetStatus | undefined) {
+  const state = budget?.state ?? "ok";
+  const resetsAt = budget?.resetsAt;
+  const name = item.entry.displayName;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- one-shot toast and localStorage dedupe are external effects
+  useEffect(() => {
+    if (state === "ok" || resetsAt === undefined) return;
+    const key = `t3:budget-toast:${item.environmentId}:${item.entry.instanceId}:${resetsAt}:`;
+    try {
+      if (localStorage.getItem(key + state) !== null) return;
+      localStorage.setItem(key + state, "1");
+      // Jumping straight to exceeded makes the earlier warning redundant.
+      if (state === "exceeded") localStorage.setItem(key + "warn", "1");
+    } catch {
+      return;
+    }
+    toastManager.add({
+      type: state === "exceeded" ? "error" : "warning",
+      title: state === "exceeded" ? `${name} is over budget` : `${name} is near its budget`,
+    });
+  }, [state, resetsAt, name, item.environmentId, item.entry.instanceId]);
+}
+
+function ApiKeyBudgetToast({ item }: { readonly item: UsageItem }) {
+  useBudgetToast(item, useInstanceSpend(item).budget);
+  return null;
+}
+
+function BudgetRow({
+  item,
+  budget,
+}: {
+  readonly item: UsageItem;
+  readonly budget: InstanceBudgetStatus;
+}) {
+  const now = useMinuteNow();
+  return (
+    <div className="flex flex-col gap-0.5">
+      <span className="flex items-center gap-1.5">
+        <PaceBar
+          thin
+          usedPercent={budgetPercent(budget)}
+          fillClass={BUDGET_FILL[budget.state]}
+          tickPercent={null}
+          className="min-w-0 flex-1"
+        />
+        <span className={cn("shrink-0 tabular-nums", BUDGET_TEXT[budget.state])}>
+          {budgetPercent(budget)}%
+        </span>
+        <Button
+          variant="ghost-muted"
+          size="icon-micro"
+          aria-label="Spending budget settings"
+          render={
+            <Link
+              to="/settings/providers"
+              search={{ environmentId: item.environmentId, instanceId: item.entry.instanceId }}
+              hash="provider-budget"
+            />
+          }
+        >
+          <SettingsIcon aria-hidden />
+        </Button>
+      </span>
+      <span className="tabular-nums">
+        {formatUsd(budget.spentUsd)} of {formatUsd(budget.amountUsd)}{" "}
+        {budgetPeriodLabel(budget, now)}
+        {budget.blocking ? (
+          <Badge variant="error" size="sm" className="ml-1.5">
+            Blocking new turns
+          </Badge>
+        ) : null}
+      </span>
+    </div>
   );
 }
 
@@ -314,6 +399,7 @@ function ApiKeyRosterDetail({ item }: { readonly item: UsageItem }) {
         Today {formatUsd(spend.todayUsd)} · Last 30 days {formatUsd(spend.periodUsd)}
         {spend.partial ? " · partial, some usage could not be priced" : ""}
       </span>
+      {spend.budget === undefined ? null : <BudgetRow item={item} budget={spend.budget} />}
       <span>API key, billed per use</span>
     </div>
   );
@@ -337,7 +423,10 @@ function UsageChip({
         <span className="max-w-20 truncate text-muted-foreground">{item.environmentLabel}</span>
       )}
       {isApiKeyItem(item.entry.snapshot) ? (
-        <ApiKeyChipValue item={item} />
+        <>
+          <ApiKeyBudgetToast item={item} />
+          <ApiKeyChipValue item={item} />
+        </>
       ) : status.kind === "none" ? (
         <span className="text-muted-foreground/50">--</span>
       ) : (

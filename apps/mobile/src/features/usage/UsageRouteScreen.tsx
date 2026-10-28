@@ -47,6 +47,7 @@ import { UsageDailyChart } from "./UsageDailyChart";
 import { toggleUsageEnvironment } from "./usageEnvironmentSelection";
 import { useRefreshLimits } from "./UsageLimitsSection";
 import { UsageLimitsSection } from "./UsageLimitsPooled";
+import { UsageBudgets } from "./UsageBudgets";
 import { Menu } from "../../components/ui/Menu";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
@@ -343,21 +344,24 @@ function UsageScreen(props: {
             className="gap-6"
           >
             {showingLimits ? (
-              <UsageLimitsSection
-                now={limits.now}
-                failedLabels={limits.failedLabels}
-                onRetry={() => void limits.refresh()}
-                selectedEnvironmentIds={selectedEnvironmentIds}
-                wide={wide}
-                cursorPrompt={
-                  cursorAccessEnvironments.length > 0 ? (
-                    <CursorEnableLimits
-                      environments={cursorAccessEnvironments}
-                      onEnabled={refreshAfterCursorEnable}
-                    />
-                  ) : null
-                }
-              />
+              <>
+                <UsageBudgets selectedEnvironmentIds={selectedEnvironmentIds} />
+                <UsageLimitsSection
+                  now={limits.now}
+                  failedLabels={limits.failedLabels}
+                  onRetry={() => void limits.refresh()}
+                  selectedEnvironmentIds={selectedEnvironmentIds}
+                  wide={wide}
+                  cursorPrompt={
+                    cursorAccessEnvironments.length > 0 ? (
+                      <CursorEnableLimits
+                        environments={cursorAccessEnvironments}
+                        onEnabled={refreshAfterCursorEnable}
+                      />
+                    ) : null
+                  }
+                />
+              </>
             ) : (
               <>
                 {wide ? null : (

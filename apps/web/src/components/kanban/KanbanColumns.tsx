@@ -86,11 +86,13 @@ const SortableCard = memo(function SortableCard(props: {
   );
 });
 
+type TileProps = Omit<Parameters<typeof KanbanCardTile>[0], "card">;
+
 function ColumnBody(props: {
   readonly column: KanbanColumn;
   readonly cards: ReadonlyArray<KanbanCard>;
   readonly disabled: boolean;
-  readonly tileProps: Omit<Parameters<typeof KanbanCardTile>[0], "card">;
+  readonly tileOf: (card: KanbanCard) => TileProps;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: props.column.id });
   return (
@@ -110,10 +112,15 @@ function ColumnBody(props: {
             key={card.id}
             card={card}
             disabled={props.disabled}
-            tileProps={props.tileProps}
+            tileProps={props.tileOf(card)}
           />
         ))}
       </SortableContext>
+      {props.cards.length === 0 ? (
+        <p className="rounded-lg border border-dashed px-3 py-6 text-center text-xs text-muted-foreground">
+          No cards
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -194,7 +201,7 @@ function SortableColumn(props: {
   readonly entry: ColumnWithCards;
   readonly canEdit: boolean;
   readonly header: ReactNode;
-  readonly tileProps: Omit<Parameters<typeof KanbanCardTile>[0], "card">;
+  readonly tileOf: (card: KanbanCard) => TileProps;
   readonly templates: ReadonlyArray<KanbanTemplate>;
   readonly onAddCard: KanbanColumnsProps["onAddCard"];
 }) {
@@ -237,12 +244,7 @@ function SortableColumn(props: {
         ) : null}
         {props.header}
       </header>
-      <ColumnBody
-        column={column}
-        cards={cards}
-        disabled={!props.canEdit}
-        tileProps={props.tileProps}
-      />
+      <ColumnBody column={column} cards={cards} disabled={!props.canEdit} tileOf={props.tileOf} />
       {props.canEdit ? (
         <QuickAdd
           templates={props.templates}
@@ -260,7 +262,8 @@ export interface KanbanColumnsProps {
   readonly templates: ReadonlyArray<KanbanTemplate>;
   readonly canEdit: boolean;
   readonly renderHeader: (column: KanbanColumn, count: number) => ReactNode;
-  readonly trailing?: ReactNode;
+  /** Overrides per card, for boards that mix cards from several boards. */
+  readonly tileFor?: ((card: KanbanCard) => Partial<TileProps>) | undefined;
   readonly onOpenCard: (card: KanbanCard) => void;
   readonly onMoveCard: (move: CardMove, from: KanbanColumn, to: KanbanColumn) => Promise<unknown>;
   readonly onMoveColumn: (
@@ -323,6 +326,8 @@ export function KanbanColumns(props: KanbanColumnsProps) {
     onLinkThread: props.canEdit ? props.onLinkThread : undefined,
   };
 
+  const tileOf = (card: KanbanCard): TileProps => ({ ...tileProps, ...props.tileFor?.(card) });
+
   const columnCards: ReadonlyArray<ColumnCards> = displayed.map((entry) => ({
     columnId: entry.column.id,
     cardIds: entry.cards.map((card) => card.id),
@@ -384,16 +389,15 @@ export function KanbanColumns(props: KanbanColumnsProps) {
               entry={entry}
               canEdit={props.canEdit}
               header={props.renderHeader(entry.column, entry.cards.length)}
-              tileProps={tileProps}
+              tileOf={tileOf}
               templates={props.templates}
               onAddCard={props.onAddCard}
             />
           ))}
-          {props.trailing}
         </div>
       </SortableContext>
       <DragOverlay>
-        {activeCard ? <KanbanCardTile card={activeCard} {...tileProps} /> : null}
+        {activeCard ? <KanbanCardTile card={activeCard} {...tileOf(activeCard)} /> : null}
       </DragOverlay>
     </DndContext>
   );

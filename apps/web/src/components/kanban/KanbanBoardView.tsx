@@ -6,15 +6,12 @@ import type {
   KanbanColumn,
   KanbanColumnId,
 } from "@t3tools/contracts";
-import { PlusIcon } from "lucide-react";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 
-import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
 import { definitionOfDoneWarning, type CardMove } from "@t3tools/client-runtime/state/kanbanLogic";
 import { KanbanColumnHeader } from "./KanbanColumnHeader";
 import { KanbanColumns } from "./KanbanColumns";
-import { PromptDialog } from "./kanbanDialogs";
 import { KanbanLinkThreadDialog } from "./KanbanLinkDialogs";
 import { KanbanStartAgentDialog } from "./KanbanStartAgent";
 import { useKanbanActions } from "./useKanban";
@@ -38,7 +35,6 @@ export function KanbanBoardView(props: {
   const { board, environmentId } = props;
   const actions = useKanbanActions(environmentId);
   const root = useRef<HTMLDivElement>(null);
-  const [addingColumn, setAddingColumn] = useState(false);
   const [startFor, setStartFor] = useState<KanbanCard | null>(null);
   const [linkFor, setLinkFor] = useState<KanbanCard | null>(null);
   const { visibleCardIds } = props;
@@ -109,19 +105,6 @@ export function KanbanBoardView(props: {
             ...(type === null ? {} : { type }),
           })
         }
-        trailing={
-          props.canEdit ? (
-            <Button
-              variant="ghost-muted"
-              size="sm"
-              className="shrink-0 justify-start"
-              onClick={() => setAddingColumn(true)}
-            >
-              <PlusIcon />
-              Add column
-            </Button>
-          ) : null
-        }
       />
       {startFor ? (
         <KanbanStartAgentDialog
@@ -137,15 +120,6 @@ export function KanbanBoardView(props: {
           board={board}
           card={linkFor}
           onClose={() => setLinkFor(null)}
-        />
-      ) : null}
-      {addingColumn ? (
-        <PromptDialog
-          title="Add column"
-          label="Name"
-          submitLabel="Add"
-          onClose={() => setAddingColumn(false)}
-          onSubmit={(name) => void actions.createColumn({ boardId: board.id, name })}
         />
       ) : null}
     </div>

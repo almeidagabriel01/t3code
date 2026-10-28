@@ -140,12 +140,17 @@ export function applyProviderInstanceMutation(
   mutation: ProviderInstanceMutation,
 ): ServerSettings {
   const providerInstances = { ...settings.providerInstances };
+  const providerBudgets = { ...settings.providerBudgets };
   if (mutation.operation === "upsert" || mutation.operation === "create") {
     providerInstances[mutation.instanceId] = mutation.instance;
   } else {
+    // Removing a default instance only resets it, so its budget stays.
+    if (String(providerInstances[mutation.instanceId]?.driver) !== mutation.instanceId) {
+      delete providerBudgets[mutation.instanceId];
+    }
     delete providerInstances[mutation.instanceId];
   }
-  return { ...settings, providerInstances };
+  return { ...settings, providerInstances, providerBudgets };
 }
 
 function ensureProviderInstanceMutationAllowed(
