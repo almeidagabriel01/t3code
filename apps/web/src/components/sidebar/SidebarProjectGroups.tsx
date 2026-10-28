@@ -23,6 +23,7 @@ import { countLivePortsByProject, resolveSubagentDisplay } from "./sidebarDispla
 import { useListeningPorts } from "../statusBar/useListeningPorts";
 import { SidebarMenuSub, SidebarMenuSubButton } from "../ui/sidebar";
 import { SidebarNotificationDot } from "./SidebarNotificationDot";
+import { SidebarProjectNewThreadButton } from "./SidebarProjectNewThreadButton";
 import { SidebarProjectHoverCard } from "./SidebarProjectHoverCard";
 import type { useSidebarProjectLayout } from "./useSidebarProjectLayout";
 import {
@@ -364,6 +365,7 @@ function SidebarProjectGroup(props: ProjectGroupProps) {
           {expanded ? null : <ProjectNotificationDot threads={group.openThreads} />}
         </button>
         <SidebarProjectHoverCard project={project} portCount={props.portCounts.get(scope) ?? 0} />
+        <SidebarProjectNewThreadButton project={project} />
       </div>
       <SortableContext
         items={items.map(sidebarListItemId)}
