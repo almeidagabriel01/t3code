@@ -1,5 +1,6 @@
 import {
   isOrchestrationV2WorkActive,
+  isSideChatThread,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadShell,
   type ThreadId,
@@ -85,7 +86,8 @@ export function deriveThreadRelationshipGraph(input: {
       thread.forkedFrom?.type === "run"
         ? thread.forkedFrom.threadId
         : thread.lineage.parentThreadId;
-    if (parentThreadId === null) continue;
+    // A side chat opens beside its parent, not in the parent's lineage.
+    if (parentThreadId === null || isSideChatThread(thread)) continue;
     addEdge({
       sourceThreadId: parentThreadId,
       targetThreadId: thread.id,

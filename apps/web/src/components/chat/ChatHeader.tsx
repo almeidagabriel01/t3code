@@ -9,7 +9,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { ChevronDownIcon } from "lucide-react";
+import { ChevronDownIcon, MessagesSquareIcon } from "lucide-react";
 import {
   memo,
   useEffect,
@@ -20,6 +20,7 @@ import {
 } from "react";
 import { isTrailingDoubleClick } from "../Sidebar.logic";
 import { Badge } from "../ui/badge";
+import { Toggle } from "../ui/toggle";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 import { useThreadActionMenu } from "~/hooks/useThreadActionMenu";
@@ -55,6 +56,10 @@ interface ChatHeaderProps {
   rightPanelOpen: boolean;
   onNewThreadInProject: () => void;
   onOpenProjectSettings?: (() => void) | undefined;
+  /** Present when this thread can open a side chat. */
+  onToggleSideChat?: (() => void) | undefined;
+  sideChatOpen?: boolean | undefined;
+  sideChatShortcutLabel?: string | null | undefined;
 }
 
 function resolveRenameCommit(input: {
@@ -81,6 +86,9 @@ export const ChatHeader = memo(function ChatHeader({
   rightPanelOpen,
   onNewThreadInProject,
   onOpenProjectSettings,
+  onToggleSideChat,
+  sideChatOpen = false,
+  sideChatShortcutLabel = null,
 }: ChatHeaderProps) {
   const activeProjectName = activeProject?.isScratch ? "No project" : activeProject?.title;
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
@@ -424,6 +432,25 @@ export const ChatHeader = memo(function ChatHeader({
           ) : null}
         </WorkspaceBreadcrumbItem>
       </WorkspaceBreadcrumb>
+      {onToggleSideChat ? (
+        <Tooltip>
+          <TooltipTrigger render={<span className="flex shrink-0" />}>
+            <Toggle
+              className="shrink-0 [-webkit-app-region:no-drag]"
+              pressed={sideChatOpen}
+              onPressedChange={onToggleSideChat}
+              aria-label="Toggle side chat"
+              variant="ghost"
+              size="sm"
+            >
+              <MessagesSquareIcon className="size-4" />
+            </Toggle>
+          </TooltipTrigger>
+          <TooltipPopup side="bottom">
+            Side chat{sideChatShortcutLabel ? ` (${sideChatShortcutLabel})` : ""}
+          </TooltipPopup>
+        </Tooltip>
+      ) : null}
       {isServerThread ? (
         <KanbanThreadCardBadge
           environmentId={activeThreadEnvironmentId}

@@ -139,6 +139,9 @@ import type { useQueuedRunEdit } from "./useQueuedRunEdit";
 import type { useTimelineFollow } from "./useTimelineFollow";
 import type { useUsageLimitsPanel } from "./useUsageLimitsPanel";
 import type { useWorktreeSetup } from "./useWorktreeSetup";
+import { useRightPanelStore } from "../../rightPanelStore";
+import { parseSideChatCommand } from "../sideChat/sideChat.logic";
+import { useSideChatStore } from "../sideChat/sideChatStore";
 
 const ENVIRONMENT_UNAVAILABLE_SEND_TOAST_TRAIL_SIZE = 3;
 
@@ -173,6 +176,8 @@ interface ComposerSendInput {
   readonly activeProposedPlan: LatestProposedPlanState | null;
   readonly activeMessageCount: number;
   readonly isServerThread: boolean;
+  /** `/side` asks in the thread's side chat instead. */
+  readonly sideChatAvailable: boolean;
   readonly isLocalDraftThread: boolean;
   readonly isGitRepo: boolean;
   readonly phase: SessionPhase;
@@ -268,6 +273,7 @@ export function useComposerSend(input: ComposerSendInput) {
     activeProposedPlan,
     activeMessageCount,
     isServerThread,
+    sideChatAvailable,
     isLocalDraftThread,
     isGitRepo,
     phase,
@@ -730,6 +736,32 @@ export function useComposerSend(input: ComposerSendInput) {
       ) {
         handleNewThreadInActiveProject();
       }
+      return;
+    }
+    // `/side` asks in the side chat instead of this thread, so it never reaches the provider.
+    const sideChatCommand =
+      sideChatAvailable &&
+      activeThread !== undefined &&
+      activeThreadKey !== null &&
+      composerImages.length === 0 &&
+      composerFiles.length === 0 &&
+      sendableComposerTerminalContexts.length === 0 &&
+      composerPreviewAnnotations.length === 0 &&
+      composerReviewComments.length === 0 &&
+      composerThreadContexts.length === 0 &&
+      composerEnvironmentContexts.length === 0
+        ? parseSideChatCommand(trimmed)
+        : null;
+    if (sideChatCommand && activeThread !== undefined && activeThreadKey !== null) {
+      if (sideChatCommand.prompt !== "") {
+        useSideChatStore.getState().setPendingPrompt(activeThreadKey, sideChatCommand.prompt);
+      }
+      useRightPanelStore
+        .getState()
+        .open(scopeThreadRef(activeThread.environmentId, activeThread.id), "side-chat");
+      promptRef.current = "";
+      clearComposerDraftContent(composerDraftTarget);
+      composerRef.current?.resetCursorState();
       return;
     }
     const standaloneSlashCommand =
