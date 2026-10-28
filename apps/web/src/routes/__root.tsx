@@ -1,3 +1,5 @@
+import { DesktopWindowMaterialSync } from "../desktop/DesktopWindowMaterialSync";
+import { LiquidGlassBackdrop } from "../appearance/LiquidGlassBackdrop";
 import { type ServerLifecycleWelcomePayload } from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import {
@@ -166,6 +168,8 @@ function RootRouteBranch() {
   if (pathname === "/welcome") {
     return (
       <>
+        <DesktopWindowMaterialSync />
+        <LiquidGlassBackdrop />
         <CustomSnoozeDialogHost />
         <GuestShareDialogHost />
         <CommandPalette>
@@ -191,6 +195,8 @@ function RootRouteBranch() {
 
   return (
     <>
+      <DesktopWindowMaterialSync />
+      <LiquidGlassBackdrop />
       <ChatGptWelcomeCoordinator />
       <FirstRunGate
         enabled={primaryEnvironmentAuthenticated}

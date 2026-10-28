@@ -18,6 +18,10 @@
     "./relay": {
       "types": "./src/relay.ts",
       "import": "./src/relay.ts"
+    },
+    "./desktopWindowMaterial": {
+      "types": "./src/desktopWindowMaterial.ts",
+      "import": "./src/desktopWindowMaterial.ts"
     }
   },
   "scripts": {
