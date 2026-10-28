@@ -143,17 +143,25 @@ function SidebarUtilityItem({
   icon,
   label,
   onClick,
+  active = false,
 }: {
   icon: ReactNode;
   label: string;
   onClick: () => void;
+  active?: boolean;
 }) {
   return (
     <SidebarMenuItem className="shrink-0">
       <Tooltip>
         <TooltipTrigger
           render={
-            <SidebarMenuButton aria-label={label} onClick={onClick} size="icon">
+            <SidebarMenuButton
+              aria-label={label}
+              aria-current={active ? "page" : undefined}
+              isActive={active}
+              onClick={onClick}
+              size="icon"
+            >
               {icon}
             </SidebarMenuButton>
           }
@@ -168,9 +176,11 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   const navigate = useNavigate();
   const navigateToMainApp = useNavigateToMainApp();
   const { isMobile, setOpenMobile } = useSidebar();
-  const isOnUtilityPage = useLocation({
-    select: (location) => isSidebarUtilityPage(location.pathname),
-  });
+  const pathname = useLocation({ select: (location) => location.pathname });
+  const onPullRequests = pathname === "/pull-requests";
+  const onBoard = pathname === "/kanban";
+  // Pages with their own footer icon toggle back from it; other utility pages keep Back.
+  const showBack = isSidebarUtilityPage(pathname) && !onPullRequests && !onBoard;
   const pullRequestsSupported = usePullRequestsSupported();
   const kanbanSupported = useKanbanEnvironmentIds().length > 0;
   const showUsageButton = useClientSettings((settings) => settings.sidebarShowUsageButton);
@@ -181,6 +191,7 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   };
   const handlePullRequestsClick = () => {
     closeMobileSidebar();
+    if (onPullRequests) return void navigateToMainApp();
     void navigate({
       to: "/pull-requests",
       search: readPullRequestListPreferences(),
@@ -197,6 +208,7 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   };
   const handleBoardClick = () => {
     closeMobileSidebar();
+    if (onBoard) return void navigateToMainApp();
     void navigate({ to: "/kanban" });
   };
 
@@ -207,7 +219,7 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
 
   return (
     <SidebarMenu className="flex-row items-center">
-      {isOnUtilityPage ? (
+      {showBack ? (
         <SidebarMenuItem className="min-w-0 flex-1">
           <SidebarMenuButton onClick={handleBackClick}>
             <ArrowLeftIcon />
@@ -224,14 +236,16 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
           {pullRequestsSupported ? (
             <SidebarUtilityItem
               icon={<PullRequestGlyph.pullRequest />}
-              label="Pull requests"
+              label={onPullRequests ? "Close pull requests" : "Pull requests"}
+              active={onPullRequests}
               onClick={handlePullRequestsClick}
             />
           ) : null}
           {kanbanSupported ? (
             <SidebarUtilityItem
               icon={<SquareKanbanIcon />}
-              label="Board"
+              label={onBoard ? "Close board" : "Board"}
+              active={onBoard}
               onClick={handleBoardClick}
             />
           ) : null}
@@ -253,10 +267,10 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
 function SidebarArchiveShortcut() {
   const navigate = useNavigate();
   const { isMobile, setOpenMobile } = useSidebar();
-  const isOnUtilityPage = useLocation({
-    select: (location) => isSidebarUtilityPage(location.pathname),
+  const isOnProjectPage = useLocation({
+    select: (location) => location.pathname.startsWith("/projects/"),
   });
-  if (isOnUtilityPage) return null;
+  if (isOnProjectPage) return null;
   return (
     <SidebarMenu>
       <SidebarMenuItem>
