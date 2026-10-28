@@ -22,7 +22,7 @@ import {
 import { restrictToFirstScrollableAncestor, restrictToHorizontalAxis } from "@dnd-kit/modifiers";
 import { horizontalListSortingStrategy, SortableContext, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { Smartphone, FileDiff, Files, Globe2, TerminalSquare } from "lucide-react";
+import { Smartphone, FileDiff, Files, Globe2, TerminalSquare, X } from "lucide-react";
 import { Volume2, VolumeOff } from "lucide";
 import { type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 
@@ -32,7 +32,6 @@ import { cn } from "~/lib/utils";
 import { MorphIcon } from "~/components/MorphIcon";
 import { AndroidIcon, AppleIcon } from "~/components/Icons";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
-import { PanelTabCloseButton } from "~/components/ui/panel-tab-close-button";
 import { faviconUrlForOrigin } from "~/lib/favicon";
 import { useDeviceState } from "~/state/device";
 import {
@@ -280,6 +279,7 @@ export function SortableTabList(props: {
   surfaces: readonly RightPanelSurface[];
   onMove: ((surfaceId: string, toIndex: number) => void) | undefined;
   children: ReactNode;
+  onDragStart: () => void;
 }) {
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
   const surfaceIds = props.surfaces.map((surface) => surface.id);
@@ -295,6 +295,7 @@ export function SortableTabList(props: {
       collisionDetection={closestCenter}
       modifiers={TAB_DRAG_MODIFIERS}
       onDragEnd={handleDragEnd}
+      onDragStart={props.onDragStart}
     >
       <SortableContext items={surfaceIds} strategy={horizontalListSortingStrategy}>
         {props.children}
@@ -305,7 +306,7 @@ export function SortableTabList(props: {
 
 interface RightPanelTabHandlers {
   onActivate: (surface: RightPanelSurface) => void;
-  onClose: (surface: RightPanelSurface) => void;
+  onClose: (surface: RightPanelSurface, pointer: boolean) => void;
   onAuxClick: (event: ReactMouseEvent, surface: RightPanelSurface) => void;
   onContextMenu: (event: ReactMouseEvent, surface: RightPanelSurface) => void;
   onStartRename: (surfaceId: string) => void;
@@ -322,6 +323,7 @@ function preventTabMiddleButtonDefault(event: ReactMouseEvent) {
 export function RightPanelTab(
   props: RightPanelTabHandlers & {
     surface: RightPanelSurface;
+    width: number;
     dragDisabled: boolean;
     active: boolean;
     pending: boolean;
@@ -352,20 +354,18 @@ export function RightPanelTab(
     onStartRename,
     onFinishRename,
   } = props;
+  const narrow = props.width < 120;
   const { listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: surface.id,
     disabled: props.dragDisabled,
   });
   const content = (
     <>
-      <PanelTabCloseButton
-        label={`Close ${title}`}
-        size="lg"
-        tabIndex={-1}
-        onClick={(event) => {
-          event.stopPropagation();
-          onClose(surface);
-        }}
+      <span
+        className={cn(
+          "relative flex shrink-0 items-center justify-center",
+          narrow ? "size-4" : "size-5",
+        )}
       >
         <SurfaceIcon
           surface={surface}
@@ -381,34 +381,11 @@ export function RightPanelTab(
             aria-hidden
           />
         ) : null}
-      </PanelTabCloseButton>
-      {audio === "none" || !audioRuntimeTabId ? null : (
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <button
-                type="button"
-                tabIndex={-1}
-                className="cursor-pointer flex size-5 shrink-0 items-center justify-center rounded-md hover:bg-muted"
-                aria-label={audio === "muted" ? `Unmute ${title}` : `Mute ${title}`}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  void previewBridge
-                    ?.setAudioMuted(audioRuntimeTabId, audio !== "muted")
-                    .catch(() => undefined);
-                }}
-              >
-                <MorphIcon className="size-3.5" icon={audio === "muted" ? VolumeOff : Volume2} />
-              </button>
-            }
-          />
-          <TooltipPopup>{audio === "muted" ? "Unmute tab" : "Mute tab"}</TooltipPopup>
-        </Tooltip>
-      )}
+      </span>
       {props.renaming ? (
         <input
           aria-label="Device tab name"
-          className="w-28 min-w-0 rounded-sm bg-background px-1 outline-none ring-1 ring-inset ring-ring"
+          className="min-w-0 flex-1 rounded-sm bg-background px-1 outline-none ring-1 ring-inset ring-ring"
           defaultValue={title}
           ref={(element) => {
             element?.focus();
@@ -427,7 +404,7 @@ export function RightPanelTab(
         />
       ) : (
         <Tooltip>
-          <TooltipTrigger render={<span className="min-w-0 truncate">{title}</span>} />
+          <TooltipTrigger render={<span className="min-w-0 flex-1 truncate">{title}</span>} />
           <TooltipPopup>
             {surface.kind === "device" ? (
               <DeviceTabTooltip
@@ -441,6 +418,52 @@ export function RightPanelTab(
           </TooltipPopup>
         </Tooltip>
       )}
+      {audio === "none" || !audioRuntimeTabId ? null : (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                tabIndex={-1}
+                className={cn(
+                  "cursor-pointer flex shrink-0 items-center justify-center rounded-md hover:bg-muted",
+                  narrow ? "size-4" : "size-5",
+                )}
+                onPointerDown={(event) => event.stopPropagation()}
+                aria-label={audio === "muted" ? `Unmute ${title}` : `Mute ${title}`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  void previewBridge
+                    ?.setAudioMuted(audioRuntimeTabId, audio !== "muted")
+                    .catch(() => undefined);
+                }}
+              >
+                <MorphIcon className="size-3.5" icon={audio === "muted" ? VolumeOff : Volume2} />
+              </button>
+            }
+          />
+          <TooltipPopup>{audio === "muted" ? "Unmute tab" : "Mute tab"}</TooltipPopup>
+        </Tooltip>
+      )}
+      <button
+        type="button"
+        aria-label={`Close ${title}`}
+        tabIndex={-1}
+        className={cn(
+          "flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-md hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+          !props.active &&
+            (narrow
+              ? "invisible"
+              : "invisible group-hover/tab:visible group-focus-within/tab:visible [@media(hover:none)]:visible"),
+        )}
+        onPointerDown={(event) => event.stopPropagation()}
+        onClick={(event) => {
+          event.stopPropagation();
+          onClose(surface, event.detail > 0 && !window.matchMedia("(pointer: coarse)").matches);
+        }}
+      >
+        <X className="size-3.5" />
+      </button>
     </>
   );
   return (
@@ -462,9 +485,10 @@ export function RightPanelTab(
       onContextMenu={(event) => onContextMenu(event, surface)}
       {...listeners}
       ref={setNodeRef}
-      style={{ transform: CSS.Translate.toString(transform), transition }}
+      style={{ width: props.width, transform: CSS.Translate.toString(transform), transition }}
       className={cn(
-        "cursor-pointer group/tab flex h-8 max-w-48 shrink-0 select-none items-center gap-1.5 rounded-(--control-radius) pr-2.5 pl-1.5 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+        "cursor-pointer group/tab flex h-8 shrink-0 select-none items-center rounded-(--control-radius) text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+        narrow ? "gap-1 px-1.5" : "gap-1.5 pr-2.5 pl-1.5",
         props.ownsDesktopTitleBar && "[-webkit-app-region:no-drag]",
         props.active
           ? "bg-accent text-foreground ring-1 ring-inset ring-border"
