@@ -6,7 +6,7 @@ import {
   type ProjectCreatePayload,
   type ProjectUpdatePayload,
   type ProjectSnapshot,
-  type ThreadId,
+  ThreadId,
 } from "@t3tools/contracts";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import * as Context from "effect/Context";
@@ -15,7 +15,9 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import { withCommandMetrics } from "../observability/Metrics.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
@@ -34,6 +36,11 @@ import { planThreadDeletion } from "../orchestration-v2/ThreadDeletion.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ProjectEnrichmentService from "./ProjectEnrichmentService.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+
+/** Re-adding a deleted project's folder within this many days brings its threads back. */
+const RESTORE_WINDOW_DAYS = 30;
+// Threads deleted by the project cascade, not ones deleted on their own earlier.
+const CASCADE_DELETED_THREAD = `thread.deleted_at >= strftime('%Y-%m-%dT%H:%M:%fZ', project.deleted_at, '-10 minutes')`;
 
 export interface ProjectCreateInput extends ProjectCreatePayload {
   readonly commandId: CommandId;
@@ -93,6 +100,7 @@ export class ProjectOperationError extends Schema.TaggedError<ProjectOperationEr
       "list-projects",
       "list-threads",
       "delete-thread",
+      "restore-threads",
       "dispatch-project-command",
     ]),
     projectId: Schema.optional(ProjectId),
@@ -162,6 +170,7 @@ export const make = Effect.gen(function* () {
   const legacyImporter = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
   const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const sql = yield* SqlClient.SqlClient;
   const projectLocks = yield* KeyedLock.make<ProjectId>();
   const workspaceLocks = yield* KeyedLock.make<string>();
 
@@ -351,9 +360,74 @@ export const make = Effect.gen(function* () {
         workspaceRoot,
         ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
       });
+      yield* restoreDeletedThreads({ ...input, workspaceRoot });
       yield* projectEnrichment.invalidate([workspaceRoot]);
       return yield* readCommitted(input.projectId);
     },
+  );
+
+  const restoreDeletedThread = Effect.fn("ProjectService.restoreDeletedThread")(function* (
+    input: ProjectCreateInput,
+    threadId: ThreadId,
+  ) {
+    const { thread } = yield* threadProjections.getThreadRecords(threadId, []);
+    if (thread.deletedAt === null) return;
+    const commandId = CommandId.make(`${input.commandId}:restore-thread:${threadId}`);
+    const now = yield* DateTime.now;
+    const id = yield* idAllocator.allocate.event({ threadId, commandId });
+    yield* eventSink.commitCommand({
+      commandId,
+      commandType: "thread.metadata.update",
+      threadId,
+      acceptedAt: now,
+      events: [
+        {
+          id,
+          type: "thread.metadata-updated",
+          threadId,
+          providerInstanceId: thread.providerInstanceId,
+          occurredAt: now,
+          payload: { ...thread, projectId: input.projectId, deletedAt: null, updatedAt: now },
+        },
+      ],
+      effects: [],
+    });
+  });
+
+  const restoreDeletedThreads = Effect.fn("ProjectService.restoreDeletedThreads")(
+    function* (input: ProjectCreateInput) {
+      const { projectId } = input;
+      const since = DateTime.formatIso(
+        DateTime.subtract(yield* DateTime.now, { days: RESTORE_WINDOW_DAYS }),
+      );
+      const rows = yield* sql<{ readonly thread_id: string; readonly project_id: string }>`
+        SELECT thread.thread_id, thread.project_id
+        FROM orchestration_v2_projection_threads AS thread
+        JOIN projection_projects AS project ON project.project_id = thread.project_id
+        WHERE project.workspace_root = ${input.workspaceRoot}
+          AND project.project_id <> ${projectId}
+          AND project.deleted_at >= ${since}
+          AND ${sql.unsafe(CASCADE_DELETED_THREAD)}
+        ORDER BY project.deleted_at DESC
+      `;
+      yield* Effect.forEach(
+        rows,
+        (row) => {
+          const threadId = ThreadId.make(row.thread_id);
+          return threadCommands.withLock(threadId, restoreDeletedThread(input, threadId));
+        },
+        { concurrency: 1, discard: true },
+      );
+      const previousProjectId = rows[0]?.project_id;
+      if (previousProjectId !== undefined) {
+        yield* sql`
+          UPDATE kanban_boards SET project_id = ${projectId}
+          WHERE project_id = ${previousProjectId}
+            AND NOT EXISTS (SELECT 1 FROM kanban_boards WHERE project_id = ${projectId})
+        `;
+      }
+    },
+    Effect.mapError((cause) => new ProjectOperationError({ operation: "restore-threads", cause })),
   );
 
   const update: ProjectService["Service"]["update"] = Effect.fn("ProjectService.update")(
@@ -427,7 +501,8 @@ export const make = Effect.gen(function* () {
     const plan = yield* planThreadDeletion({
       command,
       projection,
-      attachmentIds: yield* threadProjections.getThreadAttachmentIds(threadId),
+      // purgeExpiredDeletions removes them once the thread can no longer be restored.
+      attachmentIds: [],
       now,
       idAllocator,
     });
@@ -599,6 +674,65 @@ export const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(ProjectService, make).pipe(
-  Layer.provide(ThreadCommandExecutor.layer),
+/** Cleans attachments of project-deleted threads once their restore window has passed. */
+export const purgeExpiredDeletions = Effect.fn("ProjectService.purgeExpiredDeletions")(
+  function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const eventSink = yield* EventSink.EventSinkV2;
+    const threadProjections = yield* ProjectionStore.ProjectionStoreV2;
+    const now = yield* DateTime.now;
+    const before = DateTime.formatIso(DateTime.subtract(now, { days: RESTORE_WINDOW_DAYS }));
+    const rows = yield* sql<{ readonly thread_id: string }>`
+      SELECT thread.thread_id
+      FROM orchestration_v2_projection_threads AS thread
+      JOIN projection_projects AS project ON project.project_id = thread.project_id
+      WHERE project.deleted_at < ${before}
+        AND ${sql.unsafe(CASCADE_DELETED_THREAD)}
+        AND NOT EXISTS (
+          SELECT 1 FROM orchestration_command_receipts AS receipt
+          WHERE receipt.command_id = 'project-purge:' || thread.thread_id
+        )
+    `;
+    yield* Effect.forEach(
+      rows,
+      Effect.fnUntraced(function* (row) {
+        const threadId = ThreadId.make(row.thread_id);
+        const commandId = CommandId.make(`project-purge:${threadId}`);
+        yield* eventSink.commitCommand({
+          commandId,
+          commandType: "thread.delete",
+          threadId,
+          acceptedAt: now,
+          events: [],
+          effects: [
+            {
+              id: `effect:${commandId}:attachment.cleanup`,
+              commandId,
+              threadId,
+              request: {
+                type: "attachment.cleanup",
+                attachmentIds: yield* threadProjections.getThreadAttachmentIds(threadId),
+              },
+            },
+          ],
+        });
+      }),
+      { concurrency: 1, discard: true },
+    );
+  },
 );
+
+export const layer = Layer.effect(
+  ProjectService,
+  Effect.gen(function* () {
+    yield* purgeExpiredDeletions().pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Could not purge expired project deletions", cause),
+      ),
+      Effect.repeat(Schedule.spaced("6 hours")),
+      Effect.delay("1 minute"),
+      Effect.forkScoped,
+    );
+    return yield* make;
+  }),
+).pipe(Layer.provide(ThreadCommandExecutor.layer));

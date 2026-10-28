@@ -1540,9 +1540,8 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
                         ...(member.environmentLabel
                           ? [`Environment: ${member.environmentLabel}`]
                           : []),
-                        "This permanently clears conversation history for those threads and any archived threads.",
+                        "Its threads are kept for 30 days. Add this folder again to bring them back.",
                         "This removes only this project entry.",
-                        "This action cannot be undone.",
                       ].join("\n")
                     : [
                         `Remove project "${member.title}"?`,
@@ -1550,7 +1549,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
                         ...(member.environmentLabel
                           ? [`Environment: ${member.environmentLabel}`]
                           : []),
-                        "This permanently clears any archived conversation history.",
+                        "Its threads are kept for 30 days. Add this folder again to bring them back.",
                         "This removes only this project entry.",
                       ].join("\n"),
                   { variant: "destructive" },
@@ -1598,7 +1597,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       `Remove project "${member.title}"?`,
       `Path: ${member.workspaceRoot}`,
       ...(member.environmentLabel ? [`Environment: ${member.environmentLabel}`] : []),
-      "This permanently clears any archived conversation history.",
+      "Its threads are kept for 30 days. Add this folder again to bring them back.",
       "This removes only this project entry.",
     ].join("\n");
     const confirmed = await api.dialogs.confirm(message, { variant: "destructive" });

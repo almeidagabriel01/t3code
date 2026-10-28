@@ -264,7 +264,7 @@ it.effect("retries a partial project deletion without repeating child events or 
 );
 
 it.effect(
-  "hydrates a migrated transcript before deleting its project and cleaning attachments",
+  "hydrates a migrated transcript before deleting its project and purging attachments later",
   () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -355,7 +355,7 @@ it.effect(
         `;
         assert.deepEqual(legacyEvents, []);
 
-        const cleanup = yield* sql<{
+        const readCleanup = sql<{
           readonly command_id: string;
           readonly payload_json: string;
           readonly status: string;
@@ -364,8 +364,17 @@ it.effect(
         FROM orchestration_v2_effect_outbox
         WHERE thread_id = ${threadId} AND effect_type = 'attachment.cleanup'
       `;
+        // Attachments outlive the restore window, then a purge removes them once.
+        assert.deepEqual(yield* readCleanup, []);
+        yield* TestClock.adjust("29 days");
+        yield* ProjectService.purgeExpiredDeletions();
+        assert.deepEqual(yield* readCleanup, []);
+        yield* TestClock.adjust("2 days");
+        yield* ProjectService.purgeExpiredDeletions();
+        yield* ProjectService.purgeExpiredDeletions();
+        const cleanup = yield* readCleanup;
         assert.lengthOf(cleanup, 1);
-        assert.equal(cleanup[0]?.command_id, `${commandId}:delete-thread:${threadId}`);
+        assert.equal(cleanup[0]?.command_id, `project-purge:${threadId}`);
         assert.equal(cleanup[0]?.status, "pending");
         const request = yield* decodeEffectRequest(cleanup[0]?.payload_json);
         assert.deepEqual(request, {
@@ -374,6 +383,95 @@ it.effect(
         });
       }).pipe(Effect.provide(layerServices));
     }).pipe(Effect.provide(layerDatabase)),
+);
+
+const deleteAndReAdd = Effect.fn("ProjectDeletionTest.deleteAndReAdd")(function* (
+  label: string,
+  readdAfter: `${number} days`,
+) {
+  const projectId = ProjectId.make(`project:${label}`);
+  const threadId = ThreadId.make(`thread:${label}`);
+  const earlierThreadId = ThreadId.make(`thread:${label}:earlier`);
+  const readdedId = ProjectId.make(`project:${label}:readded`);
+  yield* seedProject(projectId);
+  yield* TestClock.setTime(Date.parse("2026-09-04T12:00:00.000Z"));
+  const eventSink = yield* EventSink.EventSinkV2;
+  const projections = yield* ProjectionStore.ProjectionStoreV2;
+  const idAllocator = yield* IdAllocator.IdAllocatorV2;
+  const service = yield* ProjectService.make;
+  yield* eventSink.write({
+    events: [
+      nativeThreadCreated(projectId, threadId),
+      nativeThreadCreated(projectId, earlierThreadId),
+    ],
+  });
+  const deleteCommand = {
+    type: "thread.delete" as const,
+    commandId: CommandId.make(`command:${label}:delete-earlier`),
+    threadId: earlierThreadId,
+  };
+  const plan = yield* planThreadDeletion({
+    command: deleteCommand,
+    projection: yield* projections.getThreadRecords(earlierThreadId, [
+      "runs",
+      "attempts",
+      "nodes",
+      "runtimeRequests",
+      "subagents",
+      "providerSessions",
+    ]),
+    attachmentIds: [],
+    now: yield* DateTime.now,
+    idAllocator,
+  });
+  yield* eventSink.commitCommand({
+    commandId: deleteCommand.commandId,
+    commandType: deleteCommand.type,
+    threadId: earlierThreadId,
+    acceptedAt: yield* DateTime.now,
+    events: plan.events,
+    effects: plan.effects,
+  });
+  yield* TestClock.adjust("1 day");
+  yield* service.delete({
+    commandId: CommandId.make(`command:${label}:delete`),
+    projectId,
+    force: true,
+  });
+  yield* TestClock.adjust(readdAfter);
+  yield* service.create({
+    commandId: CommandId.make(`command:${label}:readd`),
+    projectId: readdedId,
+    title: "Re-added",
+    workspaceRoot: `/work/${projectId}`,
+  });
+  return {
+    readdedId,
+    thread: (yield* projections.getThreadProjection(threadId)).thread,
+    earlier: (yield* projections.getThreadProjection(earlierThreadId)).thread,
+  };
+});
+
+it.effect("brings a deleted project's threads back when its folder is added within 30 days", () =>
+  Effect.gen(function* () {
+    const { readdedId, thread, earlier } = yield* deleteAndReAdd("restore", "29 days").pipe(
+      Effect.provide(layerServices),
+    );
+    assert.isNull(thread.deletedAt);
+    assert.equal(thread.projectId, readdedId);
+    // A thread deleted on its own before the project stays deleted.
+    assert.isNotNull(earlier.deletedAt);
+  }).pipe(Effect.provide(layerDatabase)),
+);
+
+it.effect("starts empty when the folder is added after the 30-day window", () =>
+  Effect.gen(function* () {
+    const { readdedId, thread } = yield* deleteAndReAdd("expired", "31 days").pipe(
+      Effect.provide(layerServices),
+    );
+    assert.isNotNull(thread.deletedAt);
+    assert.notEqual(thread.projectId, readdedId);
+  }).pipe(Effect.provide(layerDatabase)),
 );
 
 it.effect("rejects a child deletion command ID already accepted for an unrelated thread", () =>
