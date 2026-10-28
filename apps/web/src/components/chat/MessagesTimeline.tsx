@@ -1250,7 +1250,11 @@ const ConversationTimeline = memo(function ConversationTimeline({
       return (
         <>
           {activityAnnouncer}
-          <div className="h-full min-h-0 bg-background" data-timeline-loading="true" />
+          <div
+            className="h-full min-h-0 bg-background"
+            data-glass-layer
+            data-timeline-loading="true"
+          />
         </>
       );
     }

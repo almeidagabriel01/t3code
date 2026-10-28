@@ -18,6 +18,7 @@ export function StatusBar() {
       <footer
         className="relative flex h-(--status-bar-height) shrink-0 select-none items-center justify-between gap-4 overflow-clip border-t border-border bg-card px-3 text-xs whitespace-nowrap text-muted-foreground"
         data-slot="status-bar"
+        data-glass-pane="rail"
         onContextMenu={(event) => {
           event.preventDefault();
           setMenuPoint({ x: event.clientX, y: event.clientY });
