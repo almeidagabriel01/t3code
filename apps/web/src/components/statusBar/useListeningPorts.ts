@@ -68,9 +68,9 @@ export function useListeningPorts({
   projectId,
   fast = false,
 }: {
-  readonly environmentId?: EnvironmentId | null;
-  readonly projectId?: ProjectId;
-  readonly fast?: boolean;
+  readonly environmentId?: EnvironmentId | null | undefined;
+  readonly projectId?: ProjectId | undefined;
+  readonly fast?: boolean | undefined;
 } = {}) {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const id = environmentId === undefined ? primaryEnvironmentId : environmentId;

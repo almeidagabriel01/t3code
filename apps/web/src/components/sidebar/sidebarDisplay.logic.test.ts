@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveSubagentDisplay, toggleHoverCardProperty } from "./sidebarDisplay.logic";
+import {
+  countLivePortsByProject,
+  resolveSubagentDisplay,
+  toggleHoverCardProperty,
+} from "./sidebarDisplay.logic";
 
 describe("resolveSubagentDisplay", () => {
   const base = { show: true, mode: "compact", expanded: false } as const;
@@ -29,5 +33,18 @@ describe("toggleHoverCardProperty", () => {
       "ports",
     ]);
     expect(toggleHoverCardProperty(["path", "ports"], "path", false)).toEqual(["ports"]);
+  });
+});
+
+describe("countLivePortsByProject", () => {
+  it("sums merged members and omits projects without ports", () => {
+    const counts = countLivePortsByProject(
+      [{ projectId: "a1" }, { projectId: "a2" }, { projectId: "a2" }, { projectId: null }],
+      [
+        { projectKey: "a", memberProjects: [{ id: "a1" }, { id: "a2" }] },
+        { projectKey: "b", memberProjects: [{ id: "b1" }] },
+      ],
+    );
+    expect([...counts]).toEqual([["a", 3]]);
   });
 });

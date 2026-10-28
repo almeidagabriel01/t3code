@@ -19,7 +19,8 @@ import {
 import { ProjectFavicon } from "../ProjectFavicon";
 import { useUiStateStore } from "../../uiStateStore";
 import { useClientSettings } from "../../hooks/useSettings";
-import { resolveSubagentDisplay } from "./sidebarDisplay.logic";
+import { countLivePortsByProject, resolveSubagentDisplay } from "./sidebarDisplay.logic";
+import { useListeningPorts } from "../statusBar/useListeningPorts";
 import { SidebarMenuButton } from "../ui/sidebar";
 import { SidebarNotificationDot } from "./SidebarNotificationDot";
 import { SidebarProjectHoverCard } from "./SidebarProjectHoverCard";
@@ -149,6 +150,7 @@ const idleSortingStrategy: SortingStrategy = () => ({ x: 0, y: 0, scaleX: 1, sca
 type ProjectGroupProps = {
   entry: ProjectLayout;
   items: readonly SidebarListItem[];
+  portCounts: ReadonlyMap<string, number>;
   drag: SidebarProjectDrag | null;
   dragSortingStrategy: SortingStrategy;
   threadByKey: ReadonlyMap<string, EnvironmentThreadShell>;
@@ -314,29 +316,28 @@ function SidebarProjectGroup(props: ProjectGroupProps) {
       className={cn("list-none", isDragging && "relative z-20 opacity-80")}
       style={{ transform: CSS.Translate.toString(transform), transition }}
     >
-      <SidebarProjectHoverCard project={project}>
-        <div className="flex items-center gap-1 pe-1">
-          <button
-            type="button"
-            ref={setActivatorNodeRef}
-            aria-expanded={expanded}
-            onClick={() => props.onToggleProject(project, expanded)}
-            className="flex h-8 min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md px-2 text-left outline-none hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-            {...attributes}
-            {...listeners}
-          >
-            <ChevronDownIcon
-              aria-hidden
-              className={cn("size-3.5 shrink-0 text-icon-muted", !expanded && "-rotate-90")}
-            />
-            <ProjectFavicon project={project} className="size-4 shrink-0" />
-            <span className="min-w-0 flex-1 truncate text-sm font-medium text-sidebar-foreground/90">
-              {project.displayName}
-            </span>
-            {expanded ? null : <ProjectNotificationDot threads={group.openThreads} />}
-          </button>
-        </div>
-      </SidebarProjectHoverCard>
+      <div className="flex items-center gap-1 pe-1">
+        <button
+          type="button"
+          ref={setActivatorNodeRef}
+          aria-expanded={expanded}
+          onClick={() => props.onToggleProject(project, expanded)}
+          className="flex h-8 min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md px-2 text-left outline-none hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+          {...attributes}
+          {...listeners}
+        >
+          <ChevronDownIcon
+            aria-hidden
+            className={cn("size-3.5 shrink-0 text-icon-muted", !expanded && "-rotate-90")}
+          />
+          <ProjectFavicon project={project} className="size-4 shrink-0" />
+          <span className="min-w-0 flex-1 truncate text-sm font-medium text-sidebar-foreground/90">
+            {project.displayName}
+          </span>
+          {expanded ? null : <ProjectNotificationDot threads={group.openThreads} />}
+        </button>
+        <SidebarProjectHoverCard project={project} portCount={props.portCounts.get(scope) ?? 0} />
+      </div>
       <SortableContext
         items={items.map(sidebarListItemId)}
         strategy={drag === null ? idleSortingStrategy : props.dragSortingStrategy}
@@ -362,16 +363,26 @@ function SidebarProjectGroup(props: ProjectGroupProps) {
 }
 
 export function SidebarProjectGroups(
-  props: Omit<ProjectGroupProps, "entry" | "items"> & {
+  props: Omit<ProjectGroupProps, "entry" | "items" | "portCounts"> & {
     layout: readonly ProjectLayout[];
     itemsByScope: ReadonlyMap<string, readonly SidebarListItem[]>;
   },
 ) {
   const { layout, itemsByScope, ...rest } = props;
+  // One slow-polling subscription for every project row; a card that opens polls fast itself.
+  const showsPorts = useClientSettings((settings) =>
+    settings.projectHoverCardProperties.includes("ports"),
+  );
+  const { ports } = useListeningPorts(showsPorts ? {} : { environmentId: null });
+  const portCounts = countLivePortsByProject(
+    ports,
+    layout.map((entry) => entry.project),
+  );
   return layout.map((entry) => (
     <SidebarProjectGroup
       key={entry.project.projectKey}
       {...rest}
+      portCounts={portCounts}
       entry={entry}
       items={itemsByScope.get(entry.project.projectKey) ?? []}
     />

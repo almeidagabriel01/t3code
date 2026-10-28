@@ -1,4 +1,4 @@
-import type { ReactElement, ReactNode } from "react";
+import type { ReactNode } from "react";
 import { attributeTerminalUsage, type ResourceUsage } from "../statusBar/resourceUsage.logic";
 import type { ProjectId } from "@t3tools/contracts";
 import { CopyIcon, PlugIcon, SquareIcon, SquareTerminalIcon } from "lucide-react";
@@ -218,15 +218,30 @@ function ProjectHoverContent(props: { project: SidebarProjectSnapshot }) {
   );
 }
 
+/** The plug icon on a project row with live ports; hovering or focusing it opens the card. */
 export function SidebarProjectHoverCard(props: {
   project: SidebarProjectSnapshot;
-  children: ReactElement;
+  portCount: number;
 }) {
-  const enabled = useClientSettings((settings) => settings.projectHoverCardProperties.length > 0);
-  if (!enabled) return props.children;
+  const showsPorts = useClientSettings((settings) =>
+    settings.projectHoverCardProperties.includes("ports"),
+  );
+  if (!showsPorts || props.portCount === 0) return null;
   return (
     <PreviewCard>
-      <PreviewCardTrigger delay={400} closeDelay={150} render={props.children} />
+      <PreviewCardTrigger
+        delay={200}
+        closeDelay={150}
+        render={
+          <button
+            type="button"
+            aria-label={`${props.portCount} live ${props.portCount === 1 ? "port" : "ports"}`}
+            className="inline-flex size-5 shrink-0 cursor-default items-center justify-center rounded text-muted-foreground/70 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+          />
+        }
+      >
+        <PlugIcon aria-hidden className="size-3.5" />
+      </PreviewCardTrigger>
       <PreviewCardPopup side="right" align="start" className="w-96 max-w-[90vw]">
         <ProjectHoverContent project={props.project} />
       </PreviewCardPopup>

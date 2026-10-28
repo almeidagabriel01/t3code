@@ -16,8 +16,9 @@ import {
   toggleStatusBarItem,
 } from "../statusBar/statusBarItems.logic";
 import { useUsageItems } from "../statusBar/useUsageItems";
-import { SettingsRow, SettingsSection } from "./settingsLayout";
+import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
+import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 
 type StatusBarSettingsValues = Pick<
   ClientSettings,
@@ -80,7 +81,7 @@ function LabeledSelect<T extends string>({
   );
 }
 
-export function StatusBarSettingsSection({
+function StatusBarSettingsSection({
   settings,
   updateSettings,
 }: {
@@ -180,5 +181,15 @@ export function StatusBarSettingsSection({
         }
       />
     </SettingsSection>
+  );
+}
+
+export function StatusBarSettingsPanel() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <SettingsPageContainer>
+      <StatusBarSettingsSection settings={settings} updateSettings={updateSettings} />
+    </SettingsPageContainer>
   );
 }

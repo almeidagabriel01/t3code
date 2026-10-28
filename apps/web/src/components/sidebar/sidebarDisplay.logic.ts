@@ -25,3 +25,27 @@ export function toggleHoverCardProperty(
     candidate === property ? enabled : current.includes(candidate),
   );
 }
+
+/** Live port counts by sidebar project key, summing the projects a group merges. */
+export function countLivePortsByProject(
+  ports: ReadonlyArray<{ readonly projectId: string | null }>,
+  groups: ReadonlyArray<{
+    readonly projectKey: string;
+    readonly memberProjects: ReadonlyArray<{ readonly id: string }>;
+  }>,
+): ReadonlyMap<string, number> {
+  const byProject = new Map<string, number>();
+  for (const port of ports) {
+    if (port.projectId !== null)
+      byProject.set(port.projectId, (byProject.get(port.projectId) ?? 0) + 1);
+  }
+  const counts = new Map<string, number>();
+  for (const group of groups) {
+    const count = group.memberProjects.reduce(
+      (sum, member) => sum + (byProject.get(member.id) ?? 0),
+      0,
+    );
+    if (count > 0) counts.set(group.projectKey, count);
+  }
+  return counts;
+}

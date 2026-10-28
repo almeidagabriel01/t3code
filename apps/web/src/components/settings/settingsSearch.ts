@@ -31,6 +31,7 @@ export type SettingsPath =
   | "/settings/scheduled-tasks"
   | "/settings/source-control"
   | "/settings/worktrees"
+  | "/settings/status-bar"
   | "/settings/connections"
   | "/settings/access"
   | "/settings/maintenance"
@@ -99,6 +100,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/scheduled-tasks": "Scheduled tasks",
   "/settings/source-control": "Source control",
   "/settings/worktrees": "Worktrees",
+  "/settings/status-bar": "Status bar",
   "/settings/connections": "Environments",
   "/settings/access": "Sharing & access",
   "/settings/maintenance": "Maintenance",
@@ -117,6 +119,7 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
     paths: [
       "/settings/general",
       "/settings/appearance",
+      "/settings/status-bar",
       "/settings/chat",
       "/settings/diffs",
       "/settings/keybindings",
@@ -432,37 +435,37 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "status-bar-visible",
     title: "Status bar",
-    to: "/settings/general",
+    to: "/settings/status-bar",
     searchTerms: ["show hide footer bottom bar usage ports resources"],
   },
   {
     id: "status-bar-items",
     title: "Status bar items",
-    to: "/settings/general",
+    to: "/settings/status-bar",
     searchTerms: ["indicators providers usage ports resource usage footer"],
   },
   {
     id: "status-bar-usage-mode",
     title: "Usage display",
-    to: "/settings/general",
+    to: "/settings/status-bar",
     searchTerms: ["status bar verbose compact tightest limit meter"],
   },
   {
     id: "status-bar-usage-percentage",
     title: "Usage percentage",
-    to: "/settings/general",
+    to: "/settings/status-bar",
     searchTerms: ["status bar used remaining left limit"],
   },
   {
     id: "status-bar-ports-count",
     title: "Ports count",
-    to: "/settings/general",
+    to: "/settings/status-bar",
     searchTerms: ["status bar project ports all listening"],
   },
   {
     id: "status-bar-resource-sort",
     title: "Resource manager sort",
-    to: "/settings/general",
+    to: "/settings/status-bar",
     searchTerms: ["status bar memory cpu name order terminals projects"],
   },
   {
@@ -1192,6 +1195,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/devices": null,
   "/settings/source-control": "environment-defaults",
   "/settings/worktrees": "project-defaults",
+  "/settings/status-bar": null,
   "/settings/connections": "connections",
   "/settings/access": "connections",
   "/settings/scheduled-tasks": null,

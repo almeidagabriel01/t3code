@@ -1,3 +1,5 @@
+import { useNavigate } from "@tanstack/react-router";
+
 import {
   getClientSettings,
   updateClientSettings,
@@ -44,6 +46,7 @@ export function StatusBarVisibilityMenu({
   const hidden = useClientSettings((settings) => settings.statusBarHiddenItems);
   const mode = useClientSettings((settings) => settings.statusBarUsageMode);
   const { items } = useUsageItems();
+  const navigate = useNavigate();
 
   return (
     <Menu open={open} onOpenChange={(next) => (next ? undefined : onClose())}>
@@ -92,6 +95,9 @@ export function StatusBarVisibilityMenu({
             <MenuRadioItem value="compact">Compact usage</MenuRadioItem>
           </MenuRadioGroup>
           <MenuSeparator />
+          <MenuItem onClick={() => void navigate({ to: "/settings/status-bar" })}>
+            Status bar settings…
+          </MenuItem>
           <MenuItem onClick={() => void updateClientSettings({ statusBarVisible: false })}>
             Hide status bar
           </MenuItem>

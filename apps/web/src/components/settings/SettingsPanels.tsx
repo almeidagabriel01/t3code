@@ -51,7 +51,6 @@ import {
 } from "./useScopedSettings";
 import { useScopedModelDisabledReason } from "./useScopedModelAvailability";
 import { SidebarDisplaySettingsRows } from "./SidebarDisplaySettings";
-import { StatusBarSettingsSection } from "./StatusBarSettings";
 import { useOptionalSettingsScope, useSettingsScope } from "./SettingsScopeContext";
 import { scopedIdleCompaction } from "./scopedSettings";
 import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
@@ -898,8 +897,6 @@ export function GeneralSettingsPanel() {
         />
         <SidebarDisplaySettingsRows settings={settings} updateSettings={updateSettings} />
       </SettingsSection>
-
-      <StatusBarSettingsSection settings={settings} updateSettings={updateSettings} />
 
       <SettingsSection id="confirmations" title="Confirmations">
         <SettingsRow
