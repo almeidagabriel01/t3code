@@ -10,6 +10,7 @@ import {
   KANBAN_PRIORITIES,
   KANBAN_PRIORITY_LABELS,
 } from "@t3tools/client-runtime/state/kanbanLogic";
+import { parseAttachmentImageSrc } from "@t3tools/shared/attachmentImageRefs";
 import { subtaskProgress, subtasksOf } from "@t3tools/shared/kanbanSubtasks";
 import type { KanbanBoardState } from "@t3tools/client-runtime/state/kanban";
 import {
@@ -34,7 +35,12 @@ import { EmptyState } from "../../components/ui/EmptyState";
 import { Menu } from "../../components/ui/Menu";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
-import { SelectableMarkdownText } from "../../native/SelectableMarkdownText";
+import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
+import {
+  SelectableMarkdownText,
+  type MarkdownImageRenderer,
+} from "../../native/SelectableMarkdownText";
+import { ThreadMarkdownImage } from "../threads/ThreadMarkdownImage";
 import { useMarkdownPreviewStyles } from "../files/FileMarkdownPreview";
 import { kanbanEnvironment, useKanbanStates } from "../../state/kanban";
 import { useEnvironmentQuery } from "../../state/query";
@@ -273,6 +279,18 @@ function KanbanCardDetail(props: {
   const { environmentId, cardId, board, card } = props;
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
+  const [expandedImage, setExpandedImage] = useState<FilePreviewSource | null>(null);
+  const renderDescriptionImage: MarkdownImageRenderer = (image) => {
+    const attachmentId = parseAttachmentImageSrc(image.href);
+    return attachmentId === null ? null : (
+      <ThreadMarkdownImage
+        environmentId={environmentId}
+        resource={{ _tag: "attachment", attachmentId }}
+        alt={image.alt}
+        onPressPreview={setExpandedImage}
+      />
+    );
+  };
   const actions = useKanbanActions(environmentId);
   const agent = useStartKanbanAgent(environmentId, board, card);
   const query = useEnvironmentQuery(kanbanEnvironment.card({ environmentId, input: { cardId } }));
@@ -529,6 +547,11 @@ function KanbanCardDetail(props: {
               markdown={card.description}
               textStyle={markdownStyles.nativeTextStyle}
               onLinkPress={(href) => void Linking.openURL(href)}
+              renderImage={renderDescriptionImage}
+            />
+            <FilePreviewModal
+              source={expandedImage}
+              onRequestClose={() => setExpandedImage(null)}
             />
             {disabled ? null : (
               <Button

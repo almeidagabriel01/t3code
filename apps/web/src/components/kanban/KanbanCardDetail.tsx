@@ -19,6 +19,7 @@ import type {
 import {
   ArchiveIcon,
   ArchiveRestoreIcon,
+  ImagePlusIcon,
   BotIcon,
   EllipsisIcon,
   PlusIcon,
@@ -26,9 +27,11 @@ import {
   UserIcon,
   XIcon,
 } from "lucide-react";
+import { attachmentImageMarkdown } from "@t3tools/shared/attachmentImageRefs";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { requestConfirmDialog } from "../../confirmDialog";
+import { uploadStandaloneImage } from "../../lib/attachmentUploadQueue";
 import { useProject } from "../../state/entities";
 import { kanbanEnvironment } from "../../state/kanban";
 import { useEnvironmentQuery } from "../../state/query";
@@ -151,6 +154,9 @@ function Activity(props: {
   );
 }
 
+const imageFiles = (files: FileList | null) =>
+  Array.from(files ?? []).filter((file) => file.type.startsWith("image/"));
+
 function Description(props: {
   readonly text: string;
   readonly cwd: string | undefined;
@@ -160,6 +166,31 @@ function Description(props: {
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(props.text);
+  const [uploading, setUploading] = useState(0);
+  const cursor = useRef(0);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const attachImages = async (files: ReadonlyArray<File>) => {
+    setUploading((count) => count + files.length);
+    for (const file of files) {
+      try {
+        const id = await uploadStandaloneImage(props.environmentId, file);
+        const ref = attachmentImageMarkdown(file.name || "image", id);
+        setDraft((text) => {
+          const at = Math.min(cursor.current, text.length);
+          cursor.current = at + ref.length + 1;
+          return `${text.slice(0, at)}${ref}\n${text.slice(at)}`;
+        });
+      } catch (cause) {
+        toastManager.add({
+          type: "error",
+          title: "Could not attach image",
+          description: cause instanceof Error ? cause.message : "Upload failed",
+        });
+      } finally {
+        setUploading((count) => count - 1);
+      }
+    }
+  };
   const edit = () => {
     setDraft(props.text);
     setEditing(true);
@@ -173,13 +204,50 @@ function Description(props: {
           aria-label="Description"
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
+          onSelect={(event) => {
+            cursor.current = event.currentTarget.selectionStart;
+          }}
+          onPaste={(event) => {
+            const images = imageFiles(event.clipboardData.files);
+            if (images.length === 0) return;
+            event.preventDefault();
+            void attachImages(images);
+          }}
+          onDragOver={(event) => {
+            if (event.dataTransfer.types.includes("Files")) event.preventDefault();
+          }}
+          onDrop={(event) => {
+            const images = imageFiles(event.dataTransfer.files);
+            if (images.length === 0) return;
+            event.preventDefault();
+            void attachImages(images);
+          }}
+        />
+        <input
+          ref={fileInput}
+          type="file"
+          accept="image/*"
+          multiple
+          className="hidden"
+          onChange={(event) => {
+            const images = imageFiles(event.currentTarget.files);
+            event.currentTarget.value = "";
+            void attachImages(images);
+          }}
         />
         <div className="flex justify-end gap-2">
+          <span className="me-auto">
+            <Button size="xs" variant="ghost-muted" onClick={() => fileInput.current?.click()}>
+              {uploading > 0 ? <Spinner /> : <ImagePlusIcon />}
+              Attach image
+            </Button>
+          </span>
           <Button size="xs" variant="outline" onClick={() => setEditing(false)}>
             Cancel
           </Button>
           <Button
             size="xs"
+            disabled={uploading > 0}
             onClick={() => {
               props.onSave(draft);
               setEditing(false);

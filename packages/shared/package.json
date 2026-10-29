@@ -499,6 +499,10 @@
       "types": "./src/threadSearch.ts",
       "import": "./src/threadSearch.ts"
     },
+    "./attachmentImageRefs": {
+      "types": "./src/attachmentImageRefs.ts",
+      "import": "./src/attachmentImageRefs.ts"
+    },
     "./markdownLinks": {
       "types": "./src/markdownLinks.ts",
       "import": "./src/markdownLinks.ts"
