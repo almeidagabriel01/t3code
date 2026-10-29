@@ -21,7 +21,7 @@ export const bodySummary = (body: string, fallback: string) => {
   const title = heading?.[1] ?? (firstLine === undefined ? fallback : stripMarkers(firstLine));
   const preview = lines
     .filter((line, index) => index !== titleIndex && !/^\s*(?:`{3,}|~{3,})/u.test(line))
-    .map(stripMarkers)
+    .map((line) => stripMarkers(line.replace(/!\[[^\]]*\]\([^)\s]*\)/gu, "")))
     .join(" ")
     .replace(/\s+/gu, " ")
     .trim();

@@ -522,6 +522,15 @@ it.effect("uses the first body line as title and bounds titles and previews", ()
     );
     assert.strictEqual(note.title, "First task");
     assert.strictEqual(note.preview, "More context code");
+    const withImage = yield* notes.write(
+      {
+        path: "image.md",
+        body: "Plan\n\n![shot.png](https://example.com/a.png) after\n",
+        baseRevision: null,
+      },
+      "user",
+    );
+    assert.strictEqual(withImage.preview, "after");
     const long = yield* notes.write(
       {
         path: "long.md",
