@@ -15,6 +15,11 @@ const metroConfig: Promise<{ transformer: { babelTransformerPath: string } }> =
 // Remove bailout entries and manual memoization when compilation starts; this check rejects stale entries.
 const KNOWN_BAILOUTS: Record<string, string> = {
   "src/components/ui/Menu.tsx": "ref read during render",
+  "src/features/settings/MemoryImportSettings.tsx": "try/finally in handlers",
+  "src/features/settings/MemoryProjectSettings.tsx": "try/finally in handlers",
+  "src/features/settings/MemorySharingSettings.tsx": "try/finally and throw inside try",
+  "src/features/settings/SettingsMemoryRouteScreen.tsx":
+    "try/finally, ??= and optional ternary test",
   "src/features/diffs/nativeReviewDiffSurface.ts": "ref read during render",
   "src/features/home/thread-swipe-actions.tsx": "ref read during render",
   "src/features/threads/ThreadArrangementSheet.tsx": "ref read during render",
