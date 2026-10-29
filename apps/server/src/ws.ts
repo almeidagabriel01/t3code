@@ -239,6 +239,7 @@ import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { memoryError } from "./mcp/toolkits/memory/handlers.ts";
 import { ProviderMemoryImportRuntime } from "./memory/imports/MemoryImportTypes.ts";
+import * as MemoryHubService from "./memory/MemoryHubService.ts";
 import * as MemoryService from "./memory/MemoryService.ts";
 import * as MemorySyncService from "./memory/MemorySyncService.ts";
 import { requiredScopeForDeviceList, rpcAuthorizationError } from "./auth/RpcAuthorization.ts";
@@ -580,6 +581,17 @@ const memorySessionPermit = (
   required.every((scope) => capturedScopes.includes(scope))
     ? Effect.void
     : Effect.fail(new MemoryService.MemoryAccessError({ code: "unavailable" }));
+
+/** Admin RPC failures reach clients as a generic code; keep the cause in the server log. */
+const logMemoryAdminFailure = (method: string) =>
+  Effect.tapError((error: unknown) =>
+    Effect.logWarning("memory admin rpc failed", {
+      method,
+      errorTag:
+        typeof error === "object" && error !== null && "_tag" in error ? error._tag : typeof error,
+      code: typeof error === "object" && error !== null && "code" in error ? error.code : undefined,
+    }),
+  );
 
 const isMemoryImportRpcError = Schema.is(MemoryImportRpcError);
 const decodeMemoryMutationReceipt = Schema.decodeUnknownEffect(MemoryMutationReceipt);
@@ -1897,7 +1909,23 @@ export const layerWsRpc = (
       });
 
       const memory = yield* MemoryService.MemoryService;
-      const memorySync = yield* MemorySyncService.MemorySyncService;
+      const memorySyncService = yield* MemorySyncService.MemorySyncService;
+      // The sync service finds the administrator in its caller's context; bind the one built here.
+      const hubAdministrator = yield* Effect.serviceOption(MemoryHubService.MemoryHubAdministrator);
+      const memorySync = {
+        ...memorySyncService,
+        updateHubSettings: (...args: Parameters<typeof memorySyncService.updateHubSettings>) =>
+          memorySyncService
+            .updateHubSettings(...args)
+            .pipe(
+              Option.isSome(hubAdministrator)
+                ? Effect.provideService(
+                    MemoryHubService.MemoryHubAdministrator,
+                    hubAdministrator.value,
+                  )
+                : (effect) => effect,
+            ),
+      };
       const ownerPolicy = yield* ServerSettings.MemoryOwnerSourceReadPolicyAdministration;
       const memoryRuntime = yield* Effect.serviceOption(ProviderMemoryImportRuntime);
       const memoryRead = memorySessionPermit(currentSession.scopes, ["memory:read"]);
@@ -1935,7 +1963,9 @@ export const layerWsRpc = (
         [WS_METHODS.memoryHistory]: (input) =>
           memory.history(input, memoryRead).pipe(Effect.mapError(memoryError)),
         [WS_METHODS.memoryHubDiagnostics]: (input) =>
-          memorySync.hubDiagnostics(input, memoryRead).pipe(Effect.mapError(memoryError)),
+          memorySync
+            .hubDiagnostics(input, memoryRead)
+            .pipe(logMemoryAdminFailure("memoryHubDiagnostics"), Effect.mapError(memoryError)),
         [WS_METHODS.memorySyncStatus]: (input) =>
           memorySync.syncStatus(input, memoryRead).pipe(Effect.mapError(memoryError)),
         [WS_METHODS.memoryUpsert]: (input) =>
@@ -1953,16 +1983,27 @@ export const layerWsRpc = (
         [WS_METHODS.memoryReadSource]: (input) =>
           memory.readSource(input, memorySource).pipe(Effect.mapError(memoryError)),
         [WS_METHODS.memoryHubSettingsGet]: (input) =>
-          memorySync.getHubSettings(input, memorySettings).pipe(Effect.mapError(memoryError)),
+          memorySync
+            .getHubSettings(input, memorySettings)
+            .pipe(logMemoryAdminFailure("memoryHubSettingsGet"), Effect.mapError(memoryError)),
         [WS_METHODS.memoryHubSettingsUpdate]: (input) =>
-          memorySync.updateHubSettings(input, memorySettings).pipe(Effect.mapError(memoryError)),
+          memorySync
+            .updateHubSettings(input, memorySettings)
+            .pipe(logMemoryAdminFailure("memoryHubSettingsUpdate"), Effect.mapError(memoryError)),
       });
       const ownerHandlers = WsMemoryAdministrationRpcGroup.middleware(RpcInstrumentation).of({
         [WS_METHODS.memoryHubReconcile]: (input) =>
-          memorySync.reconcileHub(input, memorySettings).pipe(Effect.mapError(memoryError)),
+          memorySync
+            .reconcileHub(input, memorySettings)
+            .pipe(logMemoryAdminFailure("memoryHubReconcile"), Effect.mapError(memoryError)),
         [WS_METHODS.memoryOwnerSourceReadPolicyGet]: () => ownerPolicy.get(ownerSettings),
         [WS_METHODS.memoryOwnerSourceReadPolicyUpdate]: (input) =>
-          ownerPolicy.update(input, ownerSettings).pipe(Effect.mapError(memoryError)),
+          ownerPolicy
+            .update(input, ownerSettings)
+            .pipe(
+              logMemoryAdminFailure("memoryOwnerSourceReadPolicyUpdate"),
+              Effect.mapError(memoryError),
+            ),
       });
       const importHandlers = WsMemoryImportRpcGroup.middleware(RpcInstrumentation).of({
         [WS_METHODS.memoryImportProvider]: (input) =>

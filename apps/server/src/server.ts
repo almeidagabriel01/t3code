@@ -514,7 +514,8 @@ const layerProjectFaviconResolver = ProjectFaviconResolver.layer.pipe(
   Layer.provide(T3ProjectFileLoader.layer),
 );
 
-const { layerServerEnvironment, layerRegisteredMemoryHub } = memoryApplicationLayers;
+const { layerServerEnvironment, layerRegisteredMemoryHub, layerMemoryHubAdministrator } =
+  memoryApplicationLayers;
 
 const layerAuth = EnvironmentAuth.layer.pipe(
   Layer.provideMerge(layerPersistence),
@@ -620,6 +621,8 @@ const layerProviderInstallationRefresh = Layer.effectDiscard(
 const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   layerMemoryStarted,
   layerMemorySync,
+  // Sync and the ws handlers look the hub administrator up at call time, so it must be exposed.
+  layerMemoryHubAdministrator,
   layerProviderMemoryImport,
   AgentAwarenessRelay.layer,
   HeldHooksWaker.layer,

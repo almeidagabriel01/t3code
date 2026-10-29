@@ -30,6 +30,7 @@ import { makeProviderMemoryImport } from "./imports/ProviderMemoryImport.ts";
 import * as MemoryMaintenance from "./MemoryFtsMaintenance.ts";
 import * as MemoryGenerationHold from "./MemoryGenerationHold.ts";
 import { MemoryHubHttpReady } from "./MemoryHubHttp.ts";
+import * as MemoryHub from "./MemoryHubService.ts";
 import * as MemoryHubLayers from "./MemoryHubLayers.ts";
 import * as MemoryQuota from "./MemoryQuotaService.ts";
 import * as MemoryService from "./MemoryService.ts";
@@ -150,6 +151,16 @@ export const makeMemoryApplicationLayers = <PS, PE, PR, IS, IE, IR, SS, SE, SR, 
     MemoryHubHttpReady,
     MemoryHubHttpReady.of({ protocolVersion: MEMORY_PROTOCOL_VERSION }),
   );
+  // Sync and the ws handlers look the administrator up in their call context, so the application
+  // exposes it; narrowed so the hub's other services and its settings stay private.
+  const layerMemoryHubAdministrator: Layer.Layer<
+    MemoryHub.MemoryHubAdministrator,
+    Layer.Error<typeof layerMemoryHub>,
+    Layer.Services<typeof layerMemoryHub>
+  > = Layer.effect(
+    MemoryHub.MemoryHubAdministrator,
+    MemoryHub.MemoryHubAdministrator.use((administrator) => Effect.succeed(administrator)),
+  ).pipe(Layer.provide(layerMemoryHub));
   const layerMemorySync = MemoryHubLayers.layerMemorySync.pipe(
     Layer.provide(layerMemorySyncBinder),
     Layer.provide(layerMemoryHub),
@@ -193,6 +204,9 @@ export const makeMemoryApplicationLayers = <PS, PE, PR, IS, IE, IR, SS, SE, SR, 
           });
           return Layer.empty;
         }
+        yield* Effect.logInfo("Provider memory import available", {
+          stateDir: readerConfig.stateDir,
+        });
         return Layer.succeed(
           ProviderMemoryImportRuntime,
           makeProviderMemoryImport(
@@ -239,6 +253,7 @@ export const makeMemoryApplicationLayers = <PS, PE, PR, IS, IE, IR, SS, SE, SR, 
   return {
     layerServerEnvironment,
     layerRegisteredMemoryHub,
+    layerMemoryHubAdministrator,
     layerMemoryService,
     layerMemoryStarted,
     layerMemoryHubReady,
