@@ -1946,6 +1946,8 @@ export type MemoryImportOutcome = typeof MemoryImportOutcome.Type;
 
 export const MemoryImportIssue = Schema.Literals([
   "unsupported_format",
+  "index_file",
+  "empty_file",
   "source_missing",
   "source_unreadable",
   "invalid_utf8",
