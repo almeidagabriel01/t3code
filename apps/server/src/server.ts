@@ -1152,7 +1152,9 @@ const layerMakeServer = Layer.unwrap(
       Layer.provideMerge(layerRuntimeServices),
       Layer.provideMerge(
         McpSessionRegistry.layer.pipe(
-          Layer.provide(ServerEnvironment.layer.pipe(Layer.provide(ServerSecretStore.layer))),
+          // Layers memoize by reference: a second ServerEnvironment.layer here would be built first,
+          // without the memory import runtime, and become the descriptor everyone reads.
+          Layer.provide(layerServerEnvironment),
         ),
       ),
       Layer.provide(layerActivation),
