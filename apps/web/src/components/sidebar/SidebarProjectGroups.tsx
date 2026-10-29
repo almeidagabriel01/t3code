@@ -25,7 +25,7 @@ import { countLivePortsByProject, resolveSubagentDisplay } from "./sidebarDispla
 import { useListeningPorts } from "../statusBar/useListeningPorts";
 import { CollapsibleSectionHeader } from "../ui/collapsible-section-header";
 import { SidebarNotificationDot } from "./SidebarNotificationDot";
-import { SidebarProjectBoardButton } from "../kanban/SidebarKanbanButtons";
+import { SidebarProjectMenuButton } from "../kanban/SidebarKanbanButtons";
 import { SidebarProjectNewThreadButton } from "./SidebarProjectNewThreadButton";
 import { SidebarProjectHoverCard } from "./SidebarProjectHoverCard";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -41,6 +41,12 @@ import {
   SortableSidebarMarker,
 } from "./SidebarListMarkers";
 import { projectDragId } from "./sidebarProjectGroups.logic";
+
+/** The row's hover actions show on hover, on focus inside them, and on touch; the count and name spacer follow. */
+const ACTIONS_HIDE =
+  "group-hover/project-header:hidden pointer-coarse:hidden group-has-[[data-project-actions]:focus-within]/project-header:hidden";
+const ACTIONS_SHOW =
+  "group-hover/project-header:block pointer-coarse:block group-has-[[data-project-actions]:focus-within]/project-header:block";
 
 type ProjectLayout = ReturnType<typeof useSidebarProjectLayout>["layout"][number];
 
@@ -385,10 +391,17 @@ function SidebarProjectGroup(props: ProjectGroupProps) {
           </Tooltip>
           {expanded ? null : <ProjectNotificationDot threads={group.openThreads} />}
           {hiddenCount > 0 ? (
-            <span className="shrink-0 text-xs tabular-nums text-sidebar-muted-foreground group-hover/project-header:invisible pointer-coarse:invisible">
+            <span
+              className={cn(
+                "shrink-0 text-xs tabular-nums text-sidebar-muted-foreground",
+                ACTIONS_HIDE,
+              )}
+            >
               {hiddenCount}
             </span>
           ) : null}
+          {/* Two micro icon buttons and their gap (2 x 26px + 2px): the name stops before the actions laid over the row. */}
+          <span aria-hidden className={cn("hidden w-[54px] shrink-0", ACTIONS_SHOW)} />
           {/* Keeps the count clear of the always-visible ports icon laid over the row. */}
           {portCount > 0 ? <span aria-hidden className="size-5 shrink-0" /> : null}
           <ChevronDownIcon
@@ -401,8 +414,11 @@ function SidebarProjectGroup(props: ProjectGroupProps) {
         </button>
         {/* Sits over the count, which hides on hover, and left of the chevron. */}
         <span className="absolute inset-y-0 right-6 flex items-center gap-0.5">
-          <span className="flex items-center gap-0.5 opacity-0 focus-within:opacity-100 group-hover/project-header:opacity-100 pointer-coarse:opacity-100">
-            <SidebarProjectBoardButton project={project} />
+          <span
+            data-project-actions
+            className="flex items-center gap-0.5 opacity-0 focus-within:opacity-100 group-hover/project-header:opacity-100 pointer-coarse:opacity-100"
+          >
+            <SidebarProjectMenuButton project={project} />
             <SidebarProjectNewThreadButton project={project} />
           </span>
           <SidebarProjectHoverCard project={project} portCount={portCount} />
