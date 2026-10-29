@@ -30,6 +30,18 @@ export function isThreadWorking(thread: WorkingThreadInput): boolean {
   return !(thread.interactionMode === "plan" && thread.hasActionableProposedPlan && runSettled);
 }
 
+/**
+ * A run the user started by sending a message keeps its thread in the inbox; the Working
+ * section folds only work the agent started on its own, like wakes and subagent returns.
+ */
+export function isThreadRunUserStarted(
+  thread: Pick<EnvironmentThreadShell, "latestRun" | "latestUserAuthoredMessageAt">,
+): boolean {
+  const sentAt = toSortableTimestamp(thread.latestUserAuthoredMessageAt ?? undefined);
+  const requestedAt = toSortableTimestamp(thread.latestRun?.requestedAt ?? undefined);
+  return sentAt !== null && requestedAt !== null && sentAt >= requestedAt;
+}
+
 type InboxThreadInput = Pick<
   EnvironmentThreadShell,
   "id" | "environmentId" | "createdAt" | "unsettledAt" | "latestRun"

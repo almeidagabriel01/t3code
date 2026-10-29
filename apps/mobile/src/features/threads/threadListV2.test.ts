@@ -1681,6 +1681,34 @@ describe("Working section beta", () => {
     expect(off.workingCount).toBe(0);
   });
 
+  it("keeps a thread you just messaged at the top while it works", () => {
+    const runFrom = (id: string, requestedAt: string) => ({
+      runId: RunId.make(`run-${id}`),
+      status: "running" as const,
+      requestedAt,
+      startedAt: requestedAt,
+      completedAt: null,
+      assistantMessageId: null,
+    });
+    const messaged = makeThread({
+      id: ThreadId.make("messaged"),
+      title: "messaged",
+      runtime: running,
+      latestUserAuthoredMessageAt: "2026-06-01T05:00:00.000Z",
+      latestRun: runFrom("messaged", "2026-06-01T05:00:00.000Z"),
+    });
+    const woken = makeThread({
+      id: ThreadId.make("woken"),
+      title: "woken",
+      runtime: running,
+      latestUserAuthoredMessageAt: "2026-06-01T01:00:00.000Z",
+      latestRun: runFrom("woken", "2026-06-01T06:00:00.000Z"),
+    });
+    const layout = build({ threads: [...threads.slice(0, 2), messaged, woken] });
+    expect(ids(layout)).toEqual(["messaged", "finished-late", "finished-early"]);
+    expect(layout.workingCount).toBe(1);
+  });
+
   it("keeps an inactive row in Working during the shared grace and returns it on expiry", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(NOW));

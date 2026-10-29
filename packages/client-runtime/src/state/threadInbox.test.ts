@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 import {
   createInboxReturnTracker,
+  isThreadRunUserStarted,
   isThreadWorking,
   sortInboxThreadsByReturn,
   sortWorkingThreadsBySend,
@@ -214,6 +215,33 @@ describe("createInboxReturnTracker", () => {
     vi.advanceTimersByTime(2_000);
     expect(notify).not.toHaveBeenCalled();
     expect(tracker.returnedAt(thread("a", false))).toBeUndefined();
+  });
+});
+
+describe("isThreadRunUserStarted", () => {
+  const run = (requestedAt: string | null) => ({
+    runId: RunId.make("run"),
+    status: "running" as const,
+    requestedAt,
+    startedAt: requestedAt,
+    completedAt: null,
+    assistantMessageId: null,
+  });
+  it("is true only when your latest message started the latest run", () => {
+    const sent = "2026-06-01T05:00:00.000Z";
+    expect(
+      isThreadRunUserStarted({ latestUserAuthoredMessageAt: sent, latestRun: run(sent) }),
+    ).toBe(true);
+    expect(
+      isThreadRunUserStarted({
+        latestUserAuthoredMessageAt: sent,
+        latestRun: run("2026-06-01T06:00:00.000Z"),
+      }),
+    ).toBe(false);
+    expect(isThreadRunUserStarted({ latestRun: run(sent) })).toBe(false);
+    expect(isThreadRunUserStarted({ latestUserAuthoredMessageAt: sent, latestRun: null })).toBe(
+      false,
+    );
   });
 });
 

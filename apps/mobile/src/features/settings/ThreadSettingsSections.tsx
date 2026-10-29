@@ -230,7 +230,7 @@ export function WorkingSectionSettings() {
       <Text className="px-2 text-sm text-foreground-muted">
         {threadOrder === "fixed"
           ? "The Working section is not used while thread order is Fixed."
-          : "Fold working and monitoring threads into a Working section. They return to the top of the list when they need you."}
+          : "Fold threads the agent is working on by itself into a Working section. Threads you message stay at the top, and threads return there when they need you."}
       </Text>
     </View>
   );

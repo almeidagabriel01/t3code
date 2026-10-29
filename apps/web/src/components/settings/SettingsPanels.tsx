@@ -942,7 +942,7 @@ export function GeneralSettingsPanel() {
           description={
             settings.sidebarThreadOrder === "fixed"
               ? "Not used while thread order is Fixed."
-              : "Fold working and monitoring threads into a Working section. They return to the top of the inbox when they need you."
+              : "Fold threads the agent is working on by itself into a Working section. Threads you message stay at the top, and threads return there when they need you."
           }
           resetAction={
             settings.sidebarWorkingShelfEnabled !==
