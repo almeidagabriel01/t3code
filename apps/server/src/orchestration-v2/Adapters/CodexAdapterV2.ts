@@ -1713,34 +1713,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             }),
           ),
         );
-        const initialized = yield* Ref.make(false);
-        // Codex rejects a second initialize on the shared app-server.
-        const initializePermit = yield* Semaphore.make(1);
-        const ensureInitialized = initializePermit.withPermit(
-          Effect.gen(function* () {
-            const alreadyInitialized = yield* Ref.get(initialized);
-            if (alreadyInitialized) {
-              return;
-            }
-
-            yield* client
-              .request("initialize", {
-                clientInfo: buildCodexInitializeParams().clientInfo,
-                capabilities: CODEX_CLIENT_CAPABILITIES,
-              })
-              .pipe(
-                Effect.catchTags({
-                  // Interruption can leave Codex initialized before the local flag is set.
-                  CodexAppServerRequestError: (error) =>
-                    error.code === -32600 && error.errorMessage === "Already initialized"
-                      ? Effect.void
-                      : Effect.fail(error),
-                }),
-              );
-            yield* client.notify("initialized", undefined);
-            yield* Ref.set(initialized, true);
-          }),
-        );
         const now = yield* DateTime.now;
         const session = providerSession({
           providerSessionId: input.providerSessionId,
@@ -1753,6 +1725,42 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           ProviderAdapter.ProviderAdapterV2Event,
           ProviderAdapter.ProviderAdapterEventStreamError
         >();
+        const initialized = yield* Ref.make(false);
+        // Codex rejects a second initialize on the shared app-server.
+        const initializePermit = yield* Semaphore.make(1);
+        const ensureInitialized = initializePermit.withPermit(
+          Effect.gen(function* () {
+            const alreadyInitialized = yield* Ref.get(initialized);
+            if (alreadyInitialized) {
+              return;
+            }
+
+            const initializeResponse = yield* client
+              .request("initialize", {
+                clientInfo: buildCodexInitializeParams().clientInfo,
+                capabilities: CODEX_CLIENT_CAPABILITIES,
+              })
+              .pipe(
+                Effect.catchTags({
+                  // Interruption can leave Codex initialized before the local flag is set.
+                  CodexAppServerRequestError: (error) =>
+                    error.code === -32600 && error.errorMessage === "Already initialized"
+                      ? Effect.succeed(undefined as { readonly userAgent: string } | undefined)
+                      : Effect.fail(error),
+                }),
+              );
+            const providerVersion = initializeResponse?.userAgent.match(/\/([^\s]+)/)?.[1];
+            if (providerVersion !== undefined) {
+              yield* Queue.offer(events, {
+                type: "provider_session.updated",
+                driver: CODEX_PROVIDER,
+                providerSession: { ...session, providerVersion },
+              });
+            }
+            yield* client.notify("initialized", undefined);
+            yield* Ref.set(initialized, true);
+          }),
+        );
         // Drain final notifications before the session manager retires the dead process.
         // Queue.fail lets readers take items already buffered before they see the failure.
         yield* client.awaitTermination.pipe(

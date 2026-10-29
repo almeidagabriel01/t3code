@@ -13,6 +13,8 @@ import {
   type ChatAttachment,
   CommandId,
   MessageId,
+  OrchestrationV2RestartProviderSessionError,
+  type OrchestrationV2RestartProviderSessionInput,
   OrchestrationV2StopWorkflowError,
   type OrchestrationV2StopWorkflowInput,
   type ModelSelection,
@@ -457,6 +459,9 @@ export interface ThreadManagementServiceShape {
   readonly stopWorkflow: (
     input: OrchestrationV2StopWorkflowInput,
   ) => Effect.Effect<void, OrchestrationV2StopWorkflowError>;
+  readonly restartProviderSession: (
+    input: OrchestrationV2RestartProviderSessionInput,
+  ) => Effect.Effect<void, OrchestrationV2RestartProviderSessionError>;
   readonly awaitBackgroundTasks: (input: {
     readonly threadId: ThreadId;
     readonly taskIds: ReadonlyArray<string>;
@@ -1164,6 +1169,38 @@ const make = Effect.gen(function* () {
     (effect, input) => effect.pipe((effect) => threadDispatch.withLock(input.threadId, effect)),
   );
 
+  const restartProviderSession: ThreadManagementServiceShape["restartProviderSession"] = Effect.fn(
+    "ThreadManagementService.restartProviderSession",
+  )(
+    function* (input) {
+      const failure = (
+        reason: OrchestrationV2RestartProviderSessionError["reason"],
+        cause?: unknown,
+      ) => new OrchestrationV2RestartProviderSessionError({ ...input, reason, cause });
+      const records = yield* orchestrator
+        .getThreadRecords(input.threadId, ["runs", "providerSessions"])
+        .pipe(Effect.mapError((cause) => failure("unavailable", cause)));
+      if (records.thread.deletedAt !== null) return yield* failure("unavailable");
+      if (latestActiveRun(records) !== undefined) return yield* failure("running");
+      // The next turn reopens the session on whatever binary is on disk, as after an idle release.
+      for (const session of records.providerSessions) {
+        if (session.status === "stopped" || session.status === "error") continue;
+        if (!(yield* sessions.isLive(session.id))) continue;
+        if (session.capabilities.sessions.supportsMultipleProviderThreadsPerSession) {
+          return yield* failure("shared");
+        }
+        yield* sessions
+          .release({
+            providerSessionId: session.id,
+            reason: "manual_shutdown",
+            detail: "Restarted to use the installed provider version.",
+          })
+          .pipe(Effect.mapError((cause) => failure("restart-failed", cause)));
+      }
+    },
+    (effect, input) => effect.pipe((effect) => threadDispatch.withLock(input.threadId, effect)),
+  );
+
   const awaitBackgroundTasks: ThreadManagementServiceShape["awaitBackgroundTasks"] = Effect.fn(
     "ThreadManagementService.awaitBackgroundTasks",
   )(function* (input) {
@@ -1358,6 +1395,7 @@ const make = Effect.gen(function* () {
     interruptThread,
     stopDelegatedTasks,
     stopWorkflow,
+    restartProviderSession,
     awaitBackgroundTasks,
     getThreadEventSequence: orchestrator.getThreadEventSequence,
     recoverDelegatedTask: orchestrator.recoverDelegatedTask,

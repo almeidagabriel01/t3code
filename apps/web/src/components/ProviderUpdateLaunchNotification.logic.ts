@@ -87,8 +87,8 @@ function getProviderUpdatedTitle(provider: Pick<ServerProvider, "driver" | "vers
 
 function getProviderUpdatedDescription(providerCount: number): string {
   return providerCount === 1
-    ? "New sessions will use the updated provider."
-    : "New sessions will use the updated providers.";
+    ? "New sessions use it. Restart open threads to switch."
+    : "New sessions use them. Restart open threads to switch.";
 }
 
 function getProviderFailedUpdateTitle(

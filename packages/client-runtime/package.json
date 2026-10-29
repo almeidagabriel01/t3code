@@ -143,6 +143,10 @@
       "types": "./src/platform/index.ts",
       "default": "./src/platform/index.ts"
     },
+    "./providerSessionRestart": {
+      "types": "./src/providerSessionRestart.ts",
+      "default": "./src/providerSessionRestart.ts"
+    },
     "./providerSkills": {
       "types": "./src/providerSkills.ts",
       "default": "./src/providerSkills.ts"

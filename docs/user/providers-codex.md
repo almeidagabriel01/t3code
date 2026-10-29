@@ -64,6 +64,10 @@ Use a completely separate **CODEX_HOME path**, with no shadow home, when you wan
 separate Codex sessions and configuration. That instance cannot continue threads
 from the other home.
 
+## After the Codex CLI updates
+
+An open thread keeps the version it started with. When a newer one is installed, the thread shows a notice with **Restart session**, which applies it on the next message without losing the conversation.
+
 ## Switch accounts in an existing thread
 
 Choose the other account from the thread's model picker. T3 Code offers compatible

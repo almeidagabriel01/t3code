@@ -4593,6 +4593,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             );
           });
         const sdkMessageLock = yield* Semaphore.make(1);
+        let reportedVersion: string | undefined;
         // Members can finish after the launching turn; retain state to emit each transition once.
         const workflowMemberStates = yield* Ref.make(
           new Map<
@@ -10039,7 +10040,20 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   ) {
                     context.permissionMode = message.permissionMode;
                   }
-                  return handleSdkMessage({ query: querySession, message });
+                  const handled = handleSdkMessage({ query: querySession, message });
+                  if (
+                    message.type !== "system" ||
+                    message.subtype !== "init" ||
+                    message.claude_code_version === reportedVersion
+                  ) {
+                    return handled;
+                  }
+                  reportedVersion = message.claude_code_version;
+                  return Queue.offer(events, {
+                    type: "provider_session.updated",
+                    driver: CLAUDE_PROVIDER,
+                    providerSession: { ...session, providerVersion: reportedVersion },
+                  }).pipe(Effect.andThen(handled));
                 }),
               ),
             ),

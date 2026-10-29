@@ -107,6 +107,10 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
       label: "environment-data:orchestration:stop-workflow",
       tag: ORCHESTRATION_V2_WS_METHODS.stopWorkflow,
     }),
+    restartProviderSession: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:orchestration:restart-provider-session",
+      tag: ORCHESTRATION_V2_WS_METHODS.restartProviderSession,
+    }),
     turnItem: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:turn-item",
       tag: ORCHESTRATION_V2_WS_METHODS.getTurnItem,

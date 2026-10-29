@@ -210,6 +210,74 @@ it.effect(
   },
 );
 
+const layerRestartSessionTest = (input: {
+  readonly runStatus: "running" | "completed";
+  readonly sharedSession: boolean;
+  readonly released: Array<string>;
+}) =>
+  ThreadManagementService.layer.pipe(
+    Layer.provide(
+      Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
+        isLive: () => Effect.succeed(true),
+        release: (release) =>
+          Effect.sync(() => {
+            input.released.push(`${release.providerSessionId}:${release.reason}`);
+          }),
+      }),
+    ),
+    Layer.provide(
+      Layer.mock(Orchestrator.OrchestratorV2)({
+        getThreadRecords: () =>
+          Effect.succeed({
+            thread: { id: ThreadId.make("thread:restart"), deletedAt: null },
+            runs: [{ id: RunId.make("run:restart"), status: input.runStatus, ordinal: 1 }],
+            providerSessions: [
+              {
+                id: ProviderSessionId.make("session:restart"),
+                status: "ready",
+                capabilities: {
+                  sessions: { supportsMultipleProviderThreadsPerSession: input.sharedSession },
+                },
+              },
+            ],
+          } as unknown as OrchestrationV2ThreadProjection),
+      }),
+    ),
+    Layer.provide(ServerSettings.layerTest()),
+    Layer.provideMerge(layerReceiptsTest),
+  );
+
+it.effect(
+  "restartProviderSession releases an idle session and refuses running or shared ones",
+  () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("thread:restart");
+      const attempt = (
+        runStatus: "running" | "completed",
+        sharedSession: boolean,
+        released: Array<string>,
+      ) =>
+        ThreadManagementService.ThreadManagementService.pipe(
+          Effect.flatMap((threads) => Effect.result(threads.restartProviderSession({ threadId }))),
+          Effect.provide(layerRestartSessionTest({ runStatus, sharedSession, released })),
+        );
+
+      const idle: Array<string> = [];
+      expect((yield* attempt("completed", false, idle))._tag).toBe("Success");
+      expect(idle).toEqual(["session:restart:manual_shutdown"]);
+
+      const running: Array<string> = [];
+      const refusedRunning = yield* attempt("running", false, running);
+      expect(refusedRunning).toMatchObject({ failure: { reason: "running" } });
+      expect(running).toEqual([]);
+
+      const shared: Array<string> = [];
+      const refusedShared = yield* attempt("completed", true, shared);
+      expect(refusedShared).toMatchObject({ failure: { reason: "shared" } });
+      expect(shared).toEqual([]);
+    }),
+);
+
 it.effect("waitForThread follows a restart continuation instead of the cut run", () =>
   Effect.gen(function* () {
     const projectId = ProjectId.make("project:thread-management:wait-restart");

@@ -89,6 +89,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.notesDelete]: AuthOrchestrationOperateScope,
   [WS_METHODS.notesStartWork]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: AuthOrchestrationOperateScope,
+  [ORCHESTRATION_V2_WS_METHODS.restartProviderSession]: AuthOrchestrationOperateScope,
   [WS_METHODS.memorySearch]: AuthMemoryReadScope,
   [WS_METHODS.memoryList]: AuthMemoryReadScope,
   [WS_METHODS.memoryRead]: AuthMemoryReadScope,

@@ -41,6 +41,10 @@ Claude Code's verbose mode can stay enabled when you use Claude for text generat
 thread titles, branch names, commit messages, and pull request descriptions. On a remote connection,
 T3 Code uses the Claude configuration on the connected server.
 
+## After Claude Code updates
+
+An open thread keeps the version it started with. When a newer one is installed, the thread shows a notice with **Restart session**, which applies it on the next message without losing the conversation.
+
 ## Compact long conversations
 
 Set **Auto-compact after** in the Claude provider settings to an integer between

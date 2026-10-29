@@ -971,6 +971,45 @@ it.effect("ProviderSessionManagerV2 closes every live session for a provider ins
   }),
 );
 
+it.effect("ProviderSessionManagerV2 reopens a manually released session from its record", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const effect = Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread-provider-session-manager-restart");
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      yield* eventSink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+      });
+      const open = (resumeFromSession?: OrchestrationV2ProviderSession) =>
+        manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+          ...(resumeFromSession === undefined ? {} : { resumeFromSession }),
+        });
+      const first = yield* open();
+
+      yield* manager.release({ providerSessionId, reason: "manual_shutdown" });
+      assert.isFalse(yield* manager.isLive(providerSessionId));
+      assert.equal((yield* Ref.get(state)).closeCount, 1);
+
+      yield* open(first.providerSession);
+      assert.isTrue(yield* manager.isLive(providerSessionId));
+      assert.equal((yield* Ref.get(state)).openCount, 2);
+    });
+
+    yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60_000 })));
+  }),
+);
+
 it.effect("ProviderSessionManagerV2 opens a duplicate session only once", () =>
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
