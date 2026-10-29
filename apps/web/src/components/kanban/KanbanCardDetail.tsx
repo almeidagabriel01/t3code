@@ -1,6 +1,5 @@
 import type { KanbanBoardState } from "@t3tools/client-runtime/state/kanban";
 import {
-  definitionOfDoneWarning,
   describeCardEvent,
   dueAtToInput,
   formatCardDuration,
@@ -25,7 +24,6 @@ import {
   CalendarDaysIcon,
   CircleCheckBigIcon,
   EllipsisIcon,
-  ImagePlusIcon,
   ListChecksIcon,
   PaperclipIcon,
   PlusIcon,
@@ -34,11 +32,8 @@ import {
   UserIcon,
   XIcon,
 } from "lucide-react";
-import { attachmentImageMarkdown } from "@t3tools/shared/attachmentImageRefs";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
-import { requestConfirmDialog } from "../../confirmDialog";
-import { uploadStandaloneAttachment } from "../../lib/attachmentUploadQueue";
 import { useProject } from "../../state/entities";
 import { kanbanEnvironment } from "../../state/kanban";
 import { useEnvironmentQuery } from "../../state/query";
@@ -59,7 +54,6 @@ import {
 import { Sheet, SheetPopup, SheetTitle } from "../ui/sheet";
 import { Spinner } from "../ui/spinner";
 import { Textarea } from "../ui/textarea";
-import { toastManager } from "../ui/toast";
 import {
   KanbanAttachmentDropOverlay,
   KanbanCardAttachments,
@@ -67,6 +61,7 @@ import {
   useCardAttachmentUploads,
 } from "./KanbanCardAttachments";
 import { KanbanCardRelations } from "./KanbanCardRelations";
+import { KanbanDescriptionEditor } from "./KanbanDescriptionEditor";
 import { KanbanChecklist } from "./KanbanChecklist";
 import { KanbanLinkedAgents } from "./KanbanLinkedAgents";
 import { KanbanStartAgentDialog } from "./KanbanStartAgent";
@@ -83,7 +78,7 @@ import {
   SectionHeading,
   TemplateIcon,
 } from "./kanbanPresentation";
-import { useKanbanActions } from "./useKanban";
+import { useKanbanCardCommands } from "./useKanbanCardCommands";
 
 const NO_TYPE = "__none__";
 
@@ -167,9 +162,6 @@ function Activity(props: {
   );
 }
 
-const imageFiles = (files: FileList | null) =>
-  Array.from(files ?? []).filter((file) => file.type.startsWith("image/"));
-
 function Description(props: {
   readonly text: string;
   readonly cwd: string | undefined;
@@ -178,41 +170,7 @@ function Description(props: {
   readonly onSave: (text: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(props.text);
-  const [uploading, setUploading] = useState(0);
-  const cursor = useRef(0);
-  const fileInput = useRef<HTMLInputElement>(null);
-  const attachImages = async (files: ReadonlyArray<File>) => {
-    setUploading((count) => count + files.length);
-    for (const file of files) {
-      try {
-        const { attachmentId } = await uploadStandaloneAttachment(props.environmentId, file);
-        const ref = attachmentImageMarkdown(file.name || "image", attachmentId);
-        setDraft((text) => {
-          const at = Math.min(cursor.current, text.length);
-          cursor.current = at + ref.length + 1;
-          return `${text.slice(0, at)}${ref}\n${text.slice(at)}`;
-        });
-      } catch (cause) {
-        toastManager.add({
-          type: "error",
-          title: "Could not attach image",
-          description: cause instanceof Error ? cause.message : "Upload failed",
-        });
-      } finally {
-        setUploading((count) => count - 1);
-      }
-    }
-  };
-  const edit = () => {
-    setDraft(props.text);
-    setEditing(true);
-  };
-  const save = () => {
-    if (uploading > 0) return;
-    if (draft !== props.text) props.onSave(draft);
-    setEditing(false);
-  };
+  const edit = () => setEditing(true);
   const empty = props.text.trim().length === 0;
   return (
     <section className="grid gap-2" aria-label="Description">
@@ -228,70 +186,12 @@ function Description(props: {
         }
       />
       {editing ? (
-        <div className="grid gap-2">
-          <Textarea
-            autoFocus
-            rows={8}
-            aria-label="Description"
-            placeholder="Add more detail. Markdown works, and pasted screenshots land inline."
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            onSelect={(event) => {
-              cursor.current = event.currentTarget.selectionStart;
-            }}
-            onKeyDown={(event) => {
-              if (event.key === "Escape") {
-                event.preventDefault();
-                event.stopPropagation();
-                setEditing(false);
-              } else if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-                event.preventDefault();
-                save();
-              }
-            }}
-            onPaste={(event) => {
-              const images = imageFiles(event.clipboardData.files);
-              if (images.length === 0) return;
-              event.preventDefault();
-              void attachImages(images);
-            }}
-            onDragOver={(event) => {
-              if (event.dataTransfer.types.includes("Files")) event.preventDefault();
-            }}
-            onDrop={(event) => {
-              const images = imageFiles(event.dataTransfer.files);
-              if (images.length === 0) return;
-              event.preventDefault();
-              void attachImages(images);
-            }}
-          />
-          <input
-            ref={fileInput}
-            type="file"
-            accept="image/*"
-            multiple
-            hidden
-            onChange={(event) => {
-              const images = imageFiles(event.currentTarget.files);
-              event.currentTarget.value = "";
-              void attachImages(images);
-            }}
-          />
-          <div className="flex items-center justify-end gap-2">
-            <span className="me-auto">
-              <Button size="xs" variant="ghost-muted" onClick={() => fileInput.current?.click()}>
-                {uploading > 0 ? <Spinner /> : <ImagePlusIcon />}
-                Insert image
-              </Button>
-            </span>
-            <Button size="xs" variant="ghost" onClick={() => setEditing(false)}>
-              Cancel
-            </Button>
-            <Button size="xs" disabled={uploading > 0} onClick={save}>
-              Save
-            </Button>
-          </div>
-        </div>
+        <KanbanDescriptionEditor
+          environmentId={props.environmentId}
+          initial={props.text}
+          onSave={props.onSave}
+          onClose={() => setEditing(false)}
+        />
       ) : empty ? (
         props.disabled ? (
           <p className="text-sm text-muted-foreground">No description.</p>
@@ -317,11 +217,11 @@ function Description(props: {
   );
 }
 
-function LabelMenuItems(props: {
+export function LabelMenuItems(props: {
   readonly board: KanbanBoardState;
   readonly card: KanbanCard;
   readonly onToggle: (labelId: KanbanLabelId) => void;
-  readonly onNew: () => void;
+  readonly onNew?: (() => void) | undefined;
 }) {
   return (
     <>
@@ -334,8 +234,16 @@ function LabelMenuItems(props: {
           <LabelChip label={label} />
         </MenuCheckboxItem>
       ))}
-      {props.board.labels.length > 0 ? <MenuSeparator /> : null}
-      <MenuItem onClick={props.onNew}>New label…</MenuItem>
+      {props.onNew === undefined ? (
+        props.board.labels.length === 0 ? (
+          <MenuItem disabled>No labels yet</MenuItem>
+        ) : null
+      ) : (
+        <>
+          {props.board.labels.length > 0 ? <MenuSeparator /> : null}
+          <MenuItem onClick={props.onNew}>New label…</MenuItem>
+        </>
+      )}
     </>
   );
 }
@@ -349,7 +257,14 @@ export function KanbanCardDetail(props: {
   readonly onClose: () => void;
 }) {
   const { environmentId, board, card } = props;
-  const actions = useKanbanActions(environmentId);
+  const {
+    actions,
+    patch,
+    moveTo,
+    remove: removeCard,
+    archive,
+    toggleLabel,
+  } = useKanbanCardCommands(environmentId, board, card);
   const query = useEnvironmentQuery(
     kanbanEnvironment.card({ environmentId, input: { cardId: card.id } }),
   );
@@ -375,38 +290,11 @@ export function KanbanCardDetail(props: {
   const columnName = (id: string) =>
     board.columns.find((entry) => entry.id === id)?.name ?? "a column";
   const result = query.data;
-  const patch = (input: Omit<Parameters<typeof actions.updateCard>[0], "cardId">) =>
-    actions.updateCard({ cardId: card.id, ...input } as Parameters<typeof actions.updateCard>[0]);
   const attachments = useCardAttachmentUploads({ environmentId, disabled, patch });
 
-  const moveTo = async (columnId: KanbanColumnId) => {
-    const target = board.columns.find((entry) => entry.id === columnId);
-    const moved = await actions.moveCard({ cardId: card.id, columnId });
-    const warning = target === undefined ? null : definitionOfDoneWarning(board, card, target);
-    if (moved !== null && warning !== null) {
-      toastManager.add({
-        type: "warning",
-        title: "Moved without meeting the definition of done",
-        description: warning,
-      });
-    }
-  };
-
   const remove = async () => {
-    const confirmed = await requestConfirmDialog(
-      `Delete #${card.number}?\nThe card, its comments, attachments and activity are removed for good.`,
-      { variant: "destructive" },
-    );
-    if (confirmed === false) return;
-    if ((await actions.deleteCard({ cardId: card.id })) !== null) props.onClose();
+    if (await removeCard()) props.onClose();
   };
-
-  const toggleLabel = (labelId: KanbanLabelId) =>
-    void patch({
-      labelIds: card.labelIds.includes(labelId)
-        ? card.labelIds.filter((id) => id !== labelId)
-        : [...card.labelIds, labelId],
-    });
 
   const cardLabels = card.labelIds.flatMap(
     (id) => board.labels.find((entry) => entry.id === id) ?? [],
@@ -479,9 +367,7 @@ export function KanbanCardDetail(props: {
                     onClick={() =>
                       void (archived
                         ? actions.unarchiveCard({ cardId: card.id })
-                        : actions
-                            .archiveCard({ cardId: card.id })
-                            .then((r) => r && props.onClose()))
+                        : archive().then((done) => done && props.onClose()))
                     }
                   >
                     {archived ? <ArchiveRestoreIcon /> : <ArchiveIcon />}

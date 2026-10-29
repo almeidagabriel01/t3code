@@ -784,6 +784,56 @@ describe("composer rich text document model", () => {
   });
 });
 
+describe("description documents", () => {
+  const descriptionSchema = getSchemaByResolvedExtensions(
+    resolveExtensions([
+      StarterKit.configure({
+        blockquote: false,
+        bulletList: false,
+        codeBlock: false,
+        heading: false,
+        horizontalRule: false,
+        listItem: false,
+        orderedList: false,
+        code: false,
+      }),
+      Node.create({
+        name: "attachmentImage",
+        group: "block",
+        atom: true,
+        addAttributes: () => ({ attachmentId: { default: "" }, name: { default: "" } }),
+      }),
+      ComposerCodeExtension,
+      ComposerCodeBlockExtension,
+      ...ComposerListExtensions,
+      ...ComposerBlockExtensions,
+    ]),
+  );
+  const parse = (value: string) => {
+    const doc = ProseMirrorNode.fromJSON(
+      descriptionSchema,
+      buildDocJson(value, () => null, { atoms: false, images: true }),
+    );
+    doc.check();
+    return doc;
+  };
+
+  it.each([
+    "Steps\n![shot.png](t3-attachment:abc-1)\nthen **bold**",
+    "![a](t3-attachment:x1)\n![b](t3-attachment:x2)",
+    "# Title\n- item @src/app.ts and $skill\ninline ![ref](t3-attachment:x) stays text",
+    "```\n![in code](t3-attachment:x)\n```",
+  ])("round-trips %j", (value) => {
+    expect(serializeEditorDoc(parse(value)).value).toBe(value);
+  });
+
+  it("turns a line holding only an image ref into an image node", () => {
+    const doc = parse("before\n![shot.png](t3-attachment:abc-1)\nafter");
+    expect(doc.child(1).type.name).toBe("attachmentImage");
+    expect(doc.child(1).attrs).toEqual({ attachmentId: "abc-1", name: "shot.png" });
+  });
+});
+
 describe("serializeSelection", () => {
   function copy(value: string, first: string, last: string) {
     const doc = ProseMirrorNode.fromJSON(

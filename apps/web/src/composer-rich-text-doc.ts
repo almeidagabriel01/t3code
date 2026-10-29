@@ -37,6 +37,7 @@ import { nextOrderedMarkerText } from "~/composer-list-continuation";
 import { parseInlineMarkdown, RICH_TEXT_DELIMITERS, type RichTextMark } from "~/composer-rich-text";
 import { collectInlineContextIds } from "~/lib/composerContextReferences";
 import { composerMathRanges } from "@t3tools/shared/composerInlineTokens";
+import { attachmentImageMarkdown } from "@t3tools/shared/attachmentImageRefs";
 
 export type SkillMeta = { label: string; description: string | null };
 
@@ -548,11 +549,25 @@ function textJsonForSpan(text: string, marks: RichTextMark[]): Record<string, un
   return json;
 }
 
+/** A line that is exactly one attachment image ref becomes an `attachmentImage` block. */
+const ATTACHMENT_IMAGE_LINE = /^!\[([^\]\n]*)\]\(t3-attachment:([a-z0-9][a-z0-9_-]*)\)$/i;
+
+export interface BuildTiptapContentOptions {
+  styling?: boolean;
+  blocks?: boolean;
+  literalText?: boolean;
+  literalLength?: number;
+  /** False keeps mentions, skills, citations, and context refs as plain text. */
+  atoms?: boolean;
+  /** Parses attachment image lines into `attachmentImage` nodes. */
+  images?: boolean;
+}
+
 /** Keeps literalLength leading characters unstyled so path queries reach file search unchanged. */
 export function buildTiptapContent(
   value: string,
   skillLabelFor: (name: string) => SkillMeta | null,
-  options?: { styling?: boolean; blocks?: boolean; literalText?: boolean; literalLength?: number },
+  options?: BuildTiptapContentOptions,
 ): Record<string, unknown>[] {
   if (options?.literalText) {
     return value.split("\n").map((line) => ({
@@ -587,6 +602,7 @@ export function buildTiptapContent(
         atomSources.push(chunk.source);
         return sentinel;
       }
+      if (options?.atoms === false) return chunk.text;
       return splitPromptIntoComposerSegments(chunk.text)
         .map((segment) => {
           if (segment.type === "text") return segment.text;
@@ -626,6 +642,7 @@ export function buildTiptapContent(
     | { rule: string }
     | { heading: { level: number; space: string; inline: InlineJson[] } }
     | { quote: { prefix: string; inline: InlineJson[] } }
+    | { image: { name: string; attachmentId: string } }
     | { line: DocLine }
   )[] = [];
   const restoreSources = (line: string) =>
@@ -645,6 +662,11 @@ export function buildTiptapContent(
     }
     const opening = blockSyntax ? parseOpeningFence(line) : null;
     if (!opening) {
+      const image = options?.images ? ATTACHMENT_IMAGE_LINE.exec(line) : null;
+      if (image) {
+        entries.push({ image: { name: image[1]!, attachmentId: image[2]! } });
+        continue;
+      }
       if (blockSyntax && /^([-*_])(?:[ \t]*\1){2,}[ \t]*\r?$/.test(line)) {
         entries.push({ rule: line });
         continue;
@@ -732,6 +754,11 @@ export function buildTiptapContent(
       blocks.push({ type: "horizontalRule", attrs: { source: entry.rule } });
       continue;
     }
+    if ("image" in entry) {
+      flushLists();
+      blocks.push({ type: "attachmentImage", attrs: entry.image });
+      continue;
+    }
     if ("heading" in entry) {
       flushLists();
       blocks.push({
@@ -790,7 +817,7 @@ export function buildTiptapContent(
 export function buildDocJson(
   value: string,
   skillLabelFor: (name: string) => SkillMeta | null,
-  options?: { styling?: boolean; literalText?: boolean },
+  options?: BuildTiptapContentOptions,
 ) {
   const content = buildTiptapContent(value, skillLabelFor, options);
   if (content.at(-1)?.type === "horizontalRule") content.push({ type: "paragraph" });
@@ -1339,6 +1366,24 @@ export function serializeEditorDoc(doc: ProseMirrorNode): RichDocMap {
       acc.md += source.length;
     } else if (block.type.name === "paragraph") {
       appendInlineRuns(block, pmBlockStart + 1, acc);
+    } else if (block.type.name === "attachmentImage") {
+      const attrs = block.attrs as Record<string, unknown>;
+      const id = typeof attrs.attachmentId === "string" ? attrs.attachmentId : "";
+      const source = id ? attachmentImageMarkdown(String(attrs.name ?? ""), id) : "";
+      acc.runs.push({
+        kind: "token",
+        flatStart: acc.flat,
+        docLen: 1,
+        mdLen: source.length,
+        openLen: 0,
+        closeLen: 0,
+        pmPos: pmBlockStart,
+        mdStart: acc.md,
+        nodeName: block.type.name,
+      });
+      acc.value += source;
+      acc.flat += 1;
+      acc.md += source.length;
     }
     pmBlockStart += block.nodeSize;
   });

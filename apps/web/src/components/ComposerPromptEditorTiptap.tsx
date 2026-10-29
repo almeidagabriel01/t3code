@@ -814,6 +814,75 @@ const ComposerUndoGroupingExtension = Extension.create<
   },
 });
 
+/** Markdown blocks and marks whose input rules only build structure the serializer can write back. */
+export const RICH_MARKDOWN_EXTENSIONS = [
+  ComposerBoldSelectionOnlyExtension,
+  ComposerItalicExtension,
+  ComposerCodeExtension,
+  ComposerCodeBlockExtension.extend({
+    addNodeView() {
+      return ReactNodeViewRenderer(ComposerCodeBlockNodeView, {
+        // Tiptap shields only the button; header clicks would move ProseMirror's selection.
+        stopEvent: ({ event }) =>
+          event.target instanceof Element &&
+          event.target.closest(".chat-markdown-codeblock-header") !== null,
+      });
+    },
+    // Tiptap's fence rule allows unserializable lists/quotes; use top-level Enter instead.
+    addInputRules() {
+      return [];
+    },
+  }),
+  composerCodeBlockHighlight({
+    resolveTheme: () =>
+      resolveDiffThemeName(document.documentElement.classList.contains("dark") ? "dark" : "light"),
+  }),
+  ...ComposerBlockExtensions.map((extension) =>
+    extension.name === "blockquote"
+      ? extension.extend({
+          addInputRules() {
+            return [blockquoteInputRule];
+          },
+        })
+      : extension.name === "horizontalRule"
+        ? extension.extend({
+            addInputRules() {
+              return [horizontalRuleInputRule];
+            },
+          })
+        : extension.name === "heading"
+          ? extension.extend({
+              addInputRules() {
+                return [headingInputRule];
+              },
+            })
+          : extension,
+  ),
+  ...ComposerListExtensions.map((extension) =>
+    extension.name === "listItem"
+      ? extension
+      : extension.extend({
+          addInputRules() {
+            return this.name === "bulletList"
+              ? [
+                  listMarkerInputRule(/^(?<marker>[*+])(?<space>\s)$/, "bulletList"),
+                  listMarkerInputRule(
+                    /^(?<marker>-)(?<space>[ \t]+)(?<carried>[^\s[])$/,
+                    "bulletList",
+                  ),
+                ]
+              : [listMarkerInputRule(/^(?<marker>\d+[.)])(?<space>\s)$/, "orderedList")];
+          },
+        }),
+  ),
+  ComposerTaskListExtension,
+  ComposerTaskItemExtension.extend({
+    addInputRules() {
+      return [taskInputRule(this.type), bulletToTaskInputRule];
+    },
+  }),
+];
+
 // Module scope keeps extension identity stable; Tiptap hooks read config through this.
 function createComposerExtensions(richText: boolean) {
   return [
@@ -843,77 +912,7 @@ function createComposerExtensions(richText: boolean) {
     ComposerCitationExtension,
     ComposerContextReferenceExtension,
     ComposerMarkersExtension,
-    ...(richText
-      ? [
-          ComposerBoldSelectionOnlyExtension,
-          ComposerItalicExtension,
-          ComposerCodeExtension,
-          ComposerCodeBlockExtension.extend({
-            addNodeView() {
-              return ReactNodeViewRenderer(ComposerCodeBlockNodeView, {
-                // Tiptap shields only the button; header clicks would move ProseMirror's selection.
-                stopEvent: ({ event }) =>
-                  event.target instanceof Element &&
-                  event.target.closest(".chat-markdown-codeblock-header") !== null,
-              });
-            },
-            // Tiptap's fence rule allows unserializable lists/quotes; use top-level Enter instead.
-            addInputRules() {
-              return [];
-            },
-          }),
-          composerCodeBlockHighlight({
-            resolveTheme: () =>
-              resolveDiffThemeName(
-                document.documentElement.classList.contains("dark") ? "dark" : "light",
-              ),
-          }),
-          ...ComposerBlockExtensions.map((extension) =>
-            extension.name === "blockquote"
-              ? extension.extend({
-                  addInputRules() {
-                    return [blockquoteInputRule];
-                  },
-                })
-              : extension.name === "horizontalRule"
-                ? extension.extend({
-                    addInputRules() {
-                      return [horizontalRuleInputRule];
-                    },
-                  })
-                : extension.name === "heading"
-                  ? extension.extend({
-                      addInputRules() {
-                        return [headingInputRule];
-                      },
-                    })
-                  : extension,
-          ),
-          ...ComposerListExtensions.map((extension) =>
-            extension.name === "listItem"
-              ? extension
-              : extension.extend({
-                  addInputRules() {
-                    return this.name === "bulletList"
-                      ? [
-                          listMarkerInputRule(/^(?<marker>[*+])(?<space>\s)$/, "bulletList"),
-                          listMarkerInputRule(
-                            /^(?<marker>-)(?<space>[ \t]+)(?<carried>[^\s[])$/,
-                            "bulletList",
-                          ),
-                        ]
-                      : [listMarkerInputRule(/^(?<marker>\d+[.)])(?<space>\s)$/, "orderedList")];
-                  },
-                }),
-          ),
-          ComposerTaskListExtension,
-          ComposerTaskItemExtension.extend({
-            addInputRules() {
-              return [taskInputRule(this.type), bulletToTaskInputRule];
-            },
-          }),
-        ]
-      : []),
+    ...(richText ? RICH_MARKDOWN_EXTENSIONS : []),
   ];
 }
 
@@ -1858,7 +1857,7 @@ function scrollTiptapCaretIntoView(editor: TiptapEditor): void {
 }
 
 /** Tiptap throws on `editor.view` before mount and after destroy, which a Suspense prerender triggers. */
-function mountedEditorView(editor: TiptapEditor | null | undefined): EditorView | null {
+export function mountedEditorView(editor: TiptapEditor | null | undefined): EditorView | null {
   return editor && !editor.isDestroyed ? editor.view : null;
 }
 

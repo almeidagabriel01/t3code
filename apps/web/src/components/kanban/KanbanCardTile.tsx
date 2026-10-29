@@ -16,6 +16,7 @@ import {
   ListChecksIcon,
   ListTreeIcon,
   PaperclipIcon,
+  PencilIcon,
 } from "lucide-react";
 import { memo } from "react";
 
@@ -34,6 +35,8 @@ import {
   type KanbanProjectInfo,
 } from "./KanbanProjectBadge";
 import { formatDueLabel, isDueOverdue } from "./kanbanFormat";
+import type { QuickEditTarget } from "./KanbanQuickEdit";
+import { useKanbanCanEdit } from "./useKanban";
 import { LabelChip, PriorityIcon, ProgressBar, TemplateIcon } from "./kanbanPresentation";
 
 const LinkedAgent = memo(function LinkedAgent(props: {
@@ -82,6 +85,8 @@ export interface KanbanCardTileProps {
   /** Present when the viewer can edit; adds the agent quick action. */
   readonly onStartAgent?: ((card: KanbanCard) => void) | undefined;
   readonly onLinkThread?: ((card: KanbanCard) => void) | undefined;
+  /** Shown only where the viewer can edit the card's environment. */
+  readonly onQuickEdit?: ((target: QuickEditTarget) => void) | undefined;
 }
 
 export const KanbanCardTile = memo(function KanbanCardTile(props: KanbanCardTileProps) {
@@ -92,6 +97,7 @@ export const KanbanCardTile = memo(function KanbanCardTile(props: KanbanCardTile
   const now = Date.parse(useNowMinute());
   const overdue = card.dueAt !== null && isDueOverdue(card.dueAt, now);
   const subtasksTotal = props.subtasksTotal ?? 0;
+  const canQuickEdit = useKanbanCanEdit(props.environmentId) && props.onQuickEdit !== undefined;
   const hasFooter =
     progress.total > 0 ||
     subtasksTotal > 0 ||
@@ -129,31 +135,48 @@ export const KanbanCardTile = memo(function KanbanCardTile(props: KanbanCardTile
             <BanIcon aria-label="Blocked" className="size-3.5 text-warning-foreground" />
           ) : null}
           <PriorityIcon priority={card.priority} />
-          {props.onStartAgent && props.onLinkThread ? (
-            <span className="relative z-10 -my-1 -me-1 opacity-0 group-focus-within/card:opacity-100 group-hover/card:opacity-100 has-data-popup-open:opacity-100">
-              <Menu>
-                <MenuTrigger
-                  render={
-                    <Button
-                      size="icon-xs"
-                      variant="ghost-muted"
-                      aria-label={`Agent actions for #${card.number}`}
-                    />
-                  }
+          {canQuickEdit || (props.onStartAgent && props.onLinkThread) ? (
+            <span className="relative z-10 -my-1 -me-1 flex opacity-0 group-focus-within/card:opacity-100 group-hover/card:opacity-100 has-data-popup-open:opacity-100">
+              {canQuickEdit ? (
+                <Button
+                  size="icon-xs"
+                  variant="ghost-muted"
+                  aria-label={`Quick edit #${card.number}`}
+                  onClick={(event) => {
+                    const anchor = event.currentTarget.closest<HTMLElement>(
+                      '[data-testid="kanban-card"]',
+                    );
+                    if (anchor) props.onQuickEdit?.({ cardId: card.id, anchor });
+                  }}
                 >
-                  <BotIcon />
-                </MenuTrigger>
-                <MenuPopup align="end">
-                  <MenuItem onClick={() => props.onStartAgent?.(card)}>
+                  <PencilIcon />
+                </Button>
+              ) : null}
+              {props.onStartAgent && props.onLinkThread ? (
+                <Menu>
+                  <MenuTrigger
+                    render={
+                      <Button
+                        size="icon-xs"
+                        variant="ghost-muted"
+                        aria-label={`Agent actions for #${card.number}`}
+                      />
+                    }
+                  >
                     <BotIcon />
-                    Start new agent…
-                  </MenuItem>
-                  <MenuItem onClick={() => props.onLinkThread?.(card)}>
-                    <LinkIcon />
-                    Link existing thread…
-                  </MenuItem>
-                </MenuPopup>
-              </Menu>
+                  </MenuTrigger>
+                  <MenuPopup align="end">
+                    <MenuItem onClick={() => props.onStartAgent?.(card)}>
+                      <BotIcon />
+                      Start new agent…
+                    </MenuItem>
+                    <MenuItem onClick={() => props.onLinkThread?.(card)}>
+                      <LinkIcon />
+                      Link existing thread…
+                    </MenuItem>
+                  </MenuPopup>
+                </Menu>
+              ) : null}
             </span>
           ) : null}
         </span>
