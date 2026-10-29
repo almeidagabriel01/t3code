@@ -1,3 +1,9 @@
+import {
+  withMemoryExecution,
+  type MemoryGenerationRunnerContext,
+} from "@t3tools/provider-core/server/memoryGenerationRunner";
+import { ProviderDriverKind } from "@t3tools/contracts";
+import * as Stream from "effect/Stream";
 import * as FileSystem from "effect/FileSystem";
 
 import type { AgentOptions, RunResult } from "@cursor/sdk";
@@ -9,6 +15,7 @@ import { type ProviderSetupError, TextGenerationError } from "@t3tools/contracts
 import type { CursorSettings } from "../settings.ts";
 
 import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
+import { MemoryGenerationRunnerError } from "@t3tools/provider-core/server/memoryGenerationRunner";
 import { cursorSdkModelSelection } from "./sdkModel.ts";
 import type { CursorAuth } from "./auth.ts";
 import * as CursorSdk from "./CursorSdk.ts";
@@ -48,6 +55,7 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
   environment?: NodeJS.ProcessEnv,
   resolveApiKey?: Effect.Effect<string, ProviderSetupError>,
   withAccess?: CursorAuth["withAccess"],
+  memoryRunnerContext?: MemoryGenerationRunnerContext,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const { Agent, SqliteLocalAgentStore } = yield* CursorSdk.CursorSdk;
@@ -76,12 +84,11 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
     return apiKey;
   });
 
-  const runCursorJson: TextGenerationOperations.Runner = Effect.fn(
-    "CursorTextGeneration.runCursorJson",
-  )(
-    function* (input) {
+  // Ignores `cwd`: the agent runs in an empty temp directory, away from the project.
+  const runCursorSelected = Effect.fn("CursorTextGeneration.runCursorJson")(
+    function* <S extends Schema.Top>(input: TextGenerationOperations.Request<S>) {
       const { operation, prompt, modelSelection } = input;
-
+      const isMemory = TextGenerationOperations.isMemoryOperation(operation);
       const apiKey = yield* resolveCursorApiKey(operation);
       // sandbox.json expands writable paths independently of settingSources; the public API cannot override it.
       if (yield* fs.exists(`${yield* HostProcess.HomeDirectory}/.cursor/sandbox.json`)) {
@@ -89,10 +96,15 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
           operation,
           detail:
             "Cursor text generation cannot enforce workspace isolation with a custom ~/.cursor/sandbox.json. Use another text-generation provider.",
+          // Typed so memory pauses this model: the policy refuses every request.
+          cause: new MemoryGenerationRunnerError({ code: "unavailable" }),
         });
       }
       const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cursor-text-" });
-      // Only store disposal releases SDK SQLite handles; keep state outside the empty workspace.
+      const selectedModel = cursorSdkModelSelection(modelSelection);
+      // The SDK keeps SQLite handles open after `agent.close()` and only releases
+      // them from a store the caller disposes. Its state lives outside `cwd` so the
+      // agent's workspace stays empty.
       const stateRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cursor-text-state-" });
       const store = yield* Effect.acquireRelease(
         Effect.tryPromise(() => SqliteLocalAgentStore.open({ workspaceRef: cwd, stateRoot })),
@@ -101,14 +113,16 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
       const agentOptions = {
         apiKey,
         mode: "plan",
-        model: cursorSdkModelSelection(modelSelection),
+        model: selectedModel,
+        ...(isMemory ? { tools: [], disallowedTools: ["mcp", "task"], mcpServers: {} } : {}),
         local: {
           cwd,
           store,
           autoReview: false,
           sandboxOptions: { enabled: true },
           settingSources: [],
-          enableAgentRetries: true,
+          // Memory helpers never resume a saved agent or retry through a different tool policy.
+          enableAgentRetries: !isMemory,
         },
       } satisfies AgentOptions;
       const createCursorAgent = (sandboxEnabled: boolean) =>
@@ -127,13 +141,35 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
             if (signal.aborted) agent.close();
             return agent;
           }),
+        ).pipe(
+          Effect.mapError(
+            (cause) =>
+              new TextGenerationError({
+                operation,
+                detail: isMemory
+                  ? "Cursor could not create an isolated text generation agent."
+                  : "Cursor SDK text generation failed.",
+                cause,
+              }),
+          ),
         );
 
       const request = Effect.gen(function* () {
         // Empty cwd and setting sources isolate the run from user projects even if sandboxing fails.
         const agent = yield* Effect.acquireRelease(
           createCursorAgent(true).pipe(
-            Effect.catchIf(cursorSandboxUnsupported, () => createCursorAgent(false)),
+            Effect.catchIf(cursorSandboxUnsupported, () =>
+              isMemory
+                ? Effect.fail(
+                    new TextGenerationError({
+                      operation,
+                      detail: "Cursor memory generation requires its isolated sandbox.",
+                      // Typed so memory pauses this model: the sandbox is missing on every try.
+                      cause: new MemoryGenerationRunnerError({ code: "unavailable" }),
+                    }),
+                  )
+                : createCursorAgent(false),
+            ),
           ),
           (agent) =>
             Effect.tryPromise(() => agent[Symbol.asyncDispose]()).pipe(
@@ -156,7 +192,36 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
               )
             : Effect.void,
         );
-        return yield* Effect.tryPromise(() => run.wait());
+        const wait = Effect.tryPromise(() => run.wait());
+        if (!isMemory) return yield* wait;
+        // tools: [] enforces denial in the SDK. Any observed tool activity invalidates the result,
+        // including a successful JSON answer after an unexpected tool or user-input event.
+        const noTools = Stream.fromAsyncIterable(
+          run.stream(),
+          (cause) =>
+            new TextGenerationError({
+              operation,
+              detail: "Cursor memory generation stream failed.",
+              cause,
+            }),
+        ).pipe(
+          Stream.runForEach((message) =>
+            message.type === "tool_call" ||
+            message.type === "request" ||
+            message.type === "task" ||
+            (message.type === "assistant" &&
+              message.message.content.some((block) => block.type === "tool_use"))
+              ? Effect.fail(
+                  new TextGenerationError({
+                    operation,
+                    detail: "Cursor memory generation attempted tools or user input.",
+                  }),
+                )
+              : Effect.void,
+          ),
+        );
+        const [result] = yield* Effect.all([wait, noTools], { concurrency: "unbounded" });
+        return result;
       }).pipe(Effect.scoped);
       const promptResult = yield* request.pipe(
         Effect.timeoutOption(CURSOR_TIMEOUT_MS),
@@ -182,7 +247,12 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
         });
       }
 
-      return yield* TextGenerationOperations.decodeJsonReply(input, "Cursor SDK", rawResult);
+      const result = yield* TextGenerationOperations.decodeJsonReply(
+        input,
+        "Cursor SDK",
+        rawResult,
+      );
+      return { result, effectiveModel: selectedModel.id };
     },
     (effect, input) => {
       const { operation } = input;
@@ -205,6 +275,15 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
 
   return TextGenerationOperations.fromRunner(
     "CursorTextGeneration",
-    TextGenerationOperations.withoutInvestigation("Cursor", runCursorJson),
+    TextGenerationOperations.withoutInvestigation("Cursor", (request) =>
+      runCursorSelected(request).pipe(Effect.map((selected) => selected.result)),
+    ),
+    {
+      memoryRunner: withMemoryExecution(
+        memoryRunnerContext,
+        ProviderDriverKind.make("cursor"),
+        runCursorSelected,
+      ),
+    },
   );
 });

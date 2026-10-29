@@ -61,6 +61,7 @@ import {
   isProviderNativeImageAttachment,
   providerMessageTextWithAttachmentPaths,
 } from "@t3tools/provider-core/server/attachmentPrompt";
+import * as MemoryContext from "@t3tools/provider-core/server/memoryContext";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import {
   makeSubagentChildThread,
@@ -2341,7 +2342,27 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               detail: "Cursor turn requires non-empty text or attachments.",
             });
           }
-          const text = `${userText}\n\n${buildRuntimeInstructions({ harness: "Cursor", model: turnInput.modelSelection.model })}`;
+          const snapshot = turnInput.refreshMemoryContext
+            ? yield* turnInput.refreshMemoryContext()
+            : turnInput.memoryContext;
+          const memory =
+            snapshot === undefined
+              ? undefined
+              : yield* Effect.try({
+                  try: () => MemoryContext.memoryContextText(snapshot),
+                  catch: () =>
+                    new ProviderAdapter.ProviderAdapterProtocolError({
+                      driver: CursorAgentSdk.CURSOR_PROVIDER,
+                      detail: "Invalid memory context frame",
+                    }),
+                });
+          const text = [
+            userText,
+            buildRuntimeInstructions({ harness: "Cursor", model: turnInput.modelSelection.model }),
+            memory,
+          ]
+            .filter((part) => part !== undefined)
+            .join("\n\n");
           return images.length === 0
             ? text
             : ({
@@ -2390,6 +2411,24 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             const sdkRun = yield* agent.session
               .send({
                 message,
+                prepareMessage: Effect.fn("CursorAdapter.prepareMessage")(
+                  function* () {
+                    const mcpSession = yield* mcpSessions.read(turnInput.threadId);
+                    return yield* resolveUserMessage(
+                      turnInput,
+                      cursorMcpServers(mcpSession),
+                      hasDeviceTools,
+                      delivered,
+                    );
+                  },
+                  Effect.mapError(
+                    (cause) =>
+                      new CursorAgentSdk.CursorAgentSdkRunnerError({
+                        method: "run.prepareMessage",
+                        cause,
+                      }),
+                  ),
+                ),
                 options: {
                   model: cursorSdkModelSelection(turnInput.modelSelection),
                   mode: turnInput.runtimePolicy.interactionMode === "plan" ? "plan" : "agent",
@@ -2416,8 +2455,14 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               driver: CursorAgentSdk.CURSOR_PROVIDER,
               nativeTurnId: sdkRun.runId,
             });
+            // SDK turn state owns routing/policy only, never an admission snapshot or closure.
+            const {
+              memoryContext: _memoryContext,
+              refreshMemoryContext: _refreshMemoryContext,
+              ...turnOwner
+            } = turnInput;
             context = {
-              input: turnInput,
+              input: turnOwner,
               run: sdkRun,
               providerTurnId,
               startedAt,

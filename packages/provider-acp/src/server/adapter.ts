@@ -123,6 +123,7 @@ import {
   makeSubagentConversationArtifacts,
   subagentThreadTitle,
 } from "@t3tools/provider-core/server/subagentProjection";
+import * as MemoryContext from "@t3tools/provider-core/server/memoryContext";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 export const ACP_PROTOCOL = "acp.ndjson-jsonrpc" as const;
@@ -7425,8 +7426,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 new Map(current).set(requestedSessionId, initialNativeMetadata),
               );
             }
+            // Background bookkeeping must not retain snapshot bodies or admission closures.
+            const {
+              memoryContext: _memoryContext,
+              refreshMemoryContext: _refreshMemoryContext,
+              ...turnOwner
+            } = turnInput;
             const context: ActiveAcpTurn = {
-              input: turnInput,
+              input: turnOwner,
               providerTurnId,
               nativeThreadId: requestedSessionId,
               nativeTurnId,
@@ -7594,7 +7601,33 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               return;
             }
             const promptGeneration = yield* Ref.get(runtimeCallbackGeneration);
-            yield* runtime.prompt({ prompt: promptParts!.prompt }).pipe(
+            const prompt = yield* Effect.gen(function* () {
+              const snapshot =
+                isAppOwnedWakeTurn ||
+                (flavor.supportsCompaction === true &&
+                  turnInput.message.text.trim() === "/compact" &&
+                  turnInput.message.attachments.length === 0)
+                  ? undefined
+                  : turnInput.refreshMemoryContext
+                    ? yield* turnInput.refreshMemoryContext()
+                    : turnInput.memoryContext;
+              const memory =
+                snapshot === undefined
+                  ? undefined
+                  : yield* Effect.try({
+                      try: () => MemoryContext.memoryContextText(snapshot),
+                      catch: () =>
+                        new ProviderAdapter.ProviderAdapterProtocolError({
+                          driver,
+                          detail: "Invalid memory context frame",
+                        }),
+                    });
+              return [
+                ...promptParts!.prompt,
+                ...(memory === undefined ? [] : [{ type: "text" as const, text: memory }]),
+              ];
+            }).pipe(Effect.tapError(() => finalizeTurn(context, "failed")));
+            yield* runtime.prompt({ prompt }).pipe(
               Effect.tap(() =>
                 Ref.update(promptInstructionStates, (current) => {
                   if (promptParts?.instructionState === undefined) return current;
