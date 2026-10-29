@@ -69,6 +69,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
 import { providerMessageTextWithAttachmentPaths } from "@t3tools/provider-core/server/attachmentPrompt";
+import * as MemoryContext from "@t3tools/provider-core/server/memoryContext";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import {
   ProviderAdapterDriverCreateError,
@@ -2941,6 +2942,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             sessionID: string;
           },
           abortController: AbortController,
+          memoryInput?: ProviderAdapter.ProviderAdapterV2TurnInput,
         ) {
           const text = payload.parts
             ?.filter((part) => part.type === "text")
@@ -2954,9 +2956,36 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 Effect.orElseSucceed(() => []),
               )).find((entry) => entry.name === match[1])
             : undefined;
+          // Native workspace commands accept file parts only, so snapshots stay on prompts.
           if (!command) {
-            return yield* sdkCall("session.promptAsync", payload, (signal) =>
-              client.session.promptAsync(payload, {
+            const snapshot =
+              memoryInput === undefined
+                ? undefined
+                : memoryInput.refreshMemoryContext
+                  ? yield* memoryInput.refreshMemoryContext()
+                  : memoryInput.memoryContext;
+            const memory =
+              snapshot === undefined
+                ? undefined
+                : yield* Effect.try({
+                    try: () => MemoryContext.memoryContextText(snapshot),
+                    catch: () =>
+                      new ProviderAdapter.ProviderAdapterProtocolError({
+                        driver: OPENCODE_PROVIDER,
+                        detail: "Invalid memory context frame",
+                      }),
+                  });
+            const prepared =
+              memory === undefined
+                ? payload
+                : {
+                    ...payload,
+                    system: [payload.system, MemoryContext.MEMORY_DATA_BOUNDARY_REMINDER, memory]
+                      .filter((part) => part !== undefined)
+                      .join("\n\n"),
+                  };
+            return yield* sdkCall("session.promptAsync", prepared, (signal) =>
+              client.session.promptAsync(prepared, {
                 signal: AbortSignal.any([signal, abortController.signal]),
               }),
             ).pipe(Effect.asVoid);
@@ -3283,6 +3312,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                   parts,
                 },
                 admissionAbortController!,
+                turnInput,
               ).pipe(
                 Effect.tapError((cause) =>
                   admissionAbortController!.signal.aborted

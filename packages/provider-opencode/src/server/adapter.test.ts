@@ -2,6 +2,10 @@ import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { OpencodeClient, ToolPart } from "@opencode-ai/sdk/v2";
 import {
+  EnvironmentId,
+  MemoryId,
+  MemoryRevisionId,
+  MemorySpaceId,
   CheckpointId,
   NodeId,
   ProjectId,
@@ -47,6 +51,7 @@ import {
   OPENCODE_PROVIDER,
   reconcileOpenCodePromptAdmissionStatus,
 } from "./adapter.ts";
+import { packMemoryContext, memoryContextText } from "@t3tools/provider-core/server/memoryContext";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
@@ -145,6 +150,10 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
   nativeSessionId: string,
   client: object,
   host: Partial<ProviderHost.ProviderHost["Service"]> = {},
+  memory: Pick<
+    ProviderAdapter.ProviderAdapterV2TurnInput,
+    "memoryContext" | "refreshMemoryContext"
+  > = {},
 ) {
   const instanceId = ProviderInstanceId.make(`opencode-${suffix}`);
   const threadId = ThreadId.make(`thread-opencode-${suffix}`);
@@ -226,6 +235,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
       },
       modelSelection,
       runtimePolicy: turnPolicy,
+      ...memory,
     });
   return {
     nativeSessionId,
@@ -239,7 +249,70 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
   };
 });
 
+const memorySnapshot = packMemoryContext({
+  memorySpaceId: MemorySpaceId.make("00000000-0000-4000-8000-000000000099"),
+  projectionWatermark: 1,
+  items: [
+    {
+      memoryId: MemoryId.make("00000000-0000-4000-8000-000000000001"),
+      revisionId: MemoryRevisionId.make("00000000-0000-4000-8000-000000000002"),
+      scope: { kind: "user" },
+      provenance: { environmentId: EnvironmentId.make("fixture") },
+      assertionKind: "fact",
+      text: "& <instruction> 'data'",
+    },
+  ],
+})!;
+
 describe("OpenCodeAdapterV2", () => {
+  it.effect(
+    "delivers a framed memory snapshot in the prompt system text and nothing without one",
+    () =>
+      Effect.gen(function* () {
+        const systems: Array<string | undefined> = [];
+        const client = {
+          event: { subscribe: async () => ({ stream: asyncEventStream().stream }) },
+          session: {
+            create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+            promptAsync: async (input: { system?: string }) => {
+              systems.push(input.system);
+              return { data: true };
+            },
+            abort: async () => ({ data: true }),
+            children: async () => ({ data: [] }),
+          },
+        };
+        const withMemory = yield* makeOpenCodeRuntimeHarness(
+          "memory-on",
+          "root",
+          client,
+          {},
+          {
+            memoryContext: memorySnapshot,
+          },
+        );
+        yield* withMemory.startTurn();
+        const without = yield* makeOpenCodeRuntimeHarness("memory-off", "root", client);
+        yield* without.startTurn();
+        assert.include(systems[0] ?? "", memoryContextText(memorySnapshot));
+        assert.notInclude(systems[1] ?? "", "external_memory");
+        const tampered = yield* makeOpenCodeRuntimeHarness(
+          "memory-bad",
+          "root",
+          client,
+          {},
+          {
+            memoryContext: { ...memorySnapshot, renderedText: "tampered" },
+          },
+        );
+        const failure = yield* Effect.flip(tampered.startTurn());
+        assert.include(JSON.stringify(failure), "Invalid memory context frame");
+      }).pipe(
+        Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+        Effect.scoped,
+      ),
+  );
+
   it.effect("classifies APIError 429 as a usage limit", () =>
     Effect.gen(function* () {
       const nativeEvents = asyncEventStream();

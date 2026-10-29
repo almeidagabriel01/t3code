@@ -1,4 +1,4 @@
-import { ProviderDriverKind } from "@t3tools/contracts";
+import { ProviderDriverKind, TextGenerationError } from "@t3tools/contracts";
 import { OpenCodeSettings } from "../settings.ts";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
@@ -13,6 +13,10 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as OpenCode2TextGeneration from "./v2/textGeneration.ts";
 import { makeOpenCodeTextGeneration } from "./textGeneration.ts";
+import {
+  MemoryGenerationRunnerError,
+  type MemoryOperationName,
+} from "@t3tools/provider-core/server/memoryGenerationRunner";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as OpenCodeAdapterV2 from "./adapter.ts";
@@ -125,7 +129,39 @@ function selectOpenCodeRuntimeTextGeneration(
   v1: ProviderTextGeneration,
   v2: ProviderTextGeneration,
 ): ProviderTextGeneration {
+  // Memory preflight must not start a probe/server before the identity/isolation gates.
+  const memoryProbe = Effect.map(probe.lastSuccess, Option.getOrUndefined);
+  const unsupportedMemory = (operation: MemoryOperationName) =>
+    Effect.fail(
+      new TextGenerationError({
+        operation,
+        detail: "The selected OpenCode runtime has no memory runner.",
+        cause: new MemoryGenerationRunnerError({ code: "unsupported_operation" }),
+      }),
+    );
   return {
+    resolveMemoryConflict: (input) =>
+      byOpenCodeRuntime(memoryProbe, {
+        v1:
+          v1.resolveMemoryConflict === undefined
+            ? unsupportedMemory("resolveMemoryConflict")
+            : v1.resolveMemoryConflict(input),
+        v2:
+          v2.resolveMemoryConflict === undefined
+            ? unsupportedMemory("resolveMemoryConflict")
+            : v2.resolveMemoryConflict(input),
+      }),
+    generateMemorySummary: (input) =>
+      byOpenCodeRuntime(memoryProbe, {
+        v1:
+          v1.generateMemorySummary === undefined
+            ? unsupportedMemory("generateMemorySummary")
+            : v1.generateMemorySummary(input),
+        v2:
+          v2.generateMemorySummary === undefined
+            ? unsupportedMemory("generateMemorySummary")
+            : v2.generateMemorySummary(input),
+      }),
     generateCommitMessage: (input) =>
       byOpenCodeRuntime(probe.get, {
         v1: v1.generateCommitMessage(input),
@@ -327,12 +363,20 @@ export const OpenCodeDriver: ProviderDriver<
     });
     const textGeneration = selectOpenCodeRuntimeTextGeneration(
       runtimeProbe,
-      yield* makeOpenCodeTextGeneration(effectiveConfig).pipe(
-        Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, serverOwner),
-      ),
-      yield* OpenCode2TextGeneration.make().pipe(
-        Effect.provideService(OpenCode2Server.OpenCode2Server, openCode2Server),
-      ),
+      yield* makeOpenCodeTextGeneration(effectiveConfig, {
+        environment: processEnv,
+        memoryRunnerContext: {
+          providerInstanceId: instanceId,
+          ...(host.environmentId === undefined ? {} : { environmentId: host.environmentId }),
+        },
+      }).pipe(Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, serverOwner)),
+      yield* OpenCode2TextGeneration.make({
+        external: effectiveConfig.serverUrl.trim().length > 0,
+        memoryRunnerContext: {
+          providerInstanceId: instanceId,
+          ...(host.environmentId === undefined ? {} : { environmentId: host.environmentId }),
+        },
+      }).pipe(Effect.provideService(OpenCode2Server.OpenCode2Server, openCode2Server)),
     );
 
     const checkProvider = Effect.all(

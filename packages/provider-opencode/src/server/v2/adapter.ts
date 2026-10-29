@@ -83,6 +83,7 @@ import {
   makeSubagentConversationArtifacts,
   subagentThreadTitle,
 } from "@t3tools/provider-core/server/subagentProjection";
+import * as MemoryContext from "@t3tools/provider-core/server/memoryContext";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
 import { OPENCODE_PROVIDER, openCodePermissionRequestKind } from "../adapter.ts";
@@ -520,6 +521,7 @@ const isWakeTurn = (turn: OrchestrationV2ProviderTurn) =>
 
 const INTERRUPT_TIMEOUT = "10 seconds";
 const INSTRUCTIONS_KEY = "t3-code";
+const MEMORY_INSTRUCTIONS_KEY = "t3-code-memory";
 const RECONNECT_ATTEMPTS = 5;
 const RECONNECT_DELAY = "2 seconds";
 const RECONCILE_TIMEOUT = "15 seconds";
@@ -3269,6 +3271,32 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       yield* stopStrays(state);
     });
 
+    const prepareMemory = Effect.fnUntraced(function* (
+      sessionId: string,
+      turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
+    ) {
+      const snapshot = turnInput.refreshMemoryContext
+        ? yield* turnInput.refreshMemoryContext()
+        : turnInput.memoryContext;
+      const value =
+        snapshot === undefined
+          ? ""
+          : yield* Effect.try({
+              try: () => MemoryContext.memoryContextText(snapshot),
+              catch: () =>
+                new ProviderAdapter.ProviderAdapterProtocolError({
+                  driver: OPENCODE_PROVIDER,
+                  detail: "Invalid memory context frame",
+                }),
+            });
+      // Always replace, including an empty clear; no stale snapshot survives this admission.
+      yield* client.session.instructions.entry.put({
+        sessionID: Session.ID.make(sessionId),
+        key: MEMORY_INSTRUCTIONS_KEY,
+        value,
+      });
+    });
+
     const submit = Effect.fnUntraced(function* (
       sessionId: string,
       turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
@@ -3300,6 +3328,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           // session.command neither accepts nor returns our ID; record the preceding history boundary.
           const newest = yield* client.message.list({ sessionID, order: "desc", limit: 1 });
           yield* markBefore(sessionId, newest.data[0]?.id ?? null);
+          if (state.active !== turn || turn.interrupted) return;
+          yield* prepareMemory(sessionId, turnInput);
           if (!sending()) return;
           return yield* client.session.command({ sessionID, ...command });
         }
@@ -3314,6 +3344,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             ),
           )
         : [];
+      if (state.active !== turn || turn.interrupted) return;
+      yield* prepareMemory(sessionId, turnInput);
       const files = yield* promptFiles(turnInput.message.attachments);
       const messageText = yield* promptText(turnInput);
       if (!sending()) return;

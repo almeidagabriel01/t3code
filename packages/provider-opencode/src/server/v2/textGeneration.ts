@@ -1,7 +1,13 @@
 // Generate endpoints return 403 on the free tier; use and remove a temporary prompt session.
 import { AbsolutePath, Location, Model, Provider, Session } from "@opencode/client/effect";
-import { TextGenerationError } from "@t3tools/contracts";
+import { ProviderDriverKind, TextGenerationError } from "@t3tools/contracts";
+import {
+  MemoryGenerationRunnerError,
+  withMemoryExecution,
+  type MemoryGenerationRunnerContext,
+} from "@t3tools/provider-core/server/memoryGenerationRunner";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
+import * as FileSystem from "effect/FileSystem";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -11,6 +17,7 @@ import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as OpenCode2Server from "./OpenCode2Server.ts";
 import * as OpenCodeRuntime from "../OpenCodeRuntime.ts";
 import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
+import { requireOpenCodeMemoryIsolation } from "../textGeneration.ts";
 
 const isTextGenerationError = Schema.is(TextGenerationError);
 
@@ -28,6 +35,12 @@ const runOnServer = Effect.fn("Opencode2TextGeneration.runOnServer")(function* (
   connection: OpenCode2Server.OpenCode2Connection,
   input: TextGenerationOperations.Request<Schema.Top>,
 ) {
+  const memory = TextGenerationOperations.isMemoryOperation(input.operation);
+  if (memory && connection.external) return yield* requireOpenCodeMemoryIsolation(input.operation);
+  const fs = yield* FileSystem.FileSystem;
+  const cwd = memory
+    ? yield* fs.makeTempDirectoryScoped({ prefix: "t3code-opencode2-memory-" })
+    : input.cwd;
   const { resolveAttachmentPath } = yield* ProviderHost.ProviderHost;
   const { client } = connection;
   const parsed = OpenCodeRuntime.parseOpenCodeModelSlug(input.modelSelection.model);
@@ -35,11 +48,50 @@ const runOnServer = Effect.fn("Opencode2TextGeneration.runOnServer")(function* (
     return yield* new TextGenerationError({
       operation: input.operation,
       detail: "OpenCode model selection must use the 'provider/model' format.",
+      ...(memory ? { cause: new MemoryGenerationRunnerError({ code: "unavailable" }) } : {}),
     });
+  }
+  const location = { directory: AbsolutePath.make(cwd) };
+  if (memory) {
+    const isolationFailure = new TextGenerationError({
+      operation: input.operation,
+      detail: "OpenCode could not verify memory helper configuration or MCP isolation.",
+      cause: new MemoryGenerationRunnerError({ code: "unavailable" }),
+    });
+    const config = yield* client.config
+      .get({ location })
+      .pipe(Effect.mapError(() => isolationFailure));
+    if (
+      config.some(
+        (entry) =>
+          entry.type === "document" &&
+          ((entry.info.plugins?.length ?? 0) > 0 ||
+            Object.values(entry.info.mcp?.servers ?? {}).some(
+              (server) => server.disabled !== true,
+            )),
+      )
+    ) {
+      return yield* new TextGenerationError({
+        operation: input.operation,
+        detail: "OpenCode memory generation requires no active MCP servers in its helper location.",
+        cause: new MemoryGenerationRunnerError({ code: "unavailable" }),
+      });
+    }
+    const servers = yield* client.mcp
+      .list({ location })
+      .pipe(Effect.mapError(() => isolationFailure));
+    if (servers.data.some((server) => server.status.status !== "disabled"))
+      return yield* new TextGenerationError({
+        operation: input.operation,
+        detail: "OpenCode memory helper has connected MCP servers.",
+        cause: new MemoryGenerationRunnerError({ code: "unavailable" }),
+      });
   }
   const variant = getModelSelectionStringOptionValue(input.modelSelection, "variant");
   const outcome = yield* Deferred.make<Outcome>();
   let sessionId: string | undefined;
+  let rejected = false;
+  let effectiveModel: string | undefined;
   const texts = new Map<string, string>();
   // Subscribed first: the stream is volatile, and the reply arrives on it.
   const events = yield* connection.events;
@@ -67,6 +119,44 @@ const runOnServer = Effect.fn("Opencode2TextGeneration.runOnServer")(function* (
         event.data.sessionID !== sessionId
       ) {
         return Effect.void;
+      }
+      if (
+        memory &&
+        (event.type.startsWith("session.tool.") ||
+          event.type === "permission.asked" ||
+          event.type === "form.created")
+      ) {
+        rejected = true;
+        const fail = Deferred.succeed(outcome, {
+          _tag: "failed",
+          detail: "OpenCode attempted a tool or permission request during memory generation.",
+        });
+        if (event.type === "permission.asked")
+          return client.permission
+            .reply({
+              sessionID: event.data.sessionID,
+              requestID: event.data.id,
+              decision: "reject",
+            })
+            .pipe(Effect.timeout("5 seconds"), Effect.ignore, Effect.andThen(fail));
+        return fail;
+      }
+      if (memory && event.type === "session.step.started") {
+        const model = event.data.model;
+        if (
+          model.providerID !== parsed.providerID ||
+          model.id !== parsed.modelID ||
+          model.variant !== variant
+        ) {
+          rejected = true;
+          return Deferred.succeed(outcome, {
+            _tag: "failed",
+            detail: "OpenCode used a different memory model.",
+            // The server substitutes the same model on every try.
+            cause: new MemoryGenerationRunnerError({ code: "identity_mismatch" }),
+          });
+        }
+        effectiveModel = `${model.providerID}/${model.id}`;
       }
       switch (event.type) {
         case "session.text.ended":
@@ -114,30 +204,41 @@ const runOnServer = Effect.fn("Opencode2TextGeneration.runOnServer")(function* (
   );
   const session = yield* client.session.create({
     title: `T3 Code ${input.operation}`,
-    location: Location.PublicRef.make({ directory: AbsolutePath.make(input.cwd) }),
+    location: Location.PublicRef.make(location),
     model: Model.Ref.make({
       providerID: Provider.ID.make(parsed.providerID),
       id: Model.ID.make(parsed.modelID),
       ...(variant === undefined ? {} : { variant: Model.VariantID.make(variant) }),
     }),
-    permissions: GENERATION_PERMISSIONS,
+    permissions: memory ? [{ action: "*", resource: "*", effect: "deny" }] : GENERATION_PERMISSIONS,
   });
   sessionId = session.id;
   yield* Effect.addFinalizer(() =>
-    client.session
-      .remove({ sessionID: session.id })
-      .pipe(Effect.timeout("5 seconds"), Effect.ignore({ log: true })),
+    (memory
+      ? client.session
+          .interrupt({ sessionID: session.id })
+          .pipe(Effect.timeout("5 seconds"), Effect.ignore)
+      : Effect.void
+    ).pipe(
+      Effect.andThen(
+        client.session
+          .remove({ sessionID: session.id })
+          .pipe(Effect.timeout("5 seconds"), Effect.ignore({ log: true })),
+      ),
+    ),
   );
   const images = (input.attachments ?? []).flatMap((attachment) => {
     if (attachment.type !== "image") return [];
     const path = resolveAttachmentPath(attachment);
     return path === null ? [] : [{ uri: `file://${path}`, name: attachment.name }];
   });
-  yield* client.session.prompt({
-    sessionID: session.id,
-    text: input.prompt,
-    ...(images.length === 0 ? {} : { files: images }),
-  });
+  yield* client.session
+    .prompt({
+      sessionID: session.id,
+      text: input.prompt,
+      ...(images.length === 0 ? {} : { files: images }),
+    })
+    .pipe(Effect.asVoid, Effect.raceFirst(Deferred.await(outcome).pipe(Effect.asVoid)));
   const result = yield* Deferred.await(outcome).pipe(
     Effect.timeoutOrElse({
       duration: GENERATION_TIMEOUT,
@@ -158,36 +259,92 @@ const runOnServer = Effect.fn("Opencode2TextGeneration.runOnServer")(function* (
       ...(result.cause === undefined ? {} : { cause: result.cause }),
     });
   }
+  if (memory && (rejected || effectiveModel === undefined))
+    return yield* new TextGenerationError({
+      operation: input.operation,
+      detail: rejected
+        ? "OpenCode attempted a tool or permission request during memory generation."
+        : "OpenCode did not confirm its effective memory model.",
+      // A server that omits the effective model omits it every time.
+      ...(rejected ? {} : { cause: new MemoryGenerationRunnerError({ code: "unavailable" }) }),
+    });
   if (result.text.length === 0) {
     return yield* new TextGenerationError({
       operation: input.operation,
       detail: "OpenCode returned empty output.",
     });
   }
-  return result.text;
+  return { text: result.text, effectiveModel: effectiveModel ?? input.modelSelection.model };
 }, Effect.scoped);
 
-export const make = Effect.fn("OpenCode2TextGeneration.make")(function* () {
+/** Text generation for an instance whose server is OpenCode 2. */
+export const make = Effect.fn("OpenCode2TextGeneration.make")(function* (
+  options: {
+    readonly memoryRunnerContext?: MemoryGenerationRunnerContext;
+    readonly external?: boolean;
+  } = {},
+) {
+  const fs = yield* FileSystem.FileSystem;
   const server = yield* OpenCode2Server.OpenCode2Server;
   const host = yield* ProviderHost.ProviderHost;
-  const run: TextGenerationOperations.Runner = (input) =>
-    server
-      .withConnection((connection) => runOnServer(connection, input))
-      .pipe(
-        Effect.provideService(ProviderHost.ProviderHost, host),
-        Effect.mapError((cause) =>
-          isTextGenerationError(cause)
-            ? cause
-            : new TextGenerationError({
-                operation: input.operation,
-                detail: "OpenCode text generation failed.",
-                cause,
-              }),
+  const runSelected = <S extends Schema.Top>(input: TextGenerationOperations.Request<S>) =>
+    (TextGenerationOperations.isMemoryOperation(input.operation) && options.external
+      ? requireOpenCodeMemoryIsolation(input.operation)
+      : TextGenerationOperations.isMemoryOperation(input.operation)
+        ? server.withMemoryConnection === undefined
+          ? requireOpenCodeMemoryIsolation(input.operation)
+          : server.withMemoryConnection(
+              input.operation,
+              input.modelSelection.model.split("/")[0] ?? "",
+              (connection) => runOnServer(connection, input),
+            )
+        : server.withConnection((connection) => runOnServer(connection, input))
+    ).pipe(
+      Effect.timeoutOrElse({
+        duration: GENERATION_TIMEOUT,
+        orElse: () =>
+          Effect.fail(
+            new TextGenerationError({
+              operation: input.operation,
+              detail: "OpenCode text generation timed out.",
+            }),
+          ),
+      }),
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provideService(ProviderHost.ProviderHost, host),
+      Effect.mapError((cause) =>
+        isTextGenerationError(cause)
+          ? cause
+          : new TextGenerationError({
+              operation: input.operation,
+              detail: "OpenCode text generation failed.",
+              // A runtime that cannot start or is too old fails every memory request; a held
+              // database lock clears on its own.
+              cause:
+                TextGenerationOperations.isMemoryOperation(input.operation) &&
+                OpenCodeRuntime.isOpenCodeRuntimeError(cause) &&
+                cause.reason !== "databaseLocked"
+                  ? new MemoryGenerationRunnerError({ code: "unavailable" })
+                  : cause,
+            }),
+      ),
+      Effect.flatMap((raw) =>
+        TextGenerationOperations.decodeJsonReply(input, "OpenCode", raw.text).pipe(
+          Effect.map((result) => ({ result, effectiveModel: raw.effectiveModel })),
         ),
-        Effect.flatMap((raw) => TextGenerationOperations.decodeJsonReply(input, "OpenCode", raw)),
-      );
+      ),
+    );
   return TextGenerationOperations.fromRunner(
     "OpenCode2TextGeneration",
-    TextGenerationOperations.withoutInvestigation("OpenCode", run),
+    TextGenerationOperations.withoutInvestigation("OpenCode", (input) =>
+      runSelected(input).pipe(Effect.map((selected) => selected.result)),
+    ),
+    {
+      memoryRunner: withMemoryExecution(
+        options.memoryRunnerContext,
+        ProviderDriverKind.make("opencode"),
+        runSelected,
+      ),
+    },
   );
 });
