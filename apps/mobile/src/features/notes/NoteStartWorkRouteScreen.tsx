@@ -8,6 +8,7 @@ import {
   type NoteCardLink,
   type ProjectId,
 } from "@t3tools/contracts";
+import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 import { useState } from "react";
 import { Pressable, View } from "react-native";
@@ -21,7 +22,7 @@ import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScroll
 import { uuidv4 } from "../../lib/uuid";
 import { useProjects, useThreadShells } from "../../state/entities";
 import { useKanbanStates } from "../../state/kanban";
-import { notesEnvironment } from "../../state/notes";
+import { notesEnvironment, useNotesFeed } from "../../state/notes";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { notesError } from "./delivery";
@@ -55,7 +56,13 @@ export function NoteStartWorkRouteScreen({
     .map((thread) => thread.projectId);
   const folder = path.includes("/") ? path.split("/")[0]! : null;
   const [pickedProject, setPickedProject] = useState<ProjectId | null>(null);
-  const projectId = pickedProject ?? defaultWorkProject(projects, folder, recent);
+  const noteProject = Option.getOrNull(AsyncResult.value(useNotesFeed(environmentId)))?.notes.get(
+    path,
+  )?.project;
+  const projectId =
+    pickedProject ??
+    (projects.some((project) => project.id === noteProject) ? noteProject! : null) ??
+    defaultWorkProject(projects, folder, recent);
   const [columnId, setColumnId] = useState<string>(DEFAULT_COLUMN);
   const [busy, setBusy] = useState(false);
   const [attempted, setAttempted] = useState(false);
