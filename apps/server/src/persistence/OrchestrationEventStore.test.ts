@@ -240,6 +240,7 @@ layer("OrchestrationEventStore", (it) => {
           providerInstanceId: ProviderInstanceId.make("claudeAgent"),
           providerThreadId: null,
           childThreadId: null,
+          memoryGrantCeiling: "none",
           nativeTaskRef: null,
           prompt: "Audit the repository. ".repeat(200),
           progress: "Reading files",
