@@ -1,3 +1,5 @@
+import type { ProjectId } from "@t3tools/contracts";
+
 import { cn } from "../../lib/utils";
 import { deriveProjectIdentity } from "../../projectIdentity";
 import { projectIconColorClassName } from "../../projectIconColors";
@@ -6,7 +8,7 @@ import { ProjectFavicon, type ProjectFaviconProject } from "../ProjectFavicon";
 export interface KanbanProjectInfo {
   readonly name: string;
   readonly projectKey: string;
-  readonly project: ProjectFaviconProject;
+  readonly project: ProjectFaviconProject & { readonly id: ProjectId };
 }
 
 /** The color the sidebar badge resolves to for this project, as a text color class. */

@@ -70,13 +70,22 @@ const SortableCard = memo(function SortableCard(props: {
   readonly disabled: boolean;
   readonly tileProps: Omit<Parameters<typeof KanbanCardTile>[0], "card">;
 }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-    id: props.card.id,
-    disabled: props.disabled,
-  });
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    setActivatorNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: props.card.id, disabled: props.disabled });
   return (
     <div
-      ref={setNodeRef}
+      ref={(node) => {
+        setNodeRef(node);
+        // Keyboard drags start from the tile itself, so Enter and Space still press its buttons.
+        setActivatorNodeRef(node);
+      }}
       style={{ transform: CSS.Translate.toString(transform), transition }}
       className={cn(isDragging && "opacity-40")}
       {...attributes}
@@ -278,6 +287,7 @@ export interface KanbanColumnsProps {
   ) => void;
   readonly onStartAgent?: ((card: KanbanCard) => void) | undefined;
   readonly onLinkThread?: ((card: KanbanCard) => void) | undefined;
+  readonly onQuickEdit?: TileProps["onQuickEdit"];
 }
 
 interface Optimistic {
@@ -325,6 +335,7 @@ export function KanbanColumns(props: KanbanColumnsProps) {
     onOpen: props.onOpenCard,
     onStartAgent: props.canEdit ? props.onStartAgent : undefined,
     onLinkThread: props.canEdit ? props.onLinkThread : undefined,
+    onQuickEdit: props.onQuickEdit,
   };
 
   const tileOf = (card: KanbanCard): TileProps => ({ ...tileProps, ...props.tileFor?.(card) });

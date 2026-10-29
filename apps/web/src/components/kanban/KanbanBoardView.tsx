@@ -18,6 +18,7 @@ import { KanbanColumnHeader } from "./KanbanColumnHeader";
 import { KanbanColumns } from "./KanbanColumns";
 import type { KanbanProjectInfo } from "./KanbanProjectBadge";
 import { KanbanLinkThreadDialog } from "./KanbanLinkDialogs";
+import { KanbanQuickEdit, type QuickEditTarget } from "./KanbanQuickEdit";
 import { KanbanStartAgentDialog } from "./KanbanStartAgent";
 import { useKanbanActions } from "./useKanban";
 
@@ -43,6 +44,8 @@ export function KanbanBoardView(props: {
   const root = useRef<HTMLDivElement>(null);
   const [startFor, setStartFor] = useState<KanbanCard | null>(null);
   const [linkFor, setLinkFor] = useState<KanbanCard | null>(null);
+  const [quick, setQuick] = useState<QuickEditTarget | null>(null);
+  const quickCard = quick === null ? undefined : board.cards.get(quick.cardId);
   const { visibleCardIds } = props;
   const tileInfo = subtaskTileInfo(board);
   const columns = (() => {
@@ -97,6 +100,7 @@ export function KanbanBoardView(props: {
         onOpenCard={props.onOpenCard}
         onStartAgent={setStartFor}
         onLinkThread={setLinkFor}
+        onQuickEdit={setQuick}
         renderHeader={(column, count) => (
           <KanbanColumnHeader
             environmentId={environmentId}
@@ -131,6 +135,16 @@ export function KanbanBoardView(props: {
           board={board}
           card={linkFor}
           onClose={() => setLinkFor(null)}
+        />
+      ) : null}
+      {quick && quickCard ? (
+        <KanbanQuickEdit
+          environmentId={environmentId}
+          board={board}
+          card={quickCard}
+          anchor={quick.anchor}
+          onOpenCard={props.onOpenCard}
+          onClose={() => setQuick(null)}
         />
       ) : null}
     </div>
