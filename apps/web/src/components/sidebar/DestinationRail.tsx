@@ -10,6 +10,7 @@ import {
   CalendarClockIcon,
   ChartNoAxesColumnIcon,
   HouseIcon,
+  NotebookPenIcon,
   PlugIcon,
   PlusIcon,
   RotateCcwIcon,
@@ -44,6 +45,7 @@ import {
   usePullRequestsSupported,
 } from "../../state/environments";
 import { useKanbanEnvironmentIds } from "../../state/kanban";
+import { useNotesEnvironmentIds } from "../../state/notes";
 import { useActivityBadge } from "../activity/useActivity";
 import { providerReadyAtom } from "../../state/server";
 import { useEnvironmentScope } from "../../state/session";
@@ -95,6 +97,11 @@ const RAIL_ITEMS: Record<
     label: "Board",
     icon: SquareKanbanIcon,
     unavailable: "No connected environment has a board",
+  },
+  notes: {
+    label: "Notes",
+    icon: NotebookPenIcon,
+    unavailable: "No connected environment has notes",
   },
   pullRequests: {
     label: "Pull requests",
@@ -182,7 +189,7 @@ const ActivityRailItem = memo(function ActivityRailItem(props: {
 
 // Rail items, Home included, above the divider. It follows position, not particular items, so
 // it stays put as people reorder or hide items.
-const RAIL_DIVIDER_AFTER = 5;
+const RAIL_DIVIDER_AFTER = 6;
 
 const ADD_PROVIDER_BUTTON_ID = "destination-rail-add-provider";
 const CUSTOMIZE_RAIL_BUTTON_ID = "destination-rail-customize";
@@ -200,7 +207,13 @@ function RailLink(props: {
   icon: ReactElement;
   active: DestinationId;
   toggleBack: ToggleBack;
-  to: "/kanban" | "/usage" | "/settings/scheduled-tasks" | "/settings/archived" | "/settings";
+  to:
+    | "/kanban"
+    | "/notes"
+    | "/usage"
+    | "/settings/scheduled-tasks"
+    | "/settings/archived"
+    | "/settings";
 }) {
   const active = props.active === props.id;
   return (
@@ -236,6 +249,17 @@ function RailItem(props: {
           to="/kanban"
           label="Board"
           icon={<SquareKanbanIcon aria-hidden />}
+          active={active}
+          toggleBack={toggleBack}
+        />
+      );
+    case "notes":
+      return (
+        <RailLink
+          id="notes"
+          to="/notes"
+          label="Notes"
+          icon={<NotebookPenIcon aria-hidden />}
           active={active}
           toggleBack={toggleBack}
         />
@@ -417,6 +441,7 @@ export const DestinationRail = memo(function DestinationRail() {
   const toggleBack = useToggleBack(active);
   const pullRequestsSupported = usePullRequestsSupported();
   const boardAvailable = useKanbanEnvironmentIds().length > 0;
+  const notesAvailable = useNotesEnvironmentIds().length > 0;
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const primaryEnvironment = useEnvironment(primaryEnvironmentId);
   const canManageProviders = useEnvironmentScope(primaryEnvironmentId, AuthProvidersManageScope);
@@ -431,6 +456,7 @@ export const DestinationRail = memo(function DestinationRail() {
 
   const context: RailContext = {
     boardAvailable,
+    notesAvailable,
     pullRequestsSupported,
     canAddProvider: primaryEnvironmentId !== null && canManageProviders,
     primaryProviderReady,

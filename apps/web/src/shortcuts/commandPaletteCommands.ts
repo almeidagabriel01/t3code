@@ -30,7 +30,7 @@ const toggleOverlay =
   };
 
 /**
- * Palette, theme and usage shortcuts. They read the route, panels and theme
+ * Palette, theme, usage and notes shortcuts. They read the route, panels and theme
  * when the key is pressed, and are live only while the palette is mounted.
  */
 export function installCommandPaletteCommands(
@@ -91,6 +91,11 @@ export function installCommandPaletteCommands(
         consume(event);
         dispatchCommandPalette({ _tag: "SetOpen", open: false });
         void router.navigate({ to: "/usage" });
+      },
+      "notes.open": (event) => {
+        consume(event);
+        dispatchCommandPalette({ _tag: "SetOpen", open: false });
+        void router.navigate({ to: "/notes" });
       },
       "commandPalette.toggle": toggleOverlay("commandPalette.toggle"),
       "filePicker.toggle": toggleOverlay("filePicker.toggle"),

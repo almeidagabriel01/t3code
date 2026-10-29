@@ -70,7 +70,6 @@ export function notesStateStream<E, R>(
   );
 }
 
-/** @public */
 export function createNotesEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
@@ -106,6 +105,11 @@ export function createNotesEnvironmentAtoms<R, E>(
       label: "environment-data:notes:note",
       tag: WS_METHODS.notesRead,
       idleTtlMs: 0,
+    }),
+    // An on-demand reread that bypasses the cached query, for conflict checks.
+    read: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:notes:read",
+      tag: WS_METHODS.notesRead,
     }),
     write: command(WS_METHODS.notesWrite, "write"),
     update: command(WS_METHODS.notesUpdate, "update"),

@@ -10,6 +10,7 @@ import {
   type ThreadJumpKeybindingCommand,
 } from "@t3tools/contracts";
 import {
+  DEFAULT_RESOLVED_KEYBINDINGS,
   isMacPlatform,
   matchesKeybindingShortcut,
   matchesKeybindingShortcutModifiers,
@@ -253,6 +254,68 @@ export function shortcutLabelForCommand(
   const platform = resolvePlatform(resolvedOptions);
   const shortcut = findEffectiveShortcutForCommand(keybindings, command, resolvedOptions);
   return shortcut ? formatShortcutLabel(shortcut, platform) : null;
+}
+
+const ruleIdentity = (rule: ResolvedKeybindingRule) =>
+  JSON.stringify([
+    rule.command,
+    rule.shortcut.key,
+    rule.shortcut.modKey,
+    rule.shortcut.metaKey,
+    rule.shortcut.ctrlKey,
+    rule.shortcut.shiftKey,
+    rule.shortcut.altKey,
+    rule.whenAst ?? null,
+  ]);
+const BUILT_IN_RULES = new Set(DEFAULT_RESOLVED_KEYBINDINGS.map(ruleIdentity));
+
+/**
+ * Shortcuts for a page-scoped command whose when-clause holds. Installs that persist their
+ * rules list the default chat.new after a newly added page default on the same keys, so other
+ * built-in rules do not shadow the page's command; a rule the person added or changed still does.
+ */
+function pageCommandShortcuts(
+  keybindings: ResolvedKeybindingsConfig,
+  command: KeybindingCommand,
+  options?: ShortcutMatchOptions,
+): KeybindingShortcut[] {
+  const platform = resolvePlatform(options);
+  const context = resolveContext(options);
+  const claimed = new Set<string>();
+  const shortcuts: KeybindingShortcut[] = [];
+  for (let index = keybindings.length - 1; index >= 0; index -= 1) {
+    const binding = keybindings[index];
+    if (!binding || !matchesWhenClause(binding.whenAst, context)) continue;
+    const shortcut = shortcutForContext(binding, context);
+    const conflictKey = shortcutConflictKey(shortcut, platform);
+    if (binding.command === command) {
+      if (!claimed.has(conflictKey)) shortcuts.push(shortcut);
+    } else if (!BUILT_IN_RULES.has(ruleIdentity(binding))) {
+      claimed.add(conflictKey);
+    }
+  }
+  return shortcuts;
+}
+
+export function matchesPageCommand(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  command: KeybindingCommand,
+  options?: ShortcutMatchOptions,
+): boolean {
+  const platform = resolvePlatform(options);
+  return pageCommandShortcuts(keybindings, command, options).some((shortcut) =>
+    matchesKeybindingShortcut(event, shortcut, platform),
+  );
+}
+
+export function pageCommandShortcutLabel(
+  keybindings: ResolvedKeybindingsConfig,
+  command: KeybindingCommand,
+  options?: ShortcutMatchOptions,
+): string | null {
+  const shortcut = pageCommandShortcuts(keybindings, command, options)[0];
+  return shortcut ? formatShortcutLabel(shortcut, resolvePlatform(options)) : null;
 }
 
 export function threadJumpCommandForIndex(index: number): ThreadJumpKeybindingCommand | null {

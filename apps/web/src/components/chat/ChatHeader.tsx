@@ -43,6 +43,7 @@ import { textDirection } from "~/textDirection";
 import { useClientSettings } from "../../hooks/useSettings";
 import { GuestShareIndicator } from "./GuestShareControls";
 import { KanbanThreadCardBadge } from "../kanban/KanbanThreadCardBadge";
+import { ThreadNotesButton } from "../notes/ThreadNotesButton";
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
@@ -450,6 +451,13 @@ export const ChatHeader = memo(function ChatHeader({
             Side chat{sideChatShortcutLabel ? ` (${sideChatShortcutLabel})` : ""}
           </TooltipPopup>
         </Tooltip>
+      ) : null}
+      {isServerThread ? (
+        <ThreadNotesButton
+          environmentId={activeThreadEnvironmentId}
+          threadId={activeThreadId}
+          projectTitle={activeProject && !activeProject.isScratch ? activeProject.title : null}
+        />
       ) : null}
       {isServerThread ? (
         <KanbanThreadCardBadge

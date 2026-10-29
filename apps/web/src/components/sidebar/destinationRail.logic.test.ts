@@ -21,6 +21,7 @@ describe("resolveActiveDestination", () => {
     ["/new", "home"],
     ["/activity", "activity"],
     ["/kanban", "board"],
+    ["/notes", "notes"],
     ["/usage", "usage"],
     ["/pull-requests", "pullRequests"],
     ["/settings/scheduled-tasks", "scheduled"],
@@ -36,6 +37,7 @@ describe("resolveActiveDestination", () => {
 
 const everything: RailContext = {
   boardAvailable: true,
+  notesAvailable: true,
   pullRequestsSupported: true,
   canAddProvider: true,
   primaryProviderReady: true,
@@ -51,6 +53,7 @@ describe("resolveRailItems", () => {
     expect(shownIds(DEFAULT_RAIL_PREFERENCES, everything)).toEqual([
       "activity",
       "board",
+      "notes",
       "pullRequests",
       "usage",
       "scheduled",
@@ -62,6 +65,12 @@ describe("resolveRailItems", () => {
     expect(
       shownIds(DEFAULT_RAIL_PREFERENCES, { ...everything, boardAvailable: false }),
     ).not.toContain("board");
+  });
+
+  it("drops notes without a notes environment", () => {
+    expect(
+      shownIds(DEFAULT_RAIL_PREFERENCES, { ...everything, notesAvailable: false }),
+    ).not.toContain("notes");
   });
 
   it("offers Add provider only once providers have loaded and none is ready", () => {
@@ -103,7 +112,7 @@ describe("resolveRailItems", () => {
   });
 
   it("ignores ids this version does not know", () => {
-    const preferences = { order: ["notes", "usage"], shown: ["jarvis"], hidden: ["memory"] };
+    const preferences = { order: ["whiteboard", "usage"], shown: ["jarvis"], hidden: ["memory"] };
     expect(resolveRailItems(preferences, everything).map((item) => item.id)).toEqual(
       orderRailItems(["usage"]),
     );

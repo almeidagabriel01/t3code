@@ -20,6 +20,7 @@ import { Route as ProjectsProjectKeyRouteImport } from './routes/projects.$proje
 import { Route as ChatUsageRouteImport } from './routes/_chat.usage'
 import { Route as ChatSettingsRouteImport } from './routes/_chat.settings'
 import { Route as ChatPullRequestsRouteImport } from './routes/_chat.pull-requests'
+import { Route as ChatNotesRouteImport } from './routes/_chat.notes'
 import { Route as ChatNewRouteImport } from './routes/_chat.new'
 import { Route as ChatKanbanRouteImport } from './routes/_chat.kanban'
 import { Route as ChatActivityRouteImport } from './routes/_chat.activity'
@@ -106,6 +107,11 @@ const ChatSettingsRoute = ChatSettingsRouteImport.update({
 const ChatPullRequestsRoute = ChatPullRequestsRouteImport.update({
   id: '/pull-requests',
   path: '/pull-requests',
+  getParentRoute: () => ChatRoute,
+} as any)
+const ChatNotesRoute = ChatNotesRouteImport.update({
+  id: '/notes',
+  path: '/notes',
   getParentRoute: () => ChatRoute,
 } as any)
 const ChatNewRoute = ChatNewRouteImport.update({
@@ -289,6 +295,7 @@ export interface FileRoutesByFullPath {
   '/activity': typeof ChatActivityRoute
   '/kanban': typeof ChatKanbanRoute
   '/new': typeof ChatNewRoute
+  '/notes': typeof ChatNotesRoute
   '/pull-requests': typeof ChatPullRequestsRoute
   '/settings': typeof ChatSettingsRouteWithChildren
   '/usage': typeof ChatUsageRoute
@@ -333,6 +340,7 @@ export interface FileRoutesByTo {
   '/activity': typeof ChatActivityRoute
   '/kanban': typeof ChatKanbanRoute
   '/new': typeof ChatNewRoute
+  '/notes': typeof ChatNotesRoute
   '/pull-requests': typeof ChatPullRequestsRoute
   '/settings': typeof ChatSettingsRouteWithChildren
   '/usage': typeof ChatUsageRoute
@@ -380,6 +388,7 @@ export interface FileRoutesById {
   '/_chat/activity': typeof ChatActivityRoute
   '/_chat/kanban': typeof ChatKanbanRoute
   '/_chat/new': typeof ChatNewRoute
+  '/_chat/notes': typeof ChatNotesRoute
   '/_chat/pull-requests': typeof ChatPullRequestsRoute
   '/_chat/settings': typeof ChatSettingsRouteWithChildren
   '/_chat/usage': typeof ChatUsageRoute
@@ -428,6 +437,7 @@ export interface FileRouteTypes {
     | '/activity'
     | '/kanban'
     | '/new'
+    | '/notes'
     | '/pull-requests'
     | '/settings'
     | '/usage'
@@ -472,6 +482,7 @@ export interface FileRouteTypes {
     | '/activity'
     | '/kanban'
     | '/new'
+    | '/notes'
     | '/pull-requests'
     | '/settings'
     | '/usage'
@@ -518,6 +529,7 @@ export interface FileRouteTypes {
     | '/_chat/activity'
     | '/_chat/kanban'
     | '/_chat/new'
+    | '/_chat/notes'
     | '/_chat/pull-requests'
     | '/_chat/settings'
     | '/_chat/usage'
@@ -642,6 +654,13 @@ declare module '@tanstack/react-router' {
       path: '/pull-requests'
       fullPath: '/pull-requests'
       preLoaderRoute: typeof ChatPullRequestsRouteImport
+      parentRoute: typeof ChatRoute
+    }
+    '/_chat/notes': {
+      id: '/_chat/notes'
+      path: '/notes'
+      fullPath: '/notes'
+      preLoaderRoute: typeof ChatNotesRouteImport
       parentRoute: typeof ChatRoute
     }
     '/_chat/new': {
@@ -948,6 +967,7 @@ interface ChatRouteChildren {
   ChatActivityRoute: typeof ChatActivityRoute
   ChatKanbanRoute: typeof ChatKanbanRoute
   ChatNewRoute: typeof ChatNewRoute
+  ChatNotesRoute: typeof ChatNotesRoute
   ChatPullRequestsRoute: typeof ChatPullRequestsRoute
   ChatSettingsRoute: typeof ChatSettingsRouteWithChildren
   ChatUsageRoute: typeof ChatUsageRoute
@@ -960,6 +980,7 @@ const ChatRouteChildren: ChatRouteChildren = {
   ChatActivityRoute: ChatActivityRoute,
   ChatKanbanRoute: ChatKanbanRoute,
   ChatNewRoute: ChatNewRoute,
+  ChatNotesRoute: ChatNotesRoute,
   ChatPullRequestsRoute: ChatPullRequestsRoute,
   ChatSettingsRoute: ChatSettingsRouteWithChildren,
   ChatUsageRoute: ChatUsageRoute,

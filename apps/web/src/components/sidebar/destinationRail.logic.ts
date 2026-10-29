@@ -2,6 +2,7 @@ export type DestinationId =
   | "home"
   | "activity"
   | "board"
+  | "notes"
   | "pullRequests"
   | "usage"
   | "scheduled"
@@ -18,6 +19,7 @@ const isWithin = (pathname: string, base: string) =>
 export function resolveActiveDestination(pathname: string): DestinationId {
   if (pathname === "/activity") return "activity";
   if (pathname === "/kanban") return "board";
+  if (pathname === "/notes") return "notes";
   if (pathname === "/pull-requests") return "pullRequests";
   if (pathname === "/usage") return "usage";
   if (isWithin(pathname, "/settings/scheduled-tasks")) return "scheduled";
@@ -30,6 +32,7 @@ export function resolveActiveDestination(pathname: string): DestinationId {
 export const RAIL_ITEM_IDS = [
   "activity",
   "board",
+  "notes",
   "pullRequests",
   "usage",
   "scheduled",
@@ -52,6 +55,7 @@ export const DEFAULT_RAIL_PREFERENCES: RailPreferences = { order: [], shown: [],
 
 export interface RailContext {
   readonly boardAvailable: boolean;
+  readonly notesAvailable: boolean;
   readonly pullRequestsSupported: boolean;
   /** A primary environment exists and this session may manage its providers. */
   readonly canAddProvider: boolean;
@@ -73,6 +77,8 @@ function isAvailable(id: RailItemId, context: RailContext): boolean {
   switch (id) {
     case "board":
       return context.boardAvailable;
+    case "notes":
+      return context.notesAvailable;
     case "pullRequests":
       return context.pullRequestsSupported;
     case "addProvider":

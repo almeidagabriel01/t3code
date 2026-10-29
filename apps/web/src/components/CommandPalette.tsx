@@ -79,6 +79,7 @@ import {
 import { useActivityOpen, useToggleActivity } from "./activity/useActivity";
 import { openThreadFind } from "./chat/threadFindStore";
 import { useKanbanEnvironmentIds } from "../state/kanban";
+import { useNotesPaletteItems } from "./notes/notesPaletteItems";
 import {
   useDeferredValue,
   useEffect,
@@ -436,6 +437,7 @@ function OpenCommandPaletteDialog(props: {
   });
   const { environments } = useEnvironments();
   const kanbanSupported = useKanbanEnvironmentIds().length > 0;
+  const notesItems = useNotesPaletteItems((to) => navigate(to));
   const desktopLocalBootstraps = useDesktopLocalBootstraps();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const availableSettingsSearchItems = useAvailableSettingsSearchItems();
@@ -1675,6 +1677,8 @@ function OpenCommandPaletteDialog(props: {
       });
     }
   }
+
+  actionItems.push(...notesItems);
 
   const rootGroups = buildRootGroups({ actionItems, recentThreadItems });
   // Every setting goes to the palette's own matcher, so settings get the same
