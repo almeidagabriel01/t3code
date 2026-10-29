@@ -2304,7 +2304,7 @@ it("requires discover, preview, scope and selection confirmation before an expli
   await click("Find memories");
   await chooseOption("Import source", sourceId);
   expect(container.textContent).toContain("DEV-demo");
-  expect(container.textContent).toContain("1 file skipped");
+  expect(container.textContent).toContain("1 skipped: 1 unsupported format");
   expect(container.textContent).not.toContain("format is not supported");
   await act(async () =>
     container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')[1]!.click(),

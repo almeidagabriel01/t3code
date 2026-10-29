@@ -1022,7 +1022,7 @@ describe("ProviderMemoryImport closed coordinator", () => {
     ),
   );
 
-  it.effect("valid Claude item remains selectable beside malformed topic", () =>
+  it.effect("valid Claude item remains selectable beside an empty topic", () =>
     fixtureTest(
       (h, s) =>
         Effect.gen(function* () {
@@ -1030,7 +1030,7 @@ describe("ProviderMemoryImport closed coordinator", () => {
           h.source(
             snapshotMemoryImportFiles(s, [
               f,
-              { selector: "bad.md", text: "invalid", byteCount: 7 },
+              { selector: "bad.md", text: "---\nname: T\n---\n", byteCount: 16 },
             ]),
           );
           const d = yield* h
@@ -1045,10 +1045,7 @@ describe("ProviderMemoryImport closed coordinator", () => {
           assert.equal(p.action, "preview");
           if (p.action !== "preview") return;
           assert.equal(p.items.length, 2);
-          assert.equal(
-            p.items.find((r) => r.sourceItemKey === "bad.md#body")!.issue,
-            "unsupported_format",
-          );
+          assert.equal(p.items.find((r) => r.sourceItemKey === "bad.md#body")!.issue, "empty_file");
           yield* h.make().run(
             {
               action: "apply",

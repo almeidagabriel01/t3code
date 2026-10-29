@@ -86,6 +86,8 @@ export function nativeMemoryImportOutcomes(counts: MemoryImportCounts) {
   };
   const issues: Record<MemoryImportIssue, string> = {
     unsupported_format: "Unsupported source format",
+    index_file: "Index file, not a memory",
+    empty_file: "File is empty",
     source_missing: "Source no longer available",
     source_unreadable: "Source could not be read",
     invalid_utf8: "Source text encoding is not supported",

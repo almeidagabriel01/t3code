@@ -24,6 +24,7 @@ import type {
   ImportSourceFile,
   MemoryImportReaderShape,
 } from "./MemoryImportTypes.ts";
+import { readFrontmatter } from "./MemoryFrontmatter.ts";
 import { absolute, safe, validateStateBoundary } from "./MemoryImportReaderSupport.ts";
 
 const PROFILES = [
@@ -64,7 +65,7 @@ const strictText = (bytes: Buffer) => {
   } catch {
     throw error("invalid_utf8");
   }
-  if (text.includes("\0")) throw error("path_rejected");
+  if (text.includes("\0")) throw error("unsupported_format");
   return text;
 };
 const snapshotMutations = new Map<string, Promise<void>>();
@@ -174,7 +175,12 @@ const nodeSnapshot = (config: MemoryImportReaderConfig, input: SnapshotOperation
             if (before.dev !== parentStat.dev) throw error("path_rejected");
             return before;
           };
-          const names = async (path: string, maximum = 4096, sourceStable = false) => {
+          const names = async (
+            path: string,
+            maximum = 4096,
+            sourceStable = false,
+            tolerant = false,
+          ) => {
             // Source listings remain stable until final verification; owned parents may mutate.
             const before = await remember(path, true, sourceStable);
             const result: string[] = [];
@@ -185,9 +191,14 @@ const nodeSnapshot = (config: MemoryImportReaderConfig, input: SnapshotOperation
                 if (!entry) break;
                 // Node decodes directory names with replacement; reject ambiguous names conservatively.
                 const name = entry.name;
-                if (name.includes("\uFFFD")) throw error("invalid_utf8");
-                safe(name);
-                result.push(name);
+                try {
+                  if (name.includes("\uFFFD")) throw error("invalid_utf8");
+                  safe(name);
+                  result.push(name);
+                } catch (cause) {
+                  // A source entry that cannot be named safely is ignored, never imported.
+                  if (!tolerant) throw cause;
+                }
                 if (result.length > maximum) throw error("limit_exceeded");
               }
             } finally {
@@ -286,6 +297,7 @@ const nodeSnapshot = (config: MemoryImportReaderConfig, input: SnapshotOperation
               selector: string;
               utf8Base64: string;
               byteCount: number;
+              skip?: MemoryImportIssue;
             }[];
             selections?: string[];
           } = {};
@@ -385,41 +397,81 @@ const nodeSnapshot = (config: MemoryImportReaderConfig, input: SnapshotOperation
             let count = 0,
               sourceBytes = 0;
             const files: NonNullable<typeof result.files> = (result.files = []);
+            // Only these directories can hold importable files; anything else is never listed.
+            const descend = (selector: string) =>
+              input.format === "codex" &&
+              ["extensions", "extensions/ad_hoc", "extensions/ad_hoc/notes"].includes(selector);
+            const selects = (selector: string) =>
+              // Leaves room for the `#body` suffix of the item key.
+              Buffer.byteLength(selector) <= 500 &&
+              (input.format === "codex"
+                ? selector === "MEMORY.md" ||
+                  (selector.startsWith("extensions/ad_hoc/notes/") &&
+                    selector.split("/").length === 4 &&
+                    selector.endsWith(".md"))
+                : !selector.includes("/") && /\.md$/iu.test(selector));
+            const skipped = (selector: string, issue: MemoryImportIssue) =>
+              files.push({ selector, utf8Base64: "", byteCount: 0, skip: issue });
             const walk = async (
               parent: string,
               out: string,
               rel: string,
               depth: number,
             ): Promise<void> => {
-              for (const name of await names(parent, 512 - count, true)) {
+              for (const name of await names(parent, 512 - count, true, true)) {
                 const selector = rel ? `${rel}/${name}` : name;
-                safe(selector);
+                try {
+                  safe(selector);
+                } catch {
+                  continue;
+                }
                 const path = NodePath.join(parent, name);
                 const s = await stat(path);
                 if (++count > 512 || depth > 8) throw error("limit_exceeded");
-                await child(parent, name, s.isDirectory(), true, s);
-                const selected =
-                  input.format === "codex"
-                    ? selector === "MEMORY.md" ||
-                      (selector.startsWith("extensions/ad_hoc/notes/") &&
-                        selector.split("/").length === 4 &&
-                        selector.endsWith(".md"))
-                    : !selector.includes("/") &&
-                      selector.endsWith(".md") &&
-                      !["MEMORY.md", "CLAUDE.md"].includes(selector);
-                if (s.isDirectory()) await walk(path, out, selector, depth + 1);
-                else if (selected) {
-                  sourceBytes += Number(s.size);
-                  if (sourceBytes > 8388608) throw error("limit_exceeded");
-                  const data = await read(path, s, 262144);
-                  strictText(data);
-                  files.push({
-                    selector,
-                    utf8Base64: data.toString("base64"),
-                    byteCount: data.length,
-                  });
-                  await write(out, `${files.length}.txt`, data);
+                if (s.isDirectory() && descend(selector)) {
+                  await child(parent, name, true, true, s);
+                  await walk(path, out, selector, depth + 1);
+                  continue;
                 }
+                if (!selects(selector)) continue;
+                if (!s.isFile()) {
+                  // Links and special files are never followed; the rest of the folder still imports.
+                  skipped(selector, "path_rejected");
+                  continue;
+                }
+                await child(parent, name, false, true, s);
+                if (s.size > 262144n || sourceBytes + Number(s.size) > 8388608) {
+                  skipped(selector, "limit_exceeded");
+                  continue;
+                }
+                sourceBytes += Number(s.size);
+                let data: Buffer;
+                try {
+                  data = await read(path, s, 262144);
+                } catch (cause) {
+                  if (isImportError(cause) && cause.issue === "source_unreadable") {
+                    skipped(selector, "source_unreadable");
+                    continue;
+                  }
+                  throw cause;
+                }
+                let text: string;
+                try {
+                  text = strictText(data);
+                } catch (cause) {
+                  skipped(selector, isImportError(cause) ? cause.issue : "invalid_utf8");
+                  continue;
+                }
+                if (scanMemoryValue(text).kind === "blocked") {
+                  skipped(selector, "secret_detected");
+                  continue;
+                }
+                files.push({
+                  selector,
+                  utf8Base64: data.toString("base64"),
+                  byteCount: data.length,
+                });
+                await write(out, `${files.length}.txt`, data);
               }
             };
             await walk(source, dest, "", 1);
@@ -669,6 +721,7 @@ export const acquireMemoryImportReader = Effect.fn("acquireMemoryImportReader")(
                 selector: file.selector,
                 text: new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes),
                 byteCount: file.byteCount,
+                ...(file.skip ? { skip: file.skip } : {}),
               };
             }),
           catch: normalize,
@@ -679,7 +732,9 @@ export const acquireMemoryImportReader = Effect.fn("acquireMemoryImportReader")(
           profile = files.some((file) => file.selector === "MEMORY.md") ? PROFILES[0] : PROFILES[1];
         } else
           profile = files.some((file) =>
-            /^---\r?\n(?:(?!---)[^])*?^metadata:[^]*?^---\s*$/m.test(file.text),
+            [...readFrontmatter(file.text).fields.keys()].some((key) =>
+              key.startsWith("metadata."),
+            ),
           )
             ? PROFILES[3]
             : PROFILES[2];
@@ -688,7 +743,7 @@ export const acquireMemoryImportReader = Effect.fn("acquireMemoryImportReader")(
             if (!files.length) throw error("source_missing");
             for (const file of files) {
               safe(file.selector);
-              if (file.text.includes("\0")) throw error("path_rejected");
+              if (file.text.includes("\0")) throw error("unsupported_format");
               if (scanMemoryValue(file.text).kind === "blocked") throw error("secret_detected");
             }
           },

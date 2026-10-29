@@ -37,6 +37,8 @@ export type ImportSourceFile = {
   readonly selector: string;
   readonly text: string;
   readonly byteCount: number;
+  /** The reader could not use this file (too large, not text, secret, ...); text is empty. */
+  readonly skip?: M.MemoryImportIssue;
 };
 export type ImportSnapshot = {
   readonly slot: ImportSlot;

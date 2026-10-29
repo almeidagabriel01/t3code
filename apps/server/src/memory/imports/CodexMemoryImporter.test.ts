@@ -195,11 +195,11 @@ describe("Codex memory pure profiles", () => {
       ),
   );
 
-  it.effect("excludes summary/raw/rollout/skills/nested resources and never falls back", () =>
+  it.effect("ignores unrelated files and reports index files and unknown layouts", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const { snapshot } = yield* buildMemoryImportFixture("codex-handbook-v1");
-        const excluded = {
+        const ignored = {
           "memory_summary.md": "v1",
           "raw_memories.md": "raw",
           "rollout_summaries/r.md": "rollout",
@@ -208,24 +208,38 @@ describe("Codex memory pure profiles", () => {
           "nested/MEMORY.md": handbook(),
           "extensions/ad_hoc/resources/x.md": "resource",
           "instructions.md": "instructions",
+          "extensions/ad_hoc/notes/nested/a.md": "nested",
+          "extensions/other/notes/a.md": "other",
         };
-        assert.deepEqual(yield* parseCodexMemory(files(snapshot, excluded)), []);
-        yield* failure(
-          files(snapshot, { "MEMORY.md": "# Navigation\n- [topic](nested/topic.md)" }),
-          "unsupported_format",
+        assert.deepEqual(yield* parseCodexMemory(files(snapshot, ignored)), []);
+        const navigation = "# Navigation\n- [topic](nested/topic.md)";
+        assert.deepEqual(yield* parseCodexMemory(files(snapshot, { "MEMORY.md": navigation })), [
+          {
+            kind: "rejected",
+            sourceItemKey: "MEMORY.md",
+            byteCount: new TextEncoder().encode(navigation).length,
+            issue: "unsupported_format",
+          },
+        ]);
+        // A handbook and notes in one folder both import, whichever profile the reader picked.
+        const both = yield* parseCodexMemory(
+          files(snapshot, {
+            "MEMORY.md": handbook(),
+            [note]: "A note.",
+            "extensions/ad_hoc/notes/instructions.md": "instructions",
+          }),
         );
-        const adHoc = yield* buildMemoryImportFixture("codex-ad-hoc-v1");
         assert.deepEqual(
-          yield* parseCodexMemory(
-            files(adHoc.snapshot, {
-              ...excluded,
-              "MEMORY.md": handbook(),
-              "extensions/ad_hoc/notes/nested/a.md": "nested",
-              "extensions/ad_hoc/notes/instructions.md": "instructions",
-              "extensions/other/notes/a.md": "other",
-            }),
+          both.map((row) =>
+            row.kind === "candidate"
+              ? row.candidate.sourceItemKey
+              : `${row.sourceItemKey}:${row.issue}`,
           ),
-          [],
+          [
+            "MEMORY.md#task-group:Guidance",
+            `${note}#body`,
+            "extensions/ad_hoc/notes/instructions.md#body:index_file",
+          ],
         );
       }),
     ),
@@ -252,96 +266,129 @@ describe("Codex memory pure profiles", () => {
     ),
   );
 
-  it.effect(
-    "rejects secrets in raw evidence/header/body/selector/locator without returning partial rows",
-    () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const { snapshot } = yield* buildMemoryImportFixture("codex-handbook-v1");
-          const synthetic = "sk-" + "SYNTHETIC".repeat(4);
-          for (const text of [
-            handbook("Safe", synthetic),
-            handbook(synthetic),
-            handbook("Safe", "Guidance", `scope: ${synthetic}`),
-            handbook(`### rollout_summary_files\n- ${synthetic}`),
-          ]) {
-            yield* failure(
-              files(snapshot, {
-                "MEMORY.md": `${handbook("Safe prefix", "First safe group")}\n${text}`,
-              }),
-              "secret_detected",
-            );
-          }
-          yield* failure({ ...snapshot, sourceLocator: synthetic }, "secret_detected");
-          yield* failure(files(snapshot, { [`${synthetic}.md`]: "safe" }), "secret_detected");
-        }),
-      ),
+  it.effect("a secret skips only its file, is never exposed, and the other files import", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { snapshot } = yield* buildMemoryImportFixture("codex-handbook-v1");
+        const synthetic = "sk-" + "SYNTHETIC".repeat(4);
+        for (const text of [
+          handbook("Safe", synthetic),
+          handbook(synthetic),
+          handbook("Safe", "Guidance", `scope: ${synthetic}`),
+          handbook(`### rollout_summary_files\n- ${synthetic}`),
+        ]) {
+          const rows = yield* parseCodexMemory(
+            files(snapshot, { "MEMORY.md": text, [note]: "A safe note." }),
+          );
+          assert.deepEqual(
+            rows.map((row) => (row.kind === "candidate" ? "candidate" : row.issue)),
+            ["secret_detected", "candidate"],
+          );
+          assert.notInclude(JSON.stringify(rows), synthetic);
+        }
+        yield* failure({ ...snapshot, sourceLocator: synthetic }, "secret_detected");
+        yield* failure(files(snapshot, { [`${synthetic}.md`]: "safe" }), "secret_detected");
+      }),
+    ),
   );
 
-  it.effect(
-    "rejects duplicate NFC titles, ambiguous scope/routing, unclosed fences and transcript envelopes",
-    () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const { snapshot } = yield* buildMemoryImportFixture("codex-handbook-v1");
-          yield* failure(
-            files(snapshot, {
-              "MEMORY.md": `${handbook("a", "Café")}\n${handbook("b", "Cafe\u0301")}`,
-            }),
-            "unsupported_format",
-          );
-          yield* failure(
-            files(snapshot, { "MEMORY.md": handbook("```\nunclosed") }),
-            "unsupported_format",
-          );
-          for (const text of [
-            "# Task Group: Missing scope\nUseful",
-            handbook("safe", "Guidance", "scope: duplicate"),
-            handbook("safe", "Guidance", "applies_to: arbitrary"),
-            handbook(
-              "safe",
-              "Guidance",
-              "applies_to: cwd=/x; reuse_rule=x\napplies_to: cwd=/y; reuse_rule=y",
-            ),
-          ]) {
-            const rows = yield* parseCodexMemory(files(snapshot, { "MEMORY.md": text }));
-            assert.equal(rows[0]!.kind, "rejected");
-            assert.deepEqual(Object.keys(rows[0]!).sort(), [
-              "byteCount",
-              "issue",
-              "kind",
-              "sourceItemKey",
-            ]);
-          }
-          const adHoc = yield* buildMemoryImportFixture("codex-ad-hoc-v1");
-          yield* failure(
-            files(adHoc.snapshot, {
-              [note]: '{"type":"session_meta","payload":{}}\n{"type":"event_msg"}',
-            }),
-            "unsupported_format",
-          );
-          const blank = yield* parseCodexMemory(files(adHoc.snapshot, { [note]: " \n " }));
-          assert.deepEqual(blank, [
-            {
-              kind: "rejected",
-              sourceItemKey: `${note}#body`,
-              byteCount: 0,
-              issue: "unsupported_format",
-            },
-          ]);
-        }),
-      ),
+  // One layout variation per row; none may reject the file.
+  it.effect.each([
+    ["no scope line", "# Task Group: G\nUseful", "G", "Useful"],
+    [
+      "preamble before first group",
+      "# Memory\nIntro line\n\n# Task Group: G\nUseful",
+      "G",
+      "Useful",
+    ],
+    ["lower-case heading, extra spaces", "#  task group:   G  \nUseful", "G", "Useful"],
+    ["duplicate scope line", "# Task Group: G\nscope: a\nscope: b\nUseful", "G", "Useful"],
+    ["free-form applies_to", "# Task Group: G\napplies_to: anywhere\nUseful", "G", "Useful"],
+    ["unclosed fence", "# Task Group: G\n```\nUseful", "G", "```\nUseful"],
+    ["CRLF", "# Task Group: G\r\nUseful\r\nmore", "G", "Useful\nmore"],
+    ["empty title", "# Task Group: \nUseful", "Untitled", "Useful"],
+    [
+      "over-long title is clamped",
+      `# Task Group: ${"t".repeat(300)}\nUseful`,
+      "t".repeat(256),
+      "Useful",
+    ],
+  ] as const)("tolerates handbook layout: %s", ([_label, text, title, body]) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { snapshot } = yield* buildMemoryImportFixture("codex-handbook-v1");
+        const [item] = candidates(yield* parseCodexMemory(files(snapshot, { "MEMORY.md": text })));
+        assert.equal(item!.title, title);
+        assert.equal(item!.payload.text, body);
+      }),
+    ),
   );
 
-  it.effect.each(["safe\u0000text", "bad\ud800", "bad\udc00"])(
-    "defends against invalid snapshot text %j",
-    (text) =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const { snapshot } = yield* buildMemoryImportFixture("codex-ad-hoc-v1");
-          yield* failure(files(snapshot, { [note]: text }), "invalid_utf8");
-        }),
-      ),
+  it.effect("duplicate titles get distinct keys; transcripts and blank notes are skipped", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { snapshot } = yield* buildMemoryImportFixture("codex-handbook-v1");
+        const rows = yield* parseCodexMemory(
+          files(snapshot, {
+            "MEMORY.md": `${handbook("a", "Café")}\n${handbook("b", "Cafe\u0301")}`,
+            [note]: '{"type":"session_meta","payload":{}}\n{"type":"event_msg"}',
+            "extensions/ad_hoc/notes/blank.md": " \n ",
+          }),
+        );
+        assert.deepEqual(
+          rows.map((row) =>
+            row.kind === "candidate"
+              ? row.candidate.sourceItemKey
+              : `${row.sourceItemKey}:${row.issue}`,
+          ),
+          [
+            "MEMORY.md#task-group:Café",
+            "MEMORY.md#task-group:Café (2)",
+            `${note}#body:unsupported_format`,
+            "extensions/ad_hoc/notes/blank.md#body:empty_file",
+          ],
+        );
+      }),
+    ),
+  );
+
+  it.effect.each([
+    ["safe\u0000text", "unsupported_format"],
+    ["bad\ud800", "invalid_utf8"],
+    ["bad\udc00", "invalid_utf8"],
+  ] as const)("skips only the note with invalid text %j", ([text, issue]) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { snapshot } = yield* buildMemoryImportFixture("codex-ad-hoc-v1");
+        const rows = yield* parseCodexMemory(
+          files(snapshot, { [note]: text, "extensions/ad_hoc/notes/ok.md": "fine" }),
+        );
+        assert.deepEqual(
+          rows.map((row) => (row.kind === "candidate" ? "candidate" : row.issue)),
+          [issue, "candidate"],
+        );
+      }),
+    ),
+  );
+
+  it.effect("a file the reader skipped is reported with its reason", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { snapshot } = yield* buildMemoryImportFixture("codex-ad-hoc-v1");
+        const rows = yield* parseCodexMemory({
+          ...snapshot,
+          files: [{ selector: note, text: "", byteCount: 0, skip: "limit_exceeded" }],
+        });
+        assert.deepEqual(rows, [
+          {
+            kind: "rejected",
+            sourceItemKey: `${note}#body`,
+            byteCount: 0,
+            issue: "limit_exceeded",
+          },
+        ]);
+      }),
+    ),
   );
 
   it.effect("defends against mismatched bytes, duplicate files and wrong profile/version", () =>
@@ -354,7 +401,7 @@ describe("Codex memory pure profiles", () => {
         );
         yield* failure(
           snapshotMemoryImportFiles(snapshot, [...snapshot.files, ...snapshot.files]),
-          "unsupported_format",
+          "path_rejected",
         );
         yield* failure({ ...snapshot, profile: "unknown" }, "unsupported_format");
         yield* failure({ ...snapshot, parserVersion: "future" }, "unsupported_format");
@@ -432,11 +479,14 @@ describe("Codex memory pure profiles", () => {
           )[0]!.title!.length,
           256,
         );
-        const over = yield* parseCodexMemory(
-          files(hb.snapshot, { "MEMORY.md": handbook("safe", "t".repeat(257)) }),
+        assert.equal(
+          candidates(
+            yield* parseCodexMemory(
+              files(hb.snapshot, { "MEMORY.md": handbook("safe", "t".repeat(257)) }),
+            ),
+          )[0]!.title!.length,
+          256,
         );
-        assert.equal(over[0]!.kind, "rejected");
-        if (over[0]!.kind === "rejected") assert.equal(over[0]!.issue, "limit_exceeded");
       }),
     ),
   );
@@ -495,7 +545,14 @@ describe("Codex memory pure profiles", () => {
             (yield* parseCodexMemory(files(snapshot, { [note]: text })))[0]!.kind,
             "rejected",
           );
-          yield* failure(files(snapshot, { [note]: text + "x" }), "limit_exceeded");
+          assert.deepEqual(yield* parseCodexMemory(files(snapshot, { [note]: text + "x" })), [
+            {
+              kind: "rejected",
+              sourceItemKey: `${note}#body`,
+              byteCount: 0,
+              issue: "limit_exceeded",
+            },
+          ]);
           const aggregate = Object.fromEntries(
             Array.from({ length: 32 }, (_, i) => [`extensions/ad_hoc/notes/${i}.md`, text]),
           );

@@ -24,6 +24,10 @@ export function memoryImportIssueReason(
   switch (issue) {
     case "unsupported_format":
       return "This provider's memory format is not supported.";
+    case "index_file":
+      return "This is an index file, not a memory.";
+    case "empty_file":
+      return "This file has no content.";
     case "source_missing":
       return "That memory store or profile is not on this device.";
     case "source_unreadable":
@@ -55,6 +59,38 @@ export function memoryImportIssueReason(
     case "capacity_exceeded":
       return "Memory storage is full.";
   }
+}
+
+const skippedLabels: Partial<Record<MemoryImportIssue, readonly [string, string]>> = {
+  index_file: ["index file", "index files"],
+  empty_file: ["empty file", "empty files"],
+  limit_exceeded: ["too large", "too large"],
+  secret_detected: ["with sensitive content", "with sensitive content"],
+  invalid_utf8: ["not text", "not text"],
+  unsupported_format: ["unsupported format", "unsupported format"],
+  path_rejected: ["not a regular file", "not a regular file"],
+  source_unreadable: ["unreadable", "unreadable"],
+};
+
+/** "3 skipped: 2 index files, 1 too large", or null when nothing was skipped. */
+export function memoryImportSkippedSummary(
+  items: readonly { readonly issue?: MemoryImportIssue | undefined }[],
+): string | null {
+  const counts = new Map<string, number>();
+  let total = 0;
+  for (const { issue } of items) {
+    if (issue === undefined) continue;
+    total += 1;
+    const labels = skippedLabels[issue];
+    const key = labels ? issue : "other";
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  if (total === 0) return null;
+  const parts = [...counts].map(([key, count]) => {
+    const labels = skippedLabels[key as MemoryImportIssue];
+    return labels ? `${count} ${count === 1 ? labels[0] : labels[1]}` : `${count} other`;
+  });
+  return `${total} skipped: ${parts.join(", ")}`;
 }
 
 /** The typed refusal's reason, or null when the failure is not a memory-import error. */

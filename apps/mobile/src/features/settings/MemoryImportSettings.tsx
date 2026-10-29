@@ -10,6 +10,7 @@ import {
 import {
   memoryImportFormatLabels,
   memoryImportFormats,
+  memoryImportSkippedSummary,
   memoryImportSourceName,
 } from "@t3tools/client-runtime/memory-import-workflow";
 import { useCallback, useContext, useEffect, useRef, useState, useSyncExternalStore } from "react";
@@ -287,7 +288,7 @@ export function MemoryImportSettings({
         <>
           <Copy>
             {importable.length} memories found. Select the memories to import.
-            {skipped > 0 ? ` ${skipped} ${skipped === 1 ? "file" : "files"} skipped.` : ""}
+            {skipped > 0 ? ` ${memoryImportSkippedSummary(preview?.items ?? [])}.` : ""}
           </Copy>
           {importable.map((item, index) => (
             <SettingsSwitchRow

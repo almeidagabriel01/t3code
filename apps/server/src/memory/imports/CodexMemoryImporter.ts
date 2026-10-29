@@ -1,24 +1,23 @@
-// @effect-diagnostics-next-line nodeBuiltinImport:off -- SHA-256 is deterministic pure computation, with no runtime service or I/O.
-import * as NodeCrypto from "node:crypto";
 import * as M from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import { scanMemoryValue } from "../MemorySecretScanner.ts";
+import {
+  bytes,
+  canonical,
+  control,
+  fileProblem,
+  hash,
+  rejectedRow,
+  safeSelector,
+  secret,
+  titleOf,
+} from "./MemoryImportParseSupport.ts";
 import type { ImportParsedItem, MemoryImportParser } from "./MemoryImportTypes.ts";
 
-const FILE_MAX_BYTES = 256 * 1024;
-const TITLE_MAX_CODE_POINTS = 256;
-const bytes = (s: string) => new TextEncoder().encode(s).length;
-const canonical = (s: string) => s.normalize("NFC").replace(/\r\n/g, "\n").trim();
-const hash = (s: string) => NodeCrypto.createHash("sha256").update(s).digest("hex");
-const secret = (s: string) => scanMemoryValue(s).kind === "blocked";
-const control = (s: string) =>
-  [...s].some((c) => c.codePointAt(0)! < 32 || c.codePointAt(0) === 127);
-const safeSelector = (s: string) =>
-  s.length > 0 &&
-  bytes(s) <= M.MEMORY_IMPORT_KEY_MAX_UTF8_BYTES &&
-  !control(s) &&
-  !/[\\:]/u.test(s) &&
-  s.split("/").every((part) => part !== "" && part !== "." && part !== "..");
+// Fingerprints are keyed by item kind, not by the slot profile, so a note keeps its identity
+// when a handbook appears next to it.
+const HANDBOOK_VERSION = "codex-handbook-v1";
+const NOTE_VERSION = "codex-ad-hoc-v1";
+const noteSelector = (s: string) => /^extensions\/ad_hoc\/notes\/[^/]+\.md$/u.test(s);
 const transcriptEnvelope = (line: string) => {
   if (!line.trimStart().startsWith("{")) return false;
   try {
@@ -36,9 +35,58 @@ const transcriptEnvelope = (line: string) => {
     return false;
   }
 };
-const noteSelector = (s: string) => /^extensions\/ad_hoc\/notes\/[^/]+\.md$/u.test(s);
 
-/** Only the two 050 §2 grammars; source registration and import evidence belong to L4. */
+type Group = { title: string; body: string[]; scope?: string; routing?: string };
+
+/** Splits a handbook into task groups. Unknown lines before the first group are ignored. */
+const handbookGroups = (text: string) => {
+  const groups: Group[] = [];
+  let group: Group | undefined;
+  let fence: { char: string; length: number } | undefined;
+  let omitSection = false;
+  for (const line of text.replace(/\r\n?/g, "\n").split("\n")) {
+    const marker = /^ {0,3}(`{3,}|~{3,})(.*)$/u.exec(line);
+    if (fence) {
+      if (group && !omitSection) group.body.push(line);
+      if (
+        marker &&
+        marker[1]![0] === fence.char &&
+        marker[1]!.length >= fence.length &&
+        marker[2]!.trim() === ""
+      )
+        fence = undefined;
+      continue;
+    }
+    if (marker) {
+      fence = { char: marker[1]![0]!, length: marker[1]!.length };
+      if (group && !omitSection) group.body.push(line);
+      continue;
+    }
+    const heading = /^#{1,2}[ \t]*Task Group:[ \t]*(.*?)[ \t]*$/iu.exec(line);
+    if (heading) {
+      group = { title: titleOf(heading[1]!) || "Untitled", body: [] };
+      groups.push(group);
+      omitSection = false;
+      continue;
+    }
+    if (!group) continue;
+    if (line.startsWith("scope:")) {
+      group.scope = canonical(line.slice(6));
+      continue;
+    }
+    if (line.startsWith("applies_to:")) {
+      group.routing = canonical(line.slice(11));
+      continue;
+    }
+    const section = /^(#{1,6})\s+(.+?)\s*#*$/u.exec(line);
+    if (section && section[1]!.length <= 3)
+      omitSection = section[2] === "rollout_summary_files" || section[2] === "keywords";
+    if (!omitSection) group.body.push(line);
+  }
+  return groups;
+};
+
+/** Handbook task groups and ad-hoc notes, by file. One bad file or group never hides the rest. */
 export const parseCodexMemory: MemoryImportParser = Effect.fn("parseCodexMemory")(
   function* (input) {
     const fail = (issue: M.MemoryImportIssue) => Effect.fail(new M.MemoryImportRpcError({ issue }));
@@ -57,58 +105,42 @@ export const parseCodexMemory: MemoryImportParser = Effect.fn("parseCodexMemory"
     for (const file of input.files) {
       if (!safeSelector(file.selector)) return yield* fail("path_rejected");
       if (secret(file.selector)) return yield* fail("secret_detected");
-      const allowed =
-        input.profile === "codex-handbook-v1"
-          ? file.selector === "MEMORY.md"
-          : noteSelector(file.selector) && !file.selector.endsWith("/instructions.md");
-      if (!allowed) continue;
-      if (selectors.has(file.selector)) return yield* fail("unsupported_format");
+      if (selectors.has(file.selector)) return yield* fail("path_rejected");
       selectors.add(file.selector);
       const size = bytes(file.text);
       totalBytes += size;
-      if (size > FILE_MAX_BYTES || totalBytes > M.MEMORY_IMPORT_SNAPSHOT_MAX_UTF8_BYTES)
+      if (totalBytes > M.MEMORY_IMPORT_SNAPSHOT_MAX_UTF8_BYTES)
         return yield* fail("limit_exceeded");
       if (size !== file.byteCount) return yield* fail("source_changed");
-      // A snapshot has strings, not undecoded bytes. Reject unpaired UTF-16 surrogates;
-      // a legitimate U+FFFD cannot be distinguished from reader replacement here.
-      if (
-        file.text.includes(String.fromCharCode(0)) ||
-        /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u.test(file.text)
-      )
-        return yield* fail("invalid_utf8");
-      if (secret(file.text)) return yield* fail("secret_detected");
+      const handbook = file.selector === "MEMORY.md";
+      if (!handbook && !noteSelector(file.selector)) continue;
       const add = (
         key: string,
         body: string,
+        version: string,
         title?: string,
         metadata: readonly string[] = [],
-        malformed = false,
       ) => {
-        if (items.length >= M.MEMORY_IMPORT_PREVIEW_MAX_ITEMS) return "limit_exceeded" as const;
+        if (bytes(key) > M.MEMORY_IMPORT_KEY_MAX_UTF8_BYTES) return "path_rejected" as const;
         const text = canonical(body);
         const byteCount = bytes(text);
-        if (secret(key) || (title !== undefined && secret(title)) || secret(text))
-          return "secret_detected" as const;
-        if (bytes(key) > M.MEMORY_IMPORT_KEY_MAX_UTF8_BYTES || control(key))
-          return "path_rejected" as const;
         const payload = { text, evidence: [], derivedFromMemoryRevisions: [] };
         const issue =
-          bytes(JSON.stringify(payload)) > M.MEMORY_PAYLOAD_MAX_UTF8_BYTES ||
-          byteCount > M.MEMORY_BODY_MAX_UTF8_BYTES ||
-          (title !== undefined && [...title].length > TITLE_MAX_CODE_POINTS)
-            ? "limit_exceeded"
-            : malformed || text.length === 0
-              ? "unsupported_format"
-              : undefined;
-        if (issue) items.push({ kind: "rejected", sourceItemKey: key, byteCount, issue });
+          text.length === 0
+            ? "empty_file"
+            : secret(`${key}\n${title ?? ""}\n${text}`)
+              ? "secret_detected"
+              : bytes(JSON.stringify(payload)) > M.MEMORY_PAYLOAD_MAX_UTF8_BYTES ||
+                  byteCount > M.MEMORY_BODY_MAX_UTF8_BYTES
+                ? "limit_exceeded"
+                : undefined;
+        if (issue) items.push(rejectedRow(key, byteCount, issue));
         else
           items.push({
             kind: "candidate",
             candidate: {
               sourceItemKey: key,
-              sourceFingerprint: hash(
-                JSON.stringify([input.parserVersion, title ?? null, text, metadata]),
-              ),
+              sourceFingerprint: hash(JSON.stringify([version, title ?? null, text, metadata])),
               contentFingerprint: hash(text),
               ...(title === undefined ? {} : { title }),
               payload,
@@ -117,83 +149,38 @@ export const parseCodexMemory: MemoryImportParser = Effect.fn("parseCodexMemory"
           });
         return undefined;
       };
-      if (input.profile === "codex-ad-hoc-v1") {
+      const problem = fileProblem(file);
+      if (problem) {
+        items.push(rejectedRow(handbook ? file.selector : `${file.selector}#body`, 0, problem));
+      } else if (!handbook) {
+        if (file.selector.endsWith("/instructions.md"))
+          items.push(rejectedRow(`${file.selector}#body`, size, "index_file"));
         // JSON/JSONL transcript envelopes are never Markdown-note fallback inputs.
-        if (file.text.split(/\r?\n/u).some(transcriptEnvelope))
-          return yield* fail("unsupported_format");
-        const issue = add(`${file.selector}#body`, file.text);
-        if (issue) return yield* fail(issue);
-      } else {
-        let group:
-          | { title: string; body: string[]; scope?: string; routing?: string; malformed: boolean }
-          | undefined;
-        const titles = new Set<string>();
-        let fence: { char: string; length: number } | undefined;
-        let omitSection = false;
-        const flush = () =>
-          group === undefined
-            ? undefined
-            : add(
-                `MEMORY.md#task-group:${group.title}`,
-                group.body.join("\n"),
-                group.title,
-                [group.scope ?? "", group.routing ?? ""],
-                group.malformed || !group.scope,
-              );
-        for (const line of file.text.replace(/\r\n/g, "\n").split("\n")) {
-          const marker = /^ {0,3}(`{3,}|~{3,})(.*)$/u.exec(line);
-          if (fence) {
-            if (group && !omitSection) group.body.push(line);
-            if (
-              marker &&
-              marker[1]![0] === fence.char &&
-              marker[1]!.length >= fence.length &&
-              marker[2]!.trim() === ""
-            )
-              fence = undefined;
-            continue;
-          }
-          if (marker) {
-            fence = { char: marker[1]![0]!, length: marker[1]!.length };
-            if (group && !omitSection) group.body.push(line);
-            continue;
-          }
-          const heading = /^# Task Group: (.+)$/u.exec(line);
-          if (heading) {
-            const issue = flush();
-            if (issue) return yield* fail(issue);
-            const title = canonical(heading[1]!);
-            if (titles.has(title)) return yield* fail("unsupported_format");
-            titles.add(title);
-            group = { title, body: [], malformed: title.length === 0 };
-            omitSection = false;
-            continue;
-          }
-          if (!group) {
-            if (line.trim() !== "") return yield* fail("unsupported_format");
-            continue;
-          }
-          if (line.startsWith("scope:")) {
-            if (group.scope !== undefined) group.malformed = true;
-            group.scope = canonical(line.slice(6));
-            continue;
-          }
-          if (line.startsWith("applies_to:")) {
-            if (group.routing !== undefined) group.malformed = true;
-            group.routing = canonical(line.slice(11));
-            if (!/^cwd=.+; reuse_rule=.+$/u.test(group.routing)) group.malformed = true;
-            continue;
-          }
-          const section = /^(#{1,6})\s+(.+?)\s*#*$/u.exec(line);
-          if (section) {
-            if (section[1]!.length <= 3)
-              omitSection = section[2] === "rollout_summary_files" || section[2] === "keywords";
-          }
-          if (!omitSection) group.body.push(line);
+        else if (file.text.split(/\r?\n/u).some(transcriptEnvelope))
+          items.push(rejectedRow(`${file.selector}#body`, size, "unsupported_format"));
+        else {
+          const failed = add(`${file.selector}#body`, file.text, NOTE_VERSION);
+          if (failed) return yield* fail(failed);
         }
-        const issue = flush();
-        if (issue) return yield* fail(issue);
-        if (titles.size === 0 || fence) return yield* fail("unsupported_format");
+      } else {
+        const groups = handbookGroups(file.text);
+        if (groups.length === 0) items.push(rejectedRow(file.selector, size, "unsupported_format"));
+        const used = new Set<string>();
+        for (const group of groups) {
+          let title = group.title;
+          for (let n = 2; used.has(title); n++) title = `${group.title} (${n})`;
+          used.add(title);
+          const key = `MEMORY.md#task-group:${title}`;
+          add(
+            bytes(key) > M.MEMORY_IMPORT_KEY_MAX_UTF8_BYTES || control(key)
+              ? `MEMORY.md#task-group:${hash(title).slice(0, 32)}`
+              : key,
+            group.body.join("\n"),
+            HANDBOOK_VERSION,
+            title,
+            [group.scope ?? "", group.routing ?? ""],
+          );
+        }
       }
       if (items.length > M.MEMORY_IMPORT_PREVIEW_MAX_ITEMS) return yield* fail("limit_exceeded");
     }

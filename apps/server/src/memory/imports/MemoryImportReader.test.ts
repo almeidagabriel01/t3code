@@ -220,7 +220,15 @@ describe("MemoryImportReader", () => {
           const reader = yield* Reader.acquireMemoryImportReader(readerConfig(fixture));
           const before = captureMemoryImportInventory(fixture.sourceRoot);
           const value = yield* reader.read({ slot: fixture.snapshot.slot });
-          assert.deepEqual(value.files, fixture.snapshot.files);
+          // Index files are read too, so the parser can report them as skipped.
+          assert.deepEqual(
+            value.files.filter(
+              (file) => file.selector !== "MEMORY.md" || profile.startsWith("codex"),
+            ),
+            fixture.snapshot.files,
+          );
+          if (profile.startsWith("claude"))
+            assert.ok(value.files.some((file) => file.selector === "MEMORY.md"));
           assert.equal(value.profile, profile);
           assert.equal(value.sourceLocator.includes(fixture.sandbox), false);
           assert.equal("sourceId" in value, false);
@@ -244,12 +252,7 @@ describe("MemoryImportReader", () => {
   const faults = [
     ["symlink-root", "path_rejected"],
     ["symlink-ancestor", "path_rejected"],
-    ["symlink-file", "path_rejected"],
     ["traversal", "path_rejected"],
-    ["malformed-utf8", "invalid_utf8"],
-    ["nul", "path_rejected"],
-    ["oversized-file", "limit_exceeded"],
-    ["secret-header", "secret_detected"],
   ] as const;
   it.effect.each(faults)("refuses %s with no source changes", ([fault, issue]) =>
     Effect.scoped(
@@ -269,7 +272,108 @@ describe("MemoryImportReader", () => {
     ),
   );
 
-  it.effect("accepts exactly 256 KiB, refuses +1 without partial text", () =>
+  // A bad file is skipped with its reason and carries no text; the snapshot still succeeds.
+  const fileFaults = [
+    ["symlink-file", "path_rejected"],
+    ["malformed-utf8", "invalid_utf8"],
+    ["nul", "unsupported_format"],
+    ["oversized-file", "limit_exceeded"],
+    ["secret-header", "secret_detected"],
+  ] as const;
+  it.effect.each(fileFaults)("skips a %s file and still reads the snapshot", ([fault, issue]) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fixture = yield* buildMemoryImportFixture("codex-handbook-v1");
+        const input = buildMemoryImportFault(fixture, fault);
+        const spy = makeSourceSpy(fixture, input.root);
+        const reader = yield* Reader.acquireMemoryImportReader(spy.config);
+        const before = captureMemoryImportInventory(fixture.sandbox).entries;
+        const value = yield* reader.read({ slot: input.slot });
+        const skipped = value.files.filter((file) => file.skip);
+        assert.deepEqual(
+          skipped.map((file) => [file.selector, file.skip, file.text, file.byteCount]),
+          [["MEMORY.md", issue, "", 0]],
+        );
+        assert.deepEqual(captureMemoryImportInventory(fixture.sandbox).entries, before);
+        assertNoSourceWrites(spy.log);
+        assert.deepEqual(residue(fixture), []);
+      }),
+    ),
+  );
+
+  it.effect("one unusable file among good ones skips only that file", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fixture = yield* buildMemoryImportFixture("claude-topic-v1");
+        const put = (name: string, bytes: string | Buffer) =>
+          NodeFS.writeFileSync(NodePath.join(fixture.sourceRoot, name), bytes);
+        put("b-binary.md", Buffer.from([0xff, 0xfe, 0x41]));
+        put("c-secret.md", `# Key\nsk-${"a".repeat(24)}\n`);
+        put("d-large.md", "x".repeat(262145));
+        put("e-good.md", "# Good\nbody\n");
+        NodeFS.symlinkSync("fixture.md", NodePath.join(fixture.sourceRoot, "f-link.md"));
+        const reader = yield* Reader.acquireMemoryImportReader(readerConfig(fixture));
+        const value = yield* reader.read({ slot: fixture.snapshot.slot });
+        assert.deepEqual(
+          value.files.map((file) => [file.selector, file.skip ?? "ok"]),
+          [
+            ["b-binary.md", "invalid_utf8"],
+            ["c-secret.md", "secret_detected"],
+            ["d-large.md", "limit_exceeded"],
+            ["e-good.md", "ok"],
+            ["f-link.md", "path_rejected"],
+            ["fixture.md", "ok"],
+            ["MEMORY.md", "ok"],
+          ],
+        );
+        assert.notInclude(JSON.stringify(value), "sk-aaaa");
+      }),
+    ),
+  );
+
+  it.effect("unsafe or undecodable entry names and unrelated folders never abort a read", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fixture = yield* buildMemoryImportFixture("claude-topic-v1");
+        const root = fixture.sourceRoot;
+        NodeFS.writeFileSync(NodePath.join(root, `sk-${"a".repeat(24)}.md`), "x");
+        NodeFS.writeFileSync(NodePath.join(root, "back\\slash.md"), "x");
+        NodeFS.mkdirSync(NodePath.join(root, "sub", "deep", "deeper"), { recursive: true });
+        for (let i = 0; i < 600; i++)
+          NodeFS.writeFileSync(NodePath.join(root, "sub", "deep", `f${i}.md`), "x");
+        const reader = yield* Reader.acquireMemoryImportReader(readerConfig(fixture));
+        const value = yield* reader.read({ slot: fixture.snapshot.slot });
+        assert.deepEqual(
+          value.files.map((file) => file.selector),
+          ["fixture.md", "MEMORY.md"],
+        );
+      }),
+    ),
+  );
+
+  it.effect("a Codex folder with other layouts still reads handbook and notes", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fixture = yield* buildMemoryImportFixture("codex-handbook-v1");
+        const put = (name: string, text: string) => {
+          NodeFS.mkdirSync(NodePath.dirname(NodePath.join(fixture.sourceRoot, name)), {
+            recursive: true,
+          });
+          NodeFS.writeFileSync(NodePath.join(fixture.sourceRoot, name), text);
+        };
+        put("extensions/ad_hoc/notes/n.md", "note");
+        for (let i = 0; i < 600; i++) put(`rollout_summaries/r${i}.md`, "x");
+        const reader = yield* Reader.acquireMemoryImportReader(readerConfig(fixture));
+        const value = yield* reader.read({ slot: fixture.snapshot.slot });
+        assert.deepEqual(
+          value.files.map((file) => file.selector),
+          ["extensions/ad_hoc/notes/n.md", "MEMORY.md"],
+        );
+      }),
+    ),
+  );
+
+  it.effect("a 256 KiB file is read; one byte more is skipped as too large", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const fixture = yield* buildMemoryImportFixture("codex-ad-hoc-v1", {
@@ -285,10 +389,8 @@ describe("MemoryImportReader", () => {
           "a",
         );
         const before = captureMemoryImportInventory(fixture.sourceRoot);
-        assert.equal(
-          (yield* Effect.flip(reader.read({ slot: fixture.snapshot.slot }))).issue,
-          "limit_exceeded",
-        );
+        const [file] = (yield* reader.read({ slot: fixture.snapshot.slot })).files;
+        assert.deepEqual([file!.skip, file!.text], ["limit_exceeded", ""]);
         assert.deepEqual(captureMemoryImportInventory(fixture.sourceRoot), before);
         assert.deepEqual(residue(fixture), []);
       }),
@@ -305,29 +407,6 @@ describe("MemoryImportReader", () => {
         const reader = yield* Reader.acquireMemoryImportReader(readerConfig(fixture));
         assert.equal((yield* reader.read({ slot: fixture.snapshot.slot })).files.length, 1);
         NodeFS.writeFileSync(NodePath.join(fixture.sourceRoot, "excluded-plus-one"), "");
-        assert.equal(
-          (yield* Effect.flip(reader.read({ slot: fixture.snapshot.slot }))).issue,
-          "limit_exceeded",
-        );
-        assert.deepEqual(residue(fixture), []);
-      }),
-    ),
-  );
-
-  it.effect("bounds traversal depth at equality and +1 even for excluded directories", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const fixture = yield* buildMemoryImportFixture("codex-handbook-v1");
-        const path = NodePath.join(
-          fixture.sourceRoot,
-          ...Array.from({ length: 7 }, () => "nested"),
-        );
-        NodeFS.mkdirSync(path, { recursive: true });
-        NodeFS.writeFileSync(NodePath.join(path, "leaf"), "");
-        const reader = yield* Reader.acquireMemoryImportReader(readerConfig(fixture));
-        yield* reader.read({ slot: fixture.snapshot.slot });
-        NodeFS.mkdirSync(NodePath.join(path, "one-more"));
-        NodeFS.writeFileSync(NodePath.join(path, "one-more", "leaf"), "");
         assert.equal(
           (yield* Effect.flip(reader.read({ slot: fixture.snapshot.slot }))).issue,
           "limit_exceeded",
@@ -744,9 +823,10 @@ describe("MemoryImportReader", () => {
           "a",
         );
         const before = captureMemoryImportInventory(fixture.sourceRoot);
-        assert.equal(
-          (yield* Effect.flip(reader.read({ slot: fixture.snapshot.slot }))).issue,
-          "limit_exceeded",
+        const over = yield* reader.read({ slot: fixture.snapshot.slot });
+        assert.deepEqual(
+          over.files.filter((file) => file.skip).map((file) => file.skip),
+          ["limit_exceeded"],
         );
         assert.deepEqual(captureMemoryImportInventory(fixture.sourceRoot), before);
         assert.deepEqual(residue(fixture), []);

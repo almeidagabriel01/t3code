@@ -151,153 +151,187 @@ describe("ClaudeMemoryImporter", () => {
       }),
   );
 
-  fixtureTest(
-    "excludes navigation, nested topics, summary/raw and non-Markdown without following links",
-    (snapshot) =>
-      Effect.gen(function* () {
-        const rows = yield* parseClaudeMemory(
-          files(snapshot, [
-            ["MEMORY.md", "[topic](../../outside.md)\nrollout_path: outside.jsonl"],
-            ["CLAUDE.md", topic()],
-            ["nested/topic.md", topic()],
-            ["episodes/topic.md", topic()],
-            ["agent-memory/topic.md", topic()],
-            ["rules/a.md", topic()],
-            ["memory_summary.md", topic()],
-            ["raw_memories.md", topic()],
-            ["session.jsonl", "{}"],
-            ["topic.md", topic("[Reference](../../outside.md)\nrollout_path: outside.jsonl")],
-          ]),
-        );
-        assert.equal(
-          candidate(rows).payload.text,
-          "[Reference](../../outside.md)\nrollout_path: outside.jsonl",
-        );
-      }),
+  fixtureTest("ignores nested, non-Markdown and wrongly named entries", (snapshot) =>
+    Effect.gen(function* () {
+      const rows = yield* parseClaudeMemory(
+        files(snapshot, [
+          ["nested/topic.md", topic()],
+          ["session.jsonl", "{}"],
+          ["topic.md", topic("[Reference](../../outside.md)\nrollout_path: outside.jsonl")],
+        ]),
+      );
+      assert.equal(
+        candidate(rows).payload.text,
+        "[Reference](../../outside.md)\nrollout_path: outside.jsonl",
+      );
+    }),
   );
 
+  // One tolerance per row: whatever the header looks like, the body is the memory.
+  const tolerated: readonly (readonly [string, string, string, string])[] = [
+    [
+      "no frontmatter, heading names it",
+      "# Heading name\nSome body.",
+      "Heading name",
+      "# Heading name\nSome body.",
+    ],
+    ["no frontmatter, file name names it", "Just body.", "bad", "Just body."],
+    ["unknown type", topic("body", "name: T\ndescription: d\ntype: whatever"), "T", "body"],
+    ["no type", topic("body", "name: T\ndescription: d"), "T", "body"],
+    ["no description", topic("body", "name: T\ntype: user"), "T", "body"],
+    ["no name falls back to file name", topic("body", "description: d\ntype: user"), "bad", "body"],
+    ["unknown top-level key", topic("body", "name: T\nextra: value\ntype: user"), "T", "body"],
+    ["list value", topic("body", "name: T\ntags: [a, b]\nitems:\n  - x\n  - y"), "T", "body"],
+    [
+      "unknown nested metadata keys",
+      topic(
+        "body",
+        "name: T\nmetadata:\n  type: user\n  modified: 2026-08-05T18:08:50Z\n  node_type: memory\n  future_key: 1\n  nested:\n    deep: 1",
+      ),
+      "T",
+      "body",
+    ],
+    ["numeric name", topic("body", "name: 123\ndescription: d"), "123", "body"],
+    ["anchor and tag", topic("body", "name: &a T\nd: !!str x\ndescription: *a"), "T", "body"],
+    ["duplicate key", topic("body", "name: First\nname: Second"), "Second", "body"],
+    [
+      "quoted and escaped",
+      topic("body", "name: \"Quoted: name\"\ndescription: 'it''s'"),
+      "Quoted: name",
+      "body",
+    ],
+    [
+      "folded multi-line description",
+      topic("body", "name: T\ndescription: >\n  one\n  two"),
+      "T",
+      "body",
+    ],
+    ["multi-line name becomes one line", topic("body", 'name: "a\\nb"'), "a b", "body"],
+    ["CRLF", "---\r\nname: T\r\n---\r\nbody\r\nmore", "T", "body\nmore"],
+    ["BOM", "\uFEFF---\nname: T\n---\nbody", "T", "body"],
+    ["leading blank lines", "\n\n---\nname: T\n---\nbody", "T", "body"],
+    ["extra --- inside the body", "---\nname: T\n---\nabove\n---\nbelow", "T", "above\n---\nbelow"],
+    ["empty frontmatter", "---\n---\nbody", "bad", "body"],
+    ["unclosed frontmatter is body", "---\nname: T\nbody", "bad", "---\nname: T\nbody"],
+    [
+      "broken YAML falls back to lines",
+      "---\nname: Real name\ndescription: [unclosed\n---\nbody",
+      "Real name",
+      "body",
+    ],
+    [
+      "broken YAML nested metadata",
+      "---\nname: T\nmetadata:\n  type: user\n  bad: [x\n---\nbody",
+      "T",
+      "body",
+    ],
+    ["title key", topic("body", "title: From title"), "From title", "body"],
+    [
+      "over-long name is clamped",
+      topic("body", `name: ${"x".repeat(300)}`),
+      "x".repeat(256),
+      "body",
+    ],
+    ["unicode NFC", topic("body", "name: Cafe\u0301"), "Caf\u00e9", "body"],
+  ];
+  fixtureTest("tolerates frontmatter and layout variations, never rejecting the body", (snapshot) =>
+    Effect.gen(function* () {
+      for (const [label, text, title, body] of tolerated) {
+        const item = candidate(yield* parseClaudeMemory(files(snapshot, [["bad.md", text]])));
+        assert.equal(item.title, title, label);
+        assert.equal(item.payload.text, body, label);
+      }
+    }),
+  );
+
+  fixtureTest("file names: dots, spaces, unicode and upper-case extension", (snapshot) =>
+    Effect.gen(function* () {
+      const rows = yield* parseClaudeMemory(
+        files(snapshot, [
+          ["a.b.md", "one"],
+          ["with space.md", "two"],
+          ["caf\u00e9.MD", "three"],
+        ]),
+      );
+      assert.deepEqual(
+        rows.map((row) => (row.kind === "candidate" ? row.candidate.title : "x")),
+        ["a.b", "with space", "caf\u00e9"],
+      );
+    }),
+  );
+
+  // Every file that is not a memory is reported with a reason; the others still import.
+  const skipped: readonly (readonly [string, string, string, M.MemoryImportIssue])[] = [
+    ["MEMORY.md", "- [a](a.md)", "index", "index_file"],
+    ["memory.md", "- [a](a.md)", "index", "index_file"],
+    ["CLAUDE.md", "rules", "index", "index_file"],
+    ["memory_summary.md", "x", "index", "index_file"],
+    ["raw_memories.md", "x", "index", "index_file"],
+    ["bad.md", "", "empty", "empty_file"],
+    ["bad.md", "   \n\n", "blank", "empty_file"],
+    ["bad.md", "---\nname: T\n---\n\n", "header only", "empty_file"],
+    ["bad.md", "bad\ud800", "lone surrogate", "invalid_utf8"],
+    ["bad.md", "bad\0", "NUL", "unsupported_format"],
+    ["bad.md", "x".repeat(256 * 1024 + 1), "too large", "limit_exceeded"],
+    ["bad.md", topic("sk-" + "a".repeat(24)), "secret in body", "secret_detected"],
+    [
+      "bad.md",
+      topic("body", "name: T\ndescription: sk-" + "a".repeat(24)),
+      "secret in header",
+      "secret_detected",
+    ],
+    ["bad.md", topic("가".repeat(5461) + "xy"), "body over the payload limit", "limit_exceeded"],
+  ];
   fixtureTest(
-    "malformed/unsupported headers reject only the item with value-free rows",
+    "reports each skipped file with its reason and still imports the others",
     (snapshot) =>
       Effect.gen(function* () {
-        const bad = [
-          "Plain arbitrary Markdown",
-          topic(""),
-          topic("body", "name: Title\ndescription: Safe\ntype: unknown"),
-          topic("body", "name: First\nname: Second\ndescription: Safe\ntype: user"),
-          topic("body", "name: &title Title\ndescription: Safe\ntype: user"),
-          topic("body", "name: !!str Title\ndescription: Safe\ntype: user"),
-          topic("body", "name: [Title]\ndescription: Safe\ntype: user"),
-          topic("body", "name: Title\ndescription: {a: b}\ntype: user"),
-          topic("body", "name: Title\ndescription: Safe\ntype: user\nextra: value"),
-          topic("body", "name: Title\ndescription: Safe\ntype: user\nmetadata:\n  type: user"),
-          topic("body", "name: Title\ntype: user"),
-          topic("body", "name: 123\ndescription: Safe\ntype: user"),
-          topic("body", "name: *missing\ndescription: Safe\ntype: user"),
-        ];
-        for (const text of bad) {
+        for (const [selector, text, label, issue] of skipped) {
           const rows = yield* parseClaudeMemory(
             files(snapshot, [
-              ["bad.md", text],
-              ["good.md", topic()],
+              ["a-good.md", topic()],
+              [selector, text],
+              ["z-good.md", topic("Second.")],
             ]),
           );
-          assert.deepEqual(rows[0], {
-            kind: "rejected",
-            sourceItemKey: "bad.md#body",
-            byteCount: new TextEncoder().encode(text).length,
-            issue: "unsupported_format",
-          });
-          assert.equal(rows[1]!.kind, "candidate");
-        }
-        for (const metadata of [
-          "type: project\n  type: user",
-          "type: feedback",
-          "type: project\n  extra: value",
-          "type: project\n  node_type: {a: b}",
-          "node_type: memory",
-        ]) {
-          const text = topic(
-            "body",
-            `name: Title\ndescription: Safe\ntype: project\nmetadata:\n  ${metadata}`,
+          const row = rows.find((r) => r.kind === "rejected");
+          assert.deepEqual(
+            row && {
+              key: row.kind === "rejected" ? row.sourceItemKey : "",
+              issue: row.kind === "rejected" ? row.issue : "",
+            },
+            { key: `${selector}#body`, issue },
+            label,
           );
-          const rows = yield* parseClaudeMemory(
-            files({ ...snapshot, profile: "claude-topic-metadata-v1" }, [["bad.md", text]]),
+          assert.deepEqual(
+            rows.flatMap((r) => (r.kind === "candidate" ? [r.candidate.sourceItemKey] : [])),
+            ["a-good.md#body", "z-good.md#body"],
+            label,
           );
-          assert.equal(rows[0]!.kind, "rejected");
+          assert.notInclude(JSON.stringify(rows), "sk-aaaa", label);
         }
       }),
   );
 
-  fixtureTest(
-    "secret raw headers, decoded titles, selectors and locators fail the whole snapshot",
-    (snapshot) =>
-      Effect.gen(function* () {
-        const synthetic = "sk-" + "a".repeat(24);
-        const bad = [
-          files(snapshot, [
-            ["good.md", topic()],
-            ["bad.md", topic("Safe body.", `name: Topic\ndescription: ${synthetic}\ntype: user`)],
-          ]),
-          files(snapshot, [[`${synthetic}.md`, topic()]]),
-          { ...snapshot, sourceLocator: synthetic },
-          files(snapshot, [["bad.md", topic(synthetic)]]),
-          files(snapshot, [
-            [
-              "bad.md",
-              topic(
-                "Safe body.",
-                `name: "sk-\\u0061${"a".repeat(23)}"\ndescription: Safe\ntype: user`,
-              ),
-            ],
-          ]),
-        ];
-        for (const input of bad) yield* expectIssue(input, "secret_detected");
-      }),
+  fixtureTest("a file the reader skipped is reported, not dropped", (snapshot) =>
+    Effect.gen(function* () {
+      const rows = yield* parseClaudeMemory({
+        ...snapshot,
+        files: [
+          { selector: "a.md", text: "", byteCount: 0, skip: "secret_detected" },
+          { selector: "b.md", text: topic(), byteCount: topic().length },
+        ],
+      });
+      assert.deepEqual(
+        rows.map((r) => (r.kind === "rejected" ? r.issue : r.candidate.sourceItemKey)),
+        ["secret_detected", "b.md#body"],
+      );
+    }),
   );
 
-  for (const field of ["node_type", "originSessionId"] as const) {
-    fixtureTest(`decoded secret ${field} fails before discarding foreign metadata`, (snapshot) =>
-      Effect.gen(function* () {
-        const text = topic(
-          "Safe body.",
-          `name: Topic\ndescription: Safe\nmetadata:\n  type: project\n  ${field}: "sk-\\u0061${"a".repeat(23)}"`,
-        );
-        yield* expectIssue(
-          files({ ...snapshot, profile: "claude-topic-metadata-v1" }, [
-            [
-              "good.md",
-              topic("Safe body.", "name: Good\ndescription: Safe\nmetadata:\n  type: project"),
-            ],
-            ["bad.md", text],
-          ]),
-          "secret_detected",
-        );
-      }),
-    );
-  }
-
-  for (const invalid of ["empty body", "empty description"] as const) {
-    fixtureTest(`decoded secret name fails before rejecting ${invalid}`, (snapshot) =>
-      Effect.gen(function* () {
-        for (const profile of ["claude-topic-v1", "claude-topic-metadata-v1"] as const) {
-          const type =
-            profile === "claude-topic-v1" ? "type: project" : "metadata:\n  type: project";
-          const text = topic(
-            invalid === "empty body" ? "" : "Safe body.",
-            `name: "sk-\\u0061${"a".repeat(23)}"\ndescription: ${invalid === "empty description" ? '""' : "Safe"}\n${type}`,
-          );
-          yield* expectIssue(
-            files({ ...snapshot, profile }, [
-              ["good.md", topic("Safe body.", `name: Good\ndescription: Safe\n${type}`)],
-              ["bad.md", text],
-            ]),
-            "secret_detected",
-          );
-        }
-      }),
-    );
-  }
+  fixtureTest("a secret locator still fails the whole snapshot", (snapshot) =>
+    expectIssue({ ...snapshot, sourceLocator: "sk-" + "a".repeat(24) }, "secret_detected"),
+  );
 
   fixtureTest("rejects unsafe/ambiguous selectors before emitting any row", (snapshot) =>
     Effect.gen(function* () {
@@ -331,88 +365,38 @@ describe("ClaudeMemoryImporter", () => {
     }),
   );
 
-  fixtureTest(
-    "defends string integrity and declared bytes without confusing valid replacement characters",
-    (snapshot) =>
-      Effect.gen(function* () {
-        yield* expectIssue(files(snapshot, [["bad.md", topic("bad\ud800")]]), "invalid_utf8");
-        yield* expectIssue(files(snapshot, [["bad\ud800.md", topic()]]), "invalid_utf8");
-        yield* expectIssue(files(snapshot, [["bad.md", topic("bad\0")]]), "unsupported_format");
-        const input = files(snapshot, [["topic.md", topic()]]);
-        yield* expectIssue(
-          snapshotMemoryImportFiles(
-            input,
-            input.files.map((file) => ({ ...file, byteCount: file.byteCount + 1 })),
-          ),
-          "source_changed",
-        );
-        assert.equal(
-          candidate(
-            yield* parseClaudeMemory(files(snapshot, [["valid.md", topic("Valid � glyph.")]])),
-          ).payload.text,
-          "Valid � glyph.",
-        );
-        yield* expectIssue({ ...snapshot, profile: "unknown" }, "unsupported_format");
-        yield* expectIssue({ ...snapshot, format: "codex" }, "unsupported_format");
-      }),
+  fixtureTest("defends declared bytes, profile and format", (snapshot) =>
+    Effect.gen(function* () {
+      const input = files(snapshot, [["topic.md", topic()]]);
+      yield* expectIssue(
+        snapshotMemoryImportFiles(
+          input,
+          input.files.map((file) => ({ ...file, byteCount: file.byteCount + 1 })),
+        ),
+        "source_changed",
+      );
+      assert.equal(
+        candidate(
+          yield* parseClaudeMemory(files(snapshot, [["valid.md", topic("Valid \ufffd glyph.")]])),
+        ).payload.text,
+        "Valid \ufffd glyph.",
+      );
+      yield* expectIssue({ ...snapshot, profile: "unknown" }, "unsupported_format");
+      yield* expectIssue({ ...snapshot, format: "codex" }, "unsupported_format");
+    }),
   );
 
-  fixtureTest(
-    "body/title and source-file byte boundaries accept equality and reject +1",
-    (snapshot) =>
-      Effect.gen(function* () {
-        for (const [body, accepted] of [
-          ["가".repeat(5461) + "x", true],
-          ["가".repeat(5461) + "xy", false],
-        ] as const) {
-          const rows = yield* parseClaudeMemory(files(snapshot, [["topic.md", topic(body)]]));
-          assert.equal(rows[0]!.kind, accepted ? "candidate" : "rejected");
-          if (accepted) assert.equal(candidate(rows).byteCount, M.MEMORY_BODY_MAX_UTF8_BYTES);
-          else
-            assert.deepEqual(rows[0], {
-              kind: "rejected",
-              sourceItemKey: "topic.md#body",
-              byteCount: new TextEncoder().encode(topic(body)).length,
-              issue: "limit_exceeded",
-            });
-        }
-        for (const n of [256, 257]) {
-          const rows = yield* parseClaudeMemory(
-            files(snapshot, [
-              ["topic.md", topic("body", `name: ${"😀".repeat(n)}\ndescription: Safe\ntype: user`)],
-            ]),
-          );
-          assert.equal(rows[0]!.kind, n === 256 ? "candidate" : "rejected");
-        }
-        const prefix = "---\nname: Topic\ndescription: ";
-        const suffix = "\ntype: user\n---\nbody";
-        const exact = prefix + "x".repeat(256 * 1024 - prefix.length - suffix.length) + suffix;
-        candidate(yield* parseClaudeMemory(files(snapshot, [["topic.md", exact]])));
-        yield* expectIssue(files(snapshot, [["topic.md", exact + "x"]]), "limit_exceeded");
-      }),
-  );
-
-  fixtureTest(
-    "key, aggregate and candidate count boundaries fail without partial enumeration",
-    (snapshot) =>
-      Effect.gen(function* () {
-        candidate(yield* parseClaudeMemory(files(snapshot, [["x".repeat(504) + ".md", topic()]])));
-        yield* expectIssue(files(snapshot, [["x".repeat(505) + ".md", topic()]]), "limit_exceeded");
-        const entries = Array.from({ length: 128 }, (_, n) => [`topic-${n}.md`, topic()] as const);
-        assert.equal((yield* parseClaudeMemory(files(snapshot, entries))).length, 128);
-        yield* expectIssue(
-          files(snapshot, [...entries, ["another.md", topic()]]),
-          "limit_exceeded",
-        );
-        const excludedFiles = Array.from(
-          { length: 32 },
-          (_, n) => [`nested/${n}.md`, "x".repeat(256 * 1024)] as const,
-        );
-        assert.deepEqual(yield* parseClaudeMemory(files(snapshot, excludedFiles)), []);
-        yield* expectIssue(
-          files(snapshot, [...excludedFiles, ["nested/extra.md", "x"]]),
-          "limit_exceeded",
-        );
-      }),
+  fixtureTest("body and key boundaries", (snapshot) =>
+    Effect.gen(function* () {
+      const rows = yield* parseClaudeMemory(
+        files(snapshot, [["topic.md", topic("가".repeat(5461) + "x")]]),
+      );
+      assert.equal(candidate(rows).byteCount, M.MEMORY_BODY_MAX_UTF8_BYTES);
+      candidate(yield* parseClaudeMemory(files(snapshot, [["x".repeat(504) + ".md", topic()]])));
+      yield* expectIssue(files(snapshot, [["x".repeat(505) + ".md", topic()]]), "limit_exceeded");
+      const entries = Array.from({ length: 128 }, (_, n) => [`topic-${n}.md`, topic()] as const);
+      assert.equal((yield* parseClaudeMemory(files(snapshot, entries))).length, 128);
+      yield* expectIssue(files(snapshot, [...entries, ["another.md", topic()]]), "limit_exceeded");
+    }),
   );
 });

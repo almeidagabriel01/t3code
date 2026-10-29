@@ -16,7 +16,10 @@ import {
 } from "@t3tools/client-runtime/memory-import-workflow";
 import { useContext, useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 import { readEnvironmentScope, readPreparedConnection } from "../../state/session";
-import { memoryImportRequestFailureMessage } from "@t3tools/client-runtime/memory-import-workflow";
+import {
+  memoryImportRequestFailureMessage,
+  memoryImportSkippedSummary,
+} from "@t3tools/client-runtime/memory-import-workflow";
 import { memoryEnvironment } from "../../state/memory";
 import {
   registerMemoryImportDestination,
@@ -341,7 +344,7 @@ export function MemoryImportSettings({
           ) : null}
           {skipped > 0 && progress?.phase === "selecting" ? (
             <p className="text-xs leading-normal text-muted-foreground/80">
-              {`${skipped} ${skipped === 1 ? "file" : "files"} skipped (not a supported memory).`}
+              {memoryImportSkippedSummary(items)}
             </p>
           ) : null}
           {importable.length > 0 && progress?.phase === "selecting" ? (
