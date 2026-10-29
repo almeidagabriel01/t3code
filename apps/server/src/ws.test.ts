@@ -81,6 +81,8 @@ import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import * as Kanban from "./kanban/KanbanService.ts";
+import * as NoteWork from "./notes/NoteWorkService.ts";
+import * as Notes from "./notes/NotesService.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
 import * as GuestShareService from "./guest/GuestShareService.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
@@ -523,6 +525,8 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(ReviewService.ReviewService)({}),
   Layer.mock(ScheduledTasks.ScheduledTaskService)({}),
   Layer.mock(Kanban.KanbanService)({}),
+  Layer.mock(Notes.NotesService)({}),
+  Layer.mock(NoteWork.NoteWorkService)({}),
   Layer.mock(SecretRequests.SecretRequests)({}),
   Layer.mock(GuestShareService.GuestShareService)({}),
   Layer.mock(ServerLifecycleEvents.ServerLifecycleEvents)({}),

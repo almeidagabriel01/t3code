@@ -80,6 +80,11 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.kanbanCardComment]: AuthOrchestrationOperateScope,
   [WS_METHODS.kanbanCardLinkThread]: AuthOrchestrationOperateScope,
   [WS_METHODS.kanbanCardUnlinkThread]: AuthOrchestrationOperateScope,
+  [WS_METHODS.notesWrite]: AuthOrchestrationOperateScope,
+  [WS_METHODS.notesUpdate]: AuthOrchestrationOperateScope,
+  [WS_METHODS.notesMove]: AuthOrchestrationOperateScope,
+  [WS_METHODS.notesDelete]: AuthOrchestrationOperateScope,
+  [WS_METHODS.notesStartWork]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: AuthOrchestrationOperateScope,
   // A guest link hands thread access to someone outside, like a pairing link.
   [WS_METHODS.guestShareCreate]: AuthAccessWriteScope,

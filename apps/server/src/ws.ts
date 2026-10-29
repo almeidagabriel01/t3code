@@ -122,6 +122,8 @@ import * as DocumentText from "./provider/DocumentText.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import * as Kanban from "./kanban/KanbanService.ts";
+import * as NoteWork from "./notes/NoteWorkService.ts";
+import * as Notes from "./notes/NotesService.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
 import * as GuestShareService from "./guest/GuestShareService.ts";
 import {
@@ -1274,6 +1276,8 @@ export const layerWsRpc = (
       const providerSessionManager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
       const kanban = yield* Kanban.KanbanService;
+      const notes = yield* Notes.NotesService;
+      const noteWork = yield* NoteWork.NoteWorkService;
       const secretRequests = yield* SecretRequests.SecretRequests;
       const guestShares = yield* GuestShareService.GuestShareService;
       const pullRequests = yield* PullRequestService.PullRequestService;
@@ -2165,6 +2169,14 @@ export const layerWsRpc = (
         [WS_METHODS.kanbanCardComment]: (input) => kanban.cardComment(input),
         [WS_METHODS.kanbanCardLinkThread]: (input) => kanban.cardLinkThread(input),
         [WS_METHODS.kanbanCardUnlinkThread]: (input) => kanban.cardUnlinkThread(input),
+        [WS_METHODS.notesList]: (input) => notes.list(input),
+        [WS_METHODS.notesRead]: (input) => notes.read(input),
+        [WS_METHODS.notesWrite]: (input) => notes.write(input, "user"),
+        [WS_METHODS.notesUpdate]: (input) => notes.update(input),
+        [WS_METHODS.notesMove]: (input) => notes.move(input, "user"),
+        [WS_METHODS.notesDelete]: (input) => notes.delete(input),
+        [WS_METHODS.notesSubscribe]: (_input) => notes.subscribe,
+        [WS_METHODS.notesStartWork]: (input) => noteWork.startWork(input, "user", "user"),
         [WS_METHODS.scheduledTasksSubscribe]: (_input) =>
           scheduledTasks.subscribeList().pipe(Stream.map(withVisibleWebhookUrls)),
         [WS_METHODS.scheduledTasksUpsert]: (input) => scheduledTasks.upsert(input),

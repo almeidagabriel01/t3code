@@ -409,6 +409,23 @@ import {
   KanbanTemplateDeleteInput,
   KanbanTemplateUpsertInput,
 } from "./kanban.ts";
+import {
+  NoteConflictError,
+  NoteDocument,
+  NoteError,
+  NotesDeleteInput,
+  NotesDeleteResult,
+  NotesEvent,
+  NotesListInput,
+  NotesListResult,
+  NotesMoveInput,
+  NotesReadInput,
+  NotesStartWorkInput,
+  NotesStartWorkResult,
+  NotesSubscribeInput,
+  NotesUpdateInput,
+  NotesWriteInput,
+} from "./notes.ts";
 import { SecretRequestAnswerInput, SecretRequestError } from "./secretRequest.ts";
 import {
   ProjectCloneActionInput,
@@ -605,6 +622,15 @@ export const WS_METHODS = {
   kanbanCardComment: "kanban.cardComment",
   kanbanCardLinkThread: "kanban.cardLinkThread",
   kanbanCardUnlinkThread: "kanban.cardUnlinkThread",
+
+  notesList: "notes.list",
+  notesRead: "notes.read",
+  notesWrite: "notes.write",
+  notesUpdate: "notes.update",
+  notesMove: "notes.move",
+  notesDelete: "notes.delete",
+  notesSubscribe: "notes.subscribe",
+  notesStartWork: "notes.startWork",
 
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
@@ -1935,6 +1961,49 @@ const WsSubscribeServerLifecycleRpc = Rpc.make(WS_METHODS.subscribeServerLifecyc
   stream: true,
 });
 
+const NoteRpcErrors = Schema.Union([NoteError, NoteConflictError, EnvironmentAuthorizationError]);
+const WsNotesListRpc = Rpc.make(WS_METHODS.notesList, {
+  payload: NotesListInput,
+  success: NotesListResult,
+  error: NoteRpcErrors,
+});
+const WsNotesReadRpc = Rpc.make(WS_METHODS.notesRead, {
+  payload: NotesReadInput,
+  success: NoteDocument,
+  error: NoteRpcErrors,
+});
+const WsNotesWriteRpc = Rpc.make(WS_METHODS.notesWrite, {
+  payload: NotesWriteInput,
+  success: NoteDocument,
+  error: NoteRpcErrors,
+});
+const WsNotesUpdateRpc = Rpc.make(WS_METHODS.notesUpdate, {
+  payload: NotesUpdateInput,
+  success: NoteDocument,
+  error: NoteRpcErrors,
+});
+const WsNotesMoveRpc = Rpc.make(WS_METHODS.notesMove, {
+  payload: NotesMoveInput,
+  success: NoteDocument,
+  error: NoteRpcErrors,
+});
+const WsNotesDeleteRpc = Rpc.make(WS_METHODS.notesDelete, {
+  payload: NotesDeleteInput,
+  success: NotesDeleteResult,
+  error: NoteRpcErrors,
+});
+const WsNotesSubscribeRpc = Rpc.make(WS_METHODS.notesSubscribe, {
+  payload: NotesSubscribeInput,
+  success: NotesEvent,
+  error: NoteRpcErrors,
+  stream: true,
+});
+const WsNotesStartWorkRpc = Rpc.make(WS_METHODS.notesStartWork, {
+  payload: NotesStartWorkInput,
+  success: NotesStartWorkResult,
+  error: NoteRpcErrors,
+});
+
 const WsKanbanSubscribeRpc = Rpc.make(WS_METHODS.kanbanSubscribe, {
   payload: KanbanSubscribeInput,
   success: KanbanStreamItem,
@@ -2247,6 +2316,14 @@ export const WsRpcGroup = RpcGroup.make(
   WsKanbanCardCommentRpc,
   WsKanbanCardLinkThreadRpc,
   WsKanbanCardUnlinkThreadRpc,
+  WsNotesListRpc,
+  WsNotesReadRpc,
+  WsNotesWriteRpc,
+  WsNotesUpdateRpc,
+  WsNotesMoveRpc,
+  WsNotesDeleteRpc,
+  WsNotesSubscribeRpc,
+  WsNotesStartWorkRpc,
   WsServerReportClientActivityRpc,
   WsCloudGetRelayClientStatusRpc,
   WsCloudInstallRelayClientRpc,
