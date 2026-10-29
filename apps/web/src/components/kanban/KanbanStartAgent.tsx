@@ -20,19 +20,10 @@ import { useState } from "react";
 import { useEnvironmentSettings } from "../../hooks/useSettings";
 import { newMessageId, newThreadId } from "../../lib/utils";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
-import {
-  applyProviderInstanceSettings,
-  deriveProviderInstanceEntries,
-  sortProviderInstanceEntries,
-} from "../../providerInstances";
-import { appAtomRegistry } from "../../rpc/atomRegistry";
+import { providerInstanceEntriesFor } from "../../providerInstances";
 import { useProject } from "../../state/entities";
 import { DEFAULT_INTERACTION_MODE } from "../../types";
-import {
-  EMPTY_SERVER_PROVIDERS,
-  environmentServerConfigsAtom,
-  serverEnvironment,
-} from "../../state/server";
+import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
 import { threadEnvironment } from "../../state/threads";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { withMessageContext } from "../ChatView.logic";
@@ -77,13 +68,7 @@ function LaunchForm(props: {
   const settings = useEnvironmentSettings(environmentId);
   const providers =
     useAtomValue(serverEnvironment.providersValueAtom(environmentId)) ?? EMPTY_SERVER_PROVIDERS;
-  const entries = sortProviderInstanceEntries(
-    applyProviderInstanceSettings(
-      deriveProviderInstanceEntries(providers),
-      settings,
-      board.projectId,
-    ),
-  );
+  const entries = providerInstanceEntriesFor(providers, settings, board.projectId);
   const [picked, setPicked] = useState<ModelSelection | null>(null);
   const [pickedRuntimeMode, setPickedRuntimeMode] = useState<RuntimeMode | null>(null);
   const [useWorktree, setUseWorktree] = useState(false);
@@ -134,9 +119,6 @@ function LaunchForm(props: {
           ...withMessageContext({
             text: kanbanStartText(reference, parent),
             context: { version: 1, records: [record] },
-            supportsInlineMessageContext:
-              appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment
-                .capabilities.inlineMessageContext === true,
           }),
         },
         modelSelection: selection,

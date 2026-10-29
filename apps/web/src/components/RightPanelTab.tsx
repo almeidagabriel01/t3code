@@ -40,7 +40,7 @@ import { cn } from "~/lib/utils";
 import { MorphIcon } from "~/components/MorphIcon";
 import { AndroidIcon, AppleIcon } from "~/components/Icons";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
-import { faviconUrlForOrigin } from "~/lib/favicon";
+import { faviconUrlForOrigin } from "@t3tools/shared/favicon";
 import { useDeviceState } from "~/state/device";
 import {
   newestPullRequestSummary,
@@ -214,17 +214,17 @@ function PullRequestSurfaceIcon({
       ? undefined
       : configs.get(resolvedEnvironmentId)?.environment.capabilities;
   const linkedSnapshot =
-    capabilities?.threadPullRequests === true
+    capabilities !== undefined
       ? (resolvePullRequestTabLink(threads, resolvedEnvironmentId, host, surface)?.snapshot ?? null)
       : null;
   const detail = useEnvironmentQuery(
-    resolvedEnvironmentId === null || capabilities?.pullRequests !== true || linkedSnapshot !== null
+    resolvedEnvironmentId === null || capabilities === undefined || linkedSnapshot !== null
       ? null
       : pullRequestEnvironment.detail({
           environmentId: resolvedEnvironmentId,
           input: {
             projectId: surface.projectId as ProjectId,
-            ...(capabilities?.threadPullRequests === true && surface.host !== undefined
+            ...(capabilities !== undefined && surface.host !== undefined
               ? { host: surface.host }
               : {}),
             repository: surface.repository,

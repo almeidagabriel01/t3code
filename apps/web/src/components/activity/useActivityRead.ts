@@ -7,7 +7,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 
-import { readEnvironmentSupportsVisitedTracking } from "../../state/entities";
+import { readEnvironmentServerConfigLoaded } from "../../state/entities";
 import { readEnvironmentScope, useEnvironmentsWithScope } from "../../state/session";
 import { threadEnvironment } from "../../state/threads";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
@@ -63,7 +63,7 @@ export function useActivityRead(input: {
       restore: input.restoreThread,
       visit: async (thread) => {
         if (!canOperate(thread)) return "skipped";
-        if (!readEnvironmentSupportsVisitedTracking(thread.environmentId)) {
+        if (!readEnvironmentServerConfigLoaded(thread.environmentId)) {
           markThreadVisited(threadKey(thread), visitedAt);
           return "visited";
         }

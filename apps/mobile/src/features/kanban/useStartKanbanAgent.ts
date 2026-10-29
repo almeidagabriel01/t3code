@@ -95,7 +95,6 @@ export function useStartKanbanAgent(
             card.parentCardId === null ? undefined : board.cards.get(card.parentCardId),
           ),
           { version: 1, records: [record] },
-          config?.environment.capabilities.inlineMessageContext === true,
         ),
         uploadedAttachments: [],
         modelSelection,

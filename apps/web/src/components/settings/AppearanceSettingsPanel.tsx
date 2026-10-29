@@ -5,6 +5,7 @@ import {
   DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE,
   DEFAULT_UNIFIED_SETTINGS,
   type ChatWidth,
+  type EffortDisplay,
   type EnvironmentIdentificationMode,
   MAX_APPEARANCE_CONTRAST,
   MAX_GLASS_OPACITY,
@@ -41,6 +42,7 @@ import { searchableSetting } from "./settingsSearch";
 import { AdvancedSettings } from "./AdvancedSettings";
 import { PanelAnimationsPreview } from "./PanelAnimationsPreview";
 import { TypographySection } from "./TypographySettings";
+import { ThreadDetailsItemsRow } from "./ThreadDetailsItemsRow";
 
 const ENVIRONMENT_IDENTIFICATION_LABELS: Record<EnvironmentIdentificationMode, string> = {
   artwork: "Artwork",
@@ -174,6 +176,11 @@ function BackgroundSettingsRow({ glassBackdrop }: { glassBackdrop: "built-in" | 
     />
   );
 }
+
+const EFFORT_DISPLAY_LABELS: Record<EffortDisplay, string> = {
+  label: "Word",
+  bars: "Bars",
+};
 
 export function AppearanceSettingsPanel() {
   const {
@@ -406,6 +413,40 @@ export function AppearanceSettingsPanel() {
                   <SelectItem value="comfortable">Comfortable (default)</SelectItem>
                   <SelectItem value="wide">Wide</SelectItem>
                   <SelectItem value="full">Full</SelectItem>
+                </SelectPopup>
+              </Select>
+            </div>
+          }
+        />
+        <ThreadDetailsItemsRow />
+        <SettingsRow
+          {...searchableSetting("effort-display")}
+          description="Show reasoning effort in the composer as its name, such as High, or as bars."
+          resetAction={
+            settings.effortDisplay !== DEFAULT_UNIFIED_SETTINGS.effortDisplay ? (
+              <SettingResetButton
+                label="effort display"
+                onClick={() =>
+                  updateSettings({ effortDisplay: DEFAULT_UNIFIED_SETTINGS.effortDisplay })
+                }
+              />
+            ) : null
+          }
+          control={
+            <div className="w-full sm:w-40">
+              <Select
+                value={settings.effortDisplay}
+                onValueChange={(value) => {
+                  if (value === "bars" || value === "label")
+                    updateSettings({ effortDisplay: value });
+                }}
+              >
+                <SelectTrigger size="sm" className="w-full min-w-0" aria-label="Effort display">
+                  <SelectValue>{EFFORT_DISPLAY_LABELS[settings.effortDisplay]}</SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem value="label">Word (default)</SelectItem>
+                  <SelectItem value="bars">Bars</SelectItem>
                 </SelectPopup>
               </Select>
             </div>

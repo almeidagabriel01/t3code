@@ -14,11 +14,7 @@ import { useContext } from "react";
 
 import { useClientSettings, useEnvironmentSettings } from "../../hooks/useSettings";
 import { newMessageId, newThreadId } from "../../lib/utils";
-import {
-  applyProviderInstanceSettings,
-  deriveProviderInstanceEntries,
-  sortProviderInstanceEntries,
-} from "../../providerInstances";
+import { providerInstanceEntriesFor } from "../../providerInstances";
 import { useProjects } from "../../state/entities";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
@@ -88,9 +84,7 @@ export function useStartForkAgent(environmentId: EnvironmentId, status: ForkUpda
 
   if (project === null || status === null) return null;
   return async (task: ForkAgentTask) => {
-    const entries = sortProviderInstanceEntries(
-      applyProviderInstanceSettings(deriveProviderInstanceEntries(providers), settings, project.id),
-    );
+    const entries = providerInstanceEntriesFor(providers, settings, project.id);
     const selection = scheduledTaskDefaultModel(settings, project, entries);
     if (selection === null) {
       toastManager.add(

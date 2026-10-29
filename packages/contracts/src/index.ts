@@ -62,7 +62,6 @@ export * from "./listeningPorts.ts";
 export * from "./preview.ts";
 export * from "./previewAutomation.ts";
 export * from "./previewCapture.ts";
-export * from "./resourceTelemetry.ts";
 export * from "./usage.ts";
 export * from "./scheduledTask.ts";
 export * from "./kanban.ts";

@@ -151,6 +151,11 @@ export type SidebarProjectDrag = {
   readonly targetSection: SidebarSection | null;
 };
 
+/** The project's sidebar tree row; its thread rows name it as their parent. */
+function projectRowId(projectKey: string) {
+  return `project:${projectKey}`;
+}
+
 const idleSortingStrategy: SortingStrategy = () => ({ x: 0, y: 0, scaleX: 1, scaleY: 1 });
 
 type ProjectGroupProps = {
@@ -162,7 +167,11 @@ type ProjectGroupProps = {
   dragSortingStrategy: SortingStrategy;
   threadByKey: ReadonlyMap<string, EnvironmentThreadShell>;
   subagentChildrenByParent: ReadonlyMap<string, readonly EnvironmentThreadShell[]>;
-  renderThreadRow: (thread: EnvironmentThreadShell, section: SidebarSection) => ReactNode;
+  renderThreadRow: (
+    thread: EnvironmentThreadShell,
+    section: SidebarSection,
+    projectRow: string,
+  ) => ReactNode;
   onToggleProject: (project: ProjectLayout["project"], expanded: boolean) => void;
   onToggleSettled: (projectKey: string) => void;
   onShowMoreSettled: (projectKey: string) => void;
@@ -200,7 +209,7 @@ function SidebarProjectGroup(props: ProjectGroupProps) {
     const thread = props.threadByKey.get(key);
     if (thread === undefined) return [];
     return [
-      props.renderThreadRow(thread, section),
+      props.renderThreadRow(thread, section, projectRowId(scope)),
       <SubagentRows key={`${key}:subagents`} onOpen={props.onOpenSubagent}>
         {props.subagentChildrenByParent.get(key) ?? []}
       </SubagentRows>,
@@ -361,6 +370,9 @@ function SidebarProjectGroup(props: ProjectGroupProps) {
           className="flex h-8 min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md px-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
           {...attributes}
           {...listeners}
+          role="treeitem"
+          tabIndex={-1}
+          data-sidebar-row={projectRowId(scope)}
         >
           <ChevronDownIcon
             aria-hidden

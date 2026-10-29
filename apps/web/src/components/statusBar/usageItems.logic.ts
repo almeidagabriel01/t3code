@@ -2,10 +2,8 @@ import type { EnvironmentId, ServerConfig, ServerProviderUsageLimits } from "@t3
 import { limitsNotice, providerAccountKeys } from "@t3tools/shared/usageLimits";
 
 import {
-  applyProviderInstanceSettings,
-  deriveProviderInstanceEntries,
+  providerInstanceEntriesFor,
   shouldShowInstanceBadge,
-  sortProviderInstanceEntries,
   type ProviderInstanceEntry,
 } from "../../providerInstances";
 
@@ -52,13 +50,7 @@ export function collectUsageItems(presentations: UsagePresentations): ReadonlyAr
   for (const [environmentId, presentation] of presentations) {
     const config = presentation.serverConfig;
     if (config === null) continue;
-    const entries = sortProviderInstanceEntries(
-      applyProviderInstanceSettings(
-        deriveProviderInstanceEntries(config.providers),
-        config.settings,
-        null,
-      ),
-    );
+    const entries = providerInstanceEntriesFor(config.providers, config.settings, null);
     const driversWithUsage = new Set(
       config.providers
         .filter((provider) => provider.usageLimits !== undefined)

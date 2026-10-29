@@ -19,7 +19,7 @@ import { useEnvironments } from "../../state/environments";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { SettingsChoiceRow } from "./components/SettingsChoiceRow";
+import { ListChoiceRow as SettingsChoiceRow } from "../../components/ui/ListChoiceRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { SettingsScreen } from "./components/SettingsScreen";
@@ -102,12 +102,7 @@ export function AutoSettleSettingsRows(props: {
     })),
   );
 
-  const supportsProjectOverrides = displayTargets.every(
-    (target) =>
-      target.environment.serverConfig.environment.capabilities.projectSettingsOverrides === true,
-  );
-  const disabled =
-    !canWriteSettings || props.pending || (projectSelected && !supportsProjectOverrides);
+  const disabled = !canWriteSettings || props.pending;
   const afterDays = referenceSettings.sidebarAutoSettleAfterDays;
 
   return (

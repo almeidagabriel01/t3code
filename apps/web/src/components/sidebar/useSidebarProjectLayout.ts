@@ -3,7 +3,7 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/model
 import { useState } from "react";
 
 import { useClientSettings } from "../../hooks/useSettings";
-import { getProjectOrderKey } from "../../logicalProject";
+import { getProjectOrderKey } from "@t3tools/client-runtime/state/project-grouping";
 import { useProjects } from "../../state/entities";
 import { orderItemsByPreferredIds } from "../Sidebar.logic";
 

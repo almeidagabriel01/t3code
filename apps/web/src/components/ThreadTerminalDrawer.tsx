@@ -1,3 +1,4 @@
+import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { useAtomMount, useAtomValue } from "@effect/atom-react";
 import {
   isAtomCommandInterrupted,
@@ -687,6 +688,7 @@ function TerminalSessionViewport({
       terminal.setTheme(terminalThemeFromApp(mount));
       setupTerminal = terminal;
       terminalRef.current = terminal;
+      terminal.input.setAttribute("data-workspace-focus-default", "");
       terminal.input.readOnly = !hasTerminalWriteAccess();
       // Reapply font settings hydrated during loading, when terminalRef was null.
       const currentFont = terminalFontRef.current;
@@ -694,6 +696,7 @@ function TerminalSessionViewport({
         void terminal.setFont(terminalFontOptions(currentFont.family, currentFont.size));
       }
       const latestSession = readTerminalSession();
+      terminal.setSharedGrid(latestSession.grid);
       const initialOutput = readTerminalOutputUpdate(
         latestSession.output,
         INITIAL_TERMINAL_OUTPUT_CURSOR,
@@ -719,6 +722,7 @@ function TerminalSessionViewport({
           }
           const previous = previousSession;
           previousSession = session;
+          terminal.setSharedGrid(session.grid);
           synchronizeTerminalStatus(terminal, session.status, session.version);
           outputCursorRef.current = synchronizeTerminalSession(
             terminal,
@@ -1440,6 +1444,7 @@ export default function ThreadTerminalDrawer({
   terminalLaunchLocationsById,
 }: ThreadTerminalDrawerProps) {
   const canOperateTerminal = useEnvironmentScope(threadRef.environmentId, AuthTerminalOperateScope);
+  const terminalArea = workspaceAreaProps("terminal", 5, "Terminal");
   const isPanel = mode === "panel";
   const [advancedTypography] = useLocalStorage(
     TYPOGRAPHY_ADVANCED_STORAGE_KEY,
@@ -1724,6 +1729,7 @@ export default function ThreadTerminalDrawer({
     return (
       <aside
         ref={drawerRef}
+        {...(!isPanel && visible ? terminalArea : {})}
         data-thread-terminal-drawer
         data-glass-pane="terminal"
         data-terminal-owner={isPanel ? "right-panel" : "drawer"}
@@ -1761,6 +1767,7 @@ export default function ThreadTerminalDrawer({
   return (
     <aside
       ref={drawerRef}
+      {...(!isPanel && visible ? terminalArea : {})}
       data-thread-terminal-drawer
       data-glass-pane="terminal"
       data-terminal-owner={isPanel ? "right-panel" : "drawer"}

@@ -262,6 +262,7 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
           />
         </>
       )}
+      <SidebarThreadUndoNotice />
       <SidebarForkUpdatePill />
       <SidebarUpdatePill />
     </SidebarMenu>
@@ -292,21 +293,17 @@ function SidebarArchiveShortcut() {
   );
 }
 
-export const SidebarChromeFooter = memo(function SidebarChromeFooter({
-  showUndoNotice = false,
-}: {
-  showUndoNotice?: boolean;
-}) {
+export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
   // On narrow windows the rail folds into this footer; beside the rail the footer keeps only
   // notices and a running update pass, whose progress needs the sidebar's width.
   const railVisible = useDestinationRailVisible();
   return (
     <SidebarFooter>
-      {showUndoNotice ? <SidebarThreadUndoNotice /> : null}
       <SidebarProviderUpdatePill />
       <SidebarUpdateArchitectureWarning />
       {railVisible ? (
         <SidebarMenu className="flex-row items-center empty:hidden">
+          <SidebarThreadUndoNotice />
           <SidebarUpdatePill placement="footer-progress" />
         </SidebarMenu>
       ) : (
