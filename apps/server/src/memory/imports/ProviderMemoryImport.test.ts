@@ -332,6 +332,7 @@ const prepare = (h: ReturnType<typeof harness>) =>
     );
     assert.equal(discover.action, "discover");
     if (discover.action !== "discover") throw new Error("discover");
+    assert.equal(discover.sources[0]!.label, "Synthetic source");
     const sourceId = discover.sources[0]!.sourceId;
     const preview = yield* runtime.run(
       { action: "preview", memorySpaceId: space, sourceId },

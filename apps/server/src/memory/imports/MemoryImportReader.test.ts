@@ -231,6 +231,10 @@ describe("MemoryImportReader", () => {
           assert.equal(discovered.length, 1);
           assert.deepEqual(discovered[0]!.slot, fixture.snapshot.slot);
           assert.equal(discovered[0]!.parserVersion, profile);
+          assert.equal(
+            discovered[0]!.label,
+            fixture.snapshot.slot.selection ?? fixture.snapshot.slot.rootSlot,
+          );
           assert.deepEqual(captureMemoryImportInventory(fixture.sourceRoot), before);
           assert.deepEqual(residue(fixture), []);
         }),

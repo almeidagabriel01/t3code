@@ -637,7 +637,7 @@ export const acquireMemoryImportReader = Effect.fn("acquireMemoryImportReader")(
       profile,
       parserVersion: profile,
       sourceLocator,
-      label: slot.rootSlot,
+      label: slot.selection ?? slot.rootSlot,
     };
   };
   const read: MemoryImportReaderShape["read"] = Effect.fn("MemoryImportReader.read")(function* ({

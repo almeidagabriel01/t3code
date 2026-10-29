@@ -232,7 +232,7 @@ export const makeProviderMemoryImport: MakeProviderMemoryImport = (
                   }),
                 );
             }
-            sources.push(r.source);
+            sources.push({ ...r.source, label: slot.label });
           }
           return { action: "discover" as const, sources };
         }
