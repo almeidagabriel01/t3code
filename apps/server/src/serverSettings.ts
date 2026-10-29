@@ -15,6 +15,9 @@ import {
   ServerSettings,
   ServerSettingsError,
   type ServerSettingsPatch,
+  type MemoryOwnerSourceReadPolicy,
+  MemoryRpcError,
+  type MemorySourceReadRevokeAck,
   globalIdleCompaction,
   withIdleCompaction,
 } from "@t3tools/contracts";
@@ -62,6 +65,66 @@ export {
   resolveReviewGuideModelSelection,
   resolveSourceControlWriterModelSelection,
 } from "@t3tools/shared/serverSettings";
+
+import type { MemoryHubSettingsSnapshot } from "./memory/MemoryHubSettings.ts";
+
+/** Current committed hub epoch. SQL transactions must use this instead of the full settings cache. */
+export class MemoryHubCommittedSettings extends Context.Service<
+  MemoryHubCommittedSettings,
+  {
+    readonly read: Effect.Effect<MemoryHubSettingsSnapshot>;
+    readonly readPublication?: Effect.Effect<import("@t3tools/contracts").MemoryHubPublication>;
+  }
+>()("t3/serverSettings/MemoryHubCommittedSettings") {}
+
+export interface MemoryOwnerSourceReadCommitted {
+  readonly policy: MemoryOwnerSourceReadPolicy;
+  readonly version: number;
+}
+
+export class MemoryOwnerSourceReadCommittedPolicy extends Context.Service<
+  MemoryOwnerSourceReadCommittedPolicy,
+  {
+    readonly read: Effect.Effect<MemoryOwnerSourceReadCommitted>;
+    readonly changes: Effect.Effect<
+      Stream.Stream<MemoryOwnerSourceReadCommitted>,
+      never,
+      Scope.Scope
+    >;
+    readonly recordRevokeAck: (
+      ack: MemorySourceReadRevokeAck,
+    ) => Effect.Effect<MemoryOwnerSourceReadCommitted, ServerSettingsError | MemoryRpcError>;
+  }
+>()("t3/serverSettings/MemoryOwnerSourceReadCommittedPolicy") {}
+
+/**
+ * Read-only committed views over the settings service. The hub transition and revoke-ack writers
+ * ship with the sync service, so an ack finds no route until then.
+ */
+export const layerMemoryCommittedSettings = Layer.effectContext(
+  Effect.gen(function* () {
+    const settings = yield* ServerSettingsService;
+    const hub = (current: ServerSettings): MemoryHubSettingsSnapshot => ({
+      settings: current.memoryHub,
+      version: current.memoryHubVersion,
+      provenance: null,
+    });
+    const owner = (current: ServerSettings): MemoryOwnerSourceReadCommitted => ({
+      policy: current.memoryOwnerSourceReadPolicy,
+      version: current.memoryOwnerSourceReadPolicyVersion,
+    });
+    return Context.empty().pipe(
+      Context.add(MemoryHubCommittedSettings, {
+        read: settings.getSettings.pipe(Effect.map(hub), Effect.orDie),
+      }),
+      Context.add(MemoryOwnerSourceReadCommittedPolicy, {
+        read: settings.getSettings.pipe(Effect.map(owner), Effect.orDie),
+        changes: settings.subscribeChanges.pipe(Effect.map(Stream.map(owner))),
+        recordRevokeAck: () => Effect.fail(new MemoryRpcError({ code: "route_unavailable" })),
+      }),
+    );
+  }),
+);
 
 const encodeServerSettings = Schema.encodeEffect(ServerSettings);
 const encodeServerSettingsJson = Schema.encodeUnknownEffect(fromJsonStringPretty(ServerSettings));

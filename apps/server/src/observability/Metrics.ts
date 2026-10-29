@@ -48,6 +48,12 @@ export const providerTurnDuration = Metric.timer("t3_provider_turn_duration", {
 });
 
 // OTLP carries the unit, and Prometheus names the series by it: a unitless gauge gains `_ratio`.
+export const memoryStoreBytes = Metric.gauge("t3_memory_store_bytes", {
+  description:
+    "Allocated bytes of the memory_* tables and indexes at the last storage sample, by area.",
+  attributes: { unit: "By" },
+});
+
 export const serverResidentBytes = Metric.gauge("t3_server_resident_bytes", {
   description: "Resident memory of the server process.",
   attributes: { unit: "By" },

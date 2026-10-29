@@ -1,5 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
+import { ensureMemorySchema } from "./MemorySchema.ts";
 
 // Fork-only tables live outside the numbered migrations: a fork id would collide with the next
 // upstream migration, and the migrator refuses histories whose names differ (see Migrations.ts).
@@ -166,4 +167,6 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
       created_at TEXT NOT NULL
     )
   `;
+
+  yield* ensureMemorySchema();
 });
