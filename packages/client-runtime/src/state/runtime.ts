@@ -476,7 +476,7 @@ export async function settlePromise<A>(
   }
 }
 
-function environmentRpcKey<Input>(target: {
+export function environmentRpcKey<Input>(target: {
   readonly environmentId: EnvironmentIdType;
   readonly input: Input;
 }): string {

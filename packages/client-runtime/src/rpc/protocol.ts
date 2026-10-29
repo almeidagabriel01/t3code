@@ -1,6 +1,15 @@
-import { WsRpcGroup } from "@t3tools/contracts";
+import {
+  WsRpcGroup as WsBaseRpcGroup,
+  WsMemoryAdministrationRpcGroup,
+  WsMemoryCoreRpcGroup,
+  WsMemoryImportRpcGroup,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { RpcClient } from "effect/rpc";
+
+const WsRpcGroup = WsBaseRpcGroup.merge(WsMemoryCoreRpcGroup)
+  .merge(WsMemoryAdministrationRpcGroup)
+  .merge(WsMemoryImportRpcGroup);
 
 export const makeWsRpcProtocolClient = RpcClient.make(WsRpcGroup);
 type RpcClientFactory = typeof makeWsRpcProtocolClient;
