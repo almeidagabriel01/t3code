@@ -128,6 +128,10 @@ import { KanbanBoardRouteScreen } from "./features/kanban/KanbanBoardRouteScreen
 import { KanbanCardRouteScreen } from "./features/kanban/KanbanCardRouteScreen";
 import { KanbanArchiveRouteScreen } from "./features/kanban/KanbanArchiveRouteScreen";
 import { KanbanLinkThreadRouteScreen } from "./features/kanban/KanbanLinkThreadRouteScreen";
+import { NotesRouteScreen } from "./features/notes/NotesRouteScreen";
+import { NoteRouteScreen } from "./features/notes/NoteRouteScreen";
+import { NoteConflictRouteScreen } from "./features/notes/NoteConflictRouteScreen";
+import { NoteStartWorkRouteScreen } from "./features/notes/NoteStartWorkRouteScreen";
 import { UsageLimitAccountScreen } from "./features/usage/UsageLimitsPooled";
 import { UsageRouteScreen } from "./features/usage/UsageRouteScreen";
 import { SettingsAboutRouteScreen } from "./features/settings/SettingsAboutRouteScreen";
@@ -473,6 +477,23 @@ const SETTINGS_SCREENS = {
   SettingsKanbanLinkThread: createNativeStackScreen({
     screen: KanbanLinkThreadRouteScreen,
     options: { ...SETTINGS_PAGE_OPTIONS, title: "Link thread" },
+  }),
+  SettingsNotes: createNativeStackScreen({
+    screen: NotesRouteScreen,
+    linking: "settings/notes",
+    options: { ...SETTINGS_PAGE_OPTIONS, title: "Notes" },
+  }),
+  SettingsNote: createNativeStackScreen({
+    screen: NoteRouteScreen,
+    options: { ...SETTINGS_PAGE_OPTIONS, title: "Note" },
+  }),
+  SettingsNoteConflict: createNativeStackScreen({
+    screen: NoteConflictRouteScreen,
+    options: { ...SETTINGS_PAGE_OPTIONS, title: "Compare versions" },
+  }),
+  SettingsNoteStartWork: createNativeStackScreen({
+    screen: NoteStartWorkRouteScreen,
+    options: { ...SETTINGS_PAGE_OPTIONS, title: "Start work" },
   }),
   SettingsUsage: createNativeStackScreen({
     screen: UsageRouteScreen,

@@ -24,6 +24,7 @@ export const SETTINGS_PAGE_TARGETS = [
   "SettingsOpenSourceLicenses",
   "SettingsUsage",
   "SettingsKanban",
+  "SettingsNotes",
 ] as const;
 
 export type SettingsPageTarget = (typeof SETTINGS_PAGE_TARGETS)[number];

@@ -64,6 +64,14 @@ export interface MarkdownLinkCustomization {
 
 export interface SelectableMarkdownTextProps {
   readonly markdown: string;
+  /** Render the source as written, so task indexes match a parse of the same text. */
+  readonly preserveMarkdownSource?: boolean;
+  /** Enables task checkboxes; native toggles first, then reports the new state. */
+  readonly onTaskListItemPress?: (event: {
+    readonly index: number;
+    readonly checked: boolean;
+    readonly text: string;
+  }) => void;
   readonly textStyle: NativeMarkdownTextStyle;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
   readonly preserveSoftBreaks?: boolean;

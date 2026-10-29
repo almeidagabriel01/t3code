@@ -32,6 +32,16 @@ otherwise the project you used most recently. Choose a column, or leave the defa
 When the card is ready you can open it or start an agent on it. The note then shows the card, its
 column, and **Unlink**. If the card is deleted, the note says so and you can unlink it.
 
+## On your phone
+
+In the mobile app, open **Settings → Notes** or search the command palette for **Notes**. Notes
+open as rendered markdown; tap a checkbox to tick it, or **Edit** to change the markdown and add
+images. Pin, **Start work**, and the linked card work as on desktop.
+
+Edits save on the phone first, so you can write offline. They sync when the phone reconnects. If
+the note changed elsewhere in the meantime, only that note waits: **Compare versions** shows both,
+and you keep yours or take theirs.
+
 ## Notes and threads
 
 The notes button in a thread's header lists the notes linked to that thread. Link an existing note,

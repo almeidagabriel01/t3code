@@ -36,6 +36,7 @@ import {
 } from "./components/SettingsEnvironmentFilterHeader";
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
 import { useHasKanbanEnvironments } from "../../state/kanban";
+import { useHasNotesEnvironments } from "../../state/notes";
 import { filterSettingsSections } from "./settings-search";
 import { NativePrimaryColumnContext } from "../../native/v5-workspace-context";
 
@@ -214,6 +215,7 @@ function useSettingsIndexSections(): SettingsListSection[] {
   const { selectedTargets, projectGroups, selectedProjectKey } = useSettingsEnvironmentFilter();
   const noServerTargets = selectedTargets.length === 0;
   const hasBoards = useHasKanbanEnvironments();
+  const hasNotes = useHasNotesEnvironments();
   const selectedProject = projectGroups.find((group) => group.key === selectedProjectKey);
   const scopedProjectMembers =
     selectedProject?.members
@@ -261,6 +263,7 @@ function useSettingsIndexSections(): SettingsListSection[] {
         serverPage("SettingsThreads", "text.bubble", "Threads"),
         page("SettingsScheduledTasks", "clock", "Scheduled tasks"),
         ...(hasBoards ? [page("SettingsKanban", "square.grid.2x2", "Board")] : []),
+        ...(hasNotes ? [page("SettingsNotes", "doc.text", "Notes")] : []),
       ],
     },
     {

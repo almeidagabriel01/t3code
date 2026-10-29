@@ -31,6 +31,9 @@ const reactTests = [
   "src/features/threads/use-thread-list-now.test.tsx",
   "src/features/home/home-list-options.test.tsx",
   "src/features/connection/ConnectionsNewRouteScreen.test.tsx",
+  "src/features/notes/NoteRouteScreen.test.tsx",
+  "src/features/notes/NoteConflictRouteScreen.test.tsx",
+  "src/features/notes/NoteStartWorkRouteScreen.test.tsx",
 ];
 
 const sourceRoot = `${normalizePath(NodeURL.fileURLToPath(new URL("./src", import.meta.url)))}/`;

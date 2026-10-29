@@ -49,6 +49,7 @@ import {
   useThreadShells,
 } from "../../state/entities";
 import { useHasKanbanEnvironments } from "../../state/kanban";
+import { useHasNotesEnvironments } from "../../state/notes";
 import { useThreadSearch } from "../../state/queries";
 import { requestThreadMessageJump } from "../threads/threadMessageJump";
 import { threadEnvironment } from "../../state/threads";
@@ -229,6 +230,7 @@ export function CommandPalette(props: {
   const runCommand = props.onCommand;
   const projects = useProjects();
   const hasBoards = useHasKanbanEnvironments();
+  const hasNotes = useHasNotesEnvironments();
   const threads = useThreadShells();
   const activeThreadRef = parseActiveThreadPath(props.pathname);
   const activeThread = useThreadShell(activeThreadRef);
@@ -350,6 +352,17 @@ export function CommandPalette(props: {
               title: "Board",
               searchTerms: ["kanban", "cards", "tasks"],
               run: () => openSettings(navigation, "SettingsKanban"),
+            },
+          ]
+        : []),
+      ...(hasNotes
+        ? [
+            {
+              key: "notes",
+              kind: "action" as const,
+              title: "Notes",
+              searchTerms: ["markdown", "ideas", "capture", "start work"],
+              run: () => openSettings(navigation, "SettingsNotes"),
             },
           ]
         : []),
@@ -481,6 +494,7 @@ export function CommandPalette(props: {
     activeThreadRef,
     environments.length,
     hasBoards,
+    hasNotes,
     canTriage,
     navigation,
     projects,
