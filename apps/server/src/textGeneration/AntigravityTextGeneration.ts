@@ -1,4 +1,13 @@
-import { type ProviderSetupError, TextGenerationError } from "@t3tools/contracts";
+import {
+  ProviderDriverKind,
+  type ProviderSetupError,
+  TextGenerationError,
+} from "@t3tools/contracts";
+import {
+  MemoryGenerationRunnerError,
+  withMemoryExecution,
+  type MemoryGenerationRunnerContext,
+} from "@t3tools/provider-core/server/memoryGenerationRunner";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -48,6 +57,7 @@ type AntigravityTextRuntime = Pick<
 >;
 
 export interface AntigravityTextGenerationOptions {
+  readonly memoryRunnerContext?: MemoryGenerationRunnerContext;
   readonly profileDirectory: string;
   readonly defaultModel?: Effect.Effect<string | undefined>;
   readonly makeRuntime: (
@@ -110,6 +120,8 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
             operation,
             detail:
               "Antigravity text generation is unavailable for profiles with global hooks or MCP configuration. Select another system model.",
+            // Typed so memory pauses this model: the profile refuses every request.
+            cause: new MemoryGenerationRunnerError({ code: "unavailable" }),
           });
         }
 
@@ -210,7 +222,7 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
               });
             }
             yield* runtime.setMode("default");
-            yield* applyAntigravityAcpModelSelection({
+            const effectiveModel = yield* applyAntigravityAcpModelSelection({
               runtime,
               model: input.modelSelection.model,
               defaultModel: yield* options.defaultModel ?? Effect.undefined,
@@ -218,9 +230,19 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
                 new TextGenerationError({
                   operation,
                   detail: "Could not select the Antigravity model for text generation.",
-                  cause,
+                  // Memory treats a model it cannot select as unavailable until settings change.
+                  cause: TextGenerationOperations.isMemoryOperation(operation)
+                    ? new MemoryGenerationRunnerError({ code: "unavailable" })
+                    : cause,
                 }),
             });
+            if (TextGenerationOperations.isMemoryOperation(operation) && !effectiveModel)
+              return yield* new TextGenerationError({
+                operation,
+                detail: "Antigravity did not disclose its selected memory model.",
+                // Typed so memory pauses this model: it is undisclosed on every try.
+                cause: new MemoryGenerationRunnerError({ code: "unavailable" }),
+              });
 
             const result = yield* runtime.prompt({
               prompt: [
@@ -244,7 +266,10 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
                 detail: "Antigravity text generation was cancelled.",
               });
             }
-            return (yield* Ref.get(output)).trim();
+            return {
+              text: (yield* Ref.get(output)).trim(),
+              effectiveModel: effectiveModel ?? input.modelSelection.model,
+            };
           }).pipe(
             Effect.onInterrupt(() =>
               runtime.cancel.pipe(Effect.timeoutOption(2_000), Effect.ignore),
@@ -259,13 +284,18 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
             detail: "Antigravity wrote files during text generation.",
           });
         }
-        if (!rawResult) {
+        if (!rawResult.text) {
           return yield* new TextGenerationError({
             operation,
             detail: "Antigravity returned empty text generation output.",
           });
         }
-        return yield* TextGenerationOperations.decodeJsonReply(input, "Antigravity", rawResult);
+        const result = yield* TextGenerationOperations.decodeJsonReply(
+          input,
+          "Antigravity",
+          rawResult.text,
+        );
+        return { result, effectiveModel: rawResult.effectiveModel };
       }).pipe(
         Effect.scoped,
         Effect.timeoutOption(ANTIGRAVITY_TIMEOUT_MS),
@@ -304,6 +334,15 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
 
   return TextGenerationOperations.fromRunner(
     "AntigravityTextGeneration",
-    TextGenerationOperations.withoutInvestigation("Antigravity", runAntigravityJson),
+    TextGenerationOperations.withoutInvestigation("Antigravity", (request) =>
+      runAntigravityJson(request).pipe(Effect.map((selected) => selected.result)),
+    ),
+    {
+      memoryRunner: withMemoryExecution(
+        options.memoryRunnerContext,
+        ProviderDriverKind.make("antigravity"),
+        runAntigravityJson,
+      ),
+    },
   );
 });

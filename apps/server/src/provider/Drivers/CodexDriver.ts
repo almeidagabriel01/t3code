@@ -117,6 +117,7 @@ export const CodexDriver: ProviderDriver<
     enabled,
     config,
   }) {
+    const host = yield* ProviderHost.ProviderHost;
     if (config.setupMode === "managed")
       return yield* makeManagedCodexProvider({
         instanceId,
@@ -251,6 +252,11 @@ export const CodexDriver: ProviderDriver<
       effectiveConfig,
       processEnv,
       snapshot.getSnapshot.pipe(Effect.map((value) => value.models)),
+      undefined,
+      {
+        providerInstanceId: instanceId,
+        ...(host.environmentId === undefined ? {} : { environmentId: host.environmentId }),
+      },
     );
     const snapshotForCwd = (cwd: string) =>
       !effectiveConfig.enabled

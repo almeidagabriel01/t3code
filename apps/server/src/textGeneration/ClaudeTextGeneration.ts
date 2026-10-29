@@ -1,17 +1,24 @@
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
-import { type ClaudeSettings, TextGenerationError } from "@t3tools/contracts";
+import { ProviderDriverKind, type ClaudeSettings, TextGenerationError } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import {
+  MemoryGenerationRunnerError,
+  withMemoryExecution,
+  type MemoryGenerationRunnerContext,
+} from "@t3tools/provider-core/server/memoryGenerationRunner";
 
 import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
 import {
   normalizeCliError,
-  toJsonSchemaObject,
+  toStrictJsonSchemaObject,
 } from "@t3tools/provider-core/server/textGenerationUtils";
 import {
   getModelSelectionBooleanOptionValue,
@@ -33,6 +40,7 @@ import {
   hasClaudeManagedMcpConfig,
   makeClaudeEnvironment,
 } from "../provider/Drivers/ClaudeHome.ts";
+import { verifyClaudeMemoryHooks } from "./ClaudeMemoryIsolation.ts";
 
 const CLAUDE_TIMEOUT_MS = 180_000;
 /** `--tools` takes bare names; patterns go in the allow list. */
@@ -49,15 +57,71 @@ const CLAUDE_INVESTIGATION_ALLOWED = [
 // Denies override allows; block git --output/-o because allowed trailing args can otherwise write anywhere.
 const CLAUDE_INVESTIGATION_DENIED = ["Bash(git * --output*)", "Bash(git * -o *)"].join(",");
 
+const claudeOutputDiagnostics = {
+  permission_denials: Schema.optionalKey(Schema.Array(Schema.Unknown)),
+  subtype: Schema.optionalKey(Schema.String),
+  content: Schema.optionalKey(Schema.Array(Schema.Unknown)),
+  message: Schema.optionalKey(
+    Schema.Struct({
+      content: Schema.optionalKey(Schema.Array(Schema.Unknown)),
+    }),
+  ),
+};
 const ClaudeOutputEnvelope = Schema.Struct({
+  ...claudeOutputDiagnostics,
+  type: Schema.optionalKey(Schema.String),
   structured_output: Schema.Unknown,
 });
 const ClaudeOutputMessage = Schema.Struct({
+  ...claudeOutputDiagnostics,
   type: Schema.String,
   structured_output: Schema.optionalKey(Schema.Unknown),
 });
-const isClaudeOutputEnvelope = Schema.is(ClaudeOutputEnvelope);
 
+const hasClaudeToolAttempt = (
+  messages: ReadonlyArray<typeof ClaudeOutputMessage.Type | typeof ClaudeOutputEnvelope.Type>,
+) => {
+  const structuredCalls = new Set<string>();
+  for (const message of messages) {
+    if (
+      (message.permission_denials?.length ?? 0) > 0 ||
+      message.type === "tool_use" ||
+      message.type === "tool_result" ||
+      message.type === "permission_request" ||
+      message.subtype === "permission_denied" ||
+      message.subtype === "permission_denial"
+    )
+      return true;
+    for (const block of [...(message.content ?? []), ...(message.message?.content ?? [])]) {
+      if (block === null || typeof block !== "object" || !("type" in block)) continue;
+      if (block.type === "tool_use") {
+        // Claude delivers --json-schema results through this built-in, non-executable tool.
+        if (
+          message.type !== "assistant" ||
+          !("name" in block) ||
+          block.name !== "StructuredOutput" ||
+          !("id" in block) ||
+          typeof block.id !== "string" ||
+          block.id.length === 0 ||
+          structuredCalls.has(block.id)
+        )
+          return true;
+        structuredCalls.add(block.id);
+      } else if (block.type === "tool_result") {
+        if (
+          message.type !== "user" ||
+          !("tool_use_id" in block) ||
+          typeof block.tool_use_id !== "string" ||
+          ("is_error" in block && block.is_error !== false) ||
+          !structuredCalls.delete(block.tool_use_id)
+        )
+          return true;
+      }
+    }
+  }
+  return structuredCalls.size > 0;
+};
+const isClaudeOutputEnvelope = Schema.is(ClaudeOutputEnvelope);
 const encodeJsonString = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const decodeClaudeOutput = Schema.decodeEffect(
   Schema.fromJsonString(Schema.Union([ClaudeOutputEnvelope, Schema.Array(ClaudeOutputMessage)])),
@@ -81,9 +145,13 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
   claudeSettings: ClaudeSettings,
   environment?: NodeJS.ProcessEnv,
   modelCatalog: Effect.Effect<ClaudeModelCatalog> = Effect.succeed(BUNDLED_CLAUDE_MODEL_CATALOG),
+  memoryRunnerContext?: MemoryGenerationRunnerContext,
 ) {
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const platform = yield* HostProcess.Platform;
+  const home = yield* HostProcess.HomeDirectory;
   const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment);
   const scopedModelCatalog = modelCatalog.pipe(
     Effect.map((catalog) => scopeClaudeModelCatalog(catalog, claudeSettings.customModels)),
@@ -128,10 +196,15 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     modelSelection,
     investigate,
   }: TextGenerationOperations.Request<S>): Effect.fn.Return<
-    S["Type"],
+    { readonly result: S["Type"]; readonly effectiveModel: string },
     TextGenerationError,
     S["DecodingServices"]
   > {
+    if (TextGenerationOperations.isMemoryOperation(operation) && !claudeSettings.enabled)
+      return yield* new TextGenerationError({
+        operation,
+        detail: "Claude is disabled in settings.",
+      });
     const catalog = yield* scopedModelCatalog;
     const resolvedModelSelection = {
       ...modelSelection,
@@ -139,9 +212,10 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     };
     const jsonSchemaStr = yield* encodeJsonForOperation(
       operation,
-      toJsonSchemaObject(outputSchemaJson),
+      yield* toStrictJsonSchemaObject(operation, outputSchemaJson),
       "Failed to encode structured output schema.",
     );
+    const effectiveModel = resolveClaudeCatalogApiModelId(catalog, resolvedModelSelection);
     const caps = getClaudeCatalogModelCapabilities(catalog, resolvedModelSelection.model);
     const descriptors = getProviderOptionDescriptors({
       caps,
@@ -182,8 +256,16 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     );
 
     const runClaudeCommand = Effect.fn("runClaudeJson.runClaudeCommand")(function* () {
+      if (TextGenerationOperations.isMemoryOperation(operation))
+        yield* verifyClaudeMemoryHooks(operation, claudeEnvironment).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, commandSpawner),
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
+          Effect.provideService(HostProcess.Platform, platform),
+          Effect.provideService(HostProcess.HomeDirectory, home),
+        );
       const workingDirectory =
-        operation === "generateThreadTitle"
+        operation === "generateThreadTitle" || TextGenerationOperations.isMemoryOperation(operation)
           ? yield* fileSystem
               .makeTempDirectoryScoped({ prefix: "t3code-claude-title-" })
               .pipe(
@@ -202,8 +284,11 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
           "--json-schema",
           jsonSchemaStr,
           "--model",
-          resolveClaudeCatalogApiModelId(catalog, resolvedModelSelection),
+          effectiveModel,
           ...(cliEffort ? ["--effort", cliEffort] : []),
+          ...(TextGenerationOperations.isMemoryOperation(operation)
+            ? ["--verbose", "--setting-sources", ""]
+            : []),
           "--settings",
           settingsJson,
           ...(investigate
@@ -299,12 +384,21 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
           ),
       }),
     );
+    const messages = isClaudeOutputEnvelope(output) ? [output] : output;
+    if (TextGenerationOperations.isMemoryOperation(operation) && hasClaudeToolAttempt(messages))
+      return yield* new TextGenerationError({
+        operation,
+        detail: "Claude attempted a tool or permission request during memory generation.",
+        cause: new MemoryGenerationRunnerError({ code: "invalid_output" }),
+      });
     const envelope = isClaudeOutputEnvelope(output)
       ? output
       : output.findLast((message) => message.type === "result");
 
-    const decodeOutput = Schema.decodeEffect(outputSchemaJson);
-    return yield* decodeOutput(envelope?.structured_output).pipe(
+    const result = yield* Schema.decodeEffect(outputSchemaJson)(
+      envelope?.structured_output,
+      TextGenerationOperations.outputDecodeOptions(operation),
+    ).pipe(
       Effect.catchTags({
         SchemaError: (cause) =>
           Effect.fail(
@@ -316,7 +410,18 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
           ),
       }),
     );
+    return { result, effectiveModel };
   });
 
-  return TextGenerationOperations.fromRunner("ClaudeTextGeneration", runClaudeJson);
+  return TextGenerationOperations.fromRunner(
+    "ClaudeTextGeneration",
+    (request) => runClaudeJson(request).pipe(Effect.map((selected) => selected.result)),
+    {
+      memoryRunner: withMemoryExecution(
+        memoryRunnerContext,
+        ProviderDriverKind.make("claudeAgent"),
+        runClaudeJson,
+      ),
+    },
+  );
 });

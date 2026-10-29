@@ -44,7 +44,9 @@ type TextGenerationOp =
   | "generatePrContent"
   | "generateBranchName"
   | "generateThreadTitle"
-  | "generateReviewGuide";
+  | "generateReviewGuide"
+  | "resolveMemoryConflict"
+  | "generateMemorySummary";
 
 const resolveInstance = (
   registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
@@ -58,7 +60,10 @@ const resolveInstance = (
         : Effect.fail(
             new TextGenerationError({
               operation,
-              detail: `No provider instance registered for id '${instanceId}'.`,
+              detail:
+                operation === "resolveMemoryConflict" || operation === "generateMemorySummary"
+                  ? "route_unavailable"
+                  : `No provider instance registered for id '${instanceId}'.`,
             }),
           ),
     ),
@@ -126,7 +131,44 @@ export const make = Effect.gen(function* () {
       Effect.flatMap((service) => invoke(service, selection)),
     );
   });
+  // Memory runs on its pinned selection: no usage-limit fallback, since provenance records the exact model.
   return TextGeneration.of({
+    resolveMemoryConflict: Effect.fn("TextGeneration.resolveMemoryConflict")(function (input) {
+      return resolveInstance(
+        registry,
+        "resolveMemoryConflict",
+        input.modelSelection.instanceId,
+      ).pipe(
+        Effect.flatMap((textGeneration) =>
+          textGeneration.resolveMemoryConflict === undefined
+            ? Effect.fail(
+                new TextGenerationError({
+                  operation: "resolveMemoryConflict",
+                  detail: "unsupported_operation",
+                }),
+              )
+            : textGeneration.resolveMemoryConflict(input),
+        ),
+      );
+    }),
+    generateMemorySummary: Effect.fn("TextGeneration.generateMemorySummary")(function (input) {
+      return resolveInstance(
+        registry,
+        "generateMemorySummary",
+        input.modelSelection.instanceId,
+      ).pipe(
+        Effect.flatMap((textGeneration) =>
+          textGeneration.generateMemorySummary === undefined
+            ? Effect.fail(
+                new TextGenerationError({
+                  operation: "generateMemorySummary",
+                  detail: "unsupported_operation",
+                }),
+              )
+            : textGeneration.generateMemorySummary(input),
+        ),
+      );
+    }),
     generateCommitMessage: Effect.fn("TextGeneration.generateCommitMessage")(function (input) {
       return generate("generateCommitMessage", input.modelSelection, (service, modelSelection) =>
         service.generateCommitMessage({ ...input, modelSelection }),

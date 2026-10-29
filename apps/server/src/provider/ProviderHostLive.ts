@@ -4,11 +4,13 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 
 import { resolveAttachmentPath } from "../attachmentStore.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as ServerConfig from "../config.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as DocumentText from "./DocumentText.ts";
 import * as ProviderCredentialStore from "./ProviderCredentialStore.ts";
@@ -16,6 +18,11 @@ import * as ProviderCredentialStore from "./ProviderCredentialStore.ts";
 export const layer = Layer.effect(
   ProviderHost.ProviderHost,
   Effect.gen(function* () {
+    // Optional so CLI compositions that never run memory generation need no environment layer.
+    const identity = yield* Effect.serviceOption(ServerEnvironment.ServerEnvironmentIdentity);
+    const environmentId = Option.isSome(identity)
+      ? yield* identity.value.getEnvironmentId
+      : undefined;
     const config = yield* ServerConfig.ServerConfig;
     const serverSettings = yield* ServerSettings.ServerSettingsService;
     const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
@@ -23,6 +30,7 @@ export const layer = Layer.effect(
     const crypto = yield* Crypto.Crypto;
     const fileSystem = yield* FileSystem.FileSystem;
     return ProviderHost.ProviderHost.of({
+      ...(environmentId === undefined ? {} : { environmentId }),
       paths: {
         cwd: config.cwd,
         baseDir: config.baseDir,

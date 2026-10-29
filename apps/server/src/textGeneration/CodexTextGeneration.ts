@@ -10,9 +10,15 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import {
   type CodexSettings,
   DEFAULT_TEXT_GENERATION_REASONING_EFFORT,
+  ProviderDriverKind,
   type ServerProviderModel,
   TextGenerationError,
 } from "@t3tools/contracts";
+import {
+  MemoryGenerationRunnerError,
+  withMemoryExecution,
+  type MemoryGenerationRunnerContext,
+} from "@t3tools/provider-core/server/memoryGenerationRunner";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
 import { resolveAttachmentPath } from "../attachmentStore.ts";
@@ -22,13 +28,38 @@ import { codexExecLaunchArgs, resolveCodexLaunchArgs } from "../provider/codexLa
 import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
 import {
   normalizeCliError,
-  toJsonSchemaObject,
+  toStrictJsonSchemaObject,
 } from "@t3tools/provider-core/server/textGenerationUtils";
 import { codexModelFamily, getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { getCodexServiceTierOptionValue } from "../codexModelOptions.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
+const CODEX_DRIVER = ProviderDriverKind.make("codex");
 const CODEX_TIMEOUT_MS = 180_000;
+/**
+ * Memory generation answers from its prompt alone: no user config (and so no configured MCP
+ * servers), no exec rules, and no shell, apps, plugins, browser, computer, image, or hook tools.
+ */
+const CODEX_MEMORY_ARGS = [
+  "--ignore-user-config",
+  "--ignore-rules",
+  "--disable",
+  "shell_tool",
+  "--disable",
+  "unified_exec",
+  "--disable",
+  "apps",
+  "--disable",
+  "plugins",
+  "--disable",
+  "browser_use",
+  "--disable",
+  "computer_use",
+  "--disable",
+  "view_image",
+  "--disable",
+  "hooks",
+] as const;
 const CODEX_MCP_LIST_TIMEOUT_MS = 10_000;
 // Plugins/apps add MCP servers; use trailing config overrides because --disable loses to user -c flags.
 const CODEX_NO_PLUGIN_ARGS = [
@@ -57,6 +88,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     import("@t3tools/contracts").ProviderSetupError,
     Scope.Scope
   >,
+  memoryRunnerContext?: MemoryGenerationRunnerContext,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -107,6 +139,53 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
             }),
         ),
       );
+
+  /**
+   * Memory runs in its own home so the user's global AGENTS.md stays out. Only auth.json is
+   * linked in; Codex refreshes it in place, and a replaced link is copied back so no rotated
+   * token is lost. Without the link the run fails before spawning.
+   */
+  const makeMemoryCodexHome = Effect.fn("makeMemoryCodexHome")(function* (
+    operation: TextGenerationOperations.Operation,
+    userHome: string,
+  ) {
+    const memoryHome = yield* fileSystem
+      .makeTempDirectoryScoped({ prefix: "t3code-codex-memory-home-" })
+      .pipe(
+        Effect.mapError((cause) =>
+          normalizeCliError("codex", operation, cause, "Failed to create memory Codex home"),
+        ),
+      );
+    const userAuth = path.join(userHome, "auth.json");
+    const memoryAuth = path.join(memoryHome, "auth.json");
+    // API-key users have no auth.json to link; the fresh home still keeps user config out.
+    if (!(yield* fileSystem.exists(userAuth).pipe(Effect.orElseSucceed(() => false))))
+      return memoryHome;
+    const linked = yield* fileSystem.symlink(userAuth, memoryAuth).pipe(
+      Effect.as(true),
+      Effect.orElseSucceed(() => false),
+    );
+    if (!linked)
+      return yield* new TextGenerationError({
+        operation,
+        detail: "Codex memory generation could not isolate its authentication home.",
+        // Typed so memory pauses this model: this host cannot link the auth file.
+        cause: new MemoryGenerationRunnerError({ code: "unavailable" }),
+      });
+    yield* Effect.addFinalizer(() =>
+      fileSystem.readLink(memoryAuth).pipe(
+        Effect.matchEffect({
+          onSuccess: () => Effect.void,
+          onFailure: () =>
+            fileSystem
+              .readFile(memoryAuth)
+              .pipe(Effect.flatMap((auth) => fileSystem.writeFile(userAuth, auth))),
+        }),
+        Effect.ignore,
+      ),
+    );
+    return memoryHome;
+  });
 
   const encodeJsonForOperation = (
     operation: TextGenerationOperations.Operation,
@@ -219,14 +298,15 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     attachments,
     investigate,
   }: TextGenerationOperations.Request<S>): Effect.fn.Return<
-    S["Type"],
+    { readonly result: S["Type"]; readonly effectiveModel: string },
     TextGenerationError,
     S["DecodingServices"]
   > {
+    const isMemory = TextGenerationOperations.isMemoryOperation(operation);
     const imagePaths = yield* materializeImageAttachments(attachments);
     const schemaJson = yield* encodeJsonForOperation(
       operation,
-      toJsonSchemaObject(outputSchemaJson),
+      yield* toStrictJsonSchemaObject(operation, outputSchemaJson),
     );
     const schemaPath = yield* writeTempFile(operation, "codex-schema", schemaJson);
     const outputPath = yield* writeTempFile(operation, "codex-output", "").pipe(
@@ -237,11 +317,17 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       const resolved = resolveRuntime
         ? yield* resolveRuntime.pipe(
             Effect.mapError(
-              (cause) => new TextGenerationError({ operation, detail: cause.detail }),
+              // The setup error stays as the cause so memory can pause a model it cannot run.
+              (cause) => new TextGenerationError({ operation, detail: cause.detail, cause }),
             ),
           )
         : undefined;
       const effectiveConfig = resolved?.config ?? codexConfig;
+      if (isMemory && !effectiveConfig.enabled)
+        return yield* new TextGenerationError({
+          operation,
+          detail: "Codex is disabled in settings.",
+        });
       const effectiveEnvironment = resolved?.environment ?? resolvedEnvironment;
       const models = yield* getModels;
       const requestedModel = modelSelection.model;
@@ -257,25 +343,40 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         DEFAULT_TEXT_GENERATION_REASONING_EFFORT;
       const serviceTier = resolved ? undefined : getCodexServiceTierOptionValue(modelSelection);
       const binary = effectiveConfig.binaryPath || "codex";
+      // Memory runs in an empty directory so nothing in a checkout reaches the model.
+      const workingDirectory = isMemory
+        ? yield* fileSystem
+            .makeTempDirectoryScoped({ prefix: "t3code-codex-memory-" })
+            .pipe(
+              Effect.mapError((cause) =>
+                normalizeCliError("codex", operation, cause, "Failed to create memory directory"),
+              ),
+            )
+        : cwd;
+      const homeDirectory = yield* HostProcess.HomeDirectory;
+      const configuredHome = effectiveConfig.homePath
+        ? expandHomePath(effectiveConfig.homePath, homeDirectory)
+        : undefined;
+      const codexHome = isMemory
+        ? yield* makeMemoryCodexHome(
+            operation,
+            configuredHome ?? effectiveEnvironment.CODEX_HOME ?? path.join(homeDirectory, ".codex"),
+          )
+        : configuredHome;
       const env = {
         ...effectiveEnvironment,
-        ...(effectiveConfig.homePath
-          ? {
-              CODEX_HOME: expandHomePath(
-                effectiveConfig.homePath,
-                yield* HostProcess.HomeDirectory,
-              ),
-            }
-          : {}),
+        ...(codexHome ? { CODEX_HOME: codexHome } : {}),
       };
-      const execLaunchArgs = codexExecLaunchArgs(launchArgs);
-      const mcpServersOff = yield* listEnabledMcpServers({
-        binary,
-        cwd,
-        env,
-        // `codex mcp` rejects --strict-config; the overrides still apply.
-        launchArgs: execLaunchArgs.filter((arg) => arg !== "--strict-config"),
-      }).pipe(Effect.map(codexMcpServersOff));
+      const execLaunchArgs = isMemory ? [...CODEX_MEMORY_ARGS] : codexExecLaunchArgs(launchArgs);
+      const mcpServersOff = isMemory
+        ? null
+        : yield* listEnabledMcpServers({
+            binary,
+            cwd,
+            env,
+            // `codex mcp` rejects --strict-config; the overrides still apply.
+            launchArgs: execLaunchArgs.filter((arg) => arg !== "--strict-config"),
+          }).pipe(Effect.map(codexMcpServersOff));
       const spawnCommand = yield* resolveSpawnCommand(
         binary,
         [
@@ -304,7 +405,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       );
       const command = ChildProcess.make(spawnCommand.command, spawnCommand.args, {
         env,
-        cwd,
+        cwd: workingDirectory,
         shell: spawnCommand.shell,
         stdin: {
           stream: Stream.encodeText(Stream.make(prompt)),
@@ -345,6 +446,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
               : `Codex CLI command failed with code ${exitCode}.`,
         });
       }
+      return model;
     });
 
     const cleanup = Effect.all([removeTempFileDir(schemaPath), removeTempFileDir(outputPath)], {
@@ -352,7 +454,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     }).pipe(Effect.asVoid);
 
     return yield* Effect.gen(function* () {
-      yield* runCodexCommand().pipe(
+      const effectiveModel = yield* runCodexCommand().pipe(
         Effect.scoped,
         Effect.timeoutOption(investigate?.timeoutMs ?? CODEX_TIMEOUT_MS),
         Effect.flatMap(
@@ -361,14 +463,18 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
               Effect.fail(
                 new TextGenerationError({ operation, detail: "Codex CLI request timed out." }),
               ),
-            onSome: () => Effect.void,
+            onSome: Effect.succeed,
           }),
         ),
       );
 
-      const decodeOutput = Schema.decodeEffect(Schema.fromJsonString(outputSchemaJson));
+      const decodeOutput = (json: string) =>
+        Schema.decodeEffect(Schema.fromJsonString(outputSchemaJson))(
+          json,
+          TextGenerationOperations.outputDecodeOptions(operation),
+        );
 
-      return yield* fileSystem.readFileString(outputPath).pipe(
+      const result = yield* fileSystem.readFileString(outputPath).pipe(
         Effect.mapError(
           (cause) =>
             new TextGenerationError({
@@ -389,8 +495,13 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
             ),
         }),
       );
+      return { result, effectiveModel };
     }).pipe(Effect.ensuring(cleanup));
   });
 
-  return TextGenerationOperations.fromRunner("CodexTextGeneration", runCodexJson);
+  return TextGenerationOperations.fromRunner(
+    "CodexTextGeneration",
+    (request) => runCodexJson(request).pipe(Effect.map((selected) => selected.result)),
+    { memoryRunner: withMemoryExecution(memoryRunnerContext, CODEX_DRIVER, runCodexJson) },
+  );
 });

@@ -1,3 +1,4 @@
+import * as M from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import {
@@ -15,6 +16,7 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+
 import { type AcpError } from "effect-acp/errors";
 import type * as AcpSchema from "effect-acp/compat";
 import { expect } from "vite-plus/test";
@@ -27,6 +29,7 @@ import {
   isAntigravityTextGenerationAvailable,
   makeAntigravityTextGeneration,
 } from "./AntigravityTextGeneration.ts";
+import { MemoryGenerationRunnerError } from "@t3tools/provider-core/server/memoryGenerationRunner";
 
 type TextRuntime = Effect.Success<ReturnType<AntigravityTextGenerationOptions["makeRuntime"]>>;
 
@@ -55,6 +58,9 @@ interface PromptContext {
 
 const makeFixture = Effect.fn("makeAntigravityTextGenerationFixture")(function* (
   options: {
+    readonly currentModel?: string;
+    readonly modelOptions?: ReadonlyArray<string>;
+    readonly memoryRunnerContext?: import("@t3tools/provider-core/server/memoryGenerationRunner").MemoryGenerationRunnerContext;
     readonly outputs?: ReadonlyArray<string>;
     readonly prompt?: (context: PromptContext) => Effect.Effect<AcpSchema.PromptResponse, AcpError>;
     readonly startError?: AcpError;
@@ -161,8 +167,11 @@ const makeFixture = Effect.fn("makeAntigravityTextGenerationFixture")(function* 
             name: "Model",
             category: "model",
             type: "select",
-            currentValue: modelSelection.model,
-            options: [{ value: modelSelection.model, name: "Gemini test" }],
+            currentValue: options.currentModel ?? modelSelection.model,
+            options: (options.modelOptions ?? [modelSelection.model]).map((value) => ({
+              value,
+              name: value,
+            })),
           },
         ]),
         getEvents: () => Stream.fromQueue(events),
@@ -170,7 +179,6 @@ const makeFixture = Effect.fn("makeAntigravityTextGenerationFixture")(function* 
           Effect.sync(() => {
             state.selectedModels.push(model);
           }),
-        setConfigOption: () => Effect.succeed({ configOptions: [] }),
         prompt: (request) =>
           Effect.gen(function* () {
             state.prompts.push(request);
@@ -235,6 +243,7 @@ const makeFixture = Effect.fn("makeAntigravityTextGenerationFixture")(function* 
         handleTerminalWaitForExit: () => Effect.void,
         handleTerminalKill: () => Effect.void,
         handleTerminalRelease: () => Effect.void,
+        setConfigOption: () => Effect.succeed({ configOptions: [] }),
         handleUnknownExtRequest: (handler) =>
           Effect.sync(() => {
             incoming.extension = handler;
@@ -244,6 +253,9 @@ const makeFixture = Effect.fn("makeAntigravityTextGenerationFixture")(function* 
 
   const textGeneration = yield* makeAntigravityTextGeneration({
     profileDirectory,
+    ...(options.memoryRunnerContext === undefined
+      ? {}
+      : { memoryRunnerContext: options.memoryRunnerContext }),
     makeRuntime,
     withProcess,
   });
@@ -278,7 +290,348 @@ const makeFixture = Effect.fn("makeAntigravityTextGenerationFixture")(function* 
   };
 });
 
+const memorySelection = M.MemoryModelSelection.make({
+  instanceId: M.ProviderInstanceId.make("antigravity-test"),
+  model: "gemini-test",
+  options: [],
+});
+const memoryContext = {
+  providerInstanceId: memorySelection.instanceId,
+  environmentId: M.EnvironmentId.make("memory-owner"),
+};
+const memoryId = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+const memoryRevision = M.MemoryRevision.make({
+  memorySpaceId: M.MemorySpaceId.make(memoryId(1)),
+  memoryId: M.MemoryId.make(memoryId(2)),
+  revisionId: M.MemoryRevisionId.make(memoryId(3)),
+  payloadRef: M.MemoryRevisionId.make(memoryId(3)),
+  operationId: M.MemoryOperationId.make(memoryId(4)),
+  parents: [],
+  scope: { kind: "user" },
+  assertionKind: "inference",
+  provenance: { environmentId: memoryContext.environmentId },
+  createdAtUtc: "2026-10-14T00:00:00.000Z",
+});
+const memoryPayload = M.MemoryPayload.make({
+  text: "Synthetic input",
+  evidence: [],
+  derivedFromMemoryRevisions: [],
+});
+const memorySummary = M.GenerateMemorySummaryInput.make({
+  cwd: process.cwd(),
+  sourceThread: {
+    environmentId: memoryContext.environmentId,
+    threadId: M.ThreadId.make("synthetic-thread"),
+  },
+  sourceWatermark: {
+    fromEventId: M.EventId.make("e1"),
+    toEventId: M.EventId.make("e2"),
+    throughSequence: 2,
+  },
+  messages: [{ messageId: M.MessageId.make("m1"), text: "Synthetic input", completed: true }],
+  modelSelection: memorySelection,
+});
+const memoryConflict = M.ResolveMemoryConflictInput.make({
+  cwd: memorySummary.cwd,
+  memorySpaceId: memoryRevision.memorySpaceId,
+  memoryId: memoryRevision.memoryId,
+  conflictId: M.MemoryConflictId.make(memoryId(8)),
+  heads: [
+    { revision: memoryRevision, payload: memoryPayload },
+    {
+      revision: {
+        ...memoryRevision,
+        revisionId: M.MemoryRevisionId.make(memoryId(5)),
+        payloadRef: M.MemoryRevisionId.make(memoryId(5)),
+      },
+      payload: memoryPayload,
+    },
+  ],
+  modelSelection: memorySelection,
+});
+const memoryOutput = { text: "Synthetic result", assertionKind: "inference", evidence: [] };
+const memoryOperations = ["resolveMemoryConflict", "generateMemorySummary"] as const;
+
 it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
+  it.effect.each(memoryOperations)(
+    "fails an undisclosed Antigravity model before prompting for %s",
+    (operation) =>
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture({
+          memoryRunnerContext: memoryContext,
+          currentModel: "",
+          modelOptions: [],
+        });
+        const selection = { ...memorySelection, model: ANTIGRAVITY_DEFAULT_MODEL };
+        const error = yield* (
+          operation === "resolveMemoryConflict"
+            ? fixture.textGeneration.resolveMemoryConflict!({
+                ...memoryConflict,
+                modelSelection: selection,
+              }).pipe(Effect.map((outcome): M.GenerateMemorySummaryOutcome => outcome))
+            : fixture.textGeneration.generateMemorySummary!({
+                ...memorySummary,
+                modelSelection: selection,
+              })
+        ).pipe(Effect.flip);
+        expect(error.detail).toContain("did not disclose");
+        expect(error.cause).toEqual(new MemoryGenerationRunnerError({ code: "unavailable" }));
+        expect(fixture.state.prompts).toEqual([]);
+        yield* fixture.assertCleaned;
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect.each(memoryOperations)(
+    "captures the selected Antigravity default alias for %s",
+    (operation) =>
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture({
+          memoryRunnerContext: memoryContext,
+          outputs: [
+            JSON.stringify(
+              operation === "resolveMemoryConflict"
+                ? { ...memoryOutput, judgment: "Synthetic" }
+                : { summary: memoryOutput },
+            ),
+          ],
+        });
+        const selection = { ...memorySelection, model: ANTIGRAVITY_DEFAULT_MODEL };
+        const generated =
+          operation === "resolveMemoryConflict"
+            ? yield* fixture.textGeneration.resolveMemoryConflict!({
+                ...memoryConflict,
+                modelSelection: selection,
+              })
+            : yield* fixture.textGeneration.generateMemorySummary!({
+                ...memorySummary,
+                modelSelection: selection,
+              });
+        expect(generated.execution.effectiveModel).toBe(modelSelection.model);
+        expect(generated.execution.requestedModelSelection).toEqual(selection);
+        expect(fixture.state.selectedModels).toEqual([]);
+        yield* fixture.assertCleaned;
+      }).pipe(Effect.scoped),
+  );
+  it.effect.each(memoryOperations)(
+    "fails unavailable Antigravity model before prompting for %s",
+    (operation) =>
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture({ memoryRunnerContext: memoryContext });
+        const selection = { ...memorySelection, model: "unavailable-synthetic-model" };
+        const error = yield* (
+          operation === "resolveMemoryConflict"
+            ? fixture.textGeneration.resolveMemoryConflict!({
+                ...memoryConflict,
+                modelSelection: selection,
+              }).pipe(Effect.map((outcome): M.GenerateMemorySummaryOutcome => outcome))
+            : fixture.textGeneration.generateMemorySummary!({
+                ...memorySummary,
+                modelSelection: selection,
+              })
+        ).pipe(Effect.flip);
+        expect(error.operation).toBe(operation);
+        expect(fixture.state.prompts).toEqual([]);
+        yield* fixture.assertCleaned;
+      }).pipe(Effect.scoped),
+  );
+  it.effect.each(memoryOperations)(
+    "fails Antigravity auth admission before runtime creation for %s",
+    (operation) =>
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture({
+          memoryRunnerContext: memoryContext,
+          rejectAdmission: true,
+        });
+        const error = yield* (
+          operation === "resolveMemoryConflict"
+            ? fixture.textGeneration.resolveMemoryConflict!(memoryConflict).pipe(
+                Effect.map((outcome): M.GenerateMemorySummaryOutcome => outcome),
+              )
+            : fixture.textGeneration.generateMemorySummary!(memorySummary)
+        ).pipe(Effect.flip);
+        expect(error.operation).toBe(operation);
+        expect(fixture.state.workspaces).toEqual([]);
+      }).pipe(Effect.scoped),
+  );
+  it.effect.each(memoryOperations)(
+    "rejects memory output over the schema byte budget for %s",
+    (operation) =>
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture({
+          memoryRunnerContext: memoryContext,
+          outputs: [
+            JSON.stringify(
+              operation === "resolveMemoryConflict"
+                ? {
+                    ...memoryOutput,
+                    text: "x".repeat(65536),
+                    judgment: "Synthetic",
+                  }
+                : {
+                    summary: {
+                      ...memoryOutput,
+                      text: "x".repeat(65536),
+                    },
+                  },
+            ),
+          ],
+        });
+        const error = yield* (
+          operation === "resolveMemoryConflict"
+            ? fixture.textGeneration.resolveMemoryConflict!(memoryConflict).pipe(
+                Effect.map((outcome): M.GenerateMemorySummaryOutcome => outcome),
+              )
+            : fixture.textGeneration.generateMemorySummary!(memorySummary)
+        ).pipe(Effect.flip);
+        expect(error.operation).toBe(operation);
+        yield* fixture.assertCleaned;
+      }).pipe(Effect.scoped),
+  );
+  it.effect.each(memoryOperations)(
+    "runs %s in isolation with selected model provenance",
+    (operation) =>
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture({
+          memoryRunnerContext: memoryContext,
+          outputs: [
+            JSON.stringify(
+              operation === "resolveMemoryConflict"
+                ? { ...memoryOutput, judgment: "Synthetic judgment" }
+                : { summary: memoryOutput },
+            ),
+          ],
+        });
+        const generated =
+          operation === "resolveMemoryConflict"
+            ? yield* fixture.textGeneration.resolveMemoryConflict!(memoryConflict)
+            : yield* fixture.textGeneration.generateMemorySummary!(memorySummary);
+        expect(generated.execution).toEqual({
+          requestedModelSelection: memorySelection,
+          effectiveModel: "gemini-test",
+          effectiveProvider: "antigravity",
+          providerInstanceId: memoryContext.providerInstanceId,
+          environmentId: memoryContext.environmentId,
+        });
+        expect(fixture.state.workspaces).not.toContain(memorySummary.cwd);
+        expect(fixture.state.selectedModes).toEqual(["default"]);
+        yield* fixture.assertCleaned;
+      }).pipe(Effect.scoped),
+  );
+  it.effect.each(memoryOperations)(
+    "rejects tool attempts despite apparent success for %s",
+    (operation) =>
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture({
+          memoryRunnerContext: memoryContext,
+          prompt: ({ emit }) =>
+            Effect.gen(function* () {
+              yield* emit({
+                sessionUpdate: "tool_call",
+                toolCallId: "synthetic-tool",
+                title: "Tool attempt",
+                status: "pending",
+              });
+              yield* emit({
+                sessionUpdate: "agent_message_chunk",
+                content: {
+                  type: "text",
+                  text: JSON.stringify(
+                    operation === "resolveMemoryConflict"
+                      ? { ...memoryOutput, judgment: "Synthetic judgment" }
+                      : { summary: memoryOutput },
+                  ),
+                },
+              });
+              return { stopReason: "end_turn" as const };
+            }),
+        });
+        const exit = yield* Effect.exit(
+          operation === "resolveMemoryConflict"
+            ? fixture.textGeneration.resolveMemoryConflict!(memoryConflict).pipe(
+                Effect.map((outcome): M.GenerateMemorySummaryOutcome => outcome),
+              )
+            : fixture.textGeneration.generateMemorySummary!(memorySummary),
+        );
+        expect(exit._tag).toBe("Failure");
+        yield* fixture.assertCleaned;
+      }).pipe(Effect.scoped),
+  );
+  it.effect.each(memoryOperations)("rejects forged execution JSON for %s", (operation) =>
+    Effect.gen(function* () {
+      const fixture = yield* makeFixture({
+        memoryRunnerContext: memoryContext,
+        outputs: [
+          JSON.stringify(
+            operation === "resolveMemoryConflict"
+              ? {
+                  ...memoryOutput,
+                  judgment: "Synthetic",
+                  execution: { effectiveModel: "forged" },
+                }
+              : {
+                  summary: {
+                    ...memoryOutput,
+                    execution: { effectiveModel: "forged" },
+                  },
+                },
+          ),
+        ],
+      });
+      const exit = yield* Effect.exit(
+        operation === "resolveMemoryConflict"
+          ? fixture.textGeneration.resolveMemoryConflict!(memoryConflict).pipe(
+              Effect.map((outcome): M.GenerateMemorySummaryOutcome => outcome),
+            )
+          : fixture.textGeneration.generateMemorySummary!(memorySummary),
+      );
+      expect(exit._tag).toBe("Failure");
+      yield* fixture.assertCleaned;
+    }).pipe(Effect.scoped),
+  );
+  it.effect.each(memoryOperations)(
+    "rejects configured global MCP before runtime creation for %s",
+    (operation) =>
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture({ memoryRunnerContext: memoryContext });
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* fs.makeDirectory(path.join(fixture.profileDirectory, "config"), { recursive: true });
+        yield* fs.writeFileString(
+          path.join(fixture.profileDirectory, "config", "mcp_config.json"),
+          '{"mcpServers":{"synthetic":{}}}',
+        );
+        const exit = yield* Effect.exit(
+          operation === "resolveMemoryConflict"
+            ? fixture.textGeneration.resolveMemoryConflict!(memoryConflict).pipe(
+                Effect.map((outcome): M.GenerateMemorySummaryOutcome => outcome),
+              )
+            : fixture.textGeneration.generateMemorySummary!(memorySummary),
+        );
+        expect(exit._tag).toBe("Failure");
+        expect(fixture.state.workspaces).toEqual([]);
+      }).pipe(Effect.scoped),
+  );
+  it.effect.each(memoryOperations)(
+    "rejects mismatched instance before runtime creation for %s",
+    (operation) =>
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture({
+          memoryRunnerContext: {
+            ...memoryContext,
+            providerInstanceId: M.ProviderInstanceId.make("other-instance"),
+          },
+        });
+        const exit = yield* Effect.exit(
+          operation === "resolveMemoryConflict"
+            ? fixture.textGeneration.resolveMemoryConflict!(memoryConflict).pipe(
+                Effect.map((outcome): M.GenerateMemorySummaryOutcome => outcome),
+              )
+            : fixture.textGeneration.generateMemorySummary!(memorySummary),
+        );
+        expect(exit._tag).toBe("Failure");
+        expect(fixture.state.workspaces).toEqual([]);
+      }).pipe(Effect.scoped),
+  );
   it.effect(
     "generates all helper types in empty workspaces and removes only owned session files",
     () =>
@@ -467,7 +820,21 @@ it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("uses the native default without sending T3's default selection as a model ID", () =>
+  it.effect("pauses memory on a model the account cannot select", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeFixture({ memoryRunnerContext: memoryContext });
+      const error = yield* fixture.textGeneration.generateMemorySummary!({
+        ...memorySummary,
+        modelSelection: { ...memorySelection, model: "not-in-the-account" },
+      }).pipe(Effect.flip);
+      expect(error.detail).toContain("select the Antigravity model");
+      expect(error.cause).toEqual(new MemoryGenerationRunnerError({ code: "unavailable" }));
+      expect(fixture.state.prompts).toEqual([]);
+      yield* fixture.assertCleaned;
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("uses the native default without sending GOAT's default selection as a model ID", () =>
     Effect.gen(function* () {
       const fixture = yield* makeFixture();
       const result = yield* fixture.textGeneration.generateThreadTitle({
