@@ -49,6 +49,8 @@ import { EnvironmentToolkit } from "./toolkits/environment/tools.ts";
 import * as EnvironmentHandlers from "./toolkits/environment/handlers.ts";
 import { KanbanToolkit } from "./toolkits/kanban/tools.ts";
 import * as KanbanHandlers from "./toolkits/kanban/handlers.ts";
+import { NoteToolkit } from "./toolkits/note/tools.ts";
+import * as NoteHandlers from "./toolkits/note/handlers.ts";
 import { ProjectToolkit } from "./toolkits/project/tools.ts";
 import * as ProjectHandlers from "./toolkits/project/handlers.ts";
 import { AttachmentToolkit } from "./toolkits/attachment/tools.ts";
@@ -1127,6 +1129,8 @@ const layerKanbanToolkit = toolkitRegistration(KanbanToolkit, KanbanHandlers.lay
   Layer.provide(OrchestratorMcpService.layer),
 );
 
+const layerNoteToolkit = toolkitRegistration(NoteToolkit, NoteHandlers.layer);
+
 export const layerAttachmentToolkit = toolkitRegistration(
   AttachmentToolkit,
   AttachmentHandlers.layer,
@@ -1195,6 +1199,7 @@ export const layerTools = Layer.mergeAll(
   layerAttachmentToolkit,
   layerProjectRegistration,
   layerKanbanToolkit,
+  layerNoteToolkit,
   layerEnvironmentToolkit,
   layerPreviewControlsRegistration,
   layerWorktreeToolkitRegistration,

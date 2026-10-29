@@ -51,6 +51,7 @@ export type T3McpToolSummaryAction =
   | "project-delete"
   | "project-clone"
   | "kanban"
+  | "notes"
   | "environment-read"
   | "environment-links"
   | "environment-link"
@@ -349,6 +350,7 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   t3_project_delete: tool(["Delete", "Deleting", "Deleted", "a project"], "project-delete"),
   t3_project_clone: tool(["Clone", "Cloning", "Cloned", "a repository"], "project-clone"),
   t3_kanban: tool(["Update", "Updating", "Updated", "the kanban board"], "kanban"),
+  t3_note: tool(["Update", "Updating", "Updated", "notes"], "notes"),
   t3_attachment_prepare_upload: tool(
     ["Prepare", "Preparing", "Prepared", "an attachment upload"],
     "attachment-prepare",

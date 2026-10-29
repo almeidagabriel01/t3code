@@ -333,6 +333,9 @@ export function summarizeT3ToolCalls(
     case "kanban":
       label = phrase("Used", "use", `the kanban board ${times}`);
       break;
+    case "notes":
+      label = phrase("Used", "use", `notes ${times}`);
+      break;
     case "environment-read":
       label = phrase("Checked", "check", `environment preferences ${times}`);
       break;

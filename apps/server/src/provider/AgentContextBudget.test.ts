@@ -30,6 +30,8 @@ import { PreviewManager } from "../preview/Manager.ts";
 import { PreviewBrowser } from "../preview/PreviewBrowser.ts";
 import { ManagedProjectFolders } from "../project/ManagedProjectFolders.ts";
 import { KanbanService } from "../kanban/KanbanService.ts";
+import { NoteWorkService } from "../notes/NoteWorkService.ts";
+import { NotesService } from "../notes/NotesService.ts";
 import { ProjectService } from "../project/ProjectService.ts";
 import { ProjectSetupScriptRunner } from "../project/ProjectSetupScriptRunner.ts";
 import { PullRequestReviewGuideService } from "../pullRequest/PullRequestReviewGuideService.ts";
@@ -53,6 +55,8 @@ const toolHandlerServices = Layer.mergeAll(
   Layer.mock(KanbanService)({}),
   Layer.mock(ManagedProjectFolders)({ namedProjectsRoot: "" }),
   Layer.mock(McpProviderSessions)({}),
+  Layer.mock(NotesService)({}),
+  Layer.mock(NoteWorkService)({}),
   Layer.mock(OrchestratorV2)({}),
   Layer.mock(PeerForwarding)({}),
   Layer.mock(PeerLinkRequests)({}),
