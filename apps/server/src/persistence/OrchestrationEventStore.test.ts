@@ -131,6 +131,7 @@ layer("OrchestrationEventStore", (it) => {
             providerInstanceId,
             providerThreadId: null,
             childThreadId: null,
+            memoryGrantCeiling: "none",
             nativeTaskRef: { driver, nativeId: "subagent-prompt", strength: "strong" },
             prompt: nextPrompt,
             progress,
