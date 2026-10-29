@@ -73,4 +73,26 @@ describe("KanbanGlobalBoard", () => {
       title: "Ship it",
     });
   });
+
+  it("adds the card when Enter is pressed in the title", async () => {
+    setup();
+    const local = EnvironmentId.make("local");
+    const empty = { boards: new Map() } as unknown as KanbanState;
+    await using _screen = await render(
+      <KanbanGlobalBoard
+        states={[{ environmentId: local, state: empty, error: null }]}
+        projects={new Map([project(local, "p1", "Alpha")])}
+        onOpenCard={vi.fn()}
+      />,
+    );
+
+    await page.getByRole("button", { name: "New card" }).click();
+    await userEvent.type(page.getByRole("textbox", { name: "Title" }), "Ship it{Enter}");
+
+    await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
+    expect(mocks.createCard).toHaveBeenCalledWith(local, {
+      boardId: "new-board",
+      title: "Ship it",
+    });
+  });
 });

@@ -183,6 +183,13 @@ function NewCardDialog(props: {
                 autoFocus
                 value={title}
                 onChange={(event) => setTitle(event.target.value)}
+                onKeyDown={(event) => {
+                  // The selects' hidden inputs block the browser's implicit form submit.
+                  if (event.key === "Enter" && !event.nativeEvent.isComposing) {
+                    event.preventDefault();
+                    void submit();
+                  }
+                }}
               />
             </div>
           </form>
