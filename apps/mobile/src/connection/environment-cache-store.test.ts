@@ -254,6 +254,9 @@ function makeDatabase() {
     inspectCaches: Effect.succeed([]),
     loadPreferencesJson: Effect.succeed(Option.none()),
     savePreferencesJson: () => Effect.void,
+    loadNoteOutbox: Effect.succeed([]),
+    saveNoteOutbox: () => Effect.void,
+    removeNoteOutbox: () => Effect.void,
   });
   return { database, removed, schemaVersions, values };
 }

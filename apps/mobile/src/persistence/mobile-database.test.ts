@@ -59,3 +59,40 @@ describe("offline pull request cache", () => {
     ),
   );
 });
+
+describe("note outbox", () => {
+  it.effect("keeps one row per note, oldest first, until removed", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { DatabaseSync } = yield* Effect.promise(() => import("node:sqlite"));
+        const sqlite = new DatabaseSync(":memory:");
+        const database = {
+          execAsync: async (sql: string) => {
+            sqlite.exec(sql);
+          },
+          runAsync: async (sql: string, ...args: Array<string | number>) =>
+            sqlite.prepare(sql).run(...args),
+          getFirstAsync: async (sql: string, ...args: Array<string | number>) =>
+            sqlite.prepare(sql).get(...args),
+          getAllAsync: async (sql: string, ...args: Array<string | number>) =>
+            sqlite.prepare(sql).all(...args),
+          withExclusiveTransactionAsync: async (run: (transaction: unknown) => Promise<void>) => {
+            await run(database);
+          },
+          closeAsync: async () => {
+            sqlite.close();
+          },
+        };
+        openDatabaseAsync.mockResolvedValueOnce(database);
+        const store = yield* MobileDatabase.make;
+        yield* store.saveNoteOutbox("hub", "b.md", "b1", 2);
+        yield* store.saveNoteOutbox("hub", "a.md", "a1", 1);
+        yield* store.saveNoteOutbox("hub", "b.md", "b2", 3);
+        yield* store.saveNoteOutbox("other", "a.md", "other", 4);
+        expect(yield* store.loadNoteOutbox).toEqual(["a1", "b2", "other"]);
+        yield* store.removeNoteOutbox("hub", "a.md");
+        expect(yield* store.loadNoteOutbox).toEqual(["b2", "other"]);
+      }),
+    ),
+  );
+});
