@@ -212,7 +212,7 @@ export function KanbanDescriptionEditor(props: {
     editorProps: {
       attributes: {
         class:
-          "composer-tiptap min-h-40 rounded-lg border border-input bg-background px-3 py-2 text-sm leading-relaxed whitespace-pre-wrap wrap-break-word text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
+          "composer-tiptap min-h-40 rounded-lg border border-input bg-background px-3 py-2 text-sm leading-relaxed whitespace-pre-wrap wrap-break-word text-foreground ring-ring/24 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-inset [&_.ProseMirror-selectednode]:outline-none!",
         role: "textbox",
         "aria-multiline": "true",
         "aria-label": "Description",
