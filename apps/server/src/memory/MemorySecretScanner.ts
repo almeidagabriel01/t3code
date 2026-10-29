@@ -1,3 +1,5 @@
+import type * as Effect from "effect/Effect";
+
 /** Scanner reports rule identifiers only; inspected strings never leave this boundary. */
 export type MemoryScanResult =
   | { readonly kind: "allowed" }
@@ -48,3 +50,12 @@ export function scanMemoryValue(value: unknown): MemoryScanResult {
     ? { kind: "allowed" }
     : { kind: "blocked", ruleIds: [...found].sort(), inspectedBytes };
 }
+
+/** Seam for scrubbing text this environment writes; no session credential reaches memory text here, so identity. */
+export const redactMemoryText = <T extends { readonly text: string; readonly judgment?: string }>(
+  value: T,
+): T => value;
+
+/** A generation whose result, when present, is passed through {@link redactMemoryText}. */
+export const redacted = <O, E, R>(generation: Effect.Effect<O, E, R>): Effect.Effect<O, E, R> =>
+  generation;

@@ -1,11 +1,12 @@
 import type * as M from "@t3tools/contracts";
+import type * as Hub from "../MemoryHubService.ts";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import type { MemoryAccessError, MemoryServiceError } from "../MemoryService.ts";
 import type * as Store from "../MemoryStore.ts";
 
 export type Permit = Effect.Effect<void, MemoryAccessError, never>;
-export type SyncError = M.MemoryHubError;
+export type SyncError = Hub.MemoryHubServiceError;
 export type ImportError = MemoryServiceError | M.MemoryImportRpcError | M.MemoryRpcError;
 export type ImportAddress = {
   readonly memorySpaceId: M.MemorySpaceId;
