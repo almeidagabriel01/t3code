@@ -92,3 +92,36 @@ describe("NoteEditor formatting", () => {
     await vi.waitFor(() => expect(onChange).toHaveBeenLastCalledWith("## Plan"));
   });
 });
+
+describe("NoteEditor view mode", () => {
+  const checklist = "- [ ] ship it\n";
+
+  it("shows no formatting toolbar and takes no typing until editable", async () => {
+    const onChange = vi.fn();
+    const props = { environmentId: EnvironmentId.make("env"), body: "# Plan\n", onChange };
+    await using screen = await render(<NoteEditor {...props} editable={false} />);
+    const body = page.getByRole("textbox", { name: "Note body" });
+    await expect.element(body).toBeVisible();
+    expect(body.element().getAttribute("contenteditable")).toBe("false");
+    await expect
+      .element(page.getByRole("toolbar", { name: "Note formatting" }))
+      .not.toBeInTheDocument();
+    await screen.rerender(<NoteEditor {...props} editable />);
+    await expect.element(page.getByRole("toolbar", { name: "Note formatting" })).toBeVisible();
+    expect(body.element().getAttribute("contenteditable")).toBe("true");
+  });
+
+  it("saves a checkbox toggled while reading", async () => {
+    const onChange = vi.fn();
+    await using _screen = await render(
+      <NoteEditor
+        environmentId={EnvironmentId.make("env")}
+        body={checklist}
+        editable={false}
+        onChange={onChange}
+      />,
+    );
+    await userEvent.click(page.getByRole("checkbox"));
+    await vi.waitFor(() => expect(onChange).toHaveBeenLastCalledWith("- [x] ship it\n"));
+  });
+});

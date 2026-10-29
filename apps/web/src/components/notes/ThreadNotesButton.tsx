@@ -133,112 +133,119 @@ function ThreadNotes(props: {
     <>
       {panelToggle}
       {showLinks ? (
-      <Popover open={open} onOpenChange={setOpen}>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <PopoverTrigger
-                render={
-                  <Toggle
-                    className="shrink-0 [-webkit-app-region:no-drag]"
-                    pressed={open}
-                    aria-label={label}
-                    variant="ghost"
-                    size="sm"
-                  />
-                }
-              />
-            }
-          >
-            {panelToggle ? <LinkIcon className="size-4" /> : <NotebookPenIcon className="size-4" />}
-            {linked.length > 0 ? (
-              <span className="text-xs text-muted-foreground tabular-nums">{linked.length}</span>
-            ) : null}
-          </TooltipTrigger>
-          <TooltipPopup side="bottom">{label}</TooltipPopup>
-        </Tooltip>
-        <PopoverPopup width="md" align="end">
-          <div className="grid grid-cols-[minmax(0,1fr)] gap-3">
-            <PopoverTitle>Notes for this thread</PopoverTitle>
-            {linked.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No notes linked to this thread yet.</p>
-            ) : (
-              <ul className="-mx-2 grid grid-cols-[minmax(0,1fr)] gap-px" aria-label="Linked notes">
-                {linked.map((note) => (
-                  <li
-                    key={note.path}
-                    className="flex items-start gap-1 rounded-md hover:bg-accent/50"
-                  >
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setOpen(false);
-                        openNote(note.path);
-                      }}
-                      className="grid min-w-0 flex-1 gap-0.5 rounded-md text-start px-2 py-1.5 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
-                    >
-                      <span className="truncate text-sm font-medium">{note.title}</span>
-                      <span className="truncate text-xs text-muted-foreground">
-                        {note.preview || note.path}
-                      </span>
-                    </button>
-                    {canUpdate ? (
-                      <Button
-                        size="icon-xs"
-                        variant="ghost-muted"
-                        className="mt-1.5 me-1"
-                        aria-label={`Unlink ${note.title}`}
-                        onClick={() => void relate(note.path, "unrelate")}
-                      >
-                        <XIcon aria-hidden />
-                      </Button>
-                    ) : null}
-                  </li>
-                ))}
-              </ul>
-            )}
-            {canUpdate && notes.length > linked.length ? (
-              <div className="grid grid-cols-[minmax(0,1fr)] gap-1">
-                <Input
-                  size="sm"
-                  type="search"
-                  aria-label="Find a note to link"
-                  placeholder="Link a note…"
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
+        <Popover open={open} onOpenChange={setOpen}>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <PopoverTrigger
+                  render={
+                    <Toggle
+                      className="shrink-0 [-webkit-app-region:no-drag]"
+                      pressed={open}
+                      aria-label={label}
+                      variant="ghost"
+                      size="sm"
+                    />
+                  }
                 />
+              }
+            >
+              {panelToggle ? (
+                <LinkIcon className="size-4" />
+              ) : (
+                <NotebookPenIcon className="size-4" />
+              )}
+              {linked.length > 0 ? (
+                <span className="text-xs text-muted-foreground tabular-nums">{linked.length}</span>
+              ) : null}
+            </TooltipTrigger>
+            <TooltipPopup side="bottom">{label}</TooltipPopup>
+          </Tooltip>
+          <PopoverPopup width="md" align="end">
+            <div className="grid grid-cols-[minmax(0,1fr)] gap-3">
+              <PopoverTitle>Notes for this thread</PopoverTitle>
+              {linked.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No notes linked to this thread yet.</p>
+              ) : (
                 <ul
                   className="-mx-2 grid grid-cols-[minmax(0,1fr)] gap-px"
-                  aria-label="Notes to link"
+                  aria-label="Linked notes"
                 >
-                  {suggestions.map((note) => (
-                    <li key={note.path}>
+                  {linked.map((note) => (
+                    <li
+                      key={note.path}
+                      className="flex items-start gap-1 rounded-md hover:bg-accent/50"
+                    >
                       <button
                         type="button"
-                        onClick={() => void relate(note.path, "relate")}
-                        className="w-full truncate rounded-md px-2 py-1.5 text-start text-sm outline-none hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+                        onClick={() => {
+                          setOpen(false);
+                          openNote(note.path);
+                        }}
+                        className="grid min-w-0 flex-1 gap-0.5 rounded-md text-start px-2 py-1.5 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
                       >
-                        {note.title}
+                        <span className="truncate text-sm font-medium">{note.title}</span>
+                        <span className="truncate text-xs text-muted-foreground">
+                          {note.preview || note.path}
+                        </span>
                       </button>
+                      {canUpdate ? (
+                        <Button
+                          size="icon-xs"
+                          variant="ghost-muted"
+                          className="mt-1.5 me-1"
+                          aria-label={`Unlink ${note.title}`}
+                          onClick={() => void relate(note.path, "unrelate")}
+                        >
+                          <XIcon aria-hidden />
+                        </Button>
+                      ) : null}
                     </li>
                   ))}
                 </ul>
-              </div>
-            ) : null}
-            {canWrite ? (
-              <Button size="sm" variant="outline" onClick={() => void createForThread()}>
-                <PlusIcon aria-hidden />
-                New note for this thread
-              </Button>
-            ) : null}
-            {error ? (
-              <p role="alert" className="text-xs text-destructive-foreground">
-                {error}
-              </p>
-            ) : null}
-          </div>
-        </PopoverPopup>
-      </Popover>
+              )}
+              {canUpdate && notes.length > linked.length ? (
+                <div className="grid grid-cols-[minmax(0,1fr)] gap-1">
+                  <Input
+                    size="sm"
+                    type="search"
+                    aria-label="Find a note to link"
+                    placeholder="Link a note…"
+                    value={query}
+                    onChange={(event) => setQuery(event.target.value)}
+                  />
+                  <ul
+                    className="-mx-2 grid grid-cols-[minmax(0,1fr)] gap-px"
+                    aria-label="Notes to link"
+                  >
+                    {suggestions.map((note) => (
+                      <li key={note.path}>
+                        <button
+                          type="button"
+                          onClick={() => void relate(note.path, "relate")}
+                          className="w-full truncate rounded-md px-2 py-1.5 text-start text-sm outline-none hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+                        >
+                          {note.title}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+              {canWrite ? (
+                <Button size="sm" variant="outline" onClick={() => void createForThread()}>
+                  <PlusIcon aria-hidden />
+                  New note for this thread
+                </Button>
+              ) : null}
+              {error ? (
+                <p role="alert" className="text-xs text-destructive-foreground">
+                  {error}
+                </p>
+              ) : null}
+            </div>
+          </PopoverPopup>
+        </Popover>
       ) : null}
     </>
   );

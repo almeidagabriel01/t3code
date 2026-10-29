@@ -13,6 +13,7 @@ import {
   CheckIcon,
   EllipsisIcon,
   MessageSquareIcon,
+  PencilIcon,
   PinIcon,
   PinOffIcon,
   PlayIcon,
@@ -111,6 +112,8 @@ function NoteDetail(props: NotePaneProps & { document: NoteDocument }) {
   const [fileAction, setFileAction] = useState<"move" | "delete" | null>(null);
   const [starting, setStarting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  // Notes open read-only; a note just created (autoFocus) opens ready to type.
+  const [editing, setEditing] = useState(props.autoFocus);
   // Focus only on the first mount; an editor remounted by a reload must not take focus back.
   const [focusOnMount] = useState(props.autoFocus);
   // A note that was listed and then left the list was removed or moved elsewhere.
@@ -200,6 +203,26 @@ function NoteDetail(props: NotePaneProps & { document: NoteDocument }) {
           onRetry={() => void session.save()}
         />
         <div className="ms-auto flex items-center gap-1">
+          {canWrite && !removed ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    size="xs"
+                    variant={editing ? "default" : "outline"}
+                    aria-label={editing ? "Done editing" : "Edit note"}
+                    onClick={() => setEditing(!editing)}
+                  />
+                }
+              >
+                {editing ? <CheckIcon aria-hidden /> : <PencilIcon aria-hidden />}
+                {editing ? "Done" : "Edit"}
+              </TooltipTrigger>
+              <TooltipPopup side="bottom">
+                {editing ? "Back to reading (Esc)" : "Edit this note"}
+              </TooltipPopup>
+            </Tooltip>
+          ) : null}
           {canUpdate ? (
             <Tooltip>
               <TooltipTrigger
@@ -316,11 +339,11 @@ function NoteDetail(props: NotePaneProps & { document: NoteDocument }) {
         key={state.editorVersion}
         environmentId={environmentId}
         body={state.body}
-        editable={canWrite && !removed}
+        editable={canWrite && !removed && editing}
         autoFocus={focusOnMount && state.editorVersion === 0}
         claimedImages={state.claimedImages}
         onChange={(body) => session.edit(body)}
-        onExit={props.onExitEditor}
+        onExit={editing ? () => setEditing(false) : props.onExitEditor}
       />
       {latest.related.length > 0 ? (
         <section

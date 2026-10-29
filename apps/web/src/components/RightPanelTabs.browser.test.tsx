@@ -1,7 +1,7 @@
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useState } from "react";
 import { expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 import { act, render } from "../../test/render";
@@ -24,6 +24,7 @@ function Fixture(props: {
   width?: number;
   audio?: boolean;
   open?: boolean;
+  onAddNotes?: () => void;
   close?: (surface: RightPanelSurface, finish: () => void) => void;
 }) {
   const [surfaces, setSurfaces] = useState(props.initial);
@@ -107,7 +108,7 @@ function Fixture(props: {
         onAddPullRequest={noop}
         onAddPullRequests={noop}
         onAddDevice={noop}
-        onAddNotes={noop}
+        onAddNotes={props.onAddNotes ?? noop}
         browserAvailable={false}
         terminalAvailable={false}
         filesAvailable={false}
@@ -115,7 +116,7 @@ function Fixture(props: {
         pullRequestAvailable={false}
         pullRequestsAvailable={false}
         deviceAvailable={false}
-        notesAvailable={false}
+        notesAvailable={props.onAddNotes !== undefined}
       >
         <button type="button">Outside the tab strip</button>
       </RightPanelTabs>
@@ -149,6 +150,15 @@ it("reserves the replacement add button when a mounted panel closes and reopens"
       viewport(screen.container).clientWidth + 1,
     );
   });
+});
+
+it("opens Notes from the add menu with its N shortcut", async () => {
+  const onAddNotes = vi.fn();
+  await using screen = await render(<Fixture initial={files(1)} onAddNotes={onAddNotes} />);
+  await userEvent.click(screen.getByRole("button", { name: "Add panel surface" }));
+  await expect.element(page.getByRole("menuitem", { name: /Notes/ })).toBeVisible();
+  await userEvent.keyboard("n");
+  expect(onAddNotes).toHaveBeenCalledOnce();
 });
 
 it("shares capped widths independently of titles, shrinks equally, then scrolls at the minimum", async () => {

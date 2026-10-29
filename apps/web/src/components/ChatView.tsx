@@ -986,9 +986,6 @@ export default function ChatView(props: ChatViewProps) {
       sideChatAvailable &&
       selectActiveRightPanel(state.byThreadKey, activeThreadRef) === "side-chat",
   );
-  const notesEnvironmentIds = useNotesEnvironmentIds();
-  const notesAvailable =
-    activeThreadRef !== null && notesEnvironmentIds.includes(activeThreadRef.environmentId);
   const toggleSideChat = () => {
     if (!sideChatAvailable || activeThreadRef === null) return;
     useRightPanelStore.getState().toggle(activeThreadRef, "side-chat");
@@ -1106,6 +1103,12 @@ export default function ChatView(props: ChatViewProps) {
       ? scopeProjectRef(activeThreadEnvironmentId, activeThreadProjectId)
       : null;
   const activeProject = useProject(activeProjectRef);
+  const notesEnvironmentIds = useNotesEnvironmentIds();
+  const notesAvailable =
+    activeThreadRef !== null &&
+    activeProject != null &&
+    !activeProject.isScratch &&
+    notesEnvironmentIds.includes(activeThreadRef.environmentId);
   const activeProjectSettings = resolveProjectSettings(
     settings,
     activeProject?.id ?? null,
@@ -3168,7 +3171,7 @@ export default function ChatView(props: ChatViewProps) {
         onSendAnnotation={sendPreviewAnnotationStable}
         onCloseSurface={closeRightPanelSurface}
         notes={
-          activeProject && !activeProject.isScratch && notesAvailable
+          activeProject && notesAvailable
             ? { threadRef: activeThreadRef, projectId: activeProject.id }
             : null
         }
@@ -3982,6 +3985,7 @@ export default function ChatView(props: ChatViewProps) {
           onAddPullRequest={addPullRequestSurfaceStable}
           onAddPullRequests={addPullRequestsSurfaceStable}
           onAddDevice={addDeviceSurfaceStable}
+          onAddNotes={() => useRightPanelStore.getState().open(activeThreadRef, "notes")}
           browserAvailable={canOperatePreview && browserAvailable}
           terminalAvailable={activeProject !== null && canOperateTerminal}
           diffAvailable={isServerThread && isGitRepo}
@@ -3989,6 +3993,7 @@ export default function ChatView(props: ChatViewProps) {
           pullRequestAvailable={pullRequestSurfaceAvailable}
           pullRequestsAvailable={pullRequestsSurfaceAvailable}
           deviceAvailable={activeThreadRef !== null}
+          notesAvailable={notesAvailable}
         >
           {rightPanelContent}
         </ChatRightPanel>

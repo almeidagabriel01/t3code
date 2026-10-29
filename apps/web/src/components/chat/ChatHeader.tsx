@@ -453,12 +453,12 @@ export const ChatHeader = memo(function ChatHeader({
         </Tooltip>
       ) : null}
       <ThreadNotesButton
-          environmentId={activeThreadEnvironmentId}
-          threadId={activeThreadId}
-          isServerThread={isServerThread}
-          projectId={activeProject && !activeProject.isScratch ? activeProject.id : null}
-          projectTitle={activeProject && !activeProject.isScratch ? activeProject.title : null}
-        />
+        environmentId={activeThreadEnvironmentId}
+        threadId={activeThreadId}
+        isServerThread={isServerThread}
+        projectId={activeProject && !activeProject.isScratch ? activeProject.id : null}
+        projectTitle={activeProject && !activeProject.isScratch ? activeProject.title : null}
+      />
       {isServerThread ? (
         <KanbanThreadCardBadge
           environmentId={activeThreadEnvironmentId}
