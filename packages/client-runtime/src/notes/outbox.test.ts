@@ -61,6 +61,12 @@ describe("notes outbox", () => {
       baseRevision: revision,
       localUpdatedAt: 2,
     });
+    expect(
+      noteWriteInput(enqueueNote([], { ...edit, baseRevision: null, project: "p" as never })[0]!),
+    ).toMatchObject({ project: "p" });
+    expect(
+      noteWriteInput(enqueueNote([], { ...edit, project: "p" as never })[0]!),
+    ).not.toHaveProperty("project");
     expect(noteOutboxKey("server", "cafe\u0301.md")).toBe(noteOutboxKey("server", "café.md"));
   });
   it("preserves create-only null revisions when the body changes", () => {

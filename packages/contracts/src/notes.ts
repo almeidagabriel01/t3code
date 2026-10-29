@@ -90,6 +90,8 @@ export const NoteSummary = Schema.Struct({
   /** Threads linked for reference. */
   related: Schema.Array(ThreadId),
   card: Schema.NullOr(NoteCardLink),
+  /** The environment-local project the note belongs to; absent means unscoped. */
+  project: Schema.optionalKey(ProjectId),
   updatedBy: Schema.NullOr(NoteAuthor),
   revision: NoteRevision,
   updatedAt: IsoDateTime,
@@ -106,6 +108,8 @@ export type NoteDocument = typeof NoteDocument.Type;
 
 export const NotesListInput = Schema.Struct({
   folder: Schema.optional(NoteFolder),
+  /** Only notes of this project. */
+  project: Schema.optional(ProjectId),
 });
 export type NotesListInput = typeof NotesListInput.Type;
 
@@ -125,6 +129,8 @@ export const NotesWriteInput = Schema.Struct({
   body: Schema.String,
   /** The revision the edit started from; null creates the note and refuses when it exists. */
   baseRevision: Schema.NullOr(NoteRevision),
+  /** Sets the project when given; absent keeps the current one. */
+  project: Schema.optional(ProjectId),
 });
 export type NotesWriteInput = typeof NotesWriteInput.Type;
 
@@ -135,6 +141,8 @@ export const NotesUpdateInput = Schema.Struct({
   unrelate: Schema.optional(ThreadId),
   /** null unlinks the kanban card; start work links one. */
   card: Schema.optional(Schema.Null),
+  /** A project id moves the note there; null makes it unscoped. */
+  project: Schema.optional(Schema.NullOr(ProjectId)),
 });
 export type NotesUpdateInput = typeof NotesUpdateInput.Type;
 

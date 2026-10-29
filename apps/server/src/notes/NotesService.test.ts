@@ -175,6 +175,10 @@ it("round trips the id, card link, pin and related threads", () => {
   for (const key of ["pinned:", "related:", "card:", "cardProject:"])
     assert.notInclude(cleared, key);
   assert.include(cleared, "custom: keep");
+  const scoped = parseNote("---\nproject: project-2\n---\nB\n");
+  assert.strictEqual(scoped.project, ProjectId.make("project-2"));
+  assert.include(serializeNote(scoped), "project: project-2");
+  assert.notInclude(serializeNote({ ...scoped, project: null }), "project:");
   assert.isNull(parseNote("---\nid: Not A Valid Id\n---\n").id);
 });
 
@@ -575,6 +579,38 @@ it.effect("pinned survives body writes and moves, and repeated updates do not re
       unpinned.revision,
     );
   }).pipe(Effect.provide(layer())),
+);
+
+it.effect(
+  "a note keeps its project through writes and moves, lists by project, and clears it",
+  () =>
+    Effect.gen(function* () {
+      const notes = yield* Notes.NotesService;
+      const web = ProjectId.make("web");
+      const scoped = yield* notes.write(
+        { path: "a.md", body: "# A", baseRevision: null, project: web },
+        "user",
+      );
+      yield* notes.write({ path: "b.md", body: "# B", baseRevision: null }, "user");
+      assert.strictEqual(scoped.project, web);
+      const saved = yield* notes.write(
+        { path: "a.md", body: "# A2", baseRevision: scoped.revision },
+        "user",
+      );
+      const moved = yield* notes.move(
+        { from: "a.md", to: "m.md", baseRevision: saved.revision },
+        "user",
+      );
+      assert.strictEqual(moved.project, web);
+      assert.deepStrictEqual(
+        (yield* notes.list({ project: web })).notes.map((note) => note.path),
+        ["m.md"],
+      );
+      assert.strictEqual((yield* notes.list({})).notes.length, 2);
+      const cleared = yield* notes.update({ path: "m.md", project: null });
+      assert.isUndefined(cleared.project);
+      assert.strictEqual((yield* notes.list({ project: web })).notes.length, 0);
+    }).pipe(Effect.provide(layer())),
 );
 
 it.effect("relates only threads this environment has, idempotently", () => {

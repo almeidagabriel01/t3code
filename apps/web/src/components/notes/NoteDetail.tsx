@@ -32,6 +32,7 @@ import { Spinner } from "../ui/spinner";
 import { Toggle } from "../ui/toggle";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { NoteCardChip } from "./NoteCard";
+import { NoteProjectMenu } from "./NoteProjectMenu";
 import { NoteConflictDialog } from "./NoteConflictDialog";
 import { NoteEditor } from "./NoteEditor";
 import { NoteFileDialog } from "./NoteFileDialog";
@@ -254,6 +255,14 @@ function NoteDetail(props: NotePaneProps & { document: NoteDocument }) {
         </div>
       </div>
       <div className="mx-auto grid w-full max-w-3xl gap-2 px-4 md:px-8">
+        <div>
+          <NoteProjectMenu
+            environmentId={environmentId}
+            projectId={latest.project ?? null}
+            disabled={!canUpdate || removed}
+            onChange={(project) => void runUpdate({ project })}
+          />
+        </div>
         {latest.card !== null ? (
           <div>
             <NoteCardChip

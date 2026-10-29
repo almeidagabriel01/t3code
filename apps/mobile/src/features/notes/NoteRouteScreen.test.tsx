@@ -104,6 +104,7 @@ vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => mocks.rea
 vi.mock("../files/FileMarkdownPreview", () => ({ useMarkdownPreviewStyles: () => ({}) }));
 vi.mock("../threads/ThreadMarkdownImage", () => ({ ThreadMarkdownImage: () => null }));
 vi.mock("./NoteCard", () => ({ NoteCardSection: () => null }));
+vi.mock("./NoteProjectPicker", () => ({ NoteProjectPicker: () => null }));
 vi.mock("./notes-state", () => ({
   notesCommandOptions: {},
   useNotesOutbox: () => {

@@ -1,4 +1,4 @@
-import type { EnvironmentId, NoteDocument, NoteSummary } from "@t3tools/contracts";
+import type { EnvironmentId, NoteDocument, NoteSummary, ProjectId } from "@t3tools/contracts";
 import { useRef } from "react";
 
 import { notesEnvironment } from "../../state/notes";
@@ -14,7 +14,7 @@ export function useCreateNote(environmentId: EnvironmentId, notes: ReadonlyArray
   const write = useNoteCommand(notesEnvironment.write);
   const inFlight = useRef<Promise<NoteReply<NoteDocument>> | null>(null);
   const taken = new Set(notes.map((note) => note.path));
-  return (folder: string | null = null): Promise<NoteReply<NoteDocument>> => {
+  return (folder: string | null = null, project?: ProjectId): Promise<NoteReply<NoteDocument>> => {
     if (inFlight.current) return inFlight.current;
     const attempt = async (): Promise<NoteReply<NoteDocument>> => {
       let result: NoteReply<NoteDocument> = { ok: false, error: null };
@@ -22,7 +22,12 @@ export function useCreateNote(environmentId: EnvironmentId, notes: ReadonlyArray
       for (let skip = 0; skip < 5; skip++) {
         result = await write({
           environmentId,
-          input: { path: untitledNotePath(taken, folder, skip), body: "", baseRevision: null },
+          input: {
+            path: untitledNotePath(taken, folder, skip),
+            body: "",
+            baseRevision: null,
+            ...(project === undefined ? {} : { project }),
+          },
         });
         if (result.ok || !isNoteErrorReason(result.error, "exists")) return result;
       }

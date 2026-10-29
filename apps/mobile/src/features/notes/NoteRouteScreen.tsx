@@ -1,5 +1,5 @@
 import { useNavigation, usePreventRemove, type StaticScreenProps } from "@react-navigation/native";
-import { EnvironmentId, type NoteDocument } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, type NoteDocument } from "@t3tools/contracts";
 import {
   attachmentImageMarkdown,
   parseAttachmentImageSrc,
@@ -38,8 +38,14 @@ import {
   useNoteDraftAccess,
   useNotesOutbox,
 } from "./notes-state";
+import { NoteProjectPicker } from "./NoteProjectPicker";
 
-type NoteParams = { environmentId: string; path: string; create?: boolean };
+type NoteParams = {
+  environmentId: string;
+  path: string;
+  create?: boolean;
+  project?: string;
+};
 
 export function NoteRouteScreen({ route }: StaticScreenProps<NoteParams>) {
   return (
@@ -171,6 +177,8 @@ function NoteContent(props: NoteParams) {
 
   const save = async (nextBody: string) => {
     if (!canEdit) return;
+    const createIn =
+      props.create && props.project ? { project: ProjectId.make(props.project) } : {};
     setSaving(true);
     pendingSaves.current++;
     try {
@@ -179,6 +187,7 @@ function NoteContent(props: NoteParams) {
         path: props.path,
         body: nextBody,
         baseRevision: editBase.current,
+        ...createIn,
         localUpdatedAt: Date.now(),
       });
       setBody(stored);
@@ -220,7 +229,11 @@ function NoteContent(props: NoteParams) {
     edit(`${before}${separator}${uploaded.refs.join("\n")}\n${current.slice(at)}`);
   };
 
-  const runUpdate = async (input: { pinned?: boolean; card?: null }) => {
+  const runUpdate = async (input: {
+    pinned?: boolean;
+    card?: null;
+    project?: ProjectId | null;
+  }) => {
     setBusy(true);
     const result = await update({ environmentId, input: { path: props.path, ...input } });
     setBusy(false);
@@ -250,6 +263,7 @@ function NoteContent(props: NoteParams) {
   // Pin, unlink and start work rewrite the header on the server; a local draft would then conflict.
   const canChangeHeader = canAct && note !== null && !row && !editing && !dirty && !saving;
   const pinned = latest?.pinned ?? note?.pinned ?? false;
+  const project = latest ? (latest.project ?? null) : (note?.project ?? null);
   const card = latest ? latest.card : (note?.card ?? null);
   const bodyAvailable = hasSnapshot || note !== null || row !== undefined;
   const status = saving
@@ -479,6 +493,16 @@ function NoteContent(props: NoteParams) {
           </>
         )}
 
+        {bodyAvailable && note !== null ? (
+          <NoteProjectPicker
+            environmentId={environmentId}
+            value={project}
+            noneLabel="No project"
+            accessibilityLabel="Note project"
+            disabled={!canChangeHeader || busy}
+            onChange={(next) => void runUpdate({ project: next })}
+          />
+        ) : null}
         {bodyAvailable && note !== null ? (
           card ? (
             <NoteCardSection

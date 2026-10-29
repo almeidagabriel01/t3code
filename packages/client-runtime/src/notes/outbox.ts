@@ -1,5 +1,10 @@
 import type { EnvironmentId, NoteDocument, NotesWriteInput } from "@t3tools/contracts";
-import { NoteDocument as NoteDocumentSchema, NotePath, NoteRevision } from "@t3tools/contracts";
+import {
+  NoteDocument as NoteDocumentSchema,
+  NotePath,
+  NoteRevision,
+  ProjectId,
+} from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
 const SentEdit = Schema.Struct({
@@ -14,6 +19,8 @@ export const NoteOutboxRow = Schema.Struct({
   // send, so a draft saved under an older, looser NotePath stays visible without blocking the rest.
   path: Schema.String,
   ...SentEdit.fields,
+  /** The project a note created on this device joins when its first write lands. */
+  project: Schema.optionalKey(ProjectId),
   state: Schema.Literals(["pending", "conflict"]),
   // Likewise, a title saved before the wire cap must not block the outbox.
   current: Schema.NullOr(Schema.Struct({ ...NoteDocumentSchema.fields, title: Schema.String })),
@@ -38,10 +45,13 @@ export function enqueueNote(
   const path = decodeNotePath(edit.path.normalize("NFC"));
   const key = noteOutboxKey(edit.environmentId, path);
   const previous = rows.find((row) => noteOutboxKey(row.environmentId, row.path) === key);
+  const project = edit.project ?? previous?.project;
+  const { project: _project, ...rest } = edit;
   const next: NoteOutboxRow = {
-    ...edit,
+    ...rest,
     path,
     baseRevision: previous ? previous.baseRevision : edit.baseRevision,
+    ...(project === undefined ? {} : { project }),
     localUpdatedAt: Math.max(edit.localUpdatedAt, (previous?.localUpdatedAt ?? -1) + 1),
     state: previous?.state ?? "pending",
     current: previous?.current ?? null,
@@ -97,5 +107,11 @@ export function restoreNote(row: NoteOutboxRow): NoteOutboxRow {
 
 export function noteWriteInput(row: NoteOutboxRow): NotesWriteInput {
   const edit = row.inFlight ?? row;
-  return { path: row.path, body: edit.body, baseRevision: edit.baseRevision };
+  return {
+    path: row.path,
+    body: edit.body,
+    baseRevision: edit.baseRevision,
+    // Only a creation files the note; later writes must not undo a project change.
+    ...(edit.baseRevision === null && row.project ? { project: row.project } : {}),
+  };
 }

@@ -8,6 +8,7 @@ export interface NoteListRow {
   readonly title: string;
   readonly folder: string | null;
   readonly pinned: boolean;
+  readonly project: string | null;
   readonly preview: string;
   readonly updatedAt: string;
   readonly sync: NoteSyncState;
@@ -28,6 +29,7 @@ export function noteListRows(
         title: note.title,
         folder: note.folder,
         pinned: note.pinned,
+        project: note.project ?? null,
         preview: note.preview,
         updatedAt: note.updatedAt,
         sync: noteSyncState(),
@@ -45,6 +47,7 @@ export function noteListRows(
         row.path.split("/").at(-1)!.slice(0, -".md".length),
       folder: row.path.includes("/") ? row.path.split("/")[0]! : null,
       pinned: previous?.pinned ?? false,
+      project: previous?.project ?? row.project ?? null,
       preview: previous?.preview ?? "",
       updatedAt: previous?.updatedAt ?? "",
       sync: noteSyncState(row),

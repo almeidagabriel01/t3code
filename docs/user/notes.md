@@ -18,6 +18,13 @@ finds a note by title.
 When more than one connected environment has notes, pick the environment at the top of the page.
 Each environment keeps its own notes.
 
+## Notes per project
+
+A note can belong to a project. Open a project's **Notes** from the menu on its sidebar row or the
+command palette to see only its notes; new notes created there join it. Set, change, or clear a
+note's project with the project button above the note. On the phone, filter the list by project and
+set the project on a note the same way. Start work suggests the note's project.
+
 ## Formatting
 
 Type `/` at the start of a line, or after a space, to insert a block: headings, lists, to-dos,
@@ -58,7 +65,7 @@ unlink one, or create a note for the thread. A linked note lists the thread unde
 ## Where notes live
 
 Notes are plain `.md` files on the machine that runs the T3 Code server, in the `notes` folder of
-its data directory (`~/.t3/userdata/notes` by default). T3 Code keeps pin, card, and thread links in
+its data directory (`~/.t3/userdata/notes` by default). T3 Code keeps pin, project, card, and thread links in
 a small frontmatter block at the top of each file.
 
 You can edit the files in any editor. T3 Code picks up the change, and if you were editing the same

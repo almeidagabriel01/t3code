@@ -229,6 +229,7 @@ const make = Effect.gen(function* () {
           pinned: contents.pinned,
           related: contents.related,
           card: contents.card,
+          ...(contents.project === null ? {} : { project: contents.project }),
           updatedBy: contents.updatedBy,
           revision: sha256(bytes),
           updatedAt: info.mtime.toISOString(),
@@ -529,7 +530,14 @@ const make = Effect.gen(function* () {
         ),
       { concurrency: 4 },
     );
-    return { notes: notes.filter(Option.isSome).map((note) => note.value), folders, truncated };
+    return {
+      notes: notes
+        .filter(Option.isSome)
+        .map((note) => note.value)
+        .filter((note) => input.project === undefined || note.project === input.project),
+      folders,
+      truncated,
+    };
   });
   const read = Effect.fn("NotesService.read")(function* (input: NotesReadInput) {
     return (yield* lock.withPermits(1)(load(input.path))).document;
@@ -575,6 +583,7 @@ const make = Effect.gen(function* () {
             pinned: existing?.contents.pinned ?? false,
             related: existing?.contents.related ?? [],
             card: existing?.contents.card ?? null,
+            project: input.project ?? existing?.contents.project ?? null,
             updatedBy: author,
           },
           existing?.document.revision ?? null,
@@ -607,8 +616,10 @@ const make = Effect.gen(function* () {
           }
           if (input.unrelate) related = related.filter((entry) => entry !== input.unrelate);
           const card = input.card === null ? null : source.contents.card;
+          const project = input.project === undefined ? source.contents.project : input.project;
           if (
             card === source.contents.card &&
+            project === source.contents.project &&
             pinned === source.contents.pinned &&
             related.length === source.contents.related.length &&
             related.every((entry, index) => entry === source.contents.related[index])
@@ -616,7 +627,14 @@ const make = Effect.gen(function* () {
             return source.document;
           return yield* persist(
             input.path,
-            { ...source.contents, id: source.contents.id ?? newNoteId(), pinned, related, card },
+            {
+              ...source.contents,
+              id: source.contents.id ?? newNoteId(),
+              pinned,
+              related,
+              card,
+              project,
+            },
             source.document.revision,
           );
         }),

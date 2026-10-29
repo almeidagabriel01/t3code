@@ -125,6 +125,17 @@ it.effect("an agent writes, retries a stale write after reading, and starts work
     expect(read.body).toBe("# Launch\n- [x] plan\n");
     const listed = yield* call({ action: "list", folder: "ideas" });
     expect(listed).toMatchObject({ folders: ["ideas"], truncated: false });
+    const scoped = yield* call({ action: "update", path: "ideas/launch.md", project: "alpha" });
+    expect(scoped).toMatchObject({ project: projectId });
+    expect(yield* call({ action: "list", project: "Alpha" })).toMatchObject({
+      notes: [{ path: "ideas/launch.md" }],
+    });
+    const unscoped = yield* call({
+      action: "update",
+      path: "ideas/launch.md",
+      clearProject: true,
+    });
+    expect(unscoped).not.toHaveProperty("project");
 
     const started = yield* call({
       action: "start_work",

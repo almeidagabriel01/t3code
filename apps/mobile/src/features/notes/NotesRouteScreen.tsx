@@ -1,6 +1,6 @@
 import { useNavigation } from "@react-navigation/native";
 import { selectNotesInOrder } from "@t3tools/client-runtime/state/notes";
-import { NotePath, type EnvironmentId } from "@t3tools/contracts";
+import { NotePath, type EnvironmentId, type ProjectId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
@@ -19,6 +19,7 @@ import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScroll
 import { useNotesEnvironmentIds, useNotesFeed } from "../../state/notes";
 import { useWorkspaceEnvironments } from "../../state/workspace";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
+import { NoteProjectPicker } from "./NoteProjectPicker";
 import { notesError } from "./delivery";
 import { newNotePath, noteListRows, noteSyncLabel, type NoteListRow } from "./notes-model";
 import { useNoteDraftAccess, useNotesOutbox } from "./notes-state";
@@ -88,7 +89,9 @@ function EnvironmentNotes(props: {
   const outbox = useNotesOutbox();
   const { canEdit, connected } = useNoteDraftAccess(environmentId);
   const state = Option.getOrNull(AsyncResult.value(feed));
-  const rows = noteListRows(environmentId, state ? selectNotesInOrder(state) : [], outbox);
+  const [project, setProject] = useState<ProjectId | null>(null);
+  const allRows = noteListRows(environmentId, state ? selectNotesInOrder(state) : [], outbox);
+  const rows = project === null ? allRows : allRows.filter((row) => row.project === project);
   const groups = groupRows(rows);
 
   const create = () =>
@@ -105,10 +108,15 @@ function EnvironmentNotes(props: {
             "Can't use that name",
             "Use a name or folder/name without slashes beyond one folder, leading dots, or colons.",
           );
-        } else if (rows.some((row) => row.path === path)) {
+        } else if (allRows.some((row) => row.path === path)) {
           navigation.navigate("SettingsNote", { environmentId, path });
         } else {
-          navigation.navigate("SettingsNote", { environmentId, path, create: true });
+          navigation.navigate("SettingsNote", {
+            environmentId,
+            path,
+            create: true,
+            ...(project === null ? {} : { project }),
+          });
         }
       },
     });
@@ -128,6 +136,13 @@ function EnvironmentNotes(props: {
         contentContainerClassName="gap-5 p-4"
       >
         {props.picker}
+        <NoteProjectPicker
+          environmentId={environmentId}
+          value={project}
+          noneLabel="All projects"
+          accessibilityLabel="Filter by project"
+          onChange={setProject}
+        />
         {!connected ? (
           <Text textRole="footnote" className="text-foreground-muted">
             Offline. Edits save on this device and sync when you reconnect.

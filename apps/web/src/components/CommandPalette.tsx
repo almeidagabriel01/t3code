@@ -74,11 +74,13 @@ import {
   SquarePenIcon,
   TextSearchIcon,
   UserPlusIcon,
+  NotebookPenIcon,
   SquareKanbanIcon,
 } from "lucide-react";
 import { useActivityOpen, useToggleActivity } from "./activity/useActivity";
 import { openThreadFind } from "./chat/threadFindStore";
 import { useKanbanEnvironmentIds } from "../state/kanban";
+import { useNotesEnvironmentIds } from "../state/notes";
 import { useNotesPaletteItems } from "./notes/notesPaletteItems";
 import {
   useDeferredValue,
@@ -437,6 +439,7 @@ function OpenCommandPaletteDialog(props: {
   });
   const { environments } = useEnvironments();
   const kanbanSupported = useKanbanEnvironmentIds().length > 0;
+  const notesSupported = useNotesEnvironmentIds().length > 0;
   const notesItems = useNotesPaletteItems((to) => navigate(to));
   const desktopLocalBootstraps = useDesktopLocalBootstraps();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -1676,6 +1679,23 @@ function OpenCommandPaletteDialog(props: {
         },
       });
     }
+  }
+
+  if (notesSupported && contextualProjectGroup) {
+    actionItems.push({
+      kind: "action",
+      value: "action:project-notes",
+      searchTerms: ["notes", "markdown", "ideas", "notebook"],
+      title: "Open notes",
+      description: contextualProjectGroup.displayName,
+      icon: <NotebookPenIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        await navigate({
+          to: "/notes",
+          search: { projectKey: contextualProjectGroup.projectKey },
+        });
+      },
+    });
   }
 
   actionItems.push(...notesItems);

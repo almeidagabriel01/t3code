@@ -42,30 +42,47 @@ const run = Effect.fn("mcp.note.run")(
     const context = yield* loadCaller();
     if (!reads(action)) yield* assertNotLinked(context, "change this environment's notes");
     switch (action) {
-      case "list":
-        return yield* notes.list(input.folder === undefined ? {} : { folder: input.folder });
+      case "list": {
+        const project =
+          input.project === undefined ? undefined : yield* resolveProject(input.project, context);
+        return yield* notes.list({
+          ...(input.folder === undefined ? {} : { folder: input.folder }),
+          ...(project === undefined ? {} : { project }),
+        });
+      }
       case "read":
         return yield* notes.read({ path: yield* need(input.path, "path", action) });
-      case "write":
+      case "write": {
+        const project =
+          input.project === undefined ? undefined : yield* resolveProject(input.project, context);
         return summary(
           yield* notes.write(
             {
               path: yield* need(input.path, "path", action),
               body: yield* need(input.body, "body", action),
               baseRevision: yield* need(input.baseRevision, "baseRevision", action),
+              ...(project === undefined ? {} : { project }),
             },
             "agent",
           ),
         );
-      case "update":
+      }
+      case "update": {
+        const project = input.clearProject
+          ? null
+          : input.project === undefined
+            ? undefined
+            : yield* resolveProject(input.project, context);
         return summary(
           yield* notes.update({
             path: yield* need(input.path, "path", action),
+            ...(project === undefined ? {} : { project }),
             ...(input.pinned === undefined ? {} : { pinned: input.pinned }),
             ...(input.relate === undefined ? {} : { relate: input.relate }),
             ...(input.unrelate === undefined ? {} : { unrelate: input.unrelate }),
           }),
         );
+      }
       case "move":
         return summary(
           yield* notes.move(

@@ -1,14 +1,16 @@
 import { RegistryContext, useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import { selectNotesInOrder } from "@t3tools/client-runtime/state/notes";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
-import { NotebookPenIcon } from "lucide-react";
+import { ArrowLeftIcon, NotebookPenIcon } from "lucide-react";
 import { useContext, useEffect, useRef, useState } from "react";
 
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
 import { isElectron } from "../../env";
+import { useSidebarProjectGroups } from "../../hooks/useSidebarProjectGroups";
+import { useProjects } from "../../state/entities";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { matchesPageCommand, pageCommandShortcutLabel } from "../../keybindings";
 import { isEditableFocused } from "../../lib/editableFocus";
@@ -54,7 +56,26 @@ export function NotesPage(props: NotesSearch) {
   const primary = usePrimaryEnvironmentId();
   const { environments } = useEnvironments();
   const navigate = useNavigate();
-  const environmentId = pickEnvironment(ids, props.environmentId, primary);
+  const groups = useSidebarProjectGroups();
+  const group = props.projectKey
+    ? groups.find((entry) => entry.projectKey === props.projectKey)
+    : undefined;
+  const members = (group?.memberProjects ?? []).filter((member) =>
+    ids.includes(member.environmentId),
+  );
+  const environmentId = pickEnvironment(
+    group ? members.map((member) => member.environmentId) : ids,
+    props.environmentId,
+    primary,
+  );
+  const scope =
+    group && environmentId !== null
+      ? {
+          environmentId,
+          projectId: members.find((member) => member.environmentId === environmentId)?.id,
+          name: group.displayName,
+        }
+      : null;
   const environmentOptions = ids.map((id) => ({
     value: id,
     label: environments.find((environment) => environment.environmentId === id)?.label ?? id,
@@ -67,8 +88,20 @@ export function NotesPage(props: NotesSearch) {
         data-glass-layer
       >
         <WorkspaceBreadcrumb ariaLabel="Notes">
-          <h1 className="truncate">Notes</h1>
-          {environmentId !== null ? <NotesSummary environmentId={environmentId} /> : null}
+          {scope ? (
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              aria-label="All notes"
+              onClick={() =>
+                void navigate({ to: "/notes", search: { environmentId: scope.environmentId } })
+              }
+            >
+              <ArrowLeftIcon aria-hidden />
+            </Button>
+          ) : null}
+          <h1 className="truncate">{scope ? `Notes · ${scope.name}` : "Notes"}</h1>
+          {environmentId !== null && !scope ? <NotesSummary environmentId={environmentId} /> : null}
         </WorkspaceBreadcrumb>
         {environmentOptions.length > 1 && environmentId !== null ? (
           <div className="ms-auto">
@@ -76,7 +109,15 @@ export function NotesPage(props: NotesSearch) {
               label="Environment"
               value={environmentId}
               options={environmentOptions}
-              onChange={(next) => void navigate({ to: "/notes", search: { environmentId: next } })}
+              onChange={(next) =>
+                void navigate({
+                  to: "/notes",
+                  search: {
+                    environmentId: next,
+                    ...(props.projectKey ? { projectKey: props.projectKey } : {}),
+                  },
+                })
+              }
             />
           </div>
         ) : null}
@@ -91,7 +132,12 @@ export function NotesPage(props: NotesSearch) {
           </EmptyHeader>
         </Empty>
       ) : (
-        <EnvironmentNotes key={environmentId} {...props} environmentId={environmentId} />
+        <EnvironmentNotes
+          key={environmentId}
+          {...props}
+          environmentId={environmentId}
+          scopeProjectId={scope?.projectId ?? null}
+        />
       )}
     </SidebarInset>
   );
@@ -122,8 +168,11 @@ const rowFor = (path: string) =>
   document.querySelector<HTMLElement>(`[data-note-row="${CSS.escape(path)}"]`);
 const focusSearch = () => document.querySelector<HTMLInputElement>("[data-notes-search]")?.focus();
 
-function EnvironmentNotes(props: NotesSearch & { environmentId: EnvironmentId }) {
-  const { environmentId } = props;
+function EnvironmentNotes(
+  props: NotesSearch & { environmentId: EnvironmentId; scopeProjectId: ProjectId | null },
+) {
+  const { environmentId, scopeProjectId } = props;
+  const keepScope = props.projectKey ? { projectKey: props.projectKey } : {};
   const liveAtom = notesEnvironment.live({ environmentId, input: null });
   const live = useAtomValue(liveAtom);
   const reconnect = useAtomRefresh(liveAtom);
@@ -140,8 +189,21 @@ function EnvironmentNotes(props: NotesSearch & { environmentId: EnvironmentId })
   const returnTo = useRef<string | null>(null);
   const state = Option.getOrNull(AsyncResult.value(live));
   const ready = state !== null;
-  const notes = state === null ? [] : selectNotesInOrder(state);
-  const createNote = useCreateNote(environmentId, notes);
+  const allNotes = state === null ? [] : selectNotesInOrder(state);
+  const notes =
+    props.projectKey === undefined
+      ? allNotes
+      : allNotes.filter((note) => scopeProjectId !== null && note.project === scopeProjectId);
+  const createNote = useCreateNote(environmentId, allNotes);
+  const projects = useProjects();
+  const projectNames =
+    props.projectKey === undefined
+      ? new Map(
+          projects
+            .filter((project) => project.environmentId === environmentId)
+            .map((project) => [project.id as string, project.title]),
+        )
+      : undefined;
   const select = (path: string | undefined, options?: { replace?: boolean }) => {
     // Picking the open note again retries a read that failed.
     if (path && path === props.path)
@@ -149,24 +211,25 @@ function EnvironmentNotes(props: NotesSearch & { environmentId: EnvironmentId })
     setFocusPath(null);
     void navigate({
       to: "/notes",
-      search: { environmentId, ...(path ? { path } : {}) },
+      search: { environmentId, ...keepScope, ...(path ? { path } : {}) },
       replace: options?.replace === true,
     });
   };
   const create = useStableCallback(() => {
     if (!canCreate) return;
     setCreateError(null);
-    void createNote().then((result) => {
+    void createNote(null, scopeProjectId ?? undefined).then((result) => {
       if (result.ok) {
         setFocusPath(result.value.path);
         void navigate({
           to: "/notes",
-          search: { environmentId, path: result.value.path },
+          search: { environmentId, ...keepScope, path: result.value.path },
           replace: props.create === true,
         });
       } else {
         setCreateError(noteErrorMessage(result.error));
-        if (props.create) void navigate({ to: "/notes", search: { environmentId }, replace: true });
+        if (props.create)
+          void navigate({ to: "/notes", search: { environmentId, ...keepScope }, replace: true });
       }
     });
   });
@@ -174,8 +237,8 @@ function EnvironmentNotes(props: NotesSearch & { environmentId: EnvironmentId })
   useEffect(() => {
     if (!props.create || !ready) return;
     if (canCreate) create();
-    else void navigate({ to: "/notes", search: { environmentId }, replace: true });
-  }, [props.create, ready, canCreate, create, navigate, environmentId]);
+    else void navigate({ to: "/notes", search: { environmentId, ...keepScope }, replace: true });
+  }, [props.create, ready, canCreate, create, navigate, environmentId, keepScope]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers the page's keys with the app-wide shortcut dispatcher while mounted
   useEffect(
     () =>
@@ -232,7 +295,7 @@ function EnvironmentNotes(props: NotesSearch & { environmentId: EnvironmentId })
       document.querySelector<HTMLElement>("nav[aria-label=Notes]")?.offsetParent === null;
     if (listHidden) {
       returnTo.current = path;
-      void navigate({ to: "/notes", search: { environmentId } });
+      void navigate({ to: "/notes", search: { environmentId, ...keepScope } });
     } else if (row) row.focus();
     else focusSearch();
   };
@@ -258,6 +321,7 @@ function EnvironmentNotes(props: NotesSearch & { environmentId: EnvironmentId })
       <NoteList
         notes={notes}
         folders={state?.folders ?? []}
+        projectNames={projectNames}
         selectedPath={props.path}
         query={query}
         onQueryChange={setQuery}

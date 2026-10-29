@@ -135,8 +135,12 @@ export function NoteStartWorkDialog(props: {
     )
     .map((thread) => thread.projectId);
   const [pickedProject, setPickedProject] = useState<ProjectId | null>(null);
+  const noteProject = projects.find((project) => project.id === props.document.project)?.id;
   const projectId =
-    pickedProject ?? defaultWorkProject(projects, props.document.folder, recent) ?? null;
+    pickedProject ??
+    noteProject ??
+    defaultWorkProject(projects, props.document.folder, recent) ??
+    null;
   const [columnId, setColumnId] = useState<string>(DEFAULT_COLUMN);
   const [busy, setBusy] = useState(false);
   const [attempted, setAttempted] = useState(false);

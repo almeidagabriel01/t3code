@@ -18,6 +18,7 @@ export interface NoteContents {
   readonly pinned: boolean;
   readonly related: ReadonlyArray<ThreadId>;
   readonly card: NoteCardLink | null;
+  readonly project: ProjectId | null;
   readonly updatedBy: NoteAuthor | null;
   /** The parsed header, so keys this module does not manage survive a write. */
   readonly metadata: Document | null;
@@ -41,6 +42,7 @@ export function parseNote(contents: string): NoteContents {
   const related: unknown = isSeq(relatedNode) ? relatedNode.toJSON() : [];
   const cardId = text(metadata?.get("card"));
   const projectId = text(metadata?.get("cardProject"));
+  const scope = text(metadata?.get("project"));
   return {
     body: match ? contents.slice(match[0].length) : contents,
     id: isNoteId(id) ? id : null,
@@ -53,6 +55,7 @@ export function parseNote(contents: string): NoteContents {
       cardId !== null && projectId !== null
         ? { cardId: KanbanCardId.make(cardId), projectId: ProjectId.make(projectId) }
         : null,
+    project: scope === null ? null : ProjectId.make(scope),
     updatedBy: updatedBy === "user" || updatedBy === "agent" ? updatedBy : null,
     metadata,
   };
@@ -65,11 +68,13 @@ export function serializeNote(note: NoteContents): string {
     ...(note.pinned ? { pinned: true } : {}),
     ...(note.related.length > 0 ? { related: [...note.related] } : {}),
     ...(note.card === null ? {} : { card: note.card.cardId, cardProject: note.card.projectId }),
+    ...(note.project === null ? {} : { project: note.project }),
     updatedBy: note.updatedBy,
   };
   if (isMap(metadata?.contents)) {
     if (!note.pinned) metadata.delete("pinned");
     if (note.related.length === 0) metadata.delete("related");
+    if (note.project === null) metadata.delete("project");
     if (note.card === null) {
       metadata.delete("card");
       metadata.delete("cardProject");

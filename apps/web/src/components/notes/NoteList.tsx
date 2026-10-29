@@ -16,6 +16,7 @@ function NoteRow(props: {
   selected: boolean;
   tabbable: boolean;
   showFolder: boolean;
+  projectName: string | undefined;
   onSelect: () => void;
   onKeyDown: (event: KeyboardEvent<HTMLButtonElement>) => void;
 }) {
@@ -53,10 +54,13 @@ function NoteRow(props: {
             {note.preview}
           </span>
         ) : null}
-        {(props.showFolder && note.folder) || note.card ? (
+        {(props.showFolder && note.folder) || note.card || props.projectName ? (
           <span className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
             {props.showFolder && note.folder ? (
               <span className="min-w-0 truncate">{note.folder}</span>
+            ) : null}
+            {props.projectName ? (
+              <span className="min-w-0 truncate rounded bg-muted px-1.5">{props.projectName}</span>
             ) : null}
             {note.card ? (
               <span className="inline-flex shrink-0 items-center gap-1">
@@ -75,6 +79,8 @@ function NoteRow(props: {
 export function NoteList(props: {
   notes: ReadonlyArray<NoteSummary>;
   folders: ReadonlyArray<NoteFolder>;
+  /** Project names by id, to label each note; absent on a project's own list. */
+  projectNames?: ReadonlyMap<string, string> | undefined;
   selectedPath: string | undefined;
   query: string;
   onQueryChange: (query: string) => void;
@@ -131,6 +137,7 @@ export function NoteList(props: {
         key={note.path}
         note={note}
         showFolder={showFolder}
+        projectName={note.project ? props.projectNames?.get(note.project) : undefined}
         selected={note.path === props.selectedPath}
         tabbable={index === Math.max(selectedIndex, 0)}
         onSelect={() => props.onSelect(note.path)}
