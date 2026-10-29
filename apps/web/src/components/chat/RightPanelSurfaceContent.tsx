@@ -22,6 +22,7 @@ import { PullRequestDetailPanel } from "../pullRequest/PullRequestDetailPanel";
 import { PullRequestDetailGhost } from "../pullRequest/PullRequestGhosts";
 import { PullRequestsUnavailableState } from "../pullRequest/PullRequestsUnavailableState";
 import { ThreadPullRequestsPanel } from "../pullRequest/ThreadPullRequestsPanel";
+import { NotesSurface, type NotesSurfaceProps } from "../notes/NotesSurface";
 import { SideChatSurface, type SideChatSurfaceProps } from "../sideChat/SideChatSurface";
 
 const PreviewPanel = lazy(() =>
@@ -76,6 +77,8 @@ export function RightPanelSurfaceContent(props: {
   readonly onCloseSurface: (surface: RightPanelSurface) => void;
   /** Null when the thread cannot have a side chat, such as a side chat itself. */
   readonly sideChat: SideChatSurfaceProps | null;
+  /** Null when the thread has no project or its environment has no notes. */
+  readonly notes: NotesSurfaceProps | null;
   readonly terminal: RightPanelTerminalProps;
   readonly pullRequest: RightPanelPullRequestProps;
   readonly files: RightPanelFileProps;
@@ -173,6 +176,8 @@ export function RightPanelSurfaceContent(props: {
       return props.sideChat ? (
         <SideChatSurface key={scopedThreadKey(threadRef)} {...props.sideChat} />
       ) : null;
+    case "notes":
+      return props.notes ? <NotesSurface {...props.notes} /> : null;
     case "device":
       return (
         <Suspense fallback={null}>

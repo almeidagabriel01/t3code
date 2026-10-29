@@ -514,6 +514,8 @@ function surfaceTitle(
       return "Pull requests";
     case "side-chat":
       return "Side chat";
+    case "notes":
+      return "Notes";
     case "device":
       return surface.title ?? surface.target?.name ?? "Device";
     case "preview": {

@@ -288,6 +288,7 @@ import {
 } from "./chat/PanelLayoutControls";
 import type { ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { ThreadDetailsPanel } from "./chat/ThreadDetailsPanel";
+import { useNotesEnvironmentIds } from "../state/notes";
 import { canOpenSideChat } from "./sideChat/sideChat.logic";
 import { NoActiveThreadState } from "./NoActiveThreadState";
 import {
@@ -985,7 +986,9 @@ export default function ChatView(props: ChatViewProps) {
       sideChatAvailable &&
       selectActiveRightPanel(state.byThreadKey, activeThreadRef) === "side-chat",
   );
-  const notesAvailable = useNotesEnvironmentIds().includes(activeThread?.environmentId as EnvironmentId);
+  const notesEnvironmentIds = useNotesEnvironmentIds();
+  const notesAvailable =
+    activeThreadRef !== null && notesEnvironmentIds.includes(activeThreadRef.environmentId);
   const toggleSideChat = () => {
     if (!sideChatAvailable || activeThreadRef === null) return;
     useRightPanelStore.getState().toggle(activeThreadRef, "side-chat");

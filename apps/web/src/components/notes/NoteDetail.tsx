@@ -48,6 +48,8 @@ interface NotePaneProps {
   autoFocus: boolean;
   onSelect: (path: string | undefined) => void;
   onExitEditor: () => void;
+  /** Set where notes are not a routed page: shows the back button at every width and skips /notes. */
+  onBack?: (() => void) | undefined;
 }
 
 export function NoteLoader(props: NotePaneProps & { path: string }) {
@@ -57,7 +59,7 @@ export function NoteLoader(props: NotePaneProps & { path: string }) {
   const document = query.data;
   return (
     <>
-      {!document && <BackToNotes className="mx-4 mt-3" />}
+      {!document && <BackToNotes className="mx-4 mt-3" onBack={props.onBack} />}
       {query.error && !document && (
         <div
           role="alert"
@@ -186,7 +188,7 @@ function NoteDetail(props: NotePaneProps & { document: NoteDocument }) {
   return (
     <article className="flex min-w-0 flex-1 flex-col" aria-label="Selected note">
       <div className="mx-auto flex w-full max-w-3xl flex-wrap items-center gap-x-2 gap-y-1 px-4 pt-3 pb-1 md:px-8 md:pt-6">
-        <BackToNotes />
+        <BackToNotes onBack={props.onBack} />
         <p className="min-w-0 truncate text-xs text-muted-foreground">
           {state.document.folder ? <span>{state.document.folder} / </span> : null}
           {fileName}
@@ -425,15 +427,18 @@ function RelatedThread(props: {
 }
 
 /** The list and the note share the screen below md; this is the way back to the list there. */
-function BackToNotes(props: { className?: string }) {
+function BackToNotes(props: { className?: string; onBack?: (() => void) | undefined }) {
   const navigate = useNavigate();
   return (
-    <div className={cn("md:hidden", props.className)}>
+    <div className={cn(props.onBack ? undefined : "md:hidden", props.className)}>
       <Button
         size="icon-sm"
         variant="ghost"
         aria-label="Back to notes"
-        onClick={() => void navigate({ to: "/notes", search: ({ path: _path, ...rest }) => rest })}
+        onClick={
+          props.onBack ??
+          (() => void navigate({ to: "/notes", search: ({ path: _path, ...rest }) => rest }))
+        }
       >
         <ArrowLeftIcon aria-hidden />
       </Button>

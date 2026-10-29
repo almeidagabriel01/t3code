@@ -28,6 +28,7 @@ import {
   Files,
   Globe2,
   MessagesSquareIcon,
+  NotebookPenIcon,
   TerminalSquare,
   X,
 } from "lucide-react";
@@ -146,6 +147,8 @@ function SurfaceIcon({
       return <PullRequestGlyph.link className="size-3 shrink-0" />;
     case "side-chat":
       return <MessagesSquareIcon className="size-3 shrink-0" />;
+    case "notes":
+      return <NotebookPenIcon className="size-3 shrink-0" />;
     case "device":
       return surface.target?.platform === "ios" ? (
         <AppleIcon className="size-3 shrink-0" />

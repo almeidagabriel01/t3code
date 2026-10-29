@@ -140,6 +140,16 @@ describe("rightPanelStore", () => {
     expect(useClosedViewStore.getState().entries).toHaveLength(1);
   });
 
+  it("toggles the notes panel and remembers it when it is closed", () => {
+    const store = useRightPanelStore.getState();
+    store.toggle(refA, "notes");
+    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("notes");
+    store.closeSurface(refA, "notes");
+    expect(useClosedViewStore.getState().entries).toMatchObject([
+      { kind: "panel-tab", threadRef: refA, surface: { id: "notes", kind: "notes" } },
+    ]);
+  });
+
   it("gives each host/device its own tab and preserves renamed tabs", () => {
     const store = useRightPanelStore.getState();
     const android = {
