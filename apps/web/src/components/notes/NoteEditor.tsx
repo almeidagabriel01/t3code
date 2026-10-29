@@ -117,9 +117,38 @@ export function NoteEditor(props: {
           ATTACHMENT_IMAGE_EDITOR_CLASS,
         ),
       },
-      handleClick: (_view, _pos, event) => {
-        const href = (event.target as HTMLElement).closest("a")?.getAttribute("href");
-        if (!href || !(event.metaKey || event.ctrlKey)) return false;
+      handleDOMEvents: {
+        // ProseMirror skips the native checkbox mousedown, so handle the click; Tiptap leaves
+        // read-only toggles to us, and ticking while reading saves like an edit.
+        click: (view, event) => {
+          const target = event.target as HTMLElement;
+          if (view.editable || !(target instanceof HTMLInputElement) || target.type !== "checkbox")
+            return false;
+          const li = target.closest("li");
+          if (!li) return false;
+          const $pos = view.state.doc.resolve(view.posAtDOM(li, 0));
+          let pos = $pos.nodeAfter?.type.name === "taskItem" ? $pos.pos : null;
+          for (let depth = $pos.depth; pos === null && depth > 0; depth--) {
+            if ($pos.node(depth).type.name === "taskItem") pos = $pos.before(depth);
+          }
+          const item = pos === null ? null : view.state.doc.nodeAt(pos);
+          if (pos === null || !item) return false;
+          // Cancelling the native toggle keeps Tiptap's change handler from undoing ours.
+          event.preventDefault();
+          view.dispatch(
+            view.state.tr.setNodeMarkup(pos, undefined, {
+              ...item.attrs,
+              checked: !item.attrs.checked,
+            }),
+          );
+          return true;
+        },
+      },
+      handleClick: (view, _pos, event) => {
+        const target = event.target as HTMLElement;
+        const href = target.closest("a")?.getAttribute("href");
+        // Editing keeps plain clicks for the caret; reading follows links directly.
+        if (!href || (view.editable && !(event.metaKey || event.ctrlKey))) return false;
         const api = readLocalApi();
         if (api) void api.shell.openExternal(href);
         else window.open(href, "_blank", "noopener,noreferrer");
@@ -149,9 +178,12 @@ export function NoteEditor(props: {
       props.onChange(noteDocToMarkdown(current.getJSON()));
     },
   });
+  const wasEditable = useRef(props.editable);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pushes the editable prop into the imperative Tiptap editor
   useEffect(() => {
     editor?.setEditable(props.editable);
+    if (props.editable && !wasEditable.current) editor?.commands.focus("end");
+    wasEditable.current = props.editable;
   }, [editor, props.editable]);
   const claimedImages = props.claimedImages;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- renames image nodes inside the imperative Tiptap document without a reload
