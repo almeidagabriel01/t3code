@@ -18,6 +18,8 @@ import { Button } from "../ui/button";
 import { Label } from "../ui/label";
 import { Select, SelectTrigger, SelectValue, SelectPopup, SelectItem } from "../ui/select";
 
+const SCOPE_LABELS = { user: "All projects", project: "Project", thread: "Thread" } as const;
+
 export type MemoryScopeSelection = { scope: MemoryScope; project?: ScopedProjectRef };
 
 /** Destination choices use environment-local records, never inherited settings filters. */
@@ -171,12 +173,14 @@ export function MemoryScopeSettings({
           }}
         >
           <SelectTrigger id={scopeId} aria-label="Memory scope">
-            <SelectValue placeholder="Choose memory scope" />
+            <SelectValue placeholder="Choose memory scope">
+              {kind ? SCOPE_LABELS[kind] : null}
+            </SelectValue>
           </SelectTrigger>
           <SelectPopup>
             {(["user", "project", "thread"] as const).map((value) => (
               <SelectItem key={value} value={value}>
-                {value === "user" ? "All projects" : value === "project" ? "Project" : "Thread"}
+                {SCOPE_LABELS[value]}
               </SelectItem>
             ))}
           </SelectPopup>

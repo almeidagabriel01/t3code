@@ -2303,7 +2303,7 @@ it("requires discover, preview, scope and selection confirmation before an expli
   await chooseOption("Memory scope", "user");
   await click("Find memories");
   await chooseOption("Import source", sourceId);
-  expect(container.textContent).toContain("DEV/demo");
+  expect(container.textContent).toContain("DEV-demo");
   expect(container.textContent).toContain("1 file skipped");
   expect(container.textContent).not.toContain("format is not supported");
   await act(async () =>

@@ -63,11 +63,12 @@ export function memoryImportRequestFailureMessage(error: unknown): string | null
 }
 
 /** Claude sources are labeled by the encoded project folder (-Users-me-DEV-app); dashes stay ambiguous. */
+// Claude encodes every "/" and "." of the project path as "-", so dashes stay as written.
 export function memoryImportSourceName(label: string): string {
   if (!label.startsWith("-")) return label;
-  const parts = label.split("-").filter(Boolean);
-  const rest = parts[0] === "Users" ? parts.slice(2) : parts;
-  return rest.length > 0 ? rest.join("/") : "Home folder";
+  const home = /^-Users-[^-]+-?/.exec(label);
+  const rest = home ? label.slice(home[0].length) : label.slice(1);
+  return rest || "Home folder";
 }
 
 export const memoryImportFormatLabels: Record<MemoryImportSourceFormat, string> = {

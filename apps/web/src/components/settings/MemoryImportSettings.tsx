@@ -215,7 +215,9 @@ export function MemoryImportSettings({
               }}
             >
               <SelectTrigger id={providerId} aria-label="Import provider">
-                <SelectValue placeholder="Choose a provider" />
+                <SelectValue placeholder="Choose a provider">
+                  {format ? memoryImportFormatLabels[format] : null}
+                </SelectValue>
               </SelectTrigger>
               <SelectPopup>
                 {formats.map((value) => (
