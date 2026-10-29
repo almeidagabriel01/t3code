@@ -59,6 +59,7 @@ const dependencies = (kanban?: McpInvocationContext.McpInvocationScope["kanban"]
       listShells: () =>
         Effect.succeed([
           { id: projectId, title: "Alpha" },
+          { id: "project-b", title: "Beta" },
         ] as unknown as ReadonlyArray<OrchestrationProjectShell>),
     }),
   ).pipe(
@@ -168,5 +169,37 @@ it.effect("start work respects the kanban agent setting", () =>
     const refused = yield* call({ action: "start_work", path: "a.md" });
     expect(refused).toMatchObject({ code: "invalid_request" });
     expect(refused.message).toContain("turned off");
+  }).pipe(Effect.scoped),
+);
+
+it.effect("list and new notes default to this thread's project", () =>
+  Effect.gen(function* () {
+    const call = yield* harness();
+    const paths = (result: Record<string, unknown>) =>
+      (result.notes as ReadonlyArray<{ path: string }>).map((note) => note.path).toSorted();
+    yield* call({ action: "write", path: "mine.md", body: "# Mine\n", baseRevision: null });
+    yield* call({
+      action: "write",
+      path: "theirs.md",
+      body: "# Theirs\n",
+      baseRevision: null,
+      project: "Beta",
+    });
+    const loose = yield* call({
+      action: "write",
+      path: "loose.md",
+      body: "# Loose\n",
+      baseRevision: null,
+    });
+    yield* call({ action: "update", path: "loose.md", clearProject: true });
+    expect(loose).toMatchObject({ project: projectId });
+
+    expect(paths(yield* call({ action: "list" }))).toEqual(["mine.md"]);
+    expect(paths(yield* call({ action: "list", allProjects: true }))).toEqual([
+      "loose.md",
+      "mine.md",
+      "theirs.md",
+    ]);
+    expect(paths(yield* call({ action: "list", project: "Beta" }))).toEqual(["theirs.md"]);
   }).pipe(Effect.scoped),
 );

@@ -44,7 +44,11 @@ const run = Effect.fn("mcp.note.run")(
     switch (action) {
       case "list": {
         const project =
-          input.project === undefined ? undefined : yield* resolveProject(input.project, context);
+          input.project !== undefined
+            ? yield* resolveProject(input.project, context)
+            : input.folder === undefined && !input.allProjects
+              ? context.caller?.projectId
+              : undefined;
         return yield* notes.list({
           ...(input.folder === undefined ? {} : { folder: input.folder }),
           ...(project === undefined ? {} : { project }),
@@ -54,7 +58,11 @@ const run = Effect.fn("mcp.note.run")(
         return yield* notes.read({ path: yield* need(input.path, "path", action) });
       case "write": {
         const project =
-          input.project === undefined ? undefined : yield* resolveProject(input.project, context);
+          input.project !== undefined
+            ? yield* resolveProject(input.project, context)
+            : input.baseRevision === null
+              ? context.caller?.projectId
+              : undefined;
         return summary(
           yield* notes.write(
             {

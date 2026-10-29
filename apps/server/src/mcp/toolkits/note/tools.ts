@@ -22,6 +22,7 @@ export const NoteParameters = Schema.Struct({
   relate: Schema.optional(ThreadId),
   unrelate: Schema.optional(ThreadId),
   project: Schema.optional(Schema.String),
+  allProjects: Schema.optional(Schema.Boolean),
   clearProject: Schema.optional(Schema.Boolean),
   clientRequestId: Schema.optional(Schema.String),
 });
@@ -29,7 +30,7 @@ export type NoteParameters = typeof NoteParameters.Type;
 
 const NoteTool = Tool.make("t3_note", {
   description:
-    "Markdown notes on this environment, shared with the user, who may edit the same files. Use when the user asks to read, write or organise notes, or to turn a note into a kanban card. `path`: `note.md` or `folder/note.md`. `list` (optional `folder`, `project`) returns summaries without bodies; `read` returns `body` and `revision`. `write` replaces the whole body (`project` files a new note under that project): pass `baseRevision` from `read`, or null to create; on a conflict read again, reapply your edit, and retry. `update` sets `pinned`, `project` or `clearProject`, or `relate`/`unrelate` a thread id. `move` renames to `to` with `baseRevision`. `start_work` creates one kanban card from the note on `project`'s board (`project` is an id or name; default this thread's project) and links it to the note.",
+    "Markdown notes on this environment, shared with the user, who may edit the same files. Use when the user asks to read, write or organise notes, or to turn a note into a kanban card. `path`: `note.md` or `folder/note.md`. `list` (optional `folder`, `project`) returns summaries without bodies, by default only this thread's project's notes (all notes with `folder`, `allProjects: true`, or no project); `read` returns `body` and `revision`. `write` replaces the whole body (a new note is filed under `project`, default this thread's project): pass `baseRevision` from `read`, or null to create; on a conflict read again, reapply your edit, and retry. `update` sets `pinned`, `project` or `clearProject`, or `relate`/`unrelate` a thread id. `move` renames to `to` with `baseRevision`. `start_work` creates one kanban card from the note on `project`'s board (`project` is an id or name; default this thread's project) and links it to the note.",
   parameters: NoteParameters,
   success: Schema.Record(Schema.String, Schema.Json),
   failure: OrchestratorMcpFailure,
