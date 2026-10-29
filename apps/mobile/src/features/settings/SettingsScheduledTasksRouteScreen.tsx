@@ -87,6 +87,7 @@ import { appAtomRegistry } from "../../state/atom-registry";
 import {
   formatNextScheduledTaskRun,
   formatScheduledTaskInterval,
+  scheduledMemoryAccess,
 } from "./scheduledTaskPresentation";
 
 type ScheduledTaskRoutes = {
@@ -1357,6 +1358,9 @@ function EnvironmentTasks({
                     ? ` · ${formatNextScheduledTaskRun(task.nextRunAt, now)}`
                     : ""}
               </Text>
+              {scheduledMemoryAccess(task) ? (
+                <Text className="text-sm text-foreground-muted">{scheduledMemoryAccess(task)}</Text>
+              ) : null}
               {task.lastRunError ? (
                 <Text className="text-sm text-danger-foreground" numberOfLines={2}>
                   Last run failed: {task.lastRunError}

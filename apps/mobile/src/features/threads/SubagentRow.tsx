@@ -1,3 +1,4 @@
+import { scheduledMemoryAccess } from "../settings/scheduledTaskPresentation";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { resolveProviderInstanceDisplayName } from "@t3tools/client-runtime/state/provider-instance-display";
 import { resolveSubagentMetadata } from "@t3tools/client-runtime/state/subagent-display";
@@ -16,6 +17,8 @@ import { resolveSubagentRowPresentation } from "./threadAgentsPresentation";
 
 type SubagentRowSubagent = Pick<
   OrchestrationV2Subagent,
+  | "currentMemoryAccess"
+  | "memoryGrantCeiling"
   | "threadId"
   | "childThreadId"
   | "model"
@@ -79,6 +82,7 @@ export function SubagentRow(props: {
           ) : null}
         </View>
         <SubagentMetadata environmentId={props.environmentId} subagent={props.subagent} />
+        <SubagentMemoryAccess subagent={props.subagent} />
         {detail ? (
           <Text
             numberOfLines={3}
@@ -153,4 +157,13 @@ function SubagentMetadata(props: {
       ))}
     </View>
   );
+}
+
+function SubagentMemoryAccess({
+  subagent,
+}: {
+  readonly subagent: Pick<OrchestrationV2Subagent, "memoryGrantCeiling" | "currentMemoryAccess">;
+}) {
+  const label = scheduledMemoryAccess(subagent);
+  return label ? <Text className="text-xs text-foreground-muted">{label}</Text> : null;
 }
