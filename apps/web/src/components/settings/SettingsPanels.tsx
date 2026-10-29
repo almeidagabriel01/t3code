@@ -19,6 +19,7 @@ import {
   type ResponseStreamingMode,
   type QuitConfirmationMode,
   SidebarProjectSortOrder,
+  SidebarThreadOrder,
 } from "@t3tools/contracts/settings";
 import { createModelSelection } from "@t3tools/shared/model";
 import * as Equal from "effect/Equal";
@@ -116,6 +117,12 @@ const SIDEBAR_PROJECT_SORT_ORDER_LABELS: Record<SidebarProjectSortOrder, string>
   manual: "Manual",
 };
 const isSidebarProjectSortOrder = Schema.is(SidebarProjectSortOrder);
+
+const SIDEBAR_THREAD_ORDER_LABELS: Record<SidebarThreadOrder, string> = {
+  activity: "Recent activity",
+  fixed: "Fixed",
+};
+const isSidebarThreadOrder = Schema.is(SidebarThreadOrder);
 
 const TIMESTAMP_FORMAT_LABELS = {
   locale: "System default",
@@ -435,6 +442,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.sidebarProjectSortOrder !== DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder
       ? ["Project order"]
       : []),
+    ...(settings.sidebarThreadOrder !== DEFAULT_UNIFIED_SETTINGS.sidebarThreadOrder
+      ? ["Thread order"]
+      : []),
     ...(settings.sidebarWorkingShelfEnabled !== DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled
       ? ["Working section"]
       : []),
@@ -627,6 +637,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarProjectSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder,
+      sidebarThreadOrder: DEFAULT_UNIFIED_SETTINGS.sidebarThreadOrder,
       sidebarWorkingShelfEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled,
       sidebarShowSubagents: DEFAULT_UNIFIED_SETTINGS.sidebarShowSubagents,
       sidebarAgentActivityDisplayMode: DEFAULT_UNIFIED_SETTINGS.sidebarAgentActivityDisplayMode,
@@ -886,8 +897,53 @@ export function GeneralSettingsPanel() {
           }
         />
         <SettingsRow
+          {...searchableSetting("thread-order")}
+          description={
+            settings.sidebarThreadOrder === "activity"
+              ? "Threads you message or that need you move to the top."
+              : "Threads stay where they are; drag to reorder."
+          }
+          resetAction={
+            settings.sidebarThreadOrder !== DEFAULT_UNIFIED_SETTINGS.sidebarThreadOrder ? (
+              <SettingResetButton
+                label="thread order"
+                onClick={() =>
+                  updateSettings({
+                    sidebarThreadOrder: DEFAULT_UNIFIED_SETTINGS.sidebarThreadOrder,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.sidebarThreadOrder}
+              onValueChange={(value) => {
+                if (isSidebarThreadOrder(value)) updateSettings({ sidebarThreadOrder: value });
+              }}
+            >
+              <SelectTrigger size="sm" className="w-full sm:w-44" aria-label="Thread order">
+                <SelectValue>
+                  {SIDEBAR_THREAD_ORDER_LABELS[settings.sidebarThreadOrder]}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {SidebarThreadOrder.literals.map((order) => (
+                  <SelectItem hideIndicator key={order} value={order}>
+                    {SIDEBAR_THREAD_ORDER_LABELS[order]}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
+        <SettingsRow
           {...searchableSetting("working-shelf")}
-          description="Fold working and monitoring threads into a Working section. They return to the top of the inbox when they need you."
+          description={
+            settings.sidebarThreadOrder === "fixed"
+              ? "Not used while thread order is Fixed."
+              : "Fold working and monitoring threads into a Working section. They return to the top of the inbox when they need you."
+          }
           resetAction={
             settings.sidebarWorkingShelfEnabled !==
             DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled ? (
@@ -904,6 +960,7 @@ export function GeneralSettingsPanel() {
           control={
             <Switch
               checked={settings.sidebarWorkingShelfEnabled}
+              disabled={settings.sidebarThreadOrder === "fixed"}
               onCheckedChange={(checked) =>
                 updateSettings({ sidebarWorkingShelfEnabled: Boolean(checked) })
               }

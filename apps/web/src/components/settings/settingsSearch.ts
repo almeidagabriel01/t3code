@@ -417,6 +417,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["usage quota rate limit reset recover continue"],
   },
   {
+    id: "thread-order",
+    title: "Thread order",
+    to: "/settings/general",
+    searchTerms: ["sort threads sidebar fixed recent activity move top reorder drag"],
+  },
+  {
     id: "working-shelf",
     title: "Working section",
     to: "/settings/general",

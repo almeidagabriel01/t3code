@@ -28,7 +28,7 @@ import {
   sortPinnedThreadsByOrderKey,
   sortSettledThreads,
 } from "@t3tools/client-runtime/state/thread-sort";
-import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectId, SidebarThreadOrder } from "@t3tools/contracts";
 import { isSideChatThread } from "@t3tools/contracts";
 
 import type { ThreadListProvider } from "../../state/thread-list-environments";
@@ -208,21 +208,10 @@ function parseTimestampMs(isoDate: string): number {
   return Number.isNaN(parsed) ? 0 : parsed;
 }
 
-export function sortThreadsForListV2<
-  T extends {
-    readonly id: string;
-    readonly createdAt: string;
-    readonly unsettledAt?: string | null | undefined;
-    readonly activeOrderKey?: string | null | undefined;
-    readonly environmentId?: string | undefined;
-  },
->(threads: readonly T[]): T[] {
-  return sortActiveThreadsByOrderKey(threads);
-}
-
 export function getThreadListV2OrderedSection(input: {
   readonly threads: readonly EnvironmentThreadShell[];
   readonly section: "pinned" | "active";
+  readonly threadOrder: SidebarThreadOrder;
   readonly pendingOrder?: PendingThreadOrder | null;
   readonly now: string;
   readonly settlementEnvironmentIds?: ReadonlySet<EnvironmentId>;
@@ -255,7 +244,7 @@ export function getThreadListV2OrderedSection(input: {
   const ordered =
     input.section === "pinned"
       ? sortPinnedThreadsByOrderKey(threads)
-      : sortActiveThreadsByOrderKey(threads);
+      : sortActiveThreadsByOrderKey(threads, input.threadOrder);
   const pending =
     input.pendingOrder?.section === input.section
       ? reconcilePendingThreadOrder(input.pendingOrder, ordered)
@@ -618,6 +607,7 @@ export function buildThreadListV2Items(input: {
   readonly snoozeEnvironmentIds?: ReadonlySet<EnvironmentId>;
   readonly settledLimit?: number;
   readonly now: string;
+  readonly threadOrder?: SidebarThreadOrder;
   readonly workingShelfEnabled?: boolean;
   readonly workingShelfExpanded?: boolean;
   readonly isWorking?: (thread: EnvironmentThreadShell) => boolean;
@@ -632,6 +622,7 @@ export function buildThreadListV2Items(input: {
   readonly unloadedSettledCount?: number;
 }): ThreadListV2Layout {
   const now = input.now;
+  const threadOrder = input.threadOrder ?? "activity";
   const pending =
     input.pendingOrder == null
       ? null
@@ -639,6 +630,7 @@ export function buildThreadListV2Items(input: {
           input.pendingOrder,
           getThreadListV2OrderedSection({
             ...input,
+            threadOrder,
             section: input.pendingOrder.section,
             pendingOrder: null,
           }),
@@ -757,7 +749,7 @@ export function buildThreadListV2Items(input: {
 
   const orderedActive = workingShelfEnabled
     ? sortInboxThreadsByReturn(active, input.inboxReturnAt)
-    : applyPendingThreadOrder(sortThreadsForListV2(active), "active", pending);
+    : applyPendingThreadOrder(sortActiveThreadsByOrderKey(active, threadOrder), "active", pending);
   const orderedWorking = sortWorkingThreadsBySend(working);
   const orderedSnoozed = [...snoozed].sort(
     (left, right) =>

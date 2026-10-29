@@ -1,5 +1,9 @@
 import type { ProjectId } from "@t3tools/contracts";
-import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
+import type {
+  SidebarProjectSortOrder,
+  SidebarThreadOrder,
+  SidebarThreadSortOrder,
+} from "@t3tools/contracts/settings";
 import { generateSpreadPinOrderKeys, pinOrderKeyBetween } from "@t3tools/shared/orderKey";
 import type { EnvironmentThreadShell } from "./models.ts";
 
@@ -233,35 +237,85 @@ export function sortPinnedThreadsByOrderKey<
   return [...keyed, ...keyless];
 }
 
-export function sortActiveThreadsByOrderKey<
-  T extends {
-    readonly id: string;
-    readonly createdAt: string;
-    readonly unsettledAt?: string | null | undefined;
-    readonly activeOrderKey?: string | null | undefined;
-    readonly environmentId?: string | undefined;
-  },
->(threads: readonly T[]): T[] {
+type ActiveSortInput = Partial<
+  Pick<
+    EnvironmentThreadShell,
+    | "latestUserAuthoredMessageAt"
+    | "hasPendingApprovals"
+    | "hasPendingUserInput"
+    | "pendingSubagentRequest"
+    | "interactionMode"
+    | "hasActionableProposedPlan"
+  >
+> & {
+  readonly latestRun?: { readonly requestedAt: string | null } | null;
+  readonly id: string;
+  readonly createdAt: string;
+  readonly unsettledAt?: string | null | undefined;
+  readonly activeOrderKey?: string | null | undefined;
+  readonly environmentId?: string | undefined;
+};
+
+function activeThreadNeedsUser(thread: ActiveSortInput): boolean {
+  return (
+    thread.hasPendingApprovals === true ||
+    thread.hasPendingUserInput === true ||
+    thread.pendingSubagentRequest != null ||
+    (thread.interactionMode === "plan" && thread.hasActionableProposedPlan === true)
+  );
+}
+
+// Only a message the user sent counts; latestUserMessageAt also advances on wakes.
+function activeThreadActivityTimestampMs(thread: ActiveSortInput): number {
+  const sentAt =
+    thread.latestUserAuthoredMessageAt === undefined
+      ? thread.latestRun?.requestedAt
+      : thread.latestUserAuthoredMessageAt;
+  return Math.max(
+    activeThreadAnchorTimestampMs(thread),
+    toSortableTimestamp(sentAt ?? undefined) ?? 0,
+  );
+}
+
+/**
+ * "activity" ignores manual keys: threads that need the user lead, then the latest send,
+ * reopen, or creation. "fixed" keeps the dragged order and never reads run state.
+ */
+export function sortActiveThreadsByOrderKey<T extends ActiveSortInput>(
+  threads: readonly T[],
+  order: SidebarThreadOrder,
+): T[] {
   if (threads.length < 2) return [...threads];
+  const activity = order === "activity";
   const timestamps = new Map<T, number>();
   for (const thread of threads) {
-    if (thread.activeOrderKey == null) {
+    if (activity) timestamps.set(thread, activeThreadActivityTimestampMs(thread));
+    else if (thread.activeOrderKey == null) {
       timestamps.set(thread, activeThreadAnchorTimestampMs(thread));
     }
   }
   return [...threads].sort((left, right) => {
-    const leftKey = left.activeOrderKey;
-    const rightKey = right.activeOrderKey;
-    if (leftKey == null && rightKey != null) return -1;
-    if (leftKey != null && rightKey == null) return 1;
-    let order = 0;
-    if (leftKey != null && rightKey != null) {
-      order = leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+    let comparison = 0;
+    if (activity) {
+      comparison =
+        Number(activeThreadNeedsUser(right)) - Number(activeThreadNeedsUser(left)) ||
+        timestamps.get(right)! - timestamps.get(left)!;
     } else {
-      order = timestamps.get(right)! - timestamps.get(left)!;
+      const leftKey = left.activeOrderKey;
+      const rightKey = right.activeOrderKey;
+      if (leftKey == null && rightKey != null) return -1;
+      if (leftKey != null && rightKey == null) return 1;
+      comparison =
+        leftKey != null && rightKey != null
+          ? leftKey < rightKey
+            ? -1
+            : leftKey > rightKey
+              ? 1
+              : 0
+          : timestamps.get(right)! - timestamps.get(left)!;
     }
     return (
-      order ||
+      comparison ||
       left.id.localeCompare(right.id) ||
       (left.environmentId ?? "").localeCompare(right.environmentId ?? "")
     );

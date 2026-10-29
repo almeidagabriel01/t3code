@@ -1,5 +1,9 @@
 import { Button } from "../../components/ui/Button";
-import { AuthSettingsWriteScope, type ServerSettingsPatch } from "@t3tools/contracts";
+import {
+  AuthSettingsWriteScope,
+  type ServerSettingsPatch,
+  type SidebarThreadOrder,
+} from "@t3tools/contracts";
 import { useEnvironmentsWithScope } from "../../state/session";
 import { AutoSettleDaysField } from "./components/AutoSettleDaysField";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
@@ -15,6 +19,7 @@ import { useEnvironments } from "../../state/environments";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { SettingsChoiceRow } from "./components/SettingsChoiceRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { SettingsScreen } from "./components/SettingsScreen";
@@ -174,26 +179,58 @@ export function AutoSettleSettingsRows(props: {
   );
 }
 
+const THREAD_ORDER_OPTIONS: ReadonlyArray<{
+  readonly order: SidebarThreadOrder;
+  readonly label: string;
+  readonly description: string;
+}> = [
+  {
+    order: "activity",
+    label: "Recent activity",
+    description: "Threads you message or that need you move to the top.",
+  },
+  {
+    order: "fixed",
+    label: "Fixed",
+    description: "Threads stay where they are; move them to reorder.",
+  },
+];
+
 export function WorkingSectionSettings() {
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const preferences = useAtomValue(mobilePreferencesAtom);
-  const workingShelfEnabled =
-    AsyncResult.isSuccess(preferences) && preferences.value.workingShelfEnabled !== false;
+  const loaded = AsyncResult.isSuccess(preferences);
+  const threadOrder = (loaded ? preferences.value.threadOrder : undefined) ?? "activity";
+  const workingShelfEnabled = loaded && preferences.value.workingShelfEnabled !== false;
 
   return (
     <View className="gap-3">
+      <SettingsSection title="Thread order">
+        {THREAD_ORDER_OPTIONS.map((option, index) => (
+          <SettingsChoiceRow
+            key={option.order}
+            label={option.label}
+            description={option.description}
+            selected={loaded && threadOrder === option.order}
+            separated={index > 0}
+            disabled={!loaded}
+            onPress={() => savePreferences({ threadOrder: option.order })}
+          />
+        ))}
+      </SettingsSection>
       <SettingsSection title="Sidebar">
         <SettingsSwitchRow
           icon="bolt.circle"
           label="Working section"
-          value={workingShelfEnabled}
+          value={workingShelfEnabled && threadOrder === "activity"}
+          disabled={threadOrder === "fixed"}
           onValueChange={(value) => savePreferences({ workingShelfEnabled: value })}
         />
       </SettingsSection>
       <Text className="px-2 text-sm text-foreground-muted">
-        Fold working and monitoring threads into a Working section. They return to the top of the
-        list when they need you. While this is on, active threads are ordered by time and cannot be
-        moved.
+        {threadOrder === "fixed"
+          ? "The Working section is not used while thread order is Fixed."
+          : "Fold working and monitoring threads into a Working section. They return to the top of the list when they need you."}
       </Text>
     </View>
   );

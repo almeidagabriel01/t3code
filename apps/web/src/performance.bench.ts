@@ -35,7 +35,7 @@ describe("client performance", () => {
   });
   test("sort 1000 active threads", async ({ bench }) => {
     await bench("sort", () => {
-      sortActiveThreadsByOrderKey(threads);
+      sortActiveThreadsByOrderKey(threads, "activity");
     }).run();
   });
   test("sort 1000 keyless pinned threads", async ({ bench }) => {

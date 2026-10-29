@@ -168,7 +168,7 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
   const pendingOrder = useAtomValue(pendingThreadOrderAtom);
   const dropBusy = useAtomValue(threadDropBusyAtom);
   const { moveThread } = useThreadListActions();
-  const { workingShelfEnabled } = useThreadListV2ShelfPreferences();
+  const { threadOrder, workingShelfEnabled } = useThreadListV2ShelfPreferences();
   const now = useThreadListNow(threads);
   const [expanded, setExpanded] = useState({ snoozed: false, settled: false });
   const [settledVisibleCount, setSettledVisibleCount] = useState(
@@ -183,6 +183,7 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
   const sections = useMemo(() => {
     const shared = {
       threads,
+      threadOrder,
       now,
       queuedThreadKeys,
       pendingOrder,
@@ -211,7 +212,7 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
       snoozed: parked.filter((thread) => effectiveSnoozed(thread, { now })),
       settled: sortSettledThreads(parked.filter((thread) => !effectiveSnoozed(thread, { now }))),
     };
-  }, [threads, configs, now, queuedThreadKeys, pendingOrder, workingShelfEnabled]);
+  }, [threads, threadOrder, configs, now, queuedThreadKeys, pendingOrder, workingShelfEnabled]);
   const listedSettled = sections.settled.filter(olderSettledShelf.isListed);
   useOlderSettledShelfGrowth(olderSettledShelf, listedSettled);
   const visibleSettled = listedSettled.slice(0, settledVisibleCount);
@@ -227,7 +228,7 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
             (
               section === "pinned"
                 ? config.environment.capabilities.threadPinReorder
-                : !workingShelfEnabled && config.environment.capabilities.threadActiveReorder
+                : threadOrder === "fixed" && config.environment.capabilities.threadActiveReorder
             )
               ? [id]
               : [],
@@ -235,7 +236,7 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
         ),
       });
     return { pinned: planner("pinned"), active: planner("active") };
-  }, [sections, threads, configs, workingShelfEnabled]);
+  }, [sections, threads, configs, threadOrder]);
   const rows = useMemo(() => {
     const result: Row[] = [];
     let offset = 0;

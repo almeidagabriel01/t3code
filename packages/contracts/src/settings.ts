@@ -92,6 +92,9 @@ export const SidebarThreadSortOrder = Schema.Literals(["updated_at", "created_at
 export type SidebarThreadSortOrder = typeof SidebarThreadSortOrder.Type;
 const DEFAULT_SIDEBAR_THREAD_SORT_ORDER: SidebarThreadSortOrder = "updated_at";
 
+export const SidebarThreadOrder = Schema.Literals(["activity", "fixed"]);
+export type SidebarThreadOrder = typeof SidebarThreadOrder.Type;
+
 export const SidebarProjectGroupingMode = Schema.Literals([
   "repository",
   "repository_path",
@@ -474,6 +477,9 @@ export const ClientSettingsSchema = Schema.Struct({
   // Fork default: working threads stay in place instead of jumping to a folded section.
   sidebarWorkingShelfEnabled: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
+  sidebarThreadOrder: SidebarThreadOrder.pipe(
+    Schema.withDecodingDefault(Effect.succeed("activity" as const)),
   ),
   sidebarShowSubagents: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   destinationRail: DestinationRailPreferences.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
@@ -1775,6 +1781,7 @@ export const ClientSettingsPatch = Schema.Struct({
   showSkillsInSlashMenu: Schema.optionalKey(Schema.Boolean),
   legacySidebarEnabled: Schema.optionalKey(Schema.Boolean),
   sidebarWorkingShelfEnabled: Schema.optionalKey(Schema.Boolean),
+  sidebarThreadOrder: Schema.optionalKey(SidebarThreadOrder),
   sidebarShowSubagents: Schema.optionalKey(Schema.Boolean),
   destinationRail: Schema.optionalKey(DestinationRailPreferences),
   sidebarAgentActivityDisplayMode: Schema.optionalKey(SidebarAgentActivityDisplayMode),

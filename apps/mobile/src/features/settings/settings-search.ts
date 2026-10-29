@@ -38,6 +38,8 @@ const SETTINGS_SEARCH_TERMS = {
     "organization",
     "sidebar",
     "working section",
+    "thread order",
+    "fixed order",
     "new threads",
     "last project",
   ],

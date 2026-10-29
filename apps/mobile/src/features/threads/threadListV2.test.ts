@@ -38,7 +38,6 @@ import {
   resolveThreadListV2SnoozePresets,
   resolveThreadListV2Status,
   resolveThreadListV2WokeAt,
-  sortThreadsForListV2,
   threadListV2ListItemsAreEqual,
   threadHasUnseenCompletion,
   type ThreadListV2ListItem,
@@ -183,6 +182,32 @@ describe("queued messages keep a settled thread active", () => {
   });
 });
 
+describe("active thread order", () => {
+  const threads = [
+    makeThread({ id: ThreadId.make("top"), title: "Top", createdAt: "2026-06-01T03:00:00.000Z" }),
+    makeThread({
+      id: ThreadId.make("messaged"),
+      title: "Messaged",
+      createdAt: "2026-06-01T01:00:00.000Z",
+      activeOrderKey: "a",
+      latestUserAuthoredMessageAt: "2026-06-01T05:00:00.000Z",
+    }),
+  ];
+  const order = (threadOrder: "activity" | "fixed") =>
+    buildThreadListV2Items({
+      threads,
+      threadOrder,
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+    }).items.map((item) => item.thread.id);
+
+  it("moves a thread you message to the top by default, and keeps it in place when fixed", () => {
+    expect(order("activity")).toEqual(["messaged", "top"]);
+    expect(order("fixed")).toEqual(["top", "messaged"]);
+  });
+});
+
 describe("search lists ranked matches", () => {
   const matchKey = (id: string) =>
     threadSearchMatchKey({ environmentId, threadId: ThreadId.make(id) });
@@ -207,17 +232,6 @@ describe("search lists ranked matches", () => {
       ["mentioned", "card"],
     ]);
     expect([...layout.contentOnlyThreadKeys]).toEqual([matchKey("mentioned")]);
-  });
-});
-
-describe("sortThreadsForListV2", () => {
-  it("honors a saved active order and leaves new threads above it", () => {
-    const sorted = sortThreadsForListV2([
-      { id: "newer-arranged", createdAt: "2026-06-01T12:00:00.000Z", activeOrderKey: "t" },
-      { id: "older-arranged", createdAt: "2026-06-01T08:00:00.000Z", activeOrderKey: "f" },
-      { id: "new", createdAt: "2026-06-01T13:00:00.000Z" },
-    ]);
-    expect(sorted.map((thread) => thread.id)).toEqual(["new", "older-arranged", "newer-arranged"]);
   });
 });
 
@@ -258,14 +272,20 @@ describe("getThreadListV2OrderedSection", () => {
       }),
     ];
     expect(
-      getThreadListV2OrderedSection({ threads, section: "active", now: NOW }).map(
-        (thread) => thread.id,
-      ),
+      getThreadListV2OrderedSection({
+        threads,
+        threadOrder: "fixed",
+        section: "active",
+        now: NOW,
+      }).map((thread) => thread.id),
     ).toEqual(["active-new", "active-first", "active-later"]);
     expect(
-      getThreadListV2OrderedSection({ threads, section: "pinned", now: NOW }).map(
-        (thread) => thread.id,
-      ),
+      getThreadListV2OrderedSection({
+        threads,
+        threadOrder: "fixed",
+        section: "pinned",
+        now: NOW,
+      }).map((thread) => thread.id),
     ).toEqual(["pinned-first", "pinned-later"]);
   });
 });
@@ -860,7 +880,12 @@ describe("pending mobile thread moves", () => {
         pinnedAt: section === "pinned" ? `2026-06-01T0${3 - index}:00:00.000Z` : null,
       }),
     );
-    const ordered = getThreadListV2OrderedSection({ threads: rows, section, now: NOW });
+    const ordered = getThreadListV2OrderedSection({
+      threads: rows,
+      threadOrder: "fixed",
+      section,
+      now: NOW,
+    });
     const orderedIds = ordered.map((row) => `${row.environmentId}:${row.id}`);
     const movedId = orderedIds[2]!;
     const assignments = planPinnedMove({
@@ -896,6 +921,7 @@ describe("pending mobile thread moves", () => {
     return buildThreadListV2Items({
       threads: rows,
       pendingOrder,
+      threadOrder: "fixed",
       environmentId: null,
       searchQuery,
       now: NOW,
@@ -914,7 +940,12 @@ describe("pending mobile thread moves", () => {
         current = update(current, assignment);
         hold = reconcilePendingThreadOrder(
           hold!,
-          getThreadListV2OrderedSection({ threads: current, section, now: NOW }),
+          getThreadListV2OrderedSection({
+            threads: current,
+            threadOrder: "fixed",
+            section,
+            now: NOW,
+          }),
         );
         expect(hold).not.toBeNull();
         expect(layout(current, hold)).toEqual(desired);
@@ -1105,9 +1136,12 @@ describe("thread drag destinations", () => {
         )!.orderKey,
       }));
       expect(
-        getThreadListV2OrderedSection({ threads: confirmed, section, now: NOW }).map(
-          (row) => `${row.environmentId}:${row.id}`,
-        ),
+        getThreadListV2OrderedSection({
+          threads: confirmed,
+          threadOrder: "fixed",
+          section,
+          now: NOW,
+        }).map((row) => `${row.environmentId}:${row.id}`),
       ).toEqual(pending.orderedIds);
       expect(
         reconcilePendingThreadOrder({ ...pending, commandsComplete: true }, confirmed),
@@ -1257,9 +1291,12 @@ it("excludes subagents from navigation, search and ordering while retaining user
     buildThreadListV2Items({ threads, environmentId: null, searchQuery: "Child", now: NOW }).items,
   ).toEqual([]);
   expect(
-    getThreadListV2OrderedSection({ threads, section: "active", now: NOW }).map(
-      (thread) => thread.id,
-    ),
+    getThreadListV2OrderedSection({
+      threads,
+      threadOrder: "fixed",
+      section: "active",
+      now: NOW,
+    }).map((thread) => thread.id),
   ).toEqual([fork.id, root.id]);
 });
 

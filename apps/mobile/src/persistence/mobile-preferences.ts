@@ -13,6 +13,7 @@ import {
   type ProviderInstanceId,
   type PullRequestMergeMethod,
   type SidebarProjectGroupingMode,
+  type SidebarThreadOrder,
 } from "@t3tools/contracts";
 import type { AndroidNavigationStyle } from "../lib/androidNavigationStyle";
 import type { ComposerEnterBehavior } from "../lib/composerEnterBehavior";
@@ -116,6 +117,7 @@ export interface Preferences {
   readonly projectGroupingMode?: SidebarProjectGroupingMode;
   readonly planModeEnabled?: boolean;
   readonly workingShelfEnabled?: boolean;
+  readonly threadOrder?: SidebarThreadOrder;
   /** Unset means the shared client default. */
   readonly usagePaceEnabled?: boolean;
   readonly usageProjectionEnabled?: boolean;
@@ -201,6 +203,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     projectGroupingMode?: SidebarProjectGroupingMode;
     planModeEnabled?: boolean;
     workingShelfEnabled?: boolean;
+    threadOrder?: SidebarThreadOrder;
     usagePaceEnabled?: boolean;
     usageProjectionEnabled?: boolean;
     usageDailyBudgetEnabled?: boolean;
@@ -332,6 +335,9 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (typeof parsed.workingShelfEnabled === "boolean") {
     preferences.workingShelfEnabled = parsed.workingShelfEnabled;
+  }
+  if (parsed.threadOrder === "activity" || parsed.threadOrder === "fixed") {
+    preferences.threadOrder = parsed.threadOrder;
   }
   for (const key of [
     "usagePaceEnabled",

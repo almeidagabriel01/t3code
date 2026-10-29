@@ -646,6 +646,8 @@ export function useThreadListActions(): {
     }
     const ordered = getThreadListV2OrderedSection({
       threads: shells,
+      // Manual keys only order the fixed list.
+      threadOrder: "fixed",
       section,
       now: new Date().toISOString(),
       queuedThreadKeys: appAtomRegistry.get(queuedThreadKeysAtom),

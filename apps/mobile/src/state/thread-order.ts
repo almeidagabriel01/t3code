@@ -68,6 +68,8 @@ export function beginPendingThreadOrder(pending: PendingThreadOrder) {
     const nowMs = Date.now();
     const ordered = getThreadListV2OrderedSection({
       threads,
+      // Manual keys only order the fixed list.
+      threadOrder: "fixed",
       section: current.section,
       now: new Date(nowMs).toISOString(),
       queuedThreadKeys: appAtomRegistry.get(queuedThreadKeysAtom),

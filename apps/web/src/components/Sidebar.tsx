@@ -1,4 +1,5 @@
 import { type EnvironmentId, type ScopedProjectRef } from "@t3tools/contracts";
+import type { SidebarThreadOrder } from "@t3tools/contracts/settings";
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
 import { ThreadContextDragGhost } from "./chat/ThreadContextDragGhost";
 import {
@@ -322,6 +323,7 @@ interface SidebarThreadPartitionInput {
   readonly delegatedUnderParent: ReadonlySet<string>;
   readonly serverConfigs: ReadonlyMap<EnvironmentId, EnvironmentServerConfig>;
   readonly optimisticDrop: SidebarOptimisticDrop | null;
+  readonly threadOrder: SidebarThreadOrder;
   readonly workingShelfEnabled: boolean;
   // Snooze wakes, the queued-turn grace and the Working shelf's exit grace depend
   // on the clock, so the minute tick, the precise snooze-wake tick and the inbox
@@ -346,24 +348,31 @@ function resolveDraggedOrders(input: {
   readonly threadByKey: ReadonlyMap<string, EnvironmentThreadShell>;
   readonly settledThreads: readonly EnvironmentThreadShell[];
   readonly activeThreads: readonly EnvironmentThreadShell[];
+  readonly threadOrder: SidebarThreadOrder;
   readonly workingShelfEnabled: boolean;
 }): typeof NO_DRAGGED_ORDERS {
-  const { drag, threadByKey, settledThreads, activeThreads, workingShelfEnabled } = input;
+  const { drag, threadByKey, settledThreads, activeThreads, threadOrder, workingShelfEnabled } =
+    input;
   const thread = threadByKey.get(drag.activeKey);
   if (thread === undefined) return NO_DRAGGED_ORDERS;
   const others = (list: readonly EnvironmentThreadShell[]) =>
     list.filter((candidate) => threadShellKey(candidate) !== drag.activeKey);
+  const projectedActive = [
+    ...others(activeThreads),
+    applySidebarThreadDrop(thread, "active", drag.occurredAt),
+  ];
   return {
     settledOrder: sortSettledThreads([
       ...others(settledThreads),
       applySidebarThreadDrop(thread, "settled", drag.occurredAt),
     ]).map(threadShellKey),
-    activeOrder: workingShelfEnabled
-      ? sortInboxThreadsByReturn(
-          [...others(activeThreads), applySidebarThreadDrop(thread, "active", drag.occurredAt)],
-          inboxReturns.returnedAt,
-        ).map(threadShellKey)
-      : undefined,
+    activeOrder:
+      threadOrder === "fixed"
+        ? undefined
+        : (workingShelfEnabled
+            ? sortInboxThreadsByReturn(projectedActive, inboxReturns.returnedAt)
+            : sortThreadsForSidebar(projectedActive, threadOrder)
+          ).map(threadShellKey),
   };
 }
 
@@ -388,7 +397,9 @@ function useSidebarThreads(input: {
     routeRowThreadKey,
     projectGroups,
   } = input;
-  const workingShelfEnabled = useClientSettings((s) => s.sidebarWorkingShelfEnabled);
+  const threadOrder = useClientSettings((s) => s.sidebarThreadOrder);
+  const workingShelfEnabled =
+    useClientSettings((s) => s.sidebarWorkingShelfEnabled) && threadOrder === "activity";
   const inboxReturnsVersion = useSyncExternalStore(
     inboxReturns.subscribe,
     inboxReturns.getSnapshot,
@@ -417,6 +428,7 @@ function useSidebarThreads(input: {
     delegatedUnderParent,
     serverConfigs,
     optimisticDrop,
+    threadOrder,
     workingShelfEnabled,
     clockKey: `${nowMinute}:${snoozeWakeClock}:${inboxReturnsVersion}`,
   });
@@ -456,6 +468,7 @@ function useSidebarThreads(input: {
   return {
     ...partition,
     threads,
+    threadOrder,
     workingShelfEnabled,
     searchableThreads: [
       ...pinnedThreads,
@@ -498,6 +511,7 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
     delegatedUnderParent,
     serverConfigs,
     optimisticDrop,
+    threadOrder,
     workingShelfEnabled,
   } = input;
   const preciseNow = new Date().toISOString();
@@ -562,7 +576,7 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
   const sortedPinned = sortPinnedThreadsForSidebar(pinned);
   const sortedActive = workingShelfEnabled
     ? sortInboxThreadsByReturn(active, inboxObservation.returnedAt)
-    : sortThreadsForSidebar(active);
+    : sortThreadsForSidebar(active, threadOrder);
   return {
     pinnedThreads:
       optimisticDrop?.section !== "pinned" || optimisticDrop.order === null
@@ -1087,6 +1101,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   );
 
   const {
+    threadOrder,
     workingShelfEnabled,
     pinnedThreads,
     draggableThreadKeys,
@@ -1792,6 +1807,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           activeThreads: dragEntry.group.openThreads.filter(
             (thread) => sectionByThreadKey.get(threadShellKey(thread)) === "active",
           ),
+          threadOrder,
           workingShelfEnabled,
         });
   const sidebarSortingStrategy = createSidebarSortingStrategy({
@@ -1833,7 +1849,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             activeOrder: dragActiveKeys,
             activeKeysById,
             activeReorderableKeys: activeReorderableThreadKeys,
-            activeTimeOrdered: workingShelfEnabled,
+            activeTimeOrdered: threadOrder === "activity",
           }).kind !== "none"
         );
       },
@@ -1901,7 +1917,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       activeOrder: sectionKeysOf(dropItems, "active"),
       activeKeysById,
       activeReorderableKeys: activeReorderableThreadKeys,
-      activeTimeOrdered: workingShelfEnabled,
+      activeTimeOrdered: threadOrder === "activity",
     });
     if (plan.kind === "none") return;
     if (plan.kind === "settle" && settlingThreadKeysRef.current.has(activeKey)) return;

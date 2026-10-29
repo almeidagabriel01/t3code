@@ -1,6 +1,6 @@
 import { activeSubagentChildrenByParent } from "@t3tools/client-runtime/state/thread-attention";
 import type { OlderSettledScope } from "@t3tools/client-runtime/state/threads";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, SidebarThreadOrder } from "@t3tools/contracts";
 import { useMemo, useSyncExternalStore } from "react";
 
 import { scopedProjectKey } from "../../lib/scopedEntities";
@@ -50,13 +50,14 @@ export function useThreadListV2(input: {
   readonly now: string;
   readonly pendingOrder: LayoutInput["pendingOrder"];
   readonly shelfPreferencesLoaded: boolean;
+  readonly threadOrder: SidebarThreadOrder;
   readonly workingShelfEnabled: boolean;
   readonly workingShelfExpanded: boolean;
   readonly snoozedShelfExpanded: boolean;
   readonly settledShelfExpanded: boolean;
   readonly selectedThreadKey: string | null;
 }) {
-  const { threads, workingShelfEnabled } = input;
+  const { threads, threadOrder, workingShelfEnabled } = input;
   // A thread can stop working when the threads change, or when its exit grace expires.
   const inboxVersion = useSyncExternalStore(
     threadListInboxReturns.subscribe,
@@ -80,6 +81,7 @@ export function useThreadListV2(input: {
       ordered: getThreadListV2OrderedSection({
         threads,
         section,
+        threadOrder,
         pendingOrder: input.pendingOrder,
         now: input.now,
         settlementEnvironmentIds: input.settlementEnvironmentIds,
@@ -89,7 +91,7 @@ export function useThreadListV2(input: {
     });
   const moveAvailability = new Map([
     ...sectionAvailability("pinned"),
-    ...(workingShelfEnabled ? [] : sectionAvailability("active")),
+    ...(threadOrder === "fixed" ? sectionAvailability("active") : []),
   ]);
   // Older settled threads load in pages; the shelf lists them only as far as they are loaded.
   const scopes = olderSettledScopes(input);
@@ -111,6 +113,7 @@ export function useThreadListV2(input: {
     queuedThreadKeys: input.queuedThreadKeys,
     settledLimit: input.settledLimit,
     now: input.now,
+    threadOrder,
     workingShelfEnabled,
     workingShelfExpanded: input.workingShelfExpanded,
     inboxReturnAt: inbox.returnedAt,

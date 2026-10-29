@@ -11,7 +11,9 @@ export function useThreadListV2ShelfPreferences() {
     loaded && preferencesResult.value.threadListSnoozedShelfExpanded === true;
   const settledShelfExpanded =
     loaded && preferencesResult.value.threadListSettledShelfExpanded === true;
-  const workingShelfEnabled = loaded && preferencesResult.value.workingShelfEnabled !== false;
+  const threadOrder = (loaded ? preferencesResult.value.threadOrder : undefined) ?? "activity";
+  const workingShelfEnabled =
+    loaded && preferencesResult.value.workingShelfEnabled !== false && threadOrder === "activity";
   const workingShelfExpanded =
     loaded && preferencesResult.value.threadListWorkingShelfExpanded === true;
 
@@ -45,6 +47,7 @@ export function useThreadListV2ShelfPreferences() {
     loaded,
     settledShelfExpanded,
     snoozedShelfExpanded,
+    threadOrder,
     workingShelfEnabled,
     workingShelfExpanded,
     toggleSettledShelf,

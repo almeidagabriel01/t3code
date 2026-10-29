@@ -69,6 +69,7 @@ const clientSettings: ClientSettings = {
   sidebarThreadPreviewCount: 6,
   legacySidebarEnabled: false,
   sidebarWorkingShelfEnabled: false,
+  sidebarThreadOrder: "activity",
   sidebarShowSubagents: true,
   sidebarAgentActivityDisplayMode: "compact",
   projectHoverCardProperties: ["path", "terminals", "resources", "ports"],

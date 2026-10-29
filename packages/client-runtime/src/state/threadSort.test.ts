@@ -235,30 +235,33 @@ describe("generateSpreadPinOrderKeys", () => {
 });
 
 describe("sortActiveThreadsByOrderKey", () => {
-  it("keeps new and reopened threads ahead of the saved order", () => {
-    const sorted = sortActiveThreadsByOrderKey([
-      {
-        id: "arranged-first",
-        createdAt: "2026-03-09T09:00:00.000Z",
-        activeOrderKey: "f",
-      },
-      {
-        id: "new",
-        createdAt: "2026-03-09T11:00:00.000Z",
-        activeOrderKey: null,
-      },
-      {
-        id: "arranged-last",
-        createdAt: "2026-03-09T12:00:00.000Z",
-        unsettledAt: "2026-03-09T13:00:00.000Z",
-        activeOrderKey: "t",
-      },
-      {
-        id: "reopened",
-        createdAt: "2026-03-01T09:00:00.000Z",
-        unsettledAt: "2026-03-09T12:00:00.000Z",
-      },
-    ]);
+  it("fixed: keeps new and reopened threads ahead of the saved order", () => {
+    const sorted = sortActiveThreadsByOrderKey(
+      [
+        {
+          id: "arranged-first",
+          createdAt: "2026-03-09T09:00:00.000Z",
+          activeOrderKey: "f",
+        },
+        {
+          id: "new",
+          createdAt: "2026-03-09T11:00:00.000Z",
+          activeOrderKey: null,
+        },
+        {
+          id: "arranged-last",
+          createdAt: "2026-03-09T12:00:00.000Z",
+          unsettledAt: "2026-03-09T13:00:00.000Z",
+          activeOrderKey: "t",
+        },
+        {
+          id: "reopened",
+          createdAt: "2026-03-01T09:00:00.000Z",
+          unsettledAt: "2026-03-09T12:00:00.000Z",
+        },
+      ],
+      "fixed",
+    );
     expect(sorted.map((thread) => thread.id)).toEqual([
       "reopened",
       "new",
@@ -267,24 +270,27 @@ describe("sortActiveThreadsByOrderKey", () => {
     ]);
   });
 
-  it("breaks equal order keys and timestamps by thread then environment", () => {
-    for (const activeOrderKey of [null, "m"]) {
-      const threads = [
-        { id: "thread-b", environmentId: "env-a" },
-        { id: "thread-a", environmentId: "env-b" },
-        { id: "thread-a", environmentId: "env-a" },
-      ].map((thread) => ({
-        ...thread,
-        createdAt: "2026-03-09T10:00:00.000Z",
-        activeOrderKey,
-      }));
-      expect(
-        sortActiveThreadsByOrderKey(threads).map(
-          (thread) => `${thread.id}:${thread.environmentId}`,
-        ),
-      ).toEqual(["thread-a:env-a", "thread-a:env-b", "thread-b:env-a"]);
-    }
-  });
+  it.each(["activity", "fixed"] as const)(
+    "%s: breaks equal order keys and timestamps by thread then environment",
+    (order) => {
+      for (const activeOrderKey of [null, "m"]) {
+        const threads = [
+          { id: "thread-b", environmentId: "env-a" },
+          { id: "thread-a", environmentId: "env-b" },
+          { id: "thread-a", environmentId: "env-a" },
+        ].map((thread) => ({
+          ...thread,
+          createdAt: "2026-03-09T10:00:00.000Z",
+          activeOrderKey,
+        }));
+        expect(
+          sortActiveThreadsByOrderKey(threads, order).map(
+            (thread) => `${thread.id}:${thread.environmentId}`,
+          ),
+        ).toEqual(["thread-a:env-a", "thread-a:env-b", "thread-b:env-a"]);
+      }
+    },
+  );
 
   it("moves a keyless thread into the arranged run with one write", () => {
     const assignments = planPinnedMove({
@@ -318,6 +324,110 @@ describe("sortActiveThreadsByOrderKey", () => {
     });
     const keys = new Map(assignments.map((assignment) => [assignment.id, assignment.orderKey]));
     const updated = threads.map((thread) => ({ ...thread, activeOrderKey: keys.get(thread.id) }));
-    expect(sortActiveThreadsByOrderKey(updated).map((thread) => thread.id)).toEqual(orderedIds);
+    expect(sortActiveThreadsByOrderKey(updated, "fixed").map((thread) => thread.id)).toEqual(
+      orderedIds,
+    );
+  });
+
+  const at = (minute: number) => `2026-03-09T10:${String(minute).padStart(2, "0")}:00.000Z`;
+  const thread = (
+    id: string,
+    minute: number,
+    patch: Partial<Parameters<typeof sortActiveThreadsByOrderKey>[0][number]> & {
+      readonly latestUserMessageAt?: string;
+    } = {},
+  ) => ({ id, createdAt: at(minute), latestUserAuthoredMessageAt: null, ...patch });
+  const running = {
+    runId: "run",
+    status: "running",
+    requestedAt: at(50),
+    startedAt: at(50),
+    completedAt: null,
+  } as const;
+  const ids = (threads: ReadonlyArray<{ readonly id: string }>) => threads.map(({ id }) => id);
+
+  it("activity: a thread you message moves to the top and stays there while it works", () => {
+    const threads = [
+      thread("newer", 30),
+      thread("older", 10, { latestUserAuthoredMessageAt: at(50), latestRun: running }),
+      thread("arranged", 20, { activeOrderKey: "a" }),
+    ];
+    expect(ids(sortActiveThreadsByOrderKey(threads, "activity"))).toEqual([
+      "older",
+      "newer",
+      "arranged",
+    ]);
+  });
+
+  it("activity: a thread at the top stays there when you message it", () => {
+    const before = [thread("top", 30), thread("below", 20)];
+    const after = [
+      thread("top", 30, { latestUserAuthoredMessageAt: at(50), latestRun: running }),
+      thread("below", 20),
+    ];
+    expect(ids(sortActiveThreadsByOrderKey(before, "activity"))).toEqual(["top", "below"]);
+    expect(ids(sortActiveThreadsByOrderKey(after, "activity"))).toEqual(["top", "below"]);
+  });
+
+  it("activity: a thread starting work without your message does not move", () => {
+    const threads = [
+      thread("top", 30, { latestRun: running }),
+      thread("woken", 20, { latestUserMessageAt: at(55), latestRun: running }),
+      thread("bottom", 10),
+    ];
+    expect(ids(sortActiveThreadsByOrderKey(threads, "activity"))).toEqual([
+      "top",
+      "woken",
+      "bottom",
+    ]);
+  });
+
+  it("activity: a manually placed thread you message moves above unplaced ones", () => {
+    const threads = [
+      thread("unplaced", 30),
+      thread("placed", 10, { activeOrderKey: "a", latestUserAuthoredMessageAt: at(50) }),
+    ];
+    expect(ids(sortActiveThreadsByOrderKey(threads, "activity"))).toEqual(["placed", "unplaced"]);
+  });
+
+  it("activity: threads that need you come first", () => {
+    const threads = [
+      thread("messaged", 30, { latestUserAuthoredMessageAt: at(50) }),
+      thread("approval", 10, { hasPendingApprovals: true }),
+      thread("question", 5, { hasPendingUserInput: true }),
+      thread("plan", 3, { interactionMode: "plan", hasActionableProposedPlan: true }),
+      thread("idle", 20),
+    ];
+    expect(ids(sortActiveThreadsByOrderKey(threads, "activity"))).toEqual([
+      "approval",
+      "question",
+      "plan",
+      "messaged",
+      "idle",
+    ]);
+  });
+
+  it("activity: falls back to the latest run request on servers without authored sends", () => {
+    const threads = [thread("newer", 30), { id: "older", createdAt: at(10), latestRun: running }];
+    expect(ids(sortActiveThreadsByOrderKey(threads, "activity"))).toEqual(["older", "newer"]);
+  });
+
+  it("fixed: messages, work, and attention never reorder threads", () => {
+    const threads = [
+      thread("unplaced-new", 40),
+      thread("unplaced-old", 5, {
+        latestUserAuthoredMessageAt: at(50),
+        latestRun: running,
+        hasPendingApprovals: true,
+      }),
+      thread("placed-first", 10, { activeOrderKey: "a", hasPendingUserInput: true }),
+      thread("placed-second", 30, { activeOrderKey: "b", latestUserAuthoredMessageAt: at(55) }),
+    ];
+    expect(ids(sortActiveThreadsByOrderKey(threads, "fixed"))).toEqual([
+      "unplaced-new",
+      "unplaced-old",
+      "placed-first",
+      "placed-second",
+    ]);
   });
 });

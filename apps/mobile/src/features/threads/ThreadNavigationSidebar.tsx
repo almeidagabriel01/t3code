@@ -269,6 +269,7 @@ function ThreadNavigationSidebarPane(
     loaded: shelfPreferencesLoaded,
     settledShelfExpanded,
     snoozedShelfExpanded,
+    threadOrder,
     workingShelfEnabled,
     workingShelfExpanded,
     toggleSettledShelf,
@@ -311,6 +312,7 @@ function ThreadNavigationSidebarPane(
     now,
     pendingOrder,
     shelfPreferencesLoaded,
+    threadOrder,
     workingShelfEnabled,
     workingShelfExpanded,
     snoozedShelfExpanded,
@@ -468,6 +470,7 @@ function ThreadNavigationSidebarPane(
     savedConnectionsById,
     listEnvironments,
     threadSearchMatchByKey,
+    threadOrder,
     workingShelfEnabled,
   };
   useThreadJumpShortcuts(listItems, handleSelectThread);
@@ -594,7 +597,7 @@ function ThreadNavigationSidebarPane(
             reorderSupported={
               item.item.pinned
                 ? pinReorderEnvironmentIds.has(thread.environmentId)
-                : !workingShelfEnabled && activeReorderEnvironmentIds.has(thread.environmentId)
+                : threadOrder === "fixed" && activeReorderEnvironmentIds.has(thread.environmentId)
             }
             canMoveUp={item.canMoveUp}
             canMoveDown={item.canMoveDown}
