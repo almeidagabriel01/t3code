@@ -98,13 +98,21 @@ import { WizardPanel, WizardSteps, WizardPopup, WizardHeader } from "../ui/wizar
 import { Dialog } from "../ui/dialog";
 import { toastManager } from "../ui/toast";
 import { cn } from "../../lib/utils";
+import { MemoryGenerationSettings } from "../settings/MemoryGenerationSettings";
+import { isMemoryEnvironmentAvailable } from "../settings/MemorySettings.logic";
+import { MemorySharingChoice } from "./MemorySharingChoice";
 import { formatRelativeTime } from "../../timestampFormat";
 
-type WizardStep = "connection" | "agents" | "import";
+type WizardStep = "connection" | "agents" | "memory" | "import";
 const NO_ENVIRONMENTS: readonly EnvironmentId[] = [];
 
 const AGENT_ONBOARDING_THREAD_ID = ThreadId.make("onboarding-agent-setup");
-const ONBOARDING_STAGES = ["Connect", "Agents", "Projects"] as const;
+const STAGE_LABELS = {
+  connection: "Connect",
+  agents: "Agents",
+  memory: "Memory",
+  import: "Projects",
+} as const satisfies Record<WizardStep, string>;
 const SCAN_LIMIT_MESSAGE = "Scan limit reached. Some projects or conversations may be missing.";
 
 export function WelcomeWizard({
@@ -160,7 +168,18 @@ export function WelcomeWizard({
     setSetupIds(ids);
     setStep("agents");
   };
-  const stageIndex = step === "agents" ? 1 : step === "import" ? 2 : 0;
+  // Servers without memory keep the shorter flow.
+  const memoryIds = setupIds.filter((id) =>
+    isMemoryEnvironmentAvailable(
+      environments.find((environment) => environment.environmentId === id)?.serverConfig
+        ?.environment.capabilities,
+    ),
+  );
+  const stages: readonly WizardStep[] =
+    memoryIds.length > 0
+      ? ["connection", "agents", "memory", "import"]
+      : ["connection", "agents", "import"];
+  const stageIndex = stages.indexOf(step);
   const finish = (
     projectRef?: ScopedProjectRef,
     importWarning?: string,
@@ -242,12 +261,12 @@ export function WelcomeWizard({
           }
         >
           <WizardSteps
-            steps={ONBOARDING_STAGES}
+            steps={stages.map((stage) => STAGE_LABELS[stage])}
             currentStep={stageIndex}
             isStepDisabled={(index) => isImporting || index >= stageIndex}
             onStepChange={(index) => {
               if (isImporting || index > stageIndex) return;
-              setStep(index === 0 ? "connection" : "agents");
+              setStep(stages[index] ?? "connection");
             }}
           />
         </WizardHeader>
@@ -275,7 +294,12 @@ export function WelcomeWizard({
               }}
             />
           ) : step === "agents" ? (
-            <AgentsStep environmentIds={setupIds} onContinue={() => setStep("import")} />
+            <AgentsStep
+              environmentIds={setupIds}
+              onContinue={() => setStep(memoryIds.length > 0 ? "memory" : "import")}
+            />
+          ) : step === "memory" ? (
+            <MemoryStep environmentIds={memoryIds} onContinue={() => setStep("import")} />
           ) : (
             <ImportStep
               scans={scans}
@@ -687,6 +711,43 @@ function AgentsStep({
                   ?.label ?? "Computer"
               }
             />
+          ))}
+        </div>
+      </ScrollArea>
+      <div className="mt-6 flex justify-end">
+        <Button autoFocus onClick={onContinue}>
+          Continue
+          <ArrowRightIcon className="size-3.5" />
+        </Button>
+      </div>
+    </StepShell>
+  );
+}
+
+function MemoryStep({
+  environmentIds,
+  onContinue,
+}: {
+  readonly environmentIds: readonly EnvironmentId[];
+  readonly onContinue: () => void;
+}) {
+  const { environments } = useEnvironments();
+  return (
+    <StepShell
+      title="Set up memory"
+      description="Agents can remember useful details from finished conversations. You can change these choices later in Settings > Memory."
+    >
+      <ScrollArea scrollFade className="mt-5 h-auto max-h-[min(32rem,55dvh)]">
+        <div className="space-y-5 pr-3">
+          {environmentIds.map((environmentId) => (
+            <div key={environmentId} className="space-y-2">
+              <h3 className="text-sm font-medium">
+                {environments.find((environment) => environment.environmentId === environmentId)
+                  ?.label ?? "Computer"}
+              </h3>
+              <MemoryGenerationSettings environmentId={environmentId} hideModelWhenDisabled />
+              <MemorySharingChoice environmentId={environmentId} />
+            </div>
           ))}
         </div>
       </ScrollArea>

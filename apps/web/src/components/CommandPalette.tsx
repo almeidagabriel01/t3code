@@ -51,6 +51,7 @@ import {
 } from "@t3tools/contracts";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import {
+  BrainIcon,
   BellIcon,
   ArrowLeftIcon,
   BugIcon,
@@ -234,6 +235,7 @@ import { openLinkPullRequestDialog } from "./pullRequest/LinkPullRequestDialog";
 import { canShareWithGuestAtom } from "./chat/guestShareAvailability";
 import { openGuestShareDialog } from "./chat/guestShareDialogState";
 import { ProjectContentSearchDialog } from "./search/ProjectContentSearchDialog";
+import { validateMemorySettingsSearch } from "./settings/MemorySettings.logic";
 import { settingsForThisPlatform, SETTINGS_SECTION_LABELS } from "./settings/settingsSearch";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import { resolveShortcutCommand, threadJumpIndexFromCommand } from "../keybindings";
@@ -1600,6 +1602,31 @@ function OpenCommandPaletteDialog(props: {
       await navigate({ to: "/settings" });
     },
   });
+
+  const memoryEnvironmentId = activeThread?.environmentId ?? null;
+  if (
+    environments.some(
+      (item) =>
+        (memoryEnvironmentId === null || item.environmentId === memoryEnvironmentId) &&
+        item.serverConfig?.environment.capabilities.memory?.protocolVersion === 1,
+    )
+  ) {
+    actionItems.push({
+      kind: "action",
+      value: "action:memory",
+      searchTerms: ["memory", "forget", "conflict", "revert", "sync", "import"],
+      title: "Open memory",
+      icon: <BrainIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        setOpen(false);
+        await navigate({
+          to: "/settings/memory",
+          search: validateMemorySettingsSearch({ environmentId: memoryEnvironmentId ?? undefined }),
+          hash: "",
+        });
+      },
+    });
+  }
 
   const contextualProjectGroup =
     (contextualProjectRef

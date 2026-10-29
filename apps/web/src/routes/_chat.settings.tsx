@@ -18,6 +18,7 @@ import { SETTINGS_DEVICE_ONLY_PATHS } from "../components/settings/SettingsScope
 import { SettingsPageContainer } from "../components/settings/settingsLayout";
 import {
   retainSettingsScope,
+  settingsContentScopeKey,
   validateSettingsRouteSearch,
 } from "../components/settings/settingsScopeNavigation";
 import {
@@ -50,6 +51,7 @@ function SettingsScopeBoundary({ pathname, children }: { pathname: string; child
   const autoSettlementAvailability = searchTarget?.requiresThreadAutoSettlement
     ? getThreadAutoSettlementSearchAvailability(environments, scope)
     : null;
+  if (pathname === "/settings/memory") return children;
   if (
     scope.kind !== "unavailable" &&
     searchTarget &&
@@ -110,10 +112,11 @@ function SettingsContentLayout() {
   const contentArea = workspaceAreaProps("settings", 1, "Settings content");
   const location = useLocation();
   const { search, environment } = useSettingsScope();
-  const contentScopeKey =
-    location.pathname === "/settings/diagnostics" || location.pathname === "/settings/providers"
-      ? environment?.environmentId
-      : JSON.stringify(search);
+  const contentScopeKey = settingsContentScopeKey(
+    location.pathname,
+    search,
+    environment?.environmentId,
+  );
   const [restoreSignal, setRestoreSignal] = useState(0);
 
   return (
@@ -150,7 +153,7 @@ function SettingsRouteLayout() {
   return (
     <SettingsScopeProvider
       search={rawSearch}
-      singleEnvironment={pathname === "/settings/providers"}
+      singleEnvironment={pathname === "/settings/providers" || pathname === "/settings/memory"}
       onChange={(next) => {
         // Send every axis so retain middleware recognizes "all" as an explicit target.
         void navigate({

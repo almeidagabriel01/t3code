@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { MemoryRunAccessLabel } from "../settings/MemoryRunAccessLabel";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
@@ -393,7 +394,15 @@ export function ThreadRelationshipsPanel(props: {
     ? deriveProviderSubagentStatus(parentProjection)?.status
     : undefined;
   const projected = projection?.subagents ?? [];
-  const runtimeSubagents = projectedSubagentsToRuntime(projected);
+  const records = new Map(projected.map((record) => [String(record.id), record]));
+  const runtimeSubagents = projectedSubagentsToRuntime(projected).map((agent) => {
+    const record = records.get(agent.id);
+    return {
+      ...agent,
+      memoryGrantCeiling: record?.memoryGrantCeiling,
+      currentMemoryAccess: record?.currentMemoryAccess,
+    };
+  });
   const byId = new Map(runtimeSubagents.map((agent) => [agent.id, agent]));
   const subagentsByThreadId = new Map(
     projected
@@ -405,6 +414,8 @@ export function ThreadRelationshipsPanel(props: {
           id: subagent.id,
           threadId: subagent.threadId,
           runId: subagent.runId,
+          memoryGrantCeiling: subagent.memoryGrantCeiling,
+          currentMemoryAccess: subagent.currentMemoryAccess,
           nativeTaskRef: subagent.nativeTaskRef,
           nativeStatus: subagent.status,
           driver: subagent.driver,
@@ -756,7 +767,12 @@ export function ThreadRelationshipsPanel(props: {
                     onStop={canStopWorkflow ? () => void stopWorkflow(agent.id) : undefined}
                     stopping={stoppingId === agent.id}
                     stopDisabled={stoppingId !== null}
-                    header={relationshipLink}
+                    header={
+                      <div>
+                        {relationshipLink}
+                        <MemoryRunAccessLabel {...agent} />
+                      </div>
+                    }
                   />
                 );
               }
@@ -824,6 +840,7 @@ export function ThreadRelationshipsPanel(props: {
                   ) : (
                     relationshipLink
                   )}
+                  {agent ? <MemoryRunAccessLabel {...agent} /> : null}
                   {canStop && agent ? (
                     <div className="pointer-events-none absolute right-1 top-1/2 -translate-y-1/2 opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 pointer-coarse:pointer-events-auto pointer-coarse:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100">
                       <Tooltip>
