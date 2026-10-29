@@ -25,7 +25,7 @@ import { countLivePortsByProject, resolveSubagentDisplay } from "./sidebarDispla
 import { useListeningPorts } from "../statusBar/useListeningPorts";
 import { CollapsibleSectionHeader } from "../ui/collapsible-section-header";
 import { SidebarNotificationDot } from "./SidebarNotificationDot";
-import { SidebarProjectMenuButton } from "../kanban/SidebarKanbanButtons";
+import { SidebarProjectBoardButton } from "../kanban/SidebarKanbanButtons";
 import { SidebarProjectNewThreadButton } from "./SidebarProjectNewThreadButton";
 import { SidebarProjectHoverCard } from "./SidebarProjectHoverCard";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -418,7 +418,7 @@ function SidebarProjectGroup(props: ProjectGroupProps) {
             data-project-actions
             className="flex items-center gap-0.5 opacity-0 focus-within:opacity-100 group-hover/project-header:opacity-100 pointer-coarse:opacity-100"
           >
-            <SidebarProjectMenuButton project={project} />
+            <SidebarProjectBoardButton project={project} />
             <SidebarProjectNewThreadButton project={project} />
           </span>
           <SidebarProjectHoverCard project={project} portCount={portCount} />
