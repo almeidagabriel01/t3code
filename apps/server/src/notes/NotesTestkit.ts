@@ -14,9 +14,10 @@ import * as Notes from "./NotesService.ts";
 /** Records the attachment ids the note images layer asks to delete. */
 export const cleanupRecorder = (cleaned: Array<string>) =>
   Layer.mock(ResourceCleanupService.ResourceCleanupService)({
-    cleanupAttachments: Effect.fn("NotesTestkit.cleanupAttachments")(function* (ids) {
-      cleaned.push(...ids);
-    }),
+    cleanupAttachments: (ids) =>
+      Effect.sync(() => {
+        cleaned.push(...ids);
+      }),
   });
 
 const platformLayer = (
