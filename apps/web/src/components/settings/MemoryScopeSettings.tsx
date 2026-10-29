@@ -7,7 +7,7 @@ import {
   type MemoryScope,
   type ScopedProjectRef,
 } from "@t3tools/contracts";
-import { useContext, useEffect, useRef, useState } from "react";
+import { useContext, useEffect, useId, useRef, useState } from "react";
 import { useProjects, useThreadShells } from "../../state/entities";
 import { memoryEnvironment } from "../../state/memory";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -15,6 +15,7 @@ import { removeMemoryImportDestination } from "../../lib/memoryImportRecoverySto
 import { randomUUID } from "../../lib/utils";
 import { MemoryScopePicker } from "./MemoryScopePicker";
 import { Button } from "../ui/button";
+import { Label } from "../ui/label";
 import { Select, SelectTrigger, SelectValue, SelectPopup, SelectItem } from "../ui/select";
 
 export type MemoryScopeSelection = { scope: MemoryScope; project?: ScopedProjectRef };
@@ -32,6 +33,7 @@ export function MemoryScopeSettings({
   onChange: (selection: MemoryScopeSelection | null) => void;
 }) {
   const registry = useContext(RegistryContext);
+  const scopeId = useId();
   const projects = useProjects().filter((p) => p.environmentId === environmentId);
   const [kind, setKind] = useState<MemoryScope["kind"] | null>(null);
   const threads = useThreadShells(kind === "thread").filter(
@@ -157,35 +159,41 @@ export function MemoryScopeSettings({
     }
   }
   return (
-    <div className="space-y-3">
-      <Select
-        value={kind}
-        disabled={disabled || busy}
-        onValueChange={(value) => {
-          setKind(value);
-          setConfirm(null);
-        }}
-      >
-        <SelectTrigger aria-label="Memory scope">
-          <SelectValue placeholder="Choose memory scope" />
-        </SelectTrigger>
-        <SelectPopup>
-          {(["user", "project", "thread"] as const).map((value) => (
-            <SelectItem key={value} value={value}>
-              {value === "user" ? "All projects" : value === "project" ? "Project" : "Thread"}
-            </SelectItem>
-          ))}
-        </SelectPopup>
-      </Select>
+    <div className="space-y-4">
+      <div className="grid gap-1.5">
+        <Label htmlFor={scopeId}>Save into</Label>
+        <Select
+          value={kind}
+          disabled={disabled || busy}
+          onValueChange={(value) => {
+            setKind(value);
+            setConfirm(null);
+          }}
+        >
+          <SelectTrigger id={scopeId} aria-label="Memory scope">
+            <SelectValue placeholder="Choose memory scope" />
+          </SelectTrigger>
+          <SelectPopup>
+            {(["user", "project", "thread"] as const).map((value) => (
+              <SelectItem key={value} value={value}>
+                {value === "user" ? "All projects" : value === "project" ? "Project" : "Thread"}
+              </SelectItem>
+            ))}
+          </SelectPopup>
+        </Select>
+      </div>
       {kind === "project" ? (
         <>
-          <MemoryScopePicker
-            items={projects}
-            value={projectId}
-            disabled={disabled || busy}
-            onChange={setProjectId}
-            label="Memory project"
-          />
+          <div className="grid gap-1.5">
+            <Label render={<span />}>Project</Label>
+            <MemoryScopePicker
+              items={projects}
+              value={projectId}
+              disabled={disabled || busy}
+              onChange={setProjectId}
+              label="Memory project"
+            />
+          </div>
           {binding ? (
             <p className="text-xs leading-normal text-muted-foreground/80">
               {binding.projectKey?.kind === "explicit"
@@ -238,13 +246,16 @@ export function MemoryScopeSettings({
         </>
       ) : null}
       {kind === "thread" ? (
-        <MemoryScopePicker
-          items={threads}
-          value={threadId}
-          disabled={disabled || busy}
-          onChange={setThreadId}
-          label="Memory thread"
-        />
+        <div className="grid gap-1.5">
+          <Label render={<span />}>Thread</Label>
+          <MemoryScopePicker
+            items={threads}
+            value={threadId}
+            disabled={disabled || busy}
+            onChange={setThreadId}
+            label="Memory thread"
+          />
+        </div>
       ) : null}
       {message ? (
         <p className="text-xs leading-normal text-muted-foreground/80" role="status">

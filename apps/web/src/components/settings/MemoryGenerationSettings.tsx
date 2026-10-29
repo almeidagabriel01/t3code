@@ -11,6 +11,7 @@ import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
+import { Label } from "../ui/label";
 import { Switch } from "../ui/switch";
 import { SETTINGS_PICKER_TRIGGER_CLASSNAME, SettingsRow, SettingsSection } from "./settingsLayout";
 
@@ -72,26 +73,29 @@ export function MemoryGenerationSettings({
           title="Memory model"
           description="Automatic follows the text generation model. Choose a separate model for memory summaries."
           control={
-            <div className="flex flex-wrap items-center justify-end gap-2">
+            <div className="flex flex-wrap items-end justify-end gap-3">
               {!separate ? (
                 <span className="text-sm text-muted-foreground">Automatic · {selection.model}</span>
               ) : null}
               {activeEntry && separate ? (
                 <>
-                  <ProviderModelPicker
-                    environmentId={environmentId}
-                    activeInstanceId={selection.instanceId}
-                    model={selection.model}
-                    lockedProvider={null}
-                    instanceEntries={entries}
-                    modelOptionsByInstance={options}
-                    triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-                    triggerAriaLabel="Memory model"
-                    disabled={!allowed}
-                    onInstanceModelChange={(instanceId, model) =>
-                      save({ memoryModelSelection: createModelSelection(instanceId, model) })
-                    }
-                  />
+                  <div className="grid gap-1.5">
+                    <Label render={<span />}>Model</Label>
+                    <ProviderModelPicker
+                      environmentId={environmentId}
+                      activeInstanceId={selection.instanceId}
+                      model={selection.model}
+                      lockedProvider={null}
+                      instanceEntries={entries}
+                      modelOptionsByInstance={options}
+                      triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                      triggerAriaLabel="Memory model"
+                      disabled={!allowed}
+                      onInstanceModelChange={(instanceId, model) =>
+                        save({ memoryModelSelection: createModelSelection(instanceId, model) })
+                      }
+                    />
+                  </div>
                   <TraitsPicker
                     provider={activeEntry.driverKind}
                     models={activeEntry.models}
@@ -115,22 +119,25 @@ export function MemoryGenerationSettings({
                   />
                 </>
               ) : null}
-              <Switch
-                aria-label="Use a separate memory model"
-                checked={separate}
-                disabled={!allowed || (!separate && !activeEntry)}
-                onCheckedChange={(checked) =>
-                  save({
-                    memoryModelSelection: checked
-                      ? createModelSelection(
-                          selection.instanceId,
-                          selection.model,
-                          selection.options,
-                        )
-                      : null,
-                  })
-                }
-              />
+              <Label>
+                Separate model
+                <Switch
+                  aria-label="Use a separate memory model"
+                  checked={separate}
+                  disabled={!allowed || (!separate && !activeEntry)}
+                  onCheckedChange={(checked) =>
+                    save({
+                      memoryModelSelection: checked
+                        ? createModelSelection(
+                            selection.instanceId,
+                            selection.model,
+                            selection.options,
+                          )
+                        : null,
+                    })
+                  }
+                />
+              </Label>
             </div>
           }
           status={message ? <span role="alert">{message}</span> : undefined}

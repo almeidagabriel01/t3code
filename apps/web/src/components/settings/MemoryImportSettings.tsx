@@ -12,9 +12,9 @@ import {
 import {
   memoryImportFormatLabels,
   memoryImportFormats,
-  memoryImportIssueReason,
+  memoryImportSourceName,
 } from "@t3tools/client-runtime/memory-import-workflow";
-import { useContext, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useContext, useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 import { readEnvironmentScope, readPreparedConnection } from "../../state/session";
 import { memoryImportRequestFailureMessage } from "@t3tools/client-runtime/memory-import-workflow";
 import { memoryEnvironment } from "../../state/memory";
@@ -29,6 +29,7 @@ import { randomUUID } from "../../lib/utils";
 import { MemoryScopeSettings, type MemoryScopeSelection } from "./MemoryScopeSettings";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 import { Button } from "../ui/button";
+import { Label } from "../ui/label";
 import { Select, SelectTrigger, SelectValue, SelectPopup, SelectItem } from "../ui/select";
 
 /** A mount may check a saved receipt; only the explicit Apply button admits writes. */
@@ -40,6 +41,8 @@ export function MemoryImportSettings({
   memorySpaceId: MemorySpaceId;
 }) {
   const registry = useContext(RegistryContext);
+  const providerId = useId();
+  const sourceFieldId = useId();
   const canImport = useAtomValue(memoryEnvironment.importProvider.permissionAtom(environmentId));
   const formats = memoryImportFormats;
   const [admission] = useState(() => {
@@ -67,6 +70,7 @@ export function MemoryImportSettings({
   );
   const [format, setFormat] = useState<MemoryImportSourceFormat | null>(null);
   const [sources, setSources] = useState<readonly MemoryImportSource[]>([]);
+  const [sourceId, setSourceId] = useState<string | null>(null);
   const [items, setItems] = useState<readonly MemoryImportPreviewItem[]>([]);
   const [selected, setSelected] = useState<readonly string[]>([]);
   const [scopeEpoch, setScopeEpoch] = useState(0);
@@ -149,6 +153,7 @@ export function MemoryImportSettings({
     workflow.invalidate({ environmentId, memorySpaceId, session: randomUUID() });
     setItems([]);
     setSelected([]);
+    setSourceId(null);
     setBusy(false);
   };
   const invalidateDestination = async () => {
@@ -163,6 +168,7 @@ export function MemoryImportSettings({
     setItems([]);
     setSelected([]);
     setSources([]);
+    setSourceId(null);
   };
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers this destination with the import invalidation channel
   useEffect(() => {
@@ -178,6 +184,10 @@ export function MemoryImportSettings({
       unregister();
     };
   }, [environmentId, memorySpaceId, invalidateDestination, admission]);
+  const importable = items.filter((item) => item.issue === undefined && item.sourceFingerprint);
+  const skipped = items.length - importable.length;
+  const sourceLabel = (source: MemoryImportSource | undefined) =>
+    source ? memoryImportSourceName(source.label) : undefined;
   const locked =
     busy ||
     ["previewed", "save_failed", "recovery", "saving", "applying", "checking"].includes(
@@ -189,29 +199,33 @@ export function MemoryImportSettings({
         title="Provider memories"
         description={`Import supported ${new Intl.ListFormat("en", { type: "disjunction" }).format(formats.map((f) => memoryImportFormatLabels[f]))} memories from the selected device. Other providers are not supported. Memory write and file read permissions are required.`}
       >
-        <div className="space-y-3">
-          <Select
-            value={format}
-            disabled={!canImport || locked || !workflow}
-            onValueChange={(value) => {
-              setFormat(value);
-              setSources([]);
-              setItems([]);
-              setSelected([]);
-              workflow?.invalidate();
-            }}
-          >
-            <SelectTrigger aria-label="Import provider">
-              <SelectValue placeholder="Choose a provider" />
-            </SelectTrigger>
-            <SelectPopup>
-              {formats.map((value) => (
-                <SelectItem key={value} value={value}>
-                  {memoryImportFormatLabels[value]}
-                </SelectItem>
-              ))}
-            </SelectPopup>
-          </Select>
+        <div className="space-y-4 pt-4 pb-2 sm:max-w-md">
+          <div className="grid gap-1.5">
+            <Label htmlFor={providerId}>Provider</Label>
+            <Select
+              value={format}
+              disabled={!canImport || locked || !workflow}
+              onValueChange={(value) => {
+                setFormat(value);
+                setSources([]);
+                setSourceId(null);
+                setItems([]);
+                setSelected([]);
+                workflow?.invalidate();
+              }}
+            >
+              <SelectTrigger id={providerId} aria-label="Import provider">
+                <SelectValue placeholder="Choose a provider" />
+              </SelectTrigger>
+              <SelectPopup>
+                {formats.map((value) => (
+                  <SelectItem key={value} value={value}>
+                    {memoryImportFormatLabels[value]}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          </div>
           <MemoryScopeSettings
             key={scopeEpoch}
             environmentId={environmentId}
@@ -219,96 +233,127 @@ export function MemoryImportSettings({
             disabled={!canImport || locked}
             onChange={changeScope}
           />
-          <div className="flex flex-wrap gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={!workflow || !canImport || !format || !scope || locked}
-              onClick={() =>
-                void run(async () => {
-                  setItems([]);
-                  setSelected([]);
-                  const result = await workflow!.discover(format!);
-                  if (result && mounted.current) setSources(result.sources);
-                })
-              }
-            >
-              Discover profiles
-            </Button>
-            {sources.map((source, index) => (
-              <Button
-                key={source.sourceId}
-                size="sm"
-                variant="outline"
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!workflow || !canImport || !format || !scope || locked}
+            onClick={() =>
+              void run(async () => {
+                setItems([]);
+                setSelected([]);
+                setSourceId(null);
+                const result = await workflow!.discover(format!);
+                if (result && mounted.current) setSources(result.sources);
+              })
+            }
+          >
+            Find memories
+          </Button>
+          {progress?.phase === "discovered" && sources.length === 0 ? (
+            <p className="text-xs leading-normal text-muted-foreground/80">
+              No supported memories found on this device.
+            </p>
+          ) : null}
+          {sources.length > 0 ? (
+            <div className="grid gap-1.5">
+              <Label htmlFor={sourceFieldId}>Project to import from</Label>
+              <Select
+                value={sourceId}
                 disabled={!canImport || locked}
-                onClick={() =>
+                onValueChange={(value) => {
+                  const source = sources.find((candidate) => candidate.sourceId === value);
+                  if (!source) return;
                   void run(async () => {
+                    setSourceId(source.sourceId);
                     setItems([]);
                     setSelected([]);
                     await admission!.capturePreview();
                     const result = await workflow!.preview(source.sourceId);
                     if (result && mounted.current) setItems(result.items);
-                  })
-                }
+                  });
+                }}
               >
-                {`Preview profile ${index + 1}`}
-              </Button>
-            ))}
-          </div>
-          {progress?.phase === "discovered" && sources.length === 0 ? (
-            <p className="text-xs leading-normal text-muted-foreground/80">
-              No supported profiles found on this device.
-            </p>
+                <SelectTrigger id={sourceFieldId} aria-label="Import source">
+                  <SelectValue placeholder="Choose a project">
+                    {sourceLabel(sources.find((source) => source.sourceId === sourceId))}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup>
+                  {sources.map((source) => (
+                    <SelectItem key={source.sourceId} value={source.sourceId} title={source.label}>
+                      {sourceLabel(source)}
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
+            </div>
           ) : null}
-          {items.length > 0 ? (
-            <div role="group" aria-label="Choose memories to import">
-              {items.map((item, index) => (
-                <label key={item.sourceItemKey} className="block space-x-2">
+          {sourceId && progress?.phase === "selecting" ? (
+            importable.length > 0 ? (
+              <div className="space-y-2" role="group" aria-label="Choose memories to import">
+                <label className="flex items-center gap-2 text-sm font-medium">
                   <input
                     type="checkbox"
-                    disabled={
-                      !canImport || locked || item.issue !== undefined || !item.sourceFingerprint
+                    disabled={!canImport || locked}
+                    checked={selected.length === importable.length}
+                    onChange={(event) =>
+                      setSelected(
+                        event.currentTarget.checked
+                          ? importable.map((item) => item.sourceItemKey)
+                          : [],
+                      )
                     }
-                    checked={selected.includes(item.sourceItemKey)}
-                    onChange={(event) => {
-                      const checked = event.currentTarget.checked;
-                      setSelected((current) =>
-                        checked
-                          ? [...current, item.sourceItemKey]
-                          : current.filter((key) => key !== item.sourceItemKey),
-                      );
-                    }}
                   />
-                  <span>
-                    {item.title ?? `Memory ${index + 1}`}
-                    {item.issue !== undefined
-                      ? ` · ${memoryImportIssueReason(item.issue, "item")}`
-                      : ""}
-                    {item.tooLargeForTurnStart
-                      ? " · Stored, but too large to add to new turns automatically"
-                      : ""}
-                  </span>
+                  {`Select all (${importable.length})`}
                 </label>
-              ))}
-            </div>
-          ) : progress?.phase === "selecting" ? (
+                {importable.map((item, index) => (
+                  <label key={item.sourceItemKey} className="flex items-start gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5"
+                      disabled={!canImport || locked}
+                      checked={selected.includes(item.sourceItemKey)}
+                      onChange={(event) => {
+                        const checked = event.currentTarget.checked;
+                        setSelected((current) =>
+                          checked
+                            ? [...current, item.sourceItemKey]
+                            : current.filter((key) => key !== item.sourceItemKey),
+                        );
+                      }}
+                    />
+                    <span>
+                      {item.title ?? `Memory ${index + 1}`}
+                      {item.tooLargeForTurnStart
+                        ? " · Stored, but too large to add to new turns automatically"
+                        : ""}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs leading-normal text-muted-foreground/80">
+                No importable memories found in this project.
+              </p>
+            )
+          ) : null}
+          {skipped > 0 && progress?.phase === "selecting" ? (
             <p className="text-xs leading-normal text-muted-foreground/80">
-              No importable memories found in this profile.
+              {`${skipped} ${skipped === 1 ? "file" : "files"} skipped (not a supported memory).`}
             </p>
           ) : null}
-          <div className="flex flex-wrap gap-2">
+          {importable.length > 0 && progress?.phase === "selecting" ? (
             <Button
               size="sm"
-              variant="outline"
-              disabled={!canImport || locked || !scope || selected.length === 0}
+              disabled={
+                !canImport || locked || !scope || selected.length === 0 || !canSafelyImport()
+              }
               onClick={() => {
                 if (!workflow || !scope) return;
                 try {
                   workflow.select(
-                    items
-                      .filter(
-                        (item) => selected.includes(item.sourceItemKey) && item.sourceFingerprint,
-                      )
+                    importable
+                      .filter((item) => selected.includes(item.sourceItemKey))
                       .map((item) => ({
                         sourceItemKey: item.sourceItemKey,
                         sourceFingerprint: item.sourceFingerprint!,
@@ -316,42 +361,19 @@ export function MemoryImportSettings({
                       })),
                   );
                 } catch {
-                  setError("Preview again before confirming your selection.");
+                  setError("Preview again before importing.");
+                  return;
                 }
+                void run(async () => {
+                  await workflow.apply();
+                  setItems([]);
+                  setSelected([]);
+                  setSourceId(null);
+                });
               }}
             >
-              Confirm selection
+              {`Import ${selected.length} selected`}
             </Button>
-          </div>
-          {progress?.phase === "previewed" ? (
-            <div className="space-y-3" role="group" aria-label="Confirm import">
-              <p className="text-xs leading-normal text-muted-foreground/80">
-                Import {selected.length} selected memories into the chosen scope on this device?
-                Chunks of up to 32 run in sequence.
-              </p>
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  size="sm"
-                  disabled={!canImport || busy || !canSafelyImport()}
-                  onClick={() => void run(() => workflow!.apply())}
-                >
-                  Apply import
-                </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  disabled={busy}
-                  onClick={() => {
-                    workflow?.invalidate();
-
-                    setItems([]);
-                    setSelected([]);
-                  }}
-                >
-                  Cancel selection
-                </Button>
-              </div>
-            </div>
           ) : null}
           <div className="flex flex-wrap gap-2">
             <Button

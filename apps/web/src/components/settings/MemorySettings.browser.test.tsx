@@ -2271,7 +2271,7 @@ it("requires discover, preview, scope and selection confirmation before an expli
             format: "codex",
             parserVersion: "one",
             profile: "private-profile",
-            label: "private-path",
+            label: "-Users-me-DEV-demo",
           },
         ],
       };
@@ -2288,6 +2288,12 @@ it("requires discover, preview, scope and selection confirmation before an expli
             mappingRequired: false,
             title: "Synthetic memory",
           },
+          {
+            sourceItemKey: "other",
+            byteCount: 1,
+            mappingRequired: true,
+            issue: "unsupported_format",
+          },
         ],
       };
     throw new Error("response lost");
@@ -2295,18 +2301,20 @@ it("requires discover, preview, scope and selection confirmation before an expli
   await renderControl(<MemoryImportSettings environmentId={envId} memorySpaceId={spaceId} />);
   await chooseOption("Import provider", "codex");
   await chooseOption("Memory scope", "user");
-  await click("Discover profiles");
-  await click("Preview profile 1");
+  await click("Find memories");
+  await chooseOption("Import source", sourceId);
+  expect(container.textContent).toContain("DEV/demo");
+  expect(container.textContent).toContain("1 file skipped");
+  expect(container.textContent).not.toContain("format is not supported");
   await act(async () =>
-    container.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click(),
+    container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')[1]!.click(),
   );
-  await click("Confirm selection");
   expect(
     state.calls.mock.calls.map(
       (call) => (call[0] as { input: MemoryImportProviderInput }).input.action,
     ),
   ).toEqual(["discover", "preview"]);
-  await click("Apply import");
+  await click("Import 1 selected");
   expect(state.calls.mock.calls.at(-1)![0]).toMatchObject({
     environmentId: envId,
     input: { action: "apply", items: [{ scope: { kind: "user" } }] },
@@ -2624,17 +2632,15 @@ it("renders save failure, retries only on click and shows totals across chunks",
   await renderControl(<MemoryImportSettings environmentId={envId} memorySpaceId={spaceId} />);
   await chooseOption("Import provider", "codex");
   await chooseOption("Memory scope", "user");
-  await click("Discover profiles");
-  await click("Preview profile 1");
-  await act(async () => {
-    for (const checkbox of container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'))
-      checkbox.click();
-  });
-  await click("Confirm selection");
+  await click("Find memories");
+  await chooseOption("Import source", sourceId);
+  await act(async () =>
+    container.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click(),
+  );
   const save = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
     throw new Error("quota");
   });
-  await click("Apply import");
+  await click("Import 33 selected");
   expect(container.textContent).toContain("Retry saving import");
   expect(inputs.filter((i) => i.action === "apply")).toHaveLength(0);
   save.mockRestore();

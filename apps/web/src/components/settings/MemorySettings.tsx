@@ -47,7 +47,7 @@ import {
 } from "@t3tools/client-runtime/memory-presentation";
 import { useNavigate } from "@tanstack/react-router";
 import * as Option from "effect/Option";
-import { useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { useContext, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { useEnvironmentSettings } from "../../hooks/useSettings";
 import { useEnvironment, useEnvironments } from "../../state/environments";
 import { resolveMemoryModelSelection } from "@t3tools/shared/serverSettings";
@@ -61,6 +61,7 @@ import {
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { memoryEnvironment } from "../../state/memory";
+import { Label } from "../ui/label";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Textarea } from "../ui/textarea";
@@ -1423,6 +1424,7 @@ function MemoryEditor({
       registry.set(draft, null);
     };
   }, [draft, id, item, registry]);
+  const textId = useId();
   if (!canWrite || (item && text === null))
     return (
       <div>
@@ -1475,17 +1477,21 @@ function MemoryEditor({
       }}
     >
       <p>Save to: {scopeLabel ?? memoryScopeLabel(item?.scope ?? scope)}</p>
-      <Textarea
-        aria-label="Memory text"
-        value={text ?? ""}
-        disabled={busy || operationId !== null}
-        onChange={(event) =>
-          setText({
-            text: event.currentTarget.value,
-            memoryIds: item ? [id] : [],
-          })
-        }
-      />
+      <div className="grid gap-1.5">
+        <Label htmlFor={textId}>Memory text</Label>
+        <Textarea
+          id={textId}
+          aria-label="Memory text"
+          value={text ?? ""}
+          disabled={busy || operationId !== null}
+          onChange={(event) =>
+            setText({
+              text: event.currentTarget.value,
+              memoryIds: item ? [id] : [],
+            })
+          }
+        />
+      </div>
       {error ? <p role="alert">{error}</p> : null}
       <Button type="submit" size="sm" disabled={busy || !text?.trim()}>
         {operationId ? "Retry memory request" : "Save memory"}

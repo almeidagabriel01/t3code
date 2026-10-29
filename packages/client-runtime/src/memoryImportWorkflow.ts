@@ -62,6 +62,14 @@ export function memoryImportRequestFailureMessage(error: unknown): string | null
   return isMemoryImportRpcError(error) ? memoryImportIssueReason(error.issue) : null;
 }
 
+/** Claude sources are labeled by the encoded project folder (-Users-me-DEV-app); dashes stay ambiguous. */
+export function memoryImportSourceName(label: string): string {
+  if (!label.startsWith("-")) return label;
+  const parts = label.split("-").filter(Boolean);
+  const rest = parts[0] === "Users" ? parts.slice(2) : parts;
+  return rest.length > 0 ? rest.join("/") : "Home folder";
+}
+
 export const memoryImportFormatLabels: Record<MemoryImportSourceFormat, string> = {
   codex: "Codex",
   claude: "Claude",
