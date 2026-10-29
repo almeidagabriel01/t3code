@@ -139,9 +139,10 @@ export const makeMemoryApplicationLayers = <PS, PE, PR, IS, IE, IR, SS, SE, SR, 
     Layer.provide(ServerEnvironment.layerIdentity),
     Layer.provide(ServerSecretStore.layer),
   );
+  // Routes only: providing, not merging, keeps hub services out of the HTTP layer's outputs.
   const layerRegisteredMemoryHub = MemoryHubLayers.layerMemoryHubRoutes.pipe(
     HttpRouter.provideRequest(layerMemoryHub),
-    Layer.provideMerge(layerMemoryHub),
+    Layer.provide(layerMemoryHub),
   );
   // Published to the environment descriptor. The routes themselves mount in the HTTP layer, where
   // HttpRouter exists; server.ts merges layerRegisteredMemoryHub there.
