@@ -155,7 +155,14 @@ function EnvironmentNotes(props: {
         ) : null}
         {state?.truncated ? (
           <Text textRole="footnote" className="text-foreground-muted">
-            Showing the most recent notes only.
+            {state.omitted > 0
+              ? `${state.omitted} more notes are not shown.`
+              : "More notes are not shown."}
+          </Text>
+        ) : null}
+        {state && state.skipped.length > 0 ? (
+          <Text textRole="footnote" className="text-foreground-muted">
+            {`${state.skipped.length} ${state.skipped.length === 1 ? "file is" : "files are"} not shown as notes: ${state.skipped.map((entry) => entry.name).join(", ")}`}
           </Text>
         ) : null}
         {rows.length === 0 ? (

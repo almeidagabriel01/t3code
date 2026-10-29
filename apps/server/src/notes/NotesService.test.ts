@@ -21,7 +21,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import * as Config from "../config.ts";
 import * as Projections from "../orchestration-v2/ProjectionStore.ts";
-import { parseNote, serializeNote } from "./frontmatter.ts";
+import { InvalidFrontmatterError, parseNote, serializeNote } from "./frontmatter.ts";
 import * as Notes from "./NotesService.ts";
 import { notesLayer as layer, racing } from "./NotesTestkit.ts";
 
@@ -180,6 +180,49 @@ it("round trips the id, card link, pin and related threads", () => {
   assert.include(serializeNote(scoped), "project: project-2");
   assert.notInclude(serializeNote({ ...scoped, project: null }), "project:");
   assert.isNull(parseNote("---\nid: Not A Valid Id\n---\n").id);
+});
+
+it("frontmatter a person wrote loosely is understood and survives writes untouched", () => {
+  // [source, what the managed fields read as, key text that must survive a write of another field]
+  const cases: ReadonlyArray<
+    readonly [
+      string,
+      Partial<Record<"id" | "pinned" | "related" | "card" | "project", unknown>>,
+      string,
+    ]
+  > = [
+    ["related: thread-1", { related: ["thread-1"] }, "related: thread-1"],
+    ["related: [a, b]\nrelated2: x", { related: ["a", "b"] }, "related: [ a, b ]"],
+    ["card: 1234\ncardProject: p-1", { card: { cardId: "1234", projectId: "p-1" } }, "card: 1234"],
+    ["card: card-1", { card: null }, "card: card-1"],
+    ["cardProject: p-1", { card: null }, "cardProject: p-1"],
+    ['pinned: "true"', { pinned: true }, 'pinned: "true"'],
+    ["pinned: yes", { pinned: true }, "pinned: yes"],
+    ["pinned: True", { pinned: true }, "pinned: True"],
+    ["pinned: 0", { pinned: false }, "pinned: 0"],
+    ["id: 1234", { id: "1234" }, "id: 1234"],
+    ["project: 77", { project: "77" }, "project: 77"],
+  ];
+  for (const [header, expected, kept] of cases) {
+    const parsed = parseNote(`---\n${header}\n---\nBody\n`);
+    for (const [key, value] of Object.entries(expected))
+      assert.deepStrictEqual(parsed[key as "id"], value, header);
+    const written = serializeNote({ ...parsed, updatedBy: "agent" });
+    assert.include(written, kept, header);
+    assert.strictEqual(parseNote(written).body, "Body\n");
+    for (const line of header.split("\n")) assert.include(written, line.split(":")[0]!, header);
+  }
+  // Changing a field still rewrites exactly that field.
+  const pinned = parseNote("---\npinned: yes\nrelated: thread-1\n---\nB\n");
+  const unpinned = serializeNote({ ...pinned, pinned: false });
+  assert.notInclude(unpinned, "pinned");
+  assert.include(unpinned, "related: thread-1");
+  // `...` closes a header, and a block that is not a map is body text.
+  assert.isTrue(parseNote("---\npinned: true\n...\nB\n").pinned);
+  const rule = "---\njust a sentence\n---\nB\n";
+  assert.strictEqual(parseNote(rule).body, rule);
+  for (const broken of ["---\na: 1\na: 2\n---\nB\n", "---\na: [1\n---\nB\n"])
+    assert.throws(() => parseNote(broken), InvalidFrontmatterError);
 });
 
 it("recognizes frontmatter only at byte zero or after a BOM", () => {
@@ -688,3 +731,137 @@ it.effect("claims pending images to note-owned ids on save and releases them on 
     assert.deepStrictEqual(cleaned, [claimedId]);
   }).pipe(Effect.provide(layer({ cleaned })));
 });
+
+it.effect(
+  "a file that cannot be understood is listed as degraded, never dropped or rewritten",
+  () =>
+    Effect.gen(function* () {
+      const notes = yield* Notes.NotesService;
+      const fs = yield* FileSystem.FileSystem;
+      const { notesDir } = yield* Config.ServerConfig;
+      const duplicate = "---\na: 1\na: 2\n---\nHand edited\n";
+      yield* fs.writeFileString(`${notesDir}/good.md`, "# Good\n");
+      yield* fs.writeFileString(`${notesDir}/dup.md`, duplicate);
+      yield* fs.writeFile(`${notesDir}/binary.md`, new Uint8Array([0x23, 0x20, 0xff, 0xfe]));
+      yield* fs.makeDirectory(`${notesDir}/folder`);
+      yield* fs.writeFileString(`${notesDir}/folder/ok.md`, "# Ok\n");
+      yield* fs.writeFileString(`${notesDir}/UPPER.MD`, "# not a note name\n");
+      yield* fs.writeFileString(`${notesDir}/legacy.markdown`, "# not a note name\n");
+      yield* fs.writeFileString(`${notesDir}/cafe\u0301.md`, "# decomposed\n");
+      yield* fs.writeFileString(`${notesDir}/a:b.md`, "# colon\n");
+      yield* fs.writeFileString(`${notesDir}/readme.txt`, "ignored\n");
+
+      const listed = yield* notes.list({});
+      const byPath = new Map(listed.notes.map((note) => [note.path, note]));
+      assert.deepStrictEqual([...byPath.keys()].toSorted(), [
+        "binary.md",
+        "dup.md",
+        "folder/ok.md",
+        "good.md",
+      ]);
+      assert.isUndefined(byPath.get("good.md")!.issue);
+      assert.strictEqual(byPath.get("dup.md")!.issue, "invalid_frontmatter");
+      assert.strictEqual(byPath.get("binary.md")!.issue, "invalid_utf8");
+      assert.strictEqual(byPath.get("dup.md")!.title, "dup");
+      assert.strictEqual(byPath.get("dup.md")!.size, duplicate.length);
+      assert.deepStrictEqual(
+        listed.skipped?.map((entry) => entry.name).toSorted(),
+        ["UPPER.MD", "a:b.md", "cafe\u0301.md", "legacy.markdown"].toSorted(),
+      );
+      assert.isTrue(listed.skipped?.every((entry) => entry.reason === "unsupported_name"));
+      assert.isFalse(listed.truncated);
+
+      // The raw text is readable, and every edit is refused with the reason instead of rewriting it.
+      const read = yield* notes.read({ path: "dup.md" });
+      assert.strictEqual(read.body, duplicate);
+      const refused = yield* notes
+        .write({ path: "dup.md", baseRevision: read.revision, body: "x" }, "user")
+        .pipe(Effect.flip);
+      assert.strictEqual(refused._tag === "NoteError" && refused.reason, "invalid");
+      const pinned = yield* notes.update({ path: "dup.md", pinned: true }).pipe(Effect.flip);
+      assert.strictEqual(pinned._tag === "NoteError" && pinned.reason, "invalid");
+      assert.strictEqual(yield* fs.readFileString(`${notesDir}/dup.md`), duplicate);
+      // It can still be removed.
+      yield* notes.delete({ path: "dup.md", baseRevision: read.revision });
+      assert.isFalse(yield* fs.exists(`${notesDir}/dup.md`));
+    }).pipe(Effect.provide(layer())),
+);
+
+it.effect(
+  "an oversized file is listed as too_large and the rest of the list is cut with a count",
+  () =>
+    Effect.gen(function* () {
+      const notes = yield* Notes.NotesService;
+      const fs = yield* FileSystem.FileSystem;
+      const { notesDir } = yield* Config.ServerConfig;
+      yield* fs.writeFileString(`${notesDir}/huge.md`, "x".repeat(1024 * 1024 + 256 * 1024 + 1));
+      const huge = (yield* notes.list({})).notes.find((note) => note.path === "huge.md");
+      assert.strictEqual(huge?.issue, "too_large");
+      const refused = yield* notes
+        .delete({ path: "huge.md", baseRevision: huge!.revision })
+        .pipe(Effect.flip);
+      assert.strictEqual(refused._tag === "NoteError" && refused.reason, "too_large");
+      for (let index = 0; index < 501; index++)
+        yield* fs.writeFileString(`${notesDir}/n-${String(index).padStart(3, "0")}.md`, "# n\n");
+      const listed = yield* notes.list({});
+      assert.isTrue(listed.truncated);
+      assert.strictEqual(listed.notes.length + (listed.omitted ?? 0), 502);
+    }).pipe(Effect.provide(layer())),
+);
+
+it.effect(
+  "the watcher publishes a note that became unreadable as degraded, not stale or removed",
+  () =>
+    Effect.gen(function* () {
+      const changes = yield* Queue.unbounded<FileSystem.WatchEvent>();
+      yield* Effect.gen(function* () {
+        const notes = yield* Notes.NotesService;
+        const fs = yield* FileSystem.FileSystem;
+        const { notesDir } = yield* Config.ServerConfig;
+        yield* fs.writeFileString(`${notesDir}/n.md`, "# Fine\n");
+        const seen = yield* Queue.unbounded<NotesEvent>();
+        yield* notes.subscribe.pipe(
+          Stream.runForEach((event) => Queue.offer(seen, event)),
+          Effect.forkScoped,
+        );
+        assert.equal((yield* Queue.take(seen)).type, "snapshot");
+        yield* fs.writeFileString(`${notesDir}/n.md`, "---\na: 1\na: 2\n---\nBroken\n");
+        yield* Queue.offer(changes, { _tag: "Update", path: "n.md" });
+        yield* TestClock.adjust("100 millis");
+        const event = yield* Queue.take(seen);
+        assert.strictEqual(event.type === "upserted" && event.note.issue, "invalid_frontmatter");
+        // A full resync reaches the same state as a single-path refresh.
+        yield* Queue.offer(changes, { _tag: "Update", path: "other.txt" });
+        yield* TestClock.adjust("100 millis");
+        assert.strictEqual((yield* notes.list({})).notes[0]?.issue, "invalid_frontmatter");
+      }).pipe(Effect.provide(queuedWatcher(changes)));
+    }).pipe(Effect.scoped),
+);
+
+it.effect("a read that fails for a passing reason keeps the note and is retried", () =>
+  Effect.gen(function* () {
+    if (process.getuid?.() === 0) return;
+    const changes = yield* Queue.unbounded<FileSystem.WatchEvent>();
+    yield* Effect.gen(function* () {
+      const notes = yield* Notes.NotesService;
+      const fs = yield* FileSystem.FileSystem;
+      const { notesDir } = yield* Config.ServerConfig;
+      yield* fs.writeFileString(`${notesDir}/n.md`, "# One\n");
+      const seen = yield* Queue.unbounded<NotesEvent>();
+      yield* notes.subscribe.pipe(
+        Stream.runForEach((event) => Queue.offer(seen, event)),
+        Effect.forkScoped,
+      );
+      assert.equal((yield* Queue.take(seen)).type, "snapshot");
+      yield* fs.writeFileString(`${notesDir}/n.md`, "# Two\n");
+      yield* fs.chmod(`${notesDir}/n.md`, 0o000);
+      yield* Queue.offer(changes, { _tag: "Update", path: "n.md" });
+      yield* TestClock.adjust("100 millis");
+      assert.strictEqual(yield* Queue.size(seen), 0);
+      yield* fs.chmod(`${notesDir}/n.md`, 0o644);
+      yield* TestClock.adjust("1 second");
+      const event = yield* Queue.take(seen);
+      assert.strictEqual(event.type === "upserted" && event.note.title, "Two");
+    }).pipe(Effect.provide(queuedWatcher(changes)));
+  }).pipe(Effect.scoped),
+);

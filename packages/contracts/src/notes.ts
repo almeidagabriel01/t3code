@@ -78,6 +78,18 @@ export const NoteCardLink = Schema.Struct({
 });
 export type NoteCardLink = typeof NoteCardLink.Type;
 
+/** Why a note cannot be edited by T3 Code. Its bytes stay on disk untouched. */
+export const NoteIssue = Schema.Literals(["invalid_frontmatter", "invalid_utf8", "too_large"]);
+export type NoteIssue = typeof NoteIssue.Type;
+
+/** A file in the notes directory that is not listed as a note, so it is never silently missing. */
+export const NoteSkipped = Schema.Struct({
+  name: Schema.String.check(Schema.isMaxLength(NOTE_PATH_MAX_LENGTH)),
+  /** unsupported_name: not a plain NFC .md path with one folder at most. unreadable: could not be read. */
+  reason: Schema.Literals(["unsupported_name", "unreadable"]),
+});
+export type NoteSkipped = typeof NoteSkipped.Type;
+
 export const NoteSummary = Schema.Struct({
   /** null for a file that has never been written by T3 Code; the next write assigns one. */
   id: Schema.NullOr(NoteId),
@@ -93,6 +105,8 @@ export const NoteSummary = Schema.Struct({
   /** The environment-local project the note belongs to; absent means unscoped. */
   project: Schema.optionalKey(ProjectId),
   updatedBy: Schema.NullOr(NoteAuthor),
+  /** Set when the file could not be understood; the note is read-only and metadata is not shown. */
+  issue: Schema.optionalKey(NoteIssue),
   revision: NoteRevision,
   updatedAt: IsoDateTime,
   size: NonNegativeInt,
@@ -118,6 +132,10 @@ export const NotesListResult = Schema.Struct({
   folders: Schema.Array(NoteFolder),
   /** True when the folder holds more notes than one list returns. */
   truncated: Schema.Boolean,
+  /** How many notes the truncated list left out. */
+  omitted: Schema.optionalKey(NonNegativeInt),
+  /** Files that are not listed as notes, at most 50. */
+  skipped: Schema.optionalKey(Schema.Array(NoteSkipped)),
 });
 export type NotesListResult = typeof NotesListResult.Type;
 
@@ -172,6 +190,8 @@ export const NotesEvent = Schema.Union([
     notes: Schema.Array(NoteSummary),
     folders: Schema.Array(NoteFolder),
     truncated: Schema.Boolean,
+    omitted: Schema.optionalKey(NonNegativeInt),
+    skipped: Schema.optionalKey(Schema.Array(NoteSkipped)),
   }),
   Schema.Struct({ type: Schema.Literal("upserted"), note: NoteSummary }),
   Schema.Struct({ type: Schema.Literal("removed"), path: NotePath }),

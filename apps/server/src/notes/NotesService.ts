@@ -14,6 +14,8 @@ import {
   type NoteAuthor,
   type NoteCardLink,
   type NoteDocument,
+  type NoteIssue,
+  type NoteSkipped,
   type NotesDeleteInput,
   type NotesDeleteResult,
   type NotesEvent,
@@ -50,10 +52,32 @@ const decodeFolder = Schema.decodeEffect(NoteFolder);
 const isPath = Schema.is(NotePath);
 const isFolder = Schema.is(NoteFolder);
 const LIST_LIMIT = 500;
+const SKIPPED_LIMIT = 50;
+const isMarkdownName = (name: string) => /\.(?:md|markdown)$/iu.test(name);
+const ISSUE_LABEL: Record<NoteIssue, string> = {
+  invalid_frontmatter: "header cannot be parsed",
+  invalid_utf8: "file is not valid UTF-8",
+  too_large: "file is too large",
+};
 const MAX_FILE_BYTES = NOTE_BODY_MAX_BYTES + 256 * 1024;
 const summary = ({ body: _body, ...note }: NoteDocument): NoteSummary => note;
 const sha256 = (bytes: Uint8Array) => NodeCrypto.createHash("sha256").update(bytes).digest("hex");
 const newNoteId = () => NoteId.make(NodeCrypto.randomUUID());
+
+const strictUtf8 = (bytes: Uint8Array) => {
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    return null;
+  }
+};
+const tryParseNote = (text: string) => {
+  try {
+    return parseNote(text);
+  } catch {
+    return null;
+  }
+};
 
 export class NotesService extends Context.Service<
   NotesService,
@@ -196,7 +220,8 @@ const make = Effect.gen(function* () {
     return { name, absolute, parent, verify, verifyFile, pinTemporary };
   });
 
-  const load = Effect.fnUntraced(function* (input: string) {
+  /** Loads a note, or a degraded stand-in for a file T3 Code cannot understand (contents is null). */
+  const loadAny = Effect.fnUntraced(function* (input: string) {
     return yield* Effect.scoped(
       Effect.gen(function* () {
         const directory = yield* pinDirectory(input);
@@ -209,29 +234,53 @@ const make = Effect.gen(function* () {
         yield* directory.verify;
         const info = yield* io(name, () => handle.stat());
         if (!info.isFile()) return yield* invalidPath(name);
-        if (info.size > MAX_FILE_BYTES)
-          return yield* new NoteError({
-            reason: "too_large",
-            message: "The note is too large.",
+        const folder = name.includes("/") ? name.split("/")[0]! : null;
+        const degraded = (issue: NoteIssue, revision: string, body: string) => {
+          const document: NoteDocument = {
+            id: null,
             path: name,
-          });
+            folder,
+            title: bodySummary("", path.basename(name, ".md")).title,
+            preview: `Not editable: its ${ISSUE_LABEL[issue]}.`,
+            pinned: false,
+            related: [],
+            card: null,
+            updatedBy: null,
+            issue,
+            revision,
+            updatedAt: info.mtime.toISOString(),
+            size: info.size,
+            body,
+          };
+          readModel.set(name, document);
+          return { document, contents: null, absolute };
+        };
+        // Unread, so the revision stands for size and mtime; it only has to change with the file.
+        if (info.size > MAX_FILE_BYTES)
+          return degraded(
+            "too_large",
+            sha256(new TextEncoder().encode(`too_large:${info.size}:${info.mtimeMs}`)),
+            "",
+          );
         const bytes = yield* io(name, () => handle.readFile());
         yield* directory.verify;
-        const contents = yield* Effect.try({
-          try: () => parseNote(new TextDecoder("utf-8", { fatal: true }).decode(bytes)),
-          catch: () => storage,
-        });
+        const revision = sha256(bytes);
+        const decoded = strictUtf8(bytes);
+        if (decoded === null)
+          return degraded("invalid_utf8", revision, new TextDecoder().decode(bytes));
+        const contents = tryParseNote(decoded);
+        if (contents === null) return degraded("invalid_frontmatter", revision, decoded);
         const document: NoteDocument = {
           id: contents.id,
           path: name,
-          folder: name.includes("/") ? name.split("/")[0]! : null,
+          folder,
           ...bodySummary(contents.body, path.basename(name, ".md")),
           pinned: contents.pinned,
           related: contents.related,
           card: contents.card,
           ...(contents.project === null ? {} : { project: contents.project }),
           updatedBy: contents.updatedBy,
-          revision: sha256(bytes),
+          revision,
           updatedAt: info.mtime.toISOString(),
           size: bytes.byteLength,
           body: contents.body,
@@ -241,8 +290,26 @@ const make = Effect.gen(function* () {
       }),
     );
   });
+  /** For writers: a note T3 Code cannot understand is refused, never rewritten from a guess. */
+  const load = Effect.fnUntraced(function* (input: string) {
+    const loaded = yield* loadAny(input);
+    if (loaded.contents === null)
+      return yield* new NoteError({
+        reason: "invalid",
+        message: `This note was left unchanged because its ${ISSUE_LABEL[loaded.document.issue!]}. Fix the file or delete it.`,
+        path: loaded.document.path,
+      });
+    return { ...loaded, contents: loaded.contents };
+  });
   const optionalLoad = (name: string) =>
     load(name).pipe(
+      Effect.catchTags({
+        NoteError: (error) =>
+          error.reason === "not_found" ? Effect.succeed(null) : Effect.fail(error),
+      }),
+    );
+  const optionalLoadAny = (name: string) =>
+    loadAny(name).pipe(
       Effect.catchTags({
         NoteError: (error) =>
           error.reason === "not_found" ? Effect.succeed(null) : Effect.fail(error),
@@ -420,7 +487,7 @@ const make = Effect.gen(function* () {
   });
   /** The error for a note whose file no longer holds the expected revision. */
   const changedOnDisk = Effect.fnUntraced(function* (name: NotePath, expected: string | null) {
-    const current = yield* optionalLoad(name);
+    const current = yield* optionalLoadAny(name);
     if (!current)
       return yield* new NoteError({
         reason: "not_found",
@@ -496,54 +563,81 @@ const make = Effect.gen(function* () {
     const entries = yield* fs.readDirectory(root).pipe(Effect.mapError(() => storage));
     const folders: Array<string> = [];
     const names: Array<NotePath> = [];
-    let truncated = false;
+    const skipped: Array<NoteSkipped> = [];
+    // Names that failed to read for a reason that may pass, so a refresh keeps their last state.
+    const unreadable = new Set<string>();
+    let omitted = 0;
+    const skip = (name: string, reason: NoteSkipped["reason"]) => {
+      if (skipped.length < SKIPPED_LIMIT) skipped.push({ name, reason });
+    };
     const add = (name: string) => {
-      if (!isPath(name)) return;
-      if (names.length < limit) names.push(name);
-      else truncated = true;
+      if (isPath(name)) {
+        if (names.length < limit) names.push(name);
+        else omitted++;
+      } else if (isMarkdownName(name)) skip(name, "unsupported_name");
     };
     for (const entry of entries.toSorted()) {
       if (entry.startsWith(".")) continue;
       const entryPath = path.join(root, entry);
       const info = yield* fs.stat(entryPath).pipe(Effect.option);
-      if (Option.isNone(info)) continue;
-      if (info.value.type === "Directory" && isFolder(entry)) {
+      if (Option.isNone(info)) {
+        if (isMarkdownName(entry)) skip(entry, "unreadable");
+        continue;
+      }
+      if (info.value.type === "Directory") {
+        if (!isFolder(entry)) {
+          skip(entry, "unsupported_name");
+          continue;
+        }
         const real = yield* fs.realPath(entryPath).pipe(Effect.option);
         if (
           Option.isNone(real) ||
           path.relative(root, real.value).startsWith("..") ||
           path.isAbsolute(path.relative(root, real.value))
-        )
+        ) {
+          skip(entry, "unreadable");
           continue;
+        }
         folders.push(entry);
         if (input.folder !== undefined && entry !== input.folder) continue;
         const children = yield* fs.readDirectory(entryPath).pipe(Effect.mapError(() => storage));
-        for (const child of children.toSorted()) add(`${entry}/${child}`);
+        for (const child of children.toSorted())
+          if (!child.startsWith(".")) add(`${entry}/${child}`);
       } else if (input.folder === undefined) add(entry);
     }
-    const notes = yield* Effect.forEach(
+    const loaded = yield* Effect.forEach(
       names,
       (name) =>
-        load(name).pipe(
+        loadAny(name).pipe(
           Effect.map(({ document }) => document),
-          Effect.option,
+          Effect.catchTags({
+            NoteError: (error) => {
+              // Gone since the directory was read: nothing to list. Anything else is reported.
+              if (error.reason === "not_found") return Effect.succeed(null);
+              skip(name, "unreadable");
+              if (error.reason === "storage") unreadable.add(name);
+              return Effect.succeed(null);
+            },
+          }),
         ),
       { concurrency: 4 },
     );
     return {
-      notes: notes
-        .filter(Option.isSome)
-        .map((note) => note.value)
+      notes: loaded
+        .filter((note): note is NoteDocument => note !== null)
         .filter((note) => input.project === undefined || note.project === input.project),
       folders,
-      truncated,
+      truncated: omitted > 0,
+      ...(omitted > 0 ? { omitted } : {}),
+      ...(skipped.length > 0 ? { skipped } : {}),
+      unreadable,
     };
   });
   const read = Effect.fn("NotesService.read")(function* (input: NotesReadInput) {
-    return (yield* lock.withPermits(1)(load(input.path))).document;
+    return (yield* lock.withPermits(1)(loadAny(input.path))).document;
   });
   const list = Effect.fn("NotesService.list")(function* (input: NotesListInput) {
-    const result = yield* lock.withPermits(1)(scan(input));
+    const { unreadable: _unreadable, ...result } = yield* lock.withPermits(1)(scan(input));
     return { ...result, notes: result.notes.map(summary) };
   });
   const write = Effect.fn("NotesService.write")(function* (
@@ -650,7 +744,7 @@ const make = Effect.gen(function* () {
         const source = yield* load(input.from);
         yield* checkRevision(source.document, input.baseRevision);
         if (input.from === input.to) return source.document;
-        if (yield* optionalLoad(input.to))
+        if (yield* optionalLoadAny(input.to))
           return yield* new NoteError({
             reason: "exists",
             message: "The destination already exists.",
@@ -691,12 +785,18 @@ const make = Effect.gen(function* () {
   const remove = Effect.fn("NotesService.delete")(function* (input: NotesDeleteInput) {
     return yield* lock.withPermits(1)(
       Effect.gen(function* () {
-        const source = yield* load(input.path);
+        // A note T3 Code cannot parse can still be deleted, except an unread oversized file.
+        const source = yield* loadAny(input.path);
+        if (source.document.issue === "too_large")
+          return yield* new NoteError({
+            reason: "too_large",
+            message: "The note is too large to delete here. Remove the file directly.",
+            path: input.path,
+          });
         yield* checkRevision(source.document, input.baseRevision);
         yield* unlink(source.document.path, source.document.revision);
         yield* removed(input.path);
-        if (source.contents.id !== null)
-          yield* images.release(source.contents.id, source.contents.body);
+        if (source.contents?.id) yield* images.release(source.contents.id, source.contents.body);
         return { path: input.path };
       }),
     );
@@ -750,11 +850,11 @@ const make = Effect.gen(function* () {
   const refresh = lock.withPermits(1)(
     Effect.gen(function* () {
       const snapshot = yield* scan({}, Infinity);
-      const present = new Set(snapshot.notes.map((note) => note.path));
+      const present = new Set<string>(snapshot.notes.map((note) => note.path));
       for (const note of snapshot.notes)
         if (known.get(note.path) !== note.revision) yield* publish(note);
       for (const name of new Set([...known.keys(), ...readModel.keys()]))
-        if (!present.has(name)) yield* removed(name);
+        if (!present.has(name) && !snapshot.unreadable.has(name)) yield* removed(name);
     }),
   );
   const subscribe = Stream.unwrap(
@@ -777,18 +877,34 @@ const make = Effect.gen(function* () {
   for (const note of (yield* scan({}, Infinity)).notes) known.set(note.path, note.revision);
   const ready = yield* Deferred.make<void>();
   const dirty = new Set<string>();
+  /** Same policy as refresh: gone or unusable means removed; a failure that may pass keeps state. */
   const refreshDirty = lock.withPermits(1)(
     Effect.gen(function* () {
       const paths = [...dirty];
       dirty.clear();
+      let failed = false;
       for (const name of paths) {
         if (!isPath(name)) continue;
-        const loaded = yield* optionalLoad(name).pipe(Effect.option);
-        if (Option.isNone(loaded)) continue;
-        const source = loaded.value;
-        if (source && known.get(name) !== source.document.revision) yield* publish(source.document);
-        else if (!source && (known.has(name) || readModel.has(name))) yield* removed(name);
+        const outcome = yield* loadAny(name).pipe(
+          Effect.map((source) => ({ source }) as const),
+          Effect.catchTags({
+            NoteError: (error) =>
+              Effect.succeed(
+                error.reason === "storage"
+                  ? ({ retry: true } as const)
+                  : ({ source: null } as const),
+              ),
+          }),
+        );
+        if ("retry" in outcome) {
+          dirty.add(name);
+          failed = true;
+        } else if (outcome.source) {
+          if (known.get(name) !== outcome.source.document.revision)
+            yield* publish(outcome.source.document);
+        } else if (known.has(name) || readModel.has(name)) yield* removed(name);
       }
+      if (failed) return yield* storage;
     }),
   );
   // Each (re)attached watcher first emits a marker for the root, which resyncs every note, so
@@ -825,11 +941,18 @@ const make = Effect.gen(function* () {
     ),
     Stream.debounce("100 millis"),
     Stream.runForEach(() => {
-      if ([...dirty].some((name) => !isPath(name))) {
-        dirty.clear();
-        return refresh.pipe(Effect.ignore({ log: true }));
-      }
-      return refreshDirty.pipe(Effect.ignore({ log: true }));
+      // A failed pass keeps its paths (refreshDirty) or marks the root dirty again (refresh), and
+      // is retried, so a transient read error never leaves a note stale until the watcher reattaches.
+      const pass = [...dirty].some((name) => !isPath(name))
+        ? Effect.suspend(() => {
+            dirty.clear();
+            return refresh.pipe(Effect.tapError(() => Effect.sync(() => dirty.add(""))));
+          })
+        : refreshDirty;
+      return pass.pipe(
+        Effect.retry({ schedule: Schedule.spaced("1 second"), times: 5 }),
+        Effect.ignore({ log: true }),
+      );
     }),
     Effect.ensuring(Deferred.succeed(ready, undefined)),
     Effect.catch((error) => Effect.logWarning("Notes watcher stopped.", error)),

@@ -17,6 +17,14 @@ import * as NotesService from "./NotesService.ts";
 
 /** Kanban card descriptions are capped below a note body's limit. */
 const CARD_DESCRIPTION_MAX_CHARS = 100_000;
+const TRUNCATION_NOTICE = "\n\n[Truncated: the note continues in the note itself.]";
+
+/** Cuts at a code point boundary and says so, so a long note never silently loses its tail. */
+export const cardDescription = (body: string) => {
+  if (body.length <= CARD_DESCRIPTION_MAX_CHARS) return body;
+  const cut = body.slice(0, CARD_DESCRIPTION_MAX_CHARS - TRUNCATION_NOTICE.length);
+  return `${/[\uD800-\uDBFF]$/u.test(cut) ? cut.slice(0, -1) : cut}${TRUNCATION_NOTICE}`;
+};
 
 export class NoteWorkService extends Context.Service<
   NoteWorkService,
@@ -42,6 +50,11 @@ const make = Effect.gen(function* () {
   const startWork = Effect.fn("NoteWorkService.startWork")(
     function* (input: NotesStartWorkInput, author: NoteAuthor, actor: KanbanActor) {
       const note = yield* notes.identify(input.path);
+      if (note.card) {
+        // One note, one card: a second click returns the card the first created while it exists.
+        const existing = yield* kanban.cardFamily(note.card.cardId);
+        if (existing) return { note, boardId: existing.board.id, cardId: existing.card.id };
+      }
       // Kanban stores each command's result, so a retry with the same request id gets the card the
       // first attempt created, even when that attempt failed before linking it to the note.
       const commandKey = `note-work:${note.id}:${input.requestId}`;
@@ -50,10 +63,7 @@ const make = Effect.gen(function* () {
         projectId: input.projectId,
         actor,
       });
-      const description = yield* images.copyAsPending(
-        note.id,
-        note.body.slice(0, CARD_DESCRIPTION_MAX_CHARS),
-      );
+      const description = yield* images.copyAsPending(note.id, cardDescription(note.body));
       const card = yield* kanban.cardCreate({
         commandId: CommandId.make(`${commandKey}:card`),
         boardId: board.boardId!,

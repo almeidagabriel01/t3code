@@ -72,6 +72,49 @@ it.effect("start work creates one linked card per request id", () =>
   }).pipe(Effect.provide(workLayer([]))),
 );
 
+it.effect("starting work again returns the linked card; a deleted card can be replaced", () =>
+  Effect.gen(function* () {
+    const notes = yield* Notes.NotesService;
+    const work = yield* Work.NoteWorkService;
+    const kanban = yield* Kanban.KanbanService;
+    yield* notes.write({ path: "b.md", body: "# B\n", baseRevision: null }, "user");
+    const first = yield* work.startWork(
+      { path: "b.md", projectId, requestId: "request-1" },
+      "user",
+      "user",
+    );
+    const second = yield* work.startWork(
+      { path: "b.md", projectId, requestId: "request-2" },
+      "user",
+      "user",
+    );
+    assert.strictEqual(second.cardId, first.cardId);
+    assert.strictEqual(second.boardId, first.boardId);
+    assert.strictEqual((yield* boards)[0]?.cards.length, 1);
+    yield* kanban.cardDelete({ commandId: CommandId.make("delete-1"), cardId: first.cardId });
+    const third = yield* work.startWork(
+      { path: "b.md", projectId, requestId: "request-3" },
+      "user",
+      "user",
+    );
+    assert.notStrictEqual(third.cardId, first.cardId);
+    assert.strictEqual(third.note.card?.cardId, third.cardId);
+  }).pipe(Effect.provide(workLayer([]))),
+);
+
+it("a long note is cut on a code point and the cut is stated", () => {
+  const cut = Work.cardDescription(`${"a".repeat(99_000)}😀${"b".repeat(5_000)}`);
+  assert.isAtMost(cut.length, 100_000);
+  assert.include(cut, "[Truncated");
+  assert.strictEqual(Work.cardDescription("short"), "short");
+  // Whatever parity the cut lands on, no half of an emoji is left behind.
+  for (const lead of [0, 1]) {
+    const split = Work.cardDescription(`${"a".repeat(99_900 + lead)}${"😀".repeat(500)}`);
+    assert.notMatch(split, /[\uD800-\uDBFF](?![\uDC00-\uDFFF])/u);
+    assert.notMatch(split, /(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u);
+  }
+});
+
 it.effect("a retry after the card was created but not linked links that same card", () =>
   Effect.gen(function* () {
     const notes = yield* Notes.NotesService;

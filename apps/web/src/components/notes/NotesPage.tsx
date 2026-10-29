@@ -1,5 +1,5 @@
 import { RegistryContext, useAtomRefresh, useAtomValue } from "@effect/atom-react";
-import { selectNotesInOrder } from "@t3tools/client-runtime/state/notes";
+import { selectNotesInOrder, type NotesState } from "@t3tools/client-runtime/state/notes";
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import * as Option from "effect/Option";
@@ -39,6 +39,41 @@ import { NoteLoader } from "./NoteDetail";
 import { NoteList } from "./NoteList";
 import { noteErrorMessage } from "./noteState";
 import { useCreateNote } from "./useCreateNote";
+
+const REASON = {
+  unsupported_name: "name not supported",
+  unreadable: "could not be read",
+} as const;
+
+/** What the list leaves out: notes past the list size, and files that are not notes by name. */
+function NotesListNotice(props: { readonly state: NotesState }) {
+  const { truncated, omitted, skipped } = props.state;
+  if (!truncated && skipped.length === 0) return null;
+  return (
+    <div role="status" className="grid gap-1 px-3 py-2 text-xs text-muted-foreground">
+      {truncated ? (
+        <p>
+          {omitted > 0 ? `${omitted} more notes are not shown.` : "More notes are not shown."} Type
+          a path such as folder/note.md to open one.
+        </p>
+      ) : null}
+      {skipped.length > 0 ? (
+        <details>
+          <summary className="cursor-pointer">
+            {skipped.length} {skipped.length === 1 ? "file is" : "files are"} not shown as notes
+          </summary>
+          <ul className="mt-1 grid gap-0.5 [overflow-wrap:anywhere]">
+            {skipped.map((entry) => (
+              <li key={entry.name}>
+                {entry.name} ({REASON[entry.reason]})
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
+    </div>
+  );
+}
 
 const notesCount = (count: number) => `${count} ${count === 1 ? "note" : "notes"}`;
 
@@ -361,12 +396,7 @@ function EnvironmentNotes(
           </div>
         ) : null}
         {empty ? <div className="md:hidden">{emptyState}</div> : null}
-        {state?.truncated ? (
-          <p role="status" className="px-3 py-2 text-xs text-muted-foreground">
-            Showing the notes that fit in one list. Type a path such as folder/note.md to open
-            another.
-          </p>
-        ) : null}
+        {state ? <NotesListNotice state={state} /> : null}
       </NoteList>
       <main
         className={

@@ -43,6 +43,17 @@ describe("notes state", () => {
     const removed = applyNotesEvent(upserted, { type: "removed", path: "a.md" })!;
     assert.deepStrictEqual([...removed.notes.keys()], ["work/b.md", "ideas/c.md"]);
     assert.strictEqual(applyNotesEvent(removed, snapshot)!.notes.size, 2);
+    // The server's counts and unlisted files reach the state, and default when it sends none.
+    assert.strictEqual(initial.omitted, 0);
+    assert.deepStrictEqual(initial.skipped, []);
+    const cut = applyNotesEvent(null, {
+      ...snapshot,
+      truncated: true,
+      omitted: 3,
+      skipped: [{ name: "x.MD", reason: "unsupported_name" }],
+    })!;
+    assert.strictEqual(cut.omitted, 3);
+    assert.strictEqual(cut.skipped[0]?.name, "x.MD");
   });
 
   it("orders pinned notes first, then the most recently updated", () => {

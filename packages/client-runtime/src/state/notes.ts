@@ -2,6 +2,7 @@ import {
   WS_METHODS,
   type NoteFolder,
   type NotePath,
+  type NoteSkipped,
   type NotesEvent,
   type NoteSummary,
 } from "@t3tools/contracts";
@@ -22,6 +23,10 @@ export interface NotesState {
   readonly folders: ReadonlyArray<NoteFolder>;
   /** True when the server holds more notes than its snapshot sent. */
   readonly truncated: boolean;
+  /** How many notes the snapshot left out. */
+  readonly omitted: number;
+  /** Files the server did not list as notes. */
+  readonly skipped: ReadonlyArray<NoteSkipped>;
 }
 
 /** Folds one event; the first is always a snapshot, so state starts from it. */
@@ -31,6 +36,8 @@ export function applyNotesEvent(state: NotesState | null, event: NotesEvent): No
       notes: new Map(event.notes.map((note) => [note.path, note])),
       folders: event.folders,
       truncated: event.truncated,
+      omitted: event.omitted ?? 0,
+      skipped: event.skipped ?? [],
     };
   }
   if (state === null) return null;
