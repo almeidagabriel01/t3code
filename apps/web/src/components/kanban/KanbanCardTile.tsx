@@ -12,11 +12,11 @@ import {
   BotIcon,
   CalendarDaysIcon,
   CornerDownRightIcon,
+  EllipsisIcon,
   LinkIcon,
   ListChecksIcon,
   ListTreeIcon,
   PaperclipIcon,
-  PencilIcon,
 } from "lucide-react";
 import { memo } from "react";
 
@@ -28,6 +28,7 @@ import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Spinner } from "../ui/spinner";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { KanbanCardCover } from "./KanbanCardAttachments";
 import {
   KanbanProjectBadge,
@@ -138,19 +139,26 @@ export const KanbanCardTile = memo(function KanbanCardTile(props: KanbanCardTile
           {canQuickEdit || (props.onStartAgent && props.onLinkThread) ? (
             <span className="relative z-10 -my-1 -me-1 flex opacity-0 group-focus-within/card:opacity-100 group-hover/card:opacity-100 has-data-popup-open:opacity-100">
               {canQuickEdit ? (
-                <Button
-                  size="icon-xs"
-                  variant="ghost-muted"
-                  aria-label={`Quick edit #${card.number}`}
-                  onClick={(event) => {
-                    const anchor = event.currentTarget.closest<HTMLElement>(
-                      '[data-testid="kanban-card"]',
-                    );
-                    if (anchor) props.onQuickEdit?.({ cardId: card.id, anchor });
-                  }}
-                >
-                  <PencilIcon />
-                </Button>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        size="icon-xs"
+                        variant="ghost-muted"
+                        aria-label={`Actions for #${card.number}`}
+                        onClick={(event) => {
+                          const anchor = event.currentTarget.closest<HTMLElement>(
+                            '[data-testid="kanban-card"]',
+                          );
+                          if (anchor) props.onQuickEdit?.({ cardId: card.id, anchor });
+                        }}
+                      />
+                    }
+                  >
+                    <EllipsisIcon />
+                  </TooltipTrigger>
+                  <TooltipPopup side="top">Card actions</TooltipPopup>
+                </Tooltip>
               ) : null}
               {props.onStartAgent && props.onLinkThread ? (
                 <Menu>

@@ -87,7 +87,7 @@ describe("KanbanBoardView quick edit", () => {
       />,
     );
 
-    const pencil = page.getByRole("button", { name: "Quick edit #7" });
+    const pencil = page.getByRole("button", { name: "Actions for #7" });
     (pencil.element() as HTMLElement).focus();
     await userEvent.keyboard("{Enter}");
     const title = page.getByRole("textbox", { name: "Card title" });
@@ -98,7 +98,7 @@ describe("KanbanBoardView quick edit", () => {
     expect(mocks.updateCard).toHaveBeenCalledWith({ cardId: card.id, title: "a b" });
     await expect.element(title).not.toBeInTheDocument();
 
-    await page.getByRole("button", { name: "Quick edit #7" }).click();
+    await page.getByRole("button", { name: "Actions for #7" }).click();
     await page.getByRole("button", { name: "Move" }).click();
     await page.getByRole("menuitemradio", { name: "Doing" }).click();
     expect(mocks.moveCard).toHaveBeenCalledWith({ cardId: card.id, columnId: "doing" });
