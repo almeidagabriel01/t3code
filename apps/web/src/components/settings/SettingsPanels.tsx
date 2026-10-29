@@ -474,6 +474,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.sidebarThreadOrder !== DEFAULT_UNIFIED_SETTINGS.sidebarThreadOrder
       ? ["Thread order"]
       : []),
+    ...(settings.boringSidebarMultilineRows !== DEFAULT_UNIFIED_SETTINGS.boringSidebarMultilineRows
+      ? ["Two-line thread rows"]
+      : []),
     ...(settings.sidebarWorkingShelfEnabled !== DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled
       ? ["Working section"]
       : []),
@@ -666,6 +669,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarProjectSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder,
       sidebarThreadOrder: DEFAULT_UNIFIED_SETTINGS.sidebarThreadOrder,
+      boringSidebarMultilineRows: DEFAULT_UNIFIED_SETTINGS.boringSidebarMultilineRows,
       sidebarWorkingShelfEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled,
       sidebarShowSubagents: DEFAULT_UNIFIED_SETTINGS.sidebarShowSubagents,
       sidebarAgentActivityDisplayMode: DEFAULT_UNIFIED_SETTINGS.sidebarAgentActivityDisplayMode,
@@ -951,6 +955,32 @@ export function GeneralSettingsPanel() {
                 ))}
               </SelectPopup>
             </Select>
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("two-line-rows")}
+          description="Show active and pinned threads on two lines: the title, then the branch, pull request, and agent."
+          resetAction={
+            settings.boringSidebarMultilineRows !==
+            DEFAULT_UNIFIED_SETTINGS.boringSidebarMultilineRows ? (
+              <SettingResetButton
+                label="two-line thread rows"
+                onClick={() =>
+                  updateSettings({
+                    boringSidebarMultilineRows: DEFAULT_UNIFIED_SETTINGS.boringSidebarMultilineRows,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.boringSidebarMultilineRows}
+              onCheckedChange={(checked) =>
+                updateSettings({ boringSidebarMultilineRows: Boolean(checked) })
+              }
+              aria-label="Two-line thread rows"
+            />
           }
         />
         <SettingsRow

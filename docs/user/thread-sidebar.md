@@ -120,6 +120,10 @@ Your arranged order is kept while **Recent activity** is on and returns when you
 **Fixed**. Settling clears a thread's active position. The settled shelf continues to use
 settlement time.
 
+On web and desktop, threads under a project show on one line. Turn on **Settings → General →
+Two-line thread rows** to add the branch, pull request, and agent under the title of active and
+pinned threads.
+
 If dragging is unavailable for one environment, update the T3 Code server running in that
 environment. Pinned and active reordering require server support. Threads from older servers keep
 their default order until the server is updated.

@@ -826,6 +826,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
+  const multilineRows = useClientSettings((s) => s.boringSidebarMultilineRows);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const {
     settleThread,
@@ -3127,7 +3128,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                         );
                         const isCard =
                           section === "active" || section === "pinned" || section === "working";
-                        const rowVariant = isCard ? "card" : "slim";
+                        const rowVariant = isCard && multilineRows ? "folder-multiline" : "folder";
                         return (
                           <SortableThreadRow
                             key={threadKey}

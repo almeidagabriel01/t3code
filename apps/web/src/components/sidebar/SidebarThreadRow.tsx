@@ -1253,7 +1253,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               {accessibleTitle}
               <SidebarNotificationDot
                 dotClass={notificationDotClass}
-                className="absolute top-1/2 left-0.5 -translate-y-1/2"
+                className={cn(
+                  "absolute top-1/2 -translate-y-1/2",
+                  // In a project, the dot sits under the project icon.
+                  inFolder ? "left-4" : "left-0.5",
+                )}
               />
               {inFolder ? null : (
                 <span

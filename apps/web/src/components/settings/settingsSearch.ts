@@ -445,6 +445,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["sort threads sidebar fixed recent activity move top reorder drag"],
   },
   {
+    id: "two-line-rows",
+    title: "Two-line thread rows",
+    to: "/settings/general",
+    searchTerms: ["sidebar thread rows multiline branch pull request details compact"],
+  },
+  {
     id: "working-shelf",
     title: "Working section",
     to: "/settings/general",

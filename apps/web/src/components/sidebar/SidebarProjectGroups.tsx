@@ -2,7 +2,7 @@ import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environ
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { CheckCheckIcon, ChevronDownIcon, FolderOpenIcon } from "lucide-react";
+import { ChevronDownIcon, FolderOpenIcon } from "lucide-react";
 import { SortableContext, useSortable, type SortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useState, type ReactNode } from "react";
@@ -23,7 +23,7 @@ import { useUiStateStore } from "../../uiStateStore";
 import { useClientSettings } from "../../hooks/useSettings";
 import { countLivePortsByProject, resolveSubagentDisplay } from "./sidebarDisplay.logic";
 import { useListeningPorts } from "../statusBar/useListeningPorts";
-import { SidebarMenuSub, SidebarMenuSubButton } from "../ui/sidebar";
+import { CollapsibleSectionHeader } from "../ui/collapsible-section-header";
 import { SidebarNotificationDot } from "./SidebarNotificationDot";
 import { SidebarProjectBoardButton } from "../kanban/SidebarKanbanButtons";
 import { SidebarProjectNewThreadButton } from "./SidebarProjectNewThreadButton";
@@ -78,12 +78,12 @@ function SubagentRow(props: {
   const { thread } = props;
   return (
     <li className="relative list-none">
-      <span aria-hidden className="absolute inset-y-0 start-5 w-px bg-sidebar-border" />
+      <span aria-hidden className="absolute inset-y-0 start-9 w-px bg-sidebar-border" />
       <button
         type="button"
         data-testid="sidebar-subagent-row"
         onClick={() => props.onOpen(scopeThreadRef(thread.environmentId, thread.id))}
-        className="flex h-7 w-full cursor-pointer items-center gap-2 rounded-md ps-8 pe-2.5 text-left text-xs text-sidebar-muted-foreground outline-none hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+        className="flex h-7 w-full cursor-pointer items-center gap-2 rounded-md ps-12 pe-2.5 text-left text-xs text-sidebar-muted-foreground outline-none hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
       >
         <span
           aria-hidden
@@ -121,7 +121,7 @@ function SubagentRows(props: {
             aria-expanded={expanded}
             data-testid="sidebar-subagent-summary"
             onClick={() => setExpanded((value) => !value)}
-            className="flex h-7 w-full cursor-pointer items-center gap-2 rounded-md ps-8 pe-2.5 text-left text-xs text-sidebar-muted-foreground outline-none hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+            className="flex h-7 w-full cursor-pointer items-center gap-2 rounded-md ps-12 pe-2.5 text-left text-xs text-sidebar-muted-foreground outline-none hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
           >
             <span
               aria-hidden
@@ -278,33 +278,26 @@ function SidebarProjectGroup(props: ProjectGroupProps) {
             scope={scope}
             marker="settled-header"
             data-testid="sidebar-settled-header"
-            className={cn(
-              "rounded-md",
-              group.settledThreads.length === 0 && "h-0",
-              dragTargetSection === "settled" && "bg-primary/5 text-primary",
-            )}
+            className={cn(group.settledThreads.length === 0 ? "h-0" : "ps-7")}
           >
             {group.settledThreads.length === 0 ? null : (
-              <SidebarMenuSubButton
-                className="w-full"
-                aria-expanded={entry.settledExpanded}
+              <CollapsibleSectionHeader
+                expanded={entry.settledExpanded}
+                tone={
+                  dragTargetSection === "settled"
+                    ? "accent"
+                    : from !== null
+                      ? "emphasized"
+                      : "muted"
+                }
                 data-testid="sidebar-settled-shelf-toggle"
                 onClick={() => props.onToggleSettled(scope)}
-                render={<button type="button" />}
+                accessory={
+                  <span className="font-normal tabular-nums">{group.settledThreads.length}</span>
+                }
               >
-                <CheckCheckIcon className="size-3.5" />
-                <span className="text-sidebar-muted-foreground">Settled</span>
-                <span className="ms-auto rounded-full bg-sidebar-row-hover px-1.5 text-3xs tabular-nums text-sidebar-muted-foreground">
-                  {group.settledThreads.length}
-                </span>
-                <ChevronDownIcon
-                  aria-hidden
-                  className={cn(
-                    "size-3.5 shrink-0 transition-transform",
-                    !entry.settledExpanded && "-rotate-90",
-                  )}
-                />
-              </SidebarMenuSubButton>
+                Settled
+              </CollapsibleSectionHeader>
             )}
           </SortableSidebarMarker>
         );
@@ -340,7 +333,7 @@ function SidebarProjectGroup(props: ProjectGroupProps) {
         <button
           type="button"
           onClick={() => props.onShowMoreSettled(scope)}
-          className="flex h-7 w-full cursor-pointer items-center gap-2 rounded-md px-2 text-left text-xs text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
+          className="flex h-7 w-full cursor-pointer items-center gap-2 rounded-md ps-9 pe-2.5 text-left text-xs text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
         >
           <ChevronDownIcon aria-hidden className="size-3 shrink-0" />
           Show more
@@ -350,34 +343,31 @@ function SidebarProjectGroup(props: ProjectGroupProps) {
   const isFolder = useAtomValue(folderProjectKeysAtom, (keys) =>
     project.memberProjects.some((member) => keys.has(`${member.environmentId}:${member.id}`)),
   );
+  const portCount = props.portCounts.get(scope) ?? 0;
+  const hiddenCount = expanded
+    ? 0
+    : group.openThreads.length -
+      items.filter((item) => item.kind === "thread" && item.section !== "settled").length;
   return (
     <li
       ref={setNodeRef}
       data-testid="sidebar-project-group"
-      className={cn(
-        "list-none",
-        !props.first && "mt-2 border-t border-sidebar-border/40 pt-2",
-        isDragging && "relative z-20 opacity-80",
-      )}
+      className={cn("list-none", !props.first && "mt-2", isDragging && "relative z-20 opacity-80")}
       style={{ transform: CSS.Translate.toString(transform), transition }}
     >
-      <div className="group/project-header flex items-center gap-1 rounded-md pe-1 focus-within:bg-sidebar-row-hover hover:bg-sidebar-row-hover">
+      <div className="group/project-header relative rounded-(--control-radius) hover:bg-sidebar-row-hover">
         <button
           type="button"
           ref={setActivatorNodeRef}
           aria-expanded={expanded}
           onClick={() => props.onToggleProject(project, expanded)}
-          className="flex h-8 min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md px-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+          className="flex h-8 w-full cursor-pointer items-center gap-2.5 rounded-(--control-radius) px-(--sidebar-row-content-inset) text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
           {...attributes}
           {...listeners}
           role="treeitem"
           tabIndex={-1}
           data-sidebar-row={projectRowId(scope)}
         >
-          <ChevronDownIcon
-            aria-hidden
-            className={cn("size-3.5 shrink-0 text-icon-muted", !expanded && "-rotate-90")}
-          />
           {isFolder ? (
             <FolderOpenIcon aria-hidden className="size-4 shrink-0 text-icon-muted" />
           ) : (
@@ -386,7 +376,7 @@ function SidebarProjectGroup(props: ProjectGroupProps) {
           <Tooltip>
             <TooltipTrigger
               render={
-                <span className="min-w-0 flex-1 truncate text-sm font-semibold text-sidebar-foreground" />
+                <span className="min-w-0 flex-1 truncate text-sm font-medium text-sidebar-foreground/90" />
               }
             >
               {project.displayName}
@@ -394,28 +384,45 @@ function SidebarProjectGroup(props: ProjectGroupProps) {
             <TooltipPopup side="top">{project.displayName}</TooltipPopup>
           </Tooltip>
           {expanded ? null : <ProjectNotificationDot threads={group.openThreads} />}
+          {hiddenCount > 0 ? (
+            <span className="shrink-0 text-xs tabular-nums text-sidebar-muted-foreground group-hover/project-header:invisible pointer-coarse:invisible">
+              {hiddenCount}
+            </span>
+          ) : null}
+          {/* Keeps the count clear of the always-visible ports icon laid over the row. */}
+          {portCount > 0 ? <span aria-hidden className="size-5 shrink-0" /> : null}
+          <ChevronDownIcon
+            aria-hidden
+            className={cn(
+              "size-3 shrink-0 text-sidebar-muted-foreground transition-transform",
+              !expanded && "-rotate-90",
+            )}
+          />
         </button>
-        <span className="flex items-center gap-1">
-          <SidebarProjectBoardButton project={project} />
-          <SidebarProjectNewThreadButton project={project} />
+        {/* Sits over the count, which hides on hover, and left of the chevron. */}
+        <span className="absolute inset-y-0 right-6 flex items-center gap-0.5">
+          <span className="flex items-center gap-0.5 opacity-0 focus-within:opacity-100 group-hover/project-header:opacity-100 pointer-coarse:opacity-100">
+            <SidebarProjectBoardButton project={project} />
+            <SidebarProjectNewThreadButton project={project} />
+          </span>
+          <SidebarProjectHoverCard project={project} portCount={portCount} />
         </span>
-        <SidebarProjectHoverCard project={project} portCount={props.portCounts.get(scope) ?? 0} />
       </div>
       <SortableContext
         items={items.map(sidebarListItemId)}
         strategy={drag === null ? idleSortingStrategy : props.dragSortingStrategy}
       >
-        <SidebarMenuSub ref={attachList} role="presentation" className="relative mx-1">
+        <ul ref={attachList} role="presentation" className="relative flex flex-col gap-px">
           {items.slice(0, settledStart + 1).flatMap(renderItem)}
           {settledItems.length > 0 || showMore ? (
             <li className="list-none">
-              <SidebarMenuSub className="mx-1 mt-px">
+              <ul className="flex flex-col gap-px">
                 {settledItems.flatMap(renderItem)}
                 {showMore}
-              </SidebarMenuSub>
+              </ul>
             </li>
           ) : null}
-        </SidebarMenuSub>
+        </ul>
       </SortableContext>
     </li>
   );
