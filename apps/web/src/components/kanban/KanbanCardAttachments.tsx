@@ -113,8 +113,8 @@ export function useCardAttachmentUploads(input: {
           },
         ],
       });
-      if (added === null) throw new Error("The card could not keep this file.");
-      discard(item.id);
+      if (added === null) update(item.id, { error: "The card could not keep this file." });
+      else discard(item.id);
     } catch (cause) {
       update(item.id, { error: cause instanceof Error ? cause.message : "Upload failed" });
     }
@@ -309,15 +309,13 @@ function AttachmentRows(props: {
   };
 
   const download = async (attachment: KanbanCardAttachment, url: string | null) => {
+    const failed = (description: string) =>
+      toastManager.add({ type: "error", title: "Could not download", description });
+    if (url === null) return failed("The file is not available yet.");
     try {
-      if (url === null) throw new Error("The file is not available yet.");
       await downloadMedia(url, attachment.name);
     } catch (cause) {
-      toastManager.add({
-        type: "error",
-        title: "Could not download",
-        description: cause instanceof Error ? cause.message : String(cause),
-      });
+      failed(cause instanceof Error ? cause.message : String(cause));
     }
   };
 
