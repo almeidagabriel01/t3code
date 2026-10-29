@@ -79,6 +79,8 @@ import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as ReviewService from "./review/ReviewService.ts";
+import * as MemoryService from "./memory/MemoryService.ts";
+import * as MemorySyncService from "./memory/MemorySyncService.ts";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import * as Kanban from "./kanban/KanbanService.ts";
 import * as NoteWork from "./notes/NoteWorkService.ts";
@@ -473,6 +475,11 @@ it.effect("shell snapshots omit idle children and older settled threads only on 
 // Build the production RPC layer; unrelated capabilities fail if this test calls them.
 const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(DocumentText.DocumentText)({}),
+  Layer.mock(MemoryService.MemoryService)({
+    importPorts: {} as MemoryService.MemoryService["Service"]["importPorts"],
+  }),
+  Layer.mock(MemorySyncService.MemorySyncService)({}),
+  Layer.mock(ServerSettings.MemoryOwnerSourceReadPolicyAdministration)({}),
   Layer.mock(ServerSecretStore.ServerSecretStore)({}),
   Layer.mock(WorkspacePaths.WorkspacePaths)({}),
   Layer.mock(TraceDiagnostics.TraceDiagnostics)({}),

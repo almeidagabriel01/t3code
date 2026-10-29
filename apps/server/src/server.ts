@@ -19,6 +19,10 @@ import * as Duration from "effect/Duration";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Crypto from "effect/Crypto";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import { FetchHttpClient, HttpRouter, HttpServer } from "effect/http";
@@ -65,6 +69,7 @@ import * as SourceControlBuiltInDrivers from "./sourceControl/builtInDrivers.ts"
 import * as SourceControlSignIn from "./sourceControl/SourceControlSignIn.ts";
 import { BUILT_IN_SOURCE_CONTROL_DRIVER_LIST } from "./sourceControl/sourceControlDefinitions.ts";
 import * as TextGeneration from "./textGeneration/TextGeneration.ts";
+import { makeMemoryApplicationLayers } from "./memory/MemoryApplicationLayers.ts";
 import * as ProviderInstanceRegistryHydration from "./provider/ProviderInstanceRegistryHydration.ts";
 import * as ProjectSettingsOverrideSweep from "./provider/ProjectSettingsOverrideSweep.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
@@ -285,7 +290,14 @@ const layerUsage = UsageService.layer.pipe(
       CursorUsageAccounts.layer.pipe(
         Layer.provide(CursorAccountReader.layer.pipe(Layer.provide(CursorKeychain.layer))),
       ),
-    ).pipe(Layer.provide(ProviderHostLive.layer.pipe(Layer.provide(ServerSecretStore.layer)))),
+    ).pipe(
+      Layer.provide(
+        ProviderHostLive.layer.pipe(
+          Layer.provide(ServerSecretStore.layer),
+          Layer.provide(ServerEnvironment.layerIdentity),
+        ),
+      ),
+    ),
   ),
   Layer.provide(layerServerSettings),
 );
@@ -370,6 +382,19 @@ const layerRepositoryIdentityResolver = Layer.effect(
   }),
 ).pipe(Layer.provide(layerSourceControlProviderRegistry), Layer.provide(ProcessRunner.layer));
 
+const layerTextGeneration = TextGeneration.layer.pipe(
+  Layer.provide(layerSourceControlProviderRegistry),
+);
+
+const memoryApplicationLayers = makeMemoryApplicationLayers({
+  layerPersistence,
+  layerRepositoryIdentityResolver,
+  layerServerSettings,
+  layerTextGeneration,
+});
+const { layerMemoryStarted, layerMemorySync, layerProviderMemoryImport, layerMemorySnapshot } =
+  memoryApplicationLayers;
+
 const layerPullRequestService = PullRequestService.layer.pipe(
   Layer.provide(PullRequestProviderRegistry.layer),
   Layer.provide(PullRequestFilesViewed.layer),
@@ -384,7 +409,7 @@ const layerGitManager = GitManager.layer.pipe(
   Layer.provideMerge(WorktreeSetupTracker.layer),
   Layer.provideMerge(GitVcsDriver.layer),
   Layer.provideMerge(layerSourceControlProviderRegistry),
-  Layer.provideMerge(TextGeneration.layer.pipe(Layer.provide(layerSourceControlProviderRegistry))),
+  Layer.provideMerge(layerTextGeneration),
 );
 
 const layerGit = Layer.empty.pipe(
@@ -489,7 +514,7 @@ const layerProjectFaviconResolver = ProjectFaviconResolver.layer.pipe(
   Layer.provide(T3ProjectFileLoader.layer),
 );
 
-const layerServerEnvironment = ServerEnvironment.layer.pipe(Layer.provide(ServerSecretStore.layer));
+const { layerServerEnvironment, layerRegisteredMemoryHub } = memoryApplicationLayers;
 
 const layerAuth = EnvironmentAuth.layer.pipe(
   Layer.provideMerge(layerPersistence),
@@ -593,6 +618,9 @@ const layerProviderInstallationRefresh = Layer.effectDiscard(
 );
 
 const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
+  layerMemoryStarted,
+  layerMemorySync,
+  layerProviderMemoryImport,
   AgentAwarenessRelay.layer,
   HeldHooksWaker.layer,
   layerThreadSettlementWorker,
@@ -644,6 +672,8 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   Layer.effectDiscard(ProjectSettingsOverrideSweep.sweep),
 ).pipe(
   Layer.provideMerge(layerOrchestrationApplication),
+  // Provider turns read the snapshot; it sits below the orchestration runtime that consumes it.
+  Layer.provideMerge(layerMemorySnapshot),
   Layer.provideMerge(RuntimeLayer.layerEventInfrastructure),
   Layer.provideMerge(Layer.merge(ProjectStore.layer, ThreadSearch.layer)),
   Layer.provideMerge(layerServerSettings),
@@ -672,7 +702,11 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
 
 const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
   Layer.provideMerge(layerPtyAdapter),
-  Layer.provideMerge(AcpRegistrySupport.layerFromHost.pipe(Layer.provide(ProviderHostLive.layer))),
+  Layer.provideMerge(
+    AcpRegistrySupport.layerFromHost.pipe(
+      Layer.provide(ProviderHostLive.layer.pipe(Layer.provide(ServerEnvironment.layerIdentity))),
+    ),
+  ),
   Layer.provideMerge(
     Layer.mergeAll(
       layerProviderEventLoggers,
@@ -756,6 +790,7 @@ const layerMakeRoutes = Layer.mergeAll(
     DeviceHubProxy.layer,
     ServerBrowserStream.routeLayer,
     ServerHttp.layerStaticAndDevRoute,
+    layerRegisteredMemoryHub,
     Ws.layer,
   ),
   McpHttpServer.layer.pipe(
@@ -1129,4 +1164,13 @@ const layerMakeServer = Layer.unwrap(
   }),
 ).pipe(Layer.provide(ProcessRunner.layer));
 
-export const runServer = Layer.launch(layerMakeServer);
+// Keep explicit CLI requirements: inference widens this memory/provider graph to any.
+export const runServer: Effect.Effect<
+  never,
+  Layer.Error<typeof layerMakeServer>,
+  | FileSystem.FileSystem
+  | Path.Path
+  | ChildProcessSpawner.ChildProcessSpawner
+  | Crypto.Crypto
+  | ServerConfig.ServerConfig
+> = Layer.launch(layerMakeServer);

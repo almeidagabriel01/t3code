@@ -1,3 +1,6 @@
+import { ProviderMemoryImportRuntime } from "../memory/imports/MemoryImportTypes.ts";
+import { MemoryHubHttpReady } from "../memory/MemoryHubHttp.ts";
+import * as Settings from "../serverSettings.ts";
 import {
   EnvironmentId,
   ORCHESTRATION_PROTOCOL_VERSION,
@@ -10,6 +13,7 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
@@ -186,6 +190,9 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const serverConfig = yield* ServerConfig.ServerConfig;
   const secrets = yield* ServerSecretStore.ServerSecretStore;
+  const importRuntime = yield* Effect.serviceOption(ProviderMemoryImportRuntime);
+  const hubRoutes = yield* Effect.serviceOption(MemoryHubHttpReady);
+  const settings = yield* Effect.serviceOption(Settings.ServerSettingsService);
   const identity = yield* ServerEnvironmentIdentity;
   const hostPlatform = yield* HostProcess.Platform;
   const hostArchitecture = yield* HostProcess.Architecture;
@@ -217,6 +224,18 @@ export const make = Effect.gen(function* () {
     orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
     ...(databaseMigration === undefined ? {} : { databaseMigration }),
     capabilities: {
+      // The core and owner memory RPC groups are always installed by ws.ts.
+      memory: {
+        protocolVersion: 1,
+        refusedReverts: true,
+        resolutionInputs: true,
+        retainedLocalSpace: true,
+        generationHold: true,
+        hubDiagnostics: true,
+        ...(importRuntime._tag === "Some"
+          ? { importProvider: true, importTurnStartFit: true }
+          : {}),
+      },
       repositoryIdentity: true,
       connectionProbe: true,
       attachmentUploads: true,
@@ -284,12 +303,27 @@ export const make = Effect.gen(function* () {
   return ServerEnvironment.of({
     getEnvironmentId: Effect.succeed(environmentId),
     // Publishing opt-in and relay links change at runtime; read the capability per request.
-    getDescriptor: readAgentActivityPublishingActive(secrets).pipe(
-      Effect.map((agentActivityPublishing) => ({
+    getDescriptor: Effect.gen(function* () {
+      const agentActivityPublishing = yield* readAgentActivityPublishingActive(secrets);
+      const hubSettings = Option.isSome(settings)
+        ? yield* Effect.result(settings.value.getSettings)
+        : null;
+      const hubReady =
+        Option.isSome(hubRoutes) &&
+        hubSettings?._tag === "Success" &&
+        hubSettings.success.memoryHub.mode === "hub" &&
+        hubSettings.success.memoryHub.memorySpaceId !== null;
+      return {
         ...descriptor,
-        capabilities: { ...descriptor.capabilities, agentActivityPublishing },
-      })),
-    ),
+        capabilities: {
+          ...descriptor.capabilities,
+          ...(hubReady && Option.isSome(hubRoutes)
+            ? { memoryHubProtocolVersion: hubRoutes.value.protocolVersion }
+            : {}),
+          agentActivityPublishing,
+        },
+      };
+    }),
   });
 });
 

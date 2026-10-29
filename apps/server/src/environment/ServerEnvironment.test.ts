@@ -226,6 +226,13 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
       expect(second.capabilities.serverResolvedCommandContext).toBe(true);
       expect(second.capabilities.projectProviderInstanceOverrides).toBe(true);
       expect(second.capabilities.agentActivityPublishing).toBe(false);
+      // Import is advertised only where its reader was acquired; hub readiness only while hosting.
+      expect(second.capabilities.memory).toMatchObject({
+        protocolVersion: 1,
+        hubDiagnostics: true,
+      });
+      expect(second.capabilities.memory?.importProvider).toBeUndefined();
+      expect(second.capabilities.memoryHubProtocolVersion).toBeUndefined();
     }),
   );
 

@@ -54,17 +54,9 @@
         "src/provider/testFixtures/*.mjs",
         // graphqlgen reads its config.
         "graphql.config.ts",
-        // Memory services the server layers wire in a later step.
-        "src/memory/MemorySettingsService.ts",
-        "src/memory/MemorySnapshotBinding.ts",
-        "src/memory/MemoryOwnerSourceReadPolicyBinding.ts",
       ],
       // The generated operations export every selection's class.
-      "ignoreIssues": {
-        "**/*.graphql.ts": ["exports", "types", "namespaceMembers"],
-        // Wired into the server layers in a later step.
-        "src/runtimeIdentity.ts": ["exports"],
-      },
+      "ignoreIssues": { "**/*.graphql.ts": ["exports", "types", "namespaceMembers"] },
       // Keep the transitive Effect runtime pinned for standalone npm installs.
       // The Vite+ web build prerequisite.
       // Native and disk-loaded provider packages stay external to the bundle; the

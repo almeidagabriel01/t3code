@@ -96,7 +96,12 @@ import {
   ThreadId,
   type TerminalMetadataStreamEvent,
   type PullRequestRef,
+  MemoryImportRpcError,
+  MemoryMutationReceipt,
   WS_METHODS,
+  WsMemoryAdministrationRpcGroup,
+  WsMemoryCoreRpcGroup,
+  WsMemoryImportRpcGroup,
   WsRpcGroup,
 } from "@t3tools/contracts";
 import {
@@ -232,6 +237,10 @@ import * as DefectReporter from "./observability/DefectReporter.ts";
 import * as EventLoopMonitor from "./observability/EventLoopMonitor.ts";
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
+import { memoryError } from "./mcp/toolkits/memory/handlers.ts";
+import { ProviderMemoryImportRuntime } from "./memory/imports/MemoryImportTypes.ts";
+import * as MemoryService from "./memory/MemoryService.ts";
+import * as MemorySyncService from "./memory/MemorySyncService.ts";
 import { requiredScopeForDeviceList, rpcAuthorizationError } from "./auth/RpcAuthorization.ts";
 import * as RpcAuthorization from "./auth/RpcAuthorization.ts";
 import { RpcInstrumentation, rpcInstrumentationLayer } from "./observability/RpcInstrumentation.ts";
@@ -563,14 +572,28 @@ function projectFileFailureContext(
 
 const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 
+/** SQL-free: a session's scopes are fixed at issue and revocation closes its socket. */
+const memorySessionPermit = (
+  capturedScopes: ReadonlyArray<AuthEnvironmentScope>,
+  required: ReadonlyArray<AuthEnvironmentScope>,
+) =>
+  required.every((scope) => capturedScopes.includes(scope))
+    ? Effect.void
+    : Effect.fail(new MemoryService.MemoryAccessError({ code: "unavailable" }));
+
+const isMemoryImportRpcError = Schema.is(MemoryImportRpcError);
+const decodeMemoryMutationReceipt = Schema.decodeUnknownEffect(MemoryMutationReceipt);
+
 // Middleware added later wraps middleware added earlier, so instrumentation wraps authorization.
-const ServerWsRpcGroup = WsRpcGroup.middleware(RpcInstrumentation);
+const BaseWsRpcGroup = WsRpcGroup.middleware(RpcInstrumentation);
+// Everything the server serves: the base group plus the memory groups, which register separately.
+const ServerWsRpcGroup = RpcAuthorization.AuthorizedWsRpcGroup.middleware(RpcInstrumentation);
 
 // RpcGroup.toLayer derives each handler's requirements by scanning every RPC in
 // the group, so its type cost grows with handlers × RPCs. Near 200 methods that
 // crosses TypeScript's instantiation limit and the layer's requirements degrade to
 // `any`, so the handlers are registered as two disjoint, smaller groups.
-type ServerWsRpc = RpcGroup.Rpcs<typeof ServerWsRpcGroup>;
+type ServerWsRpc = RpcGroup.Rpcs<typeof BaseWsRpcGroup>;
 const SPLIT_WS_RPC_PREFIXES = ["server", "pullRequests", "provider", "orchestration"] as const;
 type SplitWsRpc = Extract<
   ServerWsRpc,
@@ -580,7 +603,7 @@ const isSplitWsRpc = (rpc: ServerWsRpc): rpc is SplitWsRpc =>
   SPLIT_WS_RPC_PREFIXES.some((prefix) => rpc._tag.startsWith(`${prefix}.`));
 const isOtherWsRpc = (rpc: ServerWsRpc): rpc is Exclude<ServerWsRpc, SplitWsRpc> =>
   !isSplitWsRpc(rpc);
-const serverWsRpcs = Array.from(ServerWsRpcGroup.requests.values());
+const serverWsRpcs = Array.from(BaseWsRpcGroup.requests.values());
 const SplitWsRpcGroup = RpcGroup.make(...serverWsRpcs.filter(isSplitWsRpc));
 const OtherWsRpcGroup = RpcGroup.make(...serverWsRpcs.filter(isOtherWsRpc));
 // Replaying each intervening event costs a shell refetch; past this gap a
@@ -1873,7 +1896,87 @@ export const layerWsRpc = (
         return result;
       });
 
-      const handlers = ServerWsRpcGroup.of({
+      const memory = yield* MemoryService.MemoryService;
+      const memorySync = yield* MemorySyncService.MemorySyncService;
+      const ownerPolicy = yield* ServerSettings.MemoryOwnerSourceReadPolicyAdministration;
+      const memoryRuntime = yield* Effect.serviceOption(ProviderMemoryImportRuntime);
+      const memoryRead = memorySessionPermit(currentSession.scopes, ["memory:read"]);
+      const memoryWrite = memorySessionPermit(currentSession.scopes, ["memory:write"]);
+      const memorySource = memorySessionPermit(currentSession.scopes, [
+        "memory:read",
+        "orchestration:read",
+      ]);
+      const memorySettings = memorySessionPermit(currentSession.scopes, ["settings:write"]);
+      const ownerSettings = memorySettings.pipe(Effect.mapError(memoryError));
+      const importPermit = memorySessionPermit(currentSession.scopes, [
+        "memory:write",
+        "filesystem:read",
+      ]);
+      // Task ceilings come from this session's live grants, never from the request.
+      const captureTaskMemoryCeiling = RpcAuthorization.captureRpcMemoryGrantCeiling({
+        grantedScopes: currentSession.scopes,
+        readOnly: false,
+        reauthorize: () => Effect.void,
+      });
+      const memoryHandlers = WsMemoryCoreRpcGroup.middleware(RpcInstrumentation).of({
+        [WS_METHODS.memoryProjectBindingGet]: (input) =>
+          memory.getProjectBinding(input, memoryWrite).pipe(Effect.mapError(memoryError)),
+        [WS_METHODS.memoryProjectBindingUpdate]: (input) =>
+          memory.updateProjectBinding(input, memoryWrite).pipe(Effect.mapError(memoryError)),
+        [WS_METHODS.memoryChanges]: (input) =>
+          Stream.unwrap(memory.changes(input, memoryRead)).pipe(Stream.mapError(memoryError)),
+        [WS_METHODS.memorySearch]: (input) =>
+          memory.search(input, memoryRead).pipe(Effect.mapError(memoryError)),
+        [WS_METHODS.memoryList]: (input) =>
+          memory.list(input, memoryRead).pipe(Effect.mapError(memoryError)),
+        [WS_METHODS.memoryRead]: (input) =>
+          memory.read(input, memoryRead).pipe(Effect.mapError(memoryError)),
+        [WS_METHODS.memoryHistory]: (input) =>
+          memory.history(input, memoryRead).pipe(Effect.mapError(memoryError)),
+        [WS_METHODS.memoryHubDiagnostics]: (input) =>
+          memorySync.hubDiagnostics(input, memoryRead).pipe(Effect.mapError(memoryError)),
+        [WS_METHODS.memorySyncStatus]: (input) =>
+          memorySync.syncStatus(input, memoryRead).pipe(Effect.mapError(memoryError)),
+        [WS_METHODS.memoryUpsert]: (input) =>
+          memory.upsert(input, memoryWrite).pipe(
+            Effect.flatMap((stored) => decodeMemoryMutationReceipt(stored.receipt)),
+            Effect.mapError(memoryError),
+          ),
+        [WS_METHODS.memoryForget]: (input) =>
+          memory.forget(input, memoryWrite).pipe(
+            Effect.flatMap((stored) => decodeMemoryMutationReceipt(stored.receipt)),
+            Effect.mapError(memoryError),
+          ),
+        [WS_METHODS.memoryRevertResolution]: (input) =>
+          memory.revertResolution(input, memoryWrite).pipe(Effect.mapError(memoryError)),
+        [WS_METHODS.memoryReadSource]: (input) =>
+          memory.readSource(input, memorySource).pipe(Effect.mapError(memoryError)),
+        [WS_METHODS.memoryHubSettingsGet]: (input) =>
+          memorySync.getHubSettings(input, memorySettings).pipe(Effect.mapError(memoryError)),
+        [WS_METHODS.memoryHubSettingsUpdate]: (input) =>
+          memorySync.updateHubSettings(input, memorySettings).pipe(Effect.mapError(memoryError)),
+      });
+      const ownerHandlers = WsMemoryAdministrationRpcGroup.middleware(RpcInstrumentation).of({
+        [WS_METHODS.memoryHubReconcile]: (input) =>
+          memorySync.reconcileHub(input, memorySettings).pipe(Effect.mapError(memoryError)),
+        [WS_METHODS.memoryOwnerSourceReadPolicyGet]: () => ownerPolicy.get(ownerSettings),
+        [WS_METHODS.memoryOwnerSourceReadPolicyUpdate]: (input) =>
+          ownerPolicy.update(input, ownerSettings).pipe(Effect.mapError(memoryError)),
+      });
+      const importHandlers = WsMemoryImportRpcGroup.middleware(RpcInstrumentation).of({
+        [WS_METHODS.memoryImportProvider]: (input) =>
+          (memoryRuntime._tag === "Some"
+            ? memory
+                .importProvider(input, importPermit)
+                .pipe(Effect.provideService(ProviderMemoryImportRuntime, memoryRuntime.value))
+            : Effect.fail(new MemoryService.MemoryAccessError({ code: "unavailable" }))
+          ).pipe(
+            Effect.mapError((error) =>
+              isMemoryImportRpcError(error) ? error : memoryError(error),
+            ),
+          ),
+      });
+      const handlers = BaseWsRpcGroup.of({
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           Effect.annotateCurrentSpan({
             "orchestration_v2.command_id": command.commandId,
@@ -1892,6 +1995,7 @@ export const layerWsRpc = (
               ? { "orchestration_v2.source_thread_id": command.sourceThreadId }
               : {}),
           }).pipe(
+            Effect.andThen(RpcAuthorization.rejectPublicMemoryGrantCeiling(command)),
             Effect.andThen(
               startup
                 .enqueueCommand(
@@ -2041,6 +2145,7 @@ export const layerWsRpc = (
             "orchestration_v2.command_id": input.commandId,
             "orchestration_v2.project_id": input.projectId,
           }).pipe(
+            Effect.andThen(RpcAuthorization.rejectPublicMemoryGrantCeiling(input)),
             Effect.andThen(
               startup
                 .enqueueCommand(
@@ -2179,10 +2284,18 @@ export const layerWsRpc = (
         [WS_METHODS.notesStartWork]: (input) => noteWork.startWork(input, "user", "user"),
         [WS_METHODS.scheduledTasksSubscribe]: (_input) =>
           scheduledTasks.subscribeList().pipe(Stream.map(withVisibleWebhookUrls)),
-        [WS_METHODS.scheduledTasksUpsert]: (input) => scheduledTasks.upsert(input),
+        [WS_METHODS.scheduledTasksUpsert]: (input) =>
+          captureTaskMemoryCeiling.pipe(
+            Effect.flatMap((memoryGrantCeiling) =>
+              scheduledTasks.upsert(input, { memoryGrantCeiling }),
+            ),
+          ),
         [WS_METHODS.scheduledTasksSetEnabled]: (input) =>
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
-            Effect.andThen(scheduledTasks.setEnabled(input)),
+            Effect.andThen(captureTaskMemoryCeiling),
+            Effect.flatMap((memoryGrantCeiling) =>
+              scheduledTasks.setEnabled(input, { memoryGrantCeiling }),
+            ),
           ),
         [WS_METHODS.scheduledTasksDelete]: (input) =>
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
@@ -3290,9 +3403,14 @@ export const layerWsRpc = (
       const splitHandlers: Pick<typeof handlers, SplitWsRpc["_tag"]> = handlers;
       const otherHandlers: Pick<typeof handlers, Exclude<ServerWsRpc, SplitWsRpc>["_tag"]> =
         handlers;
-      return Context.merge(
+      return Context.mergeAll(
         yield* SplitWsRpcGroup.toHandlers(splitHandlers),
         yield* OtherWsRpcGroup.toHandlers(otherHandlers),
+        yield* WsMemoryCoreRpcGroup.middleware(RpcInstrumentation).toHandlers(memoryHandlers),
+        yield* WsMemoryAdministrationRpcGroup.middleware(RpcInstrumentation).toHandlers(
+          ownerHandlers,
+        ),
+        yield* WsMemoryImportRpcGroup.middleware(RpcInstrumentation).toHandlers(importHandlers),
       );
     }),
   );
