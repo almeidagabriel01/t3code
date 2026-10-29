@@ -3,7 +3,6 @@ import { useFocusEffect } from "@react-navigation/native";
 import {
   MemoryOperationId,
   sessionGrantsScope,
-  type MemoryImportSourceFormat,
   type MemoryImportProviderResult,
   type MemoryScope,
   type MemorySpaceId,
@@ -11,7 +10,7 @@ import {
 import {
   memoryImportFormatLabels,
   memoryImportFormats,
-  memoryImportIssueReason,
+  memoryImportSourceName,
 } from "@t3tools/client-runtime/memory-import-workflow";
 import { useCallback, useContext, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { AppState } from "react-native";
@@ -76,7 +75,6 @@ export function MemoryImportSettings({
     }),
   );
   const state = useSyncExternalStore(workflow.subscribe, workflow.getSnapshot);
-  const [format, setFormat] = useState<MemoryImportSourceFormat | null>(null);
   const [sources, setSources] = useState<Discovery | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
@@ -230,11 +228,15 @@ export function MemoryImportSettings({
   const writable =
     allowed && enabled && !busy && state.phase !== "save_failed" && state.phase !== "recovery";
   const selecting = state.phase === "selecting";
+  const importable = (preview?.items ?? []).filter(
+    (item) => item.issue === undefined && item.sourceFingerprint,
+  );
+  const skipped = (preview?.items.length ?? 0) - importable.length;
   return (
     <SettingsSection title="Import memories">
       <Copy>
-        Import from Codex or Claude. Other provider profiles are not supported. Choose a profile,
-        preview its memories and confirm a destination before applying.
+        Import from Codex or Claude. Other providers are not supported. Find memories, pick a
+        project, then confirm a destination before applying.
       </Copy>
       <Copy>
         Destination:{" "}
@@ -251,11 +253,10 @@ export function MemoryImportSettings({
       {formats.map((value) => (
         <Action
           key={value}
-          label={`Discover ${memoryImportFormatLabels[value]} profiles`}
+          label={`Find ${memoryImportFormatLabels[value]} memories`}
           disabled={!writable}
           onPress={() => {
             invalidateSelection();
-            setFormat(value);
             void run(async () => {
               const result = await workflow.discover(value);
               if (result) setSources(result);
@@ -263,11 +264,14 @@ export function MemoryImportSettings({
           }}
         />
       ))}
-      {sources?.sources.length === 0 ? <Copy>No supported profiles found.</Copy> : null}
-      {sources?.sources.map((source, index) => (
+      {sources?.sources.length === 0 ? (
+        <Copy>No supported memories found on this device.</Copy>
+      ) : null}
+      {sources && sources.sources.length > 0 ? <Copy>Choose a project to import from.</Copy> : null}
+      {sources?.sources.map((source) => (
         <Action
           key={source.sourceId}
-          label={`Preview ${format ? memoryImportFormatLabels[format] : ""} profile ${index + 1}`}
+          label={memoryImportSourceName(source.label)}
           disabled={!writable}
           onPress={() => {
             setSelected(new Set());
@@ -282,21 +286,18 @@ export function MemoryImportSettings({
       {preview ? (
         <>
           <Copy>
-            {preview.items.length} memories in this preview. Select the memories to import.
+            {importable.length} memories found. Select the memories to import.
+            {skipped > 0 ? ` ${skipped} ${skipped === 1 ? "file" : "files"} skipped.` : ""}
           </Copy>
-          {preview.items.map((item, index) => (
+          {importable.map((item, index) => (
             <SettingsSwitchRow
               key={item.sourceItemKey}
-              label={
-                item.issue
-                  ? `Memory ${index + 1}: ${memoryImportIssueReason(item.issue, "item")}`
-                  : (item.title ?? `Memory ${index + 1}`)
-              }
+              label={item.title ?? `Memory ${index + 1}`}
               {...(item.tooLargeForTurnStart
                 ? { subtitle: "Stored, but too large to add to new turns automatically" }
                 : {})}
               value={selected.has(item.sourceItemKey)}
-              disabled={!writable || !selecting || !!item.issue || !item.sourceFingerprint}
+              disabled={!writable || !selecting}
               onValueChange={(value) =>
                 setSelected((old) => {
                   const next = new Set(old);
@@ -338,7 +339,12 @@ export function MemoryImportSettings({
           <Action
             label="Apply selected memories"
             disabled={!writable || state.phase !== "previewed"}
-            onPress={() => void run(() => workflow.apply())}
+            onPress={() =>
+              void run(async () => {
+                await workflow.apply();
+                invalidateSelection();
+              })
+            }
           />
           <Action
             label="Change import selection"

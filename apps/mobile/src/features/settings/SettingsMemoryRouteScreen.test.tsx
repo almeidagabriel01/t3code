@@ -1272,8 +1272,8 @@ describe("native WP6 Settings commands", () => {
     await view.render();
   }
   async function select(count = 1) {
-    await view.click("Discover Codex profiles");
-    await view.click("Preview Codex profile 1");
+    await view.click("Find Codex memories");
+    await view.click("/private/path");
     for (let i = 1; i <= count; i++) await view.click(`Import memory ${i}`);
     await view.click("Use selected scope and this environment as the import destination");
     await view.click("Confirm import selection");
@@ -1512,13 +1512,13 @@ describe("native WP6 Settings commands", () => {
     setupImport();
     h.grant(["memory:read", "memory:write"]);
     await show();
-    await view.click("Discover Codex profiles");
+    await view.click("Find Codex memories");
     expect(importCalls()).toHaveLength(0);
     await act(async () => h.grant(["memory:read", "memory:write", "filesystem:read"]));
-    await view.click("Discover Codex profiles");
+    await view.click("Find Codex memories");
     const late = h.deferred<unknown>();
     h.responses.set(WS_METHODS.memoryImportProvider, () => late.response);
-    await view.click("Preview Codex profile 1");
+    await view.click("/private/path");
     await act(async () => h.grant(["memory:read"]));
     await act(async () => {
       await late.succeed({
