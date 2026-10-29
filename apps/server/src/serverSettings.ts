@@ -384,6 +384,16 @@ const ServerSettingsJson = fromLenientJson(
   }),
 );
 const decodeServerSettingsJsonExit = Schema.decodeUnknownExit(ServerSettingsJson);
+// Only the hub epoch is read from a file replaced outside this process.
+const decodeCommittedHubJson = Schema.decodeUnknownExit(
+  fromLenientJson(
+    Schema.Struct({
+      memoryHub: ServerSettings.fields.memoryHub,
+      memoryHubVersion: Schema.optionalKey(Schema.Number),
+      _memoryHubTransition: Schema.optionalKey(MemoryHubTransitionMarker),
+    }),
+  ),
+);
 const LegacyProviderSettingsJson = fromLenientJson(
   Schema.Struct({
     providers: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
@@ -1188,8 +1198,26 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  // An external edit takes effect only with a higher hub version; it is read before the full reload.
+  const adoptExternalHubEpoch = Effect.gen(function* () {
+    if (!(yield* readConfigExists)) return;
+    const projection = decodeCommittedHubJson(yield* readRawConfig);
+    const current = yield* Ref.get(committedMemoryRef);
+    if (Exit.isFailure(projection) || current === null) return;
+    const file = projection.value;
+    if (file.memoryHubVersion === undefined || file.memoryHubVersion <= current.memoryHubVersion)
+      return;
+    yield* Ref.set(committedMemoryRef, {
+      ...current,
+      memoryHub: file.memoryHub,
+      memoryHubVersion: file.memoryHubVersion,
+    });
+    yield* Ref.set(hubMarkerRef, file._memoryHubTransition ?? null);
+  }).pipe(Effect.ignore);
+
   const revalidateAndEmit = writeSemaphore.withPermits(1)(
     Effect.gen(function* () {
+      yield* adoptExternalHubEpoch;
       const { settings } = yield* reloadSettings;
       yield* emitChange(settings);
     }),
