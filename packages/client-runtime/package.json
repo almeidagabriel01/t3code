@@ -207,6 +207,22 @@
       "types": "./src/state/kanbanLogic.ts",
       "default": "./src/state/kanbanLogic.ts"
     },
+    "./state/notes": {
+      "types": "./src/state/notes.ts",
+      "default": "./src/state/notes.ts"
+    },
+    "./notes/outbox": {
+      "types": "./src/notes/outbox.ts",
+      "default": "./src/notes/outbox.ts"
+    },
+    "./notes/line-diff": {
+      "types": "./src/notes/line-diff.ts",
+      "default": "./src/notes/line-diff.ts"
+    },
+    "./notes/markdown": {
+      "types": "./src/notes/markdown.ts",
+      "default": "./src/notes/markdown.ts"
+    },
     "./state/models": {
       "types": "./src/state/models.ts",
       "default": "./src/state/models.ts"
