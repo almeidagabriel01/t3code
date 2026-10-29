@@ -1,6 +1,6 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { page } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 import { render } from "../../../test/render";
@@ -69,5 +69,26 @@ describe("NoteEditor images", () => {
       ),
     );
     expect(onChange.mock.lastCall?.[0]).toMatch(/^# Plan\n\n/);
+  });
+});
+
+describe("NoteEditor formatting", () => {
+  it("turns an empty block into a heading from the slash menu", async () => {
+    const onChange = vi.fn();
+    await using _screen = await render(
+      <NoteEditor
+        environmentId={EnvironmentId.make("env")}
+        body=""
+        editable
+        autoFocus
+        onChange={onChange}
+      />,
+    );
+    const body = page.getByRole("textbox", { name: "Note body" });
+    await expect.element(body).toBeVisible();
+    await userEvent.type(body, "/head");
+    await expect.element(page.getByRole("option", { name: "Heading 2" })).toBeVisible();
+    await userEvent.keyboard("{ArrowDown}{Enter}Plan");
+    await vi.waitFor(() => expect(onChange).toHaveBeenLastCalledWith("## Plan"));
   });
 });

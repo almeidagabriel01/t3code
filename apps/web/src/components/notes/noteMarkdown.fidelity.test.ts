@@ -261,6 +261,8 @@ describe("note markdown fidelity", () => {
         orderedList: "list",
         taskList: "list",
         blockquote: "blockquote",
+        callout: "blockquote",
+        table: "table",
       };
       const matched = new Set<number>();
       let offset = 0;

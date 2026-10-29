@@ -1,6 +1,6 @@
 import { attachmentImageMarkdown } from "@t3tools/shared/attachmentImageRefs";
 import type { JSONContent } from "@tiptap/core";
-import type { List, Paragraph, RootContent } from "mdast";
+import type { Blockquote, List, Paragraph, RootContent, Table } from "mdast";
 import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
 import { unified } from "unified";
@@ -15,10 +15,10 @@ function fingerprintValue(node: JSONContent): unknown[] {
   return [
     node.type,
     node.text,
-    ...["level", "checked", "start", "language", "attachmentId", "name"].map(
+    ...["level", "checked", "start", "language", "attachmentId", "name", "kind"].map(
       (key) => node.attrs?.[key] ?? null,
     ),
-    node.marks?.map((mark) => mark.type).sort() ?? [],
+    node.marks?.map((mark) => mark.type + (mark.attrs?.href ?? "")).sort() ?? [],
     node.content?.map(fingerprintValue) ?? [],
   ];
 }
@@ -31,26 +31,46 @@ function text(value: string): JSONContent[] {
   return value ? [{ type: "text", text: value }] : [];
 }
 
-function inline(value: string): JSONContent[] | null {
-  // Links, escapes, HTML, images and extension syntax stay literal until the note codec supports them.
-  if (/[\\[\]<>]|!\[|\$| {2}\n/.test(value)) return null;
-  if (/`{2,}/.test(value)) return null;
-  const lines = value.split("\n");
-  for (const line of lines) {
-    let backticks = 0;
-    for (const character of line) if (character === "`") backticks++;
-    if (backticks % 2 !== 0) return null;
+const LINK = /\[([^\][\\<>\n]+)\]\(([^\s()<>\\]+)\)/g;
+
+// Escapes, HTML, images and extension syntax stay literal until the note codec supports them.
+function segment(value: string, extra: JSONContent["marks"] = []): JSONContent[] | null {
+  if (/[\\[\]<>]|!\[|\$/.test(value) || /`{2,}/.test(value)) return null;
+  if ((value.split("`").length - 1) % 2 !== 0) return null;
+  return parseInlineMarkdown(value)
+    .filter((span) => span.text)
+    .map((span) => ({
+      type: "text",
+      text: span.text,
+      marks: [...span.marks.map((type) => ({ type })), ...extra],
+    }));
+}
+
+function line(value: string): JSONContent[] | null {
+  const result: JSONContent[] = [];
+  let last = 0;
+  for (const match of value.matchAll(LINK)) {
+    const before = value.slice(last, match.index);
+    if (before.endsWith("!")) return null;
+    const plain = segment(before);
+    const linked = segment(match[1]!, [{ type: "link", attrs: { href: match[2] } }]);
+    if (!plain || !linked) return null;
+    result.push(...plain, ...linked);
+    last = match.index + match[0].length;
   }
-  return lines.flatMap((line, index) => [
-    ...(index ? [{ type: "hardBreak" }] : []),
-    ...parseInlineMarkdown(line)
-      .filter((span) => span.text)
-      .map((span) => ({
-        type: "text",
-        text: span.text,
-        marks: span.marks.map((type) => ({ type })),
-      })),
-  ]);
+  const tail = segment(value.slice(last));
+  return tail && [...result, ...tail];
+}
+
+function inline(value: string): JSONContent[] | null {
+  if (/ {2}\n/.test(value)) return null;
+  const parts: JSONContent[] = [];
+  for (const [index, text] of value.split("\n").entries()) {
+    const content = line(text);
+    if (!content) return null;
+    parts.push(...(index ? [{ type: "hardBreak" }] : []), ...content);
+  }
+  return parts;
 }
 
 // Reuse the renderer's CommonMark/GFM grammar; the AST only owns kinds and source boundaries.
@@ -110,6 +130,64 @@ function list(node: List, markdown: string): JSONContent | null {
   };
 }
 
+const CALLOUT = /^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]$/;
+
+// GitHub alert: a quote whose first line is the marker; the rest are paragraphs.
+function callout(node: Blockquote, markdown: string): JSONContent | null {
+  const first = node.children[0];
+  if (first?.type !== "paragraph") return null;
+  const lines = markdown
+    .slice(first.position!.start.offset!, first.position!.end.offset!)
+    .split("\n");
+  const kind = CALLOUT.exec(lines[0]!)?.[1];
+  if (!kind) return null;
+  const content: JSONContent[] = [];
+  const rest = lines.slice(1);
+  if (rest.some((value) => !value.startsWith("> "))) return null;
+  if (rest.length) {
+    const body = inline(rest.map((value) => value.slice(2)).join("\n"));
+    if (!body) return null;
+    content.push({ type: "paragraph", content: body });
+  }
+  for (const child of node.children.slice(1)) {
+    const next = child.type === "paragraph" ? paragraph(child, markdown, true) : null;
+    if (!next) return null;
+    content.push(next);
+  }
+  return {
+    type: "callout",
+    attrs: { kind },
+    content: content.length ? content : [{ type: "paragraph" }],
+  };
+}
+
+function table(node: Table, markdown: string): JSONContent | null {
+  if (node.align?.some((value) => value != null)) return null;
+  const rows: JSONContent[] = [];
+  for (const [rowIndex, row] of node.children.entries()) {
+    const cells: JSONContent[] = [];
+    for (const cell of row.children) {
+      const source = cell.position
+        ? markdown.slice(cell.position.start.offset!, cell.position.end.offset!)
+        : "";
+      const content = inline(
+        source
+          .replace(/^\s*\|/, "")
+          .replace(/(?<!\\)\|\s*$/, "")
+          .trim()
+          .replace(/\\\|/g, "|"),
+      );
+      if (!content) return null;
+      cells.push({
+        type: rowIndex ? "tableCell" : "tableHeader",
+        content: [{ type: "paragraph", content }],
+      });
+    }
+    rows.push({ type: "tableRow", content: cells });
+  }
+  return { type: "table", content: rows };
+}
+
 function raw(source: string): JSONContent {
   return { type: "noteRawMarkdown", content: text(source) };
 }
@@ -138,11 +216,15 @@ function block(source: string, node: RootContent, markdown: string): JSONContent
   } else if (node.type === "list") {
     return list(node, markdown) ?? raw(source);
   } else if (node.type === "blockquote") {
+    const alert = callout(node, markdown);
+    if (alert) return alert;
     const child = node.children[0];
     if (node.children.length === 1 && child?.type === "paragraph") {
       const content = paragraph(child, markdown, true);
       if (content) return { type: "blockquote", content: [content] };
     }
+  } else if (node.type === "table") {
+    return table(node, markdown) ?? raw(source);
   } else if (node.type === "paragraph") {
     const image = ATTACHMENT_IMAGE.exec(source);
     if (image)
@@ -226,6 +308,26 @@ function inlineMarkdown(node: JSONContent): string {
   let result = "";
   let index = 0;
   while (index < children.length) {
+    const href = children[index]!.marks?.find((mark) => mark.type === "link")?.attrs?.href;
+    if (typeof href === "string") {
+      let end = index;
+      while (
+        end < children.length &&
+        children[end]!.type !== "hardBreak" &&
+        children[end]!.marks?.some((mark) => mark.type === "link" && mark.attrs?.href === href)
+      )
+        end++;
+      const content = children.slice(index, end).map((child) => ({
+        ...child,
+        marks: (child.marks ?? []).filter((mark) => mark.type !== "link"),
+      }));
+      const target = href.replace(/[\s()]/g, (c) =>
+        encodeURIComponent(c).replace(/[()]/g, (p) => (p === "(" ? "%28" : "%29")),
+      );
+      result += `[${inlineMarkdown({ content })}](${target})`;
+      index = end;
+      continue;
+    }
     let sharedMark: RichTextMark | undefined;
     let end = index;
     // The longest shared emphasis stays outside shorter styles and code spans.
@@ -295,6 +397,28 @@ function serializeBlock(node: JSONContent, indent = ""): string {
     const value = children.map((child) => child.text ?? "").join("");
     const fence = "`".repeat(Math.max(2, longestBacktickRun(value)) + 1);
     return `${fence}${node.attrs?.language ?? ""}\n${value}\n${fence}`;
+  }
+  if (node.type === "callout") {
+    const body = children
+      .filter((child) => child.content?.length)
+      .map((child) => serializeBlock(child).replace(/^/gm, "> "));
+    return [`> [!${String(node.attrs?.kind ?? "NOTE")}]`, body.join("\n> \n")]
+      .filter(Boolean)
+      .join("\n");
+  }
+  if (node.type === "table") {
+    const rows = children.map(
+      (row) =>
+        `| ${(row.content ?? [])
+          .map((cell) =>
+            (cell.content ?? [])
+              .map((child) => inlineMarkdown(child).replace(/\n/g, " ").replace(/\|/g, "\\|"))
+              .join(" "),
+          )
+          .join(" | ")} |`,
+    );
+    const columns = children[0]?.content?.length ?? 1;
+    return [rows[0], `|${" --- |".repeat(columns)}`, ...rows.slice(1)].join("\n");
   }
   if (node.type === "blockquote")
     return children

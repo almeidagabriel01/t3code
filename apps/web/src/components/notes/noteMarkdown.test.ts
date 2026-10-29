@@ -184,6 +184,18 @@ describe("note markdown codec", () => {
     const changed = EditorState.create({ schema, doc }).tr.insertText("changed ", 2).doc;
     expect(noteDocToMarkdown(changed.toJSON())).toBe("> changed one\n> two\n");
   });
+  it("parses callouts, tables and links into editable nodes, and edits them canonically", () => {
+    expect(parse("> [!TIP]\n> hi\n").firstChild!.type.name).toBe("callout");
+    expect(parse("| a | b |\n| --- | --- |\n| 1 | 2 |\n").firstChild!.type.name).toBe("table");
+    expect(parse("| a |\n| :-: |\n| 1 |\n").firstChild!.type.name).toBe("noteRawMarkdown");
+    const doc = parse("see [docs](https://x.y/a) here\n");
+    expect(doc.firstChild!.child(1).marks[0]!.attrs.href).toBe("https://x.y/a");
+    const changed = EditorState.create({ schema, doc }).tr.insertText("so ", 1).doc;
+    expect(noteDocToMarkdown(changed.toJSON())).toBe("so see [docs](https://x.y/a) here\n");
+    const cell = parse("| a | b |\n| --- | --- |\n| 1 | 2 |\n");
+    const edited = EditorState.create({ schema, doc: cell }).tr.insertText("x|", 5).doc;
+    expect(noteDocToMarkdown(edited.toJSON())).toBe("| ax\\| | b |\n| --- | --- |\n| 1 | 2 |\n");
+  });
   it("escapes newly typed literal inline markdown rather than changing its meaning on reload", () => {
     const doc = schema.nodes.doc!.create(
       null,

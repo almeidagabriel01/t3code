@@ -24,9 +24,11 @@ import {
   renameAttachmentImages,
   useAttachmentImageUploads,
 } from "../AttachmentImageNode";
+import { readLocalApi } from "../../localApi";
 import { mountedEditorView } from "../ComposerPromptEditorTiptap";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { NoteBubbleMenu, NoteTableMenu } from "./NoteBubbleMenu";
 import { noteExtensions } from "./noteExtensions";
 import { noteDocToMarkdown, noteMarkdownToDoc } from "./noteMarkdown";
 
@@ -96,6 +98,7 @@ export function NoteEditor(props: {
   const fileInput = useRef<HTMLInputElement>(null);
   const images = useAttachmentImageUploads(props.environmentId);
   // The detail remounts this editor on reload via editorVersion; saves only serialize.
+  const [linkOpen, setLinkOpen] = useState(false);
   const [initialContent] = useState(() => noteMarkdownToDoc(props.body));
   const editor = useEditor({
     extensions: noteExtensions(),
@@ -110,11 +113,29 @@ export function NoteEditor(props: {
         role: "textbox",
         "aria-multiline": "true",
         class: cn(
-          "composer-tiptap min-h-64 rounded-xl border border-transparent px-1 py-4 text-base leading-7 text-foreground outline-none [overflow-wrap:anywhere] [word-break:keep-all] [&_h1]:text-2xl [&_h1]:leading-tight [&_h1]:font-semibold [&_h2]:text-lg [&_hr]:my-4 [&_ol]:list-decimal [&_pre]:rounded-md [&_pre]:bg-muted [&_pre]:p-3 [&_pre]:whitespace-pre-wrap [&_pre[data-note-raw]]:border [&_pre[data-note-raw]]:border-dashed [&_pre[data-note-raw]]:border-border [&_ul:not([data-type=taskList])]:list-disc",
+          "composer-tiptap min-h-64 rounded-xl border border-transparent px-1 py-4 text-base leading-7 text-foreground outline-none [overflow-wrap:anywhere] [word-break:keep-all] [&_h1]:text-2xl [&_h1]:leading-tight [&_h1]:font-semibold [&_h2]:text-lg [&_hr]:my-4 [&_ol]:list-decimal [&_pre]:rounded-md [&_pre]:bg-muted [&_pre]:p-3 [&_pre]:whitespace-pre-wrap [&_pre[data-note-raw]]:border [&_pre[data-note-raw]]:border-dashed [&_pre[data-note-raw]]:border-border [&_ul:not([data-type=taskList])]:list-disc [&_a]:text-primary [&_a]:underline [&_a]:underline-offset-2 [&_table]:my-3 [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-border [&_td]:px-2 [&_td]:py-1 [&_th]:border [&_th]:border-border [&_th]:bg-muted [&_th]:px-2 [&_th]:py-1 [&_th]:text-start [&_[data-callout]]:my-3 [&_[data-callout]]:rounded-md [&_[data-callout]]:border-s-4 [&_[data-callout]]:border-info [&_[data-callout]]:bg-muted/50 [&_[data-callout]]:px-3 [&_[data-callout]]:py-2 [&_[data-callout]]:before:mb-1 [&_[data-callout]]:before:block [&_[data-callout]]:before:text-xs [&_[data-callout]]:before:font-semibold [&_[data-callout]]:before:content-[attr(data-callout)] [&_[data-callout=TIP]]:border-success [&_[data-callout=IMPORTANT]]:border-primary [&_[data-callout=WARNING]]:border-warning [&_[data-callout=CAUTION]]:border-destructive",
           ATTACHMENT_IMAGE_EDITOR_CLASS,
         ),
       },
+      handleClick: (_view, _pos, event) => {
+        const href = (event.target as HTMLElement).closest("a")?.getAttribute("href");
+        if (!href || !(event.metaKey || event.ctrlKey)) return false;
+        const api = readLocalApi();
+        if (api) void api.shell.openExternal(href);
+        else window.open(href, "_blank", "noopener,noreferrer");
+        return true;
+      },
       handleKeyDown: (_view, event) => {
+        if (
+          (event.metaKey || event.ctrlKey) &&
+          !event.shiftKey &&
+          !event.altKey &&
+          event.key === "k"
+        ) {
+          event.preventDefault();
+          setLinkOpen(true);
+          return true;
+        }
         if (event.key !== "Escape" || !props.onExit) return false;
         props.onExit();
         return true;
@@ -179,6 +200,12 @@ export function NoteEditor(props: {
         />
         <div className="mx-auto w-full max-w-3xl px-3 md:px-7">
           <EditorContent editor={editor} />
+          {editor && props.editable && (
+            <>
+              <NoteBubbleMenu editor={editor} linkOpen={linkOpen} setLinkOpen={setLinkOpen} />
+              <NoteTableMenu editor={editor} />
+            </>
+          )}
         </div>
       </div>
     </AttachmentImageEnvironment>

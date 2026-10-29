@@ -1,4 +1,5 @@
 import { Extension, Node } from "@tiptap/core";
+import { Table, TableCell, TableHeader, TableRow } from "@tiptap/extension-table";
 import StarterKit from "@tiptap/starter-kit";
 import {
   ComposerBlockExtensions,
@@ -8,6 +9,7 @@ import {
   ComposerTaskItemExtension,
   ComposerTaskListExtension,
 } from "../../composer-rich-text-doc";
+import { NoteSlashCommand } from "./noteSlashCommand";
 import { AttachmentImage } from "../AttachmentImageNode";
 
 const NoteSource = Extension.create({
@@ -22,6 +24,8 @@ const NoteSource = Extension.create({
           "orderedList",
           "taskList",
           "blockquote",
+          "callout",
+          "table",
           "codeBlock",
           "horizontalRule",
           "attachmentImage",
@@ -55,6 +59,40 @@ const NoteRawMarkdown = Node.create({
   renderHTML: () => ["pre", { "data-note-raw": "", "aria-label": "Raw markdown" }, ["code", {}, 0]],
 });
 
+// A GitHub alert: `> [!NOTE]` followed by paragraphs.
+const Callout = Node.create({
+  name: "callout",
+  group: "block",
+  content: "paragraph+",
+  defining: true,
+  addAttributes: () => ({
+    kind: {
+      default: "NOTE",
+      rendered: false,
+    },
+  }),
+  parseHTML: () => [
+    { tag: "div[data-callout]", getAttrs: (el) => ({ kind: el.getAttribute("data-callout") }) },
+  ],
+  renderHTML: ({ node }) => ["div", { "data-callout": node.attrs.kind }, 0],
+  addKeyboardShortcuts() {
+    // Enter on the empty last paragraph leaves the callout, like a list item.
+    return {
+      Enter: ({ editor }) => {
+        const { $from, empty } = editor.state.selection;
+        const parent = $from.node(-1);
+        if (!empty || parent.type.name !== "callout" || $from.parent.content.size > 0) return false;
+        if ($from.index(-1) !== parent.childCount - 1 || parent.childCount < 2) return false;
+        return editor.commands.liftEmptyBlock();
+      },
+    };
+  },
+});
+
+// A markdown cell is one line of inline content.
+const NoteTableCell = TableCell.extend({ content: "paragraph" });
+const NoteTableHeader = TableHeader.extend({ content: "paragraph" });
+
 export function noteExtensions() {
   return [
     StarterKit.configure({
@@ -66,9 +104,9 @@ export function noteExtensions() {
       listItem: false,
       orderedList: false,
       code: false,
-      link: false,
       underline: false,
       trailingNode: false,
+      link: { openOnClick: false, autolink: true, HTMLAttributes: { rel: "noopener noreferrer" } },
     }),
     ComposerCodeExtension,
     ComposerCodeBlockExtension,
@@ -76,7 +114,13 @@ export function noteExtensions() {
     ...ComposerBlockExtensions,
     ComposerTaskListExtension,
     ComposerTaskItemExtension,
+    Table,
+    TableRow,
+    NoteTableHeader,
+    NoteTableCell,
+    Callout,
     AttachmentImage,
+    NoteSlashCommand,
     NoteRawMarkdown,
     NoteSource,
   ];

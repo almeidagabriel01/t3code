@@ -19,5 +19,11 @@ export const noteMarkdownFixtures = [
   "Title\n=====\n\n    indented code\n",
   "::: custom\n$math$ and \\*escaped\\*\n::: \n",
   "Unicode 한글 🐐\n\n- [X] Task\n",
+  "> [!NOTE]\n> Useful **info**\n> second line\n\n> [!WARNING]\n> One\n> \n> Two\n",
+  "> [!TIP]\n\nAfter\n",
+  "Visit [the docs](https://example.com/a_b?x=1) or [two](u) now.\n\n- [a **b**](https://x.y)\n",
+  "| a | b |\n| --- | --- |\n| 1 | [l](u) |\n|  | ~~s~~ |\n",
+  "| a | b |\n| :-- | --: |\n| 1 | 2 |\n",
+  "> [!BOGUS]\n> text\n",
   "# CRLF\r\n\r\nOriginal\r\n",
 ];
