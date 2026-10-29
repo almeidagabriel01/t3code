@@ -201,7 +201,7 @@ export function WorkingSectionSettings() {
   const preferences = useAtomValue(mobilePreferencesAtom);
   const loaded = AsyncResult.isSuccess(preferences);
   const threadOrder = (loaded ? preferences.value.threadOrder : undefined) ?? "activity";
-  const workingShelfEnabled = loaded && preferences.value.workingShelfEnabled !== false;
+  const workingShelfEnabled = loaded && preferences.value.workingShelfEnabled === true;
 
   return (
     <View className="gap-3">

@@ -13,7 +13,7 @@ export function useThreadListV2ShelfPreferences() {
     loaded && preferencesResult.value.threadListSettledShelfExpanded === true;
   const threadOrder = (loaded ? preferencesResult.value.threadOrder : undefined) ?? "activity";
   const workingShelfEnabled =
-    loaded && preferencesResult.value.workingShelfEnabled !== false && threadOrder === "activity";
+    loaded && preferencesResult.value.workingShelfEnabled === true && threadOrder === "activity";
   const workingShelfExpanded =
     loaded && preferencesResult.value.threadListWorkingShelfExpanded === true;
 
