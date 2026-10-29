@@ -122,6 +122,16 @@ it("shows unavailable audio when a workspace embed has no thread", async () => {
   expect(screen.container.querySelector("audio")).toBeNull();
 });
 
+it("resolves attachment image refs through the environment instead of the workspace", async () => {
+  setup();
+  await using screen = await renderText(
+    "![shot.png](t3-attachment:card-8b886866-d7ee-4817-aee9-eea00cb0c9b7-951dbb14-3a29-4173-857a-8501fb89cc28)",
+    { environmentId: EnvironmentId.make("environment-1") },
+  );
+  expect(screen.container.textContent).not.toContain("Image unavailable");
+  expect(screen.container.querySelector('[role="status"], img')).not.toBeNull();
+});
+
 describe("ChatMarkdown favicon privacy", () => {
   it("suppresses private link images while preserving public links across updates", async () => {
     setup();

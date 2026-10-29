@@ -157,7 +157,7 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
       "t3-context",
       THREAD_LINK_PROTOCOL,
     ],
-    src: [...(defaultSchema.protocols?.src ?? []), "file", "t3-context"],
+    src: [...(defaultSchema.protocols?.src ?? []), "file", "t3-context", "t3-attachment"],
   },
 } satisfies Parameters<typeof rehypeSanitize>[0];
 
