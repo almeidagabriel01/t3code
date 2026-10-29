@@ -75,12 +75,18 @@ export function withCreationProvenance(
     case "thread.create": {
       // Only the server stamps a link's origin, so a client cannot set one.
       const { linkOrigin: _linkOrigin, delegatedFrom: _delegatedFrom, ...rest } = command;
-      return { ...rest, ...provenance };
+      // A person's memory authority is current policy alone; only agents carry a captured ceiling.
+      return provenance.createdBy === "user"
+        ? { ...rest, memoryGrantCeiling: "none", ...provenance }
+        : { ...rest, ...provenance };
     }
     case "message.dispatch":
+    case "delegated_task.request":
+      return provenance.createdBy === "user"
+        ? { ...command, memoryGrantCeiling: "none", ...provenance }
+        : { ...command, ...provenance };
     case "thread.fork":
     case "thread.merge_back":
-    case "delegated_task.request":
       return { ...command, ...provenance };
     default:
       return command;
@@ -134,6 +140,7 @@ export interface ThreadManagementSendInput {
   readonly threadId: ThreadId;
   readonly messageId: MessageId;
   readonly scheduledTaskId?: ScheduledTaskId;
+  readonly memoryGrantCeiling?: import("@t3tools/contracts").MemoryTaskGrantCeiling;
   readonly senderThreadId?: ThreadId;
   readonly text: string;
   readonly attachments: ReadonlyArray<ChatAttachment>;
@@ -807,6 +814,7 @@ const make = Effect.gen(function* () {
       commandId: input.commandId,
       threadId: input.threadId,
       messageId: input.messageId,
+      memoryGrantCeiling: input.memoryGrantCeiling ?? "none",
       ...(input.scheduledTaskId === undefined ? {} : { scheduledTaskId: input.scheduledTaskId }),
       ...(input.senderThreadId === undefined ? {} : { senderThreadId: input.senderThreadId }),
       text: input.text,

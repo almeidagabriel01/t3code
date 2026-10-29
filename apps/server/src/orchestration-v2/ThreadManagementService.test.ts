@@ -74,6 +74,20 @@ it("stamps authoritative provenance on commands that create threads or messages"
   expect(stamped).not.toHaveProperty("delegatedFrom");
 });
 
+it("keeps a captured memory ceiling only for agent-created work", () => {
+  const dispatch = (createdBy: "user" | "agent") =>
+    ThreadManagementService.withCreationProvenance(
+      {
+        type: "delegated_task.request",
+        memoryGrantCeiling: "read_write",
+        commandId: CommandId.make("command:thread-management:memory"),
+      } as unknown as OrchestrationV2Command,
+      { createdBy, creationSource: createdBy === "user" ? "web" : "mcp" },
+    );
+  expect(dispatch("agent")).toMatchObject({ memoryGrantCeiling: "read_write" });
+  expect(dispatch("user")).toMatchObject({ memoryGrantCeiling: "none" });
+});
+
 const layerReceiptsTest = CommandReceiptStore.layer.pipe(
   Layer.provide(SqlitePersistence.layerMemory),
 );

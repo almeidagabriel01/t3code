@@ -21,6 +21,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Cause from "effect/Cause";
 import * as Path from "effect/Path";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
@@ -48,6 +49,8 @@ import { sideChatNote } from "./SideChatNote.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import * as MemorySnapshot from "../memory/MemorySnapshot.ts";
+import { runMemoryPrepareInput } from "./MemoryPrepareInput.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import {
   ContextHandoffBackgroundWorkError,
@@ -155,6 +158,7 @@ export const layer: Layer.Layer<
     const providerAuth = yield* ProviderAuthService.ProviderAuthService;
     const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+    const memorySnapshot = yield* Effect.serviceOption(MemorySnapshot.MemorySnapshot);
     const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
     const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
     const budgetGate = yield* ProviderBudgetGate;
@@ -188,6 +192,31 @@ export const layer: Layer.Layer<
         });
       },
     );
+
+    // Run workers keep this callback after startup. Capture only service references
+    // and scalar ids, outside start's scope containing the projection and history.
+    const makeRefreshMemoryContext = (threadId: ThreadId, runId: RunId) => () =>
+      Effect.gen(function* () {
+        if (Option.isNone(memorySnapshot) || !providerSessions.currentMemoryPolicy)
+          return undefined;
+        const currentPolicy = providerSessions.currentMemoryPolicy(threadId);
+        const policy = yield* currentPolicy;
+        if (policy.grant === "none") return undefined;
+        if ((yield* projectionStore.getThreadShell(threadId))?.activeRunId !== runId)
+          return undefined;
+        const snapshot = yield* memorySnapshot.value.forThread(threadId, policy, currentPolicy);
+        return (yield* projectionStore.getThreadShell(threadId))?.activeRunId === runId
+          ? snapshot
+          : undefined;
+      }).pipe(
+        Effect.catchCause((cause) =>
+          Cause.hasInterruptsOnly(cause)
+            ? Effect.interrupt
+            : Effect.logWarning("Memory refresh unavailable", { threadId, runId }).pipe(
+                Effect.as(undefined),
+              ),
+        ),
+      );
 
     // Build draining callbacks outside startup scope so they cannot retain full thread history.
     const makeRunControls = (input: {
@@ -739,10 +768,13 @@ export const layer: Layer.Layer<
       }
       const sessionResult = yield* Effect.result(
         providerSessions.open({
+          runId: run.id,
+          ...(run.delegatedTaskId === undefined ? {} : { delegatedTaskId: run.delegatedTaskId }),
           threadId: projection.thread.id,
           providerSessionId,
           modelSelection: run.modelSelection,
           runtimePolicy: resolvedRuntimePolicy,
+          ...runMemoryPrepareInput({ run, message, projection }),
           ...(existingSessionProjection === undefined
             ? {}
             : { resumeFromSession: existingSessionProjection }),
@@ -1505,6 +1537,7 @@ export const layer: Layer.Layer<
         run: runningRun,
         rootNode: runningRootNode,
         checkpointScope,
+        refreshMemoryContext: makeRefreshMemoryContext(input.threadId, runId),
         providerThread: runningProviderThread,
         attempt: runningAttempt,
         attemptId: attempt.id,

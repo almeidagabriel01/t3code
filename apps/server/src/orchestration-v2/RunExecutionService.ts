@@ -549,6 +549,7 @@ export const RunExecutionServiceV2Error = Schema.Union([
 export type RunExecutionServiceV2Error = typeof RunExecutionServiceV2Error.Type;
 
 export interface RunExecutionServiceV2StartRootRunInput {
+  readonly refreshMemoryContext?: ProviderAdapter.ProviderAdapterV2TurnInput["refreshMemoryContext"];
   readonly commandId: CommandId;
   readonly appThread: OrchestrationV2AppThread;
   readonly providerSessionId: ProviderSessionId;
@@ -1624,6 +1625,9 @@ export const layer: Layer.Layer<
           text: entry.text,
         }));
         const turnInput = {
+          ...(input.refreshMemoryContext === undefined
+            ? {}
+            : { refreshMemoryContext: input.refreshMemoryContext }),
           appThread: input.appThread,
           threadId: input.run.threadId,
           runId: input.run.id,

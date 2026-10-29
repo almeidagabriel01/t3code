@@ -168,5 +168,16 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
     )
   `;
 
+  // The destination's memory ceiling, captured when a person or agent saved the task.
+  const scheduledColumns = yield* sql<{
+    readonly name: string;
+  }>`PRAGMA table_info(scheduled_tasks)`;
+  if (
+    scheduledColumns.length > 0 &&
+    !scheduledColumns.some((column) => column.name === "memory_grant_ceiling")
+  ) {
+    yield* sql`ALTER TABLE scheduled_tasks ADD COLUMN memory_grant_ceiling TEXT NOT NULL DEFAULT 'none'`;
+  }
+
   yield* ensureMemorySchema();
 });

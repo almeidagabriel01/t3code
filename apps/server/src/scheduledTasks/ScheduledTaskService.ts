@@ -1,4 +1,5 @@
 import {
+  type MemoryTaskGrantCeiling,
   CommandId,
   MessageId,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
@@ -203,8 +204,14 @@ interface ScheduledTaskRow {
   readonly last_run_status: string;
   readonly last_run_error: string | null;
   readonly run_count: number;
+  readonly memory_grant_ceiling?: MemoryTaskGrantCeiling | null;
   readonly webhook_token: string | null;
   readonly webhook_secret: string | null;
+}
+
+/** Server-captured authority; never decoded from a public task mutation. */
+export interface CapturedTaskMemoryGrant {
+  readonly memoryGrantCeiling: MemoryTaskGrantCeiling;
 }
 
 interface WebhookDeliveryRow {
@@ -232,9 +239,12 @@ export class ScheduledTaskService extends Context.Service<
     readonly subscribeList: () => Stream.Stream<ScheduledTaskListResult, ScheduledTaskError>;
     readonly upsert: (
       input: ScheduledTaskUpsertInput,
+      captured?: CapturedTaskMemoryGrant,
     ) => Effect.Effect<ScheduledTaskMutationResult, ScheduledTaskError>;
+    /** Recaptures authority while changing the enabled flag. */
     readonly setEnabled: (
       input: ScheduledTaskSetEnabledInput,
+      captured?: CapturedTaskMemoryGrant,
     ) => Effect.Effect<ScheduledTaskMutationResult, ScheduledTaskError>;
     readonly delete: (
       input: ScheduledTaskDeleteInput,
@@ -337,6 +347,7 @@ const decodeRow = Effect.fnUntraced(
       threadId: row.thread_id,
       workspaceStrategy,
       modelSelection,
+      memoryGrantCeiling: row.memory_grant_ceiling ?? "none",
       runtimeMode: row.runtime_mode,
       interactionMode: row.interaction_mode,
       createdBy: row.created_by,
@@ -451,6 +462,7 @@ export const layer = Layer.effect(
         last_run_status,
         last_run_error,
         run_count,
+        memory_grant_ceiling,
         webhook_token,
         webhook_secret
       FROM scheduled_tasks
@@ -488,6 +500,7 @@ export const layer = Layer.effect(
         last_run_status,
         last_run_error,
         run_count,
+        memory_grant_ceiling,
         webhook_token,
         webhook_secret
       FROM scheduled_tasks
@@ -563,6 +576,7 @@ export const layer = Layer.effect(
           last_run_status,
           last_run_error,
           run_count,
+          memory_grant_ceiling,
           webhook_token,
           webhook_secret
         )
@@ -587,6 +601,7 @@ export const layer = Layer.effect(
           ${task.lastRunStatus},
           ${task.lastRunError},
           ${task.runCount},
+          ${task.memoryGrantCeiling ?? "none"},
           ${webhook.token},
           ${webhook.secret}
         WHERE ${requireExisting ? 0 : 1} = 1
@@ -603,6 +618,7 @@ export const layer = Layer.effect(
           model_selection_json = excluded.model_selection_json,
           runtime_mode = excluded.runtime_mode,
           interaction_mode = excluded.interaction_mode,
+          memory_grant_ceiling = excluded.memory_grant_ceiling,
           creation_source = excluded.creation_source,
           updated_at = excluded.updated_at,
           next_run_at = excluded.next_run_at,
@@ -828,6 +844,7 @@ export const layer = Layer.effect(
               threadId,
               messageId,
               scheduledTaskId: active.id,
+              memoryGrantCeiling: active.memoryGrantCeiling ?? "none",
               text: prompt,
               attachments: [],
               mode: "queue",
@@ -866,6 +883,7 @@ export const layer = Layer.effect(
                     initialMessage: {
                       messageId,
                       scheduledTaskId: active.id,
+                      memoryGrantCeiling: active.memoryGrantCeiling ?? "none",
                       text: prompt,
                       attachments: [],
                     },
@@ -1069,7 +1087,7 @@ export const layer = Layer.effect(
 
     const upsert: ScheduledTaskService["Service"]["upsert"] = Effect.fn(
       "ScheduledTaskService.upsert",
-    )(function* (input) {
+    )(function* (input, captured) {
       const now = yield* localNow;
       const uuid =
         input.commandId === undefined
@@ -1177,6 +1195,7 @@ export const layer = Layer.effect(
         threadId: input.threadId ?? null,
         workspaceStrategy,
         modelSelection: input.modelSelection,
+        memoryGrantCeiling: captured?.memoryGrantCeiling ?? "none",
         runtimeMode: input.runtimeMode,
         interactionMode: input.interactionMode,
         createdBy: existingTask?.createdBy ?? input.createdBy ?? "user",
@@ -1198,16 +1217,25 @@ export const layer = Layer.effect(
 
     const setEnabled: ScheduledTaskService["Service"]["setEnabled"] = Effect.fn(
       "ScheduledTaskService.setEnabled",
-    )(function* (input) {
+    )(function* (input, captured) {
       const existing = yield* loadTask(input.id);
-      if (existing.enabled === input.enabled) return { task: existing };
+      const memoryGrantCeiling = captured?.memoryGrantCeiling ?? "none";
+      if (
+        existing.enabled === input.enabled &&
+        (existing.memoryGrantCeiling ?? "none") === memoryGrantCeiling
+      )
+        return { task: existing };
       const now = yield* localNow;
-      const next = nextRunAt({ enabled: input.enabled, schedule: existing.schedule }, now);
+      const next =
+        existing.enabled === input.enabled
+          ? existing.nextRunAt
+          : nextRunAt({ enabled: input.enabled, schedule: existing.schedule }, now);
       // RETURNING so a task deleted between the load and this UPDATE is a
       // visible not-found error, not a false success.
       const updated = yield* sql<{ task_id: string }>`
           UPDATE scheduled_tasks
           SET enabled = ${input.enabled ? 1 : 0},
+              memory_grant_ceiling = ${memoryGrantCeiling},
               next_run_at = ${next},
               updated_at = ${iso(now)}
           WHERE task_id = ${input.id}
@@ -1222,7 +1250,13 @@ export const layer = Layer.effect(
       }
       yield* notifyChanged;
       return {
-        task: { ...existing, enabled: input.enabled, nextRunAt: next, updatedAt: iso(now) },
+        task: {
+          ...existing,
+          enabled: input.enabled,
+          memoryGrantCeiling,
+          nextRunAt: next,
+          updatedAt: iso(now),
+        },
       };
     });
 

@@ -3,6 +3,7 @@ import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   isOrchestrationV2WorkActive,
+  type MemoryTaskGrantCeiling,
   ModelSelection,
   OrchestrationV2DomainEvent,
   OrchestrationV2ProviderSession,
@@ -11,7 +12,9 @@ import {
   ProviderInstanceId,
   ProviderSessionId,
   ThreadId,
+  type NodeId,
   type ProviderThreadId,
+  type RunId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -44,6 +47,8 @@ import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ServerSettings from "../serverSettings.ts";
+import { effectiveMemoryGrant } from "../memory/MemoryAccess.ts";
+import type { MemorySnapshotPolicy } from "../memory/MemorySnapshot.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as EventSink from "./EventSink.ts";
 import * as CommandOutputHub from "./CommandOutputHub.ts";
@@ -143,8 +148,14 @@ export const ProviderSessionManagerV2Error = Schema.Union([
 export type ProviderSessionManagerV2Error = typeof ProviderSessionManagerV2Error.Type;
 
 export interface ProviderSessionManagerV2Shape {
+  /** The thread's current memory authority: its admitted ceiling under today's settings. */
+  readonly currentMemoryPolicy?: (threadId: ThreadId) => Effect.Effect<MemorySnapshotPolicy>;
   readonly shutdown: Effect.Effect<void>;
   readonly open: (input: {
+    readonly runId?: RunId;
+    readonly delegatedTaskId?: NodeId;
+    /** Explicit null is an ordinary start; missing is none. */
+    readonly memoryGrantCeiling?: MemoryTaskGrantCeiling | null;
     readonly threadId: ThreadId;
     readonly providerSessionId: ProviderSessionId;
     readonly modelSelection: ModelSelection;
@@ -409,6 +420,34 @@ export const layerWithOptions = (
       const isMcpCredentialReserved = (threadId: ThreadId, mcpCredentialId: string) =>
         (mcpCredentialReservations.get(mcpReservationKey(threadId, mcpCredentialId)) ?? 0) > 0;
       const mcpPrepareLock = yield* KeyedLock.make<ThreadId>();
+      /** What the thread's latest open admitted; credentials and snapshots follow it live. */
+      const memoryAdmissions = new Map<
+        ThreadId,
+        { readonly memoryGrantCeiling: MemoryTaskGrantCeiling | null; readonly readOnly: boolean }
+      >();
+      const currentMemoryPolicy = Effect.fn("ProviderSessionManager.currentMemoryPolicy")(
+        function* (threadId: ThreadId) {
+          const admission = memoryAdmissions.get(threadId);
+          if (admission === undefined || Option.isNone(serverSettings)) {
+            return { grant: "none" as const, policyEpoch: 0 };
+          }
+          const settings = yield* serverSettings.value.getSettings;
+          return {
+            grant: effectiveMemoryGrant({
+              enableAgentMemoryAccess: settings.enableAgentMemoryAccess,
+              policyReady: true,
+              readOnly: admission.readOnly,
+              memoryGrantCeiling: admission.memoryGrantCeiling,
+            }),
+            // Credentials compare grant and epoch live, so on/off is the only epoch.
+            policyEpoch: settings.enableAgentMemoryAccess ? 1 : 0,
+          };
+        },
+        Effect.orElseSucceed((): MemorySnapshotPolicy => ({
+          grant: "none" as const,
+          policyEpoch: 0,
+        })),
+      );
       /** Serialize prepares per thread so concurrent rotations cannot revoke each other's credentials. */
       const prepareMcpSession = (
         threadId: ThreadId,
@@ -429,6 +468,8 @@ export const layerWithOptions = (
                 >(["orchestration", "worktree", "pull-requests"]);
                 if (browserToolsAvailable) capabilities.add("preview");
                 if (deviceToolsAvailable) capabilities.add("device");
+                const memoryPolicy = yield* currentMemoryPolicy(threadId);
+                if (memoryPolicy.grant !== "none") capabilities.add("memory");
                 const subagent = yield* projectionStore.getThread(threadId).pipe(
                   Effect.map((thread) => thread.lineage.relationshipToParent === "subagent"),
                   Effect.orElseSucceed(() => false),
@@ -454,6 +495,9 @@ export const layerWithOptions = (
                     resolved.thread.providerInstanceId === providerInstanceId &&
                     resolved.capabilities.has("preview") === browserToolsAvailable &&
                     resolved.capabilities.has("device") === deviceToolsAvailable &&
+                    resolved.capabilities.has("memory") === (memoryPolicy.grant !== "none") &&
+                    resolved.memoryPolicy?.grant === memoryPolicy.grant &&
+                    resolved.memoryPolicy.policyEpoch === memoryPolicy.policyEpoch &&
                     // A credential issued while the lineage read failed is replaced once it works.
                     (resolved.thread.subagent === true) === subagent
                   ) {
@@ -468,6 +512,14 @@ export const layerWithOptions = (
                   browserToolsAvailable,
                   capabilities,
                   subagent,
+                  grantedScopes: [
+                    ...(memoryPolicy.grant === "none" ? [] : (["memory:read"] as const)),
+                    ...(memoryPolicy.grant === "read_write" ? (["memory:write"] as const) : []),
+                  ],
+                  memoryPolicy,
+                  readCurrentPolicy: () => currentMemoryPolicy(threadId),
+                  isLiveCaller: Effect.sync(() => memoryAdmissions.has(threadId)),
+                  readOnly: memoryAdmissions.get(threadId)?.readOnly === true,
                 });
                 yield* mcpSessions.set(credential.config);
                 reserveMcpCredential(threadId, credential.config.providerSessionId);
@@ -2026,11 +2078,22 @@ export const layerWithOptions = (
       );
 
       return ProviderSessionManagerV2.of({
+        currentMemoryPolicy,
         shutdown,
         open: (input) =>
           sessionOpen.withLock(
             input.providerSessionId,
             Effect.gen(function* () {
+              const sandbox = input.runtimePolicy.sandboxPolicy;
+              memoryAdmissions.set(input.threadId, {
+                memoryGrantCeiling: input.memoryGrantCeiling ?? "none",
+                readOnly:
+                  sandbox === "read-only" ||
+                  (typeof sandbox === "object" &&
+                    sandbox !== null &&
+                    "type" in sandbox &&
+                    sandbox.type === "readOnly"),
+              });
               const cwd = input.runtimePolicy.cwd;
               if (cwd !== null) {
                 const workspaceIsDirectory = yield* fileSystem.stat(cwd).pipe(
@@ -2271,6 +2334,7 @@ export const layerWithOptions = (
         release: releaseEntry,
         detach: Effect.fn("ProviderSessionManager.detach")(
           function* (input) {
+            memoryAdmissions.delete(input.threadId);
             const key = sessionKey(input.providerSessionId);
             const currentEntry = (yield* Ref.get(sessions)).get(key);
             let detachedProviderThreads: ReadonlyArray<OrchestrationV2ProviderThread> = [];
