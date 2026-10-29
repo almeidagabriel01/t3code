@@ -234,12 +234,33 @@ function block(source: string, node: RootContent, markdown: string): JSONContent
   return raw(source);
 }
 
+// A bullet list next to a to-do list reparses as one mixed list; keep each run its own block.
+function splitTaskRuns(node: RootContent): RootContent[] {
+  if (node.type !== "list") return [node];
+  const runs: List[] = [];
+  for (const item of node.children) {
+    const last = runs.at(-1);
+    if (
+      last &&
+      ((last.children[0]!.checked != null) === (item.checked != null) ||
+        // A misindented sibling is not a list the editor wrote; it stays literal.
+        item.position!.start.column !== node.position!.start.column)
+    ) {
+      last.children.push(item);
+      last.position = { start: last.position!.start, end: item.position!.end };
+    } else {
+      runs.push({ ...node, children: [item], position: item.position });
+    }
+  }
+  return runs;
+}
+
 // Called once when an editor document loads. Edits serialize the editor tree without parsing.
 export function noteMarkdownToDoc(markdown: string): JSONContent {
   // Keep CRLF documents literal; normalization would change unrelated lines on the next save.
   if (markdown.includes("\r"))
     return { type: "doc", content: [{ ...raw(markdown), attrs: { noteSuffix: "" } }] };
-  const nodes = parser.parse(markdown).children;
+  const nodes = parser.parse(markdown).children.flatMap(splitTaskRuns);
   const content: JSONContent[] = [];
   for (let index = 0; index < nodes.length; index++) {
     const node = nodes[index]!;

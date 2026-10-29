@@ -75,6 +75,15 @@ describe("note markdown codec", () => {
       source.slice(0, 4) + "edited " + source.slice(4),
     );
   });
+  it("keeps a bullet list followed by a to-do list editable", () => {
+    const source = "- Teste\n\n- [x] teste\n";
+    const doc = parse(source);
+    expect(doc.toJSON().content.map((node: { type: string }) => node.type)).toEqual([
+      "bulletList",
+      "taskList",
+    ]);
+    expect(noteDocToMarkdown(doc.toJSON())).toBe(source);
+  });
   it.each(noteMarkdownFixtures)("round trips fixture %j through the editor schema", (source) => {
     expect(noteDocToMarkdown(parse(source).toJSON())).toBe(source);
   });
