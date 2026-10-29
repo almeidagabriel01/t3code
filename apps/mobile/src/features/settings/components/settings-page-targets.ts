@@ -25,6 +25,7 @@ export const SETTINGS_PAGE_TARGETS = [
   "SettingsUsage",
   "SettingsKanban",
   "SettingsNotes",
+  "SettingsMemory",
 ] as const;
 
 export type SettingsPageTarget = (typeof SETTINGS_PAGE_TARGETS)[number];

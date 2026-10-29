@@ -277,6 +277,8 @@ type ThreadSettingsSessionProps = {
   readonly onUpdateOptionSelections: (selections: ReadonlyArray<ProviderOptionSelection>) => void;
   readonly runtimeMode: RuntimeMode;
   readonly onUpdateRuntimeMode: (mode: RuntimeMode) => void;
+  /** For model choices that are not for a thread, such as server-wide generation models. */
+  readonly runtimeHidden?: boolean;
 };
 
 /** The composer draft the sheet edits: the thread's own, or a queued message being edited. */
@@ -300,6 +302,7 @@ type ThreadSettingsSessionValue = {
   readonly runtimeMode: RuntimeMode;
   readonly runtimeModeChoices: ReturnType<typeof runtimeModeChoicesForSupportedModes>;
   readonly onUpdateRuntimeMode: (mode: RuntimeMode) => void;
+  readonly runtimeHidden: boolean;
   readonly displayedDescriptors: ReadonlyArray<ProviderOptionDescriptor>;
   readonly promptTraits: ReturnType<typeof getPromptControlledTraits>;
   readonly displayedModelSelection: ModelSelection | null;
@@ -610,6 +613,7 @@ function ThreadSettingsSessionProvider(
     runtimeMode: compatibleRuntimeMode,
     runtimeModeChoices,
     onUpdateRuntimeMode: props.onUpdateRuntimeMode,
+    runtimeHidden: props.runtimeHidden === true,
     displayedDescriptors,
     promptTraits,
     displayedModelSelection: pendingModel?.selection ?? props.selectedModel,
@@ -838,66 +842,80 @@ function ThreadSettingsOptionsItem(props: {
   return (
     <View style={{ paddingBottom: insets.bottom + bottomToolbarInset + 12 }}>
       <ChatGptSharingStatus provider={selectedProvider} />
-      <Text className="px-5 pb-2 pt-2 text-sm font-t3-medium text-foreground-muted">Options</Text>
-      <Animated.View
-        className="mx-4 overflow-hidden rounded-2xl bg-grouped-card"
-        layout={THREAD_SETTINGS_OPTIONS_LAYOUT_TRANSITION}
-      >
-        {session.displayedDescriptors.map((descriptor) => {
-          if (descriptor.type === "select") {
-            return (
-              <Animated.View
-                key={descriptor.id}
-                entering={
-                  props.animationsReady ? THREAD_SETTINGS_OPTION_ENTER_TRANSITION : undefined
-                }
-                exiting={props.animationsReady ? THREAD_SETTINGS_OPTION_EXIT_TRANSITION : undefined}
-                layout={THREAD_SETTINGS_OPTIONS_LAYOUT_TRANSITION}
-              >
-                <DisclosureRow
-                  label={descriptor.label}
-                  value={
-                    session.promptTraits.ultrathinkPromptControlled &&
-                    descriptor.id === session.promptTraits.primarySelectDescriptor?.id
-                      ? "Ultrathink"
-                      : getProviderOptionCurrentLabel(
-                          descriptor,
-                          session.displayedModelSelection,
-                          session.reportedModelSelection,
-                        )
+      {session.runtimeHidden && session.displayedDescriptors.length === 0 ? null : (
+        <>
+          <Text className="px-5 pb-2 pt-2 text-sm font-t3-medium text-foreground-muted">
+            Options
+          </Text>
+          <Animated.View
+            className="mx-4 overflow-hidden rounded-2xl bg-grouped-card"
+            layout={THREAD_SETTINGS_OPTIONS_LAYOUT_TRANSITION}
+          >
+            {session.displayedDescriptors.map((descriptor) => {
+              if (descriptor.type === "select") {
+                return (
+                  <Animated.View
+                    key={descriptor.id}
+                    entering={
+                      props.animationsReady ? THREAD_SETTINGS_OPTION_ENTER_TRANSITION : undefined
+                    }
+                    exiting={
+                      props.animationsReady ? THREAD_SETTINGS_OPTION_EXIT_TRANSITION : undefined
+                    }
+                    layout={THREAD_SETTINGS_OPTIONS_LAYOUT_TRANSITION}
+                  >
+                    <DisclosureRow
+                      label={descriptor.label}
+                      value={
+                        session.promptTraits.ultrathinkPromptControlled &&
+                        descriptor.id === session.promptTraits.primarySelectDescriptor?.id
+                          ? "Ultrathink"
+                          : getProviderOptionCurrentLabel(
+                              descriptor,
+                              session.displayedModelSelection,
+                              session.reportedModelSelection,
+                            )
+                      }
+                      onPress={() => props.onOpenSubmenu({ kind: "descriptor", id: descriptor.id })}
+                    />
+                  </Animated.View>
+                );
+              }
+              return (
+                <Animated.View
+                  key={descriptor.id}
+                  entering={
+                    props.animationsReady ? THREAD_SETTINGS_OPTION_ENTER_TRANSITION : undefined
                   }
-                  onPress={() => props.onOpenSubmenu({ kind: "descriptor", id: descriptor.id })}
+                  exiting={
+                    props.animationsReady ? THREAD_SETTINGS_OPTION_EXIT_TRANSITION : undefined
+                  }
+                  layout={THREAD_SETTINGS_OPTIONS_LAYOUT_TRANSITION}
+                >
+                  <SwitchRow
+                    label={descriptor.label}
+                    value={descriptor.currentValue ?? false}
+                    onValueChange={(value) => session.applyOptionChange(descriptor.id, value)}
+                  />
+                </Animated.View>
+              );
+            })}
+            {session.runtimeHidden ? null : (
+              <Animated.View layout={THREAD_SETTINGS_OPTIONS_LAYOUT_TRANSITION}>
+                <DisclosureRow
+                  isLast
+                  label="Runtime"
+                  value={
+                    session.runtimeModeChoices.find((choice) => choice.mode === session.runtimeMode)
+                      ?.label
+                  }
+                  onPress={() => props.onOpenSubmenu({ kind: "runtime" })}
                 />
               </Animated.View>
-            );
-          }
-          return (
-            <Animated.View
-              key={descriptor.id}
-              entering={props.animationsReady ? THREAD_SETTINGS_OPTION_ENTER_TRANSITION : undefined}
-              exiting={props.animationsReady ? THREAD_SETTINGS_OPTION_EXIT_TRANSITION : undefined}
-              layout={THREAD_SETTINGS_OPTIONS_LAYOUT_TRANSITION}
-            >
-              <SwitchRow
-                label={descriptor.label}
-                value={descriptor.currentValue ?? false}
-                onValueChange={(value) => session.applyOptionChange(descriptor.id, value)}
-              />
-            </Animated.View>
-          );
-        })}
-        <Animated.View layout={THREAD_SETTINGS_OPTIONS_LAYOUT_TRANSITION}>
-          <DisclosureRow
-            isLast
-            label="Runtime"
-            value={
-              session.runtimeModeChoices.find((choice) => choice.mode === session.runtimeMode)
-                ?.label
-            }
-            onPress={() => props.onOpenSubmenu({ kind: "runtime" })}
-          />
-        </Animated.View>
-      </Animated.View>
+            )}
+          </Animated.View>
+        </>
+      )}
 
       <Text className="px-5 pb-2 pt-7 text-sm font-t3-medium text-foreground-muted">Catalog</Text>
       <View className="mx-4 overflow-hidden rounded-2xl bg-grouped-card">

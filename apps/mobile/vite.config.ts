@@ -34,6 +34,9 @@ const reactTests = [
   "src/features/notes/NoteRouteScreen.test.tsx",
   "src/features/notes/NoteConflictRouteScreen.test.tsx",
   "src/features/notes/NoteStartWorkRouteScreen.test.tsx",
+  "src/features/settings/MemorySyncDiagnostics.test.tsx",
+  "src/features/settings/SettingsMemoryRouteScreen.test.tsx",
+  "src/features/threads/SubagentRow.memory.test.tsx",
 ];
 
 const sourceRoot = `${normalizePath(NodeURL.fileURLToPath(new URL("./src", import.meta.url)))}/`;

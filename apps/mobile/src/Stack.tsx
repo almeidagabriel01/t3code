@@ -129,6 +129,8 @@ import { KanbanCardRouteScreen } from "./features/kanban/KanbanCardRouteScreen";
 import { KanbanArchiveRouteScreen } from "./features/kanban/KanbanArchiveRouteScreen";
 import { KanbanLinkThreadRouteScreen } from "./features/kanban/KanbanLinkThreadRouteScreen";
 import { NotesRouteScreen } from "./features/notes/NotesRouteScreen";
+import { SettingsMemoryRouteScreen } from "./features/settings/SettingsMemoryRouteScreen";
+import { MemoryModelPickerRouteScreen } from "./features/settings/MemoryModelPickerRouteScreen";
 import { NoteRouteScreen } from "./features/notes/NoteRouteScreen";
 import { NoteConflictRouteScreen } from "./features/notes/NoteConflictRouteScreen";
 import { NoteStartWorkRouteScreen } from "./features/notes/NoteStartWorkRouteScreen";
@@ -423,6 +425,18 @@ const SETTINGS_SCREENS = {
           }),
     },
   }),
+  SettingsMemoryModel: createNativeStackScreen({
+    screen: MemoryModelPickerRouteScreen,
+    options: {
+      ...SETTINGS_PAGE_OPTIONS,
+      headerShown: false,
+      ...(Platform.OS === "android"
+        ? { presentation: "card" as const }
+        : {
+            ...THREAD_SETTINGS_SHEET_OPTIONS,
+          }),
+    },
+  }),
   SettingsClientStorage: createNativeStackScreen({
     screen: SettingsClientStorageRouteScreen,
     linking: "settings/client-storage",
@@ -477,6 +491,11 @@ const SETTINGS_SCREENS = {
   SettingsKanbanLinkThread: createNativeStackScreen({
     screen: KanbanLinkThreadRouteScreen,
     options: { ...SETTINGS_PAGE_OPTIONS, title: "Link thread" },
+  }),
+  SettingsMemory: createNativeStackScreen({
+    screen: SettingsMemoryRouteScreen,
+    linking: "settings/memory",
+    options: { ...SETTINGS_PAGE_OPTIONS, title: "Memory" },
   }),
   SettingsNotes: createNativeStackScreen({
     screen: NotesRouteScreen,
