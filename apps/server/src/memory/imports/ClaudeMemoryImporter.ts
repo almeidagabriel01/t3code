@@ -41,7 +41,7 @@ const header = (text: string, metadataProfile: boolean) => {
           entry.key.tag ||
           entry.key.anchor ||
           typeof entry.key.value !== "string" ||
-          !["type", "node_type", "originSessionId"].includes(entry.key.value) ||
+          !["type", "node_type", "originSessionId", "modified"].includes(entry.key.value) ||
           !isScalar(entry.value) ||
           entry.value.tag ||
           entry.value.anchor ||

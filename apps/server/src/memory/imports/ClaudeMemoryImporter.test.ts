@@ -142,7 +142,7 @@ describe("ClaudeMemoryImporter", () => {
         const text = (session: string) =>
           topic(
             "Safe body.",
-            `name: Topic\ndescription: Safe\ntype: project\nmetadata:\n  type: project\n  node_type: memory\n  originSessionId: ${session}`,
+            `name: Topic\ndescription: Safe\ntype: project\nmetadata:\n  type: project\n  node_type: memory\n  originSessionId: ${session}\n  modified: 2026-08-05T18:08:50.727Z-${session}`,
           );
         const a = candidate(yield* parseClaudeMemory(files(base, [["topic.md", text("first")]])));
         const b = candidate(yield* parseClaudeMemory(files(base, [["topic.md", text("second")]])));

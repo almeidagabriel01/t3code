@@ -107,6 +107,7 @@ function Fixture(props: {
         onAddPullRequest={noop}
         onAddPullRequests={noop}
         onAddDevice={noop}
+        onAddNotes={noop}
         browserAvailable={false}
         terminalAvailable={false}
         filesAvailable={false}
@@ -114,6 +115,7 @@ function Fixture(props: {
         pullRequestAvailable={false}
         pullRequestsAvailable={false}
         deviceAvailable={false}
+        notesAvailable={false}
       >
         <button type="button">Outside the tab strip</button>
       </RightPanelTabs>
