@@ -180,6 +180,7 @@ import {
   normalizeMcpText,
 } from "@t3tools/provider-core/server/mcpToolPresentation";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
+import * as MemoryContext from "@t3tools/provider-core/server/memoryContext";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import {
@@ -1574,6 +1575,8 @@ export function makeClaudeQueryOptions(input: {
       preset: "claude_code" as const,
       append: [
         buildRuntimeInstructions({ harness: "Claude Code" }) +
+          "\n\n" +
+          MemoryContext.MEMORY_DATA_BOUNDARY_REMINDER +
           (input.mcpServers === undefined
             ? ""
             : T3_CODE_ORCHESTRATION_INSTRUCTIONS +
@@ -1723,6 +1726,20 @@ export function claudeMcpQueryOverrides(input: {
         },
         timeout: CLAUDE_T3_MCP_TOOL_TIMEOUT_MS,
       },
+    },
+  };
+}
+
+function appendClaudeUserText(message: SDKUserMessage, text: string): SDKUserMessage {
+  const content = message.message.content;
+  return {
+    ...message,
+    message: {
+      ...message.message,
+      content: [
+        ...(typeof content === "string" ? [{ type: "text" as const, text: content }] : content),
+        { type: "text" as const, text },
+      ],
     },
   };
 }
@@ -3855,6 +3872,12 @@ function formatClaudeUsageLimitWait(waitMs: number): string {
   if (hours === 0) return `${totalMinutes}m`;
   return minutes === 0 ? `${hours}h` : `${hours}h ${minutes}m`;
 }
+
+// Turn bookkeeping never retains the snapshot body or its refresh closure.
+const withoutMemoryBody = (input: ProviderAdapter.ProviderAdapterV2TurnInput) => {
+  const { memoryContext: _body, refreshMemoryContext: _refresh, ...rest } = input;
+  return rest;
+};
 
 interface ActiveClaudeTurnContext {
   readonly queryPolicy: ClaudeRuntimeQueryPolicy;
@@ -10052,6 +10075,18 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           return context;
         });
 
+        const withFreshMemory = Effect.fnUntraced(function* (
+          message: SDKUserMessage,
+          turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
+        ) {
+          const snapshot = turnInput.refreshMemoryContext
+            ? yield* turnInput.refreshMemoryContext()
+            : turnInput.memoryContext;
+          if (snapshot === undefined) return message;
+          const text = yield* Effect.try(() => MemoryContext.memoryContextText(snapshot));
+          return appendClaudeUserText(message, text);
+        });
+
         const startTurn = Effect.fn("ClaudeAdapterV2.startTurn")(
           function* (turnInput: ProviderAdapter.ProviderAdapterV2TurnInput) {
             const startedAt = yield* DateTime.now;
@@ -10126,7 +10161,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   );
             const querySession = yield* openQuery(turnInput, nativeThreadId);
             const context: ActiveClaudeTurnContext = {
-              input: turnInput,
+              input: withoutMemoryBody(turnInput),
               queryPolicy: querySession.queryPolicy,
               nativeThreadId,
               nativeTurnId,
@@ -10229,11 +10264,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               });
             });
             if (userMessage !== null) {
+              const admittedMessage = yield* withFreshMemory(userMessage, turnInput);
               yield* attachTurn;
               yield* startUserTurnForWakeReports(nativeThreadId);
               yield* Effect.uninterruptibleMask((restore) =>
                 restore(
-                  querySession.query.offer(userMessage, () => {
+                  querySession.query.offer(admittedMessage, () => {
                     pdfReservation.commit();
                   }),
                 ).pipe(

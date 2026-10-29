@@ -9,6 +9,9 @@ import {
   CheckpointId,
   CodexSettings,
   EnvironmentId,
+  MemoryId,
+  MemoryRevisionId,
+  MemorySpaceId,
   MessageId,
   type ModelSelection,
   NodeId,
@@ -58,6 +61,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import packageJson from "../../../package.json" with { type: "json" };
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import { packMemoryContext } from "@t3tools/provider-core/server/memoryContext";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as EffectWorker from "../EffectWorker.ts";
@@ -244,6 +248,50 @@ describe("CodexAdapterV2 runtime policy", () => {
         value: "Filtered to overdue",
       });
       assert.isDefined(withT3.additionalContext?.["t3_code_runtime"]);
+    }),
+  );
+
+  it.effect("sends a validated memory snapshot as untrusted context and clears it afterwards", () =>
+    Effect.gen(function* () {
+      const base = {
+        nativeThreadId: "native-memory",
+        codexInput: [{ type: "text", text: "hello" }],
+        runtimePolicy: { runtimeMode: "full-access", interactionMode: "default", cwd: null },
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+      } as const;
+      const memoryContext = packMemoryContext({
+        memorySpaceId: MemorySpaceId.make("00000000-0000-4000-8000-000000000099"),
+        projectionWatermark: 1,
+        items: [
+          {
+            memoryId: MemoryId.make("00000000-0000-4000-8000-000000000001"),
+            revisionId: MemoryRevisionId.make("00000000-0000-4000-8000-000000000002"),
+            scope: { kind: "user" },
+            provenance: { environmentId: EnvironmentId.make("fixture") },
+            assertionKind: "fact",
+            text: "remembered",
+          },
+        ],
+      })!;
+      const delivered = yield* CodexAdapterV2.buildCodexTurnStartParams({ ...base, memoryContext });
+      assert.deepEqual(delivered.additionalContext?.["memory"], {
+        kind: "untrusted",
+        value: memoryContext.renderedText,
+      });
+      const cleared = yield* CodexAdapterV2.buildCodexTurnStartParams({
+        ...base,
+        clearMemoryContext: true,
+      });
+      assert.deepEqual(cleared.additionalContext?.["memory"], { kind: "untrusted", value: "" });
+      const none = yield* CodexAdapterV2.buildCodexTurnStartParams(base);
+      assert.isUndefined(none.additionalContext);
+      const tampered = yield* Effect.exit(
+        CodexAdapterV2.buildCodexTurnStartParams({
+          ...base,
+          memoryContext: { ...memoryContext, renderedText: "tampered" },
+        }),
+      );
+      assert.isTrue(Exit.isFailure(tampered));
     }),
   );
 });

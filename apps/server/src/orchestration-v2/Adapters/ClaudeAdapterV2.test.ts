@@ -32,6 +32,9 @@ import {
   CheckpointId,
   ClaudeSettings,
   EnvironmentId,
+  MemoryId,
+  MemoryRevisionId,
+  MemorySpaceId,
   MessageId,
   type ModelSelection,
   NodeId,
@@ -90,6 +93,7 @@ import { ThreadToolkit } from "../../mcp/toolkits/thread/tools.ts";
 import { OrchestratorToolkit } from "../../mcp/toolkits/orchestrator/tools.ts";
 import { ClaudeExecutableFileCheck } from "../../provider/Drivers/ClaudeExecutable.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
+import { packMemoryContext } from "@t3tools/provider-core/server/memoryContext";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
@@ -1238,6 +1242,115 @@ describe("ClaudeAdapterV2 executable path", () => {
         Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
       ),
     ),
+  );
+});
+
+const captureOfferedClaudeText = Effect.fn("captureOfferedClaudeText")(function* (
+  memory: Pick<
+    ProviderAdapter.ProviderAdapterV2TurnInput,
+    "memoryContext" | "refreshMemoryContext"
+  >,
+) {
+  const offered: Array<SDKUserMessage> = [];
+  const adapter = yield* ClaudeAdapterV2.createClaudeAdapterV2(
+    {
+      instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+      displayName: undefined,
+      environment: [],
+      enabled: true,
+      config: { ...DEFAULT_CLAUDE_SETTINGS, binaryPath: "claude" },
+    },
+    {},
+  ).pipe(
+    Effect.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-claude-memory-" })),
+    Effect.provideService(ClaudeAdapterV2.ClaudeAgentSdkQueryRunner, {
+      allocateSessionId: Effect.succeed("native-thread-claude-memory"),
+      open: () =>
+        Effect.succeed({
+          messages: Stream.never,
+          offer: (message: SDKUserMessage) => Effect.sync(() => void offered.push(message)),
+          setModel: () => Effect.void,
+          applyFlagSettings: () => Effect.void,
+          setPermissionMode: () => Effect.void,
+          backgroundTasks: () => Effect.succeed(false),
+          stopTask: () => Effect.void,
+          interrupt: Effect.void,
+          close: Effect.void,
+        }),
+      forkSession: () => Effect.die("unused"),
+      subagentLaunchToolUseId: () => Effect.succeed(null),
+      assertComplete: Effect.void,
+    }),
+  );
+  const threadId = ThreadId.make("thread-claude-memory");
+  const runtime = yield* adapter.openSession({
+    threadId,
+    providerSessionId: ProviderSessionId.make("provider-session-claude-memory"),
+    modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+    runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+  });
+  const providerThread = yield* runtime.ensureThread({
+    threadId,
+    modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+    runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+  });
+  const exit = yield* runtime
+    .startTurn({
+      ...makeClaudeTestTurnInput({
+        threadId,
+        providerThread,
+        now: yield* DateTime.now,
+        attemptId: RunAttemptId.make("attempt-claude-memory"),
+        text: "hello",
+        attachments: [],
+      }),
+      ...memory,
+    })
+    .pipe(Effect.exit);
+  return { exit, text: JSON.stringify(offered.map((message) => message.message.content)) };
+});
+
+describe("ClaudeAdapterV2 memory delivery", () => {
+  const snapshot = packMemoryContext({
+    memorySpaceId: MemorySpaceId.make("00000000-0000-4000-8000-000000000099"),
+    projectionWatermark: 1,
+    items: [
+      {
+        memoryId: MemoryId.make("00000000-0000-4000-8000-000000000001"),
+        revisionId: MemoryRevisionId.make("00000000-0000-4000-8000-000000000002"),
+        scope: { kind: "user" },
+        provenance: { environmentId: EnvironmentId.make("fixture") },
+        assertionKind: "fact",
+        text: "remembered",
+      },
+    ],
+  })!;
+  const noMemory = Option.getOrUndefined(Option.none<typeof snapshot>());
+  const layers = Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer);
+
+  it.effect(
+    "appends the framed snapshot to the admitted user message, fresh at each admission",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const withSnapshot = yield* captureOfferedClaudeText({
+            memoryContext: snapshot,
+            refreshMemoryContext: () => Effect.succeed(snapshot),
+          });
+          assert.include(withSnapshot.text, "<external_memory>");
+          assert.include(withSnapshot.text, "remembered");
+          const cleared = yield* captureOfferedClaudeText({
+            memoryContext: snapshot,
+            refreshMemoryContext: () => Effect.succeed(noMemory),
+          });
+          assert.notInclude(cleared.text, "external_memory");
+          const tampered = yield* captureOfferedClaudeText({
+            memoryContext: { ...snapshot, renderedText: "tampered" },
+          });
+          assert.isTrue(Exit.isFailure(tampered.exit));
+          assert.notInclude(tampered.text, "tampered");
+        }),
+      ).pipe(Effect.provide(layers)),
   );
 });
 

@@ -312,6 +312,8 @@ interface ThreadState {
     | { readonly name: string; readonly directory: string; readonly credential: string }
     | undefined;
   instructions: string | undefined;
+  /** A memory snapshot is installed in the session instructions and must be cleared. */
+  memoryDelivered: boolean;
 }
 
 type TurnTerminal =
@@ -757,6 +759,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       strandedSteers: new Set(),
       mcp: undefined,
       instructions: undefined,
+      memoryDelivered: false,
     });
 
     const rootOf = (state: ThreadState): ThreadState => {
@@ -3273,11 +3276,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
 
     const prepareMemory = Effect.fnUntraced(function* (
       sessionId: string,
+      state: ThreadState,
       turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
     ) {
       const snapshot = turnInput.refreshMemoryContext
         ? yield* turnInput.refreshMemoryContext()
         : turnInput.memoryContext;
+      if (snapshot === undefined && !state.memoryDelivered) return;
       const value =
         snapshot === undefined
           ? ""
@@ -3289,12 +3294,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
                   detail: "Invalid memory context frame",
                 }),
             });
-      // Always replace, including an empty clear; no stale snapshot survives this admission.
+      // Replace, including an empty clear once a snapshot was installed; none survives this admission.
       yield* client.session.instructions.entry.put({
         sessionID: Session.ID.make(sessionId),
         key: MEMORY_INSTRUCTIONS_KEY,
         value,
       });
+      state.memoryDelivered = value !== "";
     });
 
     const submit = Effect.fnUntraced(function* (
@@ -3329,7 +3335,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           const newest = yield* client.message.list({ sessionID, order: "desc", limit: 1 });
           yield* markBefore(sessionId, newest.data[0]?.id ?? null);
           if (state.active !== turn || turn.interrupted) return;
-          yield* prepareMemory(sessionId, turnInput);
+          yield* prepareMemory(sessionId, state, turnInput);
           if (!sending()) return;
           return yield* client.session.command({ sessionID, ...command });
         }
@@ -3345,7 +3351,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           )
         : [];
       if (state.active !== turn || turn.interrupted) return;
-      yield* prepareMemory(sessionId, turnInput);
+      yield* prepareMemory(sessionId, state, turnInput);
       const files = yield* promptFiles(turnInput.message.attachments);
       const messageText = yield* promptText(turnInput);
       if (!sending()) return;

@@ -119,6 +119,7 @@ import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEve
 import { codexAppServerArgs, resolveCodexLaunchArgs } from "../../provider/codexLaunchArgs.ts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
+import * as MemoryContext from "@t3tools/provider-core/server/memoryContext";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import {
   MCP_APP_EXTENSION_ID,
@@ -733,6 +734,9 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
     /** ChatGPT token sharing does not accept service tiers. */
     readonly omitServiceTier?: boolean;
     readonly appContext?: ProviderAdapter.ProviderAdapterV2TurnInput["appContext"];
+    readonly memoryContext?: ProviderAdapter.ProviderAdapterV2TurnInput["memoryContext"];
+    /** Overwrite a previously delivered snapshot with an empty one, since Codex keeps it otherwise. */
+    readonly clearMemoryContext?: boolean;
   }) {
     const runtimeModeDefaults = codexRuntimeModeTurnDefaults(input.runtimePolicy.runtimeMode);
     const approvalPolicy =
@@ -754,10 +758,9 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
         : getCodexServiceTierOptionValue(input.modelSelection);
     // MCP-written app context must be quoted user input, not developer instructions.
     const appContext = Object.fromEntries(
-      (input.appContext ?? []).map((entry) => [
-        entry.key,
-        { kind: "untrusted" as const, value: entry.text },
-      ]),
+      (input.appContext ?? [])
+        .filter((entry) => entry.key !== "memory")
+        .map((entry) => [entry.key, { kind: "untrusted" as const, value: entry.text }]),
     );
     const t3Context =
       input.hasT3Mcp === true
@@ -769,10 +772,25 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
             },
           )
         : undefined;
+    const memoryContext =
+      input.memoryContext === undefined
+        ? input.clearMemoryContext
+          ? { memory: { kind: "untrusted" as const, value: "" } }
+          : {}
+        : {
+            memory: {
+              kind: "untrusted" as const,
+              value: (yield* Effect.try(() =>
+                MemoryContext.validateMemoryContext(input.memoryContext),
+              )).renderedText,
+            },
+          };
     const additionalContext =
-      t3Context === undefined && Object.keys(appContext).length === 0
+      t3Context === undefined &&
+      Object.keys(appContext).length === 0 &&
+      Object.keys(memoryContext).length === 0
         ? undefined
-        : { ...t3Context, ...appContext };
+        : { ...t3Context, ...appContext, ...memoryContext };
     return yield* decodeCodexTurnStartParamsWithCollaborationMode({
       threadId: input.nativeThreadId,
       input: input.codexInput,
@@ -6480,9 +6498,16 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           ) {
             const threadId = yield* getNativeThreadId(turnInput.providerThread);
             const mcpSession = yield* mcpSessions.read(turnInput.threadId);
+            const memoryContext = turnInput.refreshMemoryContext
+              ? yield* turnInput.refreshMemoryContext()
+              : turnInput.memoryContext;
+            const clearMemoryContext =
+              (yield* Ref.get(additionalContextByThread)).get(threadId)?.memory !== undefined;
             const turnStartParams = yield* buildCodexTurnStartParams({
               nativeThreadId: threadId,
               codexInput,
+              memoryContext,
+              clearMemoryContext,
               runtimePolicy: turnInput.runtimePolicy,
               modelSelection: turnInput.modelSelection,
               hasT3Mcp: mcpSession !== undefined,
@@ -6868,6 +6893,21 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           compactThread: Effect.fn("CodexAdapterV2.compactThread")(
             function* (turnInput) {
               const threadId = yield* getNativeThreadId(turnInput.providerThread);
+              const fresh = turnInput.refreshMemoryContext
+                ? yield* turnInput.refreshMemoryContext()
+                : turnInput.memoryContext;
+              const validated =
+                fresh === undefined
+                  ? undefined
+                  : yield* Effect.try(() => MemoryContext.validateMemoryContext(fresh));
+              // Compaction drops what was sent; restore replays this thread's context, so keep it fresh.
+              yield* Ref.update(additionalContextByThread, (current) => {
+                const context = { ...current.get(threadId) };
+                delete context.memory;
+                if (validated)
+                  context.memory = { kind: "untrusted", value: validated.renderedText };
+                return new Map(current).set(threadId, context);
+              });
               yield* Ref.update(pendingRootTurns, (current) =>
                 new Map(current).set(threadId, turnInput),
               );
