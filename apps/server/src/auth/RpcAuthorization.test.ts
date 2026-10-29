@@ -100,6 +100,9 @@ describe("RPC authorization scopes", () => {
       expect(
         yield* RpcAuthorization.captureRpcMemoryGrantCeiling({
           grantedScopes: ["memory:read", "memory:write"],
+          reauthorize: undefined as
+            | ((scopes: ReadonlyArray<string>) => Effect.Effect<void>)
+            | undefined,
           readOnly: false,
         }),
       ).toBe("none");

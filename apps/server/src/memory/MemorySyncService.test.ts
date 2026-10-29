@@ -4246,13 +4246,12 @@ it.effect.each(["pull", "ack"] as const)(
           Layer.provide(Layer.succeed(Hub.MemoryHubConfiguration, { read: Effect.succeed(null) })),
         );
         const shared = Layer.mergeAll(
-          realCore,
           realHub,
           runtimeBase.pipe(Layer.provide(realCore)),
           identity,
           realGeneration({ resolveMemoryConflict: () => Effect.never }),
           peer(),
-        );
+        ).pipe(Layer.provideMerge(realCore));
         const app = Sync.layer.pipe(
           Layer.provideMerge(observed),
           Layer.provideMerge(shared),
@@ -4963,7 +4962,6 @@ it.effect.each(["bootstrap", "exchange"] as const)(
         const app = Sync.layer.pipe(
           Layer.provideMerge(
             Layer.mergeAll(
-              selfHub,
               runtimeBase.pipe(Layer.provide(selfCore)),
               realGeneration({ resolveMemoryConflict: () => Effect.never }),
               peer({
@@ -4971,7 +4969,7 @@ it.effect.each(["bootstrap", "exchange"] as const)(
                 pull: () => Effect.die("self HTTP pull forbidden"),
                 push: () => Effect.die("self HTTP push forbidden"),
               }),
-            ),
+            ).pipe(Layer.provideMerge(selfHub)),
           ),
           Layer.provideMerge(settingsLayer),
         );
@@ -5132,12 +5130,11 @@ it.effect.each(["bootstrap", "exchange"] as const)(
           const aApp = Sync.layer.pipe(
             Layer.provideMerge(
               Layer.mergeAll(
-                aCore,
                 aHub,
                 runtimeBase.pipe(Layer.provide(aCore)),
                 realGeneration({ resolveMemoryConflict: () => Effect.never }),
                 aClient,
-              ),
+              ).pipe(Layer.provideMerge(aCore)),
             ),
           );
           const aContext = yield* Layer.build(aApp);
