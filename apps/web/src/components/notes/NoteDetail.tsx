@@ -190,96 +190,98 @@ function NoteDetail(props: NotePaneProps & { document: NoteDocument }) {
 
   return (
     <article className="flex min-w-0 flex-1 flex-col" aria-label="Selected note">
-      <div className="mx-auto flex w-full max-w-3xl flex-wrap items-center gap-x-2 gap-y-1 px-4 pt-3 pb-1 md:px-8 md:pt-6">
-        <BackToNotes onBack={props.onBack} />
-        <p className="min-w-0 truncate text-xs text-muted-foreground">
-          {state.document.folder ? <span>{state.document.folder} / </span> : null}
-          {fileName}
-        </p>
-        <SaveState
-          state={state}
-          dirty={dirty}
-          canWrite={canWrite}
-          onRetry={() => void session.save()}
-        />
-        <div className="ms-auto flex items-center gap-1">
-          {canWrite && !removed ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    size="xs"
-                    variant={editing ? "default" : "outline"}
-                    aria-label={editing ? "Done editing" : "Edit note"}
-                    onClick={() => setEditing(!editing)}
-                  />
-                }
-              >
-                {editing ? <CheckIcon aria-hidden /> : <PencilIcon aria-hidden />}
-                {editing ? "Done" : "Edit"}
-              </TooltipTrigger>
-              <TooltipPopup side="bottom">
-                {editing ? "Back to reading (Esc)" : "Edit this note"}
-              </TooltipPopup>
-            </Tooltip>
-          ) : null}
-          {canUpdate ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Toggle
-                    size="sm"
-                    variant="ghost"
-                    aria-label={latest.pinned ? "Unpin note" : "Pin note"}
-                    pressed={latest.pinned}
-                    disabled={removed}
-                    onPressedChange={(next) => void runUpdate({ pinned: next })}
-                  />
-                }
-              >
-                {latest.pinned ? <PinOffIcon aria-hidden /> : <PinIcon aria-hidden />}
-              </TooltipTrigger>
-              <TooltipPopup side="bottom">
-                {latest.pinned ? "Unpin" : "Pin to the top"}
-              </TooltipPopup>
-            </Tooltip>
-          ) : null}
-          {canStart && latest.card === null ? (
-            <Button
-              size="xs"
-              variant="outline"
-              disabled={fileBusy}
-              onClick={() => setStarting(true)}
-            >
-              <PlayIcon aria-hidden />
-              Start work
-            </Button>
-          ) : null}
-          {canMove || canDelete ? (
-            <Menu>
-              <MenuTrigger
-                render={<Button size="icon-sm" variant="ghost" aria-label="More note actions" />}
-              >
-                <EllipsisIcon aria-hidden />
-              </MenuTrigger>
-              <MenuPopup align="end">
-                <MenuItem disabled={!canMove || fileBusy} onClick={() => setFileAction("move")}>
-                  Rename or move…
-                </MenuItem>
-                <MenuSeparator />
-                <MenuItem
-                  variant="destructive"
-                  disabled={!canDelete || fileBusy}
-                  onClick={() => setFileAction("delete")}
+      <div className="border-b border-border/60 bg-muted/30">
+        <div className="mx-auto flex w-full max-w-3xl flex-wrap items-center gap-x-2 gap-y-1 px-4 py-2 md:px-8">
+          <BackToNotes onBack={props.onBack} />
+          <p className="min-w-0 truncate text-xs text-muted-foreground">
+            {state.document.folder ? <span>{state.document.folder} / </span> : null}
+            {fileName}
+          </p>
+          <SaveState
+            state={state}
+            dirty={dirty}
+            canWrite={canWrite}
+            onRetry={() => void session.save()}
+          />
+          <div className="ms-auto flex items-center gap-1">
+            {canWrite && !removed ? (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      size="xs"
+                      variant={editing ? "default" : "outline"}
+                      aria-label={editing ? "Done editing" : "Edit note"}
+                      onClick={() => setEditing(!editing)}
+                    />
+                  }
                 >
-                  Delete…
-                </MenuItem>
-              </MenuPopup>
-            </Menu>
-          ) : null}
+                  {editing ? <CheckIcon aria-hidden /> : <PencilIcon aria-hidden />}
+                  {editing ? "Done" : "Edit"}
+                </TooltipTrigger>
+                <TooltipPopup side="bottom">
+                  {editing ? "Back to reading (Esc)" : "Edit this note"}
+                </TooltipPopup>
+              </Tooltip>
+            ) : null}
+            {canUpdate ? (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Toggle
+                      size="sm"
+                      variant="ghost"
+                      aria-label={latest.pinned ? "Unpin note" : "Pin note"}
+                      pressed={latest.pinned}
+                      disabled={removed}
+                      onPressedChange={(next) => void runUpdate({ pinned: next })}
+                    />
+                  }
+                >
+                  {latest.pinned ? <PinOffIcon aria-hidden /> : <PinIcon aria-hidden />}
+                </TooltipTrigger>
+                <TooltipPopup side="bottom">
+                  {latest.pinned ? "Unpin" : "Pin to the top"}
+                </TooltipPopup>
+              </Tooltip>
+            ) : null}
+            {canStart && latest.card === null ? (
+              <Button
+                size="xs"
+                variant="outline"
+                disabled={fileBusy}
+                onClick={() => setStarting(true)}
+              >
+                <PlayIcon aria-hidden />
+                Start work
+              </Button>
+            ) : null}
+            {canMove || canDelete ? (
+              <Menu>
+                <MenuTrigger
+                  render={<Button size="icon-sm" variant="ghost" aria-label="More note actions" />}
+                >
+                  <EllipsisIcon aria-hidden />
+                </MenuTrigger>
+                <MenuPopup align="end">
+                  <MenuItem disabled={!canMove || fileBusy} onClick={() => setFileAction("move")}>
+                    Rename or move…
+                  </MenuItem>
+                  <MenuSeparator />
+                  <MenuItem
+                    variant="destructive"
+                    disabled={!canDelete || fileBusy}
+                    onClick={() => setFileAction("delete")}
+                  >
+                    Delete…
+                  </MenuItem>
+                </MenuPopup>
+              </Menu>
+            ) : null}
+          </div>
         </div>
       </div>
-      <div className="mx-auto grid w-full max-w-3xl gap-2 px-4 md:px-8">
+      <div className="mx-auto grid w-full max-w-3xl gap-2 px-4 pt-3 md:px-8">
         <div>
           <NoteProjectMenu
             environmentId={environmentId}

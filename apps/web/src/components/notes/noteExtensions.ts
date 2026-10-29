@@ -55,6 +55,15 @@ const NoteRawMarkdown = Node.create({
     noteSuffix: { default: "\n\n", rendered: false },
     noteTail: { default: false, rendered: false, keepOnSplit: false },
   }),
+  priority: 200,
+  addKeyboardShortcuts() {
+    // The hard-break shortcut would exit a code node into a new paragraph below the literal box.
+    return {
+      "Shift-Enter": ({ editor }) =>
+        editor.state.selection.$from.parent.type.name === "noteRawMarkdown" &&
+        editor.commands.insertContent("\n"),
+    };
+  },
   parseHTML: () => [{ tag: "pre[data-note-raw]", preserveWhitespace: "full" }],
   renderHTML: () => ["pre", { "data-note-raw": "", "aria-label": "Raw markdown" }, ["code", {}, 0]],
 });

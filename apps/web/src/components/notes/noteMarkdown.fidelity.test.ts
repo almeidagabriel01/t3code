@@ -30,7 +30,6 @@ const listCode = [
   "- parent\n      - [ ] literal\n",
   "1. parent\n       - [ ] literal\n",
   "- parent\n - [ ] literal\n",
-  "-\t[ ] literal\n",
   "- parent\n  -     [ ] literal\n",
 ];
 const htmlBlocks = [
@@ -51,26 +50,44 @@ const htmlBlocks = [
   "<pre>\n\n- [ ] literal\n",
   "<!--\n\n- [ ] literal\n",
 ];
-const nonCanonical = [
-  "* [ ] alternate bullet\n",
-  "+ [ ] another bullet\n",
-  "-  [ ] spaced marker\n",
-  "- [X] uppercase check\n",
-  "- [ ]  spaced task\n",
-  "1) one\n2) two\n",
-  "1. one\n1. two\n",
-  "- parent\n   - [ ] offset child\n",
-  "- [ ] __bold__\n",
-  "- [ ] **~~`code`~~**\n",
-  "- [ ] *~~`code`~~*\n",
-  "- [ ] **~~*`code`*~~**\n",
-  "- [ ] *~~**`code`**~~*\n",
-  "- [ ] ***~~`code`~~***\n",
-  "- [ ] parent\n  - [X] uppercase child\n",
-  "> __bold__\n",
-  "***\n",
-  "~~~ts\ncode\n~~~\n",
+// Different spelling of the same meaning: structured in the editor, canonical once edited.
+const spellingVariants: ReadonlyArray<[source: string, canonical: string, type: string]> = [
+  ["* item\n", "- item\n", "bulletList"],
+  ["+ item\n", "- item\n", "bulletList"],
+  [
+    "* Ver o que tem no projeto\n* second\n",
+    "- Ver o que tem no projeto\n- second\n",
+    "bulletList",
+  ],
+  ["* [ ] alternate bullet\n", "- [ ] alternate bullet\n", "taskList"],
+  ["+ [ ] another bullet\n", "- [ ] another bullet\n", "taskList"],
+  ["-  [ ] spaced marker\n", "- [ ] spaced marker\n", "taskList"],
+  ["-\t[ ] tab marker\n", "- [ ] tab marker\n", "taskList"],
+  ["-   spaced bullet\n", "- spaced bullet\n", "bulletList"],
+  ["- [X] uppercase check\n", "- [x] uppercase check\n", "taskList"],
+  [
+    "- [ ] parent\n  - [X] uppercase child\n",
+    "- [ ] parent\n  - [x] uppercase child\n",
+    "taskList",
+  ],
+  ["1) one\n2) two\n", "1. one\n2. two\n", "orderedList"],
+  ["1. one\n1. two\n", "1. one\n2. two\n", "orderedList"],
+  ["- parent\n   - [ ] offset child\n", "- parent\n  - [ ] offset child\n", "bulletList"],
+  ["- [ ] __bold__\n", "- [ ] **bold**\n", "taskList"],
+  ["- *italic* and _italic_\n", "- *italic* and *italic*\n", "bulletList"],
+  ["- [ ] **~~`code`~~**\n", "- [ ] ~~**`code`**~~\n", "taskList"],
+  ["- [ ] **~~*`code`*~~**\n", "- [ ] ~~***`code`***~~\n", "taskList"],
+  ["- [ ] *~~`code`~~*\n", "- [ ] ~~*`code`*~~\n", "taskList"],
+  ["> __bold__\n", "> **bold**\n", "blockquote"],
+  ["***\n", "---\n", "horizontalRule"],
+  ["___\n", "---\n", "horizontalRule"],
+  ["- - -\n", "---\n", "horizontalRule"],
+  ["## Title ##\n", "## Title\n", "heading"],
+  ["#   Spaced\n", "# Spaced\n", "heading"],
+  ["~~~ts\ncode\n~~~\n", "```ts\ncode\n```\n", "codeBlock"],
 ];
+// Meaning the editor cannot hold stays literal.
+const nonCanonical = ["- [ ]  spaced task\n"];
 const externalContainerFences = ["- parent", "> paragraph"].flatMap((container) =>
   ["", "\nlazy continuation"].flatMap((lazy) =>
     ["```", "~~~"].map((fence) => `${container}${lazy}\n ${fence}\n\n- [ ] literal\n\n ${fence}\n`),
@@ -116,13 +133,9 @@ function generatedDocuments(count: number): string[] {
     "- parent\n  - [ ] {task}",
     "1. parent\n   - [ ] {task}",
     "10. parent\n   - [ ] {task}",
-    "* [ ] {task}",
-    "- [X] {task}",
-    "-  [ ] {task}",
     "- [ ]  {task}",
     "- [ ] **bold** {task}",
     "- [ ] `code` {task}",
-    "- [ ] __bold__ {task}",
     "- [ ] {task}  \ncontinuation",
     "- parent\n      - [ ] {task}",
     "- p\n  ~~~",
@@ -135,7 +148,6 @@ function generatedDocuments(count: number): string[] {
     "> - [ ] {task}",
     "> p\n ~~~\n- [ ] {task}",
     "```\n- [ ] {task}\n```",
-    "~~~ts\n- [ ] {task}\n~~~",
     "```unclosed\n- [ ] {task}",
     " ```\n- [ ] {task}\n ```",
     "    - [ ] {task}",
@@ -203,10 +215,13 @@ describe("note markdown fidelity", () => {
       const doc = parse(source);
       if (noteDocToMarkdown(doc.toJSON()) !== source)
         failures.push(`round trip ${index}: ${source}`);
-      if (noteDocToMarkdown(withoutSourceCache(doc.toJSON())) !== source)
-        failures.push(`uncached round trip ${index}: ${source}`);
+      // Spelling variants take the canonical form without the source cache, and stay there.
+      const canonical = noteDocToMarkdown(withoutSourceCache(doc.toJSON()));
+      if (noteDocToMarkdown(withoutSourceCache(parse(canonical).toJSON())) !== canonical)
+        failures.push(`canonical form is not stable ${index}: ${source}`);
       doc.descendants((node, pos) => {
-        if (node.type.name !== "taskItem") return;
+        // Editing a variant block rewrites it canonically; the variant tests cover that.
+        if (node.type.name !== "taskItem" || canonical !== source) return;
         const label = /probe\d+x\d+/.exec(node.firstChild!.textContent)?.[0];
         expect(label).toBeDefined();
         const labelOffset = source.indexOf(label!);
@@ -342,6 +357,26 @@ describe("note markdown fidelity", () => {
       expect(noteDocToMarkdown(withoutSourceCache(doc.toJSON()))).toBe(source);
     },
   );
+
+  it.each(spellingVariants)(
+    "exposes spelling variants as structure and writes them canonically once edited: %j",
+    (source, canonical, type) => {
+      const doc = parse(source);
+      expect(doc.firstChild!.type.name).toBe(type);
+      expect(noteDocToMarkdown(doc.toJSON())).toBe(source);
+      expect(noteDocToMarkdown(withoutSourceCache(doc.toJSON()))).toBe(canonical);
+      // The canonical form is a fixed point.
+      expect(noteDocToMarkdown(withoutSourceCache(parse(canonical).toJSON()))).toBe(canonical);
+      expect(parse(canonical).firstChild!.type.name).toBe(type);
+    },
+  );
+
+  it("keeps a neighbouring block's bytes when a variant block is edited", () => {
+    const source = "* one\n\n***\n\n- [X] done\n";
+    const doc = parse(source);
+    const changed = EditorState.create({ schema, doc }).tr.insertText("x ", 3).doc;
+    expect(noteDocToMarkdown(changed.toJSON())).toBe("- x one\n\n***\n\n- [X] done\n");
+  });
 
   it.each(nonCanonical)(
     "requires canonical serialization before exposing structure: %j",

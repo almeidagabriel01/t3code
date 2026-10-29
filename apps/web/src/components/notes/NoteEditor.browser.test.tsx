@@ -93,6 +93,60 @@ describe("NoteEditor formatting", () => {
   });
 });
 
+describe("NoteEditor lists", () => {
+  const props = { environmentId: EnvironmentId.make("env"), editable: true, autoFocus: true };
+
+  it.each([
+    ["* one", "bullet"],
+    ["1) one", "ordered"],
+    ["+ [X] one", "task"],
+  ])("renders %j as a real list and Enter continues it", async (source) => {
+    const onChange = vi.fn();
+    await using _screen = await render(
+      <NoteEditor {...props} body={`${source}\n`} onChange={onChange} />,
+    );
+    const body = page.getByRole("textbox", { name: "Note body" });
+    await expect.element(body).toBeVisible();
+    expect(body.element().querySelector("pre[data-note-raw]")).toBeNull();
+    expect(body.element().querySelectorAll("li")).toHaveLength(1);
+    await userEvent.keyboard("{Enter}two");
+    expect(body.element().querySelectorAll("li")).toHaveLength(2);
+    await vi.waitFor(() => expect(onChange.mock.lastCall?.[0]).toMatch(/\n.+two/));
+  });
+
+  it("keeps Shift+Enter inside the item as a line break", async () => {
+    await using _screen = await render(
+      <NoteEditor {...props} body={"- one\n"} onChange={vi.fn()} />,
+    );
+    const body = page.getByRole("textbox", { name: "Note body" });
+    await expect.element(body).toBeVisible();
+    await userEvent.keyboard("{Shift>}{Enter}{/Shift}two");
+    expect(body.element().querySelectorAll("li")).toHaveLength(1);
+    expect(body.element().querySelectorAll("li br")).toHaveLength(1);
+  });
+});
+
+describe("NoteEditor literal blocks", () => {
+  it("keeps Shift+Enter inside the literal block", async () => {
+    const onChange = vi.fn();
+    await using _screen = await render(
+      <NoteEditor
+        environmentId={EnvironmentId.make("env")}
+        body={"<div>one</div>\n"}
+        editable
+        autoFocus
+        onChange={onChange}
+      />,
+    );
+    const body = page.getByRole("textbox", { name: "Note body" });
+    await expect.element(body).toBeVisible();
+    await userEvent.keyboard("{Shift>}{Enter}{/Shift}two");
+    expect(body.element().querySelectorAll("pre[data-note-raw]")).toHaveLength(1);
+    expect(body.element().querySelectorAll("p")).toHaveLength(0);
+    await vi.waitFor(() => expect(onChange).toHaveBeenLastCalledWith("<div>one</div>\ntwo\n"));
+  });
+});
+
 describe("NoteEditor view mode", () => {
   const checklist = "- [ ] ship it\n";
 

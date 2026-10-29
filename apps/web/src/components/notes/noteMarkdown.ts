@@ -188,6 +188,48 @@ function table(node: Table, markdown: string): JSONContent | null {
   return { type: "table", content: rows };
 }
 
+type MdastNode = {
+  type: string;
+  value?: string;
+  url?: string;
+  children?: MdastNode[];
+  position?: unknown;
+};
+const PHRASING = new Set(["text", "emphasis", "strong", "delete", "inlineCode", "link", "break"]);
+
+// Inline styles compare as flat (text, style set) runs: the editor has no nesting order.
+function runs(nodes: readonly MdastNode[], marks: string[] = [], out: [string, string][] = []) {
+  for (const node of nodes) {
+    if (node.children) runs(node.children, [...marks, node.type + (node.url ?? "")], out);
+    else {
+      const own = node.type === "inlineCode" ? [...marks, "code"] : marks;
+      const { position: _position, ...rest } = node;
+      const value = node.type === "break" ? "\n" : (node.value ?? JSON.stringify(rest));
+      const key = own.toSorted().join();
+      if (out.at(-1)?.[1] === key) out[out.length - 1]![0] += value;
+      else out.push([value, key]);
+    }
+  }
+  return out;
+}
+
+function shape(node: MdastNode): unknown {
+  const { position: _position, children, ...rest } = node;
+  if (!children) return rest;
+  if (children.some((child) => PHRASING.has(child.type))) return { ...rest, runs: runs(children) };
+  return { ...rest, children: children.map(shape) };
+}
+
+// Spelling (bullet marker, emphasis marker, `[X]`, closing #s) is not meaning: a candidate is kept
+// when its canonical form parses to the same tree as the source. Unchanged blocks still write
+// back their original bytes; only edited blocks take the canonical spelling.
+function sameMeaning(canonical: string, source: string): boolean {
+  if (canonical === source) return true;
+  const tree = (value: string) =>
+    JSON.stringify((parser.parse(value).children as MdastNode[]).map(shape));
+  return tree(canonical) === tree(source);
+}
+
 function raw(source: string): JSONContent {
   return { type: "noteRawMarkdown", content: text(source) };
 }
@@ -207,7 +249,7 @@ function block(source: string, node: RootContent, markdown: string): JSONContent
       }
     }
   } else if (node.type === "heading") {
-    const heading = /^(#{1,6}) (.*)$/.exec(source);
+    const heading = /^(#{1,6})[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$/.exec(source);
     const content = heading && inline(heading[2]!);
     if (heading && content)
       return { type: "heading", attrs: { level: heading[1]!.length }, content };
@@ -277,7 +319,7 @@ export function noteMarkdownToDoc(markdown: string): JSONContent {
     const suffix = markdown.slice(end, next?.position!.start.offset);
     const candidate = overlapping ? raw(source) : block(source, node, markdown);
     // Check the entire tree once: a noncanonical child keeps its containing block literal.
-    const parsed = serializeBlock(candidate) === source ? candidate : raw(source);
+    const parsed = sameMeaning(serializeBlock(candidate), source) ? candidate : raw(source);
     parsed.attrs = {
       ...parsed.attrs,
       notePrefix: content.length === 0 ? markdown.slice(0, start) : "",

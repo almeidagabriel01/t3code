@@ -22,7 +22,7 @@ function NoteRow(props: {
 }) {
   const { note } = props;
   return (
-    <li>
+    <li className="border-b border-border/60 py-0.5 last:border-b-0">
       <button
         type="button"
         data-note-row={note.path}
@@ -155,7 +155,7 @@ export function NoteList(props: {
   return (
     <nav aria-label="Notes" className={cn("flex min-h-0 flex-col", props.className)}>
       {props.header}
-      <div className="flex items-center gap-2 p-3">
+      <div className="flex items-center gap-2 border-b border-border/60 bg-muted/30 p-3">
         <InputGroup className="min-w-0 flex-1">
           <InputGroupAddon>
             <SearchIcon aria-hidden />
@@ -205,7 +205,7 @@ export function NoteList(props: {
           </Tooltip>
         ) : null}
       </div>
-      <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
+      <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
         {props.children}
         {pathToOpen ? (
           <button
@@ -226,11 +226,11 @@ export function NoteList(props: {
             <h2 className="flex h-8 items-center px-2 text-xs font-medium text-muted-foreground">
               Pinned
             </h2>
-            <ul className="grid gap-px">{groups.pinned.map((note) => row(note, true))}</ul>
+            <ul>{groups.pinned.map((note) => row(note, true))}</ul>
           </section>
         ) : null}
         {groups.loose.length > 0 ? (
-          <ul className="grid gap-px pb-2" aria-label="Notes outside folders">
+          <ul className="pb-2" aria-label="Notes outside folders">
             {groups.loose.map((note) => row(note, false))}
           </ul>
         ) : null}
@@ -250,7 +250,7 @@ export function NoteList(props: {
             </CollapsibleSectionHeader>
             {isOpen(group.folder) ? (
               group.notes.length > 0 ? (
-                <ul className="grid gap-px">{group.notes.map((note) => row(note, false))}</ul>
+                <ul>{group.notes.map((note) => row(note, false))}</ul>
               ) : (
                 <p className="px-3 py-1.5 text-xs text-muted-foreground">No notes here yet.</p>
               )

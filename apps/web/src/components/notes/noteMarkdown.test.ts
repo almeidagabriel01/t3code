@@ -245,11 +245,11 @@ describe("note markdown codec", () => {
     );
   });
   it("preserves unknown markdown in an editable literal node", () => {
-    const doc = parse("| a |\n|---|\n| b |\n");
+    const doc = parse("| a |\n|:--|\n| b |\n");
     expect(doc.firstChild?.type.name).toBe("noteRawMarkdown");
     const state = EditorState.create({ schema, doc });
     expect(noteDocToMarkdown(state.tr.insertText("new ", 1).doc.toJSON())).toBe(
-      "new | a |\n|---|\n| b |\n",
+      "new | a |\n|:--|\n| b |\n",
     );
   });
   it("extends a fence when edited code contains its closing delimiter", () => {
