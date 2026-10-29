@@ -1,10 +1,31 @@
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import type * as SchemaAST from "effect/SchemaAST";
 
-import { type ChatAttachment, type ModelSelection, TextGenerationError } from "@t3tools/contracts";
+import {
+  validateMemoryGenerationResult,
+  GenerateMemorySummaryOutcome,
+  GenerateMemorySummaryResult,
+  ResolveMemoryConflictExecutionResult,
+  type ChatAttachment,
+  type ModelSelection,
+  TextGenerationError,
+} from "@t3tools/contracts";
 import { formatGeneratedBranchName, sanitizeFeatureBranchName } from "@t3tools/shared/git";
 import { extractJsonObject } from "@t3tools/shared/schemaJson";
 
+import {
+  buildMemoryConflictPrompt,
+  buildMemorySummaryPrompt,
+  isNoDurableMemoryText,
+  memoryEvidenceSources,
+  memoryResultFromModelOutput,
+  MemoryPromotingModelAnswer,
+  type MemorySummaryModelOutput,
+} from "./memoryGenerationPrompts.ts";
+import { unsupportedMemoryRunner, type MemoryRunner } from "./memoryGenerationRunner.ts";
+export type { MemoryRunner } from "./memoryGenerationRunner.ts";
 import type { ProviderTextGeneration } from "./textGeneration.ts";
 import {
   buildBranchNamePrompt,
@@ -20,6 +41,34 @@ import {
 } from "./textGenerationUtils.ts";
 
 export type Operation = keyof ProviderTextGeneration;
+
+export const isMemoryOperation = (
+  operation: Operation,
+): operation is "resolveMemoryConflict" | "generateMemorySummary" =>
+  operation === "resolveMemoryConflict" || operation === "generateMemorySummary";
+
+/**
+ * Parse options for a provider's raw structured output. Memory output is authority-bearing, so a
+ * key outside its schema fails the decode instead of being silently dropped.
+ */
+export const outputDecodeOptions = (operation: Operation): SchemaAST.ParseOptions | undefined =>
+  isMemoryOperation(operation) ? { onExcessProperty: "error" } : undefined;
+const sameMemorySelection = (
+  a: import("@t3tools/contracts").MemoryModelSelection,
+  b: import("@t3tools/contracts").MemoryModelSelection,
+) =>
+  a.instanceId === b.instanceId &&
+  a.model === b.model &&
+  (a.options?.length ?? 0) === (b.options?.length ?? 0) &&
+  (a.options ?? []).every(
+    (option, i) => option.id === b.options?.[i]?.id && option.value === b.options[i]?.value,
+  );
+const decodeMemorySummaryExecution = Schema.decodeUnknownEffect(GenerateMemorySummaryOutcome);
+const decodePromotionCandidate = Schema.decodeUnknownOption(GenerateMemorySummaryResult);
+const decodePromotingAnswer = Schema.decodeUnknownOption(MemoryPromotingModelAnswer);
+const decodeMemoryConflictExecution = Schema.decodeUnknownEffect(
+  ResolveMemoryConflictExecutionResult,
+);
 
 export interface Request<S extends Schema.Top> {
   readonly operation: Operation;
@@ -57,7 +106,7 @@ export const decodeJsonReply = <S extends Schema.Top>(
   text: string,
 ) => {
   const decodeOutput = Schema.decodeEffect(Schema.fromJsonString(request.outputSchema));
-  return decodeOutput(extractJsonObject(text)).pipe(
+  return decodeOutput(extractJsonObject(text), outputDecodeOptions(request.operation)).pipe(
     Effect.mapError(
       (cause) =>
         new TextGenerationError({
@@ -69,7 +118,113 @@ export const decodeJsonReply = <S extends Schema.Top>(
   );
 };
 
-export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
+export interface FromRunnerOptions {
+  readonly memoryRunner?: MemoryRunner;
+}
+
+export function fromRunner(
+  name: string,
+  run: Runner,
+  options: FromRunnerOptions = {},
+): ProviderTextGeneration {
+  const runMemory = options.memoryRunner ?? unsupportedMemoryRunner;
+  const resolveMemoryConflict: NonNullable<ProviderTextGeneration["resolveMemoryConflict"]> =
+    Effect.fn(`${name}.resolveMemoryConflict`)(function* (input) {
+      const request = yield* buildMemoryConflictPrompt(input);
+      const generated = yield* runMemory({
+        operation: "resolveMemoryConflict",
+        cwd: input.cwd,
+        modelSelection: input.modelSelection,
+        ...request,
+      });
+      const result = yield* decodeMemoryConflictExecution(
+        {
+          ...generated,
+          result: memoryResultFromModelOutput(generated.result, memoryEvidenceSources(input)),
+        },
+        { onExcessProperty: "error" },
+      ).pipe(
+        Effect.mapError(
+          (cause) =>
+            new TextGenerationError({
+              operation: "resolveMemoryConflict",
+              detail: "Memory result is invalid.",
+              cause,
+            }),
+        ),
+      );
+      if (
+        !validateMemoryGenerationResult(input, result.result) ||
+        result.execution.providerInstanceId !== input.modelSelection.instanceId ||
+        !sameMemorySelection(result.execution.requestedModelSelection, input.modelSelection)
+      )
+        return yield* new TextGenerationError({
+          operation: "resolveMemoryConflict",
+          detail: "Memory evidence or execution is invalid.",
+        });
+      return result;
+    });
+  const generateMemorySummary: NonNullable<ProviderTextGeneration["generateMemorySummary"]> =
+    Effect.fn(`${name}.generateMemorySummary`)(function* (input) {
+      const request = yield* buildMemorySummaryPrompt(input);
+      const generated = yield* runMemory({
+        operation: "generateMemorySummary",
+        cwd: input.cwd,
+        modelSelection: input.modelSelection,
+        ...request,
+      });
+      const answer = generated.result;
+      const sources = memoryEvidenceSources(input);
+      const candidate = (output: MemorySummaryModelOutput | null) =>
+        output === null || isNoDurableMemoryText(output.text)
+          ? null
+          : memoryResultFromModelOutput(output, sources);
+      // A promotion is optional: one that fails validation or rests only on model evidence is
+      // dropped without failing the summary it came with.
+      const promotion = (output: MemorySummaryModelOutput | null) => {
+        const decoded = decodePromotionCandidate(candidate(output), { onExcessProperty: "error" });
+        return Option.isSome(decoded) &&
+          decoded.value.evidence.some((evidence) => evidence.origin !== "model") &&
+          validateMemoryGenerationResult(input, decoded.value)
+          ? decoded.value
+          : null;
+      };
+      const promoting = input.promote ? decodePromotingAnswer(answer) : Option.none();
+      const result = yield* decodeMemorySummaryExecution(
+        {
+          execution: generated.execution,
+          result: candidate(answer.summary),
+          ...(Option.isSome(promoting)
+            ? {
+                promotions: {
+                  project: promotion(promoting.value.project),
+                  user: promotion(promoting.value.user),
+                },
+              }
+            : {}),
+        },
+        { onExcessProperty: "error" },
+      ).pipe(
+        Effect.mapError(
+          (cause) =>
+            new TextGenerationError({
+              operation: "generateMemorySummary",
+              detail: "Memory result is invalid.",
+              cause,
+            }),
+        ),
+      );
+      if (
+        (result.result !== null && !validateMemoryGenerationResult(input, result.result)) ||
+        result.execution.providerInstanceId !== input.modelSelection.instanceId ||
+        !sameMemorySelection(result.execution.requestedModelSelection, input.modelSelection)
+      )
+        return yield* new TextGenerationError({
+          operation: "generateMemorySummary",
+          detail: "Memory evidence or execution is invalid.",
+        });
+      return result;
+    });
   const generateCommitMessage: ProviderTextGeneration["generateCommitMessage"] = Effect.fn(
     `${name}.generateCommitMessage`,
   )(function* (input) {
@@ -173,5 +328,7 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
     generateBranchName,
     generateThreadTitle,
     generateReviewGuide,
+    resolveMemoryConflict,
+    generateMemorySummary,
   } satisfies ProviderTextGeneration;
 }
