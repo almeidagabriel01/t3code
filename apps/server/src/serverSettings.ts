@@ -15,9 +15,6 @@ import {
   ServerSettings,
   ServerSettingsError,
   type ServerSettingsPatch,
-  type MemoryOwnerSourceReadPolicy,
-  MemoryRpcError,
-  type MemorySourceReadRevokeAck,
   globalIdleCompaction,
   withIdleCompaction,
 } from "@t3tools/contracts";
@@ -66,68 +63,66 @@ export {
   resolveSourceControlWriterModelSelection,
 } from "@t3tools/shared/serverSettings";
 
-import type { MemoryHubSettingsSnapshot } from "./memory/MemoryHubSettings.ts";
-
-/** Current committed hub epoch. SQL transactions must use this instead of the full settings cache. */
-export class MemoryHubCommittedSettings extends Context.Service<
+import type { MemoryHubPublication } from "@t3tools/contracts";
+import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
+import {
+  MemoryHubAdminSettings,
   MemoryHubCommittedSettings,
-  {
-    readonly read: Effect.Effect<MemoryHubSettingsSnapshot>;
-    readonly readPublication?: Effect.Effect<import("@t3tools/contracts").MemoryHubPublication>;
-  }
->()("t3/serverSettings/MemoryHubCommittedSettings") {}
-
-export interface MemoryOwnerSourceReadCommitted {
-  readonly policy: MemoryOwnerSourceReadPolicy;
-  readonly version: number;
-}
-
-export class MemoryOwnerSourceReadCommittedPolicy extends Context.Service<
+  MemoryHubSettingsTransitions,
+  MemoryHubTransitionMarker,
   MemoryOwnerSourceReadCommittedPolicy,
-  {
-    readonly read: Effect.Effect<MemoryOwnerSourceReadCommitted>;
-    readonly changes: Effect.Effect<
-      Stream.Stream<MemoryOwnerSourceReadCommitted>,
-      never,
-      Scope.Scope
-    >;
-    readonly recordRevokeAck: (
-      ack: MemorySourceReadRevokeAck,
-    ) => Effect.Effect<MemoryOwnerSourceReadCommitted, ServerSettingsError | MemoryRpcError>;
-  }
->()("t3/serverSettings/MemoryOwnerSourceReadCommittedPolicy") {}
+  MemoryOwnerSourceReadPolicyAdministration,
+  makeMemorySettingsServices,
+  ownerProjection,
+  type HubTransitionMarker,
+  type MemorySettingsCommit,
+} from "./serverSettingsMemory.ts";
+
+export {
+  MemoryHubAdminSettings,
+  MemoryHubCommittedSettings,
+  MemoryHubSettingsTransitions,
+  MemoryOwnerSourceReadCommittedPolicy,
+  MemoryOwnerSourceReadPolicyAdministration,
+};
+export type {
+  MemoryHubTransition,
+  MemoryOwnerSourceReadCommitted,
+} from "./serverSettingsMemory.ts";
 
 /**
- * Read-only committed views over the settings service. The hub transition and revoke-ack writers
- * ship with the sync service, so an ack finds no route until then.
+ * Committed hub and owner-policy services over the settings service. They write through the
+ * service's own lock and file, so hub epochs and owner policy never change by a generic patch.
  */
 export const layerMemoryCommittedSettings = Layer.effectContext(
   Effect.gen(function* () {
     const settings = yield* ServerSettingsService;
-    const hub = (current: ServerSettings): MemoryHubSettingsSnapshot => ({
-      settings: current.memoryHub,
-      version: current.memoryHubVersion,
-      provenance: null,
-    });
-    const owner = (current: ServerSettings): MemoryOwnerSourceReadCommitted => ({
-      policy: current.memoryOwnerSourceReadPolicy,
-      version: current.memoryOwnerSourceReadPolicyVersion,
-    });
+    const identity = yield* Effect.serviceOption(ServerEnvironment.ServerEnvironmentIdentity);
+    const commit = settings.memoryCommit;
+    if (commit === undefined) return yield* Effect.die("settings service has no memory writer");
+    const services = makeMemorySettingsServices(commit, settings.getSettings, identity);
     return Context.empty().pipe(
-      Context.add(MemoryHubCommittedSettings, {
-        read: settings.getSettings.pipe(Effect.map(hub), Effect.orDie),
-      }),
+      Context.add(MemoryHubCommittedSettings, services.committedHub),
+      Context.add(MemoryHubSettingsTransitions, services.transitions),
+      Context.add(MemoryHubAdminSettings, services.adminSettings),
+      Context.add(MemoryOwnerSourceReadPolicyAdministration, services.ownerAdmin),
       Context.add(MemoryOwnerSourceReadCommittedPolicy, {
-        read: settings.getSettings.pipe(Effect.map(owner), Effect.orDie),
-        changes: settings.subscribeChanges.pipe(Effect.map(Stream.map(owner))),
-        recordRevokeAck: () => Effect.fail(new MemoryRpcError({ code: "route_unavailable" })),
+        ...services.committedOwner,
+        changes: settings.subscribeChanges.pipe(Effect.map(Stream.map(ownerProjection))),
       }),
     );
   }),
 );
 
 const encodeServerSettings = Schema.encodeEffect(ServerSettings);
-const encodeServerSettingsJson = Schema.encodeUnknownEffect(fromJsonStringPretty(ServerSettings));
+const encodeServerSettingsJson = Schema.encodeUnknownEffect(
+  fromJsonStringPretty(
+    Schema.Struct({
+      ...ServerSettings.fields,
+      _memoryHubTransition: Schema.optionalKey(MemoryHubTransitionMarker),
+    }),
+  ),
+);
 const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
 
 const textEncoder = new TextEncoder();
@@ -262,6 +257,9 @@ export class ServerSettingsService extends Context.Service<
 
     /** Subscribe before reading a snapshot to retain changes before lazy stream startup. */
     readonly subscribeChanges: Effect.Effect<Stream.Stream<ServerSettings>, never, Scope.Scope>;
+
+    /** Writer for the memory hub transitions; test doubles may leave it out. */
+    readonly memoryCommit?: MemorySettingsCommit;
   }
 >()("t3/serverSettings/ServerSettingsService") {
   static readonly layerTest = (overrides: DeepPartial<ServerSettings> = {}) => layerTest(overrides);
@@ -284,19 +282,24 @@ const makeTest = Effect.fn("serverSettings.makeTest")(function* (
   });
   const currentSettingsRef = yield* Ref.make<ServerSettings>(initialSettings);
   const writeSemaphore = yield* Semaphore.make(1);
+  const hubMarkerRef = yield* Ref.make<HubTransitionMarker | null>(null);
   const getSettings = Ref.get(currentSettingsRef).pipe(Effect.map(resolveTextGenerationProvider));
 
+  const updateTestSettingsLocked = <E, R>(
+    update: (current: ServerSettings) => Effect.Effect<ServerSettings, E | ServerSettingsError, R>,
+    transition?: HubTransitionMarker,
+  ) =>
+    Ref.get(currentSettingsRef).pipe(
+      Effect.flatMap(update),
+      Effect.flatMap(normalizeServerSettings),
+      Effect.tap((nextSettings) => Ref.set(currentSettingsRef, nextSettings)),
+      Effect.tap(() => (transition ? Ref.set(hubMarkerRef, transition) : Effect.void)),
+      Effect.map(resolveTextGenerationProvider),
+    );
   const updateTestSettings = (
     update: (current: ServerSettings) => Effect.Effect<ServerSettings, ServerSettingsError>,
   ): Effect.Effect<ServerSettings, ServerSettingsError> =>
-    writeSemaphore.withPermits(1)(
-      Ref.get(currentSettingsRef).pipe(
-        Effect.flatMap(update),
-        Effect.flatMap(normalizeServerSettings),
-        Effect.tap((nextSettings) => Ref.set(currentSettingsRef, nextSettings)),
-        Effect.map(resolveTextGenerationProvider),
-      ),
-    );
+    writeSemaphore.withPermits(1)(updateTestSettingsLocked(update));
 
   return {
     start: Effect.void,
@@ -318,11 +321,38 @@ const makeTest = Effect.fn("serverSettings.makeTest")(function* (
       writeSemaphore.withPermits(1)(getSettings.pipe(Effect.flatMap(use))),
     streamChanges: Stream.empty,
     subscribeChanges: Effect.succeed(Stream.empty),
+    memoryCommit: {
+      withLock: (effect) => writeSemaphore.withPermits(1)(effect),
+      commitLocked: updateTestSettingsLocked,
+      marker: Ref.get(hubMarkerRef),
+      publication: Effect.succeed({ state: "current" }),
+      committed: Ref.get(currentSettingsRef),
+    },
   } satisfies ServerSettingsService["Service"];
 });
 
-export const layerTest = (overrides: DeepPartial<ServerSettings> = {}) =>
-  Layer.effect(ServerSettingsService, makeTest(overrides));
+// The memory writers are opt-in, so fixtures that supply only a settings service stay valid.
+export function layerTest(
+  overrides: DeepPartial<ServerSettings>,
+  services: "memoryHub",
+): Layer.Layer<
+  | ServerSettingsService
+  | MemoryHubCommittedSettings
+  | MemoryOwnerSourceReadCommittedPolicy
+  | MemoryOwnerSourceReadPolicyAdministration
+  | MemoryHubAdminSettings
+  | MemoryHubSettingsTransitions,
+  ServerSettingsError
+>;
+export function layerTest(
+  overrides?: DeepPartial<ServerSettings>,
+): Layer.Layer<ServerSettingsService, ServerSettingsError>;
+export function layerTest(overrides: DeepPartial<ServerSettings> = {}, services?: "memoryHub") {
+  const base = Layer.effect(ServerSettingsService, makeTest(overrides));
+  return services === undefined
+    ? base
+    : layerMemoryCommittedSettings.pipe(Layer.provideMerge(base));
+}
 
 // Accept retired token delivery only on load so one old value cannot reset all settings.
 const PersistedResponseStreamingMode = Schema.Union([
@@ -340,6 +370,7 @@ const PersistedResponseStreamingMode = Schema.Union([
 const ServerSettingsJson = fromLenientJson(
   Schema.Struct({
     ...ServerSettings.fields,
+    _memoryHubTransition: Schema.optionalKey(MemoryHubTransitionMarker),
     responseStreamingMode: PersistedResponseStreamingMode.pipe(
       Schema.withDecodingDefault(Effect.succeed("paragraph" as const)),
     ),
@@ -627,6 +658,16 @@ const make = Effect.gen(function* () {
   const secretStore = yield* ServerSecretStore.ServerSecretStore;
   const sql = yield* SqlClient.SqlClient;
   const writeSemaphore = yield* Semaphore.make(1);
+  const hubMarkerRef = yield* Ref.make<HubTransitionMarker | null>(null);
+  // Hub epoch and owner policy change only through their writers, never by editing the file.
+  const committedMemoryRef = yield* Ref.make<Pick<
+    ServerSettings,
+    | "memoryHub"
+    | "memoryHubVersion"
+    | "memoryOwnerSourceReadPolicy"
+    | "memoryOwnerSourceReadPolicyVersion"
+  > | null>(null);
+  const publicationRef = yield* Ref.make<MemoryHubPublication>({ state: "unavailable" });
   const cacheKey = "settings" as const;
   const changesPubSub = yield* PubSub.unbounded<ServerSettings>();
   const startedRef = yield* Ref.make(false);
@@ -660,10 +701,12 @@ const make = Effect.gen(function* () {
   );
 
   const writeSettingsAtomically = Effect.fnUntraced(
-    function* (settings: ServerSettings) {
-      const sparseSettingsJson = yield* encodeServerSettingsJson(
-        stripDefaultServerSettings(settings, DEFAULT_SERVER_SETTINGS) ?? {},
-      );
+    function* (settings: ServerSettings, transition?: HubTransitionMarker) {
+      const marker = transition ?? (yield* Ref.get(hubMarkerRef));
+      const sparseSettingsJson = yield* encodeServerSettingsJson({
+        ...((stripDefaultServerSettings(settings, DEFAULT_SERVER_SETTINGS) ?? {}) as object),
+        ...(marker === null ? {} : { _memoryHubTransition: marker }),
+      });
 
       return yield* writeFileStringAtomically({
         filePath: settingsPath,
@@ -671,6 +714,15 @@ const make = Effect.gen(function* () {
       }).pipe(
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, pathService),
+        Effect.tap(() => Ref.set(publicationRef, { state: "current" })),
+        Effect.tap(() =>
+          Ref.set(committedMemoryRef, {
+            memoryHub: settings.memoryHub,
+            memoryHubVersion: settings.memoryHubVersion,
+            memoryOwnerSourceReadPolicy: settings.memoryOwnerSourceReadPolicy,
+            memoryOwnerSourceReadPolicyVersion: settings.memoryOwnerSourceReadPolicyVersion,
+          }),
+        ),
       );
     },
     Effect.mapError(
@@ -743,9 +795,32 @@ const make = Effect.gen(function* () {
           });
         }
       } else {
-        settings = decoded.value;
+        const { _memoryHubTransition: marker, ...publicSettings } = decoded.value;
+        yield* Ref.set(hubMarkerRef, marker ?? null);
+        settings = publicSettings;
       }
     }
+    const committedMemory = yield* Ref.get(committedMemoryRef);
+    if (committedMemory === null) {
+      yield* Ref.set(committedMemoryRef, {
+        memoryHub: settings.memoryHub,
+        memoryHubVersion: settings.memoryHubVersion,
+        memoryOwnerSourceReadPolicy: settings.memoryOwnerSourceReadPolicy,
+        memoryOwnerSourceReadPolicyVersion: settings.memoryOwnerSourceReadPolicyVersion,
+      });
+    } else settings = { ...settings, ...committedMemory };
+    yield* Ref.set(
+      publicationRef,
+      Option.isNone(parseFailure)
+        ? { state: "current" }
+        : {
+            state:
+              settings.memoryHubVersion !== 0 || settings.memoryHub.mode !== "disabled"
+                ? "last_valid"
+                : "unavailable",
+            code: "invalid_settings",
+          },
+    );
     // Settings saved by a server that kept the mode in `compactIdleThreads` move
     // it to `idleCompaction`, so that switch goes to clients as a boolean. The
     // defaults gain the field too, which tells clients this server reads modes.
@@ -1060,43 +1135,49 @@ const make = Effect.gen(function* () {
     );
   };
 
+  // oxlint-disable-next-line t3code/prefer-effect-fn -- generic over the update's error and requirements.
+  const updateSettingsWhileLocked = <E, R>(
+    update: (current: ServerSettings) => Effect.Effect<ServerSettings, E | ServerSettingsError, R>,
+    transition?: HubTransitionMarker,
+  ): Effect.Effect<ServerSettings, E | ServerSettingsError, R> =>
+    Effect.gen(function* () {
+      const { settings: current, parseFailure } = yield* reloadSettings;
+      if (Option.isSome(parseFailure)) {
+        return yield* new ServerSettingsError({
+          settingsPath,
+          operation: "read-file",
+          cause: parseFailure.value,
+        });
+      }
+      const updated = yield* update(current);
+      const persisted = yield* persistSettingsSecrets(current, updated);
+      const next = yield* normalizeServerSettings(persisted.settings);
+      const materialized = yield* Effect.uninterruptibleMask(() =>
+        Effect.gen(function* () {
+          const rollbackSecretChanges = yield* applySettingsSecretChanges(persisted.changes);
+          const materializedExit = yield* Effect.exit(materializeSettingsSecrets(next));
+          if (Exit.isFailure(materializedExit)) {
+            yield* rollbackSecretChanges;
+            return yield* Effect.failCause(materializedExit.cause);
+          }
+          const writeExit = yield* Effect.exit(writeSettingsAtomically(next, transition));
+          if (Exit.isFailure(writeExit)) {
+            yield* rollbackSecretChanges;
+            return yield* Effect.failCause(writeExit.cause);
+          }
+          if (transition) yield* Ref.set(hubMarkerRef, transition);
+          return materializedExit.value;
+        }),
+      );
+      yield* Cache.set(settingsCache, cacheKey, { settings: next, parseFailure: Option.none() });
+      yield* emitChange(next);
+      return resolveTextGenerationProvider(materialized);
+    });
+
   const updateAndPersistSettings = (
     update: (current: ServerSettings) => Effect.Effect<ServerSettings, ServerSettingsError>,
   ): Effect.Effect<ServerSettings, ServerSettingsError> =>
-    writeSemaphore.withPermits(1)(
-      Effect.gen(function* () {
-        const { settings: current, parseFailure } = yield* reloadSettings;
-        if (Option.isSome(parseFailure)) {
-          return yield* new ServerSettingsError({
-            settingsPath,
-            operation: "read-file",
-            cause: parseFailure.value,
-          });
-        }
-        const updated = yield* update(current);
-        const persisted = yield* persistSettingsSecrets(current, updated);
-        const next = yield* normalizeServerSettings(persisted.settings);
-        const materialized = yield* Effect.uninterruptibleMask(() =>
-          Effect.gen(function* () {
-            const rollbackSecretChanges = yield* applySettingsSecretChanges(persisted.changes);
-            const materializedExit = yield* Effect.exit(materializeSettingsSecrets(next));
-            if (Exit.isFailure(materializedExit)) {
-              yield* rollbackSecretChanges;
-              return yield* Effect.failCause(materializedExit.cause);
-            }
-            const writeExit = yield* Effect.exit(writeSettingsAtomically(next));
-            if (Exit.isFailure(writeExit)) {
-              yield* rollbackSecretChanges;
-              return yield* Effect.failCause(writeExit.cause);
-            }
-            return materializedExit.value;
-          }),
-        );
-        yield* Cache.set(settingsCache, cacheKey, { settings: next, parseFailure: Option.none() });
-        yield* emitChange(next);
-        return resolveTextGenerationProvider(materialized);
-      }),
-    );
+    writeSemaphore.withPermits(1)(updateSettingsWhileLocked(update));
 
   const withSettingsSnapshot: ServerSettingsService["Service"]["withSettingsSnapshot"] = (use) =>
     writeSemaphore.withPermits(1)(
@@ -1227,6 +1308,24 @@ const make = Effect.gen(function* () {
         }),
       ),
     withSettingsSnapshot,
+    memoryCommit: {
+      withLock: (effect) => writeSemaphore.withPermits(1)(effect),
+      commitLocked: updateSettingsWhileLocked,
+      marker: Ref.get(hubMarkerRef),
+      publication: Ref.get(publicationRef),
+      committed: Ref.get(committedMemoryRef).pipe(
+        Effect.map(
+          (committed) =>
+            committed ?? {
+              memoryHub: DEFAULT_SERVER_SETTINGS.memoryHub,
+              memoryHubVersion: DEFAULT_SERVER_SETTINGS.memoryHubVersion,
+              memoryOwnerSourceReadPolicy: DEFAULT_SERVER_SETTINGS.memoryOwnerSourceReadPolicy,
+              memoryOwnerSourceReadPolicyVersion:
+                DEFAULT_SERVER_SETTINGS.memoryOwnerSourceReadPolicyVersion,
+            },
+        ),
+      ),
+    },
     get streamChanges() {
       return materializeChanges(Stream.fromPubSub(changesPubSub));
     },
@@ -1238,4 +1337,7 @@ const make = Effect.gen(function* () {
   } satisfies ServerSettingsService["Service"];
 });
 
-export const layer = Layer.effect(ServerSettingsService, make);
+// The memory writers ride along, as the settings owner is also the owner of the hub epoch.
+export const layer = layerMemoryCommittedSettings.pipe(
+  Layer.provideMerge(Layer.effect(ServerSettingsService, make)),
+);
