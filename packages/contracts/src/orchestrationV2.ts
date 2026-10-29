@@ -1,4 +1,9 @@
 import { OrchestrationMessageContext } from "./composerContext.ts";
+import {
+  MemoryCurrentAccess,
+  MemoryProviderCapabilities,
+  MemoryTaskGrantCeilingField,
+} from "./memory.ts";
 import { withRecordIdTable } from "./orchestrationV2IdTable.ts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -371,6 +376,7 @@ export const OrchestrationV2IdentityCapabilities = Schema.Struct({
 export type OrchestrationV2IdentityCapabilities = typeof OrchestrationV2IdentityCapabilities.Type;
 
 export const OrchestrationV2ProviderCapabilities = Schema.Struct({
+  memory: Schema.optionalKey(MemoryProviderCapabilities),
   sessions: OrchestrationV2SessionCapabilities,
   threads: OrchestrationV2ThreadCapabilities,
   turns: OrchestrationV2TurnCapabilities,
@@ -678,6 +684,8 @@ export type OrchestrationV2ThreadLaunchWorkspaceStrategy =
 export const ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE = "workspace_preparation_failed";
 
 export const OrchestrationV2Run = Schema.Struct({
+  memoryGrantCeiling: MemoryTaskGrantCeilingField,
+  currentMemoryAccess: Schema.optionalKey(MemoryCurrentAccess),
   id: RunId,
   threadId: ThreadId,
   ordinal: PositiveInt,
@@ -868,6 +876,8 @@ export const OrchestrationV2RemoteTaskChild = Schema.Struct({
 export type OrchestrationV2RemoteTaskChild = typeof OrchestrationV2RemoteTaskChild.Type;
 
 export const OrchestrationV2Subagent = Schema.Struct({
+  memoryGrantCeiling: MemoryTaskGrantCeilingField,
+  currentMemoryAccess: Schema.optionalKey(MemoryCurrentAccess),
   id: NodeId,
   threadId: ThreadId,
   runId: Schema.NullOr(RunId),
@@ -2867,6 +2877,7 @@ export const OrchestrationV2Command = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("thread.create"),
+    memoryGrantCeiling: MemoryTaskGrantCeilingField,
     ...OrchestrationV2CreationFields,
     commandId: CommandId,
     threadId: ThreadId,
@@ -3101,6 +3112,7 @@ export const OrchestrationV2Command = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("message.dispatch"),
+    memoryGrantCeiling: MemoryTaskGrantCeilingField,
     notification: Schema.optional(OrchestrationV2Notification),
     /** Sends this pending guest message; the server uses the guest's text, not `text`. */
     guestMessageId: Schema.optional(GuestMessageId),
@@ -3275,6 +3287,7 @@ export const OrchestrationV2Command = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("delegated_task.request"),
+    memoryGrantCeiling: MemoryTaskGrantCeilingField,
     ...OrchestrationV2CreationFields,
     commandId: CommandId,
     parentThreadId: ThreadId,
@@ -3575,6 +3588,7 @@ export const OrchestrationV2ArchivedShellSnapshot = Schema.Struct({
 export type OrchestrationV2ArchivedShellSnapshot = typeof OrchestrationV2ArchivedShellSnapshot.Type;
 
 export const OrchestrationV2ThreadLaunchInput = Schema.Struct({
+  memoryGrantCeiling: MemoryTaskGrantCeilingField,
   commandId: CommandId,
   creationSource: Schema.optional(OrchestrationV2CreationSource),
   threadId: Schema.optional(ThreadId),

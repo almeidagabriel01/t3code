@@ -453,8 +453,16 @@ import {
 } from "./sourceControl.ts";
 import { VcsError } from "./vcs.ts";
 import { Project, ProjectMutation, ProjectMutationError } from "./project.ts";
+import {
+  MEMORY_WS_METHODS,
+  MemoryAdministrationRpcs,
+  MemoryCoreRpcs,
+  MemoryImportRpcs,
+} from "./memoryRpc.ts";
 
 export const WS_METHODS = {
+  ...MEMORY_WS_METHODS,
+
   projectsListEntries: "projects.listEntries",
   projectsListIgnoredFiles: "projects.listIgnoredFiles",
   projectsReadFile: "projects.readFile",
@@ -2465,3 +2473,11 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2SubscribeThreadRpc,
   WsOrchestrationV2SubscribeCommandOutputRpc,
 ).middleware(RpcScopeAuthorization);
+
+/**
+ * Memory RPCs stay out of `WsRpcGroup`: the server installs their handlers in layers of their own.
+ */
+export const WsMemoryAdministrationRpcGroup =
+  MemoryAdministrationRpcs.middleware(RpcScopeAuthorization);
+export const WsMemoryCoreRpcGroup = MemoryCoreRpcs.middleware(RpcScopeAuthorization);
+export const WsMemoryImportRpcGroup = MemoryImportRpcs.middleware(RpcScopeAuthorization);

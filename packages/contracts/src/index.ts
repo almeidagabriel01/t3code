@@ -6,6 +6,8 @@ export * from "./background.ts";
 export * from "./acpRegistry.ts";
 export * from "./auth.ts";
 export * from "./environment.ts";
+export * from "./memory.ts";
+export * from "./memoryGeneration.ts";
 export * from "./environmentHttp.ts";
 export * from "./relayClient.ts";
 export * from "./desktopBootstrap.ts";

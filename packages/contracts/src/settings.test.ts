@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
 import { type CommandId, ProjectId } from "./baseSchemas.ts";
+import { MemoryHubSettings, MemoryHubSettingsUpdateInput } from "./memory.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import {
   ClientSettingsSchema,
@@ -11,6 +12,7 @@ import {
   globalIdleCompaction,
   idleCompactionPatch,
   requiredScopesForProjectMutation,
+  requiredScopesForServerSettingsPatch,
   resolveIdleCompaction,
   resolveProjectProviderInstanceEnabled,
   resolveProviderInstanceEnabled,
@@ -18,6 +20,10 @@ import {
   ServerSettingsPatch,
   withIdleCompaction,
 } from "./settings.ts";
+
+const decodeMemoryHubSettings = Schema.decodeSync(MemoryHubSettings);
+const decodeUnknownMemoryHubSettings = Schema.decodeUnknownSync(MemoryHubSettings);
+const decodeHubUpdateInput = Schema.decodeSync(MemoryHubSettingsUpdateInput);
 
 const decodeClientSettings = Schema.decodeUnknownSync(ClientSettingsSchema);
 const decodeClientSettingsPatch = Schema.decodeUnknownSync(ClientSettingsPatch);
@@ -435,4 +441,126 @@ describe("destination rail client settings", () => {
     expect(settings.destinationRail).toEqual(saved);
     expect(encodeClientSettings(settings).destinationRail).toEqual(saved);
   });
+});
+
+describe("memory hub settings", () => {
+  it("defaults old settings to disabled memory hub", () => {
+    expect(decodeServerSettings({}).memoryHub).toEqual({ mode: "disabled" });
+    expect(decodeServerSettings({}).memoryHubVersion).toBe(0);
+  });
+  it("round-trips hub and member without secret bytes", () => {
+    for (const memoryHub of [
+      { mode: "hub", memorySpaceId: null },
+      {
+        mode: "member",
+        hubEnvironmentId: "env",
+        endpoint: "https://hub.invalid",
+        secretName: "memory-hub-member",
+        memorySpaceId: null,
+      },
+    ])
+      expect(encodeServerSettings(decodeServerSettings({ memoryHub }))).toMatchObject({
+        memoryHub,
+      });
+  });
+  it("rejects credentials query and nonloopback plain HTTP in hub endpoint", () => {
+    for (const endpoint of [
+      "https://user:pass@hub.invalid",
+      "https://hub.invalid?x=y",
+      "http://hub.invalid",
+      "https://hub.invalid/path",
+      "https://hub.invalid#secret",
+    ])
+      expect(() =>
+        decodeMemoryHubSettings({
+          mode: "member",
+          hubEnvironmentId: "env",
+          endpoint,
+          secretName: "memory-hub-member",
+          memorySpaceId: null,
+        }),
+      ).toThrow();
+  });
+  it("replaces memory hub configuration as one dedicated admin field", () => {
+    expect(
+      decodeHubUpdateInput({
+        requestId: "00000000-0000-4000-8000-000000000001",
+        expectedVersion: 0,
+        action: "configure",
+        settings: { mode: "disabled" },
+      }),
+    ).toMatchObject({ settings: { mode: "disabled" } });
+    expect(() =>
+      decodeUnknownMemoryHubSettings({
+        mode: "disabled",
+        endpoint: "https://old.invalid",
+      }),
+    ).toThrow();
+  });
+  it("rejects reserved memoryHub in generic settings patch", () => {
+    for (const raw of [
+      { memoryHub: { mode: "disabled" } },
+      { memoryHubVersion: 1 },
+      { newWorktreesStartFromOrigin: false, memoryHub: { mode: "disabled" } },
+      { newWorktreesStartFromOrigin: false, memoryHubVersion: 1 },
+    ])
+      expect(() => decodeServerSettingsPatch(raw)).toThrow();
+    expect(
+      decodeServerSettingsPatch({ newWorktreesStartFromOrigin: false, futureField: 1 }),
+    ).toEqual({
+      newWorktreesStartFromOrigin: false,
+    });
+  });
+});
+
+describe("managed memory settings", () => {
+  it("defaults installed agent memory on and owner source reads to an empty policy", () => {
+    const settings = decodeServerSettings({});
+    expect(settings.enableAgentMemoryAccess).toBe(true);
+    expect(settings.memoryOwnerSourceReadPolicy).toEqual({
+      allowedRequesterEnvironmentIds: [],
+      ownerPolicyEpoch: 0,
+      removals: [],
+      enrollments: [],
+    });
+    expect(settings.memoryOwnerSourceReadPolicyVersion).toBe(0);
+    expect(decodeServerSettings(encodeServerSettings(settings))).toEqual(settings);
+  });
+  it("round-trips memory off and guards both on/off updates with settings write", () => {
+    expect(decodeServerSettings({ enableAgentMemoryAccess: false }).enableAgentMemoryAccess).toBe(
+      false,
+    );
+    expect(decodeServerSettingsPatch({ enableAgentMemoryAccess: false })).toEqual({
+      enableAgentMemoryAccess: false,
+    });
+    for (const enabled of [true, false])
+      expect(requiredScopesForServerSettingsPatch({ enableAgentMemoryAccess: enabled })).toEqual([
+        "settings:write",
+      ]);
+    expect(() => decodeServerSettingsPatch({ enableAgentMemoryAccess: "on" })).toThrow();
+    expect(decodeServerSettings({}).memoryEnabled).toBe(true);
+    expect(decodeServerSettings({}).memoryModelSelection).toBeNull();
+    const selection = { instanceId: "codex", model: "gpt-5.4-mini" };
+    expect(
+      decodeServerSettingsPatch({ memoryEnabled: false, memoryModelSelection: selection }),
+    ).toEqual({
+      memoryEnabled: false,
+      memoryModelSelection: selection,
+    });
+    expect(decodeServerSettingsPatch({ memoryModelSelection: null })).toEqual({
+      memoryModelSelection: null,
+    });
+    expect(requiredScopesForServerSettingsPatch({ memoryEnabled: false })).toEqual([
+      "settings:write",
+    ]);
+    for (const key of ["memoryOwnerSourceReadPolicy", "memoryOwnerSourceReadPolicyVersion"])
+      expect(() =>
+        decodeServerSettingsPatch({ [key]: key.endsWith("Version") ? 0 : {} }),
+      ).toThrow();
+  });
+});
+
+it("keeps process-neutral memory disabled", () => {
+  const decoded = decodeServerSettings({});
+  expect(decoded.memoryHub).toEqual({ mode: "disabled" });
 });

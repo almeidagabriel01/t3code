@@ -1,3 +1,8 @@
+import {
+  DEFAULT_MEMORY_OWNER_SOURCE_READ_POLICY,
+  MemoryHubSettings,
+  MemoryOwnerSourceReadPolicy,
+} from "./memory.ts";
 import { EasDeviceHostConfigs, SimlockDeviceHostConfigs, SshDeviceHostConfigs } from "./device.ts";
 import {
   AuthOrchestrationOperateScope,
@@ -7,6 +12,7 @@ import {
 } from "./auth.ts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
@@ -18,6 +24,7 @@ export { GlassOpacity, MAX_GLASS_OPACITY, MIN_GLASS_OPACITY } from "./desktopWin
 import {
   ForwardCompatibleNullable,
   ForwardCompatibleOptional,
+  NonNegativeInt,
   OmittedWhenNull,
   ProjectId,
   ThreadId,
@@ -1223,6 +1230,27 @@ export const StorageCleanupSettings = Schema.Struct({
 export type StorageCleanupSettings = typeof StorageCleanupSettings.Type;
 
 export const ServerSettings = Schema.Struct({
+  memoryOwnerSourceReadPolicyVersion: NonNegativeInt.pipe(
+    Schema.withDecodingDefault(Effect.succeed(0)),
+  ),
+  memoryOwnerSourceReadPolicy: MemoryOwnerSourceReadPolicy.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_MEMORY_OWNER_SOURCE_READ_POLICY)),
+  ),
+  /** Off keeps memory tools away from agents. */
+  enableAgentMemoryAccess: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** Off stops new memory generation; queued work and stored memories are kept. */
+  memoryEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /**
+   * Null follows `textGenerationModelSelection`, the cheap background model. Memory must
+   * never inherit the new-thread default, which can be an expensive or unsupported model.
+   */
+  memoryModelSelection: Schema.NullOr(ModelSelection).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  memoryHubVersion: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+  memoryHub: MemoryHubSettings.pipe(
+    Schema.withDecodingDefault(Effect.succeed({ mode: "disabled" as const })),
+  ),
   // Null means unmigrated; empty is authoritative and must not resurrect cleared preferences.
   favorites: Schema.NullOr(ModelFavorites).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   providerModelPreferences: Schema.NullOr(ProviderModelPreferences).pipe(
@@ -1576,7 +1604,7 @@ const ModelSelectionPatch = Schema.Struct({
   options: Schema.optionalKey(ProviderOptionSelections),
 });
 
-export const ServerSettingsPatch = Schema.Struct({
+const ServerSettingsPatchFields = Schema.Struct({
   setModelFavorites: Schema.optionalKey(
     Schema.Array(Schema.Struct({ ...ModelFavorite.fields, favorite: Schema.Boolean })),
   ),
@@ -1740,6 +1768,24 @@ export const ServerSettingsPatch = Schema.Struct({
   usageModelAliases: Schema.optionalKey(
     Schema.Record(TrimmedNonEmptyString, Schema.NullOr(TrimmedNonEmptyString)),
   ),
+  enableAgentMemoryAccess: Schema.optionalKey(Schema.Boolean),
+  memoryEnabled: Schema.optionalKey(Schema.Boolean),
+  memoryModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+});
+// Hub settings and the owner read policy change only through their dedicated RPCs.
+// Test reserved keys on the raw object before the ordinary patch decoder strips unknown fields.
+const ServerSettingsPatchCodec = Schema.Unknown.check(
+  Schema.makeFilter(
+    (raw) =>
+      !Predicate.isObject(raw) ||
+      (!Object.hasOwn(raw, "memoryHub") &&
+        !Object.hasOwn(raw, "memoryHubVersion") &&
+        !Object.hasOwn(raw, "memoryOwnerSourceReadPolicy") &&
+        !Object.hasOwn(raw, "memoryOwnerSourceReadPolicyVersion")),
+  ),
+).pipe(Schema.decodeTo(ServerSettingsPatchFields));
+export const ServerSettingsPatch = Object.assign(ServerSettingsPatchCodec, {
+  fields: ServerSettingsPatchFields.fields,
 });
 export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
 

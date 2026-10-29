@@ -22,6 +22,8 @@ import * as Stream from "effect/Stream";
 import * as RpcTest from "effect/rpc/RpcTest";
 
 import {
+  AuthorizedWsRpcGroup,
+  MEMORY_RPC_REQUIRED_SCOPES,
   RPC_REQUIRED_SCOPES,
   requiredScopeForRpcMethod,
   requiredScopeForDeviceList,
@@ -64,6 +66,15 @@ describe("RPC authorization scopes", () => {
     ]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthTerminalOperateScope);
     }
+  });
+
+  it("declares a scope for every memory RPC and requires transcript and filesystem reads where needed", () => {
+    expect(
+      new Set([...Object.keys(RPC_REQUIRED_SCOPES), ...Object.keys(MEMORY_RPC_REQUIRED_SCOPES)]),
+    ).toEqual(new Set(AuthorizedWsRpcGroup.requests.keys()));
+    expect(requiredScopeForRpcMethod(WS_METHODS.memoryUpsert)).toBe("memory:write");
+    expect(requiredScopeForRpcMethod(WS_METHODS.memorySearch)).toBe("memory:read");
+    expect(requiredScopeForRpcMethod(WS_METHODS.memoryHubSettingsUpdate)).toBe("settings:write");
   });
 
   it("rejects unknown RPC method names", () => {

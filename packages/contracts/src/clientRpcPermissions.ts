@@ -2,6 +2,9 @@ import * as Schema from "effect/Schema";
 import { GitPreparePullRequestThreadInput, GitRunStackedActionInput } from "./git.ts";
 import {
   AuthAccessWriteScope,
+  AuthFilesystemReadScope,
+  AuthMemoryReadScope,
+  AuthMemoryWriteScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthPreviewOperateScope,
@@ -86,6 +89,25 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.notesDelete]: AuthOrchestrationOperateScope,
   [WS_METHODS.notesStartWork]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: AuthOrchestrationOperateScope,
+  [WS_METHODS.memorySearch]: AuthMemoryReadScope,
+  [WS_METHODS.memoryList]: AuthMemoryReadScope,
+  [WS_METHODS.memoryRead]: AuthMemoryReadScope,
+  [WS_METHODS.memoryHistory]: AuthMemoryReadScope,
+  [WS_METHODS.memoryChanges]: AuthMemoryReadScope,
+  [WS_METHODS.memoryHubDiagnostics]: AuthMemoryReadScope,
+  [WS_METHODS.memorySyncStatus]: AuthMemoryReadScope,
+  [WS_METHODS.memoryReadSource]: AuthMemoryReadScope,
+  [WS_METHODS.memoryUpsert]: AuthMemoryWriteScope,
+  [WS_METHODS.memoryForget]: AuthMemoryWriteScope,
+  [WS_METHODS.memoryRevertResolution]: AuthMemoryWriteScope,
+  [WS_METHODS.memoryImportProvider]: AuthMemoryWriteScope,
+  [WS_METHODS.memoryProjectBindingGet]: AuthMemoryWriteScope,
+  [WS_METHODS.memoryProjectBindingUpdate]: AuthMemoryWriteScope,
+  [WS_METHODS.memoryHubSettingsGet]: AuthSettingsWriteScope,
+  [WS_METHODS.memoryHubSettingsUpdate]: AuthSettingsWriteScope,
+  [WS_METHODS.memoryHubReconcile]: AuthSettingsWriteScope,
+  [WS_METHODS.memoryOwnerSourceReadPolicyGet]: AuthSettingsWriteScope,
+  [WS_METHODS.memoryOwnerSourceReadPolicyUpdate]: AuthSettingsWriteScope,
   // A guest link hands thread access to someone outside, like a pairing link.
   [WS_METHODS.guestShareCreate]: AuthAccessWriteScope,
   [WS_METHODS.peerLinksLink]: AuthAccessWriteScope,
@@ -115,6 +137,11 @@ export function clientRpcRequiredScopes(
     )
       return [AuthSourceControlWriteScope, AuthOrchestrationReadScope];
   }
+  // Source reads need explicit transcript access; the memory scope alone is not enough.
+  if (method === WS_METHODS.memoryReadSource)
+    return [AuthMemoryReadScope, AuthOrchestrationReadScope];
+  if (method === WS_METHODS.memoryImportProvider)
+    return [AuthMemoryWriteScope, AuthFilesystemReadScope];
   return Object.hasOwn(CLIENT_GUARDED_RPC_SCOPES, method)
     ? [CLIENT_GUARDED_RPC_SCOPES[method as ClientGuardedRpcTag]]
     : [];

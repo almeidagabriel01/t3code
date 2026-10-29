@@ -29,16 +29,30 @@ import {
   RpcScopeAuthorization,
   WS_METHODS,
   WsRpcGroup,
+  WsMemoryAdministrationRpcGroup,
+  WsMemoryCoreRpcGroup,
+  WsMemoryImportRpcGroup,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Layer from "effect/Layer";
 import type * as RpcGroup from "effect/rpc/RpcGroup";
 
+/** Every RPC the server serves: the base group plus the memory groups, which install separately. */
+export const AuthorizedWsRpcGroup = WsRpcGroup.merge(WsMemoryCoreRpcGroup)
+  .merge(WsMemoryAdministrationRpcGroup)
+  .merge(WsMemoryImportRpcGroup);
+
 type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
 
 export const RPC_REQUIRED_SCOPES = {
-  ...CLIENT_GUARDED_RPC_SCOPES,
+  // Memory guards live in the client table but name RPCs of the memory groups, not this one.
+  ...(Object.fromEntries(
+    Object.entries(CLIENT_GUARDED_RPC_SCOPES).filter(([tag]) => WsRpcGroup.requests.has(tag)),
+  ) as Pick<
+    typeof CLIENT_GUARDED_RPC_SCOPES,
+    Extract<keyof typeof CLIENT_GUARDED_RPC_SCOPES, WsRpcMethod>
+  >),
   [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.getWorkflowScript]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: AuthOrchestrationOperateScope,
@@ -242,11 +256,44 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.subscribeAuthAccess]: AuthAccessReadScope,
 } as const satisfies Readonly<Record<WsRpcMethod, AuthEnvironmentScope>>;
 
+export const MEMORY_RPC_REQUIRED_SCOPES = {
+  [WS_METHODS.memoryImportProvider]: "memory:write",
+  [WS_METHODS.memoryProjectBindingGet]: "memory:write",
+  [WS_METHODS.memoryProjectBindingUpdate]: "memory:write",
+  [WS_METHODS.memoryChanges]: "memory:read",
+  [WS_METHODS.memorySearch]: "memory:read",
+  [WS_METHODS.memoryList]: "memory:read",
+  [WS_METHODS.memoryRead]: "memory:read",
+  [WS_METHODS.memoryHistory]: "memory:read",
+  [WS_METHODS.memoryHubReconcile]: "settings:write",
+  [WS_METHODS.memoryHubDiagnostics]: "memory:read",
+  [WS_METHODS.memorySyncStatus]: "memory:read",
+  [WS_METHODS.memoryUpsert]: "memory:write",
+  [WS_METHODS.memoryForget]: "memory:write",
+  [WS_METHODS.memoryRevertResolution]: "memory:write",
+  [WS_METHODS.memoryReadSource]: "memory:read",
+  [WS_METHODS.memoryHubSettingsGet]: "settings:write",
+  [WS_METHODS.memoryHubSettingsUpdate]: "settings:write",
+  [WS_METHODS.memoryOwnerSourceReadPolicyGet]: "settings:write",
+  [WS_METHODS.memoryOwnerSourceReadPolicyUpdate]: "settings:write",
+} as const satisfies Readonly<
+  Record<
+    RpcGroup.Rpcs<
+      | typeof WsMemoryCoreRpcGroup
+      | typeof WsMemoryAdministrationRpcGroup
+      | typeof WsMemoryImportRpcGroup
+    >["_tag"],
+    AuthEnvironmentScope
+  >
+>;
+
+const installedScopes = { ...RPC_REQUIRED_SCOPES, ...MEMORY_RPC_REQUIRED_SCOPES };
+
 export function requiredScopeForRpcMethod(method: string): AuthEnvironmentScope {
-  if (!Object.hasOwn(RPC_REQUIRED_SCOPES, method)) {
+  if (!Object.hasOwn(installedScopes, method)) {
     throw new Error(`RPC method ${method} has no declared authorization scope.`);
   }
-  const requiredScope = RPC_REQUIRED_SCOPES[method as WsRpcMethod];
+  const requiredScope = installedScopes[method as keyof typeof installedScopes];
   if (requiredScope === undefined) {
     throw new Error(`RPC method ${method} has no declared authorization scope.`);
   }

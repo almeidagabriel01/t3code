@@ -1,4 +1,4 @@
-import type { OrchestrationV2HistoricalMessage } from "@t3tools/contracts";
+import type { MemoryContextSnapshot, OrchestrationV2HistoricalMessage } from "@t3tools/contracts";
 import {
   ChatAttachment,
   CheckpointId,
@@ -414,6 +414,12 @@ export interface ProviderAdapterV2EnsureThreadInput {
 }
 
 export interface ProviderAdapterV2TurnInput {
+  readonly memoryContext?: MemoryContextSnapshot;
+  /** Process-local admission callback; never persisted or sent to a provider. */
+  readonly refreshMemoryContext?: () => Effect.Effect<
+    MemoryContextSnapshot | undefined,
+    ProviderAdapterTurnStartError
+  >;
   readonly appThread: OrchestrationV2AppThread;
   readonly threadId: ThreadId;
   readonly runId: RunId;

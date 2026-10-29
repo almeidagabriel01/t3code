@@ -45,7 +45,13 @@ export const AuthAccessReadScope = "access:read" as const;
 export const AuthAccessWriteScope = "access:write" as const;
 export const AuthRelayReadScope = "relay:read" as const;
 export const AuthRelayWriteScope = "relay:write" as const;
+export const AuthMemoryReadScope = "memory:read" as const;
+export const AuthMemoryWriteScope = "memory:write" as const;
+const AuthMemorySyncScope = "memory:sync" as const;
 export const AuthEnvironmentScope = Schema.Literals([
+  AuthMemoryReadScope,
+  AuthMemoryWriteScope,
+  AuthMemorySyncScope,
   AuthOrchestrationReadScope,
   AuthOrchestrationOperateScope,
   AuthSettingsWriteScope,
@@ -147,6 +153,8 @@ export function sessionHasLegacyPermissions(session: SessionGrantInput): boolean
 
 // Shell and full-access agent scopes already confer access and relay authority.
 export const AuthStandardClientScopes = [
+  AuthMemoryReadScope,
+  AuthMemoryWriteScope,
   AuthOrchestrationReadScope,
   AuthOrchestrationOperateScope,
   AuthSettingsWriteScope,
@@ -496,8 +504,15 @@ export const AuthMcpAuthorizationRequest = Schema.Struct({
 export type AuthMcpAuthorizationRequest = typeof AuthMcpAuthorizationRequest.Type;
 
 /** Server-validated request details, trusted by the client only for display. */
+export const AuthMcpMemoryScope = Schema.Literals([AuthMemoryReadScope, AuthMemoryWriteScope]);
+export type AuthMcpMemoryScope = typeof AuthMcpMemoryScope.Type;
+const AuthMcpMemoryScopes = Schema.Array(AuthMcpMemoryScope).check(
+  Schema.makeFilter((s) => new Set(s).size === s.length),
+);
+
 export const AuthMcpApprovalDetails = Schema.Struct({
   /** Self-declared by the client, so shown as such. */
+  oneClickMemoryScopes: Schema.optionalKey(AuthMcpMemoryScopes),
   clientName: Schema.String,
   redirectHost: Schema.String,
   environmentHost: Schema.String,
@@ -515,10 +530,12 @@ export type AuthMcpApprovalRedirect = typeof AuthMcpApprovalRedirect.Type;
 export const AuthMcpApprovalDecision = Schema.Union([
   Schema.TaggedStruct("deny", {}),
   Schema.TaggedStruct("pairing-code", {
+    memoryScopes: Schema.optionalKey(AuthMcpMemoryScopes),
     access: AuthMcpClientAccess,
     code: TrimmedNonEmptyString,
   }),
   Schema.TaggedStruct("browser-session", {
+    memoryScopes: Schema.optionalKey(AuthMcpMemoryScopes),
     access: AuthMcpClientAccess,
     csrfToken: Schema.String,
   }),

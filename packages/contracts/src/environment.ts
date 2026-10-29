@@ -70,6 +70,23 @@ export const ServerSelfUpdateCapability = Schema.Literals([
 export type ServerSelfUpdateCapability = typeof ServerSelfUpdateCapability.Type;
 
 export const ExecutionEnvironmentCapabilities = Schema.Struct({
+  memoryHubProtocolVersion: Schema.optionalKey(Schema.Int),
+  memory: Schema.optionalKey(
+    Schema.Struct({
+      protocolVersion: Schema.Int,
+      hub: Schema.optionalKey(Schema.Boolean),
+      importProvider: Schema.optionalKey(Schema.Boolean),
+      /** Import preview can flag items too large for the turn-start frame; absent on older servers. */
+      importTurnStartFit: Schema.optionalKey(Schema.Boolean),
+      refusedReverts: Schema.optionalKey(Schema.Boolean),
+      resolutionInputs: Schema.optionalKey(Schema.Boolean),
+      retainedLocalSpace: Schema.optionalKey(Schema.Boolean),
+      /** memory.syncStatus may report a paused memory model when the request opts in. */
+      generationHold: Schema.optionalKey(Schema.Boolean),
+      /** Separate diagnostics/read and Settings reconcile RPCs; absent on older servers. */
+      hubDiagnostics: Schema.optionalKey(Schema.Boolean),
+    }),
+  ),
   repositoryIdentity: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   connectionProbe: Schema.optionalKey(Schema.Boolean),
   attachmentUploads: Schema.optionalKey(Schema.Boolean),
@@ -224,3 +241,7 @@ export const ScopedThreadRef = Schema.Struct({
   threadId: ThreadId,
 });
 export type ScopedThreadRef = typeof ScopedThreadRef.Type;
+
+export function supportsMemoryProtocol(capabilities: ExecutionEnvironmentCapabilities): boolean {
+  return capabilities.memory?.protocolVersion === 1;
+}

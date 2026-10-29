@@ -1,4 +1,8 @@
 import type {
+  GenerateMemorySummaryInput,
+  GenerateMemorySummaryOutcome,
+  ResolveMemoryConflictExecutionResult,
+  ResolveMemoryConflictInput,
   BranchNamingOptions,
   ChatAttachment,
   ModelSelection,
@@ -98,6 +102,12 @@ export type ReviewGuideGenerationResult = Omit<
 >;
 
 export interface ProviderTextGeneration {
+  readonly resolveMemoryConflict?: (
+    input: ResolveMemoryConflictInput,
+  ) => Effect.Effect<ResolveMemoryConflictExecutionResult, TextGenerationError>;
+  readonly generateMemorySummary?: (
+    input: GenerateMemorySummaryInput,
+  ) => Effect.Effect<GenerateMemorySummaryOutcome, TextGenerationError>;
   readonly generateCommitMessage: (
     input: CommitMessageGenerationInput,
   ) => Effect.Effect<CommitMessageGenerationResult, TextGenerationError>;
@@ -118,3 +128,14 @@ export interface ProviderTextGeneration {
     input: ReviewGuideGenerationInput,
   ) => Effect.Effect<ReviewGuideGenerationResult, TextGenerationError>;
 }
+
+export type {
+  ResolveMemoryConflictInput,
+  ResolveMemoryConflictResult,
+  ResolveMemoryConflictExecutionResult,
+  GenerateMemorySummaryInput,
+  GenerateMemorySummaryResult,
+  GenerateMemorySummaryExecutionResult,
+  GenerateMemorySummaryOutcome,
+  MemoryGenerationExecution,
+} from "@t3tools/contracts";
