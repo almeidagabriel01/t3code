@@ -799,3 +799,75 @@ it.effect("card images are claimed to the card on save and cleaned up with it", 
     assert.deepEqual(cleaned, [claimedId]);
   }).pipe(Effect.provide(imagesLayer(cleaned)));
 });
+
+it.effect(
+  "attachments are claimed, cover the card, and are cleaned up on remove and delete",
+  () => {
+    const cleaned: string[] = [];
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { attachmentsDir } = yield* ServerConfig.ServerConfig;
+      const { kanban, boardId } = yield* setup;
+      const pdf = "pending-1b8e6a7e-1c1f-4c55-8d8e-0f6c0a1d2e3f-pdf";
+      const shot = "pending-2b8e6a7e-1c1f-4c55-8d8e-0f6c0a1d2e3f";
+      const other = "pending-3b8e6a7e-1c1f-4c55-8d8e-0f6c0a1d2e3f";
+      yield* fs.makeDirectory(attachmentsDir, { recursive: true });
+      yield* fs.writeFile(`${attachmentsDir}/${pdf}.pdf`, new Uint8Array([9]));
+      yield* fs.writeFile(`${attachmentsDir}/${shot}.png`, new Uint8Array([1, 2]));
+      yield* fs.writeFile(`${attachmentsDir}/${other}.png`, new Uint8Array([3]));
+      const cardId = (yield* kanban.cardCreate({ commandId: cmd(), boardId, title: "Files" }))
+        .cardId!;
+      const add = (attachmentId: string, name: string, mimeType: string) =>
+        kanban.cardUpdate({
+          commandId: cmd(),
+          cardId,
+          addAttachments: [{ attachmentId, name, mimeType, sizeBytes: 2 }],
+        });
+      const read = () => kanban.getCard({ cardId }).pipe(Effect.map((result) => result.card));
+
+      yield* add(pdf, "spec.pdf", "application/pdf");
+      assert.equal((yield* read()).coverAttachmentId, null);
+      yield* add(shot, "shot.png", "image/png");
+      yield* add(other, "other.png", "image/png");
+      const card = yield* read();
+      const [specId, shotId, otherId] = card.attachments.map((a) => a.attachmentId);
+      assert.deepEqual(
+        card.attachments.map((a) => [a.name, a.addedBy]),
+        [
+          ["spec.pdf", "user"],
+          ["shot.png", "user"],
+          ["other.png", "user"],
+        ],
+      );
+      assert.ok(shotId!.startsWith(`card-${cardId}-`));
+      assert.deepEqual(Array.from(yield* fs.readFile(`${attachmentsDir}/${shotId}.png`)), [1, 2]);
+      // The first image covers the card; later ones leave it alone.
+      assert.equal(card.coverAttachmentId, shotId);
+
+      const unknown = yield* kanban
+        .cardUpdate({ commandId: cmd(), cardId, coverAttachmentId: "card-x-nope" })
+        .pipe(Effect.flip);
+      assert.equal(unknown.kind, "not_found");
+      const notPending = yield* add(otherId!, "again.png", "image/png").pipe(Effect.flip);
+      assert.equal(notPending.kind, "invalid");
+
+      yield* kanban.cardUpdate({ commandId: cmd(), cardId, coverAttachmentId: otherId! });
+      assert.equal((yield* read()).coverAttachmentId, otherId);
+      yield* kanban.cardUpdate({ commandId: cmd(), cardId, removeAttachmentIds: [otherId!] });
+      const afterRemove = yield* read();
+      assert.equal(afterRemove.coverAttachmentId, null);
+      assert.deepEqual(
+        afterRemove.attachments.map((a) => a.attachmentId),
+        [specId, shotId],
+      );
+      assert.deepEqual(cleaned, [otherId]);
+
+      yield* kanban.cardUpdate({ commandId: cmd(), cardId, coverAttachmentId: shotId! });
+      yield* kanban.cardUpdate({ commandId: cmd(), cardId, coverAttachmentId: null });
+      assert.equal((yield* read()).coverAttachmentId, null);
+
+      yield* kanban.cardDelete({ commandId: cmd(), cardId });
+      assert.deepEqual(cleaned, [otherId, specId, shotId]);
+    }).pipe(Effect.provide(imagesLayer(cleaned)));
+  },
+);

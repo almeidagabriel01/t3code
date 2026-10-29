@@ -1,14 +1,14 @@
 import type { KanbanBoardState } from "@t3tools/client-runtime/state/kanban";
 import type { EnvironmentId, KanbanCard, KanbanTemplateId } from "@t3tools/contracts";
 import { startableSubtasks, subtaskProgress, subtasksOf } from "@t3tools/shared/kanbanSubtasks";
-import { BotIcon, CornerDownRightIcon, XIcon } from "lucide-react";
+import { BotIcon, CornerDownRightIcon, ListTreeIcon, XIcon } from "lucide-react";
 import { useState } from "react";
 
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { KanbanStartAgentDialog } from "./KanbanStartAgent";
 import { OptionSelect } from "./kanbanDialogs";
-import { ColorDot, ProgressBar } from "./kanbanPresentation";
+import { ColorDot, ProgressBar, SectionHeading } from "./kanbanPresentation";
 import { useKanbanActions } from "./useKanban";
 
 const NO_TYPE = "__none__";
@@ -72,8 +72,18 @@ export function KanbanSubtasks(props: {
 
   return (
     <section className="grid gap-2" aria-label="Subtasks">
-      <div className="flex items-center gap-2">
-        <h3 className="text-sm font-semibold">Subtasks</h3>
+      <SectionHeading
+        icon={ListTreeIcon}
+        title="Subtasks"
+        action={
+          !disabled && startable.length > 0 ? (
+            <Button size="xs" variant="outline" onClick={() => setStartCards(startable)}>
+              <BotIcon />
+              Start agents ({startable.length})
+            </Button>
+          ) : null
+        }
+      >
         {progress.total > 0 ? (
           <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
             <ProgressBar done={progress.done} total={progress.total} />
@@ -82,18 +92,7 @@ export function KanbanSubtasks(props: {
             </span>
           </span>
         ) : null}
-        {!disabled && startable.length > 0 ? (
-          <Button
-            size="xs"
-            variant="outline"
-            className="ms-auto"
-            onClick={() => setStartCards(startable)}
-          >
-            <BotIcon />
-            Start agents ({startable.length})
-          </Button>
-        ) : null}
-      </div>
+      </SectionHeading>
       {subtasks.length > 0 ? (
         <ul className="grid gap-1">
           {subtasks.map((subtask) => {

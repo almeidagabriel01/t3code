@@ -17,12 +17,19 @@ import type {
   KanbanTemplateId,
 } from "@t3tools/contracts";
 import {
+  ActivityIcon,
+  AlignLeftIcon,
   ArchiveIcon,
   ArchiveRestoreIcon,
-  ImagePlusIcon,
   BotIcon,
+  CalendarDaysIcon,
+  CircleCheckBigIcon,
   EllipsisIcon,
+  ImagePlusIcon,
+  ListChecksIcon,
+  PaperclipIcon,
   PlusIcon,
+  TagIcon,
   Trash2Icon,
   UserIcon,
   XIcon,
@@ -31,7 +38,7 @@ import { attachmentImageMarkdown } from "@t3tools/shared/attachmentImageRefs";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { requestConfirmDialog } from "../../confirmDialog";
-import { uploadStandaloneImage } from "../../lib/attachmentUploadQueue";
+import { uploadStandaloneAttachment } from "../../lib/attachmentUploadQueue";
 import { useProject } from "../../state/entities";
 import { kanbanEnvironment } from "../../state/kanban";
 import { useEnvironmentQuery } from "../../state/query";
@@ -53,9 +60,16 @@ import { Sheet, SheetPopup, SheetTitle } from "../ui/sheet";
 import { Spinner } from "../ui/spinner";
 import { Textarea } from "../ui/textarea";
 import { toastManager } from "../ui/toast";
+import {
+  KanbanAttachmentDropOverlay,
+  KanbanCardAttachments,
+  KanbanCardCover,
+  useCardAttachmentUploads,
+} from "./KanbanCardAttachments";
 import { KanbanCardRelations } from "./KanbanCardRelations";
 import { KanbanChecklist } from "./KanbanChecklist";
 import { KanbanLinkedAgents } from "./KanbanLinkedAgents";
+import { KanbanStartAgentDialog } from "./KanbanStartAgent";
 import { KanbanSubtasks } from "./KanbanSubtasks";
 import { PromptDialog } from "./kanbanDialogs";
 import {
@@ -66,6 +80,7 @@ import {
   PriorityIcon,
   PropertyRow,
   QuietInput,
+  SectionHeading,
   TemplateIcon,
 } from "./kanbanPresentation";
 import { useKanbanActions } from "./useKanban";
@@ -99,12 +114,12 @@ function PropertyMenu(props: {
   );
 }
 
-function Section(props: { readonly title: string; readonly children: ReactNode }) {
+function Avatar(props: { readonly icon: typeof UserIcon }) {
+  const Icon = props.icon;
   return (
-    <section className="grid gap-2" aria-label={props.title}>
-      <h3 className="text-sm font-semibold">{props.title}</h3>
-      {props.children}
-    </section>
+    <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
+      <Icon aria-hidden className="size-3.5" />
+    </span>
   );
 }
 
@@ -113,10 +128,10 @@ function Activity(props: {
   readonly columnName: (id: string) => string;
 }) {
   if (props.events.length === 0) {
-    return <p className="text-sm text-muted-foreground">Nothing has happened yet.</p>;
+    return <p className="ps-10 text-sm text-muted-foreground">Nothing has happened yet.</p>;
   }
   return (
-    <ol className="grid gap-3">
+    <ol className="grid gap-4">
       {props.events.map((event) => {
         const agent = event.actor !== "user";
         const Icon = agent ? BotIcon : UserIcon;
@@ -127,11 +142,9 @@ function Activity(props: {
               ? "Agent"
               : "Automation";
         return (
-          <li key={event.id} className="flex gap-2.5 text-sm">
-            <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
-              <Icon className="size-3" />
-            </span>
-            <div className="grid min-w-0 flex-1 gap-1">
+          <li key={event.id} className="flex gap-3 text-sm">
+            <Avatar icon={Icon} />
+            <div className="grid min-w-0 flex-1 gap-1 pt-0.5">
               <span className="text-xs text-muted-foreground">
                 <span className="font-medium text-foreground">{who}</span>
                 {" · "}
@@ -173,8 +186,8 @@ function Description(props: {
     setUploading((count) => count + files.length);
     for (const file of files) {
       try {
-        const id = await uploadStandaloneImage(props.environmentId, file);
-        const ref = attachmentImageMarkdown(file.name || "image", id);
+        const { attachmentId } = await uploadStandaloneAttachment(props.environmentId, file);
+        const ref = attachmentImageMarkdown(file.name || "image", attachmentId);
         setDraft((text) => {
           const at = Math.min(cursor.current, text.length);
           cursor.current = at + ref.length + 1;
@@ -195,96 +208,135 @@ function Description(props: {
     setDraft(props.text);
     setEditing(true);
   };
-  if (editing) {
-    return (
-      <div className="grid gap-2">
-        <Textarea
-          autoFocus
-          rows={8}
-          aria-label="Description"
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-          onSelect={(event) => {
-            cursor.current = event.currentTarget.selectionStart;
-          }}
-          onPaste={(event) => {
-            const images = imageFiles(event.clipboardData.files);
-            if (images.length === 0) return;
-            event.preventDefault();
-            void attachImages(images);
-          }}
-          onDragOver={(event) => {
-            if (event.dataTransfer.types.includes("Files")) event.preventDefault();
-          }}
-          onDrop={(event) => {
-            const images = imageFiles(event.dataTransfer.files);
-            if (images.length === 0) return;
-            event.preventDefault();
-            void attachImages(images);
-          }}
-        />
-        <input
-          ref={fileInput}
-          type="file"
-          accept="image/*"
-          multiple
-          className="hidden"
-          onChange={(event) => {
-            const images = imageFiles(event.currentTarget.files);
-            event.currentTarget.value = "";
-            void attachImages(images);
-          }}
-        />
-        <div className="flex justify-end gap-2">
-          <span className="me-auto">
-            <Button size="xs" variant="ghost-muted" onClick={() => fileInput.current?.click()}>
-              {uploading > 0 ? <Spinner /> : <ImagePlusIcon />}
-              Attach image
-            </Button>
-          </span>
-          <Button size="xs" variant="outline" onClick={() => setEditing(false)}>
-            Cancel
-          </Button>
-          <Button
-            size="xs"
-            disabled={uploading > 0}
-            onClick={() => {
-              props.onSave(draft);
-              setEditing(false);
-            }}
-          >
-            Save
-          </Button>
-        </div>
-      </div>
-    );
-  }
+  const save = () => {
+    if (uploading > 0) return;
+    if (draft !== props.text) props.onSave(draft);
+    setEditing(false);
+  };
   const empty = props.text.trim().length === 0;
   return (
-    <div className="group relative -mx-2 rounded-lg px-2 py-1 hover:bg-accent/30">
-      {empty ? (
-        <p className="text-sm text-muted-foreground">
-          {props.disabled ? "No description." : "Add a description…"}
-        </p>
+    <section className="grid gap-2" aria-label="Description">
+      <SectionHeading
+        icon={AlignLeftIcon}
+        title="Description"
+        action={
+          editing || props.disabled || empty ? null : (
+            <Button size="xs" variant="ghost-muted" aria-label="Edit description" onClick={edit}>
+              Edit
+            </Button>
+          )
+        }
+      />
+      {editing ? (
+        <div className="grid gap-2">
+          <Textarea
+            autoFocus
+            rows={8}
+            aria-label="Description"
+            placeholder="Add more detail. Markdown works, and pasted screenshots land inline."
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            onSelect={(event) => {
+              cursor.current = event.currentTarget.selectionStart;
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                event.preventDefault();
+                event.stopPropagation();
+                setEditing(false);
+              } else if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                event.preventDefault();
+                save();
+              }
+            }}
+            onPaste={(event) => {
+              const images = imageFiles(event.clipboardData.files);
+              if (images.length === 0) return;
+              event.preventDefault();
+              void attachImages(images);
+            }}
+            onDragOver={(event) => {
+              if (event.dataTransfer.types.includes("Files")) event.preventDefault();
+            }}
+            onDrop={(event) => {
+              const images = imageFiles(event.dataTransfer.files);
+              if (images.length === 0) return;
+              event.preventDefault();
+              void attachImages(images);
+            }}
+          />
+          <input
+            ref={fileInput}
+            type="file"
+            accept="image/*"
+            multiple
+            hidden
+            onChange={(event) => {
+              const images = imageFiles(event.currentTarget.files);
+              event.currentTarget.value = "";
+              void attachImages(images);
+            }}
+          />
+          <div className="flex items-center justify-end gap-2">
+            <span className="me-auto">
+              <Button size="xs" variant="ghost-muted" onClick={() => fileInput.current?.click()}>
+                {uploading > 0 ? <Spinner /> : <ImagePlusIcon />}
+                Insert image
+              </Button>
+            </span>
+            <Button size="xs" variant="ghost" onClick={() => setEditing(false)}>
+              Cancel
+            </Button>
+            <Button size="xs" disabled={uploading > 0} onClick={save}>
+              Save
+            </Button>
+          </div>
+        </div>
+      ) : empty ? (
+        props.disabled ? (
+          <p className="text-sm text-muted-foreground">No description.</p>
+        ) : (
+          <button
+            type="button"
+            aria-label="Add a description"
+            onClick={edit}
+            className="min-h-16 cursor-text rounded-lg bg-muted/50 px-3 py-2.5 text-start text-sm text-muted-foreground outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+          >
+            Add a more detailed description…
+          </button>
+        )
       ) : (
-        <ChatMarkdown text={props.text} cwd={props.cwd} environmentId={props.environmentId} />
+        <div
+          className="-mx-2 rounded-lg px-2 py-1 hover:bg-accent/30"
+          onDoubleClick={props.disabled ? undefined : edit}
+        >
+          <ChatMarkdown text={props.text} cwd={props.cwd} environmentId={props.environmentId} />
+        </div>
       )}
-      {props.disabled ? null : (
-        <span className="absolute end-1 top-1 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100">
-          <Button size="xs" variant="ghost-muted" aria-label="Edit description" onClick={edit}>
-            Edit
-          </Button>
-        </span>
-      )}
-      {empty && !props.disabled ? (
-        <button
-          type="button"
-          aria-label="Add a description"
-          className="absolute inset-0 cursor-text rounded-lg"
-          onClick={edit}
-        />
-      ) : null}
-    </div>
+    </section>
+  );
+}
+
+function LabelMenuItems(props: {
+  readonly board: KanbanBoardState;
+  readonly card: KanbanCard;
+  readonly onToggle: (labelId: KanbanLabelId) => void;
+  readonly onNew: () => void;
+}) {
+  return (
+    <>
+      {props.board.labels.map((label) => (
+        <MenuCheckboxItem
+          key={label.id}
+          checked={props.card.labelIds.includes(label.id)}
+          onCheckedChange={() => props.onToggle(label.id)}
+        >
+          <LabelChip label={label} />
+        </MenuCheckboxItem>
+      ))}
+      {props.board.labels.length > 0 ? <MenuSeparator /> : null}
+      <MenuItem onClick={props.onNew}>New label…</MenuItem>
+    </>
   );
 }
 
@@ -313,7 +365,11 @@ export function KanbanCardDetail(props: {
   const archived = card.archivedAt !== null;
   const disabled = !props.canEdit;
   const [newLabel, setNewLabel] = useState(false);
+  const [startAgent, setStartAgent] = useState(false);
   const [comment, setComment] = useState("");
+  const picker = useRef<HTMLInputElement>(null);
+  const dueInput = useRef<HTMLInputElement>(null);
+  const checklistInput = useRef<HTMLInputElement>(null);
   const column = board.columns.find((entry) => entry.id === card.columnId);
   const template = board.templates.find((entry) => entry.id === card.type);
   const columnName = (id: string) =>
@@ -321,6 +377,7 @@ export function KanbanCardDetail(props: {
   const result = query.data;
   const patch = (input: Omit<Parameters<typeof actions.updateCard>[0], "cardId">) =>
     actions.updateCard({ cardId: card.id, ...input } as Parameters<typeof actions.updateCard>[0]);
+  const attachments = useCardAttachmentUploads({ environmentId, disabled, patch });
 
   const moveTo = async (columnId: KanbanColumnId) => {
     const target = board.columns.find((entry) => entry.id === columnId);
@@ -337,7 +394,7 @@ export function KanbanCardDetail(props: {
 
   const remove = async () => {
     const confirmed = await requestConfirmDialog(
-      `Delete #${card.number}?\nThe card, its comments and its activity are removed for good.`,
+      `Delete #${card.number}?\nThe card, its comments, attachments and activity are removed for good.`,
       { variant: "destructive" },
     );
     if (confirmed === false) return;
@@ -345,7 +402,7 @@ export function KanbanCardDetail(props: {
   };
 
   const toggleLabel = (labelId: KanbanLabelId) =>
-    patch({
+    void patch({
       labelIds: card.labelIds.includes(labelId)
         ? card.labelIds.filter((id) => id !== labelId)
         : [...card.labelIds, labelId],
@@ -355,16 +412,52 @@ export function KanbanCardDetail(props: {
     (id) => board.labels.find((entry) => entry.id === id) ?? [],
   );
 
+  const openDueDate = () => {
+    const input = dueInput.current;
+    if (input === null) return;
+    input.focus();
+    try {
+      input.showPicker();
+    } catch {
+      // Some engines refuse showPicker outside a direct gesture; focus is enough there.
+    }
+  };
+
+  const postComment = async () => {
+    const body = comment.trim();
+    if (body.length === 0) return;
+    if ((await actions.commentOnCard({ cardId: card.id, body })) !== null) {
+      setComment("");
+      query.refresh();
+    }
+  };
+
   return (
     <Sheet open onOpenChange={(open) => !open && props.onClose()}>
-      <SheetPopup className="sm:max-w-4xl">
+      <SheetPopup className="sm:max-w-4xl" {...attachments.dropHandlers}>
+        {attachments.dragging ? <KanbanAttachmentDropOverlay /> : null}
         <div className="flex min-h-0 flex-1 flex-col" data-testid="kanban-card-detail">
           <header className="flex h-12 shrink-0 items-center gap-2 border-b ps-6 pe-14">
             <SheetTitle className="sr-only">Card #{card.number}</SheetTitle>
-            <span className="text-sm text-muted-foreground">
-              {project?.title ?? board.title} <span className="px-0.5">/</span>{" "}
-              <span className="tabular-nums">#{card.number}</span>
-            </span>
+            <nav
+              aria-label="Breadcrumb"
+              className="flex min-w-0 items-center gap-1.5 text-sm text-muted-foreground"
+            >
+              <span className="truncate">{project?.title ?? board.title}</span>
+              <span aria-hidden className="text-muted-foreground/50">
+                /
+              </span>
+              {column ? (
+                <span className="inline-flex shrink-0 items-center gap-1.5">
+                  <ColorDot color={column.color} />
+                  {column.name}
+                </span>
+              ) : null}
+              <span aria-hidden className="text-muted-foreground/50">
+                ·
+              </span>
+              <span className="shrink-0 tabular-nums">#{card.number}</span>
+            </nav>
             {archived ? <Badge variant="secondary">Archived</Badge> : null}
             {query.isPending ? <Spinner className="size-3" /> : null}
             {disabled ? null : (
@@ -405,27 +498,89 @@ export function KanbanCardDetail(props: {
           </header>
 
           <div className="grid min-h-0 flex-1 grid-cols-1 overflow-y-auto md:grid-cols-[minmax(0,1fr)_18rem] md:overflow-hidden">
-            <div className="grid content-start gap-7 p-6 md:overflow-y-auto">
-              <QuietInput
-                key={card.title}
-                aria-label="Title"
-                defaultValue={card.title}
-                disabled={disabled}
-                className="w-full text-xl leading-tight font-semibold"
-                onBlur={(event) => {
-                  const title = event.target.value.trim();
-                  if (title.length > 0 && title !== card.title) void patch({ title });
-                }}
-                onKeyDown={(event) => event.key === "Enter" && event.currentTarget.blur()}
-              />
+            <div className="grid content-start gap-8 px-6 pt-5 pb-10 md:overflow-y-auto">
+              {card.coverAttachmentId !== null ? (
+                <KanbanCardCover
+                  environmentId={environmentId}
+                  card={card}
+                  className="max-h-45 w-full rounded-xl border border-border bg-muted object-cover"
+                />
+              ) : null}
+
+              <div className="grid gap-3">
+                <QuietInput
+                  key={card.title}
+                  aria-label="Title"
+                  defaultValue={card.title}
+                  disabled={disabled}
+                  className="w-full text-2xl leading-tight font-semibold tracking-tight"
+                  onBlur={(event) => {
+                    const title = event.target.value.trim();
+                    if (title.length > 0 && title !== card.title) void patch({ title });
+                  }}
+                  onKeyDown={(event) => event.key === "Enter" && event.currentTarget.blur()}
+                />
+                {disabled ? null : (
+                  <div role="toolbar" aria-label="Quick actions" className="flex flex-wrap gap-1.5">
+                    <Menu>
+                      <MenuTrigger render={<Button size="xs" variant="outline" />}>
+                        <TagIcon />
+                        Labels
+                      </MenuTrigger>
+                      <MenuPopup align="start">
+                        <LabelMenuItems
+                          board={board}
+                          card={card}
+                          onToggle={toggleLabel}
+                          onNew={() => setNewLabel(true)}
+                        />
+                      </MenuPopup>
+                    </Menu>
+                    <Button size="xs" variant="outline" onClick={openDueDate}>
+                      <CalendarDaysIcon />
+                      Dates
+                    </Button>
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      onClick={() => checklistInput.current?.focus()}
+                    >
+                      <ListChecksIcon />
+                      Checklist
+                    </Button>
+                    <Button size="xs" variant="outline" onClick={() => picker.current?.click()}>
+                      <PaperclipIcon />
+                      Attach
+                    </Button>
+                    {archived ? null : (
+                      <Button size="xs" variant="outline" onClick={() => setStartAgent(true)}>
+                        <BotIcon />
+                        Agent
+                      </Button>
+                    )}
+                  </div>
+                )}
+              </div>
 
               <Description
-                key={card.updatedAt}
+                key={card.description}
                 text={card.description}
                 cwd={project?.workspaceRoot}
                 environmentId={environmentId}
                 disabled={disabled}
                 onSave={(description) => void patch({ description })}
+              />
+
+              <KanbanCardAttachments
+                environmentId={environmentId}
+                card={card}
+                disabled={disabled}
+                uploads={attachments.uploads}
+                onAddFiles={attachments.addFiles}
+                onRetry={attachments.retry}
+                onDiscard={attachments.discard}
+                patch={patch}
+                pickerRef={picker}
               />
 
               {archived ? null : (
@@ -440,52 +595,56 @@ export function KanbanCardDetail(props: {
 
               <KanbanChecklist
                 title="Checklist"
+                icon={ListChecksIcon}
                 items={card.checklist}
                 disabled={disabled}
+                addRef={checklistInput}
                 onChange={(checklist) => void patch({ checklist })}
               />
               <KanbanChecklist
                 title="Acceptance criteria"
+                icon={CircleCheckBigIcon}
                 items={card.acceptanceCriteria}
                 disabled={disabled}
                 onChange={(acceptanceCriteria) => void patch({ acceptanceCriteria })}
               />
 
-              <Section title="Activity">
+              <section className="grid gap-4" aria-label="Activity">
+                <SectionHeading icon={ActivityIcon} title="Activity" />
+                {disabled ? null : (
+                  <div className="flex gap-3">
+                    <Avatar icon={UserIcon} />
+                    <div className="grid min-w-0 flex-1 gap-2">
+                      <Textarea
+                        rows={2}
+                        aria-label="Comment"
+                        placeholder="Write a comment…"
+                        value={comment}
+                        onChange={(event) => setComment(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                            event.preventDefault();
+                            void postComment();
+                          }
+                        }}
+                      />
+                      {comment.trim().length > 0 ? (
+                        <div className="flex justify-end">
+                          <Button size="xs" onClick={() => void postComment()}>
+                            Comment
+                          </Button>
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                )}
                 {query.error !== null ? (
                   <p className="text-sm text-destructive-foreground">Could not load activity.</p>
                 ) : (
                   <Activity events={result?.activity ?? []} columnName={columnName} />
                 )}
-                {disabled ? null : (
-                  <div className="grid gap-2">
-                    <Textarea
-                      rows={3}
-                      aria-label="Comment"
-                      placeholder="Write a comment"
-                      value={comment}
-                      onChange={(event) => setComment(event.target.value)}
-                    />
-                    <div className="flex justify-end">
-                      <Button
-                        size="xs"
-                        disabled={comment.trim().length === 0}
-                        onClick={async () => {
-                          const body = comment.trim();
-                          if ((await actions.commentOnCard({ cardId: card.id, body })) !== null) {
-                            setComment("");
-                            query.refresh();
-                          }
-                        }}
-                      >
-                        Comment
-                      </Button>
-                    </div>
-                  </div>
-                )}
-              </Section>
+              </section>
             </div>
-
             <aside
               aria-label="Properties"
               className="grid content-start gap-1 border-t bg-muted/20 p-4 md:overflow-y-auto md:border-s md:border-t-0"
@@ -593,17 +752,12 @@ export function KanbanCardDetail(props: {
                         <PlusIcon />
                       </MenuTrigger>
                       <MenuPopup align="start">
-                        {board.labels.map((label) => (
-                          <MenuCheckboxItem
-                            key={label.id}
-                            checked={card.labelIds.includes(label.id)}
-                            onCheckedChange={() => void toggleLabel(label.id)}
-                          >
-                            <LabelChip label={label} />
-                          </MenuCheckboxItem>
-                        ))}
-                        {board.labels.length > 0 ? <MenuSeparator /> : null}
-                        <MenuItem onClick={() => setNewLabel(true)}>New label…</MenuItem>
+                        <LabelMenuItems
+                          board={board}
+                          card={card}
+                          onToggle={toggleLabel}
+                          onNew={() => setNewLabel(true)}
+                        />
                       </MenuPopup>
                     </Menu>
                   )}
@@ -612,6 +766,7 @@ export function KanbanCardDetail(props: {
               <PropertyRow label="Due date">
                 <div className="flex items-center gap-1">
                   <QuietInput
+                    ref={dueInput}
                     type="date"
                     aria-label="Due date"
                     disabled={disabled}
@@ -731,6 +886,14 @@ export function KanbanCardDetail(props: {
               await patch({ labelIds: [...card.labelIds, created.labelId] });
             }
           }}
+        />
+      ) : null}
+      {startAgent ? (
+        <KanbanStartAgentDialog
+          environmentId={environmentId}
+          board={board}
+          cards={[card]}
+          onClose={() => setStartAgent(false)}
         />
       ) : null}
     </Sheet>

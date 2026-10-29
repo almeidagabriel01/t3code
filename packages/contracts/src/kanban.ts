@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import {
@@ -179,6 +180,24 @@ export const KanbanEstimate = Schema.Struct({
 });
 export type KanbanEstimate = typeof KanbanEstimate.Type;
 
+const AttachmentId = TrimmedNonEmptyString.check(Schema.isMaxLength(256));
+export const KANBAN_CARD_MAX_ATTACHMENTS = 100;
+
+const KanbanCardAttachmentUpload = Schema.Struct({
+  /** A pending upload; the server copies it to a card-owned id. */
+  attachmentId: AttachmentId,
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
+  mimeType: TrimmedNonEmptyString.check(Schema.isMaxLength(100)),
+  sizeBytes: NonNegativeInt,
+});
+
+export const KanbanCardAttachment = Schema.Struct({
+  ...KanbanCardAttachmentUpload.fields,
+  addedAt: IsoDateTime,
+  addedBy: KanbanActor,
+});
+export type KanbanCardAttachment = typeof KanbanCardAttachment.Type;
+
 export const KanbanBoard = Schema.Struct({
   id: KanbanBoardId,
   projectId: ProjectId,
@@ -212,6 +231,12 @@ export const KanbanCard = Schema.Struct({
   linkedThreadIds: Schema.Array(ThreadId),
   /** One level deep: a subtask never has subtasks of its own. */
   parentCardId: Schema.NullOr(KanbanCardId),
+  attachments: Schema.Array(KanbanCardAttachment).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  coverAttachmentId: Schema.NullOr(AttachmentId).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   archivedAt: Schema.NullOr(IsoDateTime),
   createdBy: KanbanActor,
   createdAt: IsoDateTime,
@@ -441,6 +466,13 @@ export const KanbanCardUpdateInput = Schema.Struct({
   blockedBy: Schema.optionalKey(Schema.Array(KanbanCardId)),
   /** A card id attaches the card as a subtask; null detaches it. */
   parentCardId: Schema.optionalKey(Schema.NullOr(KanbanCardId)),
+  /** The first image added becomes the cover when the card has none. */
+  addAttachments: Schema.optionalKey(
+    Schema.Array(KanbanCardAttachmentUpload).check(Schema.isMaxLength(KANBAN_CARD_MAX_ATTACHMENTS)),
+  ),
+  removeAttachmentIds: Schema.optionalKey(Schema.Array(AttachmentId)),
+  /** Must name one of the card's attachments. */
+  coverAttachmentId: Schema.optionalKey(Schema.NullOr(AttachmentId)),
 });
 export const KanbanCardMoveInput = Schema.Struct({
   ...command,

@@ -1,6 +1,8 @@
 import {
   BUILT_IN_KANBAN_TEMPLATE,
+  KANBAN_CARD_MAX_ATTACHMENTS,
   KanbanAutomations,
+  KanbanCardAttachment,
   KanbanChecklistItem,
   KanbanEstimate,
   KanbanError,
@@ -162,6 +164,7 @@ const textList = jsonColumn(Schema.Array(Schema.String));
 const labelIdList = jsonColumn(Schema.Array(KanbanLabelId));
 const checklistJson = jsonColumn(Schema.Array(KanbanChecklistItem));
 const estimateJson = jsonColumn(KanbanEstimate);
+const attachmentsJson = jsonColumn(Schema.Array(KanbanCardAttachment));
 const automationsJson = jsonColumn(KanbanAutomations);
 const payloadJson = jsonColumn(Schema.Json);
 const resultJson = jsonColumn(KanbanMutationResult);
@@ -232,6 +235,8 @@ interface CardRow {
   readonly acceptance_criteria_json: string;
   readonly archived_at: string | null;
   readonly parent_card_id: string | null;
+  readonly attachments_json: string;
+  readonly cover_attachment_id: string | null;
   readonly created_by: string;
   readonly created_at: string;
   readonly updated_at: string;
@@ -283,6 +288,8 @@ const toCard = (
   blockedBy: blockedBy as ReadonlyArray<KanbanCardId>,
   linkedThreadIds: threadIds as ReadonlyArray<ThreadId>,
   parentCardId: row.parent_card_id as KanbanCardId | null,
+  attachments: attachmentsJson.parse(row.attachments_json),
+  coverAttachmentId: row.cover_attachment_id,
   archivedAt: row.archived_at,
   createdBy: row.created_by as KanbanActor,
   createdAt: row.created_at,
@@ -1187,6 +1194,50 @@ export const layer = Layer.effect(
               : undefined;
           if (seedLabels !== undefined) yield* assertLabels(board.id, seedLabels);
           const labelIds = input.labelIds ?? seedLabels;
+          const current = attachmentsJson.parse(row.attachments_json);
+          const removedIds = current
+            .map((attachment) => attachment.attachmentId)
+            .filter((id) => input.removeAttachmentIds?.includes(id));
+          const added: Array<KanbanCardAttachment> = [];
+          if (input.addAttachments !== undefined && input.addAttachments.length > 0) {
+            const claimed = yield* cardImages.claimIds(
+              row.card_id,
+              input.addAttachments.map((attachment) => attachment.attachmentId),
+            );
+            const addedAt = yield* nowIso;
+            for (const attachment of input.addAttachments) {
+              added.push({
+                ...attachment,
+                attachmentId: claimed.get(attachment.attachmentId)!,
+                addedAt,
+                addedBy: actorOf(input),
+              });
+            }
+          }
+          const attachments = [
+            ...current.filter((attachment) => !removedIds.includes(attachment.attachmentId)),
+            ...added,
+          ];
+          if (attachments.length > KANBAN_CARD_MAX_ATTACHMENTS) {
+            return yield* new KanbanError({
+              kind: "invalid",
+              message: `A card holds at most ${KANBAN_CARD_MAX_ATTACHMENTS} attachments.`,
+            });
+          }
+          const has = (id: string | null) =>
+            attachments.some((attachment) => attachment.attachmentId === id);
+          if (input.coverAttachmentId != null && !has(input.coverAttachmentId)) {
+            return yield* notFound("attachment", input.coverAttachmentId);
+          }
+          const cover =
+            input.coverAttachmentId !== undefined
+              ? input.coverAttachmentId
+              : has(row.cover_attachment_id)
+                ? row.cover_attachment_id
+                : row.cover_attachment_id === null
+                  ? (added.find((attachment) => attachment.mimeType.startsWith("image/"))
+                      ?.attachmentId ?? null)
+                  : null;
           const next = {
             title: input.title ?? row.title,
             description:
@@ -1211,6 +1262,11 @@ export const layer = Layer.effect(
                   : estimateJson.stringify(input.estimate),
             checklist_json:
               checklist === undefined ? row.checklist_json : checklistJson.stringify(checklist),
+            attachments_json:
+              added.length + removedIds.length === 0
+                ? row.attachments_json
+                : attachmentsJson.stringify(attachments),
+            cover_attachment_id: cover,
             acceptance_criteria_json:
               criteria === undefined
                 ? row.acceptance_criteria_json
@@ -1226,6 +1282,8 @@ export const layer = Layer.effect(
               ["dueAt", next.due_at !== row.due_at],
               ["parentCardId", next.parent_card_id !== row.parent_card_id],
               ["estimate", next.estimate_json !== row.estimate_json],
+              ["attachments", next.attachments_json !== row.attachments_json],
+              ["cover", next.cover_attachment_id !== row.cover_attachment_id],
               ["checklist", next.checklist_json !== row.checklist_json],
               [
                 "acceptanceCriteria",
@@ -1252,9 +1310,11 @@ export const layer = Layer.effect(
             SET title = ${next.title}, description = ${next.description}, type = ${next.type}, priority = ${next.priority}, parent_card_id = ${next.parent_card_id},
                 label_ids_json = ${next.label_ids_json}, due_at = ${next.due_at}, estimate_json = ${next.estimate_json},
                 checklist_json = ${next.checklist_json}, acceptance_criteria_json = ${next.acceptance_criteria_json},
+                attachments_json = ${next.attachments_json}, cover_attachment_id = ${next.cover_attachment_id},
                 updated_at = ${yield* nowIso}
             WHERE card_id = ${row.card_id}`;
           yield* addEvent(row.card_id, "field-changed", actorOf(input), { fields });
+          yield* cardImages.release(row.card_id, "", removedIds);
           return {
             result,
             deltas: yield* cardDeltas([row.card_id, ...related]),
@@ -1461,7 +1521,13 @@ export const layer = Layer.effect(
           yield* sql`UPDATE kanban_cards SET parent_card_id = NULL WHERE parent_card_id = ${row.card_id}`;
           // Cascades remove the card's events, thread links, and relation edges.
           yield* sql`DELETE FROM kanban_cards WHERE card_id = ${row.card_id}`;
-          yield* cardImages.release(row.card_id, row.description);
+          yield* cardImages.release(
+            row.card_id,
+            row.description,
+            attachmentsJson
+              .parse(row.attachments_json)
+              .map((attachment) => attachment.attachmentId),
+          );
           const boardId = row.board_id as KanbanBoardId;
           return {
             result: { cardId: input.cardId, boardId },

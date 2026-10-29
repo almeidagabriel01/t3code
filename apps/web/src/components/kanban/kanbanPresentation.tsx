@@ -115,6 +115,28 @@ export function PropertyRow(props: {
   );
 }
 
+/** The heading every card-detail section shares: icon, title, optional count and trailing action. */
+export function SectionHeading(props: {
+  readonly icon: ComponentType<{ className?: string }>;
+  readonly title: string;
+  readonly count?: number | undefined;
+  readonly children?: ReactNode;
+  readonly action?: ReactNode;
+}) {
+  const Icon = props.icon;
+  return (
+    <div className="flex min-h-7 items-center gap-2">
+      <Icon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+      <h3 className="text-sm font-semibold">{props.title}</h3>
+      {props.count ? (
+        <span className="text-xs text-muted-foreground tabular-nums">{props.count}</span>
+      ) : null}
+      {props.children}
+      {props.action ? <span className="ms-auto flex items-center">{props.action}</span> : null}
+    </div>
+  );
+}
+
 export function ProgressBar(props: { readonly done: number; readonly total: number }) {
   const percent = props.total === 0 ? 0 : Math.round((props.done / props.total) * 100);
   return (

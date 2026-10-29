@@ -46,6 +46,7 @@ import { kanbanEnvironment, useKanbanStates } from "../../state/kanban";
 import { useEnvironmentQuery } from "../../state/query";
 import { useOpenLinkedThread } from "../threads/useOpenLinkedThread";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
+import { KanbanCardAttachmentList, KanbanCardCoverImage } from "./KanbanCardAttachments";
 import { KanbanLabelChip } from "./KanbanCardTile";
 import { useKanbanActions } from "./useKanbanActions";
 import { useStartKanbanAgent } from "./useStartKanbanAgent";
@@ -398,6 +399,13 @@ function KanbanCardDetail(props: {
         contentContainerClassName="gap-5 p-5"
         contentContainerStyle={{ paddingBottom: insets.bottom + 24 }}
       >
+        {card.coverAttachmentId !== null ? (
+          <KanbanCardCoverImage
+            environmentId={environmentId}
+            card={card}
+            onPress={setExpandedImage}
+          />
+        ) : null}
         <View className="gap-3">
           <Pressable
             accessibilityRole="button"
@@ -549,10 +557,6 @@ function KanbanCardDetail(props: {
               onLinkPress={(href) => void Linking.openURL(href)}
               renderImage={renderDescriptionImage}
             />
-            <FilePreviewModal
-              source={expandedImage}
-              onRequestClose={() => setExpandedImage(null)}
-            />
             {disabled ? null : (
               <Button
                 label="Edit description"
@@ -570,6 +574,17 @@ function KanbanCardDetail(props: {
             onPress={() => setEditingDescription("")}
           />
         )}
+
+        {card.attachments.length > 0 ? (
+          <Section title={`Attachments · ${card.attachments.length}`}>
+            <KanbanCardAttachmentList
+              environmentId={environmentId}
+              card={card}
+              onPress={setExpandedImage}
+            />
+          </Section>
+        ) : null}
+        <FilePreviewModal source={expandedImage} onRequestClose={() => setExpandedImage(null)} />
 
         <Checklist
           title="Checklist"

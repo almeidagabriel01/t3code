@@ -15,6 +15,7 @@ import {
   LinkIcon,
   ListChecksIcon,
   ListTreeIcon,
+  PaperclipIcon,
 } from "lucide-react";
 import { memo } from "react";
 
@@ -26,6 +27,7 @@ import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Spinner } from "../ui/spinner";
+import { KanbanCardCover } from "./KanbanCardAttachments";
 import {
   KanbanProjectBadge,
   projectAccentClassName,
@@ -94,6 +96,7 @@ export const KanbanCardTile = memo(function KanbanCardTile(props: KanbanCardTile
     progress.total > 0 ||
     subtasksTotal > 0 ||
     card.dueAt !== null ||
+    card.attachments.length > 0 ||
     card.linkedThreadIds.length > 0;
   return (
     <div
@@ -108,6 +111,13 @@ export const KanbanCardTile = memo(function KanbanCardTile(props: KanbanCardTile
             "absolute inset-y-0 start-0 w-0.5 bg-current",
             projectAccentClassName(props.project),
           )}
+        />
+      ) : null}
+      {card.coverAttachmentId !== null ? (
+        <KanbanCardCover
+          environmentId={props.environmentId}
+          card={card}
+          className="-mx-3 -mt-3 h-28 w-[calc(100%+1.5rem)] max-w-none border-b border-border bg-muted object-cover"
         />
       ) : null}
       {props.project && props.showProjectBadge ? <KanbanProjectBadge info={props.project} /> : null}
@@ -198,6 +208,12 @@ export const KanbanCardTile = memo(function KanbanCardTile(props: KanbanCardTile
             >
               <CalendarDaysIcon className="size-3.5" />
               {formatDueLabel(card.dueAt, now)}
+            </span>
+          ) : null}
+          {card.attachments.length > 0 ? (
+            <span className="inline-flex items-center gap-1">
+              <PaperclipIcon aria-label="Attachments" className="size-3.5" />
+              <span className="tabular-nums">{card.attachments.length}</span>
             </span>
           ) : null}
           <span className="ms-auto flex items-center gap-1.5">

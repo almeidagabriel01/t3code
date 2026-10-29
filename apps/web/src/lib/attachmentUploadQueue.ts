@@ -1,5 +1,6 @@
 import {
   AuthOrchestrationOperateScope,
+  PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES,
   type ChatAttachment,
@@ -165,34 +166,40 @@ function uploadBytes(input: {
   return { done, abort: () => xhr.abort() };
 }
 
-/** Uploads one image outside any composer draft; resolves to the pending attachment id. */
-export async function uploadStandaloneImage(
+/** Uploads one file outside any composer draft; supported images upload as images. */
+export async function uploadStandaloneAttachment(
   environmentId: EnvironmentId,
   file: File,
-): Promise<string> {
-  const mimeType = PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES.find(
+  onProgress: (progress: number) => void = () => {},
+): Promise<{ readonly attachmentId: string; readonly mimeType: string }> {
+  const image = PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES.find(
     (supported) => supported === file.type.toLowerCase(),
   );
-  if (!mimeType) throw new Error("Unsupported image type");
-  if (file.size === 0 || file.size > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
-    throw new Error(`Images must be under ${PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / 1024 / 1024} MB`);
+  const mimeType = image ?? (file.type || "application/octet-stream");
+  const maxBytes = image ? PROVIDER_SEND_TURN_MAX_IMAGE_BYTES : PROVIDER_SEND_TURN_MAX_FILE_BYTES;
+  if (file.size === 0) throw new Error("The file is empty");
+  if (file.size > maxBytes) {
+    throw new Error(`${image ? "Images" : "Files"} must be under ${maxBytes / 1024 / 1024} MB`);
   }
   if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) {
     throw new Error("This connection cannot upload attachments.");
   }
+  const name = file.name || (image ? "image" : "file");
   const result = await runAttachmentUploadCycle({
     registry: appAtomRegistry,
     createUploadUrl: attachmentEnvironment.createUploadUrl,
     remove: attachmentEnvironment.remove,
     environmentId,
-    upload: { name: file.name || "image", mimeType, sizeBytes: file.size },
+    upload: image
+      ? { name, mimeType: image, sizeBytes: file.size }
+      : { type: "file", name, mimeType, sizeBytes: file.size },
     resolveUploadUrl: (relativeUrl) => {
       const connection = readPreparedConnection(environmentId);
       return connection ? resolveAssetUrl(connection.httpBaseUrl, relativeUrl) : null;
     },
-    transport: (url) => uploadBytes({ url, file, mimeType, onProgress: () => {} }),
+    transport: (url) => uploadBytes({ url, file, mimeType, onProgress }),
   });
-  if (result.status === "uploaded") return result.attachmentId;
+  if (result.status === "uploaded") return { attachmentId: result.attachmentId, mimeType };
   if (result.attachmentId) deletePendingUpload(environmentId, result.attachmentId);
   throw result.status === "failed" && result.error instanceof Error
     ? result.error

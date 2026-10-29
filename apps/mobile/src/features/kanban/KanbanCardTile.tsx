@@ -87,7 +87,10 @@ export function KanbanCardTile(props: {
           ))}
         </View>
       ) : null}
-      {progress.total > 0 || card.dueAt !== null || card.linkedThreadIds.length > 0 ? (
+      {progress.total > 0 ||
+      card.dueAt !== null ||
+      card.attachments.length > 0 ||
+      card.linkedThreadIds.length > 0 ? (
         <View className="flex-row items-center gap-3">
           {progress.total > 0 ? (
             <View className="flex-row items-center gap-1">
@@ -116,6 +119,17 @@ export function KanbanCardTile(props: {
                   month: "short",
                   day: "numeric",
                 })}
+              </Text>
+            </View>
+          ) : null}
+          {card.attachments.length > 0 ? (
+            <View
+              className="flex-row items-center gap-1"
+              accessibilityLabel={`${card.attachments.length} attachments`}
+            >
+              <SymbolView name="paperclip" size={14} tintColorClassName="accent-icon-muted" />
+              <Text textRole="caption" className="text-foreground-muted">
+                {card.attachments.length}
               </Text>
             </View>
           ) : null}

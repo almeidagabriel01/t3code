@@ -1,39 +1,40 @@
 import { checklistProgress, moveChecklistItem } from "@t3tools/client-runtime/state/kanbanLogic";
 import type { KanbanChecklistItem } from "@t3tools/contracts";
 import { ArrowDownIcon, ArrowUpIcon, PlusIcon, XIcon } from "lucide-react";
-import { useState } from "react";
+import { useState, type ComponentType, type Ref } from "react";
 
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
-import { ProgressBar, QuietInput } from "./kanbanPresentation";
+import { ProgressBar, QuietInput, SectionHeading } from "./kanbanPresentation";
 
 type Item = Pick<KanbanChecklistItem, "id" | "text" | "done">;
 
 export function KanbanChecklist(props: {
   readonly title: string;
+  readonly icon: ComponentType<{ className?: string }>;
   readonly items: ReadonlyArray<Item>;
   readonly disabled: boolean;
+  readonly addRef?: Ref<HTMLInputElement> | undefined;
   readonly onChange: (
     items: ReadonlyArray<{ id?: Item["id"]; text: string; done: boolean }>,
   ) => void;
 }) {
   const [draft, setDraft] = useState("");
   const { done, total } = checklistProgress(props.items);
-  const { items, onChange } = props;
+  const { items, onChange, addRef } = props;
   return (
     <section className="grid gap-2" aria-label={props.title}>
-      <h3 className="flex items-center gap-2 text-sm font-semibold">
-        {props.title}
+      <SectionHeading icon={props.icon} title={props.title}>
         {total > 0 ? (
-          <span className="flex items-center gap-1.5 text-xs font-normal text-muted-foreground">
+          <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
             <ProgressBar done={done} total={total} />
             <span className="tabular-nums">
               {done}/{total}
             </span>
           </span>
         ) : null}
-      </h3>
+      </SectionHeading>
       <ul className="grid">
         {items.map((item, index) => (
           <li key={item.id} className="group flex items-center gap-2 rounded-md py-0.5">
@@ -99,6 +100,7 @@ export function KanbanChecklist(props: {
         <div className="flex items-center gap-2 text-muted-foreground">
           <PlusIcon className="size-4 shrink-0" />
           <QuietInput
+            ref={addRef}
             value={draft}
             aria-label={`Add to ${props.title.toLowerCase()}`}
             placeholder="Add an item"
