@@ -18,6 +18,14 @@ finds a note by title.
 When more than one connected environment has notes, pick the environment at the top of the page.
 Each environment keeps its own notes.
 
+## Formatting
+
+Type `/` at the start of a line, or after a space, to insert a block: headings, lists, to-dos,
+quotes, callouts, code, dividers, tables, or an image. Keep typing to filter, then press Enter. Select
+text to bold, italicize, strike through, code, link, or turn it into a heading. The shortcuts are
+Cmd/Ctrl+B, I, Shift+S, E, and K. Callouts, tables, and links are saved as plain markdown
+(`> [!NOTE]`, pipe tables, `[text](url)`), so other editors read them too.
+
 ## Images
 
 Paste, drop, or pick an image with the image button in the toolbar. It appears at once and uploads
@@ -55,4 +63,4 @@ a small frontmatter block at the top of each file.
 
 You can edit the files in any editor. T3 Code picks up the change, and if you were editing the same
 note, it asks you to compare the two versions before saving. Markdown the editor cannot show, such
-as tables or HTML, stays as source text, and parts you did not touch are saved exactly as they were.
+as HTML, stays as source text, and parts you did not touch are saved exactly as they were.
