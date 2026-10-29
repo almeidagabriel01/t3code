@@ -1,4 +1,5 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
@@ -9,13 +10,17 @@ import {
   type KanbanStreamItem,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import * as ServerConfig from "../config.ts";
+import * as ResourceCleanupService from "../orchestration-v2/ResourceCleanupService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as CardImages from "./CardImages.ts";
 import * as Kanban from "./KanbanService.ts";
 
 const TestLayer = Kanban.layer.pipe(
@@ -736,3 +741,61 @@ it.effect("a parent's definition of done also needs every subtask done", () =>
     assert.ok("moved" in (yield* move()));
   }).pipe(Effect.provide(TestLayer)),
 );
+
+const imagesLayer = (cleaned: string[]) =>
+  Kanban.layer.pipe(
+    Layer.provide(
+      CardImages.layerLive.pipe(
+        Layer.provide(
+          Layer.succeed(ResourceCleanupService.ResourceCleanupService, {
+            cleanupScheduledTasks: () => Effect.void,
+            cleanupTerminals: () => Effect.void,
+            cleanupPreviews: () => Effect.void,
+            cleanupAttachments: (ids) => Effect.sync(() => void cleaned.push(...ids)),
+          }),
+        ),
+      ),
+    ),
+    Layer.provideMerge(Layer.merge(SqlitePersistence.layerMemory, NodeCrypto.layer)),
+    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "kanban-images-" })),
+    Layer.provideMerge(NodeServices.layer),
+  );
+
+it.effect("card images are claimed to the card on save and cleaned up with it", () => {
+  const cleaned: string[] = [];
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const { attachmentsDir } = yield* ServerConfig.ServerConfig;
+    const { kanban, boardId } = yield* setup;
+    const pendingId = "pending-0b8e6a7e-1c1f-4c55-8d8e-0f6c0a1d2e3f";
+    const foreignId = "thread-1-6d7c1d2e-3f4a-4b5c-8d9e-0a1b2c3d4e5f";
+    yield* fs.makeDirectory(attachmentsDir, { recursive: true });
+    yield* fs.writeFile(`${attachmentsDir}/${pendingId}.png`, new Uint8Array([1, 2, 3]));
+    const cardId = (yield* kanban.cardCreate({ commandId: cmd(), boardId, title: "Shot" })).cardId!;
+    yield* kanban.cardUpdate({
+      commandId: cmd(),
+      cardId,
+      description: `![a](t3-attachment:${pendingId}) ![b](t3-attachment:${foreignId})`,
+    });
+    const { description } = (yield* kanban.getCard({ cardId })).card;
+    const claimedId = /t3-attachment:(card-[a-z0-9-]+)\)/.exec(description)![1]!;
+    assert.ok(claimedId.startsWith(`card-${cardId}-`));
+    assert.ok(description.includes(foreignId));
+    assert.deepEqual(
+      Array.from(yield* fs.readFile(`${attachmentsDir}/${claimedId}.png`)),
+      [1, 2, 3],
+    );
+
+    const missing = yield* kanban
+      .cardUpdate({
+        commandId: cmd(),
+        cardId,
+        description: "![c](t3-attachment:pending-7f2c1d2e-3f4a-4b5c-8d9e-0a1b2c3d4e5f)",
+      })
+      .pipe(Effect.flip);
+    assert.equal(missing.kind, "invalid");
+
+    yield* kanban.cardDelete({ commandId: cmd(), cardId });
+    assert.deepEqual(cleaned, [claimedId]);
+  }).pipe(Effect.provide(imagesLayer(cleaned)));
+});

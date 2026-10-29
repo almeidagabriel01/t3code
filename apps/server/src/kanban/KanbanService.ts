@@ -59,6 +59,7 @@ import type { SqlError } from "effect/sql/SqlError";
 
 import * as ServerSettings from "../serverSettings.ts";
 import * as UsageService from "../usage/UsageService.ts";
+import { KanbanCardImages, layerLive as layerCardImagesLive } from "./CardImages.ts";
 import { aggregateCardUsage, type KanbanPricingTables } from "./cardUsage.ts";
 import { checkDefinitionOfDone } from "./definitionOfDone.ts";
 import { DEFAULT_KANBAN_AUTOMATIONS } from "./defaults.ts";
@@ -351,6 +352,7 @@ export const layer = Layer.effect(
     const crypto = yield* Crypto.Crypto;
     const pricing = yield* KanbanPricing;
     const templateSource = yield* KanbanTemplateSource;
+    const cardImages = yield* KanbanCardImages;
     const writeLock = yield* Semaphore.make(1);
     const deltas = yield* PubSub.unbounded<KanbanStreamItem>();
 
@@ -1072,13 +1074,14 @@ export const layer = Layer.effect(
           const number = numbers[0]!.next_card_number;
           yield* sql`UPDATE kanban_boards SET next_card_number = ${number + 1} WHERE board_id = ${board.id}`;
           const cardId = yield* newId;
+          const description = yield* cardImages.claim(cardId, input.description ?? "");
           const plan = yield* placeOrFail(yield* liveCardsOf(column.id), {}, cardId);
           yield* writeCardKeys(plan.rewrites);
           const at = yield* nowIso;
           const actor = actorOf(input);
           yield* sql`
             INSERT INTO kanban_cards (card_id, board_id, column_id, order_key, number, title, description, type, priority, label_ids_json, due_at, estimate_json, checklist_json, acceptance_criteria_json, archived_at, parent_card_id, created_by, created_at, updated_at)
-            VALUES (${cardId}, ${board.id}, ${column.id}, ${plan.key}, ${number}, ${input.title}, ${input.description ?? ""}, ${input.type ?? null}, ${input.priority ?? template?.priority ?? "none"}, ${labelIdList.stringify(labelIds)}, ${input.dueAt ?? null}, ${input.estimate == null ? null : estimateJson.stringify(input.estimate)}, ${checklistJson.stringify(checklist)}, ${checklistJson.stringify(acceptanceCriteria)}, NULL, ${input.parentCardId ?? null}, ${actor}, ${at}, ${at})`;
+            VALUES (${cardId}, ${board.id}, ${column.id}, ${plan.key}, ${number}, ${input.title}, ${description}, ${input.type ?? null}, ${input.priority ?? template?.priority ?? "none"}, ${labelIdList.stringify(labelIds)}, ${input.dueAt ?? null}, ${input.estimate == null ? null : estimateJson.stringify(input.estimate)}, ${checklistJson.stringify(checklist)}, ${checklistJson.stringify(acceptanceCriteria)}, NULL, ${input.parentCardId ?? null}, ${actor}, ${at}, ${at})`;
           yield* addEvent(cardId, "created", actor, { title: input.title, columnId: column.id });
           return {
             result: {
@@ -1186,7 +1189,10 @@ export const layer = Layer.effect(
           const labelIds = input.labelIds ?? seedLabels;
           const next = {
             title: input.title ?? row.title,
-            description: input.description ?? row.description,
+            description:
+              input.description === undefined
+                ? row.description
+                : yield* cardImages.claim(row.card_id, input.description),
             type: input.type === undefined ? row.type : input.type,
             priority:
               input.priority ??
@@ -1455,6 +1461,7 @@ export const layer = Layer.effect(
           yield* sql`UPDATE kanban_cards SET parent_card_id = NULL WHERE parent_card_id = ${row.card_id}`;
           // Cascades remove the card's events, thread links, and relation edges.
           yield* sql`DELETE FROM kanban_cards WHERE card_id = ${row.card_id}`;
+          yield* cardImages.release(row.card_id, row.description);
           const boardId = row.board_id as KanbanBoardId;
           return {
             result: { cardId: input.cardId, boardId },
@@ -1571,6 +1578,7 @@ export const layer = Layer.effect(
 export const layerLive = layer.pipe(
   Layer.provide(
     Layer.mergeAll(
+      layerCardImagesLive,
       Layer.effect(
         KanbanPricing,
         Effect.gen(function* () {
