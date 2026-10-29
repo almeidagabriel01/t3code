@@ -1251,6 +1251,27 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("serves a card-owned image attachment", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fileSystem.makeDirectory(config.attachmentsDir, { recursive: true });
+      const attachmentId =
+        "card-8b886866-d7ee-4817-aee9-eea00cb0c9b7-951dbb14-3a29-4173-857a-8501fb89cc28";
+      const attachmentPath = path.join(config.attachmentsDir, `${attachmentId}.png`);
+      yield* fileSystem.writeFile(attachmentPath, new Uint8Array([1, 2, 3]));
+      const result = yield* issueAssetUrl({ resource: { _tag: "attachment", attachmentId } });
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separatorIndex = suffix.indexOf("/");
+      const asset = yield* resolveAsset(
+        suffix.slice(0, separatorIndex),
+        suffix.slice(separatorIndex + 1),
+      );
+      expect(asset).toMatchObject({ kind: "file", path: attachmentPath });
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("keeps inline requests for other attachment types as downloads", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;
