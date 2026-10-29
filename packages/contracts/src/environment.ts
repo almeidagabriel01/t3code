@@ -125,6 +125,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   threadPullRequestWatch: Schema.optionalKey(Schema.Boolean),
   /** Hide Kanban when absent; older servers have no board methods. */
   kanban: Schema.optionalKey(Schema.Boolean),
+  /** Hide Notes when absent; older servers have no notes methods. */
+  notes: Schema.optionalKey(Schema.Boolean),
   pullRequestStackActions: Schema.optionalKey(Schema.Boolean),
   serverSelfUpdate: Schema.optionalKey(ServerSelfUpdateCapability),
   /** Manual commands must update this install, not the host's default global prefix. */

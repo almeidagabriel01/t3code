@@ -11,6 +11,7 @@ import * as Effect from "effect/Effect";
 import * as NoteWorkService from "../../../notes/NoteWorkService.ts";
 import * as NotesService from "../../../notes/NotesService.ts";
 import * as Project from "../../../project/ProjectService.ts";
+import { assertNotLinked } from "../../linkOrigin.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { loadCaller, newCommandId, resolveProjectId, unavailable } from "../../threadAccess.ts";
 import { NoteToolkit, type NoteParameters } from "./tools.ts";
@@ -38,6 +39,8 @@ const run = Effect.fn("mcp.note.run")(
   function* (input: NoteParameters) {
     const notes = yield* NotesService.NotesService;
     const action = input.action;
+    const context = yield* loadCaller();
+    if (!reads(action)) yield* assertNotLinked(context, "change this environment's notes");
     switch (action) {
       case "list":
         return yield* notes.list(input.folder === undefined ? {} : { folder: input.folder });
@@ -76,12 +79,13 @@ const run = Effect.fn("mcp.note.run")(
         );
       case "start_work": {
         const path = yield* need(input.path, "path", action);
-        const context = yield* loadCaller();
         if (context.scope.kanban?.enabled === false) {
           return yield* invalid("The kanban board is turned off for agents in Settings.");
         }
         const projectId = yield* resolveProject(input.project, context);
-        const requestId = input.clientRequestId?.trim() || (yield* newCommandId());
+        const requestId = input.clientRequestId?.trim()
+          ? `mcp:${context.scope.requestNamespace}:${input.clientRequestId.trim()}`
+          : yield* newCommandId();
         const actor = `agent:${context.scope.thread!.threadId}` as KanbanActor;
         const started = yield* (yield* NoteWorkService.NoteWorkService).startWork(
           { path, projectId, requestId },
