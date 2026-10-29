@@ -82,12 +82,8 @@ export const AttachmentImage = Node.create({
   addNodeView: () => ReactNodeViewRenderer(AttachmentImageView),
 });
 
-/**
- * Editor classes that leave the image node's own ring as the only selection mark: the editor
- * keeps its inset focus ring and ProseMirror's selected-node outline is removed.
- */
-export const ATTACHMENT_IMAGE_EDITOR_CLASS =
-  "ring-ring/24 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-inset [&_.ProseMirror-selectednode]:outline-none!";
+/** The image node's own ring is the only selection mark; ProseMirror's outline is removed. */
+export const ATTACHMENT_IMAGE_EDITOR_CLASS = "[&_.ProseMirror-selectednode]:outline-none!";
 
 export const imageFiles = (files: FileList | null | undefined) =>
   Array.from(files ?? []).filter((file) => file.type.startsWith("image/"));
