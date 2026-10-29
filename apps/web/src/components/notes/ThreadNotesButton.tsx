@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { selectNotesInOrder } from "@t3tools/client-runtime/state/notes";
-import { NoteFolder, type EnvironmentId, type ThreadId } from "@t3tools/contracts";
+import { NoteFolder, type EnvironmentId, type ProjectId, type ThreadId } from "@t3tools/contracts";
 import { Link, useNavigate } from "@tanstack/react-router";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
@@ -25,6 +25,7 @@ const LINK_RESULTS = 6;
 export function ThreadNotesButton(props: {
   environmentId: EnvironmentId;
   threadId: ThreadId;
+  projectId: ProjectId | null;
   projectTitle: string | null;
 }) {
   const supported = useNotesEnvironmentIds().includes(props.environmentId);
@@ -35,6 +36,7 @@ export function ThreadNotesButton(props: {
 function ThreadNotes(props: {
   environmentId: EnvironmentId;
   threadId: ThreadId;
+  projectId: ProjectId | null;
   projectTitle: string | null;
 }) {
   const { environmentId } = props;
@@ -68,7 +70,7 @@ function ThreadNotes(props: {
     setError(null);
     const folder =
       props.projectTitle && isNoteFolder(props.projectTitle) ? props.projectTitle : null;
-    const created = await createNote(folder);
+    const created = await createNote(folder, props.projectId ?? undefined);
     if (!created.ok) {
       setError(noteErrorMessage(created.error));
       return;

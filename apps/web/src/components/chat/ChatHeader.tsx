@@ -456,6 +456,7 @@ export const ChatHeader = memo(function ChatHeader({
         <ThreadNotesButton
           environmentId={activeThreadEnvironmentId}
           threadId={activeThreadId}
+          projectId={activeProject && !activeProject.isScratch ? activeProject.id : null}
           projectTitle={activeProject && !activeProject.isScratch ? activeProject.title : null}
         />
       ) : null}
