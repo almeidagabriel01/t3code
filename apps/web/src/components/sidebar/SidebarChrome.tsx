@@ -43,11 +43,8 @@ import { SidebarViewToggles } from "./SidebarViewToggles";
 
 export const SidebarChromeHeader = memo(function SidebarChromeHeader({
   isElectron,
-  priorityCount,
 }: {
   isElectron: boolean;
-  /** Shows the Activity bell; only the thread sidebar has Priority. */
-  priorityCount?: number;
 }) {
   const stageLabel = useEnvironmentStageLabel();
   const environmentIdentificationMode = useEnvironmentIdentificationMode();
@@ -85,9 +82,7 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
           </div>
         ) : null}
       </div>
-      {priorityCount !== undefined ? (
-        <SidebarViewToggles onBackdrop={backdropVariant !== null} priorityCount={priorityCount} />
-      ) : null}
+      <SidebarViewToggles onBackdrop={backdropVariant !== null} />
     </div>
   );
 });

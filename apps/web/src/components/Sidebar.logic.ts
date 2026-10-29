@@ -173,20 +173,16 @@ export const animateSidebarLayoutChanges: AnimateLayoutChanges = (args) =>
   args.isSorting ? defaultAnimateLayoutChanges(args) : false;
 
 // Snoozed rows cannot accept drops without a wake time. Working rows only drag out as chat context.
-// Priority follows live attention, so it is neither a drag source nor a destination.
 
-export type SidebarSection = "priority" | "pinned" | "active" | "working" | "snoozed" | "settled";
+export type SidebarSection = "pinned" | "active" | "working" | "snoozed" | "settled";
 
-/** Snooze wins until its wake boundary. Priority overlays lifecycle;
- * otherwise settlement wins over a stale pin. */
+/** Snooze wins until its wake boundary; otherwise settlement wins over a stale pin. */
 export function resolveSidebarThreadSection(input: {
   readonly snoozed: boolean;
   readonly settled: boolean;
   readonly pinned: boolean;
-  readonly priority?: boolean;
 }): SidebarSection {
   if (input.snoozed) return "snoozed";
-  if (input.priority) return "priority";
   if (input.settled) return "settled";
   if (input.pinned) return "pinned";
   return "active";
@@ -251,7 +247,7 @@ export function resolveSidebarDropTarget(
   const moved = items.filter((_, index) => index !== activeIndex);
   moved.splice(overIndex, 0, items[activeIndex]!);
   const section = sectionAtSidebarSlot(moved, overIndex);
-  if (section === "working" || section === "snoozed" || section === "priority") return null;
+  if (section === "working" || section === "snoozed") return null;
   const pinnedOrder: string[] = [];
   const activeOrder: string[] = [];
   let currentSection: SidebarSection = "pinned";
@@ -299,8 +295,7 @@ export function resolveSidebarDropVerb(
   from: SidebarSection,
   to: SidebarSection | null,
 ): SidebarDropVerb | null {
-  if (to === null || to === from || to === "working" || to === "snoozed" || to === "priority")
-    return null;
+  if (to === null || to === from || to === "working" || to === "snoozed") return null;
   if (to === "pinned") return "pin";
   if (to === "settled") return "settle";
   if (from === "pinned") return "unpin";
@@ -359,7 +354,7 @@ export function planSidebarThreadDrop(input: {
     activeKeysById,
     activeReorderableKeys,
   } = input;
-  if (activeSection === "working" || activeSection === "priority") return { kind: "none" };
+  if (activeSection === "working") return { kind: "none" };
   if (input.supportsSettlement === false && (target.section === "settled" || activeSettled)) {
     return { kind: "none" };
   }
@@ -761,12 +756,12 @@ export function resolveSidebarPriorityRank(input: {
     : null;
 }
 
-/** Settled state each Priority row had when Activity last showed it, by scoped thread key. */
+/** Settled state each row had when the Activity page last showed it, by scoped thread key. */
 export type SidebarPriorityHolds = ReadonlyMap<string, SidebarThreadSummary["settledOverride"]>;
 
 /**
- * Reading a thread does not pull its row out of Priority while Activity stays open; it leaves
- * when Activity is shown again. Settling or unsettling the row is the user's own move, so a
+ * Reading a thread does not pull its row off the Activity page while it stays open; it leaves
+ * when the page is opened again. Settling or unsettling the row is the user's own move, so a
  * changed settled state ends the hold.
  */
 export function holdSidebarPriorityRank(input: {
@@ -780,28 +775,6 @@ export function holdSidebarPriorityRank(input: {
   if (input.released) return input.rank;
   if (input.rank !== null || !input.holds.has(input.key)) return input.rank;
   return input.holds.get(input.key) === input.settledOverride ? 2 : null;
-}
-
-/**
- * Settling acknowledges a wake. The acknowledgement sticks until the shell stops
- * reporting one, so a later hold cannot put the Woke pill back. Un-settling restores it.
- */
-export function resolveSidebarWokeAtForRow(input: {
-  readonly key: string;
-  readonly rawWokeAt: string | null;
-  readonly settledOverride: SidebarThreadSummary["settledOverride"];
-  readonly heldSettledOverride: SidebarThreadSummary["settledOverride"] | undefined;
-  readonly acknowledged: Set<string>;
-}): string | null {
-  const settling =
-    input.heldSettledOverride !== undefined &&
-    input.heldSettledOverride !== input.settledOverride &&
-    input.settledOverride === "settled";
-  if (settling) input.acknowledged.add(input.key);
-  if (input.settledOverride !== "settled" || input.rawWokeAt === null) {
-    input.acknowledged.delete(input.key);
-  }
-  return input.acknowledged.has(input.key) ? null : input.rawWokeAt;
 }
 
 /** Writable unread completions and woke-only rows are targets of Priority's bulk visit. */
@@ -844,7 +817,7 @@ export function sortPriorityThreadsForSidebar<
   );
 }
 
-/** Row controls follow lifecycle even inside Priority. */
+/** Row controls follow lifecycle. */
 export function resolveSidebarThreadPresentation(input: {
   readonly snoozed: boolean;
   readonly settled: boolean;

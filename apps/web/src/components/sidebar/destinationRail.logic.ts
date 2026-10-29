@@ -1,6 +1,6 @@
 export type DestinationId =
   | "home"
-  | "running"
+  | "activity"
   | "board"
   | "pullRequests"
   | "usage"
@@ -16,7 +16,7 @@ const isWithin = (pathname: string, base: string) =>
 
 /** Picks the rail destination for a URL. */
 export function resolveActiveDestination(pathname: string): DestinationId {
-  if (pathname === "/running") return "running";
+  if (pathname === "/activity") return "activity";
   if (pathname === "/kanban") return "board";
   if (pathname === "/pull-requests") return "pullRequests";
   if (pathname === "/usage") return "usage";
@@ -28,7 +28,7 @@ export function resolveActiveDestination(pathname: string): DestinationId {
 
 /** Rail items a person can show, hide, and reorder, in their default order. Home and Settings stay pinned. */
 export const RAIL_ITEM_IDS = [
-  "running",
+  "activity",
   "board",
   "pullRequests",
   "usage",

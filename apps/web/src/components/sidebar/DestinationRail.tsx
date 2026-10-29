@@ -3,10 +3,10 @@ import { AuthProvidersManageScope, type EnvironmentId } from "@t3tools/contracts
 import { Link, useLocation } from "@tanstack/react-router";
 import { Atom } from "effect/reactivity";
 import {
-  ActivityIcon,
   ArchiveIcon,
   ArrowDownIcon,
   ArrowUpIcon,
+  BellIcon,
   CalendarClockIcon,
   ChartNoAxesColumnIcon,
   HouseIcon,
@@ -44,7 +44,7 @@ import {
   usePullRequestsSupported,
 } from "../../state/environments";
 import { useKanbanEnvironmentIds } from "../../state/kanban";
-import { useRunningSummary } from "../../state/running";
+import { useActivityBadge } from "../activity/useActivity";
 import { providerReadyAtom } from "../../state/server";
 import { useEnvironmentScope } from "../../state/session";
 import { Button } from "../ui/button";
@@ -90,7 +90,7 @@ const RAIL_ITEMS: Record<
   RailItemId,
   { label: string; icon: LucideIcon | PullRequestGlyphIcon; unavailable?: string }
 > = {
-  running: { label: "Running", icon: ActivityIcon },
+  activity: { label: "Activity", icon: BellIcon },
   board: {
     label: "Board",
     icon: SquareKanbanIcon,
@@ -157,25 +157,24 @@ function useToggleBack(active: DestinationId) {
 
 type ToggleBack = ReturnType<typeof useToggleBack>;
 
-const RunningRailItem = memo(function RunningRailItem(props: {
+const ActivityRailItem = memo(function ActivityRailItem(props: {
   active: boolean;
   onClick: (event: MouseEvent) => void;
 }) {
-  const { running, attention } = useRunningSummary();
-  const live = running + attention;
-  const label = live === 0 ? "Running" : `Running, ${running} working, ${attention} need you`;
+  const count = useActivityBadge();
+  const label = count === 0 ? "Activity" : `Activity, ${count} need attention`;
   return (
     <RailTooltip label={label}>
       <Link
-        to="/running"
+        to="/activity"
         aria-label={label}
         activeOptions={EXACT_MATCH}
         aria-current={props.active ? "page" : undefined}
         className={railItemClassName(props.active)}
         onClick={props.onClick}
       >
-        <ActivityIcon aria-hidden />
-        <RailCount count={live} />
+        <BellIcon aria-hidden />
+        <RailCount count={count} />
       </Link>
     </RailTooltip>
   );
@@ -228,8 +227,8 @@ function RailItem(props: {
 }) {
   const { active, toggleBack } = props;
   switch (props.id) {
-    case "running":
-      return <RunningRailItem active={active === "running"} onClick={toggleBack("running")} />;
+    case "activity":
+      return <ActivityRailItem active={active === "activity"} onClick={toggleBack("activity")} />;
     case "board":
       return (
         <RailLink

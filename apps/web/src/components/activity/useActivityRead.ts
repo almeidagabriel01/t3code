@@ -14,11 +14,7 @@ import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { useUiStateStore } from "../../uiStateStore";
 import { selectSidebarMarkReadTargets } from "../Sidebar.logic";
 import { stackedThreadToast, toastManager } from "../ui/toast";
-import {
-  markSidebarPriorityRead,
-  selectSidebarPriorityClear,
-  type SidebarPriorityReadPlan,
-} from "./priorityRead";
+import { markActivityRead, selectActivityClear, type ActivityReadPlan } from "./activityRead";
 
 const threadKey = (thread: EnvironmentThreadShell) =>
   scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
@@ -26,52 +22,45 @@ const threadKey = (thread: EnvironmentThreadShell) =>
 const canOperate = (thread: EnvironmentThreadShell) =>
   readEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope);
 
-/** Priority's bulk read actions: Mark all as read, and Clear read threads. */
-export function useSidebarPriorityRead(input: {
-  readonly priorityThreads: readonly EnvironmentThreadShell[];
-  /** Effective wakes Priority ranked its rows with. */
-  readonly wokeAtByThreadKey: ReadonlyMap<string, string | null>;
+/** The page's bulk read actions: Mark all as read, and Clear read threads. */
+export function useActivityRead(input: {
+  readonly threads: readonly EnvironmentThreadShell[];
   readonly snoozeNow: string;
-  readonly releasePriorityThreads: (keys: readonly string[]) => void;
-  readonly restorePriorityThread: (key: string) => void;
+  readonly releaseThreads: (keys: readonly string[]) => void;
+  readonly restoreThread: (key: string) => void;
 }) {
-  const { priorityThreads } = input;
+  const { threads } = input;
   const localLastVisitedAtByKey = useUiStateStore((state) => state.threadLastVisitedAtById);
   const markThreadVisited = useUiStateStore((state) => state.markThreadVisited);
-  const operableEnvironments = useEnvironmentsWithScope(
-    priorityThreads,
-    AuthOrchestrationOperateScope,
-  );
+  const operableEnvironments = useEnvironmentsWithScope(threads, AuthOrchestrationOperateScope);
   const visitThread = useOrchestrationCommand(threadEnvironment.visit, { reportFailure: false });
   const rawWokeAtByKey = new Map(
-    priorityThreads.map((thread) => [
-      threadKey(thread),
-      threadWokeAt(thread, { now: input.snoozeNow }),
-    ]),
+    threads.map((thread) => [threadKey(thread), threadWokeAt(thread, { now: input.snoozeNow })]),
   );
   const markReadTargets = (operable: (thread: EnvironmentThreadShell) => boolean) =>
     selectSidebarMarkReadTargets({
-      threads: priorityThreads,
+      threads,
       localLastVisitedAtByKey,
       wokeAtByKey: rawWokeAtByKey,
       canOperate: operable,
     });
   const clearPlan = (operable: (thread: EnvironmentThreadShell) => boolean) =>
-    selectSidebarPriorityClear({
-      threads: priorityThreads,
+    selectActivityClear({
+      threads,
       localLastVisitedAtByKey,
-      wokeAtByKey: input.wokeAtByThreadKey,
+      wokeAtByKey: rawWokeAtByKey,
       canOperate: operable,
     });
   const isOperable = (thread: EnvironmentThreadShell) =>
     operableEnvironments.has(thread.environmentId);
 
-  const run = (plan: SidebarPriorityReadPlan<EnvironmentThreadShell>) => {
+  const run = (plan: ActivityReadPlan<EnvironmentThreadShell>) => {
+    // oxlint-disable-next-line react/purity -- runs from event handlers only
     const visitedAt = new Date().toISOString();
-    void markSidebarPriorityRead({
+    void markActivityRead({
       plan,
-      release: input.releasePriorityThreads,
-      restore: input.restorePriorityThread,
+      release: input.releaseThreads,
+      restore: input.restoreThread,
       visit: async (thread) => {
         if (!canOperate(thread)) return "skipped";
         if (!readEnvironmentSupportsVisitedTracking(thread.environmentId)) {

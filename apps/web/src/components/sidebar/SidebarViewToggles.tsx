@@ -1,37 +1,19 @@
 import { useAtomValue } from "@effect/atom-react";
 import { BellIcon } from "lucide-react";
-import * as Schema from "effect/Schema";
 
-import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { shortcutLabelForCommand } from "../../keybindings";
 import { primaryServerKeybindingsAtom } from "../../state/server";
+import { useActivityBadge, useActivityOpen, useToggleActivity } from "../activity/useActivity";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
-const SIDEBAR_ACTIVITY_VIEW_KEY = "t3code:sidebar:activity-view";
-// Projects is this fork's default view; Activity is opt-in per device.
-const SIDEBAR_ACTIVITY_VIEW_DEFAULT = false;
-
-export function useSidebarActivityToggle() {
-  const [activityActive, setActivityActive] = useLocalStorage(
-    SIDEBAR_ACTIVITY_VIEW_KEY,
-    SIDEBAR_ACTIVITY_VIEW_DEFAULT,
-    Schema.Boolean,
-  );
-  return { activityActive, toggleActivity: () => setActivityActive((active) => !active) };
-}
-
-export function SidebarViewToggles(props: {
-  readonly onBackdrop: boolean;
-  readonly priorityCount: number;
-}) {
-  const { activityActive, toggleActivity } = useSidebarActivityToggle();
+export function SidebarViewToggles(props: { readonly onBackdrop: boolean }) {
+  const open = useActivityOpen();
+  const toggleActivity = useToggleActivity();
+  const count = useActivityBadge();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
-  const activityLabel = activityActive ? "Show projects" : "Show activity";
-  const activityName =
-    props.priorityCount > 0
-      ? `${activityLabel}, ${props.priorityCount} in Priority`
-      : activityLabel;
+  const label = open ? "Close activity" : "Open activity";
+  const name = count > 0 ? `${label}, ${count} need attention` : label;
   const shortcutLabel = shortcutLabelForCommand(keybindings, "sidebar.toggleActivity");
 
   return (
@@ -44,9 +26,9 @@ export function SidebarViewToggles(props: {
               size="icon-sm"
               // media-navigation is absolutely placed for the sidebar trigger; the bell sits in the row.
               className="relative top-auto translate-y-0"
-              aria-label={activityName}
-              aria-pressed={activityActive}
-              data-pressed={activityActive ? "" : undefined}
+              aria-label={name}
+              aria-pressed={open}
+              data-pressed={open ? "" : undefined}
               onClick={toggleActivity}
             >
               <BellIcon />
@@ -54,13 +36,13 @@ export function SidebarViewToggles(props: {
           }
         />
         <TooltipPopup side="bottom">
-          {activityName}
+          {label}
           {shortcutLabel ? ` (${shortcutLabel})` : ""}
         </TooltipPopup>
       </Tooltip>
-      {props.priorityCount > 0 ? (
+      {count > 0 ? (
         <span className="min-w-4 text-center text-xs text-muted-foreground tabular-nums">
-          {props.priorityCount}
+          {count}
         </span>
       ) : null}
     </div>

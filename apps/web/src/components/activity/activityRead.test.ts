@@ -5,7 +5,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { makeThreadFixture, type ThreadFixtureOverrides } from "../../test-fixtures";
 import type { Thread } from "../../types";
-import { markSidebarPriorityRead, selectSidebarPriorityClear } from "./priorityRead";
+import { markActivityRead, selectActivityClear } from "./activityRead";
 
 const local = EnvironmentId.make("environment-local");
 const readOnly = EnvironmentId.make("environment-read-only");
@@ -31,7 +31,7 @@ const thread = (id: string, overrides: ThreadFixtureOverrides = {}): Thread =>
   });
 const keyOf = (row: Thread) => scopedThreadKey(scopeThreadRef(row.environmentId, row.id));
 
-function priorityRows() {
+function activityRows() {
   const heldRead = thread("held-read");
   const unread = thread("unread", { lastVisitedAt: visitedBefore });
   const woke = thread("woke", {
@@ -73,11 +73,11 @@ function priorityRows() {
   };
 }
 
-function planClear(rows: ReturnType<typeof priorityRows>) {
-  return selectSidebarPriorityClear({
+function planClear(rows: ReturnType<typeof activityRows>) {
+  return selectActivityClear({
     threads: Object.values(rows),
     localLastVisitedAtByKey: {},
-    // Priority ranks rows with effective wakes; settling acknowledged this one.
+    // A null wake is a row whose wake was acknowledged.
     wokeAtByKey: new Map([
       [keyOf(rows.woke), "2026-03-09T10:05:00.000Z"],
       [keyOf(rows.acknowledgedWake), null],
@@ -86,9 +86,9 @@ function planClear(rows: ReturnType<typeof priorityRows>) {
   });
 }
 
-describe("Clear read threads in Priority", () => {
+describe("Clear read threads on the Activity page", () => {
   it("moves finished rows out and keeps work that still needs the user", () => {
-    const rows = priorityRows();
+    const rows = activityRows();
     const plan = planClear(rows);
 
     expect(plan.markRead.map((row) => row.id)).toEqual([rows.unread.id, rows.woke.id]);
@@ -97,12 +97,12 @@ describe("Clear read threads in Priority", () => {
     );
   });
 
-  it("returns a row to Priority when marking it read fails", async () => {
-    const rows = priorityRows();
+  it("returns a row to the page when marking it read fails", async () => {
+    const rows = activityRows();
     const released = new Set<string>();
     const visited: string[] = [];
 
-    await markSidebarPriorityRead({
+    await markActivityRead({
       plan: planClear(rows),
       release: (keys) => keys.forEach((key) => released.add(key)),
       restore: (key) => released.delete(key),

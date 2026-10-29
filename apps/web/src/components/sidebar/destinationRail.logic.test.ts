@@ -19,7 +19,7 @@ describe("resolveActiveDestination", () => {
     ["/env-1/thread-1", "home"],
     ["/draft/draft-1", "home"],
     ["/new", "home"],
-    ["/running", "running"],
+    ["/activity", "activity"],
     ["/kanban", "board"],
     ["/usage", "usage"],
     ["/pull-requests", "pullRequests"],
@@ -49,7 +49,7 @@ const shownIds = (preferences: RailPreferences, context: RailContext) =>
 describe("resolveRailItems", () => {
   it("shows the everyday destinations with a working provider", () => {
     expect(shownIds(DEFAULT_RAIL_PREFERENCES, everything)).toEqual([
-      "running",
+      "activity",
       "board",
       "pullRequests",
       "usage",
@@ -131,7 +131,7 @@ describe("rail order", () => {
   });
 
   it.each([
-    ["running", -1],
+    ["activity", -1],
     ["addProvider", 1],
   ] as const)("leaves %s in place at the edge", (id, delta) => {
     expect(moveRailItem(DEFAULT_RAIL_PREFERENCES, id, delta)).toBe(DEFAULT_RAIL_PREFERENCES);

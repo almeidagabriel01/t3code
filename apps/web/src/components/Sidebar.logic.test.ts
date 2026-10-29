@@ -41,13 +41,10 @@ import {
   isSidebarThreadWoke,
   resolveSidebarPriorityRank,
   resolveSidebarThreadPresentation,
-  resolveSidebarThreadSection,
-  resolveSidebarWokeAtForRow,
   selectSidebarMarkReadTargets,
   sortPriorityThreadsForSidebar,
 } from "./Sidebar.logic";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import { EnvironmentId, ProjectId, ProviderInstanceId, RunId, ThreadId } from "@t3tools/contracts";
 
@@ -1420,39 +1417,6 @@ describe("Activity Priority", () => {
     }).runtime;
   const rank = (thread: Thread, wokeAt: string | null = null) =>
     resolveSidebarPriorityRank({ thread, wokeAt });
-  const section = (thread: Thread) =>
-    resolveSidebarThreadSection({
-      snoozed: effectiveSnoozed(thread, { now: "2026-03-09T10:10:00.000Z" }),
-      settled: thread.settledOverride === "settled",
-      pinned: thread.pinnedAt != null,
-      priority: rank(thread) !== null,
-    });
-
-  it("keeps snoozed work out of Priority, including pinned settled work", () => {
-    const thread = makeThread({
-      runtime: runtimeOf("running"),
-      snoozedAt: before,
-      snoozedUntil: "2026-03-09T12:00:00.000Z",
-      settledOverride: "settled",
-      pinnedAt: before,
-    });
-    expect(rank(thread)).toBe(1);
-    expect(section(thread)).toBe("snoozed");
-  });
-
-  it("returns settled unread work to Settled after a visit without changing lifecycle", () => {
-    const thread = makeThread({
-      settledOverride: "settled",
-      settledAt: before,
-      latestRun: makeLatestRun(),
-      lastVisitedAt: before,
-      pinnedAt: before,
-    });
-    expect(section(thread)).toBe("priority");
-    expect(rank(thread)).toBe(2);
-    expect(section({ ...thread, lastVisitedAt: after })).toBe("settled");
-  });
-
   it.each(["hasPendingApprovals", "hasPendingUserInput"] as const)(
     "ranks %s ahead of running or unread work",
     (field) => {
@@ -1526,30 +1490,7 @@ describe("Activity Priority", () => {
     ).toEqual([writableUnread, woke]);
   });
 
-  it("clears a wake when the row is settled and restores it when unsettled", () => {
-    const acknowledged = new Set<string>();
-    const row = (
-      key: string,
-      settledOverride: "settled" | null,
-      heldSettledOverride: "settled" | null | undefined,
-      rawWokeAt: string | null = after,
-    ) =>
-      resolveSidebarWokeAtForRow({
-        key,
-        rawWokeAt,
-        settledOverride,
-        heldSettledOverride,
-        acknowledged,
-      });
-    expect(row("settling", "settled", null)).toBeNull();
-    expect(row("settling", "settled", "settled")).toBeNull();
-    expect(row("settling", null, "settled")).toBe(after);
-    expect(row("already", "settled", "settled")).toBe(after);
-    expect(row("gone", "settled", null, null)).toBeNull();
-    expect(acknowledged.has("gone")).toBe(false);
-  });
-
-  it("keeps a read Priority row until Activity is shown again, unless its settled state changes", () => {
+  it("keeps a read row until the page is opened again, unless its settled state changes", () => {
     const holds = new Map([
       ["read", null],
       ["settled", "settled" as const],
@@ -1597,7 +1538,7 @@ describe("Activity Priority", () => {
     );
   });
 
-  it("uses lifecycle for row actions independently of Priority", () => {
+  it("uses lifecycle for row actions", () => {
     expect(resolveSidebarThreadPresentation({ settled: false, snoozed: false }).action).toBe(
       "settle",
     );
@@ -1607,20 +1548,5 @@ describe("Activity Priority", () => {
     expect(resolveSidebarThreadPresentation({ settled: true, snoozed: true }).action).toBe(
       "unsnooze",
     );
-  });
-
-  it("never drags into or out of Priority", () => {
-    expect(resolveSidebarDropVerb("active", "priority")).toBeNull();
-    expect(
-      planSidebarThreadDrop({
-        activeKey: "priority",
-        activeSection: "priority",
-        target: { section: "active", pinnedOrder: [], activeOrder: ["priority", "active"] },
-        pinnedOrder: [],
-        pinnedKeysById: new Map(),
-        activeOrder: ["active"],
-        activeKeysById: new Map(),
-      }),
-    ).toEqual({ kind: "none" });
   });
 });

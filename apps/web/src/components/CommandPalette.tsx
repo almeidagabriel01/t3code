@@ -53,7 +53,6 @@ import { useLocation, useNavigate } from "@tanstack/react-router";
 import {
   BellIcon,
   ArrowLeftIcon,
-  ActivityIcon,
   ChartNoAxesColumnIcon,
   PanelBottomIcon,
   CheckIcon,
@@ -75,7 +74,7 @@ import {
   UserPlusIcon,
   SquareKanbanIcon,
 } from "lucide-react";
-import { useSidebarActivityToggle } from "./sidebar/SidebarViewToggles";
+import { useActivityOpen, useToggleActivity } from "./activity/useActivity";
 import { openThreadFind } from "./chat/threadFindStore";
 import { useKanbanEnvironmentIds } from "../state/kanban";
 import {
@@ -368,7 +367,8 @@ function OpenCommandPaletteDialog(props: {
   const navigate = useNavigate();
   const pathname = useLocation({ select: (location) => location.pathname });
   const { openChildSearch, setOpen } = props;
-  const { activityActive, toggleActivity } = useSidebarActivityToggle();
+  const activityOpen = useActivityOpen();
+  const toggleActivity = useToggleActivity();
   // Keyed by palette session: the intent and restored search only seed this
   // mount, and closing must not change what the closing palette shows.
   const [initialSearch] = useState(
@@ -1166,9 +1166,9 @@ function OpenCommandPaletteDialog(props: {
 
   actionItems.push({
     kind: "action",
-    value: "action:toggle-sidebar-activity",
-    searchTerms: ["sidebar", "activity", "priority", "projects", "view", "bell"],
-    title: activityActive ? "Show projects in sidebar" : "Show activity in sidebar",
+    value: "action:toggle-activity",
+    searchTerms: ["activity", "bell", "unread", "running", "working", "needs you", "waiting"],
+    title: activityOpen ? "Close activity" : "Open activity",
     icon: <BellIcon className={ITEM_ICON_CLASS} />,
     shortcutCommand: "sidebar.toggleActivity",
     run: async () => toggleActivity(),
@@ -1525,17 +1525,6 @@ function OpenCommandPaletteDialog(props: {
       },
     });
   }
-
-  actionItems.push({
-    kind: "action",
-    value: "action:running",
-    searchTerms: ["running", "working", "busy", "agents", "activity", "needs you", "waiting"],
-    title: "Open running",
-    icon: <ActivityIcon className={ITEM_ICON_CLASS} />,
-    run: async () => {
-      await navigate({ to: "/running" });
-    },
-  });
 
   actionItems.push({
     kind: "action",

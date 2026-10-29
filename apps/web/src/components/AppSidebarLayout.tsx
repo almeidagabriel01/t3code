@@ -43,7 +43,7 @@ import {
 } from "../panelAnimations";
 import { BackgroundThreadAnnouncer } from "./BackgroundThreadAnnouncer";
 import LegacyThreadSidebar from "./LegacySidebar";
-import { useSidebarActivityToggle } from "./sidebar/SidebarViewToggles";
+import { useToggleActivity } from "./activity/useActivity";
 import ThreadSidebar from "./Sidebar";
 import { SidebarBrandWidthProbe } from "./sidebar/SidebarChrome";
 import { DestinationRail, DestinationRailVisibleContext } from "./sidebar/DestinationRail";
@@ -297,7 +297,7 @@ function SidebarControl({ overRail }: { overRail: boolean }) {
   const usagePageOpen = useLocation({ select: (location) => location.pathname === "/usage" });
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { toggleSidebar, isMobile, mobileSheetMounted } = useSidebar();
-  const { toggleActivity } = useSidebarActivityToggle();
+  const toggleActivity = useToggleActivity();
   const isSidebarVisible = useSidebarVisibility();
   const environmentIdentificationMode = useEnvironmentIdentificationMode();
   const stageBackdropVariant = useSidebarStageBackdropVariant(environmentIdentificationMode);

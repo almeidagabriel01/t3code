@@ -3,25 +3,25 @@ import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environ
 import type { SidebarThreadSummary } from "../../types";
 import { resolveSidebarPriorityRank } from "../Sidebar.logic";
 
-type SidebarPriorityRow = Parameters<typeof resolveSidebarPriorityRank>[0]["thread"] &
+type ActivityRow = Parameters<typeof resolveSidebarPriorityRank>[0]["thread"] &
   Pick<SidebarThreadSummary, "environmentId" | "id">;
 
-export interface SidebarPriorityReadPlan<T> {
+export interface ActivityReadPlan<T> {
   readonly markRead: readonly T[];
   readonly releaseKeys: readonly string[];
 }
 
 /**
- * Clear read takes every finished row out of Priority: rows held only because Activity stayed
+ * Clear read takes every finished row off the page: rows held only because it stayed
  * open, and unread completions or wakes this connection can mark read. Work in progress and
- * pending requests stay. Wakes are the effective ones Priority ranked the row with.
+ * pending requests stay. Wakes are the ones the page ranked the row with.
  */
-export function selectSidebarPriorityClear<T extends SidebarPriorityRow>(input: {
+export function selectActivityClear<T extends ActivityRow>(input: {
   readonly threads: readonly T[];
   readonly localLastVisitedAtByKey: Readonly<Record<string, string | undefined>>;
   readonly wokeAtByKey: ReadonlyMap<string, string | null>;
   readonly canOperate: (thread: T) => boolean;
-}): SidebarPriorityReadPlan<T> {
+}): ActivityReadPlan<T> {
   const markRead: T[] = [];
   const releaseKeys: string[] = [];
   for (const thread of input.threads) {
@@ -41,9 +41,9 @@ export function selectSidebarPriorityClear<T extends SidebarPriorityRow>(input: 
   return { markRead, releaseKeys };
 }
 
-/** Rows leave Priority at once; a row whose visit fails comes back. */
-export async function markSidebarPriorityRead<T extends SidebarPriorityRow>(input: {
-  readonly plan: SidebarPriorityReadPlan<T>;
+/** Rows leave the page at once; a row whose visit fails comes back. */
+export async function markActivityRead<T extends ActivityRow>(input: {
+  readonly plan: ActivityReadPlan<T>;
   readonly release: (keys: readonly string[]) => void;
   readonly restore: (key: string) => void;
   readonly visit: (thread: T) => Promise<"visited" | "skipped" | "failed">;
