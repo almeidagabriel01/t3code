@@ -32,7 +32,7 @@ import { Label } from "../ui/label";
 import { Spinner } from "../ui/spinner";
 import { useNoteCard, useOpenKanbanCard } from "./NoteCard";
 import { noteErrorMessage } from "./noteState";
-import { defaultWorkProject, workProjectOptions } from "./noteWork";
+import { defaultWorkProject, workProjectOptions } from "@t3tools/client-runtime/notes/work";
 import { useNoteCommand } from "./useNoteCommand";
 
 const DEFAULT_COLUMN = "";

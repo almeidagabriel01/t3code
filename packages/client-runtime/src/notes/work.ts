@@ -1,4 +1,4 @@
-import type { EnvironmentProject } from "@t3tools/client-runtime/state/models";
+import type { EnvironmentProject } from "../state/models.ts";
 import type { NoteFolder, ProjectId } from "@t3tools/contracts";
 
 export interface WorkProjectOption {
@@ -26,7 +26,8 @@ export function defaultWorkProject(
   const latest = recent.find((id) => known.has(id));
   if (latest) return latest;
   return (
-    projects.toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0]?.id ?? null
+    [...projects].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0]?.id ??
+    null
   );
 }
 
@@ -36,8 +37,8 @@ export function workProjectOptions(
 ): ReadonlyArray<WorkProjectOption> {
   const counts = new Map<string, number>();
   for (const project of projects) counts.set(project.title, (counts.get(project.title) ?? 0) + 1);
-  return projects
-    .toSorted((left, right) => left.title.localeCompare(right.title))
+  return [...projects]
+    .sort((left, right) => left.title.localeCompare(right.title))
     .map((project) => ({
       value: project.id,
       label:

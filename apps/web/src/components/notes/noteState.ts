@@ -6,7 +6,7 @@ import {
   type NoteSummary,
   type NotesWriteInput,
 } from "@t3tools/contracts";
-import { attachmentImageIds, replaceAttachmentImageIds } from "@t3tools/shared/attachmentImageRefs";
+import { claimedImageIds, replaceAttachmentImageIds } from "@t3tools/shared/attachmentImageRefs";
 import * as Schema from "effect/Schema";
 
 const isConflict = Schema.is(NoteConflictError);
@@ -98,21 +98,6 @@ export function isNoteErrorReason(error: unknown, reason: string): boolean {
   return (
     typeof error === "object" && error !== null && "reason" in error && error.reason === reason
   );
-}
-
-/**
- * The ids the server gave uploaded images when it saved them, read by pairing the image refs of
- * the sent and saved bodies. Null when the bodies differ in anything else.
- */
-export function claimedImageIds(sent: string, saved: string): ReadonlyMap<string, string> | null {
-  const from = attachmentImageIds(sent);
-  const to = attachmentImageIds(saved);
-  if (from.length !== to.length) return null;
-  const ids = new Map<string, string>();
-  from.forEach((id, index) => {
-    if (id !== to[index]) ids.set(id, to[index]!);
-  });
-  return ids.size > 0 && replaceAttachmentImageIds(sent, ids) === saved ? ids : null;
 }
 
 export interface NoteEditState {

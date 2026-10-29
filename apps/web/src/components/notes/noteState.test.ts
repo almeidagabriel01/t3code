@@ -2,7 +2,6 @@ import { NoteConflictError, type NoteDocument, type NotesWriteInput } from "@t3t
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
-  claimedImageIds,
   filterNotes,
   groupNotes,
   isNoteDirty,
@@ -270,18 +269,6 @@ describe("note edit session", () => {
 describe("uploaded images in a saved note", () => {
   const pendingRef = "![shot.png](t3-attachment:pending-11111111-1111-4111-8111-111111111111)";
   const claimedRef = "![shot.png](t3-attachment:note-abc-22222222-2222-4222-8222-222222222222)";
-
-  it("pairs upload ids with the ids the server stored them under", () => {
-    expect(claimedImageIds(`A\n\n${pendingRef}\n`, `A\n\n${claimedRef}\n`)).toEqual(
-      new Map([
-        [
-          "pending-11111111-1111-4111-8111-111111111111",
-          "note-abc-22222222-2222-4222-8222-222222222222",
-        ],
-      ]),
-    );
-    expect(claimedImageIds(`A\n${pendingRef}`, `B\n${claimedRef}`)).toBe(null);
-  });
 
   it("takes the stored ids into the draft so the next save does not upload again", async () => {
     const write = vi

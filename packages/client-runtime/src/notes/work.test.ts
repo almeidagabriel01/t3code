@@ -1,8 +1,8 @@
-import type { EnvironmentProject } from "@t3tools/client-runtime/state/models";
+import type { EnvironmentProject } from "../state/models.ts";
 import { EnvironmentId, type ProjectId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { defaultWorkProject, workProjectOptions } from "./noteWork";
+import { defaultWorkProject, workProjectOptions } from "./work.ts";
 
 const project = (id: string, title: string, workspaceRoot: string, updatedAt: string) =>
   ({

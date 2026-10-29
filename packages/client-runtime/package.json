@@ -223,6 +223,10 @@
       "types": "./src/notes/markdown.ts",
       "default": "./src/notes/markdown.ts"
     },
+    "./notes/work": {
+      "types": "./src/notes/work.ts",
+      "default": "./src/notes/work.ts"
+    },
     "./state/models": {
       "types": "./src/state/models.ts",
       "default": "./src/state/models.ts"
