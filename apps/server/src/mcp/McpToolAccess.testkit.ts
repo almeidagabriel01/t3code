@@ -100,3 +100,6 @@ export const idleThreadProjection = (
     updatedAt: shell.updatedAt,
   };
 };
+
+/** No permission profiles exist in this server; suites that name this layer get an empty one. */
+export const layerPermissionProfilesOff = Layer.empty;

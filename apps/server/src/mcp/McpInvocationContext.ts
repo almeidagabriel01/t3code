@@ -1,10 +1,13 @@
 import {
+  type AuthEnvironmentScope,
   type AuthMcpClientAccess,
+  type EnvironmentAuthorizationError,
   type EnvironmentId,
   McpCapabilityUnavailableError,
   OrchestratorMcpFailure,
   PreviewAutomationUnavailableError,
   type ProviderInstanceId,
+  type MemoryTaskGrantCeiling,
   type ProviderInteractionMode,
   type RuntimeMode,
   type ThreadId,
@@ -20,6 +23,7 @@ const ALL_MCP_CAPABILITIES = [
   "worktree",
   "device",
   "pull-requests",
+  "memory",
 ] as const;
 export type McpCapability = (typeof ALL_MCP_CAPABILITIES)[number];
 
@@ -104,6 +108,16 @@ export interface McpInvocationScope {
   readonly requestNamespace: string;
   readonly thread: McpThreadCaller | undefined;
   readonly client: McpClientCaller | undefined;
+  readonly readOnly?: boolean;
+  readonly memoryPolicy?: {
+    readonly grant: MemoryTaskGrantCeiling;
+    readonly policyEpoch: number;
+  };
+  /** Missing scopes or live reauthorization never imply memory access. */
+  readonly grantedScopes?: ReadonlyArray<AuthEnvironmentScope>;
+  readonly reauthorize?: (
+    required: ReadonlyArray<AuthEnvironmentScope>,
+  ) => Effect.Effect<void, EnvironmentAuthorizationError>;
   /** False while the Linked environments beta is off here; `/mcp` reads it per request. */
   readonly linkedEnvironments?: boolean;
   /** The `kanbanAgentToolEnabled` and `kanbanAgentDefaultBoard` settings, read per request. */
@@ -144,6 +158,13 @@ export const hiddenWhileLinksOff = (): boolean => {
   const fiber = Fiber.getCurrent();
   const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
   return scope?.linkedEnvironments !== false;
+};
+
+/** `McpSchema.EnabledWhen` for the memory tools, shown only to callers holding the memory capability. */
+export const enabledWithMemory = (): boolean => {
+  const fiber = Fiber.getCurrent();
+  const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
+  return scope?.capabilities.has("memory") === true;
 };
 
 /** `McpSchema.EnabledWhen` for `t3_kanban`, hidden while `kanbanAgentToolEnabled` is off. */

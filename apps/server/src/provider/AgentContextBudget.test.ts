@@ -1,3 +1,5 @@
+import { MemoryService } from "../memory/MemoryService.ts";
+import { MemorySyncService } from "../memory/MemorySyncService.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { ProviderInstanceId } from "@t3tools/contracts";
@@ -55,6 +57,8 @@ const toolHandlerServices = Layer.mergeAll(
   Layer.mock(KanbanService)({}),
   Layer.mock(ManagedProjectFolders)({ namedProjectsRoot: "" }),
   Layer.mock(McpProviderSessions)({}),
+  Layer.mock(MemoryService)({ importPorts: {} as MemoryService["Service"]["importPorts"] }),
+  Layer.mock(MemorySyncService)({}),
   Layer.mock(NotesService)({}),
   Layer.mock(NoteWorkService)({}),
   Layer.mock(OrchestratorV2)({}),

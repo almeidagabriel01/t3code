@@ -100,6 +100,7 @@ import { isSnoozed } from "../orchestration-v2/ThreadSettlementService.ts";
 import { userFacingDispatchErrorMessage } from "../orchestration-v2/UserFacingErrors.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import { captureRpcMemoryGrantCeiling } from "../auth/RpcAuthorization.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import {
@@ -1881,8 +1882,13 @@ const make = Effect.gen(function* () {
               }),
             }),
       };
+      const memoryGrantCeiling = yield* captureMcpTaskMemoryGrantCeiling(scope, false).pipe(
+        Effect.mapError(() =>
+          failure("invalid_request", "Caller memory authority is no longer available."),
+        ),
+      );
       const { task } = yield* scheduledTasks
-        .upsert(upsertInput)
+        .upsert(upsertInput, { memoryGrantCeiling })
         .pipe(
           Effect.mapError((error) =>
             failure("orchestration_error", `Could not schedule task: ${error.message}`),
@@ -1951,8 +1957,13 @@ const make = Effect.gen(function* () {
           createdBy: existing.createdBy,
           creationSource: existing.creationSource,
         };
+        const memoryGrantCeiling = yield* captureMcpTaskMemoryGrantCeiling(scope, false).pipe(
+          Effect.mapError(() =>
+            failure("invalid_request", "Caller memory authority is no longer available."),
+          ),
+        );
         const { task } = yield* scheduledTasks
-          .upsert(upsertInput)
+          .upsert(upsertInput, { memoryGrantCeiling })
           .pipe(
             Effect.mapError((error) =>
               failure("orchestration_error", `Could not update scheduled task: ${error.message}`),
@@ -2272,9 +2283,15 @@ const make = Effect.gen(function* () {
       // ThreadManagementService.dispatch is the chokepoint for this command
       // type's own enablement check, using the same command id and its
       // receipt-replay exemption, so no separate assert runs here.
+      const memoryGrantCeiling = yield* captureMcpTaskMemoryGrantCeiling(scope, false).pipe(
+        Effect.mapError(() =>
+          failure("invalid_request", "Caller memory authority is no longer available."),
+        ),
+      );
       const result = yield* threadManagement
         .dispatch({
           type: "delegated_task.request",
+          memoryGrantCeiling,
           createdBy: "agent",
           creationSource: "mcp",
           commandId,
@@ -3111,3 +3128,11 @@ export const layer: Layer.Layer<
   | ServerSettings.ServerSettingsService
   | RemoteDelegation.RemoteDelegation
 > = Layer.effect(OrchestratorMcpService, make);
+
+/** The caller's live memory grant, never thread modes, bounds what its tasks may use. */
+const captureMcpTaskMemoryGrantCeiling = (scope: McpInvocationScope, readOnly: boolean) =>
+  captureRpcMemoryGrantCeiling({
+    grantedScopes: scope.grantedScopes,
+    reauthorize: scope.reauthorize,
+    readOnly: readOnly || scope.client?.access === "read-only",
+  });

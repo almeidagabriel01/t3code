@@ -70,7 +70,7 @@ const formatPath = (path: ReadonlyArray<PropertyKey>) =>
         )
         .join(".");
 
-const schemaIssueSummary = (root: SchemaIssue.Issue): string => {
+export const schemaIssueSummary = (root: SchemaIssue.Issue): string => {
   const entries = schemaIssueEntries(root);
   const shown = entries
     .slice(0, MAX_ENTRIES)

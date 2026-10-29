@@ -47,6 +47,7 @@ import { OrchestratorToolkit } from "../../apps/server/src/mcp/toolkits/orchestr
 import { PreviewToolkit } from "../../apps/server/src/mcp/toolkits/preview/tools.ts";
 import { PreviewControlsToolkit } from "../../apps/server/src/mcp/toolkits/previewControls/tools.ts";
 import { KanbanToolkit } from "../../apps/server/src/mcp/toolkits/kanban/tools.ts";
+import { MemoryToolkit } from "../../apps/server/src/mcp/toolkits/memory/tools.ts";
 import { NoteToolkit } from "../../apps/server/src/mcp/toolkits/note/tools.ts";
 import { ProjectToolkit } from "../../apps/server/src/mcp/toolkits/project/tools.ts";
 import {
@@ -361,6 +362,7 @@ const t3SourceTools: ReadonlyArray<Tool.Any> = [
   ProjectToolkit,
   KanbanToolkit,
   NoteToolkit,
+  MemoryToolkit,
   EnvironmentToolkit,
   PreviewControlsToolkit,
   WorktreeToolkit,

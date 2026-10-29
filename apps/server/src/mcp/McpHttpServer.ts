@@ -49,6 +49,8 @@ import { EnvironmentToolkit } from "./toolkits/environment/tools.ts";
 import * as EnvironmentHandlers from "./toolkits/environment/handlers.ts";
 import { KanbanToolkit } from "./toolkits/kanban/tools.ts";
 import * as KanbanHandlers from "./toolkits/kanban/handlers.ts";
+import * as MemoryHandlers from "./toolkits/memory/handlers.ts";
+import { MemoryToolkit } from "./toolkits/memory/tools.ts";
 import { NoteToolkit } from "./toolkits/note/tools.ts";
 import * as NoteHandlers from "./toolkits/note/handlers.ts";
 import { ProjectToolkit } from "./toolkits/project/tools.ts";
@@ -463,7 +465,10 @@ const decodeAsAdvertised = <Tools extends Record<string, Tool.Any>>(
 ): Toolkit.Toolkit<Tools> =>
   Toolkit.make(
     ...Object.values(toolkit.tools).map((tool) =>
-      tool.setParameters(Schema.toCodecJson(tool.parametersSchema)),
+      // A dynamic tool already carries its JSON Schema; the handler decodes the arguments itself.
+      Tool.isDynamic(tool) && tool.jsonSchema !== undefined
+        ? tool
+        : tool.setParameters(Schema.toCodecJson(tool.parametersSchema)),
     ),
   ) as unknown as Toolkit.Toolkit<Tools>;
 
@@ -1131,6 +1136,8 @@ const layerKanbanToolkit = toolkitRegistration(KanbanToolkit, KanbanHandlers.lay
 
 const layerNoteToolkit = toolkitRegistration(NoteToolkit, NoteHandlers.layer);
 
+export const layerMemoryToolkit = toolkitRegistration(MemoryToolkit, MemoryHandlers.layer);
+
 export const layerAttachmentToolkit = toolkitRegistration(
   AttachmentToolkit,
   AttachmentHandlers.layer,
@@ -1200,6 +1207,7 @@ export const layerTools = Layer.mergeAll(
   layerProjectRegistration,
   layerKanbanToolkit,
   layerNoteToolkit,
+  layerMemoryToolkit,
   layerEnvironmentToolkit,
   layerPreviewControlsRegistration,
   layerWorktreeToolkitRegistration,

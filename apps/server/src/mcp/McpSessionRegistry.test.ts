@@ -220,3 +220,51 @@ it.effect.each(["provider-session", "thread", "all"] as const)(
       expect(yield* registry.resolve(token)).toBeUndefined();
     }),
 );
+
+it.effect(
+  "memory authority follows the committed policy: a changed grant keeps the thread and drops memory",
+  () =>
+    Effect.gen(function* () {
+      const registry = yield* makeRegistry(() => 1_000);
+      let current: McpSessionRegistry.McpMemoryPolicy = { grant: "read_write", policyEpoch: 1 };
+      const issued = yield* registry.issue({
+        threadId: ThreadId.make("thread-memory"),
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        grantedScopes: ["memory:read", "memory:write"],
+        memoryPolicy: { grant: "read_write", policyEpoch: 1 },
+        readCurrentPolicy: () => Effect.sync(() => current),
+      });
+      const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
+      const granted = yield* registry.resolve(token);
+      expect(granted?.capabilities.has("memory")).toBe(true);
+      yield* granted!.reauthorize!(["memory:write"]);
+
+      current = { grant: "read", policyEpoch: 1 };
+      const narrowed = yield* registry.resolve(token);
+      expect(narrowed?.thread.threadId).toBe("thread-memory");
+      expect(narrowed?.capabilities.has("memory")).toBe(false);
+      expect(narrowed?.grantedScopes).toEqual([]);
+      expect(yield* Effect.flip(granted!.reauthorize!(["memory:read"]))).toMatchObject({
+        _tag: "EnvironmentAuthorizationError",
+      });
+    }),
+);
+
+it.effect("a credential without a memory grant never carries the memory capability", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry(() => 1_000);
+    const issued = yield* registry.issue({
+      threadId: ThreadId.make("thread-no-memory"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      grantedScopes: [],
+      memoryPolicy: { grant: "none", policyEpoch: 0 },
+    });
+    const scope = yield* registry.resolve(
+      issued.config.authorizationHeader.replace(/^Bearer\s+/, ""),
+    );
+    expect(scope?.capabilities.has("memory")).toBe(false);
+    expect(yield* Effect.flip(scope!.reauthorize!(["memory:read"]))).toMatchObject({
+      _tag: "EnvironmentAuthorizationError",
+    });
+  }),
+);
