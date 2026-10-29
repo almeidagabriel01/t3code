@@ -10,7 +10,6 @@ html[data-desktop-client][data-desktop-glass-opaque] {
   }
 
   [data-slot="composer-shell"]::before,
-  [data-slot="composer-context-strip"]::before,
   [data-composer-banner-surface]::before,
   [data-chat-composer-main-surface],
   [data-slot="composer-banner-peek"] {

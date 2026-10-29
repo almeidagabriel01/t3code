@@ -130,11 +130,7 @@ function assertOpaque(container: HTMLElement) {
     expect(alpha(node)).toBe(255);
     expect(getComputedStyle(node).backdropFilter).toBe("none");
   }
-  for (const selector of [
-    '[data-slot="composer-shell"]',
-    '[data-slot="composer-context-strip"]',
-    "[data-composer-banner-surface]",
-  ]) {
+  for (const selector of ['[data-slot="composer-shell"]', "[data-composer-banner-surface]"]) {
     const node = element(container, selector);
     expect(alpha(node, "::before"), selector).toBe(255);
     expect(getComputedStyle(node, "::before").backdropFilter).toBe("none");

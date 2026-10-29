@@ -33,6 +33,16 @@ html:is(
       background-color: var(--lg-pane);
       box-shadow: var(--lg-edge);
     }
+    /* App modals float over the thread, not the wallpaper: frost it like a dialog. */
+    [data-app-modal][data-glass-pane] {
+      background-color: color-mix(
+        in srgb,
+        var(--background) var(--glass-surface-opacity),
+        transparent
+      );
+      -webkit-backdrop-filter: blur(var(--glass-surface-blur)) saturate(var(--glass-saturation));
+      backdrop-filter: blur(var(--glass-surface-blur)) saturate(var(--glass-saturation));
+    }
     [data-glass-pane="terminal"] {
       background-color: var(--lg-terminal);
     }
