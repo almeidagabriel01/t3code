@@ -243,6 +243,10 @@ export const SETTINGS_SEARCH_ITEMS = [
       "import",
       "source access",
       "owner",
+      "summaries",
+      "remember conversations",
+      "memory model",
+      "agent access",
     ],
   },
   {
