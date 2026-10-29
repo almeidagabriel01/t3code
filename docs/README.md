@@ -16,6 +16,7 @@
 - [Import browser sessions](./user/browser-import.md)
 - [Use T3 Code as your default browser](./user/default-browser.md)
 - [Devices](./user/devices.md)
+- [Memory](./user/memory.md)
 - [Notes](./user/notes.md)
 - [Usage and limits](./user/usage.md)
 - [Product usage data](./user/telemetry.md)
