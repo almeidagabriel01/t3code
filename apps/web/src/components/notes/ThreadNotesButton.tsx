@@ -28,6 +28,8 @@ const LINK_RESULTS = 6;
 export function ThreadNotesButton(props: {
   environmentId: EnvironmentId;
   threadId: ThreadId;
+  /** A draft has no durable id to link notes to, so only the project panel toggle shows. */
+  isServerThread: boolean;
   projectId: ProjectId | null;
   projectTitle: string | null;
 }) {
@@ -39,6 +41,8 @@ export function ThreadNotesButton(props: {
 function ThreadNotes(props: {
   environmentId: EnvironmentId;
   threadId: ThreadId;
+  /** A draft has no durable id to link notes to, so only the project panel toggle shows. */
+  isServerThread: boolean;
   projectId: ProjectId | null;
   projectTitle: string | null;
 }) {
@@ -68,7 +72,8 @@ function ThreadNotes(props: {
   const [error, setError] = useState<string | null>(null);
   const notes = state === null ? [] : selectNotesInOrder(state);
   const createNote = useCreateNote(environmentId, notes);
-  if (state === null || (notes.length === 0 && !canWrite)) return null;
+  const showLinks = props.isServerThread && state !== null && (notes.length > 0 || canWrite);
+  if (!showLinks && props.projectId === null) return null;
   const linked = notes.filter((note) => note.related.includes(props.threadId));
   const suggestions = filterNotes(
     notes.filter((note) => !note.related.includes(props.threadId)),
@@ -127,6 +132,7 @@ function ThreadNotes(props: {
   return (
     <>
       {panelToggle}
+      {showLinks ? (
       <Popover open={open} onOpenChange={setOpen}>
         <Tooltip>
           <TooltipTrigger
@@ -233,6 +239,7 @@ function ThreadNotes(props: {
           </div>
         </PopoverPopup>
       </Popover>
+      ) : null}
     </>
   );
 }

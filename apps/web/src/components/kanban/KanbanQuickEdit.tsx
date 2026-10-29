@@ -5,6 +5,7 @@ import { ArchiveIcon, ArrowRightIcon, PanelRightOpenIcon, TagIcon, Trash2Icon } 
 
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { Label } from "../ui/label";
 import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "../ui/menu";
 import { Popover, PopoverPopup } from "../ui/popover";
 import { LabelMenuItems } from "./KanbanCardDetail";
@@ -104,13 +105,16 @@ export function KanbanQuickEdit(props: {
               <LabelMenuItems board={board} card={card} onToggle={toggleLabel} />
             </MenuPopup>
           </Menu>
-          <Input
-            type="date"
-            size="sm"
-            aria-label="Due date"
-            value={dueAtToInput(card.dueAt)}
-            onChange={(event) => void patch({ dueAt: inputToDueAt(event.target.value) })}
-          />
+          <div className="my-1.5 grid gap-1.5 px-2">
+            <Label htmlFor="kanban-quick-edit-due">Due date</Label>
+            <Input
+              id="kanban-quick-edit-due"
+              type="date"
+              size="sm"
+              value={dueAtToInput(card.dueAt)}
+              onChange={(event) => void patch({ dueAt: inputToDueAt(event.target.value) })}
+            />
+          </div>
           <Button
             size="xs"
             variant="ghost"
