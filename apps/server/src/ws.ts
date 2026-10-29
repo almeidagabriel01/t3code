@@ -1912,7 +1912,8 @@ export const layerWsRpc = (
         "memory:write",
         "filesystem:read",
       ]);
-      // Task ceilings come from this session's live grants, never from the request.
+      // Task ceilings come from this session's scopes, fixed at issue (revocation closes the
+      // socket), never from the request.
       const captureTaskMemoryCeiling = RpcAuthorization.captureRpcMemoryGrantCeiling({
         grantedScopes: currentSession.scopes,
         readOnly: false,

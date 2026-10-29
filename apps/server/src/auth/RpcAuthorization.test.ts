@@ -77,6 +77,35 @@ describe("RPC authorization scopes", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.memoryHubSettingsUpdate)).toBe("settings:write");
   });
 
+  it.effect("clients cannot supply a task memory ceiling; the server captures it from grants", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* Effect.flip(
+          RpcAuthorization.rejectPublicMemoryGrantCeiling({ memoryGrantCeiling: "read" }),
+        ),
+      ).toMatchObject({ _tag: "EnvironmentAuthorizationError" });
+      yield* RpcAuthorization.rejectPublicMemoryGrantCeiling({ memoryGrantCeiling: "none" });
+      yield* RpcAuthorization.rejectPublicMemoryGrantCeiling({});
+
+      const capture = (scopes: ReadonlyArray<"memory:read" | "memory:write">, readOnly = false) =>
+        RpcAuthorization.captureRpcMemoryGrantCeiling({
+          grantedScopes: scopes,
+          readOnly,
+          reauthorize: () => Effect.void,
+        });
+      expect(yield* capture([])).toBe("none");
+      expect(yield* capture(["memory:read"])).toBe("read");
+      expect(yield* capture(["memory:read", "memory:write"])).toBe("read_write");
+      expect(yield* capture(["memory:read", "memory:write"], true)).toBe("read");
+      expect(
+        yield* RpcAuthorization.captureRpcMemoryGrantCeiling({
+          grantedScopes: ["memory:read", "memory:write"],
+          readOnly: false,
+        }),
+      ).toBe("none");
+    }),
+  );
+
   it("rejects unknown RPC method names", () => {
     for (const method of ["server.notRegistered", "toString", "constructor"]) {
       expect(() => requiredScopeForRpcMethod(method)).toThrow(
