@@ -476,25 +476,38 @@ it.effect("a move keeps a source edited during the move and leaves no destinatio
   }).pipe(Effect.provide(external.layer));
 });
 
-it.effect("linking a card re-reads a note edited during the update", () => {
-  const external = racing();
-  return Effect.gen(function* () {
-    const notes = yield* Notes.NotesService;
-    const fs = yield* FileSystem.FileSystem;
-    const { notesDir } = yield* Config.ServerConfig;
-    const initial = yield* notes.write({ path: "a.md", body: "# A\n", baseRevision: null }, "user");
-    external.arm(
-      fs
-        .writeFileString(`${notesDir}/a.md`, `---\nid: ${initial.id}\n---\n# Terminal\n`)
-        .pipe(Effect.orDie),
-    );
-    const card = { cardId: KanbanCardId.make("card-1"), projectId: ProjectId.make("project-1") };
-    const note = yield* notes.linkCard("a.md", card, "agent");
-    assert.strictEqual(note.body, "# Terminal\n");
-    assert.deepStrictEqual(note.card, card);
-    assert.strictEqual(note.id, initial.id);
-  }).pipe(Effect.provide(external.layer));
-});
+it.effect(
+  "linking a card re-reads a note edited during the update, and unlinking clears it",
+  () => {
+    const external = racing();
+    return Effect.gen(function* () {
+      const notes = yield* Notes.NotesService;
+      const fs = yield* FileSystem.FileSystem;
+      const { notesDir } = yield* Config.ServerConfig;
+      const initial = yield* notes.write(
+        { path: "a.md", body: "# A\n", baseRevision: null },
+        "user",
+      );
+      external.arm(
+        fs
+          .writeFileString(`${notesDir}/a.md`, `---\nid: ${initial.id}\n---\n# Terminal\n`)
+          .pipe(Effect.orDie),
+      );
+      const card = { cardId: KanbanCardId.make("card-1"), projectId: ProjectId.make("project-1") };
+      const note = yield* notes.linkCard("a.md", card, "agent");
+      assert.strictEqual(note.body, "# Terminal\n");
+      assert.deepStrictEqual(note.card, card);
+      assert.strictEqual(note.id, initial.id);
+      const unlinked = yield* notes.update({ path: "a.md", card: null });
+      assert.isNull(unlinked.card);
+      assert.strictEqual(unlinked.body, "# Terminal\n");
+      assert.strictEqual(
+        (yield* notes.update({ path: "a.md", card: null })).revision,
+        unlinked.revision,
+      );
+    }).pipe(Effect.provide(external.layer));
+  },
+);
 
 it.effect("uses the first body line as title and bounds titles and previews", () =>
   Effect.gen(function* () {

@@ -133,6 +133,8 @@ export const NotesUpdateInput = Schema.Struct({
   pinned: Schema.optional(Schema.Boolean),
   relate: Schema.optional(ThreadId),
   unrelate: Schema.optional(ThreadId),
+  /** null unlinks the kanban card; start work links one. */
+  card: Schema.optional(Schema.Null),
 });
 export type NotesUpdateInput = typeof NotesUpdateInput.Type;
 

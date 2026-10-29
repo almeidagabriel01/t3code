@@ -606,7 +606,9 @@ const make = Effect.gen(function* () {
             related = [...related, ref];
           }
           if (input.unrelate) related = related.filter((entry) => entry !== input.unrelate);
+          const card = input.card === null ? null : source.contents.card;
           if (
+            card === source.contents.card &&
             pinned === source.contents.pinned &&
             related.length === source.contents.related.length &&
             related.every((entry, index) => entry === source.contents.related[index])
@@ -614,7 +616,7 @@ const make = Effect.gen(function* () {
             return source.document;
           return yield* persist(
             input.path,
-            { ...source.contents, id: source.contents.id ?? newNoteId(), pinned, related },
+            { ...source.contents, id: source.contents.id ?? newNoteId(), pinned, related, card },
             source.document.revision,
           );
         }),
