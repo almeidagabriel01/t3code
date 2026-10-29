@@ -41,8 +41,23 @@ describe("deriveProviderSessionRestartNotice", () => {
     expect(derive(sessions, running)).toMatchObject(expected);
   });
 
+  it("compares versions with suffixes and ignores an unparseable installed one", () => {
+    const withVersion = (version: string | null) => ({ ...(provider as object), version }) as never;
+    expect(
+      derive(
+        [session({ providerVersion: "2.1.0 (Claude Code)" })],
+        false,
+        withVersion("2.1.1-beta.1"),
+      ),
+    ).toMatchObject({ installedVersion: "2.1.1-beta.1" });
+    expect(derive([session()], false, withVersion("garbage"))).toBeNull();
+  });
+
   it.each([
     ["the same version", [session({ providerVersion: "v2.1.1" })]],
+    ["the same version with a suffix", [session({ providerVersion: "2.1.1 (Claude Code)" })]],
+    ["a newer session than installed", [session({ providerVersion: "2.2.0" })]],
+    ["an unparseable version", [session({ providerVersion: "nightly" })]],
     ["an unreported version", [session({ providerVersion: undefined })]],
     ["a released session", [session({ status: "stopped" })]],
   ])("stays quiet for %s", (_name, sessions) => {

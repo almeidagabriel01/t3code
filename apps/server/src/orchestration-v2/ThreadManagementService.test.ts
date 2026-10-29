@@ -232,6 +232,18 @@ const layerRestartSessionTest = (input: {
             thread: { id: ThreadId.make("thread:restart"), deletedAt: null },
             runs: [{ id: RunId.make("run:restart"), status: input.runStatus, ordinal: 1 }],
             providerSessions: [
+              // An idle session ahead of the shared one proves a refusal releases nothing.
+              ...(input.sharedSession
+                ? [
+                    {
+                      id: ProviderSessionId.make("session:restart:idle"),
+                      status: "ready",
+                      capabilities: {
+                        sessions: { supportsMultipleProviderThreadsPerSession: false },
+                      },
+                    },
+                  ]
+                : []),
               {
                 id: ProviderSessionId.make("session:restart"),
                 status: "ready",

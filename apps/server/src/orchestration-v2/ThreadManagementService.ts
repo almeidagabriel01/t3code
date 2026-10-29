@@ -1183,12 +1183,17 @@ const make = Effect.gen(function* () {
       if (records.thread.deletedAt !== null) return yield* failure("unavailable");
       if (latestActiveRun(records) !== undefined) return yield* failure("running");
       // The next turn reopens the session on whatever binary is on disk, as after an idle release.
+      // Validate every session before releasing any, so a refusal never leaves a partial restart.
+      const live: Array<(typeof records.providerSessions)[number]> = [];
       for (const session of records.providerSessions) {
         if (session.status === "stopped" || session.status === "error") continue;
         if (!(yield* sessions.isLive(session.id))) continue;
         if (session.capabilities.sessions.supportsMultipleProviderThreadsPerSession) {
           return yield* failure("shared");
         }
+        live.push(session);
+      }
+      for (const session of live) {
         yield* sessions
           .release({
             providerSessionId: session.id,
