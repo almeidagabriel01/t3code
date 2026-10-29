@@ -471,7 +471,10 @@ export const ClientSettingsSchema = Schema.Struct({
   proactivePanelsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   showSkillsInSlashMenu: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   legacySidebarEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-  sidebarWorkingShelfEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  // Fork default: working threads stay in place instead of jumping to a folded section.
+  sidebarWorkingShelfEnabled: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
   sidebarShowSubagents: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   destinationRail: DestinationRailPreferences.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   sidebarAgentActivityDisplayMode: SidebarAgentActivityDisplayMode.pipe(
