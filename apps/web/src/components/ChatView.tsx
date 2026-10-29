@@ -985,6 +985,7 @@ export default function ChatView(props: ChatViewProps) {
       sideChatAvailable &&
       selectActiveRightPanel(state.byThreadKey, activeThreadRef) === "side-chat",
   );
+  const notesAvailable = useNotesEnvironmentIds().includes(activeThread?.environmentId as EnvironmentId);
   const toggleSideChat = () => {
     if (!sideChatAvailable || activeThreadRef === null) return;
     useRightPanelStore.getState().toggle(activeThreadRef, "side-chat");
@@ -3163,6 +3164,11 @@ export default function ChatView(props: ChatViewProps) {
         getShortcutContext={getShortcutContextStable}
         onSendAnnotation={sendPreviewAnnotationStable}
         onCloseSurface={closeRightPanelSurface}
+        notes={
+          activeProject && !activeProject.isScratch && notesAvailable
+            ? { threadRef: activeThreadRef, projectId: activeProject.id }
+            : null
+        }
         sideChat={
           sideChatAvailable && activeThreadShell
             ? { parent: activeThreadShell, onOpenThread: onOpenRelatedThreadStable }

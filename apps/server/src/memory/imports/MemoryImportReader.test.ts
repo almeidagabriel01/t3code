@@ -570,6 +570,28 @@ describe("MemoryImportReader", () => {
       ),
   );
 
+  it.effect("discover skips symlinked and memoryless Claude projects", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fixture = yield* buildMemoryImportFixture("claude-topic-v1");
+        const reader = yield* Reader.acquireMemoryImportReader(readerConfig(fixture));
+        NodeFS.mkdirSync(NodePath.join(fixture.trustedRoot, "no-memory"));
+        NodeFS.mkdirSync(NodePath.join(fixture.trustedRoot, "empty", "memory"), {
+          recursive: true,
+        });
+        NodeFS.symlinkSync(
+          NodePath.dirname(fixture.sourceRoot),
+          NodePath.join(fixture.trustedRoot, "moved"),
+        );
+        const discovered = yield* reader.discover({ format: fixture.snapshot.format });
+        assert.deepEqual(
+          discovered.map((source) => source.slot),
+          [fixture.snapshot.slot],
+        );
+      }),
+    ),
+  );
+
   it.effect("listed file disappearance before first stat is source_changed", () =>
     Effect.scoped(
       Effect.gen(function* () {

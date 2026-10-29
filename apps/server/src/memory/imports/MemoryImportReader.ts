@@ -14,6 +14,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Fiber from "effect/Fiber";
+import * as Option from "effect/Option";
 import * as Semaphore from "effect/Semaphore";
 import { scanMemoryValue } from "../MemorySecretScanner.ts";
 import type {
@@ -365,8 +366,11 @@ const nodeSnapshot = (config: MemoryImportReaderConfig, input: SnapshotOperation
             result.selections = [];
             for (const name of await names(root, 512, true)) {
               const s = await stat(NodePath.join(root, name));
-              await child(root, name, s.isDirectory(), false, s);
-              if (s.isDirectory()) result.selections.push(name);
+              // Claude keeps moved projects as symlinks to the new folder, which is listed itself.
+              if (s.isSymbolicLink() || !s.isDirectory()) continue;
+              await child(root, name, true, false, s);
+              const memory = await fs.lstat(NodePath.join(root, name, "memory")).catch(() => null);
+              if (memory?.isDirectory()) result.selections.push(name);
               if (result.selections.length > 128) throw error("limit_exceeded");
             }
           } else {
@@ -719,7 +723,10 @@ export const acquireMemoryImportReader = Effect.fn("acquireMemoryImportReader")(
         for (const selection of selections) {
           if (result.length >= 128) return yield* error("limit_exceeded");
           const slot: ImportSlot = { format, rootSlot: root.rootSlot, selection };
-          const profile = (yield* read({ slot })).profile;
+          // One unreadable or empty project must not hide the others.
+          const snapshot = yield* Effect.option(read({ slot }));
+          if (Option.isNone(snapshot)) continue;
+          const profile = snapshot.value.profile;
           result.push(yield* Effect.try({ try: () => metadata(slot, profile), catch: normalize }));
         }
       }

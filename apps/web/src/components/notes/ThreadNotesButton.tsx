@@ -1,13 +1,15 @@
 import { useAtomValue } from "@effect/atom-react";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { selectNotesInOrder } from "@t3tools/client-runtime/state/notes";
-import { NoteFolder, type EnvironmentId, type ThreadId } from "@t3tools/contracts";
-import { Link, useNavigate } from "@tanstack/react-router";
+import { NoteFolder, type EnvironmentId, type ProjectId, type ThreadId } from "@t3tools/contracts";
+import { useNavigate } from "@tanstack/react-router";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 import * as Schema from "effect/Schema";
-import { NotebookPenIcon, PlusIcon, XIcon } from "lucide-react";
+import { LinkIcon, NotebookPenIcon, PlusIcon, XIcon } from "lucide-react";
 import { useState } from "react";
 
+import { selectActiveRightPanel, useRightPanelStore } from "../../rightPanelStore";
 import { notesEnvironment, useNotesEnvironmentIds } from "../../state/notes";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -15,6 +17,7 @@ import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "../ui/popov
 import { Toggle } from "../ui/toggle";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { filterNotes, noteErrorMessage } from "./noteState";
+import { useNotesPanelStore } from "./notesPanelStore";
 import { useCreateNote } from "./useCreateNote";
 import { useNoteCommand } from "./useNoteCommand";
 
@@ -25,6 +28,7 @@ const LINK_RESULTS = 6;
 export function ThreadNotesButton(props: {
   environmentId: EnvironmentId;
   threadId: ThreadId;
+  projectId: ProjectId | null;
   projectTitle: string | null;
 }) {
   const supported = useNotesEnvironmentIds().includes(props.environmentId);
@@ -35,6 +39,7 @@ export function ThreadNotesButton(props: {
 function ThreadNotes(props: {
   environmentId: EnvironmentId;
   threadId: ThreadId;
+  projectId: ProjectId | null;
   projectTitle: string | null;
 }) {
   const { environmentId } = props;
@@ -45,6 +50,19 @@ function ThreadNotes(props: {
   const canUpdate = useAtomValue(notesEnvironment.update.permissionAtom(environmentId));
   const update = useNoteCommand(notesEnvironment.update);
   const navigate = useNavigate();
+  const threadRef = scopeThreadRef(environmentId, props.threadId);
+  const panelOpen = useRightPanelStore(
+    (store) => selectActiveRightPanel(store.byThreadKey, threadRef) === "notes",
+  );
+  // Without a project there is no project panel; notes open on their page.
+  const openNote = (path: string) => {
+    if (props.projectId === null) {
+      void navigate({ to: "/notes", search: { environmentId, path } });
+      return;
+    }
+    useNotesPanelStore.getState().setPath(scopedThreadKey(threadRef), path);
+    useRightPanelStore.getState().open(threadRef, "notes");
+  };
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -68,7 +86,7 @@ function ThreadNotes(props: {
     setError(null);
     const folder =
       props.projectTitle && isNoteFolder(props.projectTitle) ? props.projectTitle : null;
-    const created = await createNote(folder);
+    const created = await createNote(folder, props.projectId ?? undefined);
     if (!created.ok) {
       setError(noteErrorMessage(created.error));
       return;
@@ -82,13 +100,33 @@ function ThreadNotes(props: {
       }
     }
     setOpen(false);
-    void navigate({ to: "/notes", search: { environmentId, path: created.value.path } });
+    openNote(created.value.path);
   };
   const label =
     linked.length === 0
       ? "Notes for this thread"
       : `Notes for this thread (${linked.length} linked)`;
+  const panelToggle =
+    props.projectId === null ? null : (
+      <Tooltip>
+        <TooltipTrigger render={<span className="flex shrink-0" />}>
+          <Toggle
+            className="shrink-0 [-webkit-app-region:no-drag]"
+            pressed={panelOpen}
+            onPressedChange={() => useRightPanelStore.getState().toggle(threadRef, "notes")}
+            aria-label="Toggle project notes"
+            variant="ghost"
+            size="sm"
+          >
+            <NotebookPenIcon className="size-4" />
+          </Toggle>
+        </TooltipTrigger>
+        <TooltipPopup side="bottom">Project notes</TooltipPopup>
+      </Tooltip>
+    );
   return (
+    <>
+      {panelToggle}
     <Popover open={open} onOpenChange={setOpen}>
       <Tooltip>
         <TooltipTrigger
@@ -106,7 +144,7 @@ function ThreadNotes(props: {
             />
           }
         >
-          <NotebookPenIcon className="size-4" />
+          {panelToggle ? <LinkIcon className="size-4" /> : <NotebookPenIcon className="size-4" />}
           {linked.length > 0 ? (
             <span className="text-xs text-muted-foreground tabular-nums">{linked.length}</span>
           ) : null}
@@ -125,17 +163,19 @@ function ThreadNotes(props: {
                   key={note.path}
                   className="flex items-start gap-1 rounded-md hover:bg-accent/50"
                 >
-                  <Link
-                    to="/notes"
-                    search={{ environmentId, path: note.path }}
-                    onClick={() => setOpen(false)}
-                    className="grid min-w-0 flex-1 gap-0.5 rounded-md px-2 py-1.5 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setOpen(false);
+                      openNote(note.path);
+                    }}
+                    className="grid min-w-0 flex-1 gap-0.5 rounded-md text-start px-2 py-1.5 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
                   >
                     <span className="truncate text-sm font-medium">{note.title}</span>
                     <span className="truncate text-xs text-muted-foreground">
                       {note.preview || note.path}
                     </span>
-                  </Link>
+                  </button>
                   {canUpdate ? (
                     <Button
                       size="icon-xs"
@@ -193,5 +233,6 @@ function ThreadNotes(props: {
         </div>
       </PopoverPopup>
     </Popover>
+    </>
   );
 }
