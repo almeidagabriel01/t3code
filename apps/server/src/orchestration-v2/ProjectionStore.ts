@@ -5857,28 +5857,51 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               ) AS latest_run_stop_requested,
               active.run_id AS active_run_id,
               active.status AS active_run_status,
-              (
-                SELECT r.status
-                FROM orchestration_v2_projection_runs r
-                WHERE r.thread_id = t.thread_id
-                  AND r.status IN ('preparing', 'starting', 'running', 'waiting')
-                  AND NOT ${isSilentShellRun("r")}
-                ORDER BY r.ordinal DESC, r.run_id DESC
-                LIMIT 1
-              ) AS activity_run_status,
-              (
-                -- Mirrors orchestrationV2RunWorkStartedAt.
-                SELECT COALESCE(
-                  json_extract(r.payload_json, '$.workStartedAt'),
-                  json_extract(r.payload_json, '$.startedAt'),
-                  r.requested_at
+              COALESCE(
+                (
+                  SELECT r.status
+                  FROM orchestration_v2_projection_runs r
+                  WHERE r.thread_id = t.thread_id
+                    AND r.status IN ('preparing', 'starting', 'running', 'waiting')
+                    AND NOT ${isSilentShellRun("r")}
+                  ORDER BY r.ordinal DESC, r.run_id DESC
+                  LIMIT 1
+                ),
+                -- Native children have no runs of their own: the parent's record is their activity.
+                (
+                  SELECT CASE native.status WHEN 'pending' THEN 'starting' ELSE native.status END
+                  FROM orchestration_v2_projection_subagents native
+                  WHERE native.child_thread_id = t.thread_id
+                    AND native.origin = 'provider_native'
+                    AND native.status IN ('pending', 'running', 'waiting')
+                  ORDER BY native.updated_at DESC, native.subagent_id DESC
+                  LIMIT 1
                 )
-                FROM orchestration_v2_projection_runs r
-                WHERE r.thread_id = t.thread_id
-                  AND r.status IN ('preparing', 'starting', 'running', 'waiting')
-                  AND NOT ${isSilentShellRun("r")}
-                ORDER BY r.ordinal DESC, r.run_id DESC
-                LIMIT 1
+              ) AS activity_run_status,
+              COALESCE(
+                (
+                  -- Mirrors orchestrationV2RunWorkStartedAt.
+                  SELECT COALESCE(
+                    json_extract(r.payload_json, '$.workStartedAt'),
+                    json_extract(r.payload_json, '$.startedAt'),
+                    r.requested_at
+                  )
+                  FROM orchestration_v2_projection_runs r
+                  WHERE r.thread_id = t.thread_id
+                    AND r.status IN ('preparing', 'starting', 'running', 'waiting')
+                    AND NOT ${isSilentShellRun("r")}
+                  ORDER BY r.ordinal DESC, r.run_id DESC
+                  LIMIT 1
+                ),
+                (
+                  SELECT native.started_at
+                  FROM orchestration_v2_projection_subagents native
+                  WHERE native.child_thread_id = t.thread_id
+                    AND native.origin = 'provider_native'
+                    AND native.status IN ('pending', 'running', 'waiting')
+                  ORDER BY native.updated_at DESC, native.subagent_id DESC
+                  LIMIT 1
+                )
               ) AS activity_run_started_at,
               (
                 SELECT json_extract(session.payload_json, '$.lastError')

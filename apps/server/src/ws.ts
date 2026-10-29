@@ -144,6 +144,7 @@ import {
   shouldPublishShellApplicationEvent,
   skipUnchangedThreadShells,
   toShellApplicationEvent,
+  withNativeChildRefreshes,
   type ShellApplicationEvent,
 } from "./orchestration-v2/ShellStream.ts";
 import { ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION } from "./orchestration-v2/ProjectionStore.ts";
@@ -1080,7 +1081,7 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
       events: ReadonlyArray<ShellApplicationEvent>,
     ) {
       return yield* Effect.forEach(
-        coalesceShellApplicationEvents(events),
+        coalesceShellApplicationEvents(withNativeChildRefreshes(events)),
         (stored) =>
           Effect.gen(function* () {
             if ("aggregateKind" in stored) {

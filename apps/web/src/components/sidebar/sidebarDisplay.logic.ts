@@ -4,7 +4,9 @@ import {
   type SidebarAgentActivityDisplayMode,
 } from "@t3tools/contracts";
 
-/** Compact folds several subagents into one summary row; Full lists each one. */
+const COMPACT_SUBAGENT_ROWS = 3;
+
+/** Compact lists up to three subagents and folds more into one summary row; Full lists each one. */
 export function resolveSubagentDisplay(input: {
   readonly count: number;
   readonly show: boolean;
@@ -12,7 +14,7 @@ export function resolveSubagentDisplay(input: {
   readonly expanded: boolean;
 }): "hidden" | "rows" | "summary" | "summary-and-rows" {
   if (!input.show || input.count === 0) return "hidden";
-  if (input.mode === "full" || input.count === 1) return "rows";
+  if (input.mode === "full" || input.count <= COMPACT_SUBAGENT_ROWS) return "rows";
   return input.expanded ? "summary-and-rows" : "summary";
 }
 

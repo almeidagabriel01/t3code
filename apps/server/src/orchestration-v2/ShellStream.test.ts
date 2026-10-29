@@ -27,6 +27,8 @@ import {
   shellStreamItemsFromInitialSnapshot,
   shouldPublishShellApplicationEvent,
   skipUnchangedThreadShells,
+  toShellApplicationEvent,
+  withNativeChildRefreshes,
 } from "./ShellStream.ts";
 
 const emptyShellSnapshot = {
@@ -141,6 +143,34 @@ it.effect("coalesces a slow shell subscriber by identity and location in sequenc
 function shellFixture(overrides: Partial<OrchestrationV2ThreadShell>): OrchestrationV2ThreadShell {
   return { id: "thread-a", archivedAt: null, ...overrides } as OrchestrationV2ThreadShell;
 }
+
+describe("native subagent child refreshes", () => {
+  const subagentUpdated = (origin: string, childThreadId: string | null) =>
+    ({
+      sequence: 7,
+      event: { threadId: "parent", type: "subagent.updated", payload: { origin, childThreadId } },
+    }) as ApplicationStoredEvent;
+
+  it("refetches the native child when its parent's record changes", () => {
+    const expanded = withNativeChildRefreshes([
+      toShellApplicationEvent(subagentUpdated("provider_native", "child")),
+    ]);
+    expect(expanded.map((item) => ("event" in item ? item.event.threadId : null))).toEqual([
+      "parent",
+      "child",
+    ]);
+    expect(expanded.map((item) => item.sequence)).toEqual([7, 7]);
+  });
+
+  it("leaves app-owned and childless records alone", () => {
+    for (const stored of [
+      subagentUpdated("app_owned", "child"),
+      subagentUpdated("provider_native", null),
+    ]) {
+      expect(withNativeChildRefreshes([toShellApplicationEvent(stored)])).toHaveLength(1);
+    }
+  });
+});
 
 describe("omitIdleSubagentShells", () => {
   const row = (

@@ -35,6 +35,26 @@ describe("activeSubagentChildrenByParent", () => {
     expect(children?.map((thread) => thread.id)).toEqual(["a"]);
   });
 
+  it("lists a native child that has no run of its own while its activity is live", () => {
+    const native = presentThreadShell(environmentId, {
+      ...v2ThreadShell,
+      id: ThreadId.make("native"),
+      latestRunId: null,
+      activeProviderThreadId: null,
+      status: "idle",
+      activityRunStatus: "running",
+      lineage: {
+        parentThreadId: parentId,
+        relationshipToParent: "subagent",
+        rootThreadId: parentId,
+      },
+    });
+    const byParent = activeSubagentChildrenByParent([native]);
+    expect(
+      byParent.get(scopedThreadKey(scopeThreadRef(environmentId, parentId)))?.map((t) => t.id),
+    ).toEqual(["native"]);
+  });
+
   it("drops a parent once every child is terminal", () => {
     expect(activeSubagentChildrenByParent([child("b", "completed")]).size).toBe(0);
   });

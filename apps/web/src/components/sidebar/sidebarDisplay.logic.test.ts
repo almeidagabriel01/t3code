@@ -14,10 +14,10 @@ describe("resolveSubagentDisplay", () => {
     expect(resolveSubagentDisplay({ ...base, count: 0 })).toBe("hidden");
   });
 
-  it("folds several children into a summary in compact mode", () => {
-    expect(resolveSubagentDisplay({ ...base, count: 3 })).toBe("summary");
-    expect(resolveSubagentDisplay({ ...base, count: 3, expanded: true })).toBe("summary-and-rows");
-    expect(resolveSubagentDisplay({ ...base, count: 1 })).toBe("rows");
+  it("lists up to three children and folds more into a summary in compact mode", () => {
+    expect(resolveSubagentDisplay({ ...base, count: 3 })).toBe("rows");
+    expect(resolveSubagentDisplay({ ...base, count: 4 })).toBe("summary");
+    expect(resolveSubagentDisplay({ ...base, count: 4, expanded: true })).toBe("summary-and-rows");
   });
 
   it("lists every child in full mode", () => {

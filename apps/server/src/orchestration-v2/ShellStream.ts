@@ -280,6 +280,7 @@ export type ShellApplicationEvent =
   | {
       readonly sequence: number;
       readonly event: Pick<OrchestrationV2StoredEvent["event"], "threadId">;
+      readonly nativeChildThreadId?: ThreadId;
     };
 
 /** Focused subagents receive these updates through their thread subscription. */
@@ -317,7 +318,26 @@ export function toShellApplicationEvent(stored: ApplicationStoredEvent): ShellAp
         type: stored.type,
         sequence: stored.sequence,
       }
-    : { sequence: stored.sequence, event: { threadId: stored.event.threadId } };
+    : {
+        sequence: stored.sequence,
+        event: { threadId: stored.event.threadId },
+        ...(stored.event.type === "subagent.updated" &&
+        stored.event.payload.origin === "provider_native" &&
+        stored.event.payload.childThreadId !== null
+          ? { nativeChildThreadId: stored.event.payload.childThreadId }
+          : {}),
+      };
+}
+
+/** A native child has no events of its own when its parent's record changes, so it refetches too. */
+export function withNativeChildRefreshes(
+  events: ReadonlyArray<ShellApplicationEvent>,
+): ReadonlyArray<ShellApplicationEvent> {
+  return events.flatMap((stored) =>
+    "event" in stored && stored.nativeChildThreadId !== undefined
+      ? [stored, { sequence: stored.sequence, event: { threadId: stored.nativeChildThreadId } }]
+      : [stored],
+  );
 }
 
 export function coalesceShellApplicationEvents<A extends ShellApplicationEvent>(

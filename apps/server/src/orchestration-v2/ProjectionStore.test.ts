@@ -3237,6 +3237,120 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     }),
   );
 
+  it.effect("a native subagent child with no runs is active while its parent's record is", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const later = DateTime.add(now, { seconds: 1 });
+      const parentId = ThreadId.make("thread:projection-native-child:parent");
+      const childId = ThreadId.make("thread:projection-native-child:child");
+      const taskId = NodeId.make("node:projection-native-child:task");
+      const thread = (
+        id: typeof parentId,
+        lineage: {
+          readonly parentThreadId: ThreadId | null;
+          readonly relationshipToParent: "subagent" | null;
+          readonly rootThreadId: ThreadId;
+        },
+      ) => ({
+        createdBy: "agent" as const,
+        creationSource: "provider" as const,
+        id,
+        projectId: ProjectId.make("project:projection-native-child"),
+        title: "Native child",
+        providerInstanceId,
+        modelSelection,
+        runtimeMode: "full-access" as const,
+        interactionMode: "default" as const,
+        branch: null,
+        worktreePath: null,
+        activeProviderThreadId: null,
+        lineage,
+        forkedFrom: null,
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+        settledOverride: null,
+        settledAt: null,
+        lastVisitedAt: null,
+        deletedAt: null,
+      });
+      const task = {
+        id: taskId,
+        threadId: parentId,
+        runId: null,
+        parentNodeId: NodeId.make("node:projection-native-child:root"),
+        origin: "provider_native" as const,
+        createdBy: "agent" as const,
+        driver,
+        providerInstanceId,
+        providerThreadId: null,
+        childThreadId: childId,
+        nativeTaskRef: null,
+        prompt: "Sleep.",
+        title: null,
+        model: null,
+        status: "running" as const,
+        result: null,
+        startedAt: now,
+        completedAt: null,
+        updatedAt: now,
+      };
+      yield* projectionStore.apply({
+        id: EventId.make("event:projection-native-child:parent"),
+        type: "thread.created",
+        threadId: parentId,
+        occurredAt: now,
+        payload: thread(parentId, {
+          parentThreadId: null,
+          relationshipToParent: null,
+          rootThreadId: parentId,
+        }),
+      });
+      yield* projectionStore.apply({
+        id: EventId.make("event:projection-native-child:child"),
+        type: "thread.created",
+        threadId: childId,
+        occurredAt: now,
+        payload: thread(childId, {
+          parentThreadId: parentId,
+          relationshipToParent: "subagent",
+          rootThreadId: parentId,
+        }),
+      });
+      yield* projectionStore.apply({
+        id: EventId.make("event:projection-native-child:task"),
+        type: "subagent.updated",
+        threadId: parentId,
+        nodeId: taskId,
+        driver,
+        providerInstanceId,
+        occurredAt: now,
+        payload: task,
+      });
+      const childActivity = Effect.gen(function* () {
+        const shell = (yield* projectionStore.getShellSnapshot()).threads.find(
+          (candidate) => candidate.id === childId,
+        );
+        const single = yield* projectionStore.getThreadShell(childId);
+        return [shell?.activityRunStatus, single?.activityRunStatus];
+      });
+      assert.deepStrictEqual(yield* childActivity, ["running", "running"]);
+
+      yield* projectionStore.apply({
+        id: EventId.make("event:projection-native-child:done"),
+        type: "subagent.updated",
+        threadId: parentId,
+        nodeId: taskId,
+        driver,
+        providerInstanceId,
+        occurredAt: later,
+        payload: { ...task, status: "completed", completedAt: later, updatedAt: later },
+      });
+      assert.deepStrictEqual(yield* childActivity, [null, null]);
+    }),
+  );
+
   it.effect.each([
     ["T3 Code's idle compaction", "agent", "server", undefined, true, "/compact"],
     ["compacting on return", "user", "web", "onReturn", true, "/compact"],

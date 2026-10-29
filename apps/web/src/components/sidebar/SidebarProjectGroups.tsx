@@ -77,7 +77,8 @@ function SubagentRow(props: {
 }) {
   const { thread } = props;
   return (
-    <li className="list-none">
+    <li className="relative list-none">
+      <span aria-hidden className="absolute inset-y-0 start-5 w-px bg-sidebar-border" />
       <button
         type="button"
         data-testid="sidebar-subagent-row"
