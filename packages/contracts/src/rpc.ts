@@ -430,6 +430,17 @@ import {
   DecisionsSubscribeInput,
 } from "./decisions.ts";
 import {
+  Assistant,
+  AssistantError,
+  AssistantsCreateInput,
+  AssistantsDeleteInput,
+  AssistantsDeleteResult,
+  AssistantsEvent,
+  AssistantsResetInput,
+  AssistantsSubscribeInput,
+  AssistantsUpdateInput,
+} from "./assistants.ts";
+import {
   NoteConflictError,
   NoteDocument,
   NoteError,
@@ -666,6 +677,11 @@ export const WS_METHODS = {
   decisionsSubscribe: "decisions.subscribe",
   decisionsAnswer: "decisions.answer",
   decisionsDismiss: "decisions.dismiss",
+  assistantsSubscribe: "assistants.subscribe",
+  assistantsCreate: "assistants.create",
+  assistantsUpdate: "assistants.update",
+  assistantsDelete: "assistants.delete",
+  assistantsReset: "assistants.reset",
 
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
@@ -2106,6 +2122,34 @@ const WsDecisionsDismissRpc = Rpc.make(WS_METHODS.decisionsDismiss, {
   error: DecisionRpcErrors,
 });
 
+const AssistantRpcErrors = Schema.Union([AssistantError, EnvironmentAuthorizationError]);
+const WsAssistantsSubscribeRpc = Rpc.make(WS_METHODS.assistantsSubscribe, {
+  payload: AssistantsSubscribeInput,
+  success: AssistantsEvent,
+  error: AssistantRpcErrors,
+  stream: true,
+});
+const WsAssistantsCreateRpc = Rpc.make(WS_METHODS.assistantsCreate, {
+  payload: AssistantsCreateInput,
+  success: Assistant,
+  error: AssistantRpcErrors,
+});
+const WsAssistantsUpdateRpc = Rpc.make(WS_METHODS.assistantsUpdate, {
+  payload: AssistantsUpdateInput,
+  success: Assistant,
+  error: AssistantRpcErrors,
+});
+const WsAssistantsDeleteRpc = Rpc.make(WS_METHODS.assistantsDelete, {
+  payload: AssistantsDeleteInput,
+  success: AssistantsDeleteResult,
+  error: AssistantRpcErrors,
+});
+const WsAssistantsResetRpc = Rpc.make(WS_METHODS.assistantsReset, {
+  payload: AssistantsResetInput,
+  success: Assistant,
+  error: AssistantRpcErrors,
+});
+
 const WsKanbanSubscribeRpc = Rpc.make(WS_METHODS.kanbanSubscribe, {
   payload: KanbanSubscribeInput,
   success: KanbanStreamItem,
@@ -2432,6 +2476,11 @@ export const WsRpcGroup = RpcGroup.make(
   WsDecisionsSubscribeRpc,
   WsDecisionsAnswerRpc,
   WsDecisionsDismissRpc,
+  WsAssistantsSubscribeRpc,
+  WsAssistantsCreateRpc,
+  WsAssistantsUpdateRpc,
+  WsAssistantsDeleteRpc,
+  WsAssistantsResetRpc,
   WsServerReportClientActivityRpc,
   WsCloudGetRelayClientStatusRpc,
   WsCloudInstallRelayClientRpc,

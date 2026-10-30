@@ -68,6 +68,7 @@ export * from "./usage.ts";
 export * from "./scheduledTask.ts";
 export * from "./kanban.ts";
 export * from "./decisions.ts";
+export * from "./assistants.ts";
 export * from "./notes.ts";
 export * from "./worktreeMcp.ts";
 export * from "./resourceTelemetry.ts";

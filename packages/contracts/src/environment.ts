@@ -148,6 +148,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   notes: Schema.optionalKey(Schema.Boolean),
   /** Hide Decisions when absent; older servers have no decision methods. */
   decisions: Schema.optionalKey(Schema.Boolean),
+  /** Hide Assistants when absent; older servers have no assistant methods. */
+  assistants: Schema.optionalKey(Schema.Boolean),
   pullRequestStackActions: Schema.optionalKey(Schema.Boolean),
   serverSelfUpdate: Schema.optionalKey(ServerSelfUpdateCapability),
   /** Manual commands must update this install, not the host's default global prefix. */

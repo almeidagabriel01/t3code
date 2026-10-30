@@ -69,6 +69,19 @@ describe("decision client guards", () => {
   });
 });
 
+describe("assistant client guards", () => {
+  it("guards every assistant mutation and leaves the subscription open to readers", () => {
+    for (const method of [
+      WS_METHODS.assistantsCreate,
+      WS_METHODS.assistantsUpdate,
+      WS_METHODS.assistantsDelete,
+      WS_METHODS.assistantsReset,
+    ])
+      expect(clientRpcRequiredScopes(method, {})).toEqual(["orchestration:operate"]);
+    expect(Object.hasOwn(CLIENT_GUARDED_RPC_SCOPES, WS_METHODS.assistantsSubscribe)).toBe(false);
+  });
+});
+
 describe("Claude in Chrome client guards", () => {
   it("guards the default toggle with provider management and leaves the status read open", () => {
     expect(clientRpcRequiredScopes(WS_METHODS.providerClaudeChromeSetDefault, {})).toEqual([
