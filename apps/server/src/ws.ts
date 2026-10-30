@@ -2303,7 +2303,11 @@ export const layerWsRpc = (
             Effect.andThen(
               startup
                 .enqueueCommand(
-                  threadHandoff.handoff({ ...input, createdBy: "user", creationSource: "web" }),
+                  threadHandoff.handoff({
+                    ...input,
+                    createdBy: "user",
+                    creationSource: input.creationSource ?? "web",
+                  }),
                 )
                 .pipe(
                   Effect.catchTags({

@@ -22,7 +22,7 @@ import { getCustomModelOptionsByInstance } from "~/modelSelection";
 import { providerInstanceEntriesFor } from "~/providerInstances";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { orchestrationEnvironment } from "~/state/orchestration";
-import { useProject, useThreadShell, waitForThreadShell } from "~/state/entities";
+import { useProject, useQuietThreadShell, waitForThreadShell } from "~/state/entities";
 import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { buildThreadRouteParams } from "~/threadRoutes";
@@ -82,7 +82,9 @@ export function ThreadHandoffButton({ threadRef }: { readonly threadRef: ScopedT
   const canHandoff = useAtomValue(
     orchestrationEnvironment.handoffThread.permissionAtom(threadRef.environmentId),
   );
-  if (!canHandoff) return null;
+  // Nothing to hand off before the first message.
+  const hasMessage = useQuietThreadShell(threadRef)?.latestUserMessageAt != null;
+  if (!canHandoff || !hasMessage) return null;
   return (
     <Tooltip>
       <TooltipTrigger
@@ -112,7 +114,7 @@ function ThreadHandoffDialog({
 }) {
   const { environmentId, threadId } = threadRef;
   const navigate = useNavigate();
-  const thread = useThreadShell(threadRef);
+  const thread = useQuietThreadShell(threadRef);
   const project = useProject(
     thread === null ? null : { environmentId, projectId: thread.projectId },
   );

@@ -3943,6 +3943,7 @@ export const OrchestrationV2ThreadHandoffInput = Schema.Struct({
   sourceThreadId: ThreadId,
   modelSelection: ModelSelection,
   mode: OrchestrationV2ThreadHandoffMode,
+  creationSource: Schema.optional(OrchestrationV2CreationSource),
   /** A retry with the same id returns the thread the first call started. */
   clientRequestId: TrimmedNonEmptyString,
 });

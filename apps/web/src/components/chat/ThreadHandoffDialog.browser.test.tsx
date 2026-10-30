@@ -43,7 +43,7 @@ vi.mock("@tanstack/react-router", async (importOriginal) => ({
 }));
 vi.mock("~/hooks/useSettings", () => ({ useEnvironmentSettings: () => DEFAULT_UNIFIED_SETTINGS }));
 vi.mock("~/state/entities", () => ({
-  useThreadShell: () => ({
+  useQuietThreadShell: () => ({
     projectId: "project-1",
     title: "Fix login",
     providerInstanceId: codex,

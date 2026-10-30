@@ -1385,7 +1385,7 @@ function OpenCommandPaletteDialog(props: {
       value: "action:handoff-thread",
       searchTerms: ["hand off", "handoff", "continue", "switch", "agent", "model", "new session"],
       title: "Hand off to another agent",
-      disabled: !canHandoffActiveThread,
+      disabled: !canHandoffActiveThread || activeThread.latestUserMessageAt === null,
       icon: <ArrowRightLeftIcon className={ITEM_ICON_CLASS} />,
       run: async () => {
         openThreadHandoffDialog(threadRef);

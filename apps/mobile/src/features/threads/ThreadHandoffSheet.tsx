@@ -10,7 +10,7 @@ import {
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { Atom } from "effect/reactivity";
 import * as Haptics from "expo-haptics";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Platform, ScrollView, View } from "react-native";
 import { ScreenStack } from "react-native-screens";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -102,6 +102,9 @@ export function ThreadHandoffSheet({ route }: StaticScreenProps<ThreadHandoffPar
   const [clientRequestId] = useState(uuidv4);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The pick belongs to this sheet; the next one starts from the thread's own model.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears a registry entry held until the sheet unmounts
+  useEffect(() => () => appAtomRegistry.set(pickedAgentAtom, null), []);
 
   const agentOption = useMemo(
     () =>
@@ -121,7 +124,13 @@ export function ThreadHandoffSheet({ route }: StaticScreenProps<ThreadHandoffPar
     void Haptics.selectionAsync();
     const result = await handoff({
       environmentId: target.environmentId,
-      input: { sourceThreadId: target.threadId, modelSelection: selection, mode, clientRequestId },
+      input: {
+        sourceThreadId: target.threadId,
+        modelSelection: selection,
+        mode,
+        creationSource: "mobile",
+        clientRequestId,
+      },
     });
     if (result._tag !== "Success") {
       setStarting(false);
