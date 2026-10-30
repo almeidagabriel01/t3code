@@ -436,8 +436,7 @@ export const ChatHeader = memo(function ChatHeader({
       </WorkspaceBreadcrumb>
       {onToggleSideChat ? (
         <Tooltip>
-          {/* Narrow headers give the title room; side chat stays in panel shortcuts and its key. */}
-          <TooltipTrigger render={<span className="flex shrink-0 @max-xl/header:hidden" />}>
+          <TooltipTrigger render={<span className="flex shrink-0" />}>
             <Toggle
               className="shrink-0 [-webkit-app-region:no-drag]"
               pressed={sideChatOpen}
@@ -471,6 +470,7 @@ export const ChatHeader = memo(function ChatHeader({
       ) : null}
       {isServerThread ? <GuestShareIndicator threadRef={activeThreadRef} /> : null}
       {isServerThread ? (
+        // Narrow headers give the title room; handoff stays in the thread menu and palette.
         <span className="flex shrink-0 @max-xl/header:hidden">
           <ThreadHandoffButton threadRef={activeThreadRef} />
         </span>

@@ -114,7 +114,7 @@ function ThreadNotes(props: {
   const panelToggle =
     props.projectId === null ? null : (
       <Tooltip>
-        <TooltipTrigger render={<span className="flex shrink-0 @max-xl/header:hidden" />}>
+        <TooltipTrigger render={<span className="flex shrink-0" />}>
           <Toggle
             className="shrink-0 [-webkit-app-region:no-drag]"
             pressed={panelOpen}
