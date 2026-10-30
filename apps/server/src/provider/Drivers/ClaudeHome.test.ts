@@ -9,6 +9,7 @@ import {
   makeClaudeCapabilitiesCacheKey,
   makeClaudeContinuationGroupKey,
   makeClaudeEnvironment,
+  resolveClaudeConfigJsonPath,
   resolveClaudeHomePath,
 } from "./ClaudeHome.ts";
 
@@ -43,6 +44,23 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
         const explicit = path.resolve(NodeOS.homedir(), ".claude-work");
         expect(yield* resolveClaudeHomePath({ homePath: "~/.claude-work" }, environment)).toBe(
           explicit,
+        );
+      }),
+    );
+
+    it.effect("locates .claude.json like the CLI: homePath, then env, then ~/.claude.json", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const env = { CLAUDE_CONFIG_DIR: "/tmp/claude-inherited" };
+        const home = NodeOS.homedir();
+        expect(yield* resolveClaudeConfigJsonPath({ homePath: "~/.claude-work" }, env)).toBe(
+          path.join(home, ".claude-work", ".claude.json"),
+        );
+        expect(yield* resolveClaudeConfigJsonPath({ homePath: "" }, env)).toBe(
+          path.resolve("/tmp/claude-inherited", ".claude.json"),
+        );
+        expect(yield* resolveClaudeConfigJsonPath({ homePath: "" }, {})).toBe(
+          path.join(home, ".claude.json"),
         );
       }),
     );

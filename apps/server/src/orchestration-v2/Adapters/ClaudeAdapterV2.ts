@@ -152,6 +152,7 @@ import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
 import {
   claudeSignedOutMessage,
   makeClaudeEnvironment,
+  resolveClaudeConfigJsonPath,
   resolveClaudeHomePath,
 } from "../../provider/Drivers/ClaudeHome.ts";
 import {
@@ -869,6 +870,21 @@ const claudeConfigDirOf = (
   homeDirectory: string,
 ) => path.resolve(environment.CLAUDE_CONFIG_DIR ?? path.join(homeDirectory, ".claude"));
 
+/** The SDK ignores `claudeInChromeDefaultEnabled`; only an explicit `--chrome` starts the integration. */
+const claudeChromeDefaultEnabled = (
+  launchFlags: Readonly<Record<string, unknown>>,
+  configJsonText: string | null,
+) => {
+  if ("chrome" in launchFlags || "no-chrome" in launchFlags || configJsonText === null) {
+    return false;
+  }
+  try {
+    return JSON.parse(configJsonText)?.claudeInChromeDefaultEnabled === true;
+  } catch {
+    return false;
+  }
+};
+
 // The SDK reads CLAUDE_CONFIG_DIR from process.env. Isolate custom homes in a
 // worker so concurrent providers keep the server's environment.
 const runClaudeWorker = Effect.fn("runClaudeWorker")(function* (input: {
@@ -1476,6 +1492,7 @@ export function makeClaudeQueryOptions(input: {
   readonly appendSystemPromptFileText?: string;
   // Flag settings, because a user's settings.json env beats the process env in Claude Code.
   readonly toolSearchOverride?: "true";
+  readonly claudeConfigJsonText?: string | null;
 }): ClaudeAgentSdkQueryOptions {
   const compiledSelection = compileClaudeModelSelection(input.modelSelection);
   const {
@@ -1489,6 +1506,9 @@ export function makeClaudeQueryOptions(input: {
     settings: _launchArgSettings,
     ...extraArgs
   } = input.settings === undefined ? {} : parseCliArgs(input.settings.launchArgs).flags;
+  if (claudeChromeDefaultEnabled(extraArgs, input.claudeConfigJsonText ?? null)) {
+    extraArgs.chrome = null;
+  }
   // Claude Code overwrites its CLI append text with the SDK's initialize
   // appendSystemPrompt, so launch-argument text has to travel in that value.
   // The CLI puts file text before inline text and trims one trailing newline.
@@ -1695,6 +1715,9 @@ export const CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS: ReadonlyArray<string> = [
   "mcp__t3-code__t3_project_list",
   "mcp__t3-code__t3_project_read",
   "mcp__t3-code__t3_thread_search",
+  "mcp__t3-code__t3_thread_diff",
+  "mcp__t3-code__t3_docs",
+  "mcp__t3-code__t3_host",
   "mcp__t3-code__t3_preview_list",
   "mcp__t3-code__t3_environment_read",
   "mcp__t3-code__t3_environment_links",
@@ -4556,6 +4579,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
       }
       return claudeToolSearchOverride(adapterOptions.environment.ENABLE_TOOL_SEARCH);
     },
+  );
+
+  const readClaudeConfigJson = resolveClaudeConfigJsonPath(
+    adapterOptions.settings,
+    adapterOptions.environment,
+  ).pipe(
+    Effect.provideService(Path.Path, path),
+    Effect.flatMap((file) => fileSystem.readFileString(file)),
+    Effect.orElseSucceed(() => null),
   );
 
   const userInvocableSkills = (cwd: string | null) =>
@@ -9979,7 +10011,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             turnInput.runtimePolicy.cwd,
             launchArgSettings,
           );
+          const claudeConfigJsonText = yield* readClaudeConfigJson;
           const queryOptions = makeClaudeQueryOptions({
+            claudeConfigJsonText,
             modelSelection: turnInput.modelSelection,
             nativeThreadId,
             resume: shouldResume,

@@ -27,6 +27,19 @@ export const resolveClaudeHomePath = Effect.fn("resolveClaudeHomePath")(function
   return path.resolve(path.join(home, ".claude"));
 });
 
+/** Mirrors the CLI: `<CLAUDE_CONFIG_DIR>/.claude.json`, else `~/.claude.json` (not under `~/.claude`). */
+export const resolveClaudeConfigJsonPath = Effect.fn("resolveClaudeConfigJsonPath")(function* (
+  config: Pick<ClaudeSettings, "homePath">,
+  environment?: NodeJS.ProcessEnv,
+): Effect.fn.Return<string, never, Path.Path> {
+  const path = yield* Path.Path;
+  const hasConfigDir =
+    config.homePath.trim().length > 0 || (environment?.CLAUDE_CONFIG_DIR?.trim() ?? "").length > 0;
+  return hasConfigDir
+    ? path.join(yield* resolveClaudeHomePath(config, environment), ".claude.json")
+    : path.join(yield* HostProcess.HomeDirectory, ".claude.json");
+});
+
 export const makeClaudeEnvironment = Effect.fn("makeClaudeEnvironment")(function* (
   config: Pick<ClaudeSettings, "homePath">,
   baseEnv?: NodeJS.ProcessEnv,

@@ -91,6 +91,8 @@ import { ProjectToolkit } from "../../mcp/toolkits/project/tools.ts";
 import { WorktreeToolkit } from "../../mcp/toolkits/worktree/tools.ts";
 import { ThreadToolkit } from "../../mcp/toolkits/thread/tools.ts";
 import { OrchestratorToolkit } from "../../mcp/toolkits/orchestrator/tools.ts";
+import { DocsToolkit } from "../../mcp/toolkits/docs/tools.ts";
+import { HostToolkit } from "../../mcp/toolkits/host/tools.ts";
 import { ClaudeExecutableFileCheck } from "../../provider/Drivers/ClaudeExecutable.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import { packMemoryContext } from "@t3tools/provider-core/server/memoryContext";
@@ -252,6 +254,26 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
     });
     assert.deepEqual(options.thinking, { type: "adaptive", display: "summarized" });
     assert.equal(options.extraArgs?.["thinking-display"], "summarized");
+  });
+
+  it.each([
+    ["", '{"claudeInChromeDefaultEnabled":true}', true],
+    ["", '{"claudeInChromeDefaultEnabled":false}', false],
+    ["", "{}", false],
+    ["", "{not json", false],
+    ["", null, false],
+    ["--chrome", '{"claudeInChromeDefaultEnabled":false}', true],
+    ["--no-chrome", '{"claudeInChromeDefaultEnabled":true}', false],
+  ])("launchArgs %j with config %j sets --chrome: %s", (launchArgs, configText, expected) => {
+    const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      nativeThreadId: "chrome-thread",
+      resume: false,
+      cwd: "/workspace",
+      settings: { ...DEFAULT_CLAUDE_SETTINGS, launchArgs },
+      claudeConfigJsonText: configText,
+    });
+    assert.equal(options.extraArgs?.chrome === null, expected);
   });
 
   it.each([
@@ -579,6 +601,8 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
       ...Object.values(EnvironmentToolkit.tools),
       ...Object.values(PreviewControlsToolkit.tools),
       ...Object.values(HtmlToolkit.tools),
+      ...Object.values(DocsToolkit.tools),
+      ...Object.values(HostToolkit.tools),
     ]
       .filter((tool) => Context.get(tool.annotations, Tool.Readonly))
       .map((tool) => `mcp__t3-code__${tool.name}`)
