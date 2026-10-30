@@ -1,4 +1,5 @@
 import { ActiveNewTaskContext } from "../../state/active-new-task";
+import { fallbackModelSelectionsOf } from "@t3tools/shared/usageLimits";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 import { useNowMinuteMs } from "../../lib/clock";
 import * as Dialog from "../../components/ui/Dialog";
@@ -514,7 +515,9 @@ export function NewTaskFlowProvider(
     defaultSelection: selectedDefaultModel,
     explicitSelection:
       draftModelSelection ?? (projectDefaultModelSelection ? null : stickyModelSelection),
-    fallbackSelection: selectedEnvironmentServerConfig?.settings.fallbackModelSelection ?? null,
+    fallbackSelections: selectedEnvironmentServerConfig
+      ? fallbackModelSelectionsOf(selectedEnvironmentServerConfig.settings)
+      : [],
     providers: selectedEnvironmentServerConfig?.providers ?? [],
     ...(selectedEnvironmentServerConfig
       ? { settings: selectedEnvironmentServerConfig.settings }

@@ -10,6 +10,8 @@ const testState = vi.hoisted(() => {
     defaultThreadEnvMode: "local" as "local" | "worktree" | null,
     newWorktreesStartFromOrigin: false,
     defaultModelSelection: null,
+    fallbackModelSelection: null,
+    fallbackModelSelections: [],
     defaultRuntimeMode: "full-access" as RuntimeMode,
   };
   let storedDraft: {
@@ -100,6 +102,8 @@ const testState = vi.hoisted(() => {
         defaultThreadEnvMode: workspaceDefaults.envMode,
         newWorktreesStartFromOrigin: workspaceDefaults.startFromOrigin,
         defaultModelSelection: null,
+        fallbackModelSelection: null,
+        fallbackModelSelections: [],
         defaultRuntimeMode: "full-access",
       };
       router.state.location.href = "/";

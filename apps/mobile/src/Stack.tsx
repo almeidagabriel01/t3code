@@ -134,6 +134,7 @@ import { KanbanArchiveRouteScreen } from "./features/kanban/KanbanArchiveRouteSc
 import { KanbanLinkThreadRouteScreen } from "./features/kanban/KanbanLinkThreadRouteScreen";
 import { NotesRouteScreen } from "./features/notes/NotesRouteScreen";
 import { SettingsMemoryRouteScreen } from "./features/settings/SettingsMemoryRouteScreen";
+import { FallbackModelPickerRouteScreen } from "./features/settings/FallbackModelPickerRouteScreen";
 import { MemoryModelPickerRouteScreen } from "./features/settings/MemoryModelPickerRouteScreen";
 import { NoteRouteScreen } from "./features/notes/NoteRouteScreen";
 import { NoteConflictRouteScreen } from "./features/notes/NoteConflictRouteScreen";
@@ -431,6 +432,18 @@ const SETTINGS_SCREENS = {
   }),
   SettingsMemoryModel: createNativeStackScreen({
     screen: MemoryModelPickerRouteScreen,
+    options: {
+      ...SETTINGS_PAGE_OPTIONS,
+      headerShown: false,
+      ...(Platform.OS === "android"
+        ? { presentation: "card" as const }
+        : {
+            ...THREAD_SETTINGS_SHEET_OPTIONS,
+          }),
+    },
+  }),
+  SettingsFallbackModel: createNativeStackScreen({
+    screen: FallbackModelPickerRouteScreen,
     options: {
       ...SETTINGS_PAGE_OPTIONS,
       headerShown: false,

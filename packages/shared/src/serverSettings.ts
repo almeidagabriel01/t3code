@@ -8,6 +8,7 @@ import {
   type IdleCompactionMode,
   isProviderAvailable,
   isUnconfiguredDefaultInstanceEnabled,
+  MAX_FALLBACK_MODEL_SELECTIONS,
   resolveProjectProviderInstanceEnabled,
   resolveProviderInstanceEnabled,
   isProviderTextGenerationCapable,
@@ -25,6 +26,7 @@ import {
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { deepMerge } from "./Struct.ts";
+import { fallbackModelSelectionsOf, type FallbackSettings } from "./usageLimits.ts";
 import { fromLenientJson } from "./schemaJson.ts";
 import { createModelSelection, readCustomModelEntries } from "./model.ts";
 import {
@@ -385,7 +387,77 @@ function patchedIdleCompaction(
   return globalIdleCompaction(current) === "off" ? "off" : "onReturn";
 }
 
+const sameModel = (a: ModelSelection, b: ModelSelection) =>
+  a.instanceId === b.instanceId && a.model === b.model;
+
+export const sameFallbackModels = (
+  a: ReadonlyArray<ModelSelection>,
+  b: ReadonlyArray<ModelSelection>,
+) => a.length === b.length && a.every((entry, at) => sameModel(entry, b[at]!));
+
+/** The settings patch for a new chain; the legacy key lets a server that predates the list apply it too. */
+export function fallbackModelsPatch(list: ReadonlyArray<ModelSelection>) {
+  return {
+    fallbackModelSelections: list.slice(0, MAX_FALLBACK_MODEL_SELECTIONS),
+    fallbackModelSelection: list[0] ?? null,
+  } satisfies ServerSettingsPatch;
+}
+
+/** Appends a model, once and only while the chain has room. */
+export const addFallbackModel = (list: ReadonlyArray<ModelSelection>, model: ModelSelection) =>
+  list.length >= MAX_FALLBACK_MODEL_SELECTIONS || list.some((entry) => sameModel(entry, model))
+    ? list
+    : [...list, model];
+
+/** Replaces one entry, unless the chain already holds the new model elsewhere. */
+export const replaceFallbackModel = (
+  list: ReadonlyArray<ModelSelection>,
+  index: number,
+  model: ModelSelection,
+) =>
+  list.some((entry, at) => at !== index && sameModel(entry, model))
+    ? list
+    : list.map((entry, at) => (at === index ? model : entry));
+
+export const removeFallbackModel = (list: ReadonlyArray<ModelSelection>, index: number) =>
+  list.filter((_, at) => at !== index);
+
+/** Moves one entry by `delta` places, stopping at either end. */
+export function moveFallbackModel(
+  list: ReadonlyArray<ModelSelection>,
+  index: number,
+  delta: -1 | 1,
+) {
+  const to = index + delta;
+  const moved = list[index];
+  const other = list[to];
+  if (moved === undefined || other === undefined) return list;
+  return list.map((entry, at) => (at === index ? other : at === to ? moved : entry));
+}
+
+/** Keeps the legacy single value mirroring the head of the list, so older clients still read it. */
+export function withFallbackMirror<S extends FallbackSettings>(settings: S): S {
+  const list = fallbackModelSelectionsOf(settings);
+  return { ...settings, fallbackModelSelections: list, fallbackModelSelection: list[0] ?? null };
+}
+
 export function applyServerSettingsPatch(
+  current: ServerSettings,
+  rawPatch: ServerSettingsPatch,
+): ServerSettings {
+  const next = applyServerSettingsPatchFields(current, rawPatch);
+  // The list wins; an older client's single value replaces the whole chain.
+  const list =
+    rawPatch.fallbackModelSelections ??
+    (rawPatch.fallbackModelSelection === undefined
+      ? fallbackModelSelectionsOf(current)
+      : rawPatch.fallbackModelSelection === null
+        ? []
+        : [rawPatch.fallbackModelSelection]);
+  return { ...next, fallbackModelSelections: list, fallbackModelSelection: list[0] ?? null };
+}
+
+function applyServerSettingsPatchFields(
   current: ServerSettings,
   rawPatch: ServerSettingsPatch,
 ): ServerSettings {

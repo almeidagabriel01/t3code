@@ -1266,6 +1266,8 @@ export const StorageCleanupSettings = Schema.Struct({
 });
 export type StorageCleanupSettings = typeof StorageCleanupSettings.Type;
 
+export const MAX_FALLBACK_MODEL_SELECTIONS = 3;
+
 export const ServerSettings = Schema.Struct({
   memoryOwnerSourceReadPolicyVersion: NonNegativeInt.pipe(
     Schema.withDecodingDefault(Effect.succeed(0)),
@@ -1328,9 +1330,14 @@ export const ServerSettings = Schema.Struct({
   defaultModelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  /** Legacy single fallback: mirrors the first of `fallbackModelSelections` for older clients. */
   fallbackModelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  /** Tried in order when the default model's provider is out of usage. */
+  fallbackModelSelections: Schema.Array(ModelSelection)
+    .check(Schema.isMaxLength(MAX_FALLBACK_MODEL_SELECTIONS))
+    .pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   defaultRuntimeMode: RuntimeMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE)),
   ),
@@ -1714,6 +1721,9 @@ const ServerSettingsPatchFields = Schema.Struct({
   defaultModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   defaultRuntimeMode: Schema.optionalKey(RuntimeMode),
   fallbackModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  fallbackModelSelections: Schema.optionalKey(
+    Schema.Array(ModelSelection).check(Schema.isMaxLength(MAX_FALLBACK_MODEL_SELECTIONS)),
+  ),
   /** Replaces each project's override set; null removes it. Omitted providerInstances retains its stored value. */
   projectSettingsOverrides: Schema.optionalKey(
     Schema.Record(

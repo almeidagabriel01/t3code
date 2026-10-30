@@ -41,6 +41,9 @@ import {
 } from "./settings-scoped-server";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import { AutoSettleSettingsRows } from "./ThreadSettingsSections";
+import { FallbackModelsSection } from "./components/FallbackModelsSection";
+import { sameFallbackModels } from "@t3tools/shared/serverSettings";
+import { fallbackModelSelectionsOf } from "@t3tools/shared/usageLimits";
 import { supportsSharedSettingsSync } from "@t3tools/client-runtime/state/shared-settings";
 
 type SettingsPage = "threads" | "source-control" | "worktrees" | "maintenance";
@@ -377,6 +380,21 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                       onValueChange={(value) => write({ enableAgentBrowserAccess: value })}
                     />
                   </SettingsSection>
+                  {!projectSelected ? (
+                    <FallbackModelsSection
+                      environmentId={reference.environment.environmentId}
+                      chain={fallbackModelSelectionsOf(reference.settings)}
+                      editable={!disabled && displayTargets.length === 1}
+                      mixed={displayTargets.some(
+                        (entry) =>
+                          !sameFallbackModels(
+                            fallbackModelSelectionsOf(entry.settings),
+                            fallbackModelSelectionsOf(reference.settings),
+                          ),
+                      )}
+                      write={write}
+                    />
+                  ) : null}
                   <AutoSettleSettingsRows write={write} pending={pendingWrites > 0} />
                 </>
               ) : null}

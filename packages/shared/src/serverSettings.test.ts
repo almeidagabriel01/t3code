@@ -25,7 +25,15 @@ import {
   parsePersistedServerObservabilitySettings,
   resolveHandoffSummaryAvailability,
   resolveSourceControlWriterModelSelection,
+  addFallbackModel,
+  fallbackModelsPatch,
+  moveFallbackModel,
+  removeFallbackModel,
+  replaceFallbackModel,
+  sameFallbackModels,
+  withFallbackMirror,
 } from "./serverSettings.ts";
+import { fallbackModelSelectionsOf } from "./usageLimits.ts";
 
 const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
@@ -50,6 +58,48 @@ describe("fallbackTextGenerationModelSelection", () => {
     expect(
       applyServerSettingsPatch(settings, { fallbackModelSelection: null }).fallbackModelSelection,
     ).toBeNull();
+  });
+  it("reads a legacy single fallback as a one-model chain and keeps the legacy key mirroring the head", () => {
+    const [a, b, c] = ["a", "b", "c"].map((model) => ({
+      instanceId: ProviderInstanceId.make("codex"),
+      model,
+    }));
+    const legacy = { ...DEFAULT_SERVER_SETTINGS, fallbackModelSelection: a! };
+    expect(fallbackModelSelectionsOf(legacy)).toEqual([a]);
+    expect(withFallbackMirror(legacy).fallbackModelSelections).toEqual([a]);
+    const chained = applyServerSettingsPatch(legacy, { fallbackModelSelections: [b!, c!] });
+    expect(chained.fallbackModelSelections).toEqual([b, c]);
+    expect(chained.fallbackModelSelection).toEqual(b);
+    // An older client sets only the single value: it replaces the chain.
+    const replaced = applyServerSettingsPatch(chained, { fallbackModelSelection: a! });
+    expect(replaced.fallbackModelSelections).toEqual([a]);
+    expect(
+      applyServerSettingsPatch(replaced, { fallbackModelSelections: [] }).fallbackModelSelection,
+    ).toBeNull();
+    expect(
+      applyServerSettingsPatch(chained, { defaultRuntimeMode: "full-access" })
+        .fallbackModelSelections,
+    ).toEqual([b, c]);
+  });
+  it("edits the chain without duplicates, past three entries or off either end", () => {
+    const m = (model: string) => ({ instanceId: ProviderInstanceId.make("codex"), model });
+    const [a, b, c, d] = [m("a"), m("b"), m("c"), m("d")];
+    expect(addFallbackModel([a], a)).toEqual([a]);
+    expect(addFallbackModel([a, b, c], d)).toEqual([a, b, c]);
+    expect(addFallbackModel([a, b], c)).toEqual([a, b, c]);
+    expect(replaceFallbackModel([a, b], 0, b)).toEqual([a, b]);
+    expect(replaceFallbackModel([a, b], 0, c)).toEqual([c, b]);
+    expect(removeFallbackModel([a, b], 0)).toEqual([b]);
+    expect(sameFallbackModels([a, b], [a, b])).toBe(true);
+    expect(sameFallbackModels([a, b], [b, a])).toBe(false);
+    expect(moveFallbackModel([a, b, c], 1, -1)).toEqual([b, a, c]);
+    expect(moveFallbackModel([a, b, c], 2, 1)).toEqual([a, b, c]);
+    expect(moveFallbackModel([a, b, c], 0, -1)).toEqual([a, b, c]);
+    expect(fallbackModelsPatch([])).toEqual({
+      fallbackModelSelections: [],
+      fallbackModelSelection: null,
+    });
+    expect(fallbackModelsPatch([b, a]).fallbackModelSelection).toEqual(b);
   });
   it("ignores a configured non-default instance at machine scope, matching no fallback", () => {
     const configured = ProviderInstanceId.make("codex_work");

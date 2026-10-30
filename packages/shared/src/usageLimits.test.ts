@@ -72,7 +72,7 @@ describe("new thread model fallback", () => {
 
   const defaults = {
     defaultSelection: selection,
-    fallbackSelection: fallback,
+    fallbackSelections: [fallback],
     providers: [limited, available],
     now,
   };
@@ -80,7 +80,23 @@ describe("new thread model fallback", () => {
     ["exhausted default", {}, fallback],
     ["explicit selection", { explicitSelection: selection }, selection],
     ["missing default", { defaultSelection: null }, null],
-    ["no fallback", { fallbackSelection: null }, selection],
+    ["no fallback", { fallbackSelections: [] }, selection],
+    [
+      "second model when the first is unusable",
+      {
+        fallbackSelections: [
+          { ...fallback, instanceId: ProviderInstanceId.make("gone") },
+          fallback,
+        ],
+      },
+      fallback,
+    ],
+    ["first usable model wins", { fallbackSelections: [fallback, selection] }, fallback],
+    [
+      "none usable",
+      { fallbackSelections: [{ ...fallback, instanceId: ProviderInstanceId.make("gone") }] },
+      selection,
+    ],
     ["expired window", { now: Date.parse("2026-09-04T00:00:00Z") }, selection],
     [
       "environment disabled",

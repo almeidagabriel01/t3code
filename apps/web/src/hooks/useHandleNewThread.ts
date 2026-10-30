@@ -3,6 +3,7 @@ import {
   scopeProjectRef,
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
+import { fallbackModelSelectionsOf } from "@t3tools/shared/usageLimits";
 import { DEFAULT_SERVER_SETTINGS, type ScopedProjectRef, type ThreadId } from "@t3tools/contracts";
 import { type AnyRouter, useRouter } from "@tanstack/react-router";
 import {
@@ -157,7 +158,7 @@ export function createNewThreadHandler(router: AnyRouter) {
               targetServerSettings,
               projectRef.projectId,
             )),
-      fallbackSelection: targetServerSettings.fallbackModelSelection ?? null,
+      fallbackSelections: fallbackModelSelectionsOf(targetServerSettings),
       providers: environmentServerConfigs.get(projectRef.environmentId)?.providers ?? [],
       settings: targetServerSettings,
       projectId: projectRef.projectId,

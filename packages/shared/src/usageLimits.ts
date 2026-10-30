@@ -61,10 +61,22 @@ export function exhaustedUsageWindow(
   }
 }
 
+export type FallbackSettings = Pick<
+  ServerSettings,
+  "fallbackModelSelection" | "fallbackModelSelections"
+>;
+
+/** The ordered fallback chain. A server that predates the list only has the single legacy value. */
+export function fallbackModelSelectionsOf(settings: FallbackSettings) {
+  const { fallbackModelSelection: legacy, fallbackModelSelections: list } = settings;
+  return list.length > 0 ? list : legacy ? [legacy] : [];
+}
+
 export function resolveNewThreadModelSelection(input: {
   readonly defaultSelection: ModelSelection | null;
   readonly explicitSelection?: ModelSelection | null;
-  readonly fallbackSelection: ModelSelection | null;
+  /** Tried in order; the first usable one wins. */
+  readonly fallbackSelections: ReadonlyArray<ModelSelection>;
   readonly providers: readonly ServerProvider[];
   readonly now: number;
   readonly settings?: ServerSettings;
@@ -72,32 +84,31 @@ export function resolveNewThreadModelSelection(input: {
 }) {
   const selection = input.explicitSelection ?? input.defaultSelection;
   const unchanged = { selection, fallback: null };
-  if (input.explicitSelection || !selection || !input.fallbackSelection) return unchanged;
+  if (input.explicitSelection || !selection || input.fallbackSelections.length === 0)
+    return unchanged;
   const provider = input.providers.find((entry) => entry.instanceId === selection.instanceId);
   const window = exhaustedUsageWindow(provider, input.now, selection.model);
-  const fallback = input.providers.find(
-    (entry) => entry.instanceId === input.fallbackSelection?.instanceId,
-  );
-  if (
-    !provider ||
-    !window ||
-    !fallback?.enabled ||
-    !fallback.installed ||
-    fallback.auth.status === "unauthenticated" ||
-    !isProviderAvailable(fallback) ||
-    exhaustedUsageWindow(fallback, input.now, input.fallbackSelection.model) ||
-    (input.settings &&
-      !resolveProjectProviderInstanceEnabled(
-        input.settings,
-        input.projectId ?? null,
-        fallback.instanceId,
-      ))
-  )
-    return unchanged;
-  return {
-    selection: input.fallbackSelection,
-    fallback: { provider, resetsAt: window.resetsAt ?? null },
-  };
+  if (!provider || !window) return unchanged;
+  // ponytail: no per-model cooldown; a model's own usage window already says when it is out.
+  const usable = input.fallbackSelections.find((candidate) => {
+    const fallback = input.providers.find((entry) => entry.instanceId === candidate.instanceId);
+    return (
+      fallback?.enabled === true &&
+      fallback.installed &&
+      fallback.auth.status !== "unauthenticated" &&
+      isProviderAvailable(fallback) &&
+      !exhaustedUsageWindow(fallback, input.now, candidate.model) &&
+      (!input.settings ||
+        resolveProjectProviderInstanceEnabled(
+          input.settings,
+          input.projectId ?? null,
+          fallback.instanceId,
+        ))
+    );
+  });
+  return usable === undefined
+    ? unchanged
+    : { selection: usable, fallback: { provider, resetsAt: window.resetsAt ?? null } };
 }
 
 export const CHATGPT_USAGE_URL = "https://chatgpt.com/#settings/Usage";

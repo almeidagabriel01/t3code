@@ -254,6 +254,33 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(layerServerSettings())),
   );
 
+  it.effect("reads a saved single fallback model as a one-model chain and keeps the old key", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const saved = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6.1-sol" };
+      yield* fs.writeFileString(
+        config.settingsPath,
+        JSON.stringify({ fallbackModelSelection: saved }),
+      );
+
+      const settings = yield* service.getSettings;
+      assert.deepEqual(settings.fallbackModelSelections, [saved]);
+      assert.deepEqual(settings.fallbackModelSelection, saved);
+
+      // An older client's single value replaces the chain; the list keeps the legacy key in step.
+      const second = {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "claude-fable-5-1",
+      };
+      const chained = yield* service.updateSettings({ fallbackModelSelections: [second, saved] });
+      assert.deepEqual(chained.fallbackModelSelection, second);
+      const replaced = yield* service.updateSettings({ fallbackModelSelection: saved });
+      assert.deepEqual(replaced.fallbackModelSelections, [saved]);
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
   it.effect("tells clients it reads idle compaction modes before any settings are saved", () =>
     Effect.gen(function* () {
       const service = yield* ServerSettingsModule.ServerSettingsService;

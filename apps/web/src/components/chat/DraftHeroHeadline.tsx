@@ -1,4 +1,5 @@
 import type { DraftId } from "~/composerDraftStore";
+import { fallbackModelSelectionsOf } from "@t3tools/shared/usageLimits";
 import { composerDraftHasUserContent, useComposerDraftStore } from "~/composerDraftStore";
 import { resolveEnvironmentMachineKind, type ScopedProjectRef } from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
@@ -218,7 +219,9 @@ export function DraftHeroHeadline({
                 environmentSettings,
                 project.id,
               )),
-        fallbackSelection: environmentSettings?.fallbackModelSelection ?? null,
+        fallbackSelections: environmentSettings
+          ? fallbackModelSelectionsOf(environmentSettings)
+          : [],
         providers: providersByEnvironment.get(project.environmentId) ?? [],
         ...(environmentSettings ? { settings: environmentSettings } : {}),
         projectId: project.id,

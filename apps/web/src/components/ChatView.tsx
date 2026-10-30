@@ -1,4 +1,5 @@
 import { workspaceAreaProps } from "../lib/workspaceFocus";
+import { fallbackModelSelectionsOf } from "@t3tools/shared/usageLimits";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 import { queuedRunEditBlockedReason } from "@t3tools/client-runtime/queued-run-edit";
@@ -789,7 +790,7 @@ export default function ChatView(props: ChatViewProps) {
             settings,
             draftThread.projectId,
           ),
-        fallbackSelection: settings.fallbackModelSelection,
+        fallbackSelections: fallbackModelSelectionsOf(settings),
         providers: providersByEnvironment.get(draftThread.environmentId) ?? [],
         settings,
         projectId: draftThread.projectId,

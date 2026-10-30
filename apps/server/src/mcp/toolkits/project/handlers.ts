@@ -20,6 +20,7 @@ import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import * as DateTime from "effect/DateTime";
+import { fallbackModelSelectionsOf } from "@t3tools/shared/usageLimits";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { resolveRuntimeMode } from "../../delegatedTaskModes.ts";
@@ -192,7 +193,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           (projectDefaults
             ? resolveNewThreadModelSelection({
                 defaultSelection: projectDefaults.defaultModelSelection,
-                fallbackSelection: projectDefaults.fallbackModelSelection,
+                fallbackSelections: fallbackModelSelectionsOf(projectDefaults),
                 providers: yield* ProviderRegistry.ProviderRegistry.pipe(
                   Effect.flatMap((registry) => registry.getProviders),
                 ),

@@ -47,6 +47,7 @@ import { type DeepPartial, deepMerge } from "@t3tools/shared/Struct";
 import { fromJsonStringPretty, fromLenientJson } from "@t3tools/shared/schemaJson";
 import {
   applyServerSettingsPatch,
+  withFallbackMirror,
   deriveLegacyProjectOverrides,
   fallbackTextGenerationModelSelection,
   isModelSelectionProviderEnabled,
@@ -175,6 +176,7 @@ const normalizeServerSettings = (
   encodeServerSettings(settings).pipe(
     Effect.flatMap(decodeServerSettings),
     Effect.map(foldProviderInstanceEnabledFlags),
+    Effect.map(withFallbackMirror),
     Effect.map((next) => withIdleCompaction(next, globalIdleCompaction(next))),
     Effect.map((next) => ({ ...next, ...deriveLegacyProjectOverrides(next) })),
     Effect.mapError(
@@ -597,6 +599,7 @@ const ATOMIC_SETTINGS_KEYS: ReadonlySet<string> = new Set([
   "reviewGuideModelSelection",
   "textGenerationModelSelection",
   "fallbackModelSelection",
+  "fallbackModelSelections",
   "pullRequestMergeMethod",
 ]);
 
@@ -887,6 +890,8 @@ const make = Effect.gen(function* () {
     // it to `idleCompaction`, so that switch goes to clients as a boolean. The
     // defaults gain the field too, which tells clients this server reads modes.
     settings = withIdleCompaction(settings, globalIdleCompaction(settings));
+    // A saved single fallback model becomes a one-model chain; the old key keeps mirroring its head.
+    settings = withFallbackMirror(settings);
 
     // A file that failed to decode must stay on disk for the user to repair.
     const settingsFileTrusted = Option.isNone(parseFailure);
