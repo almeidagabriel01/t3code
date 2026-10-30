@@ -168,6 +168,33 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
     )
   `;
 
+  // project_id is kept so delivery needs no thread lookup; the unique pair makes a retried request
+  // land on the same row. delivery_error stops the sweep for a thread that is gone.
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS decisions (
+      decision_id TEXT PRIMARY KEY,
+      from_thread_id TEXT NOT NULL,
+      project_id TEXT NOT NULL,
+      client_request_id TEXT NOT NULL,
+      thread_title TEXT NOT NULL,
+      title TEXT NOT NULL,
+      context TEXT NOT NULL,
+      options_json TEXT NOT NULL,
+      recommended TEXT,
+      expires_at TEXT,
+      status TEXT NOT NULL,
+      answer_json TEXT,
+      answered_at TEXT,
+      delivered_at TEXT,
+      delivery_attempts INTEGER NOT NULL DEFAULT 0,
+      delivery_error TEXT,
+      created_at TEXT NOT NULL,
+      UNIQUE (from_thread_id, client_request_id)
+    )
+  `;
+  yield* sql`CREATE INDEX IF NOT EXISTS decisions_status_idx ON decisions(status, created_at)`;
+  yield* sql`CREATE INDEX IF NOT EXISTS decisions_thread_idx ON decisions(from_thread_id, created_at)`;
+
   // The destination's memory ceiling, captured when a person or agent saved the task.
   const scheduledColumns = yield* sql<{
     readonly name: string;

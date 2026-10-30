@@ -80,5 +80,6 @@ describe("thread notification", () => {
     const thread = completed("2026-06-20T02:00:00.000Z");
     expect(hasSidebarNotification(thread)).toBe(false);
     expect(hasSidebarNotification({ ...thread, hasPendingApprovals: true })).toBe(true);
+    expect(hasSidebarNotification({ ...thread, hasOpenDecision: true })).toBe(true);
   });
 });

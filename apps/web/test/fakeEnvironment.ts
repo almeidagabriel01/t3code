@@ -17,6 +17,8 @@ import {
   TurnItemId,
   WS_METHODS,
   WsRpcGroup,
+  type Decision,
+  type DecisionsEvent,
   type OrchestrationProjectShell,
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2Run,
@@ -302,6 +304,19 @@ function projectionOf(thread: FakeThread): OrchestrationV2ThreadProjection {
   };
 }
 
+let extraCapabilities: Record<string, boolean> = {};
+// The same object when nothing is added, so scenarios that count renders see no new config.
+const currentServerConfig = (): ServerConfig =>
+  Object.keys(extraCapabilities).length === 0
+    ? serverConfig
+    : {
+        ...serverConfig,
+        environment: {
+          ...serverConfig.environment,
+          capabilities: { ...serverConfig.environment.capabilities, ...extraCapabilities },
+        },
+      };
+
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
@@ -357,8 +372,38 @@ const handlers: Record<string, (input: never) => unknown> = {
     );
   },
   [WS_METHODS.subscribeServerConfig]: () =>
-    subscribe([{ version: 1 as const, type: "snapshot" as const, config: serverConfig }]),
+    subscribe([{ version: 1 as const, type: "snapshot" as const, config: currentServerConfig() }]),
 };
+
+/** Decisions the fake server holds, and the answer and dismiss calls it received. */
+export const fakeDecisions = {
+  items: [] as Decision[],
+  calls: [] as Array<{ readonly method: string; readonly input: unknown }>,
+};
+const decisionSubscribers = new Set<Queue.Queue<DecisionsEvent>>();
+const settle = Effect.fn("fakeEnvironment.settle")(function* (
+  method: string,
+  input: { readonly decisionId: string },
+  status: Decision["status"],
+) {
+  fakeDecisions.calls.push({ method, input });
+  const found = fakeDecisions.items.find((item) => item.id === input.decisionId)!;
+  const next: Decision = { ...found, status, answeredAt: "2026-03-17T19:12:28.000Z" };
+  fakeDecisions.items = fakeDecisions.items.map((item) => (item === found ? next : item));
+  for (const queue of decisionSubscribers) {
+    yield* Queue.offer(queue, { type: "upserted", decision: next });
+  }
+  return next;
+});
+handlers[WS_METHODS.decisionsSubscribe] = () =>
+  subscribe<DecisionsEvent>([{ type: "snapshot", decisions: fakeDecisions.items }], (queue) => {
+    decisionSubscribers.add(queue);
+    return () => decisionSubscribers.delete(queue);
+  });
+handlers[WS_METHODS.decisionsAnswer] = (input: { readonly decisionId: string }) =>
+  settle(WS_METHODS.decisionsAnswer, input, "answered");
+handlers[WS_METHODS.decisionsDismiss] = (input: { readonly decisionId: string }) =>
+  settle(WS_METHODS.decisionsDismiss, input, "withdrawn");
 
 // Unanswered calls stay pending, like a server that has not replied yet.
 const client = new Proxy(handlers, {
@@ -372,9 +417,9 @@ const client = new Proxy(handlers, {
 
 const session: EnvironmentConnectionLease["session"] = {
   client: client as unknown as WsRpcProtocolClient,
-  initialConfig: Effect.succeed(serverConfig),
+  initialConfig: Effect.sync(currentServerConfig),
   subscribeServerConfig: () =>
-    subscribe([{ version: 1 as const, type: "snapshot" as const, config: serverConfig }]),
+    subscribe([{ version: 1 as const, type: "snapshot" as const, config: currentServerConfig() }]),
   ready: Effect.void,
   probe: Effect.void,
   inboundFrames: Effect.succeed(0),
@@ -403,13 +448,24 @@ export const fakeDriver = {
 export type FakeDriver = typeof fakeDriver;
 
 const realFetch = globalThis.fetch;
-const encodedDescriptor = Schema.encodeSync(ExecutionEnvironmentDescriptor)(
-  Schema.decodeUnknownSync(ExecutionEnvironmentDescriptor)(descriptor),
-);
+const encodeEnvironmentDescriptor = Schema.encodeSync(ExecutionEnvironmentDescriptor);
+const decodeEnvironmentDescriptor = Schema.decodeUnknownSync(ExecutionEnvironmentDescriptor);
+const encodeDescriptor = (capabilities: Record<string, boolean>) =>
+  encodeEnvironmentDescriptor(
+    decodeEnvironmentDescriptor({
+      ...descriptor,
+      capabilities: { ...descriptor.capabilities, ...capabilities },
+    }),
+  );
 
 /** Serves the environment's HTTP API and these threads until disposed. */
-export function installFakeEnvironment(fixtures: ReadonlyArray<FakeThread>): Disposable {
+export function installFakeEnvironment(
+  fixtures: ReadonlyArray<FakeThread>,
+  options: { readonly decisions?: boolean } = {},
+): Disposable {
   threads = fixtures;
+  extraCapabilities = options.decisions ? { decisions: true } : {};
+  const encodedDescriptor = encodeDescriptor(extraCapabilities);
   globalThis.fetch = async (input, init) => {
     const url = new URL(input instanceof Request ? input.url : String(input), window.location.href);
     if (url.origin !== window.location.origin) return realFetch(input, init);

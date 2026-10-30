@@ -643,6 +643,7 @@ export interface ThreadStatusPill {
     | "Failed"
     | "Pending Approval"
     | "Awaiting Input"
+    | "Decision"
     | "Guest Request"
     | "Waiting"
     | "Plan Ready";
@@ -654,6 +655,7 @@ export interface ThreadStatusPill {
 const THREAD_STATUS_PRIORITY: Record<ThreadStatusPill["label"], number> = {
   "Pending Approval": 5,
   "Awaiting Input": 4,
+  Decision: 3.9,
   "Guest Request": 3.75,
   Failed: 3.5,
   Working: 3,
@@ -677,6 +679,8 @@ type ThreadStatusInput = Pick<
   lastVisitedAt?: string | null | undefined;
   pendingBackgroundTasks?: SidebarThreadSummary["pendingBackgroundTasks"] | undefined;
   blockedOnThreadWait?: boolean | undefined;
+  /** An agent in this thread waits on the user's answer to a decision. */
+  hasOpenDecision?: boolean | undefined;
 };
 
 /**
@@ -722,7 +726,10 @@ export function resolveSidebarPriorityRank(input: {
   readonly thread: ThreadStatusInput;
   readonly localLastVisitedAt?: string | undefined;
   readonly wokeAt: string | null;
+  /** An agent waits on the user's answer to a decision, whatever else the thread is doing. */
+  readonly hasOpenDecision?: boolean | undefined;
 }): 0 | 1 | 2 | null {
+  if (input.hasOpenDecision === true) return 0;
   const status = resolveSidebarThreadStatus({
     ...input.thread,
     blockedOnThreadWait: input.thread.blockedOnThreadWait === true,
@@ -1077,6 +1084,15 @@ export function resolveThreadStatusPill(input: {
   if (thread.hasPendingUserInput || thread.pendingSubagentRequest === "user_input") {
     return {
       label: "Awaiting Input",
+      colorClass: "text-amber-600 dark:text-amber-300/90",
+      dotClass: "bg-amber-500 dark:bg-amber-300/90",
+      pulse: false,
+    };
+  }
+
+  if (thread.hasOpenDecision === true) {
+    return {
+      label: "Decision",
       colorClass: "text-amber-600 dark:text-amber-300/90",
       dotClass: "bg-amber-500 dark:bg-amber-300/90",
       pulse: false,

@@ -149,6 +149,8 @@ describe("command permissions", () => {
     ORCHESTRATION_V2_WS_METHODS.handoffThread,
     WS_METHODS.notesWrite,
     WS_METHODS.notesStartWork,
+    WS_METHODS.decisionsAnswer,
+    WS_METHODS.decisionsDismiss,
   ])("uses the target grant for both availability and execution of %s", (method) =>
     Effect.scoped(
       Effect.gen(function* () {

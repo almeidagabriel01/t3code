@@ -8,7 +8,9 @@ import { isElectron } from "../../env";
 import { cn } from "../../lib/utils";
 import { useDelegatedUnderParent, useProjects, useThreadShells } from "../../state/entities";
 import { buildThreadRouteParams } from "../../threadRoutes";
+import { useDecisionEntries, useOpenDecisionThreadKeys } from "../../state/decisions";
 import { useUiStateStore } from "../../uiStateStore";
+import { DecisionsSection } from "../decisions/DecisionsSection";
 import { type SidebarPriorityHolds } from "../Sidebar.logic";
 import { BackgroundThreadContext } from "../chat/backgroundThread";
 import { RelativeTime } from "../RelativeTime";
@@ -85,8 +87,11 @@ export function ActivityPage() {
   const [holds, setHolds] = useState<SidebarPriorityHolds>(() => new Map());
   const [releases, setReleases] = useState<ReadonlySet<string>>(() => new Set());
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const openDecisionThreadKeys = useOpenDecisionThreadKeys();
+  const hasOpenDecisions = useDecisionEntries().open.length > 0;
 
   const entries = buildActivityEntries({
+    openDecisionThreadKeys,
     threads,
     delegatedUnderParent,
     localLastVisitedAtByKey,
@@ -180,7 +185,8 @@ export function ActivityPage() {
           aria-label="Activity threads"
           className="flex w-80 shrink-0 flex-col gap-3 overflow-y-auto border-r border-border p-2"
         >
-          {entries.length === 0 ? (
+          <DecisionsSection />
+          {entries.length === 0 && !hasOpenDecisions ? (
             <p className="px-2 py-6 text-center text-sm text-muted-foreground" role="status">
               Nothing needs you right now.
             </p>

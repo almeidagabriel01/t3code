@@ -128,6 +128,7 @@ import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts"
 import * as DocumentText from "./provider/DocumentText.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
+import * as Decisions from "./decisions/DecisionService.ts";
 import * as Kanban from "./kanban/KanbanService.ts";
 import * as NoteWork from "./notes/NoteWorkService.ts";
 import * as Notes from "./notes/NotesService.ts";
@@ -1317,6 +1318,7 @@ export const layerWsRpc = (
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
       const kanban = yield* Kanban.KanbanService;
       const notes = yield* Notes.NotesService;
+      const decisions = yield* Decisions.DecisionService;
       const noteWork = yield* NoteWork.NoteWorkService;
       const secretRequests = yield* SecretRequests.SecretRequests;
       const guestShares = yield* GuestShareService.GuestShareService;
@@ -2370,6 +2372,11 @@ export const layerWsRpc = (
         [WS_METHODS.notesDelete]: (input) => notes.delete(input),
         [WS_METHODS.notesSubscribe]: (_input) => notes.subscribe,
         [WS_METHODS.notesStartWork]: (input) => noteWork.startWork(input, "user", "user"),
+        [WS_METHODS.decisionsList]: (input) =>
+          decisions.list(input).pipe(Effect.map((list) => ({ decisions: list }))),
+        [WS_METHODS.decisionsSubscribe]: (_input) => decisions.subscribe,
+        [WS_METHODS.decisionsAnswer]: (input) => decisions.answer(input),
+        [WS_METHODS.decisionsDismiss]: (input) => decisions.dismiss(input.decisionId),
         [WS_METHODS.scheduledTasksSubscribe]: (_input) =>
           scheduledTasks
             .subscribeList()

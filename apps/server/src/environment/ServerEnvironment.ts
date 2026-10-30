@@ -279,6 +279,7 @@ export const make = Effect.gen(function* () {
       threadPullRequestWatch: true,
       kanban: true,
       notes: true,
+      decisions: true,
       pullRequestStackActions: true,
       threadPullRequestLinking: true,
       serverResolvedCommandContext: true,

@@ -53,6 +53,7 @@ import { useLocation, useNavigate } from "@tanstack/react-router";
 import {
   BrainIcon,
   BellIcon,
+  MessageCircleQuestionMarkIcon,
   ArrowLeftIcon,
   BugIcon,
   ChartNoAxesColumnIcon,
@@ -82,6 +83,7 @@ import {
 import { useActivityOpen, useToggleActivity } from "./activity/useActivity";
 import { openThreadFind } from "./chat/threadFindStore";
 import { useKanbanEnvironmentIds } from "../state/kanban";
+import { useDecisionEntries } from "../state/decisions";
 import { useNotesEnvironmentIds } from "../state/notes";
 import { useNotesPaletteItems } from "./notes/notesPaletteItems";
 import {
@@ -445,6 +447,7 @@ function OpenCommandPaletteDialog(props: {
   const { environments } = useEnvironments();
   const kanbanSupported = useKanbanEnvironmentIds().length > 0;
   const notesSupported = useNotesEnvironmentIds().length > 0;
+  const openDecisionCount = useDecisionEntries().open.length;
   const notesItems = useNotesPaletteItems((to) => navigate(to));
   const desktopLocalBootstraps = useDesktopLocalBootstraps();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -1191,6 +1194,19 @@ function OpenCommandPaletteDialog(props: {
     shortcutCommand: "sidebar.toggleActivity",
     run: async () => toggleActivity(),
   });
+
+  if (openDecisionCount > 0) {
+    actionItems.push({
+      kind: "action",
+      value: "action:open-decisions",
+      searchTerms: ["decisions", "decision", "approve", "choose", "agent asks", "questions"],
+      title: `Open decisions (${openDecisionCount})`,
+      icon: <MessageCircleQuestionMarkIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        await navigate({ to: "/activity" });
+      },
+    });
+  }
 
   if (projects.length > 0) {
     const activeProjectTitle =

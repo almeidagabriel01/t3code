@@ -174,6 +174,8 @@ import { ComposerErrorNotice } from "./ComposerErrorNotice";
 import { ComposerFeedback } from "./ComposerFeedback";
 import { ComposerUsageLimits } from "./ComposerUsageLimits";
 import { PendingUserInputCard } from "./PendingUserInputCard";
+import { ThreadDecisionCard } from "../decisions/ThreadDecisionCard";
+import { useThreadOpenDecisions } from "../../state/decisions";
 import { ProviderSubagentBar } from "./ProviderSubagentBar";
 import { ThreadHandoffNotice } from "./ThreadHandoffNotice";
 import { ThreadCreationFailedCard } from "./ThreadCreationFailedCard";
@@ -364,6 +366,8 @@ export function ThreadDetailScreen(props: ThreadDetailScreenProps) {
 }
 
 function ThreadDetailBody(props: ThreadDetailScreenProps) {
+  const hasOpenDecision =
+    useThreadOpenDecisions(props.environmentId, props.selectedThread.id).length > 0;
   const usesNativeWorkspaceColumns = useNativeWorkspaceColumnsSupported();
   const { layout } = useAdaptiveWorkspaceLayout();
   const deviceType = useDeviceType();
@@ -1580,6 +1584,18 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
                       <ThreadCreationFailedCard
                         reason={props.creationState.reason}
                         onEditTask={props.creationState.onEditTask}
+                      />
+                    </Animated.View>
+                  ) : null}
+                  {hasOpenDecision ? (
+                    <Animated.View
+                      className="shrink-0 px-4 pb-3"
+                      entering={FadeInDown.duration(220)}
+                      exiting={FadeOut.duration(140)}
+                    >
+                      <ThreadDecisionCard
+                        environmentId={props.environmentId}
+                        threadId={props.selectedThread.id}
                       />
                     </Animated.View>
                   ) : null}

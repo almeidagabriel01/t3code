@@ -415,6 +415,16 @@ import {
   KanbanTemplateUpsertInput,
 } from "./kanban.ts";
 import {
+  Decision,
+  DecisionError,
+  DecisionsAnswerInput,
+  DecisionsDismissInput,
+  DecisionsEvent,
+  DecisionsListInput,
+  DecisionsListResult,
+  DecisionsSubscribeInput,
+} from "./decisions.ts";
+import {
   NoteConflictError,
   NoteDocument,
   NoteError,
@@ -645,6 +655,10 @@ export const WS_METHODS = {
   notesDelete: "notes.delete",
   notesSubscribe: "notes.subscribe",
   notesStartWork: "notes.startWork",
+  decisionsList: "decisions.list",
+  decisionsSubscribe: "decisions.subscribe",
+  decisionsAnswer: "decisions.answer",
+  decisionsDismiss: "decisions.dismiss",
 
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
@@ -2050,6 +2064,29 @@ const WsNotesStartWorkRpc = Rpc.make(WS_METHODS.notesStartWork, {
   error: NoteRpcErrors,
 });
 
+const DecisionRpcErrors = Schema.Union([DecisionError, EnvironmentAuthorizationError]);
+const WsDecisionsListRpc = Rpc.make(WS_METHODS.decisionsList, {
+  payload: DecisionsListInput,
+  success: DecisionsListResult,
+  error: DecisionRpcErrors,
+});
+const WsDecisionsSubscribeRpc = Rpc.make(WS_METHODS.decisionsSubscribe, {
+  payload: DecisionsSubscribeInput,
+  success: DecisionsEvent,
+  error: DecisionRpcErrors,
+  stream: true,
+});
+const WsDecisionsAnswerRpc = Rpc.make(WS_METHODS.decisionsAnswer, {
+  payload: DecisionsAnswerInput,
+  success: Decision,
+  error: DecisionRpcErrors,
+});
+const WsDecisionsDismissRpc = Rpc.make(WS_METHODS.decisionsDismiss, {
+  payload: DecisionsDismissInput,
+  success: Decision,
+  error: DecisionRpcErrors,
+});
+
 const WsKanbanSubscribeRpc = Rpc.make(WS_METHODS.kanbanSubscribe, {
   payload: KanbanSubscribeInput,
   success: KanbanStreamItem,
@@ -2370,6 +2407,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsNotesDeleteRpc,
   WsNotesSubscribeRpc,
   WsNotesStartWorkRpc,
+  WsDecisionsListRpc,
+  WsDecisionsSubscribeRpc,
+  WsDecisionsAnswerRpc,
+  WsDecisionsDismissRpc,
   WsServerReportClientActivityRpc,
   WsCloudGetRelayClientStatusRpc,
   WsCloudInstallRelayClientRpc,

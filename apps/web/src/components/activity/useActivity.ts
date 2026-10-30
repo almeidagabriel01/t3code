@@ -2,6 +2,7 @@ import { useLocation, useNavigate } from "@tanstack/react-router";
 
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { useDelegatedUnderParent, useThreadShells } from "../../state/entities";
+import { useOpenDecisionThreadKeys } from "../../state/decisions";
 import { useUiStateStore } from "../../uiStateStore";
 import { useNavigateToMainApp } from "../sidebar/mainAppLocation";
 import { buildActivityEntries, countActivityBadge } from "./activity.logic";
@@ -15,6 +16,7 @@ export function useActivityBadge(): number {
   const delegatedUnderParent = useDelegatedUnderParent();
   const localLastVisitedAtByKey = useUiStateStore((state) => state.threadLastVisitedAtById);
   const now = useNowMinute();
+  const openDecisionThreadKeys = useOpenDecisionThreadKeys();
   return countActivityBadge(
     buildActivityEntries({
       threads,
@@ -23,6 +25,7 @@ export function useActivityBadge(): number {
       holds: NO_HOLDS,
       releases: NO_RELEASES,
       now,
+      openDecisionThreadKeys,
     }),
   );
 }

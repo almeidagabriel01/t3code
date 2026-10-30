@@ -58,6 +58,22 @@ describe("buildActivityEntries", () => {
     expect(countActivityBadge(entries)).toBe(2);
   });
 
+  it("ranks a thread with an open decision as needing the user, even finished or working", () => {
+    const finished = thread("finished");
+    const working = thread("working", {
+      runtime: { status: "running" } as never,
+    });
+    const quiet = thread("quiet");
+    const entries = build([quiet, finished, working], {
+      openDecisionThreadKeys: new Set([keyOf(finished), keyOf(working)]),
+    });
+    expect(entries.map((entry) => [entry.thread.id, entry.rank])).toEqual([
+      ["finished", 0],
+      ["working", 0],
+    ]);
+    expect(countActivityBadge(entries)).toBe(2);
+  });
+
   it("keeps a thread read while the page is open, until it is released", () => {
     const row = thread("read");
     const holds = new Map([[keyOf(row), row.settledOverride]]);

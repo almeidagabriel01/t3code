@@ -53,7 +53,11 @@ export function resolveSidebarThreadStatus(thread: ThreadStatusFields): SidebarT
 type ThreadAttentionFields = Pick<
   EnvironmentThreadShell,
   "hasPendingApprovals" | "hasPendingUserInput" | "pendingSubagentRequest" | "latestRun"
-> & { readonly lastVisitedAt?: string | null | undefined };
+> & {
+  readonly lastVisitedAt?: string | null | undefined;
+  /** An agent in this thread is waiting on the user's answer to a decision. */
+  readonly hasOpenDecision?: boolean | undefined;
+};
 
 export function hasUnseenCompletion(thread: ThreadAttentionFields): boolean {
   if (!thread.latestRun?.completedAt) return false;
@@ -82,6 +86,7 @@ export function hasSidebarNotification(thread: ThreadAttentionFields): boolean {
     thread.hasPendingApprovals ||
     thread.hasPendingUserInput ||
     thread.pendingSubagentRequest != null ||
+    thread.hasOpenDecision === true ||
     hasUnseenFailure(thread) ||
     hasUnseenCompletion(thread)
   );

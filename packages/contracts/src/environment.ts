@@ -146,6 +146,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   kanban: Schema.optionalKey(Schema.Boolean),
   /** Hide Notes when absent; older servers have no notes methods. */
   notes: Schema.optionalKey(Schema.Boolean),
+  /** Hide Decisions when absent; older servers have no decision methods. */
+  decisions: Schema.optionalKey(Schema.Boolean),
   pullRequestStackActions: Schema.optionalKey(Schema.Boolean),
   serverSelfUpdate: Schema.optionalKey(ServerSelfUpdateCapability),
   /** Manual commands must update this install, not the host's default global prefix. */

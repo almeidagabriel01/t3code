@@ -59,3 +59,12 @@ describe("memory client guards", () => {
     }
   });
 });
+
+describe("decision client guards", () => {
+  it("guards answering and dismissing, and leaves reads open to readers", () => {
+    for (const method of [WS_METHODS.decisionsAnswer, WS_METHODS.decisionsDismiss])
+      expect(clientRpcRequiredScopes(method, {})).toEqual(["orchestration:operate"]);
+    for (const method of [WS_METHODS.decisionsList, WS_METHODS.decisionsSubscribe])
+      expect(Object.hasOwn(CLIENT_GUARDED_RPC_SCOPES, method)).toBe(false);
+  });
+});

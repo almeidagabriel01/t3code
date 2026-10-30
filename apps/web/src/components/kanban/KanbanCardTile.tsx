@@ -20,7 +20,7 @@ import {
 } from "lucide-react";
 import { memo } from "react";
 
-import { useNowMinute } from "../../hooks/useNowMinute";
+import { useNowMinuteMs } from "../../hooks/useNowMinute";
 import { cn } from "../../lib/utils";
 import { useQuietThreadShell } from "../../state/entities";
 import { useProviderEntry } from "../../state/kanban";
@@ -95,7 +95,7 @@ export const KanbanCardTile = memo(function KanbanCardTile(props: KanbanCardTile
   const template = props.templates.find((entry) => entry.id === card.type);
   const labels = card.labelIds.flatMap((id) => props.labels.find((label) => label.id === id) ?? []);
   const progress = checklistProgress(card.checklist);
-  const now = Date.parse(useNowMinute());
+  const now = useNowMinuteMs();
   const overdue = card.dueAt !== null && isDueOverdue(card.dueAt, now);
   const subtasksTotal = props.subtasksTotal ?? 0;
   const canQuickEdit = useKanbanCanEdit(props.environmentId) && props.onQuickEdit !== undefined;

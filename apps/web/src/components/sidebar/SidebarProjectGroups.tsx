@@ -24,6 +24,7 @@ import { useClientSettings } from "../../hooks/useSettings";
 import { countLivePortsByProject, resolveSubagentDisplay } from "./sidebarDisplay.logic";
 import { useListeningPorts } from "../statusBar/useListeningPorts";
 import { CollapsibleSectionHeader } from "../ui/collapsible-section-header";
+import { useOpenDecisionThreadKeys } from "../../state/decisions";
 import { SidebarNotificationDot } from "./SidebarNotificationDot";
 import { SidebarProjectBoardButton } from "../kanban/SidebarKanbanButtons";
 import { SidebarProjectNewThreadButton } from "./SidebarProjectNewThreadButton";
@@ -54,10 +55,12 @@ const threadKeyOf = (thread: EnvironmentThreadShell) =>
   scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
 
 function ProjectNotificationDot(props: { threads: readonly EnvironmentThreadShell[] }) {
+  const openDecisionThreadKeys = useOpenDecisionThreadKeys();
   const dotClass = useUiStateStore((state) => {
     for (const thread of props.threads) {
       const dot = resolveSidebarNotificationDotClass({
         ...thread,
+        hasOpenDecision: openDecisionThreadKeys.has(threadKeyOf(thread)),
         lastVisitedAt: resolveThreadLastVisitedAt(
           thread.lastVisitedAt,
           state.threadLastVisitedAtById[threadKeyOf(thread)],

@@ -33,6 +33,8 @@ export function buildActivityEntries(input: {
   readonly holds: SidebarPriorityHolds;
   readonly releases: ReadonlySet<string>;
   readonly now: string;
+  /** Scoped thread keys with an open decision; see `openDecisionThreadKeys`. */
+  readonly openDecisionThreadKeys?: ReadonlySet<string> | undefined;
 }): ActivityEntry[] {
   const ranks = new Map<string, ActivityRank>();
   const listed: EnvironmentThreadShell[] = [];
@@ -48,6 +50,7 @@ export function buildActivityEntries(input: {
         thread,
         localLastVisitedAt: input.localLastVisitedAtByKey[key],
         wokeAt: threadWokeAt(thread, { now: input.now }),
+        hasOpenDecision: input.openDecisionThreadKeys?.has(key),
       }),
       key,
       settledOverride: thread.settledOverride,

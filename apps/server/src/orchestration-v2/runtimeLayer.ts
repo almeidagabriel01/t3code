@@ -56,6 +56,7 @@ import * as ThreadLaunchService from "./ThreadLaunchService.ts";
 import * as ThreadForkService from "./ThreadForkService.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
+import * as DecisionService from "../decisions/DecisionService.ts";
 import * as KanbanService from "../kanban/KanbanService.ts";
 import * as NotesLayers from "../notes/NotesLayers.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
@@ -385,6 +386,7 @@ export const layerProduction = Layer.mergeAll(
   NotesLayers.layer.pipe(Layer.provideMerge(KanbanService.layerLive)),
   layerScratchThreadPromotionProvided,
   layerSecretRequestsProvided,
+  DecisionService.layer.pipe(Layer.provide(layerThreadManagementProvided)),
   GuestShareService.layer.pipe(
     Layer.provide(Layer.merge(layerOrchestratorProvided, layerCommandOutputHubProvided)),
   ),

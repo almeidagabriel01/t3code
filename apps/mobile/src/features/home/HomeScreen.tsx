@@ -56,6 +56,8 @@ import { useThreadListSearchMatches } from "../threads/useThreadListSearchMatche
 import { useThreadListV2 } from "../threads/useThreadListV2";
 import { useThreadListNow } from "../threads/use-thread-list-now";
 import { useThreadJumpShortcuts } from "../keyboard/threadKeyboardShortcuts";
+import { HomeDecisionsSection } from "../decisions/HomeDecisionsSection";
+import { decisionThreadKey, useOpenDecisionThreadKeys } from "../../state/decisions";
 import { hasSidebarNotification } from "@t3tools/client-runtime/state/thread-attention";
 import { usePendingThreadOrder } from "../../state/thread-order";
 import { threadListEnvironmentsAtom } from "../../state/server";
@@ -372,6 +374,7 @@ export function HomeScreen(props: HomeScreenProps) {
     environmentId: props.selectedEnvironmentId,
     projectGroupingMode: props.projectGroupingMode,
   });
+  const openDecisionThreadKeys = useOpenDecisionThreadKeys();
   const attentionProjectKeys = new Set(
     props.threads.flatMap((thread) =>
       thread.archivedAt === null &&
@@ -379,9 +382,12 @@ export function HomeScreen(props: HomeScreenProps) {
       thread.lineage.relationshipToParent !== "subagent" &&
       !isSideChatThread(thread) &&
       // Older servers keep no visit time, so a finished run would never clear.
-      hasSidebarNotification(
-        thread.lastVisitedAt === undefined ? { ...thread, latestRun: null } : thread,
-      )
+      hasSidebarNotification({
+        ...(thread.lastVisitedAt === undefined ? { ...thread, latestRun: null } : thread),
+        hasOpenDecision: openDecisionThreadKeys.has(
+          decisionThreadKey(thread.environmentId, thread.id),
+        ),
+      })
         ? [scopedProjectKey(thread.environmentId, thread.projectId)]
         : [],
     ),
@@ -757,6 +763,17 @@ export function HomeScreen(props: HomeScreenProps) {
           onProjectChange={props.onProjectChange}
         />
       ) : null}
+      <HomeDecisionsSection
+        gutter={primaryColumn ? 8 : 16}
+        onOpenThread={(entry) => {
+          const thread = props.threads.find(
+            (candidate) =>
+              candidate.environmentId === entry.environmentId &&
+              candidate.id === entry.decision.fromThreadId,
+          );
+          if (thread !== undefined) selectThread(thread);
+        }}
+      />
     </>
   );
 

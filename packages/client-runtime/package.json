@@ -235,6 +235,10 @@
       "types": "./src/state/kanbanLogic.ts",
       "default": "./src/state/kanbanLogic.ts"
     },
+    "./state/decisions": {
+      "types": "./src/state/decisions.ts",
+      "default": "./src/state/decisions.ts"
+    },
     "./state/notes": {
       "types": "./src/state/notes.ts",
       "default": "./src/state/notes.ts"
