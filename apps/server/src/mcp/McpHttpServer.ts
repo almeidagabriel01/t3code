@@ -841,7 +841,7 @@ const INPUT_TARGET_ACTIONS: Readonly<Record<string, ReadonlySet<string>>> = {
 
 /** Tool actions that hand work over and name the receiving thread in their result. */
 const RESULT_TARGET_ACTIONS: Readonly<Record<string, ReadonlySet<string>>> = {
-  t3_thread_transfer: new Set(["fork", "merge_back"]),
+  t3_thread_transfer: new Set(["fork", "handoff", "merge_back"]),
 };
 
 const hasAction = (

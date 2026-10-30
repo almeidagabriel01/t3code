@@ -3548,6 +3548,7 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   getWorkflowScript: "orchestration.getWorkflowScript",
   stopWorkflow: "orchestration.stopWorkflow",
   restartProviderSession: "orchestration.restartProviderSession",
+  handoffThread: "orchestration.handoffThread",
   getTurnItem: "orchestration.getTurnItem",
   launchThread: "orchestration.launchThread",
   subscribeShell: "orchestration.subscribeShell",
@@ -3935,6 +3936,51 @@ export class OrchestrationV2RestartProviderSessionError extends Schema.TaggedErr
   }
 }
 
+export const OrchestrationV2ThreadHandoffMode = Schema.Literals(["focused", "full"]);
+export type OrchestrationV2ThreadHandoffMode = typeof OrchestrationV2ThreadHandoffMode.Type;
+
+export const OrchestrationV2ThreadHandoffInput = Schema.Struct({
+  sourceThreadId: ThreadId,
+  modelSelection: ModelSelection,
+  mode: OrchestrationV2ThreadHandoffMode,
+  /** A retry with the same id returns the thread the first call started. */
+  clientRequestId: TrimmedNonEmptyString,
+});
+export type OrchestrationV2ThreadHandoffInput = typeof OrchestrationV2ThreadHandoffInput.Type;
+
+export const OrchestrationV2ThreadHandoffResult = Schema.Struct({
+  threadId: ThreadId,
+});
+export type OrchestrationV2ThreadHandoffResult = typeof OrchestrationV2ThreadHandoffResult.Type;
+
+export class OrchestrationV2ThreadHandoffError extends Schema.TaggedError<OrchestrationV2ThreadHandoffError>()(
+  "OrchestrationV2ThreadHandoffError",
+  {
+    sourceThreadId: ThreadId,
+    reason: Schema.Literals([
+      "source-not-found",
+      "nothing-to-hand-off",
+      "provider-disabled",
+      "launch-failed",
+    ]),
+    detail: Schema.optional(Schema.String),
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    switch (this.reason) {
+      case "source-not-found":
+        return "The thread to hand off was not found.";
+      case "nothing-to-hand-off":
+        return "This thread has no messages to hand off yet.";
+      case "provider-disabled":
+        return this.detail ?? "That agent is disabled.";
+      case "launch-failed":
+        return "Could not start the new session.";
+    }
+  }
+}
+
 export const OrchestrationV2StopWorkflowInput = Schema.Struct({
   threadId: ThreadId,
   subagentId: NodeId,
@@ -4153,6 +4199,10 @@ export const OrchestrationV2RpcSchemas = {
   restartProviderSession: {
     input: OrchestrationV2RestartProviderSessionInput,
     output: Schema.Void,
+  },
+  handoffThread: {
+    input: OrchestrationV2ThreadHandoffInput,
+    output: OrchestrationV2ThreadHandoffResult,
   },
   getWorkflowScript: {
     input: OrchestrationV2GetWorkflowScriptInput,

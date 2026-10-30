@@ -146,6 +146,7 @@ describe("command permissions", () => {
   it.effect.each([
     WS_METHODS.scheduledTasksDelete,
     ORCHESTRATION_V2_WS_METHODS.stopWorkflow,
+    ORCHESTRATION_V2_WS_METHODS.handoffThread,
     WS_METHODS.notesWrite,
     WS_METHODS.notesStartWork,
   ])("uses the target grant for both availability and execution of %s", (method) =>

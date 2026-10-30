@@ -19,6 +19,8 @@ import {
   readThread,
   unavailable,
 } from "../../threadAccess.ts";
+import * as ThreadHandoffService from "../../../orchestration-v2/ThreadHandoffService.ts";
+import { callerLinkOrigin } from "../../linkOrigin.ts";
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
 import { queuedRunsInDeliveryOrder } from "../../../orchestration-v2/QueuedRunOrder.ts";
@@ -156,7 +158,8 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
       (input) =>
         Effect.gen(function* () {
           const sourcePoint = input.sourcePoint ?? { type: "latest_stable" as const };
-          const { threads, projection } = yield* readThread(input.threadId);
+          const context = yield* readThread(input.threadId);
+          const { threads, projection } = context;
           const commandId = yield* newCommandId();
           if (input.action === "merge_back") {
             const targetThreadId = yield* required(input.targetThreadId, "targetThreadId");
@@ -173,6 +176,33 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
               })
               .pipe(Effect.mapError(dispatchFailure));
             return { sequence: result.sequence, targetThreadId };
+          }
+          if (input.action === "handoff") {
+            const handoffs = yield* ThreadHandoffService.ThreadHandoffService;
+            const scope = yield* McpInvocationContext.McpInvocationContext;
+            const { threadId } = yield* handoffs
+              .handoff({
+                sourceThreadId: projection.thread.id,
+                modelSelection: input.modelSelection ?? projection.thread.modelSelection,
+                mode: input.context ?? "focused",
+                clientRequestId: commandId,
+                createdBy: "agent",
+                creationSource: "mcp",
+                linkOrigin: callerLinkOrigin(context),
+              })
+              .pipe(
+                Effect.mapError(
+                  (error) =>
+                    new OrchestratorMcpFailure({
+                      code:
+                        error.reason === "launch-failed"
+                          ? "orchestration_error"
+                          : "invalid_request",
+                      message: error.message,
+                    }),
+                ),
+              );
+            return { threadId, link: McpInvocationContext.threadLinkFor(scope, threadId) };
           }
           const targetThreadId = ThreadId.make(`${commandId}:fork`);
           const result = yield* threads

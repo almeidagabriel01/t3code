@@ -320,6 +320,7 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   t3_thread_configure: tool(["Use", "Using", "Used", "thread model settings"], "thread-configure"),
   t3_thread_transfer: tool(["Use", "Using", "Used", "thread transfers"], "thread-fork"),
   t3_thread_fork: tool(["Fork", "Forking", "Requested a fork of", "this thread"], "thread-fork"),
+  t3_thread_handoff: tool(["Hand off", "Handing off", "Handed off", "this thread"], "thread-fork"),
   t3_thread_merge_back: tool(
     ["Merge", "Merging", "Requested a merge of", "thread context"],
     "thread-merge",
@@ -442,9 +443,12 @@ const ACTION_TOOLS: Readonly<Record<string, (action: string) => string | undefin
   t3_queue: (action) => `t3_queue_${action}`,
   t3_pending_request: (action) => `t3_pending_request_${action}`,
   t3_thread_transfer: (action) =>
-    ({ fork: "t3_thread_fork", merge_back: "t3_thread_merge_back", status: "t3_thread_transfers" })[
-      action
-    ],
+    ({
+      fork: "t3_thread_fork",
+      handoff: "t3_thread_handoff",
+      merge_back: "t3_thread_merge_back",
+      status: "t3_thread_transfers",
+    })[action],
 };
 
 /** Pass the call's input so an action tool resolves to the labels and summary of its action. */

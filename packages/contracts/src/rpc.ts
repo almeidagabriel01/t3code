@@ -228,6 +228,7 @@ import {
   OrchestrationGetWorkflowScriptError,
   OrchestrationV2StopWorkflowError,
   OrchestrationV2RestartProviderSessionError,
+  OrchestrationV2ThreadHandoffError,
   OrchestrationV2DispatchCommandError,
   OrchestrationV2GetShellSnapshotError,
   OrchestrationV2CommandOutputError,
@@ -1908,6 +1909,12 @@ const WsOrchestrationV2RestartProviderSessionRpc = Rpc.make(
   },
 );
 
+const WsOrchestrationV2HandoffThreadRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.handoffThread, {
+  payload: OrchestrationV2RpcSchemas.handoffThread.input,
+  success: OrchestrationV2RpcSchemas.handoffThread.output,
+  error: Schema.Union([OrchestrationV2ThreadHandoffError, EnvironmentAuthorizationError]),
+});
+
 const WsOrchestrationV2GetWorkflowScriptRpc = Rpc.make(
   ORCHESTRATION_V2_WS_METHODS.getWorkflowScript,
   {
@@ -2471,6 +2478,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2GetWorkflowScriptRpc,
   WsOrchestrationV2StopWorkflowRpc,
   WsOrchestrationV2RestartProviderSessionRpc,
+  WsOrchestrationV2HandoffThreadRpc,
   WsOrchestrationV2GetTurnItemRpc,
   WsOrchestrationV2GetTurnDiffRpc,
   WsOrchestrationV2GetFullThreadDiffRpc,

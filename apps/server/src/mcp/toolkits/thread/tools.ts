@@ -5,6 +5,7 @@ import {
   OrchestrationSearchThreadsInput,
   OrchestrationThreadSearchMatch,
   OrchestrationV2ThreadForkSourcePoint,
+  OrchestrationV2ThreadHandoffMode,
   OrchestrationV2ContextTransfer,
   TrimmedNonEmptyString,
   ModelSelection,
@@ -24,6 +25,7 @@ import * as Crypto from "effect/Crypto";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 
+import * as ThreadHandoffService from "../../../orchestration-v2/ThreadHandoffService.ts";
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTaskService from "../../../scheduledTasks/ScheduledTaskService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
@@ -164,17 +166,20 @@ const ThreadConfigureTool = Tool.make("t3_thread_configure", {
 const ThreadTransferTool = Tool.make("t3_thread_transfer", {
   ...commandTool,
   description:
-    "Move context between threads. Omit `threadId` for this thread. fork: copy it from `sourcePoint` (default latest stable run) into a new thread with the same setup; no turn runs yet. merge_back: merge it from `sourcePoint` into a related `targetThreadId` in the same project. status: its context transfers.",
+    "Move context between threads. Omit `threadId` for this thread. handoff: when the user asks to hand this thread off, or to continue it in another agent or model, start a new thread in the same project and worktree with `modelSelection` (default the same) and `context` focused (default) or full transcript; its turn starts at once. fork: copy it from `sourcePoint` (default latest stable run) into a new thread with the same setup; no turn runs yet. merge_back: merge it from `sourcePoint` into a related `targetThreadId` in the same project. status: its context transfers.",
   parameters: Schema.Struct({
-    action: Schema.Literals(["fork", "merge_back", "status"]),
+    action: Schema.Literals(["fork", "handoff", "merge_back", "status"]),
     environmentId: OrchestratorMcpEnvironmentTarget,
     threadId: Schema.optional(ThreadId),
     sourcePoint: Schema.optional(OrchestrationV2ThreadForkSourcePoint),
     targetThreadId: Schema.optional(ThreadId),
     title: Schema.optional(TrimmedNonEmptyString),
+    modelSelection: Schema.optional(ModelSelection),
+    context: Schema.optional(OrchestrationV2ThreadHandoffMode),
   }),
   success: Schema.Union([
     Schema.Struct({ sequence: NonNegativeInt, targetThreadId: ThreadId }),
+    Schema.Struct({ threadId: ThreadId, link: Schema.String }),
     Schema.Struct({
       transfers: Schema.Array(
         Schema.Struct({
@@ -186,6 +191,7 @@ const ThreadTransferTool = Tool.make("t3_thread_transfer", {
       ),
     }),
   ]),
+  dependencies: [...commandTool.dependencies, ThreadHandoffService.ThreadHandoffService],
 }).annotate(Tool.Destructive, true);
 
 const ThreadSearchTool = Tool.make("t3_thread_search", {

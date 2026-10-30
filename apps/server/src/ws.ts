@@ -59,6 +59,7 @@ import {
   OrchestrationV2GetShellSnapshotError,
   OrchestrationV2GetThreadProjectionError,
   OrchestrationV2ThreadLaunchError,
+  OrchestrationV2ThreadHandoffError,
   type OrchestrationProjectShell,
   type OrchestrationV2ShellSnapshot,
   type OrchestrationV2ThreadStreamItem,
@@ -121,6 +122,7 @@ import * as ThreadManagementService from "./orchestration-v2/ThreadManagementSer
 import * as CommandOutputHub from "./orchestration-v2/CommandOutputHub.ts";
 import * as McpAppRequests from "./mcpApps/McpAppRequests.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
+import * as ThreadHandoffService from "./orchestration-v2/ThreadHandoffService.ts";
 import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts";
 import * as DocumentText from "./provider/DocumentText.ts";
@@ -1308,6 +1310,7 @@ export const layerWsRpc = (
         ).pipe(Effect.ignore);
       };
       const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
+      const threadHandoff = yield* ThreadHandoffService.ThreadHandoffService;
       const commandOutputHub = yield* CommandOutputHub.CommandOutputHub;
       const providerSessionManager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
@@ -2289,6 +2292,25 @@ export const layerWsRpc = (
                         commandId: input.commandId,
                         projectId: input.projectId,
                         message: cause.message,
+                        cause,
+                      }),
+                  }),
+                ),
+            ),
+          ),
+        [ORCHESTRATION_V2_WS_METHODS.handoffThread]: (input) =>
+          Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.sourceThreadId }).pipe(
+            Effect.andThen(
+              startup
+                .enqueueCommand(
+                  threadHandoff.handoff({ ...input, createdBy: "user", creationSource: "web" }),
+                )
+                .pipe(
+                  Effect.catchTags({
+                    ServerRuntimeStartupError: (cause) =>
+                      new OrchestrationV2ThreadHandoffError({
+                        sourceThreadId: input.sourceThreadId,
+                        reason: "launch-failed",
                         cause,
                       }),
                   }),

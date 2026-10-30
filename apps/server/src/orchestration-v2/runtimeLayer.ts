@@ -51,6 +51,7 @@ import * as ResourceCleanupService from "./ResourceCleanupService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
 import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
+import * as ThreadHandoffService from "./ThreadHandoffService.ts";
 import * as ThreadLaunchService from "./ThreadLaunchService.ts";
 import * as ThreadForkService from "./ThreadForkService.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
@@ -279,6 +280,11 @@ const layerThreadLaunchProvided = ThreadLaunchService.layer.pipe(
     ),
   ),
 );
+const layerThreadHandoffProvided = ThreadHandoffService.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(layerProjectService, layerThreadManagementProvided, layerThreadLaunchProvided),
+  ),
+);
 const layerSecretRequestsProvided = SecretRequests.layer.pipe(
   Layer.provide(layerThreadManagementProvided),
 );
@@ -374,6 +380,7 @@ export const layerProduction = Layer.mergeAll(
   layerProjectService,
   layerManagedProjectFoldersProvided,
   layerThreadLaunchProvided,
+  layerThreadHandoffProvided,
   layerScheduledTaskProvided,
   NotesLayers.layer.pipe(Layer.provideMerge(KanbanService.layerLive)),
   layerScratchThreadPromotionProvided,

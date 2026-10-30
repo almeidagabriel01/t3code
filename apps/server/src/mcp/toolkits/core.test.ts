@@ -17,6 +17,8 @@ import {
   TurnItemId,
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2ThreadShell,
+  OrchestrationV2ThreadHandoffError,
+  type OrchestrationV2ThreadHandoffInput,
 } from "@t3tools/contracts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as Deferred from "effect/Deferred";
@@ -40,6 +42,7 @@ import * as ProviderAdapterRegistry from "../../orchestration-v2/ProviderAdapter
 import * as ThreadLaunchService from "../../orchestration-v2/ThreadLaunchService.ts";
 import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
 import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
+import * as ThreadHandoffService from "../../orchestration-v2/ThreadHandoffService.ts";
 import * as ThreadSearch from "../../orchestration-v2/ThreadSearch.ts";
 import * as PreviewBrowser from "../../preview/PreviewBrowser.ts";
 import * as ProjectService from "../../project/ProjectService.ts";
@@ -73,13 +76,18 @@ import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
 const decodeMcpAttachmentInput = Schema.decodeUnknownEffect(McpAttachmentInput);
 const decodeThreadReadResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadReadResult);
 
-const layerThreadToolkit = McpHttpServer.layerThreadToolkit.pipe(
-  Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
-  Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
-  Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
-  Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
-  Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
-);
+const layerThreadToolkitWith = (
+  handoff: Partial<ThreadHandoffService.ThreadHandoffService["Service"]>,
+) =>
+  McpHttpServer.layerThreadToolkit.pipe(
+    Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
+    Layer.provide(Layer.mock(ThreadHandoffService.ThreadHandoffService)(handoff)),
+    Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
+    Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
+    Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
+    Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
+  );
+const layerThreadToolkit = layerThreadToolkitWith({});
 
 const threadId = ThreadId.make("mcp-core-thread");
 const scope: McpInvocationContext.McpInvocationScope = {
@@ -508,6 +516,73 @@ it.effect("a client caller targets any thread within its ceiling and cannot act 
     ),
   ),
 );
+
+it.effect("t3_thread_transfer handoff starts the new thread through the handoff service", () => {
+  const calls: Array<OrchestrationV2ThreadHandoffInput> = [];
+  const outcomes = [
+    Effect.succeed({ threadId: ThreadId.make("handed-off") }),
+    Effect.fail(
+      new OrchestrationV2ThreadHandoffError({
+        sourceThreadId: ThreadId.make("other-project-thread"),
+        reason: "nothing-to-hand-off",
+      }),
+    ),
+  ];
+  return Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const call = (args: Record<string, unknown>) =>
+      server
+        .callTool({ name: "t3_thread_transfer", arguments: args })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, clientScope("auto")),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+    const started = yield* call({
+      action: "handoff",
+      threadId: "other-project-thread",
+      context: "full",
+    });
+    expect(started.structuredContent).toMatchObject({ threadId: "handed-off" });
+    expect(calls[0]).toMatchObject({
+      sourceThreadId: "other-project-thread",
+      mode: "full",
+      modelSelection: { model: "source-model" },
+      createdBy: "agent",
+      creationSource: "mcp",
+    });
+    const empty = yield* call({ action: "handoff", threadId: "other-project-thread" });
+    expect(declaredFailure(empty)).toMatchObject({ code: "invalid_request" });
+  }).pipe(
+    Effect.provide(
+      layerThreadToolkitWith({
+        handoff: (input) => {
+          calls.push(input);
+          return outcomes.shift()!;
+        },
+      }).pipe(
+        Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provide(NodeCrypto.layer),
+        Layer.provide(
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadShell: (id) =>
+              Effect.succeed(McpToolAccessTestkit.liveThreadShell(id, { runtimeMode: "auto" })),
+            getProjectThreadRecords: () =>
+              Effect.succeed({
+                thread: {
+                  id: ThreadId.make("other-project-thread"),
+                  projectId: "other-project",
+                  runtimeMode: "auto",
+                  interactionMode: "default",
+                  modelSelection: { instanceId: "codex", model: "source-model" },
+                  deletedAt: null,
+                },
+              } as never),
+          }),
+        ),
+      ),
+    ),
+  );
+});
 
 it.effect("a read-only client reads threads and is refused every write before it runs", () =>
   Effect.gen(function* () {
