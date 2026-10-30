@@ -37,8 +37,10 @@ state. Claude does not have Codex's shared-home and shadow-home arrangement.
 For presets that differ only in API keys or endpoints, use the instance's
 **Environment variables**. Variable assignments do not belong in **Launch arguments**.
 
-Claude in Chrome follows each account's own Chrome default (set with `/chrome` in Claude Code).
-Add `--chrome` or `--no-chrome` to **Launch arguments** to force it on or off for one account.
+Claude in Chrome follows each account's own Chrome default, the same setting as `/chrome` in Claude Code.
+Type `/chrome` in a Claude thread, or open **Settings → Providers → Claude → Claude in Chrome**, to turn
+it on or off, apply it to the current thread, or install and reconnect the extension. Add `--chrome` or
+`--no-chrome` to **Launch arguments** to force it for one account.
 
 Claude Code's verbose mode can stay enabled when you use Claude for text generation, including
 thread titles, branch names, commit messages, and pull request descriptions. On a remote connection,

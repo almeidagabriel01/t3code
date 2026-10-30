@@ -58,7 +58,10 @@ import {
 import {
   makeClaudeCapabilitiesCacheKey,
   makeClaudeContinuationGroupKey,
+  readClaudeChromeStatus,
   resolveClaudeHomePath,
+  writeClaudeChromeDefault,
+  type ClaudeChromeConfigError,
 } from "./ClaudeHome.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
@@ -390,6 +393,33 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       ),
     );
 
+    const homeDirectory = yield* HostProcess.HomeDirectory;
+    const platform = yield* HostProcess.Platform;
+    const chromeTarget = { instanceId, settings: effectiveConfig, environment: processEnv };
+    const chromeError = (cause: ClaudeChromeConfigError) =>
+      new ProviderDriverError({
+        driver: DRIVER_KIND,
+        instanceId,
+        detail: cause.detail,
+        cause,
+      });
+    const claudeChrome = {
+      status: readClaudeChromeStatus(chromeTarget).pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+        Effect.provideService(HostProcess.HomeDirectory, homeDirectory),
+        Effect.provideService(HostProcess.Platform, platform),
+      ),
+      setDefault: (enabled: boolean) =>
+        writeClaudeChromeDefault(chromeTarget, enabled).pipe(
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
+          Effect.provideService(HostProcess.HomeDirectory, homeDirectory),
+          Effect.provideService(HostProcess.Platform, platform),
+          Effect.mapError(chromeError),
+        ),
+    } satisfies NonNullable<ProviderInstance["claudeChrome"]>;
+
     return {
       instanceId,
       driverKind: DRIVER_KIND,
@@ -413,6 +443,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       orchestrationAdapter,
       textGeneration,
       consumeResetCredit,
+      claudeChrome,
     } satisfies ProviderInstance;
   }),
 };

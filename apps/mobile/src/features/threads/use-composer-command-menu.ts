@@ -29,6 +29,7 @@ import {
   setComposerDraftContext,
   useComposerDraftSelection,
 } from "../../state/use-composer-drafts";
+import { CLAUDE_CHROME_COMMAND_NAME } from "@t3tools/shared/claudeChrome";
 import { USAGE_LIMITS_COMMAND } from "@t3tools/shared/usageLimits";
 import {
   detectComposerTrigger,
@@ -140,11 +141,30 @@ export function buildComposerSlashCommandItems(input: {
     (item) => item.command.includes(query) && (item.command === "model" || allowInteractionMode),
   );
 
+  if (
+    input.selectedProviderStatus?.driver === "claudeAgent" &&
+    CLAUDE_CHROME_COMMAND_NAME.includes(query)
+  ) {
+    items.push({
+      id: `cmd:${CLAUDE_CHROME_COMMAND_NAME}`,
+      type: "slash-command",
+      command: CLAUDE_CHROME_COMMAND_NAME,
+      label: `/${CLAUDE_CHROME_COMMAND_NAME}`,
+      description: "Claude in Chrome settings",
+    });
+  }
+
   // Providers expand commands only at the start of a message. T3 commands
   // change local state and do not have this restriction.
   if (!input.atMessageStart) return items;
   for (const command of input.selectedProviderStatus?.slashCommands ?? []) {
     if (!command.name.toLowerCase().includes(query)) continue;
+    if (
+      command.name === CLAUDE_CHROME_COMMAND_NAME &&
+      input.selectedProviderStatus?.driver === "claudeAgent"
+    ) {
+      continue;
+    }
     if (command.name === "compact" && !input.hasCompactableConversation) continue;
     if (command.name === USAGE_LIMITS_COMMAND.name && input.offersUsageLimits && !input.hasThread) {
       continue;
@@ -225,6 +245,7 @@ export function useComposerCommandMenu({
   onChangeDraftMessage,
   onUpdateInteractionMode,
   onUsageLimits,
+  onClaudeChrome,
 }: {
   readonly draftMessage: string;
   readonly ownerKey: string | null;
@@ -246,6 +267,7 @@ export function useComposerCommandMenu({
   readonly onChangeDraftMessage: (value: string) => void;
   readonly onUpdateInteractionMode?: (mode: ProviderInteractionMode) => void;
   readonly onUsageLimits?: () => void;
+  readonly onClaudeChrome?: () => void;
 }) {
   const [localSelection, setLocalSelection] = useState(() => ({
     ownerKey,
@@ -579,6 +601,18 @@ export function useComposerCommandMenu({
         records: [...(draft.context?.records ?? []), record],
       });
       setSelection({ start: result.cursor, end: result.cursor });
+      return;
+    }
+
+    if (
+      item.type === "slash-command" &&
+      item.command === CLAUDE_CHROME_COMMAND_NAME &&
+      onClaudeChrome
+    ) {
+      const cleared = replaceTextRange(draftMessage, trigger.rangeStart, trigger.rangeEnd, "");
+      setSelection({ start: cleared.cursor, end: cleared.cursor });
+      onChangeDraftMessage(cleared.text);
+      onClaudeChrome();
       return;
     }
 

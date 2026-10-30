@@ -103,6 +103,7 @@ import {
   useComposerDraftStore,
   useComposerThreadDraft,
 } from "../../composerDraftStore";
+import { ClaudeChromeDialog } from "../claudeChrome/ClaudeChromeDialog";
 import { ComposerStashBadge } from "./ComposerStashBadge";
 import { ComposerStashMenu } from "./ComposerStashMenu";
 import { useComposerTriggerState } from "./useComposerTriggerState";
@@ -309,6 +310,7 @@ export interface ChatComposerHandle {
   isModelPickerOpen: () => boolean;
   isCaretAtStart: () => boolean;
   compactContext: () => void;
+  openClaudeChrome: () => boolean;
   readSnapshot: () => {
     value: string;
     cursor: number;
@@ -1011,6 +1013,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const [isDragOverComposer, setIsDragOverComposer] = useState(false);
   const [isComposerPrimaryActionsCompact, setIsComposerPrimaryActionsCompact] = useState(false);
   const [isComposerModelPickerOpen, setIsComposerModelPickerOpen] = useState(false);
+  const [claudeChromeOpen, setClaudeChromeOpen] = useState(false);
+  const openClaudeChromeStable = useStableCallback(() => {
+    if (selectedProvider !== "claudeAgent") return false;
+    setClaudeChromeOpen(true);
+    return true;
+  });
   const isMobileViewport = useMediaQuery("max-sm");
   const isSoftwareKeyboardOpen = useSoftwareKeyboardOpen();
   const [isComposerFocused, setIsComposerFocused] = useState(false);
@@ -1871,6 +1879,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         if (applied) {
           setComposerHighlightedItemId(null);
           setIsComposerModelPickerOpen(true);
+        }
+        return;
+      }
+      if (item.command === "chrome") {
+        const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
+          expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
+          focusEditorAfterReplace: false,
+        });
+        if (applied) {
+          setComposerHighlightedItemId(null);
+          openClaudeChromeStable();
         }
         return;
       }
@@ -2887,6 +2906,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         trigger.click();
       },
       compactContext: compactThreadContextStable,
+      openClaudeChrome: openClaudeChromeStable,
       isModelPickerOpen: () => isComposerModelPickerOpen,
       isCaretAtStart: () => {
         const range = composerEditorRef.current?.readSelectionRange();
@@ -3047,6 +3067,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       interactionMode,
       planModeUiEnabled,
       compactThreadContextStable,
+      openClaudeChromeStable,
     ],
   );
 
@@ -3546,6 +3567,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           </div>
         </ComposerSurface.Main>
       </div>
+      {selectedProvider === "claudeAgent" ? (
+        <ClaudeChromeDialog
+          environmentId={environmentId}
+          instanceId={selectedInstanceId}
+          threadId={routeKind === "server" ? routeThreadRef.threadId : undefined}
+          open={claudeChromeOpen}
+          onOpenChange={setClaudeChromeOpen}
+        />
+      ) : null}
     </form>
   );
 });

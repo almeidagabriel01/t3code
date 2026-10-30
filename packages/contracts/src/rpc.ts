@@ -5,6 +5,11 @@ import {
   OrchestrationV2SearchThreadsInput,
   OrchestrationV2SearchThreadsResult,
 } from "./orchestrationV2.ts";
+import {
+  ClaudeChromeSetDefaultInput,
+  ClaudeChromeStatus,
+  ClaudeChromeStatusInput,
+} from "./claudeChrome.ts";
 import { OrchestrationDispatchCommandError } from "./orchestrationDispatch.ts";
 import {
   McpAppCallToolInput,
@@ -508,6 +513,8 @@ export const WS_METHODS = {
   providerUploadFeedback: "provider.uploadFeedback",
   providerAuthStart: "provider.auth.start",
   providerConsumeResetCredit: "provider.consumeResetCredit",
+  providerClaudeChromeStatus: "provider.claudeChrome.status",
+  providerClaudeChromeSetDefault: "provider.claudeChrome.setDefault",
   providerAuthComplete: "provider.auth.complete",
   chatGptReconnectProfile: "provider.chatgpt.reconnect-profile",
   chatGptImportProfile: "provider.chatgpt.import-profile",
@@ -781,6 +788,18 @@ const WsProviderConsumeResetCreditRpc = Rpc.make(WS_METHODS.providerConsumeReset
   payload: ProviderConsumeResetCreditInput,
   success: ProviderConsumeResetCreditResult,
   error: Schema.Union([ProviderSetupError, UsageLimitSourceError, EnvironmentAuthorizationError]),
+});
+
+const WsProviderClaudeChromeStatusRpc = Rpc.make(WS_METHODS.providerClaudeChromeStatus, {
+  payload: ClaudeChromeStatusInput,
+  success: ClaudeChromeStatus,
+  error: ProviderSetupRpcError,
+});
+
+const WsProviderClaudeChromeSetDefaultRpc = Rpc.make(WS_METHODS.providerClaudeChromeSetDefault, {
+  payload: ClaudeChromeSetDefaultInput,
+  success: ClaudeChromeStatus,
+  error: ProviderSetupRpcError,
 });
 
 const WsProviderAuthStartRpc = Rpc.make(WS_METHODS.providerAuthStart, {
@@ -2315,6 +2334,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerRefreshProvidersRpc,
   WsServerUpdateProviderRpc,
   WsProviderConsumeResetCreditRpc,
+  WsProviderClaudeChromeStatusRpc,
+  WsProviderClaudeChromeSetDefaultRpc,
   WsProviderAuthStartRpc,
   WsProviderAuthCompleteRpc,
   WsChatGptReconnectProfileRpc,

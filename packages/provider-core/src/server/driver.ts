@@ -1,5 +1,6 @@
 // Context tags are runtime singletons; drivers need multiple instances.
 import type {
+  ClaudeChromeStatus,
   ProviderConsumeResetCreditOutcome,
   AcpRegistryListSessionsResult,
   AcpRegistryListProvidersResult,
@@ -49,6 +50,12 @@ export interface ProviderInstance {
     ProviderConsumeResetCreditOutcome,
     ProviderDriverError
   >;
+  readonly claudeChrome?: {
+    readonly status: Effect.Effect<ClaudeChromeStatus, ProviderDriverError>;
+    readonly setDefault: (
+      enabled: boolean,
+    ) => Effect.Effect<ClaudeChromeStatus, ProviderDriverError>;
+  };
   readonly orchestrationAdapter: ProviderAdapter.ProviderAdapterV2["Service"];
   readonly textGeneration: ProviderTextGeneration;
   readonly auth?: ProviderAuthController;

@@ -68,3 +68,14 @@ describe("decision client guards", () => {
       expect(Object.hasOwn(CLIENT_GUARDED_RPC_SCOPES, method)).toBe(false);
   });
 });
+
+describe("Claude in Chrome client guards", () => {
+  it("guards the default toggle with provider management and leaves the status read open", () => {
+    expect(clientRpcRequiredScopes(WS_METHODS.providerClaudeChromeSetDefault, {})).toEqual([
+      "providers:manage",
+    ]);
+    expect(Object.hasOwn(CLIENT_GUARDED_RPC_SCOPES, WS_METHODS.providerClaudeChromeStatus)).toBe(
+      false,
+    );
+  });
+});

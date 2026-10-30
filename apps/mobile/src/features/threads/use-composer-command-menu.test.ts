@@ -125,4 +125,21 @@ describe("mobile slash commands", () => {
       }),
     ).toEqual({ text: "/plan ", cursor: 6, interactionMode: null });
   });
+
+  it.each([
+    ["claudeAgent", true],
+    ["codex", false],
+  ])("offers /chrome for %s: %s", (driver, offered) => {
+    const items = buildComposerSlashCommandItems({
+      query: "chr",
+      atMessageStart: true,
+      hasThread: true,
+      allowInteractionMode: true,
+      selectedProviderStatus: {
+        driver: ProviderDriverKind.make(driver),
+        slashCommands: [{ name: "chrome", description: "CLI chrome" }],
+      },
+    });
+    expect(items.map((item) => item.id)).toEqual(offered ? ["cmd:chrome"] : ["pcmd:chrome"]);
+  });
 });

@@ -753,6 +753,11 @@ export function createServerEnvironmentAtoms<R, E>(
     readonly usageLimitsCommand?: boolean;
   },
 ) {
+  const claudeChromeStatus = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:server:claude-chrome:status",
+    tag: WS_METHODS.providerClaudeChromeStatus,
+    staleTimeMs: 30_000,
+  });
   const configScheduler = createAtomCommandScheduler();
   const updateScheduler = createAtomCommandScheduler();
   const configConcurrency = {
@@ -1342,6 +1347,21 @@ export function createServerEnvironmentAtoms<R, E>(
       // Reopening Add provider reuses recent results. Submitting the same search asks the
       // server again, which reuses a Registry index fetched in the last five minutes.
       staleTimeMs: 5 * 60_000,
+    }),
+    claudeChromeStatus,
+    setClaudeChromeDefault: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:claude-chrome:set-default",
+      tag: WS_METHODS.providerClaudeChromeSetDefault,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.instanceId]),
+      },
+      onSuccess: ({ environmentId, input }, registry) =>
+        Effect.sync(() =>
+          registry.refresh(
+            claudeChromeStatus({ environmentId, input: { instanceId: input.instanceId } }),
+          ),
+        ),
     }),
     configProjection,
     welcome,

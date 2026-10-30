@@ -10,6 +10,7 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
+import { useNavigation } from "@react-navigation/native";
 import { useRef, useState } from "react";
 import { Linking, Pressable, ScrollView, TextInput, useWindowDimensions, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -26,6 +27,7 @@ import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useEnvironmentsWithScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { ListRow } from "../../components/ui/ListRow";
 import { ListActionRow as SettingsActionRow } from "../../components/ui/ListActionRow";
 import {
   AndroidSettingsEnvironmentFilter,
@@ -74,6 +76,15 @@ export function SettingsProviderAccountsRouteScreen() {
                           divider={index > 0}
                         />
                       ))}
+                    {(providersByEnvironment.get(environment.environmentId) ?? [])
+                      .filter((provider) => provider.driver === "claudeAgent")
+                      .map((provider) => (
+                        <ClaudeChromeRow
+                          key={`chrome:${provider.instanceId}`}
+                          environmentId={environment.environmentId}
+                          provider={provider}
+                        />
+                      ))}
                     {!(providersByEnvironment.get(environment.environmentId) ?? []).some(
                       canManageProvider,
                     ) ? (
@@ -89,6 +100,32 @@ export function SettingsProviderAccountsRouteScreen() {
         </ScreenScrollView>
       </SettingsScreen>
     </>
+  );
+}
+
+function ClaudeChromeRow({
+  environmentId,
+  provider,
+}: {
+  readonly environmentId: SettingsTarget["environmentId"];
+  readonly provider: ServerProvider;
+}) {
+  const navigation = useNavigation();
+  const name = provider.displayName ?? provider.driver;
+  return (
+    <View className="border-t border-border-subtle">
+      <ListRow
+        icon="safari"
+        label="Claude in Chrome"
+        description={name}
+        onPress={() =>
+          navigation.navigate("SettingsClaudeChrome", {
+            environmentId,
+            instanceId: provider.instanceId,
+          })
+        }
+      />
+    </View>
   );
 }
 

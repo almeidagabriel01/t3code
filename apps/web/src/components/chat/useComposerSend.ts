@@ -15,6 +15,7 @@ import {
   makeThreadErrorSetter,
 } from "../ChatView.logic";
 import { readThreadKanbanCardRecord } from "../../state/kanban";
+import { CLAUDE_CHROME_COMMAND_NAME } from "@t3tools/shared/claudeChrome";
 import { isUsageLimitsCommand } from "@t3tools/shared/usageLimits";
 import {
   AuthOrchestrationOperateScope,
@@ -423,6 +424,18 @@ export function useComposerSend(input: ComposerSendInput) {
         setComposerDraftPrompt(composerDraftTarget, "");
         composerRef.current?.resetCursorState();
       }
+      return;
+    }
+
+    if (
+      !directAnnotation &&
+      !draftHasNonPromptContent(composerDraftTarget) &&
+      promptRef.current.trim().toLowerCase() === `/${CLAUDE_CHROME_COMMAND_NAME}` &&
+      composerRef.current?.openClaudeChrome()
+    ) {
+      promptRef.current = "";
+      setComposerDraftPrompt(composerDraftTarget, "");
+      composerRef.current?.resetCursorState();
       return;
     }
 

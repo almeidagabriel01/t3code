@@ -181,6 +181,7 @@ import * as OrchestrationEventStore from "./persistence/OrchestrationEventStore.
 import { userFacingDispatchErrorMessage } from "./orchestration-v2/UserFacingErrors.ts";
 import * as ProviderRegistry from "./provider/ProviderRegistry.ts";
 import * as ProviderInstanceRegistry from "./provider/ProviderInstanceRegistry.ts";
+import { runClaudeChrome } from "./provider/claudeChromeRpc.ts";
 import * as AcpRegistrySupport from "@t3tools/provider-acp-registry/server/AcpRegistrySupport";
 import * as AcpRegistryRuntimeCoordinator from "@t3tools/provider-acp-registry/server/AcpRegistryRuntimeCoordinator";
 import * as ModelManifest from "./provider/ModelManifest.ts";
@@ -2708,6 +2709,12 @@ export const layerWsRpc = (
             );
             return { outcome };
           }),
+        [WS_METHODS.providerClaudeChromeStatus]: (input) =>
+          runClaudeChrome(providerInstances, input.instanceId, (chrome) => chrome.status),
+        [WS_METHODS.providerClaudeChromeSetDefault]: (input) =>
+          runClaudeChrome(providerInstances, input.instanceId, (chrome) =>
+            chrome.setDefault(input.enabled),
+          ),
         [WS_METHODS.providerAuthStart]: (input) => providerAuth.start(input, currentSessionId),
         [WS_METHODS.providerAuthRespond]: (input) =>
           Effect.annotateCurrentSpan({ instanceId: input.instanceId }).pipe(

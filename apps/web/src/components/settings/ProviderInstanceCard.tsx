@@ -66,6 +66,7 @@ import { ProviderAccentColorPicker } from "./ProviderAccentColorPicker";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { SettingResetButton, SettingsRow, SettingsSection } from "./settingsLayout";
 import { AcpSessionManagementSection } from "./AcpSessionManagementSection";
+import { ClaudeChromeSettingsRow } from "./ClaudeChromeSettingsRow";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { readCodexSetupMode } from "./CodexSetupSection.logic";
 import {
@@ -1214,6 +1215,9 @@ export function ProviderInstanceCard({
     <>
       <SettingsSection title={displayName} icon={titleIconNode} headerAction={editorHeaderAction}>
         <SettingsRow title="Status" status={statusContent} />
+        {environmentId !== undefined && liveProvider?.driver === "claudeAgent" ? (
+          <ClaudeChromeSettingsRow environmentId={environmentId} instanceId={instanceId} />
+        ) : null}
         <SettingsRow
           title="Display name"
           control={

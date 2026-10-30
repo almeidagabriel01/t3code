@@ -407,6 +407,10 @@
       "types": "./src/thirdPartyLicenses.ts",
       "import": "./src/thirdPartyLicenses.ts"
     },
+    "./claudeChrome": {
+      "types": "./src/claudeChrome.ts",
+      "import": "./src/claudeChrome.ts"
+    },
     "./claudeCompaction": {
       "types": "./src/claudeCompaction.ts",
       "import": "./src/claudeCompaction.ts"

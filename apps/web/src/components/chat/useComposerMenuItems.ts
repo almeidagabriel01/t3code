@@ -18,6 +18,7 @@ import {
   filterComposerPullRequestMatches,
   withLinkedComposerPullRequestsFirst,
 } from "@t3tools/shared/composerPullRequestMatches";
+import { CLAUDE_CHROME_COMMAND_NAME } from "@t3tools/shared/claudeChrome";
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 
 import type { ComposerTrigger } from "../../composer-logic";
@@ -249,6 +250,17 @@ export function useComposerMenuItems({
               },
             ] as const)
           : []),
+        ...(selectedProvider === "claudeAgent"
+          ? ([
+              {
+                id: "slash:chrome",
+                type: "slash-command",
+                command: CLAUDE_CHROME_COMMAND_NAME,
+                label: `/${CLAUDE_CHROME_COMMAND_NAME}`,
+                description: "Claude in Chrome: status and default",
+              },
+            ] as const)
+          : []),
       ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
       const slashMenuSkills = getProviderSkillsForSlashMenu(
         selectedProviderSkills,
@@ -257,14 +269,19 @@ export function useComposerMenuItems({
       const providerSlashCommandItems = getProviderSlashCommandsForSlashMenu(
         selectedProviderSlashCommands,
         slashMenuSkills,
-      ).map((command) => ({
-        id: `provider-slash-command:${selectedProvider}:${command.name}`,
-        type: "provider-slash-command" as const,
-        provider: selectedProvider,
-        command,
-        label: `/${command.name}`,
-        description: command.description ?? command.input?.hint ?? "Run provider command",
-      }));
+      )
+        .filter(
+          (command) =>
+            selectedProvider !== "claudeAgent" || command.name !== CLAUDE_CHROME_COMMAND_NAME,
+        )
+        .map((command) => ({
+          id: `provider-slash-command:${selectedProvider}:${command.name}`,
+          type: "provider-slash-command" as const,
+          provider: selectedProvider,
+          command,
+          label: `/${command.name}`,
+          description: command.description ?? command.input?.hint ?? "Run provider command",
+        }));
       const query = composerTrigger.query.trim().toLowerCase();
       const skillItems = slashMenuSkills.map((skill) => ({
         id: `skill:${selectedProvider}:${skill.name}`,

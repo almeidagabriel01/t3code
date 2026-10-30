@@ -134,6 +134,7 @@ import { KanbanArchiveRouteScreen } from "./features/kanban/KanbanArchiveRouteSc
 import { KanbanLinkThreadRouteScreen } from "./features/kanban/KanbanLinkThreadRouteScreen";
 import { NotesRouteScreen } from "./features/notes/NotesRouteScreen";
 import { SettingsMemoryRouteScreen } from "./features/settings/SettingsMemoryRouteScreen";
+import { ClaudeChromeRouteScreen } from "./features/settings/ClaudeChromeRouteScreen";
 import { FallbackModelPickerRouteScreen } from "./features/settings/FallbackModelPickerRouteScreen";
 import { MemoryModelPickerRouteScreen } from "./features/settings/MemoryModelPickerRouteScreen";
 import { NoteRouteScreen } from "./features/notes/NoteRouteScreen";
@@ -453,6 +454,10 @@ const SETTINGS_SCREENS = {
             ...THREAD_SETTINGS_SHEET_OPTIONS,
           }),
     },
+  }),
+  SettingsClaudeChrome: createNativeStackScreen({
+    screen: ClaudeChromeRouteScreen,
+    options: { ...SETTINGS_PAGE_OPTIONS, title: "Claude in Chrome" },
   }),
   SettingsClientStorage: createNativeStackScreen({
     screen: SettingsClientStorageRouteScreen,

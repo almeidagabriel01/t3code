@@ -10,7 +10,7 @@ import { orchestrationEnvironment } from "../../state/orchestration";
 import { useQuietThreadStructure } from "../../state/use-thread-detail";
 import { useAtomCommand } from "../../state/use-atom-command";
 
-const BLOCKED_REASON = {
+export const BLOCKED_REASON = {
   running: "Wait for the current turn to finish.",
   shared: "This session is shared by several threads and can't be restarted from one.",
 } as const;

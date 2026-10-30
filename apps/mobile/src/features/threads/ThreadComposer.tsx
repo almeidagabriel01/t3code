@@ -29,6 +29,7 @@ import {
   hasProviderUsageLimits,
   isUsageLimitsCommand,
 } from "@t3tools/shared/usageLimits";
+import { CLAUDE_CHROME_COMMAND_NAME } from "@t3tools/shared/claudeChrome";
 import { StackActions, useFocusEffect, useNavigation } from "@react-navigation/native";
 import type { ReactNode } from "react";
 import { useEffect, useEffectEvent, useRef, useState, type RefObject } from "react";
@@ -526,6 +527,14 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     return report !== null;
   };
 
+  const claudeChromeOffered = selectedProviderStatus?.driver === "claudeAgent";
+  const openClaudeChrome = () =>
+    navigation.navigate("SettingsClaudeChrome", {
+      environmentId: props.environmentId,
+      instanceId: props.selectedThread.modelSelection.instanceId,
+      ...(props.isDraft ? {} : { threadId: props.selectedThread.id }),
+    });
+
   const mentionableEnvironments = useMentionableEnvironments();
   const composerMenu = useComposerCommandMenu({
     draftMessage: draftMessage,
@@ -550,6 +559,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
         ? undefined
         : props.onUpdateInteractionMode,
     offersUsageLimits: usageLimitsOffered,
+    onClaudeChrome: claudeChromeOffered ? openClaudeChrome : undefined,
     onUsageLimits:
       usageLimitsOffered && draftAttachments.length === 0 ? openUsageLimits : undefined,
   });
@@ -662,6 +672,15 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
       return;
     if (usageLimitsOffered && isUsageLimitsCommand(draftMessage) && draftAttachments.length === 0) {
       if (openUsageLimits()) onChangeDraftMessage("");
+      return;
+    }
+    if (
+      claudeChromeOffered &&
+      draftMessage.trim().toLowerCase() === `/${CLAUDE_CHROME_COMMAND_NAME}` &&
+      draftAttachments.length === 0
+    ) {
+      openClaudeChrome();
+      onChangeDraftMessage("");
       return;
     }
     const threadKey = scopedThreadKey(props.environmentId, props.selectedThread.id);

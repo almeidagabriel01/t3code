@@ -152,6 +152,8 @@ import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
 import {
   claudeSignedOutMessage,
   makeClaudeEnvironment,
+  claudeChromeLaunchOverride,
+  readClaudeChromeConfig,
   resolveClaudeConfigJsonPath,
   resolveClaudeHomePath,
 } from "../../provider/Drivers/ClaudeHome.ts";
@@ -874,16 +876,9 @@ const claudeConfigDirOf = (
 const claudeChromeDefaultEnabled = (
   launchFlags: Readonly<Record<string, unknown>>,
   configJsonText: string | null,
-) => {
-  if ("chrome" in launchFlags || "no-chrome" in launchFlags || configJsonText === null) {
-    return false;
-  }
-  try {
-    return JSON.parse(configJsonText)?.claudeInChromeDefaultEnabled === true;
-  } catch {
-    return false;
-  }
-};
+) =>
+  claudeChromeLaunchOverride(launchFlags) === null &&
+  readClaudeChromeConfig(configJsonText).enabledByDefault;
 
 // The SDK reads CLAUDE_CONFIG_DIR from process.env. Isolate custom homes in a
 // worker so concurrent providers keep the server's environment.
