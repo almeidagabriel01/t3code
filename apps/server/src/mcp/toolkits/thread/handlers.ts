@@ -416,14 +416,23 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
           c.runId !== null &&
           completed.has(c.runId),
       );
+      if (input.runId !== undefined && input.turn !== undefined) {
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: "Pass either `turn` or `runId`, not both.",
+        });
+      }
       const ordinal =
         input.runId === undefined
           ? input.turn
           : (checkpoints.find((c) => c.runId === input.runId)?.appRunOrdinal ?? undefined);
-      if (input.runId !== undefined && ordinal === undefined) {
+      if (
+        (input.runId !== undefined || input.turn !== undefined) &&
+        !checkpoints.some((c) => c.appRunOrdinal === ordinal)
+      ) {
         return yield* new OrchestratorMcpFailure({
           code: "invalid_request",
-          message: "That run has no ready checkpoint.",
+          message: "That turn or run has no ready checkpoint.",
         });
       }
       const options = {

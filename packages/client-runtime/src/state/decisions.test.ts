@@ -9,6 +9,7 @@ import {
   applyDecisionsEvent,
   collectDecisionEntries,
   decisionsStateStream,
+  decisionErrorMessage,
   describeSettledDecision,
   formatDecisionExpiry,
   openDecisionCountByThread,
@@ -120,6 +121,60 @@ describe("decisions state", () => {
     assert.equal(settled({ status: "withdrawn", answeredAt: at(0) }).outcome, "Dismissed");
     assert.equal(settled({ status: "withdrawn" }).outcome, "Withdrawn");
     assert.equal(settled({ status: "expired" }).outcome, "Expired");
+  });
+
+  it("breaks urgency ties by age, then id, and puts decisions without an expiry last", () => {
+    const state = applyDecisionsEvent(null, {
+      type: "snapshot",
+      decisions: [
+        decision("never-b", "t1", { createdAt: "2026-10-01T00:00:01.000Z" }),
+        decision("never-a", "t1", { createdAt: "2026-10-01T00:00:01.000Z" }),
+        decision("never-old", "t1", { createdAt: "2026-10-01T00:00:00.000Z" }),
+        decision("same-b", "t1", { expiresAt: "2026-10-03T00:00:00.000Z" }),
+        decision("same-a", "t1", { expiresAt: "2026-10-03T00:00:00.000Z" }),
+      ],
+    })!;
+    const { open } = collectDecisionEntries([[EnvironmentId.make("a"), state]]);
+    assert.deepStrictEqual(
+      open.map((entry) => entry.decision.id),
+      ["same-a", "same-b", "never-old", "never-a", "never-b"],
+    );
+    assert.deepStrictEqual(collectDecisionEntries([]), { open: [], settled: [] });
+  });
+
+  it("words expiry at its unit boundaries and for an unreadable date", () => {
+    const now = Date.parse("2026-10-01T00:00:00.000Z");
+    const at = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(now + ms));
+    assert.deepStrictEqual(
+      [0, 59 * 60_000, 60 * 60_000, 47 * 3_600_000 + 59 * 60_000, 48 * 3_600_000].map((ms) =>
+        formatDecisionExpiry(at(ms), now),
+      ),
+      ["Expired", "Expires in 59m", "Expires in 1h", "Expires in 47h", "Expires in 2d"],
+    );
+    assert.equal(formatDecisionExpiry("not a date", now), "");
+  });
+
+  it("describes a settled decision with only a note, an unknown option, or nothing", () => {
+    const settled = (overrides: Partial<Decision>) =>
+      describeSettledDecision(decision("d", "t", overrides));
+    assert.deepStrictEqual(settled({ status: "answered", answer: { text: "later" } }), {
+      outcome: "Answered",
+      detail: "later",
+    });
+    assert.deepStrictEqual(settled({ status: "answered", answer: { optionId: "gone" } }), {
+      outcome: "Answered",
+      detail: null,
+    });
+  });
+
+  it("shows a refusal's own message and a generic one for anything else", () => {
+    assert.equal(
+      decisionErrorMessage({ message: "This decision is already answered." }),
+      "This decision is already answered.",
+    );
+    for (const unknown of [undefined, null, "boom", {}, { message: "" }, { message: 4 }]) {
+      assert.equal(decisionErrorMessage(unknown), "The decision request failed. Try again.");
+    }
   });
 
   it.effect("the stream yields state from the snapshot on", () =>

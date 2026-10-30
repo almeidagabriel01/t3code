@@ -1,6 +1,7 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { expect, it } from "@effect/vitest";
 import {
+  DecisionId,
   EnvironmentId,
   ProjectId,
   ProviderInstanceId,
@@ -22,7 +23,13 @@ import { DecisionToolkit, type DecisionParameters } from "./tools.ts";
 const projectId = ProjectId.make("project-a");
 const providerInstanceId = ProviderInstanceId.make("codex");
 
-const dependencies = (threadId: ThreadId | undefined) =>
+interface Variant {
+  /** Replaces the calling thread's shell; `null` reads as a thread that is gone. */
+  readonly shell?: Record<string, unknown> | null;
+  readonly client?: "read-only";
+}
+
+const dependencies = (threadId: ThreadId | undefined, variant: Variant) =>
   Layer.mergeAll(
     NodeCrypto.layer,
     Layer.succeed(McpInvocationContext.McpInvocationContext, {
@@ -32,23 +39,31 @@ const dependencies = (threadId: ThreadId | undefined) =>
         threadId === undefined
           ? undefined
           : { threadId, providerSessionId: "session", providerInstanceId },
-      client: undefined,
+      client:
+        variant.client === undefined
+          ? undefined
+          : { sessionId: "client", label: "Client", access: variant.client },
       issuedAt: 0,
       capabilities: new Set(["orchestration" as const]),
     }),
     Layer.mock(ThreadManagement.ThreadManagementService)({
       getThreadShell: (id) =>
-        Effect.succeed({
-          id,
-          projectId,
-          title: "Nightly migration",
-          deletedAt: null,
-          archivedAt: null,
-          activeRunId: "run-1",
-          providerInstanceId,
-          runtimeMode: "full-access",
-          interactionMode: "default",
-        } as unknown as OrchestrationV2ThreadShell),
+        Effect.succeed(
+          variant.shell === null
+            ? null
+            : ({
+                id,
+                projectId,
+                title: "Nightly migration",
+                deletedAt: null,
+                archivedAt: null,
+                activeRunId: "run-1",
+                providerInstanceId,
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                ...variant.shell,
+              } as unknown as OrchestrationV2ThreadShell),
+        ),
       sendToThread: () => Effect.succeed({} as never),
     }),
   ).pipe(
@@ -67,9 +82,11 @@ const dependencies = (threadId: ThreadId | undefined) =>
     ),
   );
 
-const harness = (threadId: ThreadId | null = ThreadId.make("thread-1")) =>
+const harness = (threadId: ThreadId | null = ThreadId.make("thread-1"), variant: Variant = {}) =>
   Effect.gen(function* () {
-    const deps = Layer.succeedContext(yield* Layer.build(dependencies(threadId ?? undefined)));
+    const deps = Layer.succeedContext(
+      yield* Layer.build(dependencies(threadId ?? undefined, variant)),
+    );
     const toolkit = yield* DecisionToolkit.pipe(
       Effect.provide(
         McpToolAccess.HandlersLayer.layer(DecisionHandlers.layer).pipe(Layer.provide(deps)),
@@ -168,11 +185,129 @@ it.effect("a caller that is not a thread is refused for every action", () =>
     for (const input of [
       { ...question, clientRequestId: "m1" },
       { action: "list" },
-      { action: "read", decisionId: "d" },
-      { action: "withdraw", decisionId: "d" },
+      { action: "read", decisionId: DecisionId.make("d") },
+      { action: "withdraw", decisionId: DecisionId.make("d") },
     ] as unknown as DecisionParameters[]) {
       expect(yield* call(input)).toMatchObject({ code: expect.any(String) });
       expect((yield* call(input)).decisionId).toBeUndefined();
     }
+  }).pipe(Effect.scoped),
+);
+
+it.effect("a caller that cannot act is refused with the right code and nothing is stored", () =>
+  Effect.gen(function* () {
+    const cases = [
+      ["thread_credential_required", null, undefined],
+      ["thread_not_found", ThreadId.make("thread-1"), { shell: null }],
+      ["thread_not_found", ThreadId.make("thread-1"), { shell: { deletedAt: "x" } }],
+      ["parent_not_active", ThreadId.make("thread-1"), { shell: { archivedAt: "x" } }],
+      ["parent_not_active", ThreadId.make("thread-1"), { shell: { activeRunId: null } }],
+      ["capability_denied", ThreadId.make("thread-1"), { client: "read-only" }],
+    ] as const;
+    for (const [code, thread, variant] of cases) {
+      const { call, decisions } = yield* harness(thread === null ? null : thread, variant ?? {});
+      expect(yield* call({ ...question, clientRequestId: "m1" })).toMatchObject({ code });
+      expect(yield* call({ action: "withdraw", decisionId: DecisionId.make("d") })).toMatchObject({
+        code,
+      });
+      expect(yield* decisions.list({})).toEqual([]);
+    }
+  }).pipe(Effect.scoped),
+);
+
+it.effect("a read-only client or an archived thread can still read and list", () =>
+  Effect.gen(function* () {
+    const { call, decisions } = yield* harness(ThreadId.make("thread-1"), {
+      client: "read-only",
+      shell: { archivedAt: "x", activeRunId: null },
+    });
+    const stored = yield* decisions.request({
+      fromThreadId: ThreadId.make("thread-1"),
+      projectId,
+      threadTitle: "T",
+      clientRequestId: "x",
+      title: "Q",
+      context: "",
+      options: [{ id: "a", label: "A" }],
+    });
+    expect((yield* call({ action: "list" })).decisions).toHaveLength(1);
+    expect(yield* call({ action: "read", decisionId: stored.id })).toMatchObject({ title: "Q" });
+  }).pipe(Effect.scoped),
+);
+
+it.effect("a request that cannot be asked is refused as invalid and stores nothing", () =>
+  Effect.gen(function* () {
+    const { call, decisions } = yield* harness();
+    const labels = (count: number) =>
+      Array.from({ length: count }, (_, index) => ({ label: `L${index}` }));
+    for (const bad of [
+      { title: "   " },
+      { title: "t".repeat(121) },
+      { context: "c".repeat(4_001) },
+      { options: labels(11) },
+      { options: [{ label: "A" }, { id: "x", label: "B" }, { id: "x", label: "C" }] },
+      { options: [{ label: "  " }] },
+      { options: [{ label: "A", consequence: "c".repeat(201) }] },
+      { recommended: "  nothing  " },
+      { expiresInMinutes: 0 },
+      { expiresInMinutes: -1 },
+      { expiresInMinutes: 60 * 24 * 30 + 1 },
+      { clientRequestId: "x".repeat(513) },
+    ]) {
+      expect(yield* call({ ...question, ...bad })).toMatchObject({ code: "invalid_request" });
+    }
+    // A request without its required fields is refused, and so is an action without its id.
+    for (const input of [
+      { action: "read" },
+      { action: "withdraw" },
+      { action: "request", title: "  ", options: question.options },
+    ] as unknown as DecisionParameters[]) {
+      expect(yield* call(input)).toMatchObject({ code: "invalid_request" });
+    }
+    expect(yield* decisions.list({})).toEqual([]);
+  }).pipe(Effect.scoped),
+);
+
+it.effect(
+  "recommended matches an id or a label ignoring case; duplicate labels pick the first",
+  () =>
+    Effect.gen(function* () {
+      const { call, decisions } = yield* harness();
+      const byLabel = yield* call({
+        ...question,
+        clientRequestId: "a",
+        options: [{ label: "Same" }, { label: "same" }, { id: "keep", label: "Third" }],
+        recommended: "  SAME ",
+      });
+      expect((yield* decisions.get(byLabel.decisionId)).recommended).toBe("o1");
+      const byId = yield* call({
+        ...question,
+        clientRequestId: "b",
+        options: [{ label: "A" }, { id: "keep", label: "B" }],
+        recommended: "KEEP",
+      });
+      expect((yield* decisions.get(byId.decisionId)).recommended).toBe("keep");
+      const none = yield* call({ ...question, clientRequestId: "c", recommended: undefined });
+      expect((yield* decisions.get(none.decisionId)).recommended).toBeUndefined();
+    }).pipe(Effect.scoped),
+);
+
+it.effect("an unknown decision reads and withdraws as invalid_request; an expiry is reported", () =>
+  Effect.gen(function* () {
+    const { call } = yield* harness();
+    expect(yield* call({ action: "read", decisionId: DecisionId.make("missing") })).toMatchObject({
+      code: "invalid_request",
+    });
+    expect(
+      yield* call({ action: "withdraw", decisionId: DecisionId.make("missing") }),
+    ).toMatchObject({
+      code: "invalid_request",
+    });
+    const timed = yield* call({ ...question, clientRequestId: "t", expiresInMinutes: 30 });
+    expect(timed.expiresAt).toEqual(expect.any(String));
+    expect(yield* call({ action: "read", decisionId: timed.decisionId })).toMatchObject({
+      expiresAt: timed.expiresAt,
+      status: "open",
+    });
   }).pipe(Effect.scoped),
 );

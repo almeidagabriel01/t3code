@@ -62,7 +62,28 @@ const processRow = (pid: number, avgCpuPercent: number, command: string) => ({
   sampleCount: 4,
 });
 
-const call = (params: Tool.Parameters<(typeof HostToolkit.tools)["t3_host"]>) =>
+interface CallOptions {
+  readonly scope?: McpInvocationContext.McpInvocationScope;
+  /** Records each history window the tool asked for. */
+  readonly windows?: Array<{ readonly windowMs: number; readonly bucketMs: number }>;
+  readonly resourceHistory?: object;
+}
+
+const resourceProcess = (pid: number, avgCpuPercent: number, name: string, command = "") => ({
+  identity: { pid },
+  name,
+  command,
+  category: "other",
+  avgCpuPercent,
+  maxCpuPercent: avgCpuPercent,
+  currentRssBytes: 1_048_576,
+  peakRssBytes: 2_097_152,
+});
+
+const call = (
+  params: Tool.Parameters<(typeof HostToolkit.tools)["t3_host"]>,
+  options: CallOptions = {},
+) =>
   Effect.gen(function* () {
     const toolkit = yield* HostToolkit.pipe(
       Effect.provide(McpToolAccess.HandlersLayer.layer(HostHandlers.layer)),
@@ -70,7 +91,7 @@ const call = (params: Tool.Parameters<(typeof HostToolkit.tools)["t3_host"]>) =>
     const chunk = yield* toolkit.handle("t3_host", params).pipe(Stream.unwrap, Stream.runCollect);
     return chunk.at(-1)!.result as Record<string, unknown>;
   }).pipe(
-    Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+    Effect.provideService(McpInvocationContext.McpInvocationContext, options.scope ?? scope),
     Effect.provide(
       Layer.mergeAll(
         Layer.mock(HostResources.HostResources)({
@@ -107,23 +128,30 @@ const call = (params: Tool.Parameters<(typeof HostToolkit.tools)["t3_host"]>) =>
             ] as never),
         }),
         Layer.mock(ProcessResourceMonitor.ProcessResourceMonitor)({
-          readHistory: () =>
-            Effect.succeed({
-              windowMs: 1,
-              bucketMs: 1,
-              sampleIntervalMs: 1,
-              retainedSampleCount: 2,
-              totalCpuSecondsApprox: 7.6,
-              buckets: [],
-              topProcesses: [
-                processRow(1, 5, "/usr/bin/node --token=secret server.js"),
-                processRow(2, 40, "git status"),
-                processRow(3, 20, "rg foo"),
-              ],
-              error: Option.none(),
-            } as never),
+          readHistory: (input) =>
+            Effect.sync(() => options.windows?.push(input)).pipe(
+              Effect.as({
+                windowMs: 1,
+                bucketMs: 1,
+                sampleIntervalMs: 1,
+                retainedSampleCount: 2,
+                totalCpuSecondsApprox: 7.6,
+                buckets: [],
+                topProcesses: [
+                  processRow(1, 5, "/usr/bin/node --token=secret server.js"),
+                  processRow(2, 40, "git status"),
+                  processRow(3, 20, "rg foo"),
+                ],
+                error: Option.none(),
+              } as never),
+            ),
         }),
-        Layer.mock(ResourceTelemetry.ResourceTelemetry)({}),
+        Layer.mock(ResourceTelemetry.ResourceTelemetry)({
+          readHistory: (input) =>
+            Effect.sync(() => options.windows?.push(input)).pipe(
+              Effect.as(options.resourceHistory as never),
+            ),
+        }),
         ServerConfig.layerTest(process.cwd(), { prefix: "t3-host-tool-" }),
       ).pipe(Layer.provideMerge(NodeServices.layer)),
     ),
@@ -170,6 +198,81 @@ describe("t3_host", () => {
       expect(result.topProcesses).toMatchObject([{ name: "git" }, { name: "rg" }]);
       expect(JSON.stringify(result)).not.toContain("secret");
     }),
+  );
+
+  it.effect("reads resource history over the asked window, busiest first, and flags a cut", () =>
+    Effect.gen(function* () {
+      const windows: NonNullable<CallOptions["windows"]> = [];
+      const resourceHistory = {
+        windowMs: 1,
+        bucketMs: 1,
+        retainedSampleCount: 3,
+        buckets: [],
+        topProcesses: [
+          resourceProcess(1, 5, "idle"),
+          resourceProcess(2, 50, "", "/usr/bin/node --secret=1 x.js"),
+        ],
+        health: { native: { lastError: Option.none() } },
+      };
+      const both = yield* call(
+        { action: "resources", windowMinutes: 7, limit: 2 },
+        { windows, resourceHistory },
+      );
+      expect(windows).toEqual([{ windowMs: 7 * 60_000, bucketMs: Math.ceil((7 * 60_000) / 30) }]);
+      expect(both.truncated).toBe(false);
+      expect(both.topProcesses).toMatchObject([{ pid: 2, name: "node" }, { pid: 1 }]);
+      expect(JSON.stringify(both)).not.toContain("secret");
+
+      yield* call({ action: "resources" }, { windows, resourceHistory });
+      expect(windows[1]).toEqual({ windowMs: 15 * 60_000, bucketMs: 30_000 });
+      const cut = yield* call({ action: "resources", limit: 1 }, { resourceHistory });
+      expect(cut.truncated).toBe(true);
+      expect(cut.topProcesses).toHaveLength(1);
+    }),
+  );
+
+  it.effect("still answers with empty history, and clips a long telemetry error by character", () =>
+    Effect.gen(function* () {
+      const empty = yield* call(
+        { action: "resources" },
+        {
+          resourceHistory: {
+            windowMs: 1,
+            bucketMs: 1,
+            retainedSampleCount: 0,
+            buckets: [],
+            topProcesses: [],
+            health: { native: { lastError: Option.some("😀".repeat(300)) } },
+          },
+        },
+      );
+      expect(empty).toMatchObject({
+        sampleCount: 0,
+        buckets: [],
+        topProcesses: [],
+        truncated: false,
+      });
+      const error = empty.error as string;
+      expect(Array.from(error)).toHaveLength(200);
+      expect(error).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
+    }),
+  );
+
+  it.effect(
+    "is refused without the orchestration capability, and works for a client outside a thread",
+    () =>
+      Effect.gen(function* () {
+        const denied = yield* call(
+          { action: "status" },
+          { scope: { ...scope, capabilities: new Set() } },
+        );
+        expect(denied).toMatchObject({ code: "capability_denied" });
+        const outside = yield* call(
+          { action: "status" },
+          { scope: { ...scope, thread: undefined } },
+        );
+        expect(outside).toMatchObject({ threads: 2 });
+      }),
   );
 });
 

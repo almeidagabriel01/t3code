@@ -134,6 +134,37 @@ it.effect.each([
     memoryOff: false,
     reason: "unavailable",
   },
+  {
+    name: "the provider has no route for it",
+    generation: {
+      generateMemorySummary: () =>
+        Effect.fail(
+          new M.TextGenerationError({
+            operation: "generateMemorySummary",
+            detail: "route_unavailable",
+          }),
+        ),
+    },
+    memoryOff: false,
+    reason: "unavailable",
+  },
+  {
+    name: "the provider has no summary operation at all",
+    generation: { generateMemorySummary: undefined } as never,
+    memoryOff: false,
+    reason: "unavailable",
+  },
+  {
+    name: "the model run fails",
+    generation: {
+      generateMemorySummary: () =>
+        Effect.fail(
+          new M.TextGenerationError({ operation: "generateMemorySummary", detail: "timeout" }),
+        ),
+    },
+    memoryOff: false,
+    reason: "failed",
+  },
 ])("refuses a summary when $name", ({ generation, memoryOff, reason }) =>
   Effect.gen(function* () {
     yield* seed;
@@ -159,6 +190,19 @@ it.effect("returns no summary when the model finds nothing to keep", () =>
         },
         { memoryOff: false },
       ),
+    ),
+  ),
+);
+
+it.effect("fails for a thread with no events instead of summarizing nothing", () =>
+  Effect.gen(function* () {
+    yield* seed;
+    const summary = yield* ThreadHandoffSummary.ThreadHandoffSummary;
+    const error = yield* Effect.flip(summary.summarize(M.ThreadId.make("no-such-thread")));
+    assert.strictEqual(error.reason, "failed");
+  }).pipe(
+    Effect.provide(
+      layerFor({ generateMemorySummary: ((input) => outcome(input, "x")) as Generate }),
     ),
   ),
 );

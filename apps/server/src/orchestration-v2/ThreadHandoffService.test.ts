@@ -48,6 +48,9 @@ const harness = (source: {
   readonly checkpoints?: ReadonlyArray<ReturnType<typeof checkpoint>>;
   readonly recordFails?: boolean;
   readonly summary?: "unavailable" | "failed";
+  readonly shell?: "missing" | "fails";
+  readonly project?: "missing" | "fails";
+  readonly launchFails?: boolean;
 }) =>
   Effect.gen(function* () {
     const launches = yield* Ref.make<ReadonlyArray<ThreadLaunch.ThreadLaunchInput>>([]);
@@ -70,7 +73,13 @@ const harness = (source: {
           NodeCrypto.layer,
           Layer.mock(ThreadManagement.ThreadManagementService)({
             getThreadShell: () =>
-              Effect.succeed({ ...thread, deletedAt: source.deletedAt ?? null } as never),
+              source.shell === "fails"
+                ? Effect.fail("shell unreadable" as never)
+                : Effect.succeed(
+                    source.shell === "missing"
+                      ? (null as never)
+                      : ({ ...thread, deletedAt: source.deletedAt ?? null } as never),
+                  ),
             dispatch: (command) =>
               source.recordFails === true
                 ? Effect.fail("record failed" as never)
@@ -96,21 +105,28 @@ const harness = (source: {
                   ),
           }),
           Layer.mock(ProjectService.ProjectService)({
-            getById: () => Effect.succeedSome({ id: projectId, workspaceRoot: "/repo" } as never),
+            getById: () =>
+              source.project === "fails"
+                ? Effect.fail("project unreadable" as never)
+                : source.project === "missing"
+                  ? Effect.succeedNone
+                  : Effect.succeedSome({ id: projectId, workspaceRoot: "/repo" } as never),
           }),
           Layer.mock(ThreadLaunch.ThreadLaunchService)({
             launch: (input) =>
               Effect.flatMap(Ref.get(disabled), (off) =>
-                off
-                  ? Effect.fail(
-                      new ThreadManagement.ThreadManagementProviderInstanceDisabledError({
-                        projectId,
-                        instanceId: input.modelSelection.instanceId,
-                      }),
-                    )
-                  : Ref.update(launches, (all) => [...all, input]).pipe(
-                      Effect.as({ threadId: input.threadId } as never),
-                    ),
+                source.launchFails === true
+                  ? Effect.fail("launch refused" as never)
+                  : off
+                    ? Effect.fail(
+                        new ThreadManagement.ThreadManagementProviderInstanceDisabledError({
+                          projectId,
+                          instanceId: input.modelSelection.instanceId,
+                        }),
+                      )
+                    : Ref.update(launches, (all) => [...all, input]).pipe(
+                        Effect.as({ threadId: input.threadId } as never),
+                      ),
               ),
           }),
         ),
@@ -334,5 +350,59 @@ it.effect("reports a disabled provider as such", () =>
     const exit = yield* Effect.exit(handoff());
     assert.isTrue(Exit.isFailure(exit));
     if (Exit.isFailure(exit)) assert.include(JSON.stringify(exit.cause), "provider-disabled");
+  }),
+);
+
+it.effect.each([
+  {
+    name: "a source that is gone",
+    source: { shell: "missing" as const },
+    reason: "source-not-found",
+  },
+  {
+    name: "a project that is gone",
+    source: { project: "missing" as const },
+    reason: "source-not-found",
+  },
+  { name: "an unreadable source", source: { shell: "fails" as const }, reason: "launch-failed" },
+  { name: "an unreadable project", source: { project: "fails" as const }, reason: "launch-failed" },
+  { name: "a launch that fails", source: { launchFails: true }, reason: "launch-failed" },
+])(
+  "fails as $reason for $name, launching and recording nothing on the source",
+  ({ source, reason }) =>
+    Effect.gen(function* () {
+      const { handoff, launches, recorded } = yield* harness({
+        worktreePath: null,
+        messages: conversation,
+        ...source,
+      });
+      const exit = yield* Effect.exit(handoff());
+      assert.isTrue(Exit.isFailure(exit));
+      if (Exit.isFailure(exit)) assert.include(JSON.stringify(exit.cause), reason);
+      assert.lengthOf(yield* Ref.get(launches), 0);
+      assert.lengthOf(yield* Ref.get(recorded), 0);
+    }),
+);
+
+it.effect("hands off the last message with text, and treats blank instructions as none", () =>
+  Effect.gen(function* () {
+    const { handoff, launches } = yield* harness({
+      worktreePath: null,
+      messages: [
+        message("user", "make login faster"),
+        message("user", "   "),
+        message("assistant", "ok"),
+      ],
+    });
+    const blank = yield* handoff({ clientRequestId: undefined, instructions: "   " });
+    const none = yield* handoff({ clientRequestId: undefined });
+    const [launched] = yield* Ref.get(launches);
+    const text = launched?.initialMessage?.text ?? "";
+    assert.include(text, "make login faster");
+    assert.notInclude(text, "Instructions for you");
+    assert.strictEqual(blank.threadId, none.threadId);
+    // The id the scratch folder derives from has a fixed length however long the request id is.
+    const long = yield* handoff({ clientRequestId: "r".repeat(5_000) });
+    assert.strictEqual(long.threadId.length, none.threadId.length);
   }),
 );

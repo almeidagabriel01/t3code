@@ -1,10 +1,12 @@
 import {
+  CommandId,
   EnvironmentId,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
   type OrchestrationV2ServerCommand as OrchestrationCommand,
   PullRequestOperationError,
+  PullRequestUnavailableError,
   type OrchestrationProjectShell,
   type PullRequestRef,
   type PullRequestReviewGuideResult,
@@ -147,6 +149,7 @@ interface HarnessOptions {
   readonly projects?: ReadonlyArray<OrchestrationProjectShell>;
   readonly pullRequests?: Partial<PullRequestService.PullRequestService["Service"]>;
   readonly interactionMode?: "default" | "plan";
+  readonly receipts?: Partial<CommandReceiptStore.CommandReceiptStoreV2["Service"]>;
   readonly generate?: (
     input: PullRequestRef,
   ) => Effect.Effect<
@@ -192,6 +195,7 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
         Effect.sync(() => {
           receipts.set(receipt.commandId, receipt as CommandReceiptStore.ProjectCommandReceiptV2);
         }),
+      ...options.receipts,
     }),
     Layer.mock(ThreadManagement.ThreadManagementService)({
       getThreadShell: (id) =>
@@ -239,6 +243,7 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
     name: Name,
     params: Parameters<typeof toolkit.handle<Name>>[1],
     capabilities: ReadonlyArray<McpInvocationContext.McpCapability> = ["pull-requests"],
+    scope: Partial<McpInvocationContext.McpInvocationScope> = {},
   ) =>
     toolkit.handle(name, params).pipe(
       Stream.unwrap,
@@ -246,7 +251,10 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
       Effect.map(
         (chunk) => chunk.at(-1)!.result as Tool.Success<(typeof PullRequestsToolkit.tools)[Name]>,
       ),
-      Effect.provideService(McpInvocationContext.McpInvocationContext, invocation(capabilities)),
+      Effect.provideService(McpInvocationContext.McpInvocationContext, {
+        ...invocation(capabilities),
+        ...scope,
+      }),
       Effect.provide(layerDependencies),
     );
   return { commands, guideRequests, call };
@@ -942,5 +950,524 @@ describe("pull request agent tools", () => {
       }
       expect(calls).toEqual([]);
     }),
+  );
+});
+
+const operationError = (detail: string, cause?: unknown) =>
+  new PullRequestOperationError({
+    operation: "read",
+    detail,
+    ...(cause === undefined ? {} : { cause }),
+  });
+
+describe("pull request reads: unhappy paths", () => {
+  it.effect.each([
+    ["review_thread without its thread", { action: "review_thread", cursor: "c" }],
+    ["review_thread without its cursor", { action: "review_thread", reviewThreadId: "t" }],
+    ["file without a path", { action: "file" }],
+  ] as const)("refuses %s before reading anything", ([, params]) =>
+    Effect.gen(function* () {
+      // An empty service throws on any call, so a refusal that reaches it would fail the test.
+      const harness = yield* makeHarness();
+      expect(
+        yield* harness.call("t3_pull_request", { ...PR, ...params }).pipe(Effect.flip),
+      ).toMatchObject({
+        code: "invalid_request",
+      });
+    }),
+  );
+
+  it.effect.each([
+    ["a string that is no URL", { url: "not a url" }, null, "PullRequestUrlInvalidError"],
+    [
+      "a URL on a host that is no forge",
+      { url: "https://example.com/a/b" },
+      null,
+      "PullRequestUrlInvalidError",
+    ],
+    [
+      "a repository without a number",
+      { repository: "t3tools/t3code" },
+      null,
+      "PullRequestTargetIncompleteError",
+    ],
+    ["a number without a repository", { number: 5 }, null, "PullRequestTargetIncompleteError"],
+    ["no target at all", {}, null, "PullRequestTargetIncompleteError"],
+    ["a project with no remote and no host", PR, "no-project", "PullRequestHostRequiredError"],
+    [
+      "a repository no project holds",
+      { url: "https://github.com/other/repo/pull/1" },
+      null,
+      "PullRequestProjectNotFoundError",
+    ],
+  ] as const)("refuses %s with its own error", ([, target, project, tag]) =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness(project === "no-project" ? { project: null } : {});
+      for (const action of ["stats", "read"] as const) {
+        expect(
+          yield* harness.call("t3_pull_request", { action, ...target } as never).pipe(Effect.flip),
+        ).toMatchObject({ _tag: tag });
+      }
+    }),
+  );
+
+  it.effect.each([
+    ["not found", operationError("Pull request not found.")],
+    ["rate limited", operationError("API rate limit exceeded.", new Error("403"))],
+    [
+      "unauthenticated",
+      new PullRequestUnavailableError({
+        reason: "cli-unauthenticated",
+        requirement: "gh auth login",
+      }),
+    ],
+  ] as const)(
+    "reports a host failure (%s) as a read failure with the host's own words",
+    ([, failure]) =>
+      Effect.gen(function* () {
+        const fail = () => Effect.fail(failure);
+        const harness = yield* makeHarness({
+          pullRequests: {
+            detail: fail,
+            checks: fail,
+            activity: fail,
+            diff: fail,
+            threadComments: fail,
+            diffFileContents: fail,
+            listStats: fail,
+            list: fail,
+          } as never,
+        });
+        for (const params of [
+          { action: "read" },
+          { action: "checks" },
+          { action: "activity" },
+          { action: "diff" },
+          { action: "review_thread", reviewThreadId: "t", cursor: "c" },
+          { action: "file", path: "a.ts" },
+          { action: "stats" },
+          { action: "search" },
+        ] as const) {
+          const error = yield* harness
+            .call("t3_pull_request", { ...PR, ...params })
+            .pipe(Effect.flip);
+          expect(error).toMatchObject({
+            _tag: "PullRequestReadFailedError",
+            detail: failure.message,
+          });
+        }
+      }),
+  );
+
+  it.effect(
+    "passes search defaults and filters through, and clips long rows instead of dropping them",
+    () =>
+      Effect.gen(function* () {
+        const seen: unknown[] = [];
+        const harness = yield* makeHarness({
+          pullRequests: {
+            list: (input: unknown) => {
+              seen.push(input);
+              return Effect.succeed({
+                entries: [
+                  {
+                    id: "a",
+                    url: "https://x/y",
+                    title: "t".repeat(5_000),
+                    labels: new Array(30).fill("l"),
+                  },
+                ],
+                errors: [],
+                truncated: true,
+                nextCursors: { repo: "next" },
+              } as never);
+            },
+          },
+        });
+        const page = yield* harness.call("t3_pull_request", { action: "search" });
+        yield* harness.call("t3_pull_request", {
+          action: "search",
+          state: "closed",
+          limit: 3,
+          query: "fix",
+          cursors: { repo: "c" },
+        } as never);
+        expect(seen).toEqual([
+          { state: "open", limit: 10 },
+          { state: "closed", limit: 3, query: "fix", cursors: { repo: "c" } },
+        ]);
+        expect(page).toMatchObject({
+          rowsClipped: true,
+          truncated: true,
+          nextCursors: { repo: "next" },
+        });
+        const [row] = page.entries as ReadonlyArray<{ title: string; labels: unknown[] }>;
+        expect(row!.title).toHaveLength(1_024);
+        expect(row!.labels).toHaveLength(20);
+      }),
+  );
+
+  it.effect("tells the agent to narrow a search whose clipped rows still exceed the budget", () =>
+    Effect.gen(function* () {
+      const row = (index: number) => ({ id: `r${index}`, title: "t".repeat(2_000) });
+      const harness = yield* makeHarness({
+        pullRequests: {
+          list: () =>
+            Effect.succeed({
+              entries: Array.from({ length: 100 }, (_, index) => row(index)),
+              errors: [],
+              truncated: false,
+              nextCursors: {},
+            } as never),
+        },
+      });
+      expect(
+        yield* harness.call("t3_pull_request", { action: "search", limit: 50 }).pipe(Effect.flip),
+      ).toMatchObject({
+        _tag: "PullRequestReadFailedError",
+        detail: expect.stringContaining("Narrow"),
+      });
+    }),
+  );
+
+  it.effect("cuts a review thread to the budget, counts what it dropped and keeps the cursor", () =>
+    Effect.gen(function* () {
+      const seen: unknown[] = [];
+      const comments = Array.from({ length: 100 }, (_, index) => ({
+        id: `c${index}`,
+        body: "😀".repeat(500),
+      }));
+      const harness = yield* makeHarness({
+        pullRequests: {
+          threadComments: (input: unknown) => {
+            seen.push(input);
+            return Effect.succeed({ comments, nextCursor: "more" } as never);
+          },
+        },
+      });
+      const page = yield* harness.call("t3_pull_request", {
+        action: "review_thread",
+        ...PR,
+        reviewThreadId: "thread-9",
+        cursor: "start",
+      });
+      const kept = (page.comments as ReadonlyArray<unknown>).length;
+      expect(seen[0]).toMatchObject({ threadId: "thread-9", cursor: "start", number: 5 });
+      expect(kept).toBeGreaterThan(0);
+      expect(page.omitted).toBe(100 - kept);
+      expect(page.nextCursor).toBe("more");
+      expect(bytesOf(page)).toBeLessThanOrEqual(READ_BUDGET_BYTES);
+    }),
+  );
+
+  it.effect("cuts each side of a file to its half of the budget, mapping path defaults", () =>
+    Effect.gen(function* () {
+      const seen: unknown[] = [];
+      const harness = yield* makeHarness({
+        pullRequests: {
+          diffFileContents: (input: unknown) => {
+            seen.push(input);
+            return Effect.succeed({
+              oldContents: "日".repeat(60_000),
+              newContents: "small",
+            } as never);
+          },
+        },
+      });
+      const file = yield* harness.call("t3_pull_request", {
+        action: "file",
+        ...PR,
+        path: "src/a.ts",
+      });
+      expect(seen[0]).toMatchObject({
+        newPath: "src/a.ts",
+        oldPath: "src/a.ts",
+        changeType: "change",
+      });
+      expect(file).toMatchObject({ oldTruncated: true, newTruncated: false, newContents: "small" });
+      expect(bytesOf(file)).toBeLessThanOrEqual(READ_BUDGET_BYTES);
+
+      yield* harness.call("t3_pull_request", {
+        action: "file",
+        ...PR,
+        path: "b.ts",
+        oldPath: "a.ts",
+        changeType: "rename-changed",
+        commit: "abc",
+      });
+      expect(seen[1]).toMatchObject({
+        newPath: "b.ts",
+        oldPath: "a.ts",
+        changeType: "rename-changed",
+        commit: "abc",
+      });
+    }),
+  );
+
+  it.effect(
+    "keeps a slice the host already marked truncated, and its cursor, when nothing more is cut",
+    () =>
+      Effect.gen(function* () {
+        const seen: unknown[] = [];
+        const harness = yield* makeHarness({
+          pullRequests: {
+            diff: (input: unknown) => {
+              seen.push(input);
+              return Effect.succeed({ patch: "@@ small", truncated: true, nextCursor: "page-2" });
+            },
+          },
+        });
+        const result = yield* harness.call("t3_pull_request", {
+          action: "diff",
+          ...PR,
+          cursor: "page-1",
+          commit: "abc",
+        });
+        expect(seen[0]).toMatchObject({ cursor: "page-1", commit: "abc" });
+        expect(result).toMatchObject({ patch: "@@ small", truncated: true, nextCursor: "page-2" });
+      }),
+  );
+
+  it.effect.each([
+    { name: "ascii", unit: "a" },
+    { name: "emoji", unit: "😀" },
+    { name: "escaped quotes", unit: '"' },
+  ])("fits a $name patch under the budget however the cut falls", ({ unit }) =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        pullRequests: {
+          diff: () =>
+            Effect.succeed({ patch: unit.repeat(100_000), truncated: false, nextCursor: null }),
+        },
+      });
+      const result = yield* harness.call("t3_pull_request", { action: "diff", ...PR });
+      expect(result.truncated).toBe(true);
+      expect(bytesOf(result)).toBeLessThanOrEqual(READ_BUDGET_BYTES);
+      const patch = result.patch as string;
+      expect(patch).not.toMatch(
+        /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/,
+      );
+    }),
+  );
+
+  it.effect("leaves a small activity whole, and fits one whose other fields are huge", () =>
+    Effect.gen(function* () {
+      const small = { comments: [{ id: "c", body: "hi" }], reviewThreads: [], commits: [] };
+      const harness = yield* makeHarness({
+        pullRequests: { activity: () => Effect.succeed(small as never) },
+      });
+      const whole = yield* harness.call("t3_pull_request", { action: "activity", ...PR });
+      expect(whole).toMatchObject({
+        activity: small,
+        omitted: { comments: 0, reviewThreads: 0, commits: 0 },
+      });
+
+      const huge = yield* makeHarness({
+        pullRequests: {
+          activity: () =>
+            Effect.succeed({
+              summary: "😀".repeat(40_000),
+              comments: Array.from({ length: 50 }, (_, index) => ({
+                id: `c${index}`,
+                body: "x".repeat(900),
+              })),
+              reviewThreads: [],
+              commits: [],
+            } as never),
+        },
+      });
+      const cut = yield* huge.call("t3_pull_request", { action: "activity", ...PR });
+      expect(bytesOf(cut)).toBeLessThanOrEqual(READ_BUDGET_BYTES);
+      const activity = cut.activity as { summary: string; comments: ReadonlyArray<unknown> };
+      expect(activity.summary).toHaveLength(512);
+      expect((cut.omitted as { comments: number }).comments).toBe(50 - activity.comments.length);
+    }),
+  );
+
+  it.effect("clips a huge pull request detail and flags it, but leaves a small one unflagged", () =>
+    Effect.gen(function* () {
+      let detail: object = { title: "t", body: "b".repeat(100_000) };
+      const harness = yield* makeHarness({
+        pullRequests: { detail: () => Effect.succeed(detail as never) },
+      });
+      const clipped = yield* harness.call("t3_pull_request", { action: "read", ...PR });
+      expect(clipped.clipped).toBe(true);
+      expect(bytesOf(clipped)).toBeLessThanOrEqual(READ_BUDGET_BYTES);
+      detail = { title: "t", body: "small" };
+      expect(yield* harness.call("t3_pull_request", { action: "read", ...PR })).not.toHaveProperty(
+        "clipped",
+      );
+    }),
+  );
+});
+
+describe("pull request writes: unhappy paths", () => {
+  const write = (extra: object, clientRequestId = "id") =>
+    ({ clientRequestId, ...PR, ...extra }) as never;
+
+  it.effect.each([
+    ["comment without a body", { action: "comment" }],
+    [
+      "comment_update without a comment",
+      { action: "comment_update", commentKind: "issue-comment", body: "b" },
+    ],
+    ["comment_update without its kind", { action: "comment_update", commentId: "1", body: "b" }],
+    [
+      "comment_update without a body",
+      { action: "comment_update", commentId: "1", commentKind: "issue-comment" },
+    ],
+    ["review_submit without a verdict", { action: "review_submit" }],
+    ["thread_reply without a thread", { action: "thread_reply", body: "b" }],
+    ["thread_reply without a body", { action: "thread_reply", reviewThreadId: "t" }],
+    ["thread_resolve without a thread", { action: "thread_resolve" }],
+    ["react without a reaction", { action: "react" }],
+    ["labels without labels", { action: "labels" }],
+    ["labels with an empty list", { action: "labels", labels: [] }],
+    ["reviewers without reviewers", { action: "reviewers" }],
+    ["update with neither title nor body", { action: "update" }],
+    ["run without an operation", { action: "run" }],
+  ] as const)("refuses %s, calls nothing and keeps the request id free", ([, params]) =>
+    Effect.gen(function* () {
+      const calls: Array<readonly [string, unknown]> = [];
+      const harness = yield* makeHarness({ pullRequests: recordingService(calls) });
+      expect(
+        yield* harness.call("t3_pull_request_write", write(params)).pipe(Effect.flip),
+      ).toMatchObject({
+        code: "invalid_request",
+      });
+      expect(calls).toEqual([]);
+      // The same id then goes through with a complete request.
+      expect(
+        yield* harness.call("t3_pull_request_write", write({ action: "comment", body: "ok" })),
+      ).not.toHaveProperty("replayed");
+      expect(calls).toHaveLength(1);
+    }),
+  );
+
+  it.effect(
+    "keeps an id to one request: another PR, action or payload is refused, another session is not",
+    () =>
+      Effect.gen(function* () {
+        const calls: Array<readonly [string, unknown]> = [];
+        const harness = yield* makeHarness({
+          pullRequests: recordingService(calls),
+          projects: [makeProject()],
+        });
+        const send = (params: object, namespace = "provider-session-1") =>
+          harness.call("t3_pull_request_write", write(params), ["pull-requests"], {
+            requestNamespace: namespace,
+          });
+        yield* send({ action: "comment", body: "hi" });
+        for (const other of [
+          { action: "comment", body: "hi", number: 6 },
+          { action: "update", body: "hi" },
+          { action: "run", operation: "close" },
+        ]) {
+          expect(yield* send(other).pipe(Effect.flip)).toMatchObject({
+            _tag: "PullRequestWriteRefusedError",
+            detail: expect.stringContaining("already used"),
+          });
+        }
+        expect(calls).toHaveLength(1);
+        // Another session may reuse the same id, and a url for the same PR is the same request.
+        yield* send({ action: "comment", body: "hi" }, "provider-session-2");
+        expect(calls).toHaveLength(2);
+        expect(
+          yield* send({
+            action: "comment",
+            body: "hi",
+            repository: undefined,
+            number: undefined,
+            url: "https://github.com/t3tools/t3code/pull/5",
+          }),
+        ).toMatchObject({ replayed: true });
+        expect(calls).toHaveLength(2);
+      }),
+  );
+
+  it.effect(
+    "sends nothing when the receipt cannot be read or written, and says it may run again",
+    () =>
+      Effect.gen(function* () {
+        const calls: Array<readonly [string, unknown]> = [];
+        const commandId = CommandId.make("x");
+        const broken = {
+          read: new CommandReceiptStore.CommandReceiptStoreReadError({ commandId }),
+          write: new CommandReceiptStore.CommandReceiptStoreWriteError({ commandId }),
+        };
+        for (const receipts of [
+          { getProjectByCommandId: () => Effect.fail(broken.read) },
+          { insertIfAbsent: () => Effect.fail(broken.write) },
+        ] as const) {
+          const harness = yield* makeHarness({
+            pullRequests: recordingService(calls),
+            receipts: receipts as never,
+          });
+          expect(
+            yield* harness
+              .call("t3_pull_request_write", write({ action: "comment", body: "hi" }))
+              .pipe(Effect.flip),
+          ).toMatchObject({
+            _tag: "PullRequestWriteRefusedError",
+            detail: expect.stringContaining("may run again"),
+          });
+        }
+        expect(calls).toEqual([]);
+      }),
+  );
+
+  it.effect("treats a lost reservation race as a replay without sending", () =>
+    Effect.gen(function* () {
+      const calls: Array<readonly [string, unknown]> = [];
+      const harness = yield* makeHarness({
+        pullRequests: recordingService(calls),
+        receipts: { insertIfAbsent: () => Effect.succeed(false) },
+      });
+      expect(
+        yield* harness.call("t3_pull_request_write", write({ action: "comment", body: "hi" })),
+      ).toMatchObject({ status: "accepted", replayed: true });
+      expect(calls).toEqual([]);
+    }),
+  );
+
+  it.effect(
+    "maps an unavailable host to refused when nothing was sent and unconfirmed when it may have been",
+    () =>
+      Effect.gen(function* () {
+        let failure: PullRequestUnavailableError = new PullRequestUnavailableError({
+          reason: "cli-missing",
+        });
+        const harness = yield* makeHarness({
+          pullRequests: {
+            comment: () => Effect.fail(failure),
+          } as never,
+        });
+        const send = (id: string) =>
+          harness
+            .call("t3_pull_request_write", write({ action: "comment", body: "hi" }, id))
+            .pipe(Effect.flip);
+        expect(yield* send("a")).toMatchObject({ _tag: "PullRequestWriteRefusedError" });
+        failure = new PullRequestUnavailableError({
+          reason: "cli-unauthenticated",
+          cause: new Error("401"),
+        });
+        expect(yield* send("b")).toMatchObject({ _tag: "PullRequestWriteUnconfirmedError" });
+      }),
+  );
+
+  it.effect(
+    "refuses a read-only credential and an outside client below full access, calling nothing",
+    () =>
+      Effect.gen(function* () {
+        const calls: Array<readonly [string, unknown]> = [];
+        const harness = yield* makeHarness({ pullRequests: recordingService(calls) });
+        const params = write({ action: "comment", body: "hi" });
+        expect(
+          yield* harness
+            .call("t3_pull_request_write", params, ["pull-requests"], { readOnly: true })
+            .pipe(Effect.flip),
+        ).toMatchObject({ code: "capability_denied" });
+        expect(calls).toEqual([]);
+      }),
   );
 });

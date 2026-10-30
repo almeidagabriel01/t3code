@@ -103,9 +103,31 @@ it.effect("a request that cannot be answered is refused", () => {
       { recommended: "missing" },
       { title: "   " },
       { expiresInMinutes: 0 },
+      { title: "t".repeat(121) },
+      { context: "c".repeat(4_001) },
+      { clientRequestId: "  " },
+      { clientRequestId: "x".repeat(513) },
+      { options: Array.from({ length: 11 }, (_, i) => ({ id: `o${i}`, label: `O${i}` })) },
+      { options: [{ id: "a", label: "  " }] },
+      { options: [{ id: " ", label: "A" }] },
+      { options: [{ id: "a", label: "l".repeat(81) }] },
+      { options: [{ id: "a", label: "A", consequence: "c".repeat(201) }] },
+      { options: [{ id: "a", label: "A" }], recommended: "b" },
+      { expiresInMinutes: -5 },
+      { expiresInMinutes: 1.5 },
+      { expiresInMinutes: 60 * 24 * 30 + 1 },
     ]) {
       assert.equal((yield* refusal(ask(decisions, bad))).reason, "invalid");
     }
+    assert.equal((yield* decisions.list({})).length, 0);
+    // The documented limits themselves are accepted.
+    yield* ask(decisions, {
+      title: "t".repeat(120),
+      context: "c".repeat(4_000),
+      options: Array.from({ length: 10 }, (_, i) => ({ id: `o${i}`, label: "l".repeat(80) })),
+      recommended: undefined,
+      expiresInMinutes: 60 * 24 * 30,
+    });
   }).pipe(Effect.provide(layer));
 });
 
@@ -279,5 +301,121 @@ it.effect("subscribe sends a snapshot, then each change", () => {
     );
     const id: DecisionId = decision.id;
     assert.isTrue(events.every((event) => event.type === "upserted" && event.decision.id === id));
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect(
+  "a decision settles once: answers and dismissals after it are refused, not delivered twice",
+  () => {
+    const { layer, sends } = harness();
+    return Effect.gen(function* () {
+      const decisions = yield* Decisions.DecisionService;
+      const missing = "nope" as DecisionId;
+      assert.equal((yield* refusal(decisions.get(missing))).reason, "not_found");
+      assert.equal(
+        (yield* refusal(decisions.answer({ decisionId: missing, optionId: "online" }))).reason,
+        "not_found",
+      );
+      assert.equal((yield* refusal(decisions.dismiss(missing))).reason, "not_found");
+
+      const dismissed = yield* ask(decisions);
+      yield* decisions.dismiss(dismissed.id);
+      assert.equal(
+        (yield* refusal(decisions.answer({ decisionId: dismissed.id, optionId: "online" }))).reason,
+        "not_open",
+      );
+
+      const answered = yield* ask(decisions, { clientRequestId: "ask-2" });
+      // Whitespace alone is no answer.
+      assert.equal(
+        (yield* refusal(decisions.answer({ decisionId: answered.id, optionId: " ", text: "  " })))
+          .reason,
+        "invalid",
+      );
+      yield* decisions.answer({ decisionId: answered.id, optionId: "offline" });
+      assert.equal((yield* refusal(decisions.dismiss(answered.id))).reason, "not_open");
+      assert.equal((yield* decisions.get(answered.id)).status, "answered");
+      assert.equal(sends.length, 2);
+    }).pipe(Effect.provide(layer));
+  },
+);
+
+it.effect("a decision lapses exactly at its expiry, not a millisecond before", () => {
+  const { layer, sends } = harness();
+  return Effect.gen(function* () {
+    const decisions = yield* Decisions.DecisionService;
+    const early = yield* ask(decisions, { expiresInMinutes: 5 });
+    const exact = yield* ask(decisions, { clientRequestId: "ask-2", expiresInMinutes: 5 });
+    yield* TestClock.adjust("299999 millis");
+    yield* decisions.expireDue;
+    assert.equal((yield* decisions.get(early.id)).status, "open");
+    assert.equal(
+      (yield* decisions.answer({ decisionId: early.id, optionId: "online" })).status,
+      "answered",
+    );
+
+    yield* TestClock.adjust("1 millis");
+    assert.equal(
+      (yield* refusal(decisions.answer({ decisionId: exact.id, optionId: "online" }))).reason,
+      "not_open",
+    );
+    yield* decisions.expireDue;
+    assert.equal((yield* decisions.get(exact.id)).status, "expired");
+    // An answered decision is never expired afterwards.
+    assert.equal((yield* decisions.get(early.id)).status, "answered");
+    yield* decisions.deliverPending;
+    assert.equal(sends.length, 2);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect(
+  "delivery to an archived thread is skipped once; other failures give up after 20 tries",
+  () => {
+    const { layer, sends } = harness((call) =>
+      call === 1
+        ? ({
+            _tag: "ThreadManagementThreadArchivedError",
+          } as ThreadManagement.ThreadManagementError)
+        : ({
+            _tag: "ThreadManagementProjectionLoadError",
+          } as ThreadManagement.ThreadManagementError),
+    );
+    return Effect.gen(function* () {
+      const decisions = yield* Decisions.DecisionService;
+      const archived = yield* ask(decisions);
+      yield* decisions.answer({ decisionId: archived.id, optionId: "online" });
+      yield* decisions.deliverPending;
+      assert.equal(sends.length, 1);
+
+      const flaky = yield* ask(decisions, { clientRequestId: "ask-2" });
+      yield* decisions.answer({ decisionId: flaky.id, optionId: "online" });
+      for (let i = 0; i < 25; i += 1) yield* decisions.deliverPending;
+      // The answer's own send is try one; the loop adds the rest up to the cap.
+      assert.equal(sends.length, 1 + 20);
+      assert.equal((yield* decisions.get(flaky.id)).deliveredAt, undefined);
+    }).pipe(Effect.provide(layer));
+  },
+);
+
+it.effect("a list keeps every open decision and only the 50 most recent settled ones", () => {
+  const { layer } = harness();
+  return Effect.gen(function* () {
+    const decisions = yield* Decisions.DecisionService;
+    const open = yield* ask(decisions, { clientRequestId: "open" });
+    for (let i = 0; i < 52; i += 1) {
+      const settled = yield* ask(decisions, { clientRequestId: `s${i}` });
+      yield* decisions.dismiss(settled.id);
+      yield* TestClock.adjust("1 seconds");
+    }
+    const listed = yield* decisions.list({});
+    assert.equal(listed.length, 51);
+    assert.equal(listed[0]!.id, open.id);
+    assert.isTrue(listed.slice(1).every((decision) => decision.status === "withdrawn"));
+    // Most recent first: the oldest two were cut.
+    assert.deepEqual(
+      listed.slice(1, 3).map((decision) => decision.createdAt >= listed[3]!.createdAt),
+      [true, true],
+    );
+    assert.equal((yield* decisions.list({ threadId: ThreadId.make("other") })).length, 0);
   }).pipe(Effect.provide(layer));
 });

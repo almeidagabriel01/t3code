@@ -137,7 +137,9 @@ const nearestPages = (pages: ReadonlyArray<UserGuidePage>, asked: string) => {
 const window = (text: string, offset: number) => {
   if (text.length - offset <= USER_GUIDE_READ_LIMIT)
     return { markdown: text.slice(offset), next: null };
-  const hardEnd = offset + USER_GUIDE_READ_LIMIT;
+  const cut = offset + USER_GUIDE_READ_LIMIT;
+  // Never end between the halves of a surrogate pair.
+  const hardEnd = /[\uD800-\uDBFF]/.test(text[cut - 1]!) ? cut - 1 : cut;
   const lineEnd = text.lastIndexOf("\n", hardEnd);
   const end = lineEnd > offset + USER_GUIDE_READ_LIMIT / 2 ? lineEnd + 1 : hardEnd;
   return { markdown: text.slice(offset, end), next: end };

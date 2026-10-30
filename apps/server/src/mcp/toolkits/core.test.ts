@@ -1201,3 +1201,434 @@ it.effect(
     );
   },
 );
+
+const diffRun = (ordinal: number, status = "completed") => ({
+  id: RunId.make(`mcp-core-run-${ordinal}`),
+  status,
+});
+const diffCheckpoint = (ordinal: number, status = "ready") => ({
+  status,
+  appRunOrdinal: ordinal,
+  runId: RunId.make(`mcp-core-run-${ordinal}`),
+});
+
+/** The diff tool over a thread whose checkpoints and diff service the test chooses. */
+const diffHarness = (options: {
+  readonly runs?: ReadonlyArray<ReturnType<typeof diffRun>>;
+  readonly checkpoints?: ReadonlyArray<ReturnType<typeof diffCheckpoint>>;
+  readonly diffText?: string;
+  readonly diffFails?: boolean;
+  readonly goneThread?: string;
+  readonly access?: "read-only";
+}) => {
+  const calls: Array<readonly [string, unknown]> = [];
+  const result = (input: { readonly threadId: ThreadId; readonly toTurnCount: number }) => ({
+    threadId: input.threadId,
+    fromTurnCount: 0,
+    toTurnCount: input.toTurnCount,
+    diff: options.diffText ?? "diff",
+  });
+  const diffService = (name: string) => (input: { threadId: ThreadId; toTurnCount: number }) =>
+    options.diffFails === true
+      ? Effect.fail({ message: "checkpoint ref missing" } as never)
+      : Effect.sync(() => {
+          calls.push([name, input]);
+          return result(input);
+        });
+  const layer = layerThreadToolkitWith(
+    {},
+    { getFullThreadDiff: diffService("full") as never, getTurnDiff: diffService("turn") as never },
+  ).pipe(
+    Layer.provideMerge(McpServer.McpServer.layer),
+    Layer.provide(NodeCrypto.layer),
+    Layer.provide(
+      Layer.mock(ThreadManagement.ThreadManagementService)({
+        getThreadShell: (id) =>
+          Effect.succeed(
+            id === options.goneThread ? null : McpToolAccessTestkit.liveThreadShell(id),
+          ),
+        getProjectThreadRecords: ({ threadId: id }) =>
+          Effect.succeed(
+            McpToolAccessTestkit.idleThreadProjection(McpToolAccessTestkit.liveThreadShell(id)),
+          ),
+        getCheckpointContext: () =>
+          Effect.succeed({
+            runs: options.runs ?? [diffRun(1), diffRun(2)],
+            checkpoints: options.checkpoints ?? [diffCheckpoint(1), diffCheckpoint(2)],
+          } as never),
+      }),
+    ),
+  );
+  const call = (args: object) =>
+    Effect.gen(function* () {
+      const server = yield* McpServer.McpServer;
+      return yield* server.callTool({ name: "t3_thread_diff", arguments: args }).pipe(
+        Effect.provideService(
+          McpInvocationContext.McpInvocationContext,
+          options.access === undefined
+            ? scope
+            : {
+                ...scope,
+                thread: undefined,
+                client: { sessionId: "client", label: "Client", access: options.access },
+              },
+        ),
+        Effect.provideService(McpSchema.McpServerClient, client),
+      );
+    });
+  return { calls, layer, call };
+};
+
+it.effect.each([
+  ["a turn and a run together", { turn: 1, runId: "mcp-core-run-1" }, "invalid_request"],
+  ["a turn with no checkpoint", { turn: 9 }, "invalid_request"],
+  ["a run with no checkpoint", { runId: "mcp-core-run-9" }, "invalid_request"],
+  ["a thread that is gone", { threadId: "gone-thread" }, "thread_not_found"],
+] as const)("t3_thread_diff refuses %s and reads no diff", ([, args, code]) => {
+  const { calls, layer, call } = diffHarness({ goneThread: "gone-thread" });
+  return call(args).pipe(
+    Effect.map((result) => {
+      expect(declaredFailure(result)).toMatchObject({ code });
+      expect(calls).toEqual([]);
+    }),
+    Effect.provide(layer),
+  );
+});
+
+it.effect.each([
+  ["a checkpoint that is not ready", { checkpoints: [diffCheckpoint(1, "stale")] }],
+  ["a run that did not complete", { runs: [diffRun(1, "failed")] }],
+] as const)("t3_thread_diff does not offer a turn or run behind %s", ([, options]) => {
+  const { calls, layer, call } = diffHarness(options);
+  return Effect.gen(function* () {
+    for (const args of [{ turn: 1 }, { runId: "mcp-core-run-1" }]) {
+      expect(declaredFailure(yield* call(args))).toMatchObject({ code: "invalid_request" });
+    }
+    // The whole-thread read counts only what is ready, so it reads nothing rather than guessing.
+    yield* call({});
+    expect(calls).toEqual([["full", { threadId, toTurnCount: 0 }]]);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect(
+  "t3_thread_diff reports a diff failure as an orchestration error and forwards its options",
+  () => {
+    const ok = diffHarness({});
+    const failing = diffHarness({ diffFails: true });
+    return Effect.gen(function* () {
+      yield* Effect.provide(ok.call({ turn: 2, ignoreWhitespace: true }), ok.layer);
+      expect(ok.calls).toEqual([
+        ["turn", { threadId, fromTurnCount: 1, toTurnCount: 2, ignoreWhitespace: true }],
+      ]);
+      const failure = declaredFailure(yield* Effect.provide(failing.call({}), failing.layer));
+      expect(failure).toMatchObject({ code: "orchestration_error" });
+      expect(failure.message).toContain("checkpoint ref missing");
+    });
+  },
+);
+
+it.effect("t3_thread_diff lets a read-only client read a thread's diff", () => {
+  const { layer, call } = diffHarness({ access: "read-only" });
+  return call({ threadId: "other-thread" }).pipe(
+    Effect.map((result) => expect(result.structuredContent).toMatchObject({ diff: "diff" })),
+    Effect.provide(layer),
+  );
+});
+
+it.effect.each([
+  { name: "exactly at the budget", slack: 0, truncated: false },
+  { name: "one byte under", slack: -1, truncated: false },
+  { name: "one byte over", slack: 1, truncated: true },
+])("t3_thread_diff keeps a diff $name whole or cut, never past 64 KiB", ({ slack, truncated }) => {
+  const shell = { threadId, fromTurnCount: 0, toTurnCount: 2, diff: "", truncated: false };
+  const room = 64 * 1024 - Buffer.byteLength(JSON.stringify(shell));
+  const { layer, call } = diffHarness({ diffText: "a".repeat(room + slack) });
+  return call({}).pipe(
+    Effect.map((result) => {
+      const body = result.structuredContent as { diff: string; truncated: boolean };
+      expect(body.truncated).toBe(truncated);
+      expect(Buffer.byteLength(JSON.stringify(body))).toBeLessThanOrEqual(64 * 1024);
+      if (!truncated) expect(body.diff).toHaveLength(room + slack);
+    }),
+    Effect.provide(layer),
+  );
+});
+
+it.effect.each([
+  { name: "a multi-byte character", unit: "é", tail: "é" },
+  { name: "an emoji", unit: "😀", tail: "😀" },
+  { name: "escaped newlines", unit: "\n", tail: "\n" },
+])("t3_thread_diff never splits $name at the cut", ({ unit, tail }) => {
+  const shell = { threadId, fromTurnCount: 0, toTurnCount: 2, diff: "", truncated: false };
+  const room = 64 * 1024 - Buffer.byteLength(JSON.stringify(shell));
+  // The last character straddles the budget, so it must be dropped whole.
+  const { layer, call } = diffHarness({ diffText: "a".repeat(room - 1) + tail + unit });
+  return call({}).pipe(
+    Effect.map((result) => {
+      const body = result.structuredContent as { diff: string; truncated: boolean };
+      expect(body.truncated).toBe(true);
+      expect(Buffer.byteLength(JSON.stringify(body))).toBeLessThanOrEqual(64 * 1024);
+      expect(body.diff).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
+      expect(body.diff.startsWith("a".repeat(room - 1))).toBe(true);
+    }),
+    Effect.provide(layer),
+  );
+});
+
+const prepRun = (
+  id: string,
+  ordinal: number,
+  preparation = true,
+  completedAt: string | null = "2026-01-01T00:00:00.000Z",
+) => ({
+  id: RunId.make(id),
+  ordinal,
+  status: "failed",
+  ...(preparation ? { workspacePreparation: { type: "worktree" } } : {}),
+  completedAt: completedAt === null ? null : DateTime.makeUnsafe(completedAt),
+});
+
+/** retry_preparation over runs the test chooses; `launches` records each command id. */
+const retryHarness = (options: {
+  readonly runs?: ReadonlyArray<object>;
+  readonly callerShell?: { readonly activeRunId: null };
+  readonly goneThread?: string;
+}) => {
+  const launches: Array<{ commandId: string; runId: string; threadId: string }> = [];
+  const layer = layerThreadToolkitWith(
+    {},
+    {},
+    {
+      retryPreparation: (input) =>
+        Effect.sync(() => {
+          launches.push(input);
+          return { sequence: 1, storedEvents: [] };
+        }),
+    },
+  ).pipe(
+    Layer.provideMerge(McpServer.McpServer.layer),
+    Layer.provide(NodeCrypto.layer),
+    Layer.provide(
+      Layer.mock(ThreadManagement.ThreadManagementService)({
+        getThreadShell: (id) =>
+          Effect.succeed(
+            id === options.goneThread
+              ? null
+              : McpToolAccessTestkit.liveThreadShell(id, options.callerShell),
+          ),
+        getProjectThreadRecords: ({ threadId: id }) =>
+          Effect.succeed({
+            ...McpToolAccessTestkit.idleThreadProjection(McpToolAccessTestkit.liveThreadShell(id)),
+            runs: options.runs ?? [prepRun("run-a", 1)],
+          } as never),
+      }),
+    ),
+  );
+  const call = (args: object, as: McpInvocationContext.McpInvocationScope = scope) =>
+    Effect.gen(function* () {
+      const server = yield* McpServer.McpServer;
+      return yield* server
+        .callTool({
+          name: "t3_thread_organize",
+          arguments: { action: "retry_preparation", ...args },
+        })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, as),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+    });
+  return { launches, layer, call };
+};
+
+it.effect(
+  "retry_preparation retries the latest prepared run, or the one named, and refuses a missing one",
+  () => {
+    const { launches, layer, call } = retryHarness({
+      runs: [prepRun("run-1", 1), prepRun("run-2", 2, false), prepRun("run-3", 3)],
+    });
+    return Effect.gen(function* () {
+      yield* call({});
+      yield* call({ runId: "run-1" });
+      expect(launches.map((launch) => launch.runId)).toEqual(["run-3", "run-1"]);
+      expect(launches.every((launch) => launch.threadId === threadId)).toBe(true);
+      expect(declaredFailure(yield* call({ runId: "run-9" }))).toMatchObject({
+        code: "run_not_found",
+      });
+      expect(launches).toHaveLength(2);
+    }).pipe(Effect.provide(layer));
+  },
+);
+
+it.effect("retry_preparation finds no run when none ever prepared a workspace", () => {
+  const { launches, layer, call } = retryHarness({ runs: [prepRun("run-1", 1, false)] });
+  return call({}).pipe(
+    Effect.map((result) => {
+      expect(declaredFailure(result)).toMatchObject({ code: "run_not_found" });
+      expect(launches).toEqual([]);
+    }),
+    Effect.provide(layer),
+  );
+});
+
+it.effect(
+  "retry_preparation derives its command id from the failure, or from the session and request id",
+  () => {
+    const { launches, layer, call } = retryHarness({
+      runs: [prepRun("run-1", 1, true, null)],
+    });
+    const other = { ...scope, requestNamespace: "another/session" };
+    return Effect.gen(function* () {
+      yield* call({});
+      yield* call({ clientRequestId: "   " });
+      // A run still without a completion time keys on "none", and a blank id counts as absent.
+      expect(launches[0]!.commandId).toBe("mcp:retry-preparation:run-1:none");
+      expect(launches[1]!.commandId).toBe(launches[0]!.commandId);
+
+      yield* call({ clientRequestId: "a/b c" });
+      yield* call({ clientRequestId: "a/b c" }, other);
+      expect(launches[2]!.commandId).toBe("mcp:retry-preparation:mcp-core-session:a%2Fb%20c");
+      expect(launches[3]!.commandId).toBe("mcp:retry-preparation:another%2Fsession:a%2Fb%20c");
+    }).pipe(Effect.provide(layer));
+  },
+);
+
+it.effect.each([
+  [
+    "a thread that is gone",
+    { goneThread: "gone-thread" },
+    { threadId: "gone-thread" },
+    scope,
+    "thread_not_found",
+  ],
+  [
+    "a calling thread with no active run",
+    { callerShell: { activeRunId: null } },
+    {},
+    scope,
+    "parent_not_active",
+  ],
+  [
+    "a read-only client",
+    {},
+    { threadId: "other-thread" },
+    {
+      ...scope,
+      thread: undefined,
+      client: { sessionId: "client", label: "Client", access: "read-only" as const },
+    },
+    "capability_denied",
+  ],
+] as const)(
+  "retry_preparation refuses %s without retrying anything",
+  ([, options, args, as, code]) => {
+    const { launches, layer, call } = retryHarness(options);
+    return call(args, as).pipe(
+      Effect.map((result) => {
+        expect(declaredFailure(result)).toMatchObject({ code });
+        expect(launches).toEqual([]);
+      }),
+      Effect.provide(layer),
+    );
+  },
+);
+
+const liveProjectThreads = Layer.mock(ThreadManagement.ThreadManagementService)({
+  getThreadShell: (id) => Effect.succeed(McpToolAccessTestkit.liveThreadShell(id)),
+  getProjectThreadRecords: ({ threadId: id }) =>
+    Effect.succeed(
+      McpToolAccessTestkit.idleThreadProjection(McpToolAccessTestkit.liveThreadShell(id)),
+    ),
+});
+
+it.effect.each([
+  ["launch-failed", "orchestration_error"],
+  ["summary-unavailable", "invalid_request"],
+  ["summary-failed", "invalid_request"],
+  ["provider-disabled", "invalid_request"],
+  ["source-not-found", "invalid_request"],
+] as const)("t3_thread_transfer handoff maps a %s failure to %s", ([reason, code]) => {
+  const handoffs: Array<ThreadHandoffService.ThreadHandoffInput> = [];
+  return Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const result = yield* server
+      .callTool({ name: "t3_thread_transfer", arguments: { action: "handoff" } })
+      .pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+        Effect.provideService(McpSchema.McpServerClient, client),
+      );
+    expect(declaredFailure(result)).toMatchObject({ code });
+    expect(handoffs).toHaveLength(1);
+  }).pipe(
+    Effect.provide(
+      layerThreadToolkitWith({
+        handoff: (input) => {
+          handoffs.push(input);
+          return Effect.fail(
+            new OrchestrationV2ThreadHandoffError({ sourceThreadId: threadId, reason }),
+          );
+        },
+      }).pipe(
+        Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provide(NodeCrypto.layer),
+        Layer.provide(liveProjectThreads),
+      ),
+    ),
+  );
+});
+
+it.effect(
+  "t3_thread_transfer handoff forwards instructions and model, and is refused without starting anything",
+  () => {
+    const handoffs: Array<ThreadHandoffService.ThreadHandoffInput> = [];
+    return Effect.gen(function* () {
+      const server = yield* McpServer.McpServer;
+      const call = (args: object, as: McpInvocationContext.McpInvocationScope) =>
+        server
+          .callTool({ name: "t3_thread_transfer", arguments: { action: "handoff", ...args } })
+          .pipe(
+            Effect.provideService(McpInvocationContext.McpInvocationContext, as),
+            Effect.provideService(McpSchema.McpServerClient, client),
+          );
+      const started = yield* call(
+        {
+          instructions: "Add tests.",
+          modelSelection: { instanceId: "claudeAgent", model: "claude-test" },
+        },
+        scope,
+      );
+      expect(started.structuredContent).toMatchObject({ threadId: "handed" });
+      expect(handoffs[0]).toMatchObject({
+        sourceThreadId: threadId,
+        mode: "focused",
+        instructions: "Add tests.",
+        modelSelection: { model: "claude-test" },
+      });
+
+      const noCapability = yield* call({}, { ...scope, capabilities: new Set<never>() });
+      expect(declaredFailure(noCapability)).toMatchObject({ code: "capability_denied" });
+      const readOnly = yield* call(
+        { threadId: "other-thread" },
+        {
+          ...scope,
+          thread: undefined,
+          client: { sessionId: "client", label: "Client", access: "read-only" },
+        },
+      );
+      expect(declaredFailure(readOnly)).toMatchObject({ code: "capability_denied" });
+      expect(handoffs).toHaveLength(1);
+    }).pipe(
+      Effect.provide(
+        layerThreadToolkitWith({
+          handoff: (input) => {
+            handoffs.push(input);
+            return Effect.succeed({ threadId: ThreadId.make("handed") });
+          },
+        }).pipe(
+          Layer.provideMerge(McpServer.McpServer.layer),
+          Layer.provide(NodeCrypto.layer),
+          Layer.provide(liveProjectThreads),
+        ),
+      ),
+    );
+  },
+);
