@@ -7,6 +7,7 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import {
+  isAssistantThreadId,
   isProviderNativeSubagentThread,
   isSideChatThread,
   OrchestrationV2ThreadShell,
@@ -560,6 +561,7 @@ export function createEnvironmentThreadShellAtoms(input: {
         if (
           thread.archivedAt !== null ||
           isSideChatThread(thread) ||
+          isAssistantThreadId(thread.id) ||
           isShownUnderParent({ environmentId, threadId: thread.id }, thread.lineage, underParent)
         ) {
           continue;

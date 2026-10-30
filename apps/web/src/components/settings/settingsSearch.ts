@@ -27,6 +27,7 @@ export type SettingsPath =
   | "/settings/keybindings"
   | "/settings/snap-shot"
   | "/settings/providers"
+  | "/settings/assistants"
   | "/settings/memory"
   | "/settings/threads"
   | "/settings/browser"
@@ -104,6 +105,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/keybindings": "Keybindings",
   "/settings/snap-shot": "SnapShots",
   "/settings/providers": "Providers",
+  "/settings/assistants": "Assistants",
   "/settings/memory": "Memory",
   "/settings/threads": "Threads",
   "/settings/browser": "Browser",
@@ -144,6 +146,7 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
     heading: "Agents",
     paths: [
       "/settings/providers",
+      "/settings/assistants",
       "/settings/memory",
       "/settings/threads",
       "/settings/browser",
@@ -640,6 +643,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Resource manager sort",
     to: "/settings/status-bar",
     searchTerms: ["status bar memory cpu name order terminals projects"],
+  },
+  {
+    id: "assistants",
+    title: "Assistants",
+    to: "/settings/assistants",
+    searchTerms: [
+      "assistants jarvis named assistant instructions tool access read only full access reset conversation archive",
+    ],
   },
   {
     id: "kanban-default-layout",
@@ -1434,6 +1445,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/snap-shot": null,
   "/settings/keybindings": null,
   "/settings/providers": null,
+  "/settings/assistants": null,
   "/settings/memory": null,
   "/settings/threads": null,
   "/settings/browser": null,

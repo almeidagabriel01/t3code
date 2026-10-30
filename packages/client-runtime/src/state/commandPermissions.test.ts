@@ -151,6 +151,10 @@ describe("command permissions", () => {
     WS_METHODS.notesStartWork,
     WS_METHODS.decisionsAnswer,
     WS_METHODS.decisionsDismiss,
+    WS_METHODS.assistantsCreate,
+    WS_METHODS.assistantsUpdate,
+    WS_METHODS.assistantsDelete,
+    WS_METHODS.assistantsReset,
   ])("uses the target grant for both availability and execution of %s", (method) =>
     Effect.scoped(
       Effect.gen(function* () {

@@ -19,6 +19,7 @@ import { APP_DISPLAY_NAME, APP_VERSION } from "../branding";
 import { AppSidebarLayout } from "../components/AppSidebarLayout";
 import { CommandPalette } from "../components/CommandPalette";
 import { CustomSnoozeDialogHost } from "../components/CustomSnoozeDialog";
+import { AssistantDialogHost } from "../components/assistants/AssistantDialog";
 import { GuestShareDialogHost } from "../components/chat/GuestShareControls";
 import { ThreadHandoffDialogHost } from "../components/chat/ThreadHandoffDialog";
 import { AddProjectToMachineDialogHost } from "../components/AddProjectToMachineDialog";
@@ -174,6 +175,7 @@ function RootRouteBranch() {
         <LiquidGlassBackdrop />
         <CustomSnoozeDialogHost />
         <GuestShareDialogHost />
+        <AssistantDialogHost />
         <ThreadHandoffDialogHost />
         <CommandPalette>
           <AppSidebarLayout>
@@ -218,6 +220,7 @@ function RootRouteBranch() {
         <ConfirmDialogHost />
         <CustomSnoozeDialogHost />
         <GuestShareDialogHost />
+        <AssistantDialogHost />
         <ThreadHandoffDialogHost />
         <ProjectCloneToastCoordinator />
         <AddProjectToMachineDialogHost />

@@ -17,6 +17,8 @@ import {
   TurnItemId,
   WS_METHODS,
   WsRpcGroup,
+  type Assistant,
+  type AssistantsEvent,
   type Decision,
   type DecisionsEvent,
   type OrchestrationProjectShell,
@@ -405,6 +407,11 @@ handlers[WS_METHODS.decisionsAnswer] = (input: { readonly decisionId: string }) 
 handlers[WS_METHODS.decisionsDismiss] = (input: { readonly decisionId: string }) =>
   settle(WS_METHODS.decisionsDismiss, input, "withdrawn");
 
+/** Assistants the fake server holds; it only serves the snapshot, mutations stay pending. */
+export const fakeAssistants = { items: [] as Assistant[] };
+handlers[WS_METHODS.assistantsSubscribe] = () =>
+  subscribe<AssistantsEvent>([{ type: "snapshot", assistants: fakeAssistants.items }]);
+
 // Unanswered calls stay pending, like a server that has not replied yet.
 const client = new Proxy(handlers, {
   get: (target, method: string) =>
@@ -461,10 +468,13 @@ const encodeDescriptor = (capabilities: Record<string, boolean>) =>
 /** Serves the environment's HTTP API and these threads until disposed. */
 export function installFakeEnvironment(
   fixtures: ReadonlyArray<FakeThread>,
-  options: { readonly decisions?: boolean } = {},
+  options: { readonly decisions?: boolean; readonly assistants?: boolean } = {},
 ): Disposable {
   threads = fixtures;
-  extraCapabilities = options.decisions ? { decisions: true } : {};
+  extraCapabilities = {
+    ...(options.decisions ? { decisions: true } : {}),
+    ...(options.assistants ? { assistants: true } : {}),
+  };
   const encodedDescriptor = encodeDescriptor(extraCapabilities);
   globalThis.fetch = async (input, init) => {
     const url = new URL(input instanceof Request ? input.url : String(input), window.location.href);

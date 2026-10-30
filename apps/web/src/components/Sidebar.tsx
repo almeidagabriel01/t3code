@@ -255,6 +255,7 @@ import {
   type SidebarProviderEntry,
   type SidebarSweepAction,
 } from "./sidebar/SidebarThreadRow";
+import { AssistantSidebarSection } from "./assistants/AssistantSidebarSection";
 import { SidebarDraftBlock } from "./sidebar/SidebarDraftBlock";
 import { SidebarProjectGroups } from "./sidebar/SidebarProjectGroups";
 import {
@@ -3227,6 +3228,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                         );
                       };
                       const items: ReactNode[] = [];
+                      items.push(
+                        <AssistantSidebarSection
+                          key="assistants"
+                          routeThreadKey={routeThreadKey}
+                          environmentLabelById={environmentLabelById}
+                          onOpenThread={navigateToThread}
+                        />,
+                      );
                       items.push(
                         <SidebarDraftBlock
                           key="draft-sessions"

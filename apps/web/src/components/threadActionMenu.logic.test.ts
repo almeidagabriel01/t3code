@@ -83,4 +83,18 @@ describe("buildThreadActionMenuItems", () => {
     expect(items.find((item) => item.id === "archive")?.disabled).toBe(true);
     expect(items.find((item) => item.id === "turn-into-project")?.disabled).toBe(true);
   });
+
+  it("swaps rename, archive and delete for reset and settings on an assistant thread", () => {
+    const ids = (canOperate: boolean) =>
+      buildThreadActionMenuItems({ ...baseState, canOperate, assistant: { name: "Jarvis" } });
+    const items = ids(true);
+    const present = items.map((item) => item.id);
+    for (const removed of ["rename", "regenerate-title", "archive", "delete"]) {
+      expect(present).not.toContain(removed);
+    }
+    expect(present).toEqual(expect.arrayContaining(["reset-assistant", "assistant-settings"]));
+    const readOnly = ids(false);
+    expect(readOnly.find((item) => item.id === "reset-assistant")?.disabled).toBe(true);
+    expect(readOnly.find((item) => item.id === "assistant-settings")?.disabled).toBeUndefined();
+  });
 });

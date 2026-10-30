@@ -36,6 +36,7 @@ import type {
 } from "@t3tools/contracts";
 import {
   EnvironmentRequestInvalidError,
+  isAssistantThreadId,
   AuthOrchestrationOperateScope,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -2346,6 +2347,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       composerControlsCollapsed={composerControlsCollapsed}
       effortDisplay={settings.effortDisplay}
       permissionsShownInStrip={props.permissionsShownInStrip}
+      permissionsLocked={routeKind === "server" && isAssistantThreadId(routeThreadRef.threadId)}
       composerControlsHidden={composerControlsHidden}
       restingHiddenBlockCount={restingHiddenBlockCount}
       iconOnlyBlockCount={iconOnlyBlockCount}

@@ -69,6 +69,7 @@ export type EnvironmentSubscriptionRpcTag =
   | typeof WS_METHODS.kanbanSubscribe
   | typeof WS_METHODS.notesSubscribe
   | typeof WS_METHODS.decisionsSubscribe
+  | typeof WS_METHODS.assistantsSubscribe
   | typeof WS_METHODS.memoryChanges
   | typeof WS_METHODS.serverGetStorageCleanupReport
   | typeof WS_METHODS.serverGetDatabaseStorage

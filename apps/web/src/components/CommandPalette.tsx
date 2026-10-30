@@ -52,6 +52,8 @@ import {
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import {
   BrainIcon,
+  UserRoundIcon,
+  UserRoundPlusIcon,
   BellIcon,
   MessageCircleQuestionMarkIcon,
   ArrowLeftIcon,
@@ -86,6 +88,8 @@ import { useKanbanEnvironmentIds } from "../state/kanban";
 import { useDecisionEntries } from "../state/decisions";
 import { useNotesEnvironmentIds } from "../state/notes";
 import { useNotesPaletteItems } from "./notes/notesPaletteItems";
+import { openAssistantDialog } from "./assistants/assistantDialogState";
+import { useAssistantEntries } from "../state/assistants";
 import {
   useDeferredValue,
   useEffect,
@@ -449,6 +453,7 @@ function OpenCommandPaletteDialog(props: {
   const notesSupported = useNotesEnvironmentIds().length > 0;
   const openDecisionCount = useDecisionEntries().open.length;
   const notesItems = useNotesPaletteItems((to) => navigate(to));
+  const assistantEntries = useAssistantEntries();
   const desktopLocalBootstraps = useDesktopLocalBootstraps();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const availableSettingsSearchItems = useAvailableSettingsSearchItems();
@@ -1628,6 +1633,44 @@ function OpenCommandPaletteDialog(props: {
       await updateClientSettings({ statusBarVisible: !getClientSettings().statusBarVisible });
     },
   });
+
+  const multipleAssistantEnvironments =
+    new Set(assistantEntries.active.map((entry) => entry.environmentId)).size > 1;
+  for (const { environmentId, assistant } of assistantEntries.active) {
+    const threadId = assistant.threadId;
+    if (threadId === null) continue;
+    actionItems.push({
+      kind: "action",
+      value: `action:assistant:${environmentId}:${assistant.id}`,
+      searchTerms: ["assistant", assistant.name, assistant.handle],
+      title: `Open ${assistant.name}`,
+      ...(multipleAssistantEnvironments
+        ? {
+            description:
+              environments.find((item) => item.environmentId === environmentId)?.label ?? "",
+          }
+        : {}),
+      icon: <UserRoundIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        await navigate({
+          to: "/$environmentId/$threadId",
+          params: buildThreadRouteParams(scopeThreadRef(environmentId, threadId)),
+        });
+      },
+    });
+  }
+  if (assistantEntries.active.length > 0) {
+    actionItems.push({
+      kind: "action",
+      value: "action:new-assistant",
+      searchTerms: ["assistant", "new", "create", "add"],
+      title: "New assistant",
+      icon: <UserRoundPlusIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        openAssistantDialog();
+      },
+    });
+  }
 
   actionItems.push({
     kind: "action",

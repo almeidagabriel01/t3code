@@ -11,10 +11,14 @@ import {
 import { canSnooze, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import {
   AuthOrchestrationOperateScope,
+  type EnvironmentId,
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
 import { useRouter } from "@tanstack/react-router";
+import { openAssistantDialog } from "../components/assistants/assistantDialogState";
+import { useAssistantFlows } from "../components/assistants/useAssistantFlows";
+import { useThreadAssistant } from "../state/assistants";
 
 import { pickSnoozePreset, resolveSnoozePresets } from "../components/Sidebar.snooze";
 import {
@@ -77,6 +81,11 @@ export function useThreadActionMenu(input: {
     onLinkCard,
   } = input;
   const router = useRouter();
+  const assistantEntry = useThreadAssistant(
+    threadRef?.environmentId ?? null,
+    threadRef?.threadId ?? null,
+  );
+  const assistantFlows = useAssistantFlows((threadRef?.environmentId ?? "") as EnvironmentId);
   const projects = useProjects();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
@@ -160,6 +169,7 @@ export function useThreadActionMenu(input: {
         canShareWithGuest,
         canLinkCard,
         canTurnIntoProject: canTurnThreadIntoProject(threadRef),
+        assistant: assistantEntry ? { name: assistantEntry.assistant.name } : null,
       });
       const clicked = await settlePromise(() => api.contextMenu.show(items, position));
       if (clicked._tag === "Failure" || clicked.value === null) return;
@@ -317,6 +327,19 @@ export function useThreadActionMenu(input: {
           return;
         case "copy-thread-id":
           copyThreadIdToClipboard(thread.id, { threadId: thread.id });
+          return;
+        case "reset-assistant":
+          if (assistantEntry) {
+            await assistantFlows.reset(assistantEntry.assistant, { openAfter: true });
+          }
+          return;
+        case "assistant-settings":
+          if (assistantEntry) {
+            openAssistantDialog({
+              environmentId: assistantEntry.environmentId,
+              assistantId: assistantEntry.assistant.id,
+            });
+          }
           return;
         case "archive": {
           if (confirmThreadArchive) {

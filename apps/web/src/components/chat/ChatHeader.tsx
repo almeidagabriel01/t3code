@@ -48,6 +48,8 @@ import { KanbanLinkCardDialog } from "../kanban/KanbanLinkDialogs";
 import { KanbanThreadCardBadge } from "../kanban/KanbanThreadCardBadge";
 import { useKanbanCanEdit } from "../kanban/useKanban";
 import { useKanbanEnvironmentIds, useThreadKanbanCard } from "../../state/kanban";
+import { AssistantAvatar } from "../assistants/assistantPresentation";
+import { useThreadAssistant } from "../../state/assistants";
 import { ThreadNotesButton } from "../notes/ThreadNotesButton";
 
 interface ChatHeaderProps {
@@ -98,6 +100,8 @@ export const ChatHeader = memo(function ChatHeader({
   sideChatShortcutLabel = null,
   onFindInThread,
 }: ChatHeaderProps) {
+  const assistantEntry = useThreadAssistant(activeThreadEnvironmentId, activeThreadId);
+  const displayTitle = assistantEntry?.assistant.name ?? activeThreadTitle;
   const activeProjectName = activeProject?.isScratch ? "No project" : activeProject?.title;
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const interfaceFont = useClientSettings((settings) => settings.fontFamilySans);
@@ -176,6 +180,7 @@ export const ChatHeader = memo(function ChatHeader({
   const startRename = () => {
     if (
       !isServerThread ||
+      assistantEntry !== null ||
       !readEnvironmentScope(activeThreadEnvironmentId, AuthOrchestrationOperateScope)
     )
       return;
@@ -401,7 +406,7 @@ export const ChatHeader = memo(function ChatHeader({
                   <button
                     ref={titleButtonRef}
                     type="button"
-                    aria-label={`Thread actions for ${activeThreadTitle}`}
+                    aria-label={`Thread actions for ${displayTitle}`}
                     aria-haspopup="menu"
                     onClick={openMenuFromTitle}
                     onDoubleClick={canOperateThread ? handleTitleDoubleClick : undefined}
@@ -410,8 +415,11 @@ export const ChatHeader = memo(function ChatHeader({
                   />
                 }
               >
-                <h2 className="min-w-0" dir={textDirection(activeThreadTitle)}>
-                  <WorkspaceBreadcrumbText>{activeThreadTitle}</WorkspaceBreadcrumbText>
+                {assistantEntry ? (
+                  <AssistantAvatar assistant={assistantEntry.assistant} className="size-4" />
+                ) : null}
+                <h2 className="min-w-0" dir={textDirection(displayTitle)}>
+                  <WorkspaceBreadcrumbText>{displayTitle}</WorkspaceBreadcrumbText>
                 </h2>
                 <ChevronDownIcon
                   aria-hidden
@@ -419,22 +427,22 @@ export const ChatHeader = memo(function ChatHeader({
                   className="size-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/thread-title:opacity-100 group-focus-visible/thread-title:opacity-100"
                 />
               </TooltipTrigger>
-              <TooltipPopup side="top">{activeThreadTitle}</TooltipPopup>
+              <TooltipPopup side="top">{displayTitle}</TooltipPopup>
             </Tooltip>
           ) : (
             <Tooltip>
               <TooltipTrigger
                 render={
                   <h2
-                    aria-label={activeThreadTitle}
+                    aria-label={displayTitle}
                     className="min-w-0 flex-1"
-                    dir={textDirection(activeThreadTitle)}
+                    dir={textDirection(displayTitle)}
                   />
                 }
               >
-                <WorkspaceBreadcrumbText>{activeThreadTitle}</WorkspaceBreadcrumbText>
+                <WorkspaceBreadcrumbText>{displayTitle}</WorkspaceBreadcrumbText>
               </TooltipTrigger>
-              <TooltipPopup side="top">{activeThreadTitle}</TooltipPopup>
+              <TooltipPopup side="top">{displayTitle}</TooltipPopup>
             </Tooltip>
           )}
           {renamingTitle === null && activeThreadLinkOrigin ? (

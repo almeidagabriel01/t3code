@@ -56,6 +56,8 @@ export function ComposerControlsBar(props: {
   effortDisplay: EffortDisplay;
   /** The strip under a new thread names the permissions, so the row does not repeat them. */
   permissionsShownInStrip: boolean;
+  /** Assistant threads: the assistant's tool access owns the runtime mode. */
+  permissionsLocked: boolean;
   interactionMode: ProviderInteractionMode;
   compatibleRuntimeMode: RuntimeMode;
   defaultRuntimeMode: RuntimeMode | undefined;
@@ -168,14 +170,18 @@ export function ComposerControlsBar(props: {
     effortDisplay: props.effortDisplay,
     triggerClassName: cn("ps-1.5 pe-1", TEXT_CONTROL_STATES),
     // Permissions always live in the effort menu, so the section never unmounts while open.
-    extraMenuContent: (
-      <ComposerPermissionsSection
-        runtimeMode={compatibleRuntimeMode}
-        runtimeModeOptions={compatibleRuntimeModeOptions}
-        onRuntimeModeChange={handleRuntimeModeChange}
-      />
-    ),
-    ...(permissionsChipHidden
+    ...(props.permissionsLocked
+      ? {}
+      : {
+          extraMenuContent: (
+            <ComposerPermissionsSection
+              runtimeMode={compatibleRuntimeMode}
+              runtimeModeOptions={compatibleRuntimeModeOptions}
+              onRuntimeModeChange={handleRuntimeModeChange}
+            />
+          ),
+        }),
+    ...(permissionsChipHidden && !props.permissionsLocked
       ? {
           extraMenuHint: [
             `Permissions: ${
@@ -200,6 +206,7 @@ export function ComposerControlsBar(props: {
     overflowShowsPermissions,
   } = resolveComposerControlsOwnership({
     matchesDefault: permissionsChipHidden,
+    permissionsLocked: props.permissionsLocked,
     hasTraits: providerTraitsPicker !== null,
     planModeUiEnabled,
     collapsed: composerControlsCollapsed,

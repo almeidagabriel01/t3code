@@ -21,6 +21,16 @@ describe("resolveComposerControlsOwnership", () => {
     });
   });
 
+  it("never shows permissions when they are locked, in the strip or the overflow", () => {
+    const result = resolveComposerControlsOwnership({
+      ...base,
+      matchesDefault: false,
+      permissionsLocked: true,
+      measuredHiddenBlockCount: 1,
+    });
+    expect(result).toMatchObject({ accessDisplay: "hidden", overflowShowsPermissions: false });
+  });
+
   it("shows a labelled chip that owns composer.mode when the mode differs", () => {
     const result = resolveComposerControlsOwnership({ ...base, matchesDefault: false });
     expect(result).toMatchObject({

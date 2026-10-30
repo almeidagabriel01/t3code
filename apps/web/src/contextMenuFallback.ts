@@ -160,6 +160,10 @@ const ICON_PATHS: Record<string, ReadonlyArray<{ tag: string; attrs: Record<stri
     { tag: "path", attrs: { d: "M3 5a2 2 0 0 0 2 2h3" } },
     { tag: "path", attrs: { d: "M3 3v13a2 2 0 0 0 2 2h3" } },
   ],
+  "user-round": [
+    { tag: "circle", attrs: { cx: "12", cy: "8", r: "5" } },
+    { tag: "path", attrs: { d: "M20 21a8 8 0 0 0-16 0" } },
+  ],
   play: [{ tag: "polygon", attrs: { points: "6 3 20 12 6 21 6 3" } }],
   "text-search": [
     { tag: "path", attrs: { d: "M21 5H3" } },

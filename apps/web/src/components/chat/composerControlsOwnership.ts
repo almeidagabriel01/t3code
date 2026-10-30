@@ -6,6 +6,8 @@
 export function resolveComposerControlsOwnership(input: {
   /** Permissions hide while the mode is the default, or while the new-thread strip names it. */
   readonly matchesDefault: boolean;
+  /** The thread's permissions are not the composer's to change, so the control never shows. */
+  readonly permissionsLocked?: boolean;
   /** The model has an effort (traits) menu, which then always holds Permissions. */
   readonly hasTraits: boolean;
   readonly planModeUiEnabled: boolean;
@@ -13,14 +15,16 @@ export function resolveComposerControlsOwnership(input: {
   /** How many trailing blocks the width measurement moved into the overflow menu. */
   readonly measuredHiddenBlockCount: number;
 }) {
-  const accessDisplay = !input.matchesDefault
-    ? input.collapsed
-      ? ("icon" as const)
-      : ("label" as const)
-    : // Without traits there is no effort menu to hold Permissions, so keep an icon.
-      input.hasTraits
-      ? ("hidden" as const)
-      : ("icon" as const);
+  const accessDisplay = input.permissionsLocked
+    ? ("hidden" as const)
+    : !input.matchesDefault
+      ? input.collapsed
+        ? ("icon" as const)
+        : ("label" as const)
+      : // Without traits there is no effort menu to hold Permissions, so keep an icon.
+        input.hasTraits
+        ? ("hidden" as const)
+        : ("icon" as const);
   const showModeBlock = !(accessDisplay === "hidden" && !input.planModeUiEnabled);
   const blockIds = [
     ...(input.hasTraits ? ["traits" as const] : []),
@@ -28,7 +32,7 @@ export function resolveComposerControlsOwnership(input: {
   ];
   const hiddenFor = (count: number) => blockIds.slice(blockIds.length - count);
   const overflowShowsPermissionsFor = (hidden: ReadonlyArray<string>) =>
-    hidden.includes(input.hasTraits ? "traits" : "mode");
+    input.permissionsLocked !== true && hidden.includes(input.hasTraits ? "traits" : "mode");
   const overflowHasContent = (hidden: ReadonlyArray<string>) =>
     hidden.includes("traits") ||
     (input.planModeUiEnabled && hidden.includes("mode")) ||

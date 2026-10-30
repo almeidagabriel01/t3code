@@ -29,7 +29,9 @@ export type ThreadActionMenuId =
   | "copy-thread"
   | "copy-thread-id"
   | "archive"
-  | "delete";
+  | "delete"
+  | "reset-assistant"
+  | "assistant-settings";
 
 export type DraftActionMenuId =
   | "copy"
@@ -99,6 +101,8 @@ export interface ThreadActionMenuState {
   readonly canTurnIntoProject?: boolean;
   /** An unlinked thread on a board-enabled environment the user can add cards to. */
   readonly canLinkCard?: boolean | undefined;
+  /** The assistant whose current conversation this is; it can't be renamed, archived or deleted here. */
+  readonly assistant?: { readonly name: string } | null | undefined;
 }
 
 /** Local navigation, read markers, and copying remain available to read-only clients. */
@@ -110,6 +114,7 @@ export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean
     "mark-unread",
     "share-guest",
     "link-card",
+    "assistant-settings",
     "copy",
     "copy-path",
     "copy-branch",
@@ -121,6 +126,7 @@ export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean
 export function buildThreadActionMenuItems(
   state: ThreadActionMenuState,
 ): ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> {
+  const isAssistant = state.assistant != null;
   const items: ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> = [
     ...(state.canFind
       ? [{ id: "find" as const, label: "Find in thread", icon: "text-search" }]
@@ -171,8 +177,10 @@ export function buildThreadActionMenuItems(
               },
         ]
       : []),
-    { id: "rename", label: "Rename thread", icon: "pencil", separatorBefore: true },
-    ...(state.supports.titleRegeneration
+    ...(isAssistant
+      ? []
+      : [{ id: "rename" as const, label: "Rename thread", icon: "pencil", separatorBefore: true }]),
+    ...(state.supports.titleRegeneration && !isAssistant
       ? [
           {
             id: "regenerate-title" as const,
@@ -247,19 +255,36 @@ export function buildThreadActionMenuItems(
       ],
     },
     { id: "project-settings", label: "Project settings", icon: "settings" },
-    {
-      id: "archive",
-      label: "Archive thread",
-      icon: "archive",
-      disabled: state.isRunning,
-      separatorBefore: true,
-    },
-    {
-      id: "delete",
-      label: "Delete",
-      destructive: true,
-      icon: "trash",
-    },
+    ...(state.assistant
+      ? [
+          {
+            id: "reset-assistant" as const,
+            label: "Reset conversation",
+            icon: "refresh-cw",
+            separatorBefore: true,
+            disabled: state.isRunning,
+          },
+          {
+            id: "assistant-settings" as const,
+            label: `${state.assistant.name} settings`,
+            icon: "user-round",
+          },
+        ]
+      : [
+          {
+            id: "archive" as const,
+            label: "Archive thread",
+            icon: "archive",
+            disabled: state.isRunning,
+            separatorBefore: true,
+          },
+          {
+            id: "delete" as const,
+            label: "Delete",
+            destructive: true,
+            icon: "trash",
+          },
+        ]),
   ];
   return state.canOperate
     ? items
