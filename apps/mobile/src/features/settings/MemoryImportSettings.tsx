@@ -78,6 +78,7 @@ export function MemoryImportSettings({
   const state = useSyncExternalStore(workflow.subscribe, workflow.getSnapshot);
   const [sources, setSources] = useState<Discovery | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
+  const [choosingSource, setChoosingSource] = useState(false);
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -90,6 +91,7 @@ export function MemoryImportSettings({
     setPreview(null);
     setSources(null);
     setSelected(new Set());
+    setChoosingSource(false);
   }, []);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- fences the import workflow and removes revoked destinations on unmount
   useEffect(() => {
@@ -322,7 +324,10 @@ export function MemoryImportSettings({
       </SettingsSection>
       {sources && sources.sources.length > 0 ? (
         <SettingsSection title="Project to import from">
-          {sources.sources.map((source) => (
+          {(preview && !choosingSource
+            ? sources.sources.filter((source) => source.sourceId === preview.sourceId)
+            : sources.sources
+          ).map((source) => (
             <Action
               key={source.sourceId}
               icon={preview?.sourceId === source.sourceId ? "folder.fill" : "folder"}
@@ -330,6 +335,7 @@ export function MemoryImportSettings({
               disabled={!writable}
               onPress={() => {
                 setSelected(new Set());
+                setChoosingSource(false);
                 void run(async () => {
                   const result = await workflow.preview(source.sourceId);
                   if (result) setPreview(result);
@@ -337,6 +343,14 @@ export function MemoryImportSettings({
               }}
             />
           ))}
+          {preview && !choosingSource && sources.sources.length > 1 ? (
+            <Action
+              icon="arrow.left.arrow.right"
+              label="Choose another project"
+              disabled={!writable}
+              onPress={() => setChoosingSource(true)}
+            />
+          ) : null}
         </SettingsSection>
       ) : null}
       {preview && selecting ? (

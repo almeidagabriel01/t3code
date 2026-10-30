@@ -1618,7 +1618,7 @@ describe("native WP6 Settings commands", () => {
       Effect.fail({ code: "revision_changed" }),
     );
     await show({ environmentId: nativeEnv, project });
-    await view.click("Scope: project");
+    await view.click("This project");
     await view.click("Create shared project binding");
     expect(
       h.calls.findLast((call) => call.method === WS_METHODS.memoryProjectBindingUpdate)?.input,
@@ -1994,7 +1994,7 @@ describe("native WP6 Settings commands", () => {
     await view.click("Select project: Fixture project 999");
     expect(candidateRows()).toHaveLength(0);
     expect(view.container.querySelectorAll("button").length).toBeLessThan(80);
-    await view.click("Scope: project");
+    await view.click("This project");
     await view.click("Choose shared binding project…");
     expect(candidateRows()).toHaveLength(20);
     await view.type("Search projects", "Fixture project 999");

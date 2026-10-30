@@ -66,6 +66,7 @@ import { useSavedRemoteConnections } from "../../state/use-remote-environment-re
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsActionRow } from "./components/SettingsActionRow";
+import { SettingsRow } from "./components/SettingsRow";
 import { MemorySyncDiagnostics } from "./MemorySyncDiagnostics";
 import { MemoryImportSettings } from "./MemoryImportSettings";
 import { MemoryProjectSettings } from "./MemoryProjectSettings";
@@ -73,7 +74,6 @@ import { MemoryProjectPicker } from "./MemoryProjectPicker";
 import { MemoryAdministration } from "./MemorySharingSettings";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { settled } from "../../lib/settled";
-import { SettingsRow } from "./components/SettingsRow";
 import {
   memoryExpectedHeads,
   memoryScopeForSelection,
@@ -109,6 +109,17 @@ function Copy({ children }: { readonly children: React.ReactNode }) {
     </Text>
   );
 }
+const IMPORT_SCOPE_LABELS = {
+  user: "All projects",
+  project: "This project",
+  thread: "This thread",
+};
+const IMPORT_SCOPE_ICONS = {
+  user: "person.crop.circle",
+  project: "folder",
+  thread: "bubble.left",
+} as const;
+
 function Action(props: React.ComponentProps<typeof SettingsActionRow>) {
   return <SettingsActionRow {...props} />;
 }
@@ -824,24 +835,27 @@ function ScopedMemoryBrowser({
             title="Import scope"
             footer="Imports go to the scope selected here. Existing memories keep their scope."
           >
-            {(["user", "project", "thread"] as const).map((kind) => (
-              <SettingsSwitchRow
-                key={kind}
-                label={`Scope: ${kind}`}
-                value={scopeKind === kind}
-                disabled={
-                  kind === "project"
-                    ? !binding?.projectKey || !projectExists
-                    : kind === "thread"
-                      ? !effectiveParams.thread
-                      : false
-                }
-                onValueChange={(value) => {
-                  setScopeKind(value ? kind : null);
-                  setCursor(undefined);
-                }}
-              />
-            ))}
+            {(["user", "project", "thread"] as const).map((kind) => {
+              const chosen = scopeKind === kind;
+              return (
+                <Action
+                  key={kind}
+                  icon={chosen ? "checkmark.circle.fill" : IMPORT_SCOPE_ICONS[kind]}
+                  label={IMPORT_SCOPE_LABELS[kind]}
+                  disabled={
+                    kind === "project"
+                      ? !binding?.projectKey || !projectExists
+                      : kind === "thread"
+                        ? !effectiveParams.thread
+                        : false
+                  }
+                  onPress={() => {
+                    setScopeKind(kind);
+                    setCursor(undefined);
+                  }}
+                />
+              );
+            })}
             <Copy>
               {projectRef
                 ? (projects.find((project) => project.id === projectRef.projectId)?.title ??
