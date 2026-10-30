@@ -38,6 +38,7 @@ import * as HttpServer from "effect/http/HttpServer";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Config from "../config.ts";
 import * as Settings from "../serverSettings.ts";
+import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as Secrets from "../auth/ServerSecretStore.ts";
 import * as Sqlite from "../persistence/Sqlite.ts";
 import * as Environment from "../environment/ServerEnvironment.ts";
@@ -217,7 +218,7 @@ const environment = (label: "H" | "A" | "B", resolve?: Resolve) =>
     const providers = Registry.layer({
       drivers: [driver],
       configMap: { [instanceId]: { driver: driver.driverKind, config: {}, enabled: true } },
-    });
+    }).pipe(Layer.provideMerge(Layer.mock(SecretResolver.SecretResolver)({})));
     const vcs = Layer.mergeAll(Git.layer, Vcs.layer).pipe(Layer.provideMerge(VcsProcess.layer));
     const sourceControl = SourceControl.layer.pipe(
       Layer.provide(SourceControlDrivers.layer),

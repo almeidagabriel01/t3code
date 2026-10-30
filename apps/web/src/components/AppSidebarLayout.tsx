@@ -40,6 +40,7 @@ import {
 } from "../panelAnimations";
 import { BackgroundThreadAnnouncer } from "./BackgroundThreadAnnouncer";
 import { useToggleActivity } from "./activity/useActivity";
+import { HistorySwipeNavigation } from "./HistorySwipeNavigation";
 import ThreadSidebar from "./Sidebar";
 import { SidebarBrandWidthProbe } from "./sidebar/SidebarChrome";
 import { DestinationRail, DestinationRailVisibleContext } from "./sidebar/DestinationRail";
@@ -478,7 +479,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
           style={sidebarProviderStyle}
         >
           <DestinationRailVisibleContext value={railVisible}>
-            <SidebarBrandWidthProbe onWidthChange={setBrandWidth} />
+            <SidebarBrandWidthProbe isElectron={isElectron} onWidthChange={setBrandWidth} />
             {railVisible ? <DestinationRail /> : null}
             <Sidebar
               side="left"
@@ -516,6 +517,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
           ) : null}
           <BackgroundThreadAnnouncer />
           <SidebarControl overRail={railVisible} />
+          {isElectron ? <HistorySwipeNavigation /> : null}
         </SidebarProvider>
         <StatusBar />
       </div>

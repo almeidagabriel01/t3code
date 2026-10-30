@@ -1,6 +1,7 @@
 import {
   AuthOrchestrationOperateScope,
   type EnvironmentId,
+  type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -65,6 +66,7 @@ interface ChatHeaderProps {
   onToggleSideChat?: (() => void) | undefined;
   sideChatOpen?: boolean | undefined;
   sideChatShortcutLabel?: string | null | undefined;
+  onFindInThread?: ((threadRef: ScopedThreadRef) => void) | undefined;
 }
 
 function resolveRenameCommit(input: {
@@ -94,6 +96,7 @@ export const ChatHeader = memo(function ChatHeader({
   onToggleSideChat,
   sideChatOpen = false,
   sideChatShortcutLabel = null,
+  onFindInThread,
 }: ChatHeaderProps) {
   const activeProjectName = activeProject?.isScratch ? "No project" : activeProject?.title;
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
@@ -216,6 +219,7 @@ export const ChatHeader = memo(function ChatHeader({
     threadRef: isServerThread ? activeThreadRef : null,
     projectCwd: activeProjectCwd,
     onStartRename: startRename,
+    onFind: onFindInThread,
     canShareWithGuest,
     canLinkCard,
     onLinkCard: () => setLinkingCard(true),

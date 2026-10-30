@@ -115,6 +115,10 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
       label: "environment-data:orchestration:handoff-thread",
       tag: ORCHESTRATION_V2_WS_METHODS.handoffThread,
     }),
+    forceStopThread: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:orchestration:force-stop-thread",
+      tag: ORCHESTRATION_V2_WS_METHODS.forceStopThread,
+    }),
     turnItem: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:turn-item",
       tag: ORCHESTRATION_V2_WS_METHODS.getTurnItem,
