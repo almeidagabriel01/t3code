@@ -11,7 +11,12 @@ import * as Upload from "../../../assets/AttachmentUpload.ts";
 import * as Claims from "../../../orchestration-v2/AttachmentClaims.ts";
 import * as ThreadMessageIntake from "../../../orchestration-v2/ThreadMessageIntake.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
-import { newCommandId, readThread, unavailable } from "../../threadAccess.ts";
+import {
+  captureCallerMemoryCeiling,
+  newCommandId,
+  readThread,
+  unavailable,
+} from "../../threadAccess.ts";
 import { AttachmentToolkit } from "./tools.ts";
 
 export function resolveAttachmentReferences(
@@ -94,7 +99,11 @@ export const layer = McpToolAccess.toLayer(
             );
             const commandId = yield* newCommandId();
             const messageId = MessageId.make(commandId);
+            const memoryGrantCeiling = yield* captureCallerMemoryCeiling(
+              yield* McpInvocationContext.McpInvocationContext,
+            );
             const result = yield* ThreadMessageIntake.sendToThread({
+              memoryGrantCeiling,
               projectId: projection.thread.projectId,
               threadId: projection.thread.id,
               commandId,

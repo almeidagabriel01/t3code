@@ -1,4 +1,4 @@
-// @effect-diagnostics effectFnOpportunity:off flatMapConditionalToFilterOrFail:off -- ported as-is
+// @effect-diagnostics effectFnOpportunity:off -- hot memory path helpers; Effect.fn would add a span to every call.
 import * as NodeUtil from "node:util";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- stable server-owned hashes.
 import * as NodeCrypto from "node:crypto";
@@ -1010,10 +1010,9 @@ const make = Effect.fnUntraced(function* (
       ),
     readReceipt: (input, permit) =>
       importTransaction(input, permit, store.readImportReceiptTx(input)).pipe(
-        Effect.flatMap((receipt) =>
-          receipt
-            ? Effect.succeed(receipt)
-            : Effect.fail(new M.MemoryRpcError({ code: "not_found" })),
+        Effect.filterOrFail(
+          (receipt) => receipt !== undefined,
+          () => new M.MemoryRpcError({ code: "not_found" }),
         ),
       ),
     readItem: (input, permit) => importTransaction(input, permit, store.readImportItemTx(input)),

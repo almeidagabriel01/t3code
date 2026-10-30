@@ -1,5 +1,5 @@
 /* oxlint-disable t3code/prefer-effect-fn -- ported as-is; Effect.fn would add spans to hot paths */
-// @effect-diagnostics effectFnOpportunity:off unnecessaryEffectGen:off raceFirstWithSleepToTimeout:off flatMapConditionalToFilterOrFail:off catchToIgnore:off catchToOrElseSucceed:off unnecessaryPipeChain:off -- ported as-is
+// @effect-diagnostics effectFnOpportunity:off -- hot memory path helpers; Effect.fn would add a span to every call.
 import { MemoryHubSettingsSnapshot } from "./MemoryHubSettings.ts";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- server-owned checkpoint identifiers.
 import * as NodeCrypto from "node:crypto";

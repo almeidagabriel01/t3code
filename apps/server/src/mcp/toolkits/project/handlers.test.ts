@@ -202,6 +202,8 @@ it.effect(
       });
       expect(belowCeiling.launched[0]?.runtimeMode).toBe("approval-required");
       expect(belowCeiling.launched[0]?.initialMessage?.senderThreadId).toBeUndefined();
+      // An OAuth client holds no memory scopes, so what it starts gets no memory.
+      expect(belowCeiling.launched[0]?.initialMessage?.memoryGrantCeiling).toBe("none");
 
       const aboveCeiling = yield* launchWith("auto-accept-edits", "full-access", {
         title: "Fix",

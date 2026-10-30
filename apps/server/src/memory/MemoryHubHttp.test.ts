@@ -1,4 +1,3 @@
-// @effect-diagnostics effectFnOpportunity:off unnecessaryEffectGen:off raceFirstWithSleepToTimeout:off flatMapConditionalToFilterOrFail:off catchToIgnore:off catchToOrElseSucceed:off unnecessaryPipeChain:off preferTypedSchemaDecoder:off preferSucceedSomeOrNone:off -- ported as-is
 import { expect, it } from "vite-plus/test";
 import { ensureMemorySchema } from "../persistence/MemorySchema.ts";
 import * as M from "@t3tools/contracts";

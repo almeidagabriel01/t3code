@@ -1,4 +1,4 @@
-import type * as Effect from "effect/Effect";
+import * as Effect from "effect/Effect";
 
 /** Scanner reports rule identifiers only; inspected strings never leave this boundary. */
 export type MemoryScanResult =
@@ -51,11 +51,40 @@ export function scanMemoryValue(value: unknown): MemoryScanResult {
     : { kind: "blocked", ruleIds: [...found].sort(), inspectedBytes };
 }
 
-/** Seam for scrubbing text this environment writes; no session credential reaches memory text here, so identity. */
+export const MEMORY_REDACTION_MARKER = "[redacted]";
+const redactions = [
+  // The scanner flags the header; redaction also drops the key body that follows it.
+  /-----BEGIN (?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY-----[\s\S]*?(?:-----END (?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY-----|$)/g,
+  ...rules.slice(1).map(([, pattern]) => new RegExp(pattern.source, "g")),
+];
+const redactString = (text: string) =>
+  redactions.reduce((acc, pattern) => acc.replace(pattern, MEMORY_REDACTION_MARKER), text);
+
+/** Replaces every secret the scanner detects in memory text with a fixed marker. */
 export const redactMemoryText = <T extends { readonly text: string; readonly judgment?: string }>(
   value: T,
-): T => value;
+): T => ({
+  ...value,
+  text: redactString(value.text),
+  ...(value.judgment === undefined ? {} : { judgment: redactString(value.judgment) }),
+});
 
-/** A generation whose result, when present, is passed through {@link redactMemoryText}. */
+const redactValue = (input: unknown, content: boolean): unknown =>
+  typeof input === "string"
+    ? content
+      ? redactString(input)
+      : input
+    : Array.isArray(input)
+      ? input.map((child) => redactValue(child, content))
+      : input !== null && typeof input === "object"
+        ? Object.fromEntries(
+            Object.entries(input).map(([key, child]) => [
+              key,
+              redactValue(child, contentFields.has(key)),
+            ]),
+          )
+        : input;
+
+/** A generation whose result has secrets in content fields replaced before anything reads it. */
 export const redacted = <O, E, R>(generation: Effect.Effect<O, E, R>): Effect.Effect<O, E, R> =>
-  generation;
+  Effect.map(generation, (output) => redactValue(output, false) as O);

@@ -191,6 +191,7 @@ import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerSettings from "./serverSettings.ts";
+import { withCurrentMemoryAccess } from "./memory/MemoryAccess.ts";
 import * as DatabaseStorage from "./persistence/DatabaseStorage.ts";
 import * as StorageCleanup from "./storageCleanup.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
@@ -1426,6 +1427,18 @@ export const layerWsRpc = (
           : {
               tasks: result.tasks.map(({ webhook: _webhook, ...task }) => task),
             };
+      const withCurrentMemoryAccessLabels = (
+        result: ScheduledTaskListResult,
+      ): Effect.Effect<ScheduledTaskListResult> =>
+        serverSettings.getSettings.pipe(
+          Effect.map(({ enableAgentMemoryAccess }) => ({
+            tasks: result.tasks.map((task) =>
+              withCurrentMemoryAccess(task, enableAgentMemoryAccess),
+            ),
+          })),
+          // An unreadable setting leaves the label omitted, which clients show as unknown.
+          Effect.orElseSucceed(() => result),
+        );
       const authorizeEffect = <A, E, R>(
         requiredScope: AuthEnvironmentScope,
         effect: Effect.Effect<A, E, R>,
@@ -2327,7 +2340,12 @@ export const layerWsRpc = (
         [WS_METHODS.notesSubscribe]: (_input) => notes.subscribe,
         [WS_METHODS.notesStartWork]: (input) => noteWork.startWork(input, "user", "user"),
         [WS_METHODS.scheduledTasksSubscribe]: (_input) =>
-          scheduledTasks.subscribeList().pipe(Stream.map(withVisibleWebhookUrls)),
+          scheduledTasks
+            .subscribeList()
+            .pipe(
+              Stream.map(withVisibleWebhookUrls),
+              Stream.mapEffect(withCurrentMemoryAccessLabels),
+            ),
         [WS_METHODS.scheduledTasksUpsert]: (input) =>
           captureTaskMemoryCeiling.pipe(
             Effect.flatMap((memoryGrantCeiling) =>

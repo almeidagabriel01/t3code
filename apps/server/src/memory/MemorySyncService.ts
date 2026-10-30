@@ -1,5 +1,5 @@
 /* oxlint-disable t3code/prefer-effect-fn -- ported as-is; Effect.fn would add spans to hot paths */
-// @effect-diagnostics effectFnOpportunity:off unnecessaryEffectGen:off raceFirstWithSleepToTimeout:off flatMapConditionalToFilterOrFail:off catchToIgnore:off catchToOrElseSucceed:off unnecessaryPipeChain:off -- ported as-is
+// @effect-diagnostics effectFnOpportunity:off -- hot memory path helpers; Effect.fn would add a span to every call.
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- stable server-owned submission IDs.
 import * as NodeCrypto from "node:crypto";
 import * as M from "@t3tools/contracts";
@@ -696,26 +696,24 @@ const make = Effect.gen(function* () {
         yield* eligibility(row.ticket);
         const holdKey = yield* hold.keyFor(input.modelSelection);
         const generated = yield* Effect.scoped(
-          Effect.gen(function* () {
-            // Renewal failure interrupts the provider, including a hung one-shot execution.
-            return yield* Effect.raceFirst(
-              hold.guard(holdKey, redacted(model(input))).pipe(
-                // A held model or a refusal that repeats retires this attempt: its lease is
-                // released and the conflict is claimed again once the model is no longer held.
-                Effect.mapError(
-                  (error) =>
-                    new M.MemoryHubError({
-                      code:
-                        error._tag === "MemoryGenerationHeld" ||
-                        Hold.deterministicFailure(error) !== undefined
-                          ? "generation_failed"
-                          : "invalid_output",
-                    }),
-                ),
+          // Renewal failure interrupts the provider, including a hung one-shot execution.
+          Effect.raceFirst(
+            hold.guard(holdKey, redacted(model(input))).pipe(
+              // A held model or a refusal that repeats retires this attempt: its lease is
+              // released and the conflict is claimed again once the model is no longer held.
+              Effect.mapError(
+                (error) =>
+                  new M.MemoryHubError({
+                    code:
+                      error._tag === "MemoryGenerationHeld" ||
+                      Hold.deterministicFailure(error) !== undefined
+                        ? "generation_failed"
+                        : "invalid_output",
+                  }),
               ),
-              renew.pipe(Effect.flatMap(() => Effect.never)),
-            );
-          }),
+            ),
+            renew.pipe(Effect.flatMap(() => Effect.never)),
+          ),
         ).pipe(
           // Member time schedules cancellation only; Hub remains the admission authority.
           Effect.timeout(
@@ -1952,9 +1950,12 @@ const make = Effect.gen(function* () {
     while (!stopped && recoveries.size) {
       const next = Math.min(...[...recoveries.values()].map((p) => p.due));
       const signal = recoveryChanged;
-      const elapsed = yield* Effect.raceFirst(
-        Effect.sleep(Math.max(0, next - (yield* Clock.currentTimeMillis))).pipe(Effect.as(true)),
-        Deferred.await(signal).pipe(Effect.as(false)),
+      const elapsed = yield* Deferred.await(signal).pipe(
+        Effect.as(false),
+        Effect.timeoutOrElse({
+          duration: Math.max(0, next - (yield* Clock.currentTimeMillis)),
+          orElse: () => Effect.succeed(true),
+        }),
       );
       if (!elapsed) {
         if (signal === recoveryChanged) recoveryChanged = yield* Deferred.make<void>();
@@ -2127,9 +2128,9 @@ const make = Effect.gen(function* () {
             retry && retry.nextAttemptAt > now && retry.nextAttemptAt !== Number.MAX_SAFE_INTEGER
               ? Math.min(30000, retry.nextAttemptAt - now)
               : 30000;
-          const elapsed = yield* Effect.raceFirst(
-            Effect.sleep(delay).pipe(Effect.as(true)),
-            Deferred.await(signal).pipe(Effect.as(false)),
+          const elapsed = yield* Deferred.await(signal).pipe(
+            Effect.as(false),
+            Effect.timeoutOrElse({ duration: delay, orElse: () => Effect.succeed(true) }),
           );
           if (elapsed) yield* guardedSync;
           else if (signal === pullRetryChanged) pullRetryChanged = yield* Deferred.make<void>();

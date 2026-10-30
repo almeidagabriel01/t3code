@@ -11,6 +11,7 @@ import {
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import { captureRpcMemoryGrantCeiling } from "../auth/RpcAuthorization.ts";
 
 import type { OrchestratorV2Error } from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
@@ -208,3 +209,22 @@ export const newCommandId = Effect.fn("mcp.newCommandId")(function* () {
   const crypto = yield* Crypto.Crypto;
   return CommandId.make(`mcp:${yield* crypto.randomUUIDv4().pipe(Effect.orDie)}`);
 });
+
+/**
+ * The caller's live memory grant bounds the work it starts. A caller without memory scopes (every
+ * OAuth client) or without a live credential gets "none", never an unbounded ceiling.
+ */
+export const captureCallerMemoryCeiling = (scope: McpInvocationContext.McpInvocationScope) =>
+  captureRpcMemoryGrantCeiling({
+    grantedScopes: scope.grantedScopes,
+    reauthorize: scope.reauthorize,
+    readOnly: scope.readOnly === true || scope.client?.access === "read-only",
+  }).pipe(
+    Effect.mapError(
+      () =>
+        new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: "Caller memory authority is no longer available.",
+        }),
+    ),
+  );

@@ -1,4 +1,4 @@
-// @effect-diagnostics effectFnOpportunity:off -- ported as-is
+// @effect-diagnostics effectFnOpportunity:off -- hot memory path helpers; Effect.fn would add a span to every call.
 import { encodeCheckpointPage } from "../MemoryCheckpointInventory.ts";
 import * as NodeUtil from "node:util";
 import * as M from "@t3tools/contracts";

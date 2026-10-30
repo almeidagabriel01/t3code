@@ -1,4 +1,3 @@
-// @effect-diagnostics catchToIgnore:off catchToOrElseSucceed:off unnecessaryPipeChain:off -- ported as-is
 import * as M from "@t3tools/contracts";
 import { makeDrainableWorker, type DrainableWorker } from "@t3tools/shared/DrainableWorker";
 import * as Clock from "effect/Clock";
@@ -756,60 +755,59 @@ const make = Effect.gen(function* () {
           ),
         });
     });
-    yield* run
-      .pipe(
-        Effect.catch((error) =>
-          Effect.gen(function* () {
-            const code = safeCode(error);
-            if (
-              code === "source_invalidated" ||
-              code === "forgotten" ||
-              code === "revision_changed"
-            ) {
-              yield* store.transact(
-                Effect.gen(function* () {
-                  const current = yield* store.readWork(work.id);
-                  if (
-                    current?.status === "running" &&
-                    current.claimedBy === work.claimedBy &&
-                    current.attempt === work.attempt
-                  )
-                    yield* store.finishWork(work.id, "cancelled");
-                }),
-              );
-              return;
-            }
-            const now = yield* Clock.currentTimeMillis;
-            // Another call opened the hold after this row was claimed: put it back untouched.
-            if (isWorkerError(error) && isHeld(error.cause)) {
-              yield* store.retryWork(owned, now);
-              return;
-            }
-            if (work.metadata.kind === "summary") {
-              const recorded = yield* store.failGenerationAttempt({
-                work: owned,
-                environmentId,
-                failureCode: code,
-                now,
-                retryAt:
-                  [
-                    "generation_failed",
-                    "unavailable",
-                    "route_unavailable",
-                    "storage_failed",
-                  ].includes(code) &&
-                  !(code === "generation_failed" && work.attempt >= MEMORY_GENERATION_MAX_ATTEMPTS)
-                    ? now + memoryRetryDelay(work.attempt)
-                    : null,
-              });
-              // A lapsed claim cannot record a report, but while no one reclaimed the row it
-              // still gets a backoff instead of being picked up again immediately.
-              if (!recorded) yield* store.retryWork(owned, now + memoryRetryDelay(work.attempt));
-            } else yield* store.retryWork(owned, now + memoryRetryDelay(work.attempt));
-          }),
-        ),
-      )
-      .pipe(Effect.mapError(workerError));
+    yield* run.pipe(
+      Effect.catch((error) =>
+        Effect.gen(function* () {
+          const code = safeCode(error);
+          if (
+            code === "source_invalidated" ||
+            code === "forgotten" ||
+            code === "revision_changed"
+          ) {
+            yield* store.transact(
+              Effect.gen(function* () {
+                const current = yield* store.readWork(work.id);
+                if (
+                  current?.status === "running" &&
+                  current.claimedBy === work.claimedBy &&
+                  current.attempt === work.attempt
+                )
+                  yield* store.finishWork(work.id, "cancelled");
+              }),
+            );
+            return;
+          }
+          const now = yield* Clock.currentTimeMillis;
+          // Another call opened the hold after this row was claimed: put it back untouched.
+          if (isWorkerError(error) && isHeld(error.cause)) {
+            yield* store.retryWork(owned, now);
+            return;
+          }
+          if (work.metadata.kind === "summary") {
+            const recorded = yield* store.failGenerationAttempt({
+              work: owned,
+              environmentId,
+              failureCode: code,
+              now,
+              retryAt:
+                [
+                  "generation_failed",
+                  "unavailable",
+                  "route_unavailable",
+                  "storage_failed",
+                ].includes(code) &&
+                !(code === "generation_failed" && work.attempt >= MEMORY_GENERATION_MAX_ATTEMPTS)
+                  ? now + memoryRetryDelay(work.attempt)
+                  : null,
+            });
+            // A lapsed claim cannot record a report, but while no one reclaimed the row it
+            // still gets a backoff instead of being picked up again immediately.
+            if (!recorded) yield* store.retryWork(owned, now + memoryRetryDelay(work.attempt));
+          } else yield* store.retryWork(owned, now + memoryRetryDelay(work.attempt));
+        }),
+      ),
+      Effect.mapError(workerError),
+    );
   });
   const deferred = Effect.fn("MemoryWorker.deferred")(function* () {
     const now = yield* Clock.currentTimeMillis;

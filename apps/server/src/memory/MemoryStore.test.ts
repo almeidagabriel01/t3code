@@ -1,4 +1,3 @@
-// @effect-diagnostics unnecessaryEffectGen:off -- ported as-is
 import {
   checkUsage,
   scanRevertResultBytes,
@@ -4081,8 +4080,8 @@ it.effect.each(["completed", "failed", "cancelled", "transition"] as const)(
         submission,
       );
       const workId = `resolve:${space}:${key.attemptId}`;
-      const finish = Effect.gen(function* () {
-        return yield* status === "transition"
+      const finish =
+        status === "transition"
           ? store.transact(
               store.transitionResolutionTicketTx({
                 ownership: { ...ownership, version: written.version },
@@ -4093,7 +4092,6 @@ it.effect.each(["completed", "failed", "cancelled", "transition"] as const)(
               }),
             )
           : store.finishWork(workId, status).pipe(Effect.as(null));
-      });
       yield* store
         .transact(
           finish.pipe(

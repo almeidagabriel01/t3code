@@ -75,6 +75,27 @@ export function effectiveMemoryGrant(
   return currentMemoryAccess(input).access;
 }
 
+/**
+ * Response-time label for a record that carries a captured ceiling. Destination read-only state is
+ * known only to a live provider session, so it is not assumed here.
+ */
+export function withCurrentMemoryAccess<
+  T extends { readonly memoryGrantCeiling?: M.MemoryTaskGrantCeiling | undefined },
+>(
+  record: T,
+  enableAgentMemoryAccess: boolean,
+): T & { readonly currentMemoryAccess: M.MemoryCurrentAccess } {
+  return {
+    ...record,
+    currentMemoryAccess: currentMemoryAccess({
+      enableAgentMemoryAccess,
+      policyReady: true,
+      readOnly: false,
+      memoryGrantCeiling: record.memoryGrantCeiling ?? "none",
+    }),
+  };
+}
+
 /** Capture actual memory grants, never infer them from orchestration or runtime mode. */
 export function captureMemoryGrantCeiling(
   scopes: ReadonlyArray<M.AuthEnvironmentScope>,

@@ -33,41 +33,38 @@ const MemoryImportRpcErrors = Schema.Union([
   Memory.MemoryImportRpcError,
   EnvironmentAuthorizationError,
 ]);
-export const WsMemoryProjectBindingGetRpc = Rpc.make(MEMORY_WS_METHODS.memoryProjectBindingGet, {
+const WsMemoryProjectBindingGetRpc = Rpc.make(MEMORY_WS_METHODS.memoryProjectBindingGet, {
   payload: Memory.MemoryProjectBindingGetInput,
   success: Memory.MemoryProjectBinding,
   error: MemoryRpcErrors,
 });
-export const WsMemoryProjectBindingUpdateRpc = Rpc.make(
-  MEMORY_WS_METHODS.memoryProjectBindingUpdate,
-  {
-    payload: Memory.MemoryProjectBindingUpdateInput,
-    success: Memory.MemoryProjectBindingUpdateResult,
-    error: MemoryRpcErrors,
-  },
-);
-export const WsMemoryChangesRpc = Rpc.make(MEMORY_WS_METHODS.memoryChanges, {
+const WsMemoryProjectBindingUpdateRpc = Rpc.make(MEMORY_WS_METHODS.memoryProjectBindingUpdate, {
+  payload: Memory.MemoryProjectBindingUpdateInput,
+  success: Memory.MemoryProjectBindingUpdateResult,
+  error: MemoryRpcErrors,
+});
+const WsMemoryChangesRpc = Rpc.make(MEMORY_WS_METHODS.memoryChanges, {
   payload: Memory.MemoryChangesInput,
   success: Memory.MemoryChangeSignal,
   error: MemoryRpcErrors,
   stream: true,
 });
-export const WsMemorySearchRpc = Rpc.make(MEMORY_WS_METHODS.memorySearch, {
+const WsMemorySearchRpc = Rpc.make(MEMORY_WS_METHODS.memorySearch, {
   payload: Memory.MemorySearchInput,
   success: Memory.MemoryPage,
   error: MemoryRpcErrors,
 });
-export const WsMemoryListRpc = Rpc.make(MEMORY_WS_METHODS.memoryList, {
+const WsMemoryListRpc = Rpc.make(MEMORY_WS_METHODS.memoryList, {
   payload: Memory.MemoryListInput,
   success: Memory.MemoryPage,
   error: MemoryRpcErrors,
 });
-export const WsMemoryReadRpc = Rpc.make(MEMORY_WS_METHODS.memoryRead, {
+const WsMemoryReadRpc = Rpc.make(MEMORY_WS_METHODS.memoryRead, {
   payload: Memory.MemoryReadInput,
   success: Memory.MemoryItem,
   error: MemoryRpcErrors,
 });
-export const WsMemoryHistoryRpc = Rpc.make(MEMORY_WS_METHODS.memoryHistory, {
+const WsMemoryHistoryRpc = Rpc.make(MEMORY_WS_METHODS.memoryHistory, {
   payload: Memory.MemoryHistoryInput,
   success: Memory.MemoryHistoryPage,
   error: MemoryRpcErrors,
@@ -77,27 +74,27 @@ export const WsMemorySyncStatusRpc = Rpc.make(MEMORY_WS_METHODS.memorySyncStatus
   success: Memory.MemorySyncStatus,
   error: MemoryRpcErrors,
 });
-export const WsMemoryHubDiagnosticsRpc = Rpc.make(MEMORY_WS_METHODS.memoryHubDiagnostics, {
+const WsMemoryHubDiagnosticsRpc = Rpc.make(MEMORY_WS_METHODS.memoryHubDiagnostics, {
   payload: Memory.MemorySyncStatusInput,
   success: Memory.MemoryHubDiagnostics,
   error: MemoryRpcErrors,
 });
-export const WsMemoryUpsertRpc = Rpc.make(MEMORY_WS_METHODS.memoryUpsert, {
+const WsMemoryUpsertRpc = Rpc.make(MEMORY_WS_METHODS.memoryUpsert, {
   payload: Memory.MemoryUpsertInput,
   success: Memory.MemoryMutationReceipt,
   error: MemoryRpcErrors,
 });
-export const WsMemoryForgetRpc = Rpc.make(MEMORY_WS_METHODS.memoryForget, {
+const WsMemoryForgetRpc = Rpc.make(MEMORY_WS_METHODS.memoryForget, {
   payload: Memory.MemoryForgetInput,
   success: Memory.MemoryMutationReceipt,
   error: MemoryRpcErrors,
 });
-export const WsMemoryRevertResolutionRpc = Rpc.make(MEMORY_WS_METHODS.memoryRevertResolution, {
+const WsMemoryRevertResolutionRpc = Rpc.make(MEMORY_WS_METHODS.memoryRevertResolution, {
   payload: Memory.MemoryRevertResolutionInput,
   success: Memory.MemoryRevertResult,
   error: MemoryRpcErrors,
 });
-export const WsMemoryReadSourceRpc = Rpc.make(MEMORY_WS_METHODS.memoryReadSource, {
+const WsMemoryReadSourceRpc = Rpc.make(MEMORY_WS_METHODS.memoryReadSource, {
   payload: Memory.MemoryReadSourceInput,
   success: Memory.MemorySourcePage,
   error: MemoryRpcErrors,
@@ -107,7 +104,7 @@ export const WsMemoryHubSettingsGetRpc = Rpc.make(MEMORY_WS_METHODS.memoryHubSet
   success: Memory.MemoryHubSettingsView,
   error: MemoryRpcErrors,
 });
-export const WsMemoryHubSettingsUpdateRpc = Rpc.make(MEMORY_WS_METHODS.memoryHubSettingsUpdate, {
+const WsMemoryHubSettingsUpdateRpc = Rpc.make(MEMORY_WS_METHODS.memoryHubSettingsUpdate, {
   payload: Memory.MemoryHubSettingsUpdateInput,
   success: Memory.MemoryHubSettingsUpdateResult,
   error: MemoryRpcErrors,
@@ -120,7 +117,7 @@ export const WsMemoryOwnerSourceReadPolicyGetRpc = Rpc.make(
     error: MemoryRpcErrors,
   },
 );
-export const WsMemoryOwnerSourceReadPolicyUpdateRpc = Rpc.make(
+const WsMemoryOwnerSourceReadPolicyUpdateRpc = Rpc.make(
   MEMORY_WS_METHODS.memoryOwnerSourceReadPolicyUpdate,
   {
     payload: Memory.MemoryOwnerSourceReadPolicyUpdateInput,
@@ -128,7 +125,7 @@ export const WsMemoryOwnerSourceReadPolicyUpdateRpc = Rpc.make(
     error: MemoryRpcErrors,
   },
 );
-export const WsMemoryHubReconcileRpc = Rpc.make(MEMORY_WS_METHODS.memoryHubReconcile, {
+const WsMemoryHubReconcileRpc = Rpc.make(MEMORY_WS_METHODS.memoryHubReconcile, {
   payload: Memory.MemoryHubReconcileInput,
   success: Memory.MemoryHubReconcileResult,
   error: MemoryRpcErrors,
@@ -138,7 +135,7 @@ export const MemoryAdministrationRpcs = RpcGroup.make(
   WsMemoryOwnerSourceReadPolicyGetRpc,
   WsMemoryOwnerSourceReadPolicyUpdateRpc,
 );
-export const WsMemoryImportProviderRpc = Rpc.make(MEMORY_WS_METHODS.memoryImportProvider, {
+const WsMemoryImportProviderRpc = Rpc.make(MEMORY_WS_METHODS.memoryImportProvider, {
   payload: Memory.MemoryImportProviderInput,
   success: Memory.MemoryImportProviderResult,
   error: MemoryImportRpcErrors,

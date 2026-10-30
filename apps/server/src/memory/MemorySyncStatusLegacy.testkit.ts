@@ -1,4 +1,3 @@
-// @effect-diagnostics effectFnOpportunity:off unnecessaryEffectGen:off raceFirstWithSleepToTimeout:off flatMapConditionalToFilterOrFail:off catchToIgnore:off catchToOrElseSucceed:off unnecessaryPipeChain:off preferTypedSchemaDecoder:off preferSucceedSomeOrNone:off -- ported as-is
 // Frozen outer contract and strict JSON codec from c7685f40a. Nested schemas are
 // unchanged by A3; intentionally do not derive the old shape from MemorySyncStatus.
 import * as M from "@t3tools/contracts";

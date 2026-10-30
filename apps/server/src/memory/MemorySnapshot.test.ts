@@ -1,4 +1,3 @@
-// @effect-diagnostics catchToOrElseSucceed:off effectSucceedWithVoid:off -- ported as-is
 import * as Settings from "../serverSettings.ts";
 import { assert, it } from "@effect/vitest";
 import * as M from "@t3tools/contracts";
@@ -763,7 +762,7 @@ it.effect("r3 a lineage writer failure cannot deliver a memory snapshot", () => 
     let sent = 0;
     const value = yield* snapshot
       .forThread(threadId, f.policy(), f.currentPolicy)
-      .pipe(Effect.catch(() => Effect.succeed(undefined)));
+      .pipe(Effect.orElseSucceed(() => undefined));
     if (value) sent++;
     assert.strictEqual(sent, 0);
     assert.lengthOf(

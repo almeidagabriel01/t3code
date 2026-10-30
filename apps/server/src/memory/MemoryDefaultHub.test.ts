@@ -1,4 +1,3 @@
-// @effect-diagnostics effectFnOpportunity:off unnecessaryEffectGen:off raceFirstWithSleepToTimeout:off flatMapConditionalToFilterOrFail:off catchToIgnore:off catchToOrElseSucceed:off unnecessaryPipeChain:off preferTypedSchemaDecoder:off preferSucceedSomeOrNone:off -- ported as-is
 import { assert, it } from "@effect/vitest";
 import * as M from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -451,57 +450,55 @@ it.effect("a malformed fresh settings file fails closed without administration",
 it.effect(
   "roster administration preserves automatic origin and a credential installation clears it",
   () =>
-    Effect.gen(function* () {
-      yield* settingsSession(
-        Effect.gen(function* () {
-          const admin = yield* start;
-          yield* admin.initializeDefaultHub;
-          const initial = yield* (yield* Settings.MemoryHubAdminSettings).read;
-          const memberId = M.EnvironmentId.make("other-fixture");
-          yield* admin.update(
-            {
-              requestId: id(30),
-              expectedVersion: 1,
-              action: "provisionMember",
-              environmentId: memberId,
-            },
-            Effect.void,
-          );
-          assert.deepStrictEqual(
-            (yield* (yield* Settings.MemoryHubAdminSettings).read).provenance,
-            initial.provenance,
-          );
-          yield* admin.update(
-            {
-              requestId: id(31),
-              expectedVersion: 2,
-              action: "acknowledgeCredential",
-              credentialRequestId: id(30),
-            },
-            Effect.void,
-          );
-          assert.deepStrictEqual(
-            (yield* (yield* Settings.MemoryHubAdminSettings).read).provenance,
-            initial.provenance,
-          );
-          const installed = yield* admin.update(
-            {
-              requestId: id(32),
-              expectedVersion: 3,
-              action: "installCredential",
-              hubEnvironmentId: memberId,
-              endpoint: "https://fixture.example",
-              memorySpaceId: M.MemorySpaceId.make("00000000-0000-4000-8000-000000000033"),
-              credential: "a".repeat(43),
-            },
-            Effect.void,
-          );
-          assert.isNull((yield* (yield* Settings.MemoryHubAdminSettings).read).provenance);
-          assert.strictEqual(installed.view.settings.mode, "member");
-          assert.strictEqual(yield* admin.initializeDefaultHub, "preserved");
-        }),
-      );
-    }).pipe(Effect.provide(dependencies)),
+    settingsSession(
+      Effect.gen(function* () {
+        const admin = yield* start;
+        yield* admin.initializeDefaultHub;
+        const initial = yield* (yield* Settings.MemoryHubAdminSettings).read;
+        const memberId = M.EnvironmentId.make("other-fixture");
+        yield* admin.update(
+          {
+            requestId: id(30),
+            expectedVersion: 1,
+            action: "provisionMember",
+            environmentId: memberId,
+          },
+          Effect.void,
+        );
+        assert.deepStrictEqual(
+          (yield* (yield* Settings.MemoryHubAdminSettings).read).provenance,
+          initial.provenance,
+        );
+        yield* admin.update(
+          {
+            requestId: id(31),
+            expectedVersion: 2,
+            action: "acknowledgeCredential",
+            credentialRequestId: id(30),
+          },
+          Effect.void,
+        );
+        assert.deepStrictEqual(
+          (yield* (yield* Settings.MemoryHubAdminSettings).read).provenance,
+          initial.provenance,
+        );
+        const installed = yield* admin.update(
+          {
+            requestId: id(32),
+            expectedVersion: 3,
+            action: "installCredential",
+            hubEnvironmentId: memberId,
+            endpoint: "https://fixture.example",
+            memorySpaceId: M.MemorySpaceId.make("00000000-0000-4000-8000-000000000033"),
+            credential: "a".repeat(43),
+          },
+          Effect.void,
+        );
+        assert.isNull((yield* (yield* Settings.MemoryHubAdminSettings).read).provenance);
+        assert.strictEqual(installed.view.settings.mode, "member");
+        assert.strictEqual(yield* admin.initializeDefaultHub, "preserved");
+      }),
+    ).pipe(Effect.provide(dependencies)),
 );
 
 it.effect("a user disable that acquires the administration lock first fences initialization", () =>

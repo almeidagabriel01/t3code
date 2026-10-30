@@ -1,4 +1,4 @@
-// @effect-diagnostics effectFnOpportunity:off redundantMapError:off -- ported as-is
+// @effect-diagnostics effectFnOpportunity:off -- hot memory path helpers; Effect.fn would add a span to every call.
 import * as M from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -478,29 +478,17 @@ const make = Effect.gen(function* () {
                 const content: M.MemoryContentSuppression[] = [];
                 const exclusions: M.MemorySourceExclusion[] = [];
                 for (const sourceKey of op.tombstone.suppressedSourceKeys)
-                  if (
-                    included.has(
-                      "sourceKey:" +
-                        (yield* sourceKeyJson(sourceKey).pipe(Effect.mapError(storageError))),
-                    )
-                  )
+                  if (included.has("sourceKey:" + (yield* sourceKeyJson(sourceKey))))
                     sourceKeys.push(sourceKey);
                 for (const value of op.tombstone.suppressedContent)
-                  if (
-                    included.has(
-                      "content:" + (yield* contentJson(value).pipe(Effect.mapError(storageError))),
-                    )
-                  )
-                    content.push(value);
+                  if (included.has("content:" + (yield* contentJson(value)))) content.push(value);
                 for (const exclusion of op.tombstone.sourceExclusions) {
                   const messageIds: M.MessageId[] = [];
                   for (const messageId of exclusion.messageIds)
                     if (
                       included.has(
                         "sourceExclusion:" +
-                          (yield* exclusionJson({ ...exclusion, messageIds: [messageId] }).pipe(
-                            Effect.mapError(storageError),
-                          )),
+                          (yield* exclusionJson({ ...exclusion, messageIds: [messageId] })),
                       )
                     )
                       messageIds.push(messageId);
@@ -512,7 +500,7 @@ const make = Effect.gen(function* () {
                   suppressedContent: content,
                   sourceExclusions: exclusions,
                 };
-              });
+              }).pipe(Effect.mapError(storageError));
             const excess = new Set([...unique.keys()].filter((key) => !selected.has(key)));
             if (excess.size) {
               const base = yield* fragment(selected);

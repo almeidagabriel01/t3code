@@ -1,5 +1,5 @@
 /* oxlint-disable t3code/prefer-effect-fn -- ported as-is; Effect.fn would add spans to hot paths */
-// @effect-diagnostics effectFnOpportunity:off -- ported as-is
+// @effect-diagnostics effectFnOpportunity:off -- hot memory path helpers; Effect.fn would add a span to every call.
 import {
   MEMORY_HUB_MAX_MEMBERS,
   MemoryHubError,

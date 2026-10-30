@@ -1,4 +1,4 @@
-// @effect-diagnostics effectFnOpportunity:off -- ported as-is
+// @effect-diagnostics effectFnOpportunity:off -- hot memory path helpers; Effect.fn would add a span to every call.
 import * as M from "@t3tools/contracts";
 import * as Renderer from "@t3tools/provider-core/server/memoryContext";
 import * as Context from "effect/Context";

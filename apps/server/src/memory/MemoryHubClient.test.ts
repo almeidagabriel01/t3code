@@ -1,4 +1,3 @@
-// @effect-diagnostics effectFnOpportunity:off unnecessaryEffectGen:off raceFirstWithSleepToTimeout:off flatMapConditionalToFilterOrFail:off catchToIgnore:off catchToOrElseSucceed:off unnecessaryPipeChain:off preferTypedSchemaDecoder:off preferSucceedSomeOrNone:off -- ported as-is
 import { assert, it } from "@effect/vitest";
 import * as M from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -34,7 +33,7 @@ const descriptor = {
   serverVersion: "1",
   capabilities: { memoryHubProtocolVersion: 1 },
 };
-const input = Schema.decodeUnknownSync(M.MemoryHubSourceReadCollectInput)({
+const input = Schema.decodeSync(M.MemoryHubSourceReadCollectInput)({
   protocolVersion: 1,
   memorySpaceId: space,
   limit: 32,

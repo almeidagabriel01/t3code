@@ -1,4 +1,3 @@
-// @effect-diagnostics effectFnOpportunity:off unnecessaryEffectGen:off raceFirstWithSleepToTimeout:off flatMapConditionalToFilterOrFail:off catchToIgnore:off catchToOrElseSucceed:off unnecessaryPipeChain:off preferTypedSchemaDecoder:off preferSucceedSomeOrNone:off -- ported as-is
 import type * as M from "@t3tools/contracts";
 import type * as Hub from "./MemoryHubService.ts";
 import type * as Store from "./MemoryStore.ts";

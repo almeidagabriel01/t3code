@@ -1,4 +1,3 @@
-// @effect-diagnostics catchToOrElseSucceed:off -- ported as-is
 import * as M from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -300,7 +299,7 @@ export const makeItemWrites = (
       const deleted =
         yield* sql`DELETE FROM memory_items_fts WHERE rowid IN (SELECT rowid FROM memory_items WHERE space=${space} AND memory_id=${current})`.pipe(
           Effect.as(true),
-          Effect.catch(() => Effect.succeed(false)),
+          Effect.orElseSucceed(() => false),
         );
       const fenced = yield* readItem(space, current);
       if (fenced && !deleted) {

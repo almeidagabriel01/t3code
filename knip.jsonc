@@ -144,8 +144,6 @@
       "includeEntryExports": true,
       // Compiler-only assertions. Nothing imports them; tsc still has to see the file.
       "entry": ["src/memory.typecheck.ts"],
-      // The memory wire contract is complete by design; later memory work consumes it.
-      "ignoreIssues": { "src/memory*.ts": ["exports", "types"] },
     },
     "packages/effect-acp": {
       "includeEntryExports": true,

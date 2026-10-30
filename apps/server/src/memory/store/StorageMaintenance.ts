@@ -1,4 +1,3 @@
-// @effect-diagnostics catchToOrElseSucceed:off -- ported as-is
 import * as M from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -153,7 +152,7 @@ export const makeStorageMaintenance = (kernel: Pick<StoreKernel, "sql" | "transa
   const mergeFts = Effect.fn("MemoryStore.mergeFts")(function* () {
     return yield* sql`INSERT INTO memory_items_fts(memory_items_fts,rank) VALUES ('merge',${M.MEMORY_FTS_MERGE_MAX_PAGES})`.pipe(
       Effect.as(true),
-      Effect.catch(() => Effect.succeed(false)),
+      Effect.orElseSucceed(() => false),
     );
   });
   const measuredMemoryBytes = Effect.fn("MemoryStore.measuredMemoryBytes")(function* (

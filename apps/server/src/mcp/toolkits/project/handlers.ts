@@ -25,7 +25,13 @@ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { resolveRuntimeMode } from "../../delegatedTaskModes.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
-import { newCommandId, readCaller, resolveProjectId, unavailable } from "../../threadAccess.ts";
+import {
+  captureCallerMemoryCeiling,
+  newCommandId,
+  readCaller,
+  resolveProjectId,
+  unavailable,
+} from "../../threadAccess.ts";
 import { ProjectToolkit } from "./tools.ts";
 
 function projectFailure(error: Project.ProjectServiceError) {
@@ -208,6 +214,9 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                 Effect.orElseSucceed(() => runtimeMode),
               )
             : runtimeMode;
+        const memoryGrantCeiling = yield* McpInvocationContext.McpInvocationContext.pipe(
+          Effect.flatMap(captureCallerMemoryCeiling),
+        );
         const result = yield* ThreadMessageIntake.launchThread({
           commandId,
           threadId,
@@ -222,6 +231,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             : {
                 initialMessage: {
                   messageId,
+                  memoryGrantCeiling,
                   ...(caller === undefined ? {} : { senderThreadId: caller.id }),
                   text: input.message ?? "",
                   attachments,

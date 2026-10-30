@@ -1,4 +1,4 @@
-// @effect-diagnostics effectFnOpportunity:off -- ported as-is
+// @effect-diagnostics effectFnOpportunity:off -- hot memory path helpers; Effect.fn would add a span to every call.
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Settings from "../serverSettings.ts";

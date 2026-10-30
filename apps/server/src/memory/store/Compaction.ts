@@ -1,4 +1,3 @@
-// @effect-diagnostics catchToOrElseSucceed:off -- ported as-is
 import * as M from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { availabilityCodec, localMetadataCodec, projectionCodec, stored } from "./StoreCodecs.ts";
@@ -92,7 +91,7 @@ export const makeCompaction = (kernel: Pick<StoreKernel, "sql" | "transact">) =>
         for (const row of rows) {
           const success = yield* sql`DELETE FROM memory_items_fts WHERE rowid=${row.rowid}`.pipe(
             Effect.as(true),
-            Effect.catch(() => Effect.succeed(false)),
+            Effect.orElseSucceed(() => false),
           );
           if (!success) continue;
           const projection = yield* projectionCodec.decode(row.item_json, strict);

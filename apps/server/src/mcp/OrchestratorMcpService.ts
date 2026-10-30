@@ -100,7 +100,6 @@ import { isSnoozed } from "../orchestration-v2/ThreadSettlementService.ts";
 import { userFacingDispatchErrorMessage } from "../orchestration-v2/UserFacingErrors.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
-import { captureRpcMemoryGrantCeiling } from "../auth/RpcAuthorization.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import {
@@ -118,7 +117,7 @@ import {
   runtimeModeRank,
   taskPrompt,
 } from "./delegatedTaskModes.ts";
-import { isLiveCallerShell, threadNotFound } from "./threadAccess.ts";
+import { captureCallerMemoryCeiling, isLiveCallerShell, threadNotFound } from "./threadAccess.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
@@ -1882,7 +1881,7 @@ const make = Effect.gen(function* () {
               }),
             }),
       };
-      const memoryGrantCeiling = yield* captureMcpTaskMemoryGrantCeiling(scope, false).pipe(
+      const memoryGrantCeiling = yield* captureCallerMemoryCeiling(scope).pipe(
         Effect.mapError(() =>
           failure("invalid_request", "Caller memory authority is no longer available."),
         ),
@@ -1957,7 +1956,7 @@ const make = Effect.gen(function* () {
           createdBy: existing.createdBy,
           creationSource: existing.creationSource,
         };
-        const memoryGrantCeiling = yield* captureMcpTaskMemoryGrantCeiling(scope, false).pipe(
+        const memoryGrantCeiling = yield* captureCallerMemoryCeiling(scope).pipe(
           Effect.mapError(() =>
             failure("invalid_request", "Caller memory authority is no longer available."),
           ),
@@ -2283,7 +2282,7 @@ const make = Effect.gen(function* () {
       // ThreadManagementService.dispatch is the chokepoint for this command
       // type's own enablement check, using the same command id and its
       // receipt-replay exemption, so no separate assert runs here.
-      const memoryGrantCeiling = yield* captureMcpTaskMemoryGrantCeiling(scope, false).pipe(
+      const memoryGrantCeiling = yield* captureCallerMemoryCeiling(scope).pipe(
         Effect.mapError(() =>
           failure("invalid_request", "Caller memory authority is no longer available."),
         ),
@@ -2676,9 +2675,11 @@ const make = Effect.gen(function* () {
                 title: request.title,
                 index,
               });
+              const memoryGrantCeiling = yield* captureCallerMemoryCeiling(scope);
               yield* threadManagement
                 .dispatch({
                   type: "thread.create",
+                  memoryGrantCeiling,
                   createdBy: "agent",
                   creationSource: "mcp",
                   commandId,
@@ -2710,6 +2711,7 @@ const make = Effect.gen(function* () {
                 yield* threadManagement
                   .dispatch({
                     type: "message.dispatch",
+                    memoryGrantCeiling,
                     createdBy: "agent",
                     creationSource: "mcp",
                     commandId: stableCommandId({
@@ -2939,9 +2941,11 @@ const make = Effect.gen(function* () {
         requestKey: key,
         operation: "thread-send",
       });
+      const memoryGrantCeiling = yield* captureCallerMemoryCeiling(scope);
       const result = yield* threadManagement
         .sendToThread({
           projectId: target.thread.projectId,
+          memoryGrantCeiling,
           commandId: stableCommandId({
             scope,
             requestKey: key,
@@ -3128,11 +3132,3 @@ export const layer: Layer.Layer<
   | ServerSettings.ServerSettingsService
   | RemoteDelegation.RemoteDelegation
 > = Layer.effect(OrchestratorMcpService, make);
-
-/** The caller's live memory grant, never thread modes, bounds what its tasks may use. */
-const captureMcpTaskMemoryGrantCeiling = (scope: McpInvocationScope, readOnly: boolean) =>
-  captureRpcMemoryGrantCeiling({
-    grantedScopes: scope.grantedScopes,
-    reauthorize: scope.reauthorize,
-    readOnly: readOnly || scope.client?.access === "read-only",
-  });

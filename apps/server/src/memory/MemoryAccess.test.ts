@@ -5,6 +5,7 @@ import {
   currentMemoryAccess,
   effectiveMemoryGrant,
   memoryAccessPermit,
+  withCurrentMemoryAccess,
 } from "./MemoryAccess.ts";
 import { MemoryAccessError } from "./MemoryService.ts";
 
@@ -172,4 +173,20 @@ it("explains current permission without widening saved or legacy ceilings", () =
     const on = currentMemoryAccess({ ...base, memoryGrantCeiling });
     expect(on.access).toBe(memoryGrantCeiling ?? "none");
   }
+});
+
+it("labels a record from its captured ceiling and the live environment setting", () => {
+  expect(withCurrentMemoryAccess({ id: "a", memoryGrantCeiling: "read" }, true)).toEqual({
+    id: "a",
+    memoryGrantCeiling: "read",
+    currentMemoryAccess: { access: "read", reason: "ceiling" },
+  });
+  expect(
+    withCurrentMemoryAccess({ memoryGrantCeiling: "read_write" }, false).currentMemoryAccess,
+  ).toEqual({ access: "none", reason: "environment_off" });
+  // A record without a ceiling is legacy or ceiling none: it never reads as open.
+  expect(withCurrentMemoryAccess({}, true).currentMemoryAccess).toEqual({
+    access: "none",
+    reason: "ceiling",
+  });
 });

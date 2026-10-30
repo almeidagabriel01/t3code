@@ -61,6 +61,7 @@ import { DispatchModeLimit, exceededDispatchModeLimit } from "./DispatchModeLimi
 import { projectTurnItemForDetail } from "./WireProjection.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { withCurrentMemoryAccess } from "../memory/MemoryAccess.ts";
 
 export type ThreadManagementSendMode = "auto" | "queue" | "steer" | "restart";
 
@@ -654,9 +655,29 @@ const make = Effect.gen(function* () {
       Effect.andThen(orchestrator.getCheckpointContext(threadId)),
     );
 
+  const withSubagentMemoryAccess = <
+    S extends { readonly projection: OrchestrationV2ThreadProjection },
+  >(
+    snapshot: S,
+  ) =>
+    serverSettings.getSettings.pipe(
+      Effect.map(({ enableAgentMemoryAccess }) => ({
+        ...snapshot,
+        projection: {
+          ...snapshot.projection,
+          subagents: snapshot.projection.subagents.map((subagent) =>
+            withCurrentMemoryAccess(subagent, enableAgentMemoryAccess),
+          ),
+        },
+      })),
+      // An unreadable setting leaves the label omitted, which clients show as unknown.
+      Effect.orElseSucceed(() => snapshot),
+    );
+
   const getThreadSnapshot: ThreadManagementServiceShape["getThreadSnapshot"] = (threadId) =>
     ensureProjectionTranscript(threadId).pipe(
       Effect.andThen(orchestrator.getThreadSnapshot(threadId)),
+      Effect.flatMap(withSubagentMemoryAccess),
     );
   const getThreadTranscript = Effect.fn("orchestrationV2.threadManagement.getThreadTranscript")(
     function* (threadId: ThreadId) {
@@ -690,6 +711,7 @@ const make = Effect.gen(function* () {
   ) =>
     ensureProjectionTranscript(threadId).pipe(
       Effect.andThen(orchestrator.getThreadSnapshotWindow(threadId, options)),
+      Effect.flatMap(withSubagentMemoryAccess),
     );
 
   const assertDispatchTargetEnabled = (command: OrchestrationV2ServerCommand) => {

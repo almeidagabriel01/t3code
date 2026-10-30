@@ -1,4 +1,3 @@
-// @effect-diagnostics unnecessaryPipeChain:off -- ported as-is
 import { refreshCheckpointAccounting } from "./MemoryCheckpointAccounting.ts";
 import { checkUsage } from "./MemoryUsageScan.testkit.ts";
 import * as Settings from "../serverSettings.ts";
@@ -3077,8 +3076,10 @@ it.effect("W2 rejects Settings writes while disabled and keeps saved records rea
             },
             Effect.void,
           )
-          .pipe(Effect.flip)
-          .pipe(Effect.map((e) => ("code" in e ? e.code : null))),
+          .pipe(
+            Effect.flip,
+            Effect.map((e) => ("code" in e ? e.code : null)),
+          ),
         "bootstrap_required",
       );
     }).pipe(Effect.provide(configured));

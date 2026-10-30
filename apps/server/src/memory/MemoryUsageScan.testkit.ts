@@ -1,4 +1,3 @@
-// @effect-diagnostics catchToOrElseSucceed:off -- ported as-is
 import { assert } from "@effect/vitest";
 import * as Schema from "effect/Schema";
 import * as Store from "./MemoryStore.ts";
@@ -216,9 +215,7 @@ export const assertUsageCounters = Effect.gen(function* () {
     const candidates: M.MemoryScope[] = [{ kind: "user" }];
     for (const row of scopes) {
       // Some SQL-only tests intentionally store a placeholder scope_json; user is still checked.
-      const scope = yield* decodeScope(row.scope_json).pipe(
-        Effect.catch(() => Effect.succeed(null)),
-      );
+      const scope = yield* decodeScope(row.scope_json).pipe(Effect.orElseSucceed(() => null));
       if (scope) candidates.push(scope);
     }
     const addresses = yield* sql<{

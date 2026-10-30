@@ -1,5 +1,5 @@
+// @effect-diagnostics effectFnOpportunity:off -- hot memory path helpers; Effect.fn would add a span to every call.
 // @effect-diagnostics nodeBuiltinImport:off - the closed import factory requires a synchronous UUID callback.
-// @effect-diagnostics effectFnOpportunity:off -- ported as-is
 import { MEMORY_PROTOCOL_VERSION, MemoryHubError } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Clock from "effect/Clock";

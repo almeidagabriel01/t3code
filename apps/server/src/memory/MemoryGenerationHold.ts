@@ -1,4 +1,4 @@
-// @effect-diagnostics effectFnOpportunity:off -- ported as-is
+// @effect-diagnostics effectFnOpportunity:off -- hot memory path helpers; Effect.fn would add a span to every call.
 /**
  * Pauses memory generation for a model whose provider rejects every request the same way.
  * A hold belongs to one model selection on one provider version; changing either starts clean.

@@ -1,4 +1,3 @@
-// @effect-diagnostics effectFnOpportunity:off unnecessaryEffectGen:off raceFirstWithSleepToTimeout:off flatMapConditionalToFilterOrFail:off catchToIgnore:off catchToOrElseSucceed:off unnecessaryPipeChain:off preferTypedSchemaDecoder:off preferSucceedSomeOrNone:off -- ported as-is
 import { watchedEvents } from "../testUtils/watchedEvents.testkit.ts";
 import {
   id,
@@ -469,7 +468,7 @@ it.effect("real HubClient transmits bounded immutable work and settles ACK", () 
     const actualClient = Client.layer.pipe(
       Layer.provide(
         Layer.mock(Secrets.ServerSecretStore)({
-          get: () => Effect.succeed(Option.some(new TextEncoder().encode("c".repeat(43)))),
+          get: () => Effect.succeedSome(new TextEncoder().encode("c".repeat(43))),
         }),
       ),
     );
