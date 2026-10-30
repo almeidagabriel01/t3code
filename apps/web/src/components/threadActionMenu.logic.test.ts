@@ -67,6 +67,13 @@ describe("buildThreadActionMenuItems", () => {
     },
   );
 
+  it.each([true, false])("offers linking to a board card only when allowed (%s)", (canLinkCard) => {
+    const items = buildThreadActionMenuItems({ ...baseState, canLinkCard });
+    expect(items.some((item) => item.id === "link-card")).toBe(canLinkCard);
+    const readOnly = buildThreadActionMenuItems({ ...baseState, canOperate: false, canLinkCard });
+    expect(readOnly.find((item) => item.id === "link-card")?.disabled).toBeUndefined();
+  });
+
   it("disables archive and turning into a project while the thread is running", () => {
     const items = buildThreadActionMenuItems({
       ...baseState,

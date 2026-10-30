@@ -1,5 +1,5 @@
 import type { EnvironmentId } from "@t3tools/contracts";
-import { EditorContent, useEditor, type Editor } from "@tiptap/react";
+import { EditorContent, useEditor, useEditorState, type Editor } from "@tiptap/react";
 import {
   BoldIcon,
   CodeIcon,
@@ -13,7 +13,7 @@ import {
   TextQuoteIcon,
   type LucideIcon,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 
 import { cn } from "../../lib/utils";
 import {
@@ -26,48 +26,95 @@ import {
 } from "../AttachmentImageNode";
 import { readLocalApi } from "../../localApi";
 import { mountedEditorView } from "../ComposerPromptEditorTiptap";
-import { Button } from "../ui/button";
+import { Toggle } from "../ui/toggle";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { NoteBubbleMenu, NoteTableMenu } from "./NoteBubbleMenu";
 import { noteExtensions } from "./noteExtensions";
 import { noteDocToMarkdown, noteMarkdownToDoc } from "./noteMarkdown";
 
-const TOOLS: ReadonlyArray<{ label: string; icon: LucideIcon; run: (editor: Editor) => void }> = [
-  {
-    label: "Heading",
-    icon: Heading2Icon,
-    run: (e) => e.chain().focus().toggleHeading({ level: 2 }).run(),
-  },
-  { label: "Bold", icon: BoldIcon, run: (e) => e.chain().focus().toggleBold().run() },
-  { label: "List", icon: ListIcon, run: (e) => e.chain().focus().toggleBulletList().run() },
-  {
-    label: "Numbered list",
-    icon: ListOrderedIcon,
-    run: (e) => e.chain().focus().toggleOrderedList().run(),
-  },
-  {
-    label: "Checklist",
-    icon: ListChecksIcon,
-    run: (e) => e.chain().focus().toggleTaskList().run(),
-  },
-  { label: "Quote", icon: TextQuoteIcon, run: (e) => e.chain().focus().toggleBlockquote().run() },
-  { label: "Code", icon: CodeIcon, run: (e) => e.chain().focus().toggleCode().run() },
-  {
-    label: "Code block",
-    icon: SquareCodeIcon,
-    run: (e) => e.chain().focus().toggleCodeBlock().run(),
-  },
-  { label: "Divider", icon: MinusIcon, run: (e) => e.chain().focus().setHorizontalRule().run() },
+interface Tool {
+  label: string;
+  icon: LucideIcon;
+  run: (editor: Editor) => void;
+  /** Present for formats that can be on at the caret; Divider is an action. */
+  active?: (editor: Editor) => boolean;
+}
+
+// Grouped as headings | inline marks | lists | blocks, with a divider between groups.
+const TOOL_GROUPS: ReadonlyArray<ReadonlyArray<Tool>> = [
+  [
+    {
+      label: "Heading",
+      icon: Heading2Icon,
+      run: (e) => e.chain().focus().toggleHeading({ level: 2 }).run(),
+      active: (e) => e.isActive("heading", { level: 2 }),
+    },
+  ],
+  [
+    {
+      label: "Bold",
+      icon: BoldIcon,
+      run: (e) => e.chain().focus().toggleBold().run(),
+      active: (e) => e.isActive("bold"),
+    },
+    {
+      label: "Code",
+      icon: CodeIcon,
+      run: (e) => e.chain().focus().toggleCode().run(),
+      active: (e) => e.isActive("code"),
+    },
+  ],
+  [
+    {
+      label: "List",
+      icon: ListIcon,
+      run: (e) => e.chain().focus().toggleBulletList().run(),
+      active: (e) => e.isActive("bulletList"),
+    },
+    {
+      label: "Numbered list",
+      icon: ListOrderedIcon,
+      run: (e) => e.chain().focus().toggleOrderedList().run(),
+      active: (e) => e.isActive("orderedList"),
+    },
+    {
+      label: "Checklist",
+      icon: ListChecksIcon,
+      run: (e) => e.chain().focus().toggleTaskList().run(),
+      active: (e) => e.isActive("taskList"),
+    },
+  ],
+  [
+    {
+      label: "Quote",
+      icon: TextQuoteIcon,
+      run: (e) => e.chain().focus().toggleBlockquote().run(),
+      active: (e) => e.isActive("blockquote"),
+    },
+    {
+      label: "Code block",
+      icon: SquareCodeIcon,
+      run: (e) => e.chain().focus().toggleCodeBlock().run(),
+      active: (e) => e.isActive("codeBlock"),
+    },
+    { label: "Divider", icon: MinusIcon, run: (e) => e.chain().focus().setHorizontalRule().run() },
+  ],
 ];
 
-function ToolButton(props: { label: string; onClick: () => void; children: React.ReactNode }) {
+function ToolButton(props: {
+  label: string;
+  pressed: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
   return (
     <Tooltip>
       <TooltipTrigger
         render={
-          <Button
-            size="icon-sm"
-            variant="ghost-muted"
+          <Toggle
+            variant="ghost"
+            size="sm"
+            pressed={props.pressed}
             aria-label={props.label}
             // Keep the caret and selection in the editor while a button is pressed.
             onMouseDown={(event) => event.preventDefault()}
@@ -194,6 +241,17 @@ export function NoteEditor(props: {
     }
     wasEditable.current = props.editable;
   }, [editor, props.editable]);
+  const toolbar = useEditorState({
+    editor,
+    selector: ({ editor: current }) =>
+      current === null
+        ? null
+        : Object.fromEntries(
+            TOOL_GROUPS.flat().map((tool) => [tool.label, tool.active?.(current) ?? false]),
+          ),
+    equalityFn: (a, b) =>
+      a === b || (a !== null && b !== null && Object.keys(a).every((key) => a[key] === b[key])),
+  });
   const claimedImages = props.claimedImages;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- renames image nodes inside the imperative Tiptap document without a reload
   useEffect(() => {
@@ -238,20 +296,31 @@ export function NoteEditor(props: {
           <div className="pointer-events-none sticky bottom-0 z-10 h-0">
             <div className="absolute inset-x-0 bottom-3 flex justify-center px-3">
               <div
-                className="dropdown-glass pointer-events-auto flex max-w-full gap-0.5 overflow-x-auto rounded-full p-1 text-popover-foreground shadow-lg/5"
+                className="dialog-glass pointer-events-auto flex max-w-full items-center gap-0.5 overflow-x-auto rounded-full border p-1 text-foreground [&_[data-pressed]]:bg-foreground/14 [&_[data-slot=toggle]:hover]:bg-foreground/10"
                 role="toolbar"
                 aria-label="Note formatting"
               >
-                {TOOLS.map((tool) => (
-                  <ToolButton
-                    key={tool.label}
-                    label={tool.label}
-                    onClick={() => editor && tool.run(editor)}
-                  >
-                    <tool.icon aria-hidden />
-                  </ToolButton>
+                {TOOL_GROUPS.map((group, index) => (
+                  <Fragment key={group[0]!.label}>
+                    {index > 0 && <span aria-hidden className="mx-1 h-4 w-px bg-foreground/15" />}
+                    {group.map((tool) => (
+                      <ToolButton
+                        key={tool.label}
+                        label={tool.label}
+                        pressed={toolbar?.[tool.label] ?? false}
+                        onClick={() => editor && tool.run(editor)}
+                      >
+                        <tool.icon aria-hidden />
+                      </ToolButton>
+                    ))}
+                  </Fragment>
                 ))}
-                <ToolButton label="Insert image" onClick={() => fileInput.current?.click()}>
+                <span aria-hidden className="mx-1 h-4 w-px bg-foreground/15" />
+                <ToolButton
+                  label="Insert image"
+                  pressed={false}
+                  onClick={() => fileInput.current?.click()}
+                >
                   <ImagePlusIcon aria-hidden />
                 </ToolButton>
               </div>

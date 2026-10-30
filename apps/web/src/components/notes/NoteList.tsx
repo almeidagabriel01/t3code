@@ -35,7 +35,7 @@ function NoteRow(props: {
         onContextMenu={(event) => props.rows.showContextMenu(event, note)}
         className="grid w-full cursor-pointer gap-0.5 rounded-lg border border-foreground/12 bg-foreground/3 px-3 py-2 text-start outline-none transition-colors hover:border-foreground/24 hover:bg-foreground/8 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset aria-[current=page]:border-primary/60 aria-[current=page]:bg-primary/12"
       >
-        <span className="flex min-w-0 items-baseline gap-2">
+        <span className="flex min-w-0 items-baseline gap-2 pe-7">
           {note.pinned ? (
             <PinIcon
               aria-label="Pinned"
@@ -47,7 +47,7 @@ function NoteRow(props: {
           </span>
           <time
             dateTime={note.updatedAt}
-            className="shrink-0 text-xs text-muted-foreground tabular-nums group-focus-within/row:invisible group-hover/row:invisible group-has-[[data-popup-open]]/row:invisible pointer-coarse:visible"
+            className="shrink-0 text-xs text-muted-foreground tabular-nums"
           >
             {formatRelativeTimeLabel(note.updatedAt)}
           </time>

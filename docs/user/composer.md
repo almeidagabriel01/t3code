@@ -264,7 +264,7 @@ thread** to continue it on its own.
 ## Hand off to another agent
 
 To continue a thread with a different agent or model, choose **Hand off to another agent** from the thread
-header, the thread's menu, or the command palette (web and desktop), or from the actions in the thread header on mobile. Pick the agent and what it gets to read, then **Start new session**. The new
+header, the thread's menu, or the command palette (web and desktop), or from the thread's **•••** menu or a long press on the thread in the list on mobile. Pick the agent and what it gets to read, then **Start new session**. The new
 thread opens in the same project and workspace, with the same permission mode, and starts
 working right away. The original thread stays as it was.
 

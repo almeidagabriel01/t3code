@@ -161,12 +161,12 @@ export function useNoteRowActions(
   };
 }
 
-/** The ⋯ button at a row's top-right; its parent is the `group/row` that reveals it. */
+/** The ⋯ button at a row's top-right; its parent is the `group/row` that brightens it. */
 export function NoteRowMenu(props: { note: NoteSummary; rows: NoteRowActions; tabbable: boolean }) {
   const list = props.rows.actions(props.note);
   if (list.length === 0) return null;
   return (
-    <div className="absolute end-1.5 top-1.5 opacity-0 group-focus-within/row:opacity-100 group-hover/row:opacity-100 has-[[data-popup-open]]:opacity-100 pointer-coarse:hidden">
+    <div className="absolute end-1.5 top-1.5 text-muted-foreground group-hover/row:text-foreground has-[[data-popup-open]]:text-foreground">
       <Menu>
         <MenuTrigger
           render={

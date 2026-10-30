@@ -43,7 +43,10 @@ import { textDirection } from "~/textDirection";
 import { useClientSettings } from "../../hooks/useSettings";
 import { GuestShareIndicator } from "./GuestShareControls";
 import { ThreadHandoffButton } from "./ThreadHandoffDialog";
+import { KanbanLinkCardDialog } from "../kanban/KanbanLinkDialogs";
 import { KanbanThreadCardBadge } from "../kanban/KanbanThreadCardBadge";
+import { useKanbanCanEdit } from "../kanban/useKanban";
+import { useKanbanEnvironmentIds, useThreadKanbanCard } from "../../state/kanban";
 import { ThreadNotesButton } from "../notes/ThreadNotesButton";
 
 interface ChatHeaderProps {
@@ -203,11 +206,19 @@ export const ChatHeader = memo(function ChatHeader({
       }
     });
   };
+  const hasCard = useThreadKanbanCard(activeThreadEnvironmentId, activeThreadId) !== null;
+  const kanbanSupported = useKanbanEnvironmentIds().includes(activeThreadEnvironmentId);
+  const canEditKanban = useKanbanCanEdit(activeThreadEnvironmentId);
+  const canLinkCard =
+    isServerThread && activeProject !== null && !hasCard && kanbanSupported && canEditKanban;
+  const [linkingCard, setLinkingCard] = useState(false);
   const { openMenu, closeMenu } = useThreadActionMenu({
     threadRef: isServerThread ? activeThreadRef : null,
     projectCwd: activeProjectCwd,
     onStartRename: startRename,
     canShareWithGuest,
+    canLinkCard,
+    onLinkCard: () => setLinkingCard(true),
   });
   const titleButtonRef = useRef<HTMLButtonElement | null>(null);
   const titleMenuTimerRef = useRef<number | null>(null);
@@ -465,7 +476,15 @@ export const ChatHeader = memo(function ChatHeader({
           environmentId={activeThreadEnvironmentId}
           threadId={activeThreadId}
           showTitle
-          allowLink
+          titleClassName="@max-xl/header:hidden"
+        />
+      ) : null}
+      {linkingCard && activeProject ? (
+        <KanbanLinkCardDialog
+          environmentId={activeThreadEnvironmentId}
+          threadId={activeThreadId}
+          projectId={activeProject.id}
+          onClose={() => setLinkingCard(false)}
         />
       ) : null}
       {isServerThread ? <GuestShareIndicator threadRef={activeThreadRef} /> : null}

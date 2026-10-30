@@ -236,6 +236,9 @@ This checkout is a personal fork that adds features (notes, kanban, memory, dest
 - Headers have a budget. Before adding a header button, look at the header with the right panel open: the title must stay readable. Hide buttons that have another entry point below a container width (`@max-xl/header:hidden`), keep icon-only buttons with tooltips, and never put two identical icons side by side.
 - A form control in a dialog looks like a field: full width, left-aligned, the same height as its sibling fields. A composer control dropped into a form reads as plain text.
 - Every customization has a visible way in. Right-click alone is undiscoverable; pair it with a button or a settings row.
+- Row actions (`⋯`) are always visible, muted at rest. Hover-only reveal also shows on focus, so one clicked row keeps its button and the others do not.
+- An action lives in the menu named for its scope: thread actions in the thread menu, never inside a feature menu such as Git.
+- Floating tool chrome must stand out from the content under it: a raised glass surface, a visible border, a shadow and full-contrast icons.
 
 ### Liquid glass and color
 
@@ -248,6 +251,7 @@ This checkout is a personal fork that adds features (notes, kanban, memory, dest
 - Never allowlist fields of external or user-edited data (frontmatter, provider memory files, CLI output). Parse tolerantly, ignore unknown keys and preserve them on write; only reject what is truly unusable.
 - One bad item never hides the others. Process per item, report skipped items with an enumerable reason, and keep the UI able to tell "nothing found" from "failed".
 - Compare versions as semver, not as strings. Validate every item before mutating any of them.
+- Anything an agent can call is retry-safe. When the caller sends no request id, derive one from the state it acts on so a repeat lands on the same result.
 - Do not patch the single case the developer reported. Find the class of input that fails and fix the class, with a table-driven test.
 
 ### Feature completeness
@@ -255,6 +259,11 @@ This checkout is a personal fork that adds features (notes, kanban, memory, dest
 - Every fork feature ships on web, desktop and mobile with equivalent flows. Mobile is not a reduced copy: when the web flow is simplified, simplify mobile the same way.
 - Every user action has its reverse and its entry points (header, menus, palette, settings), and agents can reach it through MCP tools when that makes sense.
 - Do not report "done" with known pending items. Finish them, or name them as explicit decisions.
+
+### Keeping these rules current
+
+- When you learn something the next agent would get wrong, write it down yourself, without asking: one line, in the section where it belongs here, or in the doc that owns the topic.
+- Rewrite or delete a rule that no longer holds instead of appending a correction, and merge near-duplicates. Keep this section short enough to read in a minute.
 
 ### Working with parallel agents in one worktree
 

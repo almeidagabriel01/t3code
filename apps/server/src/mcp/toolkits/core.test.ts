@@ -18,7 +18,6 @@ import {
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2ThreadShell,
   OrchestrationV2ThreadHandoffError,
-  type OrchestrationV2ThreadHandoffInput,
 } from "@t3tools/contracts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as Deferred from "effect/Deferred";
@@ -518,7 +517,7 @@ it.effect("a client caller targets any thread within its ceiling and cannot act 
 );
 
 it.effect("t3_thread_transfer handoff starts the new thread through the handoff service", () => {
-  const calls: Array<OrchestrationV2ThreadHandoffInput> = [];
+  const calls: Array<ThreadHandoffService.ThreadHandoffInput> = [];
   const outcomes = [
     Effect.succeed({ threadId: ThreadId.make("handed-off") }),
     Effect.fail(

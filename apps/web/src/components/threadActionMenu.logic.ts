@@ -21,6 +21,7 @@ export type ThreadActionMenuId =
   | "mark-unread"
   | "share-guest"
   | "handoff"
+  | "link-card"
   | "copy"
   | "copy-path"
   | "copy-branch"
@@ -94,6 +95,8 @@ export interface ThreadActionMenuState {
   readonly canShareWithGuest?: boolean;
   /** A No project thread with its own folder, on a server that can promote it. */
   readonly canTurnIntoProject?: boolean;
+  /** An unlinked thread on a board-enabled environment the user can add cards to. */
+  readonly canLinkCard?: boolean | undefined;
 }
 
 /** Local navigation, read markers, and copying remain available to read-only clients. */
@@ -103,6 +106,7 @@ export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean
     "project-settings",
     "mark-unread",
     "share-guest",
+    "link-card",
     "copy",
     "copy-path",
     "copy-branch",
@@ -177,6 +181,9 @@ export function buildThreadActionMenuItems(
       ? [{ id: "share-guest" as const, label: "Share with guest", icon: "user-plus" }]
       : []),
     { id: "handoff", label: "Hand off to another agent", icon: "arrow-right-left" },
+    ...(state.canLinkCard
+      ? [{ id: "link-card" as const, label: "Link to board card…", icon: "link" }]
+      : []),
     ...(state.projectFilter
       ? [
           {

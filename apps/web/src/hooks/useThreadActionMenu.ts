@@ -63,8 +63,11 @@ export function useThreadActionMenu(input: {
   readonly projectCwd: string | null;
   readonly onStartRename: () => void;
   readonly canShareWithGuest: boolean;
+  readonly canLinkCard?: boolean;
+  readonly onLinkCard?: () => void;
 }) {
-  const { threadRef, projectCwd, onStartRename, canShareWithGuest } = input;
+  const { threadRef, projectCwd, onStartRename, canShareWithGuest, canLinkCard, onLinkCard } =
+    input;
   const router = useRouter();
   const projects = useProjects();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -146,6 +149,7 @@ export function useThreadActionMenu(input: {
         supports,
         snoozePresets,
         canShareWithGuest,
+        canLinkCard,
         canTurnIntoProject: canTurnThreadIntoProject(threadRef),
       });
       const clicked = await settlePromise(() => api.contextMenu.show(items, position));
@@ -259,6 +263,9 @@ export function useThreadActionMenu(input: {
           return;
         case "handoff":
           openThreadHandoffDialog(threadRef);
+          return;
+        case "link-card":
+          onLinkCard?.();
           return;
         case "turn-into-project": {
           const result = await turnThreadIntoProject(threadRef);
