@@ -114,6 +114,10 @@ returns to the remembered selection.
 
 Leaving reasoning level or service tier unset uses the provider's own configuration.
 
+Under **Settings → Threads → Fallback models** you can list up to three models to try, in
+order, when the default model's provider is out of usage. A new thread starts on the first
+one whose provider is available and has usage left.
+
 ## Quote an assistant response
 
 On web and desktop, select text within one assistant response and choose
@@ -279,6 +283,15 @@ Add instructions under **What should it do next?** to put them first in the new 
 
 The new agent first states where the previous session stopped, then continues if work remains.
 Agents can do the same with the thread transfer tool's `handoff` action.
+
+## Decisions
+
+An agent that needs your choice, for example in a scheduled or background run, can file a
+decision: a question with options and the one it recommends. Open decisions show at the top of
+**Activity** and on the mobile Home screen, and as a **Decision needed** bar above the
+thread's composer. Pick an option (or write your own answer) and the agent gets it as a
+message in its thread and continues. **Dismiss** tells the agent nothing was approved; a
+decision that expires does the same, so silence never approves.
 
 ## Goals
 
