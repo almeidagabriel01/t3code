@@ -1,4 +1,5 @@
 // @effect-diagnostics globalDate:off - Local calendar-day conversion for date inputs, outside an Effect runtime.
+import { sliceWholeCodePoints } from "@t3tools/shared/String";
 import { formatComposerContextReference } from "@t3tools/shared/composerContextReferences";
 import type {
   EnvironmentId,
@@ -295,7 +296,7 @@ export function kanbanCardContextRecord(
   card: KanbanCard,
   board: Pick<KanbanBoardState, "labels" | "templates">,
 ): KanbanCardContextRecord {
-  const clamp = (text: string, max: number) => text.slice(0, max);
+  const clamp = sliceWholeCodePoints;
   const items = (list: ReadonlyArray<KanbanChecklistItem>) =>
     list.slice(0, 200).map((item) => ({ text: clamp(item.text, 2_048), done: item.done }));
   const labelNames = card.labelIds.flatMap((id) => {
@@ -375,7 +376,10 @@ export function dueAtToInput(dueAt: string | null): string {
 export function inputToDueAt(value: string): string | null {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
   const date = new Date(`${value}T12:00:00`);
-  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+  // `2026-02-30` parses as March 2; a day the calendar lacks is refused, not moved.
+  return Number.isNaN(date.getTime()) || dueAtToInput(date.toISOString()) !== value
+    ? null
+    : date.toISOString();
 }
 
 export function moveChecklistItem<T>(items: ReadonlyArray<T>, index: number, delta: -1 | 1) {

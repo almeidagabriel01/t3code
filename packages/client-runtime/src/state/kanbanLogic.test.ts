@@ -29,8 +29,11 @@ import {
   findCardInBoards,
   groupCardsByProject,
   groupCardsByRole,
+  isOverdue,
   isWipExceeded,
   kanbanCardContextRecord,
+  kanbanCardRecordForThread,
+  withKanbanCardContext,
   shouldDeliverKanbanCard,
   subtaskTileInfo,
 } from "./kanbanLogic.ts";
@@ -283,6 +286,19 @@ describe("kanbanCardContextRecord", () => {
       b,
     );
     expect(record.description).toHaveLength(16_000);
+    // A pair straddling the bound is dropped whole, never left as a lone surrogate.
+    const emoji = "x".repeat(15_999) + "😀tail";
+    const cut = kanbanCardContextRecord(card("7", "todo", { description: emoji }), b);
+    expect(cut.description).toBe("x".repeat(15_999));
+    const fits = kanbanCardContextRecord(
+      card("7", "todo", { description: "x".repeat(15_998) + "😀" }),
+      b,
+    );
+    expect(fits.description.endsWith("😀")).toBe(true);
+    const item = { id: "i" as never, text: "y".repeat(2_047) + "😀", done: false };
+    expect(
+      kanbanCardContextRecord(card("7", "todo", { checklist: [item] }), b).checklist[0]!.text,
+    ).toBe("y".repeat(2_047));
     expect(record.labels).toEqual(["Urgent fix"]);
     expect(record.type).toBe("Bug");
     expect(record.contextId).toBe("kanban-card-7");
@@ -380,5 +396,69 @@ describe("subtask tiles", () => {
     });
     expect(info(cards.get(cardId("1"))!)).toEqual({ subtasksDone: 1, subtasksTotal: 2 });
     expect(info(cards.get(cardId("3"))!)).toEqual({ parentNumber: 1, parentTitle: "Card 1" });
+  });
+});
+
+describe("input edges", () => {
+  it("refuses a due date the calendar does not have instead of rolling it over", () => {
+    for (const value of ["2026-02-30", "2026-02-29", "2026-13-01", "2026-04-31", "26-01-01"]) {
+      expect(inputToDueAt(value), value).toBeNull();
+    }
+    expect(dueAtToInput(inputToDueAt("2028-02-29"))).toBe("2028-02-29");
+  });
+
+  it("is overdue only strictly after the due instant", () => {
+    const dueAt = "2026-03-09T12:00:00.000Z";
+    const now = Date.parse(dueAt);
+    expect(isOverdue({ dueAt }, now)).toBe(false);
+    expect(isOverdue({ dueAt }, now + 1)).toBe(true);
+    expect(isOverdue({ dueAt: null }, now)).toBe(false);
+  });
+
+  it("ignores drops that name nothing, and appends to an empty target", () => {
+    expect(dropToMove(cardId("missing"), "b", columns)).toBeNull();
+    expect(dropToMove(cardId("1"), "nowhere", columns)).toBeNull();
+    expect(dropToMove(cardId("4"), "b", columns)).toBeNull();
+    const moved = applyMoveLocally(columns, { cardId: cardId("1"), columnId: columnId("c") });
+    expect(moved.map((entry) => entry.cardIds)).toEqual([["2", "3"], ["4"], ["1"]]);
+    // An anchor that is gone appends instead of dropping the card.
+    const stale = applyMoveLocally(columns, {
+      cardId: cardId("1"),
+      columnId: columnId("b"),
+      beforeCardId: cardId("gone"),
+    });
+    expect(stale[1]!.cardIds).toEqual(["4", "1"]);
+  });
+});
+
+describe("a card's context on a thread", () => {
+  const linked = card("7", "todo", { linkedThreadIds: ["thread-7" as ThreadId] });
+  const state = (cards: KanbanCard[]) => ({
+    sequence: 1,
+    boards: new Map([["b1" as KanbanBoardId, board("p1", "b1", cards)]]),
+  });
+
+  it("finds the live card a thread is linked to and nothing else", () => {
+    expect(kanbanCardRecordForThread(state([linked]), "thread-7")).toMatchObject({
+      kind: "kanban-card",
+      cardId: "7",
+    });
+    expect(kanbanCardRecordForThread(state([linked]), "thread-8")).toBeUndefined();
+    expect(kanbanCardRecordForThread(null, "thread-7")).toBeUndefined();
+    const archived = { ...linked, archivedAt: "2026-02-01T00:00:00.000Z" } as KanbanCard;
+    expect(kanbanCardRecordForThread(state([archived]), "thread-7")).toBeUndefined();
+  });
+
+  it("adds the record and a reference to a message without losing what it carried", () => {
+    const record = kanbanCardRecordForThread(state([linked]), "thread-7")!;
+    const plain = withKanbanCardContext({ text: "Go", context: undefined }, record);
+    expect(plain.text.startsWith("Go\n\n")).toBe(true);
+    expect(plain.context).toMatchObject({ version: 1, records: [record] });
+    const other = { kind: "mention" } as never;
+    const both = withKanbanCardContext(
+      { text: "Go", context: { version: 1, records: [other] } },
+      record,
+    );
+    expect(both.context.records).toEqual([other, record]);
   });
 });

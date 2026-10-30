@@ -76,6 +76,26 @@ describe("notes state", () => {
     );
   });
 
+  it("breaks ties by path and re-upserting a note replaces it instead of duplicating", () => {
+    const state = applyNotesEvent(null, {
+      ...snapshot,
+      notes: [note("b.md"), note("a.md"), note("c.md", { pinned: true })],
+    })!;
+    assert.deepStrictEqual(
+      selectNotesInOrder(state).map((entry) => entry.path),
+      ["c.md", "a.md", "b.md"],
+    );
+    const again = applyNotesEvent(state, {
+      type: "upserted",
+      note: note("a.md", { pinned: true }),
+    })!;
+    assert.strictEqual(again.notes.size, 3);
+    assert.deepStrictEqual(
+      selectNotesInOrder(again).map((entry) => entry.path),
+      ["a.md", "c.md", "b.md"],
+    );
+  });
+
   it.effect("emits a state for the snapshot and every change", () =>
     Effect.gen(function* () {
       const states = yield* notesStateStream(

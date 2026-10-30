@@ -889,3 +889,203 @@ it.effect(
     }).pipe(Effect.provide(imagesLayer(cleaned)));
   },
 );
+
+it.effect("refusals name what is wrong, change nothing, and leave the command id reusable", () =>
+  Effect.gen(function* () {
+    const { kanban, boardId, column } = yield* setup;
+    const other = yield* kanban.boardEnsure({
+      commandId: cmd(),
+      projectId: ProjectId.make("p2"),
+    });
+    const otherBoard = yield* snapshotBoard(kanban, other.boardId!);
+    const card = (title: string, extra: object = {}) =>
+      kanban
+        .cardCreate({ commandId: cmd(), boardId, title, ...extra })
+        .pipe(Effect.map((r) => r.cardId!));
+    const a = yield* card("A");
+    const b = yield* card("B");
+    const archived = yield* card("Archived");
+    yield* kanban.cardArchive({ commandId: cmd(), cardId: archived });
+    const foreignCard = (yield* kanban.cardCreate({
+      commandId: cmd(),
+      boardId: other.boardId!,
+      title: "Foreign",
+    })).cardId!;
+    const foreignColumn = otherBoard.columns[0]!.id;
+    const missing = {
+      card: "missing-card" as never,
+      column: "missing-column" as never,
+      template: "missing-template" as never,
+      label: "missing-label" as never,
+    };
+    const dup = "00000000-0000-4000-8000-000000000001" as never;
+    const todo = column("todo").id;
+
+    const snapshots = () =>
+      Effect.all([snapshotBoard(kanban, boardId), snapshotBoard(kanban, other.boardId!)]).pipe(
+        Effect.map((boards) => JSON.stringify(boards)),
+      );
+    const before = yield* snapshots();
+
+    const cases: ReadonlyArray<
+      readonly [
+        string,
+        "invalid" | "not_found" | "conflict",
+        (c: CommandId) => Effect.Effect<unknown, KanbanError>,
+      ]
+    > = [
+      [
+        "move to another board's column",
+        "invalid",
+        (commandId) => kanban.cardMove({ commandId, cardId: a, columnId: foreignColumn }),
+      ],
+      [
+        "move an archived card",
+        "invalid",
+        (commandId) => kanban.cardMove({ commandId, cardId: archived, columnId: todo }),
+      ],
+      [
+        "move to a missing column",
+        "not_found",
+        (commandId) => kanban.cardMove({ commandId, cardId: a, columnId: missing.column }),
+      ],
+      [
+        "move before a missing card",
+        "not_found",
+        (commandId) =>
+          kanban.cardMove({ commandId, cardId: a, columnId: todo, beforeCardId: missing.card }),
+      ],
+      [
+        "move a missing card",
+        "not_found",
+        (commandId) => kanban.cardMove({ commandId, cardId: missing.card, columnId: todo }),
+      ],
+      [
+        "create in a missing column",
+        "not_found",
+        (commandId) =>
+          kanban.cardCreate({ commandId, boardId, title: "X", columnId: missing.column }),
+      ],
+      [
+        "create in another board's column",
+        "not_found",
+        (commandId) =>
+          kanban.cardCreate({ commandId, boardId, title: "X", columnId: foreignColumn }),
+      ],
+      [
+        "create with a missing type",
+        "not_found",
+        (commandId) =>
+          kanban.cardCreate({ commandId, boardId, title: "X", type: missing.template }),
+      ],
+      [
+        "create with a missing label",
+        "not_found",
+        (commandId) =>
+          kanban.cardCreate({ commandId, boardId, title: "X", labelIds: [missing.label] }),
+      ],
+      [
+        "create under an archived parent",
+        "invalid",
+        (commandId) =>
+          kanban.cardCreate({ commandId, boardId, title: "X", parentCardId: archived }),
+      ],
+      [
+        "create under another board's parent",
+        "invalid",
+        (commandId) =>
+          kanban.cardCreate({ commandId, boardId, title: "X", parentCardId: foreignCard }),
+      ],
+      [
+        "create on a missing board",
+        "not_found",
+        (commandId) =>
+          kanban.cardCreate({ commandId, boardId: "missing-board" as never, title: "X" }),
+      ],
+      [
+        "make a card its own subtask",
+        "invalid",
+        (commandId) => kanban.cardUpdate({ commandId, cardId: a, parentCardId: a }),
+      ],
+      [
+        "block a missing card",
+        "not_found",
+        (commandId) => kanban.cardUpdate({ commandId, cardId: a, blocks: [missing.card] }),
+      ],
+      [
+        "repeat a checklist id",
+        "invalid",
+        (commandId) =>
+          kanban.cardUpdate({
+            commandId,
+            cardId: a,
+            title: "Renamed",
+            checklist: [
+              { id: dup, text: "one", done: false },
+              { id: dup, text: "two", done: true },
+            ],
+          }),
+      ],
+      [
+        "update a missing card",
+        "not_found",
+        (commandId) => kanban.cardUpdate({ commandId, cardId: missing.card, title: "X" }),
+      ],
+      [
+        "comment on a missing card",
+        "not_found",
+        (commandId) => kanban.cardComment({ commandId, cardId: missing.card, body: "x" }),
+      ],
+      [
+        "link a thread to a missing card",
+        "not_found",
+        (commandId) =>
+          kanban.cardLinkThread({ commandId, cardId: missing.card, threadId: ThreadId.make("t") }),
+      ],
+      [
+        "delete a column into another board's",
+        "invalid",
+        (commandId) =>
+          kanban.columnDelete({ commandId, columnId: todo, targetColumnId: foreignColumn }),
+      ],
+      [
+        "delete a missing label",
+        "not_found",
+        (commandId) => kanban.labelDelete({ commandId, boardId, labelId: missing.label }),
+      ],
+    ];
+    for (const [name, kind, run] of cases) {
+      const commandId = cmd();
+      const error = yield* run(commandId).pipe(Effect.asVoid, Effect.flip);
+      assert.isTrue(isKanbanError(error), name);
+      assert.equal(error.kind, kind, name);
+      assert.equal(yield* snapshots(), before, name);
+    }
+    assert.deepEqual((yield* kanban.getCard({ cardId: a })).activity.length, 1);
+    const gone = yield* kanban.getCard({ cardId: missing.card }).pipe(Effect.flip);
+    assert.equal(gone.kind, "not_found");
+
+    // A refused command is not recorded, so the same id succeeds once the input is fixed.
+    const commandId = cmd();
+    const failed = yield* kanban
+      .cardMove({ commandId, cardId: a, columnId: foreignColumn })
+      .pipe(Effect.flip);
+    assert.equal(failed.kind, "invalid");
+    yield* kanban.cardMove({ commandId, cardId: a, columnId: todo });
+    assert.equal((yield* kanban.getCard({ cardId: a })).card.columnId, todo);
+
+    // A thread links to one card at a time; relinking the same card is a no-op.
+    const thread = ThreadId.make("thread-x");
+    yield* kanban.cardLinkThread({ commandId: cmd(), cardId: a, threadId: thread });
+    yield* kanban.cardLinkThread({ commandId: cmd(), cardId: a, threadId: thread });
+    const taken = yield* kanban
+      .cardLinkThread({ commandId: cmd(), cardId: b, threadId: thread })
+      .pipe(Effect.flip);
+    assert.equal(taken.kind, "conflict");
+    assert.equal(
+      (yield* kanban.getCard({ cardId: a })).activity.filter((event) => event.kind === "linked")
+        .length,
+      1,
+    );
+  }).pipe(Effect.provide(TestLayer)),
+);

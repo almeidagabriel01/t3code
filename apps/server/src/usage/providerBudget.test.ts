@@ -130,3 +130,42 @@ it("sums only turns since the budget period began, even beyond the 30-day window
   assert.strictEqual(idle.budget?.spentUsd, 0);
   assert.strictEqual(idle.budget?.state, "ok");
 });
+
+it("an unknown time zone counts periods in UTC, and the reset instant starts the next period", () => {
+  for (const timeZone of ["Not/AZone", "  ", "UTC+3"]) {
+    assert.deepStrictEqual(bounds("daily", timeZone, "2026-10-28T23:59:59Z"), [
+      "2026-10-28T00:00:00.000Z",
+      "2026-10-29T00:00:00.000Z",
+    ]);
+    assert.strictEqual(budgetStatus({ ...budget, timeZone }, 1, reset).timeZone, "UTC");
+  }
+  // The reset moment itself belongs to the new period; one millisecond earlier to the old one.
+  assert.deepStrictEqual(bounds("monthly", "UTC", "2026-10-31T23:59:59.999Z"), [
+    "2026-10-01T00:00:00.000Z",
+    "2026-11-01T00:00:00.000Z",
+  ]);
+  assert.deepStrictEqual(bounds("monthly", "UTC", "2026-11-01T00:00:00Z"), [
+    "2026-11-01T00:00:00.000Z",
+    "2026-12-01T00:00:00.000Z",
+  ]);
+  // A Sunday belongs to the week that started on the Monday before it.
+  assert.deepStrictEqual(bounds("weekly", "UTC", "2026-11-01T12:00:00Z"), [
+    "2026-10-26T00:00:00.000Z",
+    "2026-11-02T00:00:00.000Z",
+  ]);
+  assert.strictEqual(
+    budgetBlockedMessage({
+      name: "X",
+      budget: { ...budget, timeZone: "Not/AZone" },
+      resetsAt: "2026-11-01T00:00:00.000Z",
+    }),
+    "X reached its $100.00 monthly budget. It resets on Nov 1, or raise the budget in Settings → Providers.",
+  );
+});
+
+it("a warning at 100 percent warns only when the budget is exceeded, never before", () => {
+  const full = { ...budget, warnAtPercent: 100 };
+  assert.strictEqual(budgetStatus(full, 99.99, reset).state, "ok");
+  assert.strictEqual(budgetStatus(full, 100, reset).state, "exceeded");
+  assert.strictEqual(budgetStatus(budget, 0, reset).state, "ok");
+});

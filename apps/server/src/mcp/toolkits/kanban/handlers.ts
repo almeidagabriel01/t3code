@@ -16,6 +16,7 @@ import * as Stream from "effect/Stream";
 
 import * as KanbanService from "../../../kanban/KanbanService.ts";
 import * as Project from "../../../project/ProjectService.ts";
+import { sliceWholeCodePoints } from "@t3tools/shared/String";
 import { startableSubtasks, subtaskProgress, subtasksOf } from "@t3tools/shared/kanbanSubtasks";
 import { assertNotLinked } from "../../linkOrigin.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
@@ -69,7 +70,7 @@ const baseCard = (board: KanbanBoardSnapshot, card: KanbanCard): Out => ({
 });
 
 const subtaskBrief = (card: KanbanCard, parent: KanbanCard) =>
-  `Work on kanban card #${card.number} "${card.title}", a subtask of #${parent.number} "${parent.title}". This thread is linked to it: read it with t3_kanban read_card, tick checklist items as you finish, then move it to review with a summary.\n\n${card.description.slice(0, 4_000)}`.trim();
+  `Work on kanban card #${card.number} "${card.title}", a subtask of #${parent.number} "${parent.title}". This thread is linked to it: read it with t3_kanban read_card, tick checklist items as you finish, then move it to review with a summary.\n\n${sliceWholeCodePoints(card.description, 4_000)}`.trim();
 
 const fullCard = (board: KanbanBoardSnapshot, card: KanbanCard): Out => ({
   ...compactCard(board, card),
@@ -487,8 +488,18 @@ const run = Effect.fn("mcp.kanban.run")(
       }
       case "link_thread":
       case "unlink_thread": {
-        const { card } = yield* locateCard(base);
+        const { board, card } = yield* locateCard(base);
         const target = (input.threadId ?? threadId) as ThreadId;
+        if (action === "link_thread" && target !== threadId) {
+          const shell = yield* context.threads
+            .getThreadShell(target)
+            .pipe(Effect.mapError(unavailable));
+          if (shell === null || shell.deletedAt !== null || shell.projectId !== board.projectId) {
+            return yield* invalid(
+              `Thread ${target} was not found in this board's project, so it cannot be linked.`,
+            );
+          }
+        }
         const link = action === "link_thread" ? kanban.cardLinkThread : kanban.cardUnlinkThread;
         yield* link({ commandId: commandId("thread"), cardId: card.id, threadId: target, actor });
         return (yield* viewCard(card.id)) satisfies Out;

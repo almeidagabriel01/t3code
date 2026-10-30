@@ -82,13 +82,13 @@ const make = Effect.gen(function* ForkUpdatesMake() {
     const headTag = latestChannelTag(mergedTags, channel);
 
     const head = yield* out(path, ["log", "-1", "--format=%H%x09%s", "main"]);
-    if (head === null) return unavailable;
+    if (head === null) return { ...unavailable, channel };
     const [headSha = null, headSubject = null] = head.split("\t");
     if (upstreamTag === null) {
       return { ...unavailable, available: true, channel, headSha, headSubject, headTag };
     }
     const behindText = yield* out(path, ["rev-list", "--count", `main..${upstreamTag}`]);
-    if (behindText === null) return unavailable;
+    if (behindText === null) return { ...unavailable, channel };
     const behind = Number.parseInt(behindText, 10) || 0;
 
     let wouldConflict: boolean | null = null;

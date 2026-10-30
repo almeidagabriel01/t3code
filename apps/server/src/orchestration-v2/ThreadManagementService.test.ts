@@ -213,25 +213,35 @@ it.effect(
 );
 
 const layerRestartSessionTest = (input: {
-  readonly runStatus: "running" | "completed";
+  readonly runStatus: string;
   readonly sharedSession: boolean;
   readonly released: Array<string>;
+  readonly deleted?: boolean;
+  /** Sessions the thread has besides the one under test, by id and status. */
+  readonly others?: ReadonlyArray<readonly [string, string]>;
+  readonly notLive?: ReadonlyArray<string>;
+  readonly releaseFails?: string;
 }) =>
   ThreadManagementService.layer.pipe(
     Layer.provide(
       Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
-        isLive: () => Effect.succeed(true),
+        isLive: (id) => Effect.succeed(!input.notLive?.includes(id)),
         release: (release) =>
-          Effect.sync(() => {
-            input.released.push(`${release.providerSessionId}:${release.reason}`);
-          }),
+          release.providerSessionId === input.releaseFails
+            ? Effect.fail(new Error("boom") as never)
+            : Effect.sync(() => {
+                input.released.push(`${release.providerSessionId}:${release.reason}`);
+              }),
       }),
     ),
     Layer.provide(
       Layer.mock(Orchestrator.OrchestratorV2)({
         getThreadRecords: () =>
           Effect.succeed({
-            thread: { id: ThreadId.make("thread:restart"), deletedAt: null },
+            thread: {
+              id: ThreadId.make("thread:restart"),
+              deletedAt: input.deleted === true ? "2026-01-01T00:00:00.000Z" : null,
+            },
             runs: [{ id: RunId.make("run:restart"), status: input.runStatus, ordinal: 1 }],
             providerSessions: [
               // An idle session ahead of the shared one proves a refusal releases nothing.
@@ -253,6 +263,11 @@ const layerRestartSessionTest = (input: {
                   sessions: { supportsMultipleProviderThreadsPerSession: input.sharedSession },
                 },
               },
+              ...(input.others ?? []).map(([id, status]) => ({
+                id: ProviderSessionId.make(id),
+                status,
+                capabilities: { sessions: { supportsMultipleProviderThreadsPerSession: false } },
+              })),
             ],
           } as unknown as OrchestrationV2ThreadProjection),
       }),
@@ -289,6 +304,67 @@ it.effect(
       const refusedShared = yield* attempt("completed", true, shared);
       expect(refusedShared).toMatchObject({ failure: { reason: "shared" } });
       expect(shared).toEqual([]);
+    }),
+);
+
+it.effect(
+  "restartProviderSession refuses a gone thread, any active run, and a failed release",
+  () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("thread:restart");
+      const attempt = (options: Parameters<typeof layerRestartSessionTest>[0]) =>
+        ThreadManagementService.ThreadManagementService.pipe(
+          Effect.flatMap((threads) => Effect.result(threads.restartProviderSession({ threadId }))),
+          Effect.provide(layerRestartSessionTest(options)),
+        );
+      const base = { runStatus: "completed", sharedSession: false } as const;
+
+      const deleted: Array<string> = [];
+      expect(yield* attempt({ ...base, released: deleted, deleted: true })).toMatchObject({
+        failure: { reason: "unavailable" },
+      });
+      expect(deleted).toEqual([]);
+
+      for (const runStatus of ["preparing", "starting", "running", "waiting"]) {
+        const released: Array<string> = [];
+        expect(yield* attempt({ ...base, runStatus, released }), runStatus).toMatchObject({
+          failure: { reason: "running" },
+        });
+        expect(released).toEqual([]);
+      }
+      for (const runStatus of ["failed", "cancelled", "interrupted"]) {
+        const released: Array<string> = [];
+        expect((yield* attempt({ ...base, runStatus, released }))._tag, runStatus).toBe("Success");
+        expect(released).toEqual(["session:restart:manual_shutdown"]);
+      }
+
+      // Stopped, errored and already-closed sessions are left alone; every live one is released.
+      const mixed: Array<string> = [];
+      yield* attempt({
+        ...base,
+        released: mixed,
+        others: [
+          ["session:stopped", "stopped"],
+          ["session:error", "error"],
+          ["session:closed", "ready"],
+          ["session:second", "busy"],
+        ],
+        notLive: ["session:closed"],
+      });
+      expect(mixed).toEqual(["session:restart:manual_shutdown", "session:second:manual_shutdown"]);
+
+      // A shared session found after an idle one still refuses the whole restart.
+      const refused: Array<string> = [];
+      expect(yield* attempt({ ...base, sharedSession: true, released: refused })).toMatchObject({
+        failure: { reason: "shared" },
+      });
+      expect(refused).toEqual([]);
+
+      const failed: Array<string> = [];
+      expect(
+        yield* attempt({ ...base, released: failed, releaseFails: "session:restart" }),
+      ).toMatchObject({ failure: { reason: "restart-failed" } });
+      expect(failed).toEqual([]);
     }),
 );
 
