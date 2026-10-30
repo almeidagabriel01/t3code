@@ -1,6 +1,9 @@
+import * as M from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import type * as SqlClient from "effect/sql/SqlClient";
+import { MemoryWorkerError } from "./MemoryWorkerError.ts";
+import { scanMemoryValue } from "./MemorySecretScanner.ts";
 
 /** Stream events one scan statement may visit; the scan yields to the event loop between pages. */
 export const MEMORY_SOURCE_SCAN_PAGE_EVENTS = 1000;
@@ -152,4 +155,71 @@ export const readEligibleSourceRows = Effect.fn("MemoryWorker.readEligibleSource
     sequence: number;
     event_id: string;
   }>`SELECT payload_json,sequence,event_id FROM orchestration_events WHERE sequence IN (SELECT value FROM json_each(${sequences})) ORDER BY sequence`;
+});
+
+const decodeMessage = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(M.OrchestrationV2ConversationMessageJson),
+);
+const encodeGenerationMessage = Schema.encodeEffect(
+  Schema.fromJsonString(
+    Schema.Struct({ messageId: M.MessageId, text: Schema.String, completed: Schema.Boolean }),
+  ),
+);
+
+/**
+ * Bounds one page of `readEligibleSourceRows` (read with a limit of 102) to what a single summary
+ * call takes: 100 messages or 180 kB. When more remains, the watermark ends at the last row read.
+ */
+export const boundSourcePage = Effect.fn("MemoryWorker.boundSourcePage")(function* (
+  rows: ReadonlyArray<{
+    readonly payload_json: string;
+    readonly sequence: number;
+    readonly event_id: string;
+  }>,
+  sourceWatermark: M.MemorySourceWatermark,
+) {
+  const messages: M.GenerateMemorySummaryInput["messages"][number][] = [];
+  let bytes = 0;
+  let last = rows[0];
+  let hasMore = false;
+  // One lookahead row distinguishes a full filtered page from actual EOF.
+  for (const row of rows.slice(0, 101)) {
+    const message = yield* decodeMessage(row.payload_json);
+    // Native history imports can contain the provider-only WP4 frame. It is
+    // reference data, not a new transcript fact (including an unfinished frame).
+    const text = message.text
+      .replace(/<external_goat_memory>[\s\S]*?(?:<\/external_goat_memory>|$)/g, "")
+      .trim();
+    if (!text) {
+      last = row;
+      continue;
+    }
+    const input = { messageId: message.id, text, completed: true };
+    const size = new TextEncoder().encode(yield* encodeGenerationMessage(input)).length;
+    if (messages.length === 100 || bytes + size > 180000) {
+      if (!messages.length) return yield* new MemoryWorkerError({ code: "invalid_output" });
+      hasMore = true;
+      break;
+    }
+    messages.push(input);
+    bytes += size;
+    last = row;
+  }
+  if (scanMemoryValue({ messages }).kind !== "allowed")
+    return yield* new MemoryWorkerError({ code: "secret_detected" });
+  return {
+    messages,
+    watermark:
+      (hasMore || rows.length > 101) && last
+        ? {
+            ...sourceWatermark,
+            fromEventId: M.EventId.make(rows[0]!.event_id),
+            toEventId: M.EventId.make(last.event_id),
+            throughSequence: last.sequence,
+          }
+        : {
+            ...sourceWatermark,
+            fromEventId: M.EventId.make(rows[0]?.event_id ?? sourceWatermark.fromEventId),
+          },
+  };
 });

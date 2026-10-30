@@ -1,6 +1,6 @@
 import { PROVIDER_SEND_TURN_MAX_INPUT_CHARS } from "@t3tools/contracts";
 
-export type ThreadHandoffMode = "focused" | "full";
+export type ThreadHandoffMode = "focused" | "full" | "summary";
 
 /** Leaves room under the provider's input cap for the adapter's own framing. */
 const PROMPT_BUDGET_CHARS = PROVIDER_SEND_TURN_MAX_INPUT_CHARS - 20_000;
@@ -16,6 +16,8 @@ export interface ThreadHandoffPromptInput {
   readonly lastUserText: string | null;
   readonly lastAssistantText: string | null;
   readonly latestPlanMarkdown: string | null;
+  /** The generated summary of the previous thread; used in summary mode. */
+  readonly summaryText?: string | null | undefined;
   /** What the person asked the new agent to do next. */
   readonly instructions?: string | null | undefined;
   /** Paths the previous thread changed in its workspace; empty when unknown. */
@@ -90,7 +92,9 @@ export function buildThreadHandoffPrompt(input: ThreadHandoffPromptInput): strin
     "",
     ...section("Instructions for you (do this first)", input.instructions ?? null, "start"),
     ...section("Last user message", input.lastUserText, "start"),
-    ...section("Last assistant message", input.lastAssistantText, "end"),
+    ...(input.mode === "summary"
+      ? section("Summary of the previous thread", input.summaryText ?? null, "start")
+      : section("Last assistant message", input.lastAssistantText, "end")),
     ...section("Latest proposed plan", input.latestPlanMarkdown, "start"),
     ...changedFilesSection(input.changedFiles ?? []),
   ];
@@ -103,7 +107,7 @@ export function buildThreadHandoffPrompt(input: ThreadHandoffPromptInput): strin
       ? "Briefly state where the previous session stopped, then carry out the instructions above. Ask me only if the session context and workspace do not provide enough information to proceed."
       : "Briefly state where the previous session stopped. If work remains, continue it. If the prior task appears complete, say so and wait for my next instruction. Ask me only if the session context and workspace do not provide enough information to proceed.",
   ];
-  if (input.mode === "focused") {
+  if (input.mode !== "full") {
     return [
       ...head,
       "Start from the latest status above and the current workspace. The complete history stays in the previous thread.",

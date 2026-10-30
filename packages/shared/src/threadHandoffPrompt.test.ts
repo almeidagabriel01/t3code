@@ -56,6 +56,22 @@ describe("buildThreadHandoffPrompt", () => {
       lacks: ["wait for my next instruction"],
     },
     {
+      name: "summary mode replaces the last reply and transcript with the summary",
+      input: {
+        ...base,
+        mode: "summary" as const,
+        summaryText: "Login now caches sessions.",
+        transcriptLines: ['{"a":1}'],
+      },
+      has: [
+        "Summary of the previous thread:",
+        "Login now caches sessions.",
+        "make login faster",
+        't3_thread_read({threadId:"thread-1"',
+      ],
+      lacks: ["Last assistant message", "I cached the session lookup.", "Saved transcript"],
+    },
+    {
       name: "changed files are listed with a count",
       input: { ...base, mode: "full" as const, changedFiles: ["src/a.ts", "src/b.ts"] },
       has: ["Files changed in the previous thread (2):", "- src/a.ts", "- src/b.ts"],

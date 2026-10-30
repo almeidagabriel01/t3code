@@ -42,9 +42,9 @@ import {
   canStartHandoff,
   DEFAULT_HANDOFF_MODE,
   findHandoffOption,
-  HANDOFF_CONTEXT_CHOICES,
   HANDOFF_LABEL,
   resolveHandoffAgents,
+  resolveHandoffContextChoices,
 } from "./thread-handoff";
 import { waitForThreadShellReady } from "./threadForkNavigation";
 import { ThreadSettingsPickerScreen } from "./ThreadSettingsSheet";
@@ -113,6 +113,10 @@ export function ThreadHandoffSheet({ route }: StaticScreenProps<ThreadHandoffPar
     selection,
     source: thread?.modelSelection,
   });
+  const contextChoices = resolveHandoffContextChoices(config);
+  const contextChoice = contextChoices.find((choice) => choice.mode === mode);
+  // A summary that became unavailable after it was picked is not sent.
+  const effectiveMode = contextChoice?.disabled === false ? mode : DEFAULT_HANDOFF_MODE;
   const startsIn = thread?.worktreePath ?? project?.workspaceRoot ?? null;
 
   const start = async () => {
@@ -125,7 +129,7 @@ export function ThreadHandoffSheet({ route }: StaticScreenProps<ThreadHandoffPar
       input: buildHandoffInput({
         sourceThreadId: target.threadId,
         modelSelection: selection,
-        mode,
+        mode: effectiveMode,
         clientRequestId,
         instructions,
       }),
@@ -196,15 +200,15 @@ export function ThreadHandoffSheet({ route }: StaticScreenProps<ThreadHandoffPar
       </ListSection>
       <ListSection
         title="Context"
-        footer={HANDOFF_CONTEXT_CHOICES.find((c) => c.mode === mode)?.description}
+        footer={contextChoices.find((c) => c.mode === effectiveMode)?.description}
       >
-        {HANDOFF_CONTEXT_CHOICES.map((choice, index) => (
+        {contextChoices.map((choice, index) => (
           <ListChoiceRow
             key={choice.mode}
             label={choice.label}
-            selected={mode === choice.mode}
+            selected={effectiveMode === choice.mode}
             separated={index > 0}
-            disabled={starting}
+            disabled={starting || choice.disabled}
             onPress={() => setMode(choice.mode)}
           />
         ))}
@@ -242,7 +246,7 @@ export function ThreadHandoffSheet({ route }: StaticScreenProps<ThreadHandoffPar
       )}
       {error === null ? null : <ErrorBanner message={error} />}
       <Button
-        label="Start new session"
+        label={starting && effectiveMode === "summary" ? "Summarizing…" : "Start new session"}
         tone="primary"
         fullWidth
         loading={starting}

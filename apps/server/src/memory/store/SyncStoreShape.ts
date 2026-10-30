@@ -457,6 +457,10 @@ export interface SyncStoreShape {
     environmentId: M.EnvironmentId,
     intentId: string,
   ) => Effect.Effect<M.MemoryPayload | undefined, MemoryStorageError>;
+  readonly readLocalSummaryThroughSequence: (
+    environmentId: M.EnvironmentId,
+    intentId: string,
+  ) => Effect.Effect<number | undefined, MemoryStorageError>;
   readonly refreshLocalSummaryIntent: (
     intent: LocalMemoryIntent,
   ) => Effect.Effect<void, MemoryStorageError | MemoryStoreConflict>;

@@ -270,6 +270,7 @@ working right away. The original thread stays as it was.
 
 - **Focused** (the default) gives the new agent your latest request and the previous agent's
   latest reply, and the thread's ID so it can read older messages only when it needs them.
+- **Summary** gives the new agent a short summary of the thread instead of its last reply. It uses the memory model, so it needs memory turned on and costs one model call unless a memory summary of the thread is already current.
 - **Full transcript** also includes the saved history. A very long thread keeps its most recent part, and the
   agent can read the rest from the original thread. It takes longer and uses more context or
   credits.

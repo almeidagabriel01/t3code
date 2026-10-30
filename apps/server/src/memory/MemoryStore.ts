@@ -262,6 +262,7 @@ const make = Effect.gen(function* () {
   const {
     putLocalIntent,
     readLocalSummaryPayload,
+    readLocalSummaryThroughSequence,
     refreshLocalSummaryIntent,
     materializeLocalIntentTx,
     materializeLocalIntent,
@@ -508,6 +509,7 @@ const make = Effect.gen(function* () {
     materializeLocalIntentTx,
     completeLocalIntentTx,
     readLocalSummaryPayload,
+    readLocalSummaryThroughSequence,
     refreshLocalSummaryIntent,
     installCheckpointPage,
     completeCheckpoint,

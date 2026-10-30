@@ -142,6 +142,26 @@ export function resolveMemoryModelSelection(
   );
 }
 
+/**
+ * Whether a handoff may summarize the thread: it runs on the memory model, which memory turns off
+ * and some providers cannot run. The server enforces the same rules and stays authoritative.
+ */
+export function resolveHandoffSummaryAvailability(
+  settings: ServerSettings,
+  providers: ReadonlyArray<ServerProvider>,
+): { readonly available: true } | { readonly available: false; readonly reason: string } {
+  if (!settings.memoryEnabled) {
+    return { available: false, reason: "Memory is turned off in Settings." };
+  }
+  const { instanceId } = resolveMemoryModelSelection(settings, undefined);
+  const provider = providers.find((candidate) => candidate.instanceId === instanceId);
+  return provider?.enabled === true &&
+    isProviderAvailable(provider) &&
+    isProviderTextGenerationCapable(provider)
+    ? { available: true }
+    : { available: false, reason: "The memory model's provider can't write summaries." };
+}
+
 export function resolveReviewGuideModelSelection(
   settings: ServerSettings,
   providers: ReadonlyArray<ServerProvider> | undefined,

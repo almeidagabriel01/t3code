@@ -167,7 +167,7 @@ const ThreadConfigureTool = Tool.make("t3_thread_configure", {
 const ThreadTransferTool = Tool.make("t3_thread_transfer", {
   ...commandTool,
   description:
-    "Move context between threads. Omit `threadId` for this thread. handoff: when the user asks to hand this thread off, or to continue it in another agent or model, start a new thread in the same project and worktree with `modelSelection` (default the same) and `context` focused (default) or full transcript, and optional `instructions` for what the new agent does next; its turn starts at once. fork: copy it from `sourcePoint` (default latest stable run) into a new thread with the same setup; no turn runs yet. merge_back: merge it from `sourcePoint` into a related `targetThreadId` in the same project. status: its context transfers.",
+    "Move context between threads. Omit `threadId` for this thread. handoff: when the user asks to hand this thread off, or to continue it in another agent or model, start a new thread in the same project and worktree with `modelSelection` (default the same) and `context` focused (default), full transcript or summary, and optional `instructions` for what the new agent does next; its turn starts at once. fork: copy it from `sourcePoint` (default latest stable run) into a new thread with the same setup; no turn runs yet. merge_back: merge it from `sourcePoint` into a related `targetThreadId` in the same project. status: its context transfers.",
   parameters: Schema.Struct({
     action: Schema.Literals(["fork", "handoff", "merge_back", "status"]),
     environmentId: OrchestratorMcpEnvironmentTarget,

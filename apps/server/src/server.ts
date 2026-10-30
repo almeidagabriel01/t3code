@@ -392,8 +392,13 @@ const memoryApplicationLayers = makeMemoryApplicationLayers({
   layerServerSettings,
   layerTextGeneration,
 });
-const { layerMemoryStarted, layerMemorySync, layerProviderMemoryImport, layerMemorySnapshot } =
-  memoryApplicationLayers;
+const {
+  layerThreadHandoffSummary,
+  layerMemoryStarted,
+  layerMemorySync,
+  layerProviderMemoryImport,
+  layerMemorySnapshot,
+} = memoryApplicationLayers;
 
 const layerPullRequestService = PullRequestService.layer.pipe(
   Layer.provide(PullRequestProviderRegistry.layer),
@@ -555,6 +560,7 @@ const layerScheduledTaskWebhookOrigin = Layer.effect(
 );
 
 const layerOrchestrationV2Runtime = RuntimeLayer.layerProduction.pipe(
+  Layer.provide(layerThreadHandoffSummary),
   Layer.provide(InstanceSpend.layerBudgetGate),
   Layer.provide(layerScheduledTaskWebhookOrigin),
   Layer.provide(ProviderEventIngestor.layerAnalytics),

@@ -123,7 +123,11 @@ export function ChoiceDialog(props: {
 export function OptionSelect<T extends string>(props: {
   readonly label: string;
   readonly value: T;
-  readonly options: ReadonlyArray<{ readonly value: T; readonly label: string }>;
+  readonly options: ReadonlyArray<{
+    readonly value: T;
+    readonly label: string;
+    readonly disabled?: boolean;
+  }>;
   readonly disabled?: boolean;
   readonly onChange: (value: T) => void;
 }) {
@@ -142,7 +146,12 @@ export function OptionSelect<T extends string>(props: {
       </SelectTrigger>
       <SelectPopup alignItemWithTrigger={false}>
         {props.options.map((option) => (
-          <SelectItem hideIndicator key={option.value} value={option.value}>
+          <SelectItem
+            hideIndicator
+            key={option.value}
+            value={option.value}
+            disabled={option.disabled === true}
+          >
             {option.label}
           </SelectItem>
         ))}

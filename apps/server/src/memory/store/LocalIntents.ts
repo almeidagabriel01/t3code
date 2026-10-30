@@ -82,6 +82,21 @@ export const makeLocalIntents = (
       ? yield* stored("summary-local-payload-codec", payloadCodec.decode(rows[0].body_json, strict))
       : undefined;
   });
+  /** The newest event sequence the local summary covers; undefined when none is stored. */
+  const readLocalSummaryThroughSequence = Effect.fn("MemoryStore.readLocalSummaryThroughSequence")(
+    function* (environmentId: M.EnvironmentId, intentId: string) {
+      const rows = yield* stored(
+        "summary-local-through-read",
+        sql<{
+          metadata_json: string;
+        }>`SELECT metadata_json FROM memory_outbox WHERE id=${`local:${environmentId}:${intentId}`} AND status!='cancelled'`,
+      );
+      return rows[0]
+        ? (yield* localMetadataCodec.decode(rows[0].metadata_json, strict)).provenance
+            .sourceWatermark?.throughSequence
+        : undefined;
+    },
+  );
   const refreshLocalSummaryIntent = Effect.fn("MemoryStore.refreshLocalSummaryIntent")(function* (
     input: LocalMemoryIntent,
   ) {
@@ -237,6 +252,7 @@ export const makeLocalIntents = (
   return {
     putLocalIntent,
     readLocalSummaryPayload,
+    readLocalSummaryThroughSequence,
     refreshLocalSummaryIntent,
     materializeLocalIntentTx,
     materializeLocalIntent,

@@ -11,6 +11,7 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 
+import * as ThreadHandoffSummary from "../memory/ThreadHandoffSummary.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ThreadHandoff from "./ThreadHandoffService.ts";
 import * as ThreadLaunch from "./ThreadLaunchService.ts";
@@ -46,10 +47,12 @@ const harness = (source: {
   readonly deletedAt?: string | null;
   readonly checkpoints?: ReadonlyArray<ReturnType<typeof checkpoint>>;
   readonly recordFails?: boolean;
+  readonly summary?: "unavailable" | "failed";
 }) =>
   Effect.gen(function* () {
     const launches = yield* Ref.make<ReadonlyArray<ThreadLaunch.ThreadLaunchInput>>([]);
     const recorded = yield* Ref.make<ReadonlyArray<unknown>>([]);
+    const summarized = yield* Ref.make(0);
     const disabled = yield* Ref.make(false);
     const thread = {
       id: sourceThreadId,
@@ -80,6 +83,17 @@ const harness = (source: {
                 checkpoints: source.checkpoints ?? [],
                 visibleTurnItems: [{ position: 0, item: { type: "message" } }],
               } as never),
+          }),
+          Layer.mock(ThreadHandoffSummary.ThreadHandoffSummary)({
+            // A different text on every call, as a model gives.
+            summarize: () =>
+              source.summary === undefined
+                ? Ref.updateAndGet(summarized, (count) => count + 1).pipe(
+                    Effect.map((count) => `summary ${count}`),
+                  )
+                : Effect.fail(
+                    new ThreadHandoffSummary.ThreadHandoffSummaryError({ reason: source.summary }),
+                  ),
           }),
           Layer.mock(ProjectService.ProjectService)({
             getById: () => Effect.succeedSome({ id: projectId, workspaceRoot: "/repo" } as never),
@@ -120,7 +134,7 @@ const harness = (source: {
           ...overrides,
         }),
       ).pipe(Effect.provide(layer));
-    return { handoff, launches, recorded, disabled };
+    return { handoff, launches, recorded, summarized, disabled };
   });
 
 const conversation = [message("user", "make login faster"), message("assistant", "cached it")];
@@ -216,6 +230,46 @@ it.effect("leads the prompt with the instructions and lists the files the source
     );
     assert.notInclude(text, "stale.ts");
     assert.notInclude(text, "subagent.ts");
+  }),
+);
+
+it.effect(
+  "summary mode swaps the last reply for the summary and keeps the same thread on a retry",
+  () =>
+    Effect.gen(function* () {
+      const { handoff, launches, summarized } = yield* harness({
+        worktreePath: null,
+        messages: conversation,
+      });
+      const first = yield* handoff({ mode: "summary", clientRequestId: undefined });
+      const retry = yield* handoff({ mode: "summary", clientRequestId: undefined });
+      const [launched] = yield* Ref.get(launches);
+      const text = launched?.initialMessage?.text ?? "";
+      assert.include(text, "Summary of the previous thread:");
+      assert.include(text, "summary 1");
+      assert.include(text, "make login faster");
+      assert.notInclude(text, "cached it");
+      assert.notInclude(text, "Saved transcript");
+      // The summary text differs per call, yet the request id does not depend on it.
+      assert.strictEqual(yield* Ref.get(summarized), 2);
+      assert.strictEqual(retry.threadId, first.threadId);
+    }),
+);
+
+it.effect.each([
+  { summary: "unavailable" as const, reason: "summary-unavailable" },
+  { summary: "failed" as const, reason: "summary-failed" },
+])("fails a summary handoff as $reason without launching", ({ summary, reason }) =>
+  Effect.gen(function* () {
+    const { handoff, launches } = yield* harness({
+      worktreePath: null,
+      messages: conversation,
+      summary,
+    });
+    const exit = yield* Effect.exit(handoff({ mode: "summary" }));
+    assert.isTrue(Exit.isFailure(exit));
+    if (Exit.isFailure(exit)) assert.include(JSON.stringify(exit.cause), reason);
+    assert.lengthOf(yield* Ref.get(launches), 0);
   }),
 );
 

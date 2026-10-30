@@ -1,7 +1,9 @@
+import { resolveHandoffSummaryAvailability } from "@t3tools/shared/serverSettings";
 import type {
   ModelSelection,
   OrchestrationV2ThreadHandoffInput,
   OrchestrationV2ThreadHandoffMode,
+  ServerConfig,
   ThreadId,
 } from "@t3tools/contracts";
 
@@ -18,6 +20,12 @@ export const HANDOFF_CONTEXT_CHOICES = [
       "Starts from the latest request and reply, and reads older details only when needed.",
   },
   {
+    mode: "summary",
+    label: "Summary",
+    description:
+      "Starts from a short summary of the thread and the latest request. Writing it takes a model call and a few seconds.",
+  },
+  {
     mode: "full",
     label: "Full transcript",
     description:
@@ -28,6 +36,21 @@ export const HANDOFF_CONTEXT_CHOICES = [
   readonly label: string;
   readonly description: string;
 }>;
+
+/** Every context choice, with Summary disabled and its reason when the memory model cannot write one. */
+export function resolveHandoffContextChoices(
+  config: Pick<ServerConfig, "settings" | "providers"> | null,
+) {
+  const summary =
+    config === null
+      ? ({ available: false, reason: "Connect to the server to write a summary." } as const)
+      : resolveHandoffSummaryAvailability(config.settings, config.providers);
+  return HANDOFF_CONTEXT_CHOICES.map((choice) =>
+    choice.mode === "summary" && !summary.available
+      ? { ...choice, disabled: true, description: `Unavailable. ${summary.reason}` }
+      : { ...choice, disabled: false },
+  );
+}
 
 export const DEFAULT_HANDOFF_MODE: OrchestrationV2ThreadHandoffMode = "focused";
 

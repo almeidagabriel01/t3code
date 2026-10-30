@@ -1,4 +1,9 @@
-import { ProviderInstanceId, ThreadId, type ModelSelection } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  ProviderInstanceId,
+  ThreadId,
+  type ModelSelection,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { ModelOption } from "../../lib/modelOptions";
@@ -8,6 +13,7 @@ import {
   canStartHandoff,
   DEFAULT_HANDOFF_MODE,
   resolveHandoffAgents,
+  resolveHandoffContextChoices,
 } from "./thread-handoff";
 
 const claude: ModelSelection = {
@@ -48,6 +54,24 @@ describe("thread handoff", () => {
     expect(canStartHandoff({ ...ok, permitted: false })).toBe(false);
     expect(canStartHandoff({ ...ok, selection: null })).toBe(false);
     expect(canStartHandoff({ ...ok, starting: true })).toBe(false);
+  });
+
+  it("offers Summary only when the memory model can write one", () => {
+    const config = (memoryEnabled: boolean, supportsTextGeneration: boolean) =>
+      ({
+        settings: { ...DEFAULT_SERVER_SETTINGS, memoryEnabled, memoryModelSelection: codex },
+        providers: [{ instanceId: codex.instanceId, enabled: true, supportsTextGeneration }],
+      }) as never;
+    const summaryOf = (value: ReturnType<typeof config> | null) =>
+      resolveHandoffContextChoices(value).find((choice) => choice.mode === "summary");
+    expect(summaryOf(config(true, true))).toMatchObject({ disabled: false });
+    expect(summaryOf(config(false, true))).toMatchObject({
+      disabled: true,
+      description: expect.stringContaining("Memory is turned off"),
+    });
+    expect(summaryOf(config(true, false))).toMatchObject({ disabled: true });
+    expect(summaryOf(null)).toMatchObject({ disabled: true });
+    expect(resolveHandoffContextChoices(null).filter((choice) => choice.disabled)).toHaveLength(1);
   });
 
   it("builds the RPC input with the picked mode and mobile source", () => {

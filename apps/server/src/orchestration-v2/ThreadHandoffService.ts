@@ -16,6 +16,7 @@ import * as Hex from "effect/encoding/Hex";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
+import * as ThreadHandoffSummary from "../memory/ThreadHandoffSummary.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ThreadLaunch from "./ThreadLaunchService.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
@@ -46,6 +47,7 @@ const make = Effect.gen(function* () {
   const threads = yield* ThreadManagement.ThreadManagementService;
   const launches = yield* ThreadLaunch.ThreadLaunchService;
   const projects = yield* ProjectService.ProjectService;
+  const summaries = yield* ThreadHandoffSummary.ThreadHandoffSummary;
   const crypto = yield* Crypto.Crypto;
 
   const handoff: ThreadHandoffService["Service"]["handoff"] = Effect.fn(
@@ -84,6 +86,18 @@ const make = Effect.gen(function* () {
       (plan) => plan.kind === "proposed_plan" && plan.markdown !== "",
     );
     const instructions = input.instructions?.trim() || null;
+    // Waits for the model; the text stays out of the request id below, which the mode already splits.
+    const summaryText =
+      input.mode === "summary"
+        ? yield* summaries.summarize(thread.id).pipe(
+            Effect.mapError((error) =>
+              fail(error.reason === "unavailable" ? "summary-unavailable" : "summary-failed", {
+                ...(error.detail === undefined ? {} : { detail: error.detail }),
+                cause: error,
+              }),
+            ),
+          )
+        : null;
     // Already in the projection from each turn's checkpoint; nothing without a git workspace.
     const changedFiles = [
       ...new Set(
@@ -100,6 +114,7 @@ const make = Effect.gen(function* () {
       title: thread.title,
       workspacePath,
       branch: thread.branch,
+      summaryText,
       instructions,
       changedFiles,
       lastUserText: lastUser.text,

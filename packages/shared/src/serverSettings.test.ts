@@ -18,6 +18,7 @@ import {
   resolveModelPreferences,
   isModelSelectionProviderEnabled,
   parsePersistedServerObservabilitySettings,
+  resolveHandoffSummaryAvailability,
   resolveSourceControlWriterModelSelection,
 } from "./serverSettings.ts";
 
@@ -915,5 +916,52 @@ describe("synchronized model preferences", () => {
         setModelFavorites: [{ provider, model: "sol", favorite: false }],
       }).favorites,
     ).toEqual([{ provider: otherProvider, model: "sol" }]);
+  });
+});
+
+describe("resolveHandoffSummaryAvailability", () => {
+  const provider = (overrides: Partial<ServerProvider>) =>
+    ({
+      instanceId: ProviderInstanceId.make("codex"),
+      enabled: true,
+      availability: "available",
+      ...overrides,
+    }) as ServerProvider;
+
+  it.each([
+    { name: "a ready memory model", providers: [provider({})], memoryEnabled: true, ok: true },
+    {
+      name: "memory turned off",
+      providers: [provider({})],
+      memoryEnabled: false,
+      ok: false,
+      reason: "Memory is turned off",
+    },
+    {
+      name: "a provider that cannot generate text",
+      providers: [provider({ supportsTextGeneration: false })],
+      memoryEnabled: true,
+      ok: false,
+      reason: "can't write summaries",
+    },
+    {
+      name: "a disabled provider",
+      providers: [provider({ enabled: false })],
+      memoryEnabled: true,
+      ok: false,
+      reason: "can't write summaries",
+    },
+    { name: "an unknown provider", providers: [], memoryEnabled: true, ok: false, reason: "" },
+  ])("is $ok with $name", ({ providers, memoryEnabled, ok, reason }) => {
+    const result = resolveHandoffSummaryAvailability(
+      {
+        ...DEFAULT_SERVER_SETTINGS,
+        memoryEnabled,
+        memoryModelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-test"),
+      },
+      providers,
+    );
+    expect(result.available).toBe(ok);
+    if (!result.available) expect(result.reason).toContain(reason);
   });
 });

@@ -42,23 +42,11 @@ export class MemoryWorker extends Context.Service<
     readonly execute: (work: Store.MemoryWork) => Effect.Effect<void, MemoryWorkerError>;
   }
 >()("t3/memory/MemoryWorker") {}
-const decodeMessage = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(M.OrchestrationV2ConversationMessageJson),
-);
 const decodeRun = Schema.decodeUnknownEffect(Schema.fromJsonString(M.OrchestrationV2RunJson));
 const decodeSelection = Schema.decodeUnknownEffect(M.MemoryModelSelection);
 const encodeSelection = Schema.encodeSync(Schema.fromJsonString(M.MemoryModelSelection));
 const decodeInput = Schema.decodeUnknownEffect(M.GenerateMemorySummaryInput);
 const decodePayload = Schema.decodeEffect(M.MemoryPayload);
-const encodeGenerationMessage = Schema.encodeEffect(
-  Schema.fromJsonString(
-    Schema.Struct({
-      messageId: M.MessageId,
-      text: Schema.String,
-      completed: Schema.Boolean,
-    }),
-  ),
-);
 const strict = { onExcessProperty: "error" } as const;
 export const memoryRetryDelay = (attempt: number) =>
   [5000, 30000, 120000][Math.max(0, attempt - 1)] ?? 600000;
@@ -170,54 +158,9 @@ const make = Effect.gen(function* () {
               limit: 102,
             }),
           );
-          const messages: M.GenerateMemorySummaryInput["messages"][number][] = [];
-          let bytes = 0;
-          let last = rows[0];
-          let hasMore = false;
-          // One lookahead row distinguishes a full filtered page from actual EOF.
-          for (const row of rows.slice(0, 101)) {
-            const message = yield* query(decodeMessage(row.payload_json));
-            // Native history imports can contain the provider-only WP4 frame. It is
-            // reference data, not a new transcript fact (including an unfinished frame).
-            const text = message.text
-              .replace(/<external_goat_memory>[\s\S]*?(?:<\/external_goat_memory>|$)/g, "")
-              .trim();
-            if (!text) {
-              last = row;
-              continue;
-            }
-            const input = { messageId: message.id, text, completed: true };
-            const size = new TextEncoder().encode(
-              yield* query(encodeGenerationMessage(input)),
-            ).length;
-            if (messages.length === 100 || bytes + size > 180000) {
-              if (!messages.length) return yield* new MemoryWorkerError({ code: "invalid_output" });
-              hasMore = true;
-              break;
-            }
-            messages.push(input);
-            bytes += size;
-            last = row;
-          }
-          if (scanMemoryValue({ messages }).kind !== "allowed")
-            return yield* new MemoryWorkerError({ code: "secret_detected" });
-          return {
-            messages,
-            watermark:
-              (hasMore || rows.length > 101) && last
-                ? {
-                    ...meta.sourceWatermark,
-                    fromEventId: M.EventId.make(rows[0]!.event_id),
-                    toEventId: M.EventId.make(last.event_id),
-                    throughSequence: last.sequence,
-                  }
-                : {
-                    ...meta.sourceWatermark,
-                    fromEventId: M.EventId.make(
-                      rows[0]?.event_id ?? meta.sourceWatermark.fromEventId,
-                    ),
-                  },
-          };
+          return yield* SourceScan.boundSourcePage(rows, meta.sourceWatermark).pipe(
+            Effect.mapError(workerError),
+          );
         }),
       )
       .pipe(Effect.mapError(workerError));

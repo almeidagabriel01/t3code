@@ -37,6 +37,7 @@ import * as MemoryService from "./MemoryService.ts";
 import * as MemorySnapshot from "./MemorySnapshot.ts";
 import * as MemoryStore from "./MemoryStore.ts";
 import * as MemorySync from "./MemorySyncService.ts";
+import * as ThreadHandoffSummary from "./ThreadHandoffSummary.ts";
 import * as MemoryWorker from "./MemoryWorker.ts";
 
 // Sync needs the core service at construction; source reads need Sync only at invocation.
@@ -128,6 +129,11 @@ export const makeMemoryApplicationLayers = <PS, PE, PR, IS, IE, IR, SS, SE, SR, 
     Layer.provide(layerTextGeneration),
     Layer.provide(RuntimeIdentity.layer),
     Layer.provide(layerMemoryGenerationHold),
+  );
+  const layerThreadHandoffSummary = ThreadHandoffSummary.layer.pipe(
+    Layer.provide(ServerEnvironment.layerIdentity),
+    Layer.provide(layerMemoryService),
+    Layer.provide(layerTextGeneration),
   );
   const layerMemoryStarted = Layer.effectDiscard(
     MemoryWorker.MemoryWorker.use((worker) => worker.start()),
@@ -255,6 +261,7 @@ export const makeMemoryApplicationLayers = <PS, PE, PR, IS, IE, IR, SS, SE, SR, 
     layerRegisteredMemoryHub,
     layerMemoryHubAdministrator,
     layerMemoryService,
+    layerThreadHandoffSummary,
     layerMemoryStarted,
     layerMemoryHubReady,
     layerMemorySync,

@@ -104,10 +104,8 @@ it("starts a new session with the chosen agent and context, then opens it", asyn
     "  Add tests.  ",
   );
   await userEvent.click(screen.getByRole("combobox", { name: "Context" }));
-  await userEvent.click(screen.getByRole("option", { name: "Full transcript" }));
-  await expect
-    .element(screen.getByRole("option", { name: "Full transcript" }))
-    .not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole("option", { name: "Summary" }));
+  await expect.element(screen.getByRole("option", { name: "Summary" })).not.toBeInTheDocument();
   // The app stylesheet is absent here, so the popup's footer sits under its inert backdrop.
   await act(async () =>
     (screen.getByRole("button", { name: "Start new session" }).element() as HTMLElement).click(),
@@ -118,7 +116,7 @@ it("starts a new session with the chosen agent and context, then opens it", asyn
     input: {
       sourceThreadId: threadId,
       modelSelection: expect.objectContaining({ instanceId: claude, model: "claude-test" }),
-      mode: "full",
+      mode: "summary",
       instructions: "Add tests.",
       clientRequestId: expect.any(String),
     },

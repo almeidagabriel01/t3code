@@ -3946,7 +3946,7 @@ export class OrchestrationV2RestartProviderSessionError extends Schema.TaggedErr
   }
 }
 
-export const OrchestrationV2ThreadHandoffMode = Schema.Literals(["focused", "full"]);
+export const OrchestrationV2ThreadHandoffMode = Schema.Literals(["focused", "full", "summary"]);
 export type OrchestrationV2ThreadHandoffMode = typeof OrchestrationV2ThreadHandoffMode.Type;
 
 export const THREAD_HANDOFF_INSTRUCTIONS_MAX_CHARS = 4000;
@@ -3978,6 +3978,8 @@ export class OrchestrationV2ThreadHandoffError extends Schema.TaggedError<Orches
       "source-not-found",
       "nothing-to-hand-off",
       "provider-disabled",
+      "summary-unavailable",
+      "summary-failed",
       "launch-failed",
     ]),
     detail: Schema.optional(Schema.String),
@@ -3992,6 +3994,10 @@ export class OrchestrationV2ThreadHandoffError extends Schema.TaggedError<Orches
         return "This thread has no messages to hand off yet.";
       case "provider-disabled":
         return this.detail ?? "That agent is disabled.";
+      case "summary-unavailable":
+        return this.detail ?? "A summary is not available right now.";
+      case "summary-failed":
+        return "Could not summarize this thread. Try again, or pick another context.";
       case "launch-failed":
         return "Could not start the new session.";
     }

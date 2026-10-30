@@ -12,6 +12,7 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
+import { resolveHandoffSummaryAvailability } from "@t3tools/shared/serverSettings";
 import { useNavigate } from "@tanstack/react-router";
 import { ArrowRightLeftIcon } from "lucide-react";
 import { useState } from "react";
@@ -46,6 +47,7 @@ import { openThreadHandoffDialog, threadHandoffDialogAtom } from "./threadHandof
 
 const CONTEXT_OPTIONS = [
   { value: "focused", label: "Focused (Recommended)" },
+  { value: "summary", label: "Summary" },
   { value: "full", label: "Full transcript" },
 ] as const satisfies ReadonlyArray<{
   readonly value: OrchestrationV2ThreadHandoffMode;
@@ -55,6 +57,8 @@ const CONTEXT_OPTIONS = [
 const CONTEXT_HELP: Record<OrchestrationV2ThreadHandoffMode, string> = {
   focused:
     "Starts from the latest request and reply, and reads older details only when needed. Usually enough.",
+  summary:
+    "Starts from a short summary of the thread and the latest request. Writing it takes a model call and a few seconds.",
   full: "Includes the saved transcript, the most recent part if it is very long. This takes longer and uses more context, plan usage, or API credits.",
 };
 
@@ -144,6 +148,12 @@ function ThreadHandoffDialog({
     activeInstanceId,
     activeModel,
   );
+  const summary = resolveHandoffSummaryAvailability(settings, providers);
+  const contextOptions = CONTEXT_OPTIONS.map((option) =>
+    option.value === "summary" ? { ...option, disabled: !summary.available } : option,
+  );
+  // A summary that became unavailable after it was picked is not sent.
+  const effectiveMode = mode === "summary" && !summary.available ? "focused" : mode;
   const sourceEntry = entries.find((entry) => entry.instanceId === thread?.providerInstanceId);
   const startsIn = thread === null ? null : (thread.worktreePath ?? project?.workspaceRoot ?? null);
 
@@ -156,7 +166,7 @@ function ThreadHandoffDialog({
       input: {
         sourceThreadId: threadId,
         modelSelection: selection,
-        mode,
+        mode: effectiveMode,
         clientRequestId,
         ...(instructions.trim() === "" ? {} : { instructions: instructions.trim() }),
       },
@@ -184,8 +194,9 @@ function ThreadHandoffDialog({
   return (
     <Dialog
       open
+      // Closing mid-start only stops waiting; a started handoff still creates its thread.
       onOpenChange={(open) => {
-        if (!open && !starting) onClose();
+        if (!open) onClose();
       }}
     >
       <DialogPopup className="max-w-lg">
@@ -230,12 +241,19 @@ function ThreadHandoffDialog({
               <Label>Context</Label>
               <OptionSelect
                 label="Context"
-                value={mode}
+                value={effectiveMode}
                 disabled={starting}
-                options={CONTEXT_OPTIONS}
+                options={contextOptions}
                 onChange={setMode}
               />
-              <p className="text-muted-foreground text-xs leading-relaxed">{CONTEXT_HELP[mode]}</p>
+              <p className="text-muted-foreground text-xs leading-relaxed">
+                {CONTEXT_HELP[effectiveMode]}
+              </p>
+              {summary.available ? null : (
+                <p className="text-muted-foreground text-xs leading-relaxed">
+                  Summary is unavailable. {summary.reason}
+                </p>
+              )}
             </div>
             <div className="grid min-w-0 gap-1.5">
               <Label>What should it do next?</Label>
@@ -272,7 +290,7 @@ function ThreadHandoffDialog({
           </div>
         </DialogPanel>
         <DialogFooter>
-          <Button variant="outline" size="sm" onClick={onClose} disabled={starting}>
+          <Button variant="outline" size="sm" onClick={onClose}>
             Cancel
           </Button>
           <Button
@@ -280,7 +298,11 @@ function ThreadHandoffDialog({
             onClick={() => void start()}
             disabled={!canHandoff || selection === null || starting}
           >
-            {starting ? "Starting..." : "Start new session"}
+            {starting
+              ? effectiveMode === "summary"
+                ? "Summarizing…"
+                : "Starting..."
+              : "Start new session"}
           </Button>
         </DialogFooter>
       </DialogPopup>
