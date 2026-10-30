@@ -8,6 +8,12 @@ import * as NodeFS from "node:fs";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
+import * as Duration from "effect/Duration";
+import * as Fiber from "effect/Fiber";
+import * as Latch from "effect/Latch";
+import * as Deferred from "effect/Deferred";
+import * as TestClock from "effect/testing/TestClock";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -45,16 +51,12 @@ const sessionId = "grok-text-session";`,
       "if (request.id === undefined) continue;",
       `requestFeed.write(line + "\\n");
     if (request.method === undefined) continue;
-    if (request.method === "session/cancel" && globalThis.stalledPromptId !== undefined && !process.env.T3_MEMORY_IGNORE_CANCEL) {
-      write({ jsonrpc: "2.0", id: globalThis.stalledPromptId, result: { stopReason: "cancelled" } });
-      globalThis.stalledPromptId = undefined;
-    }
     if (request.id === undefined) continue;`,
     )
     .replace(
       'case "session/prompt":',
       `case "session/prompt":
-      if (process.env.T3_MEMORY_STALL) { globalThis.stalledPromptId = request.id; continue; }
+      if (process.env.T3_MEMORY_STALL) continue;
       if (process.env.T3_MEMORY_TOOL) {
         write({ jsonrpc: "2.0", method: "session/update", params: { sessionId, update: {
           sessionUpdate: "tool_call", toolCallId: "synthetic", title: "unsafe", status: "pending"
@@ -135,6 +137,34 @@ interface RequestFeed {
   readonly received: (method: string) => Effect.Effect<void>;
 }
 
+/**
+ * The test clock, except that each sleep's deadline is fixed when the code under
+ * test asks for it, which is also when `onSleep` reports it. TestClock registers
+ * a sleep only once its fiber runs, so an adjust that ran first would skip it.
+ */
+const makeDeadlineClock = (
+  testClock: TestClock.TestClock,
+  onSleep: (millis: number) => void,
+): TestClock.TestClock => ({
+  ...testClock,
+  sleep: (duration) =>
+    Effect.suspend(() => {
+      const millis = Duration.toMillis(duration);
+      const deadline = testClock.currentTimeMillisUnsafe() + millis;
+      onSleep(millis);
+      return Effect.suspend(() =>
+        testClock.sleep(
+          Duration.millis(Math.max(0, deadline - testClock.currentTimeMillisUnsafe())),
+        ),
+      );
+    }),
+});
+
+/**
+ * The fake agent sends each request line over a Unix socket after logging it.
+ * Watching the log with fs.watch missed the agent's last append on macOS under
+ * load, which left the timeout tests waiting until the test timeout.
+ */
 function makeRequestFeed(socketPath: string) {
   const seen = new Set<string>();
   const waiters = new Map<string, Set<() => void>>();
@@ -435,5 +465,54 @@ it.layer(layerGrokTextGenerationTest)("Grok memory generation", (it) => {
         }),
       memoryContext,
     ),
+  );
+
+  it.effect.each(operations)("%s times out and cleans up ACP and its workspace", (operation) =>
+    Effect.gen(function* () {
+      const testClock = yield* TestClock.testClockWith(Effect.succeed);
+      const timeoutArmed = Latch.makeUnsafe();
+      const removedTempDir = yield* withFakeAcpGrok(
+        { T3_MEMORY_STALL: "1" },
+        (generation, tempDir, feed) =>
+          Effect.gen(function* () {
+            const log = NodePath.join(tempDir, "requests.ndjson");
+            const ready = yield* Deferred.make<void>();
+            yield* feed
+              .received("session/prompt")
+              .pipe(Effect.andThen(Deferred.succeed(ready, undefined)), Effect.forkChild);
+            const fiber = yield* (
+              operation === "resolveMemoryConflict"
+                ? generation.resolveMemoryConflict!(memoryConflict).pipe(
+                    Effect.map((outcome): M.GenerateMemorySummaryOutcome => outcome),
+                  )
+                : generation.generateMemorySummary!(memorySummary)
+            ).pipe(Effect.flip, Effect.forkChild);
+            yield* Deferred.await(ready);
+            yield* timeoutArmed.await;
+            yield* TestClock.adjust(180_000);
+            const failure = yield* Fiber.join(fiber);
+            expect(failure.detail).toContain("timed out");
+            const requests = readJsonRpcRequests(log);
+            const cwd = requests.find((request) => request.method === "session/new")?.params?.cwd;
+            expect(typeof cwd).toBe("string");
+            expect(NodeFS.existsSync(String(cwd))).toBe(false);
+            expect(NodeFS.existsSync(NodePath.dirname(String(cwd)))).toBe(false);
+            const pid = Number(NodeFS.readFileSync(NodePath.join(tempDir, "acp.pid"), "utf8"));
+            // Signal 0 only probes the fixture PID; generation must have reaped it.
+            expect(() => process.kill(pid, 0)).toThrow(/ESRCH/);
+            return tempDir;
+          }),
+        memoryContext,
+      ).pipe(
+        Effect.provideService(
+          Clock.Clock,
+          makeDeadlineClock(testClock, (millis) => {
+            // Grok's request timeout; the test may only advance past it once it exists.
+            if (millis === 180_000) timeoutArmed.openUnsafe();
+          }),
+        ),
+      );
+      expect(NodeFS.existsSync(removedTempDir)).toBe(false);
+    }).pipe(Effect.provide(TestClock.layer())),
   );
 });

@@ -3,6 +3,9 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
+  MemoryId,
+  MemoryRevisionId,
+  MemorySpaceId,
   ChatAttachmentId,
   ChatFileAttachment,
   ChatImageAttachment,
@@ -39,6 +42,7 @@ import { TestClock } from "effect/testing";
 
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import { memoryContextText, packMemoryContext } from "@t3tools/provider-core/server/memoryContext";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
@@ -149,13 +153,16 @@ const withInstructions = (
       typeof entry.frame === "object" &&
       entry.frame !== null &&
       "type" in entry.frame &&
-      [
+      ([
         "session.prompt",
         "session.command",
         "session.compact",
         "command.list",
         "skill.list",
-      ].includes(String(entry.frame.type)),
+      ].includes(String(entry.frame.type)) ||
+        ("input" in entry.frame &&
+          typeof entry.frame.input === "object" &&
+          (entry.frame.input as { key?: unknown } | null)?.key === "t3-code-memory")),
   );
   const after = entries.findIndex(
     (entry, index) =>
@@ -414,7 +421,64 @@ const history = {
   cursor: {},
 };
 
+const memorySnapshot = packMemoryContext({
+  memorySpaceId: MemorySpaceId.make("00000000-0000-4000-8000-000000000099"),
+  projectionWatermark: 1,
+  items: [
+    {
+      memoryId: MemoryId.make("00000000-0000-4000-8000-000000000001"),
+      revisionId: MemoryRevisionId.make("00000000-0000-4000-8000-000000000002"),
+      scope: { kind: "user" },
+      provenance: { environmentId: EnvironmentId.make("fixture") },
+      assertionKind: "fact",
+      text: "& <instruction> 'data' \"quoted\"",
+    },
+  ],
+})!;
+
 it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
+  it.effect("installs, clears and reinstalls the framed memory instruction across turns", () =>
+    Effect.gen(function* () {
+      const memoryPut = (value: string) => [
+        out("session.instructions.entry.put", {
+          sessionID: SESSION,
+          key: "t3-code-memory",
+          value,
+        }),
+        reply("session.instructions.entry.put", null),
+      ];
+      const turn = (value: string) => [
+        ...memoryPut(value),
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ];
+      const { runtime, thread } = yield* resumed([
+        ...turn(memoryContextText(memorySnapshot)),
+        ...turn(""),
+        ...turn(memoryContextText(memorySnapshot)),
+      ]);
+      let refreshes = 0;
+      for (let index = 0; index < 3; index++) {
+        const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+        yield* runtime.startTurn({
+          ...turnInput(thread),
+          providerTurnOrdinal: index + 1,
+          runOrdinal: index + 1,
+          attemptId: RunAttemptId.make(`attempt:opencode2-adapter:memory-${index}`),
+          memoryContext: memorySnapshot,
+          refreshMemoryContext: () =>
+            Effect.sync(() => {
+              refreshes++;
+              return index === 1 ? undefined : memorySnapshot;
+            }),
+        });
+        assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+      }
+      assert.equal(refreshes, 3);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("switches the session's model and variant before a turn that changed them", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([
