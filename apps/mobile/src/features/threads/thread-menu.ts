@@ -66,9 +66,34 @@ export interface ThreadMenuInput {
   readonly canHandoff: boolean;
   readonly turnIntoProject: { readonly archivable: boolean } | null;
   readonly snoozePresetActions: ReadonlyArray<MenuAction>;
+  /** The assistant whose current conversation this is; it can't be renamed, archived or deleted. */
+  readonly assistant?: { readonly name: string; readonly resetDisabled?: boolean } | null;
 }
 
+const ASSISTANT_HIDDEN_IDS = new Set([
+  "rename",
+  "regenerate-title",
+  "turn-into-project",
+  "archive",
+  "delete",
+]);
+
 export function buildThreadMenuActions(input: ThreadMenuInput): MenuAction[] {
+  const actions = buildBaseThreadMenuActions(input);
+  if (!input.assistant) return actions;
+  return [
+    ...actions.filter((action) => !ASSISTANT_HIDDEN_IDS.has(action.id ?? "")),
+    {
+      id: "reset-assistant",
+      title: "Reset conversation",
+      image: "arrow.clockwise",
+      attributes: { disabled: input.assistant.resetDisabled === true },
+    },
+    { id: "assistant-settings", title: `${input.assistant.name} settings`, image: "gearshape" },
+  ];
+}
+
+function buildBaseThreadMenuActions(input: ThreadMenuInput): MenuAction[] {
   const arrangement: MenuAction[] = [
     ...(input.reorder
       ? [
@@ -210,6 +235,8 @@ export interface ThreadMenuHandlers {
   readonly regenerateTitle: () => void;
   readonly handoff: () => void;
   readonly turnIntoProject: () => void;
+  readonly resetAssistant?: () => void;
+  readonly assistantSettings?: () => void;
   readonly delete: () => void;
   readonly openCustomSnooze: () => void;
   readonly snooze: (snoozedUntil: string) => void;
@@ -263,6 +290,10 @@ export function runThreadMenuEvent(
       return handlers.handoff();
     case "turn-into-project":
       return handlers.turnIntoProject();
+    case "reset-assistant":
+      return handlers.resetAssistant?.();
+    case "assistant-settings":
+      return handlers.assistantSettings?.();
     case "delete":
       return handlers.delete();
     case "snooze:custom":

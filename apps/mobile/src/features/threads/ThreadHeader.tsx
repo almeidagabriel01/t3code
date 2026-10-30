@@ -12,6 +12,7 @@ import { useWorkspaceBackNavigation } from "../workspace/useAndroidWorkspaceNavi
 import { isDuoDevice } from "../../lib/device-type";
 import { useDeviceType } from "../../native/native-layout-metrics";
 import { useNativeWorkspaceColumnsSupported } from "../../native/NativeWorkspaceColumns";
+import { useThreadAssistant } from "../../state/assistants";
 import { useThreadMenu } from "./useThreadMenu";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 
@@ -35,6 +36,11 @@ export function ThreadHeader(
   const navigation = useNavigation();
   const usesNativeWorkspaceColumns = useNativeWorkspaceColumnsSupported();
   const deviceType = useDeviceType();
+  const assistant = useThreadAssistant(
+    props.thread?.environmentId ?? null,
+    props.thread?.id ?? null,
+  );
+  const title = assistant ? assistant.assistant.name : props.title;
   const { items: actionItems, customSnoozeSheet } = useThreadMenu(props.thread, () => {
     // A split view has no list to return to; the deleted or archived thread's own state shows instead.
     if (!layout.usesSplitView) goBack();
@@ -82,6 +88,7 @@ export function ThreadHeader(
       : { title: "Thread", icon: "ellipsis", separateBackground: false, items: menuItems };
   const native = useThreadHeaderOptions({
     ...props,
+    title,
     gitControls: { ...gitControls, threadMenu, toolsInMenu },
   });
   const androidHeaderActions = useMemo<ReadonlyArray<AppBarAction>>(() => {
@@ -147,7 +154,7 @@ export function ThreadHeader(
   return (
     <>
       <AppBar
-        title={props.title}
+        title={title}
         subtitle={props.subtitle}
         sidebar={native.sidebar}
         options={native.options}

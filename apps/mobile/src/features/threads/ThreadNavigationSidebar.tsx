@@ -1,4 +1,5 @@
 import { useActiveNewTask } from "../../state/active-new-task";
+import { HomeAssistantsSection } from "../assistants/HomeAssistantsSection";
 import { ThreadUndoNotice } from "../home/ThreadUndoNotice";
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
 import { resolveScratchProjectScopeKey } from "@t3tools/client-runtime/state/project-grouping";
@@ -686,6 +687,16 @@ function ThreadNavigationSidebarPane(
     filterMenu,
     onOpenSettings: props.onOpenSettings,
   });
+  const assistantsHeader =
+    props.searchQuery.trim().length > 0 ? null : (
+      <HomeAssistantsSection
+        sidebar
+        gutter={4}
+        environmentLabelById={
+          new Map(environments.map((environment) => [environment.environmentId, environment.label]))
+        }
+      />
+    );
   const listEmpty = (
     <Text
       className={
@@ -772,6 +783,7 @@ function ThreadNavigationSidebarPane(
                 showsVerticalScrollIndicator={false}
                 style={styles.threadList}
                 ListEmptyComponent={listEmpty}
+                ListHeaderComponent={assistantsHeader}
               />
             </GestureDetector>
           </SwipeableScrollGateProvider>
@@ -845,6 +857,7 @@ function ThreadNavigationSidebarPane(
                 showsVerticalScrollIndicator={false}
                 style={styles.threadList}
                 ListEmptyComponent={listEmpty}
+                ListHeaderComponent={assistantsHeader}
               />
             </GestureDetector>
           </SwipeableScrollGateProvider>

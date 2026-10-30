@@ -32,6 +32,11 @@ import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import type { ArchivedThreadGroup, ArchivedThreadSortOrder } from "./archivedThreadList";
 import { SettingsScreenContent } from "../settings/components/SettingsScreen";
 
+export interface AssistantRestore {
+  readonly assistantName: string;
+  readonly onRestore: () => void;
+}
+
 export interface ArchivedThreadsHeaderEnvironment {
   readonly environmentId: EnvironmentId;
   readonly label: string;
@@ -185,6 +190,8 @@ function ArchivedThreadRow(props: {
   readonly onSwipeableWillOpen: (methods: SwipeableMethods) => void;
   readonly simultaneousSwipeGesture?: ComponentProps<typeof ThreadSwipeable>["simultaneousWith"];
   readonly onUnarchive: () => void;
+  /** Set for an assistant's old conversation: where it restores to, or null when it can't. */
+  readonly assistantRestore?: AssistantRestore | null;
   readonly thread: EnvironmentThreadShell;
 }) {
   const { width: windowWidth } = useWindowDimensions();
@@ -194,9 +201,11 @@ function ArchivedThreadRow(props: {
     AuthOrchestrationOperateScope,
   );
   const timestamp = relativeTime(props.thread.archivedAt ?? props.thread.updatedAt);
-  const subtitle = [props.environmentLabel, props.thread.branch].filter((part): part is string =>
-    Boolean(part),
-  );
+  const subtitle = [
+    props.environmentLabel,
+    props.thread.branch,
+    props.assistantRestore ? `Restores to ${props.assistantRestore.assistantName}` : null,
+  ].filter((part): part is string => Boolean(part));
   const rowContent = (
     <View
       className={`flex-row items-center gap-3 bg-grouped-card px-4 py-3 ${props.isLast ? "" : "border-b border-separator"}`}
@@ -260,12 +269,29 @@ function ArchivedThreadRow(props: {
       onDelete={props.onDelete}
       onSwipeableClose={props.onSwipeableClose}
       onSwipeableWillOpen={props.onSwipeableWillOpen}
-      primaryAction={{
-        accessibilityLabel: `Unarchive ${props.thread.title}`,
-        icon: "arrow.uturn.backward",
-        label: "Unarchive",
-        onPress: props.onUnarchive,
-      }}
+      primaryAction={
+        props.assistantRestore === undefined
+          ? {
+              accessibilityLabel: `Unarchive ${props.thread.title}`,
+              icon: "arrow.uturn.backward",
+              label: "Unarchive",
+              onPress: props.onUnarchive,
+            }
+          : props.assistantRestore
+            ? {
+                accessibilityLabel: `Restore to ${props.assistantRestore.assistantName}`,
+                icon: "arrow.uturn.backward",
+                label: "Restore",
+                onPress: props.assistantRestore.onRestore,
+              }
+            : {
+                accessibilityLabel: `Delete ${props.thread.title}`,
+                icon: "trash",
+                label: "Delete",
+                destructive: true,
+                onPress: props.onDelete,
+              }
+      }
       simultaneousWith={props.simultaneousSwipeGesture}
       threadTitle={props.thread.title}
     >
@@ -302,8 +328,12 @@ export function ArchivedThreadsScreen(props: {
   readonly onSearchQueryChange: (query: string) => void;
   readonly onSortOrderChange: (sortOrder: ArchivedThreadSortOrder) => void;
   readonly onUnarchiveThread: (thread: EnvironmentThreadShell) => void;
+  /** Undefined for an ordinary thread; see `AssistantRestore`. */
+  readonly assistantRestoreFor: (
+    thread: EnvironmentThreadShell,
+  ) => AssistantRestore | null | undefined;
 }) {
-  const { onDeleteThread, onUnarchiveThread } = props;
+  const { onDeleteThread, onUnarchiveThread, assistantRestoreFor } = props;
   const openSwipeableRef = useRef<SwipeableMethods | null>(null);
   const archiveScrollGesture = useNativeGesture();
   const environmentLabelsById = useMemo(
@@ -376,6 +406,7 @@ export function ArchivedThreadsScreen(props: {
         onSwipeableClose={handleSwipeableClose}
         onSwipeableWillOpen={handleSwipeableWillOpen}
         onUnarchive={() => onUnarchiveThread(item.thread)}
+        assistantRestore={assistantRestoreFor(item.thread)}
         simultaneousSwipeGesture={archiveScrollGesture}
         thread={item.thread}
       />

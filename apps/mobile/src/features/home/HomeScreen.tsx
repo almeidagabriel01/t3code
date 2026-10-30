@@ -56,6 +56,7 @@ import { useThreadListSearchMatches } from "../threads/useThreadListSearchMatche
 import { useThreadListV2 } from "../threads/useThreadListV2";
 import { useThreadListNow } from "../threads/use-thread-list-now";
 import { useThreadJumpShortcuts } from "../keyboard/threadKeyboardShortcuts";
+import { HomeAssistantsSection } from "../assistants/HomeAssistantsSection";
 import { HomeDecisionsSection } from "../decisions/HomeDecisionsSection";
 import { decisionThreadKey, useOpenDecisionThreadKeys } from "../../state/decisions";
 import { hasSidebarNotification } from "@t3tools/client-runtime/state/thread-attention";
@@ -763,6 +764,19 @@ export function HomeScreen(props: HomeScreenProps) {
           onProjectChange={props.onProjectChange}
         />
       ) : null}
+      {hasSearchQuery ? null : (
+        <HomeAssistantsSection
+          gutter={primaryColumn ? 8 : 16}
+          environmentLabelById={
+            new Map(
+              Object.values(props.savedConnectionsById).map((connection) => [
+                connection.environmentId,
+                connection.environmentLabel,
+              ]),
+            )
+          }
+        />
+      )}
       <HomeDecisionsSection
         gutter={primaryColumn ? 8 : 16}
         onOpenThread={(entry) => {

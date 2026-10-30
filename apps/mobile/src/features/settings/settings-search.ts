@@ -61,6 +61,15 @@ const SETTINGS_SEARCH_TERMS = {
   SettingsFollowUp: ["follow-ups", "queue", "steer", "while the agent is running"],
   SettingsKanban: ["kanban", "board", "cards", "tasks", "columns"],
   SettingsMemory: ["memory", "remember", "conversations", "import", "sharing", "agent access"],
+  SettingsAssistants: [
+    "assistants",
+    "jarvis",
+    "agents",
+    "personas",
+    "instructions",
+    "tool access",
+    "reset",
+  ],
   SettingsNotes: ["notes", "markdown", "ideas", "capture", "start work"],
   SettingsArchive: ["archive", "archived", "restore", "unarchive"],
   SettingsProviderAccounts: [

@@ -48,6 +48,8 @@ import {
   useThreadShell,
   useThreadShells,
 } from "../../state/entities";
+import { useAssistantEntries } from "../../state/assistants";
+import { useOpenAssistantEditor } from "../assistants/openAssistantEditor";
 import { useHasKanbanEnvironments } from "../../state/kanban";
 import { useHasMemoryEnvironments } from "../../state/memory";
 import { useHasNotesEnvironments } from "../../state/notes";
@@ -233,6 +235,8 @@ export function CommandPalette(props: {
   const hasBoards = useHasKanbanEnvironments();
   const hasNotes = useHasNotesEnvironments();
   const hasMemory = useHasMemoryEnvironments();
+  const assistants = useAssistantEntries().active;
+  const openAssistantEditor = useOpenAssistantEditor();
   const threads = useThreadShells();
   const activeThreadRef = parseActiveThreadPath(props.pathname);
   const activeThread = useThreadShell(activeThreadRef);
@@ -398,6 +402,36 @@ export function CommandPalette(props: {
         run: () => void startTriage(triageEnvironmentId),
       });
     }
+    const multipleAssistantEnvironments =
+      new Set(assistants.map((entry) => entry.environmentId)).size > 1;
+    for (const { environmentId, assistant } of assistants) {
+      const threadId = assistant.threadId;
+      if (threadId === null) continue;
+      actions.push({
+        key: `assistant:${environmentId}:${assistant.id}`,
+        kind: "action",
+        title: `Open ${assistant.name}`,
+        ...(multipleAssistantEnvironments
+          ? { detail: savedConnectionsById[environmentId]?.environmentLabel ?? environmentId }
+          : {}),
+        searchTerms: ["assistant", assistant.name, assistant.handle],
+        run: () =>
+          selectDetail({
+            name: "Thread",
+            params: { environmentId: String(environmentId), threadId: String(threadId) },
+          }),
+      });
+    }
+    const [firstAssistant] = assistants;
+    if (firstAssistant) {
+      actions.push({
+        key: "newAssistant",
+        kind: "action",
+        title: "New assistant",
+        searchTerms: ["assistant", "new", "create", "add"],
+        run: () => openAssistantEditor(firstAssistant.environmentId, null),
+      });
+    }
     const projectByKey = new Map(
       projects.map((project) => [scopedProjectKey(project.environmentId, project.id), project]),
     );
@@ -509,6 +543,8 @@ export function CommandPalette(props: {
     hasBoards,
     hasNotes,
     hasMemory,
+    assistants,
+    openAssistantEditor,
     canTriage,
     navigation,
     projects,

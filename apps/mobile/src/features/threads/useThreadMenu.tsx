@@ -1,16 +1,19 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { canSnooze, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
-import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
+import { AuthOrchestrationOperateScope, type EnvironmentId } from "@t3tools/contracts";
 import { useState, type ReactNode } from "react";
 
 import type { AppBarMenuItem } from "../../components/ui/AppBar.types";
 import { useNowMinuteMs } from "../../lib/clock";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { uuidv4 } from "../../lib/uuid";
+import { useThreadAssistant } from "../../state/assistants";
 import { threadListEnvironmentsAtom } from "../../state/server";
 import { useEnvironmentScope } from "../../state/session";
 import { turnThreadIntoProject, canTurnThreadIntoProject } from "./turnThreadIntoProject";
+import { useAssistantFlows } from "../assistants/useAssistantFlows";
+import { useOpenAssistantEditor } from "../assistants/openAssistantEditor";
 import { useThreadListActions } from "../home/useThreadListActions";
 import { threadCanArchive } from "../home/threadArchive";
 import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
@@ -45,6 +48,11 @@ export function useThreadMenu(
   const selectDetail = useSelectWorkspaceDetail();
   const nowMinuteMs = useNowMinuteMs();
   const [customSnoozeOpen, setCustomSnoozeOpen] = useState(false);
+  const assistantEntry = useThreadAssistant(thread?.environmentId ?? null, thread?.id ?? null);
+  const assistantFlows = useAssistantFlows(
+    assistantEntry?.environmentId ?? thread?.environmentId ?? ("" as EnvironmentId),
+  );
+  const openAssistantEditor = useOpenAssistantEditor();
   const actions = useThreadListActions((action) => {
     if (action === "archive" || action === "delete") onRemoved();
   });
@@ -80,6 +88,12 @@ export function useThreadMenu(
     canHandoff: canHandoffThread(thread),
     turnIntoProject: canTurnIntoProject ? { archivable: threadCanArchive(thread.runtime) } : null,
     snoozePresetActions: buildSnoozePresetActions(snoozePresets),
+    assistant: assistantEntry
+      ? {
+          name: assistantEntry.assistant.name,
+          resetDisabled: !threadCanArchive(thread.runtime) || !assistantFlows.canAct,
+        }
+      : null,
   });
   const onAction = (event: string) =>
     runThreadMenuEvent(
@@ -111,6 +125,14 @@ export function useThreadMenu(
         regenerateTitle: () => void actions.regenerateThreadTitle(thread),
         handoff: () => openThreadHandoff(thread),
         turnIntoProject: () => void turnThreadIntoProject(thread),
+        resetAssistant: () => {
+          if (assistantEntry) {
+            assistantFlows.reset(assistantEntry.assistant, { openAfter: true });
+          }
+        },
+        assistantSettings: () => {
+          if (assistantEntry) openAssistantEditor(environmentId, assistantEntry.assistant);
+        },
         delete: () => actions.confirmDeleteThread(thread),
         openCustomSnooze: () => setCustomSnoozeOpen(true),
         snooze: (snoozedUntil) => void actions.snoozeThread(thread, snoozedUntil),

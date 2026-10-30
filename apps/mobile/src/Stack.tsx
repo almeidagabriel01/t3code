@@ -133,6 +133,9 @@ import { KanbanCardRouteScreen } from "./features/kanban/KanbanCardRouteScreen";
 import { KanbanArchiveRouteScreen } from "./features/kanban/KanbanArchiveRouteScreen";
 import { KanbanLinkThreadRouteScreen } from "./features/kanban/KanbanLinkThreadRouteScreen";
 import { NotesRouteScreen } from "./features/notes/NotesRouteScreen";
+import { AssistantEditRouteScreen } from "./features/assistants/AssistantEditRouteScreen";
+import { AssistantModelPickerRouteScreen } from "./features/assistants/AssistantModelPickerRouteScreen";
+import { SettingsAssistantsRouteScreen } from "./features/assistants/SettingsAssistantsRouteScreen";
 import { SettingsMemoryRouteScreen } from "./features/settings/SettingsMemoryRouteScreen";
 import { ClaudeChromeRouteScreen } from "./features/settings/ClaudeChromeRouteScreen";
 import { FallbackModelPickerRouteScreen } from "./features/settings/FallbackModelPickerRouteScreen";
@@ -421,6 +424,27 @@ const SETTINGS_SCREENS = {
   }),
   SettingsScheduledTaskModel: createNativeStackScreen({
     screen: ScheduledTaskModelPickerRouteScreen,
+    options: {
+      ...SETTINGS_PAGE_OPTIONS,
+      headerShown: false,
+      ...(Platform.OS === "android"
+        ? { presentation: "card" as const }
+        : {
+            ...THREAD_SETTINGS_SHEET_OPTIONS,
+          }),
+    },
+  }),
+  SettingsAssistants: createNativeStackScreen({
+    screen: SettingsAssistantsRouteScreen,
+    linking: "settings/assistants",
+    options: { ...SETTINGS_PAGE_OPTIONS, title: "Assistants" },
+  }),
+  SettingsAssistantEdit: createNativeStackScreen({
+    screen: AssistantEditRouteScreen,
+    options: { ...SETTINGS_PAGE_OPTIONS, title: "Assistant" },
+  }),
+  SettingsAssistantModel: createNativeStackScreen({
+    screen: AssistantModelPickerRouteScreen,
     options: {
       ...SETTINGS_PAGE_OPTIONS,
       headerShown: false,

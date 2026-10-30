@@ -72,6 +72,27 @@ describe("thread menu", () => {
     expect(ids({ pinned: true })).toContain("unpin");
   });
 
+  it("swaps rename, archive and delete for reset and settings on an assistant thread", () => {
+    const assistantIds = ids({
+      assistant: { name: "Jarvis" },
+      turnIntoProject: { archivable: true },
+    });
+    for (const removed of [
+      "rename",
+      "regenerate-title",
+      "turn-into-project",
+      "archive",
+      "delete",
+    ]) {
+      expect(assistantIds).not.toContain(removed);
+    }
+    expect(assistantIds.slice(-2)).toEqual(["reset-assistant", "assistant-settings"]);
+    expect(buildThreadMenuActions({ ...input, assistant: { name: "Jarvis" } }).at(-1)?.title).toBe(
+      "Jarvis settings",
+    );
+    expect(ids()).not.toContain("reset-assistant");
+  });
+
   it("routes events to handlers, including snooze presets", () => {
     const handlers = Object.fromEntries(
       [

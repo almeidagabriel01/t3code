@@ -6,7 +6,7 @@ import { SheetHeader } from "../../components/ui/SheetHeader";
 import { Toolbar } from "../../components/ui/Toolbar";
 import * as Dialog from "../../components/ui/Dialog";
 import { createV5StackNavigator as createNativeStackNavigator } from "../../native/createV5StackNavigator";
-import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
+import { DEFAULT_SERVER_SETTINGS, isAssistantThreadId } from "@t3tools/contracts";
 import {
   modelPreferencesMigrationPatch,
   resolveModelPreferences,
@@ -1538,6 +1538,7 @@ export function ExistingThreadSettingsRouteScreen({
     return <View className="flex-1 bg-sheet" />;
   }
 
+  const isAssistantThread = isAssistantThreadId(selectedThread.id);
   const serverConfig = selectedEnvironmentRuntime?.serverConfig ?? null;
   const modelSelection = draftSettings.modelSelection ?? selectedThread.modelSelection;
   const lockedProviderInstanceId = threadAllowsProviderSwitch({
@@ -1584,6 +1585,8 @@ export function ExistingThreadSettingsRouteScreen({
       }}
       runtimeMode={draftSettings.runtimeMode ?? selectedThread.runtimeMode}
       onUpdateRuntimeMode={(runtimeMode) => updateComposerDraftSettings(threadKey, { runtimeMode })}
+      // An assistant's permissions come from its tool access, set in its own settings.
+      runtimeHidden={isAssistantThread}
       onClose={() => navigation.goBack()}
     />
   );
