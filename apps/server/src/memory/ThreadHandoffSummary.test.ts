@@ -134,17 +134,6 @@ it.effect.each([
     memoryOff: false,
     reason: "unavailable",
   },
-  {
-    name: "the model finds nothing to keep",
-    generation: {
-      generateMemorySummary: ((input) =>
-        outcome(input, "x").pipe(
-          Effect.map((output) => ({ ...output, result: null })),
-        )) as Generate,
-    },
-    memoryOff: false,
-    reason: "failed",
-  },
 ])("refuses a summary when $name", ({ generation, memoryOff, reason }) =>
   Effect.gen(function* () {
     yield* seed;
@@ -152,4 +141,24 @@ it.effect.each([
     const error = yield* Effect.flip(summary.summarize(threadId));
     assert.strictEqual(error.reason, reason);
   }).pipe(Effect.provide(layerFor(generation, { memoryOff }))),
+);
+
+it.effect("returns no summary when the model finds nothing to keep", () =>
+  Effect.gen(function* () {
+    yield* seed;
+    const summary = yield* ThreadHandoffSummary.ThreadHandoffSummary;
+    assert.isNull(yield* summary.summarize(threadId));
+  }).pipe(
+    Effect.provide(
+      layerFor(
+        {
+          generateMemorySummary: ((input) =>
+            outcome(input, "x").pipe(
+              Effect.map((output) => ({ ...output, result: null })),
+            )) as Generate,
+        },
+        { memoryOff: false },
+      ),
+    ),
+  ),
 );

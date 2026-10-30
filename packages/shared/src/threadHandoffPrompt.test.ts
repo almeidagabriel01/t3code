@@ -72,6 +72,12 @@ describe("buildThreadHandoffPrompt", () => {
       lacks: ["Last assistant message", "I cached the session lookup.", "Saved transcript"],
     },
     {
+      name: "summary mode without a summary keeps the last reply",
+      input: { ...base, mode: "summary" as const, summaryText: null },
+      has: ["Last assistant message", "I cached the session lookup."],
+      lacks: ["Summary of the previous thread"],
+    },
+    {
       name: "changed files are listed with a count",
       input: { ...base, mode: "full" as const, changedFiles: ["src/a.ts", "src/b.ts"] },
       has: ["Files changed in the previous thread (2):", "- src/a.ts", "- src/b.ts"],

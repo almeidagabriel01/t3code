@@ -92,8 +92,8 @@ export function buildThreadHandoffPrompt(input: ThreadHandoffPromptInput): strin
     "",
     ...section("Instructions for you (do this first)", input.instructions ?? null, "start"),
     ...section("Last user message", input.lastUserText, "start"),
-    ...(input.mode === "summary"
-      ? section("Summary of the previous thread", input.summaryText ?? null, "start")
+    ...(input.mode === "summary" && input.summaryText
+      ? section("Summary of the previous thread", input.summaryText, "start")
       : section("Last assistant message", input.lastAssistantText, "end")),
     ...section("Latest proposed plan", input.latestPlanMarkdown, "start"),
     ...changedFilesSection(input.changedFiles ?? []),

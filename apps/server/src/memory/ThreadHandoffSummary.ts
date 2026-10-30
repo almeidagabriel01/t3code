@@ -31,7 +31,9 @@ export class ThreadHandoffSummary extends Context.Service<
      * The thread's summary for a handoff: the memory summary when it already covers the thread's
      * latest messages, else one generated now on the memory model. Nothing is stored.
      */
-    readonly summarize: (threadId: M.ThreadId) => Effect.Effect<string, ThreadHandoffSummaryError>;
+    readonly summarize: (
+      threadId: M.ThreadId,
+    ) => Effect.Effect<string | null, ThreadHandoffSummaryError>;
   }
 >()("t3/memory/ThreadHandoffSummary") {}
 
@@ -158,11 +160,8 @@ const make = Effect.gen(function* () {
         });
       }),
     );
-    // A model that finds nothing worth keeping is a failure here: the handoff asked for a summary.
-    if (generated.summary === undefined) {
-      return yield* new ThreadHandoffSummaryError({ reason: "failed" });
-    }
-    return generated.summary.output.result.text;
+    // Nothing worth keeping means a thread too short to need one; the handoff uses the last reply.
+    return generated.summary?.output.result.text ?? null;
   }, Effect.mapError(classify));
 
   return ThreadHandoffSummary.of({ summarize });
