@@ -221,6 +221,8 @@ This checkout is a personal fork that adds features (notes, kanban, memory, dest
 - If the Browser panel's screenshots time out, drive the dev app with Playwright from `node_modules/.pnpm/playwright@*` (pair with `node apps/server/src/bin.ts pair --base-dir <worktree>/.t3`) and read the PNGs. Keep scripted steps in a JSON file.
 - Never drive the command palette or type into the app from a script: keystrokes land in whatever editor has focus and change user data or settings. Toggle appearance by setting the attribute on the test page only, and restore anything you changed in `<worktree>/.t3/userdata`.
 - Subagents do not verify visually. The session that integrates their work captures and reads the screenshots before reporting.
+- Capture with short content as well as long. Sticky and floating chrome that looks right on a full page can float mid-screen on a near-empty one; its container must fill the pane.
+- On the mobile simulator, Expo's floating "Tools button" sits over the thread header's right button and swallows taps. Turn it off in the dev menu before driving the header.
 
 ### Layout and design
 
@@ -230,7 +232,10 @@ This checkout is a personal fork that adds features (notes, kanban, memory, dest
 - `[data-surface-subheader]` inside the right panel is forced to 28px high (`index.css`). Never put it on a taller custom header; use `data-glass-layer` for in-flow chrome instead.
 - Every field has a visible label, and the label sits apart from its description text. Follow the existing settings row and section patterns; never glue a control to the text above it.
 - A single choice is a radio or checkmark list, never several switches. Rows that do not navigate have no chevron. Every action row gets its own meaningful icon; do not repeat one icon across a list.
-- Show human labels, not raw values: select triggers render their option's label, and file or folder names show readable text.
+- Show human labels, not raw values: select triggers render their option's label, model ids render their display name ("Claude Opus 5.5", never `claude-opus-5-5`), and file or folder names show readable text. Long paths are one line, truncated from the start.
+- Headers have a budget. Before adding a header button, look at the header with the right panel open: the title must stay readable. Hide buttons that have another entry point below a container width (`@max-xl/header:hidden`), keep icon-only buttons with tooltips, and never put two identical icons side by side.
+- A form control in a dialog looks like a field: full width, left-aligned, the same height as its sibling fields. A composer control dropped into a form reads as plain text.
+- Every customization has a visible way in. Right-click alone is undiscoverable; pair it with a button or a settings row.
 
 ### Liquid glass and color
 
