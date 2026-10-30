@@ -18,7 +18,8 @@ import { useState } from "react";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 
-const surface = "flex items-center gap-0.5 rounded-lg border bg-popover p-1 shadow-lg/5";
+const surface =
+  "dropdown-glass flex items-center gap-0.5 rounded-lg p-1 text-popover-foreground shadow-lg/5";
 
 function Tool(props: { label: string; icon: LucideIcon; active?: boolean; onClick: () => void }) {
   return (

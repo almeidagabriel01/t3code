@@ -102,7 +102,7 @@ export function NoteCardChip(props: {
     <div
       role="group"
       aria-label="Linked card"
-      className="inline-flex max-w-full min-w-0 items-center gap-1 rounded-lg border border-border/70 bg-card/60 py-0.5 ps-2 pe-0.5 text-xs shadow-xs/5"
+      className="inline-flex max-w-full min-w-0 items-center gap-1 rounded-lg border border-border bg-card py-0.5 ps-2 pe-0.5 text-xs shadow-xs/5"
     >
       <SquareKanbanIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
       {state.status === "found" ? (

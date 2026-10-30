@@ -43,6 +43,8 @@ import { useCreateNote } from "./useCreateNote";
 const REASON = {
   unsupported_name: "name not supported",
   unreadable: "could not be read",
+  nested_too_deep: "folder is nested too deep",
+  duplicate_name: "another note has the same name",
 } as const;
 
 /** What the list leaves out: notes past the list size, and files that are not notes by name. */
@@ -366,8 +368,8 @@ function EnvironmentNotes(
         createShortcut={createShortcut}
         className={
           props.path
-            ? "w-full shrink-0 max-md:hidden md:w-80 md:border-e md:border-border/60"
-            : "w-full shrink-0 md:w-80 md:border-e md:border-border/60"
+            ? "w-full shrink-0 max-md:hidden md:w-80 md:border-e md:border-border"
+            : "w-full shrink-0 md:w-80 md:border-e md:border-border"
         }
       >
         {live._tag === "Failure" ? (

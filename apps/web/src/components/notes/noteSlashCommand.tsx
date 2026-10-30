@@ -163,7 +163,7 @@ function SlashMenu(props: SuggestionProps<SlashItem> & { ref?: Ref<SlashMenuHand
     <div
       role="listbox"
       aria-label="Insert block"
-      className="fixed z-50 max-h-72 w-60 overflow-y-auto rounded-lg border bg-popover p-1 text-popover-foreground shadow-lg/5"
+      className="fixed z-50 max-h-72 w-60 overflow-y-auto dropdown-glass rounded-lg p-1 text-popover-foreground shadow-lg/5"
       style={{
         left: Math.min(rect.left, window.innerWidth - 248),
         ...(below ? { top: rect.bottom + 4 } : { bottom: window.innerHeight - rect.top + 4 }),

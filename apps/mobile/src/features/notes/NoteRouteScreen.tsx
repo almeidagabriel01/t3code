@@ -497,6 +497,7 @@ function NoteContent(props: NoteParams) {
           <NoteProjectPicker
             environmentId={environmentId}
             value={project}
+            missing={note.projectMissing === true}
             noneLabel="No project"
             accessibilityLabel="Note project"
             disabled={!canChangeHeader || busy}

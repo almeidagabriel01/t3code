@@ -1,8 +1,9 @@
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
-import { Pressable } from "react-native";
+import { Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
+import { Button } from "../../components/ui/Button";
 import { Menu } from "../../components/ui/Menu";
 import { useProjects } from "../../state/entities";
 
@@ -14,6 +15,7 @@ export function NoteProjectPicker(props: {
   readonly value: string | null;
   readonly noneLabel: string;
   readonly accessibilityLabel: string;
+  readonly missing?: boolean;
   readonly disabled?: boolean;
   readonly onChange: (project: ProjectId | null) => void;
 }) {
@@ -21,6 +23,18 @@ export function NoteProjectPicker(props: {
     (project) => project.environmentId === props.environmentId && project.isScratch !== true,
   );
   const current = projects.find((project) => project.id === props.value);
+  if (props.value !== null && (props.missing === true || current === undefined))
+    return (
+      <View className="min-h-11 flex-row items-center gap-2 self-start rounded-xl bg-secondary px-3">
+        <SymbolView name="folder" size={14} tintColorClassName="accent-icon-muted" />
+        <Text textRole="footnote" className="text-foreground-muted">
+          Project not found
+        </Text>
+        {props.disabled === true ? null : (
+          <Button label="Unlink" icon="link" tone="text" onPress={() => props.onChange(null)} />
+        )}
+      </View>
+    );
   return (
     <Menu
       actions={[
@@ -42,7 +56,7 @@ export function NoteProjectPicker(props: {
         className="min-h-9 flex-row items-center gap-2 self-start rounded-full bg-secondary px-4 active:opacity-70"
       >
         <Text textRole="footnote" numberOfLines={1} className="font-t3-medium text-foreground">
-          {current?.title ?? (props.value === null ? props.noneLabel : "Unknown project")}
+          {current?.title ?? props.noneLabel}
         </Text>
         <SymbolView name="chevron.down" size={12} tintColorClassName="accent-chevron" />
       </Pressable>

@@ -174,7 +174,7 @@ function ThreadNotes(props: {
                   {linked.map((note) => (
                     <li
                       key={note.path}
-                      className="flex items-start gap-1 rounded-md hover:bg-accent/50"
+                      className="flex items-start gap-1 rounded-md hover:bg-accent"
                     >
                       <button
                         type="button"
@@ -223,7 +223,7 @@ function ThreadNotes(props: {
                         <button
                           type="button"
                           onClick={() => void relate(note.path, "relate")}
-                          className="w-full truncate rounded-md px-2 py-1.5 text-start text-sm outline-none hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+                          className="w-full truncate rounded-md px-2 py-1.5 text-start text-sm outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
                         >
                           {note.title}
                         </button>

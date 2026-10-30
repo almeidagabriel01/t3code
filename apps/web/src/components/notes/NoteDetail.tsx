@@ -287,6 +287,7 @@ function NoteDetail(props: NotePaneProps & { document: NoteDocument }) {
             <NoteProjectMenu
               environmentId={environmentId}
               projectId={latest.project ?? null}
+              missing={latest.projectMissing === true}
               disabled={!canUpdate || removed}
               onChange={(project) => void runUpdate({ project })}
             />
