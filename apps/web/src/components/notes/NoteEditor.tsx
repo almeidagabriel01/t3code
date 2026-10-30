@@ -203,7 +203,7 @@ export function NoteEditor(props: {
 
   return (
     <AttachmentImageEnvironment value={props.environmentId}>
-      <div className="flex min-w-0 flex-col" data-note-editor>
+      <div className="flex min-w-0 flex-1 flex-col" data-note-editor>
         {props.leading && (
           <div className="border-b border-border" data-glass-layer>
             <div className="mx-auto flex w-full max-w-3xl flex-wrap items-center gap-1.5 px-3 py-2 @2xl/note:px-8">
@@ -224,7 +224,7 @@ export function NoteEditor(props: {
             if (view !== null && files.length > 0) images.insertImages(view, files);
           }}
         />
-        <div className="mx-auto w-full max-w-3xl px-3 @2xl/note:px-8">
+        <div className="mx-auto w-full max-w-3xl flex-1 px-3 @2xl/note:px-8">
           <EditorContent editor={editor} />
           {editor && props.editable && (
             <>

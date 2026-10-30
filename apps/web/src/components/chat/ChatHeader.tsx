@@ -287,7 +287,7 @@ export const ChatHeader = memo(function ChatHeader({
     <div
       ref={breadcrumbContainerRef}
       className={cn(
-        "flex min-w-0 flex-1 items-center gap-2 sm:gap-3",
+        "@container/header flex min-w-0 flex-1 items-center gap-2 sm:gap-3",
         rightPanelOpen ? "pr-10" : "pr-24",
       )}
       onContextMenu={handleHeaderContextMenu}
@@ -436,7 +436,8 @@ export const ChatHeader = memo(function ChatHeader({
       </WorkspaceBreadcrumb>
       {onToggleSideChat ? (
         <Tooltip>
-          <TooltipTrigger render={<span className="flex shrink-0" />}>
+          {/* Narrow headers give the title room; side chat stays in panel shortcuts and its key. */}
+          <TooltipTrigger render={<span className="flex shrink-0 @max-xl/header:hidden" />}>
             <Toggle
               className="shrink-0 [-webkit-app-region:no-drag]"
               pressed={sideChatOpen}
@@ -469,7 +470,11 @@ export const ChatHeader = memo(function ChatHeader({
         />
       ) : null}
       {isServerThread ? <GuestShareIndicator threadRef={activeThreadRef} /> : null}
-      {isServerThread ? <ThreadHandoffButton threadRef={activeThreadRef} /> : null}
+      {isServerThread ? (
+        <span className="flex shrink-0 @max-xl/header:hidden">
+          <ThreadHandoffButton threadRef={activeThreadRef} />
+        </span>
+      ) : null}
     </div>
   );
 });

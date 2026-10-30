@@ -36,15 +36,15 @@ export function KanbanThreadCardBadge(props: {
           <TooltipTrigger
             render={
               <Button
-                size="xs"
-                variant="ghost-muted"
+                className="shrink-0"
+                size="icon-sm"
+                variant="ghost"
                 aria-label="Link to board card"
                 onClick={() => setLinking(true)}
               />
             }
           >
-            <LinkIcon />
-            Link to card
+            <LinkIcon className="size-4" />
           </TooltipTrigger>
           <TooltipPopup side="bottom">Link this thread to a board card</TooltipPopup>
         </Tooltip>

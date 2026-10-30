@@ -106,15 +106,18 @@ export function ThreadHandoffSheet({ route }: StaticScreenProps<ThreadHandoffPar
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears a registry entry held until the sheet unmounts
   useEffect(() => () => appAtomRegistry.set(pickedAgentAtom, null), []);
 
-  const agentOption = useMemo(
-    () =>
-      buildModelOptions(config, selection, undefined, thread?.projectId ?? null).find(
-        (option) =>
-          option.selection.instanceId === selection?.instanceId &&
-          option.selection.model === selection.model,
-      ),
+  const options = useMemo(
+    () => buildModelOptions(config, selection, undefined, thread?.projectId ?? null),
     [config, selection, thread?.projectId],
   );
+  const optionFor = (wanted: ModelSelection | null | undefined) =>
+    options.find(
+      (option) =>
+        option.selection.instanceId === wanted?.instanceId &&
+        option.selection.model === wanted.model,
+    );
+  const agentOption = optionFor(selection);
+  const sourceOption = optionFor(thread?.modelSelection);
   const startsIn = thread?.worktreePath ?? project?.workspaceRoot ?? null;
 
   const start = async () => {
@@ -175,7 +178,7 @@ export function ThreadHandoffSheet({ route }: StaticScreenProps<ThreadHandoffPar
           {thread?.title ?? "Current session"}
         </Text>
         <Text className="text-sm text-foreground-muted" numberOfLines={1}>
-          {`Agent: ${thread?.modelSelection.model ?? "Unknown"}`}
+          {`Agent: ${sourceOption?.label ?? thread?.modelSelection.model ?? "Unknown"}`}
         </Text>
       </View>
       <ListSection title="Agent">
@@ -212,10 +215,16 @@ export function ThreadHandoffSheet({ route }: StaticScreenProps<ThreadHandoffPar
         ))}
       </ListSection>
       {startsIn === null ? null : (
-        <Text className="text-xs text-foreground-muted">
-          {"Starts in: "}
-          <Text className="font-mono text-xs text-foreground">{startsIn}</Text>
-        </Text>
+        <View className="flex-row gap-1">
+          <Text className="text-xs text-foreground-muted">Starts in</Text>
+          <Text
+            className="flex-1 font-mono text-xs text-foreground"
+            numberOfLines={1}
+            ellipsizeMode="head"
+          >
+            {startsIn}
+          </Text>
+        </View>
       )}
       {error === null ? null : <ErrorBanner message={error} />}
       <Button

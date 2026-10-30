@@ -1,4 +1,7 @@
+import { SlidersHorizontalIcon } from "lucide-react";
 import { useState } from "react";
+
+import { Button } from "~/components/ui/button";
 
 import { Kbd } from "~/components/ui/kbd";
 import { Menu, MenuItem, MenuPopup } from "~/components/ui/menu";
@@ -82,6 +85,26 @@ export function RightPanelFixedTabs(props: FixedTabsProps) {
           </Tooltip>
         );
       })}
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              className="ms-auto shrink-0"
+              size="icon-sm"
+              variant="ghost"
+              aria-label="Customize panel shortcuts"
+              onClick={(event) => {
+                const rect = event.currentTarget.getBoundingClientRect();
+                setMenuPosition({ x: rect.left, y: rect.bottom });
+                setCustomizing(true);
+              }}
+            />
+          }
+        >
+          <SlidersHorizontalIcon className="size-4" />
+        </TooltipTrigger>
+        <TooltipPopup>Customize shortcuts</TooltipPopup>
+      </Tooltip>
       <Menu open={menuOpen} onOpenChange={setMenuOpen}>
         <MenuPopup anchor={anchor} align="start" side="bottom">
           <MenuItem onClick={() => setCustomizing(true)}>Customize…</MenuItem>
@@ -99,7 +122,7 @@ export function RightPanelFixedTabs(props: FixedTabsProps) {
           side="bottom"
           align="start"
           padding="compact"
-          width="sm"
+          width="md"
           aria-label="Panel shortcuts"
         >
           <RightPanelQuickButtonsCustomizer />

@@ -12,7 +12,7 @@ import type {
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { useNavigate } from "@tanstack/react-router";
-import { MessageSquarePlusIcon } from "lucide-react";
+import { ArrowRightLeftIcon } from "lucide-react";
 import { useState } from "react";
 
 import { useEnvironmentSettings } from "~/hooks/useSettings";
@@ -38,6 +38,7 @@ import {
 } from "../ui/dialog";
 import { Label } from "../ui/label";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { resolveContextWindowModelDisplayName } from "./ContextWindowMeter.logic";
 import { ProviderModelPicker } from "./ProviderModelPicker";
 import { openThreadHandoffDialog, threadHandoffDialogAtom } from "./threadHandoffDialogState";
 
@@ -88,12 +89,16 @@ export function ThreadHandoffButton({ threadRef }: { readonly threadRef: ScopedT
           />
         }
       >
-        <MessageSquarePlusIcon className="size-4" />
+        <ArrowRightLeftIcon className="size-4" />
       </TooltipTrigger>
       <TooltipPopup side="bottom">Hand off to another agent</TooltipPopup>
     </Tooltip>
   );
 }
+
+// The composer's model picker, dressed as a form field to match the Context select beside it.
+const AGENT_FIELD_CLASSNAME =
+  "h-7 w-full max-w-none border-input bg-background px-2.5 text-start font-normal text-foreground shadow-xs/5 hover:bg-accent/50 sm:h-7 sm:max-w-none sm:text-sm dark:bg-input/32";
 
 function ThreadHandoffDialog({
   threadRef,
@@ -189,27 +194,28 @@ function ThreadHandoffDialog({
               </div>
               <div className="mt-0.5 truncate text-muted-foreground text-xs">
                 Agent: {sourceEntry?.displayName ?? thread?.providerInstanceId ?? "Unknown"}
-                {thread === null ? "" : ` · ${thread.modelSelection.model}`}
+                {thread === null
+                  ? ""
+                  : ` · ${resolveContextWindowModelDisplayName(thread.modelSelection, modelOptionsByInstance)}`}
               </div>
             </div>
             <div className="grid min-w-0 gap-1.5">
               <Label>Agent</Label>
-              <div>
-                <ProviderModelPicker
-                  environmentId={environmentId}
-                  disabled={starting || selection === null}
-                  activeInstanceId={activeInstanceId}
-                  model={activeModel}
-                  lockedProvider={null}
-                  instanceEntries={entries}
-                  modelOptionsByInstance={modelOptionsByInstance}
-                  isComposerOwned={false}
-                  triggerAriaLabel="Agent"
-                  onInstanceModelChange={(instanceId, model) =>
-                    setPicked(createModelSelection(instanceId, model))
-                  }
-                />
-              </div>
+              <ProviderModelPicker
+                environmentId={environmentId}
+                disabled={starting || selection === null}
+                activeInstanceId={activeInstanceId}
+                model={activeModel}
+                lockedProvider={null}
+                instanceEntries={entries}
+                modelOptionsByInstance={modelOptionsByInstance}
+                isComposerOwned={false}
+                triggerAriaLabel="Agent"
+                triggerClassName={AGENT_FIELD_CLASSNAME}
+                onInstanceModelChange={(instanceId, model) =>
+                  setPicked(createModelSelection(instanceId, model))
+                }
+              />
             </div>
             <div className="grid min-w-0 gap-1.5">
               <Label>Context</Label>
@@ -223,9 +229,16 @@ function ThreadHandoffDialog({
               <p className="text-muted-foreground text-xs leading-relaxed">{CONTEXT_HELP[mode]}</p>
             </div>
             {startsIn !== null ? (
-              <p className="min-w-0 text-muted-foreground text-xs">
-                Starts in:{" "}
-                <span className="break-all font-mono text-foreground/80">{startsIn}</span>
+              <p className="flex min-w-0 gap-1 text-muted-foreground text-xs">
+                <span className="shrink-0">Starts in</span>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={<span className="truncate font-mono text-foreground/80" dir="rtl" />}
+                  >
+                    <bdi dir="ltr">{startsIn}</bdi>
+                  </TooltipTrigger>
+                  <TooltipPopup>{startsIn}</TooltipPopup>
+                </Tooltip>
               </p>
             ) : null}
             {error !== null ? (

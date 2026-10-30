@@ -6,7 +6,7 @@ import { useNavigate } from "@tanstack/react-router";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 import * as Schema from "effect/Schema";
-import { LinkIcon, NotebookPenIcon, PlusIcon, XIcon } from "lucide-react";
+import { NotebookPenIcon, PlusIcon, StickyNoteIcon, XIcon } from "lucide-react";
 import { useState } from "react";
 
 import { selectActiveRightPanel, useRightPanelStore } from "../../rightPanelStore";
@@ -114,7 +114,7 @@ function ThreadNotes(props: {
   const panelToggle =
     props.projectId === null ? null : (
       <Tooltip>
-        <TooltipTrigger render={<span className="flex shrink-0" />}>
+        <TooltipTrigger render={<span className="flex shrink-0 @max-xl/header:hidden" />}>
           <Toggle
             className="shrink-0 [-webkit-app-region:no-drag]"
             pressed={panelOpen}
@@ -151,7 +151,7 @@ function ThreadNotes(props: {
               }
             >
               {panelToggle ? (
-                <LinkIcon className="size-4" />
+                <StickyNoteIcon className="size-4" />
               ) : (
                 <NotebookPenIcon className="size-4" />
               )}
