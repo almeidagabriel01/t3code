@@ -1,12 +1,14 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { StaticScreenProps } from "@react-navigation/native";
 import type { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { CLAUDE_CHROME_LINKS } from "@t3tools/shared/claudeChrome";
 import { useState } from "react";
 import { Linking, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
+import * as Dialog from "../../components/ui/Dialog";
 import { AppText as Text } from "../../components/ui/AppText";
 import { ListActionRow } from "../../components/ui/ListActionRow";
 import { ListToggleRow } from "../../components/ui/ListToggleRow";
@@ -56,6 +58,7 @@ export function ClaudeChromeRouteScreen({ route }: StaticScreenProps<ClaudeChrom
         session.capabilities.sessions.supportsMultipleProviderThreadsPerSession,
     ) ?? false;
   const [restartState, setRestartState] = useState<"idle" | "pending" | "done" | "failed">("idle");
+  const [restartError, setRestartError] = useState<string | null>(null);
   const data = status.data;
   const blocked = shared ? BLOCKED_REASON.shared : null;
   return (
@@ -92,7 +95,16 @@ export function ClaudeChromeRouteScreen({ route }: StaticScreenProps<ClaudeChrom
                 value={data.enabledByDefault}
                 disabled={!canSet}
                 onValueChange={(enabled) =>
-                  void setDefault({ environmentId, input: { instanceId, enabled } })
+                  void setDefault({ environmentId, input: { instanceId, enabled } }).then(
+                    (result) => {
+                      if (result._tag === "Success") return;
+                      const failure = squashAtomCommandFailure(result);
+                      Dialog.alert(
+                        "Couldn't change Claude in Chrome",
+                        failure instanceof Error ? failure.message : String(failure),
+                      );
+                    },
+                  )
                 }
               />
               {data.launchOverride !== null ? (
@@ -132,7 +144,7 @@ export function ClaudeChromeRouteScreen({ route }: StaticScreenProps<ClaudeChrom
               (restartState === "done"
                 ? "The next message starts a session with the new setting."
                 : restartState === "failed"
-                  ? "Could not restart the session."
+                  ? (restartError ?? "Could not restart the session.")
                   : undefined)
             }
           >
@@ -143,9 +155,12 @@ export function ClaudeChromeRouteScreen({ route }: StaticScreenProps<ClaudeChrom
               disabled={blocked !== null || !canRestart}
               onPress={() => {
                 setRestartState("pending");
-                void restart({ environmentId, input: { threadId } }).then((result) =>
-                  setRestartState(result._tag === "Success" ? "done" : "failed"),
-                );
+                void restart({ environmentId, input: { threadId } }).then((result) => {
+                  const failure =
+                    result._tag === "Success" ? null : squashAtomCommandFailure(result);
+                  setRestartError(failure instanceof Error ? failure.message : null);
+                  setRestartState(result._tag === "Success" ? "done" : "failed");
+                });
               }}
             />
           </SettingsSection>
