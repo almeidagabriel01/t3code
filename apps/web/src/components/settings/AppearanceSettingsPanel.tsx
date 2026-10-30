@@ -42,6 +42,7 @@ import { searchableSetting } from "./settingsSearch";
 import { AdvancedSettings } from "./AdvancedSettings";
 import { PanelAnimationsPreview } from "./PanelAnimationsPreview";
 import { TypographySection } from "./TypographySettings";
+import { PanelShortcutsRow } from "./PanelShortcutsRow";
 import { ThreadDetailsItemsRow } from "./ThreadDetailsItemsRow";
 
 const ENVIRONMENT_IDENTIFICATION_LABELS: Record<EnvironmentIdentificationMode, string> = {
@@ -419,6 +420,7 @@ export function AppearanceSettingsPanel() {
           }
         />
         <ThreadDetailsItemsRow />
+        <PanelShortcutsRow />
         <SettingsRow
           {...searchableSetting("effort-display")}
           description="Show reasoning effort in the composer as its name, such as High, or as bars."

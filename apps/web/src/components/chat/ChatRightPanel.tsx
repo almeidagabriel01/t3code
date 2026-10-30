@@ -10,6 +10,8 @@ type ChatRightPanelProps = Omit<RightPanelTabsProps, "mode" | "inlineSize" | "ma
   readonly widthStorageKey: string;
   readonly sheetAnimationDurationMs: number;
   readonly onCloseSheet: () => void;
+  readonly onAddSideChat: () => void;
+  readonly sideChatAvailable: boolean;
 };
 
 /**
@@ -26,6 +28,8 @@ export function ChatRightPanel(props: ChatRightPanelProps) {
     onCloseSheet,
     maximized,
     layoutControls,
+    onAddSideChat,
+    sideChatAvailable,
     ...tabs
   } = props;
   const inlineSize = usePreviewPanelInlineSize({
@@ -44,6 +48,10 @@ export function ChatRightPanel(props: ChatRightPanelProps) {
           terminal: tabs.onAddTerminal,
           preview: tabs.onAddBrowser,
           "pull-requests": tabs.onAddPullRequests,
+          "pull-request": tabs.onAddPullRequest,
+          notes: tabs.onAddNotes,
+          "side-chat": onAddSideChat,
+          device: tabs.onAddDevice,
         }}
         available={{
           files: tabs.filesAvailable,
@@ -51,6 +59,10 @@ export function ChatRightPanel(props: ChatRightPanelProps) {
           terminal: tabs.terminalAvailable,
           preview: tabs.browserAvailable,
           "pull-requests": tabs.pullRequestsAvailable,
+          "pull-request": tabs.pullRequestAvailable,
+          notes: tabs.notesAvailable,
+          "side-chat": sideChatAvailable,
+          device: tabs.deviceAvailable,
         }}
       />
       {tabs.children}

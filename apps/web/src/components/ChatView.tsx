@@ -4006,6 +4006,10 @@ export default function ChatView(props: ChatViewProps) {
           pullRequestsAvailable={pullRequestsSurfaceAvailable}
           deviceAvailable={activeThreadRef !== null}
           notesAvailable={notesAvailable}
+          onAddSideChat={() => {
+            if (activeThreadRef) useRightPanelStore.getState().open(activeThreadRef, "side-chat");
+          }}
+          sideChatAvailable={sideChatAvailable}
         >
           {rightPanelContent}
         </ChatRightPanel>

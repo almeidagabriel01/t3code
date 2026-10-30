@@ -443,6 +443,22 @@ describe("destination rail client settings", () => {
   });
 });
 
+describe("right panel quick buttons client setting", () => {
+  it("defaults to today's five buttons and keeps ids this version does not know", () => {
+    expect(decodeClientSettings({}).rightPanelQuickButtons).toEqual([
+      "files",
+      "diff",
+      "terminal",
+      "preview",
+      "pull-requests",
+    ]);
+    const saved = ["notes", "future-surface"];
+    expect(decodeClientSettings({ rightPanelQuickButtons: saved }).rightPanelQuickButtons).toEqual(
+      saved,
+    );
+  });
+});
+
 describe("memory hub settings", () => {
   it("defaults old settings to disabled memory hub", () => {
     expect(decodeServerSettings({}).memoryHub).toEqual({ mode: "disabled" });

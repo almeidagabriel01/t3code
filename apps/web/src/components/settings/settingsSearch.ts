@@ -361,6 +361,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "right-panel-quick-buttons",
+    title: "Panel shortcuts",
+    to: "/settings/appearance",
+    searchTerms: [
+      "customize right panel quick buttons shortcuts files diff terminal browser notes side chat device pull requests reorder",
+    ],
+  },
+  {
     id: "effort-display",
     title: "Effort display",
     to: "/settings/appearance",
