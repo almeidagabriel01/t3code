@@ -159,7 +159,7 @@ import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { canShareWithGuestAtom } from "./chat/guestShareAvailability";
 import { openGuestShareDialog } from "./chat/guestShareDialogState";
-import { openThreadHandoffDialog } from "./chat/ThreadHandoffDialog";
+import { openThreadHandoffDialog } from "./chat/threadHandoffDialogState";
 import {
   buildThreadRouteParams,
   resolveActiveThreadRouteRef,

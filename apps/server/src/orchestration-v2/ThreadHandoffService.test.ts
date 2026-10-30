@@ -80,7 +80,9 @@ const harness = (source: {
         ),
       ),
     );
-    const handoff = (overrides: Partial<OrchestrationV2ThreadHandoffInput> = {}) =>
+    const handoff = (
+      overrides: Partial<Pick<OrchestrationV2ThreadHandoffInput, "mode" | "clientRequestId">> = {},
+    ) =>
       Effect.flatMap(ThreadHandoff.ThreadHandoffService, (service) =>
         service.handoff({
           sourceThreadId,

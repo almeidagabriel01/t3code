@@ -79,7 +79,8 @@ vi.mock("./ProviderModelPicker", () => ({
   ),
 }));
 
-import { openThreadHandoffDialog, ThreadHandoffDialogHost } from "./ThreadHandoffDialog";
+import { ThreadHandoffDialogHost } from "./ThreadHandoffDialog";
+import { openThreadHandoffDialog } from "./threadHandoffDialogState";
 
 it("starts a new session with the chosen agent and context, then opens it", async () => {
   mocks.handoff

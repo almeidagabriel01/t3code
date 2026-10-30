@@ -235,7 +235,7 @@ import { ProjectFilePicker } from "./files/ProjectFilePicker";
 import { openLinkPullRequestDialog } from "./pullRequest/LinkPullRequestDialog";
 import { canShareWithGuestAtom } from "./chat/guestShareAvailability";
 import { openGuestShareDialog } from "./chat/guestShareDialogState";
-import { openThreadHandoffDialog } from "./chat/ThreadHandoffDialog";
+import { openThreadHandoffDialog } from "./chat/threadHandoffDialogState";
 import { orchestrationEnvironment } from "../state/orchestration";
 import { ProjectContentSearchDialog } from "./search/ProjectContentSearchDialog";
 import { validateMemorySettingsSearch } from "./settings/MemorySettings.logic";

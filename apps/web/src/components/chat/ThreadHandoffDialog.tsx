@@ -14,7 +14,6 @@ import { createModelSelection } from "@t3tools/shared/model";
 import { useNavigate } from "@tanstack/react-router";
 import { MessageSquarePlusIcon } from "lucide-react";
 import { useState } from "react";
-import { Atom } from "effect/reactivity";
 
 import { useEnvironmentSettings } from "~/hooks/useSettings";
 import { randomUUID } from "~/lib/utils";
@@ -40,6 +39,7 @@ import {
 import { Label } from "../ui/label";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ProviderModelPicker } from "./ProviderModelPicker";
+import { openThreadHandoffDialog, threadHandoffDialogAtom } from "./threadHandoffDialogState";
 
 const CONTEXT_OPTIONS = [
   { value: "focused", label: "Focused (Recommended)" },
@@ -54,16 +54,6 @@ const CONTEXT_HELP: Record<OrchestrationV2ThreadHandoffMode, string> = {
     "Starts from the latest request and reply, and reads older details only when needed. Usually enough.",
   full: "Includes the saved transcript, the most recent part if it is very long. This takes longer and uses more context, plan usage, or API credits.",
 };
-
-/** Which thread has the hand-off dialog open. The header, thread menu and palette all open it. */
-const threadHandoffDialogAtom = Atom.make<ScopedThreadRef | null>(null).pipe(
-  Atom.keepAlive,
-  Atom.withLabel("thread-handoff:dialog-thread"),
-);
-
-export function openThreadHandoffDialog(threadRef: ScopedThreadRef): void {
-  appAtomRegistry.set(threadHandoffDialogAtom, threadRef);
-}
 
 export function ThreadHandoffDialogHost() {
   const threadRef = useAtomValue(threadHandoffDialogAtom);
