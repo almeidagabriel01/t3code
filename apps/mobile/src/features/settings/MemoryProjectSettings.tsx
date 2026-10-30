@@ -15,6 +15,7 @@ import { MemoryProjectPicker } from "./MemoryProjectPicker";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { AppText as Text } from "../../components/ui/AppText";
 import { SettingsSection } from "./components/SettingsSection";
+import { settled } from "../../lib/settled";
 import { SettingsActionRow } from "./components/SettingsActionRow";
 
 /** Only the binding version returned by the server authorizes a subsequent CAS. */
@@ -86,40 +87,44 @@ export function MemoryProjectSettings({
     setBusy(true);
     setNotice(null);
     const token = ++generation.current;
-    try {
-      await beforeChange();
-      if (token !== generation.current) return;
-      const result = await update({
-        environmentId,
-        input: {
-          memorySpaceId,
-          project,
-          requestId: MemoryOperationId.make(Crypto.randomUUID()),
-          expectedVersion: binding.version,
-          ...(action === "setExplicit" ? { action, sharedProjectId } : { action }),
-        },
-      });
-      if (token !== generation.current) return;
-      if (result._tag === "Success") {
-        setBinding(result.value.binding);
-        onBinding(result.value.binding);
-        setNotice("Project binding updated for future memories. Existing scopes stay unchanged.");
-      } else {
-        setBinding(null);
-        onBinding(null);
-        setNotice(
-          "Project binding changed or could not be saved. Review the latest binding before trying again.",
-        );
-      }
-    } catch {
-      if (token === generation.current)
-        setNotice(
-          "Could not retire the previous import. Reopen Settings before changing the binding.",
-        );
-    } finally {
-      pending.current = false;
-      if (token === generation.current) setBusy(false);
-    }
+    await settled(
+      async () => {
+        await beforeChange();
+        if (token !== generation.current) return;
+        const result = await update({
+          environmentId,
+          input: {
+            memorySpaceId,
+            project,
+            requestId: MemoryOperationId.make(Crypto.randomUUID()),
+            expectedVersion: binding.version,
+            ...(action === "setExplicit" ? { action, sharedProjectId } : { action }),
+          },
+        });
+        if (token !== generation.current) return;
+        if (result._tag === "Success") {
+          setBinding(result.value.binding);
+          onBinding(result.value.binding);
+          setNotice("Project binding updated for future memories. Existing scopes stay unchanged.");
+        } else {
+          setBinding(null);
+          onBinding(null);
+          setNotice(
+            "Project binding changed or could not be saved. Review the latest binding before trying again.",
+          );
+        }
+      },
+      () => {
+        pending.current = false;
+        if (token === generation.current) setBusy(false);
+      },
+      () => {
+        if (token === generation.current)
+          setNotice(
+            "Could not retire the previous import. Reopen Settings before changing the binding.",
+          );
+      },
+    );
   }
   return (
     <SettingsSection title="Project memory binding">

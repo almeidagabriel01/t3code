@@ -25,6 +25,7 @@ import { memoryEnvironment as memory } from "../../state/memory";
 import { environmentSession } from "../../state/session";
 import { AppText as Text } from "../../components/ui/AppText";
 import { SettingsSection } from "./components/SettingsSection";
+import { settled } from "../../lib/settled";
 import { SettingsActionRow } from "./components/SettingsActionRow";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { nativeMemoryImportOutcomes } from "./SettingsMemoryRouteScreen.logic";
@@ -120,23 +121,27 @@ export function MemoryImportSettings({
     const token = generation.current;
     setBusy(true);
     setError(null);
-    try {
-      await transition.current;
-      if (!mounted.current || token !== generation.current) return;
-      const request = action();
-      await request;
-    } catch (error) {
-      if (mounted.current && token === generation.current)
-        setError(
-          memoryImportRequestFailureMessage(error) ??
-            "Import could not finish. Check the saved result before previewing again.",
-        );
-    } finally {
-      if (mounted.current && token === generation.current) {
-        setBusy(false);
-        pending.current = false;
-      }
-    }
+    await settled(
+      async () => {
+        await transition.current;
+        if (!mounted.current || token !== generation.current) return;
+        const request = action();
+        await request;
+      },
+      () => {
+        if (mounted.current && token === generation.current) {
+          setBusy(false);
+          pending.current = false;
+        }
+      },
+      (error) => {
+        if (mounted.current && token === generation.current)
+          setError(
+            memoryImportRequestFailureMessage(error) ??
+              "Import could not finish. Check the saved result before previewing again.",
+          );
+      },
+    );
   }, []);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers the retire callback the parent calls before rebinding
   useEffect(() => {

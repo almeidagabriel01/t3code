@@ -64,6 +64,7 @@ import { MemoryProjectSettings } from "./MemoryProjectSettings";
 import { MemoryProjectPicker } from "./MemoryProjectPicker";
 import { MemoryAdministration } from "./MemorySharingSettings";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
+import { settled } from "../../lib/settled";
 import { SettingsRow } from "./components/SettingsRow";
 import {
   memoryExpectedHeads,
@@ -660,14 +661,10 @@ function ScopedMemoryBrowser({
     (project) => project.environmentId === params.environmentId,
   );
   const [projectRef, setProjectRef] = useState(params.project);
-  const effectiveParams = useMemo(
-    () => ({
-      ...params,
-      project: projectRef,
-      thread: projectRef?.projectId === params.project?.projectId ? params.thread : undefined,
-    }),
-    [params, projectRef],
-  );
+  const effectiveParams = useMemo(() => {
+    const sameProject = projectRef?.projectId === params.project?.projectId;
+    return { ...params, project: projectRef, thread: sameProject ? params.thread : undefined };
+  }, [params, projectRef]);
   const [binding, setBinding] = useState<MemoryProjectBinding | null>(null);
   const acceptBinding = useCallback((value: MemoryProjectBinding | null) => setBinding(value), []);
   const [scopeKind, setScopeKind] = useState<MemoryScope["kind"] | null>("user");
@@ -1075,32 +1072,35 @@ function MemoryDetails({
     }
     busy.current = true;
     setPending(true);
-    try {
-      const result = await onForget(
-        { memorySpaceId, memoryId, ...intent.current },
-        live?.status === "active" && live.payload.evidence.some((e) => e.origin === "import"),
-      );
-      if (!mounted.current || !registry.get(memory.forget.permissionAtom(params.environmentId)))
-        return;
-      if (AsyncResult.isSuccess(result)) {
-        if (result.value.outcome === "rejected") {
+    await settled(
+      async () => {
+        const result = await onForget(
+          { memorySpaceId, memoryId, ...intent.current },
+          live?.status === "active" && live.payload.evidence.some((e) => e.origin === "import"),
+        );
+        if (!mounted.current || !registry.get(memory.forget.permissionAtom(params.environmentId)))
+          return;
+        if (AsyncResult.isSuccess(result)) {
+          if (result.value.outcome === "rejected") {
+            intent.current = null;
+            setRetry(false);
+            setNotice("Could not forget this memory. Review the record before trying again.");
+            return;
+          }
           intent.current = null;
           setRetry(false);
-          setNotice("Could not forget this memory. Review the record before trying again.");
-          return;
+          registry.refresh(readAtom);
+          registry.refresh(historyAtom);
+        } else if (AsyncResult.isFailure(result)) {
+          setRetry(true);
+          setNotice(`${failureMessage(result)} Retry uses the same request.`);
         }
-        intent.current = null;
-        setRetry(false);
-        registry.refresh(readAtom);
-        registry.refresh(historyAtom);
-      } else if (AsyncResult.isFailure(result)) {
-        setRetry(true);
-        setNotice(`${failureMessage(result)} Retry uses the same request.`);
-      }
-    } finally {
-      busy.current = false;
-      if (mounted.current) setPending(false);
-    }
+      },
+      () => {
+        busy.current = false;
+        if (mounted.current) setPending(false);
+      },
+    );
   }
   if (editing && memoryEnabled && item?.status === "active")
     return (
@@ -1430,22 +1430,25 @@ function MemoryRevertControl({
     busy.current = true;
     setPending(true);
     setError(null);
-    try {
-      const response = await revert({ environmentId, input });
-      if (!active()) return;
-      if (AsyncResult.isFailure(response)) {
-        setError("Revert request failed. Retry uses the same request.");
-      } else if (AsyncResult.isSuccess(response)) {
-        setResult(response.value);
-        setIntent(null);
-        setSelected(null);
-        registry.refresh(originalsAtom);
-        onSettled();
-      }
-    } finally {
-      busy.current = false;
-      if (active()) setPending(false);
-    }
+    await settled(
+      async () => {
+        const response = await revert({ environmentId, input });
+        if (!active()) return;
+        if (AsyncResult.isFailure(response)) {
+          setError("Revert request failed. Retry uses the same request.");
+        } else if (AsyncResult.isSuccess(response)) {
+          setResult(response.value);
+          setIntent(null);
+          setSelected(null);
+          registry.refresh(originalsAtom);
+          onSettled();
+        }
+      },
+      () => {
+        busy.current = false;
+        if (active()) setPending(false);
+      },
+    );
   }
   return (
     <View>
@@ -1612,48 +1615,52 @@ function MemoryEditor({
       !registry.get(memory.upsert.permissionAtom(params.environmentId))
     )
       return;
-    intent.current ??= operationId();
+    if (!intent.current) intent.current = operationId();
+    const requestId = intent.current;
     busy.current = true;
     setPending(true);
     setError(null);
-    try {
-      const result = await upsert({
-        environmentId: params.environmentId,
-        input: {
-          memorySpaceId,
-          operationId: intent.current,
-          memoryId: id,
-          expectedHeads: item ? [item.revision.revisionId] : [],
-          scope,
-          assertionKind: item?.revision.assertionKind ?? "fact",
-          payload: {
-            text: current,
-            evidence: item?.payload.evidence ?? [{ origin: "user", messageIds: [] }],
-            derivedFromMemoryRevisions: item?.payload.derivedFromMemoryRevisions ?? [],
+    await settled(
+      async () => {
+        const result = await upsert({
+          environmentId: params.environmentId,
+          input: {
+            memorySpaceId,
+            operationId: requestId,
+            memoryId: id,
+            expectedHeads: item ? [item.revision.revisionId] : [],
+            scope,
+            assertionKind: item?.revision.assertionKind ?? "fact",
+            payload: {
+              text: current,
+              evidence: item?.payload.evidence ?? [{ origin: "user", messageIds: [] }],
+              derivedFromMemoryRevisions: item?.payload.derivedFromMemoryRevisions ?? [],
+            },
+            baseBoundary: null,
           },
-          baseBoundary: null,
-        },
-      });
-      if (
-        !mounted.current ||
-        registry.get(draftAtom) !== current ||
-        !registry.get(memory.upsert.permissionAtom(params.environmentId))
-      )
-        return;
-      if (AsyncResult.isSuccess(result)) {
-        setError(
-          `Request ${result.value.outcome}${result.value.pendingSync ? " · Propagation pending" : ""}`,
-        );
-        intent.current = null;
-        if (result.value.outcome === "accepted" || result.value.outcome === "noop") onClose();
-      } else if (AsyncResult.isFailure(result)) {
-        setRetry(true);
-        setError(`${failureMessage(result)} Retry uses the same request.`);
-      }
-    } finally {
-      busy.current = false;
-      if (mounted.current) setPending(false);
-    }
+        });
+        if (
+          !mounted.current ||
+          registry.get(draftAtom) !== current ||
+          !registry.get(memory.upsert.permissionAtom(params.environmentId))
+        )
+          return;
+        if (AsyncResult.isSuccess(result)) {
+          setError(
+            `Request ${result.value.outcome}${result.value.pendingSync ? " · Propagation pending" : ""}`,
+          );
+          intent.current = null;
+          if (result.value.outcome === "accepted" || result.value.outcome === "noop") onClose();
+        } else if (AsyncResult.isFailure(result)) {
+          setRetry(true);
+          setError(`${failureMessage(result)} Retry uses the same request.`);
+        }
+      },
+      () => {
+        busy.current = false;
+        if (mounted.current) setPending(false);
+      },
+    );
   }
   return (
     <ScreenScrollView contentInsetAdjustmentBehavior="automatic">

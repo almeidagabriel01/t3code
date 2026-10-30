@@ -32,6 +32,7 @@ import {
 import { useAtomCommand } from "../../state/use-atom-command";
 import { AppText as Text } from "../../components/ui/AppText";
 import { SettingsSection } from "./components/SettingsSection";
+import { settled } from "../../lib/settled";
 import { SettingsActionRow } from "./components/SettingsActionRow";
 import { toggleMemoryRequester } from "./SettingsMemoryRouteScreen.logic";
 const Copy = ({ children }: { children: React.ReactNode }) => (
@@ -311,92 +312,96 @@ export function MemoryAdministration({
     setBusy(true);
     setError(null);
     const generation = attemptGeneration.current;
-    try {
-      if (!flow.current) {
-        const deviceConnection = readPreparedConnection(device)!;
-        deviceAttempt.current = { connection: deviceConnection, deviceId: device, generation };
-        const target = await getHub({ environmentId: device, input: {} });
+    await settled(
+      async () => {
+        if (!flow.current) {
+          const deviceConnection = readPreparedConnection(device)!;
+          deviceAttempt.current = { connection: deviceConnection, deviceId: device, generation };
+          const target = await getHub({ environmentId: device, input: {} });
+          if (!live() || generation !== attemptGeneration.current) return;
+          if (readPreparedConnection(device) !== deviceConnection) {
+            recover(
+              "Device connection changed. Review the latest devices before setting it up again.",
+            );
+            return;
+          }
+          if (target._tag === "Failure") throw new Error();
+          const selected = device;
+          setPending("device");
+          flow.current = memoryDeviceFlow({
+            hubId: environmentId,
+            deviceId: selected,
+            endpoint,
+            hubVersion: hub.version,
+            deviceVersion: target.value.version,
+            action,
+            requestIds: [operationId(), operationId(), operationId()],
+            isActive: () =>
+              live() &&
+              readPreparedConnection(selected) === deviceConnection &&
+              writable(environmentId) &&
+              writable(selected),
+            update: async (id, input) => {
+              if (!live() || !writable(id) || !readPreparedConnection(id)) throw new Error();
+              const result = await updateHub({ environmentId: id, input });
+              if (result._tag === "Failure") {
+                if (versionConflict(result.cause)) throw new Error("revision_changed");
+                const failure = Option.getOrNull(Cause.findErrorOption(result.cause));
+                throw failure ?? new Error("Request failed");
+              }
+              return result.value;
+            },
+          });
+        }
+        const view = await flow.current.run();
         if (!live() || generation !== attemptGeneration.current) return;
-        if (readPreparedConnection(device) !== deviceConnection) {
+        deviceAttempt.current = null;
+        setHub(view);
+        flow.current.dispose();
+        flow.current = null;
+        setPending(null);
+        setConfirm(null);
+        setDevice(null);
+        onSharingRefresh?.();
+      },
+      () => {
+        if (live() && generation === attemptGeneration.current) setBusy(false);
+      },
+      (failure) => {
+        if (generation !== attemptGeneration.current) return;
+        const attempt = deviceAttempt.current;
+        if (attempt && readPreparedConnection(attempt.deviceId) !== attempt.connection) {
           recover(
-            "Device connection changed. Review the latest devices before setting it up again.",
+            "Device connection changed. Setup may be incomplete. Review the latest devices, then Replace key to recover or Remove to clean up.",
           );
           return;
         }
-        if (target._tag === "Failure") throw new Error();
-        const selected = device;
-        setPending("device");
-        flow.current = memoryDeviceFlow({
-          hubId: environmentId,
-          deviceId: selected,
-          endpoint,
-          hubVersion: hub.version,
-          deviceVersion: target.value.version,
-          action,
-          requestIds: [operationId(), operationId(), operationId()],
-          isActive: () =>
-            live() &&
-            readPreparedConnection(selected) === deviceConnection &&
-            writable(environmentId) &&
-            writable(selected),
-          update: async (id, input) => {
-            if (!live() || !writable(id) || !readPreparedConnection(id)) throw new Error();
-            const result = await updateHub({ environmentId: id, input });
-            if (result._tag === "Failure") {
-              if (versionConflict(result.cause)) throw new Error("revision_changed");
-              const failure = Option.getOrNull(Cause.findErrorOption(result.cause));
-              throw failure ?? new Error("Request failed");
-            }
-            return result.value;
-          },
-        });
-      }
-      const view = await flow.current.run();
-      if (!live() || generation !== attemptGeneration.current) return;
-      deviceAttempt.current = null;
-      setHub(view);
-      flow.current.dispose();
-      flow.current = null;
-      setPending(null);
-      setConfirm(null);
-      setDevice(null);
-      onSharingRefresh?.();
-    } catch (failure) {
-      if (generation !== attemptGeneration.current) return;
-      const attempt = deviceAttempt.current;
-      if (attempt && readPreparedConnection(attempt.deviceId) !== attempt.connection) {
-        recover(
-          "Device connection changed. Setup may be incomplete. Review the latest devices, then Replace key to recover or Remove to clean up.",
-        );
-        return;
-      }
-      if (
-        typeof failure === "object" &&
-        failure !== null &&
-        "code" in failure &&
-        failure.code === "capacity_exceeded" &&
-        "capacity" in failure &&
-        typeof failure.capacity === "object" &&
-        failure.capacity !== null &&
-        "dimension" in failure.capacity &&
-        failure.capacity.dimension === "members"
-      ) {
-        recover("Device limit reached. Remove a device to add another.");
-        return;
-      }
-      if (failure instanceof Error && failure.message === "revision_changed") {
-        recover(
-          "Device settings changed during setup. Setup may be incomplete. Review the latest devices, then Replace key to recover or Remove to clean up.",
-        );
-        return;
-      }
-      if (live())
-        setError(
-          "Device setup did not finish. Retry to continue. If you reload, use Replace key on the device row to recover, or Remove to clean up.",
-        );
-    } finally {
-      if (live() && generation === attemptGeneration.current) setBusy(false);
-    }
+        if (
+          typeof failure === "object" &&
+          failure !== null &&
+          "code" in failure &&
+          failure.code === "capacity_exceeded" &&
+          "capacity" in failure &&
+          typeof failure.capacity === "object" &&
+          failure.capacity !== null &&
+          "dimension" in failure.capacity &&
+          failure.capacity.dimension === "members"
+        ) {
+          recover("Device limit reached. Remove a device to add another.");
+          return;
+        }
+        if (failure instanceof Error && failure.message === "revision_changed") {
+          recover(
+            "Device settings changed during setup. Setup may be incomplete. Review the latest devices, then Replace key to recover or Remove to clean up.",
+          );
+          return;
+        }
+        if (live())
+          setError(
+            "Device setup did not finish. Retry to continue. If you reload, use Replace key on the device row to recover, or Remove to clean up.",
+          );
+      },
+    );
   }
   const policy = owner ? presentMemoryOwnerPolicy(owner) : null;
   const blocked = busy || !canHub || pending !== null || recovery;
