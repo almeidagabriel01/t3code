@@ -22,7 +22,7 @@ function NoteRow(props: {
 }) {
   const { note } = props;
   return (
-    <li className="border-b border-border/60 py-0.5 last:border-b-0">
+    <li className="border-b border-border py-0.5 last:border-b-0">
       <button
         type="button"
         data-note-row={note.path}
@@ -30,7 +30,7 @@ function NoteRow(props: {
         aria-current={props.selected ? "page" : undefined}
         onClick={props.onSelect}
         onKeyDown={props.onKeyDown}
-        className="grid w-full gap-0.5 rounded-lg px-3 py-2 text-start outline-none transition-colors hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset aria-[current=page]:bg-accent aria-[current=page]:text-accent-foreground"
+        className="grid w-full gap-0.5 rounded-lg px-3 py-2 text-start outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset aria-[current=page]:bg-primary/10 aria-[current=page]:text-accent-foreground"
       >
         <span className="flex min-w-0 items-baseline gap-2">
           {note.pinned ? (
@@ -155,7 +155,10 @@ export function NoteList(props: {
   return (
     <nav aria-label="Notes" className={cn("flex min-h-0 flex-col", props.className)}>
       {props.header}
-      <div className="flex items-center gap-2 border-b border-border/60 bg-muted/30 p-3">
+      <div
+        className="flex items-center gap-2 border-b border-border bg-background p-3"
+        data-surface-subheader
+      >
         <InputGroup className="min-w-0 flex-1">
           <InputGroupAddon>
             <SearchIcon aria-hidden />
@@ -210,7 +213,7 @@ export function NoteList(props: {
         {pathToOpen ? (
           <button
             type="button"
-            className="w-full truncate rounded-lg px-3 py-2 text-start text-sm text-primary outline-none hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+            className="w-full truncate rounded-lg px-3 py-2 text-start text-sm text-primary outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
             onClick={() => props.onSelect(pathToOpen)}
           >
             Open {pathToOpen}

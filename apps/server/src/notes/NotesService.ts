@@ -42,6 +42,7 @@ import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../config.ts";
 import * as Projections from "../orchestration-v2/ProjectionStore.ts";
+import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import { parseNote, serializeNote, type NoteContents } from "./frontmatter.ts";
 import * as NoteImages from "./NoteImages.ts";
 import { bodySummary } from "./noteSummary.ts";
@@ -54,6 +55,19 @@ const isFolder = Schema.is(NoteFolder);
 const LIST_LIMIT = 500;
 const SKIPPED_LIMIT = 50;
 const isMarkdownName = (name: string) => /\.(?:md|markdown)$/iu.test(name);
+/** The API spelling of an on-disk name: NFC, and one `.md` for `.MD` and `.markdown` too. */
+const fileKey = (name: string) => name.normalize("NFC").replace(/\.(?:md|markdown)$/iu, ".md");
+const folderKey = (name: string) => name.normalize("NFC");
+/** Exact spellings first, so every lookup and listing picks the same file among aliases. */
+const aliasOrder = (entries: ReadonlyArray<string>, key: (name: string) => string) => [
+  ...entries.filter((entry) => key(entry) === entry).toSorted(),
+  ...entries.filter((entry) => key(entry) !== entry).toSorted(),
+];
+const resolveEntry = (
+  entries: ReadonlyArray<string>,
+  wanted: string,
+  key: (name: string) => string,
+) => aliasOrder(entries, key).find((entry) => key(entry) === wanted);
 const ISSUE_LABEL: Record<NoteIssue, string> = {
   invalid_frontmatter: "header cannot be parsed",
   invalid_utf8: "file is not valid UTF-8",
@@ -106,6 +120,10 @@ export class NotesService extends Context.Service<
       card: NoteCardLink,
       author: NoteAuthor,
     ) => Effect.Effect<NoteDocument, NoteError>;
+    /** Clears the card link of every note that points at the card; for when the card is gone. */
+    readonly unlinkCard: (cardId: NoteCardLink["cardId"]) => Effect.Effect<void, NoteError>;
+    /** Notes that link a card, so a caller can check each link still resolves. */
+    readonly linkedCards: Effect.Effect<ReadonlyArray<{ path: NotePath; card: NoteCardLink }>>;
   }
 >()("t3/notes/NotesService") {}
 
@@ -116,6 +134,7 @@ const make = Effect.gen(function* () {
   const git = yield* NotesGit.NotesGit;
   const images = yield* NoteImages.NoteImages;
   const projections = yield* Projections.ProjectionStoreV2;
+  const projects = yield* ProjectStore.ProjectStoreV2;
   const lock = yield* Semaphore.make(1);
   const events = yield* PubSub.unbounded<NotesEvent>();
   yield* Effect.addFinalizer(() => PubSub.shutdown(events));
@@ -126,6 +145,11 @@ const make = Effect.gen(function* () {
   const root = yield* fs.realPath(config.notesDir).pipe(Effect.mapError(() => storage));
   const known = new Map<NotePath, string>();
   const readModel = new Map<NotePath, NoteDocument>();
+  // Every note path on disk. The first LIST_LIMIT by path are the listed ones, in the snapshot and
+  // in live events alike.
+  const index = new Set<NotePath>();
+  const listedNow = () => new Set([...index].sort().slice(0, LIST_LIMIT));
+  const omittedNow = () => Math.max(0, index.size - LIST_LIMIT);
 
   // Path pinning, loading and persisting run inside the public operations' spans.
   const invalidPath = (name: string) =>
@@ -181,21 +205,31 @@ const make = Effect.gen(function* () {
       yield* verify;
       const folder = segments[0]!;
       const entries = yield* io(name, () => NodeFSP.readdir(root));
-      parent = path.join(root, folder);
+      // The directory's own spelling may be NFD; only a listed entry is ever opened.
+      const actualFolder = resolveEntry(entries, folder, folderKey);
+      parent = path.join(root, actualFolder ?? folder);
       const info = yield* io(name, () => NodeFSP.lstat(parent)).pipe(
         Effect.catchTags({
           NoteError: (error) =>
             error.reason === "not_found" ? Effect.succeed(null) : Effect.fail(error),
         }),
       );
-      if (info && (!entries.includes(folder) || info.isSymbolicLink()))
+      // Found without being listed: a case-insensitive alias of another spelling.
+      if (info && (actualFolder === undefined || info.isSymbolicLink()))
         return yield* invalidPath(name);
       if (!info && create) yield* fs.makeDirectory(parent).pipe(Effect.mapError(() => storage));
       const handle = yield* open(name, parent, directoryFlags);
       pins.push({ absolute: parent, handle });
     }
     yield* verify;
-    const absolute = path.join(parent, segments.at(-1)!);
+    const listing = yield* io(name, () => NodeFSP.readdir(parent)).pipe(
+      Effect.catchTags({
+        NoteError: (error) =>
+          error.reason === "not_found" ? Effect.succeed([]) : Effect.fail(error),
+      }),
+    );
+    const actualFile = resolveEntry(listing, segments.at(-1)!, fileKey) ?? segments.at(-1)!;
+    const absolute = path.join(parent, actualFile);
     const verifyFile = Effect.gen(function* () {
       yield* verify;
       const info = yield* io(name, () => NodeFSP.lstat(absolute)).pipe(
@@ -206,7 +240,7 @@ const make = Effect.gen(function* () {
       );
       if (info) {
         const entries = yield* io(name, () => NodeFSP.readdir(parent));
-        if (!info.isFile() || info.isSymbolicLink() || !entries.includes(segments.at(-1)!))
+        if (!info.isFile() || info.isSymbolicLink() || !entries.includes(actualFile))
           return yield* invalidPath(name);
       }
       return info;
@@ -270,6 +304,12 @@ const make = Effect.gen(function* () {
           return degraded("invalid_utf8", revision, new TextDecoder().decode(bytes));
         const contents = tryParseNote(decoded);
         if (contents === null) return degraded("invalid_frontmatter", revision, decoded);
+        const projectMissing =
+          contents.project !== null &&
+          (yield* projects.get(contents.project).pipe(
+            Effect.map(Option.isNone),
+            Effect.orElseSucceed(() => false),
+          ));
         const document: NoteDocument = {
           id: contents.id,
           path: name,
@@ -279,6 +319,7 @@ const make = Effect.gen(function* () {
           related: contents.related,
           card: contents.card,
           ...(contents.project === null ? {} : { project: contents.project }),
+          ...(projectMissing ? { projectMissing: true as const } : {}),
           updatedBy: contents.updatedBy,
           revision,
           updatedAt: info.mtime.toISOString(),
@@ -315,16 +356,40 @@ const make = Effect.gen(function* () {
           error.reason === "not_found" ? Effect.succeed(null) : Effect.fail(error),
       }),
     );
+  /** Applies an index change and tells clients which notes entered or left the listed cut. */
+  const settle = Effect.fnUntraced(function* (change: NotePath, apply: () => void) {
+    const before = listedNow();
+    apply();
+    const after = listedNow();
+    const omitted = omittedNow();
+    for (const name of before)
+      if (!after.has(name) && name !== change)
+        yield* PubSub.publish(events, { type: "removed", path: name, omitted });
+    for (const name of after) {
+      if (before.has(name) || name === change) continue;
+      const document = readModel.get(name) ?? (yield* optionalLoadAny(name))?.document;
+      if (document)
+        yield* PubSub.publish(events, { type: "upserted", note: summary(document), omitted });
+    }
+    return { listed: after.has(change), omitted };
+  });
   const publish = Effect.fnUntraced(function* (note: NoteDocument) {
     readModel.set(note.path, note);
     known.set(note.path, note.revision);
-    yield* PubSub.publish(events, { type: "upserted", note: summary(note) });
+    const { listed, omitted } = yield* settle(note.path, () => index.add(note.path));
+    yield* PubSub.publish(
+      events,
+      listed
+        ? { type: "upserted", note: summary(note), omitted }
+        : { type: "removed", path: note.path, omitted },
+    );
     yield* git.changed;
   });
   const removed = Effect.fnUntraced(function* (name: NotePath) {
     known.delete(name);
     readModel.delete(name);
-    yield* PubSub.publish(events, { type: "removed", path: name });
+    const { omitted } = yield* settle(name, () => index.delete(name));
+    yield* PubSub.publish(events, { type: "removed", path: name, omitted });
     yield* git.changed;
   });
   const persist = Effect.fnUntraced(function* (
@@ -562,21 +627,30 @@ const make = Effect.gen(function* () {
       );
     const entries = yield* fs.readDirectory(root).pipe(Effect.mapError(() => storage));
     const folders: Array<string> = [];
-    const names: Array<NotePath> = [];
+    const all: Array<NotePath> = [];
     const skipped: Array<NoteSkipped> = [];
     // Names that failed to read for a reason that may pass, so a refresh keeps their last state.
     const unreadable = new Set<string>();
-    let omitted = 0;
     const skip = (name: string, reason: NoteSkipped["reason"]) => {
       if (skipped.length < SKIPPED_LIMIT) skipped.push({ name, reason });
     };
-    const add = (name: string) => {
-      if (isPath(name)) {
-        if (names.length < limit) names.push(name);
-        else omitted++;
-      } else if (isMarkdownName(name)) skip(name, "unsupported_name");
+    const addFrom = (prefix: string, listing: ReadonlyArray<string>) => {
+      const seen = new Set<string>();
+      for (const entry of aliasOrder(listing, fileKey)) {
+        if (entry.startsWith(".")) continue;
+        const name = `${prefix}${fileKey(entry)}`;
+        if (!isPath(name)) {
+          if (isMarkdownName(entry)) skip(`${prefix}${entry}`, "unsupported_name");
+        } else if (seen.has(name)) skip(`${prefix}${entry}`, "duplicate_name");
+        else {
+          seen.add(name);
+          all.push(name);
+        }
+      }
     };
-    for (const entry of entries.toSorted()) {
+    const rootFiles: Array<string> = [];
+    const seenFolders = new Set<string>();
+    for (const entry of aliasOrder(entries, folderKey)) {
       if (entry.startsWith(".")) continue;
       const entryPath = path.join(root, entry);
       const info = yield* fs.stat(entryPath).pipe(Effect.option);
@@ -585,8 +659,13 @@ const make = Effect.gen(function* () {
         continue;
       }
       if (info.value.type === "Directory") {
-        if (!isFolder(entry)) {
+        const folder = folderKey(entry);
+        if (!isFolder(folder)) {
           skip(entry, "unsupported_name");
+          continue;
+        }
+        if (seenFolders.has(folder)) {
+          skip(entry, "duplicate_name");
           continue;
         }
         const real = yield* fs.realPath(entryPath).pipe(Effect.option);
@@ -598,13 +677,23 @@ const make = Effect.gen(function* () {
           skip(entry, "unreadable");
           continue;
         }
-        folders.push(entry);
-        if (input.folder !== undefined && entry !== input.folder) continue;
+        seenFolders.add(folder);
+        folders.push(folder);
+        if (input.folder !== undefined && folder !== input.folder) continue;
         const children = yield* fs.readDirectory(entryPath).pipe(Effect.mapError(() => storage));
-        for (const child of children.toSorted())
-          if (!child.startsWith(".")) add(`${entry}/${child}`);
-      } else if (input.folder === undefined) add(entry);
+        for (const child of children.toSorted()) {
+          if (child.startsWith(".") || isMarkdownName(child)) continue;
+          const nested = yield* fs.stat(path.join(entryPath, child)).pipe(Effect.option);
+          if (Option.isSome(nested) && nested.value.type === "Directory")
+            skip(`${folder}/${child}`, "nested_too_deep");
+        }
+        addFrom(`${folder}/`, children);
+      } else if (input.folder === undefined) rootFiles.push(entry);
     }
+    addFrom("", rootFiles);
+    all.sort();
+    const names = all.slice(0, limit);
+    const omitted = all.length - names.length;
     const loaded = yield* Effect.forEach(
       names,
       (name) =>
@@ -631,13 +720,18 @@ const make = Effect.gen(function* () {
       ...(omitted > 0 ? { omitted } : {}),
       ...(skipped.length > 0 ? { skipped } : {}),
       unreadable,
+      all,
     };
   });
   const read = Effect.fn("NotesService.read")(function* (input: NotesReadInput) {
     return (yield* lock.withPermits(1)(loadAny(input.path))).document;
   });
   const list = Effect.fn("NotesService.list")(function* (input: NotesListInput) {
-    const { unreadable: _unreadable, ...result } = yield* lock.withPermits(1)(scan(input));
+    const {
+      unreadable: _unreadable,
+      all: _all,
+      ...result
+    } = yield* lock.withPermits(1)(scan(input));
     return { ...result, notes: result.notes.map(summary) };
   });
   const write = Effect.fn("NotesService.write")(function* (
@@ -847,13 +941,24 @@ const make = Effect.gen(function* () {
       ),
     );
   });
+  const linkedCards = Effect.sync(() =>
+    [...readModel.values()].flatMap((note) =>
+      note.card ? [{ path: note.path, card: note.card }] : [],
+    ),
+  );
+  const unlinkCard = Effect.fn("NotesService.unlinkCard")(function* (
+    cardId: NoteCardLink["cardId"],
+  ) {
+    for (const note of yield* linkedCards)
+      if (note.card.cardId === cardId) yield* update({ path: note.path, card: null });
+  });
   const refresh = lock.withPermits(1)(
     Effect.gen(function* () {
       const snapshot = yield* scan({}, Infinity);
       const present = new Set<string>(snapshot.notes.map((note) => note.path));
       for (const note of snapshot.notes)
         if (known.get(note.path) !== note.revision) yield* publish(note);
-      for (const name of new Set([...known.keys(), ...readModel.keys()]))
+      for (const name of new Set([...known.keys(), ...readModel.keys(), ...index]))
         if (!present.has(name) && !snapshot.unreadable.has(name)) yield* removed(name);
     }),
   );
@@ -874,7 +979,9 @@ const make = Effect.gen(function* () {
       }),
     ),
   );
-  for (const note of (yield* scan({}, Infinity)).notes) known.set(note.path, note.revision);
+  const initial = yield* scan({}, Infinity);
+  for (const note of initial.notes) known.set(note.path, note.revision);
+  for (const name of initial.all) index.add(name);
   const ready = yield* Deferred.make<void>();
   const dirty = new Set<string>();
   /** Same policy as refresh: gone or unusable means removed; a failure that may pass keeps state. */
@@ -902,7 +1009,7 @@ const make = Effect.gen(function* () {
         } else if (outcome.source) {
           if (known.get(name) !== outcome.source.document.revision)
             yield* publish(outcome.source.document);
-        } else if (known.has(name) || readModel.has(name)) yield* removed(name);
+        } else if (known.has(name) || readModel.has(name) || index.has(name)) yield* removed(name);
       }
       if (failed) return yield* storage;
     }),
@@ -931,6 +1038,9 @@ const make = Effect.gen(function* () {
       path
         .relative(root, path.isAbsolute(name) ? name : path.join(root, name))
         .split(path.sep)
+        .map((segment, position, segments) =>
+          position === segments.length - 1 ? fileKey(segment) : folderKey(segment),
+        )
         .join("/"),
     ),
     Stream.filter((name) => !name.split("/").some((segment) => segment.startsWith("."))),
@@ -970,6 +1080,8 @@ const make = Effect.gen(function* () {
     subscribe,
     identify,
     linkCard,
+    unlinkCard,
+    linkedCards,
   });
 });
 

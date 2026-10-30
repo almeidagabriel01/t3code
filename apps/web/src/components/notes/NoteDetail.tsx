@@ -30,8 +30,6 @@ import { useEnvironmentQuery } from "../../state/query";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
 import { Spinner } from "../ui/spinner";
-import { Toggle } from "../ui/toggle";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { NoteCardChip } from "./NoteCard";
 import { NoteProjectMenu } from "./NoteProjectMenu";
 import { NoteConflictDialog } from "./NoteConflictDialog";
@@ -40,6 +38,12 @@ import { NoteFileDialog } from "./NoteFileDialog";
 import { NoteStartWorkDialog } from "./NoteStartWorkDialog";
 import { isNoteDirty, noteErrorMessage, NoteSession, type NoteEditState } from "./noteState";
 import { useNoteCommand } from "./useNoteCommand";
+
+const ISSUE_REASON = {
+  invalid_frontmatter: "header cannot be parsed",
+  invalid_utf8: "file is not valid UTF-8",
+  too_large: "file is too large",
+} as const satisfies Record<NonNullable<NoteDocument["issue"]>, string>;
 
 interface NotePaneProps {
   environmentId: EnvironmentId;
@@ -121,6 +125,7 @@ function NoteDetail(props: NotePaneProps & { document: NoteDocument }) {
   if (props.summary !== undefined && !listed) setListed(true);
   const removed = listed && props.listReady && props.summary === undefined;
   const dirty = isNoteDirty(state);
+  const issue = state.document.issue;
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- feeds server reads of this note into the external edit session
   useEffect(() => {
@@ -190,73 +195,39 @@ function NoteDetail(props: NotePaneProps & { document: NoteDocument }) {
 
   return (
     <article className="flex min-w-0 flex-1 flex-col" aria-label="Selected note">
-      <div className="border-b border-border/60 bg-muted/30">
-        <div className="mx-auto flex w-full max-w-3xl flex-wrap items-center gap-x-2 gap-y-1 px-4 py-2 md:px-8">
+      <div className="border-b border-border bg-background" data-surface-subheader>
+        <div className="mx-auto flex h-11 w-full max-w-3xl items-center gap-2 px-4 md:px-8">
           <BackToNotes onBack={props.onBack} />
-          <p className="min-w-0 truncate text-xs text-muted-foreground">
-            {state.document.folder ? <span>{state.document.folder} / </span> : null}
+          <p className="min-w-0 truncate text-sm font-medium">
+            {state.document.folder ? (
+              <span className="font-normal text-muted-foreground">{state.document.folder} / </span>
+            ) : null}
             {fileName}
           </p>
-          <SaveState
-            state={state}
-            dirty={dirty}
-            canWrite={canWrite}
-            onRetry={() => void session.save()}
-          />
-          <div className="ms-auto flex items-center gap-1">
-            {canWrite && !removed ? (
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      size="xs"
-                      variant={editing ? "default" : "outline"}
-                      aria-label={editing ? "Done editing" : "Edit note"}
-                      onClick={() => setEditing(!editing)}
-                    />
-                  }
-                >
-                  {editing ? <CheckIcon aria-hidden /> : <PencilIcon aria-hidden />}
-                  {editing ? "Done" : "Edit"}
-                </TooltipTrigger>
-                <TooltipPopup side="bottom">
-                  {editing ? "Back to reading (Esc)" : "Edit this note"}
-                </TooltipPopup>
-              </Tooltip>
-            ) : null}
-            {canUpdate ? (
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Toggle
-                      size="sm"
-                      variant="ghost"
-                      aria-label={latest.pinned ? "Unpin note" : "Pin note"}
-                      pressed={latest.pinned}
-                      disabled={removed}
-                      onPressedChange={(next) => void runUpdate({ pinned: next })}
-                    />
-                  }
-                >
-                  {latest.pinned ? <PinOffIcon aria-hidden /> : <PinIcon aria-hidden />}
-                </TooltipTrigger>
-                <TooltipPopup side="bottom">
-                  {latest.pinned ? "Unpin" : "Pin to the top"}
-                </TooltipPopup>
-              </Tooltip>
-            ) : null}
-            {canStart && latest.card === null ? (
+          {issue ? null : (
+            <SaveState
+              state={state}
+              dirty={dirty}
+              canWrite={canWrite}
+              onRetry={() => void session.save()}
+            />
+          )}
+          <div className="ms-auto flex shrink-0 items-center gap-1">
+            {canWrite && !removed && !issue ? (
               <Button
                 size="xs"
-                variant="outline"
-                disabled={fileBusy}
-                onClick={() => setStarting(true)}
+                variant={editing ? "default" : "outline"}
+                aria-label={editing ? "Done editing" : "Edit note"}
+                onClick={() => setEditing(!editing)}
               >
-                <PlayIcon aria-hidden />
-                Start work
+                {editing ? <CheckIcon aria-hidden /> : <PencilIcon aria-hidden />}
+                {editing ? "Done" : "Edit"}
               </Button>
             ) : null}
-            {canMove || canDelete ? (
+            {(canUpdate && !issue) ||
+            (canStart && latest.card === null && !issue) ||
+            canMove ||
+            canDelete ? (
               <Menu>
                 <MenuTrigger
                   render={<Button size="icon-sm" variant="ghost" aria-label="More note actions" />}
@@ -264,17 +235,38 @@ function NoteDetail(props: NotePaneProps & { document: NoteDocument }) {
                   <EllipsisIcon aria-hidden />
                 </MenuTrigger>
                 <MenuPopup align="end">
-                  <MenuItem disabled={!canMove || fileBusy} onClick={() => setFileAction("move")}>
-                    Rename or move…
-                  </MenuItem>
-                  <MenuSeparator />
-                  <MenuItem
-                    variant="destructive"
-                    disabled={!canDelete || fileBusy}
-                    onClick={() => setFileAction("delete")}
-                  >
-                    Delete…
-                  </MenuItem>
+                  {canUpdate && !issue ? (
+                    <MenuItem
+                      disabled={removed}
+                      onClick={() => void runUpdate({ pinned: !latest.pinned })}
+                    >
+                      {latest.pinned ? <PinOffIcon aria-hidden /> : <PinIcon aria-hidden />}
+                      {latest.pinned ? "Unpin" : "Pin to the top"}
+                    </MenuItem>
+                  ) : null}
+                  {canStart && latest.card === null && !issue ? (
+                    <MenuItem disabled={fileBusy} onClick={() => setStarting(true)}>
+                      <PlayIcon aria-hidden />
+                      Start work
+                    </MenuItem>
+                  ) : null}
+                  {canMove ? (
+                    <MenuItem disabled={fileBusy} onClick={() => setFileAction("move")}>
+                      Rename or move…
+                    </MenuItem>
+                  ) : null}
+                  {canDelete ? (
+                    <>
+                      <MenuSeparator />
+                      <MenuItem
+                        variant="destructive"
+                        disabled={fileBusy}
+                        onClick={() => setFileAction("delete")}
+                      >
+                        Delete…
+                      </MenuItem>
+                    </>
+                  ) : null}
                 </MenuPopup>
               </Menu>
             ) : null}
@@ -282,24 +274,32 @@ function NoteDetail(props: NotePaneProps & { document: NoteDocument }) {
         </div>
       </div>
       <div className="mx-auto grid w-full max-w-3xl gap-2 px-4 pt-3 md:px-8">
-        <div>
-          <NoteProjectMenu
-            environmentId={environmentId}
-            projectId={latest.project ?? null}
-            disabled={!canUpdate || removed}
-            onChange={(project) => void runUpdate({ project })}
-          />
-        </div>
-        {latest.card !== null ? (
-          <div>
-            <NoteCardChip
+        {issue ? (
+          <p
+            role="status"
+            className="rounded-lg border border-border bg-muted/50 px-3 py-2 text-sm"
+          >
+            This note is read-only: its {ISSUE_REASON[issue]}. T3 Code leaves the file untouched;
+            fix it on disk or delete the note.
+          </p>
+        ) : (
+          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+            <NoteProjectMenu
               environmentId={environmentId}
-              link={latest.card}
-              canUnlink={canUpdate && !removed}
-              onUnlink={() => void runUpdate({ card: null })}
+              projectId={latest.project ?? null}
+              disabled={!canUpdate || removed}
+              onChange={(project) => void runUpdate({ project })}
             />
+            {latest.card !== null ? (
+              <NoteCardChip
+                environmentId={environmentId}
+                link={latest.card}
+                canUnlink={canUpdate && !removed}
+                onUnlink={() => void runUpdate({ card: null })}
+              />
+            ) : null}
           </div>
-        ) : null}
+        )}
         {removed && (
           <p role="alert" className="text-sm text-destructive-foreground">
             This note was removed. Your draft is still visible; copy it before leaving.
@@ -341,7 +341,7 @@ function NoteDetail(props: NotePaneProps & { document: NoteDocument }) {
         key={state.editorVersion}
         environmentId={environmentId}
         body={state.body}
-        editable={canWrite && !removed && editing}
+        editable={canWrite && !removed && !issue && editing}
         autoFocus={focusOnMount && state.editorVersion === 0}
         claimedImages={state.claimedImages}
         onChange={(body) => session.edit(body)}
@@ -422,7 +422,7 @@ function RelatedThread(props: {
   });
   const title = shell?.title.trim() || "Thread";
   return (
-    <li className="flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-sm hover:bg-accent/40">
+    <li className="flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-sm hover:bg-accent">
       <MessageSquareIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
       {shell ? (
         <Link

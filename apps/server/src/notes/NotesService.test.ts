@@ -133,6 +133,7 @@ it.effect("publishes an outside edit and deletion picked up by the watcher", () 
       assert.deepStrictEqual(yield* Queue.take(seen), {
         type: "removed",
         path: "project/task.md",
+        omitted: 0,
       });
     }).pipe(Effect.provide(queuedWatcher(changes)));
   }).pipe(Effect.scoped),
@@ -745,9 +746,6 @@ it.effect(
       yield* fs.writeFile(`${notesDir}/binary.md`, new Uint8Array([0x23, 0x20, 0xff, 0xfe]));
       yield* fs.makeDirectory(`${notesDir}/folder`);
       yield* fs.writeFileString(`${notesDir}/folder/ok.md`, "# Ok\n");
-      yield* fs.writeFileString(`${notesDir}/UPPER.MD`, "# not a note name\n");
-      yield* fs.writeFileString(`${notesDir}/legacy.markdown`, "# not a note name\n");
-      yield* fs.writeFileString(`${notesDir}/cafe\u0301.md`, "# decomposed\n");
       yield* fs.writeFileString(`${notesDir}/a:b.md`, "# colon\n");
       yield* fs.writeFileString(`${notesDir}/readme.txt`, "ignored\n");
 
@@ -765,10 +763,10 @@ it.effect(
       assert.strictEqual(byPath.get("dup.md")!.title, "dup");
       assert.strictEqual(byPath.get("dup.md")!.size, duplicate.length);
       assert.deepStrictEqual(
-        listed.skipped?.map((entry) => entry.name).toSorted(),
-        ["UPPER.MD", "a:b.md", "cafe\u0301.md", "legacy.markdown"].toSorted(),
+        listed.skipped?.map((entry) => entry.name),
+        ["a:b.md"],
       );
-      assert.isTrue(listed.skipped?.every((entry) => entry.reason === "unsupported_name"));
+      assert.strictEqual(listed.skipped?.[0]?.reason, "unsupported_name");
       assert.isFalse(listed.truncated);
 
       // The raw text is readable, and every edit is refused with the reason instead of rewriting it.
@@ -862,6 +860,113 @@ it.effect("a read that fails for a passing reason keeps the note and is retried"
       yield* TestClock.adjust("1 second");
       const event = yield* Queue.take(seen);
       assert.strictEqual(event.type === "upserted" && event.note.title, "Two");
+    }).pipe(Effect.provide(queuedWatcher(changes)));
+  }).pipe(Effect.scoped),
+);
+
+it.effect("decomposed names and .MD/.markdown files are listed, read and written in place", () =>
+  Effect.gen(function* () {
+    const notes = yield* Notes.NotesService;
+    const fs = yield* FileSystem.FileSystem;
+    const { notesDir } = yield* Config.ServerConfig;
+    const nfd = "Reunia\u0303o.md";
+    yield* fs.writeFileString(`${notesDir}/${nfd}`, "# decomposed\n");
+    yield* fs.makeDirectory(`${notesDir}/Ide\u0301ias`);
+    yield* fs.writeFileString(`${notesDir}/Ide\u0301ias/x.MD`, "# upper\n");
+    yield* fs.writeFileString(`${notesDir}/legacy.markdown`, "# legacy\n");
+    const listed = yield* notes.list({});
+    assert.deepStrictEqual(
+      listed.notes.map((note) => note.path),
+      ["Ide\u0301ias/x.md".normalize("NFC"), nfd.normalize("NFC"), "legacy.md"].toSorted(),
+    );
+    assert.isUndefined(listed.skipped);
+    for (const note of listed.notes) {
+      const read = yield* notes.read({ path: note.path });
+      const written = yield* notes.write(
+        { path: note.path, body: `${read.body}edited\n`, baseRevision: read.revision },
+        "user",
+      );
+      assert.strictEqual(written.path, note.path);
+    }
+    // The files kept their own spelling: no duplicate was created next to them.
+    assert.deepStrictEqual(
+      (yield* fs.readDirectory(notesDir)).filter((name) => !name.startsWith(".")).toSorted(),
+      ["Ide\u0301ias", nfd, "legacy.markdown"].toSorted(),
+    );
+    assert.include(yield* fs.readFileString(`${notesDir}/legacy.markdown`), "edited");
+    assert.include(yield* fs.readFileString(`${notesDir}/Ide\u0301ias/x.MD`), "edited");
+  }).pipe(Effect.provide(layer())),
+);
+
+it.effect("a folder inside a note folder is reported, not silently invisible", () =>
+  Effect.gen(function* () {
+    const notes = yield* Notes.NotesService;
+    const fs = yield* FileSystem.FileSystem;
+    const { notesDir } = yield* Config.ServerConfig;
+    yield* fs.makeDirectory(`${notesDir}/a/deep`, { recursive: true });
+    yield* fs.writeFileString(`${notesDir}/a/deep/lost.md`, "# lost\n");
+    yield* fs.writeFileString(`${notesDir}/a/ok.md`, "# ok\n");
+    const listed = yield* notes.list({});
+    assert.deepStrictEqual(
+      listed.notes.map((note) => note.path),
+      ["a/ok.md"],
+    );
+    assert.deepStrictEqual(listed.skipped, [{ name: "a/deep", reason: "nested_too_deep" }]);
+  }).pipe(Effect.provide(layer())),
+);
+
+it.effect("a note linked to a missing project is flagged, and flagged no more once unlinked", () =>
+  Effect.gen(function* () {
+    const notes = yield* Notes.NotesService;
+    const gone = ProjectId.make("project-gone");
+    yield* notes.write({ path: "n.md", body: "x", baseRevision: null, project: gone }, "user");
+    assert.isTrue((yield* notes.list({})).notes[0]?.projectMissing);
+    const cleared = yield* notes.update({ path: "n.md", project: null });
+    assert.isUndefined(cleared.projectMissing);
+    assert.isUndefined(cleared.project);
+  }).pipe(Effect.provide(layer({ projectExists: () => false }))),
+);
+
+it.effect("live updates follow the snapshot's cap: first 500 paths, omitted kept current", () =>
+  Effect.gen(function* () {
+    const changes = yield* Queue.unbounded<FileSystem.WatchEvent>();
+    yield* Effect.gen(function* () {
+      const notes = yield* Notes.NotesService;
+      const fs = yield* FileSystem.FileSystem;
+      const { notesDir } = yield* Config.ServerConfig;
+      for (let index = 0; index < 501; index++)
+        yield* fs.writeFileString(`${notesDir}/n-${String(index).padStart(3, "0")}.md`, "# n\n");
+      // The watcher indexes the files written after startup.
+      yield* Queue.offer(changes, { _tag: "Update", path: "resync.txt" });
+      yield* TestClock.adjust("100 millis");
+      const seen = yield* Queue.unbounded<NotesEvent>();
+      yield* notes.subscribe.pipe(
+        Stream.runForEach((event) => Queue.offer(seen, event)),
+        Effect.forkScoped,
+      );
+      const snapshot = yield* Queue.take(seen);
+      assert.strictEqual(snapshot.type === "snapshot" && snapshot.notes.length, 500);
+      assert.strictEqual(snapshot.type === "snapshot" && snapshot.omitted, 1);
+      // Past the cut: no note is published, only the count moves.
+      yield* fs.writeFileString(`${notesDir}/zzz.md`, "# z\n");
+      yield* Queue.offer(changes, { _tag: "Create", path: "zzz.md" });
+      yield* TestClock.adjust("100 millis");
+      const beyond = yield* Queue.take(seen);
+      assert.deepStrictEqual(beyond, { type: "removed", path: "zzz.md", omitted: 2 });
+      // Before the cut: it enters and the last listed note leaves.
+      yield* fs.writeFileString(`${notesDir}/a.md`, "# a\n");
+      yield* Queue.offer(changes, { _tag: "Create", path: "a.md" });
+      yield* TestClock.adjust("100 millis");
+      const events = [yield* Queue.take(seen), yield* Queue.take(seen)];
+      assert.deepStrictEqual(events[0], { type: "removed", path: "n-499.md", omitted: 3 });
+      assert.strictEqual(events[1]?.type === "upserted" && events[1].note.path, "a.md");
+      // Removing a listed note promotes the first omitted one.
+      yield* fs.remove(`${notesDir}/a.md`);
+      yield* Queue.offer(changes, { _tag: "Remove", path: "a.md" });
+      yield* TestClock.adjust("100 millis");
+      const promoted = [yield* Queue.take(seen), yield* Queue.take(seen)];
+      assert.strictEqual(promoted[0]?.type === "upserted" && promoted[0].note.path, "n-499.md");
+      assert.deepStrictEqual(promoted[1], { type: "removed", path: "a.md", omitted: 2 });
     }).pipe(Effect.provide(queuedWatcher(changes)));
   }).pipe(Effect.scoped),
 );

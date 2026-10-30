@@ -3,9 +3,11 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 
 import * as Config from "../config.ts";
 import * as Projections from "../orchestration-v2/ProjectionStore.ts";
+import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ResourceCleanupService from "../orchestration-v2/ResourceCleanupService.ts";
 import * as NoteImages from "./NoteImages.ts";
 import * as Git from "./NotesGit.ts";
@@ -41,6 +43,8 @@ export const notesLayer = (
   options: {
     readonly transformFs?: (fs: FileSystem.FileSystem) => FileSystem.FileSystem;
     readonly getThread?: Projections.ProjectionStoreV2["Service"]["getThread"];
+    /** Whether a project id names a project; every id does by default. */
+    readonly projectExists?: (projectId: string) => boolean;
     /** Stores images for real and records the ids released through cleanup. */
     readonly cleaned?: Array<string>;
   } = {},
@@ -52,6 +56,16 @@ export const notesLayer = (
           options.getThread ??
           ((threadId) =>
             Effect.fail(new Projections.ProjectionStoreThreadNotFoundError({ threadId }))),
+      }),
+    ),
+    Layer.provide(
+      Layer.mock(ProjectStore.ProjectStoreV2)({
+        get: (projectId) =>
+          Effect.succeed(
+            (options.projectExists?.(projectId) ?? true)
+              ? Option.some({} as ProjectStore.ProjectRow)
+              : Option.none(),
+          ),
       }),
     ),
     Layer.provide(Layer.succeed(Git.NotesGit, { changed: Effect.void, flush: Effect.void })),

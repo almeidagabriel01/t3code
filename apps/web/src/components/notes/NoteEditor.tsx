@@ -196,10 +196,7 @@ export function NoteEditor(props: {
     <AttachmentImageEnvironment value={props.environmentId}>
       <div className="flex min-w-0 flex-col" data-note-editor>
         {props.editable && (
-          <div
-            className="sticky top-0 z-10 border-b border-border/60 bg-background/80 backdrop-blur-md"
-            data-glass-layer
-          >
+          <div className="surface-glass sticky top-0 z-10 border-b border-border">
             <div
               className="mx-auto flex w-full max-w-3xl gap-0.5 overflow-x-auto px-3 py-1 md:px-7"
               role="toolbar"

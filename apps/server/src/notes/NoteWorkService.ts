@@ -8,8 +8,10 @@ import {
   type NotesStartWorkResult,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Stream from "effect/Stream";
 
 import * as KanbanService from "../kanban/KanbanService.ts";
 import * as NoteImages from "./NoteImages.ts";
@@ -50,7 +52,7 @@ const make = Effect.gen(function* () {
   const startWork = Effect.fn("NoteWorkService.startWork")(
     function* (input: NotesStartWorkInput, author: NoteAuthor, actor: KanbanActor) {
       const note = yield* notes.identify(input.path);
-      if (note.card) {
+      if (note.card && !input.forceNew) {
         // One note, one card: a second click returns the card the first created while it exists.
         const existing = yield* kanban.cardFamily(note.card.cardId);
         if (existing) return { note, boardId: existing.board.id, cardId: existing.card.id };
@@ -81,6 +83,31 @@ const make = Effect.gen(function* () {
     },
     Effect.catchTags({ KanbanError: (error) => Effect.fail(startFailed(error)) }),
   );
+  // A deleted card leaves nothing for a note to open, so its link is cleared. Archived cards stay.
+  const unlinkIfGone = Effect.fn("NoteWorkService.unlinkIfGone")(function* (
+    cardId: NotesStartWorkResult["cardId"],
+  ) {
+    if ((yield* kanban.cardFamily(cardId)) === null) yield* notes.unlinkCard(cardId);
+  });
+  const ready = yield* Deferred.make<void>();
+  yield* kanban.subscribe().pipe(
+    Stream.runForEach((item) =>
+      item.kind === "snapshot"
+        ? // Cards deleted while the server was down: check every link once, after subscribing.
+          notes.linkedCards.pipe(
+            Effect.flatMap((linked) =>
+              Effect.forEach(linked, ({ card }) => unlinkIfGone(card.cardId), { discard: true }),
+            ),
+            Effect.andThen(Deferred.succeed(ready, undefined)),
+          )
+        : item.kind === "card.removed"
+          ? unlinkIfGone(item.cardId)
+          : Effect.void,
+    ),
+    Effect.catch((error) => Effect.logWarning("Note card link cleanup stopped.", error)),
+    Effect.forkScoped,
+  );
+  yield* Deferred.await(ready);
   return NoteWorkService.of({ startWork });
 });
 

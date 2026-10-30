@@ -54,6 +54,11 @@ describe("notes state", () => {
     })!;
     assert.strictEqual(cut.omitted, 3);
     assert.strictEqual(cut.skipped[0]?.name, "x.MD");
+    // Live events carry the current omitted count, even for a path the client never held.
+    const grown = applyNotesEvent(cut, { type: "removed", path: "zzz.md", omitted: 4 })!;
+    assert.deepStrictEqual([grown.omitted, grown.truncated], [4, true]);
+    const shrunk = applyNotesEvent(grown, { type: "upserted", note: note("b.md"), omitted: 0 })!;
+    assert.deepStrictEqual([shrunk.omitted, shrunk.truncated], [0, false]);
   });
 
   it("orders pinned notes first, then the most recently updated", () => {

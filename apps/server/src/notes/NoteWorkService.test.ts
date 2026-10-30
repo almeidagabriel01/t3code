@@ -1,9 +1,15 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
-import { CommandId, ProjectId, type KanbanBoardSnapshot } from "@t3tools/contracts";
+import {
+  CommandId,
+  ProjectId,
+  type KanbanBoardSnapshot,
+  type NotesEvent,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 
 import * as Config from "../config.ts";
@@ -100,6 +106,49 @@ it.effect("starting work again returns the linked card; a deleted card can be re
     assert.notStrictEqual(third.cardId, first.cardId);
     assert.strictEqual(third.note.card?.cardId, third.cardId);
   }).pipe(Effect.provide(workLayer([]))),
+);
+
+it.effect("forceNew creates another card and relinks; the same request id stays idempotent", () =>
+  Effect.gen(function* () {
+    const notes = yield* Notes.NotesService;
+    const work = yield* Work.NoteWorkService;
+    yield* notes.write({ path: "f.md", body: "# F\n", baseRevision: null }, "user");
+    const first = yield* work.startWork(
+      { path: "f.md", projectId, requestId: "request-1" },
+      "user",
+      "user",
+    );
+    const input = { path: "f.md", projectId, requestId: "request-2", forceNew: true } as const;
+    const second = yield* work.startWork(input, "user", "user");
+    assert.notStrictEqual(second.cardId, first.cardId);
+    assert.strictEqual(second.note.card?.cardId, second.cardId);
+    assert.strictEqual((yield* work.startWork(input, "user", "user")).cardId, second.cardId);
+    assert.strictEqual((yield* boards)[0]?.cards.length, 2);
+  }).pipe(Effect.provide(workLayer([]))),
+);
+
+it.effect("deleting a card clears the note's link", () =>
+  Effect.gen(function* () {
+    const notes = yield* Notes.NotesService;
+    const work = yield* Work.NoteWorkService;
+    const kanban = yield* Kanban.KanbanService;
+    yield* notes.write({ path: "g.md", body: "# G\n", baseRevision: null }, "user");
+    const started = yield* work.startWork(
+      { path: "g.md", projectId, requestId: "request-1" },
+      "user",
+      "user",
+    );
+    const seen = yield* Queue.unbounded<NotesEvent>();
+    yield* notes.subscribe.pipe(
+      Stream.runForEach((event) => Queue.offer(seen, event)),
+      Effect.forkScoped,
+    );
+    assert.strictEqual((yield* Queue.take(seen)).type, "snapshot");
+    yield* kanban.cardDelete({ commandId: CommandId.make("delete-1"), cardId: started.cardId });
+    const event = yield* Queue.take(seen);
+    assert.isTrue(event.type === "upserted" && event.note.card === null);
+    assert.isNull((yield* notes.read({ path: "g.md" })).card);
+  }).pipe(Effect.scoped, Effect.provide(workLayer([]))),
 );
 
 it("a long note is cut on a code point and the cut is stated", () => {

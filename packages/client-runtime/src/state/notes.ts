@@ -42,14 +42,17 @@ export function applyNotesEvent(state: NotesState | null, event: NotesEvent): No
   }
   if (state === null) return null;
   const notes = new Map(state.notes);
+  const cap =
+    event.omitted === undefined ? {} : { omitted: event.omitted, truncated: event.omitted > 0 };
   if (event.type === "removed") {
     notes.delete(event.path);
-    return { ...state, notes };
+    return { ...state, ...cap, notes };
   }
   notes.set(event.note.path, event.note);
   const folder = event.note.folder;
   return {
     ...state,
+    ...cap,
     notes,
     folders:
       folder === null || state.folders.includes(folder)

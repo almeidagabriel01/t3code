@@ -11,7 +11,8 @@ import { KanbanBoardId, KanbanCardId, KanbanColumnId } from "./kanban.ts";
 
 /**
  * Notes are markdown files under the environment's notes directory. Folders only organise; the
- * hierarchy stops at one level, so a path is `note.md` or `folder/note.md`.
+ * hierarchy stops at one level, so a path is `note.md` or `folder/note.md`. Paths are the NFC, `.md`
+ * spelling of the file; the file on disk may be NFD or `.MD`/`.markdown`.
  */
 const NOTE_PATH_MAX_LENGTH = 300;
 /** A folder name, alone or as the first segment of a NotePath. */
@@ -85,8 +86,12 @@ export type NoteIssue = typeof NoteIssue.Type;
 /** A file in the notes directory that is not listed as a note, so it is never silently missing. */
 export const NoteSkipped = Schema.Struct({
   name: Schema.String.check(Schema.isMaxLength(NOTE_PATH_MAX_LENGTH)),
-  /** unsupported_name: not a plain NFC .md path with one folder at most. unreadable: could not be read. */
-  reason: Schema.Literals(["unsupported_name", "unreadable"]),
+  /**
+   * unsupported_name: not a .md/.markdown path with at most one folder. unreadable: could not be
+   * read. nested_too_deep: a folder inside a note folder, whose notes are not listed.
+   * duplicate_name: another file already spells the same path once normalized.
+   */
+  reason: Schema.Literals(["unsupported_name", "unreadable", "nested_too_deep", "duplicate_name"]),
 });
 export type NoteSkipped = typeof NoteSkipped.Type;
 
@@ -105,6 +110,8 @@ export const NoteSummary = Schema.Struct({
   /** The environment-local project the note belongs to; absent means unscoped. */
   project: Schema.optionalKey(ProjectId),
   updatedBy: Schema.NullOr(NoteAuthor),
+  /** True when project names a project this environment no longer has; unlink it by setting project to null. */
+  projectMissing: Schema.optionalKey(Schema.Literal(true)),
   /** Set when the file could not be understood; the note is read-only and metadata is not shown. */
   issue: Schema.optionalKey(NoteIssue),
   revision: NoteRevision,
@@ -193,8 +200,20 @@ export const NotesEvent = Schema.Union([
     omitted: Schema.optionalKey(NonNegativeInt),
     skipped: Schema.optionalKey(Schema.Array(NoteSkipped)),
   }),
-  Schema.Struct({ type: Schema.Literal("upserted"), note: NoteSummary }),
-  Schema.Struct({ type: Schema.Literal("removed"), path: NotePath }),
+  /**
+   * omitted, when present, is the live count of notes beyond the 500 listed (sorted by path), so a
+   * removed event for a path the client does not hold only updates that count.
+   */
+  Schema.Struct({
+    type: Schema.Literal("upserted"),
+    note: NoteSummary,
+    omitted: Schema.optionalKey(NonNegativeInt),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("removed"),
+    path: NotePath,
+    omitted: Schema.optionalKey(NonNegativeInt),
+  }),
 ]);
 export type NotesEvent = typeof NotesEvent.Type;
 
@@ -205,6 +224,8 @@ export const NotesStartWorkInput = Schema.Struct({
   columnId: Schema.optional(KanbanColumnId),
   /** Stable per attempt: a retry with the same id returns the same card instead of a second one. */
   requestId: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
+  /** Creates another card and relinks the note even when its card still exists. */
+  forceNew: Schema.optional(Schema.Boolean),
 });
 export type NotesStartWorkInput = typeof NotesStartWorkInput.Type;
 
