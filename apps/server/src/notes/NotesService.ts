@@ -26,6 +26,7 @@ import {
   type NotesUpdateInput,
   type NotesWriteInput,
   type NoteSummary,
+  type ProjectId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
@@ -41,6 +42,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../config.ts";
+import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
 import * as Projections from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import { parseNote, serializeNote, type NoteContents } from "./frontmatter.ts";
@@ -135,6 +137,7 @@ const make = Effect.gen(function* () {
   const images = yield* NoteImages.NoteImages;
   const projections = yield* Projections.ProjectionStoreV2;
   const projects = yield* ProjectStore.ProjectStoreV2;
+  const applicationEvents = yield* OrchestrationEventStore.OrchestrationEventStore;
   const lock = yield* Semaphore.make(1);
   const events = yield* PubSub.unbounded<NotesEvent>();
   yield* Effect.addFinalizer(() => PubSub.shutdown(events));
@@ -1066,6 +1069,48 @@ const make = Effect.gen(function* () {
     }),
     Effect.ensuring(Deferred.succeed(ready, undefined)),
     Effect.catch((error) => Effect.logWarning("Notes watcher stopped.", error)),
+  );
+  // projectMissing is computed on load, so a project removed or re-created is pushed live.
+  const reconcileProject = (projectId: ProjectId) =>
+    lock.withPermits(1)(
+      Effect.gen(function* () {
+        const missing = yield* projects.get(projectId).pipe(
+          Effect.map(Option.isNone),
+          Effect.orElseSucceed(() => false),
+        );
+        const listed = listedNow();
+        for (const document of readModel.values()) {
+          if (document.project !== projectId || (document.projectMissing === true) === missing)
+            continue;
+          const { projectMissing: _, ...rest } = document;
+          const next: NoteDocument = missing ? { ...rest, projectMissing: true } : rest;
+          readModel.set(document.path, next);
+          if (listed.has(document.path))
+            yield* PubSub.publish(events, {
+              type: "upserted",
+              note: summary(next),
+              omitted: omittedNow(),
+            });
+        }
+      }),
+    );
+  yield* applicationEvents.latestApplicationSequence.pipe(
+    Effect.orElseSucceed(() => 0),
+    Effect.flatMap((afterSequence) =>
+      applicationEvents
+        .streamApplicationEvents({ afterSequence })
+        .pipe(
+          Stream.runForEach((event) =>
+            "aggregateKind" in event &&
+            event.aggregateKind === "project" &&
+            (event.type === "project.created" || event.type === "project.deleted")
+              ? reconcileProject(event.aggregateId)
+              : Effect.void,
+          ),
+        ),
+    ),
+    Effect.catch((error) => Effect.logWarning("Note project tracking stopped.", error)),
+    Effect.forkScoped,
   );
   yield* watch.pipe(Effect.repeat(Schedule.spaced("1 second")), Effect.forkScoped);
   yield* Deferred.await(ready);

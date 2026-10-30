@@ -4,8 +4,11 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
+import type { ApplicationStoredEvent } from "@t3tools/contracts";
 
 import * as Config from "../config.ts";
+import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
 import * as Projections from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ResourceCleanupService from "../orchestration-v2/ResourceCleanupService.ts";
@@ -45,6 +48,8 @@ export const notesLayer = (
     readonly getThread?: Projections.ProjectionStoreV2["Service"]["getThread"];
     /** Whether a project id names a project; every id does by default. */
     readonly projectExists?: (projectId: string) => boolean;
+    /** Project events the notes service sees; none by default. */
+    readonly projectEvents?: Stream.Stream<ApplicationStoredEvent>;
     /** Stores images for real and records the ids released through cleanup. */
     readonly cleaned?: Array<string>;
   } = {},
@@ -66,6 +71,12 @@ export const notesLayer = (
               ? Option.some({} as ProjectStore.ProjectRow)
               : Option.none(),
           ),
+      }),
+    ),
+    Layer.provide(
+      Layer.mock(OrchestrationEventStore.OrchestrationEventStore)({
+        latestApplicationSequence: Effect.succeed(0),
+        streamApplicationEvents: () => options.projectEvents ?? Stream.never,
       }),
     ),
     Layer.provide(Layer.succeed(Git.NotesGit, { changed: Effect.void, flush: Effect.void })),

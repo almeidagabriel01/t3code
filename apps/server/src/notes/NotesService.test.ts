@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import {
+  type ApplicationStoredEvent,
   KanbanCardId,
   NOTE_TITLE_MAX_LENGTH,
   NoteSummary,
@@ -925,6 +926,41 @@ it.effect("a note linked to a missing project is flagged, and flagged no more on
     assert.isUndefined(cleared.projectMissing);
     assert.isUndefined(cleared.project);
   }).pipe(Effect.provide(layer({ projectExists: () => false }))),
+);
+
+it.effect("removing and re-creating a project pushes projectMissing to its notes live", () =>
+  Effect.gen(function* () {
+    const project = ProjectId.make("project-live");
+    const feed = yield* Queue.unbounded<ApplicationStoredEvent>();
+    const seen = yield* Queue.unbounded<NotesEvent>();
+    let present = true;
+    const projectEvent = (type: "project.deleted" | "project.created") =>
+      ({ aggregateKind: "project", aggregateId: project, type }) as ApplicationStoredEvent;
+    yield* Effect.gen(function* () {
+      const notes = yield* Notes.NotesService;
+      yield* notes.write({ path: "n.md", body: "x", baseRevision: null, project }, "user");
+      yield* notes.write({ path: "other.md", body: "y", baseRevision: null }, "user");
+      yield* notes.subscribe.pipe(
+        Stream.runForEach((event) => Queue.offer(seen, event)),
+        Effect.forkScoped,
+      );
+      assert.equal((yield* Queue.take(seen)).type, "snapshot");
+      present = false;
+      yield* Queue.offer(feed, projectEvent("project.deleted"));
+      const removed = yield* Queue.take(seen);
+      assert.isTrue(removed.type === "upserted" && removed.note.projectMissing);
+      assert.isTrue((yield* notes.list({})).notes.find((n) => n.path === "n.md")?.projectMissing);
+      present = true;
+      yield* Queue.offer(feed, projectEvent("project.created"));
+      const restored = yield* Queue.take(seen);
+      assert.isTrue(restored.type === "upserted" && restored.note.path === "n.md");
+      assert.isUndefined(restored.type === "upserted" ? restored.note.projectMissing : "x");
+    }).pipe(
+      Effect.provide(
+        layer({ projectEvents: Stream.fromQueue(feed), projectExists: () => present }),
+      ),
+    );
+  }),
 );
 
 it.effect("live updates follow the snapshot's cap: first 500 paths, omitted kept current", () =>
