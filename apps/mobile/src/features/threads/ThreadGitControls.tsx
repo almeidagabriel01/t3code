@@ -2,7 +2,7 @@ import { Toolbar } from "../../components/ui/Toolbar";
 import * as Dialog from "../../components/ui/Dialog";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { createNativeHeaderMenu } from "../../components/ui/nativeHeaderMenu.ios";
-import type { AppBarMenu } from "../../components/ui/AppBar.types";
+import type { AppBarMenu, AppBarMenuItem } from "../../components/ui/AppBar.types";
 import {
   AuthSourceControlWriteScope,
   EnvironmentId,
@@ -79,6 +79,7 @@ type ThreadGitHeaderActionItems = {
   readonly terminal: HeaderItem;
   readonly files: HeaderItem;
   readonly git: HeaderItem;
+  readonly more: HeaderItem | null;
 };
 type QuickActionIcon =
   | "arrow.down.circle"
@@ -96,7 +97,10 @@ export type ThreadGitMenuProps = {
   readonly onOpenFilesInspector?: () => void;
   readonly onOpenGitInspector?: () => void;
   readonly onMergeBack?: () => void;
-  readonly onHandoff?: () => void;
+  /** The open thread's actions, shown as its own header menu rather than inside Git. */
+  readonly threadMenu?: AppBarMenu | null;
+  /** Compact phone header: Terminal and Files live in `threadMenu`, not as buttons. */
+  readonly toolsInMenu?: boolean;
   readonly onPull: () => Promise<void>;
   readonly onRunAction: (input: GitActionRequestInput) => Promise<GitRunStackedActionResult | null>;
 };
@@ -276,6 +280,30 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
   };
 }
 
+function headerMenuItems(items: ReadonlyArray<AppBarMenuItem>): HeaderItems {
+  return items.map((item) => {
+    const icon = item.icon ? { name: item.icon, type: "sfSymbol" as const } : undefined;
+    if ("items" in item) {
+      return {
+        type: "submenu",
+        label: item.title,
+        icon,
+        inline: item.inline,
+        items: headerMenuItems(item.items),
+      };
+    }
+    return {
+      type: "action",
+      label: item.title,
+      description: item.subtitle,
+      icon,
+      disabled: item.disabled,
+      state: item.selected ? "on" : undefined,
+      onPress: item.onPress,
+    };
+  });
+}
+
 function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGitHeaderActionItems {
   const model = useThreadGitControlModel(props);
 
@@ -349,6 +377,18 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
       type: "button",
       variant: "plain",
     },
+    more: props.threadMenu
+      ? {
+          accessibilityLabel: "Thread actions",
+          icon: { name: "ellipsis", type: "sfSymbol" },
+          identifier: "thread-right-more",
+          label: "More",
+          menu: { items: headerMenuItems(props.threadMenu.items), title: props.threadMenu.title },
+          sharesBackground: true,
+          type: "menu",
+          variant: "plain",
+        }
+      : null,
     git: {
       accessibilityLabel: "Git actions",
       icon: { name: "point.topleft.down.curvedto.point.bottomright.up", type: "sfSymbol" },
@@ -397,17 +437,6 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
                 },
               ]
             : []),
-          ...(props.onHandoff
-            ? [
-                {
-                  description: "Continue in a new session with another agent",
-                  icon: { name: "arrow.left.arrow.right", type: "sfSymbol" as const },
-                  label: "Hand off to another agent",
-                  onPress: props.onHandoff,
-                  type: "action" as const,
-                },
-              ]
-            : []),
           {
             description:
               props.hasThread === false
@@ -431,12 +460,17 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
 
 export function useThreadGitRightHeaderItems(props: ThreadGitControlsProps): HeaderItems {
   const actionItems = useThreadGitHeaderActionItems(props);
-  return [actionItems.git, actionItems.files, actionItems.terminal] as HeaderItems;
+  const tools = props.toolsInMenu ? [] : [actionItems.files, actionItems.terminal];
+  return [actionItems.more, actionItems.git, ...tools].filter(
+    (item) => item !== null,
+  ) as HeaderItems;
 }
 
 export function useThreadGitCenterHeaderItems(props: ThreadGitControlsProps): HeaderItems {
   const actionItems = useThreadGitHeaderActionItems(props);
-  return [actionItems.files, actionItems.git, actionItems.terminal] as HeaderItems;
+  return [actionItems.more, actionItems.files, actionItems.git, actionItems.terminal].filter(
+    (item) => item !== null,
+  ) as HeaderItems;
 }
 
 export function ThreadGitControls(props: ThreadGitControlsProps) {
@@ -457,7 +491,7 @@ export function ThreadGitControls(props: ThreadGitControlsProps) {
           separateBackground
         />
       ) : null}
-      {showActionControls ? (
+      {showActionControls && !props.toolsInMenu ? (
         <Toolbar.Menu
           accessibilityLabel="Open terminal"
           icon="terminal"
@@ -524,6 +558,7 @@ export function ThreadGitControls(props: ThreadGitControlsProps) {
         />
       ) : null}
       {showActionControls ? createNativeHeaderMenu(threadGitMenuDefinition(props, model)) : null}
+      {showActionControls && props.threadMenu ? createNativeHeaderMenu(props.threadMenu) : null}
     </Toolbar>
   );
 }

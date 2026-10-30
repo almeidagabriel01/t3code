@@ -36,6 +36,15 @@ import { orchestrationEnvironment } from "../../state/orchestration";
 import { environmentThreadShells } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
+import {
+  buildHandoffInput,
+  canStartHandoff,
+  DEFAULT_HANDOFF_MODE,
+  findHandoffOption,
+  HANDOFF_CONTEXT_CHOICES,
+  HANDOFF_LABEL,
+  resolveHandoffAgents,
+} from "./thread-handoff";
 import { waitForThreadShellReady } from "./threadForkNavigation";
 import { ThreadSettingsPickerScreen } from "./ThreadSettingsSheet";
 
@@ -45,25 +54,6 @@ export type ThreadHandoffParams = {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
 };
-
-const CONTEXT_CHOICES = [
-  {
-    mode: "focused",
-    label: "Focused (Recommended)",
-    description:
-      "Starts from the latest request and reply, and reads older details only when needed.",
-  },
-  {
-    mode: "full",
-    label: "Full transcript",
-    description:
-      "Includes the saved transcript, the most recent part if it is very long. Takes longer and uses more context or credits.",
-  },
-] as const satisfies ReadonlyArray<{
-  readonly mode: OrchestrationV2ThreadHandoffMode;
-  readonly label: string;
-  readonly description: string;
-}>;
 
 /** The agent picked in the picker route, for the one thread whose hand-off sheet is open. */
 const pickedAgentAtom = Atom.make<{
@@ -97,7 +87,7 @@ export function ThreadHandoffSheet({ route }: StaticScreenProps<ThreadHandoffPar
   const handoff = useAtomCommand(orchestrationEnvironment.handoffThread, {
     reportFailure: false,
   });
-  const [mode, setMode] = useState<OrchestrationV2ThreadHandoffMode>("focused");
+  const [mode, setMode] = useState<OrchestrationV2ThreadHandoffMode>(DEFAULT_HANDOFF_MODE);
   // One id per sheet, so a retry after a dropped reply returns the thread the first call started.
   const [clientRequestId] = useState(uuidv4);
   const [starting, setStarting] = useState(false);
@@ -107,17 +97,20 @@ export function ThreadHandoffSheet({ route }: StaticScreenProps<ThreadHandoffPar
   useEffect(() => () => appAtomRegistry.set(pickedAgentAtom, null), []);
 
   const options = useMemo(
-    () => buildModelOptions(config, selection, undefined, thread?.projectId ?? null),
-    [config, selection, thread?.projectId],
+    () =>
+      buildModelOptions(
+        config,
+        thread?.modelSelection ?? null,
+        undefined,
+        thread?.projectId ?? null,
+      ),
+    [config, thread?.modelSelection, thread?.projectId],
   );
-  const optionFor = (wanted: ModelSelection | null | undefined) =>
-    options.find(
-      (option) =>
-        option.selection.instanceId === wanted?.instanceId &&
-        option.selection.model === wanted.model,
-    );
-  const agentOption = optionFor(selection);
-  const sourceOption = optionFor(thread?.modelSelection);
+  const { agentOption, agentLabel, sourceLabel } = resolveHandoffAgents({
+    options,
+    selection,
+    source: thread?.modelSelection,
+  });
   const startsIn = thread?.worktreePath ?? project?.workspaceRoot ?? null;
 
   const start = async () => {
@@ -127,13 +120,12 @@ export function ThreadHandoffSheet({ route }: StaticScreenProps<ThreadHandoffPar
     void Haptics.selectionAsync();
     const result = await handoff({
       environmentId: target.environmentId,
-      input: {
+      input: buildHandoffInput({
         sourceThreadId: target.threadId,
         modelSelection: selection,
         mode,
-        creationSource: "mobile",
         clientRequestId,
-      },
+      }),
     });
     if (result._tag !== "Success") {
       setStarting(false);
@@ -178,12 +170,12 @@ export function ThreadHandoffSheet({ route }: StaticScreenProps<ThreadHandoffPar
           {thread?.title ?? "Current session"}
         </Text>
         <Text className="text-sm text-foreground-muted" numberOfLines={1}>
-          {`Agent: ${sourceOption?.label ?? thread?.modelSelection.model ?? "Unknown"}`}
+          {`Agent: ${sourceLabel}`}
         </Text>
       </View>
       <ListSection title="Agent">
         <NavigationRow
-          title={agentOption?.label ?? selection?.model ?? "Choose an agent"}
+          title={agentLabel}
           subtitle={agentOption?.providerLabel}
           leading={
             agentOption === undefined ? undefined : (
@@ -201,9 +193,9 @@ export function ThreadHandoffSheet({ route }: StaticScreenProps<ThreadHandoffPar
       </ListSection>
       <ListSection
         title="Context"
-        footer={CONTEXT_CHOICES.find((c) => c.mode === mode)?.description}
+        footer={HANDOFF_CONTEXT_CHOICES.find((c) => c.mode === mode)?.description}
       >
-        {CONTEXT_CHOICES.map((choice, index) => (
+        {HANDOFF_CONTEXT_CHOICES.map((choice, index) => (
           <ListChoiceRow
             key={choice.mode}
             label={choice.label}
@@ -232,7 +224,7 @@ export function ThreadHandoffSheet({ route }: StaticScreenProps<ThreadHandoffPar
         tone="primary"
         fullWidth
         loading={starting}
-        disabled={!canHandoff || selection === null}
+        disabled={!canStartHandoff({ permitted: canHandoff, selection, starting })}
         onPress={() => void start()}
       />
     </ScrollView>
@@ -257,7 +249,7 @@ export function ThreadHandoffSheet({ route }: StaticScreenProps<ThreadHandoffPar
               tintColorClassName="accent-foreground"
               hideBackButton
               hideShadow={false}
-              title="Hand off to another agent"
+              title={HANDOFF_LABEL}
               titleColorClassName="accent-foreground"
               titleFontSize={18}
               titleFontWeight="800"
@@ -272,7 +264,7 @@ export function ThreadHandoffSheet({ route }: StaticScreenProps<ThreadHandoffPar
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
       <NativeStackScreenOptions options={{ sheetCornerRadius: 28 }} />
-      <AndroidSheetHeader title="Hand off to another agent" onBack={() => navigation.goBack()} />
+      <AndroidSheetHeader title={HANDOFF_LABEL} onBack={() => navigation.goBack()} />
       <ScreenContent insetHorizontal={layout.usesSplitView}>{content}</ScreenContent>
     </View>
   );
@@ -290,11 +282,7 @@ export function ThreadHandoffAgentRouteScreen({ route }: StaticScreenProps<Threa
     [config, selection, projectId],
   );
   const providerGroups = useMemo(() => groupByProvider(models), [models]);
-  const selectedOption = models.find(
-    (option) =>
-      option.selection.instanceId === selection?.instanceId &&
-      option.selection.model === selection.model,
-  );
+  const selectedOption = findHandoffOption(models, selection);
   const optionDescriptors = useMemo(
     () =>
       resolveProviderOptionDescriptors({
