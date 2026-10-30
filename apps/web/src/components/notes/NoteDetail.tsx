@@ -12,11 +12,13 @@ import {
   ArrowLeftIcon,
   CheckIcon,
   EllipsisIcon,
+  FolderInputIcon,
   MessageSquareIcon,
   PencilIcon,
   PinIcon,
   PinOffIcon,
   PlayIcon,
+  Trash2Icon,
   XIcon,
 } from "lucide-react";
 import { useEffect, useState, useSyncExternalStore } from "react";
@@ -68,7 +70,7 @@ export function NoteLoader(props: NotePaneProps & { path: string }) {
       {query.error && !document && (
         <div
           role="alert"
-          className="mx-auto flex w-full max-w-3xl items-center gap-2 px-4 py-6 text-sm text-destructive-foreground md:px-8"
+          className="mx-auto flex w-full max-w-3xl items-center gap-2 px-3 py-6 text-sm text-destructive-foreground"
         >
           {query.error}
           <Button size="sm" variant="outline" onClick={query.refresh}>
@@ -81,7 +83,7 @@ export function NoteLoader(props: NotePaneProps & { path: string }) {
       ) : !query.error ? (
         <p
           role="status"
-          className="mx-auto flex w-full max-w-3xl items-center gap-2 px-4 py-6 text-sm text-muted-foreground md:px-8"
+          className="mx-auto flex w-full max-w-3xl items-center gap-2 px-3 py-6 text-sm text-muted-foreground"
         >
           <Spinner />
           Loading note…
@@ -114,7 +116,7 @@ function NoteDetail(props: NotePaneProps & { document: NoteDocument }) {
   const canStart = canStartWork && hasBoards;
   const [compare, setCompare] = useState(false);
   const [fileAction, setFileAction] = useState<"move" | "delete" | null>(null);
-  const [starting, setStarting] = useState(false);
+  const [starting, setStarting] = useState<"first" | "another" | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   // Notes open read-only; a note just created (autoFocus) opens ready to type.
   const [editing, setEditing] = useState(props.autoFocus);
@@ -194,9 +196,9 @@ function NoteDetail(props: NotePaneProps & { document: NoteDocument }) {
   const fileName = state.document.path.slice(state.document.path.lastIndexOf("/") + 1);
 
   return (
-    <article className="flex min-w-0 flex-1 flex-col" aria-label="Selected note">
-      <div className="border-b border-border bg-background" data-surface-subheader>
-        <div className="mx-auto flex h-11 w-full max-w-3xl items-center gap-2 px-4 md:px-8">
+    <article className="@container/note flex min-w-0 flex-1 flex-col" aria-label="Selected note">
+      <div className="border-b border-border bg-background" data-glass-layer>
+        <div className="mx-auto flex h-11 w-full max-w-3xl items-center gap-2 px-3 @2xl/note:px-8">
           <BackToNotes onBack={props.onBack} />
           <p className="min-w-0 truncate text-sm font-medium">
             {state.document.folder ? (
@@ -224,10 +226,7 @@ function NoteDetail(props: NotePaneProps & { document: NoteDocument }) {
                 {editing ? "Done" : "Edit"}
               </Button>
             ) : null}
-            {(canUpdate && !issue) ||
-            (canStart && latest.card === null && !issue) ||
-            canMove ||
-            canDelete ? (
+            {(canUpdate && !issue) || (canStart && !issue) || canMove || canDelete ? (
               <Menu>
                 <MenuTrigger
                   render={<Button size="icon-sm" variant="ghost" aria-label="More note actions" />}
@@ -244,14 +243,18 @@ function NoteDetail(props: NotePaneProps & { document: NoteDocument }) {
                       {latest.pinned ? "Unpin" : "Pin to the top"}
                     </MenuItem>
                   ) : null}
-                  {canStart && latest.card === null && !issue ? (
-                    <MenuItem disabled={fileBusy} onClick={() => setStarting(true)}>
+                  {canStart && !issue ? (
+                    <MenuItem
+                      disabled={fileBusy}
+                      onClick={() => setStarting(latest.card === null ? "first" : "another")}
+                    >
                       <PlayIcon aria-hidden />
-                      Start work
+                      {latest.card === null ? "Start work" : "Start another card…"}
                     </MenuItem>
                   ) : null}
                   {canMove ? (
                     <MenuItem disabled={fileBusy} onClick={() => setFileAction("move")}>
+                      <FolderInputIcon aria-hidden />
                       Rename or move…
                     </MenuItem>
                   ) : null}
@@ -263,6 +266,7 @@ function NoteDetail(props: NotePaneProps & { document: NoteDocument }) {
                         disabled={fileBusy}
                         onClick={() => setFileAction("delete")}
                       >
+                        <Trash2Icon aria-hidden />
                         Delete…
                       </MenuItem>
                     </>
@@ -273,7 +277,7 @@ function NoteDetail(props: NotePaneProps & { document: NoteDocument }) {
           </div>
         </div>
       </div>
-      <div className="mx-auto grid w-full max-w-3xl gap-2 px-4 pt-3 md:px-8">
+      <div className="mx-auto grid w-full max-w-3xl gap-2 px-3 pt-3 empty:hidden @2xl/note:px-8">
         {issue ? (
           <p
             role="status"
@@ -282,25 +286,7 @@ function NoteDetail(props: NotePaneProps & { document: NoteDocument }) {
             This note is read-only: its {ISSUE_REASON[issue]}. T3 Code leaves the file untouched;
             fix it on disk or delete the note.
           </p>
-        ) : (
-          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-            <NoteProjectMenu
-              environmentId={environmentId}
-              projectId={latest.project ?? null}
-              missing={latest.projectMissing === true}
-              disabled={!canUpdate || removed}
-              onChange={(project) => void runUpdate({ project })}
-            />
-            {latest.card !== null ? (
-              <NoteCardChip
-                environmentId={environmentId}
-                link={latest.card}
-                canUnlink={canUpdate && !removed}
-                onUnlink={() => void runUpdate({ card: null })}
-              />
-            ) : null}
-          </div>
-        )}
+        ) : null}
         {removed && (
           <p role="alert" className="text-sm text-destructive-foreground">
             This note was removed. Your draft is still visible; copy it before leaving.
@@ -343,7 +329,27 @@ function NoteDetail(props: NotePaneProps & { document: NoteDocument }) {
         environmentId={environmentId}
         body={state.body}
         editable={canWrite && !removed && !issue && editing}
-        reserveToolbar={canWrite && !removed && !issue}
+        leading={
+          issue ? undefined : (
+            <>
+              <NoteProjectMenu
+                environmentId={environmentId}
+                projectId={latest.project ?? null}
+                missing={latest.projectMissing === true}
+                disabled={!canUpdate || removed}
+                onChange={(project) => void runUpdate({ project })}
+              />
+              {latest.card !== null ? (
+                <NoteCardChip
+                  environmentId={environmentId}
+                  link={latest.card}
+                  canUnlink={canUpdate && !removed}
+                  onUnlink={() => void runUpdate({ card: null })}
+                />
+              ) : null}
+            </>
+          )
+        }
         autoFocus={focusOnMount && state.editorVersion === 0}
         claimedImages={state.claimedImages}
         onChange={(body) => session.edit(body)}
@@ -352,7 +358,7 @@ function NoteDetail(props: NotePaneProps & { document: NoteDocument }) {
       {latest.related.length > 0 ? (
         <section
           aria-label="Related threads"
-          className="mx-auto w-full max-w-3xl px-4 pt-4 pb-10 md:px-8"
+          className="mx-auto w-full max-w-3xl px-3 pt-4 pb-10 @2xl/note:px-8"
         >
           <h2 className="px-2 pb-1 text-xs font-medium text-muted-foreground">Related threads</h2>
           <ul className="grid gap-px">
@@ -404,8 +410,9 @@ function NoteDetail(props: NotePaneProps & { document: NoteDocument }) {
         <NoteStartWorkDialog
           environmentId={environmentId}
           document={state.document}
+          another={starting === "another"}
           onStarted={(note) => session.receive(note)}
-          onClose={() => setStarting(false)}
+          onClose={() => setStarting(null)}
         />
       )}
     </article>

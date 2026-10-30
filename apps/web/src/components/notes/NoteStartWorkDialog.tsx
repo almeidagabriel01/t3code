@@ -116,6 +116,8 @@ function StartedCard(props: {
 export function NoteStartWorkDialog(props: {
   environmentId: EnvironmentId;
   document: NoteDocument;
+  /** The note already has a card; this creates a second one and links the note to it. */
+  another?: boolean;
   onStarted: (note: NoteDocument) => void;
   onClose: () => void;
 }) {
@@ -172,6 +174,7 @@ export function NoteStartWorkDialog(props: {
         path: props.document.path,
         projectId,
         requestId,
+        ...(props.another ? { forceNew: true } : {}),
         ...(columnId === DEFAULT_COLUMN ? {} : { columnId: columnId as KanbanColumnId }),
       },
     });
@@ -202,10 +205,11 @@ export function NoteStartWorkDialog(props: {
         ) : (
           <>
             <DialogHeader>
-              <DialogTitle>Start work</DialogTitle>
+              <DialogTitle>{props.another ? "Start another card" : "Start work"}</DialogTitle>
               <DialogDescription>
-                Creates a card from “{props.document.title}” on the project’s board, with the note
-                as its description, and links the two.
+                {props.another
+                  ? `Creates a new card from “${props.document.title}” and links the note to it instead of its current card, which stays on the board.`
+                  : `Creates a card from “${props.document.title}” on the project’s board, with the note as its description, and links the two.`}
               </DialogDescription>
             </DialogHeader>
             <DialogPanel>

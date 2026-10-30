@@ -33,11 +33,13 @@ const DEFAULT_COLUMN = "";
 /** Creates one kanban card from the note in a chosen project, then offers to open it or start an agent. */
 export function NoteStartWorkRouteScreen({
   route,
-}: StaticScreenProps<{ environmentId: string; path: string }>) {
+}: StaticScreenProps<{ environmentId: string; path: string; another?: boolean }>) {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const environmentId = EnvironmentId.make(route.params.environmentId);
   const { path } = route.params;
+  // The note already has a card: this creates a second one and links the note to it.
+  const another = route.params.another === true;
   const { canAct } = useNoteDraftAccess(environmentId);
   const startWork = useAtomCommand(notesEnvironment.startWork, notesCommandOptions);
   // One id per screen: a retry after a lost response returns the card instead of a second one.
@@ -82,6 +84,7 @@ export function NoteStartWorkRouteScreen({
         path,
         projectId,
         requestId,
+        ...(another ? { forceNew: true } : {}),
         ...(columnId === DEFAULT_COLUMN ? {} : { columnId: columnId as KanbanColumnId }),
       },
     });
@@ -112,7 +115,7 @@ export function NoteStartWorkRouteScreen({
   }
 
   return (
-    <SettingsScreen title="Start work">
+    <SettingsScreen title={another ? "Start another card" : "Start work"}>
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         contentContainerClassName="gap-4 p-5"
@@ -166,7 +169,7 @@ export function NoteStartWorkRouteScreen({
           </Text>
         ) : null}
         <Button
-          label={attempted && !busy ? "Try again" : "Start work"}
+          label={attempted && !busy ? "Try again" : another ? "Create card" : "Start work"}
           icon="sparkles"
           tone="primary"
           loading={busy}

@@ -22,7 +22,7 @@ function NoteRow(props: {
 }) {
   const { note } = props;
   return (
-    <li className="border-b border-border py-0.5 last:border-b-0">
+    <li className="py-0.5">
       <button
         type="button"
         data-note-row={note.path}
@@ -30,7 +30,7 @@ function NoteRow(props: {
         aria-current={props.selected ? "page" : undefined}
         onClick={props.onSelect}
         onKeyDown={props.onKeyDown}
-        className="grid w-full gap-0.5 rounded-lg px-3 py-2 text-start outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset aria-[current=page]:bg-primary/10 aria-[current=page]:text-accent-foreground"
+        className="grid w-full cursor-pointer gap-0.5 rounded-lg border border-foreground/12 bg-foreground/3 px-3 py-2 text-start outline-none transition-colors hover:border-foreground/24 hover:bg-foreground/8 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset aria-[current=page]:border-primary/60 aria-[current=page]:bg-primary/12"
       >
         <span className="flex min-w-0 items-baseline gap-2">
           {note.pinned ? (
@@ -156,8 +156,8 @@ export function NoteList(props: {
     <nav aria-label="Notes" className={cn("flex min-h-0 flex-col", props.className)}>
       {props.header}
       <div
-        className="flex items-center gap-2 border-b border-border bg-background p-3"
-        data-surface-subheader
+        className="flex items-center gap-2 border-b border-border bg-background px-2 py-2.5"
+        data-glass-layer
       >
         <InputGroup className="min-w-0 flex-1">
           <InputGroupAddon>

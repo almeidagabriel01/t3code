@@ -506,13 +506,28 @@ function NoteContent(props: NoteParams) {
         ) : null}
         {bodyAvailable && note !== null ? (
           card ? (
-            <NoteCardSection
-              environmentId={environmentId}
-              link={card}
-              {...(canChangeHeader && !busy
-                ? { onUnlink: () => void runUpdate({ card: null }) }
-                : {})}
-            />
+            <>
+              <NoteCardSection
+                environmentId={environmentId}
+                link={card}
+                {...(canChangeHeader && !busy
+                  ? { onUnlink: () => void runUpdate({ card: null }) }
+                  : {})}
+              />
+              <Button
+                label="Start another card"
+                icon="plus"
+                tone="secondary"
+                disabled={!canChangeHeader || busy}
+                onPress={() =>
+                  navigation.navigate("SettingsNoteStartWork", {
+                    environmentId,
+                    path: props.path,
+                    another: true,
+                  })
+                }
+              />
+            </>
           ) : (
             <Button
               label="Start work"

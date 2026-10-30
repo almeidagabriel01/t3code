@@ -1,4 +1,5 @@
 import type { Editor } from "@tiptap/core";
+import { NodeSelection } from "@tiptap/pm/state";
 import { BubbleMenu } from "@tiptap/react/menus";
 import {
   BoldIcon,
@@ -100,6 +101,8 @@ export function NoteBubbleMenu(props: {
       shouldShow={({ editor: current, state, view, element }) => {
         if (
           !current.isEditable ||
+          // A selected image or divider takes no text formatting.
+          state.selection instanceof NodeSelection ||
           current.isActive("codeBlock") ||
           current.isActive("noteRawMarkdown")
         )

@@ -1,11 +1,17 @@
 import type { KanbanBoardState } from "@t3tools/client-runtime/state/kanban";
 import { dueAtToInput, inputToDueAt } from "@t3tools/client-runtime/state/kanbanLogic";
 import type { EnvironmentId, KanbanCard, KanbanCardId, KanbanColumnId } from "@t3tools/contracts";
-import { ArchiveIcon, ArrowRightIcon, PanelRightOpenIcon, TagIcon, Trash2Icon } from "lucide-react";
+import {
+  ArchiveIcon,
+  ArrowRightIcon,
+  CalendarDaysIcon,
+  PanelRightOpenIcon,
+  TagIcon,
+  Trash2Icon,
+} from "lucide-react";
 
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
-import { Label } from "../ui/label";
 import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "../ui/menu";
 import { Popover, PopoverPopup } from "../ui/popover";
 import { LabelMenuItems } from "./KanbanCardDetail";
@@ -105,10 +111,17 @@ export function KanbanQuickEdit(props: {
               <LabelMenuItems board={board} card={card} onToggle={toggleLabel} />
             </MenuPopup>
           </Menu>
-          <div className="my-1.5 grid gap-1.5 px-2">
-            <Label htmlFor="kanban-quick-edit-due">Due date</Label>
+          <div className="flex h-8 items-center gap-1 ps-2 text-xs font-medium">
+            <CalendarDaysIcon
+              aria-hidden
+              className="-mx-0.5 size-3.5 shrink-0 text-muted-foreground"
+            />
+            <label htmlFor="kanban-quick-edit-due" className="shrink-0">
+              Due date
+            </label>
             <Input
               id="kanban-quick-edit-due"
+              className="ms-auto w-32"
               type="date"
               size="sm"
               value={dueAtToInput(card.dueAt)}

@@ -60,12 +60,7 @@ const TOOLS: ReadonlyArray<{ label: string; icon: LucideIcon; run: (editor: Edit
   { label: "Divider", icon: MinusIcon, run: (e) => e.chain().focus().setHorizontalRule().run() },
 ];
 
-function ToolButton(props: {
-  label: string;
-  disabled: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
+function ToolButton(props: { label: string; onClick: () => void; children: React.ReactNode }) {
   return (
     <Tooltip>
       <TooltipTrigger
@@ -74,7 +69,6 @@ function ToolButton(props: {
             size="icon-sm"
             variant="ghost-muted"
             aria-label={props.label}
-            disabled={props.disabled}
             onClick={props.onClick}
           />
         }
@@ -94,8 +88,8 @@ export function NoteEditor(props: {
   environmentId: EnvironmentId;
   body: string;
   editable: boolean;
-  /** Keeps the formatting bar in place while reading, so switching to edit moves nothing. */
-  reserveToolbar?: boolean;
+  /** Shown at the start of the formatting row, so entering edit mode moves nothing. */
+  leading?: React.ReactNode;
   autoFocus?: boolean;
   /** Image ids the server assigned to uploads; nodes still showing an upload id are renamed. */
   claimedImages?: ReadonlyMap<string, string>;
@@ -190,7 +184,12 @@ export function NoteEditor(props: {
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pushes the editable prop into the imperative Tiptap editor
   useEffect(() => {
     editor?.setEditable(props.editable);
-    if (props.editable && !wasEditable.current) editor?.commands.focus("end");
+    if (props.editable && !wasEditable.current && editor) {
+      // An empty transaction lets editable-only plugins (the paragraph after a final image) run first,
+      // so the caret lands in text rather than selecting the image.
+      editor.view.dispatch(editor.state.tr);
+      editor.commands.focus("end");
+    }
     wasEditable.current = props.editable;
   }, [editor, props.editable]);
   const claimedImages = props.claimedImages;
@@ -203,30 +202,30 @@ export function NoteEditor(props: {
   return (
     <AttachmentImageEnvironment value={props.environmentId}>
       <div className="flex min-w-0 flex-col" data-note-editor>
-        {(props.editable || props.reserveToolbar) && (
-          <div className="surface-glass sticky top-0 z-10 border-b border-border">
-            <div
-              className="mx-auto flex w-full max-w-3xl gap-0.5 overflow-x-auto px-3 py-1 md:px-7"
-              role="toolbar"
-              aria-label="Note formatting"
-            >
-              {TOOLS.map((tool) => (
-                <ToolButton
-                  key={tool.label}
-                  label={tool.label}
-                  disabled={!props.editable}
-                  onClick={() => editor && tool.run(editor)}
+        {(props.editable || props.leading) && (
+          <div className="border-b border-border" data-glass-layer>
+            <div className="mx-auto flex h-10 w-full max-w-3xl items-center gap-2 px-3 @2xl/note:px-8">
+              <div className="flex min-w-0 shrink-0 items-center gap-1.5">{props.leading}</div>
+              {props.editable && (
+                <div
+                  className="ms-auto flex min-w-0 gap-0.5 overflow-x-auto"
+                  role="toolbar"
+                  aria-label="Note formatting"
                 >
-                  <tool.icon aria-hidden />
-                </ToolButton>
-              ))}
-              <ToolButton
-                label="Insert image"
-                disabled={!props.editable}
-                onClick={() => fileInput.current?.click()}
-              >
-                <ImagePlusIcon aria-hidden />
-              </ToolButton>
+                  {TOOLS.map((tool) => (
+                    <ToolButton
+                      key={tool.label}
+                      label={tool.label}
+                      onClick={() => editor && tool.run(editor)}
+                    >
+                      <tool.icon aria-hidden />
+                    </ToolButton>
+                  ))}
+                  <ToolButton label="Insert image" onClick={() => fileInput.current?.click()}>
+                    <ImagePlusIcon aria-hidden />
+                  </ToolButton>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -243,7 +242,7 @@ export function NoteEditor(props: {
             if (view !== null && files.length > 0) images.insertImages(view, files);
           }}
         />
-        <div className="mx-auto w-full max-w-3xl px-3 md:px-7">
+        <div className="mx-auto w-full max-w-3xl px-3 @2xl/note:px-8">
           <EditorContent editor={editor} />
           {editor && props.editable && (
             <>
