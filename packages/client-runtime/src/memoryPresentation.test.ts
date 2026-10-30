@@ -415,6 +415,13 @@ describe("memory presentation boundaries", () => {
     expect(presentMemorySync({ state: "offline", memorySpaceId: null }).label).toBe(
       "Connect a memory space",
     );
+    expect(
+      presentMemorySync({
+        state: "offline",
+        memorySpaceId: item.memorySpaceId,
+        failureCode: "route_unavailable",
+      }).label,
+    ).toBe("Hub disconnected (route unavailable)");
     expect(presentMemorySync({ state: "disabled", memorySpaceId: null }).label).toBe(
       "Memory sharing off",
     );

@@ -215,7 +215,9 @@ export function presentMemoryOwnerPolicy(view: MemoryOwnerSourceReadPolicyView) 
 
 /** Online is a connection state, not proof of publication, exposure or policy readiness. */
 export function presentMemorySync(
-  status: Pick<MemorySyncStatus, "state" | "memorySpaceId">,
+  status: Pick<MemorySyncStatus, "state" | "memorySpaceId"> & {
+    readonly failureCode?: MemorySyncStatus["failureCode"];
+  },
   options?: {
     readonly capabilities: ExecutionEnvironmentCapabilities;
     readonly diagnostics?: MemoryHubDiagnostics;
@@ -230,22 +232,27 @@ export function presentMemorySync(
     offline: "Hub disconnected",
     error: "Memory sync error",
   } as const;
-  return {
-    label: diagnostics
-      ? diagnostics.readiness === "disabled"
-        ? labels.disabled
-        : diagnostics.readiness === "unbound"
-          ? "Connect a memory space"
-          : diagnostics.readiness === "staging"
-            ? labels.bootstrapping
-            : diagnostics.connection === "connected"
-              ? labels.online
-              : diagnostics.connection === "unreachable"
-                ? labels.offline
-                : "Hub connection not confirmed"
-      : status.state !== "disabled" && status.memorySpaceId === null
+  const label = diagnostics
+    ? diagnostics.readiness === "disabled"
+      ? labels.disabled
+      : diagnostics.readiness === "unbound"
         ? "Connect a memory space"
-        : labels[status.state],
+        : diagnostics.readiness === "staging"
+          ? labels.bootstrapping
+          : diagnostics.connection === "connected"
+            ? labels.online
+            : diagnostics.connection === "unreachable"
+              ? labels.offline
+              : "Hub connection not confirmed"
+    : status.state !== "disabled" && status.memorySpaceId === null
+      ? "Connect a memory space"
+      : labels[status.state];
+  return {
+    // The last sync failure is the only hint why the hub is unreachable, so keep it visible.
+    label:
+      label === labels.offline && status.failureCode
+        ? `${label} (${status.failureCode.replaceAll("_", " ")})`
+        : label,
     diagnostics: diagnostics?.publication.state ?? "unknown",
     readiness: diagnostics?.readiness ?? "unknown",
     connection: diagnostics?.connection ?? "unknown",

@@ -272,7 +272,8 @@ const make = Effect.gen(function* () {
         lastFailure = { epoch, code: failureCode(error) };
       }
     },
-    (effect) => Effect.ignore(effect),
+    (effect) =>
+      Effect.ignore(effect, { log: "Warn", message: "memory sync could not record a failure" }),
   );
   const route = Effect.fnUntraced(function* () {
     const s = yield* readSettings;
@@ -921,10 +922,15 @@ const make = Effect.gen(function* () {
                 undefined,
                 undefined,
                 true,
-              ).pipe(Effect.ignore);
+              ).pipe(
+                Effect.ignore({
+                  log: "Warn",
+                  message: "memory conflict ticket transition failed",
+                }),
+              );
             }
           }
-        }).pipe(Effect.ignore),
+        }).pipe(Effect.ignore({ log: "Warn", message: "memory conflict ticket recovery failed" })),
       ),
     );
   });
@@ -994,7 +1000,13 @@ const make = Effect.gen(function* () {
                 nextAttemptAt: now + 30000,
               }),
             )
-            .pipe(Effect.ignore);
+            .pipe(
+              Effect.ignore({
+                log: "Warn",
+                message:
+                  "memory conflict ticket could not be marked recoverable after an epoch fence",
+              }),
+            );
           yield* release(r, acquired.ticket);
           executions.delete(saved.ticket.memoryId);
           return;
@@ -1009,7 +1021,10 @@ const make = Effect.gen(function* () {
           Effect.ensuring(store.wake),
           Effect.ensuring(
             Effect.suspend(() => requestCycle(sweep, true, false)).pipe(
-              Effect.ignore,
+              Effect.ignore({
+                log: "Warn",
+                message: "memory conflict resolution sweep request failed",
+              }),
               Effect.forkIn(scope),
               Effect.asVoid,
             ),
@@ -1928,7 +1943,9 @@ const make = Effect.gen(function* () {
         return yield* Effect.failCause(exit.cause);
     });
   const syncOnce = requestCycle(syncCycle);
-  const guardedSync = syncOnce.pipe(Effect.ignore);
+  const guardedSync = syncOnce.pipe(
+    Effect.ignore({ log: "Warn", message: "memory sync cycle failed" }),
+  );
   // Timers only schedule real reads. A successful pinned descriptor is the observation;
   // authorization is deliberately never inferred from this public, credential-free read.
   const recoveryLoop: Effect.Effect<void> = Effect.gen(function* () {
@@ -1961,14 +1978,16 @@ const make = Effect.gen(function* () {
         if (observed._tag === "Success") {
           recoveries.delete(c);
           enqueueRearm(r.settings.memoryHubVersion, r.space!, [c]);
-          yield* requestCycle(syncCycle, false, false).pipe(Effect.ignore);
+          yield* requestCycle(syncCycle, false, false).pipe(
+            Effect.ignore({ log: "Warn", message: "memory sync cycle after recovery failed" }),
+          );
         } else {
           pending.delay = Math.min(900000, pending.delay * 2);
           pending.due = (yield* Clock.currentTimeMillis) + pending.delay;
         }
       }
     }
-  }).pipe(Effect.ignore);
+  }).pipe(Effect.ignore({ log: "Warn", message: "memory recovery loop failed" }));
   const cancelEpoch = coordinator.withPermit(
     Effect.gen(function* () {
       cancelling = true;
@@ -2049,7 +2068,12 @@ const make = Effect.gen(function* () {
           previousBinding = next;
           if (next.space) enqueueRearm(next.epoch, next.space, classes);
           // Do not block the settings consumer on the next transport.
-          yield* requestCycle(syncCycle, false, false).pipe(Effect.ignore);
+          yield* requestCycle(syncCycle, false, false).pipe(
+            Effect.ignore({
+              log: "Warn",
+              message: "memory sync cycle after settings change failed",
+            }),
+          );
         }),
       ).pipe(Effect.forkIn(scope)),
     );
@@ -2080,7 +2104,10 @@ const make = Effect.gen(function* () {
             enqueueRearm(event.epoch, space, [event.holdClass]);
             yield* requestCycle(syncCycle, false, false);
           }),
-        ).pipe(Effect.ignore, Effect.forkIn(scope)),
+        ).pipe(
+          Effect.ignore({ log: "Warn", message: "memory sync cycle after hold event failed" }),
+          Effect.forkIn(scope),
+        ),
       );
     background.push(
       yield* Effect.gen(function* () {

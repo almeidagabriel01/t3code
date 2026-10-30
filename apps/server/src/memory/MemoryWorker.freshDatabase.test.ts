@@ -242,3 +242,37 @@ it.effect.each([
     assert.strictEqual((spans.get("MemoryWorker.sweepDue") ?? 0) - before > 1, wakes);
   }).pipe(Effect.scoped, Effect.provide(live(false, false, stream)));
 });
+
+it.effect("a failed event stream is logged and restarted instead of ending silently", () => {
+  const failed = Deferred.makeUnsafe<void>();
+  const restarted = Deferred.makeUnsafe<void>();
+  const warnings: unknown[] = [];
+  let calls = 0;
+  const stream = (): Stream.Stream<M.OrchestrationV2StoredEvent> =>
+    ++calls === 1
+      ? (Stream.fail("stream broke").pipe(
+          Stream.ensuring(Deferred.succeed(failed, undefined)),
+        ) as never)
+      : Stream.fromEffect(Deferred.succeed(restarted, undefined)).pipe(Stream.drain);
+  return Effect.gen(function* () {
+    const worker = yield* Worker.MemoryWorker;
+    yield* worker.start();
+    yield* Deferred.await(failed);
+    yield* TestClock.adjust("5 seconds");
+    yield* Deferred.await(restarted);
+    assert.isAtLeast(warnings.length, 1);
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      Layer.mergeAll(
+        live(false, false, stream),
+        Logger.layer([
+          Logger.make(({ message }) => {
+            if (Array.isArray(message) && message[0] === "Memory event stream stopped; restarting")
+              warnings.push(message);
+          }),
+        ]),
+      ),
+    ),
+  );
+});

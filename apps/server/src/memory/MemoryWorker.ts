@@ -9,6 +9,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Semaphore from "effect/Semaphore";
 import * as Ref from "effect/Ref";
+import * as Cause from "effect/Cause";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -850,18 +851,33 @@ const make = Effect.gen(function* () {
           });
       });
       yield* process.pipe(
-        Effect.catch(() =>
-          store
-            .finishOwnedDeferred(target, runtime.instanceId, now + 600000, {
-              now,
-              failure: target.reason ?? "dependency_invalidated",
-            })
-            .pipe(Effect.asVoid),
+        Effect.catch((cause) =>
+          Effect.logWarning("Memory deferred item failed", {
+            kind: target.kind,
+            code: safeCode(cause),
+            cause,
+          }).pipe(
+            Effect.andThen(
+              store
+                .finishOwnedDeferred(target, runtime.instanceId, now + 600000, {
+                  now,
+                  failure: target.reason ?? "dependency_invalidated",
+                })
+                .pipe(Effect.asVoid),
+            ),
+          ),
         ),
       );
     }
     for (const op of yield* store.readParked(100))
-      yield* service.reconnectParked(op).pipe(Effect.catch(() => Effect.succeed(false)));
+      yield* service.reconnectParked(op).pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("Memory parked reconnect failed", {
+            code: safeCode(cause),
+            cause,
+          }).pipe(Effect.as(false)),
+        ),
+      );
     for (const pending of yield* store.pendingForgetIntents(100)) {
       const aggregate = yield* store.loadAggregate(pending.memorySpaceId, pending.memoryId);
       if (
@@ -869,7 +885,14 @@ const make = Effect.gen(function* () {
         pending.submissionState === "rejected" &&
         pending.operationDigest
       ) {
-        yield* service.retryForgetExpansion(pending).pipe(Effect.catch(() => Effect.void));
+        yield* service.retryForgetExpansion(pending).pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("Memory forget expansion retry failed", {
+              code: safeCode(cause),
+              cause,
+            }),
+          ),
+        );
         continue;
       }
       if (aggregate.tombstone) {
@@ -893,7 +916,14 @@ const make = Effect.gen(function* () {
           },
           Effect.void,
         )
-        .pipe(Effect.catch(() => Effect.void));
+        .pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("Memory forget intent retry failed", {
+              code: safeCode(cause),
+              cause,
+            }),
+          ),
+        );
     }
   });
   const sweepDue = Effect.fn("MemoryWorker.sweepDue")(
@@ -972,10 +1002,19 @@ const make = Effect.gen(function* () {
       Ref.set(started, false).pipe(Effect.andThen(Ref.set(queue, undefined))),
     );
     yield* Stream.runForEach(yield* store.subscribeWake, () => wake).pipe(Effect.forkScoped);
-    yield* events.stream({ afterSequence: yield* store.readThreadHookWatermark() }).pipe(
-      catchUpWakes,
-      Stream.runForEach(() => wake),
-      Effect.catch(() => Effect.void),
+    // A dead watcher would leave catch-up to the 5 second poll, so it restarts from the stored watermark.
+    yield* Effect.gen(function* () {
+      yield* events.stream({ afterSequence: yield* store.readThreadHookWatermark() }).pipe(
+        catchUpWakes,
+        Stream.runForEach(() => wake),
+      );
+    }).pipe(
+      Effect.catchCauseIf(
+        (cause) => !Cause.hasInterruptsOnly(cause),
+        (cause) => Effect.logWarning("Memory event stream stopped; restarting", { cause }),
+      ),
+      Effect.andThen(Effect.sleep("5 seconds")),
+      Effect.forever,
       Effect.forkScoped,
     );
     yield* wake;
