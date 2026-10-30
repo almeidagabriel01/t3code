@@ -13,6 +13,7 @@ const { mocks, Children } = vi.hoisted(() => ({
     back: vi.fn(),
     preventRemove: false,
     uuid: 0,
+    note: {} as { project?: string },
   },
 }));
 vi.mock("react-native", () => ({ View: Children, Pressable: Children }));
@@ -52,6 +53,13 @@ vi.mock("../../state/entities", () => ({
   useProjects: () => [
     {
       environmentId: "hub",
+      id: "api",
+      title: "Api",
+      workspaceRoot: "/code/api",
+      updatedAt: "2025-01-01T00:00:00.000Z",
+    },
+    {
+      environmentId: "hub",
       id: "web",
       title: "Web",
       workspaceRoot: "/code/web",
@@ -61,7 +69,10 @@ vi.mock("../../state/entities", () => ({
   useThreadShells: () => [],
 }));
 vi.mock("../../state/kanban", () => ({ useKanbanStates: () => [] }));
-vi.mock("../../state/notes", () => ({ notesEnvironment: { startWork: {} } }));
+vi.mock("../../state/notes", () => ({
+  notesEnvironment: { startWork: {} },
+  useNotesFeed: () => AsyncResult.success({ notes: new Map([["ideas/note.md", mocks.note]]) }),
+}));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => mocks.startWork }));
 vi.mock("./NoteCard", () => ({
   NoteCardSection: (props: { link: { cardId: string } }) => <p>Card {props.link.cardId}</p>,
@@ -92,6 +103,7 @@ beforeEach(() => {
   mocks.startWork.mockReset();
   mocks.back.mockReset();
   mocks.preventRemove = false;
+  mocks.note = {};
 });
 afterEach(() => act(() => root.unmount()));
 
@@ -119,4 +131,14 @@ it("retries with the same request id so a lost response cannot create a second c
   });
   expect(container.textContent).toContain("Card card-1");
   expect(container.textContent).toContain("Card created");
+});
+
+it("defaults to the project the note belongs to", async () => {
+  mocks.note = { project: "api" };
+  mocks.startWork.mockResolvedValue(
+    AsyncResult.success({ note: {}, boardId: "board", cardId: "c" }),
+  );
+  await act(async () => root.render(<NoteStartWorkRouteScreen {...props} />));
+  await act(async () => button("Start work").click());
+  expect(mocks.startWork.mock.calls[0]![0].input.projectId).toBe(ProjectId.make("api"));
 });
