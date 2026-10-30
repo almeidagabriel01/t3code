@@ -146,6 +146,8 @@ describe("NoteEditor lists", () => {
     await expect.element(body).toBeVisible();
     expect(body.element().querySelector("pre[data-note-raw]")).toBeNull();
     expect(body.element().querySelectorAll("li")).toHaveLength(1);
+    // autoFocus lands after the editor mounts; typing earlier goes nowhere.
+    await expect.element(body).toHaveFocus();
     await userEvent.keyboard("{Enter}two");
     expect(body.element().querySelectorAll("li")).toHaveLength(2);
     await vi.waitFor(() => expect(onChange.mock.lastCall?.[0]).toMatch(/\n.+two/));
@@ -156,7 +158,7 @@ describe("NoteEditor lists", () => {
       <NoteEditor {...props} body={"- one\n"} onChange={vi.fn()} />,
     );
     const body = page.getByRole("textbox", { name: "Note body" });
-    await expect.element(body).toBeVisible();
+    await expect.element(body).toHaveFocus();
     await userEvent.keyboard("{Shift>}{Enter}{/Shift}two");
     expect(body.element().querySelectorAll("li")).toHaveLength(1);
     expect(body.element().querySelectorAll("li br")).toHaveLength(1);
@@ -176,7 +178,7 @@ describe("NoteEditor literal blocks", () => {
       />,
     );
     const body = page.getByRole("textbox", { name: "Note body" });
-    await expect.element(body).toBeVisible();
+    await expect.element(body).toHaveFocus();
     await userEvent.keyboard("{Shift>}{Enter}{/Shift}two");
     expect(body.element().querySelectorAll("pre[data-note-raw]")).toHaveLength(1);
     expect(body.element().querySelectorAll("p")).toHaveLength(0);

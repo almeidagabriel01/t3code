@@ -343,6 +343,7 @@ function NoteDetail(props: NotePaneProps & { document: NoteDocument }) {
         environmentId={environmentId}
         body={state.body}
         editable={canWrite && !removed && !issue && editing}
+        reserveToolbar={canWrite && !removed && !issue}
         autoFocus={focusOnMount && state.editorVersion === 0}
         claimedImages={state.claimedImages}
         onChange={(body) => session.edit(body)}
