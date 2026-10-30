@@ -52,6 +52,15 @@ export type T3McpToolSummaryAction =
   | "project-clone"
   | "kanban"
   | "notes"
+  | "memory-search"
+  | "memory-list"
+  | "memory-read"
+  | "memory-history"
+  | "memory-sync-status"
+  | "memory-save"
+  | "memory-forget"
+  | "memory-revert"
+  | "memory-source"
   | "environment-read"
   | "environment-links"
   | "environment-link"
@@ -351,6 +360,21 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   t3_project_clone: tool(["Clone", "Cloning", "Cloned", "a repository"], "project-clone"),
   t3_kanban: tool(["Update", "Updating", "Updated", "the kanban board"], "kanban"),
   t3_note: tool(["Update", "Updating", "Updated", "notes"], "notes"),
+  memory_search: tool(["Search", "Searching", "Searched", "memories"], "memory-search"),
+  memory_list: tool(["List", "Listing", "Listed", "memories"], "memory-list"),
+  memory_read: tool(["Read", "Reading", "Read", "a memory"], "memory-read"),
+  memory_history: tool(["Read", "Reading", "Read", "memory history"], "memory-history"),
+  memory_sync_status: tool(
+    ["Check", "Checking", "Checked", "memory sync status"],
+    "memory-sync-status",
+  ),
+  memory_upsert: tool(["Save", "Saving", "Saved", "a memory"], "memory-save"),
+  memory_forget: tool(["Forget", "Forgetting", "Forgot", "a memory"], "memory-forget"),
+  memory_revert_resolution: tool(
+    ["Restore", "Restoring", "Restored", "a memory revision"],
+    "memory-revert",
+  ),
+  memory_read_source: tool(["Read", "Reading", "Read", "a memory source"], "memory-source"),
   t3_attachment_prepare_upload: tool(
     ["Prepare", "Preparing", "Prepared", "an attachment upload"],
     "attachment-prepare",

@@ -336,6 +336,33 @@ export function summarizeT3ToolCalls(
     case "notes":
       label = phrase("Used", "use", `notes ${times}`);
       break;
+    case "memory-search":
+      label = phrase("Searched", "search", `memories ${times}`);
+      break;
+    case "memory-list":
+      label = phrase("Listed", "list", `memories ${times}`);
+      break;
+    case "memory-read":
+      label = phrase("Read", "read", quantity(selected.length, "memory", "memories"));
+      break;
+    case "memory-history":
+      label = phrase("Read", "read", `memory history ${times}`);
+      break;
+    case "memory-sync-status":
+      label = phrase("Checked", "check", `memory sync status ${times}`);
+      break;
+    case "memory-save":
+      label = phrase("Saved", "save", quantity(selected.length, "memory", "memories"));
+      break;
+    case "memory-forget":
+      label = phrase("Forgot", "forget", quantity(selected.length, "memory", "memories"));
+      break;
+    case "memory-revert":
+      label = phrase("Restored", "restore", quantity(selected.length, "memory revision"));
+      break;
+    case "memory-source":
+      label = phrase("Read", "read", quantity(selected.length, "memory source"));
+      break;
     case "environment-read":
       label = phrase("Checked", "check", `environment preferences ${times}`);
       break;

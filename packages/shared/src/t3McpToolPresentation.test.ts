@@ -38,6 +38,16 @@ describe("resolveT3McpToolPresentation", () => {
   });
 });
 
+describe("memory tools", () => {
+  it("present every memory tool with a human title", () => {
+    expect(resolveT3McpToolPresentation("mcp__t3-code__memory_upsert")?.displayName).toBe(
+      "Save a memory",
+    );
+    expect(resolveT3McpToolPresentation("memory_search")?.displayName).toBe("Search memories");
+    expect(resolveT3McpSummaryAction("memory_forget", {})).toBe("memory-forget");
+  });
+});
+
 describe("resolveT3McpToolDefinition", () => {
   it("labels an action tool call as the action it ran", () => {
     expect(

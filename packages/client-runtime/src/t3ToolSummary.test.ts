@@ -80,4 +80,16 @@ describe("summarizeT3ToolCalls", () => {
       failedCount: 0,
     });
   });
+
+  it("summarizes memory tools", () => {
+    expect(summarizeT3ToolCalls("memory-save", [completed({}, {}), completed({}, {})]).label).toBe(
+      "Saved 2 memories",
+    );
+    expect(summarizeT3ToolCalls("memory-search", [completed({ query: "x" }, {})]).label).toBe(
+      "Searched memories 1 time",
+    );
+    expect(
+      summarizeT3ToolCalls("memory-forget", [{ input: {}, output: {}, outcome: "failed" }]).label,
+    ).toBe("Tried to forget 1 memory");
+  });
 });
