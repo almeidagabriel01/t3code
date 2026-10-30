@@ -2470,6 +2470,10 @@ code {
   border-radius: 6px;
 }
 
+.composer-tiptap .ProseMirror-gapcursor:after {
+  border-top-color: var(--foreground);
+}
+
 .composer-tiptap .composer-chip-range-selected {
   position: relative;
 }

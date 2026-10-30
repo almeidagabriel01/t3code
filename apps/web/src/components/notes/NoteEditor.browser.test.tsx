@@ -72,6 +72,43 @@ describe("NoteEditor images", () => {
   });
 });
 
+describe("NoteEditor image caret", () => {
+  function noteWithImage(onChange: (markdown: string) => void) {
+    setup();
+    return (
+      <NoteEditor
+        environmentId={EnvironmentId.make("env")}
+        body={"![shot](t3-attachment:att-1)\n"}
+        editable
+        onChange={onChange}
+      />
+    );
+  }
+
+  it("types below a final image after clicking past it, without changing the file first", async () => {
+    const onChange = vi.fn();
+    await using _screen = await render(noteWithImage(onChange));
+    const body = page.getByRole("textbox", { name: "Note body" });
+    await expect.element(body).toBeVisible();
+    const rect = body.element().getBoundingClientRect();
+    await userEvent.click(body, { position: { x: 20, y: rect.height - 8 } });
+    await userEvent.keyboard("below");
+    await vi.waitFor(() =>
+      expect(onChange).toHaveBeenLastCalledWith("![shot](t3-attachment:att-1)\n\nbelow\n"),
+    );
+  });
+
+  it("opens a paragraph under a selected image on Enter and steps out with the arrow keys", async () => {
+    const onChange = vi.fn();
+    await using _screen = await render(noteWithImage(onChange));
+    await userEvent.click(page.getByRole("img", { name: "shot" }));
+    await userEvent.keyboard("{Enter}above{ArrowUp}{ArrowDown}");
+    await userEvent.keyboard("x");
+    await vi.waitFor(() => expect(onChange.mock.lastCall?.[0]).toContain("x"));
+    expect(onChange.mock.lastCall?.[0]).toMatch(/^!\[shot\]\(t3-attachment:att-1\)\n\n/);
+  });
+});
+
 describe("NoteEditor formatting", () => {
   it("turns an empty block into a heading from the slash menu", async () => {
     const onChange = vi.fn();

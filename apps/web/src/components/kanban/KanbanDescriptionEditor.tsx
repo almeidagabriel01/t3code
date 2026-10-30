@@ -13,6 +13,7 @@ import {
   hasPendingImage,
   imageFiles,
   useAttachmentImageUploads,
+  withoutTrailingImageGap,
 } from "../AttachmentImageNode";
 import { mountedEditorView, RICH_MARKDOWN_EXTENSIONS } from "../ComposerPromptEditorTiptap";
 import { Button } from "../ui/button";
@@ -91,7 +92,7 @@ export function KanbanDescriptionEditor(props: {
 
   function save(view: EditorView) {
     if (hasPendingImage(view.state.doc)) return;
-    const text = serializeEditorDoc(view.state.doc).value;
+    const text = serializeEditorDoc(withoutTrailingImageGap(view.state.doc)).value;
     if (text !== props.initial) props.onSave(text);
     props.onClose();
   }

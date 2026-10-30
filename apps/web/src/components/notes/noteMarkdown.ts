@@ -505,7 +505,13 @@ function serializeBlock(node: JSONContent, indent = ""): string {
 // Unchanged blocks reuse their bytes; edits serialize only changed blocks in canonical form.
 // The source fingerprint and surrounding whitespace survive editor transactions, with no reparse.
 export function noteDocToMarkdown(doc: JSONContent): string {
-  const blocks = doc.content ?? [];
+  const all = doc.content ?? [];
+  const gap = all.at(-1);
+  // The editor keeps an empty paragraph after a final image for the caret; it is not content.
+  const blocks =
+    gap?.type === "paragraph" && !gap.content?.length && all.at(-2)?.type === "attachmentImage"
+      ? all.slice(0, -1)
+      : all;
   const tail = blocks.find((node) => node.attrs?.noteTail === true)?.attrs?.noteSuffix;
   return blocks
     .map((node, index) => {

@@ -1,6 +1,8 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { Node } from "@tiptap/core";
+import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { Fragment, Slice, type Node as ProseMirrorNode } from "@tiptap/pm/model";
+import { NodeSelection } from "@tiptap/pm/state";
 import type { EditorView } from "@tiptap/pm/view";
 import { NodeViewWrapper, ReactNodeViewRenderer, type ReactNodeViewProps } from "@tiptap/react";
 import { ImageIcon } from "lucide-react";
@@ -80,7 +82,46 @@ export const AttachmentImage = Node.create({
     { "data-attachment-id": node.attrs.attachmentId, alt: node.attrs.name },
   ],
   addNodeView: () => ReactNodeViewRenderer(AttachmentImageView),
+  addKeyboardShortcuts() {
+    // Enter on a selected image opens a paragraph below it.
+    return {
+      Enter: ({ editor }) => {
+        const { selection } = editor.state;
+        if (!(selection instanceof NodeSelection) || selection.node.type !== this.type)
+          return false;
+        const at = selection.to;
+        return editor
+          .chain()
+          .insertContentAt(at, { type: "paragraph" })
+          .setTextSelection(at + 1)
+          .run();
+      },
+    };
+  },
+  addProseMirrorPlugins() {
+    // A document ending in an image has no text position after it, so a click there loses the caret.
+    return [
+      new Plugin({
+        key: new PluginKey("attachmentImageTrailingParagraph"),
+        appendTransaction: (_transactions, _old, state) => {
+          const last = state.doc.lastChild;
+          if (!this.editor.isEditable || last?.type !== this.type) return null;
+          const paragraph = state.schema.nodes.paragraph!.create();
+          return state.tr.insert(state.doc.content.size, paragraph);
+        },
+      }),
+    ];
+  },
 });
+
+/** The document without the empty paragraph kept after a final image so the caret has a place. */
+export function withoutTrailingImageGap(doc: ProseMirrorNode) {
+  const { lastChild, childCount } = doc;
+  const before = childCount > 1 ? doc.child(childCount - 2) : null;
+  if (lastChild?.type.name !== "paragraph" || lastChild.content.size > 0) return doc;
+  if (before?.type.name !== "attachmentImage") return doc;
+  return doc.cut(0, doc.content.size - lastChild.nodeSize);
+}
 
 /** The image node's own ring is the only selection mark; ProseMirror's outline is removed. */
 export const ATTACHMENT_IMAGE_EDITOR_CLASS = "[&_.ProseMirror-selectednode]:outline-none!";

@@ -20,6 +20,13 @@ describe("note markdown codec", () => {
     expect(markdown).toBe(`\`\`\`md\n${value}\n\`\`\`\n`);
     expect(parse(markdown).firstChild!.textContent).toBe(value);
   });
+  it("ignores the empty caret paragraph kept after a final image", () => {
+    const source = "Intro\n\n![shot](t3-attachment:note-a)\n";
+    const doc = parse(source);
+    const gap = schema.nodes.paragraph!.create();
+    const withGap = doc.copy(doc.content.addToEnd(gap));
+    expect(noteDocToMarkdown(withGap.toJSON())).toBe(source);
+  });
   it("serializes inline code with 200000 backtick runs without exceeding the argument limit", () => {
     const value = "x`".repeat(200000) + "edited";
     const doc = schema.nodes.doc!.create(
