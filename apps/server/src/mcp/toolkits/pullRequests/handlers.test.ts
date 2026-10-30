@@ -25,12 +25,17 @@ import {
   type PullRequestTestThread,
   v2PullRequestThread,
 } from "../../../orchestration-v2/testkit/pullRequestFixtures.ts";
+import * as CommandReceiptStore from "../../../orchestration-v2/CommandReceiptStore.ts";
+import * as PullRequestSyncReactor from "../../../orchestration-v2/PullRequestSyncReactor.ts";
+import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
+import * as PullRequestService from "../../../pullRequest/PullRequestService.ts";
 import * as PullRequestReviewGuideService from "../../../pullRequest/PullRequestReviewGuideService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
-import * as McpToolAccessTestkit from "../../McpToolAccess.testkit.ts";
+import { liveThreadShell } from "../../McpToolAccess.testkit.ts";
 import { listThreadPullRequests } from "./handlers.ts";
+import { bytesOf, READ_BUDGET_BYTES } from "./readBudget.ts";
 import * as PullRequestsHandlers from "./handlers.ts";
 import { CHILD_PULL_REQUEST_REPORT_NEXT, PullRequestsToolkit } from "./tools.ts";
 
@@ -140,6 +145,8 @@ interface HarnessOptions {
   readonly project?: OrchestrationProjectShell | null;
   readonly reject?: (command: OrchestrationCommand) => string | null;
   readonly projects?: ReadonlyArray<OrchestrationProjectShell>;
+  readonly pullRequests?: Partial<PullRequestService.PullRequestService["Service"]>;
+  readonly interactionMode?: "default" | "plan";
   readonly generate?: (
     input: PullRequestRef,
   ) => Effect.Effect<
@@ -169,7 +176,29 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
       yield* Ref.update(commands, (recorded) => [...recorded, command]);
       return { sequence: 1, storedEvents: [] };
     });
+  const receipts = new Map<string, CommandReceiptStore.ProjectCommandReceiptV2>();
   const layerDependencies = Layer.mergeAll(
+    Layer.mock(PullRequestService.PullRequestService)(options.pullRequests ?? {}),
+    Layer.mock(PullRequestSyncReactor.PullRequestSyncReactor)({ requestSync: () => Effect.void }),
+    Layer.mock(CommandReceiptStore.CommandReceiptStoreV2)({
+      getProjectByCommandId: (id) => Effect.succeed(Option.fromNullishOr(receipts.get(id))),
+      insertIfAbsent: (receipt) =>
+        Effect.sync(() => {
+          if (receipts.has(receipt.commandId)) return false;
+          receipts.set(receipt.commandId, receipt as CommandReceiptStore.ProjectCommandReceiptV2);
+          return true;
+        }),
+      upsert: (receipt) =>
+        Effect.sync(() => {
+          receipts.set(receipt.commandId, receipt as CommandReceiptStore.ProjectCommandReceiptV2);
+        }),
+    }),
+    Layer.mock(ThreadManagement.ThreadManagementService)({
+      getThreadShell: (id) =>
+        Effect.succeed(
+          liveThreadShell(id, { interactionMode: options.interactionMode ?? "default" }),
+        ),
+    }),
     Layer.mock(ProjectService.ProjectService)({
       getShell: () => Effect.succeed(Option.fromNullishOr(project)),
       listShells: () => Effect.succeed(options.projects ?? (project ? [project] : [])),
@@ -198,7 +227,6 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
       dispatch,
     }),
     Layer.succeed(Crypto.Crypto, testCrypto),
-    McpToolAccessTestkit.liveThreadsLayer,
   );
   const toolkit = yield* PullRequestsToolkit.pipe(
     Effect.provide(
@@ -701,6 +729,218 @@ describe("pull request guide tools", () => {
       expect((yield* Ref.get(harness.guideRequests)).map((ref) => ref.projectId)).toEqual([
         "project-azure",
       ]);
+    }),
+  );
+});
+
+const PR = { repository: "t3tools/t3code", number: 5 } as const;
+
+/** Every write the service can take, recording its name and input. */
+const recordingService = (
+  calls: Array<readonly [string, unknown]>,
+  fail?: () => PullRequestOperationError | null,
+) => {
+  const record = (name: string) => (input: unknown) =>
+    Effect.suspend(() => {
+      calls.push([name, input]);
+      const error = fail?.() ?? null;
+      return error === null ? Effect.void : Effect.fail(error);
+    });
+  return {
+    comment: record("comment"),
+    updateComment: record("updateComment"),
+    submitReview: record("submitReview"),
+    replyToThread: record("replyToThread"),
+    setThreadResolution: record("setThreadResolution"),
+    setReaction: record("setReaction"),
+    setLabels: record("setLabels"),
+    requestReviewers: record("requestReviewers"),
+    update: record("update"),
+    runAction: record("runAction"),
+  } satisfies Partial<PullRequestService.PullRequestService["Service"]>;
+};
+
+describe("pull request agent tools", () => {
+  it.effect("cuts a long activity to the read budget and counts what it dropped", () =>
+    Effect.gen(function* () {
+      const comments = Array.from({ length: 100 }, (_, index) => ({
+        id: `comment-${index}`,
+        body: "x".repeat(2_000),
+      }));
+      const harness = yield* makeHarness({
+        pullRequests: {
+          activity: () => Effect.succeed({ comments, reviewThreads: [], commits: [] } as never),
+        },
+      });
+      const result = yield* harness.call("t3_pull_request", { action: "activity", ...PR });
+      const kept = (result.activity as { comments: ReadonlyArray<unknown> }).comments.length;
+      expect(kept).toBeGreaterThan(0);
+      expect(kept).toBeLessThan(comments.length);
+      expect((result.omitted as { comments: number }).comments).toBe(comments.length - kept);
+      expect(bytesOf(result)).toBeLessThanOrEqual(READ_BUDGET_BYTES);
+    }),
+  );
+
+  it.effect("cuts a patch to the read budget and says so", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        pullRequests: {
+          diff: () =>
+            Effect.succeed({ patch: "é".repeat(100_000), truncated: false, nextCursor: null }),
+        },
+      });
+      const result = yield* harness.call("t3_pull_request", { action: "diff", ...PR });
+      expect(result.truncated).toBe(true);
+      expect(bytesOf(result)).toBeLessThanOrEqual(READ_BUDGET_BYTES);
+    }),
+  );
+
+  it.effect.each([
+    ["comment", { body: "hi" }, "comment", { body: "hi" }],
+    [
+      "comment_update",
+      { commentId: "9", commentKind: "issue-comment", body: "b" },
+      "updateComment",
+      { commentId: "9", kind: "issue-comment", body: "b" },
+    ],
+    [
+      "review_submit",
+      { verdict: "approve", body: "lgtm" },
+      "submitReview",
+      { verdict: "approve", body: "lgtm", comments: [] },
+    ],
+    [
+      "thread_reply",
+      { reviewThreadId: "t1", body: "fixed" },
+      "replyToThread",
+      { threadId: "t1", body: "fixed" },
+    ],
+    [
+      "thread_resolve",
+      { reviewThreadId: "t1", on: false },
+      "setThreadResolution",
+      { threadId: "t1", resolved: false },
+    ],
+    ["react", { content: "rocket" }, "setReaction", { content: "rocket", reacted: true }],
+    ["labels", { labels: ["bug"], on: false }, "setLabels", { labels: ["bug"], applied: false }],
+    [
+      "reviewers",
+      { reviewers: [{ id: "ana", kind: "user" }] },
+      "requestReviewers",
+      { reviewers: [{ id: "ana", kind: "user" }], requested: true },
+    ],
+    ["update", { title: "New" }, "update", { title: "New" }],
+    [
+      "run",
+      { operation: "merge", mergeMethod: "squash" },
+      "runAction",
+      { action: "merge", mergeMethod: "squash" },
+    ],
+  ] as const)("routes %s to one service call", ([action, params, method, expected]) =>
+    Effect.gen(function* () {
+      const calls: Array<readonly [string, unknown]> = [];
+      const harness = yield* makeHarness({ pullRequests: recordingService(calls) });
+      const result = yield* harness.call("t3_pull_request_write", {
+        action,
+        clientRequestId: `request-${action}`,
+        ...PR,
+        ...params,
+      } as never);
+      expect(result).toMatchObject({ status: "accepted", number: 5 });
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.[0]).toBe(method);
+      expect(calls[0]?.[1]).toMatchObject({ projectId: PROJECT_ID, number: 5, ...expected });
+    }),
+  );
+
+  it.effect("sends a write once per clientRequestId and refuses the id for another request", () =>
+    Effect.gen(function* () {
+      const calls: Array<readonly [string, unknown]> = [];
+      const harness = yield* makeHarness({ pullRequests: recordingService(calls) });
+      const write = (body: string) =>
+        harness.call("t3_pull_request_write", {
+          action: "comment",
+          clientRequestId: "same",
+          ...PR,
+          body,
+        });
+      expect(yield* write("first")).not.toHaveProperty("replayed");
+      expect(yield* write("first")).toMatchObject({ status: "accepted", replayed: true });
+      expect(yield* write("other").pipe(Effect.flip)).toMatchObject({
+        _tag: "PullRequestWriteRefusedError",
+      });
+      expect(calls).toHaveLength(1);
+    }),
+  );
+
+  it.effect(
+    "lets a write the service refused before the host go again, but not an unknown one",
+    () =>
+      Effect.gen(function* () {
+        const calls: Array<readonly [string, unknown]> = [];
+        let outcome: PullRequestOperationError | null = new PullRequestOperationError({
+          operation: "comment",
+          detail: "Comments are locked.",
+        });
+        const harness = yield* makeHarness({
+          pullRequests: recordingService(calls, () => outcome),
+        });
+        const write = (clientRequestId: string) =>
+          harness.call("t3_pull_request_write", {
+            action: "comment",
+            clientRequestId,
+            ...PR,
+            body: "hi",
+          });
+        expect(yield* write("a").pipe(Effect.flip)).toMatchObject({
+          _tag: "PullRequestWriteRefusedError",
+        });
+        outcome = null;
+        expect(yield* write("a")).toMatchObject({ status: "accepted" });
+        expect(calls).toHaveLength(2);
+
+        outcome = new PullRequestOperationError({
+          operation: "comment",
+          detail: "Timed out.",
+          cause: new Error("socket"),
+        });
+        expect(yield* write("b").pipe(Effect.flip)).toMatchObject({
+          _tag: "PullRequestWriteUnconfirmedError",
+        });
+        outcome = null;
+        expect(yield* write("b").pipe(Effect.flip)).toMatchObject({
+          _tag: "PullRequestWriteUnconfirmedError",
+        });
+        expect(calls).toHaveLength(3);
+      }),
+  );
+
+  it.effect("refuses writes from a plan-mode thread or without the capability", () =>
+    Effect.gen(function* () {
+      const calls: Array<readonly [string, unknown]> = [];
+      const params = {
+        action: "comment",
+        clientRequestId: "x",
+        ...PR,
+        body: "hi",
+      } as const;
+      const plan = yield* makeHarness({
+        interactionMode: "plan",
+        pullRequests: recordingService(calls),
+      });
+      expect(yield* plan.call("t3_pull_request_write", params).pipe(Effect.flip)).toMatchObject({
+        code: "capability_denied",
+      });
+      const open = yield* makeHarness({ pullRequests: recordingService(calls) });
+      expect(
+        yield* open.call("t3_pull_request_write", params, ["preview"]).pipe(Effect.flip),
+      ).toMatchObject({ _tag: "McpCapabilityUnavailableError" });
+      for (const action of ["read", "search"] as const) {
+        expect(
+          yield* open.call("t3_pull_request", { action, ...PR }, ["preview"]).pipe(Effect.flip),
+        ).toMatchObject({ _tag: "McpCapabilityUnavailableError" });
+      }
+      expect(calls).toEqual([]);
     }),
   );
 });

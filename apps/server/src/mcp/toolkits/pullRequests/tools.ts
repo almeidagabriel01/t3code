@@ -3,6 +3,17 @@ import {
   OrchestratorMcpEnvironmentTarget,
   OrchestratorMcpFailure,
   PositiveInt,
+  ProjectId,
+  PullRequestAction,
+  PullRequestInvolvement,
+  PullRequestListCursors,
+  PullRequestListFilters,
+  PullRequestListState,
+  PullRequestMergeMethod,
+  PullRequestReactionContent,
+  PullRequestReviewVerdict,
+  PullRequestReviewerRequestInput,
+  PullRequestUpdateMethod,
   PullRequestReviewGuide,
   PullRequestReviewGuideRun,
   PullRequestState,
@@ -19,7 +30,10 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
+import * as CommandReceiptStore from "../../../orchestration-v2/CommandReceiptStore.ts";
+import * as PullRequestSyncReactor from "../../../orchestration-v2/PullRequestSyncReactor.ts";
 import * as PullRequestReviewGuideService from "../../../pullRequest/PullRequestReviewGuideService.ts";
+import * as PullRequestService from "../../../pullRequest/PullRequestService.ts";
 
 const dependencies = [
   McpInvocationContext.McpInvocationContext,
@@ -185,6 +199,34 @@ export class PullRequestGuideFailedError extends Schema.TaggedError<PullRequestG
   }
 }
 
+export class PullRequestReadFailedError extends Schema.TaggedError<PullRequestReadFailedError>()(
+  "PullRequestReadFailedError",
+  { detail: Schema.String, cause: Schema.optional(Schema.Defect()) },
+) {
+  override get message(): string {
+    return this.detail;
+  }
+}
+
+/** Refused before any request reached the host, so nothing was posted and the same call may run again. */
+export class PullRequestWriteRefusedError extends Schema.TaggedError<PullRequestWriteRefusedError>()(
+  "PullRequestWriteRefusedError",
+  { detail: Schema.String },
+) {
+  override get message(): string {
+    return this.detail;
+  }
+}
+
+export class PullRequestWriteUnconfirmedError extends Schema.TaggedError<PullRequestWriteUnconfirmedError>()(
+  "PullRequestWriteUnconfirmedError",
+  { cause: Schema.optional(Schema.Defect()) },
+) {
+  override get message(): string {
+    return "The write may have been partly posted. Read the PR (activity) to check. Repeating this clientRequestId will not send it again; use a new one only after confirming it did not post.";
+  }
+}
+
 export const PullRequestToolError = Schema.Union([
   OrchestratorMcpFailure,
   McpCapabilityUnavailableError,
@@ -202,6 +244,9 @@ export const PullRequestToolError = Schema.Union([
   PullRequestWatchFromSubagentError,
   PullRequestProjectNotFoundError,
   PullRequestGuideFailedError,
+  PullRequestReadFailedError,
+  PullRequestWriteRefusedError,
+  PullRequestWriteUnconfirmedError,
 ]);
 export type PullRequestToolError = typeof PullRequestToolError.Type;
 
@@ -408,7 +453,138 @@ const ReadPullRequestGuideTool = Tool.make("read_pull_request_guide", {
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, true);
 
+const ReadTarget = Schema.Struct({
+  url: PullRequestTargetInput.fields.url,
+  repository: PullRequestTargetInput.fields.repository,
+  number: PullRequestTargetInput.fields.number,
+  host: PullRequestTargetInput.fields.host,
+});
+
+const PULL_REQUEST_READ_ACTIONS = [
+  "read",
+  "checks",
+  "activity",
+  "diff",
+  "review_thread",
+  "file",
+  "search",
+  "stats",
+] as const;
+
+export const PullRequestReadParameters = Schema.Struct({
+  environmentId: OrchestratorMcpEnvironmentTarget,
+  action: Schema.Literals(PULL_REQUEST_READ_ACTIONS),
+  ...ReadTarget.fields,
+  reviewThreadId: Schema.optional(TrimmedNonEmptyString),
+  cursor: Schema.optional(TrimmedNonEmptyString),
+  commit: Schema.optional(TrimmedNonEmptyString),
+  path: Schema.optional(TrimmedNonEmptyString),
+  oldPath: Schema.optional(TrimmedNonEmptyString),
+  changeType: Schema.optional(
+    Schema.Literals(["change", "rename-pure", "rename-changed", "new", "deleted"]),
+  ),
+  state: Schema.optional(PullRequestListState),
+  involvement: Schema.optional(PullRequestInvolvement),
+  filters: Schema.optional(PullRequestListFilters),
+  projectId: Schema.optional(ProjectId),
+  query: Schema.optional(TrimmedNonEmptyString),
+  limit: Schema.optional(PositiveInt),
+  cursors: Schema.optional(PullRequestListCursors),
+});
+export type PullRequestReadParameters = typeof PullRequestReadParameters.Type;
+
+const PullRequestReadTool = Tool.make("t3_pull_request", {
+  description:
+    "Read a pull request from its host. Name it by `url`, or `repository` + `number` (+ `host`). `read`: details. `checks`: CI. `activity`: reviews, comments, commits. `diff`: patch, `cursor` pages. `review_thread`: `reviewThreadId` + the thread's `cursor`. `file`: `path` (`oldPath`, `changeType`) before/after contents. `search`: list PRs by `state` (default open), `query`, `filters`, `involvement`, `projectId`, `limit` (default 10), `cursors`. `stats`: diff size. Long output is cut at 64 KiB and says so.",
+  parameters: PullRequestReadParameters,
+  success: Schema.Record(Schema.String, Schema.Unknown),
+  failure: PullRequestToolError,
+  dependencies: [...dependencies, PullRequestService.PullRequestService],
+})
+  .annotate(Tool.Title, "Read pull request")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, true);
+
+const PULL_REQUEST_WRITE_ACTIONS = [
+  "comment",
+  "comment_update",
+  "review_submit",
+  "thread_reply",
+  "thread_resolve",
+  "react",
+  "labels",
+  "reviewers",
+  "update",
+  "run",
+] as const;
+
+/** Merge, close and the other state changes `run` may start; deleting branches, reverting and approving workflows stay with the user. */
+export const PullRequestRunOperation = Schema.Literals([
+  "merge",
+  "close",
+  "reopen",
+  "ready",
+  "draft",
+  "update-branch",
+  "enable-auto-merge",
+  "disable-auto-merge",
+] as const satisfies ReadonlyArray<PullRequestAction>);
+
+export const PullRequestWriteParameters = Schema.Struct({
+  environmentId: OrchestratorMcpEnvironmentTarget,
+  clientRequestId: TrimmedNonEmptyString.check(Schema.isMaxLength(256)).annotate({
+    description:
+      "Your own id for this write. Retrying with the same id does not post twice. New write, new id.",
+  }),
+  action: Schema.Literals(PULL_REQUEST_WRITE_ACTIONS),
+  ...ReadTarget.fields,
+  body: Schema.optional(Schema.String),
+  title: Schema.optional(TrimmedNonEmptyString),
+  commentId: Schema.optional(TrimmedNonEmptyString),
+  commentKind: Schema.optional(Schema.Literals(["issue-comment", "review-comment"])),
+  verdict: Schema.optional(PullRequestReviewVerdict),
+  reviewThreadId: Schema.optional(TrimmedNonEmptyString),
+  subjectId: Schema.optional(TrimmedNonEmptyString),
+  content: Schema.optional(PullRequestReactionContent),
+  labels: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  reviewers: Schema.optional(PullRequestReviewerRequestInput.fields.reviewers),
+  on: Schema.optional(Schema.Boolean),
+  operation: Schema.optional(PullRequestRunOperation),
+  mergeMethod: Schema.optional(PullRequestMergeMethod),
+  updateMethod: Schema.optional(PullRequestUpdateMethod),
+});
+export type PullRequestWriteParameters = typeof PullRequestWriteParameters.Type;
+
+export const PullRequestWriteResult = Schema.Struct({
+  ...PullRequestIdentity,
+  status: Schema.Literal("accepted"),
+  replayed: Schema.optional(Schema.Boolean),
+});
+
+const PullRequestWriteTool = Tool.make("t3_pull_request_write", {
+  description:
+    "Change a pull request on its host, as the signed-in user. Same target fields as `t3_pull_request`; `clientRequestId` is required. `comment`: `body`. `comment_update`: `commentId`, `commentKind`, `body`. `review_submit`: `verdict`, `body`. `thread_reply`: `reviewThreadId`, `body`. `thread_resolve`: `reviewThreadId`; `on: false` reopens. `react`: `content`, optional `subjectId` (default the PR); `on: false` removes. `labels`: `labels`; `on: false` removes. `reviewers`: `reviewers`; `on: false` cancels the request. `update`: `title` and/or `body`. `run`: `operation` (merge with `mergeMethod`, close, reopen, ready, draft, update-branch with `updateMethod`, enable-auto-merge, disable-auto-merge). Only on the user's ask: others see it. Needs a thread in default mode.",
+  parameters: PullRequestWriteParameters,
+  success: PullRequestWriteResult,
+  failure: PullRequestToolError,
+  dependencies: [
+    ...dependencies,
+    PullRequestService.PullRequestService,
+    PullRequestSyncReactor.PullRequestSyncReactor,
+    CommandReceiptStore.CommandReceiptStoreV2,
+  ],
+})
+  .annotate(Tool.Title, "Change pull request")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, true);
+
 export const PullRequestsToolkit = Toolkit.make(
+  PullRequestReadTool,
+  PullRequestWriteTool,
   LinkPullRequestTool,
   UnlinkPullRequestTool,
   ListThreadPullRequestsTool,

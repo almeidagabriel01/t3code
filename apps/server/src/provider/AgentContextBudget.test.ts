@@ -37,6 +37,10 @@ import { NoteWorkService } from "../notes/NoteWorkService.ts";
 import { NotesService } from "../notes/NotesService.ts";
 import { ProjectService } from "../project/ProjectService.ts";
 import { ProjectSetupScriptRunner } from "../project/ProjectSetupScriptRunner.ts";
+import { CheckpointDiffQuery } from "../checkpointing/CheckpointDiffQuery.ts";
+import { CommandReceiptStoreV2 } from "../orchestration-v2/CommandReceiptStore.ts";
+import { PullRequestSyncReactor } from "../orchestration-v2/PullRequestSyncReactor.ts";
+import { PullRequestService } from "../pullRequest/PullRequestService.ts";
 import { PullRequestReviewGuideService } from "../pullRequest/PullRequestReviewGuideService.ts";
 import { ScheduledTaskService } from "../scheduledTasks/ScheduledTaskService.ts";
 import { SecretRequests } from "../secrets/SecretRequests.ts";
@@ -74,6 +78,10 @@ const toolHandlerServices = Layer.mergeAll(
   Layer.mock(ProviderAdapterRegistryV2)({}),
   Layer.mock(ProviderRegistry)({}),
   Layer.mock(PullRequestReviewGuideService)({}),
+  Layer.mock(PullRequestService)({}),
+  Layer.mock(PullRequestSyncReactor)({}),
+  Layer.mock(CommandReceiptStoreV2)({}),
+  Layer.mock(CheckpointDiffQuery)({}),
   Layer.mock(RemoteDelegation)({}),
   Layer.mock(ScheduledTaskService)({}),
   Layer.mock(SecretRequests)({}),

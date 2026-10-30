@@ -48,6 +48,7 @@ import * as ProjectService from "../../project/ProjectService.ts";
 import * as ProviderRegistry from "../../provider/ProviderRegistry.ts";
 import * as SecretRequests from "../../secrets/SecretRequests.ts";
 import * as RemoteDelegation from "../../peer/RemoteDelegation.ts";
+import * as CheckpointDiffQuery from "../../checkpointing/CheckpointDiffQuery.ts";
 import * as ScheduledTaskService from "../../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as McpHttpServer from "../McpHttpServer.ts";
@@ -77,11 +78,13 @@ const decodeThreadReadResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadR
 
 const layerThreadToolkitWith = (
   handoff: Partial<ThreadHandoffService.ThreadHandoffService["Service"]>,
+  diffs: Partial<CheckpointDiffQuery.CheckpointDiffQuery["Service"]> = {},
 ) =>
   McpHttpServer.layerThreadToolkit.pipe(
     Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
     Layer.provide(Layer.mock(ThreadHandoffService.ThreadHandoffService)(handoff)),
     Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
+    Layer.provide(Layer.mock(CheckpointDiffQuery.CheckpointDiffQuery)(diffs)),
     Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
     Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
     Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
@@ -721,6 +724,7 @@ it.effect("refuses act-as-caller tools to a client caller", () =>
         Layer.provide(Layer.mock(ProviderRegistry.ProviderRegistry)({})),
         Layer.provide(Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({})),
         Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
+        Layer.provide(Layer.mock(CheckpointDiffQuery.CheckpointDiffQuery)({})),
         Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
         Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
         Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
@@ -868,6 +872,7 @@ it.effect.each(["t3_thread_interrupt", "t3_workflow_stop"])(
           Layer.provide(Layer.mock(ProviderRegistry.ProviderRegistry)({})),
           Layer.provide(Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({})),
           Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
+          Layer.provide(Layer.mock(CheckpointDiffQuery.CheckpointDiffQuery)({})),
           Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
           Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
           Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
@@ -964,6 +969,7 @@ it.effect("discovers workflow stop targets and requires orchestration capability
         Layer.provide(Layer.mock(ProviderRegistry.ProviderRegistry)({})),
         Layer.provide(Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({})),
         Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
+        Layer.provide(Layer.mock(CheckpointDiffQuery.CheckpointDiffQuery)({})),
         Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
         Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
         Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
@@ -1029,3 +1035,81 @@ it.effect("only the caller that prepared a pending upload can discard it", () =>
     ),
   ),
 );
+
+it.effect("t3_thread_diff reads one turn or the whole thread, cut at the read budget", () => {
+  const calls: Array<readonly [string, unknown]> = [];
+  const result = (input: { readonly threadId: ThreadId; readonly toTurnCount: number }) => ({
+    threadId: input.threadId,
+    fromTurnCount: 0,
+    toTurnCount: input.toTurnCount,
+    diff: "é".repeat(100_000),
+  });
+  return Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const diff = (args: object, granted: McpInvocationContext.McpInvocationScope["capabilities"]) =>
+      server.callTool({ name: "t3_thread_diff", arguments: args }).pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, {
+          ...scope,
+          capabilities: granted,
+        }),
+        Effect.provideService(McpSchema.McpServerClient, client),
+      );
+    const whole = (yield* diff({}, scope.capabilities)).structuredContent as {
+      readonly diff: string;
+      readonly truncated: boolean;
+    };
+    expect(whole.truncated).toBe(true);
+    expect(Buffer.byteLength(JSON.stringify(whole))).toBeLessThanOrEqual(64 * 1024);
+    yield* diff({ runId: "mcp-core-run-1" }, scope.capabilities);
+    expect(calls).toEqual([
+      ["full", { threadId, toTurnCount: 2 }],
+      ["turn", { threadId, fromTurnCount: 0, toTurnCount: 1 }],
+    ]);
+    expect(declaredFailure(yield* diff({}, new Set<never>()))).toMatchObject({
+      code: "capability_denied",
+    });
+    expect(calls).toHaveLength(2);
+  }).pipe(
+    Effect.provide(
+      layerThreadToolkitWith(
+        {},
+        {
+          getFullThreadDiff: (input) =>
+            Effect.sync(() => {
+              calls.push(["full", input]);
+              return result(input);
+            }),
+          getTurnDiff: (input) =>
+            Effect.sync(() => {
+              calls.push(["turn", input]);
+              return result(input);
+            }),
+        },
+      ).pipe(
+        Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provide(NodeCrypto.layer),
+        Layer.provide(
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadShell: (id) => Effect.succeed(McpToolAccessTestkit.liveThreadShell(id)),
+            getProjectThreadRecords: ({ threadId: id }) =>
+              Effect.succeed(
+                McpToolAccessTestkit.idleThreadProjection(McpToolAccessTestkit.liveThreadShell(id)),
+              ),
+            getCheckpointContext: () =>
+              Effect.succeed({
+                runs: [1, 2].map((ordinal) => ({
+                  id: RunId.make(`mcp-core-run-${ordinal}`),
+                  status: "completed",
+                })),
+                checkpoints: [1, 2].map((ordinal) => ({
+                  status: "ready",
+                  appRunOrdinal: ordinal,
+                  runId: RunId.make(`mcp-core-run-${ordinal}`),
+                })),
+              } as never),
+          }),
+        ),
+      ),
+    ),
+  );
+});

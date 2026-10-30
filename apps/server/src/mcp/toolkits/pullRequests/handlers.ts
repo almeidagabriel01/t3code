@@ -14,6 +14,7 @@ import * as Option from "effect/Option";
 
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
+import * as PullRequestService from "../../../pullRequest/PullRequestService.ts";
 import * as PullRequestReviewGuideService from "../../../pullRequest/PullRequestReviewGuideService.ts";
 import { pullRequestSyncKey } from "../../../pullRequest/pullRequestSyncKey.ts";
 import { sourceControlDefinitions } from "../../../sourceControl/sourceControlDefinitions.ts";
@@ -27,6 +28,8 @@ import {
 } from "../../../sourceControl/threadPullRequests.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
+import { makePullRequestReadHandlers } from "./readHandlers.ts";
+import { makePullRequestWriteHandlers } from "./writeHandlers.ts";
 import {
   type ListThreadPullRequestsResult,
   PullRequestLinkFailedError,
@@ -333,9 +336,16 @@ const make = Effect.gen(function* () {
           target,
           project: projectForPullRequest(known, target, callerProject),
           failure: null,
+          error: null,
         })),
         Effect.catch((error) =>
-          Effect.succeed({ input, target: null, project: undefined, failure: error.message }),
+          Effect.succeed({
+            input,
+            target: null,
+            project: undefined,
+            failure: error.message,
+            error,
+          }),
         ),
       ),
     );
@@ -351,6 +361,21 @@ const make = Effect.gen(function* () {
     number: target.number,
   });
 
+  /** A target the caller named, resolved to the project checkout that can read it. */
+  const locateOne = Effect.fn("PullRequestsToolkit.locateOne")(function* (
+    input: Omit<PullRequestTargetInput, "threadId">,
+  ) {
+    const [entry] = yield* locateAll([input]);
+    // An unreadable target is the caller's input, so its own refusal comes back unchanged.
+    if (entry !== undefined && entry.target === null && entry.error !== null)
+      return yield* entry.error;
+    if (entry === undefined || entry.target === null || entry.project === undefined)
+      return yield* new PullRequestProjectNotFoundError({
+        repository: entry?.target.repository ?? input.repository ?? "",
+      });
+    return { target: entry.target, ref: guideReference(entry.project, entry.target) };
+  });
+
   const guideFailureDetail = (error: { readonly message: string }) =>
     "detail" in error && typeof error.detail === "string" ? error.detail : error.message;
 
@@ -359,6 +384,8 @@ const make = Effect.gen(function* () {
   ) => McpToolAccess.writesThreads((params: P) => [params.threadId], handle);
 
   return {
+    ...makePullRequestReadHandlers(yield* PullRequestService.PullRequestService, locateOne),
+    ...(yield* makePullRequestWriteHandlers(locateOne)),
     link_pull_request: writesThread((input) =>
       Effect.gen(function* () {
         const thread = yield* requireThread(PullRequestLinkFailedError, input.threadId);

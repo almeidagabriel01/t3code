@@ -19,6 +19,8 @@ import {
   readThread,
   unavailable,
 } from "../../threadAccess.ts";
+import * as CheckpointDiffQuery from "../../../checkpointing/CheckpointDiffQuery.ts";
+import { bytesOf, clipJsonText, READ_BUDGET_BYTES } from "../pullRequests/readBudget.ts";
 import * as ThreadHandoffService from "../../../orchestration-v2/ThreadHandoffService.ts";
 import { callerLinkOrigin } from "../../linkOrigin.ts";
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
@@ -356,6 +358,63 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
         }
       }),
     ),
+  ),
+  t3_thread_diff: McpToolAccess.reads((input) =>
+    Effect.gen(function* () {
+      const { threads, projection } = yield* readThread(input.threadId);
+      const threadId = projection.thread.id;
+      const diffs = yield* CheckpointDiffQuery.CheckpointDiffQuery;
+      const context = yield* threads
+        .getCheckpointContext(threadId)
+        .pipe(Effect.mapError(unavailable));
+      // The same checkpoints getTurnDiff accepts: ready, with a completed run.
+      const completed = new Set(
+        context.runs.filter((run) => run.status === "completed").map((run) => run.id),
+      );
+      const checkpoints = context.checkpoints.filter(
+        (c) =>
+          c.status === "ready" &&
+          c.appRunOrdinal !== null &&
+          c.runId !== null &&
+          completed.has(c.runId),
+      );
+      const ordinal =
+        input.runId === undefined
+          ? input.turn
+          : (checkpoints.find((c) => c.runId === input.runId)?.appRunOrdinal ?? undefined);
+      if (input.runId !== undefined && ordinal === undefined) {
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: "That run has no ready checkpoint.",
+        });
+      }
+      const options = {
+        threadId,
+        ...(input.ignoreWhitespace === undefined
+          ? {}
+          : { ignoreWhitespace: input.ignoreWhitespace }),
+      };
+      const diff = yield* (
+        ordinal === undefined
+          ? diffs.getFullThreadDiff({
+              ...options,
+              toTurnCount: Math.max(0, ...checkpoints.map((c) => c.appRunOrdinal ?? 0)),
+            })
+          : diffs.getTurnDiff({ ...options, fromTurnCount: ordinal - 1, toTurnCount: ordinal })
+      ).pipe(
+        Effect.mapError(
+          (error) =>
+            new OrchestratorMcpFailure({
+              code: "orchestration_error",
+              message: `Unable to read the thread's diff: ${error.message}`,
+            }),
+        ),
+      );
+      // The rest of the result is measured first so the whole JSON stays within budget.
+      const rest = bytesOf({ ...diff, diff: "", truncated: false });
+      const cut = clipJsonText(diff.diff, READ_BUDGET_BYTES - rest);
+      return { ...diff, diff: cut.text, truncated: cut.truncated };
+    }),
   ),
   t3_thread_organize: writesThread((input) =>
     Effect.gen(function* () {

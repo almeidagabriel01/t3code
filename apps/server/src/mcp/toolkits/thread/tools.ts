@@ -20,12 +20,14 @@ import {
   ThreadId,
   RunId,
   NonNegativeInt,
+  PositiveInt,
   ProjectId,
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 
+import * as CheckpointDiffQuery from "../../../checkpointing/CheckpointDiffQuery.ts";
 import * as ThreadHandoffService from "../../../orchestration-v2/ThreadHandoffService.ts";
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTaskService from "../../../scheduledTasks/ScheduledTaskService.ts";
@@ -226,6 +228,29 @@ const ThreadSearchTool = Tool.make("t3_thread_search", {
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false);
 
+const ThreadDiffTool = Tool.make("t3_thread_diff", {
+  ...commandTool,
+  description:
+    "Read a thread's checkpoint diff: one turn (`turn`, the run's 1-based ordinal, or `runId`) or, with neither, everything since the start. Omit `threadId` for this thread. Output is cut at 64 KiB (`truncated`): read single turns for the rest.",
+  parameters: Schema.Struct({
+    environmentId: OrchestratorMcpEnvironmentTarget,
+    threadId: Schema.optional(ThreadId),
+    turn: Schema.optional(PositiveInt),
+    runId: Schema.optional(RunId),
+    ignoreWhitespace: Schema.optional(Schema.Boolean),
+  }),
+  success: Schema.Struct({
+    threadId: ThreadId,
+    fromTurnCount: NonNegativeInt,
+    toTurnCount: NonNegativeInt,
+    diff: Schema.String,
+    truncated: Schema.Boolean,
+  }),
+  dependencies: [...commandTool.dependencies, CheckpointDiffQuery.CheckpointDiffQuery],
+})
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false);
+
 const ScheduledTaskRunTool = Tool.make("run_scheduled_task_now", {
   ...commandTool,
   description:
@@ -250,6 +275,7 @@ const ScheduledTaskRunTool = Tool.make("run_scheduled_task_now", {
 export const ThreadToolkit = Toolkit.make(
   ScheduledTaskRunTool,
   ThreadSearchTool,
+  ThreadDiffTool,
   ThreadConfigureTool,
   ThreadTransferTool,
   ThreadOrganizeTool,
