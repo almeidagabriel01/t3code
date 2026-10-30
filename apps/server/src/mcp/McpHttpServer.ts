@@ -52,6 +52,11 @@ import * as KanbanHandlers from "./toolkits/kanban/handlers.ts";
 import * as MemoryHandlers from "./toolkits/memory/handlers.ts";
 import { MemoryToolkit } from "./toolkits/memory/tools.ts";
 import { NoteToolkit } from "./toolkits/note/tools.ts";
+import * as HostHandlers from "./toolkits/host/handlers.ts";
+import { HostToolkit } from "./toolkits/host/tools.ts";
+import * as DocsHandlers from "./toolkits/docs/handlers.ts";
+import { DocsToolkit } from "./toolkits/docs/tools.ts";
+import * as UserDocs from "../userDocs/UserDocs.ts";
 import * as NoteHandlers from "./toolkits/note/handlers.ts";
 import { ProjectToolkit } from "./toolkits/project/tools.ts";
 import * as ProjectHandlers from "./toolkits/project/handlers.ts";
@@ -1136,6 +1141,12 @@ const layerKanbanToolkit = toolkitRegistration(KanbanToolkit, KanbanHandlers.lay
 
 const layerNoteToolkit = toolkitRegistration(NoteToolkit, NoteHandlers.layer);
 
+const layerHostToolkit = toolkitRegistration(HostToolkit, HostHandlers.layer);
+
+const layerDocsToolkit = toolkitRegistration(DocsToolkit, DocsHandlers.layer).pipe(
+  Layer.provide(UserDocs.layer),
+);
+
 export const layerMemoryToolkit = toolkitRegistration(MemoryToolkit, MemoryHandlers.layer);
 
 export const layerAttachmentToolkit = toolkitRegistration(
@@ -1207,6 +1218,8 @@ export const layerTools = Layer.mergeAll(
   layerProjectRegistration,
   layerKanbanToolkit,
   layerNoteToolkit,
+  layerDocsToolkit,
+  layerHostToolkit,
   layerMemoryToolkit,
   layerEnvironmentToolkit,
   layerPreviewControlsRegistration,

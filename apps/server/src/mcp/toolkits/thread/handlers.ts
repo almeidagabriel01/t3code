@@ -1,5 +1,5 @@
 import {
-  type CommandId,
+  CommandId,
   type RuntimeRequestId,
   ThreadId,
   type OrchestrationV2ThreadProjection,
@@ -7,6 +7,7 @@ import {
   OrchestratorMcpFailure,
   type OrchestrationV2Command,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import { modelSelectionCommandType } from "@t3tools/shared/model";
 
@@ -21,6 +22,7 @@ import {
 } from "../../threadAccess.ts";
 import * as CheckpointDiffQuery from "../../../checkpointing/CheckpointDiffQuery.ts";
 import { bytesOf, clipJsonText, READ_BUDGET_BYTES } from "../pullRequests/readBudget.ts";
+import * as ThreadLaunchService from "../../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadHandoffService from "../../../orchestration-v2/ThreadHandoffService.ts";
 import { callerLinkOrigin } from "../../linkOrigin.ts";
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
@@ -50,6 +52,42 @@ const dispatch = Effect.fn("mcp.dispatchThreadCommand")(function* (
   const { threads, projection } = yield* readThread(threadId);
   const result = yield* threads
     .dispatch(command({ commandId: yield* newCommandId(), threadId: projection.thread.id }))
+    .pipe(Effect.mapError(dispatchFailure));
+  return { sequence: result.sequence };
+});
+
+/** The Retry button's operation. The command id makes a repeat a replay, so it prepares once. */
+const retryPreparation = Effect.fn("mcp.retryPreparation")(function* (input: {
+  readonly threadId?: ThreadId | undefined;
+  readonly runId?: RunId | undefined;
+  readonly clientRequestId?: string | undefined;
+}) {
+  const { scope, projection } = yield* readThread(input.threadId, ["runs"]);
+  const run =
+    input.runId === undefined
+      ? projection.runs
+          .filter((candidate) => candidate.workspacePreparation !== undefined)
+          .toSorted((a, b) => b.ordinal - a.ordinal)[0]
+      : projection.runs.find((candidate) => candidate.id === input.runId);
+  if (run === undefined) {
+    return yield* new OrchestratorMcpFailure({
+      code: "run_not_found",
+      message: "The thread has no run with a workspace preparation to retry.",
+    });
+  }
+  const requestId = input.clientRequestId?.trim();
+  // Without an id the key is the failure itself, so a repeat replays and a later failure retries.
+  const key =
+    requestId === undefined || requestId === ""
+      ? `${run.id}:${run.completedAt === null ? "none" : DateTime.toEpochMillis(run.completedAt)}`
+      : `${encodeURIComponent(scope.requestNamespace)}:${encodeURIComponent(requestId)}`;
+  const launch = yield* ThreadLaunchService.ThreadLaunchService;
+  const result = yield* launch
+    .retryPreparation({
+      commandId: CommandId.make(`mcp:retry-preparation:${key}`),
+      threadId: projection.thread.id,
+      runId: run.id,
+    })
     .pipe(Effect.mapError(dispatchFailure));
   return { sequence: result.sequence };
 });
@@ -418,6 +456,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
   ),
   t3_thread_organize: writesThread((input) =>
     Effect.gen(function* () {
+      if (input.action === "retry_preparation") return yield* retryPreparation(input);
       const { threads, projection, caller } = yield* readThread(input.threadId);
       const common = { commandId: yield* newCommandId(), threadId: projection.thread.id };
       if (input.action === "settle") {

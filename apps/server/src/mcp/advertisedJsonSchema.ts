@@ -96,6 +96,29 @@ const compact = (schema: Json, optional: boolean): Json => {
   return result;
 };
 
+// Model APIs reject a top-level anyOf, so an untagged union of objects becomes one object whose
+// fields are required only when every branch requires them. Decoding still checks the branches.
+const mergeTopLevelObjects = (schema: Json): Json => {
+  if (!Predicate.isObject(schema) || !Array.isArray(schema.anyOf)) return schema;
+  // `Schema.Struct({})` advertises as "anything but null".
+  const objects = schema.anyOf.map((branch) =>
+    Predicate.isObject(branch) && Object.keys(branch).length === 1 && isNullSchema(branch.not)
+      ? { type: "object" }
+      : branch,
+  );
+  if (!objects.every((branch) => Predicate.isObject(branch) && branch.type === "object"))
+    return schema;
+  const properties: JsonObject = {};
+  for (const object of objects as ReadonlyArray<JsonObject>)
+    if (Predicate.isObject(object.properties)) Object.assign(properties, object.properties);
+  const [first = [], ...others] = (objects as ReadonlyArray<JsonObject>).map((object) =>
+    Array.isArray(object.required) ? object.required : [],
+  );
+  const required = first.filter((name) => others.every((names) => names.includes(name)));
+  const { anyOf: _anyOf, ...rest } = schema;
+  return { ...rest, type: "object", properties, ...(required.length > 0 ? { required } : {}) };
+};
+
 /**
  * The input schema T3 advertises for a tool. Drops JSON noise that every thread pays for:
  * `additionalProperties: true`, safe-integer bounds, nested `anyOf`, JSON-string fallbacks, and
@@ -103,4 +126,6 @@ const compact = (schema: Json, optional: boolean): Json => {
  * Decoding still uses the full schema, so each tag's own required fields still apply.
  */
 export const advertisedJsonSchema = (tool: Tool.Any) =>
-  compact(Tool.getJsonSchema(tool), false) as ReturnType<typeof Tool.getJsonSchema>;
+  mergeTopLevelObjects(compact(Tool.getJsonSchema(tool), false)) as ReturnType<
+    typeof Tool.getJsonSchema
+  >;

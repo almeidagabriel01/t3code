@@ -37,6 +37,9 @@ import { NoteWorkService } from "../notes/NoteWorkService.ts";
 import { NotesService } from "../notes/NotesService.ts";
 import { ProjectService } from "../project/ProjectService.ts";
 import { ProjectSetupScriptRunner } from "../project/ProjectSetupScriptRunner.ts";
+import { ProcessResourceMonitor } from "../diagnostics/ProcessResourceMonitor.ts";
+import { HostResources } from "../resourceTelemetry/HostResources.ts";
+import { ResourceTelemetry } from "../resourceTelemetry/ResourceTelemetry.ts";
 import { CheckpointDiffQuery } from "../checkpointing/CheckpointDiffQuery.ts";
 import { CommandReceiptStoreV2 } from "../orchestration-v2/CommandReceiptStore.ts";
 import { PullRequestSyncReactor } from "../orchestration-v2/PullRequestSyncReactor.ts";
@@ -82,6 +85,9 @@ const toolHandlerServices = Layer.mergeAll(
   Layer.mock(PullRequestSyncReactor)({}),
   Layer.mock(CommandReceiptStoreV2)({}),
   Layer.mock(CheckpointDiffQuery)({}),
+  Layer.mock(HostResources)({}),
+  Layer.mock(ProcessResourceMonitor)({}),
+  Layer.mock(ResourceTelemetry)({}),
   Layer.mock(RemoteDelegation)({}),
   Layer.mock(ScheduledTaskService)({}),
   Layer.mock(SecretRequests)({}),
@@ -143,6 +149,17 @@ it.effect("agent context matches the committed budget", () =>
       ),
     };
 
+    // Model APIs refuse a tool whose input schema is not a plain object at the top.
+    expect(
+      mcp.tools
+        .filter(({ tool }) => {
+          const schema = tool.inputSchema as Record<string, unknown>;
+          return (
+            schema.type !== "object" || "anyOf" in schema || "oneOf" in schema || "allOf" in schema
+          );
+        })
+        .map(({ tool }) => tool.name),
+    ).toEqual([]);
     expect(
       measured,
       "Set agentContextBudget.json to the measured values. Before you cut text to fit, run the evals that cover it (evals/README.md).",

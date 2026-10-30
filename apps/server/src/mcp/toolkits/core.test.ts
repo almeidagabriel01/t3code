@@ -38,7 +38,6 @@ import {
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ProviderAdapterRegistry from "../../orchestration-v2/ProviderAdapterRegistry.ts";
-import * as ThreadLaunchService from "../../orchestration-v2/ThreadLaunchService.ts";
 import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
 import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
 import * as ThreadHandoffService from "../../orchestration-v2/ThreadHandoffService.ts";
@@ -48,6 +47,9 @@ import * as ProjectService from "../../project/ProjectService.ts";
 import * as ProviderRegistry from "../../provider/ProviderRegistry.ts";
 import * as SecretRequests from "../../secrets/SecretRequests.ts";
 import * as RemoteDelegation from "../../peer/RemoteDelegation.ts";
+import * as DateTime from "effect/DateTime";
+import * as Orchestrator from "../../orchestration-v2/Orchestrator.ts";
+import * as ThreadLaunchService from "../../orchestration-v2/ThreadLaunchService.ts";
 import * as CheckpointDiffQuery from "../../checkpointing/CheckpointDiffQuery.ts";
 import * as ScheduledTaskService from "../../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettings from "../../serverSettings.ts";
@@ -79,12 +81,14 @@ const decodeThreadReadResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadR
 const layerThreadToolkitWith = (
   handoff: Partial<ThreadHandoffService.ThreadHandoffService["Service"]>,
   diffs: Partial<CheckpointDiffQuery.CheckpointDiffQuery["Service"]> = {},
+  launch: Partial<ThreadLaunchService.ThreadLaunchService["Service"]> = {},
 ) =>
   McpHttpServer.layerThreadToolkit.pipe(
     Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
     Layer.provide(Layer.mock(ThreadHandoffService.ThreadHandoffService)(handoff)),
     Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
     Layer.provide(Layer.mock(CheckpointDiffQuery.CheckpointDiffQuery)(diffs)),
+    Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)(launch)),
     Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
     Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
     Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
@@ -1113,3 +1117,87 @@ it.effect("t3_thread_diff reads one turn or the whole thread, cut at the read bu
     ),
   );
 });
+
+it.effect(
+  "t3_thread_organize retry_preparation replays one command per failure or request id",
+  () => {
+    const commandIds: Array<string> = [];
+    const failedRun = {
+      id: RunId.make("mcp-core-run-failed"),
+      ordinal: 1,
+      status: "failed",
+      workspacePreparation: { type: "worktree" },
+      completedAt: DateTime.makeUnsafe("2026-01-01T00:00:00.000Z"),
+    };
+    let runs: ReadonlyArray<object> = [failedRun];
+    let rejection: string | undefined;
+    return Effect.gen(function* () {
+      const server = yield* McpServer.McpServer;
+      const retry = (args: object = {}) =>
+        server
+          .callTool({
+            name: "t3_thread_organize",
+            arguments: { action: "retry_preparation", ...args },
+          })
+          .pipe(
+            Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+            Effect.provideService(McpSchema.McpServerClient, client),
+          );
+      yield* retry();
+      yield* retry();
+      expect(commandIds[1]).toBe(commandIds[0]);
+      expect(commandIds[0]).toContain(
+        `${failedRun.id}:${DateTime.toEpochMillis(failedRun.completedAt)}`,
+      );
+      yield* retry({ clientRequestId: "a" });
+      yield* retry({ clientRequestId: "a" });
+      yield* retry({ clientRequestId: "b" });
+      expect(commandIds[3]).toBe(commandIds[2]);
+      expect(commandIds[4]).not.toBe(commandIds[2]);
+
+      rejection = `Run ${failedRun.id} has no failed workspace preparation to retry.`;
+      expect(declaredFailure(yield* retry({ runId: failedRun.id }))).toMatchObject({
+        message: expect.stringContaining("no failed workspace preparation"),
+      });
+      runs = [];
+      expect(declaredFailure(yield* retry())).toMatchObject({ code: "run_not_found" });
+    }).pipe(
+      Effect.provide(
+        layerThreadToolkitWith(
+          {},
+          {},
+          {
+            retryPreparation: (input) =>
+              rejection === undefined
+                ? Effect.sync(() => {
+                    commandIds.push(input.commandId);
+                    return { sequence: 1, storedEvents: [] };
+                  })
+                : Effect.fail(
+                    new Orchestrator.OrchestratorDispatchError({
+                      commandId: input.commandId,
+                      commandType: "prepared-run.retry",
+                      cause: rejection,
+                    }),
+                  ),
+          },
+        ).pipe(
+          Layer.provideMerge(McpServer.McpServer.layer),
+          Layer.provide(NodeCrypto.layer),
+          Layer.provide(
+            Layer.mock(ThreadManagement.ThreadManagementService)({
+              getThreadShell: (id) => Effect.succeed(McpToolAccessTestkit.liveThreadShell(id)),
+              getProjectThreadRecords: ({ threadId: id }) =>
+                Effect.succeed({
+                  ...McpToolAccessTestkit.idleThreadProjection(
+                    McpToolAccessTestkit.liveThreadShell(id),
+                  ),
+                  runs,
+                } as never),
+            }),
+          ),
+        ),
+      ),
+    );
+  },
+);

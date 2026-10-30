@@ -43,3 +43,18 @@ it("drops JSON noise, merges tagged unions, and keeps null where it is required"
     required: ["beforeRunId", "every"],
   });
 });
+
+it("advertises an untagged top-level union of objects as one object", () => {
+  const tool = Tool.make("example", {
+    parameters: Schema.Union([
+      Schema.Struct({}),
+      Schema.Struct({ a: Schema.Literal(true) }),
+      Schema.Struct({ a: Schema.Literal(true), b: Schema.Literal(true) }),
+    ]),
+  });
+
+  expect(advertisedJsonSchema(tool)).toEqual({
+    type: "object",
+    properties: { a: { type: "boolean", enum: [true] }, b: { type: "boolean", enum: [true] } },
+  });
+});

@@ -28,6 +28,7 @@ import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 
 import * as CheckpointDiffQuery from "../../../checkpointing/CheckpointDiffQuery.ts";
+import * as ThreadLaunchService from "../../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadHandoffService from "../../../orchestration-v2/ThreadHandoffService.ts";
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTaskService from "../../../scheduledTasks/ScheduledTaskService.ts";
@@ -36,7 +37,7 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 const ThreadOrganizeTool = Tool.make("t3_thread_organize", {
   description:
-    "Pin, snooze, settle, archive, or mark a thread unread. Omit `threadId` for this thread. `snooze` needs `snoozedUntil`. Settling this thread applies at turn end. A failed turn or queued message leaves it active.",
+    "Pin, snooze, settle, archive, or mark a thread unread. Omit `threadId` for this thread. `snooze` needs `snoozedUntil`. Settling this thread applies at turn end. A failed turn or queued message leaves it active. `retry_preparation`: re-run the failed workspace preparation (Git fetch, worktree, setup) of `runId` (default the latest) so its agent starts, as the Retry button does; `clientRequestId` makes a repeat of the same call a no-op; use a new one after a later failure.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     threadId: Schema.optional(ThreadId),
@@ -50,8 +51,11 @@ const ThreadOrganizeTool = Tool.make("t3_thread_organize", {
       "archive",
       "unarchive",
       "mark_unread",
+      "retry_preparation",
     ]),
     snoozedUntil: Schema.optional(IsoDateTime),
+    runId: Schema.optional(RunId),
+    clientRequestId: Schema.optional(Schema.String.check(Schema.isMaxLength(256))),
   }),
   success: Schema.Union([
     OrchestrationV2DispatchCommandResult,
@@ -63,6 +67,7 @@ const ThreadOrganizeTool = Tool.make("t3_thread_organize", {
     McpInvocationContext.McpInvocationContext,
     ThreadManagementService.ThreadManagementService,
     Crypto.Crypto,
+    ThreadLaunchService.ThreadLaunchService,
   ],
 })
   .annotate(Tool.Title, "Organize a thread")
