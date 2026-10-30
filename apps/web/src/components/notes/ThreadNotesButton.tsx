@@ -182,7 +182,7 @@ function ThreadNotes(props: {
                           setOpen(false);
                           openNote(note.path);
                         }}
-                        className="grid min-w-0 flex-1 gap-0.5 rounded-md text-start px-2 py-1.5 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+                        className="grid min-w-0 flex-1 cursor-pointer gap-0.5 rounded-md text-start px-2 py-1.5 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
                       >
                         <span className="truncate text-sm font-medium">{note.title}</span>
                         <span className="truncate text-xs text-muted-foreground">
@@ -223,7 +223,7 @@ function ThreadNotes(props: {
                         <button
                           type="button"
                           onClick={() => void relate(note.path, "relate")}
-                          className="w-full truncate rounded-md px-2 py-1.5 text-start text-sm outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+                          className="w-full cursor-pointer truncate rounded-md px-2 py-1.5 text-start text-sm outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
                         >
                           {note.title}
                         </button>

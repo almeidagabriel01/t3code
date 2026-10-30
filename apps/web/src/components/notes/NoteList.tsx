@@ -1,4 +1,4 @@
-import type { NoteFolder, NoteSummary } from "@t3tools/contracts";
+import type { EnvironmentId, NoteFolder, NoteSummary } from "@t3tools/contracts";
 import { PinIcon, PlusIcon, SearchIcon, SquareKanbanIcon } from "lucide-react";
 import { useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 
@@ -9,6 +9,7 @@ import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group"
 import { Button } from "../ui/button";
 import { Kbd } from "../ui/kbd";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { NoteRowMenu, useNoteRowActions, type NoteRowActions } from "./NoteRowMenu";
 import { filterNotes, groupNotes, openablePath } from "./noteState";
 
 function NoteRow(props: {
@@ -17,12 +18,13 @@ function NoteRow(props: {
   tabbable: boolean;
   showFolder: boolean;
   projectName: string | undefined;
+  rows: NoteRowActions;
   onSelect: () => void;
   onKeyDown: (event: KeyboardEvent<HTMLButtonElement>) => void;
 }) {
   const { note } = props;
   return (
-    <li className="py-0.5">
+    <li className="group/row relative py-0.5">
       <button
         type="button"
         data-note-row={note.path}
@@ -30,6 +32,7 @@ function NoteRow(props: {
         aria-current={props.selected ? "page" : undefined}
         onClick={props.onSelect}
         onKeyDown={props.onKeyDown}
+        onContextMenu={(event) => props.rows.showContextMenu(event, note)}
         className="grid w-full cursor-pointer gap-0.5 rounded-lg border border-foreground/12 bg-foreground/3 px-3 py-2 text-start outline-none transition-colors hover:border-foreground/24 hover:bg-foreground/8 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset aria-[current=page]:border-primary/60 aria-[current=page]:bg-primary/12"
       >
         <span className="flex min-w-0 items-baseline gap-2">
@@ -44,7 +47,7 @@ function NoteRow(props: {
           </span>
           <time
             dateTime={note.updatedAt}
-            className="shrink-0 text-xs text-muted-foreground tabular-nums"
+            className="shrink-0 text-xs text-muted-foreground tabular-nums group-focus-within/row:invisible group-hover/row:invisible group-has-[[data-popup-open]]/row:invisible pointer-coarse:visible"
           >
             {formatRelativeTimeLabel(note.updatedAt)}
           </time>
@@ -71,12 +74,14 @@ function NoteRow(props: {
           </span>
         ) : null}
       </button>
+      <NoteRowMenu note={note} rows={props.rows} tabbable={props.tabbable} />
     </li>
   );
 }
 
 /** Pinned notes, loose notes, and one collapsible group per folder, with search above them. */
 export function NoteList(props: {
+  environmentId: EnvironmentId;
   notes: ReadonlyArray<NoteSummary>;
   folders: ReadonlyArray<NoteFolder>;
   /** Project names by id, to label each note; absent on a project's own list. */
@@ -92,6 +97,7 @@ export function NoteList(props: {
   className?: string;
   children?: ReactNode;
 }) {
+  const rows = useNoteRowActions(props.environmentId, props.selectedPath, props.onSelect);
   const listRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
@@ -138,6 +144,7 @@ export function NoteList(props: {
         note={note}
         showFolder={showFolder}
         projectName={note.project ? props.projectNames?.get(note.project) : undefined}
+        rows={rows}
         selected={note.path === props.selectedPath}
         tabbable={index === Math.max(selectedIndex, 0)}
         onSelect={() => props.onSelect(note.path)}
@@ -213,7 +220,7 @@ export function NoteList(props: {
         {pathToOpen ? (
           <button
             type="button"
-            className="w-full truncate rounded-lg px-3 py-2 text-start text-sm text-primary outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+            className="w-full cursor-pointer truncate rounded-lg px-3 py-2 text-start text-sm text-primary outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
             onClick={() => props.onSelect(pathToOpen)}
           >
             Open {pathToOpen}
@@ -261,6 +268,7 @@ export function NoteList(props: {
           </section>
         ))}
       </div>
+      {rows.dialogs}
     </nav>
   );
 }

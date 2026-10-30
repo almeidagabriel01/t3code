@@ -1,6 +1,8 @@
+import { useAtomValue } from "@effect/atom-react";
 import { useNavigation } from "@react-navigation/native";
 import { selectNotesInOrder } from "@t3tools/client-runtime/state/notes";
-import { NotePath, type EnvironmentId, type ProjectId } from "@t3tools/contracts";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { NotePath, type EnvironmentId, type NoteSummary, type ProjectId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
@@ -16,13 +18,21 @@ import { ListSection } from "../../components/ui/ListSection";
 import { Menu } from "../../components/ui/Menu";
 import { NavigationRow } from "../../components/ui/NavigationRow";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
-import { useNotesEnvironmentIds, useNotesFeed } from "../../state/notes";
+import { notesEnvironment, useNotesEnvironmentIds, useNotesFeed } from "../../state/notes";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { useWorkspaceEnvironments } from "../../state/workspace";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { NoteProjectPicker } from "./NoteProjectPicker";
 import { notesError } from "./delivery";
-import { newNotePath, noteListRows, noteSyncLabel, type NoteListRow } from "./notes-model";
-import { useNoteDraftAccess, useNotesOutbox } from "./notes-state";
+import {
+  newNotePath,
+  noteListRows,
+  noteRowMenuActions,
+  noteSyncLabel,
+  type NoteListRow,
+  type NoteRowActionId,
+} from "./notes-model";
+import { notesCommandOptions, useNoteDraftAccess, useNotesOutbox } from "./notes-state";
 
 const isNotePath = Schema.is(NotePath);
 
@@ -183,7 +193,9 @@ function EnvironmentNotes(props: {
               {entries.map((row) => (
                 <NoteRow
                   key={row.path}
+                  environmentId={environmentId}
                   row={row}
+                  summary={state?.notes.get(row.path)}
                   onPress={() =>
                     navigation.navigate("SettingsNote", { environmentId, path: row.path })
                   }
@@ -197,10 +209,87 @@ function EnvironmentNotes(props: {
   );
 }
 
-function NoteRow(props: { readonly row: NoteListRow; readonly onPress: () => void }) {
-  const { row } = props;
+function NoteRow(props: {
+  readonly environmentId: EnvironmentId;
+  readonly row: NoteListRow;
+  /** The server's copy; a note that exists only as a draft here has none, so no actions. */
+  readonly summary: NoteSummary | undefined;
+  readonly onPress: () => void;
+}) {
+  const { environmentId, row, summary } = props;
+  const navigation = useNavigation();
+  const { canAct } = useNoteDraftAccess(environmentId);
+  const canUpdate = useAtomValue(notesEnvironment.update.permissionAtom(environmentId));
+  const canMove = useAtomValue(notesEnvironment.move.permissionAtom(environmentId));
+  const canDelete = useAtomValue(notesEnvironment.delete.permissionAtom(environmentId));
+  const canStart = useAtomValue(notesEnvironment.startWork.permissionAtom(environmentId));
+  const update = useAtomCommand(notesEnvironment.update, notesCommandOptions);
+  const move = useAtomCommand(notesEnvironment.move, notesCommandOptions);
+  const remove = useAtomCommand(notesEnvironment.delete, notesCommandOptions);
   const sync = noteSyncLabel(row.sync);
-  return (
+  // A pending draft would conflict with a header or file change made on the server.
+  const actions =
+    summary !== undefined && canAct && row.sync === "synced"
+      ? noteRowMenuActions(summary, {
+          update: canUpdate,
+          start: canStart,
+          move: canMove,
+          delete: canDelete,
+        })
+      : [];
+  const fail = (result: AsyncResult.AsyncResult<unknown, unknown>) => {
+    if (AsyncResult.isFailure(result))
+      Dialog.alert("Couldn't change the note", notesError(squashAtomCommandFailure(result)));
+  };
+  const run = (id: NoteRowActionId) => {
+    if (summary === undefined) return;
+    if (id === "pin") {
+      void update({ environmentId, input: { path: summary.path, pinned: !summary.pinned } }).then(
+        fail,
+      );
+    } else if (id === "start") {
+      navigation.navigate("SettingsNoteStartWork", {
+        environmentId,
+        path: summary.path,
+        ...(summary.card === null ? {} : { another: true }),
+      });
+    } else if (id === "move") {
+      Dialog.prompt({
+        title: "Rename or move",
+        message: "A file name, optionally inside one folder: folder/name.md",
+        placeholder: "name.md",
+        initialValue: summary.path,
+        confirmText: "Move",
+        onConfirm: (value) => {
+          const to = value.trim().normalize("NFC");
+          if (!isNotePath(to)) {
+            Dialog.alert(
+              "Can't use that name",
+              "Use name.md or folder/name.md, at most one folder deep.",
+            );
+          } else if (to !== summary.path) {
+            void move({
+              environmentId,
+              input: { from: summary.path, to, baseRevision: summary.revision },
+            }).then(fail);
+          }
+        },
+      });
+    } else {
+      Dialog.confirm({
+        title: `Delete “${summary.title}”?`,
+        message: `This removes ${summary.path} and its images.`,
+        confirmText: "Delete",
+        destructive: true,
+        onConfirm: () =>
+          void remove({
+            environmentId,
+            input: { path: summary.path, baseRevision: summary.revision },
+          }).then(fail),
+      });
+    }
+  };
+  const content = (
     <NavigationRow
       className="bg-grouped-card"
       title={row.title}
@@ -220,6 +309,17 @@ function NoteRow(props: { readonly row: NoteListRow; readonly onPress: () => voi
       }
       onPress={props.onPress}
     />
+  );
+  return actions.length === 0 ? (
+    content
+  ) : (
+    <Menu
+      actions={actions}
+      onPressAction={({ nativeEvent }) => run(nativeEvent.event as NoteRowActionId)}
+      shouldOpenOnLongPress
+    >
+      {content}
+    </Menu>
   );
 }
 

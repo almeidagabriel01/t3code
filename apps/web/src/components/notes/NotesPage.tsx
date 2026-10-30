@@ -356,6 +356,7 @@ function EnvironmentNotes(
   return (
     <div className="flex min-h-0 flex-1">
       <NoteList
+        environmentId={environmentId}
         notes={notes}
         folders={state?.folders ?? []}
         projectNames={projectNames}

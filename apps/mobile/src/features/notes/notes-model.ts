@@ -94,3 +94,39 @@ export function newNotePath(input: string): string {
   const path = input.trim().normalize("NFC");
   return path.toLowerCase().endsWith(".md") ? path : `${path}.md`;
 }
+
+export type NoteRowActionId = "pin" | "start" | "move" | "delete";
+
+/** The long-press menu of a note row; empty when the connection allows none of them. */
+export function noteRowMenuActions(
+  note: { readonly pinned: boolean; readonly card: unknown; readonly issue?: unknown },
+  can: { update: boolean; start: boolean; move: boolean; delete: boolean },
+) {
+  const actions: Array<{
+    id: NoteRowActionId;
+    title: string;
+    image: string;
+    attributes?: { destructive: true };
+  }> = [];
+  if (can.update && !note.issue)
+    actions.push({
+      id: "pin",
+      title: note.pinned ? "Unpin" : "Pin to the top",
+      image: note.pinned ? "pin.slash" : "pin",
+    });
+  if (can.start && !note.issue)
+    actions.push({
+      id: "start",
+      title: note.card === null ? "Start work" : "Start another card",
+      image: "sparkles",
+    });
+  if (can.move) actions.push({ id: "move", title: "Rename or move", image: "folder" });
+  if (can.delete)
+    actions.push({
+      id: "delete",
+      title: "Delete",
+      image: "trash",
+      attributes: { destructive: true },
+    });
+  return actions;
+}

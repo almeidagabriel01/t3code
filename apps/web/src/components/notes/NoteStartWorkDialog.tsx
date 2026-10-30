@@ -4,6 +4,7 @@ import type {
   EnvironmentId,
   KanbanColumnId,
   NoteDocument,
+  NoteSummary,
   NotesStartWorkResult,
   ProjectId,
 } from "@t3tools/contracts";
@@ -115,7 +116,7 @@ function StartedCard(props: {
 /** Creates one kanban card from the note in a chosen project, then offers to open it or start an agent. */
 export function NoteStartWorkDialog(props: {
   environmentId: EnvironmentId;
-  document: NoteDocument;
+  document: NoteSummary;
   /** The note already has a card; this creates a second one and links the note to it. */
   another?: boolean;
   onStarted: (note: NoteDocument) => void;

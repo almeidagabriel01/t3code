@@ -66,6 +66,7 @@ export function NotesSurface({ threadRef, projectId }: NotesSurfaceProps) {
   }
   return (
     <NoteList
+      environmentId={environmentId}
       className="h-full"
       notes={notes}
       folders={[]}

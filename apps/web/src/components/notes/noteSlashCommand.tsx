@@ -183,7 +183,7 @@ function SlashMenu(props: SuggestionProps<SlashItem> & { ref?: Ref<SlashMenuHand
             onMouseEnter={() => setIndex(i)}
             onClick={() => command(item)}
             className={cn(
-              "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-start text-sm outline-none",
+              "flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-start text-sm outline-none",
               i === active && "bg-accent text-accent-foreground",
             )}
           >

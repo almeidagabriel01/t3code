@@ -4,6 +4,7 @@ import {
   NotePath,
   type EnvironmentId,
   type NoteDocument,
+  type NoteSummary,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { useState } from "react";
@@ -28,7 +29,7 @@ const isConflict = Schema.is(NoteConflictError);
 export function NoteFileDialog(props: {
   environmentId: EnvironmentId;
   action: "move" | "delete";
-  document: NoteDocument;
+  document: NoteSummary;
   onClose: () => void;
   onConflict?: (current: NoteDocument) => void;
   onDone: (path: string | undefined) => void;

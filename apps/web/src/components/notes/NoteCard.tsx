@@ -108,7 +108,7 @@ export function NoteCardChip(props: {
       {state.status === "found" ? (
         <button
           type="button"
-          className="flex min-w-0 items-center gap-1.5 rounded-sm py-0.5 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+          className="flex min-w-0 cursor-pointer items-center gap-1.5 rounded-sm py-0.5 outline-none hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
           aria-label={`Open card #${state.card.number}, ${state.card.title}`}
           onClick={() => openCard(props.environmentId, state.card, props.link.projectId)}
         >

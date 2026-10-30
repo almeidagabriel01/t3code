@@ -69,13 +69,15 @@ function ToolButton(props: { label: string; onClick: () => void; children: React
             size="icon-sm"
             variant="ghost-muted"
             aria-label={props.label}
+            // Keep the caret and selection in the editor while a button is pressed.
+            onMouseDown={(event) => event.preventDefault()}
             onClick={props.onClick}
           />
         }
       >
         {props.children}
       </TooltipTrigger>
-      <TooltipPopup side="bottom">{props.label}</TooltipPopup>
+      <TooltipPopup side="top">{props.label}</TooltipPopup>
     </Tooltip>
   );
 }
@@ -88,7 +90,7 @@ export function NoteEditor(props: {
   environmentId: EnvironmentId;
   body: string;
   editable: boolean;
-  /** Shown at the start of the formatting row, so entering edit mode moves nothing. */
+  /** Metadata chips shown above the body, in read and edit mode alike. */
   leading?: React.ReactNode;
   autoFocus?: boolean;
   /** Image ids the server assigned to uploads; nodes still showing an upload id are renamed. */
@@ -115,7 +117,7 @@ export function NoteEditor(props: {
         role: "textbox",
         "aria-multiline": "true",
         class: cn(
-          "composer-tiptap min-h-64 rounded-xl border border-transparent px-1 py-4 text-base leading-7 text-foreground outline-none [overflow-wrap:anywhere] [word-break:keep-all] [&_h1]:text-2xl [&_h1]:leading-tight [&_h1]:font-semibold [&_h2]:text-lg [&_hr]:my-4 [&_ol]:list-decimal [&_pre]:rounded-md [&_pre]:bg-muted [&_pre]:p-3 [&_pre]:whitespace-pre-wrap [&_pre[data-note-raw]]:border [&_pre[data-note-raw]]:border-dashed [&_pre[data-note-raw]]:border-border [&_ul:not([data-type=taskList])]:list-disc [&_a]:text-primary [&_a]:underline [&_a]:underline-offset-2 [&_table]:my-3 [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-border [&_td]:px-2 [&_td]:py-1 [&_th]:border [&_th]:border-border [&_th]:bg-muted [&_th]:px-2 [&_th]:py-1 [&_th]:text-start [&_[data-callout]]:my-3 [&_[data-callout]]:rounded-md [&_[data-callout]]:border-s-4 [&_[data-callout]]:border-info [&_[data-callout]]:bg-muted/50 [&_[data-callout]]:px-3 [&_[data-callout]]:py-2 [&_[data-callout]]:before:mb-1 [&_[data-callout]]:before:block [&_[data-callout]]:before:text-xs [&_[data-callout]]:before:font-semibold [&_[data-callout]]:before:content-[attr(data-callout)] [&_[data-callout=TIP]]:border-success [&_[data-callout=IMPORTANT]]:border-primary [&_[data-callout=WARNING]]:border-warning [&_[data-callout=CAUTION]]:border-destructive",
+          "composer-tiptap min-h-64 rounded-xl border border-transparent px-1 pt-4 pb-24 text-base leading-7 text-foreground outline-none [overflow-wrap:anywhere] [word-break:keep-all] [&_h1]:text-2xl [&_h1]:leading-tight [&_h1]:font-semibold [&_h2]:text-lg [&_hr]:my-4 [&_ol]:list-decimal [&_pre]:rounded-md [&_pre]:bg-muted [&_pre]:p-3 [&_pre]:whitespace-pre-wrap [&_pre[data-note-raw]]:border [&_pre[data-note-raw]]:border-dashed [&_pre[data-note-raw]]:border-border [&_ul:not([data-type=taskList])]:list-disc [&_a]:text-primary [&_a]:underline [&_a]:underline-offset-2 [&_table]:my-3 [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-border [&_td]:px-2 [&_td]:py-1 [&_th]:border [&_th]:border-border [&_th]:bg-muted [&_th]:px-2 [&_th]:py-1 [&_th]:text-start [&_[data-callout]]:my-3 [&_[data-callout]]:rounded-md [&_[data-callout]]:border-s-4 [&_[data-callout]]:border-info [&_[data-callout]]:bg-muted/50 [&_[data-callout]]:px-3 [&_[data-callout]]:py-2 [&_[data-callout]]:before:mb-1 [&_[data-callout]]:before:block [&_[data-callout]]:before:text-xs [&_[data-callout]]:before:font-semibold [&_[data-callout]]:before:content-[attr(data-callout)] [&_[data-callout=TIP]]:border-success [&_[data-callout=IMPORTANT]]:border-primary [&_[data-callout=WARNING]]:border-warning [&_[data-callout=CAUTION]]:border-destructive",
           ATTACHMENT_IMAGE_EDITOR_CLASS,
         ),
       },
@@ -202,30 +204,10 @@ export function NoteEditor(props: {
   return (
     <AttachmentImageEnvironment value={props.environmentId}>
       <div className="flex min-w-0 flex-col" data-note-editor>
-        {(props.editable || props.leading) && (
+        {props.leading && (
           <div className="border-b border-border" data-glass-layer>
-            <div className="mx-auto flex h-10 w-full max-w-3xl items-center gap-2 px-3 @2xl/note:px-8">
-              <div className="flex min-w-0 shrink-0 items-center gap-1.5">{props.leading}</div>
-              {props.editable && (
-                <div
-                  className="ms-auto flex min-w-0 gap-0.5 overflow-x-auto"
-                  role="toolbar"
-                  aria-label="Note formatting"
-                >
-                  {TOOLS.map((tool) => (
-                    <ToolButton
-                      key={tool.label}
-                      label={tool.label}
-                      onClick={() => editor && tool.run(editor)}
-                    >
-                      <tool.icon aria-hidden />
-                    </ToolButton>
-                  ))}
-                  <ToolButton label="Insert image" onClick={() => fileInput.current?.click()}>
-                    <ImagePlusIcon aria-hidden />
-                  </ToolButton>
-                </div>
-              )}
+            <div className="mx-auto flex w-full max-w-3xl flex-wrap items-center gap-1.5 px-3 py-2 @2xl/note:px-8">
+              {props.leading}
             </div>
           </div>
         )}
@@ -251,6 +233,31 @@ export function NoteEditor(props: {
             </>
           )}
         </div>
+        {props.editable && (
+          // Zero height, so the pill overlays the body and toggling edit mode moves nothing.
+          <div className="pointer-events-none sticky bottom-0 z-10 h-0">
+            <div className="absolute inset-x-0 bottom-3 flex justify-center px-3">
+              <div
+                className="dropdown-glass pointer-events-auto flex max-w-full gap-0.5 overflow-x-auto rounded-full p-1 text-popover-foreground shadow-lg/5"
+                role="toolbar"
+                aria-label="Note formatting"
+              >
+                {TOOLS.map((tool) => (
+                  <ToolButton
+                    key={tool.label}
+                    label={tool.label}
+                    onClick={() => editor && tool.run(editor)}
+                  >
+                    <tool.icon aria-hidden />
+                  </ToolButton>
+                ))}
+                <ToolButton label="Insert image" onClick={() => fileInput.current?.click()}>
+                  <ImagePlusIcon aria-hidden />
+                </ToolButton>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </AttachmentImageEnvironment>
   );

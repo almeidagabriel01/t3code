@@ -4,6 +4,7 @@ import {
   canEditNoteDraft,
   newNotePath,
   noteListRows,
+  noteRowMenuActions,
   noteSyncLabel,
   noteSyncState,
 } from "./notes-model";
@@ -93,5 +94,33 @@ describe("note sync presentation", () => {
     expect(noteListRows("hub", [document()], [sending])[0]?.sync).toBe("syncing");
     expect(noteListRows("hub", [document()], [conflict])[0]?.sync).toBe("conflict");
     expect(noteListRows("hub", [document()], [])[0]?.sync).toBe("synced");
+  });
+});
+
+describe("note row menu", () => {
+  const all = { update: true, start: true, move: true, delete: true };
+
+  it("offers pin, start, move and a destructive delete, by permission", () => {
+    const pinned = { pinned: true, card: null };
+    expect(noteRowMenuActions(pinned, all).map((action) => [action.id, action.title])).toEqual([
+      ["pin", "Unpin"],
+      ["start", "Start work"],
+      ["move", "Rename or move"],
+      ["delete", "Delete"],
+    ]);
+    expect(noteRowMenuActions(pinned, all).at(-1)?.attributes).toEqual({ destructive: true });
+    expect(
+      noteRowMenuActions({ pinned: false, card: {} }, { ...all, update: false }).map(
+        (action) => action.title,
+      ),
+    ).toEqual(["Start another card", "Rename or move", "Delete"]);
+  });
+
+  it("hides pin and start for a note the server could not parse", () => {
+    expect(
+      noteRowMenuActions({ pinned: false, card: null, issue: "invalid_utf8" }, all).map(
+        (action) => action.id,
+      ),
+    ).toEqual(["move", "delete"]);
   });
 });
