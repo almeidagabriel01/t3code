@@ -280,6 +280,7 @@ export const make = Effect.gen(function* () {
       kanban: true,
       notes: true,
       decisions: true,
+      assistants: true,
       pullRequestStackActions: true,
       threadPullRequestLinking: true,
       serverResolvedCommandContext: true,

@@ -195,6 +195,26 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
   yield* sql`CREATE INDEX IF NOT EXISTS decisions_status_idx ON decisions(status, created_at)`;
   yield* sql`CREATE INDEX IF NOT EXISTS decisions_thread_idx ON decisions(from_thread_id, created_at)`;
 
+  // The handle stays reserved while archived. thread_id is the current conversation; it is NULL
+  // until its first launch lands. Jarvis is the one default row.
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS assistants (
+      assistant_id TEXT PRIMARY KEY,
+      handle TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL,
+      project_id TEXT NOT NULL,
+      instructions TEXT NOT NULL DEFAULT '',
+      tool_access TEXT NOT NULL,
+      is_default INTEGER NOT NULL DEFAULT 0,
+      thread_id TEXT UNIQUE,
+      generation INTEGER NOT NULL DEFAULT 1,
+      archived_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `;
+  yield* sql`CREATE UNIQUE INDEX IF NOT EXISTS assistants_default_idx ON assistants(is_default) WHERE is_default = 1`;
+
   // The destination's memory ceiling, captured when a person or agent saved the task.
   const scheduledColumns = yield* sql<{
     readonly name: string;

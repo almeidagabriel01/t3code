@@ -47,6 +47,8 @@ import { PreviewControlsToolkit } from "./toolkits/previewControls/tools.ts";
 import * as PreviewControlsHandlers from "./toolkits/previewControls/handlers.ts";
 import { EnvironmentToolkit } from "./toolkits/environment/tools.ts";
 import * as EnvironmentHandlers from "./toolkits/environment/handlers.ts";
+import { AssistantToolkit } from "./toolkits/assistant/tools.ts";
+import * as AssistantHandlers from "./toolkits/assistant/handlers.ts";
 import { DecisionToolkit } from "./toolkits/decision/tools.ts";
 import * as DecisionHandlers from "./toolkits/decision/handlers.ts";
 import { KanbanToolkit } from "./toolkits/kanban/tools.ts";
@@ -1145,6 +1147,8 @@ const layerNoteToolkit = toolkitRegistration(NoteToolkit, NoteHandlers.layer);
 
 const layerDecisionToolkit = toolkitRegistration(DecisionToolkit, DecisionHandlers.layer);
 
+const layerAssistantToolkit = toolkitRegistration(AssistantToolkit, AssistantHandlers.layer);
+
 const layerHostToolkit = toolkitRegistration(HostToolkit, HostHandlers.layer);
 
 const layerDocsToolkit = toolkitRegistration(DocsToolkit, DocsHandlers.layer).pipe(
@@ -1223,6 +1227,7 @@ export const layerTools = Layer.mergeAll(
   layerKanbanToolkit,
   layerNoteToolkit,
   layerDecisionToolkit,
+  layerAssistantToolkit,
   layerDocsToolkit,
   layerHostToolkit,
   layerMemoryToolkit,

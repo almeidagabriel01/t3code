@@ -91,6 +91,14 @@ export class ManagedProjectFolders extends Context.Service<
   {
     readonly scratchRoot: Effect.Effect<Option.Option<string>>;
     readonly ensureScratchProject: Effect.Effect<{ readonly projectId: ProjectId }, ScratchError>;
+    /**
+     * Where Jarvis lives: Scratch when available, else a managed `assistants` project. Needs no
+     * work tree, so a data dir inside a Git work tree (Scratch off) does not stop it.
+     */
+    readonly ensureAssistantProject: Effect.Effect<
+      { readonly projectId: ProjectId },
+      ScratchFolderError | ScratchProjectError
+    >;
     readonly isScratchProject: (projectId: ProjectId) => Effect.Effect<boolean>;
     readonly folderForThread: (input: {
       readonly projectId: ProjectId;
@@ -250,51 +258,79 @@ const make = Effect.gen(function* () {
       .makeDirectory(folder, { recursive: true })
       .pipe(Effect.mapError((cause) => new ScratchFolderError({ folder, cause })));
 
+  // The icon is set once at create, so a user's own icon choice is never overwritten.
+  const ensureManagedProject = Effect.fnUntraced(function* (input: {
+    readonly workspaceRoot: string;
+    readonly kind: string;
+    readonly title: string;
+    readonly icon: string;
+  }) {
+    const { workspaceRoot } = input;
+    yield* makeScratchFolder(workspaceRoot);
+    const id = yield* crypto
+      .randomUUIDv4()
+      .pipe(Effect.mapError((cause) => new ScratchProjectError({ workspaceRoot, cause })));
+    const bootstrapped = yield* projects
+      .bootstrap({
+        commandId: CommandId.make(`${input.kind}-project:${id}`),
+        projectId: ProjectId.make(id),
+        title: input.title,
+        workspaceRoot,
+      })
+      .pipe(
+        // bootstrap reads before locking; racing creates return the winner in a conflict.
+        Effect.catchTags({
+          ProjectConflictError: (conflict) =>
+            Effect.succeed({
+              project: { id: conflict.conflictingProjectId },
+              created: false,
+            }),
+        }),
+        Effect.mapError((cause) => new ScratchProjectError({ workspaceRoot, cause })),
+      );
+    if (bootstrapped.created) {
+      yield* projects
+        .update({
+          commandId: CommandId.make(`${input.kind}-project-icon:${id}`),
+          projectId: bootstrapped.project.id,
+          projectIcon: { kind: "lucide", name: input.icon, color: "gray" },
+        })
+        .pipe(Effect.mapError((cause) => new ScratchProjectError({ workspaceRoot, cause })));
+    }
+    return { projectId: bootstrapped.project.id };
+  });
+
+  const ensureScratchAt = (workspaceRoot: string) =>
+    ensureManagedProject({
+      workspaceRoot,
+      kind: "scratch",
+      title: "No project",
+      icon: "message-square-dashed",
+    });
+
   const ensureScratchProject: ManagedProjectFolders["Service"]["ensureScratchProject"] = Effect.gen(
     function* () {
-      const workspaceRoot = yield* scratchRoot.pipe(
-        Effect.flatMap(
-          Option.match({
-            onNone: () => Effect.fail(new ScratchUnavailableError()),
-            onSome: Effect.succeed,
-          }),
-        ),
-      );
-      yield* makeScratchFolder(workspaceRoot);
-      const id = yield* crypto
-        .randomUUIDv4()
-        .pipe(Effect.mapError((cause) => new ScratchProjectError({ workspaceRoot, cause })));
-      const bootstrapped = yield* projects
-        .bootstrap({
-          commandId: CommandId.make(`scratch-project:${id}`),
-          projectId: ProjectId.make(id),
-          title: "No project",
-          workspaceRoot,
-        })
-        .pipe(
-          // bootstrap reads before locking; racing creates return the winner in a conflict.
-          Effect.catchTags({
-            ProjectConflictError: (conflict) =>
-              Effect.succeed({
-                project: { id: conflict.conflictingProjectId },
-                created: false,
-              }),
-          }),
-          Effect.mapError((cause) => new ScratchProjectError({ workspaceRoot, cause })),
-        );
-      if (bootstrapped.created) {
-        // Set once at create, so a user's own icon choice is never overwritten.
-        yield* projects
-          .update({
-            commandId: CommandId.make(`scratch-project-icon:${id}`),
-            projectId: bootstrapped.project.id,
-            projectIcon: { kind: "lucide", name: "message-square-dashed", color: "gray" },
-          })
-          .pipe(Effect.mapError((cause) => new ScratchProjectError({ workspaceRoot, cause })));
-      }
-      return { projectId: bootstrapped.project.id };
+      const root = yield* scratchRoot;
+      if (Option.isNone(root)) return yield* new ScratchUnavailableError();
+      return yield* ensureScratchAt(root.value);
     },
   );
+
+  const ensureAssistantProject: ManagedProjectFolders["Service"]["ensureAssistantProject"] =
+    scratchRoot.pipe(
+      Effect.flatMap(
+        Option.match({
+          onSome: ensureScratchAt,
+          onNone: () =>
+            ensureManagedProject({
+              workspaceRoot: path.resolve(config.baseDir, "assistants"),
+              kind: "assistants",
+              title: "Assistants",
+              icon: "bot",
+            }),
+        }),
+      ),
+    );
 
   const isScratchRoot = (projectId: ProjectId, root: string) =>
     projects.getById(projectId).pipe(
@@ -461,6 +497,7 @@ const make = Effect.gen(function* () {
   return ManagedProjectFolders.of({
     scratchRoot,
     ensureScratchProject,
+    ensureAssistantProject,
     isScratchProject,
     folderForThread,
     namedProjectsRoot,

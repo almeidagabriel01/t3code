@@ -1,5 +1,7 @@
 import { expect, it } from "@effect/vitest";
 import {
+  type Assistant,
+  assistantThreadIdFor,
   CommandId,
   EnvironmentId,
   MessageId,
@@ -28,6 +30,8 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import { AgentScope } from "@t3tools/shared/AgentScope";
+
+import { AssistantDirectory } from "../assistants/AssistantDirectory.ts";
 
 import * as ServerSettings from "../serverSettings.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -939,3 +943,121 @@ it.effect("Force stop refuses once a newer run has started, before killing anyth
     expect(killed).toBe(false);
   }),
 );
+
+const guardThreads = {
+  current: assistantThreadIdFor("helper", 2),
+  old: assistantThreadIdFor("helper", 1),
+  plain: ThreadId.make("thread:guard:plain"),
+};
+
+const layerAssistantGuardTest = (dispatched: Array<unknown>) =>
+  ThreadManagementService.layer.pipe(
+    Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+    Layer.provide(
+      Layer.mock(Orchestrator.OrchestratorV2)({
+        getThreadRecords: () =>
+          Effect.succeed({
+            thread: {
+              id: guardThreads.current,
+              projectId: ProjectId.make("project:guard"),
+              deletedAt: null,
+              modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "test" },
+            },
+          } as unknown as OrchestrationV2ThreadProjection),
+        dispatch: (command) =>
+          Effect.sync(() => {
+            dispatched.push(command);
+            return { sequence: 1, storedEvents: [] } as never;
+          }),
+      }),
+    ),
+    Layer.provide(
+      Layer.succeed(AssistantDirectory, {
+        forThread: (threadId) =>
+          Effect.succeed(
+            threadId === guardThreads.plain
+              ? Option.none()
+              : Option.some({
+                  assistant: { toolAccess: "workspace-write", archivedAt: null } as Assistant,
+                  current: threadId === guardThreads.current,
+                }),
+          ),
+      }),
+    ),
+    Layer.provide(ServerSettings.layerTest()),
+    Layer.provideMerge(layerReceiptsTest),
+  );
+
+it.effect.each([
+  [
+    "above its tool access",
+    "current",
+    { type: "thread.runtime-mode.set", runtimeMode: "full-access" },
+    "capped",
+  ],
+  [
+    "within its tool access",
+    "current",
+    { type: "thread.runtime-mode.set", runtimeMode: "approval-required" },
+    null,
+  ],
+  ["archiving the current thread", "current", { type: "thread.archive" }, "Reset it"],
+  ["deleting the current thread", "current", { type: "thread.delete" }, "Reset it"],
+  ["archiving an old generation", "old", { type: "thread.archive" }, null],
+  ["restoring an old generation", "old", { type: "thread.unarchive" }, "Restore an earlier"],
+  ["unarchiving the current thread", "current", { type: "thread.unarchive" }, null],
+  [
+    "any change on a plain thread",
+    "plain",
+    { type: "thread.runtime-mode.set", runtimeMode: "full-access" },
+    null,
+  ],
+  ["archiving a plain thread", "plain", { type: "thread.archive" }, null],
+] as const)("assistant guard: %s", ([, which, partial, refusal]) => {
+  const dispatched: Array<unknown> = [];
+  return Effect.gen(function* () {
+    const threads = yield* ThreadManagementService.ThreadManagementService;
+    const result = yield* Effect.flip(
+      threads.dispatch({
+        ...partial,
+        commandId: CommandId.make("command:guard"),
+        threadId: guardThreads[which],
+      } as never),
+    ).pipe(
+      Effect.asSome,
+      Effect.orElseSucceed(() => Option.none()),
+    );
+    if (refusal === null) {
+      expect(Option.isNone(result)).toBe(true);
+      expect(dispatched).toHaveLength(1);
+    } else {
+      expect(Option.getOrThrow(result)).toMatchObject({
+        _tag: "OrchestratorCommandRejectedError",
+        cause: { message: expect.stringContaining(refusal) },
+      });
+      expect(dispatched).toEqual([]);
+    }
+  }).pipe(Effect.provide(layerAssistantGuardTest(dispatched)));
+});
+
+it.effect("assistant guard: a first message cannot rename an assistant thread", () => {
+  const dispatched: Array<unknown> = [];
+  return Effect.gen(function* () {
+    const threads = yield* ThreadManagementService.ThreadManagementService;
+    for (const threadId of [guardThreads.current, guardThreads.plain]) {
+      yield* threads.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(`command:guard:${threadId}`),
+        threadId,
+        messageId: MessageId.make(`message:guard:${threadId}`),
+        text: "hi",
+        titleSeed: "hi",
+        attachments: [],
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+    }
+    expect(dispatched.map((command) => "titleSeed" in (command as object))).toEqual([false, true]);
+  }).pipe(Effect.provide(layerAssistantGuardTest(dispatched)));
+});

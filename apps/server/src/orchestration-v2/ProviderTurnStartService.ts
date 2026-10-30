@@ -45,6 +45,8 @@ import {
   latestNativeContextUsage,
 } from "@t3tools/provider-core/server/handoffBudget";
 import { deliverContextHandoffs } from "./ContextHandoffDelivery.ts";
+import { AssistantDirectory } from "../assistants/AssistantDirectory.ts";
+import { assistantNote } from "../assistants/assistantNote.ts";
 import { sideChatNote } from "./SideChatNote.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -162,6 +164,7 @@ export const layer: Layer.Layer<
     const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
     const memorySnapshot = yield* Effect.serviceOption(MemorySnapshot.MemorySnapshot);
+    const assistantDirectory = yield* Effect.serviceOption(AssistantDirectory);
     const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
     const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
     const budgetGate = yield* ProviderBudgetGate;
@@ -854,6 +857,7 @@ export const layer: Layer.Layer<
       });
       const restartNote = [
         yield* sideChatNote(projectionStore, projection.thread, userText),
+        yield* assistantNote(assistantDirectory, projection.thread.id, userText),
         restartCancelledWork.length === 0
           ? ""
           : restartCancelledBackgroundWorkNote(restartCancelledWork),

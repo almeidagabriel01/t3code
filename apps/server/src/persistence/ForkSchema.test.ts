@@ -79,3 +79,20 @@ it.effect("leaves a table it does not own absent, and the database one role per 
     assert.strictEqual(roles[0]!.n, 3);
   }).pipe(Effect.provide(database)),
 );
+
+it.effect("keeps one default assistant and one assistant per handle and thread", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* ensureForkSchema();
+    yield* ensureForkSchema();
+    const insert = (id: string, handle: string, isDefault: number, threadId: string | null) =>
+      sql`INSERT INTO assistants (assistant_id, handle, name, project_id, tool_access, is_default, thread_id, created_at, updated_at)
+        VALUES (${id}, ${handle}, ${id}, 'p', 'full', ${isDefault}, ${threadId}, 't', 't')`;
+    yield* insert("a", "a", 1, "assistant:a:1");
+    yield* insert("b", "b", 0, null);
+    yield* insert("c", "c", 0, null);
+    assert.isDefined(yield* insert("d", "d", 1, null).pipe(Effect.flip));
+    assert.isDefined(yield* insert("e", "a", 0, null).pipe(Effect.flip));
+    assert.isDefined(yield* insert("f", "f", 0, "assistant:a:1").pipe(Effect.flip));
+  }).pipe(Effect.provide(database)),
+);

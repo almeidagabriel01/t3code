@@ -2,7 +2,8 @@ import type {
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
 } from "@t3tools/contracts";
-import { isSideChatThread } from "@t3tools/contracts";
+import { isSideChatThread, runtimeModeForToolAccess, type RuntimeMode } from "@t3tools/contracts";
+import { AssistantDirectory } from "../assistants/AssistantDirectory.ts";
 import type {
   ProjectionRecordField,
   ProjectionRecordFilter,
@@ -579,6 +580,22 @@ const FORCE_STOP_REASON = "Force stopped by user";
 const FORCE_STOP_RELEASE_WAIT = "10 seconds";
 const isForceStopThreadError = Schema.is(OrchestrationV2ForceStopThreadError);
 
+const ASSISTANT_REFUSALS = {
+  above_tool_access:
+    "This assistant's tool access is capped; change it in the assistant's settings.",
+  current_thread:
+    "This is an assistant's conversation. Reset it, or archive or delete the assistant, instead.",
+  old_generation:
+    "Restore an earlier assistant conversation with the assistant's reset and restore.",
+} as const;
+
+const RUNTIME_MODE_RANK: Record<RuntimeMode, number> = {
+  "approval-required": 0,
+  "auto-accept-edits": 1,
+  auto: 2,
+  "full-access": 3,
+};
+
 const make = Effect.gen(function* () {
   const threadDispatch = yield* ThreadCommandExecutor.ThreadCommandExecutor;
   const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -588,6 +605,7 @@ const make = Effect.gen(function* () {
   const legacyImporter = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
+  const assistantDirectory = yield* Effect.serviceOption(AssistantDirectory);
 
   const assertProviderInstanceEnabled: ThreadManagementServiceShape["assertProviderInstanceEnabled"] =
     (input) =>
@@ -764,10 +782,69 @@ const make = Effect.gen(function* () {
     }
   };
 
+  /**
+   * The assistant rules every client and agent path shares. AssistantService dispatches
+   * through the Orchestrator directly, so its own archive, delete and unarchive skip this.
+   */
+  const guardAssistantThread = (
+    command: OrchestrationV2ServerCommand,
+  ): Effect.Effect<OrchestrationV2ServerCommand, Orchestrator.OrchestratorCommandRejectedError> => {
+    if (Option.isNone(assistantDirectory) || !("threadId" in command)) {
+      return Effect.succeed(command);
+    }
+    const threadId = command.threadId;
+    return assistantDirectory.value.forThread(threadId).pipe(
+      Effect.flatMap(
+        (
+          found,
+        ): Effect.Effect<
+          OrchestrationV2ServerCommand,
+          Orchestrator.OrchestratorCommandRejectedError
+        > => {
+          if (Option.isNone(found)) return Effect.succeed(command);
+          const { assistant, current } = found.value;
+          const refuse = (reason: keyof typeof ASSISTANT_REFUSALS) =>
+            Effect.fail(
+              new Orchestrator.OrchestratorCommandRejectedError({
+                commandId: command.commandId,
+                commandType: command.type,
+                cause: new Error(ASSISTANT_REFUSALS[reason]),
+              }),
+            );
+          switch (command.type) {
+            case "thread.runtime-mode.set":
+              return RUNTIME_MODE_RANK[command.runtimeMode] >
+                RUNTIME_MODE_RANK[runtimeModeForToolAccess(assistant.toolAccess)]
+                ? refuse("above_tool_access")
+                : Effect.succeed(command);
+            case "thread.archive":
+            case "thread.delete":
+              return current && assistant.archivedAt === null
+                ? refuse("current_thread")
+                : Effect.succeed(command);
+            case "thread.unarchive":
+              return current ? Effect.succeed(command) : refuse("old_generation");
+            case "message.dispatch": {
+              // The first message must not rename the assistant's thread.
+              const { titleSeed: _titleSeed, ...rest } = command;
+              return Effect.succeed(rest);
+            }
+            default:
+              return Effect.succeed(command);
+          }
+        },
+      ),
+    );
+  };
+
   const dispatch: ThreadManagementServiceShape["dispatch"] = (command) =>
-    ensureCommandTranscripts(command).pipe(
-      Effect.andThen(assertDispatchTargetEnabled(command)),
-      Effect.andThen(orchestrator.dispatch(command)),
+    guardAssistantThread(command).pipe(
+      Effect.flatMap((guarded) =>
+        ensureCommandTranscripts(guarded).pipe(
+          Effect.andThen(assertDispatchTargetEnabled(guarded)),
+          Effect.andThen(orchestrator.dispatch(guarded)),
+        ),
+      ),
     );
 
   const getProjectThreadRecords: ThreadManagementServiceShape["getProjectThreadRecords"] = (

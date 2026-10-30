@@ -57,6 +57,9 @@ import * as ThreadForkService from "./ThreadForkService.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as DecisionService from "../decisions/DecisionService.ts";
+import * as AssistantDirectory from "../assistants/AssistantDirectory.ts";
+import * as AssistantRuntimePolicy from "../assistants/AssistantRuntimePolicy.ts";
+import * as AssistantService from "../assistants/AssistantService.ts";
 import * as KanbanService from "../kanban/KanbanService.ts";
 import * as NotesLayers from "../notes/NotesLayers.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
@@ -66,8 +69,9 @@ export const layerEventInfrastructure = Layer.mergeAll(
   OrchestrationCommandReceipts.layer,
 );
 
-const layerRuntimePolicyProvided = RuntimePolicy.layerFromProjectStore.pipe(
-  Layer.provide(ProjectStore.layer),
+const layerRuntimePolicyProvided = AssistantRuntimePolicy.layer.pipe(
+  Layer.provide(RuntimePolicy.layerFromProjectStore.pipe(Layer.provide(ProjectStore.layer))),
+  Layer.provide(AssistantDirectory.layer),
 );
 
 const layerEventStoreProvided = EventStore.layerFromOrchestrationEventStore.pipe(
@@ -176,6 +180,8 @@ const layerProviderTurnStartServiceProvided = ProviderTurnStartService.layer.pip
       layerProviderAuthServiceProvided,
       layerRunExecutionServiceProvided,
       layerRuntimePolicyProvided,
+      // Read as an optional service; without it assistant instructions silently stop riding turns.
+      AssistantDirectory.layer,
     ),
   ),
 );
@@ -258,6 +264,8 @@ const layerThreadManagementProvided = ThreadManagementService.layerWithLegacyImp
       layerLegacyV1ThreadImporterProvided,
       layerCommandReceiptStoreProvided,
       layerProviderSessionManagerProvided,
+      // The thread guard reads it as an optional service.
+      AssistantDirectory.layer,
     ),
   ),
 );
@@ -387,6 +395,16 @@ export const layerProduction = Layer.mergeAll(
   layerScratchThreadPromotionProvided,
   layerSecretRequestsProvided,
   DecisionService.layer.pipe(Layer.provide(layerThreadManagementProvided)),
+  AssistantService.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        layerThreadManagementProvided,
+        layerThreadLaunchProvided,
+        layerManagedProjectFoldersProvided,
+        layerProjectService,
+      ),
+    ),
+  ),
   GuestShareService.layer.pipe(
     Layer.provide(Layer.merge(layerOrchestratorProvided, layerCommandOutputHubProvided)),
   ),

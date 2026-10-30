@@ -127,6 +127,36 @@ it.effect("offers nothing when the data dir sits inside a Git checkout", () =>
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+it.effect("keeps assistants in Scratch, or in their own project when Scratch is off", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    yield* withScratch(() =>
+      Effect.gen(function* () {
+        const scratch = yield* ManagedProjectFolders.ManagedProjectFolders;
+        assert.equal(
+          (yield* scratch.ensureAssistantProject).projectId,
+          (yield* scratch.ensureScratchProject).projectId,
+        );
+      }),
+    );
+    const checkout = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-assistant-repo-" });
+    yield* git(checkout, ["init", "--quiet"]);
+    const baseDir = path.join(checkout, ".t3");
+    yield* fileSystem.makeDirectory(baseDir);
+    yield* Effect.gen(function* () {
+      const scratch = yield* ManagedProjectFolders.ManagedProjectFolders;
+      const projects = yield* ProjectService.ProjectService;
+      const first = yield* scratch.ensureAssistantProject;
+      assert.equal((yield* scratch.ensureAssistantProject).projectId, first.projectId);
+      const owner = (yield* projects.snapshot).projects.find(
+        (project) => project.id === first.projectId,
+      );
+      assert.equal(owner?.workspaceRoot, path.resolve(baseDir, "assistants"));
+    }).pipe(Effect.provide(layer(baseDir)));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect("offers a Scratch folder when Git is not installed", () =>
   withScratch(
     ({ baseDir }) =>

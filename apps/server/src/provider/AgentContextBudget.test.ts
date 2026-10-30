@@ -32,6 +32,7 @@ import { RemoteDelegation } from "../peer/RemoteDelegation.ts";
 import { PreviewManager } from "../preview/Manager.ts";
 import { PreviewBrowser } from "../preview/PreviewBrowser.ts";
 import { ManagedProjectFolders } from "../project/ManagedProjectFolders.ts";
+import { AssistantService } from "../assistants/AssistantService.ts";
 import { DecisionService } from "../decisions/DecisionService.ts";
 import { KanbanService } from "../kanban/KanbanService.ts";
 import { NoteWorkService } from "../notes/NoteWorkService.ts";
@@ -69,6 +70,7 @@ const toolHandlerServices = Layer.mergeAll(
   Layer.mock(MemoryService)({ importPorts: {} as MemoryService["Service"]["importPorts"] }),
   Layer.mock(MemorySyncService)({}),
   Layer.mock(NotesService)({}),
+  Layer.mock(AssistantService)({}),
   Layer.mock(DecisionService)({}),
   Layer.mock(NoteWorkService)({}),
   Layer.mock(OrchestratorV2)({}),

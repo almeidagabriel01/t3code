@@ -9,7 +9,7 @@ import {
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
-import { isSideChatThread } from "@t3tools/contracts";
+import { isAssistantThreadId, isSideChatThread } from "@t3tools/contracts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Cause from "effect/Cause";
 import * as Console from "effect/Console";
@@ -284,7 +284,8 @@ const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
       (thread) =>
         thread.projectId === project.id &&
         thread.lineage.relationshipToParent !== "subagent" &&
-        !isSideChatThread(thread),
+        !isSideChatThread(thread) &&
+        !isAssistantThreadId(thread.id),
     );
     if (existingThread === undefined) {
       const serverSettings = yield* ServerSettings.ServerSettingsService;

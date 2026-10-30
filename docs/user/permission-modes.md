@@ -27,6 +27,9 @@ Providers enforce permissions differently. Some read-only actions can proceed in
 including OpenCode and Antigravity, fall back to asking. On Grok, commands its review blocks come
 to you for approval. On fx, prompts it still sends also come to you.
 
+[Assistants](./assistants.md) fix their tool access (read only, workspace write or full access) and
+hide the mode control.
+
 Muse Code offers only **Supervised** and **Full access**. A Muse thread already set to another mode
 runs in **Supervised**.
 
