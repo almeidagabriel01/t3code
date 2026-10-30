@@ -361,6 +361,24 @@ it.effect("subscribe emits a snapshot, then ordered deltas without gaps", () =>
   }).pipe(Effect.provide(TestLayer)),
 );
 
+it.effect("a corrupted row degrades its own fields instead of failing the snapshot", () =>
+  Effect.gen(function* () {
+    const { kanban, boardId } = yield* setup;
+    const sql = yield* SqlClient.SqlClient;
+    const bad = yield* kanban.cardCreate({ commandId: cmd(), boardId, title: "Bad" });
+    yield* kanban.cardCreate({ commandId: cmd(), boardId, title: "Good" });
+    yield* sql`UPDATE kanban_cards SET label_ids_json = '{oops', checklist_json = '[{"nope":1}]',
+      attachments_json = 'not json' WHERE card_id = ${bad.cardId!}`;
+    yield* sql`UPDATE kanban_boards SET automations_json = '[]' WHERE board_id = ${boardId}`;
+
+    const board = yield* snapshotBoard(kanban, boardId);
+    const card = board.cards.find((candidate) => candidate.id === bad.cardId)!;
+    assert.deepEqual([card.labelIds, card.checklist, card.attachments], [[], [], []]);
+    assert.deepEqual(board.cards.map((candidate) => candidate.title).toSorted(), ["Bad", "Good"]);
+    assert.equal(board.automations.definitionOfDone, true);
+  }).pipe(Effect.provide(TestLayer)),
+);
+
 it.effect("checked moves into review need a finished checklist and a summary", () =>
   Effect.gen(function* () {
     const { kanban, boardId, column } = yield* setup;

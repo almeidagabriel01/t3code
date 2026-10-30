@@ -169,16 +169,32 @@ const automationsJson = jsonColumn(KanbanAutomations);
 const payloadJson = jsonColumn(Schema.Json);
 const resultJson = jsonColumn(KanbanMutationResult);
 
+/** A bad stored value degrades that field to `fallback` and is logged, so one row never fails a whole read. */
+const readJson = <T>(
+  column: { readonly parse: (json: string) => T },
+  json: string,
+  fallback: T,
+  context: string,
+) =>
+  Effect.try({ try: () => column.parse(json), catch: (cause) => ({ cause }) }).pipe(
+    Effect.catch(({ cause }) =>
+      Effect.logWarning("kanban stored JSON is unreadable; using a fallback", {
+        context,
+        cause,
+      }).pipe(Effect.as(fallback)),
+    ),
+  );
+
 const isKanbanError = Schema.is(KanbanError);
 
-const archivedSubtasks = (json: string): ReadonlyArray<string> => {
-  const payload = payloadJson.parse(json);
+const archivedSubtasks = Effect.fnUntraced(function* (json: string) {
+  const payload = yield* readJson(payloadJson, json, null, "archived subtasks payload");
   const ids =
     payload !== null && typeof payload === "object" && !Array.isArray(payload)
       ? (payload as { subtaskIds?: unknown }).subtaskIds
       : undefined;
   return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === "string") : [];
-};
+});
 
 /** Longer keys come from repeated appends; respreading the column keeps them short. */
 const MAX_ORDER_KEY_LENGTH = 16;
@@ -253,47 +269,71 @@ const toColumn = (row: ColumnRow): KanbanColumn => ({
   role: row.role as KanbanColumnRole,
 });
 
-const toTemplate = (row: TemplateRow): KanbanTemplate => ({
-  id: row.template_id as KanbanTemplate["id"],
-  name: row.name as KanbanTemplate["name"],
-  icon: row.icon,
-  color: row.color,
-  checklist: textList.parse(row.checklist_json),
-  acceptanceCriteria: textList.parse(row.acceptance_criteria_json),
-  labelIds: labelIdList.parse(row.label_ids_json),
-  priority: row.priority as KanbanTemplate["priority"],
+const toTemplate = Effect.fnUntraced(function* (row: TemplateRow) {
+  const context = `template ${row.template_id}`;
+  return {
+    id: row.template_id as KanbanTemplate["id"],
+    name: row.name as KanbanTemplate["name"],
+    icon: row.icon,
+    color: row.color,
+    checklist: yield* readJson(textList, row.checklist_json, [], `${context} checklist`),
+    acceptanceCriteria: yield* readJson(
+      textList,
+      row.acceptance_criteria_json,
+      [],
+      `${context} acceptance criteria`,
+    ),
+    labelIds: yield* readJson(labelIdList, row.label_ids_json, [], `${context} labels`),
+    priority: row.priority as KanbanTemplate["priority"],
+  } satisfies KanbanTemplate;
 });
 
-const toCard = (
+const toCard = Effect.fnUntraced(function* (
   row: CardRow,
   threadIds: ReadonlyArray<string>,
   blocks: ReadonlyArray<string>,
   blockedBy: ReadonlyArray<string>,
-): KanbanCard => ({
-  id: row.card_id as KanbanCardId,
-  boardId: row.board_id as KanbanBoardId,
-  columnId: row.column_id as KanbanColumnId,
-  orderKey: row.order_key,
-  number: row.number as KanbanCard["number"],
-  title: row.title as KanbanCard["title"],
-  description: row.description,
-  type: row.type as KanbanCard["type"],
-  priority: row.priority as KanbanCard["priority"],
-  labelIds: labelIdList.parse(row.label_ids_json),
-  dueAt: row.due_at,
-  estimate: row.estimate_json === null ? null : estimateJson.parse(row.estimate_json),
-  checklist: checklistJson.parse(row.checklist_json),
-  acceptanceCriteria: checklistJson.parse(row.acceptance_criteria_json),
-  blocks: blocks as ReadonlyArray<KanbanCardId>,
-  blockedBy: blockedBy as ReadonlyArray<KanbanCardId>,
-  linkedThreadIds: threadIds as ReadonlyArray<ThreadId>,
-  parentCardId: row.parent_card_id as KanbanCardId | null,
-  attachments: attachmentsJson.parse(row.attachments_json),
-  coverAttachmentId: row.cover_attachment_id,
-  archivedAt: row.archived_at,
-  createdBy: row.created_by as KanbanActor,
-  createdAt: row.created_at,
-  updatedAt: row.updated_at,
+) {
+  const context = `card ${row.card_id}`;
+  return {
+    id: row.card_id as KanbanCardId,
+    boardId: row.board_id as KanbanBoardId,
+    columnId: row.column_id as KanbanColumnId,
+    orderKey: row.order_key,
+    number: row.number as KanbanCard["number"],
+    title: row.title as KanbanCard["title"],
+    description: row.description,
+    type: row.type as KanbanCard["type"],
+    priority: row.priority as KanbanCard["priority"],
+    labelIds: yield* readJson(labelIdList, row.label_ids_json, [], `${context} labels`),
+    dueAt: row.due_at,
+    estimate:
+      row.estimate_json === null
+        ? null
+        : yield* readJson(estimateJson, row.estimate_json, null, `${context} estimate`),
+    checklist: yield* readJson(checklistJson, row.checklist_json, [], `${context} checklist`),
+    acceptanceCriteria: yield* readJson(
+      checklistJson,
+      row.acceptance_criteria_json,
+      [],
+      `${context} acceptance criteria`,
+    ),
+    blocks: blocks as ReadonlyArray<KanbanCardId>,
+    blockedBy: blockedBy as ReadonlyArray<KanbanCardId>,
+    linkedThreadIds: threadIds as ReadonlyArray<ThreadId>,
+    parentCardId: row.parent_card_id as KanbanCardId | null,
+    attachments: yield* readJson(
+      attachmentsJson,
+      row.attachments_json,
+      [],
+      `${context} attachments`,
+    ),
+    coverAttachmentId: row.cover_attachment_id,
+    archivedAt: row.archived_at,
+    createdBy: row.created_by as KanbanActor,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  } satisfies KanbanCard;
 });
 
 const notFound = (entity: string, id: string) =>
@@ -389,7 +429,7 @@ export const layer = Layer.effect(
       const linksByCard = groupBy(links, (link) => link.card_id);
       const blocksByCard = groupBy(edges, (edge) => edge.blocker);
       const blockedByCard = groupBy(edges, (edge) => edge.blocked);
-      return rows.map((row) =>
+      return yield* Effect.forEach(rows, (row) =>
         toCard(
           row,
           (linksByCard.get(row.card_id) ?? []).map((link) => link.thread_id),
@@ -430,21 +470,30 @@ export const layer = Layer.effect(
       const columnsByBoard = groupBy(columns, (row) => row.board_id);
       const labelsByBoard = groupBy(labels, (row) => row.board_id);
       const templatesByBoard = groupBy(templates, (row) => row.board_id);
-      return boards.map((row): KanbanBoard => ({
-        id: row.board_id as KanbanBoardId,
-        projectId: row.project_id as ProjectId,
-        title: row.title as KanbanBoard["title"],
-        columns: (columnsByBoard.get(row.board_id) ?? []).map(toColumn),
-        labels: (labelsByBoard.get(row.board_id) ?? []).map((label) => ({
-          id: label.label_id as KanbanBoard["labels"][number]["id"],
-          name: label.name as KanbanBoard["labels"][number]["name"],
-          color: label.color,
-        })),
-        templates: (templatesByBoard.get(row.board_id) ?? []).map(toTemplate),
-        automations: automationsJson.parse(row.automations_json),
-        createdAt: row.created_at,
-        updatedAt: row.updated_at,
-      }));
+      return yield* Effect.forEach(boards, (row) =>
+        Effect.gen(function* () {
+          return {
+            id: row.board_id as KanbanBoardId,
+            projectId: row.project_id as ProjectId,
+            title: row.title as KanbanBoard["title"],
+            columns: (columnsByBoard.get(row.board_id) ?? []).map(toColumn),
+            labels: (labelsByBoard.get(row.board_id) ?? []).map((label) => ({
+              id: label.label_id as KanbanBoard["labels"][number]["id"],
+              name: label.name as KanbanBoard["labels"][number]["name"],
+              color: label.color,
+            })),
+            templates: yield* Effect.forEach(templatesByBoard.get(row.board_id) ?? [], toTemplate),
+            automations: yield* readJson(
+              automationsJson,
+              row.automations_json,
+              DEFAULT_KANBAN_AUTOMATIONS,
+              `board ${row.board_id} automations`,
+            ),
+            createdAt: row.created_at,
+            updatedAt: row.updated_at,
+          } satisfies KanbanBoard;
+        }),
+      );
     });
 
     const loadBoard = Effect.fn("KanbanService.loadBoard")(function* (boardId: string) {
@@ -509,14 +558,23 @@ export const layer = Layer.effect(
               });
         return {
           card,
-          activity: events.map((event): KanbanCardEvent => ({
-            id: event.event_id as KanbanCardEvent["id"],
-            cardId: card.id,
-            kind: event.kind as KanbanCardEvent["kind"],
-            actor: event.actor as KanbanActor,
-            payload: payloadJson.parse(event.payload_json),
-            createdAt: event.created_at,
-          })),
+          activity: yield* Effect.forEach(events, (event) =>
+            Effect.gen(function* () {
+              return {
+                id: event.event_id as KanbanCardEvent["id"],
+                cardId: card.id,
+                kind: event.kind as KanbanCardEvent["kind"],
+                actor: event.actor as KanbanActor,
+                payload: yield* readJson(
+                  payloadJson,
+                  event.payload_json,
+                  null,
+                  `card event ${event.event_id} payload`,
+                ),
+                createdAt: event.created_at,
+              } satisfies KanbanCardEvent;
+            }),
+          ),
           threads: card.linkedThreadIds.map((threadId) => {
             const facts = factsByThread.get(threadId);
             const latest = facts?.runs.at(-1);
@@ -562,7 +620,17 @@ export const layer = Layer.effect(
           Effect.gen(function* () {
             const stored = yield* sql<{ readonly result_json: string }>`
               SELECT result_json FROM kanban_commands WHERE command_id = ${commandId}`;
-            if (stored[0] !== undefined) return resultJson.parse(stored[0].result_json);
+            if (stored[0] !== undefined) {
+              return yield* Effect.try({
+                try: () => resultJson.parse(stored[0]!.result_json),
+                catch: (cause) =>
+                  new KanbanError({
+                    kind: "internal",
+                    message: `Stored result of command ${commandId} is unreadable.`,
+                    cause,
+                  }),
+              });
+            }
             const committed = yield* sql.withTransaction(
               Effect.gen(function* () {
                 const outcome = yield* body;
@@ -880,7 +948,7 @@ export const layer = Layer.effect(
         SELECT card_id, label_ids_json FROM kanban_cards WHERE board_id = ${boardId}`;
       const changed: string[] = [];
       for (const row of rows) {
-        const ids = textList.parse(row.label_ids_json);
+        const ids = yield* readJson(textList, row.label_ids_json, [], `card ${row.card_id} labels`);
         if (!ids.includes(labelId)) continue;
         yield* sql`UPDATE kanban_cards SET label_ids_json = ${textList.stringify(ids.filter((id) => id !== labelId))} WHERE card_id = ${row.card_id}`;
         changed.push(row.card_id);
@@ -891,7 +959,12 @@ export const layer = Layer.effect(
       }>`
         SELECT template_id, label_ids_json FROM kanban_templates WHERE board_id = ${boardId}`;
       for (const row of templates) {
-        const ids = textList.parse(row.label_ids_json);
+        const ids = yield* readJson(
+          textList,
+          row.label_ids_json,
+          [],
+          `template ${row.template_id} labels`,
+        );
         if (!ids.includes(labelId)) continue;
         yield* sql`UPDATE kanban_templates SET label_ids_json = ${textList.stringify(ids.filter((id) => id !== labelId))} WHERE template_id = ${row.template_id}`;
       }
@@ -1164,18 +1237,21 @@ export const layer = Layer.effect(
             input.type != null && input.type !== row.type
               ? board.templates.find((candidate) => candidate.id === input.type)
               : undefined;
-          const seedList = (
+          const seedList = Effect.fnUntraced(function* (
             provided: typeof input.checklist,
             currentJson: string,
             texts: ReadonlyArray<string> | undefined,
-          ) =>
-            provided !== undefined
-              ? withChecklistIds(provided)
-              : texts !== undefined &&
-                  texts.length > 0 &&
-                  checklistJson.parse(currentJson).length === 0
-                ? seedChecklist(texts)
-                : Effect.void;
+          ) {
+            if (provided !== undefined) return yield* withChecklistIds(provided);
+            if (texts === undefined || texts.length === 0) return undefined;
+            const current = yield* readJson(
+              checklistJson,
+              currentJson,
+              [],
+              `card ${row.card_id} checklist`,
+            );
+            return current.length === 0 ? yield* seedChecklist(texts) : undefined;
+          });
           const checklist = yield* seedList(
             input.checklist,
             row.checklist_json,
@@ -1189,12 +1265,18 @@ export const layer = Layer.effect(
           const seedLabels =
             input.labelIds === undefined &&
             template !== undefined &&
-            labelIdList.parse(row.label_ids_json).length === 0
+            (yield* readJson(labelIdList, row.label_ids_json, [], `card ${row.card_id} labels`))
+              .length === 0
               ? template.labelIds
               : undefined;
           if (seedLabels !== undefined) yield* assertLabels(board.id, seedLabels);
           const labelIds = input.labelIds ?? seedLabels;
-          const current = attachmentsJson.parse(row.attachments_json);
+          const current = yield* readJson(
+            attachmentsJson,
+            row.attachments_json,
+            [],
+            `card ${row.card_id} attachments`,
+          );
           const removedIds = current
             .map((attachment) => attachment.attachmentId)
             .filter((id) => input.removeAttachmentIds?.includes(id));
@@ -1372,6 +1454,21 @@ export const layer = Layer.effect(
         const target = yield* findColumn(input.columnId);
         const boards = yield* sql<BoardRow>`
           SELECT * FROM kanban_boards WHERE board_id = ${row.board_id}`;
+        const automations =
+          boards[0] === undefined
+            ? DEFAULT_KANBAN_AUTOMATIONS
+            : yield* readJson(
+                automationsJson,
+                boards[0].automations_json,
+                DEFAULT_KANBAN_AUTOMATIONS,
+                `board ${row.board_id} automations`,
+              );
+        const checklist = yield* readJson(
+          checklistJson,
+          row.checklist_json,
+          [],
+          `card ${row.card_id} checklist`,
+        );
         const open = yield* sql<{ readonly number: number; readonly title: string }>`
           SELECT c.number AS number, c.title AS title FROM kanban_cards c
           JOIN kanban_columns col ON col.column_id = c.column_id
@@ -1383,9 +1480,9 @@ export const layer = Layer.effect(
             target.column_id === row.column_id || boards[0] === undefined
               ? ({ ok: true } as const)
               : checkDefinitionOfDone({
-                  enabled: automationsJson.parse(boards[0].automations_json).definitionOfDone,
+                  enabled: automations.definitionOfDone,
                   targetRole: target.role as KanbanColumnRole,
-                  checklist: checklistJson.parse(row.checklist_json),
+                  checklist,
                   summary: input.summary,
                   openSubtasks: open.map((subtask) => `#${subtask.number} ${subtask.title}`),
                 }),
@@ -1482,7 +1579,7 @@ export const layer = Layer.effect(
             WHERE card_id = ${row.card_id} AND kind = 'archived'
             ORDER BY created_at DESC, rowid DESC LIMIT 1`)[0];
           const together: ReadonlyArray<string> =
-            archivedEvent === undefined ? [] : archivedSubtasks(archivedEvent.payload_json);
+            archivedEvent === undefined ? [] : yield* archivedSubtasks(archivedEvent.payload_json);
           const touched = new Set<string>();
           // Only those still archived under this parent (one may have been deleted or detached since).
           const restorable =
@@ -1524,9 +1621,12 @@ export const layer = Layer.effect(
           yield* cardImages.release(
             row.card_id,
             row.description,
-            attachmentsJson
-              .parse(row.attachments_json)
-              .map((attachment) => attachment.attachmentId),
+            (yield* readJson(
+              attachmentsJson,
+              row.attachments_json,
+              [],
+              `card ${row.card_id} attachments`,
+            )).map((attachment) => attachment.attachmentId),
           );
           const boardId = row.board_id as KanbanBoardId;
           return {
