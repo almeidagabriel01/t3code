@@ -73,6 +73,7 @@ function compactMenuStatus(gitStatus: VcsStatusResult | null): string {
   return parts.join(" · ");
 }
 
+const GIT_MENU_ICON = "point.topleft.down.curvedto.point.bottomright.up";
 type HeaderItem = Record<string, unknown>;
 type HeaderItems = HeaderItem[];
 type ThreadGitHeaderActionItems = {
@@ -99,7 +100,7 @@ export type ThreadGitMenuProps = {
   readonly onMergeBack?: () => void;
   /** The open thread's actions, shown as its own header menu rather than inside Git. */
   readonly threadMenu?: AppBarMenu | null;
-  /** Compact phone header: Terminal and Files live in `threadMenu`, not as buttons. */
+  /** Compact phone header: Git and Files live in the "•••" menu, not as buttons. */
   readonly toolsInMenu?: boolean;
   readonly onPull: () => Promise<void>;
   readonly onRunAction: (input: GitActionRequestInput) => Promise<GitRunStackedActionResult | null>;
@@ -306,6 +307,58 @@ function headerMenuItems(items: ReadonlyArray<AppBarMenuItem>): HeaderItems {
 
 function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGitHeaderActionItems {
   const model = useThreadGitControlModel(props);
+  const gitMenuItems: HeaderItems = [
+    {
+      description: compactMenuStatus(props.gitStatus),
+      disabled: true,
+      icon: {
+        name: "point.topleft.down.curvedto.point.bottomright.up",
+        type: "sfSymbol",
+      },
+      label: compactMenuBranchLabel(model.currentBranchLabel),
+      onPress: (): void => {},
+      type: "action",
+    },
+    {
+      description: model.quickActionHint ?? undefined,
+      disabled: model.quickAction.disabled,
+      icon: { name: model.quickActionIcon, type: "sfSymbol" },
+      label: model.quickAction.label,
+      onPress: (): void => void model.runQuickAction(),
+      type: "action",
+    },
+    {
+      description:
+        props.hasThread === false
+          ? "Available after the first message"
+          : "Turn diffs and worktree changes",
+      disabled: !model.isRepo || props.hasThread === false,
+      icon: { name: "text.bubble", type: "sfSymbol" },
+      label: "Review changes",
+      onPress: model.openReview,
+      type: "action",
+    },
+    ...(props.onMergeBack
+      ? [
+          {
+            description: "Bring this thread's latest turn into its source",
+            icon: { name: PullRequestGlyph.merged, type: "sfSymbol" as const },
+            label: "Merge back to source",
+            onPress: props.onMergeBack,
+            type: "action" as const,
+          },
+        ]
+      : []),
+    {
+      description:
+        props.hasThread === false ? "Available after the first message" : "Commit, files, branches",
+      disabled: props.hasThread === false,
+      icon: { name: "ellipsis", type: "sfSymbol" },
+      label: "More",
+      onPress: model.openGitInspector,
+      type: "action",
+    },
+  ];
 
   return {
     terminal: {
@@ -383,7 +436,22 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
           icon: { name: "ellipsis", type: "sfSymbol" },
           identifier: "thread-right-more",
           label: "More",
-          menu: { items: headerMenuItems(props.threadMenu.items), title: props.threadMenu.title },
+          menu: {
+            items: [
+              ...(props.toolsInMenu
+                ? [
+                    {
+                      type: "submenu",
+                      label: "Git",
+                      icon: { name: GIT_MENU_ICON, type: "sfSymbol" },
+                      items: gitMenuItems,
+                    },
+                  ]
+                : []),
+              ...headerMenuItems(props.threadMenu.items),
+            ],
+            title: props.threadMenu.title,
+          },
           sharesBackground: true,
           type: "menu",
           variant: "plain",
@@ -394,63 +462,7 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
       icon: { name: "point.topleft.down.curvedto.point.bottomright.up", type: "sfSymbol" },
       identifier: "thread-right-git",
       label: "Git",
-      menu: {
-        items: [
-          {
-            description: compactMenuStatus(props.gitStatus),
-            disabled: true,
-            icon: {
-              name: "point.topleft.down.curvedto.point.bottomright.up",
-              type: "sfSymbol",
-            },
-            label: compactMenuBranchLabel(model.currentBranchLabel),
-            onPress: (): void => {},
-            type: "action",
-          },
-          {
-            description: model.quickActionHint ?? undefined,
-            disabled: model.quickAction.disabled,
-            icon: { name: model.quickActionIcon, type: "sfSymbol" },
-            label: model.quickAction.label,
-            onPress: (): void => void model.runQuickAction(),
-            type: "action",
-          },
-          {
-            description:
-              props.hasThread === false
-                ? "Available after the first message"
-                : "Turn diffs and worktree changes",
-            disabled: !model.isRepo || props.hasThread === false,
-            icon: { name: "text.bubble", type: "sfSymbol" },
-            label: "Review changes",
-            onPress: model.openReview,
-            type: "action",
-          },
-          ...(props.onMergeBack
-            ? [
-                {
-                  description: "Bring this thread's latest turn into its source",
-                  icon: { name: PullRequestGlyph.merged, type: "sfSymbol" as const },
-                  label: "Merge back to source",
-                  onPress: props.onMergeBack,
-                  type: "action" as const,
-                },
-              ]
-            : []),
-          {
-            description:
-              props.hasThread === false
-                ? "Available after the first message"
-                : "Commit, files, branches",
-            disabled: props.hasThread === false,
-            icon: { name: "ellipsis", type: "sfSymbol" },
-            label: "More",
-            onPress: model.openGitInspector,
-            type: "action",
-          },
-        ],
-        title: "Git",
-      },
+      menu: { items: gitMenuItems, title: "Git" },
       sharesBackground: true,
       type: "menu",
       variant: "plain",
@@ -460,10 +472,10 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
 
 export function useThreadGitRightHeaderItems(props: ThreadGitControlsProps): HeaderItems {
   const actionItems = useThreadGitHeaderActionItems(props);
-  const tools = props.toolsInMenu ? [] : [actionItems.files, actionItems.terminal];
-  return [actionItems.more, actionItems.git, ...tools].filter(
-    (item) => item !== null,
-  ) as HeaderItems;
+  const tools = props.toolsInMenu
+    ? [actionItems.terminal]
+    : [actionItems.git, actionItems.files, actionItems.terminal];
+  return [actionItems.more, ...tools].filter((item) => item !== null) as HeaderItems;
 }
 
 export function useThreadGitCenterHeaderItems(props: ThreadGitControlsProps): HeaderItems {
@@ -491,7 +503,7 @@ export function ThreadGitControls(props: ThreadGitControlsProps) {
           separateBackground
         />
       ) : null}
-      {showActionControls && !props.toolsInMenu ? (
+      {showActionControls ? (
         <Toolbar.Menu
           accessibilityLabel="Open terminal"
           icon="terminal"
@@ -557,8 +569,27 @@ export function ThreadGitControls(props: ThreadGitControlsProps) {
           separateBackground
         />
       ) : null}
-      {showActionControls ? createNativeHeaderMenu(threadGitMenuDefinition(props, model)) : null}
-      {showActionControls && props.threadMenu ? createNativeHeaderMenu(props.threadMenu) : null}
+      {showActionControls && !props.toolsInMenu
+        ? createNativeHeaderMenu(threadGitMenuDefinition(props, model))
+        : null}
+      {showActionControls && props.threadMenu
+        ? createNativeHeaderMenu(
+            props.toolsInMenu
+              ? {
+                  ...props.threadMenu,
+                  items: [
+                    {
+                      id: "git",
+                      title: "Git",
+                      icon: GIT_MENU_ICON,
+                      items: threadGitMenuDefinition(props, model).items,
+                    },
+                    ...props.threadMenu.items,
+                  ],
+                }
+              : props.threadMenu,
+          )
+        : null}
     </Toolbar>
   );
 }

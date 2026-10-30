@@ -4,7 +4,7 @@ import { useMemo } from "react";
 import { Platform } from "react-native";
 import { AppBar } from "../../components/ui/AppBar";
 import { ScreenHeaderButton } from "../../components/ui/ScreenHeaderButton";
-import type { AppBarAction, AppBarMenu } from "../../components/ui/AppBar.types";
+import type { AppBarAction, AppBarMenu, AppBarMenuItem } from "../../components/ui/AppBar.types";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import type { ThreadInspectorMode } from "./thread-inspector-content-stack";
 import { useThreadHeaderOptions } from "./useThreadHeaderOptions";
@@ -12,7 +12,6 @@ import { useWorkspaceBackNavigation } from "../workspace/useAndroidWorkspaceNavi
 import { isDuoDevice } from "../../lib/device-type";
 import { useDeviceType } from "../../native/native-layout-metrics";
 import { useNativeWorkspaceColumnsSupported } from "../../native/NativeWorkspaceColumns";
-import { buildThreadToolsMenuItems } from "./thread-header-tools";
 import { useThreadMenu } from "./useThreadMenu";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 
@@ -40,24 +39,40 @@ export function ThreadHeader(
     // A split view has no list to return to; the deleted or archived thread's own state shows instead.
     if (!layout.usesSplitView) goBack();
   });
-  // The compact phone header keeps Git plus one menu; wide and Duo headers keep their own buttons.
+  // The compact phone header keeps Terminal plus one menu; wide and Duo headers keep their own buttons.
   const toolsInMenu =
     props.thread !== undefined &&
     !layout.usesSplitView &&
     !(usesNativeWorkspaceColumns && isDuoDevice(deviceType));
   const { gitControls } = props;
-  const menuItems = [
+  const menuItems: AppBarMenuItem[] = [
+    // iOS adds the Git submenu itself (it needs the Git controls' state); Android has no such menu.
+    ...(toolsInMenu && Platform.OS === "android"
+      ? [
+          {
+            id: "git",
+            title: "Git",
+            icon: "point.topleft.down.curvedto.point.bottomright.up",
+            onPress: props.onOpenGitInspector,
+          },
+        ]
+      : []),
     ...(toolsInMenu
-      ? buildThreadToolsMenuItems({
-          ...gitControls,
-          onOpenFiles:
-            gitControls.onOpenFilesInspector ??
-            (() =>
-              navigation.navigate("ThreadFiles", {
-                environmentId: String(gitControls.environmentId),
-                threadId: String(gitControls.threadId),
-              })),
-        })
+      ? [
+          {
+            id: "files",
+            title: "Files",
+            icon: "folder",
+            disabled: !gitControls.canOpenFiles,
+            onPress:
+              gitControls.onOpenFilesInspector ??
+              (() =>
+                navigation.navigate("ThreadFiles", {
+                  environmentId: String(gitControls.environmentId),
+                  threadId: String(gitControls.threadId),
+                })),
+          },
+        ]
       : []),
     ...(actionItems ? [{ id: "thread-actions", inline: true, items: actionItems }] : []),
   ];
@@ -87,18 +102,20 @@ export function ThreadHeader(
         onPress: filesVisible ? toggleAuxiliaryPane : props.onOpenFilesInspector,
       });
     }
-    if (!toolsInMenu && props.hasWorkspaceRoot && props.gitControls.canOpenTerminal) {
+    if (props.hasWorkspaceRoot && props.gitControls.canOpenTerminal) {
       actions.push({
         accessibilityLabel: "Open terminal",
         icon: "terminal",
         onPress: () => onOpenTerminal(null),
       });
     }
-    actions.push({
-      accessibilityLabel: "Open git controls",
-      icon: "point.topleft.down.curvedto.point.bottomright.up",
-      onPress: props.onOpenGitInspector,
-    });
+    if (!toolsInMenu) {
+      actions.push({
+        accessibilityLabel: "Open git controls",
+        icon: "point.topleft.down.curvedto.point.bottomright.up",
+        onPress: props.onOpenGitInspector,
+      });
+    }
     if (onMergeBack) {
       actions.push({
         accessibilityLabel: "Merge back to source",
