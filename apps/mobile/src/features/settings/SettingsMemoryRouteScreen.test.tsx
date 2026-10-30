@@ -137,6 +137,23 @@ describe("native Memory with shared factory", () => {
     await view.click("Clear");
     expect(view.container.textContent).toContain("Synthetic memory body");
   });
+  it("asks again when the displayed bodies expire, without a manual refresh", async () => {
+    vi.useFakeTimers();
+    try {
+      await mount();
+      expect(view.container.textContent).toContain("Synthetic memory body");
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000);
+      });
+      expect(view.container.textContent).not.toContain("Synthetic memory body");
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_000);
+      });
+      expect(view.container.textContent).toContain("Synthetic memory body");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
   it("keeps the bootstrap subscription stable until a new reset makes it ready", async () => {
     h = createNativeMemoryHarness();
     h.grant(["memory:read", "memory:write", "settings:write"]);
@@ -1271,12 +1288,12 @@ describe("native WP6 Settings commands", () => {
     view = renderNative(h, <SettingsMemoryRouteScreen route={{ params }} />);
     await view.render();
   }
+  let importCount = 1;
   async function select(count = 1) {
     await view.click("Find Codex memories");
     await view.click("/private/path");
     for (let i = 1; i <= count; i++) await view.click(`Import memory ${i}`);
-    await view.click("Use selected scope and this environment as the import destination");
-    await view.click("Confirm import selection");
+    importCount = count;
   }
   it.each(["ios", "android"])(
     "requires preview and destination confirmation, persists before apply and bounds chunks on %s",
@@ -1305,7 +1322,7 @@ describe("native WP6 Settings commands", () => {
         }
         return handler(value);
       });
-      await view.click("Apply selected memories");
+      await view.click(`Import ${importCount} selected`);
       const applies = importCalls().filter(
         (call) => (call.input as { action: string }).action === "apply",
       );
@@ -1319,6 +1336,24 @@ describe("native WP6 Settings commands", () => {
       expect(view.container.textContent).not.toContain("synthetic-session");
     },
   );
+  it("imports the chosen memories with one action and no separate confirmation", async () => {
+    setupImport(3);
+    await show();
+    await view.click("Find Codex memories");
+    await view.click("/private/path");
+    const importButton = (label: string) =>
+      [...view.container.querySelectorAll("button")].find((b) => b.textContent === label);
+    expect((importButton("Import 0 selected") as HTMLButtonElement).disabled).toBe(true);
+    await view.click("Select all (3)");
+    await view.click("Import memory 2");
+    expect(view.container.textContent).not.toContain("Confirm import selection");
+    await view.click("Import 2 selected");
+    const apply = importCalls().find(
+      (call) => (call.input as { action: string }).action === "apply",
+    );
+    expect((apply!.input as { items: unknown[] }).items).toHaveLength(2);
+    expect(view.container.textContent).toContain("Import completed");
+  });
   it("keeps earlier rejection reasons after a successful final import batch", async () => {
     setupImport(33);
     await show();
@@ -1356,7 +1391,7 @@ describe("native WP6 Settings commands", () => {
         },
       };
     });
-    await view.click("Apply selected memories");
+    await view.click(`Import ${importCount} selected`);
     expect(batches).toBe(2);
     const text = view.container.textContent;
     expect(text).toContain("Import completed");
@@ -1393,7 +1428,7 @@ describe("native WP6 Settings commands", () => {
       }
       return result;
     });
-    await view.click("Apply selected memories");
+    await view.click(`Import ${importCount} selected`);
     await h.waitForCall(WS_METHODS.memoryImportProvider, 4);
     expect(view.container.textContent).toContain("Added: 32");
     expect(view.container.textContent).toContain("Completed batches: 1");
@@ -1410,7 +1445,7 @@ describe("native WP6 Settings commands", () => {
     await select(33);
     const reply = h.deferred<unknown>();
     h.responses.set(WS_METHODS.memoryImportProvider, () => reply.response);
-    await view.click("Apply selected memories");
+    await view.click(`Import ${importCount} selected`);
     const input = importCalls().at(-1)!.input as {
       operationId: string;
       items: Array<{ sourceItemKey: string }>;
@@ -1450,7 +1485,7 @@ describe("native WP6 Settings commands", () => {
     h.responses.set(WS_METHODS.memoryImportProvider, () =>
       Effect.fail(new Error("synthetic response lost")),
     );
-    await view.click("Apply selected memories");
+    await view.click(`Import ${importCount} selected`);
     expect(h.secureValues.size).toBe(1);
     await view.unmount();
     const operationId = JSON.parse([...h.secureValues.values()][0]!).handle.operationId;
@@ -1501,7 +1536,7 @@ describe("native WP6 Settings commands", () => {
       },
       syncStatus: nativeSyncStatus,
     }));
-    await view.click("Apply selected memories");
+    await view.click(`Import ${importCount} selected`);
     expect(h.secureValues.size).toBe(1);
     h.responses.set(WS_METHODS.memoryImportProvider, () => Effect.fail({ code: "not_found" }));
     await view.click("Check saved import result");
@@ -1667,7 +1702,7 @@ describe("native WP6 Settings commands", () => {
       entered();
       return gate;
     });
-    await view.click("Apply selected memories");
+    await view.click(`Import ${importCount} selected`);
     await writing;
     expect(
       importCalls().filter((call) => (call.input as { action: string }).action === "apply"),
@@ -1684,7 +1719,7 @@ describe("native WP6 Settings commands", () => {
     await show();
     await select();
     h.setSecureWrite(() => Promise.reject(new Error("synthetic storage failed")));
-    await view.click("Apply selected memories");
+    await view.click(`Import ${importCount} selected`);
     expect(
       importCalls().filter((call) => (call.input as { action: string }).action === "apply"),
     ).toHaveLength(0);
@@ -1707,7 +1742,7 @@ describe("native WP6 Settings commands", () => {
     await select();
     const late = h.deferred<unknown>();
     h.responses.set(WS_METHODS.memoryImportProvider, () => late.response);
-    await view.click("Apply selected memories");
+    await view.click(`Import ${importCount} selected`);
     const handle = [...h.secureValues.values()][0]!;
     await act(async () => h.registry.set(h.prepared(nativeEnv), Option.none()));
     expect([...h.secureValues.values()]).toEqual([handle]);
@@ -1745,7 +1780,7 @@ describe("native WP6 Settings commands", () => {
     await select();
     const late = h.deferred<unknown>();
     h.responses.set(WS_METHODS.memoryImportProvider, () => late.response);
-    await view.click("Apply selected memories");
+    await view.click(`Import ${importCount} selected`);
     const operationId = JSON.parse([...h.secureValues.values()][0]!).handle.operationId;
     await act(async () => h.grant(["memory:read"]));
     expect(h.secureValues.size).toBe(0);
@@ -1776,7 +1811,7 @@ describe("native WP6 Settings commands", () => {
       h.responses.set(WS_METHODS.memoryImportProvider, () =>
         Effect.fail(new Error("synthetic lost")),
       );
-      await view.click("Apply selected memories");
+      await view.click(`Import ${importCount} selected`);
       await view.unmount();
       const key = [...h.secureValues.keys()][0]!;
       const value = JSON.parse(h.secureValues.get(key)!);
@@ -1807,7 +1842,7 @@ describe("native WP6 Settings commands", () => {
     h.responses.set(WS_METHODS.memoryImportProvider, () =>
       Effect.fail(new Error("synthetic lost")),
     );
-    await view.click("Apply selected memories");
+    await view.click(`Import ${importCount} selected`);
     await view.unmount();
     const handle = [...h.secureValues.values()][0]!;
     const hydrated = h.deferred<unknown>();
@@ -1840,7 +1875,7 @@ describe("native WP6 Settings commands", () => {
     await select();
     const late = h.deferred<unknown>();
     h.responses.set(WS_METHODS.memoryImportProvider, () => late.response);
-    await view.click("Apply selected memories");
+    await view.click(`Import ${importCount} selected`);
     const operationId = JSON.parse([...h.secureValues.values()][0]!).handle.operationId;
     h.responses.set(WS_METHODS.memoryProjectBindingUpdate, (value) => {
       expect(h.secureValues.size).toBe(0);
@@ -1896,7 +1931,7 @@ describe("native WP6 Settings commands", () => {
     h.responses.set(WS_METHODS.memoryImportProvider, () =>
       Effect.fail(new Error("synthetic lost")),
     );
-    await view.click("Apply selected memories");
+    await view.click(`Import ${importCount} selected`);
     expect(h.secureValues.size).toBe(1);
     h.projects.length = 0;
     await view.rerender(<SettingsMemoryRouteScreen route={{ params }} />);
@@ -2053,7 +2088,7 @@ describe("native WP6 Settings commands", () => {
       h.responses.set(WS_METHODS.memoryImportProvider, () =>
         Effect.fail(new Error("synthetic lost")),
       );
-      await view.click("Apply selected memories");
+      await view.click(`Import ${importCount} selected`);
       const handle = [...h.secureValues.values()][0]!;
       await act(async () => {
         if (mode === "replacement") h.registry.set(h.prepared(nativeEnv), Option.some({} as never));

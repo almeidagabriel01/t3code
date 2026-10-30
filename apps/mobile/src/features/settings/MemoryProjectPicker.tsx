@@ -30,7 +30,7 @@ export function MemoryProjectPicker({
   if (!open)
     return (
       <SettingsActionRow
-        icon="brain"
+        icon="folder"
         label={label}
         disabled={disabled}
         onPress={() => {
@@ -70,7 +70,7 @@ export function MemoryProjectPicker({
       {matches.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE).map((project) => (
         <SettingsActionRow
           key={project.id}
-          icon="brain"
+          icon="folder"
           label={`${candidateLabel}${project.title}`}
           disabled={disabled}
           onPress={() => {
@@ -80,19 +80,19 @@ export function MemoryProjectPicker({
         />
       ))}
       <SettingsActionRow
-        icon="brain"
+        icon="chevron.left"
         label="Previous projects"
         disabled={currentPage === 0}
         onPress={() => setPage(currentPage - 1)}
       />
       <SettingsActionRow
-        icon="brain"
+        icon="chevron.right"
         label="Next projects"
         disabled={(currentPage + 1) * PAGE_SIZE >= matches.length}
         onPress={() => setPage(currentPage + 1)}
       />
       <SettingsActionRow
-        icon="brain"
+        icon="xmark"
         label="Close project chooser"
         onPress={() => setOpen(false)}
       />

@@ -117,6 +117,7 @@ vi.mock("react-native", async () => {
     Pressable,
     TextInput,
     FlatList,
+    RefreshControl: () => null,
     ScrollView: View,
     KeyboardAvoidingView: View,
     Platform: {
@@ -273,6 +274,13 @@ vi.mock("../features/settings/components/SettingsActionRow", () => ({
       </button>
     );
   },
+}));
+vi.mock("../components/ui/Button", () => ({
+  Button: (props: { label: string; disabled?: boolean; onPress: () => void }) => (
+    <button disabled={props.disabled} onClick={props.onPress}>
+      {props.label}
+    </button>
+  ),
 }));
 vi.mock("../features/settings/components/SettingsSwitchRow", () => ({
   SettingsSwitchRow: (props: {
@@ -546,6 +554,7 @@ export function createNativeMemoryHarness() {
       }),
     ],
   ]);
+  let resetGate: Promise<void> = Promise.resolve();
   const rpcFor = (environmentId: EnvironmentId) =>
     new Proxy(
       {},
@@ -553,11 +562,16 @@ export function createNativeMemoryHarness() {
         get: (_object, method) => (input: unknown) => {
           if (method === WS_METHODS.memoryChanges)
             return Stream.concat(
-              Stream.succeed({
-                kind: "reset",
-                memorySpaceId: nativeSpace,
-                projectionWatermark: 1,
-              } as MemoryChangeSignal),
+              Stream.fromEffect(Effect.promise(() => resetGate)).pipe(
+                Stream.map(
+                  () =>
+                    ({
+                      kind: "reset",
+                      memorySpaceId: nativeSpace,
+                      projectionWatermark: 1,
+                    }) as MemoryChangeSignal,
+                ),
+              ),
               Stream.fromQueue(queue),
             );
           return Effect.suspend(() => {
@@ -693,6 +707,12 @@ export function createNativeMemoryHarness() {
           { immediate: true },
         );
       }),
+    /** Delays the first change-stream reset, like a real round trip; returns the release. */
+    holdReset: () => {
+      let release = () => {};
+      resetGate = new Promise<void>((resolve) => (release = resolve));
+      return release;
+    },
     signal: (signal: MemoryChangeSignal) => Effect.runPromise(Queue.offer(queue, signal)),
     grant: (values: readonly AuthEnvironmentScope[]) =>
       registry.set(grants(nativeEnv), AsyncResult.success(scopes(values))),

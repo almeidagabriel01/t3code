@@ -107,7 +107,7 @@ export function MemorySyncDiagnostics({
       )}
       {capable && allowed ? (
         <SettingsActionRow
-          icon="brain"
+          icon="arrow.clockwise"
           label="Refresh sync diagnostics"
           onPress={() => void load()}
         />
@@ -115,7 +115,7 @@ export function MemorySyncDiagnostics({
       {diagnostics && allowed ? (
         <>
           <SettingsActionRow
-            icon="brain"
+            icon="info.circle"
             label={details ? "Hide sync details" : "Show sync details"}
             onPress={() => setDetails(!details)}
           />
@@ -124,7 +124,7 @@ export function MemorySyncDiagnostics({
       ) : null}
       {view.canReconcileInSettings && canWrite && status.memorySpaceId && diagnostics ? (
         <SettingsActionRow
-          icon="brain"
+          icon="arrow.left.arrow.right"
           label="Reconcile"
           disabled={busy}
           onPress={() => {

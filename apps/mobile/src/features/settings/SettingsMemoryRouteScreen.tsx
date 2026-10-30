@@ -44,7 +44,15 @@ import {
 import { AsyncResult } from "effect/reactivity";
 import * as Option from "effect/Option";
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { AppState, Modal, FlatList, Pressable, TextInput, View } from "react-native";
+import {
+  AppState,
+  Modal,
+  FlatList,
+  Pressable,
+  RefreshControl,
+  TextInput,
+  View,
+} from "react-native";
 import * as Crypto from "expo-crypto";
 import { AppText as Text } from "../../components/ui/AppText";
 import { Menu } from "../../components/ui/Menu";
@@ -75,6 +83,8 @@ import {
 
 const operationId = () => MemoryOperationId.make(Crypto.randomUUID());
 const PAGE_SIZE = 30;
+const MEMORY_RELOAD_DELAY_MS = 1000;
+const SCREEN_CONTENT = "gap-6 px-5 pt-4 pb-10";
 function formatMemoryTime(value: string | null) {
   if (!value) return "Unavailable";
   const date = new Date(value);
@@ -91,6 +101,7 @@ function failureMessage(result: Parameters<typeof squashAtomCommandFailure>[0]) 
   const failure = squashAtomCommandFailure(result);
   return failure instanceof Error ? failure.message : "The request could not be completed.";
 }
+const ItemSeparator = () => <View className="h-2" />;
 function Copy({ children }: { readonly children: React.ReactNode }) {
   return (
     <Text selectable className="p-3 text-sm text-foreground-muted">
@@ -98,13 +109,8 @@ function Copy({ children }: { readonly children: React.ReactNode }) {
     </Text>
   );
 }
-function Action(props: {
-  readonly label: string;
-  readonly onPress: () => void;
-  readonly disabled?: boolean;
-  readonly tone?: "danger";
-}) {
-  return <SettingsActionRow icon="brain" {...props} />;
+function Action(props: React.ComponentProps<typeof SettingsActionRow>) {
+  return <SettingsActionRow {...props} />;
 }
 function Field(props: {
   readonly label: string;
@@ -241,7 +247,10 @@ export function SettingsMemoryRouteScreen({
 function MemoryChooser() {
   const { savedConnectionsById } = useSavedRemoteConnections();
   return (
-    <ScreenScrollView contentInsetAdjustmentBehavior="automatic">
+    <ScreenScrollView
+      contentInsetAdjustmentBehavior="automatic"
+      contentContainerClassName={SCREEN_CONTENT}
+    >
       <Copy>Choose the environment whose memory you want to manage.</Copy>
       {Object.values(savedConnectionsById).map((connection) => (
         <MemoryEnvironmentEntry
@@ -424,7 +433,7 @@ function MemoryConnected({
           status={status}
         />
       ) : (
-        <ScreenScrollView>
+        <ScreenScrollView contentContainerClassName={SCREEN_CONTENT}>
           <MemoryGeneration environmentId={environmentId} />
           <MemoryAgentAccess environmentId={environmentId} />
           {status ? <MemoryStatusRows status={status} /> : null}
@@ -576,7 +585,7 @@ function MemoryBrowser({
         }}
       >
         <SettingsRow
-          icon="brain"
+          icon="cube"
           label="Memory scope"
           value={
             selection === "thread"
@@ -627,7 +636,7 @@ function MemoryBrowser({
       retireImport={retireImport}
     />
   ) : (
-    <ScreenScrollView>{scopePicker}</ScreenScrollView>
+    <ScreenScrollView contentContainerClassName={SCREEN_CONTENT}>{scopePicker}</ScreenScrollView>
   );
 }
 
@@ -746,6 +755,17 @@ function ScopedMemoryBrowser({
       });
   const result = useAtomValue(atom);
   const page = AsyncResult.isSuccess(result) ? Option.getOrNull(result.value) : null;
+  const loaded = page !== null;
+  const failed = AsyncResult.isFailure(result);
+  // Bodies expire after a minute and a page can miss its request while the stream is not ready.
+  // A visible list asks again once it has been empty for a moment, instead of waiting for a tap.
+  useFocusEffect(
+    useCallback(() => {
+      if (loaded || failed || !exposure.ready) return;
+      const timer = setTimeout(() => registry.refresh(atom), MEMORY_RELOAD_DELAY_MS);
+      return () => clearTimeout(timer);
+    }, [loaded, failed, exposure.ready, registry, atom]),
+  );
   if (selected)
     return (
       <MemoryDetails
@@ -779,15 +799,20 @@ function ScopedMemoryBrowser({
       data={page?.items ?? []}
       keyExtractor={(item) => item.memoryId}
       contentInsetAdjustmentBehavior="automatic"
+      contentContainerClassName="px-5 pt-4 pb-10"
+      refreshControl={
+        <RefreshControl refreshing={false} onRefresh={() => registry.refresh(atom)} />
+      }
+      ItemSeparatorComponent={ItemSeparator}
       ListHeaderComponent={
-        <>
+        <View className="gap-6 pb-6">
+          <MemoryGeneration environmentId={params.environmentId} />
+          <MemoryAgentAccess environmentId={params.environmentId} />
           <MemoryAdministration
             environmentId={params.environmentId}
             onSharingRefresh={() => void onSyncRefresh()}
             sync={status}
           />
-          <MemoryGeneration environmentId={params.environmentId} />
-          <MemoryAgentAccess environmentId={params.environmentId} />
           {status ? <MemoryStatusRows status={status} /> : null}
           <MemorySyncDiagnostics
             environmentId={params.environmentId}
@@ -795,8 +820,10 @@ function ScopedMemoryBrowser({
             onRefresh={onSyncRefresh}
           />
           {scopePicker}
-          <SettingsSection title="Import scope">
-            <Copy>Select a scope for imports. Existing memories keep their scope.</Copy>
+          <SettingsSection
+            title="Import scope"
+            footer="Imports go to the scope selected here. Existing memories keep their scope."
+          >
             {(["user", "project", "thread"] as const).map((kind) => (
               <SettingsSwitchRow
                 key={kind}
@@ -815,16 +842,12 @@ function ScopedMemoryBrowser({
                 }}
               />
             ))}
-            {projectRef ? (
-              <Copy>
-                {projects.find((project) => project.id === projectRef.projectId)?.title ??
-                  "Selected project"}
-              </Copy>
-            ) : (
-              <Copy>
-                No project selected. User scope is available; select a project for project scope.
-              </Copy>
-            )}
+            <Copy>
+              {projectRef
+                ? (projects.find((project) => project.id === projectRef.projectId)?.title ??
+                  "Selected project")
+                : "No project selected. User scope is available; select a project for project scope."}
+            </Copy>
             <MemoryProjectPicker
               environmentId={params.environmentId}
               label="Choose project…"
@@ -844,6 +867,7 @@ function ScopedMemoryBrowser({
             />
             {projectRef ? (
               <Action
+                icon="xmark"
                 label="Clear selected project"
                 onPress={() => {
                   void (async () => {
@@ -885,42 +909,47 @@ function ScopedMemoryBrowser({
               <Copy>Saved memories stay. Turn on memory to save new memories.</Copy>
             ) : null}
             {notice ? <Copy>{notice}</Copy> : null}
-            {page && page.items.length > 0 && presentMemoryPage(page, Boolean(search)) ? (
-              <Copy>{presentMemoryPage(page, Boolean(search))}</Copy>
-            ) : null}
-          </SettingsSection>
-          <Field label="Search memory" value={query} onChange={setQuery} />
-          <Action
-            label="Search"
-            onPress={() => {
-              setSearch(query.trim());
-              setCursor(undefined);
-            }}
-          />
-          {query || search ? (
+            <Field label="Search memory" value={query} onChange={setQuery} />
             <Action
-              label="Clear"
+              icon="magnifyingglass"
+              label="Search"
               onPress={() => {
-                setQuery("");
-                setSearch("");
+                setSearch(query.trim());
                 setCursor(undefined);
               }}
             />
+            {query || search ? (
+              <Action
+                icon="xmark"
+                label="Clear"
+                onPress={() => {
+                  setQuery("");
+                  setSearch("");
+                  setCursor(undefined);
+                }}
+              />
+            ) : null}
+            <SettingsSwitchRow
+              label="Include quarantined"
+              value={quarantine}
+              onValueChange={(value) => {
+                setQuarantine(value);
+                setCursor(undefined);
+              }}
+            />
+            <Action
+              icon="square.and.pencil"
+              label="Remember something"
+              onPress={() => setCreating(true)}
+              disabled={!canWrite || !memoryEnabled || !scope}
+            />
+          </SettingsSection>
+          {page && page.items.length > 0 && presentMemoryPage(page, Boolean(search)) ? (
+            <Text textRole="footnote" className="px-2 text-foreground-muted">
+              {presentMemoryPage(page, Boolean(search))}
+            </Text>
           ) : null}
-          <SettingsSwitchRow
-            label="Include quarantined"
-            value={quarantine}
-            onValueChange={(value) => {
-              setQuarantine(value);
-              setCursor(undefined);
-            }}
-          />
-          <Action
-            label="Remember something"
-            onPress={() => setCreating(true)}
-            disabled={!canWrite || !memoryEnabled || !scope}
-          />
-        </>
+        </View>
       }
       renderItem={({ item }) => (
         <Pressable
@@ -935,7 +964,7 @@ function ScopedMemoryBrowser({
             );
             setSelected(item.memoryId);
           }}
-          className="gap-1 border-b border-border p-4"
+          className="gap-1 rounded-2xl bg-grouped-card px-4 py-3"
         >
           <Text
             className={item.status === "forgotten" ? "text-foreground-muted" : "text-foreground"}
@@ -947,7 +976,7 @@ function ScopedMemoryBrowser({
                 : "Conflicting memory"}
           </Text>
           {item.status === "forgotten" ? <Copy>The memory body has been removed.</Copy> : null}
-          <Text className="text-sm text-foreground-muted">
+          <Text textRole="footnote" className="text-foreground-muted">
             {presentMemoryItem(item).label}
             {presentMemoryItem(item).syncLabel ? ` · ${presentMemoryItem(item).syncLabel}` : ""}
           </Text>
@@ -959,23 +988,30 @@ function ScopedMemoryBrowser({
             ? "Could not load memory. Refresh to try again."
             : page
               ? presentMemoryPage(page, Boolean(search))
-              : "Waiting for memory access or fresh data. Refresh to try again."}
+              : "No memories to show yet. Pull down to refresh."}
         </Copy>
       }
       ListFooterComponent={
-        <>
+        <View className="mt-4 overflow-hidden rounded-2xl">
           {!page || AsyncResult.isFailure(result) ? (
-            <Action label="Refresh memories" onPress={() => registry.refresh(atom)} />
+            <Action
+              icon="arrow.clockwise"
+              label="Refresh memories"
+              onPress={() => registry.refresh(atom)}
+            />
           ) : null}
           {page?.nextCursor ? (
             <Action
+              icon="chevron.right"
               label="Next page"
               disabled={!page?.nextCursor}
               onPress={() => setCursor(page?.nextCursor ?? undefined)}
             />
           ) : null}
-          {cursor ? <Action label="First page" onPress={() => setCursor(undefined)} /> : null}
-        </>
+          {cursor ? (
+            <Action icon="chevron.left" label="First page" onPress={() => setCursor(undefined)} />
+          ) : null}
+        </View>
       }
     />
   );
@@ -1117,8 +1153,11 @@ function MemoryDetails({
       />
     );
   return (
-    <ScreenScrollView contentInsetAdjustmentBehavior="automatic">
-      <Action label="Close details" onPress={onClose} />
+    <ScreenScrollView
+      contentInsetAdjustmentBehavior="automatic"
+      contentContainerClassName={SCREEN_CONTENT}
+    >
+      <Action icon="chevron.left" label="Close details" onPress={onClose} />
       {notice ? <Copy>{notice}</Copy> : null}
       {item ? (
         <>
@@ -1664,8 +1703,11 @@ function MemoryEditor({
     );
   }
   return (
-    <ScreenScrollView contentInsetAdjustmentBehavior="automatic">
-      <Action label="Close editor" onPress={onClose} />
+    <ScreenScrollView
+      contentInsetAdjustmentBehavior="automatic"
+      contentContainerClassName={SCREEN_CONTENT}
+    >
+      <Action icon="chevron.left" label="Close editor" onPress={onClose} />
       <Copy>Save to: {scopeLabel ?? memoryScopeLabel(scope)}</Copy>
       {text === null ? (
         <Copy>The draft is no longer available. Close and reopen this memory.</Copy>
@@ -1792,7 +1834,7 @@ function MemoryGeneration({ environmentId }: { environmentId: EnvironmentId }) {
       />
       {separate ? (
         <SettingsRow
-          icon="brain"
+          icon="sparkles"
           label="Memory model"
           value={resolvedModel?.model}
           disabled={!allowed || busy}

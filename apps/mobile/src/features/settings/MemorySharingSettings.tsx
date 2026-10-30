@@ -38,12 +38,7 @@ import { toggleMemoryRequester } from "./SettingsMemoryRouteScreen.logic";
 const Copy = ({ children }: { children: React.ReactNode }) => (
   <Text className="p-3 text-sm text-foreground-muted">{children}</Text>
 );
-const Action = (props: {
-  label: string;
-  onPress: () => void;
-  disabled?: boolean;
-  tone?: "danger";
-}) => <SettingsActionRow icon="brain" {...props} />;
+const Action = SettingsActionRow;
 const decodeHubAddress = Schema.decodeUnknownSync(MemoryHubEndpoint);
 const loopbackAddress = (value: string) => {
   try {
@@ -440,6 +435,7 @@ export function MemoryAdministration({
         {hub ? (
           hub.settings.mode === "disabled" ? (
             <Action
+              icon="server.rack"
               label="Make this device the hub"
               disabled={blocked}
               onPress={() =>
@@ -453,6 +449,7 @@ export function MemoryAdministration({
             />
           ) : (
             <Action
+              icon="slash.circle"
               label="Turn sharing off"
               disabled={blocked}
               onPress={() => setConfirm("disable")}
@@ -464,6 +461,7 @@ export function MemoryAdministration({
             <Copy>Stop sharing on this device?</Copy>
             <Copy>Saved memories stay.</Copy>
             <Action
+              icon="stop.fill"
               label="Stop sharing"
               disabled={blocked}
               onPress={() =>
@@ -476,6 +474,7 @@ export function MemoryAdministration({
               }
             />
             <Action
+              icon="xmark"
               label="Cancel"
               disabled={busy || pending !== null}
               onPress={() => setConfirm(null)}
@@ -486,12 +485,14 @@ export function MemoryAdministration({
           <>
             <Copy>{error}</Copy>
             <Action
+              icon="arrow.clockwise"
               label={recovery ? "Review latest settings" : "Retry"}
               disabled={busy}
               onPress={retry}
             />
             {pending !== null ? (
               <Action
+                icon="stop.fill"
                 label="Stop retrying"
                 disabled={busy}
                 onPress={() =>
@@ -524,6 +525,7 @@ export function MemoryAdministration({
                   ) : null}
                   {reason ? <Copy>{reason}</Copy> : null}
                   <Action
+                    icon="arrow.clockwise"
                     label={`Replace key for ${name(id)}`}
                     disabled={blocked || !!reason}
                     onPress={() => {
@@ -532,6 +534,7 @@ export function MemoryAdministration({
                     }}
                   />
                   <Action
+                    icon="trash"
                     label={`Remove ${name(id)}`}
                     disabled={blocked}
                     onPress={() => setConfirm(id)}
@@ -546,6 +549,7 @@ export function MemoryAdministration({
             .map((e) => (
               <Action
                 key={e.environmentId}
+                icon="plus"
                 label={`Add ${e.label}`}
                 disabled={blocked}
                 onPress={() => {
@@ -581,6 +585,7 @@ export function MemoryAdministration({
                 <Copy>Settings write permission is required on this device.</Copy>
               ) : null}
               <Action
+                icon="checkmark.circle"
                 label="Confirm"
                 disabled={blocked || !writable(device) || loopbackAddress(endpoint)}
                 onPress={() =>
@@ -590,6 +595,7 @@ export function MemoryAdministration({
                 }
               />
               <Action
+                icon="xmark"
                 label="Cancel"
                 disabled={busy || pending !== null}
                 onPress={() => setConfirm(null)}
@@ -601,6 +607,7 @@ export function MemoryAdministration({
               <Copy>{`Remove ${name(confirm)}?`}</Copy>
               <Copy>This device will lose access to shared memory.</Copy>
               <Action
+                icon="trash"
                 label="Remove device"
                 tone="danger"
                 disabled={blocked}
@@ -614,6 +621,7 @@ export function MemoryAdministration({
                 }
               />
               <Action
+                icon="xmark"
                 label="Cancel"
                 disabled={busy || pending !== null}
                 onPress={() => setConfirm(null)}
@@ -635,6 +643,7 @@ export function MemoryAdministration({
                 <Copy>Waiting for the device to confirm</Copy>
               ) : null}
               <Action
+                icon="trash"
                 label={`Remove conversation access for ${name(id)}`}
                 disabled={busy || recovery || !canOwner || pending !== null}
                 onPress={() => void saveOwner(id)}
@@ -657,6 +666,7 @@ export function MemoryAdministration({
             .map((e) => (
               <Action
                 key={e.environmentId}
+                icon="checkmark.circle"
                 label={`Allow ${e.label}`}
                 disabled={busy || recovery || !canOwner || !owner || pending !== null}
                 onPress={() => void saveOwner(e.environmentId)}

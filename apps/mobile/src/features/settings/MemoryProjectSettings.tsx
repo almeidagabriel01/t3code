@@ -136,7 +136,7 @@ export function MemoryProjectSettings({
             : "No repository binding available"}
       </Text>
       <SettingsActionRow
-        icon="brain"
+        icon="link"
         label="Create shared project binding"
         disabled={!allowed || !binding || busy}
         onPress={() => void save("setExplicit")}
@@ -164,13 +164,13 @@ export function MemoryProjectSettings({
         }}
       />
       <SettingsActionRow
-        icon="brain"
+        icon="arrow.uturn.backward"
         label="Use repository binding"
         disabled={!allowed || !binding || busy}
         onPress={() => void save("useRepository")}
       />
       <SettingsActionRow
-        icon="brain"
+        icon="arrow.clockwise"
         label="Review latest project binding"
         disabled={busy}
         onPress={() => void load()}
