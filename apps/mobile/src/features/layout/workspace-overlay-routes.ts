@@ -28,6 +28,8 @@ const LISTED_OVERLAY_ROUTES: ReadonlySet<string> = new Set([
   "SettingsAuth",
   "SettingsWaitlist",
   "ThreadAgents",
+  "ThreadHandoff",
+  "ThreadHandoffAgent",
   "ThreadBackgroundWork",
   "ThreadPullRequests",
   "ThreadQueue",

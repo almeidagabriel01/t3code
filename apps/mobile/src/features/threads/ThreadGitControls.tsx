@@ -96,6 +96,7 @@ export type ThreadGitMenuProps = {
   readonly onOpenFilesInspector?: () => void;
   readonly onOpenGitInspector?: () => void;
   readonly onMergeBack?: () => void;
+  readonly onHandoff?: () => void;
   readonly onPull: () => Promise<void>;
   readonly onRunAction: (input: GitActionRequestInput) => Promise<GitRunStackedActionResult | null>;
 };
@@ -392,6 +393,17 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
                   icon: { name: PullRequestGlyph.merged, type: "sfSymbol" as const },
                   label: "Merge back to source",
                   onPress: props.onMergeBack,
+                  type: "action" as const,
+                },
+              ]
+            : []),
+          ...(props.onHandoff
+            ? [
+                {
+                  description: "Continue in a new session with another agent",
+                  icon: { name: "arrow.left.arrow.right", type: "sfSymbol" as const },
+                  label: "Hand off to another agent",
+                  onPress: props.onHandoff,
                   type: "action" as const,
                 },
               ]

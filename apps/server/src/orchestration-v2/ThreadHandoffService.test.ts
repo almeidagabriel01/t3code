@@ -9,7 +9,6 @@ import {
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 
 import * as ProjectService from "../project/ProjectService.ts";
@@ -61,8 +60,7 @@ const harness = (source: {
               } as never),
           }),
           Layer.mock(ProjectService.ProjectService)({
-            getById: () =>
-              Effect.succeed(Option.some({ id: projectId, workspaceRoot: "/repo" } as never)),
+            getById: () => Effect.succeedSome({ id: projectId, workspaceRoot: "/repo" } as never),
           }),
           Layer.mock(ThreadLaunch.ThreadLaunchService)({
             launch: (input) =>

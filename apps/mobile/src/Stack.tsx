@@ -66,6 +66,10 @@ import { GitConfirmSheet } from "./features/threads/git/GitConfirmSheet";
 import { GitOverviewSheet } from "./features/threads/git/GitOverviewSheet";
 import { ThreadPullRequestsSheet } from "./features/threads/ThreadPullRequestsSheet";
 import { ThreadAgentsSheet } from "./features/threads/ThreadAgentsSheet";
+import {
+  ThreadHandoffAgentRouteScreen,
+  ThreadHandoffSheet,
+} from "./features/threads/ThreadHandoffSheet";
 import { ThreadBackgroundWorkSheet } from "./features/threads/ThreadBackgroundWorkSheet";
 import { ThreadQueueSheet } from "./features/threads/ThreadQueueControl";
 import {
@@ -961,6 +965,27 @@ const RootStackConfig = createWorkspaceStackNavigator({
         headerShown: false,
         sheetAllowedDetents: formSheetDetents(0.5, 0.9),
         sheetGrabberVisible: true,
+      },
+    }),
+    ThreadHandoff: createNativeStackScreen({
+      screen: ThreadHandoffSheet,
+      options: {
+        ...HORIZONTAL_FORM_SHEET_OPTIONS,
+        headerShown: false,
+        sheetAllowedDetents: formSheetDetents(0.75, 0.95),
+        sheetGrabberVisible: true,
+      },
+    }),
+    ThreadHandoffAgent: createNativeStackScreen({
+      screen: ThreadHandoffAgentRouteScreen,
+      options: {
+        gestureEnabled: true,
+        headerShown: false,
+        ...(Platform.OS === "android"
+          ? { presentation: "card" as const }
+          : {
+              ...THREAD_SETTINGS_SHEET_OPTIONS,
+            }),
       },
     }),
     ThreadAgents: createNativeStackScreen({

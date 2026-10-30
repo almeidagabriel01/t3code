@@ -803,6 +803,15 @@ function ThreadRouteContent(
       mergeBackTargetThreadId !== null && mergeBackRun !== null
         ? () => void handleMergeBack()
         : undefined,
+    // Nothing to hand off before the first message.
+    onHandoff:
+      selectedThread && selectedThread.latestUserMessageAt !== null
+        ? () =>
+            navigation.navigate("ThreadHandoff", {
+              environmentId: selectedThread.environmentId,
+              threadId: selectedThread.id,
+            })
+        : undefined,
     currentBranch: selectedThread?.branch ?? null,
     gitStatus: gitStatus.data,
     gitOperationLabel: gitState.gitOperationLabel,

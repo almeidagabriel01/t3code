@@ -75,6 +75,7 @@ import {
   SquarePenIcon,
   TextSearchIcon,
   UserPlusIcon,
+  ArrowRightLeftIcon,
   NotebookPenIcon,
   SquareKanbanIcon,
 } from "lucide-react";
@@ -234,6 +235,8 @@ import { ProjectFilePicker } from "./files/ProjectFilePicker";
 import { openLinkPullRequestDialog } from "./pullRequest/LinkPullRequestDialog";
 import { canShareWithGuestAtom } from "./chat/guestShareAvailability";
 import { openGuestShareDialog } from "./chat/guestShareDialogState";
+import { openThreadHandoffDialog } from "./chat/ThreadHandoffDialog";
+import { orchestrationEnvironment } from "../state/orchestration";
 import { ProjectContentSearchDialog } from "./search/ProjectContentSearchDialog";
 import { validateMemorySettingsSearch } from "./settings/MemorySettings.logic";
 import { settingsForThisPlatform, SETTINGS_SECTION_LABELS } from "./settings/settingsSearch";
@@ -464,6 +467,9 @@ function OpenCommandPaletteDialog(props: {
   );
   const canShareActiveThreadWithGuest = useAtomValue(
     canShareWithGuestAtom(activeThread?.environmentId ?? ("" as EnvironmentId)),
+  );
+  const canHandoffActiveThread = useAtomValue(
+    orchestrationEnvironment.handoffThread.permissionAtom(activeThread?.environmentId ?? null),
   );
   const activeThreadReferenceCopyTarget =
     referenceThreadRef === null || (pathname === "/pull-requests" && !openPanelPullRequestUrl)
@@ -1368,6 +1374,21 @@ function OpenCommandPaletteDialog(props: {
       icon: <UserPlusIcon className={ITEM_ICON_CLASS} />,
       run: async () => {
         openGuestShareDialog(threadRef);
+      },
+    });
+  }
+
+  if (activeThread !== null) {
+    const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
+    actionItems.push({
+      kind: "action",
+      value: "action:handoff-thread",
+      searchTerms: ["hand off", "handoff", "continue", "switch", "agent", "model", "new session"],
+      title: "Hand off to another agent",
+      disabled: !canHandoffActiveThread,
+      icon: <ArrowRightLeftIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        openThreadHandoffDialog(threadRef);
       },
     });
   }

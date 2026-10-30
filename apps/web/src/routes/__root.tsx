@@ -20,6 +20,7 @@ import { AppSidebarLayout } from "../components/AppSidebarLayout";
 import { CommandPalette } from "../components/CommandPalette";
 import { CustomSnoozeDialogHost } from "../components/CustomSnoozeDialog";
 import { GuestShareDialogHost } from "../components/chat/GuestShareControls";
+import { ThreadHandoffDialogHost } from "../components/chat/ThreadHandoffDialog";
 import { AddProjectToMachineDialogHost } from "../components/AddProjectToMachineDialog";
 import { ConfirmDialogHost } from "../components/ConfirmDialogHost";
 import { DevReplayHost } from "../components/DevReplayHost";
@@ -173,6 +174,7 @@ function RootRouteBranch() {
         <LiquidGlassBackdrop />
         <CustomSnoozeDialogHost />
         <GuestShareDialogHost />
+        <ThreadHandoffDialogHost />
         <CommandPalette>
           <AppSidebarLayout>
             <Outlet />
@@ -216,6 +218,7 @@ function RootRouteBranch() {
         <ConfirmDialogHost />
         <CustomSnoozeDialogHost />
         <GuestShareDialogHost />
+        <ThreadHandoffDialogHost />
         <ProjectCloneToastCoordinator />
         <AddProjectToMachineDialogHost />
         {import.meta.env.DEV && primaryEnvironmentAuthenticated ? <DevReplayHost /> : null}

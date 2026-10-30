@@ -261,6 +261,23 @@ and permission mode. It is meant for questions and leaves files alone unless you
 to change something. Use **Start a new side chat** to discard it, or **Open as a full
 thread** to continue it on its own.
 
+## Hand off to another agent
+
+To continue a thread with a different agent or model, choose **Hand off to another agent** from the thread
+header, the thread's menu, or the command palette (web and desktop), or from the thread's
+settings on mobile. Pick the agent and what it gets to read, then **Start new session**. The new
+thread opens in the same project and workspace, with the same permission mode, and starts
+working right away. The original thread stays as it was.
+
+- **Focused** (the default) gives the new agent your latest request and the previous agent's
+  latest reply, and the thread's ID so it can read older messages only when it needs them.
+- **Full transcript** also includes the saved history. A very long thread keeps its most recent part, and the
+  agent can read the rest from the original thread. It takes longer and uses more context or
+  credits.
+
+The new agent first states where the previous session stopped, then continues if work remains.
+Agents can do the same with the thread transfer tool's `handoff` action.
+
 ## Goals
 
 With Codex and Claude, send `/goal` followed by what "done" means, for example

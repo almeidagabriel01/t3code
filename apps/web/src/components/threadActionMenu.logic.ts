@@ -20,6 +20,7 @@ export type ThreadActionMenuId =
   | "regenerate-title"
   | "mark-unread"
   | "share-guest"
+  | "handoff"
   | "copy"
   | "copy-path"
   | "copy-branch"
@@ -175,6 +176,7 @@ export function buildThreadActionMenuItems(
     ...(state.canShareWithGuest
       ? [{ id: "share-guest" as const, label: "Share with guest", icon: "user-plus" }]
       : []),
+    { id: "handoff", label: "Hand off to another agent", icon: "arrow-right-left" },
     ...(state.projectFilter
       ? [
           {

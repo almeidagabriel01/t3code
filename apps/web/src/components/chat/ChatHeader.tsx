@@ -42,6 +42,7 @@ import { cn } from "~/lib/utils";
 import { textDirection } from "~/textDirection";
 import { useClientSettings } from "../../hooks/useSettings";
 import { GuestShareIndicator } from "./GuestShareControls";
+import { ThreadHandoffButton } from "./ThreadHandoffDialog";
 import { KanbanThreadCardBadge } from "../kanban/KanbanThreadCardBadge";
 import { ThreadNotesButton } from "../notes/ThreadNotesButton";
 
@@ -468,6 +469,7 @@ export const ChatHeader = memo(function ChatHeader({
         />
       ) : null}
       {isServerThread ? <GuestShareIndicator threadRef={activeThreadRef} /> : null}
+      {isServerThread ? <ThreadHandoffButton threadRef={activeThreadRef} /> : null}
     </div>
   );
 });

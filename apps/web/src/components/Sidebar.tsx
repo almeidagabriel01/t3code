@@ -159,6 +159,7 @@ import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { canShareWithGuestAtom } from "./chat/guestShareAvailability";
 import { openGuestShareDialog } from "./chat/guestShareDialogState";
+import { openThreadHandoffDialog } from "./chat/ThreadHandoffDialog";
 import {
   buildThreadRouteParams,
   resolveActiveThreadRouteRef,
@@ -2618,6 +2619,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             return;
           case "share-guest":
             openGuestShareDialog(threadRef);
+            return;
+          case "handoff":
+            openThreadHandoffDialog(threadRef);
             return;
           case "regenerate-title": {
             if (isRegeneratingTitle) return;

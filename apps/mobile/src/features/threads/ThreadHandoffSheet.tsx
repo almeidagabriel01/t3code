@@ -1,0 +1,309 @@
+import { useAtomValue } from "@effect/atom-react";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import {
+  type EnvironmentId,
+  type ModelSelection,
+  type OrchestrationV2ThreadHandoffMode,
+  type ThreadId,
+} from "@t3tools/contracts";
+import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
+import { Atom } from "effect/reactivity";
+import * as Haptics from "expo-haptics";
+import { useMemo, useState } from "react";
+import { Platform, ScrollView, View } from "react-native";
+import { ScreenStack } from "react-native-screens";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+
+import { ProviderIcon } from "../../components/ProviderIcon";
+import { AndroidSheetHeader } from "../../components/ui/AndroidScreenHeader";
+import { AppText as Text } from "../../components/ui/AppText";
+import { Button } from "../../components/ui/Button";
+import { ErrorBanner } from "../../components/ui/ErrorBanner";
+import { ListChoiceRow } from "../../components/ui/ListChoiceRow";
+import { ListSection } from "../../components/ui/ListSection";
+import { NavigationRow } from "../../components/ui/NavigationRow";
+import { ScreenContent } from "../../components/ui/ScreenContent";
+import { buildModelOptions, groupByProvider } from "../../lib/modelOptions";
+import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
+import { scopedThreadKey } from "../../lib/scopedEntities";
+import { uuidv4 } from "../../lib/uuid";
+import { NativeStackScreenOptions, nativeHeaderScrollEdgeEffects } from "../../native/StackHeader";
+import { NativeHeader, NativeScreen } from "../../native/ThemedScreenStack";
+import { appAtomRegistry } from "../../state/atom-registry";
+import { useEnvironmentServerConfig, useProjects, useQuietThreadShell } from "../../state/entities";
+import { orchestrationEnvironment } from "../../state/orchestration";
+import { environmentThreadShells } from "../../state/threads";
+import { useAtomCommand } from "../../state/use-atom-command";
+import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
+import { waitForThreadShellReady } from "./threadForkNavigation";
+import { ThreadSettingsPickerScreen } from "./ThreadSettingsSheet";
+
+const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
+
+export type ThreadHandoffParams = {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+};
+
+const CONTEXT_CHOICES = [
+  {
+    mode: "focused",
+    label: "Focused (Recommended)",
+    description:
+      "Starts from the latest request and reply, and reads older details only when needed.",
+  },
+  {
+    mode: "full",
+    label: "Full transcript",
+    description:
+      "Includes the saved transcript, the most recent part if it is very long. Takes longer and uses more context or credits.",
+  },
+] as const satisfies ReadonlyArray<{
+  readonly mode: OrchestrationV2ThreadHandoffMode;
+  readonly label: string;
+  readonly description: string;
+}>;
+
+/** The agent picked in the picker route, for the one thread whose hand-off sheet is open. */
+const pickedAgentAtom = Atom.make<{
+  readonly threadKey: string;
+  readonly selection: ModelSelection;
+} | null>(null).pipe(Atom.keepAlive, Atom.withLabel("thread-handoff:picked-agent"));
+
+function useHandoffAgent(target: ThreadHandoffParams) {
+  const threadRef = scopeThreadRef(target.environmentId, target.threadId);
+  const thread = useQuietThreadShell(threadRef);
+  const picked = useAtomValue(pickedAgentAtom);
+  const threadKey = scopedThreadKey(target.environmentId, target.threadId);
+  const selection =
+    picked?.threadKey === threadKey ? picked.selection : (thread?.modelSelection ?? null);
+  return { thread, selection, threadKey };
+}
+
+export function ThreadHandoffSheet({ route }: StaticScreenProps<ThreadHandoffParams>) {
+  const target = route.params;
+  const { layout } = useAdaptiveWorkspaceLayout();
+  const navigation = useNavigation();
+  const insets = useSafeAreaInsets();
+  const { thread, selection } = useHandoffAgent(target);
+  const project = useProjects().find(
+    (entry) => entry.environmentId === target.environmentId && entry.id === thread?.projectId,
+  );
+  const config = useEnvironmentServerConfig(target.environmentId);
+  const canHandoff = useAtomValue(
+    orchestrationEnvironment.handoffThread.permissionAtom(target.environmentId),
+  );
+  const handoff = useAtomCommand(orchestrationEnvironment.handoffThread, {
+    reportFailure: false,
+  });
+  const [mode, setMode] = useState<OrchestrationV2ThreadHandoffMode>("focused");
+  // One id per sheet, so a retry after a dropped reply returns the thread the first call started.
+  const [clientRequestId] = useState(uuidv4);
+  const [starting, setStarting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const agentOption = useMemo(
+    () =>
+      buildModelOptions(config, selection, undefined, thread?.projectId ?? null).find(
+        (option) =>
+          option.selection.instanceId === selection?.instanceId &&
+          option.selection.model === selection.model,
+      ),
+    [config, selection, thread?.projectId],
+  );
+  const startsIn = thread?.worktreePath ?? project?.workspaceRoot ?? null;
+
+  const start = async () => {
+    if (selection === null || starting) return;
+    setStarting(true);
+    setError(null);
+    void Haptics.selectionAsync();
+    const result = await handoff({
+      environmentId: target.environmentId,
+      input: { sourceThreadId: target.threadId, modelSelection: selection, mode, clientRequestId },
+    });
+    if (result._tag !== "Success") {
+      setStarting(false);
+      const failure = squashAtomCommandFailure(result);
+      setError(failure instanceof Error ? failure.message : "Could not start the new session.");
+      return;
+    }
+    const nextRef = scopeThreadRef(target.environmentId, result.value.threadId);
+    const ready = await waitForThreadShellReady({
+      read: () => appAtomRegistry.get(environmentThreadShells.threadShellAtom(nextRef)) !== null,
+    });
+    setStarting(false);
+    if (!ready) {
+      setError(
+        "The new session started, but it has not reached this device yet. Open it from the thread list.",
+      );
+      return;
+    }
+    // Replace this leaf sheet so the new thread enters the workspace stack Home's Back button expects.
+    navigation.dispatch(
+      StackActions.replace("Thread", {
+        environmentId: target.environmentId,
+        threadId: result.value.threadId,
+      }),
+    );
+  };
+
+  const content = (
+    <ScrollView
+      nestedScrollEnabled
+      keyboardShouldPersistTaps="handled"
+      className="flex-1"
+      contentInsetAdjustmentBehavior={Platform.OS === "ios" ? "automatic" : "never"}
+      contentContainerClassName="gap-5 px-5 pt-2"
+      contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 16) + 8 }}
+    >
+      <Text className="text-sm text-foreground-muted">
+        Start a fresh session from this stopping point. The original session stays unchanged.
+      </Text>
+      <View className="gap-0.5 rounded-2xl bg-grouped-card px-4 py-3">
+        <Text className="text-base font-t3-medium text-foreground" numberOfLines={1}>
+          {thread?.title ?? "Current session"}
+        </Text>
+        <Text className="text-sm text-foreground-muted" numberOfLines={1}>
+          {`Agent: ${thread?.modelSelection.model ?? "Unknown"}`}
+        </Text>
+      </View>
+      <ListSection title="Agent">
+        <NavigationRow
+          title={agentOption?.label ?? selection?.model ?? "Choose an agent"}
+          subtitle={agentOption?.providerLabel}
+          leading={
+            agentOption === undefined ? undefined : (
+              <ProviderIcon
+                iconUrl={agentOption.providerIconUrl}
+                provider={agentOption.providerDriver}
+                size={20}
+              />
+            )
+          }
+          disabled={starting}
+          accessibilityHint="Choose which agent continues the work"
+          onPress={() => navigation.navigate("ThreadHandoffAgent", target)}
+        />
+      </ListSection>
+      <ListSection
+        title="Context"
+        footer={CONTEXT_CHOICES.find((c) => c.mode === mode)?.description}
+      >
+        {CONTEXT_CHOICES.map((choice, index) => (
+          <ListChoiceRow
+            key={choice.mode}
+            label={choice.label}
+            selected={mode === choice.mode}
+            separated={index > 0}
+            disabled={starting}
+            onPress={() => setMode(choice.mode)}
+          />
+        ))}
+      </ListSection>
+      {startsIn === null ? null : (
+        <Text className="text-xs text-foreground-muted">
+          {"Starts in: "}
+          <Text className="font-mono text-xs text-foreground">{startsIn}</Text>
+        </Text>
+      )}
+      {error === null ? null : <ErrorBanner message={error} />}
+      <Button
+        label="Start new session"
+        tone="primary"
+        fullWidth
+        loading={starting}
+        disabled={!canHandoff || selection === null}
+        onPress={() => void start()}
+      />
+    </ScrollView>
+  );
+
+  if (Platform.OS === "ios") {
+    // Plain formSheets lack stack headers; host one in a nested native stack.
+    return (
+      <View collapsable={false} className="flex-1 bg-sheet">
+        <ScreenStack style={{ flex: 1 }}>
+          <NativeScreen
+            activityState={2}
+            enabled
+            isNativeStack
+            screenId="thread-handoff-sheet-native"
+            scrollEdgeEffects={HEADER_SCROLL_EDGE_EFFECTS}
+            className="flex-1 bg-sheet"
+          >
+            {content}
+            <NativeHeader
+              backgroundColor="rgba(0,0,0,0)"
+              tintColorClassName="accent-foreground"
+              hideBackButton
+              hideShadow={false}
+              title="Hand off to another agent"
+              titleColorClassName="accent-foreground"
+              titleFontSize={18}
+              titleFontWeight="800"
+              translucent
+            />
+          </NativeScreen>
+        </ScreenStack>
+      </View>
+    );
+  }
+
+  return (
+    <View collapsable={false} className="flex-1 bg-sheet">
+      <NativeStackScreenOptions options={{ sheetCornerRadius: 28 }} />
+      <AndroidSheetHeader title="Hand off to another agent" onBack={() => navigation.goBack()} />
+      <ScreenContent insetHorizontal={layout.usesSplitView}>{content}</ScreenContent>
+    </View>
+  );
+}
+
+/** Picks the agent for a hand-off from the same catalog the thread's model picker shows. */
+export function ThreadHandoffAgentRouteScreen({ route }: StaticScreenProps<ThreadHandoffParams>) {
+  const target = route.params;
+  const navigation = useNavigation();
+  const { thread, selection, threadKey } = useHandoffAgent(target);
+  const config = useEnvironmentServerConfig(target.environmentId);
+  const projectId = thread?.projectId ?? null;
+  const models = useMemo(
+    () => buildModelOptions(config, selection, undefined, projectId),
+    [config, selection, projectId],
+  );
+  const providerGroups = useMemo(() => groupByProvider(models), [models]);
+  const selectedOption = models.find(
+    (option) =>
+      option.selection.instanceId === selection?.instanceId &&
+      option.selection.model === selection.model,
+  );
+  const optionDescriptors = useMemo(
+    () =>
+      resolveProviderOptionDescriptors({
+        capabilities: selectedOption?.capabilities,
+        selections: selection?.options,
+      }),
+    [selectedOption?.capabilities, selection?.options],
+  );
+  const pick = (next: ModelSelection) =>
+    appAtomRegistry.set(pickedAgentAtom, { threadKey, selection: next });
+  return (
+    <ThreadSettingsPickerScreen
+      environmentId={target.environmentId}
+      projectId={projectId}
+      providerGroups={providerGroups}
+      selectedModel={selection}
+      prompt=""
+      onPromptChange={() => {}}
+      onSelectModel={(option) => pick(option.selection)}
+      optionDescriptors={optionDescriptors}
+      onUpdateOptionSelections={(options) => {
+        if (selection) pick({ ...selection, options });
+      }}
+      runtimeMode="full-access"
+      onUpdateRuntimeMode={() => {}}
+      runtimeHidden
+      onClose={() => navigation.goBack()}
+    />
+  );
+}
