@@ -1070,12 +1070,13 @@ function MemoryDetails({
       if (!live) return;
       intent.current = { operationId: operationId(), expectedHeads: memoryExpectedHeads(live) };
     }
+    const forgetIntent = intent.current;
     busy.current = true;
     setPending(true);
     await settled(
       async () => {
         const result = await onForget(
-          { memorySpaceId, memoryId, ...intent.current },
+          { memorySpaceId, memoryId, ...forgetIntent },
           live?.status === "active" && live.payload.evidence.some((e) => e.origin === "import"),
         );
         if (!mounted.current || !registry.get(memory.forget.permissionAtom(params.environmentId)))
