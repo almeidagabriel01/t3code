@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
+  THREAD_HANDOFF_INSTRUCTIONS_MAX_CHARS,
   type EnvironmentId,
   type ModelSelection,
   type OrchestrationV2ThreadHandoffMode,
@@ -11,7 +12,7 @@ import { StackActions, useNavigation, type StaticScreenProps } from "@react-navi
 import { Atom } from "effect/reactivity";
 import * as Haptics from "expo-haptics";
 import { useEffect, useMemo, useState } from "react";
-import { Platform, ScrollView, View } from "react-native";
+import { Platform, ScrollView, TextInput, View } from "react-native";
 import { ScreenStack } from "react-native-screens";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -88,6 +89,7 @@ export function ThreadHandoffSheet({ route }: StaticScreenProps<ThreadHandoffPar
     reportFailure: false,
   });
   const [mode, setMode] = useState<OrchestrationV2ThreadHandoffMode>(DEFAULT_HANDOFF_MODE);
+  const [instructions, setInstructions] = useState("");
   // One id per sheet, so a retry after a dropped reply returns the thread the first call started.
   const [clientRequestId] = useState(uuidv4);
   const [starting, setStarting] = useState(false);
@@ -125,6 +127,7 @@ export function ThreadHandoffSheet({ route }: StaticScreenProps<ThreadHandoffPar
         modelSelection: selection,
         mode,
         clientRequestId,
+        instructions,
       }),
     });
     if (result._tag !== "Success") {
@@ -205,6 +208,25 @@ export function ThreadHandoffSheet({ route }: StaticScreenProps<ThreadHandoffPar
             onPress={() => setMode(choice.mode)}
           />
         ))}
+      </ListSection>
+      <ListSection
+        title="What should it do next?"
+        footer="Optional. Goes at the top of the new agent's first message."
+      >
+        <View className="px-4 py-3">
+          <TextInput
+            multiline
+            accessibilityLabel="What should it do next?"
+            value={instructions}
+            onChangeText={setInstructions}
+            editable={!starting}
+            maxLength={THREAD_HANDOFF_INSTRUCTIONS_MAX_CHARS}
+            textAlignVertical="top"
+            placeholder="Optional"
+            placeholderTextColorClassName="accent-foreground-muted"
+            className="max-h-40 min-h-20 font-sans text-base text-foreground"
+          />
+        </View>
       </ListSection>
       {startsIn === null ? null : (
         <View className="flex-row gap-1">

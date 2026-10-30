@@ -31,7 +31,7 @@ describe("buildThreadHandoffPrompt", () => {
         "Treat workspace files as authoritative",
         "Briefly state where the previous session stopped.",
       ],
-      lacks: ["Latest proposed plan", "Saved transcript"],
+      lacks: ["Latest proposed plan", "Saved transcript", "Instructions for you", "Files changed"],
     },
     {
       name: "optional parts are left out when absent",
@@ -44,6 +44,28 @@ describe("buildThreadHandoffPrompt", () => {
       input: { ...base, latestPlanMarkdown: "# Plan\n1. cache" },
       has: ["Latest proposed plan:", "1. cache"],
       lacks: [],
+    },
+    {
+      name: "instructions lead the context and steer the closing ask",
+      input: { ...base, instructions: "Add tests for the cache." },
+      has: [
+        "Instructions for you (do this first):",
+        "Add tests for the cache.",
+        "then carry out the instructions above",
+      ],
+      lacks: ["wait for my next instruction"],
+    },
+    {
+      name: "changed files are listed with a count",
+      input: { ...base, mode: "full" as const, changedFiles: ["src/a.ts", "src/b.ts"] },
+      has: ["Files changed in the previous thread (2):", "- src/a.ts", "- src/b.ts"],
+      lacks: ["more"],
+    },
+    {
+      name: "changed files past the cap are summarized",
+      input: { ...base, changedFiles: Array.from({ length: 53 }, (_, index) => `f${index}.ts`) },
+      has: ["Files changed in the previous thread (53):", "- f49.ts", "- ...and 3 more"],
+      lacks: ["- f50.ts"],
     },
     {
       name: "full embeds the transcript lines in order",

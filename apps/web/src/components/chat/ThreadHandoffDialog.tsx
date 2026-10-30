@@ -4,11 +4,12 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import type {
-  ModelSelection,
-  OrchestrationV2ThreadHandoffMode,
-  ProviderInstanceId,
-  ScopedThreadRef,
+import {
+  THREAD_HANDOFF_INSTRUCTIONS_MAX_CHARS,
+  type ModelSelection,
+  type OrchestrationV2ThreadHandoffMode,
+  type ProviderInstanceId,
+  type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { useNavigate } from "@tanstack/react-router";
@@ -37,6 +38,7 @@ import {
   DialogTitle,
 } from "../ui/dialog";
 import { Label } from "../ui/label";
+import { Textarea } from "../ui/textarea";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { resolveContextWindowModelDisplayName } from "./ContextWindowMeter.logic";
 import { ProviderModelPicker } from "./ProviderModelPicker";
@@ -122,6 +124,7 @@ function ThreadHandoffDialog({
   const handoff = useAtomCommand(orchestrationEnvironment.handoffThread, { reportFailure: false });
   const [picked, setPicked] = useState<ModelSelection | null>(null);
   const [mode, setMode] = useState<OrchestrationV2ThreadHandoffMode>("focused");
+  const [instructions, setInstructions] = useState("");
   // One id per dialog, so a retry after a dropped reply returns the thread the first call started.
   const [clientRequestId] = useState(randomUUID);
   const [starting, setStarting] = useState(false);
@@ -150,7 +153,13 @@ function ThreadHandoffDialog({
     setError(null);
     const result = await handoff({
       environmentId,
-      input: { sourceThreadId: threadId, modelSelection: selection, mode, clientRequestId },
+      input: {
+        sourceThreadId: threadId,
+        modelSelection: selection,
+        mode,
+        clientRequestId,
+        ...(instructions.trim() === "" ? {} : { instructions: instructions.trim() }),
+      },
     });
     if (result._tag === "Failure") {
       setStarting(false);
@@ -227,6 +236,20 @@ function ThreadHandoffDialog({
                 onChange={setMode}
               />
               <p className="text-muted-foreground text-xs leading-relaxed">{CONTEXT_HELP[mode]}</p>
+            </div>
+            <div className="grid min-w-0 gap-1.5">
+              <Label>What should it do next?</Label>
+              <Textarea
+                aria-label="What should it do next?"
+                value={instructions}
+                disabled={starting}
+                maxLength={THREAD_HANDOFF_INSTRUCTIONS_MAX_CHARS}
+                placeholder="Optional"
+                onChange={(event) => setInstructions(event.target.value)}
+              />
+              <p className="text-muted-foreground text-xs leading-relaxed">
+                Optional. Goes at the top of the new agent's first message.
+              </p>
             </div>
             {startsIn !== null ? (
               <p className="flex min-w-0 gap-1 text-muted-foreground text-xs">

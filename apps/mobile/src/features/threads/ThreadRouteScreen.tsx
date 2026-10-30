@@ -78,7 +78,10 @@ import { useSelectedThreadGitState } from "../../state/use-selected-thread-git-s
 import { useSelectedThreadRequests } from "../../state/use-selected-thread-requests";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
 import { useThreadComposerState } from "../../state/use-thread-composer-state";
-import { resolveMergeBackTargetThreadId } from "@t3tools/client-runtime/state/thread-relationships";
+import {
+  resolveHandoffTargetThreadId,
+  resolveMergeBackTargetThreadId,
+} from "@t3tools/client-runtime/state/thread-relationships";
 import { resolveLatestMergeBackRun } from "@t3tools/client-runtime/state/thread-workflows";
 import { threadEnvironment, useThreadFamily } from "../../state/threads";
 import { EMPTY_ENVIRONMENT_THREAD_STATE } from "@t3tools/client-runtime/state/threads";
@@ -1016,6 +1019,7 @@ function ThreadRouteContent(
           isCompacting={composer.isCompacting}
           runlessWorkActive={composer.runlessWorkActive}
           providerSubagentStatus={composer.providerSubagentStatus}
+          handedOffToThreadId={resolveHandoffTargetThreadId(selectedThreadDetail)}
           creationState={creationState}
           setupWorkingStartedAt={
             composer.activeWorkStartedAt !== null &&

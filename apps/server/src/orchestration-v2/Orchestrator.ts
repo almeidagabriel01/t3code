@@ -25,6 +25,7 @@ import {
   CommandId,
   type GuestMessageId,
   isCompactionCommandMessage,
+  ContextTransferId,
   isOrchestrationV2WorkActive,
   isProviderNativeSubagentThread,
   MessageId,
@@ -543,6 +544,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
       return command.parentThreadId;
     case "secret_request.record":
     case "link_request.record":
+    case "thread.handoff.record":
       return command.threadId;
     case "thread.fork":
     case "thread.merge_back":
@@ -8218,6 +8220,54 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     },
   );
 
+  const dispatchThreadHandoffRecord = Effect.fn("orchestrationV2.dispatch.threadHandoffRecord")(
+    function* (
+      command: Extract<OrchestrationV2InternalCommand, { readonly type: "thread.handoff.record" }>,
+      events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    ) {
+      const read = (threadId: ThreadId, fields: ReadonlyArray<"contextTransfers">) =>
+        projectionStore
+          .getThreadRecords(threadId, fields)
+          .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
+      const source = yield* read(command.threadId, ["contextTransfers"]);
+      const target = yield* read(command.targetThreadId, []);
+      // Derived from the pair so a handoff retried under another command still records once.
+      const transferId = ContextTransferId.make(
+        `context-transfer:handoff:${command.threadId}:${command.targetThreadId}`,
+      );
+      if (source.contextTransfers.some((transfer) => transfer.id === transferId)) return;
+      const now = yield* DateTime.now;
+      // Appends only: the source may be mid-turn, so nothing of its run state is touched.
+      yield* emit(
+        events,
+        command,
+      )({
+        type: "context-transfer.created",
+        threadId: command.threadId,
+        providerInstanceId: source.thread.providerInstanceId,
+        occurredAt: now,
+        payload: {
+          id: transferId,
+          type: "handoff",
+          sourceThreadId: command.threadId,
+          targetThreadId: command.targetThreadId,
+          sourcePoint: { threadId: command.threadId },
+          basePoint: null,
+          sourceProviderInstanceId: source.thread.providerInstanceId,
+          targetProviderInstanceId: target.thread.providerInstanceId,
+          targetRunId: null,
+          status: "consumed",
+          resolution: null,
+          createdBy: command.createdBy,
+          error: null,
+          createdAt: now,
+          updatedAt: now,
+          consumedAt: now,
+        },
+      });
+    },
+  );
+
   const dispatchSecretRequestRecord = Effect.fn("orchestrationV2.dispatch.secretRequestRecord")(
     function* (
       command: Extract<OrchestrationV2InternalCommand, { readonly type: "secret_request.record" }>,
@@ -12805,6 +12855,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "secret_request.record":
         yield* dispatchSecretRequestRecord(command, events);
         break;
+      case "thread.handoff.record":
+        yield* dispatchThreadHandoffRecord(command, events);
+        break;
       case "link_request.record":
         yield* dispatchLinkRequestRecord(command, events, effects);
         break;
@@ -12906,7 +12959,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           command.type === "thread.stop" ||
           command.type === "subagent.stop" ||
           // Closing a share again, or after it ended, is not an error.
-          command.type === "thread.guest-share.close",
+          command.type === "thread.guest-share.close" ||
+          // Already recorded.
+          command.type === "thread.handoff.record",
         (_planned) =>
           new OrchestratorDispatchError({
             commandId: command.commandId,

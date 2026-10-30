@@ -7,7 +7,7 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
-export type ThreadRelationshipKind = "parent" | "fork" | "subagent" | "transfer";
+export type ThreadRelationshipKind = "parent" | "fork" | "subagent" | "transfer" | "handoff";
 
 export interface ThreadRelationshipNode {
   readonly threadId: ThreadId;
@@ -41,6 +41,18 @@ export function resolveMergeBackTargetThreadId(
   return projection.thread.forkedFrom?.type === "run"
     ? projection.thread.forkedFrom.threadId
     : projection.thread.lineage.parentThreadId;
+}
+
+/** The newest thread this one was handed off to, if any. */
+export function resolveHandoffTargetThreadId(
+  projection: Pick<OrchestrationV2ThreadProjection, "thread" | "contextTransfers"> | null,
+): ThreadId | null {
+  if (projection === null) return null;
+  const handoffs = projection.contextTransfers.filter(
+    (transfer) => transfer.type === "handoff" && transfer.sourceThreadId === projection.thread.id,
+  );
+  // Transfers load oldest first.
+  return handoffs.at(-1)?.targetThreadId ?? null;
 }
 
 function edgeKey(edge: ThreadRelationshipEdge): string {
@@ -114,11 +126,17 @@ export function deriveThreadRelationshipGraph(input: {
     }
     for (const transfer of input.projection.contextTransfers) {
       if (transfer.sourceThreadId === transfer.targetThreadId) continue;
+      const handoffTarget =
+        transfer.type === "handoff" ? threadsById.get(transfer.targetThreadId) : undefined;
       addEdge({
         sourceThreadId: transfer.sourceThreadId,
         targetThreadId: transfer.targetThreadId,
-        kind: "transfer",
-        status: transfer.status,
+        kind: transfer.type === "handoff" ? "handoff" : "transfer",
+        // A handoff's own status is always consumed; the row shows the new thread's.
+        status:
+          handoffTarget === undefined
+            ? transfer.status
+            : (handoffTarget.activityRunStatus ?? handoffTarget.status),
       });
     }
   }

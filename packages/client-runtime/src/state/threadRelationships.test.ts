@@ -6,6 +6,7 @@ import {
   deriveThreadRelationshipGraph,
   immediateThreadRelationships,
   orderWebThreadLineageRows,
+  resolveHandoffTargetThreadId,
   resolveMergeBackTargetThreadId,
   threadRelationshipRowStatus,
 } from "./threadRelationships.ts";
@@ -171,6 +172,43 @@ describe("thread relationships", () => {
         }),
       ]),
     );
+  });
+
+  it("shows a handoff with the new thread's live status and resolves the newest target", () => {
+    const source = ThreadId.make("thread-source");
+    const first = ThreadId.make("thread-first");
+    const second = ThreadId.make("thread-second");
+    const projection = {
+      thread: { id: source },
+      subagents: [],
+      contextTransfers: [first, second].map((targetThreadId) => ({
+        type: "handoff",
+        sourceThreadId: source,
+        targetThreadId,
+        status: "consumed",
+      })),
+    };
+    const graph = deriveThreadRelationshipGraph({
+      threads: [
+        { id: source, status: "completed", forkedFrom: null, lineage: { parentThreadId: null } },
+        {
+          id: second,
+          status: "completed",
+          activityRunStatus: "running",
+          forkedFrom: null,
+          lineage: { parentThreadId: null },
+        },
+      ] as never,
+      projection: projection as never,
+    });
+    expect(graph.edges).toEqual([
+      expect.objectContaining({ targetThreadId: first, kind: "handoff", status: "consumed" }),
+      expect.objectContaining({ targetThreadId: second, kind: "handoff", status: "running" }),
+    ]);
+    expect(resolveHandoffTargetThreadId(projection as never)).toBe(second);
+    expect(
+      resolveHandoffTargetThreadId({ ...projection, contextTransfers: [] } as never),
+    ).toBeNull();
   });
 
   it("keeps the live shell when an archived snapshot contains the same thread id", () => {

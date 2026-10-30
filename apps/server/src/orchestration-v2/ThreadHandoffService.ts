@@ -83,12 +83,25 @@ const make = Effect.gen(function* () {
     const latestPlan = projection.plans.findLast(
       (plan) => plan.kind === "proposed_plan" && plan.markdown !== "",
     );
+    const instructions = input.instructions?.trim() || null;
+    // Already in the projection from each turn's checkpoint; nothing without a git workspace.
+    const changedFiles = [
+      ...new Set(
+        projection.checkpoints.flatMap((checkpoint) =>
+          checkpoint.status === "ready" && checkpoint.appRunOrdinal !== null
+            ? checkpoint.files.map((file) => file.path)
+            : [],
+        ),
+      ),
+    ];
     const prompt = buildThreadHandoffPrompt({
       mode: input.mode,
       threadId: thread.id,
       title: thread.title,
       workspacePath,
       branch: thread.branch,
+      instructions,
+      changedFiles,
       lastUserText: lastUser.text,
       lastAssistantText:
         projection.messages.findLast((message) => message.role === "assistant")?.text ?? null,
@@ -100,7 +113,8 @@ const make = Effect.gen(function* () {
     // A fixed-length id: the thread's scratch folder name derives from it.
     const { instanceId, model } = input.modelSelection;
     const requestId =
-      input.clientRequestId ?? `latest:${lastUser.id}:${input.mode}:${instanceId}:${model}`;
+      input.clientRequestId ??
+      `latest:${lastUser.id}:${input.mode}:${instanceId}:${model}:${instructions ?? ""}`;
     const key = `${input.sourceThreadId.length}:${input.sourceThreadId}${requestId}`;
     const digest = yield* crypto
       .digest("SHA-256", new TextEncoder().encode(key))
@@ -132,6 +146,23 @@ const make = Effect.gen(function* () {
           error._tag === "ThreadManagementProviderInstanceDisabledError"
             ? fail("provider-disabled", { detail: error.message, cause: error })
             : failed(error),
+        ),
+      );
+    // The new thread exists and runs; a missing marker on the source must not fail the handoff.
+    yield* threads
+      .dispatch({
+        type: "thread.handoff.record",
+        commandId: CommandId.make(`${commandId}:record`),
+        threadId: input.sourceThreadId,
+        targetThreadId: result.threadId,
+        createdBy: input.createdBy,
+      })
+      .pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("Could not record a handoff on its source thread", {
+            sourceThreadId: input.sourceThreadId,
+            cause,
+          }),
         ),
       );
     return { threadId: result.threadId };

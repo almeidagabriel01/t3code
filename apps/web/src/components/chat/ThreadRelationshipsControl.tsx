@@ -48,6 +48,7 @@ import {
   ArrowRightIcon,
   BotIcon,
   ChevronDownIcon,
+  ArrowRightLeftIcon,
   CornerLeftUpIcon,
   GitForkIcon,
   LoaderCircleIcon,
@@ -177,6 +178,9 @@ function ThreadLineageGroup(props: {
 
 function relationshipLabel(edge: ThreadRelationshipEdge, currentThreadId: ThreadId) {
   if (edge.kind === "transfer") return "Context transfer";
+  if (edge.kind === "handoff") {
+    return edge.sourceThreadId === currentThreadId ? "Handed off to" : "Handed off from";
+  }
   if (edge.kind === "subagent") {
     return edge.sourceThreadId === currentThreadId ? "Subagent" : "Parent agent";
   }
@@ -619,11 +623,14 @@ export function ThreadRelationshipsPanel(props: {
                 (isParent && threadId === parentRef?.threadId
                   ? (node?.thread?.activityRunStatus ?? parentNativeStatus)
                   : undefined) ?? threadRelationshipRowStatus(graph, { threadId, edge });
-              const RelationshipIcon = isParent
-                ? CornerLeftUpIcon
-                : isSubagent
-                  ? BotIcon
-                  : GitForkIcon;
+              const RelationshipIcon =
+                edge.kind === "handoff"
+                  ? ArrowRightLeftIcon
+                  : isParent
+                    ? CornerLeftUpIcon
+                    : isSubagent
+                      ? BotIcon
+                      : GitForkIcon;
               const relationship = relationshipLabel(edge, props.threadId);
               const projectedAgent =
                 isSubagent && !isParent ? subagentsByThreadId.get(threadId) : undefined;
@@ -671,7 +678,9 @@ export function ThreadRelationshipsPanel(props: {
               const project = projects.find((project) => project.id === node?.thread?.projectId);
               const relationshipHint = node?.missing
                 ? "This related thread is unavailable"
-                : `Open ${relationship.toLowerCase()} in this chat`;
+                : edge.kind === "handoff"
+                  ? `Open the ${edge.sourceThreadId === props.threadId ? "new" : "original"} thread`
+                  : `Open ${relationship.toLowerCase()} in this chat`;
               const RelationshipPopup = agent ? ThreadHoverCardPopup : TooltipPopup;
               const relationshipTooltip = agent ? (
                 <SubagentTooltipContent

@@ -168,6 +168,8 @@ export const OrchestrationV2ContextTransferType = Schema.Literals([
   "merge_back",
   "subagent_spawn",
   "subagent_result",
+  /** A thread handed off to another agent in a new thread; the source records it. */
+  "handoff",
 ]);
 export type OrchestrationV2ContextTransferType = typeof OrchestrationV2ContextTransferType.Type;
 
@@ -3528,6 +3530,14 @@ const OrchestrationV2InternalCommand = Schema.Union([
       }),
     ),
   }),
+  /** Records on the source thread that it was handed off to `targetThreadId`; a repeat records nothing. */
+  Schema.Struct({
+    type: Schema.Literal("thread.handoff.record"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    targetThreadId: ThreadId,
+    createdBy: OrchestrationV2Actor,
+  }),
 ]);
 export type OrchestrationV2InternalCommand = typeof OrchestrationV2InternalCommand.Type;
 
@@ -3939,10 +3949,16 @@ export class OrchestrationV2RestartProviderSessionError extends Schema.TaggedErr
 export const OrchestrationV2ThreadHandoffMode = Schema.Literals(["focused", "full"]);
 export type OrchestrationV2ThreadHandoffMode = typeof OrchestrationV2ThreadHandoffMode.Type;
 
+export const THREAD_HANDOFF_INSTRUCTIONS_MAX_CHARS = 4000;
+
 export const OrchestrationV2ThreadHandoffInput = Schema.Struct({
   sourceThreadId: ThreadId,
   modelSelection: ModelSelection,
   mode: OrchestrationV2ThreadHandoffMode,
+  /** What the new agent should do next; leads its prompt. */
+  instructions: Schema.optional(
+    Schema.String.check(Schema.isMaxLength(THREAD_HANDOFF_INSTRUCTIONS_MAX_CHARS)),
+  ),
   creationSource: Schema.optional(OrchestrationV2CreationSource),
   /** A retry with the same id returns the thread the first call started. */
   clientRequestId: TrimmedNonEmptyString,

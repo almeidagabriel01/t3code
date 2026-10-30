@@ -274,6 +274,8 @@ working right away. The original thread stays as it was.
   agent can read the rest from the original thread. It takes longer and uses more context or
   credits.
 
+Add instructions under **What should it do next?** to put them first in the new agent's message; it also gets the list of files the original thread changed. The original thread shows where it was handed off to (under Lineage on web and desktop, above the composer on mobile).
+
 The new agent first states where the previous session stopped, then continues if work remains.
 Agents can do the same with the thread transfer tool's `handoff` action.
 

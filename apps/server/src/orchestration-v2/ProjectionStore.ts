@@ -3456,6 +3456,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             SELECT payload_json FROM orchestration_v2_projection_context_transfers
             WHERE (source_thread_id = ${threadId} OR target_thread_id = ${threadId})
               AND (status IN ('pending','running','waiting')
+                OR type = 'handoff'
                 OR target_run_id IN (SELECT value FROM json_each(${cohortRunIds}))
                 OR json_extract(payload_json, '$.contextHandoffId') IN
                   (SELECT value FROM json_each(${cohortHandoffIds})))

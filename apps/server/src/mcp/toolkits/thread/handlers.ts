@@ -185,6 +185,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
                 sourceThreadId: projection.thread.id,
                 modelSelection: input.modelSelection ?? projection.thread.modelSelection,
                 mode: input.context ?? "focused",
+                ...(input.instructions === undefined ? {} : { instructions: input.instructions }),
                 createdBy: "agent",
                 creationSource: "mcp",
                 linkOrigin: callerLinkOrigin(context),

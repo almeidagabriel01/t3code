@@ -99,6 +99,10 @@ it("starts a new session with the chosen agent and context, then opens it", asyn
   await expect.element(screen.getByText("Hand off to another agent")).toBeVisible();
   await expect.element(screen.getByText("/repo/.wt/login")).toBeVisible();
   await userEvent.click(screen.getByText("Pick Claude"));
+  await userEvent.type(
+    screen.getByRole("textbox", { name: "What should it do next?" }),
+    "  Add tests.  ",
+  );
   await userEvent.click(screen.getByRole("combobox", { name: "Context" }));
   await userEvent.click(screen.getByRole("option", { name: "Full transcript" }));
   await expect
@@ -115,6 +119,7 @@ it("starts a new session with the chosen agent and context, then opens it", asyn
       sourceThreadId: threadId,
       modelSelection: expect.objectContaining({ instanceId: claude, model: "claude-test" }),
       mode: "full",
+      instructions: "Add tests.",
       clientRequestId: expect.any(String),
     },
   });

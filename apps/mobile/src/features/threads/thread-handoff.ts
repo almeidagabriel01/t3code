@@ -75,6 +75,9 @@ export function buildHandoffInput(input: {
   readonly modelSelection: ModelSelection;
   readonly mode: OrchestrationV2ThreadHandoffMode;
   readonly clientRequestId: string;
+  readonly instructions?: string;
 }): OrchestrationV2ThreadHandoffInput {
-  return { ...input, creationSource: "mobile" };
+  const { instructions, ...rest } = input;
+  const trimmed = instructions?.trim();
+  return { ...rest, ...(trimmed ? { instructions: trimmed } : {}), creationSource: "mobile" };
 }

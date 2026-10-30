@@ -46,6 +46,7 @@ import type {
   RuntimeRequestId,
   ScopedThreadRef,
   ServerConfig as T3ServerConfig,
+  ThreadId,
   UsageLimitsReport,
 } from "@t3tools/contracts";
 import {
@@ -171,6 +172,7 @@ import { ComposerFeedback } from "./ComposerFeedback";
 import { ComposerUsageLimits } from "./ComposerUsageLimits";
 import { PendingUserInputCard } from "./PendingUserInputCard";
 import { ProviderSubagentBar } from "./ProviderSubagentBar";
+import { ThreadHandoffNotice } from "./ThreadHandoffNotice";
 import { ThreadCreationFailedCard } from "./ThreadCreationFailedCard";
 import {
   FLOATING_WORKING_CONTROL_COVERAGE,
@@ -230,6 +232,8 @@ export interface ThreadDetailScreenProps {
   readonly activeWorkStartedAt: string | null;
   readonly runlessWorkActive?: boolean;
   readonly providerSubagentStatus?: ProviderSubagentStatus | null;
+  /** The newest thread this one was handed off to. */
+  readonly handedOffToThreadId?: ThreadId | null;
   readonly isCompacting: boolean;
   readonly creationState:
     | {
@@ -1582,6 +1586,17 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
                     </View>
                   ) : (
                     <>
+                      {props.handedOffToThreadId ? (
+                        <View
+                          className="self-center px-3 pt-1.5"
+                          style={{ width: "100%", maxWidth: contentMaxWidth }}
+                        >
+                          <ThreadHandoffNotice
+                            environmentId={props.environmentId}
+                            targetThreadId={props.handedOffToThreadId}
+                          />
+                        </View>
+                      ) : null}
                       <ThreadComposer
                         isDraft={Boolean(props.draftMode)}
                         canOperateThread={props.canOperateThread}

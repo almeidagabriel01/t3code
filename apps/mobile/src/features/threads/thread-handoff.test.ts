@@ -59,6 +59,7 @@ describe("thread handoff", () => {
         modelSelection: codex,
         mode: "full",
         clientRequestId: "req-1",
+        instructions: "  Add tests.  ",
       }),
     ).toEqual({
       sourceThreadId,
@@ -66,6 +67,16 @@ describe("thread handoff", () => {
       mode: "full",
       creationSource: "mobile",
       clientRequestId: "req-1",
+      instructions: "Add tests.",
     });
+    expect(
+      buildHandoffInput({
+        sourceThreadId,
+        modelSelection: codex,
+        mode: "full",
+        clientRequestId: "req-1",
+        instructions: "   ",
+      }),
+    ).not.toHaveProperty("instructions");
   });
 });
