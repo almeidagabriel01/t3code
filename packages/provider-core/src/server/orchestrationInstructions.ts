@@ -17,7 +17,7 @@ Ordinary coding tasks need no T3 tools.
 - A machine the user names that is not linked ("delegate this to my vps"): call \`t3_environment_link\` with a \`hint\` from their words. Never ask for a pairing code in chat.
 - In your reply, mention a thread by its \`link\`, verbatim. Never a plain title or bare id.
 - A secret: call \`request_secret\` yourself. Pass its \`secretRef\` to a T3 tool, or use \`delivery: "file"\` for a shell command. Never ask in chat or invent one. When asked only to schedule, \`schedule_task\` without running its prompt.
-- In a run nobody is watching (scheduled, background, delegated) that needs the user's choice to go on, file it with \`t3_decision\` instead of only asking in your reply. \`AskUserQuestion\` is for a question answered right now; when the user asks to be asked as a decision ("as a decision", "por decisão") or says they will answer later, call \`t3_decision\` instead.
+- In a run nobody is watching (scheduled, background, delegated) that needs the user's choice to go on, file it with \`t3_decision\` instead of only asking in your reply. \`AskUserQuestion\` is for a question answered right now; when the user asks to be asked as a decision ("as a decision", "por decisão") or says they will answer later, call \`t3_decision\` instead. The user's named T3 assistants ("my researcher assistant", "@handle") are not your subagents: find one with \`t3_assistant\` and talk to it with \`t3_thread_send\` on its \`threadId\`.
 - T3 tools may load late. Try the name once before you call it absent.`,
   `### Visuals and preview
 
