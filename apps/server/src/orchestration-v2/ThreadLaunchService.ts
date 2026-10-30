@@ -104,11 +104,13 @@ export interface ThreadLaunchInput {
   readonly linkOrigin?: OrchestrationV2LinkOrigin;
   /** The parent there, when that environment's agent delegated this as a task. */
   readonly delegatedFrom?: OrchestrationV2DelegatedFrom;
+  /** The worktree is already set up and may be in use; do not run the project's setup script again. */
+  readonly skipSetupScript?: boolean;
 }
 
 type PreparationInput = Pick<
   ThreadLaunchInput,
-  "commandId" | "projectId" | "workspaceStrategy" | "initialMessage"
+  "commandId" | "projectId" | "workspaceStrategy" | "initialMessage" | "skipSetupScript"
 > & {
   readonly reusedWorktree?: { readonly baseRef: string };
 };
@@ -571,7 +573,7 @@ const make = Effect.gen(function* () {
       }
       yield* setupTracker.stageStatus(threadId, "setup-script", "running");
       const setup =
-        worktreePath === null
+        worktreePath === null || input.skipSetupScript === true
           ? ({ status: "no-script" } as const)
           : yield* setupScripts
               .runForThread({

@@ -975,6 +975,35 @@ it.effect("launches a worktree request for Scratch at the root, in its own folde
   }).pipe(Effect.provide(harness.layer));
 });
 
+it.effect("skips the setup script for a worktree the launch says is already set up", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const workspace = { type: "existing_worktree", worktreePath: "/repo/.wt/feature" } as const;
+    const set = yield* launches.launch({
+      ...launchInput({
+        command: "command:launch:set-up",
+        thread: "thread:set-up",
+        message: "Go on",
+        workspace,
+      }),
+      skipSetupScript: true,
+    });
+    assert.equal((yield* preparationSettled(set.threadId)).runs[0]?.status, "starting");
+    assert.equal(harness.runSetup.mock.calls.length, 0);
+    const fresh = yield* launches.launch(
+      launchInput({
+        command: "command:launch:fresh",
+        thread: "thread:fresh",
+        message: "Start",
+        workspace,
+      }),
+    );
+    yield* preparationSettled(fresh.threadId);
+    assert.equal(harness.runSetup.mock.calls.length, 1);
+  }).pipe(Effect.provide(harness.layer));
+});
+
 it.effect("stores a Scratch scheduled task at the root and keeps worktrees elsewhere", () => {
   const harness = scratchHarness();
   return Effect.gen(function* () {

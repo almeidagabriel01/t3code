@@ -20,7 +20,12 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as ThreadLaunch from "./ThreadLaunchService.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 
-export interface ThreadHandoffInput extends OrchestrationV2ThreadHandoffInput {
+export interface ThreadHandoffInput extends Omit<
+  OrchestrationV2ThreadHandoffInput,
+  "clientRequestId"
+> {
+  /** Without one, repeating a handoff of the same latest message to the same agent lands on one thread. */
+  readonly clientRequestId?: string | undefined;
   readonly createdBy: OrchestrationV2Actor;
   readonly creationSource: OrchestrationV2CreationSource;
   /** The linked environment an agent acts for; the new thread carries it. */
@@ -93,7 +98,10 @@ const make = Effect.gen(function* () {
     });
 
     // A fixed-length id: the thread's scratch folder name derives from it.
-    const key = `${input.sourceThreadId.length}:${input.sourceThreadId}${input.clientRequestId}`;
+    const { instanceId, model } = input.modelSelection;
+    const requestId =
+      input.clientRequestId ?? `latest:${lastUser.id}:${input.mode}:${instanceId}:${model}`;
+    const key = `${input.sourceThreadId.length}:${input.sourceThreadId}${requestId}`;
     const digest = yield* crypto
       .digest("SHA-256", new TextEncoder().encode(key))
       .pipe(Effect.mapError(failed));
@@ -113,6 +121,8 @@ const make = Effect.gen(function* () {
             ? { type: "root", ...branch }
             : { type: "existing_worktree", worktreePath: thread.worktreePath, ...branch },
         initialMessage: { text: prompt, attachments: [] },
+        // The source set the worktree up and its agent may still be working there.
+        skipSetupScript: true,
         createdBy: input.createdBy,
         creationSource: input.creationSource,
         ...(input.linkOrigin === undefined ? {} : { linkOrigin: input.linkOrigin }),

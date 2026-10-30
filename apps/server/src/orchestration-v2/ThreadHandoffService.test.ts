@@ -24,7 +24,11 @@ const targetSelection = {
   model: "claude-test",
 } as const;
 
-const message = (role: "user" | "assistant", text: string) => ({ role, text });
+const message = (role: "user" | "assistant", text: string) => ({
+  id: `${role}:${text}`,
+  role,
+  text,
+});
 
 const harness = (source: {
   readonly worktreePath: string | null;
@@ -81,7 +85,9 @@ const harness = (source: {
       ),
     );
     const handoff = (
-      overrides: Partial<Pick<OrchestrationV2ThreadHandoffInput, "mode" | "clientRequestId">> = {},
+      overrides: Partial<
+        Pick<OrchestrationV2ThreadHandoffInput, "mode"> & { clientRequestId: string | undefined }
+      > = {},
     ) =>
       Effect.flatMap(ThreadHandoff.ThreadHandoffService, (service) =>
         service.handoff({
@@ -119,6 +125,7 @@ it.effect("starts the new thread in the source's project and worktree with its m
     });
     assert.include(launched?.initialMessage?.text, "make login faster");
     assert.include(launched?.initialMessage?.text, "Original working directory: /repo/.wt/login");
+    assert.isTrue(launched?.skipSetupScript);
   }),
 );
 
@@ -141,6 +148,19 @@ it.effect("derives one thread per request id", () =>
     assert.strictEqual(retry.threadId, first.threadId);
     assert.notStrictEqual(other.threadId, first.threadId);
   }),
+);
+
+it.effect(
+  "lands a repeated handoff of the same latest message on one thread without a request id",
+  () =>
+    Effect.gen(function* () {
+      const { handoff } = yield* harness({ worktreePath: null, messages: conversation });
+      const first = yield* handoff({ clientRequestId: undefined });
+      const retry = yield* handoff({ clientRequestId: undefined });
+      const full = yield* handoff({ clientRequestId: undefined, mode: "full" });
+      assert.strictEqual(retry.threadId, first.threadId);
+      assert.notStrictEqual(full.threadId, first.threadId);
+    }),
 );
 
 it.effect.each([
