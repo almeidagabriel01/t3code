@@ -35,7 +35,9 @@ import { useProjects, useThreadShell } from "../../state/entities";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { validateMemorySettingsSearch } from "../settings/MemorySettings.logic";
+import { cn } from "../../lib/utils";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
+import { SETTINGS_PICKER_TRIGGER_CLASSNAME } from "../settings/settingsLayout";
 import { Alert, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
 import {
@@ -262,10 +264,10 @@ function AssistantDialog(props: {
               <Input
                 id="assistant-handle"
                 value={handle}
-                aria-invalid={!handleValid}
+                aria-invalid={!handleValid && (handleInput !== null || name.trim().length > 0)}
                 onChange={(event) => setHandleInput(event.target.value.toLowerCase())}
               />
-              {!handleValid ? (
+              {!handleValid && (handleInput !== null || name.trim().length > 0) ? (
                 <p className="text-xs text-destructive-foreground">
                   Use 1 to 32 lowercase letters, numbers or dashes, starting and ending with a
                   letter or number.
@@ -318,7 +320,7 @@ function AssistantDialog(props: {
                     : "Starts on your default model unless you choose another."
                 }
               />
-              <div id="assistant-model" className="flex">
+              <div id="assistant-model">
                 {model !== null &&
                 entries.some((entry) => entry.instanceId === model.instanceId) ? (
                   <ProviderModelPicker
@@ -334,6 +336,11 @@ function AssistantDialog(props: {
                       model.model,
                     )}
                     triggerAriaLabel="Assistant model"
+                    isComposerOwned={false}
+                    triggerClassName={cn(
+                      SETTINGS_PICKER_TRIGGER_CLASSNAME,
+                      "min-h-9 w-full text-left sm:min-h-8 sm:max-w-none",
+                    )}
                     onInstanceModelChange={(instanceId, next) =>
                       setPickedModel(createModelSelection(instanceId, next))
                     }

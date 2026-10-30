@@ -161,6 +161,7 @@ describe("resolveThreadListV2Status", () => {
 
 describe("queued messages keep a settled thread active", () => {
   const threads = [
+    makeThread({ id: ThreadId.make("assistant:jarvis:1"), title: "Jarvis" }),
     makeThread({ id: ThreadId.make("active"), title: "Active" }),
     makeThread({ id: ThreadId.make("settled"), title: "Settled", settledOverride: "settled" }),
     makeThread({
@@ -242,8 +243,9 @@ describe("search lists ranked matches", () => {
 });
 
 describe("getThreadListV2OrderedSection", () => {
-  it("uses each saved order and excludes settled, snoozed, and archived rows", () => {
+  it("uses each saved order and excludes settled, snoozed, archived and assistant rows", () => {
     const threads = [
+      makeThread({ id: ThreadId.make("assistant:jarvis:1"), title: "Jarvis" }),
       makeThread({ id: ThreadId.make("active-later"), title: "Later", activeOrderKey: "t" }),
       makeThread({ id: ThreadId.make("active-first"), title: "First", activeOrderKey: "f" }),
       makeThread({ id: ThreadId.make("active-new"), title: "New" }),

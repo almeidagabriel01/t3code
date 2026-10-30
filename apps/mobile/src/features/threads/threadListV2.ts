@@ -31,7 +31,7 @@ import {
   sortSettledThreads,
 } from "@t3tools/client-runtime/state/thread-sort";
 import type { EnvironmentId, ProjectId, SidebarThreadOrder } from "@t3tools/contracts";
-import { isSideChatThread } from "@t3tools/contracts";
+import { isAssistantThreadId, isSideChatThread } from "@t3tools/contracts";
 import type { SnoozePresetSetting } from "@t3tools/contracts/settings";
 
 import type { ThreadListProvider } from "../../state/thread-list-environments";
@@ -226,7 +226,8 @@ export function getThreadListV2OrderedSection(input: {
     if (
       thread.archivedAt !== null ||
       thread.lineage.relationshipToParent === "subagent" ||
-      isSideChatThread(thread)
+      isSideChatThread(thread) ||
+      isAssistantThreadId(thread.id)
     )
       return false;
     if (
@@ -657,6 +658,7 @@ export function buildThreadListV2Items(input: {
       thread.archivedAt === null &&
       thread.lineage.relationshipToParent !== "subagent" &&
       !isSideChatThread(thread) &&
+      !isAssistantThreadId(thread.id) &&
       (input.environmentId === null || thread.environmentId === input.environmentId) &&
       (projectKeys === null || projectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
   );

@@ -24,7 +24,7 @@ import {
 import { foldSearchQuery, rankSearchItems, scoreThreadSearch } from "@t3tools/shared/paletteSearch";
 import type { ContextMenuItem, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
-import { isSideChatThread } from "@t3tools/contracts";
+import { isAssistantThreadId, isSideChatThread } from "@t3tools/contracts";
 import type { AsyncResult } from "effect/reactivity";
 import {
   effectiveSnoozed,
@@ -600,6 +600,7 @@ export function filterSidebarV2VisibleThreads<
     (thread) =>
       thread.archivedAt === null &&
       !isSideChatThread(thread) &&
+      !isAssistantThreadId(thread.id) &&
       !isShownUnderParent(
         { environmentId: thread.environmentId, threadId: thread.id },
         thread.lineage,

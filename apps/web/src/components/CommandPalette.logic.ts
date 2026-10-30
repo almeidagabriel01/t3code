@@ -27,7 +27,7 @@ import {
   type SourceControlRepositoryInfo,
   THREAD_JUMP_KEYBINDING_COMMANDS,
 } from "@t3tools/contracts";
-import { isSideChatThread } from "@t3tools/contracts";
+import { isAssistantThreadId, isSideChatThread } from "@t3tools/contracts";
 import { filterFilesystemBrowseEntries } from "@t3tools/client-runtime/state/filesystem";
 import { type ReactNode } from "react";
 import { formatRelativeTimeLabel } from "../timestampFormat";
@@ -423,7 +423,10 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
   // Callers order these: recents by last use, search results by rank.
   const visibleThreads = input.threads.filter(
     (thread) =>
-      thread.archivedAt === null && !isSidebarSubagentThread(thread) && !isSideChatThread(thread),
+      thread.archivedAt === null &&
+      !isSidebarSubagentThread(thread) &&
+      !isSideChatThread(thread) &&
+      !isAssistantThreadId(thread.id),
   );
 
   return visibleThreads.map((thread) => {

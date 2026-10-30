@@ -7,6 +7,9 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  ProviderDriverKind,
+  type ServerProvider,
+  type ServerProviderModel,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -387,4 +390,74 @@ it.effect("subscribers get a snapshot, then every change", () => {
     assert.equal(yield* Queue.take(received), "upserted:research-buddy");
     assert.equal(yield* Queue.take(received), `removed:${made.id}`);
   }).pipe(Effect.provide(layer));
+});
+
+const usableModel = (slug: string, extra: Partial<ServerProviderModel> = {}) =>
+  ({
+    slug,
+    name: slug,
+    isCustom: false,
+    capabilities: null,
+    ...extra,
+  }) satisfies ServerProviderModel;
+const usableProvider = (
+  instanceId: string,
+  extra: Partial<ServerProvider> = {},
+): ServerProvider => ({
+  instanceId: ProviderInstanceId.make(instanceId),
+  driver: ProviderDriverKind.make(instanceId),
+  enabled: true,
+  installed: true,
+  version: "0.0.0",
+  status: "ready",
+  auth: { status: "authenticated" },
+  checkedAt: "2026-10-30T00:00:00.000Z",
+  models: [usableModel(`${instanceId}-a`), usableModel(`${instanceId}-b`, { isDefault: true })],
+  slashCommands: [],
+  skills: [],
+  ...extra,
+});
+
+it.each([
+  ["no providers", [], null],
+  [
+    "first usable provider's default model",
+    [usableProvider("claude"), usableProvider("codex")],
+    "claude:claude-b",
+  ],
+  [
+    "skips disabled",
+    [usableProvider("claude", { enabled: false }), usableProvider("codex")],
+    "codex:codex-b",
+  ],
+  [
+    "skips not installed",
+    [usableProvider("claude", { installed: false }), usableProvider("codex")],
+    "codex:codex-b",
+  ],
+  [
+    "skips signed out",
+    [usableProvider("claude", { auth: { status: "unauthenticated" } }), usableProvider("codex")],
+    "codex:codex-b",
+  ],
+  [
+    "skips unavailable",
+    [usableProvider("claude", { availability: "unavailable" }), usableProvider("codex")],
+    "codex:codex-b",
+  ],
+  [
+    "custom default falls back to a built-in model",
+    [
+      usableProvider("claude", {
+        models: [usableModel("mine", { isCustom: true, isDefault: true }), usableModel("built-in")],
+      }),
+    ],
+    "claude:built-in",
+  ],
+] as const)("firstUsableProviderModel: %s", (_name, providers, expected) => {
+  const selection = Assistants.firstUsableProviderModel(providers);
+  assert.strictEqual(
+    selection === null ? null : `${selection.instanceId}:${selection.model}`,
+    expected,
+  );
 });

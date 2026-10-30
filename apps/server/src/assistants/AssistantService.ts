@@ -12,9 +12,11 @@ import {
   CommandId,
   DEFAULT_ASSISTANT_ID,
   DEFAULT_MODEL,
+  isProviderAvailable,
   type ModelSelection,
   type ProjectId,
   ProviderInstanceId,
+  type ServerProvider,
   runtimeModeForToolAccess,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -32,6 +34,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -72,6 +75,25 @@ export class AssistantService extends Context.Service<
   }
 >()("t3/assistants/AssistantService") {}
 
+/** Like a new thread with no configured default: the first usable provider and its default model. */
+export function firstUsableProviderModel(
+  providers: ReadonlyArray<ServerProvider>,
+): ModelSelection | null {
+  const provider = providers.find(
+    (entry) =>
+      entry.enabled &&
+      entry.installed &&
+      entry.auth.status !== "unauthenticated" &&
+      isProviderAvailable(entry),
+  );
+  if (provider === undefined) return null;
+  const model =
+    provider.models.find((entry) => entry.isDefault && !entry.isCustom) ??
+    provider.models.find((entry) => !entry.isCustom) ??
+    provider.models[0];
+  return model === undefined ? null : { instanceId: provider.instanceId, model: model.slug };
+}
+
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const crypto = yield* Crypto.Crypto;
@@ -80,6 +102,7 @@ const make = Effect.gen(function* () {
   const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
   const projects = yield* ProjectService.ProjectService;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const providerRegistry = yield* Effect.serviceOption(ProviderRegistry.ProviderRegistry);
   const lock = yield* Semaphore.make(1);
   const events = yield* PubSub.unbounded<AssistantsEvent>();
   yield* Effect.addFinalizer(() => PubSub.shutdown(events));
@@ -126,10 +149,15 @@ const make = Effect.gen(function* () {
       Effect.mapError(() => assistantError("storage", "Could not read the server settings.")),
     );
     const project = yield* projects.getById(projectId).pipe(Effect.orElseSucceed(Option.none));
+    const configured = resolveProjectSettings(settings, projectId, Option.getOrNull(project))
+      .settings.defaultModelSelection;
+    if (configured) return configured;
+    const providers = Option.isSome(providerRegistry)
+      ? yield* providerRegistry.value.getProviders
+      : [];
+    // ponytail: no usage-limit fallback chain here, the user picks the model on the thread.
     return (
-      // ponytail: no usage-limit fallback chain here, the user picks the model on the thread.
-      resolveProjectSettings(settings, projectId, Option.getOrNull(project)).settings
-        .defaultModelSelection ??
+      firstUsableProviderModel(providers) ??
       ({
         instanceId: ProviderInstanceId.make("codex"),
         model: DEFAULT_MODEL,
