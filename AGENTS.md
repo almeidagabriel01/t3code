@@ -210,3 +210,47 @@ Architecture and its constraints: `docs/internals/overview.md`. Glossary: `docs/
 ## Additional tips
 
 - Security is important, but should not be over-indexed on, especially for dev mode/maintainer-only features.
+
+## Fork quality bar
+
+This checkout is a personal fork that adds features (notes, kanban, memory, destination rail, liquid glass, provider session restart, and more). Every rule below comes from a mistake that already shipped once and was caught by the developer. Treat them as hard rules for fork work, on web, desktop and mobile alike.
+
+### See it before you call it done
+
+- A UI change is not done until you have looked at it in a running client: dark, light and liquid glass; right-panel width (~360–540px) and full-page width; and the mobile simulator when mobile changed (`test-t3-mobile`). Tests and typecheck do not count as seeing it.
+- If the Browser panel's screenshots time out, drive the dev app with Playwright from `node_modules/.pnpm/playwright@*` (pair with `node apps/server/src/bin.ts pair --base-dir <worktree>/.t3`) and read the PNGs. Keep scripted steps in a JSON file.
+- Never drive the command palette or type into the app from a script: keystrokes land in whatever editor has focus and change user data or settings. Toggle appearance by setting the attribute on the test page only, and restore anything you changed in `<worktree>/.t3/userdata`.
+- Subagents do not verify visually. The session that integrates their work captures and reads the screenshots before reporting.
+
+### Layout and design
+
+- Design like a senior product designer: one purpose per row, nothing crammed. Do not put unrelated controls side by side (metadata chips and a formatting toolbar are two rows, or a floating toolbar).
+- Read mode shows no editing chrome. Switching modes must not shift content.
+- Size padding to the container, not the viewport: `@container` + `@2xl/<name>:` variants. `md:` follows the window, so a narrow right panel gets wide-screen padding.
+- `[data-surface-subheader]` inside the right panel is forced to 28px high (`index.css`). Never put it on a taller custom header; use `data-glass-layer` for in-flow chrome instead.
+- Every field has a visible label, and the label sits apart from its description text. Follow the existing settings row and section patterns; never glue a control to the text above it.
+- A single choice is a radio or checkmark list, never several switches. Rows that do not navigate have no chevron. Every action row gets its own meaningful icon; do not repeat one icon across a list.
+- Show human labels, not raw values: select triggers render their option's label, and file or folder names show readable text.
+
+### Liquid glass and color
+
+- New chrome uses the glass system (`surface-glass`, `dropdown-glass`, `dialog-glass`, `alert-glass`, `[data-glass-layer]`, and `components/ui` primitives, which already carry glass). Never ship an opaque strip (`bg-muted`, `bg-background` bands) where the rest of the app is translucent. Floating panels use the `components/ui` popover, menu and dialog primitives, never a hand-styled div.
+- Dark-theme tokens are very faint (`--border` and `--accent` are only a few percent white). For dividers, cards and hover states that must read clearly, use foreground-relative colors (`border-foreground/12`, `hover:bg-foreground/8`) and check them on screen in dark mode.
+- Every clickable element has `cursor-pointer`, a visible hover state and an inset focus ring. That includes chips, list rows, icon buttons and menu triggers.
+
+### Robust logic
+
+- Never allowlist fields of external or user-edited data (frontmatter, provider memory files, CLI output). Parse tolerantly, ignore unknown keys and preserve them on write; only reject what is truly unusable.
+- One bad item never hides the others. Process per item, report skipped items with an enumerable reason, and keep the UI able to tell "nothing found" from "failed".
+- Compare versions as semver, not as strings. Validate every item before mutating any of them.
+- Do not patch the single case the developer reported. Find the class of input that fails and fix the class, with a table-driven test.
+
+### Feature completeness
+
+- Every fork feature ships on web, desktop and mobile with equivalent flows. Mobile is not a reduced copy: when the web flow is simplified, simplify mobile the same way.
+- Every user action has its reverse and its entry points (header, menus, palette, settings), and agents can reach it through MCP tools when that makes sense.
+- Do not report "done" with known pending items. Finish them, or name them as explicit decisions.
+
+### Working with parallel agents in one worktree
+
+- Commit with `git commit <paths>` only. The pre-commit hook can sweep other agents' staged files into your commit, so never stage (`git add -N` is the only exception, for new files), never stash, and never reset the index.
