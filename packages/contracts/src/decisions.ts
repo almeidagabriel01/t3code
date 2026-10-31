@@ -56,6 +56,8 @@ export const Decision = Schema.Struct({
   answeredAt: Schema.optional(IsoDateTime),
   /** When the outcome reached the requesting thread; absent while pending or when the thread is gone. */
   deliveredAt: Schema.optional(IsoDateTime),
+  /** Set when the decision mirrors a provider approval; answering responds to that request. */
+  approvalRequestId: Schema.optional(Schema.String),
   createdAt: IsoDateTime,
 });
 export type Decision = typeof Decision.Type;

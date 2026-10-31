@@ -1,8 +1,10 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import { IsoDateTime, ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import type { RuntimeMode } from "./providerPolicy.ts";
+import { InstanceBudgetStatus, ProviderBudget } from "./usage.ts";
 
 /**
  * An assistant is a named, long-lived conversation: a row that points at its current real thread.
@@ -79,6 +81,8 @@ export const Assistant = Schema.Struct({
   /** The current conversation; null only until its first launch lands. */
   threadId: Schema.NullOr(ThreadId),
   generation: Schema.Number,
+  /** Spending cap over every conversation it had; priced like provider budgets. */
+  budget: Schema.NullOr(ProviderBudget).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   archivedAt: Schema.NullOr(IsoDateTime),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -105,6 +109,7 @@ export const AssistantsCreateInput = Schema.Struct({
   modelSelection: Schema.optional(ModelSelection),
   instructions: Schema.String.check(Schema.isMaxLength(ASSISTANT_INSTRUCTIONS_MAX_CHARS)),
   toolAccess: AssistantToolAccess,
+  budget: Schema.optional(Schema.NullOr(ProviderBudget)),
 });
 export type AssistantsCreateInput = typeof AssistantsCreateInput.Type;
 
@@ -119,6 +124,8 @@ export const AssistantsUpdateInput = Schema.Struct({
     Schema.String.check(Schema.isMaxLength(ASSISTANT_INSTRUCTIONS_MAX_CHARS)),
   ),
   toolAccess: Schema.optional(AssistantToolAccess),
+  /** Null removes the cap. */
+  budget: Schema.optional(Schema.NullOr(ProviderBudget)),
   archived: Schema.optional(Schema.Boolean),
 });
 export type AssistantsUpdateInput = typeof AssistantsUpdateInput.Type;
@@ -132,6 +139,20 @@ export const AssistantsResetInput = Schema.Struct({
   restoreThreadId: Schema.optional(ThreadId),
 });
 export type AssistantsResetInput = typeof AssistantsResetInput.Type;
+
+export const AssistantsSpendInput = Schema.Struct({ assistantId: AssistantId });
+export type AssistantsSpendInput = typeof AssistantsSpendInput.Type;
+
+/** Estimated at API prices from T3's own turns, across every conversation the assistant had. */
+export const AssistantSpend = Schema.Struct({
+  todayUsd: Schema.Number,
+  /** Rolling last 30 days, including today. */
+  periodUsd: Schema.Number,
+  /** Some turns had no usage or no known rate, so the totals are a floor. */
+  partial: Schema.Boolean,
+  budget: Schema.optionalKey(InstanceBudgetStatus),
+});
+export type AssistantSpend = typeof AssistantSpend.Type;
 
 export const AssistantsDeleteResult = Schema.Struct({ assistantId: AssistantId });
 export type AssistantsDeleteResult = typeof AssistantsDeleteResult.Type;

@@ -78,7 +78,8 @@ describe("assistant client guards", () => {
       WS_METHODS.assistantsReset,
     ])
       expect(clientRpcRequiredScopes(method, {})).toEqual(["orchestration:operate"]);
-    expect(Object.hasOwn(CLIENT_GUARDED_RPC_SCOPES, WS_METHODS.assistantsSubscribe)).toBe(false);
+    for (const method of [WS_METHODS.assistantsSubscribe, WS_METHODS.assistantsSpend])
+      expect(Object.hasOwn(CLIENT_GUARDED_RPC_SCOPES, method)).toBe(false);
   });
 });
 

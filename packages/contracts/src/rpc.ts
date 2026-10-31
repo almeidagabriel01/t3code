@@ -437,6 +437,8 @@ import {
   AssistantsDeleteResult,
   AssistantsEvent,
   AssistantsResetInput,
+  AssistantSpend,
+  AssistantsSpendInput,
   AssistantsSubscribeInput,
   AssistantsUpdateInput,
 } from "./assistants.ts";
@@ -682,6 +684,7 @@ export const WS_METHODS = {
   assistantsUpdate: "assistants.update",
   assistantsDelete: "assistants.delete",
   assistantsReset: "assistants.reset",
+  assistantsSpend: "assistants.spend",
 
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
@@ -2149,6 +2152,11 @@ const WsAssistantsResetRpc = Rpc.make(WS_METHODS.assistantsReset, {
   success: Assistant,
   error: AssistantRpcErrors,
 });
+const WsAssistantsSpendRpc = Rpc.make(WS_METHODS.assistantsSpend, {
+  payload: AssistantsSpendInput,
+  success: AssistantSpend,
+  error: AssistantRpcErrors,
+});
 
 const WsKanbanSubscribeRpc = Rpc.make(WS_METHODS.kanbanSubscribe, {
   payload: KanbanSubscribeInput,
@@ -2481,6 +2489,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsAssistantsUpdateRpc,
   WsAssistantsDeleteRpc,
   WsAssistantsResetRpc,
+  WsAssistantsSpendRpc,
   WsServerReportClientActivityRpc,
   WsCloudGetRelayClientStatusRpc,
   WsCloudInstallRelayClientRpc,

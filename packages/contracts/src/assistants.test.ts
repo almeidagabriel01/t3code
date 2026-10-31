@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  Assistant,
   AssistantHandle,
   assistantHandleFromName,
   assistantIdFromThreadId,
@@ -45,4 +46,40 @@ describe("assistant thread ids", () => {
       expect(assistantIdFromThreadId(threadId)).toBeNull();
     },
   );
+});
+
+describe("Assistant", () => {
+  const decode = Schema.decodeUnknownSync(Assistant);
+  const row = {
+    id: "jarvis",
+    handle: "jarvis",
+    name: "Jarvis",
+    projectId: "project-1",
+    instructions: "",
+    toolAccess: "full",
+    isDefault: true,
+    threadId: null,
+    generation: 1,
+    archivedAt: null,
+    createdAt: "2026-10-30T00:00:00.000Z",
+    updatedAt: "2026-10-30T00:00:00.000Z",
+  };
+
+  it("reads a row saved before budgets existed as having no budget", () => {
+    expect(decode(row).budget).toBeNull();
+  });
+
+  it("keeps a budget, filling the provider budget defaults", () => {
+    const budget = decode({
+      ...row,
+      budget: { amountUsd: 5, period: "monthly", timeZone: "America/Sao_Paulo" },
+    }).budget;
+    expect(budget).toEqual({
+      amountUsd: 5,
+      period: "monthly",
+      warnAtPercent: 80,
+      blockWhenExceeded: false,
+      timeZone: "America/Sao_Paulo",
+    });
+  });
 });
