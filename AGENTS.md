@@ -258,6 +258,7 @@ This checkout is a personal fork that adds features (notes, kanban, memory, dest
 ### Feature completeness
 
 - Every fork feature ships on web, desktop and mobile with equivalent flows. Mobile is not a reduced copy: when the web flow is simplified, simplify mobile the same way.
+- Mobile tablets (iPad, Android tablets) render `ThreadNavigationSidebar`, not `HomeScreen`: a Home section goes in both. That sidebar sits outside any navigator screen, so nothing it renders may call `useRoute`; open things by id with `useSelectWorkspaceDetail` or `useNavigateToPullRequest`.
 - Every user action has its reverse and its entry points (header, menus, palette, settings), and agents can reach it through MCP tools when that makes sense.
 - Do not report "done" with known pending items. Finish them, or name them as explicit decisions.
 
