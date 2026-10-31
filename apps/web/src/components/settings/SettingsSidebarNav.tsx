@@ -32,6 +32,7 @@ import {
   ServerIcon,
   Settings2Icon,
   ShieldCheckIcon,
+  SlackIcon,
   SmartphoneIcon,
   UserRoundIcon,
   WrenchIcon,
@@ -101,6 +102,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/snap-shot": SnapShotIcon,
   "/settings/providers": BotIcon,
   "/settings/assistants": UserRoundIcon,
+  "/settings/slack": SlackIcon,
   "/settings/memory": BrainIcon,
   "/settings/threads": MessagesSquareIcon,
   "/settings/browser": GlobeIcon,
@@ -147,7 +149,9 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const navGroups = SETTINGS_NAV_GROUPS.map((group) => ({
     ...group,
     paths: group.paths.filter(
-      (to) => to !== "/settings/memory" || searchableItems.some((entry) => entry.to === to),
+      (to) =>
+        (to !== "/settings/memory" && to !== "/settings/slack") ||
+        searchableItems.some((entry) => entry.to === to),
     ),
   })).filter((group) => group.paths.length > 0);
   const navPaths = navGroups.flatMap((group) => group.paths);

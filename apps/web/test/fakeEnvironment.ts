@@ -3,6 +3,7 @@
 // stay pending so nothing retries on timers. Everything above the wire is the app's own.
 import {
   AuthStandardClientScopes,
+  type AuthEnvironmentScope,
   EnvironmentId,
   EventId,
   ExecutionEnvironmentDescriptor,
@@ -14,12 +15,18 @@ import {
   RunId,
   ScheduledTaskError,
   ServerConfig,
+  SlackChannelSettingsError,
   ThreadId,
   TurnItemId,
   WS_METHODS,
   WsRpcGroup,
   type Assistant,
   type AssistantSpend,
+  type ChannelLinkCode,
+  type ChannelLinkedIdentity,
+  type SlackChannelSettings,
+  type SlackChannelSettingsErrorReason,
+  type SlackChannelStatusEvent,
   type ScheduledTask,
   type AssistantsEvent,
   type Decision,
@@ -468,6 +475,87 @@ handlers[WS_METHODS.scheduledTasksSetEnabled] = (input: {
   return Effect.succeed({ task: { ...found, enabled: input.enabled } });
 };
 
+/** Slack settings, link codes and identities the fake server holds, and the calls it received. */
+const SLACK_DEFAULTS: SlackChannelSettings = {
+  connectionId: "slack-render" as SlackChannelSettings["connectionId"],
+  enabled: false,
+  hasAppToken: false,
+  hasBotToken: false,
+  allowedChannelIds: [],
+  status: "disabled",
+};
+export const fakeSlack = {
+  settings: SLACK_DEFAULTS,
+  identities: [] as ChannelLinkedIdentity[],
+  linkCode: { code: "ABC123", expiresAt: "2099-01-01T00:00:00.000Z" } as ChannelLinkCode,
+  failConfigure: null as SlackChannelSettingsErrorReason | null,
+  configures: [] as unknown[],
+  disconnects: 0,
+  unlinks: [] as unknown[],
+};
+/** Starts a Slack scenario from a clean server. */
+export function resetFakeSlack(settings: Partial<SlackChannelSettings> = {}): void {
+  fakeSlack.settings = { ...SLACK_DEFAULTS, ...settings };
+  fakeSlack.identities = [];
+  fakeSlack.failConfigure = null;
+  fakeSlack.configures = [];
+  fakeSlack.disconnects = 0;
+  fakeSlack.unlinks = [];
+}
+const slackStatusSubscribers = new Set<Queue.Queue<SlackChannelStatusEvent>>();
+/** Pushes a live status event to the open subscription. */
+export function publishSlackStatus(event: Omit<SlackChannelStatusEvent, "connectionId">): void {
+  for (const queue of slackStatusSubscribers) {
+    Effect.runSync(Queue.offer(queue, { connectionId: fakeSlack.settings.connectionId, ...event }));
+  }
+}
+handlers[WS_METHODS.slackChannelGetSettings] = () => Effect.sync(() => fakeSlack.settings);
+handlers[WS_METHODS.slackChannelSubscribeStatus] = () =>
+  subscribe<SlackChannelStatusEvent>([], (queue) => {
+    slackStatusSubscribers.add(queue);
+    return () => slackStatusSubscribers.delete(queue);
+  });
+handlers[WS_METHODS.slackChannelConfigure] = (input: {
+  readonly enabled?: boolean;
+  readonly appToken?: string;
+  readonly botToken?: string;
+  readonly allowedChannelIds?: SlackChannelSettings["allowedChannelIds"];
+}) => {
+  fakeSlack.configures.push(input);
+  if (fakeSlack.failConfigure !== null) {
+    return Effect.fail(new SlackChannelSettingsError({ reason: fakeSlack.failConfigure }));
+  }
+  const current = fakeSlack.settings;
+  fakeSlack.settings = {
+    ...current,
+    enabled: input.enabled ?? current.enabled,
+    hasAppToken: current.hasAppToken || input.appToken !== undefined,
+    hasBotToken: current.hasBotToken || input.botToken !== undefined,
+    allowedChannelIds: input.allowedChannelIds ?? current.allowedChannelIds,
+  };
+  return Effect.succeed(fakeSlack.settings);
+};
+handlers[WS_METHODS.slackChannelDisconnect] = () => {
+  fakeSlack.disconnects += 1;
+  fakeSlack.settings = {
+    ...fakeSlack.settings,
+    enabled: false,
+    hasAppToken: false,
+    hasBotToken: false,
+    status: "disabled",
+  };
+  return Effect.succeed(fakeSlack.settings);
+};
+handlers[WS_METHODS.channelsCreateLinkCode] = () => Effect.succeed(fakeSlack.linkCode);
+handlers[WS_METHODS.channelsListIdentities] = () => Effect.sync(() => fakeSlack.identities);
+handlers[WS_METHODS.channelsUnlink] = (input: { readonly externalActorId: string }) => {
+  fakeSlack.unlinks.push(input);
+  fakeSlack.identities = fakeSlack.identities.filter(
+    (identity) => identity.externalActorId !== input.externalActorId,
+  );
+  return Effect.succeed({});
+};
+
 // Unanswered calls stay pending, like a server that has not replied yet.
 const client = new Proxy(handlers, {
   get: (target, method: string) =>
@@ -524,12 +612,18 @@ const encodeDescriptor = (capabilities: Record<string, boolean>) =>
 /** Serves the environment's HTTP API and these threads until disposed. */
 export function installFakeEnvironment(
   fixtures: ReadonlyArray<FakeThread>,
-  options: { readonly decisions?: boolean; readonly assistants?: boolean } = {},
+  options: {
+    readonly decisions?: boolean;
+    readonly assistants?: boolean;
+    readonly slackChannel?: boolean;
+    readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
+  } = {},
 ): Disposable {
   threads = fixtures;
   extraCapabilities = {
     ...(options.decisions ? { decisions: true } : {}),
     ...(options.assistants ? { assistants: true } : {}),
+    ...(options.slackChannel ? { slackChannel: true } : {}),
   };
   const encodedDescriptor = encodeDescriptor(extraCapabilities);
   globalThis.fetch = async (input, init) => {
@@ -540,7 +634,7 @@ export function installFakeEnvironment(
       return json({
         authenticated: true,
         auth,
-        scopes: AuthStandardClientScopes,
+        scopes: options.scopes ?? AuthStandardClientScopes,
         sessionMethod: "browser-session-cookie",
         expiresAt: "2099-01-01T00:00:00.000Z",
       });

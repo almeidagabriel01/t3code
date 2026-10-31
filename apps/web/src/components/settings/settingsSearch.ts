@@ -28,6 +28,7 @@ export type SettingsPath =
   | "/settings/snap-shot"
   | "/settings/providers"
   | "/settings/assistants"
+  | "/settings/slack"
   | "/settings/memory"
   | "/settings/threads"
   | "/settings/browser"
@@ -76,6 +77,7 @@ export interface SettingsSearchItem {
   readonly managedTunnelOnly?: boolean;
   readonly peerLinksOnly?: boolean;
   readonly requiresMemory?: boolean;
+  readonly requiresSlack?: boolean;
   readonly secondary?: boolean;
   readonly requiresThreadAutoSettlement?: boolean;
   readonly requiresDesktopWindowMaterial?: boolean;
@@ -93,6 +95,7 @@ export interface SettingsSearchAvailability {
   readonly managedTunnelActive?: boolean;
   readonly hasPeerLinkHost?: boolean;
   readonly hasMemory?: boolean;
+  readonly hasSlack?: boolean;
 }
 
 export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
@@ -106,6 +109,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/snap-shot": "SnapShots",
   "/settings/providers": "Providers",
   "/settings/assistants": "Assistants",
+  "/settings/slack": "Slack",
   "/settings/memory": "Memory",
   "/settings/threads": "Threads",
   "/settings/browser": "Browser",
@@ -147,6 +151,7 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
     paths: [
       "/settings/providers",
       "/settings/assistants",
+      "/settings/slack",
       "/settings/memory",
       "/settings/threads",
       "/settings/browser",
@@ -650,6 +655,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/assistants",
     searchTerms: [
       "assistants jarvis named assistant instructions tool access read only full access reset conversation archive",
+    ],
+  },
+  {
+    id: "slack",
+    title: "Slack",
+    to: "/settings/slack",
+    requiresSlack: true,
+    searchTerms: [
+      "slack bot app token bot token channels link account unlink manifest socket mode assistants jarvis workspace",
     ],
   },
   {
@@ -1446,6 +1460,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/keybindings": null,
   "/settings/providers": null,
   "/settings/assistants": null,
+  "/settings/slack": null,
   "/settings/memory": null,
   "/settings/threads": null,
   "/settings/browser": null,
@@ -1579,6 +1594,7 @@ export function filterAvailableSettingsSearchItems(
   return items.filter(
     (item) =>
       (!item.requiresMemory || availability.hasMemory === true) &&
+      (!item.requiresSlack || availability.hasSlack === true) &&
       (!item.cloudOnly || availability.hasCloudPublicConfig) &&
       (!item.environmentOnly || availability.hasEnvironment) &&
       (!item.providerSettingsOnly || availability.hasProviderSettingsEnvironment) &&
