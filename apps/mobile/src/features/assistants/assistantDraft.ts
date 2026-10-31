@@ -58,7 +58,7 @@ export function budgetDraftFor(budget: ProviderBudget | null | undefined): Budge
     : DEFAULT_BUDGET_DRAFT;
 }
 
-/** Whether the limit can be saved: off, or a positive amount and a warn-at from 1 to 100. */
+/** Whether the limit can be saved: off, or at least $0.01 and a warn-at from 1 to 100. */
 export function isBudgetDraftValid(draft: BudgetDraft): boolean {
   if (!draft.enabled) return true;
   const amount = Number(draft.amount);
@@ -66,7 +66,7 @@ export function isBudgetDraftValid(draft: BudgetDraft): boolean {
   return (
     draft.amount.trim() !== "" &&
     Number.isFinite(amount) &&
-    amount > 0 &&
+    amount >= 0.01 &&
     Number.isInteger(warnAt) &&
     warnAt >= 1 &&
     warnAt <= 100

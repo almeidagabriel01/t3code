@@ -26,8 +26,8 @@ export type BudgetDraftResult =
 export function budgetFromDraft(draft: BudgetDraft, timeZone: string): BudgetDraftResult {
   if (!draft.enabled) return { ok: true, budget: null };
   const amountUsd = Number(draft.amount.trim().replace(/^\$/, ""));
-  if (!Number.isFinite(amountUsd) || amountUsd <= 0) {
-    return { ok: false, message: "Enter a spending limit above $0." };
+  if (!Number.isFinite(amountUsd) || amountUsd < 0.01) {
+    return { ok: false, message: "Enter a spending limit of at least $0.01." };
   }
   const warnAtPercent = Number(draft.warnAtPercent);
   if (!Number.isInteger(warnAtPercent) || warnAtPercent < 1 || warnAtPercent > 100) {

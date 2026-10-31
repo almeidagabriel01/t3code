@@ -19,7 +19,7 @@ describe("assistant budget draft", () => {
     } as const;
     expect(budgetFromDraft(budgetToDraft(budget), "UTC")).toEqual({ ok: true, budget });
     const on = { ...budgetToDraft(null), enabled: true };
-    for (const amount of ["", "0", "-1", "abc"]) {
+    for (const amount of ["", "0", "0.001", "-1", "abc"]) {
       expect(budgetFromDraft({ ...on, amount }, "UTC").ok).toBe(false);
     }
     expect(budgetFromDraft({ ...on, amount: "$3.5", warnAtPercent: "101" }, "UTC").ok).toBe(false);

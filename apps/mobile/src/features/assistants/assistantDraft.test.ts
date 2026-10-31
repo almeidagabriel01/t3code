@@ -99,6 +99,7 @@ describe("assistant draft", () => {
     for (const bad of [
       { amount: "" },
       { amount: "0" },
+      { amount: "0.001" },
       { amount: "abc" },
       { warnAt: "0" },
       { warnAt: "101" },
