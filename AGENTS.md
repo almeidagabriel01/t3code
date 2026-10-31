@@ -218,7 +218,7 @@ This checkout is a personal fork that adds features (notes, kanban, memory, dest
 ### See it before you call it done
 
 - A UI change is not done until you have looked at it in a running client: dark, light and liquid glass; right-panel width (~360–540px) and full-page width; and the mobile simulator when mobile changed (`test-t3-mobile`). Tests and typecheck do not count as seeing it.
-- If the Browser panel's screenshots time out, drive the dev app with Playwright from `node_modules/.pnpm/playwright@*` (pair with `node apps/server/src/bin.ts pair --base-dir <worktree>/.t3`) and read the PNGs. Keep scripted steps in a JSON file.
+- If the Browser panel's screenshots time out, drive the dev app with Playwright from `node_modules/.pnpm/playwright@*` (pair with `node apps/server/src/bin.ts pair --base-dir <worktree>/.t3`) and read the PNGs. Keep scripted steps in a JSON file. Pair and browse on `127.0.0.1`, not `localhost`: the pairing cookie does not carry over.
 - Never drive the command palette or type into the app from a script: keystrokes land in whatever editor has focus and change user data or settings. Toggle appearance by setting the attribute on the test page only, and restore anything you changed in `<worktree>/.t3/userdata`.
 - Subagents do not verify visually. The session that integrates their work captures and reads the screenshots before reporting.
 - Capture with short content as well as long. Sticky and floating chrome that looks right on a full page can float mid-screen on a near-empty one; its container must fill the pane.
