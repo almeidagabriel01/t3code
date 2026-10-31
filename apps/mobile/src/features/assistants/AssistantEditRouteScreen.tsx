@@ -175,6 +175,8 @@ function AssistantForm(props: { readonly editor: AssistantEditor }) {
 
   const handle = effectiveAssistantHandle(current);
   const handleValid = isAssistantHandleValid(handle);
+  // An untouched new form isn't wrong yet; flag the handle once there is something to check.
+  const showHandleError = !handleValid && (current.handle !== null || current.name.trim() !== "");
   const projectChanged = assistantProjectChanged(assistant, effectiveProject?.id ?? null);
   const hasChanges = assistantDraftHasChanges(editor);
   const canSave =
@@ -290,7 +292,7 @@ function AssistantForm(props: { readonly editor: AssistantEditor }) {
           autoCapitalize="none"
           onChange={(value) => updateAssistantDraft({ handle: value.toLowerCase() })}
           footer={
-            handleValid ? null : (
+            !showHandleError ? null : (
               <Text textRole="footnote" className="px-2 text-danger-foreground">
                 Use 1 to 32 lowercase letters, numbers or dashes, starting and ending with a letter
                 or number.
