@@ -43,6 +43,7 @@ import {
 } from "react-native";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 import {
+  ORCHESTRATION_V2_SPENDING_BUDGET_FAILURE_CODE,
   ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE,
   type EnvironmentId,
   type RunId,
@@ -893,9 +894,12 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
           minute: "2-digit",
         })
       : null;
-    const label = warning
-      ? `Usage limit reached.${resetTime ? ` Retry after ${resetTime}.` : ""}`
-      : row.summary;
+    const label =
+      failureItem.failure.code === ORCHESTRATION_V2_SPENDING_BUDGET_FAILURE_CODE
+        ? failureItem.failure.message
+        : warning
+          ? `Usage limit reached.${resetTime ? ` Retry after ${resetTime}.` : ""}`
+          : row.summary;
     return (
       <WorkLogPressable
         accessibilityLabel={warning ? label : `${row.summary}: ${failureItem.failure.message}`}

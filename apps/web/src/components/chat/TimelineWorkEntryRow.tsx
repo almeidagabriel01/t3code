@@ -7,6 +7,7 @@ import {
   hasQuestionAnswer,
 } from "@t3tools/client-runtime/work-log/user-input";
 import {
+  ORCHESTRATION_V2_SPENDING_BUDGET_FAILURE_CODE,
   ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE,
   type EnvironmentId,
   ThreadId,
@@ -208,9 +209,12 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
     const warning = failureItem.failure.class === "usage_limit";
     const resetAt = failureItem.failure.resetAt;
     const resetTime = resetAt ? formatUpcomingTimestamp(resetAt, timestampFormat) : null;
-    const label = warning
-      ? `Usage limit reached.${resetTime ? ` Retry after ${resetTime}.` : ""}`
-      : workEntry.label;
+    const label =
+      failureItem.failure.code === ORCHESTRATION_V2_SPENDING_BUDGET_FAILURE_CODE
+        ? failureItem.failure.message
+        : warning
+          ? `Usage limit reached.${resetTime ? ` Retry after ${resetTime}.` : ""}`
+          : workEntry.label;
     const retryRunId =
       failureItem.runId !== null &&
       retryableWorkspacePreparationRunIds.has(failureItem.runId) &&

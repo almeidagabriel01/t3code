@@ -11,6 +11,7 @@ import {
   type OrchestrationV2RunAttempt,
   type OrchestrationV2TurnItem,
   isCompactionCommandMessage,
+  ORCHESTRATION_V2_SPENDING_BUDGET_FAILURE_CODE,
   parseGoalCommand,
   RunId,
   ThreadId,
@@ -669,6 +670,7 @@ export const layer: Layer.Layer<
             title: "Spending budget reached",
             failure: makeProviderFailure({
               class: "usage_limit",
+              code: ORCHESTRATION_V2_SPENDING_BUDGET_FAILURE_CODE,
               message: budgetRefusal.message,
               resetAt: budgetRefusal.resetsAt,
               retryable: false,

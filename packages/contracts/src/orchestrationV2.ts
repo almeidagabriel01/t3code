@@ -684,6 +684,8 @@ export type OrchestrationV2ThreadLaunchWorkspaceStrategy =
   typeof OrchestrationV2ThreadLaunchWorkspaceStrategy.Type;
 
 export const ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE = "workspace_preparation_failed";
+/** A user-set spending budget refused the turn; its message names the budget and how to raise it. */
+export const ORCHESTRATION_V2_SPENDING_BUDGET_FAILURE_CODE = "spending_budget_reached";
 
 export const OrchestrationV2Run = Schema.Struct({
   memoryGrantCeiling: MemoryTaskGrantCeilingField,

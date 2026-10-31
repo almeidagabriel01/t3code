@@ -1311,7 +1311,12 @@ effectIt.effect("refuses a turn on an instance whose blocking budget is exceeded
     expect(harness.projection().turnItems).toMatchObject([
       {
         type: "error",
-        failure: { class: "usage_limit", message, resetAt: "2026-11-01T00:00:00.000Z" },
+        failure: {
+          class: "usage_limit",
+          code: "spending_budget_reached",
+          message,
+          resetAt: "2026-11-01T00:00:00.000Z",
+        },
       },
     ]);
   }),
