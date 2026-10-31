@@ -402,6 +402,7 @@ export const layerProduction = Layer.mergeAll(
         layerThreadLaunchProvided,
         layerManagedProjectFoldersProvided,
         layerProjectService,
+        layerScheduledTaskProvided,
       ),
     ),
   ),

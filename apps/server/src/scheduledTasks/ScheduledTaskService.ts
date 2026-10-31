@@ -256,6 +256,12 @@ export class ScheduledTaskService extends Context.Service<
       readonly threadIds: ReadonlyArray<ThreadId>;
       readonly projectId: ProjectId;
     }) => Effect.Effect<void, ScheduledTaskError>;
+    /** Rebinds tasks of one thread to another, for an assistant whose conversation changed. */
+    readonly retargetThreadTasks: (input: {
+      readonly fromThreadId: ThreadId;
+      readonly toThreadId: ThreadId;
+      readonly projectId: ProjectId;
+    }) => Effect.Effect<void, ScheduledTaskError>;
     /** The dispatched thread, or null if dispatch failed; leaves the task's binding unchanged. */
     readonly runNow: (
       input: ScheduledTaskRunNowInput,
@@ -1400,6 +1406,21 @@ export const layer = Layer.effect(
       if (moved.length > 0) yield* notifyChanged;
     });
 
+    const retargetThreadTasks: ScheduledTaskService["Service"]["retargetThreadTasks"] = Effect.fn(
+      "ScheduledTaskService.retargetThreadTasks",
+    )(function* (input) {
+      const moved = yield* sql<{ task_id: ScheduledTaskId }>`
+        UPDATE scheduled_tasks SET thread_id = ${input.toThreadId}, project_id = ${input.projectId}
+        WHERE thread_id = ${input.fromThreadId}
+        RETURNING task_id
+      `.pipe(
+        Effect.mapError((cause) =>
+          taskError("Could not move the thread's schedule tasks.", { cause }),
+        ),
+      );
+      if (moved.length > 0) yield* notifyChanged;
+    });
+
     const runNow: ScheduledTaskService["Service"]["runNow"] = Effect.fn(
       "ScheduledTaskService.runNow",
     )(function* (input: ScheduledTaskRunNowInput) {
@@ -2288,6 +2309,7 @@ export const layer = Layer.effect(
       delete: deleteTask,
       deleteForThread,
       moveThreadTasks,
+      retargetThreadTasks,
       runNow,
       rotateWebhookToken,
       listWebhookDeliveries,

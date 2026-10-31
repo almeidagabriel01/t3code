@@ -11,6 +11,7 @@ import {
   DecisionId,
   DecisionOption,
   MessageId,
+  RuntimeRequestId,
   type DecisionsAnswerInput,
   type DecisionsEvent,
   type DecisionsListInput,
@@ -53,6 +54,7 @@ interface DecisionRow {
   readonly answer_json: string | null;
   readonly answered_at: string | null;
   readonly delivered_at: string | null;
+  readonly approval_request_id: string | null;
   readonly created_at: string;
 }
 
@@ -67,6 +69,8 @@ export interface DecisionRequestInput {
   readonly options: ReadonlyArray<DecisionOption>;
   readonly recommended?: string | undefined;
   readonly expiresInMinutes?: number | undefined;
+  /** Mirrors a provider approval: the outcome answers that request instead of sending a message. */
+  readonly approvalRequestId?: string | undefined;
 }
 
 const decisionError = (reason: DecisionError["reason"], message: string) =>
@@ -93,6 +97,7 @@ const toDecision = (row: DecisionRow): Decision => ({
   ...(row.answer_json === null ? {} : { answer: decodeAnswer(row.answer_json) }),
   ...(row.answered_at === null ? {} : { answeredAt: row.answered_at }),
   ...(row.delivered_at === null ? {} : { deliveredAt: row.delivered_at }),
+  ...(row.approval_request_id === null ? {} : { approvalRequestId: row.approval_request_id }),
   createdAt: row.created_at,
 });
 
@@ -229,12 +234,12 @@ const make = Effect.gen(function* () {
           yield* sql`
             INSERT INTO decisions (
               decision_id, from_thread_id, project_id, client_request_id, thread_title, title,
-              context, options_json, recommended, expires_at, status, created_at
+              context, options_json, recommended, expires_at, status, approval_request_id, created_at
             ) VALUES (
               ${decisionId}, ${input.fromThreadId}, ${input.projectId}, ${clientRequestId},
               ${input.threadTitle.slice(0, 200)}, ${title}, ${input.context},
               ${encodeOptions(input.options)}, ${input.recommended ?? null}, ${expiresAt},
-              'open', ${createdAt}
+              'open', ${input.approvalRequestId ?? null}, ${createdAt}
             )`;
           const row = yield* findRow(decisionId);
           yield* publish(row);
@@ -291,22 +296,52 @@ const make = Effect.gen(function* () {
       }),
     );
 
+  /** Only "Approve" approves: a dismissal, an expiry or free text all decline. */
+  const respondToApproval = Effect.fn("DecisionService.respondToApproval")(function* (
+    row: DecisionRow,
+  ) {
+    const threadId = row.from_thread_id as ThreadId;
+    const requestId = RuntimeRequestId.make(row.approval_request_id!);
+    const { runtimeRequests } = yield* threads.getThreadRecords(threadId, ["runtimeRequests"]);
+    const request = runtimeRequests.find((candidate) => candidate.id === requestId);
+    // Answered in the thread, interrupted or gone meanwhile: nothing left to deliver.
+    if (request === undefined || request.status !== "pending") return;
+    const { answer } = toDecision(row);
+    const accepted = row.status === "answered" && answer?.optionId === "accept";
+    const feedback = answer?.text;
+    yield* threads.dispatch({
+      type: "runtime-request.respond",
+      commandId: CommandId.make(`decision-answer:${row.decision_id}`),
+      threadId,
+      requestId,
+      decision: accepted ? "accept" : "decline",
+      ...(!accepted &&
+      feedback !== undefined &&
+      request.responseCapability.type === "live" &&
+      request.responseCapability.supportsFeedback
+        ? { feedback }
+        : {}),
+    });
+  });
+
   const markDelivery = Effect.fn("DecisionService.markDelivery")(function* (row: DecisionRow) {
     const now = yield* nowIso;
-    const result = yield* threads
-      .sendToThread({
-        projectId: row.project_id as ProjectId,
-        // The row id is the receipt: a retry after a crash replays this send instead of repeating it.
-        commandId: CommandId.make(`decision-answer:${row.decision_id}`),
-        messageId: MessageId.make(`decision-answer:${row.decision_id}`),
-        threadId: row.from_thread_id as ThreadId,
-        text: deliveryText(row),
-        attachments: [],
-        mode: "queue",
-        createdBy: "user",
-        creationSource: "server",
-      })
-      .pipe(Effect.result);
+    const result = yield* (
+      row.approval_request_id === null
+        ? threads.sendToThread({
+            projectId: row.project_id as ProjectId,
+            // The row id is the receipt: a retry after a crash replays this send instead of repeating it.
+            commandId: CommandId.make(`decision-answer:${row.decision_id}`),
+            messageId: MessageId.make(`decision-answer:${row.decision_id}`),
+            threadId: row.from_thread_id as ThreadId,
+            text: deliveryText(row),
+            attachments: [],
+            mode: "queue",
+            createdBy: "user",
+            creationSource: "server",
+          })
+        : respondToApproval(row)
+    ).pipe(Effect.result);
     if (result._tag === "Success") {
       yield* sql`
         UPDATE decisions SET delivered_at = ${now}

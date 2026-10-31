@@ -113,7 +113,7 @@ export interface BudgetRefusal {
 
 /** Asked before a provider turn starts; the default allows everything so unwired layers stay open. */
 export const ProviderBudgetGate = Context.Reference<
-  (instanceId: string) => Effect.Effect<Option.Option<BudgetRefusal>>
+  (instanceId: string, threadId: string) => Effect.Effect<Option.Option<BudgetRefusal>>
 >("t3/usage/ProviderBudgetGate", {
   defaultValue: () => () => Effect.succeedNone,
 });

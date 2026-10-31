@@ -258,6 +258,7 @@ import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import { commandFeatureUsage, featureUsage } from "./telemetry/FeatureUsage.ts";
 import type { TelemetryOwner } from "./telemetry/Identify.ts";
 import * as UsageService from "./usage/UsageService.ts";
+import * as AssistantSpend from "./assistants/AssistantSpend.ts";
 import * as InstanceSpend from "./usage/InstanceSpend.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as TriageService from "./triage/TriageService.ts";
@@ -1322,6 +1323,7 @@ export const layerWsRpc = (
       const notes = yield* Notes.NotesService;
       const decisions = yield* Decisions.DecisionService;
       const assistants = yield* Assistants.AssistantService;
+      const assistantSpend = yield* AssistantSpend.AssistantSpend;
       const noteWork = yield* NoteWork.NoteWorkService;
       const secretRequests = yield* SecretRequests.SecretRequests;
       const guestShares = yield* GuestShareService.GuestShareService;
@@ -2386,6 +2388,7 @@ export const layerWsRpc = (
         [WS_METHODS.assistantsDelete]: (input) =>
           assistants.remove(input.assistantId).pipe(Effect.as({ assistantId: input.assistantId })),
         [WS_METHODS.assistantsReset]: (input) => assistants.reset(input),
+        [WS_METHODS.assistantsSpend]: (input) => assistantSpend.read(input.assistantId),
         [WS_METHODS.scheduledTasksSubscribe]: (_input) =>
           scheduledTasks
             .subscribeList()

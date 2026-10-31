@@ -215,6 +215,16 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
   `;
   yield* sql`CREATE UNIQUE INDEX IF NOT EXISTS assistants_default_idx ON assistants(is_default) WHERE is_default = 1`;
 
+  // Added after the tables first shipped, so older databases get them here.
+  const decisionColumns = yield* sql<{ readonly name: string }>`PRAGMA table_info(decisions)`;
+  if (!decisionColumns.some((column) => column.name === "approval_request_id")) {
+    yield* sql`ALTER TABLE decisions ADD COLUMN approval_request_id TEXT`;
+  }
+  const assistantColumns = yield* sql<{ readonly name: string }>`PRAGMA table_info(assistants)`;
+  if (!assistantColumns.some((column) => column.name === "budget_json")) {
+    yield* sql`ALTER TABLE assistants ADD COLUMN budget_json TEXT`;
+  }
+
   // The destination's memory ceiling, captured when a person or agent saved the task.
   const scheduledColumns = yield* sql<{
     readonly name: string;

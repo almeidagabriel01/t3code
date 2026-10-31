@@ -193,6 +193,9 @@ import * as CursorAccountReader from "@t3tools/provider-cursor/server/CursorAcco
 import * as CursorKeychain from "@t3tools/provider-cursor/server/CursorKeychain";
 import * as CursorUsageAccounts from "@t3tools/provider-cursor/server/CursorUsageAccounts";
 import * as UsageService from "./usage/UsageService.ts";
+import * as AssistantApprovalReactor from "./assistants/AssistantApprovalReactor.ts";
+import * as AssistantDirectory from "./assistants/AssistantDirectory.ts";
+import * as AssistantSpend from "./assistants/AssistantSpend.ts";
 import * as InstanceSpend from "./usage/InstanceSpend.ts";
 import * as CodexUsageHistory from "./usage/CodexUsageHistory.ts";
 import * as RuntimeLayer from "./orchestration-v2/runtimeLayer.ts";
@@ -562,7 +565,7 @@ const layerScheduledTaskWebhookOrigin = Layer.effect(
 
 const layerOrchestrationV2Runtime = RuntimeLayer.layerProduction.pipe(
   Layer.provide(layerThreadHandoffSummary),
-  Layer.provide(InstanceSpend.layerBudgetGate),
+  Layer.provide(AssistantSpend.layerBudgetGate),
   Layer.provide(layerScheduledTaskWebhookOrigin),
   Layer.provide(ProviderEventIngestor.layerAnalytics),
   Layer.provide(layerCheckpointStore),
@@ -676,6 +679,16 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
       yield* service.start();
     }),
   ).pipe(Layer.provide(DelegatedTaskQuestionReactor.layer), Layer.provide(ProjectionStoreV2.layer)),
+  Layer.effectDiscard(
+    Effect.gen(function* () {
+      const service = yield* AssistantApprovalReactor.AssistantApprovalReactor;
+      yield* service.start();
+    }),
+  ).pipe(
+    Layer.provide(AssistantApprovalReactor.layer),
+    Layer.provide(AssistantDirectory.layer),
+    Layer.provide(ProjectionStoreV2.layer),
+  ),
   ProviderUsageLimitsIngestion.layer,
   layerProviderInstallationRefresh,
   ReplayMarkers.layer,
@@ -759,6 +772,7 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
 
 const layerRuntimeDependencies = layerRuntimeCoreDependencies.pipe(
   Layer.provideMerge(InstanceSpend.layer),
+  Layer.provideMerge(AssistantSpend.layer),
   Layer.provideMerge(layerUsage),
   Layer.provideMerge(layerBackground),
   Layer.provideMerge(layerResourceDiagnostics),

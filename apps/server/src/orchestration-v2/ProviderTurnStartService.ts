@@ -653,7 +653,9 @@ export const layer: Layer.Layer<
         }
       }
       // Refused before any session opens; a turn already running is never touched.
-      const budgetRefusal = Option.getOrUndefined(yield* budgetGate(run.providerInstanceId));
+      const budgetRefusal = Option.getOrUndefined(
+        yield* budgetGate(run.providerInstanceId, projection.thread.id),
+      );
       if (budgetRefusal !== undefined) {
         const now = yield* DateTime.now;
         yield* settleRunBeforeStart({

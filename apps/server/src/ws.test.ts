@@ -105,6 +105,7 @@ import * as ThreadHandoffService from "./orchestration-v2/ThreadHandoffService.t
 import * as ThreadSearch from "./orchestration-v2/ThreadSearch.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 import * as UsageService from "./usage/UsageService.ts";
+import * as AssistantSpend from "./assistants/AssistantSpend.ts";
 import * as InstanceSpend from "./usage/InstanceSpend.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
@@ -568,6 +569,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(ThreadHandoffService.ThreadHandoffService)({}),
   Layer.mock(UsageService.UsageService)({}),
   Layer.mock(InstanceSpend.InstanceSpend)({}),
+  Layer.mock(AssistantSpend.AssistantSpend)({}),
   Layer.mock(VcsProvisioningService.VcsProvisioningService)({}),
   Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({}),
   Layer.mock(WorkspaceEntries.WorkspaceEntries)({}),

@@ -27,12 +27,20 @@ type Send = Parameters<ThreadManagement.ThreadManagementService["Service"]["send
 /** `fail` decides per call; the default accepts every send. */
 const harness = (fail?: (call: number) => ThreadManagement.ThreadManagementError | undefined) => {
   const sends: Send[] = [];
+  const dispatches: Array<Record<string, unknown>> = [];
+  /** The runtime requests the thread currently holds. */
+  const requests: Array<{ id: string; status: string; responseCapability: unknown }> = [];
   const layer = Decisions.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
         SqlitePersistence.layerMemory,
         NodeCrypto.layer,
         Layer.mock(ThreadManagement.ThreadManagementService)({
+          getThreadRecords: () => Effect.succeed({ runtimeRequests: requests } as never),
+          dispatch: (command) => {
+            dispatches.push(command as never);
+            return Effect.succeed({} as never);
+          },
           sendToThread: (input) => {
             sends.push(input);
             const failure = fail?.(sends.length);
@@ -42,7 +50,7 @@ const harness = (fail?: (call: number) => ThreadManagement.ThreadManagementError
       ),
     ),
   );
-  return { sends, layer };
+  return { sends, dispatches, requests, layer };
 };
 
 const ask = (
@@ -417,5 +425,85 @@ it.effect("a list keeps every open decision and only the 50 most recent settled 
       [true, true],
     );
     assert.equal((yield* decisions.list({ threadId: ThreadId.make("other") })).length, 0);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("an approval decision answers its request instead of sending a message", () => {
+  const { layer, sends, dispatches, requests } = harness();
+  const approval = (clientRequestId: string, supportsFeedback = true) => {
+    requests.push({
+      id: clientRequestId,
+      status: "pending",
+      responseCapability: { type: "live", supportsFeedback },
+    });
+    return {
+      clientRequestId,
+      approvalRequestId: clientRequestId,
+      expiresInMinutes: clientRequestId === "expires" ? 1 : undefined,
+      options: [
+        { id: "accept", label: "Approve" },
+        { id: "decline", label: "Deny" },
+      ],
+      recommended: undefined,
+    };
+  };
+  return Effect.gen(function* () {
+    const decisions = yield* Decisions.DecisionService;
+    const decided: Array<[string, unknown, unknown]> = [];
+    const settle = (id: string) =>
+      Effect.sync(() => {
+        const sent = dispatches.filter((command) => command["requestId"] === id);
+        decided.push([id, sent[0]?.["decision"], sent[0]?.["feedback"]]);
+      });
+
+    const made = yield* ask(decisions, approval("approve"));
+    assert.equal(made.approvalRequestId, "approve");
+    yield* decisions.answer({ decisionId: made.id, optionId: "accept" });
+    yield* settle("approve");
+    const denied = yield* ask(decisions, approval("deny"));
+    yield* decisions.answer({ decisionId: denied.id, optionId: "decline" });
+    yield* settle("deny");
+    const text = yield* ask(decisions, approval("text"));
+    yield* decisions.answer({ decisionId: text.id, text: "use the dry run" });
+    yield* settle("text");
+    const noFeedback = yield* ask(decisions, approval("plain", false));
+    yield* decisions.answer({ decisionId: noFeedback.id, text: "no" });
+    yield* settle("plain");
+    const dismissed = yield* ask(decisions, approval("dismiss"));
+    yield* decisions.dismiss(dismissed.id);
+    yield* settle("dismiss");
+    const expiring = yield* ask(decisions, approval("expires"));
+    yield* TestClock.adjust("2 minutes");
+    yield* decisions.expireDue;
+    yield* decisions.deliverPending;
+    yield* settle("expires");
+    assert.deepEqual(decided, [
+      ["approve", "accept", undefined],
+      ["deny", "decline", undefined],
+      ["text", "decline", "use the dry run"],
+      ["plain", "decline", undefined],
+      ["dismiss", "decline", undefined],
+      ["expires", "decline", undefined],
+    ]);
+    assert.equal((yield* decisions.get(expiring.id)).status, "expired");
+    assert.lengthOf(sends, 0);
+    assert.isTrue(
+      (yield* decisions.list({})).every((decision) => decision.deliveredAt !== undefined),
+    );
+
+    // Answered in the thread meanwhile: delivery is done, nothing is dispatched.
+    const late = yield* ask(decisions, approval("late"));
+    requests.find((request) => request.id === "late")!.status = "resolved";
+    dispatches.length = 0;
+    yield* decisions.answer({ decisionId: late.id, optionId: "accept" });
+    assert.lengthOf(dispatches, 0);
+    assert.isDefined((yield* decisions.get(late.id)).deliveredAt);
+
+    // The reactor taking it back settles it without telling the agent anything.
+    const taken = yield* ask(decisions, approval("taken"));
+    yield* decisions.withdraw({ decisionId: taken.id, fromThreadId: thread });
+    yield* decisions.deliverPending;
+    assert.lengthOf(dispatches, 0);
+    assert.lengthOf(sends, 0);
   }).pipe(Effect.provide(layer));
 });

@@ -23,6 +23,7 @@ import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.t
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as Assistants from "./AssistantService.ts";
 
@@ -46,6 +47,8 @@ const harness = () => {
   const threads = new Map<string, FakeThread>();
   const launched: Array<{ threadId: string; projectId: string; runtimeMode: string }> = [];
   const dispatched: Array<{ type: string; threadId: string; extra?: unknown }> = [];
+  const retargets: Array<{ from: string; to: string; projectId: string }> = [];
+  const taskDeletes: string[] = [];
   const pointers: Array<{ type: string; threadId: string; pointer: string | null; rows: number }> =
     [];
 
@@ -112,6 +115,20 @@ const harness = () => {
       ensureAssistantProject: Effect.succeed({ projectId: scratch }),
       namedProjectsRoot: "",
     }),
+    Layer.mock(ScheduledTaskService.ScheduledTaskService)({
+      retargetThreadTasks: (input) => {
+        retargets.push({
+          from: input.fromThreadId,
+          to: input.toThreadId,
+          projectId: input.projectId,
+        });
+        return Effect.void;
+      },
+      deleteForThread: (threadId) => {
+        taskDeletes.push(threadId);
+        return Effect.void;
+      },
+    }),
     Layer.mock(ProjectService.ProjectService)({
       getById: (projectId) =>
         Effect.succeed(projectId === missingProject ? Option.none() : Option.some({} as never)),
@@ -123,7 +140,7 @@ const harness = () => {
     SqlitePersistence.layerMemory,
   );
   const layer = Assistants.layer.pipe(Layer.provideMerge(mocks.pipe(Layer.provideMerge(base))));
-  return { layer, threads, launched, dispatched, pointers };
+  return { layer, threads, launched, dispatched, pointers, retargets, taskDeletes };
 };
 
 const create = (overrides: Partial<AssistantsCreateInput> = {}): AssistantsCreateInput => ({
@@ -208,7 +225,7 @@ it.effect("create derives a handle, keeps it reserved, and launches in the chose
 it.effect(
   "reset moves the pointer before archiving the old conversation and keeps its model",
   () => {
-    const { layer, threads, pointers, launched } = harness();
+    const { layer, threads, pointers, launched, retargets } = harness();
     return Effect.gen(function* () {
       const assistants = yield* Assistants.AssistantService;
       const made = yield* assistants.create(create({ modelSelection: model("m1") }));
@@ -222,6 +239,9 @@ it.effect(
         rows: 1,
       });
       assert.lengthOf(launched, 2);
+      assert.deepEqual(retargets, [
+        { from: `assistant:${made.id}:1`, to: `assistant:${made.id}:2`, projectId: repo },
+      ]);
 
       yield* assistants.ensureDefault;
       const jarvis = yield* assistants.reset({ assistantId: DEFAULT_ASSISTANT_ID as never });
@@ -231,7 +251,7 @@ it.effect(
 );
 
 it.effect("restore brings back this assistant's own conversation only", () => {
-  const { layer, pointers } = harness();
+  const { layer, pointers, retargets } = harness();
   return Effect.gen(function* () {
     const assistants = yield* Assistants.AssistantService;
     const made = yield* assistants.create(create());
@@ -251,7 +271,9 @@ it.effect("restore brings back this assistant's own conversation only", () => {
     assert.equal(gone.reason, "not_found");
 
     pointers.length = 0;
+    retargets.length = 0;
     const restored = yield* assistants.reset({ assistantId: made.id, restoreThreadId: first });
+    assert.deepEqual(retargets, [{ from: `assistant:${made.id}:2`, to: first, projectId: repo }]);
     assert.equal(restored.threadId, first);
     // The old thread is already current when it is unarchived; the replaced one is archived after.
     assert.deepEqual(
@@ -264,8 +286,8 @@ it.effect("restore brings back this assistant's own conversation only", () => {
   }).pipe(Effect.provide(layer));
 });
 
-it.effect("remove deletes the row first, then every conversation it had", () => {
-  const { layer, pointers, threads } = harness();
+it.effect("remove deletes the row first, then every conversation and its schedules", () => {
+  const { layer, pointers, threads, taskDeletes } = harness();
   return Effect.gen(function* () {
     const assistants = yield* Assistants.AssistantService;
     const made = yield* assistants.create(create());
@@ -280,6 +302,7 @@ it.effect("remove deletes the row first, then every conversation it had", () => 
       ],
     );
     assert.isTrue(threads.get(`assistant:${made.id}:2`)!.deletedAt !== null);
+    assert.deepEqual(taskDeletes, [`assistant:${made.id}:1`, `assistant:${made.id}:2`]);
     assert.equal((yield* assistants.remove(made.id).pipe(Effect.flip)).reason, "not_found");
   }).pipe(Effect.provide(layer));
 });
@@ -340,7 +363,7 @@ it.effect("update writes the row, then renames, switches access and archives the
 });
 
 it.effect("a project change starts a new generation there and retires the old thread", () => {
-  const { layer, launched, pointers } = harness();
+  const { layer, launched, pointers, retargets } = harness();
   return Effect.gen(function* () {
     const assistants = yield* Assistants.AssistantService;
     yield* assistants.ensureDefault;
@@ -359,6 +382,9 @@ it.effect("a project change starts a new generation there and retires the old th
       pointers.map((entry) => [entry.type, entry.threadId, entry.pointer]),
       [["thread.archive", made.threadId, null]],
     );
+    assert.deepEqual(retargets, [
+      { from: made.threadId!, to: moved.threadId!, projectId: scratch },
+    ]);
     assert.equal(
       (yield* assistants.update({ assistantId: made.id, handle: "jarvis" }).pipe(Effect.flip))
         .reason,
@@ -371,6 +397,35 @@ it.effect("a project change starts a new generation there and retires the old th
     });
     assert.equal(restored.threadId, made.threadId);
     assert.equal(restored.projectId, made.projectId);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("a budget round-trips through create and update, and null removes it", () => {
+  const { layer } = harness();
+  const budget = {
+    amountUsd: 5,
+    period: "monthly",
+    warnAtPercent: 80,
+    blockWhenExceeded: true,
+    timeZone: "UTC",
+  } as const;
+  return Effect.gen(function* () {
+    const assistants = yield* Assistants.AssistantService;
+    const made = yield* assistants.create(create({ budget }));
+    assert.deepEqual(made.budget, budget);
+    assert.isNull((yield* assistants.create(create({ name: "Plain" }))).budget);
+    const raised = yield* assistants.update({
+      assistantId: made.id,
+      budget: { ...budget, amountUsd: 9 },
+    });
+    assert.equal(raised.budget?.amountUsd, 9);
+    // Other edits leave the cap alone; null takes it off.
+    assert.equal(
+      (yield* assistants.update({ assistantId: made.id, name: "Renamed" })).budget?.amountUsd,
+      9,
+    );
+    assert.isNull((yield* assistants.update({ assistantId: made.id, budget: null })).budget);
+    assert.isNull((yield* assistants.list).find((entry) => entry.id === made.id)!.budget);
   }).pipe(Effect.provide(layer));
 });
 

@@ -20,7 +20,6 @@ import {
   budgetBlockedMessage,
   budgetPeriodBounds,
   budgetStatus,
-  ProviderBudgetGate,
   type BudgetRefusal,
 } from "./providerBudget.ts";
 import * as UsageService from "./UsageService.ts";
@@ -208,14 +207,5 @@ export const layer = Layer.effect(
       });
     });
     return { read, budgetRefusal };
-  }),
-);
-
-/** Wires the turn-start check; kept apart so orchestration layers stay free of usage services. */
-export const layerBudgetGate = Layer.effect(
-  ProviderBudgetGate,
-  Effect.gen(function* () {
-    const spend = yield* InstanceSpend;
-    return spend.budgetRefusal;
   }),
 );

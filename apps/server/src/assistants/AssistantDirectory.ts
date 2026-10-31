@@ -33,8 +33,8 @@ export interface AssistantRow {
 
 const BudgetJson = Schema.fromJsonString(ProviderBudget);
 // A row that no longer decodes loses its cap rather than hiding every assistant.
-const decodeBudget = (json: string) =>
-  Option.getOrNull(Schema.decodeUnknownOption(BudgetJson)(json));
+const decodeBudgetOption = Schema.decodeOption(BudgetJson);
+const decodeBudget = (json: string) => Option.getOrNull(decodeBudgetOption(json));
 export const encodeBudget = Schema.encodeSync(BudgetJson);
 
 export const toAssistant = (row: AssistantRow): Assistant => ({
