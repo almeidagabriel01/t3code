@@ -4,6 +4,9 @@ import type { OrchestrationV2DomainEvent } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
+import * as Logger from "effect/Logger";
+import * as Deferred from "effect/Deferred";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as DecisionService from "../decisions/DecisionService.ts";
@@ -24,7 +27,9 @@ interface FakeRequest {
 }
 const live = { type: "live" };
 
-const harness = () => {
+const harness = (stream: Stream.Stream<OrchestrationV2DomainEvent, never> = Stream.empty) => {
+  /** Request ids and thread ids whose projection reads fail. */
+  const broken = new Set<string>();
   /** What the projection holds, by thread then request id. */
   const requests = new Map<string, FakeRequest>();
   const sends: unknown[] = [];
@@ -34,23 +39,31 @@ const harness = () => {
       Layer.mergeAll(
         SqlitePersistence.layerMemory,
         NodeCrypto.layer,
-        Layer.mock(Orchestrator.OrchestratorV2)({}),
+        Layer.mock(Orchestrator.OrchestratorV2)({ streamDomainEvents: stream }),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getRuntimeResponseContext: (threadId, requestId) =>
-            Effect.succeed({
-              request: requests.get(`${threadId}/${requestId}`),
-              item: {
-                type: "approval_request",
-                prompt: "rm -rf build",
-                reason: "Clean the output",
-              },
-            } as never),
+            (broken.has(requestId) ? Effect.die("projection read failed") : Effect.void).pipe(
+              Effect.andThen(
+                Effect.succeed({
+                  request: requests.get(`${threadId}/${requestId}`),
+                  item: {
+                    type: "approval_request",
+                    prompt: "rm -rf build",
+                    reason: "Clean the output",
+                  },
+                } as never),
+              ),
+            ),
           getThreadRecords: (threadId) =>
-            Effect.succeed({
-              runtimeRequests: [...requests]
-                .filter(([key]) => key.startsWith(`${threadId}/`))
-                .map(([, request]) => request),
-            } as never),
+            (broken.has(threadId) ? Effect.die("projection read failed") : Effect.void).pipe(
+              Effect.andThen(
+                Effect.succeed({
+                  runtimeRequests: [...requests]
+                    .filter(([key]) => key.startsWith(`${threadId}/`))
+                    .map(([, request]) => request),
+                } as never),
+              ),
+            ),
         }),
         Layer.mock(AssistantDirectory)({
           forThread: (threadId) =>
@@ -81,7 +94,7 @@ const harness = () => {
       payload: request,
     } as unknown as OrchestrationV2DomainEvent;
   };
-  return { layer, requests, sends, put };
+  return { layer, requests, sends, put, broken };
 };
 
 it.effect("a pending live approval becomes one decision, however often it is replayed", () => {
@@ -165,4 +178,60 @@ it.effect("catch-up mirrors what was pending on each current assistant thread", 
       ["waiting"],
     );
   }).pipe(Effect.provide(layer));
+});
+
+const insertAssistant = (id: string) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`
+      INSERT INTO assistants (assistant_id, handle, name, project_id, tool_access, thread_id, generation, created_at, updated_at)
+      VALUES (${id}, ${id}, 'Jarvis', 'scratch', 'workspace-write', ${`assistant:${id}:1`}, 1, 'x', 'x')`;
+  });
+
+it.effect("one approval that cannot be mirrored does not stop the others", () => {
+  const { layer, put, broken } = harness();
+  return Effect.gen(function* () {
+    const reactor = yield* Reactor.AssistantApprovalReactor;
+    const decisions = yield* DecisionService.DecisionService;
+    broken.add("bad");
+    yield* reactor.handle(put(jarvisThread, "bad"));
+    yield* reactor.handle(put(jarvisThread, "good"));
+    assert.deepEqual(
+      (yield* decisions.list({})).map((decision) => decision.approvalRequestId),
+      ["good"],
+    );
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("catch-up survives a thread, or the whole lookup, failing", () => {
+  const { layer, put, broken } = harness();
+  return Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* insertAssistant("broken");
+    yield* insertAssistant("jarvis");
+    broken.add("assistant:broken:1");
+    put(jarvisThread, "waiting");
+    const reactor = yield* Reactor.AssistantApprovalReactor;
+    const decisions = yield* DecisionService.DecisionService;
+    yield* reactor.catchUp;
+    assert.deepEqual(
+      (yield* decisions.list({})).map((decision) => decision.approvalRequestId),
+      ["waiting"],
+    );
+    yield* sql`DROP TABLE assistants`;
+    yield* reactor.catchUp;
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("a failing domain event stream is logged, not fatal", () => {
+  const { layer } = harness(Stream.fail("stream down") as never);
+  return Effect.gen(function* () {
+    const logged = yield* Deferred.make<void>();
+    const logger = Logger.make<unknown, void>(({ message }) => {
+      if (String(message).includes("event stream failed")) Deferred.doneUnsafe(logged, Effect.void);
+    });
+    const reactor = yield* Reactor.AssistantApprovalReactor;
+    yield* reactor.start().pipe(Effect.provide(Logger.layer([logger])));
+    yield* Deferred.await(logged);
+  }).pipe(Effect.scoped, Effect.provide(layer));
 });

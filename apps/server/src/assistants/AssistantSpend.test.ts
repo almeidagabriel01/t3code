@@ -6,6 +6,8 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as InstanceSpend from "../usage/InstanceSpend.ts";
+import { ProviderBudgetGate } from "../usage/providerBudget.ts";
 import * as UsageService from "../usage/UsageService.ts";
 import * as AssistantSpend from "./AssistantSpend.ts";
 
@@ -117,4 +119,53 @@ it.effect("only an exceeded, blocking budget refuses a turn", () =>
       assert.isTrue(Option.isNone(yield* spend.budgetRefusal(threadId)), threadId);
     }
   }).pipe(Effect.provide(layer)),
+);
+
+it.effect("the turn gate refuses an over-limit assistant, with the instance refusal first", () =>
+  Effect.gen(function* () {
+    yield* seed;
+    const instanceRefusal = { message: "instance over", resetsAt: "2026-11-01T00:00:00.000Z" };
+    const refusedInstances = new Set(["refused-instance"]);
+    const gate = yield* Effect.service(ProviderBudgetGate).pipe(
+      Effect.provide(
+        AssistantSpend.layerBudgetGate.pipe(
+          Layer.provide(
+            Layer.mock(InstanceSpend.InstanceSpend)({
+              budgetRefusal: (id) =>
+                Effect.succeed(
+                  refusedInstances.has(id) ? Option.some(instanceRefusal) : Option.none(),
+                ),
+            }),
+          ),
+          Layer.provideMerge(layer),
+        ),
+      ),
+    );
+    const refusal = (instanceId: string, threadId: string) =>
+      gate(instanceId, threadId).pipe(Effect.map(Option.getOrUndefined));
+    assert.include((yield* refusal("codex", "assistant:a1:2"))?.message, "a1 reached its");
+    assert.isUndefined(yield* refusal("codex", "assistant:a10:1"));
+    assert.isUndefined(yield* refusal("codex", "plain-thread"));
+    assert.equal(yield* refusal("refused-instance", "assistant:a1:2"), instanceRefusal);
+    assert.equal(yield* refusal("refused-instance", "plain-thread"), instanceRefusal);
+  }).pipe(Effect.provide(layer)),
+);
+
+it.effect("a spend read that blows up reports a storage error", () =>
+  Effect.gen(function* () {
+    yield* seed;
+    const spend = yield* AssistantSpend.AssistantSpend;
+    assert.equal((yield* spend.read("a1").pipe(Effect.flip)).reason, "storage");
+  }).pipe(
+    Effect.provide(
+      AssistantSpend.layer.pipe(
+        Layer.provideMerge(
+          Layer.mergeAll(
+            SqlitePersistence.layerMemory,
+            Layer.mock(UsageService.UsageService)({ pricingTables: Effect.die("pricing down") }),
+          ),
+        ),
+      ),
+    ),
+  ),
 );

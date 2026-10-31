@@ -49,6 +49,7 @@ const harness = () => {
   const dispatched: Array<{ type: string; threadId: string; extra?: unknown }> = [];
   const retargets: Array<{ from: ReadonlyArray<string>; to: string; projectId: string }> = [];
   const taskDeletes: string[] = [];
+  const failingTaskDeletes = new Set<string>();
   const pointers: Array<{ type: string; threadId: string; pointer: string | null; rows: number }> =
     [];
 
@@ -126,7 +127,7 @@ const harness = () => {
       },
       deleteForThread: (threadId) => {
         taskDeletes.push(threadId);
-        return Effect.void;
+        return failingTaskDeletes.has(threadId) ? Effect.fail("boom" as never) : Effect.void;
       },
     }),
     Layer.mock(ProjectService.ProjectService)({
@@ -140,7 +141,16 @@ const harness = () => {
     SqlitePersistence.layerMemory,
   );
   const layer = Assistants.layer.pipe(Layer.provideMerge(mocks.pipe(Layer.provideMerge(base))));
-  return { layer, threads, launched, dispatched, pointers, retargets, taskDeletes };
+  return {
+    layer,
+    threads,
+    launched,
+    dispatched,
+    pointers,
+    retargets,
+    taskDeletes,
+    failingTaskDeletes,
+  };
 };
 
 const create = (overrides: Partial<AssistantsCreateInput> = {}): AssistantsCreateInput => ({
@@ -313,6 +323,21 @@ it.effect("remove deletes the row first, then every conversation and its schedul
     assert.equal((yield* assistants.remove(made.id).pipe(Effect.flip)).reason, "not_found");
   }).pipe(Effect.provide(layer));
 });
+
+it.effect(
+  "a schedule cleanup that fails does not keep the other conversations from deleting",
+  () => {
+    const { layer, taskDeletes, failingTaskDeletes } = harness();
+    return Effect.gen(function* () {
+      const assistants = yield* Assistants.AssistantService;
+      const made = yield* assistants.create(create());
+      yield* assistants.reset({ assistantId: made.id });
+      failingTaskDeletes.add(`assistant:${made.id}:1`);
+      yield* assistants.remove(made.id);
+      assert.deepEqual(taskDeletes, [`assistant:${made.id}:1`, `assistant:${made.id}:2`]);
+    }).pipe(Effect.provide(layer));
+  },
+);
 
 it.effect("Jarvis can be edited and reset but not archived or deleted", () => {
   const { layer, dispatched } = harness();

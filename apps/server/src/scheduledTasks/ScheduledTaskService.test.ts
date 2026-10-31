@@ -476,3 +476,86 @@ it.effect("a bound run follows its thread when promotion moves it mid-send", () 
     }).pipe(Effect.provide(layer));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
+
+it.effect("retargeting thread tasks moves only tasks bound to the source threads", () =>
+  Effect.gen(function* () {
+    const layer = ScheduledTaskService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+          Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+            namedProjectsRoot: "/projects",
+            isScratchProject: () => Effect.succeed(false),
+          }),
+          NodeCrypto.layer,
+          Scheduler.layer,
+        ),
+      ),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const oldProject = ProjectId.make("project:old");
+      const newProject = ProjectId.make("project:new");
+      const bind = (name: string, threadId: string) =>
+        service.upsert({
+          id: ScheduledTaskId.make(`task:${name}`),
+          title: name,
+          prompt: "Check progress",
+          enabled: true,
+          schedule: { type: "interval", everyMs: 60_000 },
+          projectId: oldProject,
+          threadId: ThreadId.make(threadId),
+          workspaceStrategy: { type: "root" },
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+        });
+      yield* bind("first", "thread:a");
+      yield* bind("second", "thread:b");
+      yield* bind("elsewhere", "thread:c");
+
+      const snapshots = yield* Ref.make(0);
+      const initial = yield* Deferred.make<void>();
+      const moved = yield* Deferred.make<void>();
+      yield* service.subscribeList().pipe(
+        Stream.runForEach(({ tasks }) =>
+          Ref.update(snapshots, (n) => n + 1).pipe(
+            Effect.andThen(
+              tasks.some((task) => task.projectId === newProject)
+                ? Deferred.succeed(moved, undefined)
+                : Deferred.succeed(initial, undefined),
+            ),
+          ),
+        ),
+        Effect.forkChild,
+      );
+      yield* Deferred.await(initial);
+
+      const target = ThreadId.make("thread:target");
+      const retarget = (fromThreadIds: ReadonlyArray<string>) =>
+        service.retargetThreadTasks({
+          fromThreadIds: fromThreadIds.map((id) => ThreadId.make(id)),
+          toThreadId: target,
+          projectId: newProject,
+        });
+      yield* retarget([]);
+      yield* retarget(["thread:nobody"]);
+      yield* retarget(["thread:a", "thread:b"]);
+      yield* Deferred.await(moved);
+
+      const byId = new Map((yield* service.list()).tasks.map((task) => [task.id, task]));
+      for (const name of ["first", "second"]) {
+        const task = byId.get(ScheduledTaskId.make(`task:${name}`));
+        assert.equal(task?.threadId, target);
+        assert.equal(task?.projectId, newProject);
+      }
+      const other = byId.get(ScheduledTaskId.make("task:elsewhere"));
+      assert.equal(other?.threadId, "thread:c");
+      assert.equal(other?.projectId, oldProject);
+      // The no-op calls published nothing: only the initial snapshot and the move.
+      assert.equal(yield* Ref.get(snapshots), 2);
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
