@@ -13,6 +13,7 @@ import { subscribe } from "../rpc/client.ts";
 import {
   createAtomCommandScheduler,
   createEnvironmentRpcCommand,
+  createEnvironmentRpcQueryAtomFamily,
   createEnvironmentSubscriptionAtomFamily,
 } from "./runtime.ts";
 
@@ -124,5 +125,10 @@ export function createAssistantsEnvironmentAtoms<R, E>(
     update: command(WS_METHODS.assistantsUpdate, "update"),
     delete: command(WS_METHODS.assistantsDelete, "delete"),
     reset: command(WS_METHODS.assistantsReset, "reset"),
+    spend: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:assistants:spend",
+      tag: WS_METHODS.assistantsSpend,
+      staleTimeMs: 60_000,
+    }),
   };
 }

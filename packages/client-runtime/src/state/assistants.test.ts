@@ -18,6 +18,7 @@ const assistant = (id: string, overrides: Partial<Assistant> = {}): Assistant =>
   isDefault: false,
   threadId: `assistant:${id}:1` as ThreadId,
   generation: 1,
+  budget: null,
   archivedAt: null,
   createdAt: `2026-10-01T00:00:0${id.length}.000Z`,
   updatedAt: "2026-10-01T00:00:00.000Z",
