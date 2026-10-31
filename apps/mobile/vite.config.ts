@@ -37,6 +37,12 @@ const reactTests = [
   "src/features/notes/NoteStartWorkRouteScreen.test.tsx",
   "src/features/settings/MemorySyncDiagnostics.test.tsx",
   "src/features/settings/SettingsMemoryRouteScreen.test.tsx",
+  "src/features/settings/SettingsScheduledTasksRouteScreen.test.tsx",
+  "src/features/decisions/HomeDecisionsSection.test.tsx",
+  "src/features/decisions/DecisionCard.test.tsx",
+  "src/features/assistants/AssistantSchedulesSection.test.tsx",
+  "src/features/assistants/AssistantEditRouteScreen.test.tsx",
+  "src/features/assistants/SettingsAssistantsRouteScreen.test.tsx",
   "src/features/threads/SubagentRow.memory.test.tsx",
 ];
 
