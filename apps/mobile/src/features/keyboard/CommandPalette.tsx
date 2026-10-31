@@ -51,6 +51,7 @@ import {
 import { useAssistantEntries } from "../../state/assistants";
 import { useOpenAssistantEditor } from "../assistants/openAssistantEditor";
 import { useHasKanbanEnvironments } from "../../state/kanban";
+import { useSlackEnvironmentIds } from "../../state/slackChannel";
 import { useHasMemoryEnvironments } from "../../state/memory";
 import { useHasNotesEnvironments } from "../../state/notes";
 import { useThreadSearch } from "../../state/queries";
@@ -235,6 +236,7 @@ export function CommandPalette(props: {
   const hasBoards = useHasKanbanEnvironments();
   const hasNotes = useHasNotesEnvironments();
   const hasMemory = useHasMemoryEnvironments();
+  const hasSlack = useSlackEnvironmentIds().length > 0;
   const assistants = useAssistantEntries().active;
   const openAssistantEditor = useOpenAssistantEditor();
   const threads = useThreadShells();
@@ -358,6 +360,17 @@ export function CommandPalette(props: {
               title: "Board",
               searchTerms: ["kanban", "cards", "tasks"],
               run: () => openSettings(navigation, "SettingsKanban"),
+            },
+          ]
+        : []),
+      ...(hasSlack
+        ? [
+            {
+              key: "slack",
+              kind: "action" as const,
+              title: "Slack",
+              searchTerms: ["assistants", "chat", "bot", "channels"],
+              run: () => openSettings(navigation, "SettingsSlack"),
             },
           ]
         : []),
@@ -543,6 +556,7 @@ export function CommandPalette(props: {
     hasBoards,
     hasNotes,
     hasMemory,
+    hasSlack,
     assistants,
     openAssistantEditor,
     canTriage,

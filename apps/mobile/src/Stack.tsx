@@ -136,6 +136,7 @@ import { NotesRouteScreen } from "./features/notes/NotesRouteScreen";
 import { AssistantEditRouteScreen } from "./features/assistants/AssistantEditRouteScreen";
 import { AssistantModelPickerRouteScreen } from "./features/assistants/AssistantModelPickerRouteScreen";
 import { SettingsAssistantsRouteScreen } from "./features/assistants/SettingsAssistantsRouteScreen";
+import { SettingsSlackRouteScreen } from "./features/slack/SettingsSlackRouteScreen";
 import { SettingsMemoryRouteScreen } from "./features/settings/SettingsMemoryRouteScreen";
 import { ClaudeChromeRouteScreen } from "./features/settings/ClaudeChromeRouteScreen";
 import { FallbackModelPickerRouteScreen } from "./features/settings/FallbackModelPickerRouteScreen";
@@ -433,6 +434,11 @@ const SETTINGS_SCREENS = {
             ...THREAD_SETTINGS_SHEET_OPTIONS,
           }),
     },
+  }),
+  SettingsSlack: createNativeStackScreen({
+    screen: SettingsSlackRouteScreen,
+    linking: "settings/slack",
+    options: { ...SETTINGS_PAGE_OPTIONS, title: "Slack" },
   }),
   SettingsAssistants: createNativeStackScreen({
     screen: SettingsAssistantsRouteScreen,

@@ -70,6 +70,16 @@ const SETTINGS_SEARCH_TERMS = {
     "tool access",
     "reset",
   ],
+  SettingsSlack: [
+    "slack",
+    "assistants",
+    "chat",
+    "bot",
+    "channels",
+    "link account",
+    "manifest",
+    "tokens",
+  ],
   SettingsNotes: ["notes", "markdown", "ideas", "capture", "start work"],
   SettingsArchive: ["archive", "archived", "restore", "unarchive"],
   SettingsProviderAccounts: [
