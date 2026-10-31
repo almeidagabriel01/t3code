@@ -5,7 +5,11 @@ import {
   assistantDraftFor,
   assistantCreateInput,
   assistantUpdateInput,
+  assistantDraftHasChanges,
+  budgetDraftFor,
+  budgetFromDraft,
   effectiveAssistantHandle,
+  isBudgetDraftValid,
   isAssistantHandleValid,
   type AssistantEditor,
 } from "./assistantDraft";
@@ -79,5 +83,69 @@ describe("assistant draft", () => {
       instructions: "",
       toolAccess: "full",
     });
+  });
+
+  it("turns the spending limit draft into a budget, or null when off", () => {
+    const on = { ...budgetDraftFor(null), enabled: true, amount: "12.5" };
+    expect(budgetFromDraft(budgetDraftFor(null), "UTC")).toBeNull();
+    expect(budgetFromDraft(on, "UTC")).toEqual({
+      amountUsd: 12.5,
+      period: "monthly",
+      warnAtPercent: 80,
+      blockWhenExceeded: true,
+      timeZone: "UTC",
+    });
+    expect(isBudgetDraftValid(budgetDraftFor(null))).toBe(true);
+    for (const bad of [
+      { amount: "" },
+      { amount: "0" },
+      { amount: "abc" },
+      { warnAt: "0" },
+      { warnAt: "101" },
+      { warnAt: "1.5" },
+    ]) {
+      expect(isBudgetDraftValid({ ...on, ...bad })).toBe(false);
+    }
+  });
+
+  it("sends the budget only when it changed, and null when switched off", () => {
+    const on = { ...budgetDraftFor(null), enabled: true, amount: "5" };
+    expect(
+      assistantCreateInput(editorFor(null, { name: "S" }), "p1" as ProjectId),
+    ).not.toHaveProperty("budget");
+    expect(
+      assistantCreateInput(editorFor(null, { name: "S", budget: on }), "p1" as ProjectId),
+    ).toMatchObject({ budget: { amountUsd: 5 } });
+    expect(
+      assistantUpdateInput(editorFor(assistant, { budget: on }), "p1" as ProjectId),
+    ).toMatchObject({ budget: { amountUsd: 5 } });
+    const limited = {
+      ...assistant,
+      budget: {
+        amountUsd: 5,
+        period: "daily",
+        warnAtPercent: 50,
+        blockWhenExceeded: false,
+        timeZone: "UTC",
+      },
+    } as Assistant;
+    const off = { ...budgetDraftFor(limited.budget), enabled: false };
+    expect(assistantUpdateInput(editorFor(limited, { budget: off }), "p1" as ProjectId)).toEqual({
+      assistantId: "a1",
+      budget: null,
+    });
+  });
+
+  it("ignores leftovers in a switched-off limit when detecting changes", () => {
+    expect(
+      assistantDraftHasChanges(
+        editorFor(assistant, { budget: { ...budgetDraftFor(null), amount: "9" } }),
+      ),
+    ).toBe(false);
+    expect(
+      assistantDraftHasChanges(
+        editorFor(assistant, { budget: { ...budgetDraftFor(null), enabled: true } }),
+      ),
+    ).toBe(true);
   });
 });

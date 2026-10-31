@@ -21,6 +21,8 @@ import type * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 
+import { useEnvironmentQuery } from "./query";
+
 import { connectionAtomRuntime } from "../connection/runtime";
 import { appAtomRegistry } from "./atom-registry";
 import { environmentServerConfigsAtom } from "./server";
@@ -76,6 +78,18 @@ const assistantEntriesAtom = Atom.make((get) => {
   }
   return { active, archived };
 }).pipe(Atom.withLabel("mobile-assistant-entries"));
+
+/** What an assistant spent across its conversations; idle (null) when it has no budget to show. */
+export function useAssistantSpend(
+  environmentId: EnvironmentId,
+  assistantId: Assistant["id"] | null,
+) {
+  return useEnvironmentQuery(
+    assistantId === null
+      ? null
+      : assistantsEnvironment.spend({ environmentId, input: { assistantId } }),
+  );
+}
 
 /** Environments whose server has assistants. */
 export function useAssistantsEnvironmentIds(): ReadonlyArray<EnvironmentId> {

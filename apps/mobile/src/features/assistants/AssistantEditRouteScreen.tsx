@@ -3,6 +3,7 @@ import {
   ASSISTANT_INSTRUCTIONS_MAX_CHARS,
   ASSISTANT_NAME_MAX_LENGTH,
   type AssistantToolAccess,
+  type BudgetPeriod,
   type EnvironmentId,
   type ProjectId,
 } from "@t3tools/contracts";
@@ -12,7 +13,7 @@ import { Platform, Pressable, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/ui/AppText";
-import { SymbolView } from "../../components/ui/AppSymbol";
+import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import { ListActionRow } from "../../components/ui/ListActionRow";
@@ -22,10 +23,12 @@ import { ListSection } from "../../components/ui/ListSection";
 import { Menu } from "../../components/ui/Menu";
 import { RowPressable } from "../../components/ui/RowPressable";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
+import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import {
   useAssistantActions,
   useAssistantEntries,
+  useAssistantSpend,
   useAssistantsEnvironmentIds,
 } from "../../state/assistants";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
@@ -40,10 +43,16 @@ import {
   discardAssistantEditor,
   effectiveAssistantHandle,
   isAssistantHandleValid,
+  isBudgetDraftValid,
   updateAssistantDraft,
   type AssistantEditor,
 } from "./assistantDraft";
-import { TOOL_ACCESS_OPTIONS } from "./assistantPresentation";
+import { AssistantSchedulesSection } from "./AssistantSchedulesSection";
+import {
+  BUDGET_PERIOD_OPTIONS,
+  budgetSpendLine,
+  TOOL_ACCESS_OPTIONS,
+} from "./assistantPresentation";
 import { assistantProjectName, useAssistantEditor } from "./useAssistantEditor";
 import { useAssistantFlows } from "./useAssistantFlows";
 
@@ -79,6 +88,7 @@ function TextField(props: {
   readonly maxLength?: number;
   readonly multiline?: boolean;
   readonly autoCapitalize?: "none" | "sentences";
+  readonly keyboardType?: "decimal-pad" | "number-pad";
   readonly footer?: ReactNode;
   readonly disabled?: boolean;
 }) {
@@ -92,6 +102,7 @@ function TextField(props: {
         maxLength={props.maxLength}
         multiline={props.multiline}
         autoCapitalize={props.autoCapitalize}
+        keyboardType={props.keyboardType}
         autoCorrect={false}
         textAlignVertical={props.multiline ? "top" : "center"}
         placeholderTextColorClassName="accent-foreground-muted"
@@ -102,6 +113,29 @@ function TextField(props: {
         }
       />
     </Field>
+  );
+}
+
+function SwitchRow(props: {
+  readonly icon: AppSymbolName;
+  readonly label: string;
+  readonly value: boolean;
+  readonly onChange: (value: boolean) => void;
+}) {
+  return (
+    <View className="bg-grouped-card">
+      <ListRowLayout
+        icon={props.icon}
+        label={props.label}
+        accessory={
+          <ThemedSwitch
+            accessibilityLabel={props.label}
+            value={props.value}
+            onValueChange={props.onChange}
+          />
+        }
+      />
+    </View>
   );
 }
 
@@ -154,7 +188,7 @@ export function AssistantEditRouteScreen() {
 function AssistantForm(props: { readonly editor: AssistantEditor }) {
   const { editor } = props;
   const { assistant, current, environmentId } = editor;
-  const { projects, effectiveProject, modelLabel } = useAssistantEditor();
+  const { projects, effectiveProject, modelLabel, modelSelection } = useAssistantEditor();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const actions = useAssistantActions(environmentId);
@@ -168,11 +202,16 @@ function AssistantForm(props: { readonly editor: AssistantEditor }) {
   const { savedConnectionsById } = useSavedRemoteConnections();
   const environmentLabel = (id: EnvironmentId) =>
     savedConnectionsById[id]?.environmentLabel ?? String(id);
+  const spend = useAssistantSpend(environmentId, assistant?.id ?? null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   // Set once the save lands, so the removal guard lets the form close.
   const closing = useRef(false);
 
+  const budget = current.budget;
+  const updateBudget = (change: Partial<typeof budget>) =>
+    updateAssistantDraft({ budget: { ...budget, ...change } });
+  const spendLine = spend.data ? budgetSpendLine(spend.data) : null;
   const handle = effectiveAssistantHandle(current);
   const handleValid = isAssistantHandleValid(handle);
   // An untouched new form isn't wrong yet; flag the handle once there is something to check.
@@ -185,6 +224,7 @@ function AssistantForm(props: { readonly editor: AssistantEditor }) {
     current.name.trim().length > 0 &&
     handleValid &&
     effectiveProject !== null &&
+    isBudgetDraftValid(current.budget) &&
     (assistant === null || hasChanges);
 
   const close = () => {
@@ -397,6 +437,112 @@ function AssistantForm(props: { readonly editor: AssistantEditor }) {
         <View className="gap-2">
           <View className="gap-0.5 px-2">
             <Text textRole="footnote" className="font-t3-medium text-foreground">
+              Spending limit
+            </Text>
+            <Text textRole="footnote" className="text-foreground-muted">
+              Caps what it may spend across all its conversations, estimated at API prices.
+            </Text>
+          </View>
+          <ListSection>
+            <SwitchRow
+              icon="chart.bar.xaxis"
+              label="Limit spending"
+              value={budget.enabled}
+              onChange={(enabled) => updateBudget({ enabled })}
+            />
+          </ListSection>
+          {spendLine ? (
+            <Text textRole="footnote" className="px-2 text-foreground-muted">
+              {spendLine}
+            </Text>
+          ) : null}
+        </View>
+        {budget.enabled ? (
+          <>
+            <TextField
+              label="Amount (USD)"
+              description="The most it may spend in each period."
+              value={budget.amount}
+              keyboardType="decimal-pad"
+              autoCapitalize="none"
+              onChange={(amount) => updateBudget({ amount })}
+              footer={
+                isBudgetDraftValid(budget) || budget.amount === "" ? null : (
+                  <Text textRole="footnote" className="px-2 text-danger-foreground">
+                    Enter an amount above zero and a warning between 1 and 100.
+                  </Text>
+                )
+              }
+            />
+            <View className="gap-2">
+              <View className="gap-0.5 px-2">
+                <Text textRole="footnote" className="font-t3-medium text-foreground">
+                  Period
+                </Text>
+                <Text textRole="footnote" className="text-foreground-muted">
+                  How often the spending count starts over.
+                </Text>
+              </View>
+              <ListSection>
+                {BUDGET_PERIOD_OPTIONS.map((option) => (
+                  <RowPressable
+                    key={option.value}
+                    accessibilityRole="radio"
+                    accessibilityLabel={option.label}
+                    accessibilityState={{ selected: budget.period === option.value }}
+                    onPress={() => updateBudget({ period: option.value as BudgetPeriod })}
+                    className="bg-grouped-card"
+                  >
+                    <ListRowLayout
+                      icon={option.icon}
+                      label={option.label}
+                      accessory={
+                        budget.period === option.value ? (
+                          <SymbolView
+                            name="checkmark"
+                            size={16}
+                            tintColorClassName="accent-icon"
+                            type="monochrome"
+                            weight="semibold"
+                          />
+                        ) : undefined
+                      }
+                    />
+                  </RowPressable>
+                ))}
+              </ListSection>
+            </View>
+            <TextField
+              label="Warn at (%)"
+              description="Shows a warning once this share of the limit is spent."
+              value={budget.warnAt}
+              keyboardType="number-pad"
+              autoCapitalize="none"
+              onChange={(warnAt) => updateBudget({ warnAt })}
+            />
+            <View className="gap-2">
+              <View className="gap-0.5 px-2">
+                <Text textRole="footnote" className="font-t3-medium text-foreground">
+                  When the limit is reached
+                </Text>
+                <Text textRole="footnote" className="text-foreground-muted">
+                  Off keeps it running and only warns.
+                </Text>
+              </View>
+              <ListSection>
+                <SwitchRow
+                  icon="stop.fill"
+                  label="Stop when reached"
+                  value={budget.block}
+                  onChange={(block) => updateBudget({ block })}
+                />
+              </ListSection>
+            </View>
+          </>
+        ) : null}
+        <View className="gap-2">
+          <View className="gap-0.5 px-2">
+            <Text textRole="footnote" className="font-t3-medium text-foreground">
               Memory
             </Text>
             <Text textRole="footnote" className="text-foreground-muted">
@@ -416,6 +562,14 @@ function AssistantForm(props: { readonly editor: AssistantEditor }) {
             />
           </ListSection>
         </View>
+        {assistant?.threadId ? (
+          <AssistantSchedulesSection
+            environmentId={environmentId}
+            environmentLabel={environmentLabel(environmentId)}
+            assistant={assistant}
+            modelSelection={modelSelection}
+          />
+        ) : null}
         {error ? (
           <Text
             accessibilityRole="alert"

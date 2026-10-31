@@ -73,13 +73,16 @@ export function useOpenDecisionThreadKeys(): ReadonlySet<string> {
   return useAtomValue(openDecisionThreadKeysAtom);
 }
 
-/** The thread's open decisions, most urgent first. */
+/** The thread's open decisions, most urgent first. Provider approvals are left out: the thread already shows them natively. */
 export function useThreadOpenDecisions(
   environmentId: EnvironmentId,
   threadId: ThreadId,
 ): ReadonlyArray<DecisionEntry> {
   return useDecisionEntries().open.filter(
-    (entry) => entry.environmentId === environmentId && entry.decision.fromThreadId === threadId,
+    (entry) =>
+      entry.environmentId === environmentId &&
+      entry.decision.fromThreadId === threadId &&
+      entry.decision.approvalRequestId === undefined,
   );
 }
 

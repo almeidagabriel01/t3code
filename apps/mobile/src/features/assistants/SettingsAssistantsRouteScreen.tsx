@@ -6,7 +6,11 @@ import { EmptyState } from "../../components/ui/EmptyState";
 import { ListSection } from "../../components/ui/ListSection";
 import { RowPressable } from "../../components/ui/RowPressable";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
-import { useAssistantEntries, type AssistantEntry } from "../../state/assistants";
+import {
+  useAssistantEntries,
+  useAssistantSpend,
+  type AssistantEntry,
+} from "../../state/assistants";
 import { useProjects } from "../../state/entities";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
@@ -20,11 +24,14 @@ function AssistantListRow(props: { readonly entry: AssistantEntry; readonly deta
     (candidate) =>
       candidate.environmentId === environmentId && candidate.id === assistant.projectId,
   );
+  const budgetState = useAssistantSpend(environmentId, assistant.budget ? assistant.id : null).data
+    ?.budget?.state;
   const detail = [
     `@${assistant.handle}`,
     toolAccessLabel(assistant.toolAccess),
     project ? (project.isScratch === true ? "No project" : project.title) : null,
     ...props.detail,
+    budgetState === "exceeded" ? "Limit reached" : budgetState === "warn" ? "Near limit" : null,
   ].filter((part): part is string => part !== null);
   return (
     <RowPressable

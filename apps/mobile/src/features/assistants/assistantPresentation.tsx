@@ -1,4 +1,9 @@
-import type { Assistant, AssistantToolAccess } from "@t3tools/contracts";
+import type {
+  Assistant,
+  AssistantSpend,
+  AssistantToolAccess,
+  BudgetPeriod,
+} from "@t3tools/contracts";
 import { View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
@@ -66,4 +71,26 @@ export function AssistantAvatar(props: {
       </Text>
     </View>
   );
+}
+
+export const BUDGET_PERIOD_OPTIONS: ReadonlyArray<{
+  readonly value: BudgetPeriod;
+  readonly label: string;
+  readonly icon: AppSymbolName;
+}> = [
+  { value: "daily", label: "Daily", icon: "sun.max" },
+  { value: "weekly", label: "Weekly", icon: "clock" },
+  { value: "monthly", label: "Monthly", icon: "calendar.badge.clock" },
+];
+
+const PERIOD_WORDS = { daily: "today", weekly: "this week", monthly: "this month" } as const;
+const usd = new Intl.NumberFormat(undefined, { style: "currency", currency: "USD" });
+
+/** "$1.23 this month · estimated at API prices"; the budget's period when it has one, else the last 30 days. */
+export function budgetSpendLine(spend: AssistantSpend): string {
+  const status = spend.budget;
+  const amount = status ? status.spentUsd : spend.periodUsd;
+  const when = status ? PERIOD_WORDS[status.period] : "in the last 30 days";
+  const prefix = spend.partial ? "At least " : "";
+  return `${prefix}${usd.format(amount)} ${when} · estimated at API prices`;
 }

@@ -5,12 +5,17 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProjectId,
+  type ScheduledTask,
+  type ThreadId,
 } from "@t3tools/contracts";
 import {
   scheduledTaskDefaultModel,
   DEFAULT_SCHEDULE,
   scheduleDraftForTask,
   scheduleFromDraft,
+  createDraft,
+  editDraft,
+  hasScheduledTaskDraftChanges,
 } from "./scheduledTaskDraft";
 
 describe("scheduleDraftForTask", () => {
@@ -195,4 +200,22 @@ it("rejects dedupe keys without valid request placeholders", () => {
   expect(
     scheduleFromDraft({ ...DEFAULT_SCHEDULE, mode: "webhook", coalesceKey: "{{body.bad" }),
   ).toBeNull();
+});
+
+describe("bound task drafts", () => {
+  it("carries the conversation into a new draft and treats unbinding as a change", () => {
+    const thread = "assistant:a1:1" as ThreadId;
+    const bound = createDraft(ProjectId.make("p1"), null, thread);
+    expect(bound.threadId).toBe(thread);
+    expect(createDraft(ProjectId.make("p1"), null).threadId).toBeNull();
+    expect(hasScheduledTaskDraftChanges(bound, { ...bound, threadId: null })).toBe(true);
+    expect(
+      editDraft({
+        ...({} as ScheduledTask),
+        schedule: { type: "interval", everyMs: 60_000 },
+        workspaceStrategy: { type: "root" },
+        threadId: thread,
+      }).threadId,
+    ).toBe(thread);
+  });
 });
