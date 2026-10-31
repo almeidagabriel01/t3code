@@ -208,17 +208,24 @@ const make = Effect.gen(function* () {
       threadId,
     }));
 
-  /** Schedules belong to the assistant, so they follow it to whichever conversation is current. */
-  const followSchedules = (from: string | null, to: ThreadId, projectId: string) =>
-    from === null || from === to
-      ? Effect.void
-      : scheduledTasks
-          .retargetThreadTasks({
-            fromThreadId: from as ThreadId,
-            toThreadId: to,
-            projectId: projectId as ProjectId,
-          })
-          .pipe(Effect.catch(threadFailure("Could not move the assistant's schedules.")));
+  /**
+   * Schedules belong to the assistant, so they follow it to whichever conversation is current.
+   * Every other generation is a source, so a reset that failed midway heals on the next change.
+   */
+  const followSchedules = (
+    row: { readonly assistant_id: string; readonly generation: number },
+    to: ThreadId,
+    projectId: string,
+  ) =>
+    scheduledTasks
+      .retargetThreadTasks({
+        fromThreadIds: Array.from({ length: row.generation }, (_, index) =>
+          assistantThreadIdFor(row.assistant_id, index + 1),
+        ).filter((threadId) => threadId !== to),
+        toThreadId: to,
+        projectId: projectId as ProjectId,
+      })
+      .pipe(Effect.catch(threadFailure("Could not move the assistant's schedules.")));
 
   /** Archives a conversation that was already replaced, if it is still live. */
   const retire = (threadId: string | null) =>
@@ -441,7 +448,7 @@ const make = Effect.gen(function* () {
                 project_id = ${next.projectId}, thread_id = ${threadId}, generation = ${generation},
                 budget_json = ${next.budgetJson}, archived_at = ${archivedAt}, updated_at = ${now}
               WHERE assistant_id = ${row.assistant_id}`;
-            yield* followSchedules(previousThreadId, threadId, next.projectId);
+            yield* followSchedules({ ...row, generation }, threadId, next.projectId);
             yield* retire(previousThreadId);
             if (archivedAt !== null) yield* archiveThread(threadId, true);
           } else {
@@ -580,7 +587,7 @@ const make = Effect.gen(function* () {
               UPDATE assistants SET thread_id = ${restore}, project_id = ${thread.projectId},
                 updated_at = ${yield* nowIso}
               WHERE assistant_id = ${row.assistant_id}`;
-            yield* followSchedules(previousThreadId, restore, thread.projectId);
+            yield* followSchedules(row, restore, thread.projectId);
             if (thread.archivedAt !== null) yield* archiveThread(restore, false);
             yield* retire(previousThreadId);
           } else {
@@ -591,7 +598,7 @@ const make = Effect.gen(function* () {
             yield* sql`
               UPDATE assistants SET thread_id = ${threadId}, generation = ${generation}, updated_at = ${yield* nowIso}
               WHERE assistant_id = ${row.assistant_id}`;
-            yield* followSchedules(previousThreadId, threadId, row.project_id);
+            yield* followSchedules({ ...row, generation }, threadId, row.project_id);
             yield* retire(previousThreadId);
           }
           yield* publish(row.assistant_id);

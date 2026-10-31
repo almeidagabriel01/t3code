@@ -47,7 +47,7 @@ const harness = () => {
   const threads = new Map<string, FakeThread>();
   const launched: Array<{ threadId: string; projectId: string; runtimeMode: string }> = [];
   const dispatched: Array<{ type: string; threadId: string; extra?: unknown }> = [];
-  const retargets: Array<{ from: string; to: string; projectId: string }> = [];
+  const retargets: Array<{ from: ReadonlyArray<string>; to: string; projectId: string }> = [];
   const taskDeletes: string[] = [];
   const pointers: Array<{ type: string; threadId: string; pointer: string | null; rows: number }> =
     [];
@@ -118,7 +118,7 @@ const harness = () => {
     Layer.mock(ScheduledTaskService.ScheduledTaskService)({
       retargetThreadTasks: (input) => {
         retargets.push({
-          from: input.fromThreadId,
+          from: input.fromThreadIds,
           to: input.toThreadId,
           projectId: input.projectId,
         });
@@ -240,8 +240,15 @@ it.effect(
       });
       assert.lengthOf(launched, 2);
       assert.deepEqual(retargets, [
-        { from: `assistant:${made.id}:1`, to: `assistant:${made.id}:2`, projectId: repo },
+        { from: [`assistant:${made.id}:1`], to: `assistant:${made.id}:2`, projectId: repo },
       ]);
+      // Every older generation is a source, so tasks a failed reset left behind still follow.
+      yield* assistants.reset({ assistantId: made.id });
+      assert.deepEqual(retargets.at(-1), {
+        from: [`assistant:${made.id}:1`, `assistant:${made.id}:2`],
+        to: `assistant:${made.id}:3`,
+        projectId: repo,
+      });
 
       yield* assistants.ensureDefault;
       const jarvis = yield* assistants.reset({ assistantId: DEFAULT_ASSISTANT_ID as never });
@@ -273,7 +280,7 @@ it.effect("restore brings back this assistant's own conversation only", () => {
     pointers.length = 0;
     retargets.length = 0;
     const restored = yield* assistants.reset({ assistantId: made.id, restoreThreadId: first });
-    assert.deepEqual(retargets, [{ from: `assistant:${made.id}:2`, to: first, projectId: repo }]);
+    assert.deepEqual(retargets, [{ from: [`assistant:${made.id}:2`], to: first, projectId: repo }]);
     assert.equal(restored.threadId, first);
     // The old thread is already current when it is unarchived; the replaced one is archived after.
     assert.deepEqual(
@@ -383,7 +390,7 @@ it.effect("a project change starts a new generation there and retires the old th
       [["thread.archive", made.threadId, null]],
     );
     assert.deepEqual(retargets, [
-      { from: made.threadId!, to: moved.threadId!, projectId: scratch },
+      { from: [made.threadId!], to: moved.threadId!, projectId: scratch },
     ]);
     assert.equal(
       (yield* assistants.update({ assistantId: made.id, handle: "jarvis" }).pipe(Effect.flip))

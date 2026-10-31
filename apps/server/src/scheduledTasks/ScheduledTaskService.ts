@@ -258,7 +258,7 @@ export class ScheduledTaskService extends Context.Service<
     }) => Effect.Effect<void, ScheduledTaskError>;
     /** Rebinds tasks of one thread to another, for an assistant whose conversation changed. */
     readonly retargetThreadTasks: (input: {
-      readonly fromThreadId: ThreadId;
+      readonly fromThreadIds: ReadonlyArray<ThreadId>;
       readonly toThreadId: ThreadId;
       readonly projectId: ProjectId;
     }) => Effect.Effect<void, ScheduledTaskError>;
@@ -1409,9 +1409,10 @@ export const layer = Layer.effect(
     const retargetThreadTasks: ScheduledTaskService["Service"]["retargetThreadTasks"] = Effect.fn(
       "ScheduledTaskService.retargetThreadTasks",
     )(function* (input) {
+      if (input.fromThreadIds.length === 0) return;
       const moved = yield* sql<{ task_id: ScheduledTaskId }>`
         UPDATE scheduled_tasks SET thread_id = ${input.toThreadId}, project_id = ${input.projectId}
-        WHERE thread_id = ${input.fromThreadId}
+        WHERE thread_id IN ${sql.in(input.fromThreadIds)}
         RETURNING task_id
       `.pipe(
         Effect.mapError((cause) =>
