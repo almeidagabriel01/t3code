@@ -18,6 +18,18 @@ thread is archived, so a crash leaves two threads and a valid pointer, never non
 from (assistant, generation), which makes a retry land on the same thread. Old generations are
 ordinary archived threads that "restore" can bring back.
 
+Scheduled tasks bind to a thread id, so every pointer move retargets the tasks of all other
+generations onto the current thread. Moving from every generation, not just the previous one, lets a
+change that failed midway heal on the next.
+
+## Approvals become decisions
+
+`AssistantApprovalReactor` mirrors each pending live approval on an assistant thread into a decision
+with `approvalRequestId` set, and withdraws it silently when the request resolves anywhere else.
+`DecisionService` answers such a decision with `runtime-request.respond` instead of a message, and a
+dismiss or expiry declines: a dismissed approval must never leave the turn blocked. Clients hide these
+decisions on their own thread, where the native approval prompt already shows.
+
 ## Two enforcement points
 
 Tool access is the runtime mode plus, for read only, a read-only sandbox. Both are enforced
