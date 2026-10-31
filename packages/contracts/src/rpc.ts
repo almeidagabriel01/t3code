@@ -442,6 +442,20 @@ import {
   AssistantsSubscribeInput,
   AssistantsUpdateInput,
 } from "./assistants.ts";
+import { ChannelGatewayError, ChannelLinkCode, ChannelLinkedIdentity } from "./channels.ts";
+import {
+  ChannelsCreateLinkCodeInput,
+  ChannelsListIdentitiesInput,
+  ChannelsUnlinkInput,
+  ChannelsUnlinkResult,
+  SlackChannelConfigureInput,
+  SlackChannelDisconnectInput,
+  SlackChannelGetSettingsInput,
+  SlackChannelSettings,
+  SlackChannelSettingsError,
+  SlackChannelStatusEvent,
+  SlackChannelSubscribeStatusInput,
+} from "./slackChannel.ts";
 import {
   NoteConflictError,
   NoteDocument,
@@ -685,6 +699,13 @@ export const WS_METHODS = {
   assistantsDelete: "assistants.delete",
   assistantsReset: "assistants.reset",
   assistantsSpend: "assistants.spend",
+  slackChannelGetSettings: "slackChannel.getSettings",
+  slackChannelConfigure: "slackChannel.configure",
+  slackChannelDisconnect: "slackChannel.disconnect",
+  slackChannelSubscribeStatus: "slackChannel.subscribeStatus",
+  channelsCreateLinkCode: "channels.createLinkCode",
+  channelsListIdentities: "channels.listIdentities",
+  channelsUnlink: "channels.unlink",
 
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
@@ -2158,6 +2179,48 @@ const WsAssistantsSpendRpc = Rpc.make(WS_METHODS.assistantsSpend, {
   error: AssistantRpcErrors,
 });
 
+const SlackChannelRpcErrors = Schema.Union([
+  SlackChannelSettingsError,
+  EnvironmentAuthorizationError,
+]);
+const WsSlackChannelGetSettingsRpc = Rpc.make(WS_METHODS.slackChannelGetSettings, {
+  payload: SlackChannelGetSettingsInput,
+  success: SlackChannelSettings,
+  error: SlackChannelRpcErrors,
+});
+const WsSlackChannelConfigureRpc = Rpc.make(WS_METHODS.slackChannelConfigure, {
+  payload: SlackChannelConfigureInput,
+  success: SlackChannelSettings,
+  error: SlackChannelRpcErrors,
+});
+const WsSlackChannelDisconnectRpc = Rpc.make(WS_METHODS.slackChannelDisconnect, {
+  payload: SlackChannelDisconnectInput,
+  success: SlackChannelSettings,
+  error: SlackChannelRpcErrors,
+});
+const WsSlackChannelSubscribeStatusRpc = Rpc.make(WS_METHODS.slackChannelSubscribeStatus, {
+  payload: SlackChannelSubscribeStatusInput,
+  success: SlackChannelStatusEvent,
+  error: SlackChannelRpcErrors,
+  stream: true,
+});
+const ChannelsRpcErrors = Schema.Union([ChannelGatewayError, EnvironmentAuthorizationError]);
+const WsChannelsCreateLinkCodeRpc = Rpc.make(WS_METHODS.channelsCreateLinkCode, {
+  payload: ChannelsCreateLinkCodeInput,
+  success: ChannelLinkCode,
+  error: ChannelsRpcErrors,
+});
+const WsChannelsListIdentitiesRpc = Rpc.make(WS_METHODS.channelsListIdentities, {
+  payload: ChannelsListIdentitiesInput,
+  success: Schema.Array(ChannelLinkedIdentity),
+  error: ChannelsRpcErrors,
+});
+const WsChannelsUnlinkRpc = Rpc.make(WS_METHODS.channelsUnlink, {
+  payload: ChannelsUnlinkInput,
+  success: ChannelsUnlinkResult,
+  error: ChannelsRpcErrors,
+});
+
 const WsKanbanSubscribeRpc = Rpc.make(WS_METHODS.kanbanSubscribe, {
   payload: KanbanSubscribeInput,
   success: KanbanStreamItem,
@@ -2490,6 +2553,13 @@ export const WsRpcGroup = RpcGroup.make(
   WsAssistantsDeleteRpc,
   WsAssistantsResetRpc,
   WsAssistantsSpendRpc,
+  WsSlackChannelGetSettingsRpc,
+  WsSlackChannelConfigureRpc,
+  WsSlackChannelDisconnectRpc,
+  WsSlackChannelSubscribeStatusRpc,
+  WsChannelsCreateLinkCodeRpc,
+  WsChannelsListIdentitiesRpc,
+  WsChannelsUnlinkRpc,
   WsServerReportClientActivityRpc,
   WsCloudGetRelayClientStatusRpc,
   WsCloudInstallRelayClientRpc,

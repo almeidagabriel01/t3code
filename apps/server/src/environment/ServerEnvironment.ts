@@ -281,6 +281,7 @@ export const make = Effect.gen(function* () {
       notes: true,
       decisions: true,
       assistants: true,
+      slackChannel: true,
       pullRequestStackActions: true,
       threadPullRequestLinking: true,
       serverResolvedCommandContext: true,

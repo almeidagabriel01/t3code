@@ -83,6 +83,24 @@ describe("assistant client guards", () => {
   });
 });
 
+describe("Slack channel client guards", () => {
+  it("guards Slack and link mutations and leaves reads open to readers", () => {
+    for (const method of [
+      WS_METHODS.slackChannelConfigure,
+      WS_METHODS.slackChannelDisconnect,
+      WS_METHODS.channelsCreateLinkCode,
+      WS_METHODS.channelsUnlink,
+    ])
+      expect(clientRpcRequiredScopes(method, {})).toEqual(["orchestration:operate"]);
+    for (const method of [
+      WS_METHODS.slackChannelGetSettings,
+      WS_METHODS.slackChannelSubscribeStatus,
+      WS_METHODS.channelsListIdentities,
+    ])
+      expect(Object.hasOwn(CLIENT_GUARDED_RPC_SCOPES, method)).toBe(false);
+  });
+});
+
 describe("Claude in Chrome client guards", () => {
   it("guards the default toggle with provider management and leaves the status read open", () => {
     expect(clientRpcRequiredScopes(WS_METHODS.providerClaudeChromeSetDefault, {})).toEqual([

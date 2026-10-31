@@ -196,6 +196,13 @@ import * as UsageService from "./usage/UsageService.ts";
 import * as AssistantApprovalReactor from "./assistants/AssistantApprovalReactor.ts";
 import * as AssistantDirectory from "./assistants/AssistantDirectory.ts";
 import * as AssistantSpend from "./assistants/AssistantSpend.ts";
+import * as ChannelBridge from "./channels/ChannelBridge.ts";
+import * as ChannelOutbox from "./channels/ChannelOutbox.ts";
+import * as ChannelReplyReactor from "./channels/ChannelReplyReactor.ts";
+import * as ChannelTransport from "./channels/ChannelTransport.ts";
+import * as SlackChannelRuntime from "./channels/slack/SlackChannelRuntime.ts";
+import * as SlackChannelSettings from "./channels/slack/SlackChannelSettings.ts";
+import * as SlackSdk from "./channels/slack/SlackSdk.ts";
 import * as InstanceSpend from "./usage/InstanceSpend.ts";
 import * as CodexUsageHistory from "./usage/CodexUsageHistory.ts";
 import * as RuntimeLayer from "./orchestration-v2/runtimeLayer.ts";
@@ -628,6 +635,15 @@ const layerProviderInstallationRefresh = Layer.effectDiscard(
   }),
 );
 
+// One transport registry: the Slack runtime registers into the same one the outbox resolves from.
+const layerChannels = SlackChannelSettings.layer.pipe(
+  Layer.provideMerge(SlackChannelRuntime.layer),
+  Layer.provideMerge(SlackSdk.layer),
+  Layer.provideMerge(Layer.mergeAll(ChannelBridge.layer, ChannelReplyReactor.layer)),
+  Layer.provideMerge(ChannelOutbox.layer),
+  Layer.provideMerge(ChannelTransport.layer),
+);
+
 const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   layerMemoryStarted,
   layerMemorySync,
@@ -689,11 +705,20 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
     Layer.provide(AssistantDirectory.layer),
     Layer.provide(ProjectionStoreV2.layer),
   ),
+  Layer.effectDiscard(
+    Effect.gen(function* () {
+      yield* (yield* ChannelOutbox.ChannelOutbox).start();
+      yield* (yield* ChannelBridge.ChannelBridge).start();
+      yield* (yield* ChannelReplyReactor.ChannelReplyReactor).start();
+      yield* (yield* SlackChannelSettings.SlackChannelSettings).start;
+    }),
+  ),
   ProviderUsageLimitsIngestion.layer,
   layerProviderInstallationRefresh,
   ReplayMarkers.layer,
   Layer.effectDiscard(ProjectSettingsOverrideSweep.sweep),
 ).pipe(
+  Layer.provideMerge(layerChannels),
   Layer.provideMerge(layerOrchestrationApplication),
   // Provider turns read the snapshot; it sits below the orchestration runtime that consumes it.
   Layer.provideMerge(layerMemorySnapshot),

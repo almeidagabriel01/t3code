@@ -215,6 +215,69 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
   `;
   yield* sql`CREATE UNIQUE INDEX IF NOT EXISTS assistants_default_idx ON assistants(is_default) WHERE is_default = 1`;
 
+  // Chat-app bridge. The inbox is keyed by the transport's idempotency key so a redelivery is a
+  // no-op; the outbox by delivery id so a replayed event never posts twice.
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS channel_inbox (
+      connection_id TEXT NOT NULL,
+      idempotency_key TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      state TEXT NOT NULL,
+      PRIMARY KEY (connection_id, idempotency_key)
+    )
+  `;
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS channel_outbox (
+      delivery_id TEXT PRIMARY KEY,
+      message_json TEXT NOT NULL,
+      replaces_delivery_id TEXT,
+      state TEXT NOT NULL,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      next_attempt_at TEXT NOT NULL,
+      external_message_id TEXT,
+      last_error_code TEXT,
+      created_at TEXT NOT NULL
+    )
+  `;
+  yield* sql`CREATE INDEX IF NOT EXISTS channel_outbox_due_idx ON channel_outbox(state, next_attempt_at)`;
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS channel_conversations (
+      connection_id TEXT NOT NULL,
+      conversation_key TEXT NOT NULL,
+      assistant_id TEXT NOT NULL,
+      PRIMARY KEY (connection_id, conversation_key)
+    )
+  `;
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS channel_reply_targets (
+      assistant_id TEXT PRIMARY KEY,
+      address_json TEXT NOT NULL,
+      actor_id TEXT NOT NULL
+    )
+  `;
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS channel_identities (
+      connection_id TEXT NOT NULL,
+      external_actor_id TEXT NOT NULL,
+      display_name TEXT,
+      linked_at TEXT NOT NULL,
+      PRIMARY KEY (connection_id, external_actor_id)
+    )
+  `;
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS channel_link_codes (
+      code_hash TEXT PRIMARY KEY,
+      expires_at TEXT NOT NULL,
+      used_at TEXT
+    )
+  `;
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS channel_cards (
+      decision_id TEXT PRIMARY KEY,
+      delivery_id TEXT NOT NULL
+    )
+  `;
+
   // Added after the tables first shipped, so older databases get them here.
   const decisionColumns = yield* sql<{ readonly name: string }>`PRAGMA table_info(decisions)`;
   if (!decisionColumns.some((column) => column.name === "approval_request_id")) {
