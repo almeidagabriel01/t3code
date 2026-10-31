@@ -67,7 +67,7 @@ const make = Effect.gen(function* () {
     const context = [
       ...(prompt === undefined || prompt === ""
         ? []
-        : [request.kind === "command" ? `\`\`\`\n${prompt}\n\`\`\`` : prompt]),
+        : [request.kind === "command" ? `\`\`\`sh\n${prompt}\n\`\`\`` : prompt]),
       ...(detail?.reason?.trim() ? [`Reason: ${detail.reason.trim()}`] : []),
     ]
       .join("\n\n")
