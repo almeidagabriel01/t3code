@@ -4,6 +4,7 @@ import {
   type AssistantToolAccess,
   assistantIdFromThreadId,
   isAssistantThreadId,
+  ProviderBudget,
   type ProjectId,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -11,6 +12,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
 export interface AssistantRow {
@@ -24,9 +26,16 @@ export interface AssistantRow {
   readonly thread_id: string | null;
   readonly generation: number;
   readonly archived_at: string | null;
+  readonly budget_json: string | null;
   readonly created_at: string;
   readonly updated_at: string;
 }
+
+const BudgetJson = Schema.fromJsonString(ProviderBudget);
+// A row that no longer decodes loses its cap rather than hiding every assistant.
+const decodeBudget = (json: string) =>
+  Option.getOrNull(Schema.decodeUnknownOption(BudgetJson)(json));
+export const encodeBudget = Schema.encodeSync(BudgetJson);
 
 export const toAssistant = (row: AssistantRow): Assistant => ({
   id: row.assistant_id as AssistantId,
@@ -39,6 +48,7 @@ export const toAssistant = (row: AssistantRow): Assistant => ({
   threadId: row.thread_id as ThreadId | null,
   generation: row.generation,
   archivedAt: row.archived_at,
+  budget: row.budget_json === null ? null : decodeBudget(row.budget_json),
   createdAt: row.created_at,
   updatedAt: row.updated_at,
 });

@@ -21,6 +21,7 @@ import {
   matchesScheduledTaskScope,
   scheduleFromDraft,
   taskToDraft,
+  validateScheduledTasksSearch,
 } from "./scheduledTasksSettings.logic";
 
 const laptopId = EnvironmentId.make("laptop");
@@ -324,4 +325,17 @@ it("rejects dedupe templates without a request placeholder", () => {
   const draft = taskToDraft({ ...legacyTask, schedule: { type: "webhook", signature: null } });
   expect(scheduleFromDraft({ ...draft, replayKey: "literal" })).toBeNull();
   expect(scheduleFromDraft({ ...draft, coalesceKey: "{{body.bad" })).toBeNull();
+});
+
+describe("validateScheduledTasksSearch", () => {
+  it("keeps non-blank ids and drops the rest", () => {
+    expect(
+      validateScheduledTasksSearch({
+        environmentId: "env",
+        taskId: "t1",
+        threadId: "assistant:a:1",
+      }),
+    ).toEqual({ environmentId: "env", taskId: "t1", threadId: "assistant:a:1" });
+    expect(validateScheduledTasksSearch({ threadId: "  ", taskId: 4 })).toEqual({});
+  });
 });

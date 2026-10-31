@@ -18,7 +18,10 @@ export function ThreadDecisionBanner(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
 }) {
-  const [first, ...rest] = useThreadOpenDecisions(props.environmentId, props.threadId);
+  // A provider approval is already shown by the thread's own approval UI.
+  const [first, ...rest] = useThreadOpenDecisions(props.environmentId, props.threadId).filter(
+    (entry) => entry.decision.approvalRequestId === undefined,
+  );
   if (first === undefined) return null;
   return (
     <DecisionBannerRow

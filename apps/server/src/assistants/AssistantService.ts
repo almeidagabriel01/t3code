@@ -39,7 +39,8 @@ import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.t
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { type AssistantRow, toAssistant } from "./AssistantDirectory.ts";
+import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
+import { type AssistantRow, encodeBudget, toAssistant } from "./AssistantDirectory.ts";
 
 const JARVIS_INSTRUCTIONS = [
   "You are Jarvis, the user's general assistant across all of their projects.",
@@ -102,6 +103,7 @@ const make = Effect.gen(function* () {
   const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
   const projects = yield* ProjectService.ProjectService;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const scheduledTasks = yield* ScheduledTaskService.ScheduledTaskService;
   const providerRegistry = yield* Effect.serviceOption(ProviderRegistry.ProviderRegistry);
   const lock = yield* Semaphore.make(1);
   const events = yield* PubSub.unbounded<AssistantsEvent>();
@@ -205,6 +207,18 @@ const make = Effect.gen(function* () {
       commandId,
       threadId,
     }));
+
+  /** Schedules belong to the assistant, so they follow it to whichever conversation is current. */
+  const followSchedules = (from: string | null, to: ThreadId, projectId: string) =>
+    from === null || from === to
+      ? Effect.void
+      : scheduledTasks
+          .retargetThreadTasks({
+            fromThreadId: from as ThreadId,
+            toThreadId: to,
+            projectId: projectId as ProjectId,
+          })
+          .pipe(Effect.catch(threadFailure("Could not move the assistant's schedules.")));
 
   /** Archives a conversation that was already replaced, if it is still live. */
   const retire = (threadId: string | null) =>
@@ -345,10 +359,11 @@ const make = Effect.gen(function* () {
           yield* sql`
             INSERT INTO assistants (
               assistant_id, handle, name, project_id, instructions, tool_access, is_default,
-              generation, created_at, updated_at
+              generation, budget_json, created_at, updated_at
             ) VALUES (
               ${id}, ${handle}, ${input.name}, ${input.projectId}, ${input.instructions},
-              ${input.toolAccess}, 0, 1, ${now}, ${now}
+              ${input.toolAccess}, 0, 1, ${input.budget ? encodeBudget(input.budget) : null},
+              ${now}, ${now}
             )`;
           const row = yield* findRow(id);
           const threadId = yield* launchGeneration(row, 1, input.modelSelection).pipe(
@@ -399,6 +414,12 @@ const make = Effect.gen(function* () {
             instructions: input.instructions ?? row.instructions,
             toolAccess: input.toolAccess ?? toAssistant(row).toolAccess,
             projectId: input.projectId ?? row.project_id,
+            budgetJson:
+              input.budget === undefined
+                ? row.budget_json
+                : input.budget === null
+                  ? null
+                  : encodeBudget(input.budget),
           };
           const now = yield* nowIso;
           if (projectChanged) {
@@ -418,8 +439,9 @@ const make = Effect.gen(function* () {
               UPDATE assistants SET name = ${next.name}, handle = ${next.handle},
                 instructions = ${next.instructions}, tool_access = ${next.toolAccess},
                 project_id = ${next.projectId}, thread_id = ${threadId}, generation = ${generation},
-                archived_at = ${archivedAt}, updated_at = ${now}
+                budget_json = ${next.budgetJson}, archived_at = ${archivedAt}, updated_at = ${now}
               WHERE assistant_id = ${row.assistant_id}`;
+            yield* followSchedules(previousThreadId, threadId, next.projectId);
             yield* retire(previousThreadId);
             if (archivedAt !== null) yield* archiveThread(threadId, true);
           } else {
@@ -427,7 +449,7 @@ const make = Effect.gen(function* () {
             yield* sql`
               UPDATE assistants SET name = ${next.name}, handle = ${next.handle},
                 instructions = ${next.instructions}, tool_access = ${next.toolAccess},
-                archived_at = ${archivedAt}, updated_at = ${now}
+                budget_json = ${next.budgetJson}, archived_at = ${archivedAt}, updated_at = ${now}
               WHERE assistant_id = ${row.assistant_id}`;
             if (
               previousThreadId !== null &&
@@ -513,6 +535,17 @@ const make = Effect.gen(function* () {
                 Effect.catch((cause) =>
                   Effect.logWarning("assistant conversation was not deleted", { threadId, cause }),
                 ),
+                // Thread deletion cleans schedules too; this covers a conversation that never deleted.
+                Effect.andThen(
+                  scheduledTasks.deleteForThread(threadId).pipe(
+                    Effect.catch((cause) =>
+                      Effect.logWarning("assistant schedules were not deleted", {
+                        threadId,
+                        cause,
+                      }),
+                    ),
+                  ),
+                ),
               ),
             { discard: true },
           );
@@ -547,6 +580,7 @@ const make = Effect.gen(function* () {
               UPDATE assistants SET thread_id = ${restore}, project_id = ${thread.projectId},
                 updated_at = ${yield* nowIso}
               WHERE assistant_id = ${row.assistant_id}`;
+            yield* followSchedules(previousThreadId, restore, thread.projectId);
             if (thread.archivedAt !== null) yield* archiveThread(restore, false);
             yield* retire(previousThreadId);
           } else {
@@ -557,6 +591,7 @@ const make = Effect.gen(function* () {
             yield* sql`
               UPDATE assistants SET thread_id = ${threadId}, generation = ${generation}, updated_at = ${yield* nowIso}
               WHERE assistant_id = ${row.assistant_id}`;
+            yield* followSchedules(previousThreadId, threadId, row.project_id);
             yield* retire(previousThreadId);
           }
           yield* publish(row.assistant_id);

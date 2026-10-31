@@ -13,7 +13,11 @@ import {
 } from "lucide-react";
 
 import { useSidebarProjectGroups } from "../../hooks/useSidebarProjectGroups";
-import { useAssistantEntries, type AssistantEntry } from "../../state/assistants";
+import {
+  useAssistantEntries,
+  useAssistantSpend,
+  type AssistantEntry,
+} from "../../state/assistants";
 import { useProjects, useThreadShell } from "../../state/entities";
 import { useEnvironmentProviders, useEnvironments } from "../../state/environments";
 import { AssistantAvatar, toolAccessLabel } from "../assistants/assistantPresentation";
@@ -70,6 +74,10 @@ function AssistantRow(props: { readonly entry: AssistantEntry; readonly first: b
       )?.displayName ??
       project?.title ??
       "Unknown project");
+  const limitState = useAssistantSpend(
+    environmentId,
+    assistant.budget === null ? null : assistant.id,
+  )?.budget?.state;
   const providers = useEnvironmentProviders().get(environmentId);
   const selection = useThreadShell(
     assistant.threadId ? scopeThreadRef(environmentId, assistant.threadId) : null,
@@ -96,6 +104,7 @@ function AssistantRow(props: { readonly entry: AssistantEntry; readonly first: b
         projectName,
         toolAccessLabel(assistant.toolAccess),
         model,
+        limitState === "exceeded" ? "Limit reached" : limitState === "warn" ? "Near limit" : null,
       ]
         .filter((part): part is string => part !== null)
         .join(" · ")}

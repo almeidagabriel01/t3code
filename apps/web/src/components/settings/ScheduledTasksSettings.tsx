@@ -59,7 +59,9 @@ import {
   useEnvironmentHttpBaseUrl,
   type EnvironmentPresentation,
 } from "../../state/environments";
-import { useProjects } from "../../state/entities";
+import { useProjects, useThreadShell } from "../../state/entities";
+import { useThreadAssistant } from "../../state/assistants";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { environmentAtomList, environmentIdsKey } from "../../state/environmentAtomList";
 import { formatEnvironmentQueryError, useEnvironmentQuery } from "../../state/query";
 import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
@@ -348,11 +350,14 @@ function statusVariant(status: ScheduledTask["lastRunStatus"]) {
 export function ScheduledTasksSettings(target: {
   readonly environmentId?: EnvironmentId;
   readonly taskId?: ScheduledTaskId | undefined;
+  /** Opens the create editor bound to this thread's conversation. */
+  readonly threadId?: ThreadId | undefined;
 }) {
   const { scope, environments, connectedEnvironments, environment } = useSettingsScope();
   const [editor, setEditor] = useState<{
     environmentId: EnvironmentId;
     task: ScheduledTask | null;
+    bound?: BoundThread;
   } | null>(null);
   const openForEdit = (environmentId: EnvironmentId, task: ScheduledTask) => {
     setEditor({ environmentId, task });
@@ -387,13 +392,38 @@ export function ScheduledTasksSettings(target: {
     setOpenedLinkTaskId(target.taskId);
     if (editor === null) setEditor({ environmentId: linkedEnvironmentId, task: linkedTask });
   }
+  const boundThread = useThreadShell(
+    target.threadId !== undefined && linkedEnvironmentId !== undefined
+      ? scopeThreadRef(linkedEnvironmentId, target.threadId)
+      : null,
+  );
+  // Same once-only rule as `taskId`: a `threadId` link opens one create editor, then it is the user's.
+  const [openedBoundThreadId, setOpenedBoundThreadId] = useState<ThreadId | undefined>();
+  if (target.threadId === undefined && openedBoundThreadId !== undefined) {
+    setOpenedBoundThreadId(undefined);
+  }
+  if (
+    boundThread &&
+    target.threadId !== undefined &&
+    linkedEnvironmentId !== undefined &&
+    openedBoundThreadId !== target.threadId
+  ) {
+    setOpenedBoundThreadId(target.threadId);
+    if (editor === null) {
+      setEditor({
+        environmentId: linkedEnvironmentId,
+        task: null,
+        bound: { threadId: target.threadId, projectId: boundThread.projectId },
+      });
+    }
+  }
   const navigate = useNavigate({ from: "/settings/scheduled-tasks" });
   const closeEditor = () => {
     setEditor(null);
-    if (target.taskId === undefined) return;
+    if (target.taskId === undefined && target.threadId === undefined) return;
     void navigate({
       to: "/settings/scheduled-tasks",
-      search: ({ taskId: _closed, ...rest }) => rest,
+      search: ({ taskId: _closed, threadId: _closedThread, ...rest }) => rest,
       replace: true,
     });
   };
@@ -464,9 +494,10 @@ export function ScheduledTasksSettings(target: {
       </SettingsSection>
       {editor ? (
         <ScheduledTaskEditorDialog
-          key={`${editor.environmentId}:${editor.task?.id ?? "new"}`}
+          key={`${editor.environmentId}:${editor.task?.id ?? "new"}:${editor.bound?.threadId ?? ""}`}
           initialEnvironmentId={editor.environmentId}
           task={editor.task}
+          bound={editor.bound}
           onClose={closeEditor}
         />
       ) : null}
@@ -1079,13 +1110,20 @@ function WebhookDeliveryMode({ environmentId }: { readonly environmentId: Enviro
   );
 }
 
+interface BoundThread {
+  readonly threadId: ThreadId;
+  readonly projectId: ProjectId;
+}
+
 function ScheduledTaskEditorDialog({
   initialEnvironmentId,
   task,
+  bound,
   onClose,
 }: {
   readonly initialEnvironmentId: EnvironmentId;
   readonly task: ScheduledTask | null;
+  readonly bound: BoundThread | undefined;
   readonly onClose: () => void;
 }) {
   const [saving, setSaving] = useState(false);
@@ -1101,6 +1139,7 @@ function ScheduledTaskEditorDialog({
         <ScheduledTaskEditorForm
           initialEnvironmentId={initialEnvironmentId}
           task={task}
+          bound={bound}
           saving={saving}
           onSavingChange={setSaving}
           onClose={onClose}
@@ -1110,15 +1149,23 @@ function ScheduledTaskEditorDialog({
   );
 }
 
+function useBoundThreadName(environmentId: EnvironmentId, threadId: ThreadId | ""): string {
+  const assistant = useThreadAssistant(environmentId, threadId === "" ? null : threadId);
+  const shell = useThreadShell(threadId === "" ? null : scopeThreadRef(environmentId, threadId));
+  return assistant?.assistant.name ?? shell?.title ?? "This thread";
+}
+
 function ScheduledTaskEditorForm({
   initialEnvironmentId,
   task,
+  bound,
   saving,
   onSavingChange: setSaving,
   onClose,
 }: {
   readonly initialEnvironmentId: EnvironmentId;
   readonly task: ScheduledTask | null;
+  readonly bound: BoundThread | undefined;
   readonly saving: boolean;
   readonly onSavingChange: (saving: boolean) => void;
   readonly onClose: () => void;
@@ -1135,7 +1182,8 @@ function ScheduledTaskEditorForm({
   const projects = allProjects.filter(
     (project) =>
       project.environmentId === environmentId &&
-      matchesScheduledTaskScope(scope, environmentId, project.id),
+      (matchesScheduledTaskScope(scope, environmentId, project.id) ||
+        project.id === bound?.projectId),
   );
   const settings = useEnvironmentSettings(environmentId);
   const providers =
@@ -1147,8 +1195,13 @@ function ScheduledTaskEditorForm({
     label: "scheduled task upsert",
   });
   const [draft, setDraft] = useState<DraftState>(() =>
-    task ? taskToDraft(task) : { ...EMPTY_DRAFT, projectId: projects[0]?.id ?? "" },
+    task
+      ? taskToDraft(task)
+      : bound
+        ? { ...EMPTY_DRAFT, projectId: bound.projectId, threadId: bound.threadId }
+        : { ...EMPTY_DRAFT, projectId: projects[0]?.id ?? "" },
   );
+  const boundName = useBoundThreadName(environmentId, draft.threadId as ThreadId | "");
   const submissionPending = useRef(false);
   const editingTaskMissing =
     draft.editingId !== null &&
@@ -1386,57 +1439,78 @@ function ScheduledTaskEditorForm({
             />
           </Field>
 
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="Project" htmlFor="scheduled-task-project">
-              <Select
-                value={selectedProjectId}
-                onValueChange={(projectId) =>
-                  setDraft((current) => ({ ...current, projectId: projectId ?? "" }))
-                }
-              >
-                <SelectTrigger size="sm" id="scheduled-task-project">
-                  <SelectValue placeholder="Select a project">{selectedProject?.title}</SelectValue>
-                </SelectTrigger>
-                <SelectPopup>
-                  {projects.map((project) => (
-                    <SelectItem key={project.id} value={project.id} label={project.title}>
-                      <span className="block truncate">{project.title}</span>
-                      {allProjects.some(
-                        (other) =>
-                          other.title === project.title &&
-                          (other.environmentId !== project.environmentId ||
-                            other.id !== project.id),
-                      ) ? (
-                        <span className="block max-w-72 truncate text-xs text-muted-foreground">
-                          {project.workspaceRoot}
-                        </span>
-                      ) : null}
-                    </SelectItem>
-                  ))}
-                </SelectPopup>
-              </Select>
+          {draft.threadId ? (
+            <Field label="Runs in">
+              <div className="flex items-center justify-between gap-3">
+                <span className="min-w-0 truncate text-sm">{boundName}'s conversation</span>
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="outline"
+                  onClick={() => setDraft((current) => ({ ...current, threadId: "" }))}
+                >
+                  Run in a new thread
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                It follows that conversation's project, model and permissions.
+              </p>
             </Field>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="Project" htmlFor="scheduled-task-project">
+                <Select
+                  value={selectedProjectId}
+                  onValueChange={(projectId) =>
+                    setDraft((current) => ({ ...current, projectId: projectId ?? "" }))
+                  }
+                >
+                  <SelectTrigger size="sm" id="scheduled-task-project">
+                    <SelectValue placeholder="Select a project">
+                      {selectedProject?.title}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectPopup>
+                    {projects.map((project) => (
+                      <SelectItem key={project.id} value={project.id} label={project.title}>
+                        <span className="block truncate">{project.title}</span>
+                        {allProjects.some(
+                          (other) =>
+                            other.title === project.title &&
+                            (other.environmentId !== project.environmentId ||
+                              other.id !== project.id),
+                        ) ? (
+                          <span className="block max-w-72 truncate text-xs text-muted-foreground">
+                            {project.workspaceRoot}
+                          </span>
+                        ) : null}
+                      </SelectItem>
+                    ))}
+                  </SelectPopup>
+                </Select>
+              </Field>
 
-            <Field label="Workspace" htmlFor="scheduled-task-workspace">
-              <Select
-                value={draft.workspaceMode}
-                onValueChange={(value) =>
-                  setDraft((current) => ({ ...current, workspaceMode: value as WorkspaceMode }))
-                }
-              >
-                <SelectTrigger size="sm" id="scheduled-task-workspace">
-                  <SelectValue>{WORKSPACE_MODE_LABELS[draft.workspaceMode]}</SelectValue>
-                </SelectTrigger>
-                <SelectPopup>
-                  <SelectItem value="worktree">Create a new worktree</SelectItem>
-                  <SelectItem value="root">Use the project checkout</SelectItem>
-                  <SelectItem value="existing_worktree">Use a specific checkout</SelectItem>
-                </SelectPopup>
-              </Select>
-            </Field>
-          </div>
+              <Field label="Workspace" htmlFor="scheduled-task-workspace">
+                <Select
+                  value={draft.workspaceMode}
+                  onValueChange={(value) =>
+                    setDraft((current) => ({ ...current, workspaceMode: value as WorkspaceMode }))
+                  }
+                >
+                  <SelectTrigger size="sm" id="scheduled-task-workspace">
+                    <SelectValue>{WORKSPACE_MODE_LABELS[draft.workspaceMode]}</SelectValue>
+                  </SelectTrigger>
+                  <SelectPopup>
+                    <SelectItem value="worktree">Create a new worktree</SelectItem>
+                    <SelectItem value="root">Use the project checkout</SelectItem>
+                    <SelectItem value="existing_worktree">Use a specific checkout</SelectItem>
+                  </SelectPopup>
+                </Select>
+              </Field>
+            </div>
+          )}
 
-          {draft.workspaceMode === "worktree" ? (
+          {!draft.threadId && draft.workspaceMode === "worktree" ? (
             <Field label="Base branch" htmlFor="scheduled-task-base-ref">
               <WorktreeBaseBranchPicker
                 key={`${environmentId}:${selectedProjectId}`}
@@ -1453,7 +1527,7 @@ function ScheduledTaskEditorForm({
               />
             </Field>
           ) : null}
-          {draft.workspaceMode === "existing_worktree" ? (
+          {!draft.threadId && draft.workspaceMode === "existing_worktree" ? (
             <Field label="Checkout path" htmlFor="scheduled-task-checkout">
               <Input
                 id="scheduled-task-checkout"
@@ -1481,24 +1555,26 @@ function ScheduledTaskEditorForm({
             />
           </Field>
 
-          <Field label="Model">
-            <div>
-              <ProviderModelPicker
-                environmentId={environmentId}
-                disabled={saving || !connected}
-                activeInstanceId={activeInstanceId}
-                model={activeModel}
-                lockedProvider={null}
-                instanceEntries={instanceEntries}
-                modelOptionsByInstance={modelOptionsByInstance}
-                isComposerOwned={false}
-                triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-                onInstanceModelChange={(instanceId, model) =>
-                  setDraft((current) => ({ ...current, modelKey: `${instanceId}:${model}` }))
-                }
-              />
-            </div>
-          </Field>
+          {draft.threadId ? null : (
+            <Field label="Model">
+              <div>
+                <ProviderModelPicker
+                  environmentId={environmentId}
+                  disabled={saving || !connected}
+                  activeInstanceId={activeInstanceId}
+                  model={activeModel}
+                  lockedProvider={null}
+                  instanceEntries={instanceEntries}
+                  modelOptionsByInstance={modelOptionsByInstance}
+                  isComposerOwned={false}
+                  triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                  onInstanceModelChange={(instanceId, model) =>
+                    setDraft((current) => ({ ...current, modelKey: `${instanceId}:${model}` }))
+                  }
+                />
+              </div>
+            </Field>
+          )}
 
           <div className="space-y-3">
             {task?.schedule.type === "interval" &&

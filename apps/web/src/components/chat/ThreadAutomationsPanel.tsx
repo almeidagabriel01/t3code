@@ -37,7 +37,7 @@ const STATUS_DOT_CLASS: Record<ScheduledTask["lastRunStatus"], string> = {
   failed: "bg-destructive",
 };
 
-function taskScheduleLine(task: ScheduledTask) {
+export function taskScheduleLine(task: ScheduledTask) {
   return (
     <>
       {scheduleLabel(task.schedule)}

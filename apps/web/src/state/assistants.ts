@@ -22,6 +22,7 @@ import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 
 import { connectionAtomRuntime } from "../connection/runtime";
+import { useEnvironmentQuery } from "./query";
 import { environmentAtomList, environmentIdsKey } from "./environmentAtomList";
 import { environmentServerConfigsAtom } from "./server";
 import { useEnvironmentsWithScope } from "./session";
@@ -137,4 +138,16 @@ export function useAssistantActions(environmentId: EnvironmentId) {
       reply(await remove({ environmentId, input: { assistantId } })),
     reset: async (input: AssistantsResetInput) => reply(await reset({ environmentId, input })),
   };
+}
+
+/** What the assistant spent across every conversation; no request while `assistantId` is null. */
+export function useAssistantSpend(
+  environmentId: EnvironmentId,
+  assistantId: Assistant["id"] | null,
+) {
+  return useEnvironmentQuery(
+    assistantId === null
+      ? null
+      : assistantsEnvironment.spend({ environmentId, input: { assistantId } }),
+  ).data;
 }

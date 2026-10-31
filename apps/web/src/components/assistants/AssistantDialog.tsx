@@ -4,6 +4,7 @@ import {
   ASSISTANT_NAME_MAX_LENGTH,
   assistantHandleFromName,
   AssistantHandle,
+  BudgetPeriod,
   type AssistantToolAccess,
   type EnvironmentId,
   type ModelSelection,
@@ -28,6 +29,7 @@ import {
 import {
   useAssistantActions,
   useAssistantEntries,
+  useAssistantSpend,
   useAssistantsEnvironmentIds,
 } from "../../state/assistants";
 import { useEnvironmentProviders, useEnvironments } from "../../state/environments";
@@ -37,6 +39,7 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { validateMemorySettingsSearch } from "../settings/MemorySettings.logic";
 import { cn } from "../../lib/utils";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
+import { BUDGET_PERIOD_LABELS } from "../settings/ProviderBudgetSection";
 import { SETTINGS_PICKER_TRIGGER_CLASSNAME } from "../settings/settingsLayout";
 import { Alert, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
@@ -52,8 +55,11 @@ import {
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { Radio, RadioGroup } from "../ui/radio-group";
+import { Switch } from "../ui/switch";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Textarea } from "../ui/textarea";
+import { AssistantSchedules } from "./AssistantSchedules";
+import { budgetFromDraft, budgetToDraft, spendLine, type BudgetDraft } from "./assistantBudget";
 import { assistantDialogAtom, type AssistantDialogTarget } from "./assistantDialogState";
 import { useAssistantFlows } from "./useAssistantFlows";
 import { TOOL_ACCESS_OPTIONS } from "./assistantPresentation";
@@ -83,6 +89,90 @@ function FieldLabel(props: {
     <div className="flex flex-col gap-0.5">
       <Label htmlFor={props.htmlFor}>{props.label}</Label>
       <p className="text-xs text-muted-foreground">{props.description}</p>
+    </div>
+  );
+}
+
+function BudgetFields(props: {
+  readonly draft: BudgetDraft;
+  readonly onChange: (patch: Partial<BudgetDraft>) => void;
+  readonly spent: string | null;
+}) {
+  const { draft } = props;
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex flex-col gap-0.5">
+          <Label htmlFor="assistant-limit">Spending limit</Label>
+          <p className="text-xs text-muted-foreground">
+            Counts every conversation it has had, priced from this app's own turns.
+          </p>
+        </div>
+        <Switch
+          id="assistant-limit"
+          checked={draft.enabled}
+          onCheckedChange={(checked) => props.onChange({ enabled: Boolean(checked) })}
+          aria-label="Limit spending"
+        />
+      </div>
+      {props.spent ? <p className="text-xs text-muted-foreground">{props.spent}</p> : null}
+      {draft.enabled ? (
+        <>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="assistant-limit-amount">Amount (USD)</Label>
+              <Input
+                id="assistant-limit-amount"
+                inputMode="decimal"
+                placeholder="10"
+                value={draft.amount}
+                onChange={(event) => props.onChange({ amount: event.target.value })}
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="assistant-limit-warn">Warn at (%)</Label>
+              <Input
+                id="assistant-limit-warn"
+                inputMode="numeric"
+                value={draft.warnAtPercent}
+                onChange={(event) => props.onChange({ warnAtPercent: event.target.value })}
+              />
+            </div>
+          </div>
+          <fieldset className="flex flex-col gap-1">
+            <legend className="text-sm font-medium">Period</legend>
+            <RadioGroup
+              aria-label="Limit period"
+              value={draft.period}
+              onValueChange={(value) => props.onChange({ period: value as BudgetPeriod })}
+            >
+              {BudgetPeriod.literals.map((period) => (
+                <label
+                  key={period}
+                  className="flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-1 text-sm outline-hidden hover:bg-foreground/8"
+                >
+                  <Radio value={period} />
+                  {BUDGET_PERIOD_LABELS[period]}
+                </label>
+              ))}
+            </RadioGroup>
+          </fieldset>
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex flex-col gap-0.5">
+              <Label htmlFor="assistant-limit-stop">Stop when reached</Label>
+              <p className="text-xs text-muted-foreground">
+                New turns are refused until the period resets. Turns already running finish.
+              </p>
+            </div>
+            <Switch
+              id="assistant-limit-stop"
+              checked={draft.block}
+              onCheckedChange={(checked) => props.onChange({ block: Boolean(checked) })}
+              aria-label="Stop when reached"
+            />
+          </div>
+        </>
+      ) : null}
     </div>
   );
 }
@@ -120,6 +210,11 @@ function AssistantDialog(props: {
   );
   const [projectId, setProjectId] = useState<ProjectId | null>(assistant?.projectId ?? null);
   const [pickedModel, setPickedModel] = useState<ModelSelection | null>(null);
+  const [budgetDraft, setBudgetDraft] = useState(() => budgetToDraft(assistant?.budget ?? null));
+  const spend = useAssistantSpend(
+    (environmentId ?? "") as EnvironmentId,
+    assistant && assistant.budget !== null ? assistant.id : null,
+  );
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -168,6 +263,8 @@ function AssistantDialog(props: {
 
   const save = async () => {
     if (!canSave || effectiveProjectId === null) return;
+    const budget = budgetFromDraft(budgetDraft, Intl.DateTimeFormat().resolvedOptions().timeZone);
+    if (!budget.ok) return setError(budget.message);
     setSaving(true);
     setError(null);
     const trimmedName = name.trim();
@@ -180,6 +277,7 @@ function AssistantDialog(props: {
           ...(pickedModel ? { modelSelection: pickedModel } : {}),
           ...(instructions !== assistant.instructions ? { instructions } : {}),
           ...(toolAccess !== assistant.toolAccess ? { toolAccess } : {}),
+          budget: budget.budget,
         })
       : await actions.create({
           name: trimmedName,
@@ -188,6 +286,7 @@ function AssistantDialog(props: {
           ...(pickedModel ? { modelSelection: pickedModel } : {}),
           instructions,
           toolAccess,
+          ...(budget.budget ? { budget: budget.budget } : {}),
         });
     setSaving(false);
     if (!reply.ok) return setError(reply.message);
@@ -405,6 +504,18 @@ function AssistantDialog(props: {
                 ))}
               </RadioGroup>
             </fieldset>
+            <BudgetFields
+              draft={budgetDraft}
+              onChange={(patch) => setBudgetDraft((current) => ({ ...current, ...patch }))}
+              spent={spend ? spendLine(spend) : null}
+            />
+            {assistant?.threadId && environmentId !== null ? (
+              <AssistantSchedules
+                environmentId={environmentId}
+                threadId={assistant.threadId}
+                onNavigate={props.onClose}
+              />
+            ) : null}
             <div className="flex flex-col gap-0.5">
               <span className="text-sm font-medium">Memory</span>
               <p className="text-xs text-muted-foreground">

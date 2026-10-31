@@ -12,7 +12,7 @@ import { searchableSetting } from "./settingsSearch";
 
 const LOCAL_TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
-const PERIODS: Record<BudgetPeriod, string> = {
+export const BUDGET_PERIOD_LABELS: Record<BudgetPeriod, string> = {
   daily: "Daily",
   weekly: "Weekly (Mon–Sun)",
   monthly: "Monthly",
@@ -98,12 +98,12 @@ export function ProviderBudgetSection({
                 }}
               >
                 <SelectTrigger size="sm" aria-label="Budget period">
-                  <SelectValue>{(value: BudgetPeriod) => PERIODS[value]}</SelectValue>
+                  <SelectValue>{(value: BudgetPeriod) => BUDGET_PERIOD_LABELS[value]}</SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
                   {BudgetPeriod.literals.map((period) => (
                     <SelectItem key={period} value={period}>
-                      {PERIODS[period]}
+                      {BUDGET_PERIOD_LABELS[period]}
                     </SelectItem>
                   ))}
                 </SelectPopup>

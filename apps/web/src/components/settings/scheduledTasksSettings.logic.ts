@@ -4,6 +4,7 @@ import {
   MAX_WEBHOOK_DELIVERY_AGE_MINUTES,
   type ProjectId,
   ScheduledTaskId,
+  ThreadId,
   type ScheduledTask,
   type ScheduledTaskUpsertSchedule,
   type ModelSelection,
@@ -48,6 +49,9 @@ export function validateScheduledTasksSearch(raw: Record<string, unknown>) {
       : {}),
     ...(typeof raw.taskId === "string" && raw.taskId.trim()
       ? { taskId: ScheduledTaskId.make(raw.taskId) }
+      : {}),
+    ...(typeof raw.threadId === "string" && raw.threadId.trim()
+      ? { threadId: ThreadId.make(raw.threadId) }
       : {}),
   };
 }
