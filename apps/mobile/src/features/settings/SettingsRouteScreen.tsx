@@ -37,7 +37,7 @@ import {
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
 import { useAssistantsEnvironmentIds } from "../../state/assistants";
 import { useHasKanbanEnvironments } from "../../state/kanban";
-import { useSlackEnvironmentIds } from "../../state/slackChannel";
+import { useImessageEnvironmentIds } from "../../state/imessageChannel";
 import { useHasMemoryEnvironments } from "../../state/memory";
 import { useHasNotesEnvironments } from "../../state/notes";
 import { filterSettingsSections } from "./settings-search";
@@ -220,7 +220,7 @@ function useSettingsIndexSections(): SettingsListSection[] {
   const hasBoards = useHasKanbanEnvironments();
   const hasNotes = useHasNotesEnvironments();
   const hasMemory = useHasMemoryEnvironments();
-  const hasSlack = useSlackEnvironmentIds().length > 0;
+  const hasImessage = useImessageEnvironmentIds().length > 0;
   const hasAssistants = useAssistantsEnvironmentIds().length > 0;
   const selectedProject = projectGroups.find((group) => group.key === selectedProjectKey);
   const scopedProjectMembers =
@@ -268,7 +268,7 @@ function useSettingsIndexSections(): SettingsListSection[] {
         serverPage("SettingsProviderAccounts", "person.crop.circle", "Providers"),
         serverPage("SettingsThreads", "text.bubble", "Threads"),
         ...(hasAssistants ? [page("SettingsAssistants", "person.2", "Assistants")] : []),
-        ...(hasSlack ? [page("SettingsSlack", "text.bubble", "Slack")] : []),
+        ...(hasImessage ? [page("SettingsImessage", "text.bubble", "iMessage")] : []),
         page("SettingsScheduledTasks", "clock", "Scheduled tasks"),
         ...(hasBoards ? [page("SettingsKanban", "square.grid.2x2", "Board")] : []),
         ...(hasNotes ? [page("SettingsNotes", "doc.text", "Notes")] : []),

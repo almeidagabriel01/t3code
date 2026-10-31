@@ -136,7 +136,7 @@ import { NotesRouteScreen } from "./features/notes/NotesRouteScreen";
 import { AssistantEditRouteScreen } from "./features/assistants/AssistantEditRouteScreen";
 import { AssistantModelPickerRouteScreen } from "./features/assistants/AssistantModelPickerRouteScreen";
 import { SettingsAssistantsRouteScreen } from "./features/assistants/SettingsAssistantsRouteScreen";
-import { SettingsSlackRouteScreen } from "./features/slack/SettingsSlackRouteScreen";
+import { SettingsImessageRouteScreen } from "./features/imessage/SettingsImessageRouteScreen";
 import { SettingsMemoryRouteScreen } from "./features/settings/SettingsMemoryRouteScreen";
 import { ClaudeChromeRouteScreen } from "./features/settings/ClaudeChromeRouteScreen";
 import { FallbackModelPickerRouteScreen } from "./features/settings/FallbackModelPickerRouteScreen";
@@ -435,10 +435,10 @@ const SETTINGS_SCREENS = {
           }),
     },
   }),
-  SettingsSlack: createNativeStackScreen({
-    screen: SettingsSlackRouteScreen,
-    linking: "settings/slack",
-    options: { ...SETTINGS_PAGE_OPTIONS, title: "Slack" },
+  SettingsImessage: createNativeStackScreen({
+    screen: SettingsImessageRouteScreen,
+    linking: "settings/imessage",
+    options: { ...SETTINGS_PAGE_OPTIONS, title: "iMessage" },
   }),
   SettingsAssistants: createNativeStackScreen({
     screen: SettingsAssistantsRouteScreen,
