@@ -12,12 +12,15 @@ import {
   ProjectId,
   ProviderInstanceId,
   RunId,
+  ScheduledTaskError,
   ServerConfig,
   ThreadId,
   TurnItemId,
   WS_METHODS,
   WsRpcGroup,
   type Assistant,
+  type AssistantSpend,
+  type ScheduledTask,
   type AssistantsEvent,
   type Decision,
   type DecisionsEvent,
@@ -409,8 +412,61 @@ handlers[WS_METHODS.decisionsDismiss] = (input: { readonly decisionId: string })
 
 /** Assistants the fake server holds; it only serves the snapshot, mutations stay pending. */
 export const fakeAssistants = { items: [] as Assistant[] };
+const assistantSubscribers = new Set<Queue.Queue<AssistantsEvent>>();
 handlers[WS_METHODS.assistantsSubscribe] = () =>
-  subscribe<AssistantsEvent>([{ type: "snapshot", assistants: fakeAssistants.items }]);
+  subscribe<AssistantsEvent>([{ type: "snapshot", assistants: fakeAssistants.items }], (queue) => {
+    assistantSubscribers.add(queue);
+    return () => assistantSubscribers.delete(queue);
+  });
+/** Replaces the assistants, including for a subscription an earlier screen left open. */
+export function publishAssistants(items: Assistant[]): void {
+  fakeAssistants.items = items;
+  for (const queue of assistantSubscribers) {
+    Effect.runSync(Queue.offer(queue, { type: "snapshot", assistants: items }));
+  }
+}
+
+/** Spend the fake serves for any assistant, and the update calls it received. */
+export const fakeAssistantEdits = {
+  spend: null as AssistantSpend | null,
+  updates: [] as unknown[],
+};
+handlers[WS_METHODS.assistantsSpend] = () =>
+  fakeAssistantEdits.spend ? Effect.succeed(fakeAssistantEdits.spend) : Effect.never;
+handlers[WS_METHODS.assistantsUpdate] = (input: { readonly assistantId: string }) => {
+  fakeAssistantEdits.updates.push(input);
+  const found = fakeAssistants.items.find((item) => item.id === input.assistantId);
+  return found ? Effect.succeed(found) : Effect.never;
+};
+
+/** Scheduled tasks the fake server holds; `failToggle` makes the next toggle fail with it. */
+export const fakeScheduledTasks = {
+  items: [] as ScheduledTask[],
+  toggles: [] as Array<{ readonly id: string; readonly enabled: boolean }>,
+  failToggle: null as string | null,
+};
+const taskSubscribers = new Set<Queue.Queue<{ readonly tasks: ScheduledTask[] }>>();
+handlers[WS_METHODS.scheduledTasksSubscribe] = () =>
+  subscribe([{ tasks: fakeScheduledTasks.items }], (queue) => {
+    taskSubscribers.add(queue);
+    return () => taskSubscribers.delete(queue);
+  });
+/** Replaces the scheduled tasks, including for a subscription an earlier screen left open. */
+export function publishScheduledTasks(items: ScheduledTask[]): void {
+  fakeScheduledTasks.items = items;
+  for (const queue of taskSubscribers) Effect.runSync(Queue.offer(queue, { tasks: items }));
+}
+handlers[WS_METHODS.scheduledTasksSetEnabled] = (input: {
+  readonly id: string;
+  readonly enabled: boolean;
+}) => {
+  fakeScheduledTasks.toggles.push(input);
+  if (fakeScheduledTasks.failToggle !== null) {
+    return Effect.fail(new ScheduledTaskError({ message: fakeScheduledTasks.failToggle }));
+  }
+  const found = fakeScheduledTasks.items.find((item) => item.id === input.id)!;
+  return Effect.succeed({ task: { ...found, enabled: input.enabled } });
+};
 
 // Unanswered calls stay pending, like a server that has not replied yet.
 const client = new Proxy(handlers, {

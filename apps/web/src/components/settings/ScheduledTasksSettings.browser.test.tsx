@@ -6,6 +6,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   ScheduledTaskId,
+  ThreadId,
   type ScheduledTask,
 } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -40,7 +41,12 @@ const task: ScheduledTask = {
   runCount: 0,
 };
 
-const state = vi.hoisted(() => ({ connected: true, tasksLoaded: true, secondary: false }));
+const state = vi.hoisted(() => ({
+  connected: true,
+  tasksLoaded: true,
+  secondary: false,
+  boundThread: false,
+}));
 const secondaryId = EnvironmentId.make("secondary");
 const permissions = new Map<string, Atom.Writable<boolean>>();
 
@@ -48,6 +54,7 @@ function setup() {
   state.connected = true;
   state.tasksLoaded = true;
   state.secondary = false;
+  state.boundThread = false;
   permissions.clear();
   permissions.set(environmentId, Atom.make(true));
   permissions.set(secondaryId, Atom.make(true));
@@ -120,6 +127,8 @@ vi.mock(import("../../state/environments"), async (original) => ({
 vi.mock(import("../../state/entities"), async (original) => ({
   ...(await original()),
   useProjects: (() => [{ id: projectId, environmentId, title: "Project" }]) as never,
+  useThreadShell: (() =>
+    state.boundThread ? { title: "Brief thread", projectId } : null) as never,
 }));
 vi.mock(import("../../hooks/useSettings"), async (original) => ({
   ...(await original()),
@@ -194,5 +203,33 @@ describe("ScheduledTasksSettings", () => {
 
     await expect.element(dialog.getByRole("heading", { name: "New task" })).toBeInTheDocument();
     await expect.element(name).toHaveValue("My draft");
+  });
+
+  it("opens a create editor bound to the linked conversation, which can be unbound", async () => {
+    setup();
+    state.boundThread = true;
+    await using screen = await render(
+      <ScheduledTasksSettings threadId={ThreadId.make("assistant:jarvis:1")} />,
+    );
+    const dialog = page.getByRole("dialog");
+    await expect.element(dialog.getByRole("heading", { name: "New task" })).toBeVisible();
+    await expect.element(dialog.getByText("Brief thread's conversation")).toBeVisible();
+    expect(dialog.getByLabelText("Project").query()).toBeNull();
+
+    await userEvent.click(dialog.getByRole("button", { name: "Run in a new thread" }));
+    await expect.element(dialog.getByLabelText("Project")).toBeVisible();
+    await userEvent.click(dialog.getByLabelText("Workspace"));
+    await userEvent.click(page.getByRole("option", { name: "Use the project checkout" }));
+    await expect
+      .element(dialog.getByLabelText("Workspace"))
+      .toHaveTextContent("Use the project checkout");
+    await userEvent.click(dialog.getByLabelText("Project"));
+    await userEvent.click(page.getByRole("option", { name: "Project" }));
+    await expect.element(dialog.getByLabelText("Project")).toHaveTextContent("Project");
+
+    await userEvent.click(dialog.getByRole("button", { name: "Cancel" }));
+    await expect.element(dialog).not.toBeInTheDocument();
+    await screen.rerender(<ScheduledTasksSettings />);
+    await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
   });
 });

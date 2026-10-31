@@ -6,6 +6,7 @@ import {
   ComposerContextId,
   EnvironmentId,
   MessageId,
+  ORCHESTRATION_V2_SPENDING_BUDGET_FAILURE_CODE,
   RunAttemptId,
   RunId,
   RuntimeRequestId,
@@ -1070,6 +1071,38 @@ it("renders automatic compaction as one live divider that finishes with its reas
     .toBeVisible();
   expect(container.querySelectorAll('[role="separator"]')).toHaveLength(1);
   expect(container.textContent).not.toContain("Compacting before");
+});
+
+it("shows a refused turn's own spending-limit message instead of the generic error", async () => {
+  setup();
+  const fixture = makeStreamingTimelineFixture();
+  const base = fixture.visibleTurnItems[5]!;
+  if (base.item.type !== "assistant_message") throw new Error("Expected streaming fixture message");
+  const message = "Jarvis reached its $5.00 weekly limit. Raise it to keep going.";
+  const entries = deriveTimelineEntriesFromVisibleTurnItems({
+    visibleTurnItems: [
+      {
+        ...base,
+        item: {
+          ...base.item,
+          type: "error" as const,
+          status: "failed" as const,
+          failure: {
+            class: "unknown" as const,
+            message,
+            code: ORCHESTRATION_V2_SPENDING_BUDGET_FAILURE_CODE,
+            retryable: false,
+          },
+        },
+      },
+    ],
+    optimisticMessages: [],
+  });
+  await using screen = await renderElement(
+    <MessagesTimeline {...baseProps()} timelineEntries={entries} />,
+  );
+  // The label and the detail line both carry it; the generic label would not.
+  await expect.element(screen.getByText(message).first()).toBeVisible();
 });
 
 it("keeps concurrent approvals actionable outside collapsed work and restores settled rows", async () => {
