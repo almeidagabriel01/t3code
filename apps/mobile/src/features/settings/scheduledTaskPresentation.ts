@@ -20,7 +20,7 @@ const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 
-export function formatScheduledTaskInterval(everyMs: number): string {
+function formatScheduledTaskInterval(everyMs: number): string {
   const units = [
     [7 * DAY, "week"],
     [DAY, "day"],
