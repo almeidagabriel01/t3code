@@ -32,7 +32,7 @@ import {
   ServerIcon,
   Settings2Icon,
   ShieldCheckIcon,
-  SlackIcon,
+  MessageCircleIcon,
   SmartphoneIcon,
   UserRoundIcon,
   WrenchIcon,
@@ -102,7 +102,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/snap-shot": SnapShotIcon,
   "/settings/providers": BotIcon,
   "/settings/assistants": UserRoundIcon,
-  "/settings/slack": SlackIcon,
+  "/settings/imessage": MessageCircleIcon,
   "/settings/memory": BrainIcon,
   "/settings/threads": MessagesSquareIcon,
   "/settings/browser": GlobeIcon,
@@ -150,7 +150,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
     ...group,
     paths: group.paths.filter(
       (to) =>
-        (to !== "/settings/memory" && to !== "/settings/slack") ||
+        (to !== "/settings/memory" && to !== "/settings/imessage") ||
         searchableItems.some((entry) => entry.to === to),
     ),
   })).filter((group) => group.paths.length > 0);

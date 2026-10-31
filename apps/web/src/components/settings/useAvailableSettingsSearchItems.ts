@@ -46,11 +46,11 @@ export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch
         (scopeSearch.machine === undefined || environment.environmentId === scopeSearch.machine) &&
         isMemoryEnvironmentAvailable(environment.serverConfig?.environment.capabilities),
     ) === true;
-  const hasSlack =
+  const hasImessage =
     environments.some(
       (environment) =>
         (scopeSearch.machine === undefined || environment.environmentId === scopeSearch.machine) &&
-        environment.serverConfig?.environment.capabilities.slackChannel === true,
+        environment.serverConfig?.environment.capabilities.imessageChannel === true,
     ) === true;
   const hasThreadAutoSettlement =
     getThreadAutoSettlementSearchAvailability(environments).eligibleEnvironmentIds.length > 0;
@@ -83,6 +83,6 @@ export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch
     managedTunnelActive,
     hasPeerLinkHost,
     hasMemory,
-    hasSlack,
+    hasImessage,
   });
 }

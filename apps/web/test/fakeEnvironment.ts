@@ -15,18 +15,17 @@ import {
   RunId,
   ScheduledTaskError,
   ServerConfig,
-  SlackChannelSettingsError,
+  ImessageChannelSettingsError,
   ThreadId,
   TurnItemId,
   WS_METHODS,
   WsRpcGroup,
   type Assistant,
   type AssistantSpend,
-  type ChannelLinkCode,
-  type ChannelLinkedIdentity,
-  type SlackChannelSettings,
-  type SlackChannelSettingsErrorReason,
-  type SlackChannelStatusEvent,
+  type ImessageChannelAccess,
+  type ImessageChannelSettings,
+  type ImessageChannelSettingsErrorReason,
+  type ImessageChannelStatusEvent,
   type ScheduledTask,
   type AssistantsEvent,
   type Decision,
@@ -475,85 +474,66 @@ handlers[WS_METHODS.scheduledTasksSetEnabled] = (input: {
   return Effect.succeed({ task: { ...found, enabled: input.enabled } });
 };
 
-/** Slack settings, link codes and identities the fake server holds, and the calls it received. */
-const SLACK_DEFAULTS: SlackChannelSettings = {
-  connectionId: "slack-render" as SlackChannelSettings["connectionId"],
+/** iMessage settings and access the fake server holds, and the calls it received. */
+const IMESSAGE_DEFAULTS: ImessageChannelSettings = {
   enabled: false,
-  hasAppToken: false,
-  hasBotToken: false,
-  allowedChannelIds: [],
+  allowedHandles: [],
+  selfHandles: [],
   status: "disabled",
 };
-export const fakeSlack = {
-  settings: SLACK_DEFAULTS,
-  identities: [] as ChannelLinkedIdentity[],
-  linkCode: { code: "ABC123", expiresAt: "2099-01-01T00:00:00.000Z" } as ChannelLinkCode,
-  failConfigure: null as SlackChannelSettingsErrorReason | null,
+export const fakeImessage = {
+  settings: IMESSAGE_DEFAULTS,
+  access: "ok" as ImessageChannelAccess,
+  failConfigure: null as ImessageChannelSettingsErrorReason | null,
   configures: [] as unknown[],
-  disconnects: 0,
-  unlinks: [] as unknown[],
+  accessChecks: 0,
 };
-/** Starts a Slack scenario from a clean server. */
-export function resetFakeSlack(settings: Partial<SlackChannelSettings> = {}): void {
-  fakeSlack.settings = { ...SLACK_DEFAULTS, ...settings };
-  fakeSlack.identities = [];
-  fakeSlack.failConfigure = null;
-  fakeSlack.configures = [];
-  fakeSlack.disconnects = 0;
-  fakeSlack.unlinks = [];
+/** Starts an iMessage scenario from a clean server. */
+export function resetFakeImessage(
+  settings: Partial<ImessageChannelSettings> = {},
+  access: ImessageChannelAccess = "ok",
+): void {
+  fakeImessage.settings = { ...IMESSAGE_DEFAULTS, ...settings };
+  fakeImessage.access = access;
+  fakeImessage.failConfigure = null;
+  fakeImessage.configures = [];
+  fakeImessage.accessChecks = 0;
 }
-const slackStatusSubscribers = new Set<Queue.Queue<SlackChannelStatusEvent>>();
+const imessageStatusSubscribers = new Set<Queue.Queue<ImessageChannelStatusEvent>>();
 /** Pushes a live status event to the open subscription. */
-export function publishSlackStatus(event: Omit<SlackChannelStatusEvent, "connectionId">): void {
-  for (const queue of slackStatusSubscribers) {
-    Effect.runSync(Queue.offer(queue, { connectionId: fakeSlack.settings.connectionId, ...event }));
-  }
+export function publishImessageStatus(event: ImessageChannelStatusEvent): void {
+  for (const queue of imessageStatusSubscribers) Effect.runSync(Queue.offer(queue, event));
 }
-handlers[WS_METHODS.slackChannelGetSettings] = () => Effect.sync(() => fakeSlack.settings);
-handlers[WS_METHODS.slackChannelSubscribeStatus] = () =>
-  subscribe<SlackChannelStatusEvent>([], (queue) => {
-    slackStatusSubscribers.add(queue);
-    return () => slackStatusSubscribers.delete(queue);
+handlers[WS_METHODS.imessageChannelGetSettings] = () => Effect.sync(() => fakeImessage.settings);
+handlers[WS_METHODS.imessageChannelCheckAccess] = () =>
+  Effect.sync(() => {
+    fakeImessage.accessChecks += 1;
+    return { access: fakeImessage.access };
   });
-handlers[WS_METHODS.slackChannelConfigure] = (input: {
+handlers[WS_METHODS.imessageChannelSubscribeStatus] = () =>
+  subscribe<ImessageChannelStatusEvent>([], (queue) => {
+    imessageStatusSubscribers.add(queue);
+    return () => imessageStatusSubscribers.delete(queue);
+  });
+handlers[WS_METHODS.imessageChannelConfigure] = (input: {
   readonly enabled?: boolean;
-  readonly appToken?: string;
-  readonly botToken?: string;
-  readonly allowedChannelIds?: SlackChannelSettings["allowedChannelIds"];
+  readonly allowedHandles?: ReadonlyArray<string>;
+  readonly selfHandles?: ReadonlyArray<string>;
 }) => {
-  fakeSlack.configures.push(input);
-  if (fakeSlack.failConfigure !== null) {
-    return Effect.fail(new SlackChannelSettingsError({ reason: fakeSlack.failConfigure }));
+  fakeImessage.configures.push(input);
+  if (fakeImessage.failConfigure !== null) {
+    return Effect.fail(
+      new ImessageChannelSettingsError({ reason: fakeImessage.failConfigure, detail: "nope" }),
+    );
   }
-  const current = fakeSlack.settings;
-  fakeSlack.settings = {
+  const current = fakeImessage.settings;
+  fakeImessage.settings = {
     ...current,
     enabled: input.enabled ?? current.enabled,
-    hasAppToken: current.hasAppToken || input.appToken !== undefined,
-    hasBotToken: current.hasBotToken || input.botToken !== undefined,
-    allowedChannelIds: input.allowedChannelIds ?? current.allowedChannelIds,
+    allowedHandles: input.allowedHandles ?? current.allowedHandles,
+    selfHandles: input.selfHandles ?? current.selfHandles,
   };
-  return Effect.succeed(fakeSlack.settings);
-};
-handlers[WS_METHODS.slackChannelDisconnect] = () => {
-  fakeSlack.disconnects += 1;
-  fakeSlack.settings = {
-    ...fakeSlack.settings,
-    enabled: false,
-    hasAppToken: false,
-    hasBotToken: false,
-    status: "disabled",
-  };
-  return Effect.succeed(fakeSlack.settings);
-};
-handlers[WS_METHODS.channelsCreateLinkCode] = () => Effect.succeed(fakeSlack.linkCode);
-handlers[WS_METHODS.channelsListIdentities] = () => Effect.sync(() => fakeSlack.identities);
-handlers[WS_METHODS.channelsUnlink] = (input: { readonly externalActorId: string }) => {
-  fakeSlack.unlinks.push(input);
-  fakeSlack.identities = fakeSlack.identities.filter(
-    (identity) => identity.externalActorId !== input.externalActorId,
-  );
-  return Effect.succeed({});
+  return Effect.succeed(fakeImessage.settings);
 };
 
 // Unanswered calls stay pending, like a server that has not replied yet.
@@ -615,7 +595,7 @@ export function installFakeEnvironment(
   options: {
     readonly decisions?: boolean;
     readonly assistants?: boolean;
-    readonly slackChannel?: boolean;
+    readonly imessageChannel?: boolean;
     readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
   } = {},
 ): Disposable {
@@ -623,7 +603,7 @@ export function installFakeEnvironment(
   extraCapabilities = {
     ...(options.decisions ? { decisions: true } : {}),
     ...(options.assistants ? { assistants: true } : {}),
-    ...(options.slackChannel ? { slackChannel: true } : {}),
+    ...(options.imessageChannel ? { imessageChannel: true } : {}),
   };
   const encodedDescriptor = encodeDescriptor(extraCapabilities);
   globalThis.fetch = async (input, init) => {
