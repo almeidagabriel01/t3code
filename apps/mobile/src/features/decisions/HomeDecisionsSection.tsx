@@ -5,14 +5,22 @@ import { Pressable, View } from "react-native";
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { useDecisionEntries } from "../../state/decisions";
+import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
 import { DecisionCard } from "./DecisionCard";
 
 /** Open decisions as cards, most urgent first, then a folded list of how recent ones ended. */
-export function HomeDecisionsSection(props: {
-  readonly gutter: number;
-  readonly onOpenThread: (entry: DecisionEntry) => void;
-}) {
+export function HomeDecisionsSection(props: { readonly gutter: number }) {
   const { open, settled } = useDecisionEntries();
+  const selectDetail = useSelectWorkspaceDetail();
+  // By id, not from a thread list: assistant conversations are never listed.
+  const openThread = (entry: DecisionEntry) =>
+    selectDetail({
+      name: "Thread",
+      params: {
+        environmentId: String(entry.environmentId),
+        threadId: String(entry.decision.fromThreadId),
+      },
+    });
   const [recentOpen, setRecentOpen] = useState(false);
   if (open.length === 0 && settled.length === 0) return null;
   return (
@@ -27,7 +35,7 @@ export function HomeDecisionsSection(props: {
               key={`${entry.environmentId}:${entry.decision.id}`}
               environmentId={entry.environmentId}
               decision={entry.decision}
-              onOpenThread={() => props.onOpenThread(entry)}
+              onOpenThread={() => openThread(entry)}
             />
           ))}
         </>
@@ -57,7 +65,7 @@ export function HomeDecisionsSection(props: {
                   key={`${entry.environmentId}:${entry.decision.id}`}
                   environmentId={entry.environmentId}
                   decision={entry.decision}
-                  onOpenThread={() => props.onOpenThread(entry)}
+                  onOpenThread={() => openThread(entry)}
                 />
               ))
             : null}

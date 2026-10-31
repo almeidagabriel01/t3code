@@ -1,5 +1,6 @@
 import { useActiveNewTask } from "../../state/active-new-task";
 import { HomeAssistantsSection } from "../assistants/HomeAssistantsSection";
+import { HomeDecisionsSection } from "../decisions/HomeDecisionsSection";
 import { ThreadUndoNotice } from "../home/ThreadUndoNotice";
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
 import { resolveScratchProjectScopeKey } from "@t3tools/client-runtime/state/project-grouping";
@@ -689,13 +690,18 @@ function ThreadNavigationSidebarPane(
   });
   const assistantsHeader =
     props.searchQuery.trim().length > 0 ? null : (
-      <HomeAssistantsSection
-        sidebar
-        gutter={4}
-        environmentLabelById={
-          new Map(environments.map((environment) => [environment.environmentId, environment.label]))
-        }
-      />
+      <>
+        <HomeAssistantsSection
+          sidebar
+          gutter={4}
+          environmentLabelById={
+            new Map(
+              environments.map((environment) => [environment.environmentId, environment.label]),
+            )
+          }
+        />
+        <HomeDecisionsSection gutter={4} />
+      </>
     );
   const listEmpty = (
     <Text

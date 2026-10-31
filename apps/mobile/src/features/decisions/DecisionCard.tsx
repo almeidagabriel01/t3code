@@ -2,7 +2,7 @@ import {
   describeSettledDecision,
   formatDecisionExpiry,
 } from "@t3tools/client-runtime/state/decisions";
-import type { Decision, EnvironmentId } from "@t3tools/contracts";
+import type { Decision, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useState } from "react";
 import { Pressable, View } from "react-native";
 
@@ -12,20 +12,31 @@ import { SymbolView } from "../../components/ui/AppSymbol";
 import { cn } from "../../lib/cn";
 import { useNowMinuteMs } from "../../lib/clock";
 import { SelectableMarkdownText } from "../../native/SelectableMarkdownText";
-import { useOpenPullRequest } from "../../native/useOpenPullRequest";
+import { useNavigateToPullRequest } from "../../native/useOpenPullRequest";
 import { useDecisionActions } from "../../state/decisions";
-import { useLiveThreadLinkLabels } from "../../state/entities";
+import { useLiveThreadLinkLabels, useThreadShell } from "../../state/entities";
 import { useMarkdownPreviewStyles } from "../files/FileMarkdownPreview";
 
 /** Long context folds behind "Show more" instead of pushing the options off screen. */
 const CONTEXT_FOLD_LENGTH = 280;
 const CONTEXT_FOLDED_HEIGHT = 96;
 
-function Context(props: { readonly markdown: string; readonly environmentId: EnvironmentId }) {
+function Context(props: {
+  readonly markdown: string;
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+}) {
   const [expanded, setExpanded] = useState(false);
   const styles = useMarkdownPreviewStyles();
   const markdown = useLiveThreadLinkLabels(props.markdown, props.environmentId);
-  const openLink = useOpenPullRequest();
+  // Cards also render outside any screen (the tablet sidebar), so links resolve from the decision.
+  const thread = useThreadShell({ environmentId: props.environmentId, threadId: props.threadId });
+  const navigateToPullRequest = useNavigateToPullRequest();
+  const openLink = (href: string) =>
+    navigateToPullRequest(
+      href,
+      thread === null ? null : { environmentId: props.environmentId, projectId: thread.projectId },
+    );
   if (props.markdown.trim() === "") return null;
   const foldable =
     props.markdown.length > CONTEXT_FOLD_LENGTH || props.markdown.split("\n").length > 5;
@@ -139,7 +150,11 @@ function OpenCard(props: DecisionCardProps) {
   return (
     <View className="gap-3">
       <Heading decision={decision} onOpenThread={props.onOpenThread} />
-      <Context markdown={decision.context} environmentId={props.environmentId} />
+      <Context
+        markdown={decision.context}
+        environmentId={props.environmentId}
+        threadId={decision.fromThreadId}
+      />
       <View accessibilityRole="radiogroup" className="gap-1">
         {decision.options.map((option) => {
           const selected = optionId === option.id;

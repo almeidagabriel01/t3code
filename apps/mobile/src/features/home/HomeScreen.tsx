@@ -777,17 +777,7 @@ export function HomeScreen(props: HomeScreenProps) {
           }
         />
       )}
-      <HomeDecisionsSection
-        gutter={primaryColumn ? 8 : 16}
-        onOpenThread={(entry) => {
-          const thread = props.threads.find(
-            (candidate) =>
-              candidate.environmentId === entry.environmentId &&
-              candidate.id === entry.decision.fromThreadId,
-          );
-          if (thread !== undefined) selectThread(thread);
-        }}
-      />
+      <HomeDecisionsSection gutter={primaryColumn ? 8 : 16} />
     </>
   );
 
