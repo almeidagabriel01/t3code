@@ -261,6 +261,7 @@ This checkout is a personal fork that adds features (notes, kanban, memory, dest
 - Mobile tablets (iPad, Android tablets) render `ThreadNavigationSidebar`, not `HomeScreen`: a Home section goes in both. That sidebar sits outside any navigator screen, so nothing it renders may call `useRoute`; open things by id with `useSelectWorkspaceDetail` or `useNavigateToPullRequest`.
 - Every user action has its reverse and its entry points (header, menus, palette, settings), and agents can reach it through MCP tools when that makes sense.
 - Do not report "done" with known pending items. Finish them, or name them as explicit decisions.
+- A fork phase closes only when tests execute at least 90% of the lines it added on each of server, web and mobile, screens included (the developer's call; it overrides "leave out tests for rendered markup" for fork work, but tests still assert behavior). Measure with v8 coverage installed for the run only: `@vitest/coverage-v8` as a committed devDependency fails knip.
 
 ### Keeping these rules current
 
