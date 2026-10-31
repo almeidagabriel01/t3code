@@ -285,7 +285,7 @@ function SlackEnvironment(props: {
                 ) : null}
               </span>
             }
-            description={`Starts with ${hint}. Tokens are stored on the server and never shown again.`}
+            description="Stored on the server and never shown again."
             control={
               <div className="w-full @min-[32rem]/settings-row:w-72">
                 <SecretInput
