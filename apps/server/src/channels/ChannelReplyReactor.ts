@@ -62,14 +62,16 @@ const make = Effect.gen(function* () {
   const targetFor = Effect.fn("ChannelReplyReactor.targetFor")(function* (threadId: string) {
     const assistantId = assistantIdFromThreadId(threadId);
     if (assistantId === null) return undefined;
-    const rows = yield* sql<{ readonly address_json: string; readonly actor_id: string }>`
-      SELECT address_json, actor_id FROM channel_reply_targets WHERE assistant_id = ${assistantId}`;
+    const rows = yield* sql<{ readonly address_json: string; readonly name: string | null }>`
+      SELECT t.address_json, a.name FROM channel_reply_targets t
+      LEFT JOIN assistants a ON a.assistant_id = t.assistant_id
+      WHERE t.assistant_id = ${assistantId}`;
     const row = rows[0];
     return row === undefined
       ? undefined
       : {
           address: decodeReplyAddress(row.address_json) as ChannelReplyAddress,
-          actorId: row.actor_id,
+          assistantName: row.name ?? "Assistant",
         };
   });
 
@@ -96,9 +98,8 @@ const make = Effect.gen(function* () {
     yield* outbox.enqueue({
       deliveryId,
       destination: target.address,
+      senderName: target.assistantName,
       text,
-      // A direct message is already addressed to the person; a channel needs the tag.
-      ...(target.address.channelId.startsWith("D") ? {} : { mentionActorId: target.actorId }),
     });
   });
 
@@ -138,12 +139,11 @@ const make = Effect.gen(function* () {
         yield* outbox.enqueue({
           deliveryId,
           destination: target.address,
-          text: [`**${decision.title}**`, decision.context]
-            .filter((part) => part !== "")
-            .join("\n\n"),
+          senderName: target.assistantName,
+          text: [decision.title, decision.context].filter((part) => part !== "").join("\n\n"),
           choices: decision.options.map((option) => ({
             label: option.label,
-            value: `decision:${decision.id}:${option.id}`,
+            value: option.id,
           })),
         });
         yield* sql`INSERT OR IGNORE INTO channel_cards (decision_id, delivery_id) VALUES (${decision.id}, ${deliveryId})`;
@@ -154,14 +154,15 @@ const make = Effect.gen(function* () {
       if (card[0] === undefined) return;
       const original = Option.getOrUndefined(yield* outbox.find(card[0].delivery_id));
       if (original === undefined) return;
-      yield* outbox.enqueue(
-        {
-          deliveryId: `channel-decision-edit:${decision.id}`,
-          destination: decodeStoredMessage(original.message_json).destination,
-          text: `**${decision.title}**\n\n${settledLine(decision)}`,
-        },
-        { replacesDeliveryId: original.delivery_id },
-      );
+      const { destination, senderName } = decodeStoredMessage(original.message_json);
+      yield* outbox.enqueue({
+        deliveryId: `channel-decision-settled:${decision.id}`,
+        destination,
+        senderName,
+        // The settled line reads "<title> — <outcome>"; chat has no other place to put the title.
+        // oxlint-disable-next-line t3code/no-em-dash-copy -- fixed product format
+        text: `${decision.title} — ${settledLine(decision)}`,
+      });
     },
     (effect, decision) =>
       effect.pipe(

@@ -13,23 +13,22 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as ChannelTransport from "./ChannelTransport.ts";
 
 export const dmAddress = {
-  kind: "slack",
+  kind: "imessage",
   connectionId: "c1",
-  teamId: "T1",
-  channelId: "D1",
+  chatGuid: "iMessage;-;+15550000000",
 } as const;
-export const channelAddress = { ...dmAddress, channelId: "C1", rootTs: "100.1" } as const;
+export const otherChatAddress = { ...dmAddress, chatGuid: "iMessage;-;+15550000001" } as const;
 
 let counter = 0;
 export const inbound = (overrides: Partial<ChannelInboundMessage> = {}): ChannelInboundMessage => {
   counter += 1;
   return {
-    kind: "slack",
+    kind: "imessage",
     connectionId: "c1",
-    conversationKey: "slack:T1:D1",
+    conversationKey: dmAddress.chatGuid,
     externalMessageId: `ext-${counter}`,
     idempotencyKey: `key-${counter}`,
-    actor: { externalActorId: "U1" },
+    actor: { externalActorId: "+15550000000" },
     replyAddress: dmAddress,
     text: "hello",
     receivedAt: "2026-01-01T00:00:00.000Z",
@@ -43,7 +42,7 @@ export const deliveryError = (
   new ChannelGatewayError({
     reason: "delivery_failed",
     deliveryOutcome: "not_sent",
-    deliveryErrorCode: "network",
+    deliveryErrorCode: "unknown",
     ...overrides,
   });
 
@@ -57,7 +56,7 @@ export const fakeTransport = (
 ) => {
   const sent: Outbound[] = [];
   const transport: ChannelTransport.ChannelTransport = {
-    kind: "slack",
+    kind: "imessage",
     send: (message) =>
       Effect.suspend(() => {
         sent.push(message);

@@ -17,10 +17,9 @@ import * as Reactor from "./ChannelReplyReactor.ts";
 import * as ChannelTransport from "./ChannelTransport.ts";
 import { encodeReplyAddress } from "./ChannelBridge.ts";
 import {
-  channelAddress,
-  deliveryError,
   dmAddress,
   fakeTransport,
+  otherChatAddress,
   outboxRows,
 } from "./channelBridgeTestSupport.ts";
 
@@ -58,14 +57,20 @@ const harness = () => {
 };
 
 const speak = (
-  address: typeof dmAddress | typeof channelAddress = dmAddress,
+  address: typeof dmAddress | typeof otherChatAddress = dmAddress,
   assistant = "jarvis",
 ) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
+    if (assistant === "jarvis") {
+      yield* sql`
+        INSERT OR IGNORE INTO assistants
+          (assistant_id, handle, name, project_id, tool_access, created_at, updated_at)
+        VALUES ('jarvis', 'jarvis', 'Jarvis', 'scratch', 'full', '2026-01-01', '2026-01-01')`;
+    }
     yield* sql`
       INSERT OR REPLACE INTO channel_reply_targets (assistant_id, address_json, actor_id)
-      VALUES (${assistant}, ${encodeReplyAddress(address)}, 'U1')`;
+      VALUES (${assistant}, ${encodeReplyAddress(address)}, '+15550000000')`;
   });
 
 const runEvent = (status: string, id = "run-1", threadId = thread) =>
@@ -106,6 +111,7 @@ it.effect("a finished run posts its last assistant message once, however often i
       deliveryId: "channel-run:run-1",
       destination: dmAddress,
       text: "Here you go.",
+      senderName: "Jarvis",
     });
     assert.lengthOf(reads, 1);
   }).pipe(Effect.provide(layer));
@@ -178,22 +184,21 @@ it.effect.each(outcomes)("a run that is $name", (outcome) => {
   }).pipe(Effect.provide(layer));
 });
 
-it.effect("replies name the speaker in a channel and not in a direct message", () => {
+it.effect("a reply goes to the chat that was last spoken in, in the assistant's name", () => {
   const { layer, records } = harness();
   return Effect.gen(function* () {
     const reactor = yield* Reactor.ChannelReplyReactor;
     records.set("run-1", { messages: [{ text: "hi" }], turnItems: [] });
     records.set("run-2", { messages: [{ text: "hi" }], turnItems: [] });
-    yield* speak(channelAddress);
+    yield* speak(otherChatAddress);
     yield* reactor.handle(runEvent("completed", "run-1"));
     yield* speak(dmAddress);
     yield* reactor.handle(runEvent("completed", "run-2"));
-    const [inChannel, inDm] = yield* outboxRows;
+    const [first, second] = yield* outboxRows;
     assert.deepEqual(
-      [inChannel!.message.mentionActorId, inChannel!.message.destination],
-      ["U1", channelAddress],
+      [first!.message.destination, first!.message.senderName, second!.message.destination],
+      [otherChatAddress, "Jarvis", dmAddress],
     );
-    assert.isUndefined(inDm!.message.mentionActorId);
   }).pipe(Effect.provide(layer));
 });
 
@@ -261,7 +266,7 @@ const openDecision = Effect.gen(function* () {
   });
 });
 
-it.effect("an open decision becomes a card with one button per option, posted once", () => {
+it.effect("an open decision becomes a card with its options, posted once", () => {
   const { layer } = harness();
   return Effect.gen(function* () {
     const reactor = yield* Reactor.ChannelReplyReactor;
@@ -269,18 +274,19 @@ it.effect("an open decision becomes a card with one button per option, posted on
     yield* reactor.handleDecision(decision);
     assert.lengthOf(yield* outboxRows, 0);
 
-    yield* speak(channelAddress);
+    yield* speak(otherChatAddress);
     yield* reactor.handleDecision(decision);
     yield* reactor.handleDecision(decision);
     const rows = yield* outboxRows;
     assert.lengthOf(rows, 1);
     assert.deepEqual(rows[0]!.message, {
       deliveryId: `channel-decision:${decision.id}`,
-      destination: channelAddress,
-      text: "**Deploy?**\n\nTo production",
+      destination: otherChatAddress,
+      senderName: "Jarvis",
+      text: "Deploy?\n\nTo production",
       choices: [
-        { label: "Yes", value: `decision:${decision.id}:yes` },
-        { label: "No", value: `decision:${decision.id}:no` },
+        { label: "Yes", value: "yes" },
+        { label: "No", value: "no" },
       ],
     });
   }).pipe(Effect.provide(layer));
@@ -328,7 +334,7 @@ const settlements: ReadonlyArray<{
 ];
 
 it.effect.each(settlements)(
-  "a card is edited, with no buttons, once its decision is $name",
+  "one line follows the card once its decision is $name",
   (settlement) => {
     const { layer } = harness();
     return Effect.gen(function* () {
@@ -338,7 +344,7 @@ it.effect.each(settlements)(
       const decisions = yield* DecisionService.DecisionService;
       const { sent, transport } = fakeTransport();
       yield* registry.register(transport);
-      yield* speak(channelAddress);
+      yield* speak(otherChatAddress);
       const decision = yield* openDecision;
       yield* reactor.handleDecision(decision);
       yield* outbox.drain;
@@ -351,55 +357,38 @@ it.effect.each(settlements)(
       yield* outbox.drain;
       assert.lengthOf(sent, 2);
       assert.deepEqual(sent[1], {
-        deliveryId: `channel-decision-edit:${decision.id}`,
-        destination: channelAddress,
-        text: `**Deploy?**\n\n${settlement.line}`,
-        replacesExternalMessageId: "ts-1",
+        deliveryId: `channel-decision-settled:${decision.id}`,
+        destination: otherChatAddress,
+        senderName: "Jarvis",
+        text: `Deploy? — ${settlement.line}`,
       });
     }).pipe(Effect.provide(layer));
   },
 );
 
-it.effect("an edit is skipped when the card never posted", () => {
+it.effect("no line is sent for a decision that never had a card", () => {
   const { layer } = harness();
   return Effect.gen(function* () {
     const reactor = yield* Reactor.ChannelReplyReactor;
-    const outbox = yield* ChannelOutbox.ChannelOutbox;
-    const registry = yield* ChannelTransport.ChannelTransportRegistry;
     const decisions = yield* DecisionService.DecisionService;
-    const { sent, transport } = fakeTransport(() =>
-      Effect.fail(deliveryError({ deliveryErrorCode: "not_in_channel" })),
-    );
-    yield* registry.register(transport);
     const decision = yield* openDecision;
     yield* reactor.handleDecision(
       yield* decisions.withdraw({ decisionId: decision.id, fromThreadId: decision.fromThreadId }),
     );
     assert.lengthOf(yield* outboxRows, 0);
+  }).pipe(Effect.provide(layer));
+});
 
-    const second = yield* decisions.request({
-      fromThreadId: thread as never,
-      projectId: "scratch" as never,
-      threadTitle: "Jarvis",
-      clientRequestId: "r2",
-      title: "Again?",
-      context: "",
-      options: [{ id: "ok", label: "OK" }],
-    });
-    yield* speak();
-    yield* reactor.handleDecision(second);
-    yield* outbox.drain;
-    yield* reactor.handleDecision(
-      yield* decisions.withdraw({ decisionId: second.id, fromThreadId: second.fromThreadId }),
-    );
-    yield* outbox.drain;
-    assert.lengthOf(sent, 1);
+it.effect("a reply for an assistant that has no record is still named", () => {
+  const { layer, records } = harness();
+  return Effect.gen(function* () {
+    const reactor = yield* Reactor.ChannelReplyReactor;
+    records.set("run-1", { messages: [{ text: "hi" }], turnItems: [] });
+    yield* speak(dmAddress, "ghost");
+    yield* reactor.handle(runEvent("completed", "run-1", "assistant:ghost:1"));
     assert.deepEqual(
-      (yield* outboxRows).map((row) => [row.state, row.last_error_code]),
-      [
-        ["failed", "not_in_channel"],
-        ["failed", "card_not_delivered"],
-      ],
+      (yield* outboxRows).map((row) => row.message.senderName),
+      ["Assistant"],
     );
   }).pipe(Effect.provide(layer));
 });
@@ -442,7 +431,7 @@ it.effect("started, it posts the cards that were open at startup without being d
     yield* outbox.start();
     yield* reactor.start();
     yield* Deferred.await(delivered);
-    assert.equal(sent[0]!.text, "**Deploy?**\n\nTo production");
+    assert.equal(sent[0]!.text, "Deploy?\n\nTo production");
   }).pipe(Effect.provide(layer));
 });
 

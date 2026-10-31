@@ -235,9 +235,9 @@
       "types": "./src/state/kanbanLogic.ts",
       "default": "./src/state/kanbanLogic.ts"
     },
-    "./state/slackChannel": {
-      "types": "./src/state/slackChannel.ts",
-      "default": "./src/state/slackChannel.ts"
+    "./state/imessageChannel": {
+      "types": "./src/state/imessageChannel.ts",
+      "default": "./src/state/imessageChannel.ts"
     },
     "./state/assistants": {
       "types": "./src/state/assistants.ts",

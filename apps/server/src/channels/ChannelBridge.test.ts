@@ -4,7 +4,6 @@ import type { ChannelInboundMessage } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
-import * as TestClock from "effect/testing/TestClock";
 
 import * as AssistantService from "../assistants/AssistantService.ts";
 import * as DecisionService from "../decisions/DecisionService.ts";
@@ -12,10 +11,9 @@ import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.t
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ChannelBridge from "./ChannelBridge.ts";
 import { ChannelGateway } from "./ChannelGateway.ts";
-import { ChannelIdentities } from "./ChannelIdentities.ts";
 import * as ChannelOutbox from "./ChannelOutbox.ts";
 import * as ChannelTransport from "./ChannelTransport.ts";
-import { channelAddress, dmAddress, inbound, outboxRows } from "./channelBridgeTestSupport.ts";
+import { dmAddress, inbound, otherChatAddress, outboxRows } from "./channelBridgeTestSupport.ts";
 
 const assistant = (id: string, name: string, extra: Record<string, unknown> = {}) => ({
   id,
@@ -70,38 +68,12 @@ const harness = () => {
   return { layer, state, sends, channelSends };
 };
 
-const link = (actor = "U1") =>
-  Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    yield* sql`
-      INSERT OR REPLACE INTO channel_identities (connection_id, external_actor_id, linked_at)
-      VALUES ('c1', ${actor}, '2026-01-01T00:00:00.000Z')`;
-  });
-
 const texts = Effect.map(outboxRows, (rows) => rows.map((row) => row.message.text));
-
-it.effect("an unlinked sender gets the link help and nothing reaches a thread", () => {
-  const { layer, sends } = harness();
-  return Effect.gen(function* () {
-    const gateway = yield* ChannelGateway;
-    const message = inbound();
-    yield* gateway.ingest(message);
-    yield* gateway.ingest(message);
-    yield* gateway.ingest(inbound({ choiceValue: "decision:d1:accept" }));
-    assert.lengthOf(sends, 0);
-    const rows = yield* outboxRows;
-    assert.lengthOf(rows, 2);
-    assert.include(rows[0]!.message.text, "Settings → Slack → Link your account");
-    assert.include(rows[0]!.message.text, "link <code>");
-    assert.deepEqual(rows[0]!.message.destination, dmAddress);
-  }).pipe(Effect.provide(layer));
-});
 
 it.effect("a duplicate inbound message is a no-op", () => {
   const { layer, channelSends } = harness();
   return Effect.gen(function* () {
     const gateway = yield* ChannelGateway;
-    yield* link();
     const message = inbound();
     yield* gateway.ingest(message);
     yield* gateway.ingest(message);
@@ -114,7 +86,6 @@ it.effect("a message reaches the current thread unchanged, queued, with a stable
   return Effect.gen(function* () {
     const gateway = yield* ChannelGateway;
     const sql = yield* SqlClient.SqlClient;
-    yield* link();
     const message = inbound({ text: "  what is up?\nsecond line " });
     yield* gateway.ingest(message);
     const [sent] = channelSends();
@@ -131,7 +102,7 @@ it.effect("a message reaches the current thread unchanged, queued, with a stable
     });
     const [target] = yield* sql<{ readonly assistant_id: string; readonly actor_id: string }>`
       SELECT assistant_id, actor_id FROM channel_reply_targets`;
-    assert.deepEqual([target!.assistant_id, target!.actor_id], ["jarvis", "U1"]);
+    assert.deepEqual([target!.assistant_id, target!.actor_id], ["jarvis", "+15550000000"]);
     const [inboxRow] = yield* sql<{ readonly state: string }>`SELECT state FROM channel_inbox`;
     assert.equal(inboxRow!.state, "sent");
   }).pipe(Effect.provide(layer));
@@ -173,7 +144,6 @@ it.effect.each(routing)("routing: $name", (row) => {
   const { layer, channelSends } = harness();
   return Effect.gen(function* () {
     const gateway = yield* ChannelGateway;
-    yield* link();
     yield* gateway.ingest(inbound({ text: row.text }));
     const [sent] = channelSends();
     assert.equal(sent!.threadId, `assistant:${row.to}:1`);
@@ -185,11 +155,14 @@ it.effect("an assistant picked by name stays sticky per conversation until it is
   const { layer, state, channelSends } = harness();
   return Effect.gen(function* () {
     const gateway = yield* ChannelGateway;
-    yield* link();
     yield* gateway.ingest(inbound({ text: "@research first" }));
     yield* gateway.ingest(inbound({ text: "second" }));
     yield* gateway.ingest(
-      inbound({ text: "elsewhere", conversationKey: "slack:T1:C1", replyAddress: channelAddress }),
+      inbound({
+        text: "elsewhere",
+        conversationKey: otherChatAddress.chatGuid,
+        replyAddress: otherChatAddress,
+      }),
     );
     yield* gateway.ingest(inbound({ text: "@jarvis back" }));
     yield* gateway.ingest(inbound({ text: "third" }));
@@ -222,10 +195,10 @@ it.effect("naming an assistant with no text switches without sending", () => {
   const { layer, channelSends } = harness();
   return Effect.gen(function* () {
     const gateway = yield* ChannelGateway;
-    yield* link();
     yield* gateway.ingest(inbound({ text: "@research" }));
     yield* gateway.ingest(inbound({ text: "now" }));
     assert.deepEqual(yield* texts, ["You are now talking to Research."]);
+    assert.equal((yield* outboxRows)[0]!.message.senderName, "T3 Code");
     assert.equal(channelSends()[0]!.threadId, "assistant:research:1");
   }).pipe(Effect.provide(layer));
 });
@@ -235,16 +208,19 @@ it.effect("a message that cannot be delivered gets a failure line", () => {
   return Effect.gen(function* () {
     const gateway = yield* ChannelGateway;
     const sql = yield* SqlClient.SqlClient;
-    yield* link();
     state.sendFailure = { message: "Thread is archived." };
     yield* gateway.ingest(inbound());
     yield* gateway.ingest(inbound({ text: "@fresh hi" }));
     state.listFails = true;
     yield* gateway.ingest(inbound());
     assert.lengthOf(sends, 1);
+    assert.deepEqual(
+      (yield* outboxRows).map((row) => row.message.senderName),
+      ["Jarvis", "Fresh", "T3 Code"],
+    );
     assert.deepEqual(yield* texts, [
-      "I could not pass that on to Jarvis: Thread is archived.",
-      "I could not pass that on to Fresh: its conversation has not started yet",
+      "I could not pass that on: Thread is archived.",
+      "I could not pass that on: its conversation has not started yet",
       "I could not reach your assistants right now. Please try again.",
     ]);
     const states = yield* sql<{ readonly state: string }>`SELECT DISTINCT state FROM channel_inbox`;
@@ -262,24 +238,9 @@ it.effect("a storage failure fails ingest so the transport leaves the event for 
   return Effect.gen(function* () {
     const gateway = yield* ChannelGateway;
     const sql = yield* SqlClient.SqlClient;
-    yield* link();
     yield* sql`DROP TABLE channel_inbox`;
     const error = yield* Effect.flip(gateway.ingest(inbound()));
     assert.equal(error.reason, "persistence_failed");
-    yield* sql`DROP TABLE channel_identities`;
-    assert.equal((yield* Effect.flip(gateway.ingest(inbound()))).reason, "persistence_failed");
-    assert.equal(
-      (yield* Effect.flip(
-        gateway.linkIdentity({
-          connectionId: "c1",
-          externalActorId: "U1",
-          code: "123456",
-          idempotencyKey: "k",
-          replyAddress: dmAddress,
-        }),
-      )).reason,
-      "persistence_failed",
-    );
   }).pipe(Effect.provide(layer));
 });
 
@@ -288,7 +249,6 @@ it.effect("rows stored but not sent are processed once at startup", () => {
   return Effect.gen(function* () {
     const bridge = yield* ChannelBridge.ChannelBridge;
     const sql = yield* SqlClient.SqlClient;
-    yield* link();
     const stored: ChannelInboundMessage = inbound({ text: "@research left behind" });
     yield* sql`
       INSERT INTO channel_inbox (connection_id, idempotency_key, payload_json, state)
@@ -306,102 +266,6 @@ it.effect("rows stored but not sent are processed once at startup", () => {
       SELECT state FROM channel_inbox WHERE idempotency_key = ${stored.idempotencyKey}`;
     assert.equal(row!.state, "sent");
     yield* bridge.start();
-  }).pipe(Effect.provide(layer));
-});
-
-it.effect("a link code links once, expires, and only its hash is stored", () => {
-  const { layer } = harness();
-  return Effect.gen(function* () {
-    const gateway = yield* ChannelGateway;
-    const identities = yield* ChannelIdentities;
-    const sql = yield* SqlClient.SqlClient;
-    const consume = (code: string, key: string, actor = "U1") =>
-      gateway.linkIdentity({
-        connectionId: "c1",
-        externalActorId: actor,
-        code,
-        idempotencyKey: key,
-        replyAddress: dmAddress,
-      });
-
-    const first = yield* identities.createLinkCode("c1");
-    assert.match(first.code, /^\d{6}$/);
-    const stored = yield* sql<{
-      readonly code_hash: string;
-    }>`SELECT code_hash FROM channel_link_codes`;
-    assert.notInclude(stored[0]!.code_hash, first.code);
-
-    yield* consume("000000x", "wrong");
-    yield* consume(first.code, "ok");
-    yield* consume(first.code, "ok");
-    yield* consume(first.code, "reuse", "U2");
-    assert.deepEqual(
-      (yield* identities.list("c1")).map((identity) => identity.externalActorId),
-      ["U1"],
-    );
-
-    const second = yield* identities.createLinkCode("c1");
-    yield* TestClock.adjust("11 minutes");
-    yield* consume(second.code, "late");
-    const rows = yield* outboxRows;
-    assert.deepEqual(
-      rows.map((row) => row.message.text.split(".")[0]),
-      [
-        "That link code did not work",
-        "Linked",
-        "That link code did not work",
-        "That link code did not work",
-      ],
-    );
-    assert.lengthOf(yield* identities.list("c1"), 1);
-
-    yield* identities.createLinkCode("c1");
-    const live = yield* sql`SELECT * FROM channel_link_codes`;
-    assert.lengthOf(live, 1);
-    assert.equal(
-      (yield* Effect.flip(identities.unlink({ connectionId: "c1", externalActorId: "U9" }))).reason,
-      "not_found",
-    );
-    yield* identities.unlink({ connectionId: "c1", externalActorId: "U1" });
-    assert.lengthOf(yield* identities.list("c1"), 0);
-  }).pipe(Effect.provide(layer));
-});
-
-it.effect("a code made for one connection does not link another", () => {
-  const { layer } = harness();
-  return Effect.gen(function* () {
-    const gateway = yield* ChannelGateway;
-    const identities = yield* ChannelIdentities;
-    const { code } = yield* identities.createLinkCode("other");
-    yield* gateway.linkIdentity({
-      connectionId: "c1",
-      externalActorId: "U1",
-      code,
-      idempotencyKey: "k",
-      replyAddress: dmAddress,
-    });
-    assert.lengthOf(yield* identities.list("c1"), 0);
-    assert.lengthOf(yield* identities.list("other"), 0);
-  }).pipe(Effect.provide(layer));
-});
-
-it.effect("fixed notices are answered once per key", () => {
-  const { layer } = harness();
-  return Effect.gen(function* () {
-    const gateway = yield* ChannelGateway;
-    const input = {
-      connectionId: "c1",
-      idempotencyKey: "n1",
-      replyAddress: dmAddress,
-      actor: { externalActorId: "U1" },
-    };
-    yield* gateway.requestNotice({ ...input, notice: "link_help" });
-    yield* gateway.requestNotice({ ...input, notice: "link_help" });
-    yield* gateway.requestNotice({ ...input, idempotencyKey: "n2", notice: "link_invalid" });
-    assert.deepEqual(
-      (yield* texts).map((text) => text.slice(0, 20)),
-      ["To talk to your assi", "That link code did n"],
-    );
   }).pipe(Effect.provide(layer));
 });
 
@@ -427,37 +291,90 @@ const decisionHarness = () => {
   };
 };
 
-it.effect("a button press answers the decision once; a stale press is told so", () => {
-  const { layer, request } = decisionHarness();
+const parseRows: ReadonlyArray<{ readonly text: string; readonly number: number | undefined }> = [
+  { text: "2", number: 2 },
+  { text: " 2 ", number: 2 },
+  { text: "2.", number: 2 },
+  { text: "2)", number: 2 },
+  { text: "10", number: 10 },
+  { text: "123", number: undefined },
+  { text: "2 please", number: undefined },
+  { text: "@jarvis 2", number: undefined },
+  { text: "", number: undefined },
+];
+it.each(parseRows)("number reply parsing: $text", (row) => {
+  assert.equal(ChannelBridge.parseNumberReply(row.text), row.number);
+});
+
+/** Records the card the reactor would have sent, so a number reply can find it. */
+const sendCard = (decisionId: string, address: typeof dmAddress = dmAddress) =>
+  Effect.gen(function* () {
+    const outbox = yield* ChannelOutbox.ChannelOutbox;
+    const sql = yield* SqlClient.SqlClient;
+    const deliveryId = `channel-decision:${decisionId}`;
+    yield* outbox.enqueue({
+      deliveryId,
+      destination: address,
+      senderName: "Jarvis",
+      text: "Deploy?",
+      choices: [
+        { label: "Yes", value: "yes" },
+        { label: "No", value: "no" },
+      ],
+    });
+    yield* sql`INSERT INTO channel_cards (decision_id, delivery_id) VALUES (${decisionId}, ${deliveryId})`;
+  });
+
+it.effect("a number answers the open card of that chat once; others are told or passed on", () => {
+  const { layer, request, channelSends } = decisionHarness();
   return Effect.gen(function* () {
     const gateway = yield* ChannelGateway;
     const decisions = yield* DecisionService.DecisionService;
-    yield* link();
     const decision = yield* request;
-    const press = inbound({ choiceValue: `decision:${decision.id}:yes` });
-    yield* gateway.ingest(press);
-    yield* gateway.ingest(press);
+    // Nothing is open yet: the number is an ordinary message to the assistant.
+    yield* gateway.ingest(inbound({ text: "2" }));
+    assert.deepEqual(
+      channelSends().map((send) => send.text),
+      ["2"],
+    );
+    yield* sendCard(decision.id);
+    yield* gateway.ingest(inbound({ text: "3" }));
+    yield* gateway.ingest(
+      inbound({
+        text: "1",
+        conversationKey: otherChatAddress.chatGuid,
+        replyAddress: otherChatAddress,
+      }),
+    );
+    assert.equal((yield* decisions.get(decision.id)).status, "open");
+    yield* gateway.ingest(inbound({ text: " 1. " }));
     const answered = yield* decisions.get(decision.id);
     assert.deepEqual([answered.status, answered.answer?.optionId], ["answered", "yes"]);
-    assert.lengthOf(yield* outboxRows, 0);
-
-    yield* gateway.ingest(inbound({ choiceValue: `decision:${decision.id}:no` }));
-    yield* gateway.ingest(inbound({ choiceValue: `decision:missing:no` }));
-    yield* gateway.ingest(inbound({ choiceValue: `decision:${decision.id}` }));
-    assert.deepEqual(yield* texts, [
-      "That decision was already answered.",
-      "That decision was already answered.",
-    ]);
+    // Settled: a number is a normal message again, and the numbered answer was never forwarded.
+    yield* gateway.ingest(inbound({ text: "2" }));
+    assert.deepEqual(
+      channelSends().map((send) => send.text),
+      ["2", "1", "2"],
+    );
+    assert.deepEqual((yield* texts).slice(1), ["Reply with a number from 1 to 2."]);
   }).pipe(Effect.provide(layer));
 });
 
-it.effect("a button for an option the decision does not have is refused with a retry hint", () => {
-  const { layer, request } = decisionHarness();
-  return Effect.gen(function* () {
-    const gateway = yield* ChannelGateway;
-    yield* link();
-    const decision = yield* request;
-    yield* gateway.ingest(inbound({ choiceValue: `decision:${decision.id}:maybe` }));
-    assert.deepEqual(yield* texts, ["I could not record that answer. Please try again."]);
-  }).pipe(Effect.provide(layer));
-});
+it.effect(
+  "a number for a card answered elsewhere is not forwarded; a failing answer says so",
+  () => {
+    const { layer, request, channelSends } = decisionHarness();
+    return Effect.gen(function* () {
+      const gateway = yield* ChannelGateway;
+      const decisions = yield* DecisionService.DecisionService;
+      const decision = yield* request;
+      yield* sendCard(decision.id);
+      yield* decisions.answer({ decisionId: decision.id, optionId: "no" });
+      yield* gateway.ingest(inbound({ text: "1" }));
+      assert.deepEqual(
+        channelSends().map((send) => send.text),
+        ["1"],
+      );
+    }).pipe(Effect.provide(layer));
+  },
+);

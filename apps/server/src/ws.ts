@@ -259,8 +259,7 @@ import { commandFeatureUsage, featureUsage } from "./telemetry/FeatureUsage.ts";
 import type { TelemetryOwner } from "./telemetry/Identify.ts";
 import * as UsageService from "./usage/UsageService.ts";
 import * as AssistantSpend from "./assistants/AssistantSpend.ts";
-import * as ChannelIdentities from "./channels/ChannelIdentities.ts";
-import * as SlackChannelSettings from "./channels/slack/SlackChannelSettings.ts";
+import * as ImessageChannelSettings from "./channels/imessage/ImessageChannelSettings.ts";
 import * as InstanceSpend from "./usage/InstanceSpend.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as TriageService from "./triage/TriageService.ts";
@@ -1326,8 +1325,7 @@ export const layerWsRpc = (
       const decisions = yield* Decisions.DecisionService;
       const assistants = yield* Assistants.AssistantService;
       const assistantSpend = yield* AssistantSpend.AssistantSpend;
-      const slackChannelSettings = yield* SlackChannelSettings.SlackChannelSettings;
-      const channelIdentities = yield* ChannelIdentities.ChannelIdentities;
+      const imessageChannelSettings = yield* ImessageChannelSettings.ImessageChannelSettings;
       const noteWork = yield* NoteWork.NoteWorkService;
       const secretRequests = yield* SecretRequests.SecretRequests;
       const guestShares = yield* GuestShareService.GuestShareService;
@@ -2393,14 +2391,10 @@ export const layerWsRpc = (
           assistants.remove(input.assistantId).pipe(Effect.as({ assistantId: input.assistantId })),
         [WS_METHODS.assistantsReset]: (input) => assistants.reset(input),
         [WS_METHODS.assistantsSpend]: (input) => assistantSpend.read(input.assistantId),
-        [WS_METHODS.slackChannelGetSettings]: () => slackChannelSettings.get,
-        [WS_METHODS.slackChannelConfigure]: (input) => slackChannelSettings.configure(input),
-        [WS_METHODS.slackChannelDisconnect]: () => slackChannelSettings.disconnect,
-        [WS_METHODS.slackChannelSubscribeStatus]: () => slackChannelSettings.streamStatus,
-        [WS_METHODS.channelsCreateLinkCode]: (input) =>
-          channelIdentities.createLinkCode(input.connectionId),
-        [WS_METHODS.channelsListIdentities]: (input) => channelIdentities.list(input.connectionId),
-        [WS_METHODS.channelsUnlink]: (input) => channelIdentities.unlink(input).pipe(Effect.as({})),
+        [WS_METHODS.imessageChannelGetSettings]: () => imessageChannelSettings.get,
+        [WS_METHODS.imessageChannelConfigure]: (input) => imessageChannelSettings.configure(input),
+        [WS_METHODS.imessageChannelSubscribeStatus]: () => imessageChannelSettings.streamStatus,
+        [WS_METHODS.imessageChannelCheckAccess]: () => imessageChannelSettings.checkAccess,
         [WS_METHODS.scheduledTasksSubscribe]: (_input) =>
           scheduledTasks
             .subscribeList()

@@ -83,19 +83,15 @@ describe("assistant client guards", () => {
   });
 });
 
-describe("Slack channel client guards", () => {
-  it("guards Slack and link mutations and leaves reads open to readers", () => {
+describe("iMessage channel client guards", () => {
+  it("guards configure and leaves reads open to readers", () => {
+    expect(clientRpcRequiredScopes(WS_METHODS.imessageChannelConfigure, {})).toEqual([
+      "orchestration:operate",
+    ]);
     for (const method of [
-      WS_METHODS.slackChannelConfigure,
-      WS_METHODS.slackChannelDisconnect,
-      WS_METHODS.channelsCreateLinkCode,
-      WS_METHODS.channelsUnlink,
-    ])
-      expect(clientRpcRequiredScopes(method, {})).toEqual(["orchestration:operate"]);
-    for (const method of [
-      WS_METHODS.slackChannelGetSettings,
-      WS_METHODS.slackChannelSubscribeStatus,
-      WS_METHODS.channelsListIdentities,
+      WS_METHODS.imessageChannelGetSettings,
+      WS_METHODS.imessageChannelSubscribeStatus,
+      WS_METHODS.imessageChannelCheckAccess,
     ])
       expect(Object.hasOwn(CLIENT_GUARDED_RPC_SCOPES, method)).toBe(false);
   });

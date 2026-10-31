@@ -1,9 +1,4 @@
-import type {
-  ChannelGatewayError,
-  ChannelIdentityLinkConsumeInput,
-  ChannelInboundMessage,
-  ChannelNoticeInput,
-} from "@t3tools/contracts";
+import type { ChannelGatewayError, ChannelInboundMessage } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 
@@ -15,12 +10,7 @@ import type * as Effect from "effect/Effect";
 export class ChannelGateway extends Context.Service<
   ChannelGateway,
   {
-    /** A message for an assistant, or a button press on a card the gateway sent. */
+    /** A message for an assistant, or a number answering a card the gateway sent. */
     readonly ingest: (message: ChannelInboundMessage) => Effect.Effect<void, ChannelGatewayError>;
-    /** Someone replied `link <code>`; answers them with success or failure. */
-    readonly linkIdentity: (
-      input: ChannelIdentityLinkConsumeInput,
-    ) => Effect.Effect<void, ChannelGatewayError>;
-    readonly requestNotice: (input: ChannelNoticeInput) => Effect.Effect<void, ChannelGatewayError>;
   }
 >()("t3/channels/ChannelGateway") {}

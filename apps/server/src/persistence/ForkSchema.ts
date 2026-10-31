@@ -271,6 +271,35 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
       used_at TEXT
     )
   `;
+  // iMessage polling: the ROWID cursor with the rows still waiting for their chat, what the
+  // transport sent (so its echo is not read back), and self-chat messages already shown.
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS imessage_cursor (
+      id TEXT PRIMARY KEY,
+      cursor INTEGER NOT NULL,
+      pending_json TEXT NOT NULL
+    )
+  `;
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS imessage_sent (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      delivery_id TEXT NOT NULL,
+      chunk_index INTEGER NOT NULL,
+      chat_guid TEXT NOT NULL,
+      text_hash TEXT NOT NULL,
+      sent_at_ms INTEGER NOT NULL,
+      consumed INTEGER NOT NULL DEFAULT 0,
+      UNIQUE (delivery_id, chunk_index)
+    )
+  `;
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS imessage_seen (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      chat_guid TEXT NOT NULL,
+      text_hash TEXT NOT NULL,
+      date_ms INTEGER NOT NULL
+    )
+  `;
   yield* sql`
     CREATE TABLE IF NOT EXISTS channel_cards (
       decision_id TEXT PRIMARY KEY,

@@ -106,8 +106,7 @@ import * as ThreadSearch from "./orchestration-v2/ThreadSearch.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 import * as UsageService from "./usage/UsageService.ts";
 import * as AssistantSpend from "./assistants/AssistantSpend.ts";
-import * as ChannelIdentities from "./channels/ChannelIdentities.ts";
-import * as SlackChannelSettings from "./channels/slack/SlackChannelSettings.ts";
+import * as ImessageChannelSettings from "./channels/imessage/ImessageChannelSettings.ts";
 import * as InstanceSpend from "./usage/InstanceSpend.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
@@ -572,8 +571,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(UsageService.UsageService)({}),
   Layer.mock(InstanceSpend.InstanceSpend)({}),
   Layer.mock(AssistantSpend.AssistantSpend)({}),
-  Layer.mock(SlackChannelSettings.SlackChannelSettings)({}),
-  Layer.mock(ChannelIdentities.ChannelIdentities)({}),
+  Layer.mock(ImessageChannelSettings.ImessageChannelSettings)({}),
   Layer.mock(VcsProvisioningService.VcsProvisioningService)({}),
   Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({}),
   Layer.mock(WorkspaceEntries.WorkspaceEntries)({}),

@@ -70,7 +70,7 @@ export * from "./kanban.ts";
 export * from "./decisions.ts";
 export * from "./assistants.ts";
 export * from "./channels.ts";
-export * from "./slackChannel.ts";
+export * from "./imessageChannel.ts";
 export * from "./notes.ts";
 export * from "./worktreeMcp.ts";
 export * from "./resourceTelemetry.ts";

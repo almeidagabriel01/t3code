@@ -20,10 +20,9 @@ const NO_TRANSPORT_RETRY_SECONDS = 30;
 /** The worker also looks on this interval, so a wake lost between a commit and its offer is brief. */
 const IDLE_CHECK = "10 seconds";
 const PERMANENT_ERROR_CODES = new Set([
-  "not_in_channel",
-  "channel_not_found",
-  "invalid_auth",
-  "token_revoked",
+  "automation_denied",
+  "messages_not_signed_in",
+  "chat_not_found",
 ]);
 
 const MessageJson = Schema.fromJsonString(ChannelOutboundMessage);
@@ -35,7 +34,6 @@ type OutboxState = "pending" | "sent" | "failed" | "ambiguous";
 interface OutboxRow {
   readonly delivery_id: string;
   readonly message_json: string;
-  readonly replaces_delivery_id: string | null;
   readonly state: OutboxState;
   readonly attempts: number;
   readonly next_attempt_at: string;
@@ -46,14 +44,8 @@ interface OutboxRow {
 export class ChannelOutbox extends Context.Service<
   ChannelOutbox,
   {
-    /**
-     * Stores one delivery; a repeat of the same `deliveryId` changes nothing. `replacesDeliveryId`
-     * edits the message that earlier delivery posted, found when this one is sent.
-     */
-    readonly enqueue: (
-      message: ChannelOutboundMessage,
-      options?: { readonly replacesDeliveryId?: string },
-    ) => Effect.Effect<void>;
+    /** Stores one delivery; a repeat of the same `deliveryId` changes nothing. */
+    readonly enqueue: (message: ChannelOutboundMessage) => Effect.Effect<void>;
     readonly find: (deliveryId: string) => Effect.Effect<Option.Option<OutboxRow>>;
     /** Wakes the worker; `enqueue` does this itself, a caller that enqueues in a transaction calls it after commit. */
     readonly wake: Effect.Effect<void>;
@@ -75,14 +67,13 @@ const make = Effect.gen(function* () {
   const wake = Queue.offer(wakeups, undefined).pipe(Effect.asVoid);
 
   const enqueue: ChannelOutbox["Service"]["enqueue"] = Effect.fn("ChannelOutbox.enqueue")(
-    function* (message, options) {
+    function* (message) {
       const now = yield* nowIso;
       yield* sql`
         INSERT OR IGNORE INTO channel_outbox (
-          delivery_id, message_json, replaces_delivery_id, state, next_attempt_at, created_at
+          delivery_id, message_json, state, next_attempt_at, created_at
         ) VALUES (
-          ${message.deliveryId}, ${encodeMessage(message)}, ${options?.replacesDeliveryId ?? null},
-          'pending', ${now}, ${now}
+          ${message.deliveryId}, ${encodeMessage(message)}, 'pending', ${now}, ${now}
         )`;
       yield* wake;
     },
@@ -100,22 +91,12 @@ const make = Effect.gen(function* () {
 
   const deliver = Effect.fn("ChannelOutbox.deliver")(function* (row: OutboxRow) {
     const message = decodeMessage(row.message_json);
-    let outgoing = message;
-    if (row.replaces_delivery_id !== null) {
-      const original = Option.getOrUndefined(yield* find(row.replaces_delivery_id));
-      // Created earlier, so it is either settled by now or still waiting for its own turn.
-      if (original?.state === "pending") return;
-      if (original?.external_message_id == null) {
-        return yield* finish(row.delivery_id, "failed", "card_not_delivered");
-      }
-      outgoing = { ...message, replacesExternalMessageId: original.external_message_id };
-    }
     const transport = yield* registry.resolve(message.destination.kind);
     if (Option.isNone(transport)) {
       const next = yield* inSeconds(NO_TRANSPORT_RETRY_SECONDS);
       return yield* sql`UPDATE channel_outbox SET next_attempt_at = ${next} WHERE delivery_id = ${row.delivery_id}`;
     }
-    const exit = yield* Effect.exit(transport.value.send(outgoing));
+    const exit = yield* Effect.exit(transport.value.send(message));
     if (Exit.isSuccess(exit)) {
       return yield* sql`
         UPDATE channel_outbox

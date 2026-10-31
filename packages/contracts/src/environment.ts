@@ -150,8 +150,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   decisions: Schema.optionalKey(Schema.Boolean),
   /** Hide Assistants when absent; older servers have no assistant methods. */
   assistants: Schema.optionalKey(Schema.Boolean),
-  /** Hide Slack when absent; older servers have no Slack connection methods. */
-  slackChannel: Schema.optionalKey(Schema.Boolean),
+  /** Hide iMessage when absent; only Mac servers can run it. */
+  imessageChannel: Schema.optionalKey(Schema.Boolean),
   pullRequestStackActions: Schema.optionalKey(Schema.Boolean),
   serverSelfUpdate: Schema.optionalKey(ServerSelfUpdateCapability),
   /** Manual commands must update this install, not the host's default global prefix. */

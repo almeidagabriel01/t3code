@@ -200,9 +200,8 @@ import * as ChannelBridge from "./channels/ChannelBridge.ts";
 import * as ChannelOutbox from "./channels/ChannelOutbox.ts";
 import * as ChannelReplyReactor from "./channels/ChannelReplyReactor.ts";
 import * as ChannelTransport from "./channels/ChannelTransport.ts";
-import * as SlackChannelRuntime from "./channels/slack/SlackChannelRuntime.ts";
-import * as SlackChannelSettings from "./channels/slack/SlackChannelSettings.ts";
-import * as SlackSdk from "./channels/slack/SlackSdk.ts";
+import * as ImessageChannelRuntime from "./channels/imessage/ImessageChannelRuntime.ts";
+import * as ImessageChannelSettings from "./channels/imessage/ImessageChannelSettings.ts";
 import * as InstanceSpend from "./usage/InstanceSpend.ts";
 import * as CodexUsageHistory from "./usage/CodexUsageHistory.ts";
 import * as RuntimeLayer from "./orchestration-v2/runtimeLayer.ts";
@@ -635,10 +634,9 @@ const layerProviderInstallationRefresh = Layer.effectDiscard(
   }),
 );
 
-// One transport registry: the Slack runtime registers into the same one the outbox resolves from.
-const layerChannels = SlackChannelSettings.layer.pipe(
-  Layer.provideMerge(SlackChannelRuntime.layer),
-  Layer.provideMerge(SlackSdk.layer),
+// One transport registry: the iMessage runtime registers into the same one the outbox resolves from.
+const layerChannels = ImessageChannelSettings.layer.pipe(
+  Layer.provideMerge(ImessageChannelRuntime.layer),
   Layer.provideMerge(Layer.mergeAll(ChannelBridge.layer, ChannelReplyReactor.layer)),
   Layer.provideMerge(ChannelOutbox.layer),
   Layer.provideMerge(ChannelTransport.layer),
@@ -710,7 +708,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
       yield* (yield* ChannelOutbox.ChannelOutbox).start();
       yield* (yield* ChannelBridge.ChannelBridge).start();
       yield* (yield* ChannelReplyReactor.ChannelReplyReactor).start();
-      yield* (yield* SlackChannelSettings.SlackChannelSettings).start;
+      yield* (yield* ImessageChannelSettings.ImessageChannelSettings).start;
     }),
   ),
   ProviderUsageLimitsIngestion.layer,

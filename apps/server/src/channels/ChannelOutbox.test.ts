@@ -6,13 +6,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
-import {
-  channelAddress,
-  deliveryError,
-  dmAddress,
-  fakeTransport,
-  outboxRows,
-} from "./channelBridgeTestSupport.ts";
+import { deliveryError, dmAddress, fakeTransport, outboxRows } from "./channelBridgeTestSupport.ts";
 import * as ChannelOutbox from "./ChannelOutbox.ts";
 import * as ChannelTransport from "./ChannelTransport.ts";
 
@@ -25,6 +19,7 @@ const message = (deliveryId: string, text = deliveryId) => ({
   deliveryId,
   destination: dmAddress,
   text,
+  senderName: "Jarvis",
 });
 
 it.effect("enqueue is idempotent and rows are delivered in creation order", () =>
@@ -55,10 +50,12 @@ it.effect("enqueue is idempotent and rows are delivered in creation order", () =
 
 const failures = [
   { name: "unknown outcome", error: { deliveryOutcome: "unknown" as const }, state: "ambiguous" },
-  ...(["not_in_channel", "channel_not_found", "invalid_auth", "token_revoked"] as const).map(
-    (code) => ({ name: code, error: { deliveryErrorCode: code }, state: "failed" }),
-  ),
-  { name: "network", error: { deliveryErrorCode: "network" as const }, state: "pending" },
+  ...(["automation_denied", "messages_not_signed_in", "chat_not_found"] as const).map((code) => ({
+    name: code,
+    error: { deliveryErrorCode: code },
+    state: "failed",
+  })),
+  { name: "unknown code", error: { deliveryErrorCode: "unknown" as const }, state: "pending" },
   { name: "no code", error: { deliveryErrorCode: undefined as never }, state: "pending" },
 ];
 
@@ -89,9 +86,7 @@ it.effect("a retryable failure backs off exponentially and honors retryAfterSeco
       call === 1
         ? Effect.fail(deliveryError())
         : call === 2
-          ? Effect.fail(
-              deliveryError({ deliveryErrorCode: "rate_limited", retryAfterSeconds: 120 }),
-            )
+          ? Effect.fail(deliveryError({ retryAfterSeconds: 120 }))
           : Effect.succeed("ts"),
     );
     yield* registry.register(transport);
@@ -129,7 +124,7 @@ it.effect("it gives up after ten attempts, with delays capped at five minutes", 
     yield* outbox.drain;
     assert.lengthOf(sent, 10);
     const [row] = yield* outboxRows;
-    assert.deepEqual([row!.state, row!.attempts, row!.last_error_code], ["failed", 10, "network"]);
+    assert.deepEqual([row!.state, row!.attempts, row!.last_error_code], ["failed", 10, "unknown"]);
   }).pipe(Effect.provide(layer)),
 );
 
@@ -151,48 +146,6 @@ it.effect("without a transport the row stays pending and goes out once one regis
   }).pipe(Effect.provide(layer)),
 );
 
-it.effect("an edit finds the original's external id at send time", () =>
-  Effect.gen(function* () {
-    const outbox = yield* ChannelOutbox.ChannelOutbox;
-    const registry = yield* ChannelTransport.ChannelTransportRegistry;
-    const { sent, transport } = fakeTransport();
-    yield* registry.register(transport);
-    yield* outbox.enqueue({ ...message("card"), choices: [{ label: "Yes", value: "v" }] });
-    yield* outbox.enqueue(message("edit"), { replacesDeliveryId: "card" });
-    yield* outbox.drain;
-    assert.isUndefined(sent[0]!.replacesExternalMessageId);
-    assert.equal(sent[1]!.replacesExternalMessageId, "ts-1");
-  }).pipe(Effect.provide(layer)),
-);
-
-it.effect("an edit waits for a card that is still retrying and is dropped if it never posted", () =>
-  Effect.gen(function* () {
-    const outbox = yield* ChannelOutbox.ChannelOutbox;
-    const registry = yield* ChannelTransport.ChannelTransportRegistry;
-    const { sent, transport } = fakeTransport((m) =>
-      m.deliveryId === "card" ? Effect.fail(deliveryError()) : Effect.succeed("ts"),
-    );
-    yield* registry.register(transport);
-    yield* outbox.enqueue(message("card"));
-    yield* outbox.enqueue(message("edit"), { replacesDeliveryId: "card" });
-    yield* outbox.enqueue(message("orphan"), { replacesDeliveryId: "missing" });
-    yield* outbox.drain;
-    assert.deepEqual(
-      sent.map((m) => m.deliveryId),
-      ["card"],
-    );
-    const rows = yield* outboxRows;
-    assert.deepEqual(
-      rows.map((row) => [row.delivery_id, row.state, row.last_error_code]),
-      [
-        ["card", "pending", "network"],
-        ["edit", "pending", null],
-        ["orphan", "failed", "card_not_delivered"],
-      ],
-    );
-  }).pipe(Effect.provide(layer)),
-);
-
 it.effect("the worker sends what is enqueued without being asked", () =>
   Effect.gen(function* () {
     const outbox = yield* ChannelOutbox.ChannelOutbox;
@@ -203,9 +156,9 @@ it.effect("the worker sends what is enqueued without being asked", () =>
     );
     yield* registry.register(transport);
     yield* outbox.start();
-    yield* outbox.enqueue({ ...message("a"), destination: channelAddress, mentionActorId: "U1" });
+    yield* outbox.enqueue({ ...message("a"), choices: [{ label: "Yes", value: "v" }] });
     yield* Deferred.await(delivered);
-    assert.equal(sent[0]!.mentionActorId, "U1");
+    assert.deepEqual(sent[0]!.choices, [{ label: "Yes", value: "v" }]);
   }).pipe(Effect.provide(layer)),
 );
 

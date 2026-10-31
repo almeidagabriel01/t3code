@@ -442,20 +442,16 @@ import {
   AssistantsSubscribeInput,
   AssistantsUpdateInput,
 } from "./assistants.ts";
-import { ChannelGatewayError, ChannelLinkCode, ChannelLinkedIdentity } from "./channels.ts";
 import {
-  ChannelsCreateLinkCodeInput,
-  ChannelsListIdentitiesInput,
-  ChannelsUnlinkInput,
-  ChannelsUnlinkResult,
-  SlackChannelConfigureInput,
-  SlackChannelDisconnectInput,
-  SlackChannelGetSettingsInput,
-  SlackChannelSettings,
-  SlackChannelSettingsError,
-  SlackChannelStatusEvent,
-  SlackChannelSubscribeStatusInput,
-} from "./slackChannel.ts";
+  ImessageChannelCheckAccessInput,
+  ImessageChannelCheckAccessResult,
+  ImessageChannelConfigureInput,
+  ImessageChannelGetSettingsInput,
+  ImessageChannelSettings,
+  ImessageChannelSettingsError,
+  ImessageChannelStatusEvent,
+  ImessageChannelSubscribeStatusInput,
+} from "./imessageChannel.ts";
 import {
   NoteConflictError,
   NoteDocument,
@@ -699,13 +695,10 @@ export const WS_METHODS = {
   assistantsDelete: "assistants.delete",
   assistantsReset: "assistants.reset",
   assistantsSpend: "assistants.spend",
-  slackChannelGetSettings: "slackChannel.getSettings",
-  slackChannelConfigure: "slackChannel.configure",
-  slackChannelDisconnect: "slackChannel.disconnect",
-  slackChannelSubscribeStatus: "slackChannel.subscribeStatus",
-  channelsCreateLinkCode: "channels.createLinkCode",
-  channelsListIdentities: "channels.listIdentities",
-  channelsUnlink: "channels.unlink",
+  imessageChannelGetSettings: "imessageChannel.getSettings",
+  imessageChannelConfigure: "imessageChannel.configure",
+  imessageChannelSubscribeStatus: "imessageChannel.subscribeStatus",
+  imessageChannelCheckAccess: "imessageChannel.checkAccess",
 
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
@@ -2179,46 +2172,30 @@ const WsAssistantsSpendRpc = Rpc.make(WS_METHODS.assistantsSpend, {
   error: AssistantRpcErrors,
 });
 
-const SlackChannelRpcErrors = Schema.Union([
-  SlackChannelSettingsError,
+const ImessageChannelRpcErrors = Schema.Union([
+  ImessageChannelSettingsError,
   EnvironmentAuthorizationError,
 ]);
-const WsSlackChannelGetSettingsRpc = Rpc.make(WS_METHODS.slackChannelGetSettings, {
-  payload: SlackChannelGetSettingsInput,
-  success: SlackChannelSettings,
-  error: SlackChannelRpcErrors,
+const WsImessageChannelGetSettingsRpc = Rpc.make(WS_METHODS.imessageChannelGetSettings, {
+  payload: ImessageChannelGetSettingsInput,
+  success: ImessageChannelSettings,
+  error: ImessageChannelRpcErrors,
 });
-const WsSlackChannelConfigureRpc = Rpc.make(WS_METHODS.slackChannelConfigure, {
-  payload: SlackChannelConfigureInput,
-  success: SlackChannelSettings,
-  error: SlackChannelRpcErrors,
+const WsImessageChannelConfigureRpc = Rpc.make(WS_METHODS.imessageChannelConfigure, {
+  payload: ImessageChannelConfigureInput,
+  success: ImessageChannelSettings,
+  error: ImessageChannelRpcErrors,
 });
-const WsSlackChannelDisconnectRpc = Rpc.make(WS_METHODS.slackChannelDisconnect, {
-  payload: SlackChannelDisconnectInput,
-  success: SlackChannelSettings,
-  error: SlackChannelRpcErrors,
-});
-const WsSlackChannelSubscribeStatusRpc = Rpc.make(WS_METHODS.slackChannelSubscribeStatus, {
-  payload: SlackChannelSubscribeStatusInput,
-  success: SlackChannelStatusEvent,
-  error: SlackChannelRpcErrors,
+const WsImessageChannelSubscribeStatusRpc = Rpc.make(WS_METHODS.imessageChannelSubscribeStatus, {
+  payload: ImessageChannelSubscribeStatusInput,
+  success: ImessageChannelStatusEvent,
+  error: ImessageChannelRpcErrors,
   stream: true,
 });
-const ChannelsRpcErrors = Schema.Union([ChannelGatewayError, EnvironmentAuthorizationError]);
-const WsChannelsCreateLinkCodeRpc = Rpc.make(WS_METHODS.channelsCreateLinkCode, {
-  payload: ChannelsCreateLinkCodeInput,
-  success: ChannelLinkCode,
-  error: ChannelsRpcErrors,
-});
-const WsChannelsListIdentitiesRpc = Rpc.make(WS_METHODS.channelsListIdentities, {
-  payload: ChannelsListIdentitiesInput,
-  success: Schema.Array(ChannelLinkedIdentity),
-  error: ChannelsRpcErrors,
-});
-const WsChannelsUnlinkRpc = Rpc.make(WS_METHODS.channelsUnlink, {
-  payload: ChannelsUnlinkInput,
-  success: ChannelsUnlinkResult,
-  error: ChannelsRpcErrors,
+const WsImessageChannelCheckAccessRpc = Rpc.make(WS_METHODS.imessageChannelCheckAccess, {
+  payload: ImessageChannelCheckAccessInput,
+  success: ImessageChannelCheckAccessResult,
+  error: ImessageChannelRpcErrors,
 });
 
 const WsKanbanSubscribeRpc = Rpc.make(WS_METHODS.kanbanSubscribe, {
@@ -2553,13 +2530,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsAssistantsDeleteRpc,
   WsAssistantsResetRpc,
   WsAssistantsSpendRpc,
-  WsSlackChannelGetSettingsRpc,
-  WsSlackChannelConfigureRpc,
-  WsSlackChannelDisconnectRpc,
-  WsSlackChannelSubscribeStatusRpc,
-  WsChannelsCreateLinkCodeRpc,
-  WsChannelsListIdentitiesRpc,
-  WsChannelsUnlinkRpc,
+  WsImessageChannelGetSettingsRpc,
+  WsImessageChannelConfigureRpc,
+  WsImessageChannelSubscribeStatusRpc,
+  WsImessageChannelCheckAccessRpc,
   WsServerReportClientActivityRpc,
   WsCloudGetRelayClientStatusRpc,
   WsCloudInstallRelayClientRpc,
