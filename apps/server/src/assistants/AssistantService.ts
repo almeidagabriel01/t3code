@@ -542,8 +542,10 @@ const make = Effect.gen(function* () {
               return yield* assistantError("not_found", "That conversation no longer exists.");
             }
             // The pointer moves before the thread comes back, so it is already the current one.
+            // A thread can't change projects, so the assistant follows it to the restored one's.
             yield* sql`
-              UPDATE assistants SET thread_id = ${restore}, updated_at = ${yield* nowIso}
+              UPDATE assistants SET thread_id = ${restore}, project_id = ${thread.projectId},
+                updated_at = ${yield* nowIso}
               WHERE assistant_id = ${row.assistant_id}`;
             if (thread.archivedAt !== null) yield* archiveThread(restore, false);
             yield* retire(previousThreadId);

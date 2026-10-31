@@ -35,6 +35,7 @@ const model = (name: string): ModelSelection => ({
 });
 
 interface FakeThread {
+  projectId: string;
   deletedAt: string | null;
   archivedAt: string | null;
   modelSelection: ModelSelection;
@@ -93,6 +94,7 @@ const harness = () => {
         const threadId = input.threadId!;
         if (!threads.has(threadId)) {
           threads.set(threadId, {
+            projectId: input.projectId,
             deletedAt: null,
             archivedAt: null,
             modelSelection: input.modelSelection,
@@ -362,6 +364,13 @@ it.effect("a project change starts a new generation there and retires the old th
         .reason,
       "handle_taken",
     );
+    // Restoring a conversation from the old project brings the assistant back there with it.
+    const restored = yield* assistants.reset({
+      assistantId: made.id,
+      restoreThreadId: made.threadId!,
+    });
+    assert.equal(restored.threadId, made.threadId);
+    assert.equal(restored.projectId, made.projectId);
   }).pipe(Effect.provide(layer));
 });
 

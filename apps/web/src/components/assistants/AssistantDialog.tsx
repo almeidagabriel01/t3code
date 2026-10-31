@@ -10,7 +10,7 @@ import {
   type ProjectId,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
-import { Link } from "@tanstack/react-router";
+import { Link, useRouter } from "@tanstack/react-router";
 import * as Schema from "effect/Schema";
 import { BrainIcon } from "lucide-react";
 import { useState } from "react";
@@ -55,6 +55,7 @@ import { Radio, RadioGroup } from "../ui/radio-group";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Textarea } from "../ui/textarea";
 import { assistantDialogAtom, type AssistantDialogTarget } from "./assistantDialogState";
+import { useAssistantFlows } from "./useAssistantFlows";
 import { TOOL_ACCESS_OPTIONS } from "./assistantPresentation";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 
@@ -108,6 +109,8 @@ function AssistantDialog(props: {
   );
   const environmentId = existing?.environmentId ?? pickedEnvironmentId ?? environmentIds[0] ?? null;
   const actions = useAssistantActions((environmentId ?? "") as EnvironmentId);
+  const { openConversation } = useAssistantFlows((environmentId ?? "") as EnvironmentId);
+  const router = useRouter();
 
   const [name, setName] = useState(assistant?.name ?? "");
   const [handleInput, setHandleInput] = useState<string | null>(null);
@@ -187,8 +190,12 @@ function AssistantDialog(props: {
           toolAccess,
         });
     setSaving(false);
-    if (reply.ok) props.onClose();
-    else setError(reply.message);
+    if (!reply.ok) return setError(reply.message);
+    props.onClose();
+    // Settings stays put for setting up several; elsewhere the new assistant opens to talk to it.
+    if (!assistant && !router.state.location.pathname.startsWith("/settings")) {
+      openConversation(reply.value);
+    }
   };
 
   return (
