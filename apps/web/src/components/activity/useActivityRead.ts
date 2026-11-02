@@ -1,4 +1,9 @@
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
+import {
+  markActivityRead,
+  selectActivityClear,
+  type ActivityReadPlan,
+} from "@t3tools/client-runtime/state/thread-activity";
 import { threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import {
@@ -14,7 +19,6 @@ import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { useUiStateStore } from "../../uiStateStore";
 import { selectSidebarMarkReadTargets } from "../Sidebar.logic";
 import { stackedThreadToast, toastManager } from "../ui/toast";
-import { markActivityRead, selectActivityClear, type ActivityReadPlan } from "./activityRead";
 
 const threadKey = (thread: EnvironmentThreadShell) =>
   scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));

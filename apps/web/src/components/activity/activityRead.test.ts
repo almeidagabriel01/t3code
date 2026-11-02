@@ -5,7 +5,10 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { makeThreadFixture, type ThreadFixtureOverrides } from "../../test-fixtures";
 import type { Thread } from "../../types";
-import { markActivityRead, selectActivityClear } from "./activityRead";
+import {
+  markActivityRead,
+  selectActivityClear,
+} from "@t3tools/client-runtime/state/thread-activity";
 
 const local = EnvironmentId.make("environment-local");
 const readOnly = EnvironmentId.make("environment-read-only");

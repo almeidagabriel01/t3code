@@ -137,6 +137,22 @@ describe("HomeNeedsYouSection", () => {
     expect(mocks.visit).not.toHaveBeenCalled();
   });
 
+  it("clears read threads through the same visits, skipping what it cannot operate", async () => {
+    render([unread("one"), shell("ask", { hasPendingUserInput: true })]);
+    await press("Clear read");
+    expect(mocks.visit).toHaveBeenCalledTimes(1);
+    expect(mocks.visit).toHaveBeenCalledWith({
+      environmentId: "hub",
+      input: { threadId: "one", visitedAt: now },
+    });
+
+    mocks.operable = new Set();
+    render([unread("one")]);
+    mocks.visit.mockClear();
+    await press("Clear read");
+    expect(mocks.visit).not.toHaveBeenCalled();
+  });
+
   it("treats a server without visit times as having nothing unread", () => {
     render([shell("old", { latestRun, lastVisitedAt: undefined })]);
     expect(container.textContent).toBe("");

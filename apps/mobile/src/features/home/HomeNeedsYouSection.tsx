@@ -3,6 +3,7 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/model
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import {
   buildActivityEntries,
+  selectActivityClear,
   selectSidebarMarkReadTargets,
   type ActivityRank,
 } from "@t3tools/client-runtime/state/thread-activity";
@@ -54,16 +55,12 @@ export function HomeNeedsYouSection(props: {
   }).filter((entry) => props.includeWorking || entry.rank !== 1);
   if (entries.length === 0) return null;
 
-  const markAllRead = async () => {
-    const wokeAtByKey = new Map(
-      entries.map((entry) => [entry.key, threadWokeAt(entry.thread, { now: props.now })]),
-    );
-    const targets = selectSidebarMarkReadTargets({
-      threads: entries.map((entry) => entry.thread),
-      localLastVisitedAtByKey: {},
-      wokeAtByKey,
-      canOperate: (thread) => operable.has(thread.environmentId),
-    });
+  const wokeAtByKey = new Map(
+    entries.map((entry) => [entry.key, threadWokeAt(entry.thread, { now: props.now })]),
+  );
+  const canOperate = (thread: EnvironmentThreadShell) => operable.has(thread.environmentId);
+  const threads = entries.map((entry) => entry.thread);
+  const markRead = async (targets: ReadonlyArray<EnvironmentThreadShell>) => {
     let failed = false;
     for (const thread of targets) {
       const key = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
@@ -75,6 +72,21 @@ export function HomeNeedsYouSection(props: {
     }
     if (failed) Dialog.alert("Could not mark every thread as read");
   };
+  const markAllRead = () =>
+    markRead(
+      selectSidebarMarkReadTargets({
+        threads,
+        localLastVisitedAtByKey: {},
+        wokeAtByKey,
+        canOperate,
+      }),
+    );
+  // No holds here, so rows leave as soon as they are read and only the visits remain.
+  const clearRead = () =>
+    markRead(
+      selectActivityClear({ threads, localLastVisitedAtByKey: {}, wokeAtByKey, canOperate })
+        .markRead,
+    );
 
   return (
     <View className="gap-1 pb-3 pt-2" style={{ paddingHorizontal: props.gutter }}>
@@ -88,16 +100,28 @@ export function HomeNeedsYouSection(props: {
                 {heading} · {group.length}
               </Text>
               {rank === 2 ? (
-                <Pressable
-                  accessibilityRole="button"
-                  hitSlop={8}
-                  onPress={() => void markAllRead()}
-                  className="active:opacity-70"
-                >
-                  <Text className="font-t3-medium text-xs text-foreground-secondary">
-                    Mark all as read
-                  </Text>
-                </Pressable>
+                <View className="flex-row items-center gap-4">
+                  <Pressable
+                    accessibilityRole="button"
+                    hitSlop={8}
+                    onPress={() => void clearRead()}
+                    className="active:opacity-70"
+                  >
+                    <Text className="font-t3-medium text-xs text-foreground-secondary">
+                      Clear read
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    hitSlop={8}
+                    onPress={() => void markAllRead()}
+                    className="active:opacity-70"
+                  >
+                    <Text className="font-t3-medium text-xs text-foreground-secondary">
+                      Mark all as read
+                    </Text>
+                  </Pressable>
+                </View>
               ) : null}
             </View>
             {group.map((entry) => (
