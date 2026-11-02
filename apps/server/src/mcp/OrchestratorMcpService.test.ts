@@ -27,6 +27,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -2200,6 +2201,8 @@ describe("OrchestratorMcpService provider resolution", () => {
       },
       ...overrides,
     });
+    const folderModel = { instanceId: ProviderInstanceId.make("codex"), model: "folder-model" };
+    const overrideModel = { instanceId: ProviderInstanceId.make("codex"), model: "override-model" };
     const supervisedClient: McpInvocationScope = {
       environmentId: EnvironmentId.make("environment:scheduled"),
       requestNamespace: "client:scheduled",
@@ -2241,6 +2244,72 @@ describe("OrchestratorMcpService provider resolution", () => {
           ),
         ),
       );
+
+    it.effect.each([
+      [
+        "a folder rule",
+        { folderModelDefaults: [{ folder: "/work", modelSelection: folderModel }] },
+        folderModel,
+      ],
+      [
+        "a project override over the folder rule",
+        {
+          folderModelDefaults: [{ folder: "/work", modelSelection: folderModel }],
+          projectSettingsOverrides: { [projectId]: { defaultModelSelection: overrideModel } },
+        },
+        overrideModel,
+      ],
+    ])("schedules a task with the model from %s", ([, settings, expected]) =>
+      Effect.gen(function* () {
+        const upserts: Array<ScheduledTaskUpsertInput> = [];
+        yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+          Effect.flatMap((mcp) =>
+            mcp.scheduleTask(supervisedClient, {
+              projectId,
+              prompt: "check in later",
+              schedule: { type: "interval", everyMs: 3_600_000 },
+            }),
+          ),
+          Effect.provide(
+            layerOrchestratorService.pipe(
+              Layer.provide(
+                Layer.mergeAll(
+                  NodeServices.layer,
+                  Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+                  ServerSettings.layerTest(settings),
+                  Layer.mock(ProviderRegistry.ProviderRegistry)({
+                    getProviders: Effect.succeed([]),
+                  }),
+                  Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+                    list: () => Effect.succeed([]),
+                  }),
+                  Layer.mock(ProjectService.ProjectService)({
+                    getById: () =>
+                      Effect.succeed(
+                        Option.some({
+                          id: projectId,
+                          workspaceRoot: "/work/app",
+                          defaultModelSelection: null,
+                        } as never),
+                      ),
+                  }),
+                  Layer.mock(SecretRequests.SecretRequests)({}),
+                  Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+                  Layer.mock(ScheduledTaskService.ScheduledTaskService)({
+                    upsert: (input) =>
+                      Effect.sync(() => {
+                        upserts.push(input);
+                        return { task: task({}) };
+                      }),
+                  }),
+                ),
+              ),
+            ),
+          ),
+        );
+        assert.deepEqual(upserts[0]?.modelSelection, expected);
+      }),
+    );
 
     it.effect("hides a webhook URL from a caller below the task's modes", () =>
       Effect.gen(function* () {
