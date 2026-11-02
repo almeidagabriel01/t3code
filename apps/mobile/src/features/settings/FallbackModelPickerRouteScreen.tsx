@@ -36,7 +36,6 @@ export function FallbackModelPickerRouteScreen({
           environmentId,
           input: { patch: fallbackModelsPatch(addFallbackModel(chain, option.selection)) },
         });
-        navigation.goBack();
       }}
       optionDescriptors={[]}
       onUpdateOptionSelections={() => {}}

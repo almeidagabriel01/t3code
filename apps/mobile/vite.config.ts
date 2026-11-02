@@ -22,6 +22,7 @@ const reactTests = [
   "src/features/settings/components/BranchNamingSettings.test.tsx",
   "src/features/settings/components/FolderModelsSection.test.tsx",
   "src/features/settings/FolderModelRouteScreen.test.tsx",
+  "src/features/settings/FallbackModelPickerRouteScreen.test.tsx",
   "src/features/settings/FolderModelPickerRouteScreen.test.tsx",
   "src/features/settings/components/SettingsDragHandle.test.tsx",
   "src/features/threads/ThreadMarkdownImage.test.tsx",

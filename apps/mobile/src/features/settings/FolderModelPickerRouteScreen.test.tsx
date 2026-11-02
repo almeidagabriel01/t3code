@@ -53,8 +53,12 @@ beforeEach(() => {
 afterEach(() => act(() => root.unmount()));
 
 describe("FolderModelPickerRouteScreen", () => {
-  it("saves the picked model for the folder and closes both screens", () => {
-    act(() => mocks.picker!.onSelectModel({ selection: model }));
+  it("saves the picked model for the folder and closes both screens once", () => {
+    // The sheet's Save calls onSelectModel, then onClose.
+    act(() => {
+      mocks.picker!.onSelectModel({ selection: model });
+      mocks.picker!.onClose();
+    });
     expect(mocks.save).toHaveBeenCalledWith({
       environmentId: "env",
       input: {
@@ -66,12 +70,13 @@ describe("FolderModelPickerRouteScreen", () => {
         },
       },
     });
-    expect(mocks.dispatch).toHaveBeenCalledWith({ type: "POP", count: 2 });
+    expect(mocks.dispatch.mock.calls).toEqual([[{ type: "POP", count: 2 }]]);
+    expect(mocks.goBack).not.toHaveBeenCalled();
   });
 
   it("closes without saving", () => {
     act(() => mocks.picker!.onClose());
     expect(mocks.save).not.toHaveBeenCalled();
-    expect(mocks.goBack).toHaveBeenCalled();
+    expect(mocks.dispatch.mock.calls).toEqual([[{ type: "POP", count: 1 }]]);
   });
 });
