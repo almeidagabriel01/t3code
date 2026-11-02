@@ -7,6 +7,7 @@ import {
   MessageId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -34,6 +35,8 @@ export function parseNumberReply(text: string): number | undefined {
 }
 
 const SYSTEM_SENDER = "T3 Code";
+/** Guards against reply loops and floods; counted from each message's own receive time. */
+export const INBOUND_PER_MINUTE = 10;
 
 const persistenceFailed = (cause: unknown) =>
   Effect.logWarning("channel storage failed", { cause }).pipe(
@@ -249,6 +252,32 @@ const make = Effect.gen(function* () {
           ${encodeInbound(message)}, 'stored')
         RETURNING idempotency_key`.pipe(Effect.catch(persistenceFailed));
       if (stored.length === 0) return;
+      const since = DateTime.formatIso(
+        DateTime.subtract(DateTime.makeUnsafe(message.receivedAt), { minutes: 1 }),
+      );
+      // ponytail: scans the sender's inbox rows; add a received_at column if the inbox grows large.
+      const [recent] = yield* sql<{ readonly count: number }>`
+        SELECT COUNT(*) AS count FROM channel_inbox
+        WHERE connection_id = ${message.connectionId}
+          AND json_extract(payload_json, '$.actor.externalActorId') = ${message.actor.externalActorId}
+          AND json_extract(payload_json, '$.receivedAt') > ${since}
+          AND json_extract(payload_json, '$.receivedAt') <= ${message.receivedAt}`.pipe(
+        Effect.catch(persistenceFailed),
+      );
+      if ((recent?.count ?? 0) > INBOUND_PER_MINUTE) {
+        yield* sql`
+          UPDATE channel_inbox SET state = 'limited'
+          WHERE connection_id = ${message.connectionId}
+            AND idempotency_key = ${message.idempotencyKey}`.pipe(Effect.catch(persistenceFailed));
+        if (recent?.count === INBOUND_PER_MINUTE + 1) {
+          yield* reply(
+            message,
+            "limited",
+            "You're sending messages too fast. I'll read new ones again in a minute.",
+          ).pipe(isolate("sending the rate limit notice failed"));
+        }
+        return;
+      }
       yield* deliverMessage(message).pipe(isolate("channel message handling failed"));
     },
     Effect.catchDefect((defect) => persistenceFailed(defect)),

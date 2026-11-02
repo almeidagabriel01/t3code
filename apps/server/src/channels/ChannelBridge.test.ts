@@ -1,6 +1,7 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
 import type { ChannelInboundMessage } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -78,6 +79,25 @@ it.effect("a duplicate inbound message is a no-op", () => {
     yield* gateway.ingest(message);
     yield* gateway.ingest(message);
     assert.lengthOf(channelSends(), 1);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("a sender over the per-minute limit is held back once with one notice", () => {
+  const { layer, channelSends } = harness();
+  const at = (seconds: number) =>
+    DateTime.formatIso(DateTime.makeUnsafe(Date.UTC(2026, 0, 1, 0, 0, seconds)));
+  return Effect.gen(function* () {
+    const gateway = yield* ChannelGateway;
+    for (let index = 0; index < ChannelBridge.INBOUND_PER_MINUTE + 2; index += 1) {
+      yield* gateway.ingest(inbound({ receivedAt: at(index) }));
+    }
+    yield* gateway.ingest(inbound({ receivedAt: at(20), actor: { externalActorId: "+1555999" } }));
+    yield* gateway.ingest(inbound({ receivedAt: at(62) }));
+    assert.lengthOf(channelSends(), ChannelBridge.INBOUND_PER_MINUTE + 2);
+    assert.deepEqual(
+      (yield* texts).filter((text) => text.includes("too fast")),
+      ["You're sending messages too fast. I'll read new ones again in a minute."],
+    );
   }).pipe(Effect.provide(layer));
 });
 
