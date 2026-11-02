@@ -65,6 +65,7 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { environmentAtomList, environmentIdsKey } from "../../state/environmentAtomList";
 import { formatEnvironmentQueryError, useEnvironmentQuery } from "../../state/query";
 import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
+import { threadFamilies } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { WorktreeBaseBranchPicker } from "../WorktreeBaseBranchPicker";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
@@ -72,13 +73,14 @@ import { ConnectionStatusDot, connectionPhaseDotClassName } from "../ConnectionS
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import { readEnvironmentScope } from "~/state/session";
 import { useSettingsScope } from "./SettingsScopeContext";
-import { EnvironmentRow, environmentTransportLabel } from "./EnvironmentRow";
+import { EnvironmentRow, useEnvironmentTransportLabel } from "./EnvironmentRow";
 import { SettingsGroup } from "./SettingsGroup";
 import { settingsScopeEnvironmentLabel, settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
 import {
   WEBHOOK_SIGNATURE_DEFAULTS,
   webhookDraftErrors,
   webhookDeliveryLabel,
+  defaultScheduledTaskProjectId,
   matchesScheduledTaskScope,
   scheduleFromDraft,
   scheduledTaskDefaultModel,
@@ -573,19 +575,13 @@ function ScheduledTaskEnvironmentList({
     <SettingsGroup>
       {populated.map(({ environment, tasks }) => {
         const { primary, secondary } = settingsScopeEnvironmentLabels(environment, environments);
-        const transport = environmentTransportLabel(environment);
         return (
           <div key={environment.environmentId} className="divide-y divide-border/50">
             <EnvironmentRow
               kind={resolveEnvironmentMachineKind(environment.serverConfig)}
               label={primary}
               subtitle={
-                <>
-                  {secondary && secondary !== transport ? (
-                    <span className="block truncate">{secondary}</span>
-                  ) : null}
-                  <span className="block truncate">{transport}</span>
-                </>
+                <ScheduledTaskEnvironmentSubtitle environment={environment} secondary={secondary} />
               }
             >
               <ConnectionStatusDot
@@ -640,6 +636,24 @@ function ScheduledTaskEnvironmentList({
         );
       })}
     </SettingsGroup>
+  );
+}
+
+function ScheduledTaskEnvironmentSubtitle({
+  environment,
+  secondary,
+}: {
+  readonly environment: EnvironmentPresentation;
+  readonly secondary: string;
+}) {
+  const transport = useEnvironmentTransportLabel(environment);
+  return (
+    <>
+      {secondary && secondary !== transport ? (
+        <span className="block truncate">{secondary}</span>
+      ) : null}
+      <span className="block truncate">{transport}</span>
+    </>
   );
 }
 
@@ -1150,9 +1164,15 @@ function ScheduledTaskEditorDialog({
 }
 
 function useBoundThreadName(environmentId: EnvironmentId, threadId: ThreadId | ""): string {
+  const ref = threadId === "" ? null : scopeThreadRef(environmentId, threadId);
   const assistant = useThreadAssistant(environmentId, threadId === "" ? null : threadId);
-  const shell = useThreadShell(threadId === "" ? null : scopeThreadRef(environmentId, threadId));
-  return assistant?.assistant.name ?? shell?.title ?? "This thread";
+  const shell = useThreadShell(ref);
+  // The shell can omit older settled threads; their family read still carries the title.
+  const family = useEnvironmentQuery(
+    ref !== null && shell === null ? threadFamilies.familyAtom(environmentId, ref.threadId) : null,
+  );
+  const familyTitle = family.data?.threads.find((row) => row.id === threadId)?.title.trim();
+  return assistant?.assistant.name ?? shell?.title ?? (familyTitle || "This thread");
 }
 
 function ScheduledTaskEditorForm({
@@ -1179,12 +1199,13 @@ function ScheduledTaskEditorForm({
     connected ? serverEnvironment.scheduledTasksLive({ environmentId, input: {} }) : null,
   );
   const allProjects = useProjects();
-  const projects = allProjects.filter(
-    (project) =>
-      project.environmentId === environmentId &&
-      (matchesScheduledTaskScope(scope, environmentId, project.id) ||
-        project.id === bound?.projectId),
-  );
+  const projectsOn = (id: EnvironmentId) =>
+    allProjects.filter(
+      (project) =>
+        project.environmentId === id &&
+        (matchesScheduledTaskScope(scope, id, project.id) || project.id === bound?.projectId),
+    );
+  const scopedProjects = projectsOn(environmentId);
   const settings = useEnvironmentSettings(environmentId);
   const providers =
     useAtomValue(serverEnvironment.providersValueAtom(environmentId)) ?? EMPTY_SERVER_PROVIDERS;
@@ -1199,9 +1220,21 @@ function ScheduledTaskEditorForm({
       ? taskToDraft(task)
       : bound
         ? { ...EMPTY_DRAFT, projectId: bound.projectId, threadId: bound.threadId }
-        : { ...EMPTY_DRAFT, projectId: projects[0]?.id ?? "" },
+        : {
+            ...EMPTY_DRAFT,
+            projectId: defaultScheduledTaskProjectId(scopedProjects, scope),
+          },
   );
   const boundName = useBoundThreadName(environmentId, draft.threadId as ThreadId | "");
+  // Pinned first. The chosen project stays listed after it is archived.
+  const projects = scopedProjects
+    .filter(
+      (project) =>
+        project.archivedAt == null ||
+        project.id === draft.projectId ||
+        project.id === task?.projectId,
+    )
+    .sort((left, right) => Number(right.pinnedAt != null) - Number(left.pinnedAt != null));
   const submissionPending = useRef(false);
   const editingTaskMissing =
     draft.editingId !== null &&
@@ -1366,7 +1399,7 @@ function ScheduledTaskEditorForm({
                 setEnvironmentId(next.environmentId);
                 setDraft((current) => ({
                   ...current,
-                  projectId: "",
+                  projectId: defaultScheduledTaskProjectId(projectsOn(next.environmentId), scope),
                   modelKey: "",
                   baseModelSelection: null,
                   baseRef: "main",

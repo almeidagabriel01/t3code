@@ -28,6 +28,7 @@ import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as SourceControlRepositoryService from "../sourceControl/SourceControlRepositoryService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
+import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as CheckpointDiffQuery from "../checkpointing/CheckpointDiffQuery.ts";
@@ -227,12 +228,15 @@ const serveBox = (seen: Ref.Ref<Seen>, linkSession: Ref.Ref<string>) =>
         ),
       ),
       Layer.provide(NodeServices.layer),
-      Layer.provide(Layer.mock(ProviderRegistry.ProviderRegistry)({})),
+      Layer.provide(
+        Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+      ),
       Layer.provide(Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({})),
       Layer.provide(
         Layer.mergeAll(
           Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
           Layer.mock(CheckpointDiffQuery.CheckpointDiffQuery)({}),
+          Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({}),
         ),
       ),
       Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
@@ -317,6 +321,7 @@ const makeLaptop = Effect.gen(function* () {
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
         Layer.mock(CheckpointDiffQuery.CheckpointDiffQuery)({}),
         Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({}),
         Layer.mock(SecretRequests.SecretRequests)({}),
         ServerSettings.layerTest(),
         Layer.mock(RemoteDelegation.RemoteDelegation)({}),

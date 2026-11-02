@@ -202,49 +202,60 @@ const runOnServer = Effect.fn("Opencode2TextGeneration.runOnServer")(function* (
     ),
     Effect.forkScoped,
   );
-  const session = yield* client.session.create({
-    title: `T3 Code ${input.operation}`,
-    location: Location.PublicRef.make(location),
-    model: Model.Ref.make({
-      providerID: Provider.ID.make(parsed.providerID),
-      id: Model.ID.make(parsed.modelID),
-      ...(variant === undefined ? {} : { variant: Model.VariantID.make(variant) }),
-    }),
-    permissions: memory ? [{ action: "*", resource: "*", effect: "deny" }] : GENERATION_PERMISSIONS,
-  });
-  sessionId = session.id;
-  yield* Effect.addFinalizer(() =>
-    (memory
-      ? client.session
-          .interrupt({ sessionID: session.id })
-          .pipe(Effect.timeout("5 seconds"), Effect.ignore)
-      : Effect.void
-    ).pipe(
-      Effect.andThen(
-        client.session
-          .remove({ sessionID: session.id })
-          .pipe(Effect.timeout("5 seconds"), Effect.ignore({ log: true })),
+  // The limit covers creating the session and sending the prompt as well, since
+  // either request can stall while the event stream stays connected.
+  const generate = Effect.gen(function* () {
+    const session = yield* client.session.create({
+      title: `T3 Code ${input.operation}`,
+      location: Location.PublicRef.make(location),
+      model: Model.Ref.make({
+        providerID: Provider.ID.make(parsed.providerID),
+        id: Model.ID.make(parsed.modelID),
+        ...(variant === undefined ? {} : { variant: Model.VariantID.make(variant) }),
+      }),
+      permissions: memory
+        ? [{ action: "*", resource: "*", effect: "deny" }]
+        : GENERATION_PERMISSIONS,
+    });
+    sessionId = session.id;
+    yield* Effect.addFinalizer(() =>
+      (memory
+        ? client.session
+            .interrupt({ sessionID: session.id })
+            .pipe(Effect.timeout("5 seconds"), Effect.ignore)
+        : Effect.void
+      ).pipe(
+        Effect.andThen(
+          client.session
+            .remove({ sessionID: session.id })
+            .pipe(Effect.timeout("5 seconds"), Effect.ignore({ log: true })),
+        ),
       ),
-    ),
-  );
-  const images = (input.attachments ?? []).flatMap((attachment) => {
-    if (attachment.type !== "image") return [];
-    const path = resolveAttachmentPath(attachment);
-    return path === null ? [] : [{ uri: `file://${path}`, name: attachment.name }];
+    );
+    const images = (input.attachments ?? []).flatMap((attachment) => {
+      if (attachment.type !== "image") return [];
+      const path = resolveAttachmentPath(attachment);
+      return path === null ? [] : [{ uri: `file://${path}`, name: attachment.name }];
+    });
+    yield* client.session
+      .prompt({
+        sessionID: session.id,
+        text: input.prompt,
+        ...(images.length === 0 ? {} : { files: images }),
+      })
+      .pipe(Effect.asVoid, Effect.raceFirst(Deferred.await(outcome).pipe(Effect.asVoid)));
+    return yield* Deferred.await(outcome);
   });
-  yield* client.session
-    .prompt({
-      sessionID: session.id,
-      text: input.prompt,
-      ...(images.length === 0 ? {} : { files: images }),
-    })
-    .pipe(Effect.asVoid, Effect.raceFirst(Deferred.await(outcome).pipe(Effect.asVoid)));
-  const result = yield* Deferred.await(outcome).pipe(
+  const result = yield* generate.pipe(
     Effect.timeoutOrElse({
       duration: GENERATION_TIMEOUT,
       orElse: () =>
-        client.session.interrupt({ sessionID: Session.ID.make(session.id) }).pipe(
-          Effect.ignore,
+        (sessionId === undefined
+          ? Effect.void
+          : client.session
+              .interrupt({ sessionID: Session.ID.make(sessionId) })
+              .pipe(Effect.timeout("5 seconds"), Effect.ignore)
+        ).pipe(
           Effect.as<Outcome>({
             _tag: "failed",
             detail: "OpenCode did not finish generating in time.",

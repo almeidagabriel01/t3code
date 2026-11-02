@@ -1000,7 +1000,7 @@ it.effect("turns a side chat into a normal thread and rejects other threads", ()
     const orchestrator = yield* Orchestrator.OrchestratorV2;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const parentThreadId = ThreadId.make("thread:side-parent");
-    const sideThreadId = ThreadId.make("thread:side-chat");
+    const legacyThreadId = ThreadId.make("thread:legacy-side-chat");
     const projectId = ProjectId.make("project:side");
     const create = (threadId: ThreadId, sideChatOf?: ThreadId) =>
       orchestrator.dispatch({
@@ -1019,7 +1019,18 @@ it.effect("turns a side chat into a normal thread and rejects other threads", ()
         ...(sideChatOf === undefined ? {} : { sideChatOf }),
       });
     yield* create(parentThreadId);
-    yield* create(sideThreadId, parentThreadId);
+    yield* create(legacyThreadId, parentThreadId);
+    const sideThreadId = ThreadId.make("thread:side-chat");
+    yield* orchestrator.dispatch({
+      type: "thread.fork",
+      commandId: CommandId.make("fork-side-chat"),
+      createdBy: "user",
+      creationSource: "web",
+      sourceThreadId: parentThreadId,
+      targetThreadId: sideThreadId,
+      sourcePoint: { type: "latest_stable" },
+      sideChat: true,
+    });
     const detach = (threadId: ThreadId, id: string) =>
       orchestrator.dispatch({
         type: "thread.metadata.update",
@@ -1030,17 +1041,23 @@ it.effect("turns a side chat into a normal thread and rejects other threads", ()
 
     assert.isFalse(Exit.isSuccess(yield* Effect.exit(detach(parentThreadId, "detach-parent"))));
 
+    assert.isTrue((yield* projections.getThreadProjection(sideThreadId)).thread.lineage.sideChat);
     assert.equal(
-      (yield* projections.getThreadProjection(sideThreadId)).thread.sideChatOf,
+      (yield* projections.getThreadProjection(legacyThreadId)).thread.sideChatOf,
       parentThreadId,
     );
-    yield* detach(sideThreadId, "detach-side");
-    const promoted = yield* projections.getThreadProjection(sideThreadId);
-    assert.isNull(promoted.thread.sideChatOf ?? null);
-    const shell = yield* projections.getThreadShell(sideThreadId);
-    assert.isUndefined(shell?.sideChatOf);
-
-    assert.isFalse(Exit.isSuccess(yield* Effect.exit(detach(sideThreadId, "detach-again"))));
+    for (const threadId of [sideThreadId, legacyThreadId]) {
+      yield* detach(threadId, `detach-${threadId}`);
+      const promoted = yield* projections.getThreadProjection(threadId);
+      assert.isNull(promoted.thread.sideChatOf ?? null);
+      assert.isUndefined(promoted.thread.lineage.sideChat);
+      const shell = yield* projections.getThreadShell(threadId);
+      assert.isUndefined(shell?.sideChatOf);
+      assert.isUndefined(shell?.lineage.sideChat);
+      assert.isFalse(
+        Exit.isSuccess(yield* Effect.exit(detach(threadId, `detach-again-${threadId}`))),
+      );
+    }
   }).pipe(Effect.provide(layerTest)),
 );
 

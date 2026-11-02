@@ -31,6 +31,7 @@ import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.t
 import * as ProviderReplayHarness from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
+import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as CheckpointDiffQuery from "../checkpointing/CheckpointDiffQuery.ts";
@@ -164,10 +165,15 @@ const layerTools = Layer.mergeAll(
         }),
     }),
   ),
-  Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
-  Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
-  Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
-  Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
+  Layer.provide(
+    Layer.mergeAll(
+      Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({}),
+      Layer.mock(SecretRequests.SecretRequests)({}),
+      Layer.mock(PeerForwarding.PeerForwarding)({}),
+      Layer.mock(PeerLinkRequests.PeerLinkRequests)({}),
+      Layer.mock(PeerLinks.PeerLinks)({}),
+    ),
+  ),
   Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
   Layer.provide(Layer.mock(ThreadHandoffService.ThreadHandoffService)({})),
   Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),

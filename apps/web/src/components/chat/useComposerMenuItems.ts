@@ -66,6 +66,7 @@ export function useComposerMenuItems({
   threadPullRequests,
   planModeUiEnabled,
   sideChatAvailable,
+  sideChatDisabledReason,
   compactSlashCommandAvailable,
   selectedProvider,
   selectedProviderSkills,
@@ -83,6 +84,7 @@ export function useComposerMenuItems({
   readonly threadPullRequests: ReadonlyArray<ThreadPullRequestLink> | undefined;
   readonly planModeUiEnabled: boolean;
   readonly sideChatAvailable: boolean;
+  readonly sideChatDisabledReason: string | null;
   readonly compactSlashCommandAvailable: boolean;
   readonly selectedProvider: ProviderDriverKind;
   readonly selectedProviderSkills: ServerProvider["skills"];
@@ -246,7 +248,14 @@ export function useComposerMenuItems({
                 type: "slash-command",
                 command: "side",
                 label: "/side",
-                description: "Ask a side question without adding it to this thread",
+                description: sideChatDisabledReason ?? "Ask a side question in a new side chat",
+              },
+              {
+                id: "slash:btw",
+                type: "slash-command",
+                command: "btw",
+                label: "/btw",
+                description: sideChatDisabledReason ?? "Same as /side",
               },
             ] as const)
           : []),

@@ -10,9 +10,9 @@ type ChatRightPanelProps = Omit<RightPanelTabsProps, "mode" | "inlineSize" | "ma
   readonly widthStorageKey: string;
   readonly sheetAnimationDurationMs: number;
   readonly onCloseSheet: () => void;
-  readonly onAddSideChat: () => void;
-  readonly sideChatAvailable: boolean;
 };
+
+const noop = () => {};
 
 /**
  * The right panel, inline beside the chat column or as a sheet on narrow
@@ -28,8 +28,6 @@ export function ChatRightPanel(props: ChatRightPanelProps) {
     onCloseSheet,
     maximized,
     layoutControls,
-    onAddSideChat,
-    sideChatAvailable,
     ...tabs
   } = props;
   const inlineSize = usePreviewPanelInlineSize({
@@ -50,7 +48,7 @@ export function ChatRightPanel(props: ChatRightPanelProps) {
           "pull-requests": tabs.onAddPullRequests,
           "pull-request": tabs.onAddPullRequest,
           notes: tabs.onAddNotes,
-          "side-chat": onAddSideChat,
+          "side-chat": tabs.onAddSideChat ?? noop,
           device: tabs.onAddDevice,
         }}
         available={{
@@ -61,7 +59,7 @@ export function ChatRightPanel(props: ChatRightPanelProps) {
           "pull-requests": tabs.pullRequestsAvailable,
           "pull-request": tabs.pullRequestAvailable,
           notes: tabs.notesAvailable,
-          "side-chat": sideChatAvailable,
+          "side-chat": tabs.sideChatAvailable === true && !tabs.sideChatDisabledReason,
           device: tabs.deviceAvailable,
         }}
       />

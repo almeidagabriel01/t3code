@@ -30,8 +30,14 @@ import {
   sortPinnedThreadsByOrderKey,
   sortSettledThreads,
 } from "@t3tools/client-runtime/state/thread-sort";
-import type { EnvironmentId, ProjectId, SidebarThreadOrder } from "@t3tools/contracts";
-import { isAssistantThreadId, isSideChatThread } from "@t3tools/contracts";
+import {
+  isAssistantThreadId,
+  isListedThreadLineage,
+  isSideChatThread,
+  type EnvironmentId,
+  type ProjectId,
+  type SidebarThreadOrder,
+} from "@t3tools/contracts";
 import type { SnoozePresetSetting } from "@t3tools/contracts/settings";
 
 import type { ThreadListProvider } from "../../state/thread-list-environments";
@@ -225,7 +231,7 @@ export function getThreadListV2OrderedSection(input: {
   const threads = input.threads.filter((thread) => {
     if (
       thread.archivedAt !== null ||
-      thread.lineage.relationshipToParent === "subagent" ||
+      !isListedThreadLineage(thread.lineage) ||
       isSideChatThread(thread) ||
       isAssistantThreadId(thread.id)
     )
@@ -656,7 +662,7 @@ export function buildThreadListV2Items(input: {
   const listedThreads = input.threads.filter(
     (thread) =>
       thread.archivedAt === null &&
-      thread.lineage.relationshipToParent !== "subagent" &&
+      isListedThreadLineage(thread.lineage) &&
       !isSideChatThread(thread) &&
       !isAssistantThreadId(thread.id) &&
       (input.environmentId === null || thread.environmentId === input.environmentId) &&

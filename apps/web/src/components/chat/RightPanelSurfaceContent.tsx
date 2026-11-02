@@ -10,8 +10,10 @@ import type {
 } from "@t3tools/contracts";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { lazy, Suspense } from "react";
+import SideChatPane from "./SideChatPane";
 import type { ComposerImageAttachment, DraftId } from "../../composerDraftStore";
 import type { ShortcutMatchContext } from "../../keybindings";
+import type { SideChatParentPanel } from "../../lib/sideChatPane";
 import { type RightPanelSurface, useRightPanelStore } from "../../rightPanelStore";
 import {
   PersistentThreadTerminalPanel,
@@ -23,7 +25,6 @@ import { PullRequestDetailGhost } from "../pullRequest/PullRequestGhosts";
 import { PullRequestsUnavailableState } from "../pullRequest/PullRequestsUnavailableState";
 import { ThreadPullRequestsPanel } from "../pullRequest/ThreadPullRequestsPanel";
 import { NotesSurface, type NotesSurfaceProps } from "../notes/NotesSurface";
-import { SideChatSurface, type SideChatSurfaceProps } from "../sideChat/SideChatSurface";
 
 const PreviewPanel = lazy(() =>
   import("../preview/PreviewPanel").then((module) => ({ default: module.PreviewPanel })),
@@ -75,13 +76,12 @@ export function RightPanelSurfaceContent(props: {
     image: ComposerImageAttachment | null,
   ) => void;
   readonly onCloseSurface: (surface: RightPanelSurface) => void;
-  /** Null when the thread cannot have a side chat, such as a side chat itself. */
-  readonly sideChat: SideChatSurfaceProps | null;
   /** Null when the thread has no project or its environment has no notes. */
   readonly notes: NotesSurfaceProps | null;
   readonly terminal: RightPanelTerminalProps;
   readonly pullRequest: RightPanelPullRequestProps;
   readonly files: RightPanelFileProps;
+  readonly sideChatParentPanel: SideChatParentPanel;
 }) {
   const { surface, threadRef, visible } = props;
   if (surface === null) return null;
@@ -173,9 +173,16 @@ export function RightPanelSurfaceContent(props: {
     case "pull-requests":
       return <ThreadPullRequestsPanel threadRef={threadRef} />;
     case "side-chat":
-      return props.sideChat ? (
-        <SideChatSurface key={scopedThreadKey(threadRef)} {...props.sideChat} />
-      ) : null;
+      // Not lazy: revealing a suspended tiptap editor tears down its view and crashes the composer.
+      return (
+        <SideChatPane
+          key={surface.id}
+          parentRef={threadRef}
+          threadId={surface.threadId}
+          parentPanel={props.sideChatParentPanel}
+          onClose={() => props.onCloseSurface(surface)}
+        />
+      );
     case "notes":
       return props.notes ? <NotesSurface {...props.notes} /> : null;
     case "device":

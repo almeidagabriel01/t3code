@@ -37,6 +37,7 @@ import { DecisionService } from "../decisions/DecisionService.ts";
 import { KanbanService } from "../kanban/KanbanService.ts";
 import { NoteWorkService } from "../notes/NoteWorkService.ts";
 import { NotesService } from "../notes/NotesService.ts";
+import { ProjectCloneTracker } from "../project/ProjectCloneTracker.ts";
 import { ProjectService } from "../project/ProjectService.ts";
 import { ProjectSetupScriptRunner } from "../project/ProjectSetupScriptRunner.ts";
 import { ProcessResourceMonitor } from "../diagnostics/ProcessResourceMonitor.ts";
@@ -80,6 +81,7 @@ const toolHandlerServices = Layer.mergeAll(
   Layer.mock(PreviewAutomationBroker)({}),
   Layer.mock(PreviewBrowser)({}),
   Layer.mock(PreviewManager)({}),
+  Layer.mock(ProjectCloneTracker)({}),
   Layer.mock(ProjectService)({}),
   Layer.mock(ProjectSetupScriptRunner)({}),
   Layer.mock(ProviderAdapterRegistryV2)({}),

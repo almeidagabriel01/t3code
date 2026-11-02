@@ -175,7 +175,7 @@ it("saves the period and whether the limit stops new turns", async () => {
   fakeAssistantEdits.updates = [];
   fakeAssistantEdits.spend = null;
   await using _screen = await openEditDialog("Jarvis");
-  await userEvent.click(page.getByRole("switch", { name: "Spending limit" }));
+  await userEvent.click(page.getByRole("switch", { name: "Limit spending" }));
   await userEvent.fill(page.getByLabelText("Amount (USD)"), "3");
   await userEvent.click(page.getByRole("radio", { name: "Weekly (Mon–Sun)" }));
   await userEvent.click(page.getByRole("switch", { name: "Stop when reached" }));
@@ -192,7 +192,7 @@ it("refuses an invalid spending limit without saving", async () => {
   fakeAssistantEdits.updates = [];
   fakeAssistantEdits.spend = null;
   await using _screen = await openEditDialog("Jarvis");
-  await userEvent.click(page.getByRole("switch", { name: "Spending limit" }));
+  await userEvent.click(page.getByRole("switch", { name: "Limit spending" }));
   await userEvent.click(page.getByRole("button", { name: "Save" }));
   await expect.element(page.getByText("Enter a spending limit of at least $0.01.")).toBeVisible();
   await userEvent.fill(page.getByLabelText("Amount (USD)"), "5");
@@ -219,7 +219,7 @@ it("removes the cap when the limit is switched off", async () => {
   fakeAssistantEdits.updates = [];
   fakeAssistantEdits.spend = null;
   await using _screen = await openEditDialog("Jarvis");
-  await userEvent.click(page.getByRole("switch", { name: "Spending limit" }));
+  await userEvent.click(page.getByRole("switch", { name: "Limit spending" }));
   await userEvent.click(page.getByRole("button", { name: "Save" }));
   await eventually(() =>
     expect(fakeAssistantEdits.updates).toMatchObject([{ assistantId: "jarvis", budget: null }]),

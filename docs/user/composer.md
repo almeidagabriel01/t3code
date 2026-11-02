@@ -23,7 +23,7 @@ included, and `#1234` without a space still looks up a pull request.
 
 Enter sends. In a list or quote, **Shift+Enter** continues it, and Shift+Enter
 on an empty line moves out one level, then leaves it; **Tab** nests a list item
-under the one above. In a code block, Enter
+under the one above and **Shift+Tab** moves it back out. In a code block, Enter
 starts a new line at the current indentation, **Tab** and **Shift+Tab** indent
 the selected lines, and a closing ` ``` ` followed by Enter, or two blank lines
 at the end, leave the block. **Backspace** at the start of a code block turns it
@@ -251,19 +251,8 @@ Claude instances can also compact idle threads for you. See
 
 ## Side chat
 
-On web and desktop, send `/side <question>` to ask about the current thread without
-adding to it. The question opens in a **Side chat** tab in the right panel, and its
-answers never enter the thread's history. Send `/side` alone, use the side chat button
-in the thread header, or press `Mod+/` to open or close the tab.
-
-The side chat starts from the conversation up to the last finished turn, and every
-question you send it also carries the thread's current state: whether it is working,
-interrupted, or waiting on you, its goal, its task list, and its latest messages. You can
-ask what the thread is doing while the agent is still working, and the side chat header
-shows the thread's status. It has the full composer, with the thread's model, workspace,
-and permission mode. It is meant for questions and leaves files alone unless you ask it
-to change something. Use **Start a new side chat** to discard it, or **Open as a full
-thread** to continue it on its own.
+On web and desktop, send `/side <question>` or `/btw <question>` to ask about the current
+thread without adding to it. See [side chats](./thread-sidebar.md#side-chats).
 
 ## Hand off to another agent
 

@@ -14,6 +14,7 @@ import {
   FileDiff,
   Files,
   Globe2,
+  MessagesSquare,
   Plus,
   TerminalSquare,
 } from "lucide-react";
@@ -109,6 +110,8 @@ export interface RightPanelTabsProps {
   onAddPullRequests: () => void;
   onAddDevice: () => void;
   onAddNotes: () => void;
+  /** Absent where side chats are not offered. */
+  onAddSideChat?: (() => void) | undefined;
   browserAvailable: boolean;
   terminalAvailable: boolean;
   diffAvailable: boolean;
@@ -117,6 +120,9 @@ export interface RightPanelTabsProps {
   pullRequestsAvailable: boolean;
   deviceAvailable: boolean;
   notesAvailable: boolean;
+  sideChatAvailable?: boolean;
+  /** Overrides the default reason while side chats are available but cannot start. */
+  sideChatDisabledReason?: string | null;
   pullRequestStatusSeeds?: Readonly<Record<string, PullRequestTabStatusSeed>>;
   children: ReactNode;
 }
@@ -134,6 +140,7 @@ const SURFACE_DISABLED_REASONS = {
   pullRequests: "No linked pull requests are available for this thread.",
   device: "Devices are only available from a thread.",
   notes: "Notes are only available for projects on an environment with notes.",
+  sideChat: "Side chats start after the first message.",
 } as const;
 
 // Closed keepMounted popups must stop blocking shortcuts once their exit transition ends.
@@ -159,6 +166,7 @@ const SURFACE_UNAVAILABLE_HINTS = {
   pullRequests: "No linked pull requests available.",
   device: "Available from a thread.",
   notes: "Available when a project is open.",
+  sideChat: "Available after the first message.",
 } as const;
 
 type TabContextMenuAction =
@@ -268,6 +276,8 @@ function RightPanelEmptyState(props: {
   onAddPullRequests: () => void;
   onAddDevice: () => void;
   onAddNotes: () => void;
+  /** Absent where side chats are not offered. */
+  onAddSideChat?: (() => void) | undefined;
   browserAvailable: boolean;
   terminalAvailable: boolean;
   diffAvailable: boolean;
@@ -276,6 +286,8 @@ function RightPanelEmptyState(props: {
   pullRequestsAvailable: boolean;
   deviceAvailable: boolean;
   notesAvailable: boolean;
+  sideChatAvailable: boolean;
+  sideChatDisabledReason: string | null;
 }) {
   const [highlight, setHighlight] = useState(-1);
 
@@ -345,6 +357,19 @@ function RightPanelEmptyState(props: {
       disabledReason: SURFACE_UNAVAILABLE_HINTS.notes,
       onClick: props.onAddNotes,
     },
+    ...(props.onAddSideChat
+      ? [
+          {
+            label: "Side chat",
+            description: "Ask a side question while this thread keeps working.",
+            icon: MessagesSquare,
+            shortcut: "S",
+            available: props.sideChatAvailable && !props.sideChatDisabledReason,
+            disabledReason: props.sideChatDisabledReason ?? SURFACE_UNAVAILABLE_HINTS.sideChat,
+            onClick: props.onAddSideChat,
+          },
+        ]
+      : []),
   ] as const;
 
   type SurfaceAction = (typeof actions)[number];
@@ -528,12 +553,12 @@ function surfaceTitle(
       return `#${surface.number}`;
     case "pull-requests":
       return "Pull requests";
-    case "side-chat":
-      return "Side chat";
     case "notes":
       return "Notes";
     case "device":
       return surface.title ?? surface.target?.name ?? "Device";
+    case "side-chat":
+      return "Side chat";
     case "preview": {
       const snapshot = surface.resourceId ? sessions[surface.resourceId] : null;
       if (!snapshot || snapshot.navStatus._tag === "Idle") return "Browser";
@@ -660,6 +685,18 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       disabledReason: SURFACE_DISABLED_REASONS.notes,
       onClick: props.onAddNotes,
     },
+    ...(props.onAddSideChat
+      ? [
+          {
+            label: "Side chat",
+            icon: MessagesSquare,
+            shortcut: "S",
+            available: props.sideChatAvailable === true && !props.sideChatDisabledReason,
+            disabledReason: props.sideChatDisabledReason ?? SURFACE_DISABLED_REASONS.sideChat,
+            onClick: props.onAddSideChat,
+          },
+        ]
+      : []),
   ] as const;
 
   const handleAddSurfaceMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
@@ -1083,6 +1120,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddPullRequests={props.onAddPullRequests}
             onAddDevice={props.onAddDevice}
             onAddNotes={props.onAddNotes}
+            onAddSideChat={props.onAddSideChat}
             browserAvailable={props.browserAvailable}
             terminalAvailable={props.terminalAvailable}
             diffAvailable={props.diffAvailable}
@@ -1091,6 +1129,8 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             pullRequestsAvailable={props.pullRequestsAvailable}
             deviceAvailable={props.deviceAvailable}
             notesAvailable={props.notesAvailable}
+            sideChatAvailable={props.sideChatAvailable === true}
+            sideChatDisabledReason={props.sideChatDisabledReason ?? null}
           />
         ) : (
           props.children

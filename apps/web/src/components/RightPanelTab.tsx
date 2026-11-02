@@ -1,6 +1,15 @@
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import { useProjects, useServerConfigs, useThreadShells } from "~/state/entities";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  threadRuntimeIsActive,
+  type EnvironmentThreadShell,
+} from "@t3tools/client-runtime/state/shell";
+import {
+  useProjects,
+  useQuietThreadShell,
+  useServerConfigs,
+  useThreadShells,
+} from "~/state/entities";
 import {
   threadPullRequestKeysEqual,
   visibleThreadPullRequests,
@@ -10,6 +19,7 @@ import type {
   PreviewSessionSnapshot,
   ProjectId,
   PullRequestState,
+  ThreadId,
 } from "@t3tools/contracts";
 import {
   closestCenter,
@@ -146,7 +156,7 @@ function SurfaceIcon({
     case "pull-requests":
       return <PullRequestGlyph.link className="size-3 shrink-0" />;
     case "side-chat":
-      return <MessagesSquareIcon className="size-3 shrink-0" />;
+      return <SideChatTabIcon environmentId={environmentId} threadId={surface.threadId} />;
     case "notes":
       return <NotebookPenIcon className="size-3 shrink-0" />;
     case "device":
@@ -158,6 +168,41 @@ function SurfaceIcon({
         <Smartphone className="size-3 shrink-0" />
       );
   }
+}
+
+/** What a side chat tab's dot shows and its title's accessible name says. */
+function sideChatTabState(shell: EnvironmentThreadShell | null) {
+  if (shell === null) return null;
+  if (shell.hasPendingApprovals || shell.pendingSubagentRequest === "approval") {
+    return "needs approval";
+  }
+  if (shell.hasPendingUserInput || shell.pendingSubagentRequest === "user_input") {
+    return "needs input";
+  }
+  return threadRuntimeIsActive(shell.runtime) ? "running" : null;
+}
+
+// Static dots: a side chat tab can stay open for a whole run.
+function SideChatTabIcon(props: { environmentId: EnvironmentId | null; threadId: ThreadId }) {
+  const state = sideChatTabState(
+    useQuietThreadShell(
+      props.environmentId === null ? null : scopeThreadRef(props.environmentId, props.threadId),
+    ),
+  );
+  return (
+    <>
+      <MessagesSquareIcon className="size-3 shrink-0" />
+      {state === null ? null : (
+        <span
+          className={cn(
+            "absolute -top-0.5 -right-0.5 size-1.5 rounded-full",
+            state === "running" ? "bg-muted-foreground" : "bg-info",
+          )}
+          aria-hidden
+        />
+      )}
+    </>
+  );
 }
 
 export function resolvePullRequestTabLink(
@@ -357,7 +402,6 @@ export function RightPanelTab(
 ) {
   const {
     surface,
-    title,
     audio,
     audioRuntimeTabId,
     onActivate,
@@ -372,6 +416,13 @@ export function RightPanelTab(
     id: surface.id,
     disabled: props.dragDisabled,
   });
+  const sideChatShell = useQuietThreadShell(
+    surface.kind === "side-chat" && props.environmentId !== null
+      ? scopeThreadRef(props.environmentId, surface.threadId)
+      : null,
+  );
+  const title = sideChatShell?.title ?? props.title;
+  const sideChatState = sideChatTabState(sideChatShell);
   const content = (
     <>
       <span
@@ -417,7 +468,16 @@ export function RightPanelTab(
         />
       ) : (
         <Tooltip>
-          <TooltipTrigger render={<span className="min-w-0 flex-1 truncate">{title}</span>} />
+          <TooltipTrigger
+            render={
+              <span
+                className="min-w-0 flex-1 truncate"
+                aria-label={sideChatState === null ? undefined : `${title}, ${sideChatState}`}
+              >
+                {title}
+              </span>
+            }
+          />
           <TooltipPopup>
             {surface.kind === "device" ? (
               <DeviceTabTooltip

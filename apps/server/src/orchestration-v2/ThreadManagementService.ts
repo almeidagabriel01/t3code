@@ -13,6 +13,7 @@ import type {
 import {
   type ChatAttachment,
   CommandId,
+  isListedThreadLineage,
   MessageId,
   OrchestrationV2RestartProviderSessionError,
   type OrchestrationV2RestartProviderSessionInput,
@@ -430,7 +431,7 @@ export interface ThreadManagementServiceShape {
     Orchestrator.OrchestratorV2Error
   >;
   readonly getThreadShell: Orchestrator.OrchestratorV2["Service"]["getThreadShell"];
-  /** Omit `projectId` to list every project's threads. */
+  /** Omit `projectId` to list every project's threads. Side chats are never listed. */
   readonly listProjectThreads: (input: {
     readonly projectId?: ProjectId | undefined;
     readonly includeSubagents: boolean;
@@ -777,6 +778,22 @@ const make = Effect.gen(function* () {
             }),
           ),
         );
+      case "prepared-run.release":
+      case "prepared-run.retry":
+        return orchestrator
+          .getThreadRecords(command.threadId, ["runs"], { runIds: [command.runId] })
+          .pipe(
+            Effect.flatMap((projection) => {
+              const run = projection.runs.find((candidate) => candidate.id === command.runId);
+              return run === undefined
+                ? Effect.void
+                : assertProviderInstanceEnabled({
+                    projectId: projection.thread.projectId,
+                    commandId: command.commandId,
+                    instanceId: run.providerInstanceId,
+                  });
+            }),
+          );
       default:
         return Effect.void;
     }
@@ -891,9 +908,11 @@ const make = Effect.gen(function* () {
           snapshot.threads
             .filter(
               (thread) =>
-                // Side chats belong to the user's view of their parent, like subagents.
-                input.includeSubagents ||
-                (thread.lineage.relationshipToParent !== "subagent" && !isSideChatThread(thread)),
+                // Side chats live in their parent's view, never in project lists.
+                !isSideChatThread(thread) &&
+                (input.includeSubagents
+                  ? thread.lineage.sideChat !== true
+                  : isListedThreadLineage(thread.lineage)),
             )
             .toSorted(
               (left, right) =>

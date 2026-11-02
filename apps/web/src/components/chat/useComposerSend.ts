@@ -56,10 +56,12 @@ import {
 import {
   type ComposerSubmissionIntent,
   collapseExpandedComposerCursor,
+  parseSideChatCommand,
   parseStandaloneComposerSlashCommand,
 } from "../../composer-logic";
 import { resolvePlanFollowUpSubmission } from "../../proposedPlan";
 import { type ChatMessage } from "../../types";
+import { recordPromptSent } from "../GitHubStarPrompt";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { newMessageId, newThreadId } from "~/lib/utils";
 import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
@@ -77,7 +79,10 @@ import {
   useComposerDraftStore,
   DraftId,
 } from "../../composerDraftStore";
-import { type TerminalContextDraft } from "../../lib/terminalContext";
+import {
+  filterTerminalContextsWithText,
+  type TerminalContextDraft,
+} from "../../lib/terminalContext";
 import { ensureInlineContextReferences } from "../../lib/composerContextReferences";
 import {
   buildMessageContext,
@@ -141,9 +146,6 @@ import type { useQueuedRunEdit } from "./useQueuedRunEdit";
 import type { useTimelineFollow } from "./useTimelineFollow";
 import type { useUsageLimitsPanel } from "./useUsageLimitsPanel";
 import type { useWorktreeSetup } from "./useWorktreeSetup";
-import { useRightPanelStore } from "../../rightPanelStore";
-import { parseSideChatCommand } from "../sideChat/sideChat.logic";
-import { useSideChatStore } from "../sideChat/sideChatStore";
 
 const ENVIRONMENT_UNAVAILABLE_SEND_TOAST_TRAIL_SIZE = 3;
 
@@ -178,8 +180,6 @@ interface ComposerSendInput {
   readonly activeProposedPlan: LatestProposedPlanState | null;
   readonly activeMessageCount: number;
   readonly isServerThread: boolean;
-  /** `/side` asks in the thread's side chat instead. */
-  readonly sideChatAvailable: boolean;
   readonly isLocalDraftThread: boolean;
   readonly isGitRepo: boolean;
   readonly phase: SessionPhase;
@@ -243,6 +243,10 @@ interface ComposerSendInput {
   readonly anchorNewTurn: TimelineFollow["anchorNewTurn"];
   readonly acknowledgeActiveThreadWoke: () => void;
   readonly handleInteractionModeChange: (mode: ProviderInteractionMode) => void;
+  /** Resolves true once the side chat started and got the prompt. */
+  readonly onSideChat?: ((prompt: string) => Promise<boolean>) | undefined;
+  /** Refuses `/side` with this reason and keeps the draft. */
+  readonly sideChatDisabledReason: string | null;
   readonly handleNewThreadInActiveProject: () => void;
   readonly persistThreadSettingsForNextTurn: (input: {
     threadId: ThreadId;
@@ -274,7 +278,6 @@ export function useComposerSend(input: ComposerSendInput) {
     activeProposedPlan,
     activeMessageCount,
     isServerThread,
-    sideChatAvailable,
     isLocalDraftThread,
     isGitRepo,
     phase,
@@ -329,6 +332,8 @@ export function useComposerSend(input: ComposerSendInput) {
     anchorNewTurn,
     acknowledgeActiveThreadWoke,
     handleInteractionModeChange,
+    onSideChat,
+    sideChatDisabledReason,
     handleNewThreadInActiveProject,
     persistThreadSettingsForNextTurn,
   } = input;
@@ -492,7 +497,57 @@ export function useComposerSend(input: ComposerSendInput) {
       return;
     }
     const sendCtx = composerRef.current?.getSendContext();
-    if (activePendingProgress && sendCtx?.answeringPendingUserInput !== false) {
+    // `/side` beats an open question and a plan follow-up, which would send the text to main.
+    const sideChatCommand =
+      sendCtx && !directAnnotation && !queuedRunEdit.isEditing
+        ? parseSideChatCommand(promptAtSend)
+        : null;
+    const answeringQuestion =
+      Boolean(activePendingProgress) && sendCtx?.answeringPendingUserInput !== false;
+    // Where side chats are unavailable, `/side` text can still be a literal answer.
+    if (sideChatDisabledReason !== null && sideChatCommand && !answeringQuestion) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "warning",
+          title: "Side chat not started",
+          description: sideChatDisabledReason,
+        }),
+      );
+      return;
+    }
+    if (onSideChat && sendCtx && sideChatCommand && sideChatDisabledReason === null) {
+      if (
+        sendCtx.images.length > 0 ||
+        sendCtx.files.length > 0 ||
+        filterTerminalContextsWithText(sendCtx.terminalContexts).length > 0 ||
+        sendCtx.previewAnnotations.length > 0 ||
+        sendCtx.reviewComments.length > 0 ||
+        sendCtx.threadContexts.length > 0 ||
+        sendCtx.environmentContexts.length > 0
+      ) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "Side chats take text only",
+            description: "Remove the attachments and context, then send it again.",
+          }),
+        );
+        return;
+      }
+      const started = await onSideChat(sideChatCommand.prompt);
+      // Clear only what was sent; the user may have edited the draft or left meanwhile.
+      if (
+        started &&
+        currentRouteThreadKeyRef.current === routeThreadKey &&
+        promptRef.current === promptAtSend
+      ) {
+        promptRef.current = "";
+        setComposerDraftPrompt(composerDraftTarget, "");
+        composerRef.current?.resetCursorState();
+      }
+      return;
+    }
+    if (answeringQuestion) {
       if (directAnnotation) {
         notifyDirectAnnotationAttached();
         return;
@@ -748,43 +803,6 @@ export function useComposerSend(input: ComposerSendInput) {
       ) {
         handleNewThreadInActiveProject();
       }
-      return;
-    }
-    // `/side` asks in the side chat instead of this thread, so it never reaches the provider.
-    const sideChatCommand =
-      sideChatAvailable &&
-      activeThread !== undefined &&
-      activeThreadKey !== null &&
-      composerImages.length === 0 &&
-      composerFiles.length === 0 &&
-      sendableComposerTerminalContexts.length === 0 &&
-      composerPreviewAnnotations.length === 0 &&
-      composerReviewComments.length === 0 &&
-      composerThreadContexts.length === 0 &&
-      composerEnvironmentContexts.length === 0
-        ? parseSideChatCommand(trimmed)
-        : null;
-    // A draft has no conversation to ask about; sending `/side` there would start a thread with it.
-    if (!sideChatCommand && parseSideChatCommand(trimmed) !== null) {
-      toastManager.add(
-        stackedThreadToast({
-          type: "info",
-          title: "Side chat needs a conversation",
-          description: "Send a message first, then ask with /side.",
-        }),
-      );
-      return;
-    }
-    if (sideChatCommand && activeThread !== undefined && activeThreadKey !== null) {
-      if (sideChatCommand.prompt !== "") {
-        useSideChatStore.getState().setPendingPrompt(activeThreadKey, sideChatCommand.prompt);
-      }
-      useRightPanelStore
-        .getState()
-        .open(scopeThreadRef(activeThread.environmentId, activeThread.id), "side-chat");
-      promptRef.current = "";
-      clearComposerDraftContent(composerDraftTarget);
-      composerRef.current?.resetCursorState();
       return;
     }
     const standaloneSlashCommand =
@@ -1427,6 +1445,7 @@ export function useComposerSend(input: ComposerSendInput) {
         ) {
           handleNewThreadInActiveProject();
         }
+        void recordPromptSent(environmentId);
       }
     }
 

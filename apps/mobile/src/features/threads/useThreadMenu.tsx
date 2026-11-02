@@ -11,7 +11,7 @@ import { uuidv4 } from "../../lib/uuid";
 import { useProjects } from "../../state/entities";
 import { useNotesEnvironmentIds } from "../../state/notes";
 import { useThreadAssistant } from "../../state/assistants";
-import { threadListEnvironmentsAtom } from "../../state/server";
+import { threadListEnvironmentsAtom } from "../../state/presentation";
 import { useEnvironmentScope } from "../../state/session";
 import { turnThreadIntoProject, canTurnThreadIntoProject } from "./turnThreadIntoProject";
 import { whenRootNavigationReady, rootNavigationRef } from "../../lib/rootNavigation";
