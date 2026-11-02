@@ -55,6 +55,7 @@ export function FolderModelsSection(props: {
             const model = describe(rule.modelSelection);
             const row = (
               <RowPressable
+                key={rule.folder}
                 accessibilityRole="button"
                 accessibilityLabel={`${rule.folder}, ${model}`}
                 disabled={!props.editable}

@@ -59,8 +59,10 @@ export function FallbackModelsSection(props: {
         ? null
         : props.chain.map((selection, index) => {
             const { name, provider } = describe(selection);
+            const key = `${selection.instanceId}:${selection.model}`;
             const row = (
               <RowPressable
+                key={key}
                 accessibilityRole="button"
                 accessibilityLabel={`${index + 1}. ${name}${provider ? `, ${provider}` : ""}`}
                 disabled={!props.editable}
@@ -85,7 +87,7 @@ export function FallbackModelsSection(props: {
             );
             return props.editable ? (
               <Menu
-                key={`${selection.instanceId}:${selection.model}`}
+                key={key}
                 actions={actions(index)}
                 onPressAction={({ nativeEvent }) => {
                   if (nativeEvent.event === "up")
