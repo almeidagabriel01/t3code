@@ -16,6 +16,7 @@ const { mocks, Children } = vi.hoisted(() => ({
     createCard: vi.fn(),
     prompt: vi.fn(),
     alert: vi.fn(),
+    navigate: vi.fn(),
   },
 }));
 
@@ -38,7 +39,9 @@ vi.mock("react-native", () => ({
     <button aria-label={props.accessibilityLabel}>{props.children}</button>
   ),
 }));
-vi.mock("@react-navigation/native", () => ({ useNavigation: () => ({ navigate: vi.fn() }) }));
+vi.mock("@react-navigation/native", () => ({
+  useNavigation: () => ({ navigate: mocks.navigate }),
+}));
 vi.mock("../../components/ui/AppText", () => ({ AppText: Children }));
 vi.mock("../../components/ui/AppSymbol", () => ({ SymbolView: () => null }));
 vi.mock("../../components/ui/Dialog", () => ({ alert: mocks.alert, prompt: mocks.prompt }));
@@ -76,7 +79,19 @@ vi.mock("../../components/ui/ScreenScrollView", () => ({ ScreenScrollView: Child
 vi.mock("../settings/components/SettingsScreen", () => ({ SettingsScreen: Children }));
 vi.mock("../../lib/uuid", () => ({ uuidv4: () => "00000000-0000-4000-8000-000000000001" }));
 vi.mock("../../lib/clock", () => ({ useNowMinuteMs: () => 0 }));
-vi.mock("./KanbanCardTile", () => ({ KanbanCardTile: () => null }));
+vi.mock("./KanbanCardTile", () => ({
+  KanbanCardTile: (props: { card: { id: string }; projectLabel?: string; onPress: () => void }) => (
+    <button onClick={props.onPress}>{`tile ${props.card.id} ${props.projectLabel ?? ""}`}</button>
+  ),
+}));
+vi.mock("./KanbanCardMenu", () => ({
+  KanbanCardMenu: (props: { card: { id: string }; onOpen: () => void; children?: ReactNode }) => (
+    <>
+      <button onClick={props.onOpen}>{`menu ${props.card.id}`}</button>
+      {props.children}
+    </>
+  ),
+}));
 vi.mock("./useKanbanActions", () => ({
   useKanbanActions: () => ({ canEdit: false, createCard: vi.fn() }),
 }));
@@ -124,6 +139,7 @@ beforeEach(() => {
   mocks.createCard.mockReset().mockResolvedValue(AsyncResult.success({ cardId: "c1" }));
   mocks.prompt.mockReset();
   mocks.alert.mockReset();
+  mocks.navigate.mockReset();
   host = document.createElement("div");
   root = createRoot(host);
 });
@@ -260,5 +276,60 @@ describe("KanbanBoardRouteScreen", () => {
     expect(host.textContent).toContain("New card");
     await press("Alpha");
     expect(host.textContent).not.toContain("New card");
+  });
+
+  it("opens a card from its tile and its menu, labelled with its project on the merged board", async () => {
+    mocks.states = [
+      {
+        environmentId,
+        state: {
+          boards: new Map([
+            [
+              "b0",
+              {
+                id: "b0",
+                projectId: "p1",
+                columns: [
+                  {
+                    id: "todo",
+                    boardId: "b0",
+                    name: "Todo",
+                    color: null,
+                    orderKey: "a",
+                    wipLimit: null,
+                    role: "todo",
+                  },
+                ],
+                cards: new Map([
+                  [
+                    "c1",
+                    {
+                      id: "c1",
+                      boardId: "b0",
+                      columnId: "todo",
+                      orderKey: "a",
+                      number: 1,
+                      title: "One",
+                    },
+                  ],
+                ]),
+                labels: [],
+                templates: [],
+              },
+            ],
+          ]),
+        },
+        error: false,
+      },
+    ];
+    await mount();
+    expect(host.textContent).toContain("tile c1 Alpha");
+    await press("tile c1 Alpha");
+    await press("menu c1");
+    expect(mocks.navigate).toHaveBeenCalledTimes(2);
+    expect(mocks.navigate).toHaveBeenLastCalledWith("SettingsKanbanCard", {
+      environmentId,
+      cardId: "c1",
+    });
   });
 });

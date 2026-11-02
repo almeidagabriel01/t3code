@@ -22,6 +22,7 @@ import {
   WsRpcGroup,
   type Assistant,
   type AssistantSpend,
+  type ForkUpdateStatus,
   type ImessageChannelAccess,
   type ImessageChannelSettings,
   type ImessageChannelSettingsErrorReason,
@@ -534,6 +535,31 @@ handlers[WS_METHODS.imessageChannelConfigure] = (input: {
     selfHandles: input.selfHandles ?? current.selfHandles,
   };
   return Effect.succeed(fakeImessage.settings);
+};
+
+export const fakeForkUpdate: {
+  status: ForkUpdateStatus;
+  commands: Array<{ readonly type: string } & Record<string, unknown>>;
+} = {
+  status: {
+    available: true,
+    path: "/workspace/render",
+    channel: "stable",
+    headSha: "aaaaaaaa11",
+    headSubject: null,
+    headTag: null,
+    upstreamSha: "bbbbbbbb22",
+    upstreamTag: "v1.0.0",
+    behind: 0,
+    wouldConflict: null,
+    conflictFiles: [],
+  },
+  commands: [],
+};
+handlers[WS_METHODS.serverForkUpdateStatus] = () => Effect.sync(() => fakeForkUpdate.status);
+handlers[WS_METHODS.projectsMutate] = (input: { readonly type: string }) => {
+  fakeForkUpdate.commands.push(input as (typeof fakeForkUpdate.commands)[number]);
+  return Effect.succeed({ ...input, createdAt: AT, updatedAt: AT });
 };
 
 // Unanswered calls stay pending, like a server that has not replied yet.
