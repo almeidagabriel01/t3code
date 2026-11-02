@@ -2,7 +2,17 @@ import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { EnvironmentThreadShell } from "./models.ts";
-import { buildActivityEntries, countActivityBadge } from "./threadActivity.ts";
+import {
+  buildActivityEntries,
+  countActivityBadge,
+  firstValidTimestampMs,
+  holdSidebarPriorityRank,
+  isSidebarThreadWoke,
+  markActivityRead,
+  resolveSidebarPriorityRank,
+  selectActivityClear,
+  selectSidebarMarkReadTargets,
+} from "./threadActivity.ts";
 
 const now = "2026-03-09T10:10:00.000Z";
 const before = "2026-03-09T10:04:00.000Z";
@@ -58,5 +68,104 @@ describe("buildActivityEntries", () => {
       ["unread", 2],
     ]);
     expect(countActivityBadge(entries)).toBe(2);
+  });
+});
+
+describe("isSidebarThreadWoke", () => {
+  it.each([
+    [null, undefined, false],
+    ["not-a-date", undefined, false],
+    [before, undefined, true],
+    [before, "garbage", true],
+    [after, before, true],
+    [before, after, false],
+  ] as const)("wokeAt %s visited %s -> %s", (wokeAt, visited, expected) => {
+    expect(isSidebarThreadWoke(wokeAt, visited)).toBe(expected);
+  });
+});
+
+describe("holdSidebarPriorityRank", () => {
+  const base = { key: "k", settledOverride: null, holds: new Map([["k", null]]) } as const;
+  it.each([
+    ["keeps a real rank", { rank: 0 as const }, 0],
+    ["holds a read row as unread", { rank: null }, 2],
+    ["released drops it", { rank: null, released: true }, null],
+    ["unheld stays off", { rank: null, holds: new Map() }, null],
+    ["settled change ends the hold", { rank: null, settledOverride: "settled" as never }, null],
+  ] as const)("%s", (_name, overrides, expected) => {
+    expect(holdSidebarPriorityRank({ ...base, ...overrides } as never)).toBe(expected);
+  });
+});
+
+describe("firstValidTimestampMs", () => {
+  it("skips null and unparsable candidates, else 0", () => {
+    expect(firstValidTimestampMs(null, undefined, "nope", before)).toBe(Date.parse(before));
+    expect(firstValidTimestampMs(null, "nope")).toBe(0);
+  });
+});
+
+describe("read plan", () => {
+  const unread = shell("unread", { latestRun, lastVisitedAt: before });
+  const readOnly = shell("readonly", { latestRun, lastVisitedAt: before });
+  const quiet = shell("quiet");
+  const working = shell("working", { runtime: { status: "running" } });
+  const key = (thread: EnvironmentThreadShell) => `${thread.environmentId}:${thread.id}`;
+  const threads = [unread, readOnly, quiet, working];
+  const canOperate = (thread: EnvironmentThreadShell) => thread.id !== "readonly";
+
+  it("selects only operable unread rows as mark-read targets", () => {
+    const targets = selectSidebarMarkReadTargets({
+      threads,
+      localLastVisitedAtByKey: {},
+      canOperate,
+    });
+    expect(targets.map((thread) => thread.id)).toEqual(["unread"]);
+    const woke = selectSidebarMarkReadTargets({
+      threads: [quiet],
+      localLastVisitedAtByKey: {},
+      wokeAtByKey: new Map([[key(quiet), before]]),
+      canOperate,
+    });
+    expect(woke).toHaveLength(0);
+  });
+
+  it("plans: marks operable unread read, releases quiet rows, keeps work and unwritable rows", () => {
+    const plan = selectActivityClear({
+      threads,
+      localLastVisitedAtByKey: {},
+      wokeAtByKey: new Map(),
+      canOperate,
+    });
+    expect(plan.markRead.map((thread) => thread.id)).toEqual(["unread"]);
+    expect(plan.releaseKeys).toHaveLength(2);
+    expect(plan.releaseKeys).toEqual(["env:unread", "env:quiet"]);
+  });
+
+  it("rank resolves hold for an open decision and a local visit watermark", () => {
+    expect(resolveSidebarPriorityRank({ thread: quiet, wokeAt: null, hasOpenDecision: true })).toBe(
+      0,
+    );
+    expect(
+      resolveSidebarPriorityRank({
+        thread: { ...unread, lastVisitedAt: undefined },
+        wokeAt: null,
+        localLastVisitedAt: after,
+      }),
+    ).toBe(null);
+  });
+
+  it("releases at once and restores only rows whose visit fails", async () => {
+    const plan = { markRead: [unread, readOnly], releaseKeys: ["a", "b"] };
+    const released: string[][] = [];
+    const restored: string[] = [];
+    await markActivityRead({
+      plan,
+      release: (keys) => released.push([...keys]),
+      restore: (k) => restored.push(k),
+      visit: async (thread) => (thread.id === "unread" ? "failed" : "visited"),
+    });
+    expect(released).toEqual([["a", "b"]]);
+    expect(restored).toHaveLength(1);
+    expect(restored[0]).toContain("unread");
   });
 });

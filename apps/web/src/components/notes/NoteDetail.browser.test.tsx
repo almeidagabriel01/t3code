@@ -1,4 +1,4 @@
-import { EnvironmentId, type NoteDocument } from "@t3tools/contracts";
+import { EnvironmentId, type NoteDocument, type NoteSummary } from "@t3tools/contracts";
 import { useState } from "react";
 import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
@@ -138,6 +138,8 @@ it("renames an untitled note to its title and keeps the editor, focus and typing
   );
   await vi.waitFor(() => expect(onPath).toHaveBeenCalledWith("My plan.md"));
 
+  // Leaving for the path our own rename moved to is not leaving the note.
+  await screen.router!.navigate({ to: "/", search: { path: "My plan.md" } });
   await userEvent.keyboard(" now");
   expect(body.element()).toBe(editor);
   await expect.element(body).toHaveFocus();
@@ -162,4 +164,32 @@ it("steps to the next free name when the title's file already exists", async () 
     "My plan.md",
     "My plan 2.md",
   ]);
+});
+
+it("opens another note when the selected path changes, and tracks the listed summary", async () => {
+  mocks.docs.clear();
+  mocks.docs.set("A.md", document("A.md", "alpha body", "A", "a"));
+  mocks.docs.set("B.md", document("B.md", "bravo body", "B", "b"));
+  function Switch() {
+    const [path, setPath] = useState("A.md");
+    return (
+      <>
+        <button onClick={() => setPath("B.md")}>Open B</button>
+        <NoteLoader
+          environmentId={environmentId}
+          path={path}
+          summary={mocks.docs.get(path) as NoteSummary}
+          listReady
+          autoFocus={false}
+          onSelect={() => undefined}
+          onExitEditor={() => undefined}
+        />
+      </>
+    );
+  }
+  await using _screen = await render(<Switch />);
+  const body = page.getByRole("textbox", { name: "Note body" });
+  await expect.element(body).toHaveTextContent("alpha body");
+  await userEvent.click(page.getByRole("button", { name: "Open B" }));
+  await expect.element(body).toHaveTextContent("bravo body");
 });

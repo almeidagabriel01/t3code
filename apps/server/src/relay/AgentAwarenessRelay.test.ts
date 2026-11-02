@@ -456,6 +456,18 @@ describe("AgentAwarenessRelay", () => {
       }).pipe(Effect.scoped),
     );
 
+    it.effect("still publishes when the decisions table cannot be read", () =>
+      Effect.gen(function* () {
+        const { relay, publications, sql, events, pulls } = yield* setup;
+        yield* sql`DROP TABLE decisions`;
+        yield* Queue.offer(events, decision("open"));
+        yield* Queue.take(pulls);
+        yield* relay.drain;
+        assert.isAtLeast(publications.length, 1);
+        assert.notEqual(publications[0]?.state?.detail, "Ship it?");
+      }).pipe(Effect.scoped),
+    );
+
     it.effect("a decision on an assistant thread answering in a chat is not pushed", () =>
       Effect.gen(function* () {
         const { relay, currentShell, publications, sql, events, pulls } = yield* setup;
