@@ -1,4 +1,3 @@
-import { createMemoryHistory } from "@tanstack/react-router";
 import { AuthOrchestrationReadScope } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import type * as Context from "effect/Context";
@@ -7,9 +6,8 @@ import { page } from "vite-plus/test/browser";
 
 import "~/index.css";
 
-import { AppRoot } from "~/AppRoot";
+import { AppAtomRegistryProvider } from "~/rpc/atomRegistry";
 import { __setClientSettingsForTests } from "~/hooks/useSettings";
-import { getRouter } from "~/router";
 import {
   fakeImessage,
   installFakeEnvironment,
@@ -18,6 +16,7 @@ import {
   type FakeDriver,
 } from "../../../test/fakeEnvironment";
 import { render } from "../../../test/render";
+import { ImessageSettingsPanel } from "./ImessageSettings";
 
 vi.mock(
   "../../../../../packages/client-runtime/src/connection/driver.ts",
@@ -46,12 +45,17 @@ __setClientSettingsForTests({
   onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
 });
 
+// The panel alone under the app's atom registry: mounting the whole app per case is slow enough
+// to pass the test timeout on a busy machine.
 async function openImessage() {
-  const router = getRouter(createMemoryHistory({ initialEntries: ["/settings/imessage"] }));
-  await router.load();
   const container = document.createElement("div");
   container.style.cssText = "height: 900px; width: 1400px;";
-  return render(<AppRoot router={router} />, { container, router: false });
+  return render(
+    <AppAtomRegistryProvider>
+      <ImessageSettingsPanel />
+    </AppAtomRegistryProvider>,
+    { container, router: false },
+  );
 }
 
 it("disables every change without permission", async () => {
