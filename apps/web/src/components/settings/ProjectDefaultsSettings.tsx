@@ -20,6 +20,7 @@ import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
 import { resolveEnvModeLabel, WORKTREE_SUBMODULES_LABELS } from "../BranchToolbar.logic";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { FallbackModelsRow } from "./FallbackModelsRow";
+import { FolderModelsRow } from "./FolderModelsRow";
 import { runtimeModeConfig, runtimeModeOptions } from "../chat/runtimeModeConfig";
 import { PULL_REQUEST_MERGE_METHOD_LABELS } from "../pullRequest/pullRequestDetail.logic";
 import { TraitsPicker } from "../chat/TraitsPicker";
@@ -79,6 +80,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
   const activeEntry = entries.find((entry) => entry.instanceId === selection?.instanceId);
   const mixedModel = useScopedSettingsMixed(["defaultModelSelection"]);
   const mixedFallback = useScopedSettingsMixed(["fallbackModelSelections"]);
+  const mixedFolderModels = useScopedSettingsMixed(["folderModelDefaults"]);
   const mixedPermissions = useScopedSettingsMixed(["defaultRuntimeMode"]);
   const PermissionIcon = runtimeModeConfig[settings.defaultRuntimeMode].icon;
   const mixedWorkspace = useScopedSettingsMixed(["defaultThreadEnvMode"]);
@@ -231,6 +233,19 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
     />
   ) : null;
 
+  const folderRow = !isProjectScope ? (
+    <FolderModelsRow
+      settings={settings}
+      providers={providers}
+      update={updateSettings}
+      mixed={mixedFolderModels}
+      anchor={selection}
+      environmentId={representative?.environmentId ?? null}
+      instanceEntries={entries}
+      getModelDisabledReason={modelDisabledReason}
+    />
+  ) : null;
+
   return (
     <SettingsSection
       id={category === "source-control" ? "source-control-defaults" : "project-defaults"}
@@ -240,12 +255,14 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
         <>
           {modelRow}
           {fallbackRow}
+          {folderRow}
           {workspaceRow}
         </>
       ) : category === "general" ? (
         <>
           {modelRow}
           {fallbackRow}
+          {folderRow}
           <SettingsRow
             serverScoped
             settingKeys={["defaultRuntimeMode"]}

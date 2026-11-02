@@ -27,12 +27,12 @@ import {
 } from "./settingsLayout";
 import type { useUpdateScopedSettings } from "./useScopedSettings";
 
-type PickerProps = Pick<
+export type PickerProps = Pick<
   ComponentProps<typeof ProviderModelPicker>,
   "environmentId" | "instanceEntries" | "getModelDisabledReason"
 >;
 
-function IconAction(props: {
+export function IconAction(props: {
   readonly label: string;
   readonly disabled?: boolean;
   readonly onClick: () => void;
@@ -58,6 +58,32 @@ function IconAction(props: {
   );
 }
 
+/** The trigger props shared by every model picker in a settings list. */
+export function modelPickerProps(
+  props: PickerProps,
+  settings: UnifiedSettings,
+  providers: Parameters<typeof getCustomModelOptionsByInstance>[1],
+  selection: ModelSelection,
+) {
+  return {
+    environmentId: props.environmentId,
+    activeInstanceId: selection.instanceId,
+    model: selection.model,
+    lockedProvider: null,
+    instanceEntries: props.instanceEntries,
+    modelOptionsByInstance: getCustomModelOptionsByInstance(
+      settings,
+      providers,
+      selection.instanceId,
+      selection.model,
+    ),
+    triggerClassName: SETTINGS_PICKER_TRIGGER_CLASSNAME,
+    ...(props.getModelDisabledReason
+      ? { getModelDisabledReason: props.getModelDisabledReason }
+      : {}),
+  };
+}
+
 /** The ordered chain of models new threads fall back to when the default model's provider is out of usage. */
 export function FallbackModelsRow(
   props: PickerProps & {
@@ -78,23 +104,8 @@ export function FallbackModelsRow(
       toastManager.add({ type: "error", title: "Fallback model not saved", description: reason });
     return reason === null;
   };
-  const pickerProps = (selection: ModelSelection) => ({
-    environmentId: props.environmentId,
-    activeInstanceId: selection.instanceId,
-    model: selection.model,
-    lockedProvider: null,
-    instanceEntries: props.instanceEntries,
-    modelOptionsByInstance: getCustomModelOptionsByInstance(
-      settings,
-      providers,
-      selection.instanceId,
-      selection.model,
-    ),
-    triggerClassName: SETTINGS_PICKER_TRIGGER_CLASSNAME,
-    ...(props.getModelDisabledReason
-      ? { getModelDisabledReason: props.getModelDisabledReason }
-      : {}),
-  });
+  const pickerProps = (selection: ModelSelection) =>
+    modelPickerProps(props, settings, providers, selection);
 
   return (
     <SettingsRow

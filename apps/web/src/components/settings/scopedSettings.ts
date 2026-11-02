@@ -17,6 +17,7 @@ import {
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import {
   clearProjectSettingsOverrides,
+  matchFolderModelDefault,
   resolveProjectSettings,
   resolveWorktreeCleanup,
   type ProjectSettingSource,
@@ -79,6 +80,8 @@ export interface ScopedSettingsTarget {
   readonly projectId: ProjectId | null;
   readonly settings: ServerSettings;
   readonly sources: Readonly<Record<ProjectScopedServerSettingKey, ProjectSettingSource>>;
+  /** The folder whose rule supplies the default model, when one does. */
+  readonly folder?: string;
 }
 
 export function resolveScopedSettingsTargets(
@@ -95,10 +98,23 @@ export function resolveScopedSettingsTargets(
       const environment = byId.get(member.environmentId);
       if (!environment?.serverConfig) return [];
       const projectFile = projectFiles?.get(member.physicalProjectKey);
+      const project = { workspaceRoot: member.workspaceRoot };
       const resolved =
         projectFile === undefined
-          ? resolveProjectSettings(environment.serverConfig.settings, member.id)
-          : resolveProjectSettings(environment.serverConfig.settings, member.id, null, projectFile);
+          ? resolveProjectSettings(environment.serverConfig.settings, member.id, project)
+          : resolveProjectSettings(
+              environment.serverConfig.settings,
+              member.id,
+              project,
+              projectFile,
+            );
+      const folder =
+        resolved.sources.defaultModelSelection === "folder"
+          ? matchFolderModelDefault(
+              environment.serverConfig.settings.folderModelDefaults,
+              member.workspaceRoot,
+            )?.folder
+          : undefined;
       return [
         {
           environmentId: member.environmentId,
@@ -106,6 +122,7 @@ export function resolveScopedSettingsTargets(
           projectId: member.id,
           settings: resolved.settings,
           sources: resolved.sources,
+          ...(folder === undefined ? {} : { folder }),
         },
       ];
     });
@@ -164,9 +181,11 @@ export function scopedSettingsSource(
     ? "mixed"
     : sources.has("project")
       ? "project"
-      : sources.has("t3.json")
-        ? "t3.json"
-        : "environment";
+      : sources.has("folder")
+        ? "folder"
+        : sources.has("t3.json")
+          ? "t3.json"
+          : "environment";
 }
 
 interface ScopedServerWrite {

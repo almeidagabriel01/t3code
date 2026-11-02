@@ -1,4 +1,9 @@
-import { DEFAULT_SERVER_SETTINGS, EnvironmentId, ProjectId } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  EnvironmentId,
+  ProjectId,
+  ProviderInstanceId,
+} from "@t3tools/contracts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -42,6 +47,31 @@ describe("settingInheritanceLayers", () => {
       ["Current checkout", true],
       ["Inherits", false],
       ["Current checkout", false],
+    ]);
+  });
+
+  it("names the folder whose rule sets the default model", () => {
+    const folderModel = { instanceId: ProviderInstanceId.make("codex"), model: "folder-model" };
+    const settings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      folderModelDefaults: [{ folder: "/a/work", modelSelection: folderModel }],
+    };
+    const layers = settingInheritanceLayers(
+      {
+        environmentId,
+        label: "Laptop",
+        projectId,
+        folder: "/a/work",
+        ...resolveProjectSettings(settings, projectId, { workspaceRoot: "/a/work/app" }),
+      },
+      settings,
+      "defaultModelSelection",
+    );
+    expect(layers.map((layer) => [layer.label, layer.value, layer.effective])).toEqual([
+      ["Project", "Inherits", false],
+      ["Folder a/work", "folder-model", true],
+      ["Laptop", "Inherits", false],
+      ["Default", "Automatic", false],
     ]);
   });
 });

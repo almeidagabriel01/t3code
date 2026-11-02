@@ -5,10 +5,12 @@ import {
   DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER,
   defaultInstanceIdForDriver,
   globalIdleCompaction,
+  type FolderModelDefault,
   type IdleCompactionMode,
   isProviderAvailable,
   isUnconfiguredDefaultInstanceEnabled,
   MAX_FALLBACK_MODEL_SELECTIONS,
+  MAX_FOLDER_MODEL_DEFAULTS,
   resolveProjectProviderInstanceEnabled,
   resolveProviderInstanceEnabled,
   isProviderTextGenerationCapable,
@@ -25,6 +27,7 @@ import {
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import { normalizeProjectPathForDispatch } from "./path.ts";
 import { deepMerge } from "./Struct.ts";
 import { fallbackModelSelectionsOf, type FallbackSettings } from "./usageLimits.ts";
 import { fromLenientJson } from "./schemaJson.ts";
@@ -433,6 +436,21 @@ export function moveFallbackModel(
   const other = list[to];
   if (moved === undefined || other === undefined) return list;
   return list.map((entry, at) => (at === index ? other : at === to ? moved : entry));
+}
+
+/** Adds a folder rule, or swaps the model of the rule already on that folder; blank folders and a full list change nothing. */
+export function upsertFolderModelDefault(
+  list: ReadonlyArray<FolderModelDefault>,
+  folder: string,
+  modelSelection: ModelSelection,
+): ReadonlyArray<FolderModelDefault> {
+  const normalized = normalizeProjectPathForDispatch(folder);
+  if (normalized === "") return list;
+  const at = list.findIndex((rule) => normalizeProjectPathForDispatch(rule.folder) === normalized);
+  if (at >= 0) return list.map((rule, i) => (i === at ? { ...rule, modelSelection } : rule));
+  return list.length >= MAX_FOLDER_MODEL_DEFAULTS
+    ? list
+    : [...list, { folder: normalized, modelSelection }];
 }
 
 /** Keeps the legacy single value mirroring the head of the list, so older clients still read it. */

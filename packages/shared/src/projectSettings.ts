@@ -53,7 +53,7 @@ export interface LegacyProjectSettingsFields {
 }
 
 /** The rule for the deepest folder that holds the workspace; path-segment aware. */
-function matchFolderModelDefault(
+export function matchFolderModelDefault(
   rules: ReadonlyArray<FolderModelDefault>,
   workspaceRoot: string | null | undefined,
 ): FolderModelDefault | null {

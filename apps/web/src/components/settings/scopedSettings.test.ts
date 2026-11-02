@@ -100,6 +100,24 @@ const checkout = resolveSettingsScope(
 );
 
 describe("scoped settings targets", () => {
+  it("reports the folder rule as the source of a member's default model", () => {
+    const folderModel = { instanceId: ProviderInstanceId.make("codex"), model: "folder-model" };
+    const withRule = environment("Server", {
+      settings: { folderModelDefaults: [{ folder: "/repo", modelSelection: folderModel }] },
+    });
+    const [target] = resolveScopedSettingsTargets(
+      resolveSettingsScope(
+        { project: group.projectKey, machine: server.environmentId },
+        [group],
+        [withRule],
+      ),
+      [withRule],
+    );
+    expect(target?.settings.defaultModelSelection).toEqual(folderModel);
+    expect(target?.folder).toBe("/repo");
+    expect(scopedSettingsSource([target!], ["defaultModelSelection"])).toBe("folder");
+  });
+
   it("uses the named environment even when a different primary is available", () => {
     const selected = selectScopedSettingsEnvironments(named, environments, laptop.environmentId);
     expect(selected.environments).toEqual([server]);

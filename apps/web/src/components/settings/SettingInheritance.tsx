@@ -24,7 +24,7 @@ import { isProjectScopedSettingKey } from "./scopedSettings";
 import { settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
 
 interface InheritanceLayer {
-  readonly key: "project" | "environment" | "t3.json" | "built-in";
+  readonly key: "project" | "folder" | "environment" | "t3.json" | "built-in";
   readonly label: string;
   readonly value: string;
   readonly effective: boolean;
@@ -101,6 +101,16 @@ export function settingInheritanceLayers(
       value: source === "project" ? formatValue(key, target.settings[key]) : "Inherits",
       effective: source === "project",
       set: source === "project",
+    });
+  }
+  if (source === "folder") {
+    layers.push({
+      key: "folder",
+      label:
+        `Folder ${target.folder?.split(/[\\/]/).filter(Boolean).slice(-2).join("/") ?? ""}`.trim(),
+      value: formatValue(key, target.settings[key]),
+      effective: true,
+      set: true,
     });
   }
   layers.push({

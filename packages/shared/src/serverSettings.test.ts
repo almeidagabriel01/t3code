@@ -31,6 +31,7 @@ import {
   removeFallbackModel,
   replaceFallbackModel,
   sameFallbackModels,
+  upsertFolderModelDefault,
   withFallbackMirror,
 } from "./serverSettings.ts";
 import { fallbackModelSelectionsOf } from "./usageLimits.ts";
@@ -80,6 +81,21 @@ describe("fallbackTextGenerationModelSelection", () => {
       applyServerSettingsPatch(chained, { defaultRuntimeMode: "full-access" })
         .fallbackModelSelections,
     ).toEqual([b, c]);
+  });
+  it("adds a folder rule once per folder, trimmed, and ignores blanks", () => {
+    const m = (model: string) => ({ instanceId: ProviderInstanceId.make("codex"), model });
+    const rule = { folder: "~/work", modelSelection: m("a") };
+    expect(upsertFolderModelDefault([], "  ~/work/ ", m("a"))).toEqual([rule]);
+    expect(upsertFolderModelDefault([rule], "~/work", m("b"))).toEqual([
+      { folder: "~/work", modelSelection: m("b") },
+    ]);
+    expect(upsertFolderModelDefault([rule], "~/play", m("b"))).toHaveLength(2);
+    expect(upsertFolderModelDefault([rule], "   ", m("b"))).toEqual([rule]);
+    const full = Array.from({ length: 50 }, (_, i) => ({
+      folder: `/f${i}`,
+      modelSelection: m("a"),
+    }));
+    expect(upsertFolderModelDefault(full, "/new", m("b"))).toBe(full);
   });
   it("edits the chain without duplicates, past three entries or off either end", () => {
     const m = (model: string) => ({ instanceId: ProviderInstanceId.make("codex"), model });
