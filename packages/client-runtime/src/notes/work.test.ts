@@ -2,7 +2,7 @@ import type { EnvironmentProject } from "../state/models.ts";
 import { EnvironmentId, type ProjectId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { defaultWorkProject, workProjectOptions } from "./work.ts";
+import { defaultWorkProject, NO_PROJECT_WORK, workProjectOptions } from "./work.ts";
 
 const project = (id: string, title: string, workspaceRoot: string, updatedAt: string) =>
   ({
@@ -38,5 +38,15 @@ describe("start work project", () => {
       "API · /old/api",
       "Web",
     ]);
+  });
+
+  it("lists No project first only where it is offered", () => {
+    expect(workProjectOptions(projects, true)[0]).toEqual({
+      value: NO_PROJECT_WORK,
+      label: "No project",
+    });
+    expect(workProjectOptions(projects).map((option) => option.value)).not.toContain(
+      NO_PROJECT_WORK,
+    );
   });
 });

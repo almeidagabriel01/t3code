@@ -6,6 +6,9 @@ export interface WorkProjectOption {
   readonly label: string;
 }
 
+/** Stands for the No-project board until its Scratch project is ensured at start. */
+export const NO_PROJECT_WORK = "no-project" as ProjectId;
+
 const folderName = (value: string) => value.normalize("NFC").toLocaleLowerCase();
 
 /**
@@ -34,10 +37,11 @@ export function defaultWorkProject(
 /** Project titles, with the folder path added where two projects share a title. */
 export function workProjectOptions(
   projects: ReadonlyArray<EnvironmentProject>,
+  offerNoProject = false,
 ): ReadonlyArray<WorkProjectOption> {
   const counts = new Map<string, number>();
   for (const project of projects) counts.set(project.title, (counts.get(project.title) ?? 0) + 1);
-  return [...projects]
+  const named = [...projects]
     .sort((left, right) => left.title.localeCompare(right.title))
     .map((project) => ({
       value: project.id,
@@ -46,4 +50,5 @@ export function workProjectOptions(
           ? `${project.title} · ${project.workspaceRoot}`
           : project.title,
     }));
+  return offerNoProject ? [{ value: NO_PROJECT_WORK, label: "No project" }, ...named] : named;
 }

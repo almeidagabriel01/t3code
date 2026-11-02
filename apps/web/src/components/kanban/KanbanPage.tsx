@@ -25,7 +25,7 @@ import {
 } from "@t3tools/client-runtime/state/kanbanLogic";
 import { KanbanArchive } from "./KanbanArchive";
 import { KanbanBoardView } from "./KanbanBoardView";
-import type { KanbanProjectInfo } from "./KanbanProjectBadge";
+import { kanbanProjectName, type KanbanProjectInfo } from "./KanbanProjectBadge";
 import { KanbanCardDetail } from "./KanbanCardDetail";
 import { KanbanGlobalBoard } from "./KanbanGlobalBoard";
 import { KanbanToolbar } from "./KanbanToolbar";
@@ -159,10 +159,7 @@ export function KanbanPage() {
           [
             boardScopeKey(m.environmentId, m.id),
             {
-              name:
-                entry.isScratch && entry.memberProjects.length > 1 && m.environmentLabel
-                  ? `${entry.displayName} · ${m.environmentLabel}`
-                  : entry.displayName,
+              name: kanbanProjectName(entry, m),
               projectKey: entry.projectKey,
               project: m,
             },

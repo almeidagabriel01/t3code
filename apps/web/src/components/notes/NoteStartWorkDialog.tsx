@@ -33,7 +33,12 @@ import { Label } from "../ui/label";
 import { Spinner } from "../ui/spinner";
 import { useNoteCard, useOpenKanbanCard } from "./NoteCard";
 import { noteErrorMessage } from "./noteState";
-import { defaultWorkProject, workProjectOptions } from "@t3tools/client-runtime/notes/work";
+import {
+  defaultWorkProject,
+  NO_PROJECT_WORK,
+  workProjectOptions,
+} from "@t3tools/client-runtime/notes/work";
+import { useScratchProject } from "~/hooks/useScratchProject";
 import { useNoteCommand } from "./useNoteCommand";
 
 const DEFAULT_COLUMN = "";
@@ -138,12 +143,14 @@ export function NoteStartWorkDialog(props: {
     )
     .map((thread) => thread.projectId);
   const [pickedProject, setPickedProject] = useState<ProjectId | null>(null);
+  const { scratchWorkspaceRootFor, openScratchProject } = useScratchProject();
+  const offerNoProject = scratchWorkspaceRootFor(props.environmentId) !== null;
   const noteProject = projects.find((project) => project.id === props.document.project)?.id;
   const projectId =
     pickedProject ??
     noteProject ??
     defaultWorkProject(projects, props.document.folder, recent) ??
-    null;
+    (offerNoProject ? NO_PROJECT_WORK : null);
   const [columnId, setColumnId] = useState<string>(DEFAULT_COLUMN);
   const [busy, setBusy] = useState(false);
   const [attempted, setAttempted] = useState(false);
@@ -162,18 +169,26 @@ export function NoteStartWorkDialog(props: {
       ? selectKanbanBoardByProject(kanban, projectId)
       : undefined;
   const columns = board?.columns ?? [];
-  const options = workProjectOptions(projects);
+  const options = workProjectOptions(projects, offerNoProject);
 
   const start = async () => {
     if (busy || projectId === null || !canStart) return;
     setBusy(true);
     setAttempted(true);
     setError(null);
+    const workProjectId =
+      projectId === NO_PROJECT_WORK
+        ? (await openScratchProject(props.environmentId))?.id
+        : projectId;
+    if (workProjectId === undefined) {
+      setBusy(false);
+      return;
+    }
     const reply = await startWork({
       environmentId: props.environmentId,
       input: {
         path: props.document.path,
-        projectId,
+        projectId: workProjectId,
         requestId,
         ...(props.another ? { forceNew: true } : {}),
         ...(columnId === DEFAULT_COLUMN ? {} : { columnId: columnId as KanbanColumnId }),
@@ -181,7 +196,7 @@ export function NoteStartWorkDialog(props: {
     });
     setBusy(false);
     if (reply.ok) {
-      setResult({ value: reply.value, projectId });
+      setResult({ value: reply.value, projectId: workProjectId });
       props.onStarted(reply.value.note);
     } else {
       setError(noteErrorMessage(reply.error));

@@ -1,7 +1,14 @@
 import { useNavigation, usePreventRemove, type StaticScreenProps } from "@react-navigation/native";
-import { defaultWorkProject, workProjectOptions } from "@t3tools/client-runtime/notes/work";
+import {
+  defaultWorkProject,
+  NO_PROJECT_WORK,
+  workProjectOptions,
+} from "@t3tools/client-runtime/notes/work";
 import { selectKanbanBoardByProject } from "@t3tools/client-runtime/state/kanban";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import {
   EnvironmentId,
   type KanbanColumnId,
@@ -20,9 +27,10 @@ import { Button } from "../../components/ui/Button";
 import { Menu } from "../../components/ui/Menu";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { uuidv4 } from "../../lib/uuid";
-import { useProjects, useThreadShells } from "../../state/entities";
+import { useProjects, useServerConfigs, useThreadShells } from "../../state/entities";
 import { useKanbanStates } from "../../state/kanban";
 import { notesEnvironment, useNotesFeed } from "../../state/notes";
+import { projectEnvironment } from "../../state/projects";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { notesError } from "./delivery";
@@ -48,6 +56,8 @@ export function NoteStartWorkRouteScreen({
   const projects = useProjects().filter(
     (project) => project.environmentId === environmentId && project.isScratch !== true,
   );
+  const offerNoProject = useServerConfigs().get(environmentId)?.scratchWorkspaceRoot != null;
+  const openScratch = useAtomCommand(projectEnvironment.openScratch, { reportFailure: false });
   const recent = useThreadShells()
     .filter((thread) => thread.environmentId === environmentId)
     .sort((left, right) =>
@@ -64,7 +74,8 @@ export function NoteStartWorkRouteScreen({
   const projectId =
     pickedProject ??
     (projects.some((project) => project.id === noteProject) ? noteProject! : null) ??
-    defaultWorkProject(projects, folder, recent);
+    defaultWorkProject(projects, folder, recent) ??
+    (offerNoProject ? NO_PROJECT_WORK : null);
   const [columnId, setColumnId] = useState<string>(DEFAULT_COLUMN);
   const [busy, setBusy] = useState(false);
   const [attempted, setAttempted] = useState(false);
@@ -76,7 +87,7 @@ export function NoteStartWorkRouteScreen({
   const board =
     kanban && projectId !== null ? selectKanbanBoardByProject(kanban, projectId) : undefined;
   const columns = board?.columns ?? [];
-  const options = workProjectOptions(projects);
+  const options = workProjectOptions(projects, offerNoProject);
   // A retry must carry the same choice as the attempt whose response may have been lost.
   const frozen = busy || attempted;
 
@@ -85,11 +96,24 @@ export function NoteStartWorkRouteScreen({
     setBusy(true);
     setAttempted(true);
     setError(null);
+    let workProjectId: ProjectId = projectId;
+    if (projectId === NO_PROJECT_WORK) {
+      const scratch = await openScratch({ environmentId, input: {} });
+      if (scratch._tag !== "Success") {
+        setBusy(false);
+        if (!isAtomCommandInterrupted(scratch)) {
+          const failure = squashAtomCommandFailure(scratch);
+          setError(failure instanceof Error ? failure.message : "Could not open No project.");
+        }
+        return;
+      }
+      workProjectId = scratch.value.id;
+    }
     const result = await startWork({
       environmentId,
       input: {
         path,
-        projectId,
+        projectId: workProjectId,
         requestId,
         ...(another ? { forceNew: true } : {}),
         ...(columnId === DEFAULT_COLUMN ? {} : { columnId: columnId as KanbanColumnId }),
@@ -97,7 +121,7 @@ export function NoteStartWorkRouteScreen({
     });
     setBusy(false);
     if (AsyncResult.isSuccess(result)) {
-      setStarted({ cardId: result.value.cardId, projectId });
+      setStarted({ cardId: result.value.cardId, projectId: workProjectId });
     } else if (AsyncResult.isFailure(result)) {
       setError(notesError(squashAtomCommandFailure(result)));
     }

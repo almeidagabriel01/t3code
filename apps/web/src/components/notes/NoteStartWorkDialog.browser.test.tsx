@@ -17,7 +17,18 @@ const environmentId = EnvironmentId.make("env");
 const boardId = "board-1" as KanbanBoardId;
 const cardId = "card-7" as KanbanCardId;
 
-const mocks = vi.hoisted(() => ({ startWork: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  startWork: vi.fn(),
+  openScratchProject: vi.fn(),
+  scratchRoot: "/data/scratch" as string | null,
+}));
+
+vi.mock("~/hooks/useScratchProject", () => ({
+  useScratchProject: () => ({
+    scratchWorkspaceRootFor: () => mocks.scratchRoot,
+    openScratchProject: mocks.openScratchProject,
+  }),
+}));
 
 vi.mock("./useNoteCommand", () => ({ useNoteCommand: () => mocks.startWork }));
 vi.mock("../../state/notes", async () => {
@@ -89,6 +100,8 @@ const note: NoteDocument = {
 };
 
 function setup() {
+  mocks.scratchRoot = "/data/scratch";
+  mocks.openScratchProject.mockReset().mockResolvedValue({ id: "scratch" });
   mocks.startWork
     .mockReset()
     .mockResolvedValueOnce({ ok: false, error: new Error("Disconnected") })
@@ -131,5 +144,59 @@ describe("NoteStartWorkDialog", () => {
     expect(onStarted).toHaveBeenCalledWith(
       expect.objectContaining({ card: { cardId, projectId: "web" } }),
     );
+  });
+
+  it("starts work on the No-project board by ensuring its project first", async () => {
+    setup();
+    await using _screen = await render(
+      <NoteStartWorkDialog
+        environmentId={environmentId}
+        document={note}
+        onStarted={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    await page.getByRole("combobox", { name: "Project" }).click();
+    await page.getByRole("option", { name: "No project" }).click();
+    await userEvent.click(page.getByRole("button", { name: "Start work" }));
+
+    await expect.element(page.getByRole("alert")).toHaveTextContent("Disconnected");
+    expect(mocks.openScratchProject).toHaveBeenCalledWith(environmentId);
+    expect(mocks.startWork.mock.calls[0]![0].input.projectId).toBe("scratch");
+  });
+
+  it("does not start when the No-project folder cannot be opened", async () => {
+    setup();
+    mocks.openScratchProject.mockResolvedValue(null);
+    await using _screen = await render(
+      <NoteStartWorkDialog
+        environmentId={environmentId}
+        document={note}
+        onStarted={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    await page.getByRole("combobox", { name: "Project" }).click();
+    await page.getByRole("option", { name: "No project" }).click();
+    await userEvent.click(page.getByRole("button", { name: "Start work" }));
+
+    await expect.element(page.getByRole("button", { name: "Try again" })).toBeVisible();
+    expect(mocks.startWork).not.toHaveBeenCalled();
+  });
+
+  it("offers no No project option where threads without a project are unavailable", async () => {
+    setup();
+    mocks.scratchRoot = null;
+    await using _screen = await render(
+      <NoteStartWorkDialog
+        environmentId={environmentId}
+        document={note}
+        onStarted={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    await page.getByRole("combobox", { name: "Project" }).click();
+    await expect.element(page.getByRole("option", { name: "API" })).toBeInTheDocument();
+    await expect.element(page.getByRole("option", { name: "No project" })).not.toBeInTheDocument();
   });
 });
