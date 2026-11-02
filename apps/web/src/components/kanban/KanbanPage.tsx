@@ -25,7 +25,7 @@ import {
 } from "@t3tools/client-runtime/state/kanbanLogic";
 import { KanbanArchive } from "./KanbanArchive";
 import { KanbanBoardView } from "./KanbanBoardView";
-import type { KanbanProjectInfo } from "./KanbanProjectBadge";
+import { kanbanProjectName, type KanbanProjectInfo } from "./KanbanProjectBadge";
 import { KanbanCardDetail } from "./KanbanCardDetail";
 import { KanbanGlobalBoard } from "./KanbanGlobalBoard";
 import { KanbanToolbar } from "./KanbanToolbar";
@@ -158,7 +158,11 @@ export function KanbanPage() {
         (m) =>
           [
             boardScopeKey(m.environmentId, m.id),
-            { name: entry.displayName, projectKey: entry.projectKey, project: m },
+            {
+              name: kanbanProjectName(entry, m),
+              projectKey: entry.projectKey,
+              project: m,
+            },
           ] as const,
       ),
     ),

@@ -10,6 +10,9 @@ const { mocks, Children } = vi.hoisted(() => ({
   Children: ({ children }: { children?: ReactNode }) => children,
   mocks: {
     startWork: vi.fn(),
+    openScratch: vi.fn(),
+    projectsEmpty: false,
+    scratchRoot: "/data/scratch" as string | null,
     back: vi.fn(),
     preventRemove: false,
     uuid: 0,
@@ -50,22 +53,26 @@ vi.mock("../../components/ui/Button", () => ({
 }));
 vi.mock("../../lib/uuid", () => ({ uuidv4: () => `request-${++mocks.uuid}` }));
 vi.mock("../../state/entities", () => ({
-  useProjects: () => [
-    {
-      environmentId: "hub",
-      id: "api",
-      title: "Api",
-      workspaceRoot: "/code/api",
-      updatedAt: "2025-01-01T00:00:00.000Z",
-    },
-    {
-      environmentId: "hub",
-      id: "web",
-      title: "Web",
-      workspaceRoot: "/code/web",
-      updatedAt: "2026-01-01T00:00:00.000Z",
-    },
-  ],
+  useServerConfigs: () => new Map([["hub", { scratchWorkspaceRoot: mocks.scratchRoot }]]),
+  useProjects: () =>
+    mocks.projectsEmpty
+      ? []
+      : [
+          {
+            environmentId: "hub",
+            id: "api",
+            title: "Api",
+            workspaceRoot: "/code/api",
+            updatedAt: "2025-01-01T00:00:00.000Z",
+          },
+          {
+            environmentId: "hub",
+            id: "web",
+            title: "Web",
+            workspaceRoot: "/code/web",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+          },
+        ],
   useThreadShells: () => [],
 }));
 vi.mock("../../state/kanban", () => ({ useKanbanStates: () => [] }));
@@ -73,7 +80,11 @@ vi.mock("../../state/notes", () => ({
   notesEnvironment: { startWork: {} },
   useNotesFeed: () => AsyncResult.success({ notes: new Map([["ideas/note.md", mocks.note]]) }),
 }));
-vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => mocks.startWork }));
+vi.mock("../../state/projects", () => ({ projectEnvironment: { openScratch: "openScratch" } }));
+vi.mock("../../state/use-atom-command", () => ({
+  useAtomCommand: (command: unknown) =>
+    command === "openScratch" ? mocks.openScratch : mocks.startWork,
+}));
 vi.mock("./NoteCard", () => ({
   NoteCardSection: (props: { link: { cardId: string } }) => <p>Card {props.link.cardId}</p>,
 }));
@@ -104,6 +115,9 @@ beforeEach(() => {
   mocks.back.mockReset();
   mocks.preventRemove = false;
   mocks.note = {};
+  mocks.projectsEmpty = false;
+  mocks.scratchRoot = "/data/scratch";
+  mocks.openScratch.mockReset().mockResolvedValue(AsyncResult.success({ id: "scratch" }));
 });
 afterEach(() => act(() => root.unmount()));
 
@@ -141,4 +155,32 @@ it("defaults to the project the note belongs to", async () => {
   await act(async () => root.render(<NoteStartWorkRouteScreen {...props} />));
   await act(async () => button("Start work").click());
   expect(mocks.startWork.mock.calls[0]![0].input.projectId).toBe(ProjectId.make("api"));
+});
+
+it("starts on the No-project board when it is all there is, ensuring its project first", async () => {
+  mocks.projectsEmpty = true;
+  mocks.startWork.mockResolvedValue(
+    AsyncResult.success({ note: {}, boardId: "board", cardId: "c" }),
+  );
+  await act(async () => root.render(<NoteStartWorkRouteScreen {...props} />));
+  await act(async () => button("Start work").click());
+  expect(mocks.openScratch).toHaveBeenCalledWith({ environmentId: "hub", input: {} });
+  expect(mocks.startWork.mock.calls[0]![0].input.projectId).toBe("scratch");
+  expect(container.textContent).toContain("Card created");
+});
+
+it("shows why it did not start when the No-project folder cannot be opened", async () => {
+  mocks.projectsEmpty = true;
+  mocks.openScratch.mockResolvedValue(AsyncResult.failure(Cause.fail(new Error("No folder."))));
+  await act(async () => root.render(<NoteStartWorkRouteScreen {...props} />));
+  await act(async () => button("Start work").click());
+  expect(container.textContent).toContain("No folder.");
+  expect(mocks.startWork).not.toHaveBeenCalled();
+});
+
+it("offers nothing to start on when there are no projects and no No-project folder", async () => {
+  mocks.projectsEmpty = true;
+  mocks.scratchRoot = null;
+  await act(async () => root.render(<NoteStartWorkRouteScreen {...props} />));
+  expect(container.textContent).toContain("No projects in this environment yet.");
 });

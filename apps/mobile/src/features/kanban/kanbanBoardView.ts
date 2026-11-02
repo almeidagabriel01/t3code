@@ -6,6 +6,7 @@ import {
   KANBAN_ROLE_LABELS,
   type GlobalBoard,
 } from "@t3tools/client-runtime/state/kanbanLogic";
+import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import type {
   EnvironmentId,
   KanbanBoardId,
@@ -86,4 +87,58 @@ export function buildBoardColumns(
     }),
     addTo: null,
   }));
+}
+
+export interface NewBoardTarget {
+  readonly key: string;
+  readonly environmentId: EnvironmentId;
+  readonly title: string;
+  /** null is the No-project board: the Scratch project is ensured first. */
+  readonly projectId: ProjectId | null;
+}
+
+/** Projects without a board yet, plus "No project" where the server offers it and it has none. */
+export function newBoardTargets(input: {
+  readonly environments: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly scratchWorkspaceRoot: string | null;
+  }>;
+  readonly projects: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly id: ProjectId;
+    readonly title: string;
+    readonly workspaceRoot: string;
+  }>;
+  readonly boards: ReadonlyArray<GlobalBoard>;
+}): ReadonlyArray<NewBoardTarget> {
+  const hasBoard = new Set(
+    input.boards.map((entry) => boardScopeKey(entry.environmentId, entry.board.projectId)),
+  );
+  return input.environments.flatMap(({ environmentId, scratchWorkspaceRoot }) => {
+    const own = input.projects.filter((project) => project.environmentId === environmentId);
+    const scratch = own.find((project) => isScratchProject(project, scratchWorkspaceRoot));
+    const named = own
+      .filter(
+        (project) => project !== scratch && !hasBoard.has(boardScopeKey(environmentId, project.id)),
+      )
+      .map((project) => ({
+        key: boardScopeKey(environmentId, project.id),
+        environmentId,
+        title: project.title,
+        projectId: project.id,
+      }));
+    const noProject =
+      scratchWorkspaceRoot === null ||
+      (scratch !== undefined && hasBoard.has(boardScopeKey(environmentId, scratch.id)))
+        ? []
+        : [
+            {
+              key: `${environmentId}:no-project`,
+              environmentId,
+              title: "No project",
+              projectId: null,
+            },
+          ];
+    return [...noProject, ...named];
+  });
 }

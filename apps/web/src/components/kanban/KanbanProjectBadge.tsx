@@ -8,7 +8,24 @@ import { ProjectFavicon, type ProjectFaviconProject } from "../ProjectFavicon";
 export interface KanbanProjectInfo {
   readonly name: string;
   readonly projectKey: string;
-  readonly project: ProjectFaviconProject & { readonly id: ProjectId };
+  readonly project: ProjectFaviconProject & {
+    readonly id: ProjectId;
+    readonly isScratch?: true;
+  };
+}
+
+/** "No project" groups every environment's Scratch project; the environment tells them apart. */
+export function kanbanProjectName(
+  group: {
+    readonly displayName: string;
+    readonly isScratch?: true;
+    readonly memberProjects: ReadonlyArray<unknown>;
+  },
+  member: { readonly environmentLabel: string | null },
+): string {
+  return group.isScratch && group.memberProjects.length > 1 && member.environmentLabel
+    ? `${group.displayName} · ${member.environmentLabel}`
+    : group.displayName;
 }
 
 /** The color the sidebar badge resolves to for this project, as a text color class. */
