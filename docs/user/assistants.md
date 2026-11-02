@@ -55,6 +55,25 @@ subscription it is a guide, not a bill. **Stop when reached** refuses new messag
 resets; with it off, you only see a warning. The assistant list shows **Near limit** and **Limit
 reached**.
 
+## Talk to them over iMessage
+
+On a Mac, **Settings → iMessage** lets you message your assistants from Messages and get their
+replies in the same chat. It works while T3 Code is running on that Mac.
+
+1. Turn on T3 Code in System Settings → Privacy & Security → **Full Disk Access**, then **Check
+   again**.
+2. Add your own phone number and Apple ID email under **Chat with yourself**. If the Mac's Messages
+   uses an Apple ID of its own, add the people allowed to write to it under **Other accounts**
+   instead.
+3. Turn on **Use iMessage** and send yourself a message. Allow T3 Code to control Messages when
+   macOS asks.
+
+Start a message with `@Name` to pick an assistant; the default one answers otherwise, and the chat
+stays with the last one you picked. Send `@` on its own to list them. Approvals arrive as numbered
+choices: reply with the number. Only blue iMessage bubbles reach the Mac, so a chat with yourself
+that your phone sends as SMS or RCS is not read; write to your Apple ID email instead. Replies come
+from your other address, so they read as incoming on your phone.
+
 ## Memory follows the project
 
 An assistant shares memory with its project (and your user memory). To keep one assistant's memory

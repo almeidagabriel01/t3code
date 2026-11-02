@@ -52,3 +52,21 @@ A runtime layer that forgets to provide it silently loses enforcement; `runtimeL
 `assistantNote` prepends `<t3_assistant …>` to every prompt, like the side-chat note. Sending it once
 would lose it at compaction, native resume or a provider switch, and an edit to the instructions
 would not reach a running conversation. Slash commands skip it so they stay at the start of the prompt.
+
+## iMessage channel
+
+`apps/server/src/channels` keeps chat transports out of assistant code: a transport turns its input
+into a `ChannelInboundMessage` for `ChannelGateway.ingest`, and `ChannelOutbox` delivers replies at
+least once, so a timed-out send is never retried as if it surely failed. The iMessage transport reads
+`~/Library/Messages/chat.db` read-only and sends through a fixed AppleScript. Traps:
+
+- Modern `message.date` is nanoseconds past 2^53, and `node:sqlite` throws on such integers; the
+  query casts it to REAL.
+- Messages records a chat with yourself twice (`is_from_me` 1 and 0) and echoes every reply the
+  transport sends. Admission skips echoes by a fingerprint stored before each send and twins by text
+  within a few seconds; matching ignores which self chat it landed in.
+- Messages sends from the Mac's login (`message.account`). A reply to that same address shows as
+  sent by the user, so self-chat replies go to the user's other address, and every self chat maps to
+  that one conversation so stickiness and numbered answers carry across.
+- `send … to chat id` uses SMS when the chat also has an SMS route; replies go to the handle on the
+  iMessage account and fall back to the chat id.
