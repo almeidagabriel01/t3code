@@ -30,6 +30,8 @@ export function KanbanCardTile(props: {
   readonly projectLabel?: string | undefined;
   readonly now: number;
   readonly onPress: () => void;
+  /** Set by the Android long-press menu wrapping the tile. */
+  readonly onLongPress?: () => void;
 }) {
   const { card } = props;
   const template = props.board.templates.find((entry) => entry.id === card.type);
@@ -43,6 +45,7 @@ export function KanbanCardTile(props: {
       accessibilityRole="button"
       accessibilityLabel={`#${card.number} ${card.title}`}
       onPress={props.onPress}
+      onLongPress={props.onLongPress}
       className="gap-2 rounded-2xl border border-border bg-card p-3 active:opacity-70"
     >
       <View className="flex-row items-center gap-2">

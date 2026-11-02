@@ -7,6 +7,15 @@ import IconAlertTriangle from "@tabler/icons-react-native/IconAlertTriangle";
 import IconApps from "@tabler/icons-react-native/IconApps";
 import IconArchive from "@tabler/icons-react-native/IconArchive";
 import IconCalendarClock from "@tabler/icons-react-native/IconCalendarClock";
+import IconArrowsMaximize from "@tabler/icons-react-native/IconArrowsMaximize";
+import IconCalendar from "@tabler/icons-react-native/IconCalendar";
+import IconCircleHalf2 from "@tabler/icons-react-native/IconCircleHalf2";
+import IconClipboardCopy from "@tabler/icons-react-native/IconClipboardCopy";
+import IconLogout from "@tabler/icons-react-native/IconLogout";
+import IconNote from "@tabler/icons-react-native/IconNote";
+import IconZoomIn from "@tabler/icons-react-native/IconZoomIn";
+import IconZoomOut from "@tabler/icons-react-native/IconZoomOut";
+import IconZoomReset from "@tabler/icons-react-native/IconZoomReset";
 import IconPaperclip from "@tabler/icons-react-native/IconPaperclip";
 import IconArrowBackUp from "@tabler/icons-react-native/IconArrowBackUp";
 import IconArrowDown from "@tabler/icons-react-native/IconArrowDown";
@@ -183,6 +192,17 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   "circle.inset.filled": IconCircleDot,
   "circle.dashed.inset.filled": IconCircleDot,
   "calendar.badge.clock": IconCalendarClock,
+  "1.magnifyingglass": IconZoomReset,
+  "arrow.clockwise.circle": IconRefresh,
+  "arrow.up.right.square": IconExternalLink,
+  calendar: IconCalendar,
+  "circle.lefthalf.filled": IconCircleHalf2,
+  "doc.on.clipboard": IconClipboardCopy,
+  "minus.magnifyingglass": IconZoomOut,
+  "plus.magnifyingglass": IconZoomIn,
+  "note.text": IconNote,
+  "rectangle.and.arrow.up.right.and.arrow.down.left": IconArrowsMaximize,
+  "rectangle.portrait.and.arrow.right": IconLogout,
   paperclip: IconPaperclip,
   clock: IconClock,
   timer: IconClock,

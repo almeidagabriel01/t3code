@@ -181,7 +181,7 @@ function ColumnPage(props: {
               navigation.navigate("SettingsKanbanCard", { environmentId, cardId: card.id });
             return (
               <KanbanCardMenu
-                key={card.id}
+                key={`${environmentId}:${card.id}`}
                 environmentId={environmentId}
                 board={board}
                 card={card}

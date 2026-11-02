@@ -15,7 +15,11 @@ export function projectPickerLabels(
   const suffix = (parts: ReadonlyArray<string>, depth: number) => parts.slice(-depth).join("/");
   const byTitle = new Map<string, Array<ReadonlyArray<string>>>();
   for (const project of projects) {
-    byTitle.set(project.title, [...(byTitle.get(project.title) ?? []), segments(project)]);
+    const group = byTitle.get(project.title) ?? [];
+    const own = segments(project).join("/");
+    // The same folder listed twice (one project seen from two environments) is one place.
+    if (!group.some((other) => other.join("/") === own)) group.push(segments(project));
+    byTitle.set(project.title, group);
   }
   return projects.map((project) => {
     const group = byTitle.get(project.title) ?? [];

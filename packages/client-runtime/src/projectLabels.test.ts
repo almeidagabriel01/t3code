@@ -24,8 +24,13 @@ describe("projectPickerLabels", () => {
       ["App · one/core", "App · two/core"],
     ],
     ["one root nests the other", [p("s", "/a/s"), p("s", "/b/a/s")], ["s · a", "s · b/a"]],
-    ["identical roots", [p("s", "/a/s"), p("s", "/a/s")], ["s · a", "s · a"]],
-    ["root is just the title", [p("s", "/s"), p("s", "/s")], ["s · s", "s · s"]],
+    ["one folder seen from two environments", [p("s", "/a/s"), p("s", "/a/s")], ["s", "s"]],
+    ["root is just the title", [p("s", "/s"), p("s", "/s")], ["s", "s"]],
+    [
+      "a twin folder beside a different one",
+      [p("s", "/a/s"), p("s", "/a/s"), p("s", "/b/s")],
+      ["s · a", "s · a", "s · b"],
+    ],
     ["empty root", [p("s", ""), p("s", "")], ["s", "s"]],
   ] as const)("%s", (_name, projects, expected) => {
     expect(projectPickerLabels(projects)).toEqual(expected);
