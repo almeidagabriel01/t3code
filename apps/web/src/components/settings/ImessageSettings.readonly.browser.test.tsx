@@ -54,7 +54,7 @@ async function openImessage() {
     <AppAtomRegistryProvider>
       <ImessageSettingsPanel />
     </AppAtomRegistryProvider>,
-    { container, router: false },
+    { container },
   );
 }
 

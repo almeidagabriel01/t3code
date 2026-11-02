@@ -5,8 +5,8 @@ import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 
-import { AppAtomRegistryProvider } from "~/rpc/atomRegistry";
 import { __setClientSettingsForTests } from "~/hooks/useSettings";
+import { AppAtomRegistryProvider } from "~/rpc/atomRegistry";
 import {
   fakeImessage,
   installFakeEnvironment,
@@ -16,7 +16,9 @@ import {
   type FakeDriver,
 } from "../../../test/fakeEnvironment";
 import { render } from "../../../test/render";
+import { SidebarProvider } from "../ui/sidebar";
 import { ImessageSettingsPanel } from "./ImessageSettings";
+import { SettingsSidebarNav } from "./SettingsSidebarNav";
 
 vi.mock(
   "../../../../../packages/client-runtime/src/connection/driver.ts",
@@ -50,9 +52,23 @@ async function openImessage() {
     <AppAtomRegistryProvider>
       <ImessageSettingsPanel />
     </AppAtomRegistryProvider>,
-    { container, router: false },
+    { container },
   );
 }
+
+it("lists iMessage in the settings navigation", async () => {
+  resetFakeImessage();
+  await using _screen = await render(
+    <AppAtomRegistryProvider>
+      <SidebarProvider>
+        <SettingsSidebarNav pathname="/settings/imessage" />
+      </SidebarProvider>
+    </AppAtomRegistryProvider>,
+  );
+  await expect
+    .element(page.getByRole("navigation", { name: "Settings sections" }).getByText("iMessage"))
+    .toBeVisible();
+});
 
 const eventually = (check: () => void) => vi.waitFor(check, { timeout: 10_000 });
 
@@ -61,9 +77,6 @@ it("shows access states and rechecks on demand", async () => {
   await using _screen = await openImessage();
   await expect.element(page.getByText("Not granted")).toBeVisible();
   await expect.element(page.getByText("Open System Settings", { exact: false })).toBeVisible();
-  await expect
-    .element(page.getByRole("navigation", { name: "Settings sections" }).getByText("iMessage"))
-    .toBeVisible();
 
   fakeImessage.access = "ok";
   const before = fakeImessage.accessChecks;
