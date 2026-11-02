@@ -17,11 +17,16 @@ describe("menu symbols", () => {
   it("every menu image has an Android icon", () => {
     const map = NodeFS.readFileSync(NodePath.join(SRC, "components/ui/AppSymbol.tsx"), "utf8");
     const mapped = new Set(
-      [...map.matchAll(/^\s+"?([a-z0-9.]+)"?:\s*Icon\w+,$/gm)].map((match) => match[1]),
+      [...map.matchAll(/^\s+"?([a-z0-9._]+)"?:\s*Icon\w+,$/gm)].map((match) => match[1]),
     );
     const missing = sourceFiles(SRC).flatMap((file) =>
-      [...NodeFS.readFileSync(file, "utf8").matchAll(/\bimage: "([a-z0-9.]+)"/g)]
-        .map((match) => match[1]!)
+      [...NodeFS.readFileSync(file, "utf8").matchAll(/\bimage: ([^,\n]+)/g)]
+        .filter((match) => /^"| \? /.test(match[1]!))
+        .flatMap((match) =>
+          [...match[1]!.replace(/===\s*"[^"]*"/g, "").matchAll(/"([a-z0-9._]+)"/g)].map(
+            (name) => name[1]!,
+          ),
+        )
         .filter((name) => !mapped.has(name))
         .map((name) => `${file.slice(SRC.length + 1)}: ${name}`),
     );

@@ -266,7 +266,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                             id: "steer",
                             title: "Send now",
                             attributes: { disabled: !controls.canSend },
-                            image: Platform.OS === "ios" ? "arrow.up" : "arrow_upward",
+                            image: "arrow.up",
                           },
                         ]
                       : []),
@@ -274,7 +274,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                       id: "edit",
                       title: "Edit",
                       attributes: { disabled: !controls.canEdit },
-                      image: Platform.OS === "ios" ? "pencil" : "edit",
+                      image: "pencil",
                     },
                     {
                       id: "remove",

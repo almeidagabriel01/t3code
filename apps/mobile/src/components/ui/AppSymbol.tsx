@@ -7,6 +7,8 @@ import IconAlertTriangle from "@tabler/icons-react-native/IconAlertTriangle";
 import IconApps from "@tabler/icons-react-native/IconApps";
 import IconArchive from "@tabler/icons-react-native/IconArchive";
 import IconCalendarClock from "@tabler/icons-react-native/IconCalendarClock";
+import IconHourglass from "@tabler/icons-react-native/IconHourglass";
+import IconStopwatch from "@tabler/icons-react-native/IconStopwatch";
 import IconArrowsMaximize from "@tabler/icons-react-native/IconArrowsMaximize";
 import IconCalendar from "@tabler/icons-react-native/IconCalendar";
 import IconCircleHalf2 from "@tabler/icons-react-native/IconCircleHalf2";
@@ -205,7 +207,8 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   "rectangle.portrait.and.arrow.right": IconLogout,
   paperclip: IconPaperclip,
   clock: IconClock,
-  timer: IconClock,
+  timer: IconStopwatch,
+  hourglass: IconHourglass,
   "face.smiling": IconMoodPlus,
   tag: IconTag,
   ticket: IconTicket,
