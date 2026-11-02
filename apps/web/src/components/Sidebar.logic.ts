@@ -580,7 +580,6 @@ export function resolveSidebarRowThreadId(
   return thread?.id ?? threadId;
 }
 
-
 export function buildBulkTitleRegenerationContextMenuItem(input: {
   supportedCount: number;
   actionableCount: number;
@@ -799,7 +798,6 @@ export type SidebarV2TopStatusKind =
   | "waiting"
   | "woke"
   | "working";
-
 
 export { sortActiveThreadsByOrderKey as sortThreadsForSidebar } from "@t3tools/client-runtime/state/thread-sort";
 export {

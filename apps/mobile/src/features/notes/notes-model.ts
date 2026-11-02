@@ -130,3 +130,18 @@ export function noteRowMenuActions(
     });
   return actions;
 }
+
+const searchable = (value: string) => value.normalize("NFC").toLocaleLowerCase();
+
+/** Same matching as the web list: every term appears in the title, preview, or path. */
+export function filterNoteRows(
+  rows: ReadonlyArray<NoteListRow>,
+  query: string,
+): ReadonlyArray<NoteListRow> {
+  const terms = searchable(query).split(/\s+/u).filter(Boolean);
+  if (terms.length === 0) return rows;
+  return rows.filter((row) => {
+    const haystack = searchable(`${row.title}\n${row.preview}\n${row.path}`);
+    return terms.every((term) => haystack.includes(term));
+  });
+}

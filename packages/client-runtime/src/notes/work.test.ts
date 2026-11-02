@@ -34,8 +34,8 @@ describe("start work project", () => {
 
   it("tells same-named projects apart by their folder", () => {
     expect(workProjectOptions(projects).map((option) => option.label)).toEqual([
-      "API · /code/api",
-      "API · /old/api",
+      "API · code",
+      "API · old",
       "Web",
     ]);
   });

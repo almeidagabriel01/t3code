@@ -8,10 +8,13 @@ import type { AppBarMenuItem } from "../../components/ui/AppBar.types";
 import { useNowMinuteMs } from "../../lib/clock";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { uuidv4 } from "../../lib/uuid";
+import { useProjects } from "../../state/entities";
+import { useNotesEnvironmentIds } from "../../state/notes";
 import { useThreadAssistant } from "../../state/assistants";
 import { threadListEnvironmentsAtom } from "../../state/server";
 import { useEnvironmentScope } from "../../state/session";
 import { turnThreadIntoProject, canTurnThreadIntoProject } from "./turnThreadIntoProject";
+import { whenRootNavigationReady, rootNavigationRef } from "../../lib/rootNavigation";
 import { useAssistantFlows } from "../assistants/useAssistantFlows";
 import { useOpenAssistantEditor } from "../assistants/openAssistantEditor";
 import { useThreadListActions } from "../home/useThreadListActions";
@@ -45,6 +48,8 @@ export function useThreadMenu(
     thread?.environmentId ?? null,
     AuthOrchestrationOperateScope,
   );
+  const projects = useProjects();
+  const notesEnvironmentIds = useNotesEnvironmentIds();
   const selectDetail = useSelectWorkspaceDetail();
   const nowMinuteMs = useNowMinuteMs();
   const [customSnoozeOpen, setCustomSnoozeOpen] = useState(false);
@@ -86,6 +91,14 @@ export function useThreadMenu(
       regenerating: thread.titleRegeneration != null,
     },
     canHandoff: canHandoffThread(thread),
+    notes:
+      notesEnvironmentIds.includes(environmentId) &&
+      projects.some(
+        (project) =>
+          project.environmentId === environmentId &&
+          project.id === thread.projectId &&
+          project.isScratch !== true,
+      ),
     turnIntoProject: canTurnIntoProject ? { archivable: threadCanArchive(thread.runtime) } : null,
     snoozePresetActions: buildSnoozePresetActions(snoozePresets),
     assistant: assistantEntry
@@ -124,6 +137,13 @@ export function useThreadMenu(
         rename: () => actions.renameThread(thread),
         regenerateTitle: () => void actions.regenerateThreadTitle(thread),
         handoff: () => openThreadHandoff(thread),
+        openNotes: () =>
+          whenRootNavigationReady(() =>
+            rootNavigationRef.navigate("SettingsNotes", {
+              environmentId,
+              project: thread.projectId,
+            }),
+          ),
         turnIntoProject: () => void turnThreadIntoProject(thread),
         resetAssistant: () => {
           if (assistantEntry) {

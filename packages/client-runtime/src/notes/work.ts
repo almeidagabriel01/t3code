@@ -1,4 +1,5 @@
 import type { EnvironmentProject } from "../state/models.ts";
+import { projectPickerLabels } from "../projectLabels.ts";
 import type { NoteFolder, ProjectId } from "@t3tools/contracts";
 
 export interface WorkProjectOption {
@@ -39,16 +40,9 @@ export function workProjectOptions(
   projects: ReadonlyArray<EnvironmentProject>,
   offerNoProject = false,
 ): ReadonlyArray<WorkProjectOption> {
-  const counts = new Map<string, number>();
-  for (const project of projects) counts.set(project.title, (counts.get(project.title) ?? 0) + 1);
-  const named = [...projects]
-    .sort((left, right) => left.title.localeCompare(right.title))
-    .map((project) => ({
-      value: project.id,
-      label:
-        (counts.get(project.title) ?? 0) > 1
-          ? `${project.title} · ${project.workspaceRoot}`
-          : project.title,
-    }));
+  const labels = projectPickerLabels(projects);
+  const named = projects
+    .map((project, index) => ({ value: project.id, label: labels[index] ?? project.title }))
+    .sort((left, right) => left.label.localeCompare(right.label));
   return offerNoProject ? [{ value: NO_PROJECT_WORK, label: "No project" }, ...named] : named;
 }

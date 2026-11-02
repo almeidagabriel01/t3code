@@ -66,6 +66,8 @@ export interface ThreadMenuInput {
   readonly autoSettle: { readonly supported: boolean; readonly enabled: boolean };
   readonly titleRegeneration: { readonly supported: boolean; readonly regenerating: boolean };
   readonly canHandoff: boolean;
+  /** The project's notes are reachable: the environment supports notes and the thread has a real project. */
+  readonly notes?: boolean;
   readonly turnIntoProject: { readonly archivable: boolean } | null;
   readonly snoozePresetActions: ReadonlyArray<MenuAction>;
   /** The assistant whose current conversation this is; it can't be renamed, archived or deleted. */
@@ -172,6 +174,7 @@ function buildBaseThreadMenuActions(input: ThreadMenuInput): MenuAction[] {
           },
         ]
       : []),
+    ...(input.notes ? [{ id: "notes", title: "Notes", image: "note.text" }] : []),
     { id: "copy-thread", title: "Copy thread", image: "text.bubble" },
     { id: "copy-thread-id", title: "Copy thread ID", image: "doc.on.doc" },
   ];
@@ -236,6 +239,7 @@ export interface ThreadMenuHandlers {
   readonly rename: () => void;
   readonly regenerateTitle: () => void;
   readonly handoff: () => void;
+  readonly openNotes?: () => void;
   readonly turnIntoProject: () => void;
   readonly resetAssistant?: () => void;
   readonly assistantSettings?: () => void;
@@ -290,6 +294,8 @@ export function runThreadMenuEvent(
       return handlers.regenerateTitle();
     case "handoff":
       return handlers.handoff();
+    case "notes":
+      return handlers.openNotes?.();
     case "turn-into-project":
       return handlers.turnIntoProject();
     case "reset-assistant":

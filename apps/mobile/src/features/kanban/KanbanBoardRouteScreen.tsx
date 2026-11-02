@@ -225,7 +225,7 @@ export function KanbanBoardRouteScreen() {
     if (project === undefined) return "Project";
     return isScratchProject(project, serverConfigs.get(environmentId)?.scratchWorkspaceRoot)
       ? "No project"
-      : (labels.get(boardScopeKey(environmentId, projectId)) ?? project.title);
+      : (labels.get(boardScopeKey(environmentId, project.id)) ?? project.title);
   };
   const options = boards.map(({ environmentId, board }) => ({
     key: boardScopeKey(environmentId, board.projectId),

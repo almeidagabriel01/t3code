@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import { useNavigation } from "@react-navigation/native";
+import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { selectNotesInOrder } from "@t3tools/client-runtime/state/notes";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { NotePath, type EnvironmentId, type NoteSummary, type ProjectId } from "@t3tools/contracts";
@@ -7,8 +7,8 @@ import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 import * as Schema from "effect/Schema";
-import { useState } from "react";
-import { Pressable } from "react-native";
+import { useRef, useState } from "react";
+import { Pressable, View, type TextInputInstance } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
@@ -17,6 +17,7 @@ import { EmptyState } from "../../components/ui/EmptyState";
 import { ListSection } from "../../components/ui/ListSection";
 import { Menu } from "../../components/ui/Menu";
 import { NavigationRow } from "../../components/ui/NavigationRow";
+import { SearchField } from "../../components/ui/SearchField";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { notesEnvironment, useNotesEnvironmentIds, useNotesFeed } from "../../state/notes";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -25,6 +26,7 @@ import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { NoteProjectPicker } from "./NoteProjectPicker";
 import { notesError } from "./delivery";
 import {
+  filterNoteRows,
   newNotePath,
   noteListRows,
   noteRowMenuActions,
@@ -36,11 +38,19 @@ import { notesCommandOptions, useNoteDraftAccess, useNotesOutbox } from "./notes
 
 const isNotePath = Schema.is(NotePath);
 
-export function NotesRouteScreen() {
+/** A thread's Notes menu item opens the page on that thread's project. */
+export type NotesRouteParams =
+  | { readonly environmentId: EnvironmentId; readonly project?: ProjectId }
+  | undefined;
+
+export function NotesRouteScreen({ route }: StaticScreenProps<NotesRouteParams>) {
   const environmentIds = useNotesEnvironmentIds();
   const environments = useWorkspaceEnvironments();
   const [selected, setSelected] = useState<EnvironmentId | null>(null);
-  const environmentId = environmentIds.find((id) => id === selected) ?? environmentIds[0] ?? null;
+  const environmentId =
+    environmentIds.find((id) => id === (selected ?? route.params?.environmentId)) ??
+    environmentIds[0] ??
+    null;
   const label = (id: EnvironmentId) =>
     environments.find((entry) => entry.environmentId === id)?.environmentLabel ?? "Environment";
   if (environmentId === null) {
@@ -56,8 +66,11 @@ export function NotesRouteScreen() {
   }
   return (
     <EnvironmentNotes
-      key={environmentId}
+      key={`${environmentId}:${route.params?.project ?? ""}`}
       environmentId={environmentId}
+      initialProject={
+        environmentId === route.params?.environmentId ? (route.params.project ?? null) : null
+      }
       picker={
         environmentIds.length > 1 ? (
           <Menu
@@ -91,6 +104,7 @@ export function NotesRouteScreen() {
 
 function EnvironmentNotes(props: {
   readonly environmentId: EnvironmentId;
+  readonly initialProject: ProjectId | null;
   readonly picker: React.ReactNode;
 }) {
   const { environmentId } = props;
@@ -99,9 +113,13 @@ function EnvironmentNotes(props: {
   const outbox = useNotesOutbox();
   const { canEdit, connected } = useNoteDraftAccess(environmentId);
   const state = Option.getOrNull(AsyncResult.value(feed));
-  const [project, setProject] = useState<ProjectId | null>(null);
+  const [project, setProject] = useState<ProjectId | null>(props.initialProject);
+  const [query, setQuery] = useState("");
+  const searchRef = useRef<TextInputInstance | null>(null);
   const allRows = noteListRows(environmentId, state ? selectNotesInOrder(state) : [], outbox);
-  const rows = project === null ? allRows : allRows.filter((row) => row.project === project);
+  const inProject = project === null ? allRows : allRows.filter((row) => row.project === project);
+  const rows = filterNoteRows(inProject, query);
+  const noMatch = query.trim() !== "" && inProject.length > 0;
   const groups = groupRows(rows);
 
   const create = () =>
@@ -153,6 +171,17 @@ function EnvironmentNotes(props: {
           accessibilityLabel="Filter by project"
           onChange={setProject}
         />
+        <View className="flex-row">
+          <SearchField
+            inputRef={searchRef}
+            autoFocus={false}
+            accessibilityLabel="Search notes"
+            clearAccessibilityLabel="Clear note search"
+            placeholder="Search notes"
+            value={query}
+            onChangeText={setQuery}
+          />
+        </View>
         {!connected ? (
           <Text textRole="footnote" className="text-foreground-muted">
             Offline. Edits save on this device and sync when you reconnect.
@@ -178,9 +207,19 @@ function EnvironmentNotes(props: {
         {rows.length === 0 ? (
           <EmptyState
             variant="plain"
-            title={state ? "No notes yet" : connected ? "Loading notes" : "Not loaded"}
+            title={
+              noMatch
+                ? "No notes match"
+                : state
+                  ? "No notes yet"
+                  : connected
+                    ? "Loading notes"
+                    : "Not loaded"
+            }
             detail={
-              state
+              noMatch
+                ? "Try a different search."
+                : state
                 ? "Notes you or your agents write show up here."
                 : connected
                   ? "Connecting to your environment."
