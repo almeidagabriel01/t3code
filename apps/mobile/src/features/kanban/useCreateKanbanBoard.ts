@@ -3,7 +3,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { CommandId } from "@t3tools/contracts";
+import { CommandId, type KanbanBoardId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 
 import * as Dialog from "../../components/ui/Dialog";
@@ -13,11 +13,17 @@ import { projectEnvironment } from "../../state/projects";
 import { useAtomCommand } from "../../state/use-atom-command";
 import type { NewBoardTarget } from "./kanbanBoardView";
 
-/** Same as web: the server creates a project's board on first open. Resolves to the board's scope key. */
+/** Same as web: the server creates a project's board on first open and returns the existing one after. */
 export function useCreateKanbanBoard() {
   const openScratch = useAtomCommand(projectEnvironment.openScratch, { reportFailure: false });
   const ensureBoard = useAtomCommand(kanbanEnvironment.ensureBoard);
-  return async ({ environmentId, projectId }: NewBoardTarget): Promise<string | null> => {
+  return async ({
+    environmentId,
+    projectId,
+  }: NewBoardTarget): Promise<{
+    readonly scopeKey: string;
+    readonly boardId: KanbanBoardId;
+  } | null> => {
     let id = projectId;
     if (id === null) {
       const scratch = await openScratch({ environmentId, input: {} });
@@ -37,6 +43,24 @@ export function useCreateKanbanBoard() {
       environmentId,
       input: { commandId: CommandId.make(uuidv4()), projectId: id },
     });
-    return AsyncResult.isSuccess(result) ? boardScopeKey(environmentId, id) : null;
+    return AsyncResult.isSuccess(result) && result.value.boardId !== undefined
+      ? { scopeKey: boardScopeKey(environmentId, id), boardId: result.value.boardId }
+      : null;
+  };
+}
+
+/** Picks a project's board (creating it first if needed), then adds a card to its default column. */
+export function useCreateKanbanCard() {
+  const ensureBoard = useCreateKanbanBoard();
+  const createCard = useAtomCommand(kanbanEnvironment.createCard);
+  return async (target: NewBoardTarget, title: string) => {
+    const board = await ensureBoard(target);
+    if (board === null) return false;
+    return AsyncResult.isSuccess(
+      await createCard({
+        environmentId: target.environmentId,
+        input: { commandId: CommandId.make(uuidv4()), boardId: board.boardId, title },
+      }),
+    );
   };
 }

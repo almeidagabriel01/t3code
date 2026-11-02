@@ -122,4 +122,22 @@ describe("KanbanColumns", () => {
     await userEvent.keyboard("{Enter}");
     expect(onAddCard).toHaveBeenCalledWith("todo", "Ship it", null);
   });
+
+  it("moves focus between cards with the arrow keys, and not while typing", async () => {
+    const { ui } = setup();
+    await using _screen = await render(ui, { router: false });
+    const open = (title: string) => page.getByRole("button", { name: title, exact: true });
+    const focused = () => document.activeElement?.textContent;
+    (open("Task c1").element() as HTMLElement).focus();
+    await userEvent.keyboard("{ArrowDown}");
+    expect(focused()).toBe("Task c2");
+    await userEvent.keyboard("{ArrowRight}");
+    expect(focused()).toBe("Task c3");
+    await userEvent.keyboard("{ArrowLeft}");
+    expect(focused()).toBe("Task c1");
+    await userEvent.click(page.getByRole("button", { name: "Add a card" }).first());
+    await userEvent.fill(page.getByLabelText("Card title"), "x");
+    await userEvent.keyboard("{ArrowDown}");
+    expect(document.activeElement?.getAttribute("aria-label")).toBe("Card title");
+  });
 });

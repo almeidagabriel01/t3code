@@ -13,6 +13,8 @@ const { mocks, Children } = vi.hoisted(() => ({
     scratchRoot: "/data/scratch" as string | null,
     openScratch: vi.fn(),
     ensureBoard: vi.fn(),
+    createCard: vi.fn(),
+    prompt: vi.fn(),
     alert: vi.fn(),
   },
 }));
@@ -39,7 +41,7 @@ vi.mock("react-native", () => ({
 vi.mock("@react-navigation/native", () => ({ useNavigation: () => ({ navigate: vi.fn() }) }));
 vi.mock("../../components/ui/AppText", () => ({ AppText: Children }));
 vi.mock("../../components/ui/AppSymbol", () => ({ SymbolView: () => null }));
-vi.mock("../../components/ui/Dialog", () => ({ alert: mocks.alert, prompt: vi.fn() }));
+vi.mock("../../components/ui/Dialog", () => ({ alert: mocks.alert, prompt: mocks.prompt }));
 vi.mock("../../components/ui/Button", () => ({
   Button: (props: { label: string }) => <span>{props.label}</span>,
 }));
@@ -85,12 +87,16 @@ vi.mock("../../state/entities", () => ({
 }));
 vi.mock("../../state/kanban", () => ({
   useKanbanStates: () => mocks.states,
-  kanbanEnvironment: { ensureBoard: "ensureBoard" },
+  kanbanEnvironment: { ensureBoard: "ensureBoard", createCard: "createCard" },
 }));
 vi.mock("../../state/projects", () => ({ projectEnvironment: { openScratch: "openScratch" } }));
 vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: (command: string) =>
-    command === "openScratch" ? mocks.openScratch : mocks.ensureBoard,
+    ({
+      openScratch: mocks.openScratch,
+      ensureBoard: mocks.ensureBoard,
+      createCard: mocks.createCard,
+    })[command],
 }));
 
 import { KanbanBoardRouteScreen } from "./KanbanBoardRouteScreen";
@@ -115,6 +121,8 @@ beforeEach(() => {
   mocks.scratchRoot = "/data/scratch";
   mocks.openScratch.mockReset().mockResolvedValue(AsyncResult.success({ id: "s1" }));
   mocks.ensureBoard.mockReset().mockResolvedValue(AsyncResult.success({ boardId: "b1" }));
+  mocks.createCard.mockReset().mockResolvedValue(AsyncResult.success({ cardId: "c1" }));
+  mocks.prompt.mockReset();
   mocks.alert.mockReset();
   host = document.createElement("div");
   root = createRoot(host);
@@ -122,10 +130,30 @@ beforeEach(() => {
 afterEach(() => act(() => root.unmount()));
 
 const mount = () => act(async () => root.render(<KanbanBoardRouteScreen />));
-const press = (label: string) =>
+const press = (label: string, which: "first" | "last" = "first") =>
   act(async () => {
-    [...host.querySelectorAll("button")].find((node) => node.textContent === label)?.click();
+    const matches = [...host.querySelectorAll("button")].filter(
+      (node) => node.textContent === label,
+    );
+    (which === "first" ? matches[0] : matches.at(-1))?.click();
   });
+const withBoard = () => {
+  mocks.projects = [
+    ...(mocks.projects as unknown[]),
+    { environmentId, id: "p2", title: "Beta", workspaceRoot: "/b" },
+  ];
+  mocks.states = [
+    {
+      environmentId,
+      state: {
+        boards: new Map([
+          ["b0", { id: "b0", projectId: "p1", columns: [], cards: new Map(), templates: [] }],
+        ]),
+      },
+      error: false,
+    },
+  ];
+};
 
 describe("KanbanBoardRouteScreen", () => {
   it("creates the No-project board from an empty list: ensures the folder, then the board", async () => {
@@ -195,5 +223,42 @@ describe("KanbanBoardRouteScreen", () => {
     await mount();
     expect(host.textContent).toContain("No project");
     expect(host.textContent).not.toContain("Renamed");
+  });
+
+  it("adds a card from the all-projects board: ensures the chosen project's board, then creates the card", async () => {
+    withBoard();
+    await mount();
+    await press("Beta", "last");
+    expect(mocks.prompt).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "New card", message: "Beta" }),
+    );
+    await act(async () => mocks.prompt.mock.calls[0]![0].onConfirm("  Fix it  "));
+    expect(mocks.ensureBoard).toHaveBeenCalledWith({
+      environmentId,
+      input: { commandId: expect.any(String), projectId: "p2" },
+    });
+    expect(mocks.createCard).toHaveBeenCalledWith({
+      environmentId,
+      input: { commandId: expect.any(String), boardId: "b1", title: "Fix it" },
+    });
+  });
+
+  it("creates nothing for a blank title or when the board cannot be ensured", async () => {
+    withBoard();
+    await mount();
+    await press("Beta", "last");
+    await act(async () => mocks.prompt.mock.calls[0]![0].onConfirm("   "));
+    expect(mocks.ensureBoard).not.toHaveBeenCalled();
+    mocks.ensureBoard.mockResolvedValue(AsyncResult.failure(Cause.fail(new Error("no"))));
+    await act(async () => mocks.prompt.mock.calls[0]![0].onConfirm("Title"));
+    expect(mocks.createCard).not.toHaveBeenCalled();
+  });
+
+  it("offers New card only on the all-projects board", async () => {
+    withBoard();
+    await mount();
+    expect(host.textContent).toContain("New card");
+    await press("Alpha");
+    expect(host.textContent).not.toContain("New card");
   });
 });

@@ -10,6 +10,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as Environment from "../environment/ServerEnvironment.ts";
 import * as Settings from "../serverSettings.ts";
 import * as Generation from "../textGeneration/TextGeneration.ts";
+import { memoryStableUuid } from "./MemoryService.ts";
 import * as Store from "./MemoryStore.ts";
 import { generateSummaryChunks } from "./memorySummaryChunks.ts";
 import { boundSourcePage, readEligibleSourceRows } from "./memorySourceScan.ts";
@@ -81,13 +82,37 @@ const make = Effect.gen(function* () {
     );
 
     // The memory summary stands in when no message or finished run came after what it covers.
+    // Hub mode writes it to the hub space; otherwise it is a local intent.
     const intentId = `${environmentId}:${threadId}:summary`;
-    const through = yield* store.readLocalSummaryThroughSequence(environmentId, intentId);
-    if (through !== undefined) {
+    const hubSpace =
+      snapshot.memoryHub.mode === "disabled" ? null : snapshot.memoryHub.memorySpaceId;
+    const stored =
+      hubSpace === null
+        ? yield* Effect.gen(function* () {
+            const through = yield* store.readLocalSummaryThroughSequence(environmentId, intentId);
+            return through === undefined
+              ? undefined
+              : { through, read: store.readLocalSummaryPayload(environmentId, intentId) };
+          })
+        : yield* Effect.gen(function* () {
+            const aggregate = yield* store.loadAggregate(
+              hubSpace,
+              M.MemoryId.make(memoryStableUuid(intentId)),
+            );
+            const head = aggregate.revisions.find(
+              (pair) =>
+                aggregate.heads.length === 1 && aggregate.heads[0] === pair.revision.revisionId,
+            );
+            const through = head?.revision.provenance.sourceWatermark?.throughSequence;
+            return through === undefined || !head?.payload
+              ? undefined
+              : { through, read: Effect.succeed(head.payload) };
+          });
+    if (stored !== undefined) {
       const newer =
-        yield* sql`SELECT 1 FROM orchestration_events WHERE application_event_version=2 AND aggregate_kind='thread' AND stream_id=${threadId} AND sequence>${through} AND (event_type='message.updated' OR (event_type='run.updated' AND json_extract(payload_json,'$.status') IN ('completed','failed','interrupted','cancelled','rolled_back'))) LIMIT 1`;
+        yield* sql`SELECT 1 FROM orchestration_events WHERE application_event_version=2 AND aggregate_kind='thread' AND stream_id=${threadId} AND sequence>${stored.through} AND (event_type='message.updated' OR (event_type='run.updated' AND json_extract(payload_json,'$.status') IN ('completed','failed','interrupted','cancelled','rolled_back'))) LIMIT 1`;
       if (newer.length === 0) {
-        const payload = yield* store.readLocalSummaryPayload(environmentId, intentId);
+        const payload = yield* stored.read;
         if (payload !== undefined) return payload.text;
       }
     }

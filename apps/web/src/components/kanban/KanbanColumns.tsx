@@ -31,7 +31,7 @@ import type {
   KanbanTemplateId,
 } from "@t3tools/contracts";
 import { GripVerticalIcon, PlusIcon } from "lucide-react";
-import { memo, useState, type ReactNode } from "react";
+import { memo, useState, type KeyboardEvent, type ReactNode } from "react";
 
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
@@ -359,7 +359,9 @@ export function KanbanColumns(props: KanbanColumnsProps) {
     event.preventDefault();
     if (next === null) return;
     event.currentTarget
-      .querySelector<HTMLElement>(`[data-card-nav="${CSS.escape(next)}"] [data-card-open]`)
+      .querySelector<HTMLElement>(
+        `[data-card-nav="${globalThis.CSS.escape(next)}"] [data-card-open]`,
+      )
       ?.focus();
   };
 
@@ -412,10 +414,10 @@ export function KanbanColumns(props: KanbanColumnsProps) {
         items={displayed.map((entry) => `${COLUMN_PREFIX}${entry.column.id}`)}
         strategy={horizontalListSortingStrategy}
       >
-        // Arrow keys between cards; the board is a keyboard scope, not an interactive control.
         <div
           ref={boardPanRef}
           className="flex h-full items-start gap-3 overflow-x-auto p-4"
+          // Keyboard scope for arrow navigation between cards, not an interactive control.
           onKeyDown={onKeyDown}
         >
           {displayed.map((entry) => (

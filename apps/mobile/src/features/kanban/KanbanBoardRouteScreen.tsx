@@ -30,7 +30,7 @@ import {
   type NewBoardTarget,
 } from "./kanbanBoardView";
 import { KanbanCardTile } from "./KanbanCardTile";
-import { useCreateKanbanBoard } from "./useCreateKanbanBoard";
+import { useCreateKanbanBoard, useCreateKanbanCard } from "./useCreateKanbanBoard";
 import { useKanbanActions } from "./useKanbanActions";
 
 const NO_TEMPLATE = "__blank__";
@@ -93,11 +93,39 @@ function NewBoardButton(props: {
       onPressAction={({ nativeEvent }) => {
         const target = props.targets.find((entry) => entry.key === nativeEvent.event);
         if (target !== undefined) {
-          void create(target).then((scopeKey) => scopeKey !== null && props.onCreated(scopeKey));
+          void create(target).then((board) => board !== null && props.onCreated(board.scopeKey));
         }
       }}
     >
       <Button label="New board" icon="plus" tone="text" onPress={() => undefined} />
+    </Menu>
+  );
+}
+
+/** The merged board has no column to add to, so the project is chosen here. */
+function NewCardButton(props: { readonly targets: ReadonlyArray<NewBoardTarget> }) {
+  const create = useCreateKanbanCard();
+  if (props.targets.length === 0) return null;
+  return (
+    <Menu
+      actions={props.targets.map((target) => ({ id: target.key, title: target.title }))}
+      onPressAction={({ nativeEvent }) => {
+        const target = props.targets.find((entry) => entry.key === nativeEvent.event);
+        if (target === undefined) return;
+        Dialog.prompt({
+          title: "New card",
+          message: target.title,
+          placeholder: "Title",
+          initialValue: "",
+          confirmText: "Add",
+          onConfirm: (value) => {
+            const title = value.trim();
+            if (title.length > 0) void create(target, title);
+          },
+        });
+      }}
+    >
+      <Button label="New card" icon="plus" tone="text" onPress={() => undefined} />
     </Menu>
   );
 }
@@ -174,13 +202,19 @@ export function KanbanBoardRouteScreen() {
   const [width, setWidth] = useState(0);
   const boards = useMemo(() => collectGlobalBoards(states), [states]);
   const serverConfigs = useServerConfigs();
+  const environments = states.map(({ environmentId }) => ({
+    environmentId,
+    scratchWorkspaceRoot: serverConfigs.get(environmentId)?.scratchWorkspaceRoot ?? null,
+  }));
   const newTargets = newBoardTargets({
-    environments: states.map(({ environmentId }) => ({
-      environmentId,
-      scratchWorkspaceRoot: serverConfigs.get(environmentId)?.scratchWorkspaceRoot ?? null,
-    })),
+    environments,
     projects,
     boards,
+  });
+  const cardTargets = newBoardTargets({
+    environments,
+    projects,
+    boards: [],
   });
   const projectTitle = (environmentId: EnvironmentId, projectId: string) => {
     const project = projects.find(
@@ -261,6 +295,7 @@ export function KanbanBoardRouteScreen() {
                 </Pressable>
               </Menu>
               <NewBoardButton targets={newTargets} onCreated={setScope} />
+              {activeScope === ALL_PROJECTS ? <NewCardButton targets={cardTargets} /> : null}
               {archiveTarget === null ? null : (
                 <Button
                   label="Archived"
