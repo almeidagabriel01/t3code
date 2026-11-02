@@ -30,8 +30,10 @@ export function buildSnoozePresetActions(
       id: `snooze:${preset.id}`,
       title: preset.label,
       subtitle: preset.whenLabel,
+      // "after:N" counts from now; "at:day:time" is a calendar slot.
+      image: preset.id.startsWith("at:") ? "calendar" : "hourglass",
     })),
-    { id: "snooze:custom", title: "Custom…" },
+    { id: "snooze:custom", title: "Custom…", image: "calendar.badge.clock" },
   ];
 }
 

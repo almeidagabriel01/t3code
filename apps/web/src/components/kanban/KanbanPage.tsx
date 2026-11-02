@@ -25,6 +25,7 @@ import {
 } from "@t3tools/client-runtime/state/kanbanLogic";
 import { KanbanArchive } from "./KanbanArchive";
 import { KanbanBoardView } from "./KanbanBoardView";
+import { projectPickerLabels } from "@t3tools/client-runtime/projectLabels";
 import { kanbanProjectName, type KanbanProjectInfo } from "./KanbanProjectBadge";
 import { KanbanCardDetail } from "./KanbanCardDetail";
 import { KanbanGlobalBoard } from "./KanbanGlobalBoard";
@@ -152,6 +153,10 @@ export function KanbanPage() {
     states.some((entry) => entry.environmentId === member.environmentId),
   );
   const member = members.find((entry) => entry.physicalProjectKey === memberKey) ?? members[0];
+  const named = groups.filter((entry) => entry.isScratch !== true);
+  const labels = projectPickerLabels(
+    named.map((entry) => ({ title: entry.displayName, workspaceRoot: entry.workspaceRoot })),
+  );
   const projects = new Map(
     groups.flatMap((entry) =>
       entry.memberProjects.map(
@@ -159,7 +164,10 @@ export function KanbanPage() {
           [
             boardScopeKey(m.environmentId, m.id),
             {
-              name: kanbanProjectName(entry, m),
+              name:
+                entry.isScratch === true
+                  ? kanbanProjectName(entry, m)
+                  : (labels[named.indexOf(entry)] ?? entry.displayName),
               projectKey: entry.projectKey,
               project: m,
             },

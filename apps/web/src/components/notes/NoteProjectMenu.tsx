@@ -1,4 +1,5 @@
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import { projectPickerLabels } from "@t3tools/client-runtime/projectLabels";
 import { CheckIcon, FolderIcon, UnlinkIcon } from "lucide-react";
 
 import { useProjects } from "../../state/entities";
@@ -18,6 +19,7 @@ export function NoteProjectMenu(props: {
   const projects = useProjects().filter(
     (project) => project.environmentId === props.environmentId && project.isScratch !== true,
   );
+  const labels = projectPickerLabels(projects);
   const current = projects.find((project) => project.id === props.projectId);
   if (props.projectId !== null && (props.missing === true || current === undefined))
     return (
@@ -60,16 +62,16 @@ export function NoteProjectMenu(props: {
         }
       >
         <FolderIcon aria-hidden />
-        {current?.title ?? "No project"}
+        {current ? labels[projects.indexOf(current)] : "No project"}
       </MenuTrigger>
       <MenuPopup align="start">
         <MenuItem onClick={() => props.onChange(null)}>
           No project
           {props.projectId === null ? <CheckIcon aria-hidden className="ms-auto" /> : null}
         </MenuItem>
-        {projects.map((project) => (
+        {projects.map((project, index) => (
           <MenuItem key={project.id} onClick={() => props.onChange(project.id)}>
-            {project.title}
+            {labels[index]}
             {project.id === props.projectId ? <CheckIcon aria-hidden className="ms-auto" /> : null}
           </MenuItem>
         ))}

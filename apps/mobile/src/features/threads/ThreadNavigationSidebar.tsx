@@ -1,5 +1,6 @@
 import { useActiveNewTask } from "../../state/active-new-task";
 import { HomeAssistantsSection } from "../assistants/HomeAssistantsSection";
+import { HomeNeedsYouSection } from "../home/HomeNeedsYouSection";
 import { HomeDecisionsSection } from "../decisions/HomeDecisionsSection";
 import { ThreadUndoNotice } from "../home/ThreadUndoNotice";
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
@@ -699,6 +700,12 @@ function ThreadNavigationSidebarPane(
               environments.map((environment) => [environment.environmentId, environment.label]),
             )
           }
+        />
+        <HomeNeedsYouSection
+          threads={threads}
+          now={now}
+          includeWorking={!workingShelfEnabled}
+          gutter={4}
         />
         <HomeDecisionsSection gutter={4} />
       </>

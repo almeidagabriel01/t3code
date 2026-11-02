@@ -6,6 +6,7 @@ import {
   KANBAN_ROLE_LABELS,
   type GlobalBoard,
 } from "@t3tools/client-runtime/state/kanbanLogic";
+import { projectPickerLabels } from "@t3tools/client-runtime/projectLabels";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import type {
   EnvironmentId,
@@ -97,6 +98,36 @@ export interface NewBoardTarget {
   readonly projectId: ProjectId | null;
 }
 
+/** Picker labels by board scope key; Scratch is left out (it reads "No project"). */
+export function projectLabelsByScope(input: {
+  readonly environments: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly scratchWorkspaceRoot: string | null;
+  }>;
+  readonly projects: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly id: ProjectId;
+    readonly title: string;
+    readonly workspaceRoot: string;
+  }>;
+}): ReadonlyMap<string, string> {
+  const listed = input.projects.filter(
+    (project) =>
+      !isScratchProject(
+        project,
+        input.environments.find((entry) => entry.environmentId === project.environmentId)
+          ?.scratchWorkspaceRoot,
+      ),
+  );
+  const labels = projectPickerLabels(listed);
+  return new Map(
+    listed.map((project, index) => [
+      boardScopeKey(project.environmentId, project.id),
+      labels[index] ?? project.title,
+    ]),
+  );
+}
+
 /** Projects without a board yet, plus "No project" where the server offers it and it has none. */
 export function newBoardTargets(input: {
   readonly environments: ReadonlyArray<{
@@ -114,6 +145,7 @@ export function newBoardTargets(input: {
   const hasBoard = new Set(
     input.boards.map((entry) => boardScopeKey(entry.environmentId, entry.board.projectId)),
   );
+  const labels = projectLabelsByScope(input);
   return input.environments.flatMap(({ environmentId, scratchWorkspaceRoot }) => {
     const own = input.projects.filter((project) => project.environmentId === environmentId);
     const scratch = own.find((project) => isScratchProject(project, scratchWorkspaceRoot));
@@ -124,7 +156,7 @@ export function newBoardTargets(input: {
       .map((project) => ({
         key: boardScopeKey(environmentId, project.id),
         environmentId,
-        title: project.title,
+        title: labels.get(boardScopeKey(environmentId, project.id)) ?? project.title,
         projectId: project.id,
       }));
     const noProject =

@@ -1,3 +1,4 @@
+import { projectPickerLabels } from "@t3tools/client-runtime/projectLabels";
 import { RegistryContext, useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import { selectNotesInOrder, type NotesState } from "@t3tools/client-runtime/state/notes";
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
@@ -235,11 +236,11 @@ function EnvironmentNotes(
   const projects = useProjects();
   const projectNames =
     props.projectKey === undefined
-      ? new Map(
-          projects
-            .filter((project) => project.environmentId === environmentId)
-            .map((project) => [project.id as string, project.title]),
-        )
+      ? (() => {
+          const own = projects.filter((project) => project.environmentId === environmentId);
+          const labels = projectPickerLabels(own);
+          return new Map(own.map((project, index) => [project.id as string, labels[index] ?? ""]));
+        })()
       : undefined;
   const select = (path: string | undefined, options?: { replace?: boolean }) => {
     // Picking the open note again retries a read that failed.

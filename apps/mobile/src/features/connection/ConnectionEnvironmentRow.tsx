@@ -172,12 +172,9 @@ export function ConnectionEnvironmentRow(props: {
           value={enabled}
         />
         <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={
-            props.opensDetails
-              ? `Manage ${props.environment.environmentLabel}`
-              : `${props.expanded ? "Collapse" : "Expand"} details for ${props.environment.environmentLabel}`
-          }
+          // The label row beside it carries the same action; one button per row for screen readers.
+          accessible={false}
+          importantForAccessibility="no-hide-descendants"
           onPress={props.onToggle}
           style={{
             minWidth: 44,

@@ -28,6 +28,7 @@ export function FolderModelPickerRouteScreen({
   const providerGroups = useMemo(() => groupByProvider(models), [models]);
   return (
     <ThreadSettingsPickerScreen
+      title="Folder model"
       environmentId={environmentId}
       projectId={null}
       providerGroups={providerGroups}

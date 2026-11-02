@@ -1205,6 +1205,7 @@ type ThreadSettingsPickerStackParams = {
 
 type ThreadSettingsPickerPresentation = {
   readonly onClose: () => void;
+  readonly title?: string;
 };
 
 const ThreadSettingsPickerStack = createNativeStackNavigator<ThreadSettingsPickerStackParams>();
@@ -1321,7 +1322,7 @@ function ThreadSettingsModelsScreen() {
             </View>
           }
           onCancel={presentation.onClose}
-          title="Thread settings"
+          title={presentation.title ?? "Thread settings"}
           confirm={session.pendingModel ? { label: "Save", onPress: commitAndClose } : undefined}
         />
       ) : null}
@@ -1377,7 +1378,7 @@ function ThreadSettingsModelsScreen() {
       </ScreenContent>
       {Platform.OS === "ios" ? (
         <SheetHeader
-          title="Thread settings"
+          title={presentation.title ?? "Thread settings"}
           onCancel={presentation.onClose}
           accessibilityLabel="Cancel thread settings"
           confirm={{
@@ -1467,6 +1468,7 @@ function ThreadSettingsPickerNavigator(props: ThreadSettingsPickerPresentation) 
   const foreground = theme["--color-foreground"];
   const presentation = {
     onClose: props.onClose,
+    ...(props.title === undefined ? {} : { title: props.title }),
   };
 
   return (
@@ -1495,7 +1497,7 @@ function ThreadSettingsPickerNavigator(props: ThreadSettingsPickerPresentation) 
         <ThreadSettingsPickerStack.Screen
           name="ThreadSettingsModels"
           component={ThreadSettingsModelsScreen}
-          options={{ headerBackVisible: false, title: "Thread settings" }}
+          options={{ headerBackVisible: false, title: props.title ?? "Thread settings" }}
         />
         <ThreadSettingsPickerStack.Screen
           name="ThreadSettingsChoice"
@@ -1508,11 +1510,11 @@ function ThreadSettingsPickerNavigator(props: ThreadSettingsPickerPresentation) 
 }
 
 export function ThreadSettingsPickerScreen(
-  props: ThreadSettingsSessionProps & { readonly onClose: () => void },
+  props: ThreadSettingsSessionProps & { readonly onClose: () => void; readonly title?: string },
 ) {
   return (
     <ThreadSettingsSessionProvider {...props}>
-      <ThreadSettingsPickerNavigator onClose={props.onClose} />
+      <ThreadSettingsPickerNavigator onClose={props.onClose} title={props.title} />
     </ThreadSettingsSessionProvider>
   );
 }

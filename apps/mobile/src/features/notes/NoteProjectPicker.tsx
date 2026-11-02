@@ -1,4 +1,5 @@
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import { projectPickerLabels } from "@t3tools/client-runtime/projectLabels";
 import { Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
@@ -22,6 +23,8 @@ export function NoteProjectPicker(props: {
   const projects = useProjects().filter(
     (project) => project.environmentId === props.environmentId && project.isScratch !== true,
   );
+  const labels = projectPickerLabels(projects);
+  const labelOf = (index: number) => labels[index] ?? projects[index]?.title ?? "";
   const current = projects.find((project) => project.id === props.value);
   if (props.value !== null && (props.missing === true || current === undefined))
     return (
@@ -39,9 +42,9 @@ export function NoteProjectPicker(props: {
     <Menu
       actions={[
         { id: NONE, title: props.noneLabel, state: props.value === null ? "on" : "off" },
-        ...projects.map((project) => ({
+        ...projects.map((project, index) => ({
           id: project.id,
-          title: project.title,
+          title: labelOf(index),
           state: project.id === props.value ? ("on" as const) : ("off" as const),
         })),
       ]}
@@ -56,7 +59,7 @@ export function NoteProjectPicker(props: {
         className="min-h-9 flex-row items-center gap-2 self-start rounded-full bg-secondary px-4 active:opacity-70"
       >
         <Text textRole="footnote" numberOfLines={1} className="font-t3-medium text-foreground">
-          {current?.title ?? props.noneLabel}
+          {current ? labelOf(projects.indexOf(current)) : props.noneLabel}
         </Text>
         <SymbolView name="chevron.down" size={12} tintColorClassName="accent-chevron" />
       </Pressable>

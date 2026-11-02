@@ -80,6 +80,32 @@ export function untitledNotePath(
   }
 }
 
+const DEFAULT_NAME = /^Untitled(?: \d+)?\.md$/u;
+const DEFAULT_TITLE = /^Untitled(?: \d+)?$/u;
+const FILE_STEM_MAX = 80;
+
+/**
+ * The file a note still named Untitled N.md should take from its title, or null when it keeps its
+ * name: the file is not a default one, or the title is empty, a default, or has no usable characters.
+ * attempt 1, 2, ... appends " 2", " 3" for a name that was taken.
+ */
+export function untitledRenameTarget(path: string, title: string, attempt = 0): string | null {
+  const slash = path.lastIndexOf("/");
+  if (!DEFAULT_NAME.test(path.slice(slash + 1)) || DEFAULT_TITLE.test(title.trim())) return null;
+  const cut = title
+    .replace(/[\u0000-\u001f\u007f\\/:]+/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .replace(/^\.+/u, "")
+    .slice(0, FILE_STEM_MAX);
+  const stem = cut
+    .replace(/[\uD800-\uDBFF]$/u, "")
+    .replace(/[\s.]+$/u, "")
+    .normalize("NFC");
+  if (!stem) return null;
+  return `${path.slice(0, slash + 1)}${stem}${attempt > 0 ? ` ${attempt + 1}` : ""}.md`;
+}
+
 export type NoteReply<A> = { ok: true; value: A } | { ok: false; error: unknown };
 
 export function noteErrorMessage(error: unknown): string {

@@ -1,13 +1,14 @@
-import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import {
   hasSidebarNotification,
   hasUnseenCompletion,
   hasUnseenFailure,
-  resolveSidebarThreadStatus,
   type SidebarThreadStatus,
 } from "@t3tools/client-runtime/state/thread-attention";
-import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
+import {
+  filterSidebarV2VisibleThreads,
+  type ThreadStatusInput,
+} from "@t3tools/client-runtime/state/thread-activity";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
 import * as React from "react";
@@ -24,7 +25,6 @@ import {
 import { foldSearchQuery, rankSearchItems, scoreThreadSearch } from "@t3tools/shared/paletteSearch";
 import type { ContextMenuItem, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
-import { isAssistantThreadId, isSideChatThread } from "@t3tools/contracts";
 import type { AsyncResult } from "effect/reactivity";
 import {
   effectiveSnoozed,
@@ -580,36 +580,6 @@ export function resolveSidebarRowThreadId(
   return thread?.id ?? threadId;
 }
 
-/**
- * `delegatedUnderParent` holds the tasks linked environments run for a thread
- * the sidebar lists, by thread key; they show under that thread, as subagents do.
- */
-export function filterSidebarV2VisibleThreads<
-  T extends Pick<
-    SidebarThreadSummary,
-    "archivedAt" | "environmentId" | "id" | "lineage" | "sideChatOf"
-  > & {
-    projectId: string;
-  },
->(
-  threads: readonly T[],
-  scopedProjectKeys: ReadonlySet<string> | null,
-  delegatedUnderParent: ReadonlySet<string>,
-): T[] {
-  return threads.filter(
-    (thread) =>
-      thread.archivedAt === null &&
-      !isSideChatThread(thread) &&
-      !isAssistantThreadId(thread.id) &&
-      !isShownUnderParent(
-        { environmentId: thread.environmentId, threadId: thread.id },
-        thread.lineage,
-        delegatedUnderParent,
-      ) &&
-      (scopedProjectKeys === null ||
-        scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
-  );
-}
 
 export function buildBulkTitleRegenerationContextMenuItem(input: {
   supportedCount: number;
@@ -666,24 +636,6 @@ const THREAD_STATUS_PRIORITY: Record<ThreadStatusPill["label"], number> = {
   Completed: 1,
 };
 
-type ThreadStatusInput = Pick<
-  SidebarThreadSummary,
-  | "hasActionableProposedPlan"
-  | "hasPendingApprovals"
-  | "hasPendingUserInput"
-  | "pendingSubagentRequest"
-  | "pendingGuestMessageCount"
-  | "interactionMode"
-  | "latestRun"
-  | "runtime"
-> & {
-  lastVisitedAt?: string | null | undefined;
-  pendingBackgroundTasks?: SidebarThreadSummary["pendingBackgroundTasks"] | undefined;
-  blockedOnThreadWait?: boolean | undefined;
-  /** An agent in this thread waits on the user's answer to a decision. */
-  hasOpenDecision?: boolean | undefined;
-};
-
 /**
  * Thread jump hints appear once the jump modifier has been held for a moment,
  * so a quick shortcut never flashes them, and hide as soon as it is released.
@@ -697,115 +649,6 @@ export function useThreadJumpHintsVisible(shouldShow: boolean): boolean {
     setShowAt(shouldShow ? () => deadlineAfter(THREAD_JUMP_HINT_SHOW_DELAY_MS) : null);
   }
   return useDeadlinePassed(showAt);
-}
-
-export function resolveThreadLastVisitedAt(
-  serverLastVisitedAt: string | null | undefined,
-  localLastVisitedAt: string | undefined,
-): string | undefined {
-  // Server visits override local watermarks, including mark-unread rewinds; use local values only on older
-  // servers.
-  if (serverLastVisitedAt === undefined) return localLastVisitedAt;
-  return serverLastVisitedAt ?? undefined;
-}
-
-/** A visit acknowledges a wake without changing the thread's lifecycle. */
-export function isSidebarThreadWoke(
-  wokeAt: string | null,
-  lastVisitedAt: string | undefined,
-): boolean {
-  if (wokeAt === null || !Number.isFinite(Date.parse(wokeAt))) return false;
-  const visited = lastVisitedAt === undefined ? NaN : Date.parse(lastVisitedAt);
-  return !Number.isFinite(visited) || visited < Date.parse(wokeAt);
-}
-
-/**
- * Priority is a display overlay; its rank never changes pinning or settlement. A subagent's
- * pending request already reaches its parent through `pendingSubagentRequest`.
- */
-export function resolveSidebarPriorityRank(input: {
-  readonly thread: ThreadStatusInput;
-  readonly localLastVisitedAt?: string | undefined;
-  readonly wokeAt: string | null;
-  /** An agent waits on the user's answer to a decision, whatever else the thread is doing. */
-  readonly hasOpenDecision?: boolean | undefined;
-}): 0 | 1 | 2 | null {
-  if (input.hasOpenDecision === true) return 0;
-  const status = resolveSidebarThreadStatus({
-    ...input.thread,
-    blockedOnThreadWait: input.thread.blockedOnThreadWait === true,
-  });
-  if (status === "approval" || status === "input") return 0;
-  if (status === "working" || status === "waiting") return 1;
-  const lastVisitedAt = resolveThreadLastVisitedAt(
-    input.thread.lastVisitedAt,
-    input.localLastVisitedAt,
-  );
-  return hasUnseenCompletion({ ...input.thread, lastVisitedAt }) ||
-    isSidebarThreadWoke(input.wokeAt, lastVisitedAt)
-    ? 2
-    : null;
-}
-
-/** Settled state each row had when the Activity page last showed it, by scoped thread key. */
-export type SidebarPriorityHolds = ReadonlyMap<string, SidebarThreadSummary["settledOverride"]>;
-
-/**
- * Reading a thread does not pull its row off the Activity page while it stays open; it leaves
- * when the page is opened again. Settling or unsettling the row is the user's own move, so a
- * changed settled state ends the hold.
- */
-export function holdSidebarPriorityRank(input: {
-  readonly rank: 0 | 1 | 2 | null;
-  readonly key: string;
-  readonly settledOverride: SidebarThreadSummary["settledOverride"];
-  readonly holds: SidebarPriorityHolds;
-  /** Mark all as read drops the row once it no longer qualifies, instead of holding it. */
-  readonly released?: boolean;
-}): 0 | 1 | 2 | null {
-  if (input.released) return input.rank;
-  if (input.rank !== null || !input.holds.has(input.key)) return input.rank;
-  return input.holds.get(input.key) === input.settledOverride ? 2 : null;
-}
-
-/** Writable unread completions and woke-only rows are targets of Priority's bulk visit. */
-export function selectSidebarMarkReadTargets<
-  T extends ThreadStatusInput & Pick<SidebarThreadSummary, "environmentId" | "id">,
->(input: {
-  readonly threads: readonly T[];
-  readonly localLastVisitedAtByKey: Readonly<Record<string, string | undefined>>;
-  readonly wokeAtByKey?: ReadonlyMap<string, string | null>;
-  readonly canOperate: (thread: T) => boolean;
-}): T[] {
-  return input.threads.filter((thread) => {
-    if (!input.canOperate(thread)) return false;
-    const key = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
-    const lastVisitedAt = resolveThreadLastVisitedAt(
-      thread.lastVisitedAt,
-      input.localLastVisitedAtByKey[key],
-    );
-    return (
-      hasUnseenCompletion({ ...thread, lastVisitedAt }) ||
-      isSidebarThreadWoke(input.wokeAtByKey?.get(key) ?? null, lastVisitedAt)
-    );
-  });
-}
-
-/**
- * Cache ranks before sorting. Within a rank, newer threads come first by
- * creation time: updatedAt moves on every streamed event of a running thread,
- * so ordering by it would swap working rows while they stream.
- */
-export function sortPriorityThreadsForSidebar<
-  T extends Pick<SidebarThreadSummary, "environmentId" | "id" | "createdAt">,
->(threads: readonly T[], ranks: ReadonlyMap<string, number>): T[] {
-  const key = (thread: T) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
-  return threads.toSorted(
-    (left, right) =>
-      (ranks.get(key(left)) ?? 2) - (ranks.get(key(right)) ?? 2) ||
-      firstValidTimestampMs(right.createdAt) - firstValidTimestampMs(left.createdAt) ||
-      key(left).localeCompare(key(right)),
-  );
 }
 
 /** Row controls follow lifecycle. */
@@ -957,16 +800,6 @@ export type SidebarV2TopStatusKind =
   | "woke"
   | "working";
 
-export function firstValidTimestampMs(
-  ...candidates: ReadonlyArray<string | null | undefined>
-): number {
-  for (const candidate of candidates) {
-    if (candidate == null) continue;
-    const parsed = Date.parse(candidate);
-    if (!Number.isNaN(parsed)) return parsed;
-  }
-  return 0;
-}
 
 export { sortActiveThreadsByOrderKey as sortThreadsForSidebar } from "@t3tools/client-runtime/state/thread-sort";
 export {
@@ -1376,3 +1209,15 @@ export function sortScopedProjectsForSidebar<
       left.id.localeCompare(right.id),
   );
 }
+
+export {
+  filterSidebarV2VisibleThreads,
+  firstValidTimestampMs,
+  holdSidebarPriorityRank,
+  isSidebarThreadWoke,
+  resolveSidebarPriorityRank,
+  resolveThreadLastVisitedAt,
+  selectSidebarMarkReadTargets,
+  sortPriorityThreadsForSidebar,
+  type SidebarPriorityHolds,
+} from "@t3tools/client-runtime/state/thread-activity";

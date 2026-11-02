@@ -402,15 +402,9 @@ function CloudEnvironmentRowShell(props: {
       />
       {props.opensDetails || props.showChevron ? (
         <ChevronContainer
-          accessibilityRole={props.onOpen ? "button" : undefined}
-          accessibilityLabel={
-            props.onOpen
-              ? `Manage ${props.label}`
-              : props.onRemove
-                ? `Remove ${props.label} from this device`
-                : undefined
-          }
-          accessibilityHint={props.onRemove ? "Long press to remove from this device" : undefined}
+          // The content beside it carries the same action; one button per row for screen readers.
+          accessible={false}
+          importantForAccessibility="no-hide-descendants"
           onPress={props.onOpen}
           onLongPress={props.onRemove}
           style={{

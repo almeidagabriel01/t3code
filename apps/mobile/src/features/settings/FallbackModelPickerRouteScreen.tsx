@@ -25,6 +25,7 @@ export function FallbackModelPickerRouteScreen({
   const providerGroups = useMemo(() => groupByProvider(models), [models]);
   return (
     <ThreadSettingsPickerScreen
+      title="Fallback model"
       environmentId={environmentId}
       projectId={null}
       providerGroups={providerGroups}

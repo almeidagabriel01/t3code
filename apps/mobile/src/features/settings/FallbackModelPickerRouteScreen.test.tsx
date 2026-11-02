@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   picker: null as null | {
     onSelectModel: (option: { selection: unknown }) => void;
     onClose: () => void;
+    title?: string;
   },
 }));
 
@@ -44,6 +45,10 @@ beforeEach(() => {
 afterEach(() => act(() => root.unmount()));
 
 describe("FallbackModelPickerRouteScreen", () => {
+  it("titles the picker Fallback model", () => {
+    expect(mocks.picker!.title).toBe("Fallback model");
+  });
+
   it("saves the picked model and goes back one screen", () => {
     // The sheet's Save calls onSelectModel, then onClose.
     act(() => {

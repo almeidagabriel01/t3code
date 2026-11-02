@@ -57,6 +57,7 @@ import { useThreadListV2 } from "../threads/useThreadListV2";
 import { useThreadListNow } from "../threads/use-thread-list-now";
 import { useThreadJumpShortcuts } from "../keyboard/threadKeyboardShortcuts";
 import { HomeAssistantsSection } from "../assistants/HomeAssistantsSection";
+import { HomeNeedsYouSection } from "./HomeNeedsYouSection";
 import { HomeDecisionsSection } from "../decisions/HomeDecisionsSection";
 import { decisionThreadKey, useOpenDecisionThreadKeys } from "../../state/decisions";
 import { hasSidebarNotification } from "@t3tools/client-runtime/state/thread-attention";
@@ -777,6 +778,12 @@ export function HomeScreen(props: HomeScreenProps) {
           }
         />
       )}
+      <HomeNeedsYouSection
+        threads={props.threads}
+        now={now}
+        includeWorking={!workingShelfEnabled}
+        gutter={primaryColumn ? 8 : 16}
+      />
       <HomeDecisionsSection gutter={primaryColumn ? 8 : 16} />
     </>
   );

@@ -26,6 +26,7 @@ import {
   ALL_PROJECTS,
   buildBoardColumns,
   newBoardTargets,
+  projectLabelsByScope,
   type BoardViewColumn,
   type NewBoardTarget,
 } from "./kanbanBoardView";
@@ -216,6 +217,7 @@ export function KanbanBoardRouteScreen() {
     projects,
     boards: [],
   });
+  const labels = projectLabelsByScope({ environments, projects });
   const projectTitle = (environmentId: EnvironmentId, projectId: string) => {
     const project = projects.find(
       (entry) => entry.environmentId === environmentId && entry.id === projectId,
@@ -223,7 +225,7 @@ export function KanbanBoardRouteScreen() {
     if (project === undefined) return "Project";
     return isScratchProject(project, serverConfigs.get(environmentId)?.scratchWorkspaceRoot)
       ? "No project"
-      : project.title;
+      : (labels.get(boardScopeKey(environmentId, projectId)) ?? project.title);
   };
   const options = boards.map(({ environmentId, board }) => ({
     key: boardScopeKey(environmentId, board.projectId),

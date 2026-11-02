@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   picker: null as null | {
     onSelectModel: (option: { selection: unknown }) => void;
     onClose: () => void;
+    title?: string;
   },
 }));
 
@@ -53,6 +54,10 @@ beforeEach(() => {
 afterEach(() => act(() => root.unmount()));
 
 describe("FolderModelPickerRouteScreen", () => {
+  it("titles the picker Folder model", () => {
+    expect(mocks.picker!.title).toBe("Folder model");
+  });
+
   it("saves the picked model for the folder and closes both screens once", () => {
     // The sheet's Save calls onSelectModel, then onClose.
     act(() => {

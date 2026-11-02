@@ -3,7 +3,12 @@ import { boardScopeKey } from "@t3tools/client-runtime/state/kanbanLogic";
 import type { EnvironmentId, KanbanCard, KanbanColumn, ProjectId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { ALL_PROJECTS, buildBoardColumns, newBoardTargets } from "./kanbanBoardView";
+import {
+  ALL_PROJECTS,
+  buildBoardColumns,
+  newBoardTargets,
+  projectLabelsByScope,
+} from "./kanbanBoardView";
 
 const column = (id: string, role: KanbanColumn["role"], orderKey: string) =>
   ({ id, boardId: "b1", name: id, color: "blue", orderKey, wipLimit: null, role }) as KanbanColumn;
@@ -75,6 +80,22 @@ describe("newBoardTargets", () => {
     expect(targets(null)).toEqual([
       ["Beta", "p2"],
       ["No project", "s1"],
+    ]);
+  });
+
+  it("tells same-titled projects apart and keeps Scratch out of the labels", () => {
+    const twins = [
+      project("a", "server", "/code/t3code/apps/server"),
+      project("b", "server", "/code/other-repo/server"),
+      project("s1", "No project", "/data/scratch"),
+    ];
+    const environments = [{ environmentId, scratchWorkspaceRoot: "/data/scratch" }];
+    expect(
+      newBoardTargets({ environments, projects: twins, boards: [] }).map((target) => target.title),
+    ).toEqual(["No project", "server · apps", "server · other-repo"]);
+    expect([...projectLabelsByScope({ environments, projects: twins }).values()]).toEqual([
+      "server · apps",
+      "server · other-repo",
     ]);
   });
 });
