@@ -44,21 +44,6 @@ export function groupNotes(
   };
 }
 
-const searchable = (value: string) => value.normalize("NFC").toLocaleLowerCase();
-
-/** Every whitespace-separated term must appear in the title, preview, or path. */
-export function filterNotes(
-  notes: ReadonlyArray<NoteSummary>,
-  query: string,
-): ReadonlyArray<NoteSummary> {
-  const terms = searchable(query).split(/\s+/u).filter(Boolean);
-  if (terms.length === 0) return notes;
-  return notes.filter((note) => {
-    const haystack = searchable(`${note.title}\n${note.preview}\n${note.path}`);
-    return terms.every((term) => haystack.includes(term));
-  });
-}
-
 /** A query that names a note the list does not hold, such as one past a truncated list. */
 export function openablePath(notes: ReadonlyArray<NoteSummary>, query: string): string | null {
   const path = query.trim().normalize("NFC");

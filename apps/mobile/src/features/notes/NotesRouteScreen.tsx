@@ -1,3 +1,4 @@
+import { filterNotes } from "@t3tools/client-runtime/notes/search";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { selectNotesInOrder } from "@t3tools/client-runtime/state/notes";
@@ -26,7 +27,6 @@ import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { NoteProjectPicker } from "./NoteProjectPicker";
 import { notesError } from "./delivery";
 import {
-  filterNoteRows,
   newNotePath,
   noteListRows,
   noteRowMenuActions,
@@ -118,7 +118,7 @@ function EnvironmentNotes(props: {
   const searchRef = useRef<TextInputInstance | null>(null);
   const allRows = noteListRows(environmentId, state ? selectNotesInOrder(state) : [], outbox);
   const inProject = project === null ? allRows : allRows.filter((row) => row.project === project);
-  const rows = filterNoteRows(inProject, query);
+  const rows = filterNotes(inProject, query);
   const noMatch = query.trim() !== "" && inProject.length > 0;
   const groups = groupRows(rows);
 

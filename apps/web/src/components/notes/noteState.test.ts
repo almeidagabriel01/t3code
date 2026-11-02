@@ -8,7 +8,6 @@ import * as Schema from "effect/Schema";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
-  filterNotes,
   groupNotes,
   isNoteDirty,
   NoteSession,
@@ -335,15 +334,6 @@ describe("note list", () => {
       ["b", ["b/new.md", "b/old.md"]],
       ["empty", []],
     ]);
-  });
-
-  it("matches every search term against the title, preview, or path", () => {
-    const notes = [
-      { ...summary("plans/launch.md", "2026-01-01T00:00:00.000Z"), preview: "ship the beta" },
-      summary("ideas.md", "2026-01-01T00:00:00.000Z"),
-    ];
-    expect(filterNotes(notes, "plans beta").map((note) => note.path)).toEqual(["plans/launch.md"]);
-    expect(filterNotes(notes, "  ")).toBe(notes);
   });
 
   it("names a new note after the first free Untitled slot", () => {

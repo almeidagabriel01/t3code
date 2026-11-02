@@ -267,6 +267,10 @@
       "types": "./src/projectLabels.ts",
       "default": "./src/projectLabels.ts"
     },
+    "./notes/search": {
+      "types": "./src/notes/search.ts",
+      "default": "./src/notes/search.ts"
+    },
     "./notes/work": {
       "types": "./src/notes/work.ts",
       "default": "./src/notes/work.ts"

@@ -2,7 +2,6 @@ import { describe, expect, it } from "@effect/vitest";
 
 import {
   canEditNoteDraft,
-  filterNoteRows,
   newNotePath,
   noteListRows,
   noteRowMenuActions,
@@ -127,20 +126,7 @@ describe("note row menu", () => {
   });
 });
 
-describe("note search and route", () => {
-  const rows = [
-    { title: "Café plan", preview: "ship it", path: "ideas/cafe.md" },
-    { title: "Groceries", preview: "milk and eggs", path: "groceries.md" },
-  ] as never;
-  it("matches every term in title, preview, or path, ignoring case and accents form", () => {
-    const titles = (query: string) => filterNoteRows(rows, query).map((r) => r.title);
-    expect(titles("  ")).toHaveLength(2);
-    expect(titles("CAFÉ ship")).toEqual(["Café plan"]);
-    expect(titles("eggs milk")).toEqual(["Groceries"]);
-    expect(titles("ideas/")).toEqual(["Café plan"]);
-    expect(titles("milk ship")).toEqual([]);
-  });
-
+describe("note route", () => {
   it("opens on the thread's environment and project, falling back to the first environment", () => {
     const a = "a" as never;
     const b = "b" as never;

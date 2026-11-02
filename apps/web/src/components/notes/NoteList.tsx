@@ -10,7 +10,8 @@ import { Button } from "../ui/button";
 import { Kbd } from "../ui/kbd";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { NoteRowMenu, useNoteRowActions, type NoteRowActions } from "./NoteRowMenu";
-import { filterNotes, groupNotes, openablePath } from "./noteState";
+import { filterNotes } from "@t3tools/client-runtime/notes/search";
+import { groupNotes, openablePath } from "./noteState";
 
 function NoteRow(props: {
   note: NoteSummary;
