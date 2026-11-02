@@ -82,6 +82,14 @@ vi.mock("../state/session", async (original) => ({
   useEnvironmentScope: () => true,
   readEnvironmentScope: () => true,
 }));
+vi.mock("../state/decisions", async (original) => ({
+  ...(await original<typeof import("../state/decisions")>()),
+  useDecisionEntries: () => ({ open: [], resolved: [] }),
+}));
+vi.mock("../state/assistants", async (original) => ({
+  ...(await original<typeof import("../state/assistants")>()),
+  useAssistantEntries: () => ({ active: [], archived: [] }),
+}));
 vi.mock("../state/filesystem", async (original) => ({
   ...(await original<typeof import("../state/filesystem")>()),
   useFilesystemReadAccess: () => ({ canReadFiles: true, isPending: false, error: null }),
