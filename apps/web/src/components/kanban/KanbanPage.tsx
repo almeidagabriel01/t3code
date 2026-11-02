@@ -158,7 +158,14 @@ export function KanbanPage() {
         (m) =>
           [
             boardScopeKey(m.environmentId, m.id),
-            { name: entry.displayName, projectKey: entry.projectKey, project: m },
+            {
+              name:
+                entry.isScratch && entry.memberProjects.length > 1 && m.environmentLabel
+                  ? `${entry.displayName} · ${m.environmentLabel}`
+                  : entry.displayName,
+              projectKey: entry.projectKey,
+              project: m,
+            },
           ] as const,
       ),
     ),

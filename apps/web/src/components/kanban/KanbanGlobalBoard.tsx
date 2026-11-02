@@ -1,4 +1,5 @@
 import type {
+  EnvironmentId,
   KanbanCard,
   KanbanCardId,
   KanbanColumn,
@@ -7,6 +8,8 @@ import type {
 } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
+
+import { useScratchProject } from "~/hooks/useScratchProject";
 
 import { ArrowUpRightIcon, PlusIcon } from "lucide-react";
 import { ProjectFavicon } from "../ProjectFavicon";
@@ -97,18 +100,24 @@ function Lane(props: {
   );
 }
 
+const NO_PROJECT_KEY = "no-project";
+
 /** Picks the project first; a project without a board gets one before the card is added. */
 function NewCardDialog(props: {
   readonly boards: ReadonlyArray<GlobalBoard>;
   readonly projects: ReadonlyArray<readonly [string, KanbanProjectInfo]>;
+  /** Set when "No project" is offered before its project exists. */
+  readonly scratchEnvironmentId: EnvironmentId | null;
   readonly onClose: () => void;
 }) {
-  const [projectKey, setProjectKey] = useState(props.projects[0]![0]);
+  const { openScratchProject } = useScratchProject();
+  const [projectKey, setProjectKey] = useState(props.projects[0]?.[0] ?? NO_PROJECT_KEY);
   const [columnId, setColumnId] = useState("");
   const [title, setTitle] = useState("");
   const [busy, setBusy] = useState(false);
-  const info = (props.projects.find(([key]) => key === projectKey) ?? props.projects[0]!)[1];
-  const { environmentId, id: projectId } = info.project;
+  const info = props.projects.find(([key]) => key === projectKey)?.[1];
+  const environmentId = info?.project.environmentId ?? props.scratchEnvironmentId!;
+  const projectId = info?.project.id;
   const actions = useKanbanActions(environmentId);
   const canEdit = useKanbanCanEdit(environmentId);
   const board = props.boards.find(
@@ -123,7 +132,12 @@ function NewCardDialog(props: {
   const submit = async () => {
     if (!canSubmit) return;
     setBusy(true);
-    const boardId = board?.id ?? (await actions.ensureBoard({ projectId }))?.boardId;
+    const boardProjectId = projectId ?? (await openScratchProject(environmentId))?.id;
+    const boardId =
+      board?.id ??
+      (boardProjectId === undefined
+        ? undefined
+        : (await actions.ensureBoard({ projectId: boardProjectId }))?.boardId);
     const created =
       boardId === undefined
         ? null
@@ -155,7 +169,12 @@ function NewCardDialog(props: {
               <OptionSelect
                 label="Project"
                 value={projectKey}
-                options={props.projects.map(([key, entry]) => ({ value: key, label: entry.name }))}
+                options={[
+                  ...props.projects.map(([key, entry]) => ({ value: key, label: entry.name })),
+                  ...(props.scratchEnvironmentId === null
+                    ? []
+                    : [{ value: NO_PROJECT_KEY, label: "No project" }]),
+                ]}
                 onChange={(next) => {
                   setProjectKey(next);
                   setColumnId("");
@@ -231,15 +250,30 @@ export function KanbanGlobalBoard(props: {
   const creatable = [...props.projects].filter(([, info]) =>
     connected.has(info.project.environmentId),
   );
+  const { scratchEnvironmentId } = useScratchProject();
+  const offered = scratchEnvironmentId(null);
+  const scratchEnvironment =
+    offered !== null &&
+    connected.has(offered) &&
+    !creatable.some(
+      ([, info]) => info.project.isScratch === true && info.project.environmentId === offered,
+    )
+      ? offered
+      : null;
   const newCard =
-    creatable.length === 0 ? null : (
+    creatable.length === 0 && scratchEnvironment === null ? null : (
       <>
         <Button size="xs" variant="outline" onClick={() => setCreating(true)}>
           <PlusIcon />
           New card
         </Button>
         {creating ? (
-          <NewCardDialog boards={boards} projects={creatable} onClose={() => setCreating(false)} />
+          <NewCardDialog
+            boards={boards}
+            projects={creatable}
+            scratchEnvironmentId={scratchEnvironment}
+            onClose={() => setCreating(false)}
+          />
         ) : null}
       </>
     );

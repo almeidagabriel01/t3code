@@ -8,7 +8,10 @@ import { ProjectFavicon, type ProjectFaviconProject } from "../ProjectFavicon";
 export interface KanbanProjectInfo {
   readonly name: string;
   readonly projectKey: string;
-  readonly project: ProjectFaviconProject & { readonly id: ProjectId };
+  readonly project: ProjectFaviconProject & {
+    readonly id: ProjectId;
+    readonly isScratch?: true;
+  };
 }
 
 /** The color the sidebar badge resolves to for this project, as a text color class. */

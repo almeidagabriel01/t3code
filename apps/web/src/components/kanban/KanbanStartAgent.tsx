@@ -74,6 +74,8 @@ function LaunchForm(props: {
   const [useWorktree, setUseWorktree] = useState(false);
   const [baseBranch, setBaseBranch] = useState("main");
   const [launching, setLaunching] = useState(false);
+  // The No-project folder is not a repository, so there is nothing to branch from.
+  const canUseWorktree = project?.isScratch !== true;
 
   const selection =
     picked !== null &&
@@ -137,7 +139,7 @@ function LaunchForm(props: {
             worktreePath: null,
             createdAt: new Date().toISOString(),
           },
-          ...(useWorktree && baseBranch.trim().length > 0 && project !== null
+          ...(useWorktree && canUseWorktree && baseBranch.trim().length > 0 && project !== null
             ? {
                 prepareWorktree: {
                   projectCwd: project.workspaceRoot,
@@ -235,15 +237,17 @@ function LaunchForm(props: {
               onChange={setPickedRuntimeMode}
             />
           </div>
-          <div className="flex items-center justify-between gap-3">
-            <Label htmlFor="kanban-worktree">New worktree</Label>
-            <Switch
-              id="kanban-worktree"
-              checked={useWorktree}
-              onCheckedChange={(checked) => setUseWorktree(Boolean(checked))}
-            />
-          </div>
-          {useWorktree ? (
+          {canUseWorktree ? (
+            <div className="flex items-center justify-between gap-3">
+              <Label htmlFor="kanban-worktree">New worktree</Label>
+              <Switch
+                id="kanban-worktree"
+                checked={useWorktree}
+                onCheckedChange={(checked) => setUseWorktree(Boolean(checked))}
+              />
+            </div>
+          ) : null}
+          {useWorktree && canUseWorktree ? (
             <div className="grid gap-1.5">
               <Label htmlFor="kanban-base">Base branch</Label>
               <Input
