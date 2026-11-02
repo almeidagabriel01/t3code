@@ -6,6 +6,7 @@ import "vite-plus/test/config";
 const reactTests = [
   "src/features/connection/ConnectionEnvironmentRow.test.tsx",
   "src/features/kanban/KanbanBoardRouteScreen.test.tsx",
+  "src/features/kanban/KanbanCardMenu.test.tsx",
   "src/features/kanban/KanbanAddAttachmentButton.test.tsx",
   "src/features/threads/git/GitBranchesSheet.occupancy.test.tsx",
   "src/features/files/useFileTreeEntries.test.tsx",

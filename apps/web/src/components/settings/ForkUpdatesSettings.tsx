@@ -1,7 +1,12 @@
+import { inferProjectTitleFromPath } from "@t3tools/client-runtime/state/projects";
 import type { EnvironmentId, ForkUpdateStatus } from "@t3tools/contracts";
 import { useState } from "react";
 
 import { updateClientSettings, useClientSettings } from "../../hooks/useSettings";
+import { newProjectId } from "../../lib/utils";
+import { projectEnvironment } from "../../state/projects";
+import { useAtomCommand } from "../../state/use-atom-command";
+import { forkUpdateAction } from "../forkUpdates/forkUpdates.logic";
 import {
   useForkUpdatesEnvironmentId,
   useForkUpdateStatus,
@@ -25,8 +30,9 @@ function describeStatus(status: ForkUpdateStatus): string {
 
 function conflictText(status: ForkUpdateStatus): string | null {
   if (status.behind === 0 || status.wouldConflict === null) return null;
-  if (!status.wouldConflict) return "The merge would apply cleanly.";
-  return `The merge would conflict in ${status.conflictFiles.length} file${status.conflictFiles.length === 1 ? "" : "s"}: ${status.conflictFiles.slice(0, 5).join(", ")}${status.conflictFiles.length > 5 ? ", ..." : ""}`;
+  if (!status.wouldConflict) return "The merge applies cleanly.";
+  const count = status.conflictFiles.length;
+  return `Merging it would conflict in ${count} file${count === 1 ? "" : "s"}.`;
 }
 
 function ForkUpdatesSections({ environmentId }: { readonly environmentId: EnvironmentId }) {
@@ -35,7 +41,24 @@ function ForkUpdatesSections({ environmentId }: { readonly environmentId: Enviro
   const [draft, setDraft] = useState(folder);
   const { status, checking, check } = useForkUpdateStatus(environmentId);
   const startAgent = useStartForkAgent(environmentId, status);
+  const createProject = useAtomCommand(projectEnvironment.create);
+  const [adding, setAdding] = useState(false);
   const conflict = status === null ? null : conflictText(status);
+  const action = status === null ? "none" : forkUpdateAction(status, startAgent !== null);
+  const addProject = async (workspaceRoot: string) => {
+    setAdding(true);
+    await createProject({
+      environmentId,
+      input: {
+        projectId: newProjectId(),
+        title: inferProjectTitleFromPath(workspaceRoot),
+        workspaceRoot,
+        createWorkspaceRootIfMissing: false,
+        defaultModelSelection: null,
+      },
+    });
+    setAdding(false);
+  };
 
   return (
     <SettingsSection id="fork-updates" title="Fork updates">
@@ -92,7 +115,11 @@ function ForkUpdatesSections({ environmentId }: { readonly environmentId: Enviro
           status === null
             ? "Checking upstream..."
             : status.available
-              ? `${describeStatus(status)}${conflict === null ? "" : ` ${conflict}`}`
+              ? `${describeStatus(status)}${conflict === null ? "" : ` ${conflict}`}${
+                  action === "add-project"
+                    ? " Add the fork folder as a project so an agent can run the update."
+                    : ""
+                }`
               : `No fork checkout with an upstream remote at ${status.path}.`
         }
         control={
@@ -100,28 +127,35 @@ function ForkUpdatesSections({ environmentId }: { readonly environmentId: Enviro
             <Button variant="outline" size="compact" disabled={checking} onClick={check}>
               {checking ? "Checking..." : "Check now"}
             </Button>
-            <Button
-              size="compact"
-              disabled={startAgent === null || checking}
-              onClick={() => void startAgent?.("update")}
-            >
-              Update now
-            </Button>
-            <Button
-              variant={status?.wouldConflict ? "default" : "outline"}
-              size="compact"
-              disabled={startAgent === null || checking}
-              onClick={() => void startAgent?.("resolve")}
-            >
-              Resolve with agent
-            </Button>
+            {status?.available && action === "add-project" ? (
+              <Button size="compact" disabled={adding} onClick={() => void addProject(status.path)}>
+                {adding ? "Adding..." : "Add project"}
+              </Button>
+            ) : null}
+            {action === "update" || action === "resolve" ? (
+              <Button size="compact" disabled={checking} onClick={() => void startAgent?.(action)}>
+                {action === "update" ? "Update now" : "Resolve with agent"}
+              </Button>
+            ) : null}
           </div>
         }
       >
-        {status?.available && startAgent === null ? (
-          <p className="mt-2 text-xs text-muted-foreground">
-            Add {status.path} as a project to start update threads from here.
-          </p>
+        {status?.available && status.wouldConflict && status.conflictFiles.length > 0 ? (
+          <details className="group mt-2 text-xs">
+            <summary className="w-fit cursor-pointer rounded-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
+              Show conflicting files
+            </summary>
+            <ul className="mt-1.5 max-h-48 overflow-y-auto rounded-md border border-foreground/12 py-1 font-mono">
+              {status.conflictFiles.map((file) => (
+                <li
+                  key={file}
+                  className="truncate px-2 py-0.5 text-muted-foreground [direction:rtl] [text-align:left]"
+                >
+                  <bdi>{file}</bdi>
+                </li>
+              ))}
+            </ul>
+          </details>
         ) : null}
       </SettingsRow>
     </SettingsSection>

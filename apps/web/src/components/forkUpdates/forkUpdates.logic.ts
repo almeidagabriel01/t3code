@@ -13,3 +13,15 @@ export function shouldNotifyForkUpdate(
     status.upstreamTag !== dismissedTag
   );
 }
+
+export type ForkUpdateAction = "none" | "add-project" | "update" | "resolve";
+
+/** The one action that moves the fork forward: a conflicting merge needs the agent, a clean one just runs. */
+export function forkUpdateAction(
+  status: Pick<ForkUpdateStatus, "available" | "behind" | "wouldConflict">,
+  hasProject: boolean,
+): ForkUpdateAction {
+  if (!status.available || status.behind === 0) return "none";
+  if (!hasProject) return "add-project";
+  return status.wouldConflict === true ? "resolve" : "update";
+}

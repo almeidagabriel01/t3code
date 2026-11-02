@@ -30,6 +30,7 @@ import {
   type BoardViewColumn,
   type NewBoardTarget,
 } from "./kanbanBoardView";
+import { KanbanCardMenu } from "./KanbanCardMenu";
 import { KanbanCardTile } from "./KanbanCardTile";
 import { useCreateKanbanBoard, useCreateKanbanCard } from "./useCreateKanbanBoard";
 import { useKanbanActions } from "./useKanbanActions";
@@ -175,20 +176,29 @@ function ColumnPage(props: {
             No cards
           </Text>
         ) : (
-          column.cards.map(({ environmentId, board, card, projectId }) => (
-            <KanbanCardTile
-              key={card.id}
-              card={card}
-              board={board}
-              now={props.now}
-              projectLabel={
-                projectId === null ? undefined : props.projectLabel(environmentId, projectId)
-              }
-              onPress={() =>
-                navigation.navigate("SettingsKanbanCard", { environmentId, cardId: card.id })
-              }
-            />
-          ))
+          column.cards.map(({ environmentId, board, card, projectId }) => {
+            const open = () =>
+              navigation.navigate("SettingsKanbanCard", { environmentId, cardId: card.id });
+            return (
+              <KanbanCardMenu
+                key={card.id}
+                environmentId={environmentId}
+                board={board}
+                card={card}
+                onOpen={open}
+              >
+                <KanbanCardTile
+                  card={card}
+                  board={board}
+                  now={props.now}
+                  projectLabel={
+                    projectId === null ? undefined : props.projectLabel(environmentId, projectId)
+                  }
+                  onPress={open}
+                />
+              </KanbanCardMenu>
+            );
+          })
         )}
         {column.addTo ? <AddCardButton addTo={column.addTo} /> : null}
       </View>

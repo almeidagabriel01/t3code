@@ -3,10 +3,8 @@ import {
   collectGlobalBoards,
   definitionOfDoneWarning,
   describeCardEvent,
-  dueAtToInput,
   formatCardDuration,
   findCardInBoards,
-  inputToDueAt,
   KANBAN_PRIORITIES,
   KANBAN_PRIORITY_LABELS,
 } from "@t3tools/client-runtime/state/kanbanLogic";
@@ -48,6 +46,7 @@ import { useOpenLinkedThread } from "../threads/useOpenLinkedThread";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { KanbanAddAttachmentButton } from "./KanbanAddAttachmentButton";
 import { KanbanCardAttachmentList, KanbanCardCoverImage } from "./KanbanCardAttachments";
+import { promptDueDate } from "./KanbanCardMenu";
 import { KanbanLabelChip } from "./KanbanCardTile";
 import { useKanbanActions } from "./useKanbanActions";
 import { useStartKanbanAgent } from "./useStartKanbanAgent";
@@ -354,21 +353,7 @@ function KanbanCardDetail(props: {
         : [...card.labelIds, labelId],
     });
   const editDue = () =>
-    Dialog.prompt({
-      title: "Due date",
-      message: "YYYY-MM-DD, or empty to clear.",
-      initialValue: dueAtToInput(card.dueAt),
-      confirmText: "Save",
-      onConfirm: (value) => {
-        const text = value.trim();
-        const dueAt = text === "" ? null : inputToDueAt(text);
-        if (text !== "" && dueAt === null) {
-          Dialog.alert("Invalid date", "Use the format YYYY-MM-DD.");
-          return;
-        }
-        void actions.updateCard({ cardId, dueAt });
-      },
-    });
+    promptDueDate(card.dueAt, (dueAt) => void actions.updateCard({ cardId, dueAt }));
   const confirmDelete = () =>
     Dialog.confirm({
       title: `Delete #${card.number}?`,

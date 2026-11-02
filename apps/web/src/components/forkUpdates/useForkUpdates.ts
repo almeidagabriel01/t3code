@@ -1,5 +1,6 @@
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { findProjectByPath } from "@t3tools/client-runtime/state/projects";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   AuthDiagnosticsReadScope,
@@ -74,9 +75,9 @@ export function useStartForkAgent(environmentId: EnvironmentId, status: ForkUpda
   const project =
     path === null
       ? null
-      : (projects.find(
-          (candidate) =>
-            candidate.environmentId === environmentId && candidate.workspaceRoot === path,
+      : (findProjectByPath(
+          projects.filter((candidate) => candidate.environmentId === environmentId),
+          path,
         ) ?? null);
   const settings = useEnvironmentSettings(environmentId);
   const providers =
