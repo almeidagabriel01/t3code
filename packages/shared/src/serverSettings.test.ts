@@ -106,6 +106,18 @@ describe("fallbackTextGenerationModelSelection", () => {
     ]);
     expect(upsertFolderModelDefault([rule], "~/play", m("b"))).toHaveLength(2);
     expect(upsertFolderModelDefault([rule], "   ", m("b"))).toEqual([rule]);
+    // The client can't expand `~`; a home-relative path matches the stored absolute rule.
+    const stored = { folder: "/Users/me/work", modelSelection: m("a") };
+    expect(upsertFolderModelDefault([stored], "~/work/", m("b"))).toEqual([
+      { folder: "/Users/me/work", modelSelection: m("b") },
+    ]);
+    expect(
+      upsertFolderModelDefault([{ ...stored, folder: "/home/me/work" }], "~/work", m("b")),
+    ).toHaveLength(1);
+    expect(upsertFolderModelDefault([stored], "~/me/work", m("b"))).toHaveLength(2);
+    expect(
+      upsertFolderModelDefault([{ ...stored, folder: "/Users/me/x/work" }], "~/work", m("b")),
+    ).toHaveLength(2);
     const full = Array.from({ length: 50 }, (_, i) => ({
       folder: `/f${i}`,
       modelSelection: m("a"),

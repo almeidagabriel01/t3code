@@ -446,7 +446,15 @@ export function upsertFolderModelDefault(
 ): ReadonlyArray<FolderModelDefault> {
   const normalized = normalizeProjectPathForDispatch(folder);
   if (normalized === "") return list;
-  const at = list.findIndex((rule) => normalizeProjectPathForDispatch(rule.folder) === normalized);
+  const homeRelative = /^~(\/.*)$/.exec(normalized)?.[1];
+  const at = list.findIndex((rule) => {
+    const stored = normalizeProjectPathForDispatch(rule.folder);
+    return (
+      stored === normalized ||
+      (homeRelative !== undefined &&
+        /^\/(?:Users|home)\/[^/]+(\/.*)$/.exec(stored)?.[1] === homeRelative)
+    );
+  });
   if (at >= 0) return list.map((rule, i) => (i === at ? { ...rule, modelSelection } : rule));
   return list.length >= MAX_FOLDER_MODEL_DEFAULTS
     ? list
