@@ -192,6 +192,11 @@ narrow windows these shortcuts move to the bottom of the sidebar.
 **Running** lists every thread that is working or needs you, grouped by project; its badge
 counts them. Threads that need you come first.
 
+**Board** shows every project's cards; filter by project, or switch to **By project**. For tasks
+that belong to no project, pick **No project** in **New card**: those cards live on their own
+board, and an agent started from one runs as a thread without a project. On mobile, the board is
+under **Settings → Board**, where **New board** creates a board for a project that has none.
+
 Select **+** at the bottom of the rail to show or hide items and move them up or down. Home and
 Settings always stay. **Add provider** appears on its own while your main machine has no working
 provider, and opens the same setup as **Settings → Providers**. An item you turn on or off stays

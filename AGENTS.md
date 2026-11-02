@@ -224,6 +224,7 @@ This checkout is a personal fork that adds features (notes, kanban, memory, dest
 - Subagents do not verify visually. The session that integrates their work captures and reads the screenshots before reporting.
 - Capture with short content as well as long. Sticky and floating chrome that looks right on a full page can float mid-screen on a near-empty one; its container must fill the pane.
 - On the mobile simulator, Expo's floating "Tools button" sits over the thread header's right button and swallows taps. Turn it off in the dev menu before driving the header.
+- Never start Metro with `CI=1`: Expo then stops watching files, so edits never reach the device and every device test runs stale code. Prove a reload with a visible text change before trusting a result.
 
 ### Layout and design
 

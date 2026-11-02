@@ -42,7 +42,8 @@ in the background; the note saves the image after the upload finishes.
 
 **Start work** turns a note into a card on a project's board, with the note as the card's
 description, and links the two. T3 Code suggests the project named like the note's folder,
-otherwise the project you used most recently. Choose a column, or leave the default.
+otherwise the project you used most recently, and **No project** puts the card on the board for
+tasks without a project. Choose a column, or leave the default.
 
 When the card is ready you can open it or start an agent on it. The note then shows the card, its
 column, and **Unlink**. If the card is deleted, the note says so and you can unlink it.
