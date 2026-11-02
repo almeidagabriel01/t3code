@@ -14,6 +14,7 @@ import {
   ENVIRONMENT_ID,
   PROJECT_ID,
   installFakeEnvironment,
+  threadWithHistory,
   type FakeDriver,
 } from "../../test/fakeEnvironment";
 import { render } from "../../test/render";
@@ -32,6 +33,32 @@ vi.mock(import("~/rpc/requestLatencyState"), async (original) => ({
   ...(await original()),
   trackRpcRequestSent: () => {},
 }));
+
+it("Toggle side chat starts a side chat and shows its pane, and toggles it closed", async () => {
+  await page.viewport(1400, 900);
+  const parent = threadWithHistory("thread-parent", 1);
+  using _environment = installFakeEnvironment([parent], { sideChats: true });
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${parent.id}`] }),
+  );
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, { router: false });
+  await expect.element(page.getByText("thread-parent: question 0")).toBeVisible();
+  await expect.element(page.getByRole("button", { name: "Toggle side chat" })).toBeVisible();
+  await page.getByRole("button", { name: "Toggle side chat" }).click();
+  await expect.element(page.getByRole("button", { name: "Close side chat" })).toBeVisible();
+  await expect.element(page.getByRole("button", { name: "Turn into thread" })).toBeVisible();
+  await expect.element(page.getByTestId("composer-editor").last()).toBeVisible();
+
+  await page.getByRole("button", { name: "Toggle side chat" }).click();
+  await expect
+    .element(page.getByRole("button", { name: "Close side chat" }))
+    .not.toBeInTheDocument();
+});
 
 it("a new draft does not load its reserved thread before the server lists it", async () => {
   using _environment = installFakeEnvironment([]);

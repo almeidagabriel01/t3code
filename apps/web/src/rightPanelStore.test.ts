@@ -43,6 +43,15 @@ async function reloadRightPanelStore() {
 }
 
 describe("rightPanelStore", () => {
+  it("shows an explicitly opened side chat and opens the closed panel", () => {
+    const sideChatId = ThreadId.make("side-1");
+    useRightPanelStore.getState().openSideChat(refA, sideChatId);
+    const state = useRightPanelStore.getState();
+    expect(state.panelOpen).toBe(true);
+    expect(selectThreadRightPanelState(state.byThreadKey, refA).isOpen).toBe(true);
+    expect(selectActiveRightPanelSurface(state.byThreadKey, refA)?.id).toBe("side-chat:side-1");
+  });
+
   it("opens a hosted side chat's panel actions in its parent's panel until unhosted", () => {
     const store = useRightPanelStore.getState();
     const unhost = hostRightPanel(refB, refA);

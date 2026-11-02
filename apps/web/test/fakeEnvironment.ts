@@ -350,21 +350,29 @@ const subscribe = <A>(first: ReadonlyArray<A>, register?: (queue: Queue.Queue<A>
     }),
   );
 
+const shellSubscribers = new Set<Queue.Queue<OrchestrationV2ShellStreamItem>>();
+
 const handlers: Record<string, (input: never) => unknown> = {
   [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: () =>
-    subscribe<OrchestrationV2ShellStreamItem>([
-      {
-        kind: "snapshot",
-        snapshot: {
-          schemaVersion: 1,
-          snapshotSequence: sequence,
-          projects: [project],
-          threads: threads.map(shellOf),
-          archivedThreads: [],
+    subscribe<OrchestrationV2ShellStreamItem>(
+      [
+        {
+          kind: "snapshot",
+          snapshot: {
+            schemaVersion: 1,
+            snapshotSequence: sequence,
+            projects: [project],
+            threads: threads.map(shellOf),
+            archivedThreads: [],
+          },
         },
+        { kind: "synchronized" },
+      ],
+      (queue) => {
+        shellSubscribers.add(queue);
+        return () => shellSubscribers.delete(queue);
       },
-      { kind: "synchronized" },
-    ]),
+    ),
   [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: (input: { readonly threadId: ThreadId }) => {
     const thread = threads.find((candidate) => candidate.id === input.threadId);
     if (!thread) return Stream.never;
@@ -386,6 +394,42 @@ const handlers: Record<string, (input: never) => unknown> = {
   [WS_METHODS.subscribeServerConfig]: () =>
     subscribe([{ version: 1 as const, type: "snapshot" as const, config: currentServerConfig() }]),
 };
+
+// Forking a side chat adds an empty thread under its parent, as the server does.
+handlers[ORCHESTRATION_V2_WS_METHODS.dispatchCommand] = (command: {
+  readonly type: string;
+  readonly sourceThreadId?: ThreadId;
+  readonly targetThreadId?: ThreadId;
+  readonly title?: string;
+}) =>
+  Effect.sync(() => {
+    sequence += 1;
+    if (command.type === "thread.fork" && command.sourceThreadId && command.targetThreadId) {
+      const child: FakeThread = {
+        id: command.targetThreadId,
+        title: command.title ?? "Side chat",
+        runs: [],
+        items: [],
+      };
+      threads = [...threads, child];
+      const shell = shellOf(child);
+      const thread = {
+        ...shell,
+        lineage: {
+          rootThreadId: command.sourceThreadId,
+          parentThreadId: command.sourceThreadId,
+          relationshipToParent: null,
+          sideChat: true,
+        },
+      };
+      for (const queue of shellSubscribers) {
+        Effect.runSync(
+          Queue.offer(queue, { kind: "thread.updated", sequence, location: "active", thread }),
+        );
+      }
+    }
+    return { sequence };
+  });
 
 /** Decisions the fake server holds, and the answer and dismiss calls it received. */
 export const fakeDecisions = {
@@ -622,6 +666,7 @@ export function installFakeEnvironment(
     readonly decisions?: boolean;
     readonly assistants?: boolean;
     readonly imessageChannel?: boolean;
+    readonly sideChats?: boolean;
     readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
   } = {},
 ): Disposable {
@@ -630,6 +675,7 @@ export function installFakeEnvironment(
     ...(options.decisions ? { decisions: true } : {}),
     ...(options.assistants ? { assistants: true } : {}),
     ...(options.imessageChannel ? { imessageChannel: true } : {}),
+    ...(options.sideChats ? { sideChats: true } : {}),
   };
   const encodedDescriptor = encodeDescriptor(extraCapabilities);
   globalThis.fetch = async (input, init) => {
