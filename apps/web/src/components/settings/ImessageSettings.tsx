@@ -1,3 +1,8 @@
+import {
+  compactImessageHandle,
+  formatImessageHandleInput,
+  imessageDefaultCallingCode,
+} from "@t3tools/client-runtime/state/imessageChannel";
 import type { EnvironmentId } from "@t3tools/contracts";
 import {
   AtSignIcon,
@@ -35,6 +40,12 @@ import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsL
 import { searchableSetting } from "./settingsSearch";
 
 const SECTION_ICON = "size-4 text-muted-foreground";
+// Desktop puts its own en-US first in navigator.languages; the OS locale names the real region.
+const CALLING_CODE = imessageDefaultCallingCode([
+  ...(typeof window === "undefined" ? [] : [window.desktopBridge?.getSystemLocale() ?? ""]),
+  ...(typeof navigator === "undefined" ? [] : navigator.languages),
+  Intl.DateTimeFormat().resolvedOptions().locale,
+]);
 
 function FieldError({ message }: { readonly message: string | null }) {
   return message ? (
@@ -59,9 +70,10 @@ function HandleSection(props: {
   const [error, setError] = useState<string | null>(null);
 
   const add = async () => {
-    const handle = draft.trim();
+    const handle = compactImessageHandle(draft);
     if (handle === "") return;
-    if (handles.includes(handle)) return setError("That one is already on the list.");
+    if (handles.some((item) => compactImessageHandle(item) === handle))
+      return setError("That one is already on the list.");
     const reply = await save([...handles, handle]);
     if (!reply.ok) return setError(reply.message);
     setError(null);
@@ -83,10 +95,12 @@ function HandleSection(props: {
           <div className="flex w-full items-center gap-2 @min-[32rem]/settings-row:w-72">
             <Input
               aria-label={props.label}
-              placeholder="+15551234567 or name@example.com"
+              placeholder="Phone number or email"
               value={draft}
               disabled={!canAct}
-              onChange={(event) => setDraft(event.target.value)}
+              onChange={(event) =>
+                setDraft(formatImessageHandleInput(event.target.value, CALLING_CODE))
+              }
               onKeyDown={(event) => {
                 if (event.key === "Enter") void add();
               }}
@@ -104,7 +118,7 @@ function HandleSection(props: {
         handles.map((handle) => (
           <SettingsRow
             key={handle}
-            title={<span className="font-mono">{handle}</span>}
+            title={<span className="font-mono">{formatImessageHandleInput(handle)}</span>}
             control={
               <Tooltip>
                 <TooltipTrigger

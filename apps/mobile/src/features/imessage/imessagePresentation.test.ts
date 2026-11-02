@@ -60,9 +60,11 @@ describe("iMessage presentation", () => {
 
   it("trims handles and rejects blanks and duplicates", () => {
     expect(parseImessageHandle("  ", [])).toHaveProperty("error");
+    expect(parseImessageHandle("+55 (11) 9", [])).toEqual({ handle: "+55119" });
     expect(parseImessageHandle(" A@B.com ", ["a@b.com"])).toEqual({
       error: "That is already added.",
     });
     expect(parseImessageHandle(" +5511 ", [])).toEqual({ handle: "+5511" });
+    expect(parseImessageHandle("+55 (11) 99999-8888", ["+5511999998888"])).toHaveProperty("error");
   });
 });

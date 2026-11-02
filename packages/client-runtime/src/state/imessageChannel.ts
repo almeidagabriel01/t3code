@@ -62,3 +62,83 @@ export function createImessageChannelEnvironmentAtoms<R, E>(
     }),
   };
 }
+
+const CALLING_CODES: Readonly<Record<string, string>> = {
+  AR: "54",
+  AU: "61",
+  BR: "55",
+  CA: "1",
+  CH: "41",
+  CL: "56",
+  CO: "57",
+  DE: "49",
+  ES: "34",
+  FR: "33",
+  GB: "44",
+  IE: "353",
+  IN: "91",
+  IT: "39",
+  JP: "81",
+  MX: "52",
+  NL: "31",
+  PE: "51",
+  PT: "351",
+  PY: "595",
+  US: "1",
+  UY: "598",
+};
+
+/** The calling code of the first locale that names a known region, such as `pt-BR` → `55`. */
+export function imessageDefaultCallingCode(locales: ReadonlyArray<string>): string | undefined {
+  for (const locale of locales) {
+    const region = /[-_]([A-Za-z]{2})(?:[-_]|$)/.exec(locale)?.[1]?.toUpperCase();
+    if (region && CALLING_CODES[region]) return CALLING_CODES[region];
+  }
+  return undefined;
+}
+
+const group = (digits: string, sizes: ReadonlyArray<number>, separators: ReadonlyArray<string>) => {
+  let out = "";
+  let at = 0;
+  sizes.forEach((size, index) => {
+    if (at >= digits.length) return;
+    out += (at === 0 ? "" : separators[index - 1]) + digits.slice(at, at + size);
+    at += size;
+  });
+  return out + digits.slice(at);
+};
+
+/** A typed handle without the mask's separators, as the server stores it; emails are lowercased. */
+export const compactImessageHandle = (value: string) =>
+  value.includes("@") ? value.trim().toLowerCase() : value.replace(/[\s\-().]/g, "");
+
+/**
+ * Formats a phone number as it is typed; emails pass through. A number typed without `+` is
+ * national and gets `callingCode`. Separators only appear before a digit, so backspace never sticks.
+ */
+export function formatImessageHandleInput(value: string, callingCode?: string): string {
+  if (/[A-Za-z@_]/.test(value)) return value;
+  let digits = value.replace(/\D/g, "");
+  if (digits === "") return value.trim().startsWith("+") ? "+" : "";
+  if (!value.trim().startsWith("+") && callingCode) {
+    const international =
+      digits.startsWith(callingCode) && digits.length > (callingCode === "55" ? 11 : 10);
+    if (!international) digits = callingCode + digits;
+  }
+  if (digits.startsWith("55")) {
+    const national = digits.slice(2, 13);
+    if (national === "") return "+55";
+    const area = national.slice(0, 2);
+    const rest = national.slice(2);
+    const line = rest.length > 8 ? group(rest, [5, 4], ["-"]) : group(rest, [4, 4], ["-"]);
+    return `+55 (${area}${rest === "" ? "" : `) ${line}`}`;
+  }
+  if (digits.startsWith("1")) {
+    const national = digits.slice(1, 11);
+    if (national === "") return "+1";
+    const area = national.slice(0, 3);
+    const rest = national.slice(3);
+    return `+1 (${area}${rest === "" ? "" : `) ${group(rest, [3, 4], ["-"])}`}`;
+  }
+  return `+${digits.slice(0, 15)}`;
+}

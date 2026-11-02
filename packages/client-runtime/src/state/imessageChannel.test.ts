@@ -1,7 +1,12 @@
 import { assert, describe, it } from "@effect/vitest";
 import type { ImessageChannelSettings, ImessageChannelStatusEvent } from "@t3tools/contracts";
 
-import { applyImessageStatusEvent } from "./imessageChannel.ts";
+import {
+  applyImessageStatusEvent,
+  compactImessageHandle,
+  formatImessageHandleInput,
+  imessageDefaultCallingCode,
+} from "./imessageChannel.ts";
 
 const settings: ImessageChannelSettings = {
   enabled: true,
@@ -31,5 +36,46 @@ describe("applyImessageStatusEvent", () => {
       ...withoutError,
       status: "running",
     });
+  });
+});
+
+describe("formatImessageHandleInput", () => {
+  it.each([
+    ["", "55", ""],
+    ["+", "55", "+"],
+    ["3", "55", "+55 (3"],
+    ["35999", "55", "+55 (35) 999"],
+    ["35999998888", "55", "+55 (35) 99999-8888"],
+    ["3533334444", "55", "+55 (35) 3333-4444"],
+    ["(35) 99999-8888", "55", "+55 (35) 99999-8888"],
+    ["5535999998888", "55", "+55 (35) 99999-8888"],
+    ["+55 (", "55", "+55"],
+    ["+55 (35) 99999-88889", "55", "+55 (35) 99999-8888"],
+    ["5551234567", "1", "+1 (555) 123-4567"],
+    ["15551234567", "1", "+1 (555) 123-4567"],
+    ["+351912345678", "55", "+351912345678"],
+    ["35999998888", undefined, "+35999998888"],
+    ["Me@Example.com", "55", "Me@Example.com"],
+  ])("formats %j with calling code %s as %j", (input, code, expected) => {
+    assert.strictEqual(formatImessageHandleInput(input, code), expected);
+  });
+});
+
+describe("compactImessageHandle", () => {
+  it("drops mask separators from numbers and lowercases emails", () => {
+    assert.strictEqual(compactImessageHandle("+55 (35) 99999-8888"), "+5535999998888");
+    assert.strictEqual(compactImessageHandle(" Me@Example.com "), "me@example.com");
+  });
+});
+
+describe("imessageDefaultCallingCode", () => {
+  it.each([
+    [["en-BR", "pt-BR"], "55"],
+    [["en", "pt_BR"], "55"],
+    [["en-US"], "1"],
+    [["zz-QQ", "pt-PT"], "351"],
+    [["en"], undefined],
+  ])("reads %j as %s", (locales, expected) => {
+    assert.strictEqual(imessageDefaultCallingCode(locales), expected);
   });
 });

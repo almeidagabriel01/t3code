@@ -1,3 +1,4 @@
+import { compactImessageHandle } from "@t3tools/client-runtime/state/imessageChannel";
 import type { ImessageChannelAccess, ImessageChannelSettings } from "@t3tools/contracts";
 
 const ERROR_SENTENCES: Record<string, string> = {
@@ -78,9 +79,9 @@ export function parseImessageHandle(
   input: string,
   existing: ReadonlyArray<string>,
 ): { readonly handle: string } | { readonly error: string } {
-  const handle = input.trim();
-  if (handle === "") return { error: "Type a phone number with country code or an email." };
-  return existing.some((entry) => entry.toLowerCase() === handle.toLowerCase())
+  const handle = compactImessageHandle(input);
+  if (handle === "") return { error: "Type a phone number or an email." };
+  return existing.some((entry) => compactImessageHandle(entry) === handle)
     ? { error: "That is already added." }
     : { handle };
 }

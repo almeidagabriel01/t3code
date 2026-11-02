@@ -1,3 +1,7 @@
+import {
+  formatImessageHandleInput,
+  imessageDefaultCallingCode,
+} from "@t3tools/client-runtime/state/imessageChannel";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useState, type ComponentProps } from "react";
 import { Pressable, TextInput, View } from "react-native";
@@ -21,6 +25,8 @@ import {
   imessageStatusLabel,
   parseImessageHandle,
 } from "./imessagePresentation";
+
+const CALLING_CODE = imessageDefaultCallingCode([Intl.DateTimeFormat().resolvedOptions().locale]);
 
 function Hint(props: { readonly children: string; readonly tone?: "danger" }) {
   return (
@@ -122,7 +128,7 @@ function HandleSection(props: {
         <ItemRow
           key={handle}
           icon={props.icon}
-          label={handle}
+          label={formatImessageHandleInput(handle)}
           actionLabel={`Remove ${handle}`}
           disabled={props.disabled}
           onAction={() => void props.onChange(props.handles.filter((entry) => entry !== handle))}
@@ -131,9 +137,9 @@ function HandleSection(props: {
       <Field
         label={props.fieldLabel}
         icon="plus"
-        placeholder="+5511999999999 or name@example.com"
+        placeholder="Phone number or email"
         value={draft}
-        onChange={setDraft}
+        onChange={(value) => setDraft(formatImessageHandleInput(value, CALLING_CODE))}
         disabled={props.disabled}
       />
       <SettingsActionRow
