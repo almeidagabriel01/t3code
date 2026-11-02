@@ -23,7 +23,13 @@ export interface ScopedMobileSettingsTarget {
 
 export function resolveMobileSettingsTargets(
   environments: readonly SettingsTarget[],
-  members: readonly { readonly environmentId: EnvironmentId; readonly id: ProjectId }[] | null,
+  members:
+    | readonly {
+        readonly environmentId: EnvironmentId;
+        readonly id: ProjectId;
+        readonly workspaceRoot?: string;
+      }[]
+    | null,
 ): readonly ScopedMobileSettingsTarget[] {
   if (members === null) {
     return environments.map((environment) => ({
@@ -40,7 +46,9 @@ export function resolveMobileSettingsTargets(
       {
         environment,
         projectId: member.id,
-        ...resolveProjectSettings(environment.serverConfig.settings, member.id),
+        ...resolveProjectSettings(environment.serverConfig.settings, member.id, {
+          workspaceRoot: member.workspaceRoot,
+        }),
       },
     ];
   });

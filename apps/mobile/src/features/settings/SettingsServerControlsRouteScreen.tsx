@@ -1,3 +1,4 @@
+import * as Equal from "effect/Equal";
 import { useNavigation } from "@react-navigation/native";
 import { SettingsRow } from "./components/SettingsRow";
 import { AuthSettingsWriteScope } from "@t3tools/contracts";
@@ -42,6 +43,7 @@ import {
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import { AutoSettleSettingsRows } from "./ThreadSettingsSections";
 import { FallbackModelsSection } from "./components/FallbackModelsSection";
+import { FolderModelsSection } from "./components/FolderModelsSection";
 import { sameFallbackModels } from "@t3tools/shared/serverSettings";
 import { fallbackModelSelectionsOf } from "@t3tools/shared/usageLimits";
 import { supportsSharedSettingsSync } from "@t3tools/client-runtime/state/shared-settings";
@@ -390,6 +392,21 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                           !sameFallbackModels(
                             fallbackModelSelectionsOf(entry.settings),
                             fallbackModelSelectionsOf(reference.settings),
+                          ),
+                      )}
+                      write={write}
+                    />
+                  ) : null}
+                  {!projectSelected ? (
+                    <FolderModelsSection
+                      environmentId={reference.environment.environmentId}
+                      rules={reference.settings.folderModelDefaults}
+                      editable={!disabled && displayTargets.length === 1}
+                      mixed={displayTargets.some(
+                        (entry) =>
+                          !Equal.equals(
+                            entry.settings.folderModelDefaults,
+                            reference.settings.folderModelDefaults,
                           ),
                       )}
                       write={write}

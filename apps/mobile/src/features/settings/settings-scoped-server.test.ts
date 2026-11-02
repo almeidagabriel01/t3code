@@ -106,6 +106,24 @@ describe("mobile project settings scope", () => {
     expect(secondSettings.responseStreamingMode).toBe("turn");
   });
 
+  it("shows a folder rule's model for a project inside that folder", () => {
+    const folderModel = { instanceId: "codex" as never, model: "folder-model" };
+    const settings: ServerSettings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      folderModelDefaults: [{ folder: "/work", modelSelection: folderModel }],
+    };
+    const [inside, outside] = resolveMobileSettingsTargets(
+      [environment(firstId, settings)],
+      [
+        { environmentId: firstId, id: firstProject, workspaceRoot: "/work/app" },
+        { environmentId: firstId, id: secondProject, workspaceRoot: "/elsewhere/app" },
+      ],
+    );
+    expect(inside?.settings.defaultModelSelection).toEqual(folderModel);
+    expect(inside?.sources.defaultModelSelection).toBe("folder");
+    expect(outside?.settings.defaultModelSelection).toBeNull();
+  });
+
   it("removes a project override when a picker sends null for a key that cannot store it", () => {
     const settings: ServerSettings = {
       ...DEFAULT_SERVER_SETTINGS,

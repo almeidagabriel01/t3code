@@ -140,6 +140,8 @@ import { SettingsImessageRouteScreen } from "./features/imessage/SettingsImessag
 import { SettingsMemoryRouteScreen } from "./features/settings/SettingsMemoryRouteScreen";
 import { ClaudeChromeRouteScreen } from "./features/settings/ClaudeChromeRouteScreen";
 import { FallbackModelPickerRouteScreen } from "./features/settings/FallbackModelPickerRouteScreen";
+import { FolderModelPickerRouteScreen } from "./features/settings/FolderModelPickerRouteScreen";
+import { FolderModelRouteScreen } from "./features/settings/FolderModelRouteScreen";
 import { MemoryModelPickerRouteScreen } from "./features/settings/MemoryModelPickerRouteScreen";
 import { NoteRouteScreen } from "./features/notes/NoteRouteScreen";
 import { NoteConflictRouteScreen } from "./features/notes/NoteConflictRouteScreen";
@@ -475,6 +477,22 @@ const SETTINGS_SCREENS = {
   }),
   SettingsFallbackModel: createNativeStackScreen({
     screen: FallbackModelPickerRouteScreen,
+    options: {
+      ...SETTINGS_PAGE_OPTIONS,
+      headerShown: false,
+      ...(Platform.OS === "android"
+        ? { presentation: "card" as const }
+        : {
+            ...THREAD_SETTINGS_SHEET_OPTIONS,
+          }),
+    },
+  }),
+  SettingsFolderModel: createNativeStackScreen({
+    screen: FolderModelRouteScreen,
+    options: { ...SETTINGS_PAGE_OPTIONS, title: "Add folder" },
+  }),
+  SettingsFolderModelPicker: createNativeStackScreen({
+    screen: FolderModelPickerRouteScreen,
     options: {
       ...SETTINGS_PAGE_OPTIONS,
       headerShown: false,
