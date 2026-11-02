@@ -38,7 +38,7 @@ export function FolderModelRouteScreen({ route }: StaticScreenProps<FolderModelP
       </View>
       <SettingsSection>
         <SettingsRow
-          icon="brain"
+          icon="cube"
           label="Choose model"
           disabled={trimmed === ""}
           onPress={() =>

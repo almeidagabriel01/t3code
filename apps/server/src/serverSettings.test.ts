@@ -290,6 +290,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         folderModelDefaults: [
           { folder: "~/work/", modelSelection },
           { folder: "/srv/apps/", modelSelection },
+          { folder: "/srv/apps", modelSelection },
         ],
       });
       assert.deepEqual(

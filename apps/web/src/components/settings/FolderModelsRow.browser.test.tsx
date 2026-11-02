@@ -54,6 +54,7 @@ const modelSelection = { instanceId: codex.instanceId, model: "synthetic-model" 
 const row = (
   rules: typeof DEFAULT_UNIFIED_SETTINGS.folderModelDefaults,
   update: (patch: unknown) => void,
+  mixed = false,
 ) => {
   const settings = { ...DEFAULT_UNIFIED_SETTINGS, folderModelDefaults: rules };
   return (
@@ -61,7 +62,7 @@ const row = (
       settings={settings}
       providers={[codex]}
       update={update as never}
-      mixed={false}
+      mixed={mixed}
       anchor={modelSelection}
       environmentId={EnvironmentId.make("device")}
       instanceEntries={providerInstanceEntriesFor([codex], settings, null)}
@@ -86,9 +87,22 @@ it("adds a rule with the typed folder and the default model", async () => {
   await using _screen = await render(row([], update), { router: false });
 
   await userEvent.click(page.getByRole("button", { name: "Add folder" }));
+  await userEvent.click(page.getByRole("button", { name: "Cancel" }));
+  await expect.element(page.getByLabelText("Folder")).not.toBeInTheDocument();
+  await userEvent.click(page.getByRole("button", { name: "Add folder" }));
   await userEvent.fill(page.getByLabelText("Folder"), "  ~/work/ ");
   await userEvent.click(page.getByRole("button", { name: "Add", exact: true }));
   expect(update).toHaveBeenCalledWith({
     folderModelDefaults: [{ folder: "~/work", modelSelection }],
   });
+});
+
+it("shows only Mixed when the selected environments differ", async () => {
+  await using _screen = await render(
+    row([{ folder: "/Users/me/work", modelSelection }], vi.fn(), true),
+    { router: false },
+  );
+
+  await expect.element(page.getByText("Mixed")).toBeVisible();
+  await expect.element(page.getByText("/Users/me/work")).not.toBeInTheDocument();
 });

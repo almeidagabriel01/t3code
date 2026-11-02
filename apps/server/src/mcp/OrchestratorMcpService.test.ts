@@ -10,6 +10,7 @@ import {
   OrchestratorMcpTarget,
   type OrchestrationV2ThreadShell,
   type ScheduledTask,
+  type ScheduledTaskUpsertInput,
   ScheduledTaskId,
   ProjectId,
   ProviderDriverKind,
@@ -27,7 +28,6 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -2246,20 +2246,20 @@ describe("OrchestratorMcpService provider resolution", () => {
       );
 
     it.effect.each([
-      [
-        "a folder rule",
-        { folderModelDefaults: [{ folder: "/work", modelSelection: folderModel }] },
-        folderModel,
-      ],
-      [
-        "a project override over the folder rule",
-        {
+      {
+        name: "a folder rule",
+        settings: { folderModelDefaults: [{ folder: "/work", modelSelection: folderModel }] },
+        expected: folderModel,
+      },
+      {
+        name: "a project override over the folder rule",
+        settings: {
           folderModelDefaults: [{ folder: "/work", modelSelection: folderModel }],
           projectSettingsOverrides: { [projectId]: { defaultModelSelection: overrideModel } },
         },
-        overrideModel,
-      ],
-    ])("schedules a task with the model from %s", ([, settings, expected]) =>
+        expected: overrideModel,
+      },
+    ])("schedules a task with the model from $name", ({ settings, expected }) =>
       Effect.gen(function* () {
         const upserts: Array<ScheduledTaskUpsertInput> = [];
         yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
@@ -2285,13 +2285,11 @@ describe("OrchestratorMcpService provider resolution", () => {
                   }),
                   Layer.mock(ProjectService.ProjectService)({
                     getById: () =>
-                      Effect.succeed(
-                        Option.some({
-                          id: projectId,
-                          workspaceRoot: "/work/app",
-                          defaultModelSelection: null,
-                        } as never),
-                      ),
+                      Effect.succeedSome({
+                        id: projectId,
+                        workspaceRoot: "/work/app",
+                        defaultModelSelection: null,
+                      } as never),
                   }),
                   Layer.mock(SecretRequests.SecretRequests)({}),
                   Layer.mock(RemoteDelegation.RemoteDelegation)({}),

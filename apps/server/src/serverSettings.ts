@@ -732,10 +732,14 @@ const withNormalizedFolderRules = (
     ? patch
     : {
         ...patch,
-        folderModelDefaults: patch.folderModelDefaults.map((rule) => ({
-          ...rule,
-          folder: normalizeProjectPathForDispatch(expandHomePath(rule.folder, home)),
-        })),
+        folderModelDefaults: [
+          ...new Map(
+            patch.folderModelDefaults.map((rule) => {
+              const folder = normalizeProjectPathForDispatch(expandHomePath(rule.folder, home));
+              return [folder, { ...rule, folder }] as const;
+            }),
+          ).values(),
+        ],
       };
 
 const make = Effect.gen(function* () {

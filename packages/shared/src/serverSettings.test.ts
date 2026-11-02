@@ -82,6 +82,21 @@ describe("fallbackTextGenerationModelSelection", () => {
         .fallbackModelSelections,
     ).toEqual([b, c]);
   });
+  it("drops folder rules it cannot read and keeps the rest", () => {
+    const rule = (folder: string) => ({
+      folder,
+      modelSelection: { instanceId: "codex", model: "m", extra: 1 },
+      unknown: true,
+    });
+    const decoded = decodeServerSettings({
+      folderModelDefaults: [rule("/a"), { folder: "" }, { nope: 1 }, null, rule("/b")],
+    });
+    expect(decoded.folderModelDefaults.map((entry) => entry.folder)).toEqual(["/a", "/b"]);
+    expect(decoded.folderModelDefaults[0]).toEqual({
+      folder: "/a",
+      modelSelection: { instanceId: "codex", model: "m" },
+    });
+  });
   it("adds a folder rule once per folder, trimmed, and ignores blanks", () => {
     const m = (model: string) => ({ instanceId: ProviderInstanceId.make("codex"), model });
     const rule = { folder: "~/work", modelSelection: m("a") };

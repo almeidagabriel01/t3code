@@ -1276,6 +1276,24 @@ export const FolderModelDefault = Schema.Struct({
 });
 export type FolderModelDefault = typeof FolderModelDefault.Type;
 
+// A rule this build cannot read is dropped, so it never takes the others, or the whole file, with it.
+const decodeFolderModelDefault = Schema.decodeUnknownOption(FolderModelDefault);
+const LenientFolderModelDefaults = Schema.Array(Schema.Unknown).pipe(
+  Schema.decodeTo(
+    Schema.Array(Schema.toType(FolderModelDefault)),
+    SchemaTransformation.transform({
+      decode: (items): ReadonlyArray<FolderModelDefault> =>
+        items
+          .flatMap((item) => {
+            const rule = decodeFolderModelDefault(item);
+            return Option.isSome(rule) ? [rule.value] : [];
+          })
+          .slice(0, MAX_FOLDER_MODEL_DEFAULTS),
+      encode: (rules): ReadonlyArray<unknown> => rules,
+    }),
+  ),
+);
+
 export const ServerSettings = Schema.Struct({
   memoryOwnerSourceReadPolicyVersion: NonNegativeInt.pipe(
     Schema.withDecodingDefault(Effect.succeed(0)),
@@ -1346,9 +1364,9 @@ export const ServerSettings = Schema.Struct({
   fallbackModelSelections: Schema.Array(ModelSelection)
     .check(Schema.isMaxLength(MAX_FALLBACK_MODEL_SELECTIONS))
     .pipe(Schema.withDecodingDefault(Effect.succeed([]))),
-  folderModelDefaults: Schema.Array(FolderModelDefault)
-    .check(Schema.isMaxLength(MAX_FOLDER_MODEL_DEFAULTS))
-    .pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  folderModelDefaults: LenientFolderModelDefaults.pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   defaultRuntimeMode: RuntimeMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE)),
   ),

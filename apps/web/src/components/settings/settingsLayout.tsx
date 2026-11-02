@@ -427,7 +427,10 @@ export function SettingsRow({
     : source === "project"
       ? { state: "overridden", summary: "Overridden for this project" }
       : source === "folder"
-        ? { state: "inherited", summary: "Inherited from the folder's model rule" }
+        ? {
+            state: "inherited",
+            summary: `Inherited from folder ${context?.targets.find((target) => target.folder)?.folder ?? "rule"}`,
+          }
         : source === "t3.json"
           ? { state: "inherited", summary: "Inherited from the repository's t3.json" }
           : source === "environment" && scopedKeys.length > 0
