@@ -22,16 +22,33 @@ export interface ImessageSender {
   }) => Promise<{ readonly acceptedAt: string } | ImessageSendFailure>;
 }
 
-/** Fixed script: the chat and the text arrive as arguments, never spliced into the source. */
+/**
+ * Fixed script: the chat, the text and the handle arrive as arguments, never spliced into the
+ * source. A chat that also carries SMS sends by SMS, so a 1:1 reply goes to the handle on the
+ * iMessage account; the chat id is the fallback.
+ */
 export const IMESSAGE_SCRIPT = `on run argv
   set targetID to item 1 of argv
   set messageText to item 2 of argv
+  set targetHandle to item 3 of argv
   tell application "Messages"
-    set targetChat to get chat id targetID
-    send messageText to targetChat
+    set targetParticipant to missing value
+    if targetHandle is not "" then
+      try
+        set targetParticipant to participant targetHandle of (1st account whose service type = iMessage)
+      end try
+    end if
+    if targetParticipant is missing value then
+      send messageText to (get chat id targetID)
+    else
+      send messageText to targetParticipant
+    end if
   end tell
 end run
 `;
+
+/** The other person's handle in a 1:1 chat guid such as `any;-;+15550000000`; empty otherwise. */
+const directHandle = (chatGuid: string) => /^[^;]+;-;([^;]+)$/.exec(chatGuid)?.[1] ?? "";
 
 /** What osascript says when Messages has no account to send from. */
 const NOT_SIGNED_IN = /not signed in|isn.t signed in|no (?:imessage )?account/i;
@@ -53,7 +70,7 @@ export function makeOsascriptImessageSender(
         try {
           child = (input.spawnProcess ?? NodeChildProcess.spawn)(
             "/usr/bin/osascript",
-            ["-l", "AppleScript", "-", chatGuid, text],
+            ["-l", "AppleScript", "-", chatGuid, text, directHandle(chatGuid)],
             { shell: false, stdio: ["pipe", "pipe", "pipe"] },
           ) as NodeChildProcess.ChildProcessWithoutNullStreams;
         } catch {

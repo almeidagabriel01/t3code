@@ -52,12 +52,19 @@ describe("iMessage sender", () => {
     });
     expect(called).toEqual({
       path: "/usr/bin/osascript",
-      args: ["-l", "AppleScript", "-", input.chatGuid, hostile],
+      args: ["-l", "AppleScript", "-", input.chatGuid, hostile, "+15550000000"],
       shell: false,
     });
     expect(script).toBe(IMESSAGE_SCRIPT);
     expect(script).not.toContain("do shell script");
     expect("acceptedAt" in result).toBe(true);
+    for (const [chatGuid, handle] of [
+      ["any;-;me@example.com", "me@example.com"],
+      ["iMessage;+;chat123", ""],
+    ] as const) {
+      await makeOsascriptImessageSender({ spawnProcess: fake }).sendText({ chatGuid, text: "hi" });
+      expect(called?.args.at(-1)).toBe(handle);
+    }
   });
 
   const exits: ReadonlyArray<readonly [string, string, number, unknown]> = [
