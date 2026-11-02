@@ -74,6 +74,10 @@ choices: reply with the number. Only blue iMessage bubbles reach the Mac, so a c
 that your phone sends as SMS or RCS is not read; write to your Apple ID email instead. Replies come
 from your other address, so they read as incoming on your phone.
 
+While a conversation is in Messages, the T3 Code mobile app does not also push its replies; send
+the assistant a message from the app and its notifications come back. More than 10 messages a
+minute from one person are held back, with one notice.
+
 ## Memory follows the project
 
 An assistant shares memory with its project (and your user memory). To keep one assistant's memory

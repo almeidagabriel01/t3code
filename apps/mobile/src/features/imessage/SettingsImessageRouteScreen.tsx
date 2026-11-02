@@ -238,7 +238,7 @@ function ImessageEnvironment(props: {
         <ListRowLayout
           icon="bubble.left.and.bubble.right"
           label="Limits"
-          description="Group chats and attachments are not supported."
+          description="Group chats and attachments are not supported, and more than 10 messages a minute from one person are held back."
         />
       </ListSection>
     </View>

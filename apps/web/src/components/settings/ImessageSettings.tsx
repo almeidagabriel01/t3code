@@ -116,28 +116,28 @@ function HandleSection(props: {
         <SettingsRow title={props.emptyTitle} />
       ) : (
         handles.map((handle) => (
-          <SettingsRow
-            key={handle}
-            title={<span className="font-mono">{formatImessageHandleInput(handle)}</span>}
-            control={
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      size="icon-xs"
-                      variant="ghost-muted"
-                      aria-label={`Remove ${handle}`}
-                      disabled={!canAct}
-                      onClick={() => void remove(handle)}
-                    />
-                  }
-                >
-                  <Trash2Icon />
-                </TooltipTrigger>
-                <TooltipPopup side="top">Remove {handle}</TooltipPopup>
-              </Tooltip>
-            }
-          />
+          // A plain row: SettingsRow stacks its control under the title in a narrow panel.
+          <div key={handle} className="flex items-center justify-between gap-3 px-3 py-3 sm:px-4">
+            <span className="min-w-0 truncate font-mono text-sm font-medium text-foreground">
+              {formatImessageHandleInput(handle)}
+            </span>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    size="icon-xs"
+                    variant="ghost-muted"
+                    aria-label={`Remove ${handle}`}
+                    disabled={!canAct}
+                    onClick={() => void remove(handle)}
+                  />
+                }
+              >
+                <Trash2Icon />
+              </TooltipTrigger>
+              <TooltipPopup side="top">Remove {handle}</TooltipPopup>
+            </Tooltip>
+          </div>
         ))
       )}
     </SettingsSection>
@@ -320,7 +320,7 @@ export function ImessageSettingsPanel() {
           <SettingsSection title="Good to know" icon={<InfoIcon className={SECTION_ICON} />}>
             <SettingsRow
               title="Approvals and limits"
-              description="Approvals arrive as numbered choices: reply with the number. Group chats and attachments are not supported."
+              description="Approvals arrive as numbered choices: reply with the number. Group chats and attachments are not supported, and more than 10 messages a minute from one person are held back."
             />
           </SettingsSection>
         </>
