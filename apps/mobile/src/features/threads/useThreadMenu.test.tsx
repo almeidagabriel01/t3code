@@ -28,7 +28,7 @@ vi.mock("../../lib/uuid", () => ({ uuidv4: () => "id" }));
 vi.mock("../../state/entities", () => ({ useProjects: () => mocks.projects }));
 vi.mock("../../state/notes", () => ({ useNotesEnvironmentIds: () => mocks.notesEnvironmentIds }));
 vi.mock("../../state/assistants", () => ({ useThreadAssistant: () => null }));
-vi.mock("../../state/server", () => ({ threadListEnvironmentsAtom: "atom" }));
+vi.mock("../../state/presentation", () => ({ threadListEnvironmentsAtom: "atom" }));
 vi.mock("../../state/session", () => ({ useEnvironmentScope: () => true }));
 vi.mock("./turnThreadIntoProject", () => ({
   turnThreadIntoProject: vi.fn(),
