@@ -22,6 +22,12 @@ vi.mock("../../components/ui/AppText", () => ({
     return null;
   },
 }));
+vi.mock("react-native-safe-area-context", () => ({
+  useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
+}));
+vi.mock("../../components/ui/ScreenScrollView", () => ({
+  ScreenScrollView: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+}));
 vi.mock("./components/SettingsScreen", () => ({
   SettingsScreen: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
