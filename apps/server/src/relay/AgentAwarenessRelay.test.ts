@@ -15,6 +15,7 @@ import {
   TurnItemId,
 } from "@t3tools/contracts";
 import { RelayAgentActivityState } from "@t3tools/contracts/relay";
+import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -27,6 +28,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import {
@@ -258,7 +260,10 @@ const makeTestRelay = Effect.fnUntraced(function* (
     },
     { preconnect: () => {} },
   );
+  const sqlContext = yield* Layer.build(SqlitePersistence.layerMemory);
+  const sql = Context.get(sqlContext, SqlClient.SqlClient);
   const relay = yield* AgentAwarenessRelay.make.pipe(
+    Effect.provide(sqlContext),
     Effect.provideService(ServerSecretStore.ServerSecretStore, secrets),
     Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
     Effect.provideService(ServerEnvironment.ServerEnvironment, {
@@ -290,7 +295,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
     Effect.provideService(FetchHttpClient.Fetch, fetch),
     Effect.provide(NodeCrypto.layer),
   );
-  return { relay, secrets, secretReads, currentShell, shellReads, publications, catchUp };
+  return { relay, secrets, secretReads, currentShell, shellReads, publications, catchUp, sql };
 });
 
 describe("AgentAwarenessRelay", () => {
@@ -356,6 +361,23 @@ describe("AgentAwarenessRelay", () => {
       assert.equal(publications.length, 2);
       assert.equal(publications[1]?.state?.threadTitle, "Renamed thread");
     }),
+  );
+
+  it.effect(
+    "an assistant answering in a chat is not pushed; it is again once back in the app",
+    () =>
+      Effect.gen(function* () {
+        const { relay, currentShell, publications, sql } = yield* makeTestRelay();
+        const threadId = ThreadId.make("assistant:jarvis:1");
+        yield* Ref.set(currentShell, shell({ id: threadId }));
+        yield* sql`INSERT INTO channel_reply_targets (assistant_id, actor_id, address_json)
+        VALUES ('jarvis', '+15550000000', '{}')`;
+        yield* relay.publishThread(threadId);
+        assert.equal(publications.length, 0);
+        yield* sql`DELETE FROM channel_reply_targets`;
+        yield* relay.publishThread(threadId);
+        assert.equal(publications.length, 1);
+      }),
   );
 
   it.effect("republishes unchanged state with fresh credentials after relinking", () =>

@@ -1,10 +1,11 @@
-import type {
-  EnvironmentId,
-  OrchestrationV2DomainEvent,
-  OrchestrationV2ThreadShell,
-  OrchestrationV2TurnItem,
-  Project,
-  ThreadId,
+import {
+  assistantIdFromThreadId,
+  type EnvironmentId,
+  type OrchestrationV2DomainEvent,
+  type OrchestrationV2ThreadShell,
+  type OrchestrationV2TurnItem,
+  type Project,
+  type ThreadId,
 } from "@t3tools/contracts";
 import {
   RelayApi,
@@ -36,6 +37,7 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import {
@@ -364,6 +366,7 @@ export const make = Effect.gen(function* () {
   const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
   const threads = yield* ThreadManagement.ThreadManagementService;
   const projects = yield* ProjectService.ProjectService;
+  const sql = yield* SqlClient.SqlClient;
   const crypto = yield* Crypto.Crypto;
   const scope = yield* Effect.scope;
   const cloudLinkKeyPair = yield* getOrCreateEnvironmentKeyPairFromSecretStore(secrets);
@@ -391,6 +394,17 @@ export const make = Effect.gen(function* () {
       ? { url, issuer: issuer ?? url, environmentCredential }
       : null;
   });
+
+  // Its replies already reach the phone through Messages; a push for the same run is a duplicate.
+  const answersInChat = (threadId: ThreadId) => {
+    const assistantId = assistantIdFromThreadId(threadId);
+    return assistantId === null
+      ? Effect.succeed(false)
+      : sql`SELECT 1 FROM channel_reply_targets WHERE assistant_id = ${assistantId}`.pipe(
+          Effect.map((rows) => rows.length > 0),
+          Effect.orElseSucceed(() => false),
+        );
+  };
 
   const readPublishAgentActivityEnabled = readSecretString(PUBLISH_AGENT_ACTIVITY_SECRET).pipe(
     Effect.map(isAgentActivityPublishingEnabledValue),
@@ -520,8 +534,10 @@ export const make = Effect.gen(function* () {
       // Subagents have no relay rows to clear; per-event tombstones would needlessly redeliver user aggregates.
       return;
     }
+    const inChat = threadShell !== null && (yield* answersInChat(threadId));
+    if (inChat && !(yield* Ref.get(publishedStateByThreadRef)).has(threadId)) return;
     const thread =
-      threadShell === null || threadShell.archivedAt !== null
+      threadShell === null || threadShell.archivedAt !== null || inChat
         ? Option.none<OrchestrationV2ThreadShell>()
         : Option.some(threadShell);
     const project = Option.isSome(thread)
