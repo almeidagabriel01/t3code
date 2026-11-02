@@ -43,6 +43,7 @@ import {
   type CardMove,
   type ColumnCards,
 } from "@t3tools/client-runtime/state/kanbanLogic";
+import { isCardNavKey, nextCardFocus } from "./boardNav";
 import { KanbanCardTile } from "./KanbanCardTile";
 import { boardPanRef } from "./boardPan";
 import { TemplateIcon } from "./kanbanPresentation";
@@ -87,6 +88,7 @@ const SortableCard = memo(function SortableCard(props: {
         setActivatorNodeRef(node);
       }}
       style={{ transform: CSS.Translate.toString(transform), transition }}
+      data-card-nav={props.card.id}
       className={cn(isDragging && "opacity-40")}
       {...attributes}
       {...listeners}
@@ -345,6 +347,22 @@ export function KanbanColumns(props: KanbanColumnsProps) {
     cardIds: entry.cards.map((card) => card.id),
   }));
 
+  const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+    if (!isCardNavKey(event.key) || activeCard !== null) return;
+    if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
+    const wrapper = target.closest<HTMLElement>("[data-card-nav]");
+    const onCard = target === wrapper || target.hasAttribute("data-card-open");
+    if (!wrapper || !onCard) return;
+    const next = nextCardFocus(columnCards, wrapper.dataset.cardNav!, event.key);
+    event.preventDefault();
+    if (next === null) return;
+    event.currentTarget
+      .querySelector<HTMLElement>(`[data-card-nav="${CSS.escape(next)}"] [data-card-open]`)
+      ?.focus();
+  };
+
   const onDragStart = (event: DragStartEvent) => {
     const id = String(event.active.id);
     if (id.startsWith(COLUMN_PREFIX)) return;
@@ -394,7 +412,12 @@ export function KanbanColumns(props: KanbanColumnsProps) {
         items={displayed.map((entry) => `${COLUMN_PREFIX}${entry.column.id}`)}
         strategy={horizontalListSortingStrategy}
       >
-        <div ref={boardPanRef} className="flex h-full items-start gap-3 overflow-x-auto p-4">
+        // Arrow keys between cards; the board is a keyboard scope, not an interactive control.
+        <div
+          ref={boardPanRef}
+          className="flex h-full items-start gap-3 overflow-x-auto p-4"
+          onKeyDown={onKeyDown}
+        >
           {displayed.map((entry) => (
             <SortableColumn
               key={entry.column.id}

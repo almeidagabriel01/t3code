@@ -18,7 +18,18 @@ const { mocks, Children } = vi.hoisted(() => ({
 }));
 
 vi.mock("react-native", () => ({
-  View: Children,
+  View: (props: {
+    onLayout?: (event: { nativeEvent: { layout: { width: number } } }) => void;
+    style?: { width?: number };
+    children?: ReactNode;
+  }) => (
+    <div
+      data-width={props.style?.width}
+      ref={() => props.onLayout?.({ nativeEvent: { layout: { width: 600 } } })}
+    >
+      {props.children}
+    </div>
+  ),
   FlatList: (props: { data: unknown[]; renderItem: (info: unknown) => ReactNode }) =>
     props.data.map((item, index) => props.renderItem({ item, index })),
   Pressable: (props: { accessibilityLabel?: string; children?: ReactNode }) => (
@@ -145,6 +156,22 @@ describe("KanbanBoardRouteScreen", () => {
     await press("No project");
     expect(mocks.alert).toHaveBeenCalledWith("Could not create the board", "No folder.");
     expect(mocks.ensureBoard).not.toHaveBeenCalled();
+  });
+
+  it("sizes column pages to the measured content width, not the scroll view", async () => {
+    mocks.states = [
+      {
+        environmentId,
+        state: {
+          boards: new Map([
+            ["b1", { id: "b1", projectId: "p1", columns: [], cards: new Map(), templates: [] }],
+          ]),
+        },
+        error: false,
+      },
+    ];
+    await mount();
+    expect(host.querySelector("[data-width]")?.getAttribute("data-width")).toBe("600");
   });
 
   it("offers no No project entry where the server has no such folder", async () => {

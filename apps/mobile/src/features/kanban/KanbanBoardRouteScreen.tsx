@@ -217,7 +217,6 @@ export function KanbanBoardRouteScreen() {
         contentInsetAdjustmentBehavior="automatic"
         keyboardShouldPersistTaps="handled"
         // Columns share this one vertical scroll so the header inset applies once.
-        onLayout={(event) => setWidth(event.nativeEvent.layout.width)}
       >
         {states.length === 0 ? (
           <EmptyState
@@ -239,7 +238,8 @@ export function KanbanBoardRouteScreen() {
             action={<NewBoardButton targets={newTargets} onCreated={setScope} />}
           />
         ) : (
-          <>
+          // Measure the content, not the scroll view: Android caps the content width, so pages sized to the scroll view overflow on tablets.
+          <View onLayout={(event) => setWidth(event.nativeEvent.layout.width)}>
             <View className="flex-row px-4 py-3">
               <Menu
                 actions={actions}
@@ -294,7 +294,7 @@ export function KanbanBoardRouteScreen() {
                 )}
               />
             ) : null}
-          </>
+          </View>
         )}
       </ScrollView>
     </SettingsScreen>

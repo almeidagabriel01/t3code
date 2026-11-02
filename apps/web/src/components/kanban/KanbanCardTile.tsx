@@ -191,6 +191,7 @@ export const KanbanCardTile = memo(function KanbanCardTile(props: KanbanCardTile
       </div>
       <button
         type="button"
+        data-card-open
         onClick={() => props.onOpen(card)}
         className="line-clamp-3 cursor-pointer text-left text-sm leading-snug font-medium text-foreground outline-none after:absolute after:inset-0 after:rounded-lg"
       >

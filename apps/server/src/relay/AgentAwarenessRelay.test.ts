@@ -1,10 +1,12 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import {
+  DecisionId,
   EnvironmentId,
   EventId,
   MessageId,
   NodeId,
+  type DecisionsEvent,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ThreadShell,
   type OrchestrationV2TurnItem,
@@ -37,6 +39,7 @@ import {
   RELAY_ISSUER_SECRET,
   RELAY_URL_SECRET,
 } from "../cloud/config.ts";
+import * as DecisionService from "../decisions/DecisionService.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -146,6 +149,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
     readonly linked?: boolean;
     readonly readShell?: (threadId: ThreadId) => Effect.Effect<OrchestrationV2ThreadShell | null>;
     readonly domainEvents?: Stream.Stream<OrchestrationV2DomainEvent>;
+    readonly decisionEvents?: Stream.Stream<DecisionsEvent>;
   } = {},
 ) {
   const values = new Map<string, Uint8Array>(
@@ -266,6 +270,17 @@ const makeTestRelay = Effect.fnUntraced(function* (
     Effect.provide(sqlContext),
     Effect.provideService(ServerSecretStore.ServerSecretStore, secrets),
     Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
+    Effect.provideService(DecisionService.DecisionService, {
+      request: unused,
+      list: unused,
+      get: unused,
+      subscribe: options.decisionEvents ?? Stream.empty,
+      answer: unused,
+      dismiss: unused,
+      withdraw: unused,
+      expireDue: unused(),
+      deliverPending: unused(),
+    }),
     Effect.provideService(ServerEnvironment.ServerEnvironment, {
       getEnvironmentId: Effect.succeed(EnvironmentId.make("relay-environment")),
       getDescriptor: unused(),
@@ -379,6 +394,77 @@ describe("AgentAwarenessRelay", () => {
         assert.equal(publications.length, 1);
       }),
   );
+
+  describe("decisions", () => {
+    const decision = (status: "open" | "answered", fromThreadId = THREAD_ID): DecisionsEvent => ({
+      type: "upserted",
+      decision: {
+        id: DecisionId.make("decision-1"),
+        fromThreadId,
+        threadTitle: "Thread",
+        title: "Ship it?",
+        context: "",
+        options: [{ id: "yes", label: "Yes" }],
+        status,
+        createdAt: NOW,
+      },
+    });
+    const insertOpen = (sql: SqlClient.SqlClient, threadId: ThreadId) =>
+      sql`INSERT INTO decisions (decision_id, from_thread_id, project_id, client_request_id,
+        thread_title, title, context, options_json, status, created_at)
+        VALUES ('decision-1', ${threadId}, 'p', 'r', 'Thread', 'Ship it?', '', '[]', 'open', ${NOW})`;
+    const setup = Effect.gen(function* () {
+      const events = yield* Queue.unbounded<DecisionsEvent>();
+      const pulls = yield* Queue.unbounded<void>();
+      const made = yield* makeTestRelay({
+        decisionEvents: Stream.fromEffectRepeat(
+          Queue.offer(pulls, undefined).pipe(Effect.andThen(Queue.take(events))),
+        ),
+      });
+      yield* made.relay.start();
+      yield* Queue.take(pulls);
+      return { ...made, events, pulls };
+    });
+
+    it.effect("a new open decision publishes the thread as needing the user", () =>
+      Effect.gen(function* () {
+        const { relay, publications, sql, events, pulls } = yield* setup;
+        yield* insertOpen(sql, THREAD_ID);
+        yield* Queue.offer(events, decision("open"));
+        yield* Queue.take(pulls);
+        yield* relay.drain;
+        assert.equal(publications.length, 1);
+        assert.equal(publications[0]?.state?.phase, "waiting_for_approval");
+        assert.equal(publications[0]?.state?.headline, "Decision needed");
+        assert.equal(publications[0]?.state?.detail, "Ship it?");
+      }).pipe(Effect.scoped),
+    );
+
+    it.effect("an answered decision publishes nothing", () =>
+      Effect.gen(function* () {
+        const { relay, publications, events, pulls } = yield* setup;
+        yield* Queue.offer(events, decision("answered"));
+        yield* Queue.take(pulls);
+        yield* relay.drain;
+        assert.equal(publications.length, 0);
+      }).pipe(Effect.scoped),
+    );
+
+    it.effect("a decision on an assistant thread answering in a chat is not pushed", () =>
+      Effect.gen(function* () {
+        const { relay, currentShell, publications, sql, events, pulls } = yield* setup;
+        const threadId = ThreadId.make("assistant:jarvis:1");
+        yield* Ref.set(currentShell, shell({ id: threadId }));
+        yield* sql`INSERT INTO channel_reply_targets (assistant_id, actor_id, address_json)
+          VALUES ('jarvis', '+15550000000', '{}')`;
+        yield* insertOpen(sql, threadId);
+        yield* Queue.offer(events, decision("open", threadId));
+        yield* Queue.take(pulls);
+        yield* relay.drain;
+        assert.equal(publications.length, 0);
+      }).pipe(Effect.scoped),
+    );
+  });
 
   it.effect("republishes unchanged state with fresh credentials after relinking", () =>
     Effect.gen(function* () {

@@ -40,6 +40,7 @@ import * as HttpApiClient from "effect/http-api/HttpApiClient";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as DecisionService from "../decisions/DecisionService.ts";
 import {
   isAgentActivityPublishingEnabledValue,
   PUBLISH_AGENT_ACTIVITY_SECRET,
@@ -367,6 +368,7 @@ export const make = Effect.gen(function* () {
   const threads = yield* ThreadManagement.ThreadManagementService;
   const projects = yield* ProjectService.ProjectService;
   const sql = yield* SqlClient.SqlClient;
+  const decisions = yield* DecisionService.DecisionService;
   const crypto = yield* Crypto.Crypto;
   const scope = yield* Effect.scope;
   const cloudLinkKeyPair = yield* getOrCreateEnvironmentKeyPairFromSecretStore(secrets);
@@ -405,6 +407,15 @@ export const make = Effect.gen(function* () {
           Effect.orElseSucceed(() => false),
         );
   };
+
+  const openDecisionTitle = (threadId: ThreadId) =>
+    sql<{ readonly title: string }>`
+      SELECT title FROM decisions
+      WHERE from_thread_id = ${threadId} AND status = 'open'
+      ORDER BY created_at DESC LIMIT 1`.pipe(
+      Effect.map((rows) => rows[0]?.title ?? null),
+      Effect.orElseSucceed(() => null),
+    );
 
   const readPublishAgentActivityEnabled = readSecretString(PUBLISH_AGENT_ACTIVITY_SECRET).pipe(
     Effect.map(isAgentActivityPublishingEnabledValue),
@@ -543,11 +554,30 @@ export const make = Effect.gen(function* () {
     const project = Option.isSome(thread)
       ? yield* projects.getById(thread.value.projectId)
       : Option.none<Project>();
-    const snapshot = resolveAgentAwarenessRelayPublishSnapshot({
+    const projected = resolveAgentAwarenessRelayPublishSnapshot({
       environmentId,
       thread,
       project,
     });
+    // An open decision is a request for the user, like an approval, but it never reaches the thread shell.
+    const decisionTitle =
+      projected.state !== null &&
+      projected.state.phase !== "waiting_for_approval" &&
+      projected.state.phase !== "waiting_for_input"
+        ? yield* openDecisionTitle(threadId)
+        : null;
+    const snapshot =
+      projected.state === null || decisionTitle === null
+        ? projected
+        : {
+            ...projected,
+            state: sanitizeRelayAgentActivityState({
+              ...projected.state,
+              phase: "waiting_for_approval",
+              headline: "Decision needed",
+              detail: decisionTitle,
+            }),
+          };
     const publishIdentity = agentAwarenessPublishIdentity(snapshot.state);
     const publishedStateByThread = yield* Ref.get(publishedStateByThreadRef);
     if (
@@ -842,6 +872,14 @@ export const make = Effect.gen(function* () {
         Effect.sleep("1 second").pipe(
           Effect.andThen(publishActiveThreadsOnceWhenConfigured(startupState !== "enabled")),
         ),
+      );
+      // An open row is only ever published on creation; settling publishes a non-open status.
+      yield* forkParked(
+        Stream.runForEach(decisions.subscribe, (event) =>
+          event.type === "upserted" && event.decision.status === "open"
+            ? enqueueThreadPublish(event.decision.fromThreadId)
+            : Effect.void,
+        ).pipe(Effect.ignore),
       );
       yield* forkParked(
         Stream.runForEach(threads.streamDomainEvents, (event) => {
