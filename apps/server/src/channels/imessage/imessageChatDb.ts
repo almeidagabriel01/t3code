@@ -65,7 +65,9 @@ export function classifyImessageDbFailure(cause: unknown): ImessageDbError["cate
   return "database_unavailable";
 }
 
-const SELECT = `SELECT m.ROWID AS rowid, m.guid, m.text, m.attributedBody, m.is_from_me, m.date,
+// Modern dates are nanoseconds past 2^53, which node:sqlite refuses to read as an integer.
+const SELECT = `SELECT m.ROWID AS rowid, m.guid, m.text, m.attributedBody, m.is_from_me,
+  CAST(m.date AS REAL) AS date,
   m.associated_message_type, m.item_type, m.balloon_bundle_id, m.cache_has_attachments,
   m.service AS message_service, h.id AS sender_handle, h.service AS sender_service,
   c.guid AS chat_guid, c.chat_identifier, c.style,

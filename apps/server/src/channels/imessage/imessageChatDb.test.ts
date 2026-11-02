@@ -17,6 +17,9 @@ const SCHEMA = `CREATE TABLE message (guid TEXT, text TEXT, attributedBody BLOB,
   CREATE TABLE chat (guid TEXT, chat_identifier TEXT, style INTEGER);
   CREATE TABLE chat_message_join (message_id INTEGER, chat_id INTEGER);`;
 
+/** A 2026 date as modern macOS stores it: nanoseconds since 2001, past `Number.MAX_SAFE_INTEGER`. */
+const APPLE_NANOSECONDS = 815_273_906_249_017_984n;
+
 const withDir = <A, E, R>(use: (dir: string) => Effect.Effect<A, E, R>) =>
   Effect.acquireUseRelease(
     Effect.sync(() => NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-imsg-db-"))),
@@ -60,7 +63,7 @@ describe("read-only chat database", () => {
               .prepare(
                 "INSERT INTO message (guid,text,handle_id,is_from_me,date,item_type,service) VALUES (?,?,?,?,?,?,?)",
               )
-              .run(`g${i}`, "hello", 1, 0, 0, 0, "iMessage");
+              .run(`g${i}`, "hello", 1, 0, i === 1 ? APPLE_NANOSECONDS : 0, 0, "iMessage");
           }
           writer.exec(
             "INSERT INTO chat_message_join VALUES (2,1); INSERT INTO chat_message_join VALUES (3,1); INSERT INTO chat_message_join VALUES (3,1);",
@@ -78,6 +81,7 @@ describe("read-only chat database", () => {
           [1, 2],
         );
         assert.deepEqual(rows[0]?.attributedBody, new Uint8Array([0, 255, 1]));
+        assert.equal(rows[0]?.date, Number(APPLE_NANOSECONDS));
         assert.include(rows[1], {
           chat_join_count: 1,
           chat_guid: "iMessage;-;+15550000000",
