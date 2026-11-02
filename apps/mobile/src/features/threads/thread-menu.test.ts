@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   buildSnoozePresetActions,
+  canOpenThreadNotes,
   buildThreadMenuActions,
   menuActionsToAppBarItems,
   resolveThreadMenuKind,
@@ -27,6 +28,39 @@ const ids = (overrides: Partial<ThreadMenuInput> = {}) =>
   buildThreadMenuActions({ ...input, ...overrides }).map((action) => action.id);
 
 describe("thread menu", () => {
+  it("offers Notes only when asked and routes it", () => {
+    expect(ids()).not.toContain("notes");
+    expect(ids({ notes: true })).toContain("notes");
+    const openNotes = vi.fn();
+    runThreadMenuEvent("notes", { openNotes } as unknown as ThreadMenuHandlers, {
+      displayedPresets: [],
+      presets: undefined,
+      now: new Date(0),
+    });
+    expect(openNotes).toHaveBeenCalledTimes(1);
+  });
+
+  it("has thread Notes only in a real project of a notes environment", () => {
+    const thread = { environmentId: "e", projectId: "p" };
+    const project = { environmentId: "e", id: "p" };
+    expect(canOpenThreadNotes(thread, ["e"], [project])).toBe(true);
+    expect(canOpenThreadNotes(thread, ["e"], [{ ...project, isScratch: true }])).toBe(false);
+    expect(canOpenThreadNotes(thread, [], [project])).toBe(false);
+    expect(canOpenThreadNotes(thread, ["e"], [])).toBe(false);
+  });
+
+  it("gives every snooze preset and Custom… an icon", () => {
+    const actions = buildSnoozePresetActions([
+      { id: "after:60", label: "1 hour", whenLabel: "10:00" },
+      { id: "at:monday:09:00", label: "Monday", whenLabel: "09:00" },
+    ]);
+    expect(actions.map((action) => action.image)).toEqual([
+      "hourglass",
+      "calendar",
+      "calendar.badge.clock",
+    ]);
+  });
+
   it("picks the menu kind the list uses", () => {
     const base = { snoozed: false, settlementSupported: true, settled: false, snoozable: false };
     expect(resolveThreadMenuKind({ ...base, snoozed: true, settled: true })).toBe("snoozed");

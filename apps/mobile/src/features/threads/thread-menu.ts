@@ -343,3 +343,24 @@ export function menuActionsToAppBarItems(
     };
   });
 }
+
+/** Notes open on the thread's project, so a thread in no real project (Scratch) has none. */
+export function canOpenThreadNotes(
+  thread: { readonly environmentId: string; readonly projectId: string },
+  notesEnvironmentIds: ReadonlyArray<string>,
+  projects: ReadonlyArray<{
+    readonly environmentId: string;
+    readonly id: string;
+    readonly isScratch?: boolean | undefined;
+  }>,
+): boolean {
+  return (
+    notesEnvironmentIds.includes(thread.environmentId) &&
+    projects.some(
+      (project) =>
+        project.environmentId === thread.environmentId &&
+        project.id === thread.projectId &&
+        project.isScratch !== true,
+    )
+  );
+}

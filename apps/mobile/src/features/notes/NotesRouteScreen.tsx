@@ -31,6 +31,7 @@ import {
   noteListRows,
   noteRowMenuActions,
   noteSyncLabel,
+  resolveNotesRoute,
   type NoteListRow,
   type NoteRowActionId,
 } from "./notes-model";
@@ -47,10 +48,11 @@ export function NotesRouteScreen({ route }: StaticScreenProps<NotesRouteParams>)
   const environmentIds = useNotesEnvironmentIds();
   const environments = useWorkspaceEnvironments();
   const [selected, setSelected] = useState<EnvironmentId | null>(null);
-  const environmentId =
-    environmentIds.find((id) => id === (selected ?? route.params?.environmentId)) ??
-    environmentIds[0] ??
-    null;
+  const { environmentId, initialProject } = resolveNotesRoute(
+    environmentIds,
+    selected,
+    route.params,
+  );
   const label = (id: EnvironmentId) =>
     environments.find((entry) => entry.environmentId === id)?.environmentLabel ?? "Environment";
   if (environmentId === null) {
@@ -68,9 +70,7 @@ export function NotesRouteScreen({ route }: StaticScreenProps<NotesRouteParams>)
     <EnvironmentNotes
       key={`${environmentId}:${route.params?.project ?? ""}`}
       environmentId={environmentId}
-      initialProject={
-        environmentId === route.params?.environmentId ? (route.params.project ?? null) : null
-      }
+      initialProject={initialProject}
       picker={
         environmentIds.length > 1 ? (
           <Menu
@@ -220,10 +220,10 @@ function EnvironmentNotes(props: {
               noMatch
                 ? "Try a different search."
                 : state
-                ? "Notes you or your agents write show up here."
-                : connected
-                  ? "Connecting to your environment."
-                  : "Connect to this environment to load its notes."
+                  ? "Notes you or your agents write show up here."
+                  : connected
+                    ? "Connecting to your environment."
+                    : "Connect to this environment to load its notes."
             }
           />
         ) : (

@@ -1,5 +1,5 @@
 import type { NoteOutboxRow } from "@t3tools/client-runtime/notes/outbox";
-import type { NoteSummary } from "@t3tools/contracts";
+import type { EnvironmentId, NoteSummary, ProjectId } from "@t3tools/contracts";
 
 export type NoteSyncState = "synced" | "pending" | "syncing" | "conflict";
 
@@ -144,4 +144,21 @@ export function filterNoteRows(
     const haystack = searchable(`${row.title}\n${row.preview}\n${row.path}`);
     return terms.every((term) => haystack.includes(term));
   });
+}
+
+/** The environment and project filter a Notes page opens on; a stale or missing environment falls back to the first. */
+export function resolveNotesRoute(
+  environmentIds: ReadonlyArray<EnvironmentId>,
+  selected: EnvironmentId | null,
+  params: { readonly environmentId: EnvironmentId; readonly project?: ProjectId } | undefined,
+) {
+  const environmentId =
+    environmentIds.find((id) => id === (selected ?? params?.environmentId)) ??
+    environmentIds[0] ??
+    null;
+  const initialProject =
+    environmentId !== null && environmentId === params?.environmentId
+      ? (params.project ?? null)
+      : null;
+  return { environmentId, initialProject };
 }

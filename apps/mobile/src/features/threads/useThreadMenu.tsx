@@ -27,6 +27,7 @@ import { copyThreadMenuReference } from "./copyThreadMenuReference";
 import {
   buildSnoozePresetActions,
   buildThreadMenuActions,
+  canOpenThreadNotes,
   menuActionsToAppBarItems,
   resolveThreadMenuKind,
   runThreadMenuEvent,
@@ -91,14 +92,7 @@ export function useThreadMenu(
       regenerating: thread.titleRegeneration != null,
     },
     canHandoff: canHandoffThread(thread),
-    notes:
-      notesEnvironmentIds.includes(environmentId) &&
-      projects.some(
-        (project) =>
-          project.environmentId === environmentId &&
-          project.id === thread.projectId &&
-          project.isScratch !== true,
-      ),
+    notes: canOpenThreadNotes(thread, notesEnvironmentIds, projects),
     turnIntoProject: canTurnIntoProject ? { archivable: threadCanArchive(thread.runtime) } : null,
     snoozePresetActions: buildSnoozePresetActions(snoozePresets),
     assistant: assistantEntry
