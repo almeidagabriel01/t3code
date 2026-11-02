@@ -105,6 +105,7 @@ const dependencies = (threadId: ThreadId, { kanban, client, threads, link }: Cal
         ] as unknown as ReadonlyArray<OrchestrationProjectShell>),
     }),
     Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+      namedProjectsRoot: "/projects",
       ensureScratchProject: scratchAvailable
         ? Effect.succeed({ projectId: scratchProjectId })
         : Effect.fail(new ManagedProjectFolders.ScratchUnavailableError()),
