@@ -7,6 +7,7 @@ import {
 } from "@t3tools/client-runtime/state/kanbanLogic";
 import type { EnvironmentId, KanbanTemplateId } from "@t3tools/contracts";
 import type { MenuAction } from "@react-native-menu/menu";
+import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { useMemo, useState } from "react";
 import { FlatList, Pressable, View } from "react-native";
 
@@ -18,11 +19,18 @@ import { Menu } from "../../components/ui/Menu";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { useNowMinuteMs } from "../../lib/clock";
-import { useProjects } from "../../state/entities";
+import { useProjects, useServerConfigs } from "../../state/entities";
 import { useKanbanStates } from "../../state/kanban";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
-import { ALL_PROJECTS, buildBoardColumns, type BoardViewColumn } from "./kanbanBoardView";
+import {
+  ALL_PROJECTS,
+  buildBoardColumns,
+  newBoardTargets,
+  type BoardViewColumn,
+  type NewBoardTarget,
+} from "./kanbanBoardView";
 import { KanbanCardTile } from "./KanbanCardTile";
+import { useCreateKanbanBoard } from "./useCreateKanbanBoard";
 import { useKanbanActions } from "./useKanbanActions";
 
 const NO_TEMPLATE = "__blank__";
@@ -69,6 +77,27 @@ function AddCardButton(props: { readonly addTo: NonNullable<BoardViewColumn["add
       }
     >
       {button}
+    </Menu>
+  );
+}
+
+function NewBoardButton(props: {
+  readonly targets: ReadonlyArray<NewBoardTarget>;
+  readonly onCreated: (scopeKey: string) => void;
+}) {
+  const create = useCreateKanbanBoard();
+  if (props.targets.length === 0) return null;
+  return (
+    <Menu
+      actions={props.targets.map((target) => ({ id: target.key, title: target.title }))}
+      onPressAction={({ nativeEvent }) => {
+        const target = props.targets.find((entry) => entry.key === nativeEvent.event);
+        if (target !== undefined) {
+          void create(target).then((scopeKey) => scopeKey !== null && props.onCreated(scopeKey));
+        }
+      }}
+    >
+      <Button label="New board" icon="plus" tone="text" onPress={() => undefined} />
     </Menu>
   );
 }
@@ -144,9 +173,24 @@ export function KanbanBoardRouteScreen() {
   const [scope, setScope] = useState(ALL_PROJECTS);
   const [width, setWidth] = useState(0);
   const boards = useMemo(() => collectGlobalBoards(states), [states]);
-  const projectTitle = (environmentId: EnvironmentId, projectId: string) =>
-    projects.find((project) => project.environmentId === environmentId && project.id === projectId)
-      ?.title ?? "Project";
+  const serverConfigs = useServerConfigs();
+  const newTargets = newBoardTargets({
+    environments: states.map(({ environmentId }) => ({
+      environmentId,
+      scratchWorkspaceRoot: serverConfigs.get(environmentId)?.scratchWorkspaceRoot ?? null,
+    })),
+    projects,
+    boards,
+  });
+  const projectTitle = (environmentId: EnvironmentId, projectId: string) => {
+    const project = projects.find(
+      (entry) => entry.environmentId === environmentId && entry.id === projectId,
+    );
+    if (project === undefined) return "Project";
+    return isScratchProject(project, serverConfigs.get(environmentId)?.scratchWorkspaceRoot)
+      ? "No project"
+      : project.title;
+  };
   const options = boards.map(({ environmentId, board }) => ({
     key: boardScopeKey(environmentId, board.projectId),
     title: projectTitle(environmentId, board.projectId),
@@ -191,7 +235,8 @@ export function KanbanBoardRouteScreen() {
           <EmptyState
             variant="plain"
             title="No boards yet"
-            detail="Open a project's board on desktop or web to create it."
+            detail="Create the first board for a project, or for threads without a project."
+            action={<NewBoardButton targets={newTargets} onCreated={setScope} />}
           />
         ) : (
           <>
@@ -215,6 +260,7 @@ export function KanbanBoardRouteScreen() {
                   <SymbolView name="chevron.down" size={12} tintColorClassName="accent-chevron" />
                 </Pressable>
               </Menu>
+              <NewBoardButton targets={newTargets} onCreated={setScope} />
               {archiveTarget === null ? null : (
                 <Button
                   label="Archived"

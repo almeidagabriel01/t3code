@@ -1,9 +1,9 @@
 import type { KanbanBoardState } from "@t3tools/client-runtime/state/kanban";
 import { boardScopeKey } from "@t3tools/client-runtime/state/kanbanLogic";
-import type { EnvironmentId, KanbanCard, KanbanColumn } from "@t3tools/contracts";
+import type { EnvironmentId, KanbanCard, KanbanColumn, ProjectId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { ALL_PROJECTS, buildBoardColumns } from "./kanbanBoardView";
+import { ALL_PROJECTS, buildBoardColumns, newBoardTargets } from "./kanbanBoardView";
 
 const column = (id: string, role: KanbanColumn["role"], orderKey: string) =>
   ({ id, boardId: "b1", name: id, color: "blue", orderKey, wipLimit: null, role }) as KanbanColumn;
@@ -40,5 +40,41 @@ describe("buildBoardColumns", () => {
 
   it("is empty for a board that is gone", () => {
     expect(buildBoardColumns(boards, "other")).toEqual([]);
+  });
+});
+
+describe("newBoardTargets", () => {
+  const project = (id: string, title: string, workspaceRoot: string) => ({
+    environmentId,
+    id: id as ProjectId,
+    title,
+    workspaceRoot,
+  });
+  const projects = [
+    project("p1", "Alpha", "/work/alpha"),
+    project("p2", "Beta", "/work/beta"),
+    project("s1", "No project", "/data/scratch"),
+  ];
+  const targets = (scratchWorkspaceRoot: string | null, withBoards = boards) =>
+    newBoardTargets({
+      environments: [{ environmentId, scratchWorkspaceRoot }],
+      projects,
+      boards: withBoards,
+    }).map((target) => [target.title, target.projectId]);
+
+  it("lists No project first, then projects without a board", () => {
+    expect(targets("/data/scratch")).toEqual([
+      ["No project", null],
+      ["Beta", "p2"],
+    ]);
+  });
+
+  it("drops No project when its board exists or the server offers no such folder", () => {
+    const scratchBoard = { environmentId, board: { ...board, id: "b2", projectId: "s1" } };
+    expect(targets("/data/scratch", [...boards, scratchBoard] as never)).toEqual([["Beta", "p2"]]);
+    expect(targets(null)).toEqual([
+      ["Beta", "p2"],
+      ["No project", "s1"],
+    ]);
   });
 });
