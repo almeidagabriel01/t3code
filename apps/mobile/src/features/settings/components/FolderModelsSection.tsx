@@ -64,6 +64,7 @@ export function FolderModelsSection(props: {
               >
                 <ListRowLayout
                   label={rule.folder}
+                  labelTruncatesStart
                   description={model}
                   disabled={!props.editable}
                   accessory={
