@@ -788,6 +788,7 @@ export function HomeScreen(props: HomeScreenProps) {
         now={now}
         includeWorking={!workingShelfEnabled}
         gutter={primaryColumn ? 8 : 16}
+        renderRow={(item) => renderV2Item({ item })}
       />
       <HomeDecisionsSection gutter={primaryColumn ? 8 : 16} />
     </>

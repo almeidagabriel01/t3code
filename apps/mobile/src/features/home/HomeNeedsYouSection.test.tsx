@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 const { mocks, Children } = vi.hoisted(() => ({
   Children: ({ children }: { children?: ReactNode }) => children,
   mocks: {
-    selectDetail: vi.fn(),
+    open: vi.fn(),
     visit: vi.fn(),
     alert: vi.fn(),
     operable: new Set<string>(),
@@ -19,15 +19,32 @@ vi.mock("react-native", () => ({
     <button onClick={props.onPress}>{props.children}</button>
   ),
 }));
+vi.mock("../../components/ui/AppSymbol", () => ({ SymbolView: () => null }));
+vi.mock("../../components/ui/Menu", () => ({
+  Menu: (props: {
+    actions: { id: string; title: string }[];
+    onPressAction: (event: { nativeEvent: { event: string } }) => void;
+    children?: ReactNode;
+  }) => (
+    <>
+      {props.children}
+      {props.actions.map((action) => (
+        <button
+          key={action.id}
+          onClick={() => props.onPressAction({ nativeEvent: { event: action.id } })}
+        >
+          {action.title}
+        </button>
+      ))}
+    </>
+  ),
+}));
 vi.mock("../../components/ui/AppText", () => ({ AppText: Children }));
 vi.mock("../../components/ui/Dialog", () => ({ alert: mocks.alert }));
 vi.mock("../../state/decisions", () => ({ useOpenDecisionThreadKeys: () => new Set<string>() }));
 vi.mock("../../state/session", () => ({ useEnvironmentsWithScope: () => mocks.operable }));
 vi.mock("../../state/threads", () => ({ threadEnvironment: { visit: {} } }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => mocks.visit }));
-vi.mock("../workspace/useSelectWorkspaceDetail", () => ({
-  useSelectWorkspaceDetail: () => mocks.selectDetail,
-}));
 
 import { HomeNeedsYouSection } from "./HomeNeedsYouSection";
 
@@ -63,6 +80,11 @@ const render = (threads: EnvironmentThreadShell[], includeWorking = true) =>
         now={now}
         includeWorking={includeWorking}
         gutter={4}
+        renderRow={(item) => (
+          <button onClick={() => mocks.open(item.item.thread.id, item.item.wokeAt)}>
+            {item.item.thread.title}
+          </button>
+        )}
       />,
     ),
   );
@@ -78,7 +100,7 @@ beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   container = window.document.createElement("div");
   root = createRoot(container);
-  mocks.selectDetail.mockReset();
+  mocks.open.mockReset();
   mocks.visit.mockReset().mockResolvedValue({ _tag: "Success" });
   mocks.alert.mockReset();
   mocks.operable = new Set(["hub"]);
@@ -99,14 +121,11 @@ describe("HomeNeedsYouSection", () => {
     ];
     render(threads);
     expect(container.textContent).toMatch(
-      /Needs you · 1.*Title ask.*Working · 1.*Title busy.*Unread · 1.*Title done/,
+      /Needs you.*Waiting for you · 1.*Title ask.*Working · 1.*Title busy.*Unread · 1.*Title done/,
     );
 
     await press("Title ask");
-    expect(mocks.selectDetail).toHaveBeenCalledWith({
-      name: "Thread",
-      params: { environmentId: "hub", threadId: "ask" },
-    });
+    expect(mocks.open).toHaveBeenCalledWith("ask", null);
 
     render(threads, false);
     expect(container.textContent).not.toContain("Working");

@@ -716,6 +716,8 @@ function ThreadNavigationSidebarPane(
           now={now}
           includeWorking={!workingShelfEnabled}
           gutter={4}
+          sidebar
+          renderRow={(item) => renderListItem({ item })}
         />
         <HomeDecisionsSection gutter={4} />
       </>
