@@ -230,7 +230,7 @@ export function NoteStartWorkDialog(props: {
             </DialogHeader>
             <DialogPanel>
               <div className="grid gap-4">
-                <div className="flex items-center justify-between gap-3">
+                <div className="grid gap-1.5">
                   <Label>Project</Label>
                   {projectId !== null ? (
                     <OptionSelect
@@ -248,7 +248,7 @@ export function NoteStartWorkDialog(props: {
                   )}
                 </div>
                 {columns.length > 0 ? (
-                  <div className="flex items-center justify-between gap-3">
+                  <div className="grid gap-1.5">
                     <Label>Column</Label>
                     <OptionSelect
                       label="Column"

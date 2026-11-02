@@ -31,6 +31,7 @@ import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
 import { runtimeModeConfig, runtimeModeOptions } from "../chat/runtimeModeConfig";
 import { scheduledTaskDefaultModel } from "../settings/scheduledTasksSettings.logic";
+import { SETTINGS_PICKER_TRIGGER_CLASSNAME } from "../settings/settingsLayout";
 import { Button } from "../ui/button";
 import {
   Dialog,
@@ -50,6 +51,8 @@ import {
 } from "@t3tools/client-runtime/state/kanbanLogic";
 import { OptionSelect } from "./kanbanDialogs";
 import { reportKanbanError, useKanbanActions } from "./useKanban";
+
+const FIELD_PICKER_CLASSNAME = `${SETTINGS_PICKER_TRIGGER_CLASSNAME} w-full sm:max-w-none justify-start text-start [&_[data-chat-provider-model-picker-label]]:flex-1 [&_[data-chat-provider-model-picker-label]]:text-start`;
 
 function LaunchForm(props: {
   readonly environmentId: EnvironmentId;
@@ -200,6 +203,7 @@ function LaunchForm(props: {
                 instanceEntries={entries}
                 modelOptionsByInstance={modelOptionsByInstance}
                 isComposerOwned={false}
+                triggerClassName={FIELD_PICKER_CLASSNAME}
                 onInstanceModelChange={(instanceId, model) =>
                   setPicked(createModelSelection(instanceId, model))
                 }
@@ -207,7 +211,7 @@ function LaunchForm(props: {
             </div>
           </div>
           {activeEntry !== undefined && selection !== null ? (
-            <div className="flex items-center justify-between gap-3">
+            <div className="grid gap-1.5">
               <Label>Effort</Label>
               <TraitsPicker
                 provider={activeEntry.driverKind}
@@ -218,13 +222,14 @@ function LaunchForm(props: {
                 allowPromptInjectedEffort={false}
                 planModeEnabled={false}
                 disabled={launching}
+                triggerClassName={FIELD_PICKER_CLASSNAME}
                 onModelOptionsChange={(options) =>
                   setPicked(createModelSelection(selection.instanceId, selection.model, options))
                 }
               />
             </div>
           ) : null}
-          <div className="flex items-center justify-between gap-3">
+          <div className="grid gap-1.5">
             <Label>Permissions</Label>
             <OptionSelect
               label="Permissions"
