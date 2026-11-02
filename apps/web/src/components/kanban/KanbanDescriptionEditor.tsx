@@ -63,6 +63,7 @@ export function KanbanDescriptionEditor(props: {
         role: "textbox",
         "aria-multiline": "true",
         "aria-label": "Description",
+        "data-inline-image-drop": "",
       },
       handleKeyDown: (view, event) => {
         if (event.key === "Escape") {

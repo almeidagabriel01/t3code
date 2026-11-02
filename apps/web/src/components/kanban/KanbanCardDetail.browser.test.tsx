@@ -125,6 +125,34 @@ describe("KanbanCardDetail attachments", () => {
     expect(mocks.updateCard).not.toHaveBeenCalled();
   });
 
+  it("shows the drop-to-attach overlay over the panel but not over the description editor", async () => {
+    setup();
+    await using _screen = await render(
+      <KanbanCardDetail
+        environmentId={EnvironmentId.make("env")}
+        board={board}
+        card={card}
+        canEdit
+        onOpenCard={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    const title = page.getByRole("textbox", { name: "Title" });
+    await expect.element(title).toBeVisible();
+    const drag = (target: Element) => {
+      const dataTransfer = new DataTransfer();
+      dataTransfer.items.add(new File([new Uint8Array([1])], "a.png", { type: "image/png" }));
+      target.dispatchEvent(
+        new DragEvent("dragover", { dataTransfer, bubbles: true, cancelable: true }),
+      );
+    };
+    drag(title.element());
+    await expect.element(page.getByText("Drop to attach")).toBeVisible();
+    await page.getByRole("button", { name: "Add a description" }).click();
+    drag(page.getByRole("textbox", { name: "Description" }).element());
+    await expect.element(page.getByText("Drop to attach")).not.toBeInTheDocument();
+  });
+
   it("shows an image pasted into the description as the image, then saves its markdown ref", async () => {
     setup();
     let finish: (value: { attachmentId: string; mimeType: string }) => void = () => {};

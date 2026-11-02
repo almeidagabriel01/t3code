@@ -50,7 +50,7 @@ const outcome = (input: M.GenerateMemorySummaryInput, text: string) =>
 // the handoff's, so a call to it means the stored summary was not reused.
 const layerFor = (
   generation: Partial<Generation.TextGeneration["Service"]>,
-  options: { readonly memoryOff?: boolean } = {},
+  options: { readonly memoryOff?: boolean; readonly hub?: boolean } = {},
 ) =>
   ThreadHandoffSummary.layer.pipe(
     Layer.provide(Layer.mock(Generation.TextGeneration)(generation)),
@@ -60,7 +60,7 @@ const layerFor = (
         getEnvironmentId: Effect.succeed(environmentId),
       }),
     ),
-    Layer.provideMerge(live(false, undefined, true, 0, options.memoryOff === true)),
+    Layer.provideMerge(live(false, undefined, options.hub !== true, 0, options.memoryOff === true)),
   );
 
 const counting = (text: string) =>
@@ -111,6 +111,20 @@ it.effect(
         assert.lengthOf(yield* Ref.get(calls), 1);
       }).pipe(Effect.provide(layerFor({ generateMemorySummary })));
     }),
+);
+
+it.effect("reuses the hub summary without a model call in hub memory mode", () =>
+  Effect.gen(function* () {
+    const { calls, generateMemorySummary } = yield* counting("generated summary");
+    yield* Effect.gen(function* () {
+      yield* seed;
+      yield* (yield* Worker.MemoryWorker).sweepDue();
+      const summary = yield* ThreadHandoffSummary.ThreadHandoffSummary;
+      const stored = yield* summary.summarize(threadId);
+      assert.notStrictEqual(stored, "generated summary");
+      assert.lengthOf(yield* Ref.get(calls), 0);
+    }).pipe(Effect.provide(layerFor({ generateMemorySummary }, { hub: true })));
+  }),
 );
 
 it.effect.each([

@@ -140,6 +140,9 @@ export function useCardAttachmentUploads(input: {
   };
 
   const hasFiles = (event: DragEvent) => event.dataTransfer.types.includes("Files");
+  // The description editor turns dropped images into inline images itself.
+  const inEditor = (event: DragEvent) =>
+    event.target instanceof Element && event.target.closest("[data-inline-image-drop]") !== null;
   const dropHandlers = {
     onPaste: (event: ClipboardEvent) => {
       // The description editor claims its own pastes as inline images.
@@ -151,6 +154,10 @@ export function useCardAttachmentUploads(input: {
     },
     onDragOver: (event: DragEvent) => {
       if (input.disabled || !hasFiles(event)) return;
+      if (inEditor(event)) {
+        setDragging(false);
+        return;
+      }
       event.preventDefault();
       if (!dragging) setDragging(true);
     },
@@ -160,7 +167,7 @@ export function useCardAttachmentUploads(input: {
     },
     onDrop: (event: DragEvent) => {
       setDragging(false);
-      if (event.defaultPrevented || input.disabled || !hasFiles(event)) return;
+      if (event.defaultPrevented || input.disabled || !hasFiles(event) || inEditor(event)) return;
       event.preventDefault();
       addFiles(Array.from(event.dataTransfer.files));
     },
