@@ -8,6 +8,7 @@ import {
 } from "@t3tools/contracts";
 import { CheckIcon, ChevronRightIcon, LayersIcon } from "lucide-react";
 import * as Equal from "effect/Equal";
+import { formatModelSlugName } from "@t3tools/shared/model";
 
 import { cn } from "../../lib/utils";
 import type { EnvironmentPresentation } from "../../state/environments";
@@ -75,7 +76,8 @@ function formatValue(key: keyof ServerSettings, value: unknown): string {
   }
   if (Array.isArray(value)) return `${value.length} ${value.length === 1 ? "item" : "items"}`;
   if (typeof value === "object") {
-    if ("model" in value && typeof value.model === "string") return value.model;
+    if ("model" in value && typeof value.model === "string")
+      return formatModelSlugName(value.model);
     if ("mode" in value && typeof value.mode === "string") {
       return WRITING_STYLE_LABELS[value.mode] ?? value.mode;
     }

@@ -51,7 +51,7 @@ describe("settingInheritanceLayers", () => {
   });
 
   it("names the folder whose rule sets the default model", () => {
-    const folderModel = { instanceId: ProviderInstanceId.make("codex"), model: "folder-model" };
+    const folderModel = { instanceId: ProviderInstanceId.make("codex"), model: "claude-opus-5-5" };
     const settings = {
       ...DEFAULT_SERVER_SETTINGS,
       folderModelDefaults: [{ folder: "/a/work", modelSelection: folderModel }],
@@ -69,7 +69,7 @@ describe("settingInheritanceLayers", () => {
     );
     expect(layers.map((layer) => [layer.label, layer.value, layer.effective])).toEqual([
       ["Project", "Inherits", false],
-      ["Folder a/work", "folder-model", true],
+      ["Folder a/work", "Claude Opus 5.5", true],
       ["Laptop", "Inherits", false],
       ["Default", "Automatic", false],
     ]);
