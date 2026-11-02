@@ -2259,10 +2259,11 @@ describe("OrchestratorMcpService provider resolution", () => {
         },
         expected: overrideModel,
       },
+      { name: "no rule at all, which is refused", settings: {}, expected: null },
     ])("schedules a task with the model from $name", ({ settings, expected }) =>
       Effect.gen(function* () {
         const upserts: Array<ScheduledTaskUpsertInput> = [];
-        yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+        const result = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
           Effect.flatMap((mcp) =>
             mcp.scheduleTask(supervisedClient, {
               projectId,
@@ -2304,8 +2305,18 @@ describe("OrchestratorMcpService provider resolution", () => {
               ),
             ),
           ),
+          Effect.result,
         );
-        assert.deepEqual(upserts[0]?.modelSelection, expected);
+        if (expected === null) {
+          assert.isTrue(
+            result._tag === "Failure" &&
+              "code" in result.failure &&
+              result.failure.code === "invalid_request",
+          );
+          assert.lengthOf(upserts, 0);
+        } else {
+          assert.deepEqual(upserts[0]?.modelSelection, expected);
+        }
       }),
     );
 

@@ -5,6 +5,7 @@ import "vite-plus/test/config";
 
 const reactTests = [
   "src/features/kanban/KanbanBoardRouteScreen.test.tsx",
+  "src/features/kanban/KanbanAddAttachmentButton.test.tsx",
   "src/features/threads/git/GitBranchesSheet.occupancy.test.tsx",
   "src/features/files/useFileTreeEntries.test.tsx",
   "src/features/projects/AddProjectScreen.test.ts",

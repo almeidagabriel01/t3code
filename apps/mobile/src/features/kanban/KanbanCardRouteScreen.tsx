@@ -46,6 +46,7 @@ import { kanbanEnvironment, useKanbanStates } from "../../state/kanban";
 import { useEnvironmentQuery } from "../../state/query";
 import { useOpenLinkedThread } from "../threads/useOpenLinkedThread";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
+import { KanbanAddAttachmentButton } from "./KanbanAddAttachmentButton";
 import { KanbanCardAttachmentList, KanbanCardCoverImage } from "./KanbanCardAttachments";
 import { KanbanLabelChip } from "./KanbanCardTile";
 import { useKanbanActions } from "./useKanbanActions";
@@ -575,13 +576,16 @@ function KanbanCardDetail(props: {
           />
         )}
 
-        {card.attachments.length > 0 ? (
+        {card.attachments.length > 0 || !disabled ? (
           <Section title={`Attachments · ${card.attachments.length}`}>
             <KanbanCardAttachmentList
               environmentId={environmentId}
               card={card}
               onPress={setExpandedImage}
             />
+            {disabled ? null : (
+              <KanbanAddAttachmentButton environmentId={environmentId} cardId={cardId} />
+            )}
           </Section>
         ) : null}
         <FilePreviewModal source={expandedImage} onRequestClose={() => setExpandedImage(null)} />
