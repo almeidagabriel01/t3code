@@ -440,13 +440,19 @@ describe("AgentAwarenessRelay", () => {
       }).pipe(Effect.scoped),
     );
 
-    it.effect("an answered decision publishes nothing", () =>
+    it.effect("a settled decision republishes the thread without the request", () =>
       Effect.gen(function* () {
-        const { relay, publications, events, pulls } = yield* setup;
+        const { relay, publications, sql, events, pulls } = yield* setup;
+        yield* insertOpen(sql, THREAD_ID);
+        yield* Queue.offer(events, decision("open"));
+        yield* Queue.take(pulls);
+        yield* relay.drain;
+        yield* sql`UPDATE decisions SET status = 'answered' WHERE decision_id = 'decision-1'`;
         yield* Queue.offer(events, decision("answered"));
         yield* Queue.take(pulls);
         yield* relay.drain;
-        assert.equal(publications.length, 0);
+        assert.equal(publications.length, 2);
+        assert.notEqual(publications[1]?.state?.headline, "Decision needed");
       }).pipe(Effect.scoped),
     );
 

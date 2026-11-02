@@ -873,10 +873,10 @@ export const make = Effect.gen(function* () {
           Effect.andThen(publishActiveThreadsOnceWhenConfigured(startupState !== "enabled")),
         ),
       );
-      // An open row is only ever published on creation; settling publishes a non-open status.
+      // Settling republishes too, so a dismissed or expired decision stops showing as needed.
       yield* forkParked(
         Stream.runForEach(decisions.subscribe, (event) =>
-          event.type === "upserted" && event.decision.status === "open"
+          event.type === "upserted"
             ? enqueueThreadPublish(event.decision.fromThreadId)
             : Effect.void,
         ).pipe(Effect.ignore),
