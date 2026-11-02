@@ -15,6 +15,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import * as KanbanService from "../../../kanban/KanbanService.ts";
+import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as Project from "../../../project/ProjectService.ts";
 import { sliceWholeCodePoints } from "@t3tools/shared/String";
 import { startableSubtasks, subtaskProgress, subtasksOf } from "@t3tools/shared/kanbanSubtasks";
@@ -137,6 +138,13 @@ const run = Effect.fn("mcp.kanban.run")(
         return yield* resolveProjectId(context, undefined);
       }
       const ref = input.project;
+      if (/^(none|no project)$/i.test(ref.trim())) {
+        const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+        const scratch = yield* folders.ensureScratchProject.pipe(
+          Effect.mapError((error) => invalid(error.message)),
+        );
+        return scratch.projectId;
+      }
       const matches = shells.filter((shell) => shell.id === ref);
       const found = matches.length > 0 ? matches : shells.filter((shell) => eq(shell.title, ref));
       if (found.length !== 1) {

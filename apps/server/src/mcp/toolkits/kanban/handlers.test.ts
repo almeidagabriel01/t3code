@@ -17,6 +17,7 @@ import * as Stream from "effect/Stream";
 import * as KanbanService from "../../../kanban/KanbanService.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as SqlitePersistence from "../../../persistence/Sqlite.ts";
+import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as Project from "../../../project/ProjectService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
@@ -27,6 +28,8 @@ import { KanbanToolkit, type KanbanParameters } from "./tools.ts";
 
 const projectId = ProjectId.make("project-a");
 const otherProjectId = ProjectId.make("project-b");
+const scratchProjectId = ProjectId.make("project-scratch");
+let scratchAvailable = true;
 const providerInstanceId = ProviderInstanceId.make("codex");
 
 const delegated: Array<{ task: string; title?: string | undefined }> = [];
@@ -98,7 +101,13 @@ const dependencies = (threadId: ThreadId, { kanban, client, threads, link }: Cal
         Effect.succeed([
           { id: projectId, title: "Alpha" },
           { id: otherProjectId, title: "Beta" },
+          { id: scratchProjectId, title: "No project" },
         ] as unknown as ReadonlyArray<OrchestrationProjectShell>),
+    }),
+    Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+      ensureScratchProject: scratchAvailable
+        ? Effect.succeed({ projectId: scratchProjectId })
+        : Effect.fail(new ManagedProjectFolders.ScratchUnavailableError()),
     }),
   ).pipe(
     Layer.provideMerge(
@@ -618,5 +627,53 @@ it.effect("a create retried with the same clientRequestId keeps the first card's
     yield* call(move);
     const activity = (yield* call({ action: "read_card", card: "#1" })).activity;
     expect(activity.filter((event: { kind: string }) => event.kind === "moved")).toHaveLength(1);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("project none is the No-project board; a no-project thread's cards link to it", () =>
+  Effect.gen(function* () {
+    const { call } = yield* harness({
+      threads: {
+        "scratch-thread": { projectId: scratchProjectId },
+        "alpha-thread": { projectId },
+      },
+    });
+    const created = yield* call({ action: "create_card", project: "No Project", title: "Domain" });
+    expect(created).toMatchObject({ number: 1 });
+    yield* call({ action: "create_card", title: "Alpha card" });
+    const none = yield* call({ action: "read_board", project: "none" });
+    expect(none.cards.map((card: { title: string }) => card.title)).toEqual(["Domain"]);
+    const boards = (yield* call({ action: "list_boards" })).boards;
+    expect(boards.map((board: { project: string }) => board.project).toSorted()).toEqual([
+      "Alpha",
+      "No project",
+    ]);
+    const linked = yield* call({
+      action: "link_thread",
+      project: "none",
+      card: "#1",
+      threadId: "scratch-thread" as never,
+    });
+    expect(linked.linkedThreadIds).toContain("scratch-thread");
+    expect(
+      yield* call({
+        action: "link_thread",
+        project: "none",
+        card: "#1",
+        threadId: "alpha-thread" as never,
+      }),
+    ).toMatchObject({ code: "invalid_request" });
+  }).pipe(Effect.scoped),
+);
+
+it.effect("project none reports when threads without a project are unavailable", () =>
+  Effect.gen(function* () {
+    scratchAvailable = false;
+    const { call } = yield* harness();
+    scratchAvailable = true;
+    expect(yield* call({ action: "read_board", project: "none" })).toMatchObject({
+      code: "invalid_request",
+      message: "Threads without a project are not available on this environment.",
+    });
   }).pipe(Effect.scoped),
 );
