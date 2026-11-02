@@ -1,3 +1,4 @@
+import * as NodeOS from "node:os";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   DEFAULT_SERVER_SETTINGS,
@@ -278,6 +279,23 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       assert.deepEqual(chained.fallbackModelSelection, second);
       const replaced = yield* service.updateSettings({ fallbackModelSelection: saved });
       assert.deepEqual(replaced.fallbackModelSelections, [saved]);
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
+  it.effect("stores folder rules with the home folder expanded and no trailing slash", () =>
+    Effect.gen(function* () {
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const modelSelection = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6.1-sol" };
+      const saved = yield* service.updateSettings({
+        folderModelDefaults: [
+          { folder: "~/work/", modelSelection },
+          { folder: "/srv/apps/", modelSelection },
+        ],
+      });
+      assert.deepEqual(
+        saved.folderModelDefaults.map((rule) => rule.folder),
+        [`${NodeOS.homedir()}/work`, "/srv/apps"],
+      );
     }).pipe(Effect.provide(layerServerSettings())),
   );
 

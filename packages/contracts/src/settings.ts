@@ -1267,6 +1267,14 @@ export const StorageCleanupSettings = Schema.Struct({
 export type StorageCleanupSettings = typeof StorageCleanupSettings.Type;
 
 export const MAX_FALLBACK_MODEL_SELECTIONS = 3;
+export const MAX_FOLDER_MODEL_DEFAULTS = 50;
+
+/** Projects inside `folder` (an absolute path) start new threads with `modelSelection`. */
+export const FolderModelDefault = Schema.Struct({
+  folder: TrimmedNonEmptyString,
+  modelSelection: ModelSelection,
+});
+export type FolderModelDefault = typeof FolderModelDefault.Type;
 
 export const ServerSettings = Schema.Struct({
   memoryOwnerSourceReadPolicyVersion: NonNegativeInt.pipe(
@@ -1337,6 +1345,9 @@ export const ServerSettings = Schema.Struct({
   /** Tried in order when the default model's provider is out of usage. */
   fallbackModelSelections: Schema.Array(ModelSelection)
     .check(Schema.isMaxLength(MAX_FALLBACK_MODEL_SELECTIONS))
+    .pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  folderModelDefaults: Schema.Array(FolderModelDefault)
+    .check(Schema.isMaxLength(MAX_FOLDER_MODEL_DEFAULTS))
     .pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   defaultRuntimeMode: RuntimeMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE)),
@@ -1720,6 +1731,9 @@ const ServerSettingsPatchFields = Schema.Struct({
   ),
   defaultModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   defaultRuntimeMode: Schema.optionalKey(RuntimeMode),
+  folderModelDefaults: Schema.optionalKey(
+    Schema.Array(FolderModelDefault).check(Schema.isMaxLength(MAX_FOLDER_MODEL_DEFAULTS)),
+  ),
   fallbackModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   fallbackModelSelections: Schema.optionalKey(
     Schema.Array(ModelSelection).check(Schema.isMaxLength(MAX_FALLBACK_MODEL_SELECTIONS)),

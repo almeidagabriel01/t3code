@@ -158,6 +158,71 @@ describe("resolveProjectSettings", () => {
   });
 });
 
+describe("folder model defaults", () => {
+  const codex = ProviderInstanceId.make("codex");
+  const claude = ProviderInstanceId.make("claudeAgent");
+  const codexModel = createModelSelection(codex, "gpt-5");
+  const claudeModel = createModelSelection(claude, "opus");
+  const sunModel = createModelSelection(codex, "sun");
+  const withRules = (
+    rules: Array<{ folder: string; modelSelection: typeof codexModel }>,
+    extra = {},
+  ) => ({ ...DEFAULT_SERVER_SETTINGS, folderModelDefaults: rules, ...extra });
+
+  it.each([
+    ["no rule", [], "/a/b/app", null, "environment"],
+    ["rule matches", [["/a/b", codexModel]], "/a/b/app", codexModel, "folder"],
+    ["rule matches the folder itself", [["/a/b/", codexModel]], "/a/b", codexModel, "folder"],
+    ["sibling prefix", [["/a/b", codexModel]], "/a/bc/app", null, "environment"],
+    [
+      "deepest folder wins",
+      [
+        ["/a", claudeModel],
+        ["/a/b", codexModel],
+      ],
+      "/a/b/app",
+      codexModel,
+      "folder",
+    ],
+    ["no workspace root", [["/a", codexModel]], undefined, null, "environment"],
+  ] as const)("%s", (_name, rules, workspaceRoot, model, source) => {
+    const settings = withRules(
+      rules.map(([folder, modelSelection]) => ({ folder, modelSelection })),
+    );
+    const resolved = resolveProjectSettings(settings, projectId, { workspaceRoot });
+    expect(resolved.settings.defaultModelSelection).toEqual(model);
+    expect(resolved.sources.defaultModelSelection).toBe(source);
+  });
+
+  it("lets a project override win over the folder rule", () => {
+    const settings = withRules([{ folder: "/a", modelSelection: codexModel }], {
+      projectSettingsOverrides: { [projectId]: { defaultModelSelection: sunModel } },
+    });
+    const resolved = resolveProjectSettings(settings, projectId, { workspaceRoot: "/a/app" });
+    expect(resolved.settings.defaultModelSelection).toEqual(sunModel);
+    expect(resolved.sources.defaultModelSelection).toBe("project");
+  });
+
+  it("skips a rule whose provider is off for the project", () => {
+    const settings = withRules([{ folder: "/a", modelSelection: codexModel }], {
+      projectSettingsOverrides: {
+        [projectId]: { providerInstances: { [codex]: { enabled: false } } },
+      },
+    });
+    const resolved = resolveProjectSettings(settings, projectId, { workspaceRoot: "/a/app" });
+    expect(resolved.settings.defaultModelSelection).toBeNull();
+    expect(resolved.sources.defaultModelSelection).toBe("environment");
+  });
+
+  it("applies to a project that has no overrides", () => {
+    const settings = withRules([{ folder: "/a", modelSelection: claudeModel }]);
+    expect(
+      resolveProjectSettings(settings, null, { workspaceRoot: "/a/x" }).settings
+        .defaultModelSelection,
+    ).toEqual(claudeModel);
+  });
+});
+
 describe("resolveProjectSettings with a t3.json", () => {
   it("walks project override, environment value, file, then built-in for file-backed keys", () => {
     const file = { defaultThreadEnvMode: "worktree" as const };

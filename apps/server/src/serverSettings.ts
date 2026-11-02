@@ -40,6 +40,9 @@ import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import { normalizeProjectPathForDispatch } from "@t3tools/shared/path";
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import { resolveSymlinkTarget } from "@t3tools/shared/symlink";
 import * as ServerConfig from "./config.ts";
@@ -320,6 +323,7 @@ export class ServerSettingsService extends Context.Service<
 const makeTest = Effect.fn("serverSettings.makeTest")(function* (
   overrides: DeepPartial<ServerSettings> = {},
 ) {
+  const home = yield* HostProcess.HomeDirectory;
   const { automaticGitFetchInterval, providerHealthRefreshInterval, ...overridesForMerge } =
     overrides;
   const merged = deepMerge(DEFAULT_SERVER_SETTINGS, overridesForMerge);
@@ -359,7 +363,9 @@ const makeTest = Effect.fn("serverSettings.makeTest")(function* (
     getSettings,
     updateSettings: (patch) =>
       updateTestSettings((currentSettings) =>
-        Effect.succeed(applyServerSettingsPatch(currentSettings, patch)),
+        Effect.succeed(
+          applyServerSettingsPatch(currentSettings, withNormalizedFolderRules(patch, home)),
+        ),
       ),
     updateProviderInstance: (mutation, patch = {}) =>
       updateTestSettings((currentSettings) =>
@@ -600,6 +606,7 @@ const ATOMIC_SETTINGS_KEYS: ReadonlySet<string> = new Set([
   "textGenerationModelSelection",
   "fallbackModelSelection",
   "fallbackModelSelections",
+  "folderModelDefaults",
   "pullRequestMergeMethod",
 ]);
 
@@ -716,7 +723,23 @@ function foldLegacyProjectSettings(
   };
 }
 
+/** Folder rules compare against stored workspace roots, which are absolute with `~` expanded. */
+const withNormalizedFolderRules = (
+  patch: ServerSettingsPatch,
+  home: string,
+): ServerSettingsPatch =>
+  patch.folderModelDefaults === undefined
+    ? patch
+    : {
+        ...patch,
+        folderModelDefaults: patch.folderModelDefaults.map((rule) => ({
+          ...rule,
+          folder: normalizeProjectPathForDispatch(expandHomePath(rule.folder, home)),
+        })),
+      };
+
 const make = Effect.gen(function* () {
+  const home = yield* HostProcess.HomeDirectory;
   const { settingsPath } = yield* ServerConfig.ServerConfig;
   const fs = yield* FileSystem.FileSystem;
   const pathService = yield* Path.Path;
@@ -1402,7 +1425,7 @@ const make = Effect.gen(function* () {
     updateSettings: (patch) =>
       updateAndPersistSettings((current) =>
         ensureSecretProviderWritesAllowed(patch, settingsPath).pipe(
-          Effect.as(applyServerSettingsPatch(current, patch)),
+          Effect.as(applyServerSettingsPatch(current, withNormalizedFolderRules(patch, home))),
         ),
       ),
     updateProviderInstance: (mutation, patch = {}) =>

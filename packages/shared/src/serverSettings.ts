@@ -667,6 +667,9 @@ function applyServerSettingsPatchFields(
     ...(patch.fallbackModelSelection !== undefined
       ? { fallbackModelSelection: patch.fallbackModelSelection }
       : {}),
+    ...(patch.folderModelDefaults !== undefined
+      ? { folderModelDefaults: patch.folderModelDefaults }
+      : {}),
     ...(patch.defaultProjectScripts !== undefined
       ? { defaultProjectScripts: patch.defaultProjectScripts }
       : {}),

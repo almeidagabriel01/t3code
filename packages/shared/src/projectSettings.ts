@@ -1,4 +1,5 @@
 import {
+  type FolderModelDefault,
   type ModelSelection,
   PROJECT_FILE_BACKED_SETTINGS,
   PROJECT_SCOPED_SERVER_SETTING_KEYS,
@@ -16,7 +17,7 @@ import {
 import { normalizeProjectPathForComparison } from "./path.ts";
 import { fallbackTextGenerationModelSelection } from "./serverSettings.ts";
 
-export type ProjectSettingSource = "environment" | "project" | "t3.json";
+export type ProjectSettingSource = "environment" | "folder" | "project" | "t3.json";
 
 export type ProjectSettingSources = Readonly<
   Record<ProjectScopedServerSettingKey, ProjectSettingSource>
@@ -48,6 +49,28 @@ export function hasProjectSettingsOverrides(
 export interface LegacyProjectSettingsFields {
   readonly defaultModelSelection?: ModelSelection | null | undefined;
   readonly defaultThreadEnvMode?: ThreadEnvMode | null | undefined;
+  readonly workspaceRoot?: string | undefined;
+}
+
+/** The rule for the deepest folder that holds the workspace; path-segment aware. */
+function matchFolderModelDefault(
+  rules: ReadonlyArray<FolderModelDefault>,
+  workspaceRoot: string | null | undefined,
+): FolderModelDefault | null {
+  if (!workspaceRoot) return null;
+  const workspace = normalizeProjectPathForComparison(workspaceRoot);
+  let best: FolderModelDefault | null = null;
+  let bestLength = -1;
+  for (const rule of rules) {
+    const root = normalizeProjectPathForComparison(rule.folder);
+    const separator = root.includes("\\") ? "\\" : "/";
+    const prefix = root.endsWith(separator) ? root : `${root}${separator}`;
+    if ((workspace === root || workspace.startsWith(prefix)) && root.length > bestLength) {
+      best = rule;
+      bestLength = root.length;
+    }
+  }
+  return best;
 }
 
 export function resolveProjectSettings(
@@ -123,7 +146,8 @@ function resolveProjectOverrides(
             : {}),
           ...stored,
         };
-  if (Object.keys(overrides).length === 0) {
+  const folderRule = matchFolderModelDefault(settings.folderModelDefaults, project?.workspaceRoot);
+  if (Object.keys(overrides).length === 0 && folderRule === null) {
     return { settings, sources: ENVIRONMENT_SOURCES, overrides: EMPTY_OVERRIDES };
   }
   const sources: Record<ProjectScopedServerSettingKey, ProjectSettingSource> = {
@@ -149,6 +173,14 @@ function resolveProjectOverrides(
     }
     effective[key] = value;
     sources[key] = "project";
+  }
+  if (
+    folderRule !== null &&
+    sources.defaultModelSelection === "environment" &&
+    resolveProjectProviderInstanceEnabled(settings, projectId, folderRule.modelSelection.instanceId)
+  ) {
+    effective.defaultModelSelection = folderRule.modelSelection;
+    sources.defaultModelSelection = "folder";
   }
   const textGeneration = effective.textGenerationModelSelection as ModelSelection;
   if (!resolveProjectProviderInstanceEnabled(settings, projectId, textGeneration.instanceId)) {
