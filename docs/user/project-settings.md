@@ -161,6 +161,11 @@ resolve in one order: a project override, then the environment setting, then `t3
 built-in default. Leave a setting on **Inherit** to let the next tier decide.
 Browser access changes apply when an agent session next starts.
 
+With no project selected, **Model by folder** in Threads sets the model for every project inside
+a folder, such as `~/work`. The deepest matching folder wins, and a project's own model setting
+still overrides it. The model setting for a project then shows that it is inherited from the
+folder.
+
 New worktrees initialize git submodules recursively. If that step is slow because the repository
 declares many nested submodules, set **Submodules** in **Settings → Worktrees** under Advanced (with the project
 selected to override it there) to **Top level only** to stop at the ones the repository declares
