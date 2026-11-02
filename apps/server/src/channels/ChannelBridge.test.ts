@@ -124,14 +124,6 @@ const routing: ReadonlyArray<{
   },
   { name: "case-insensitive", text: "@RESEARCH BOT Go", to: "research-bot", delivered: "Go" },
   { name: "name then newline", text: "@Research\nplease", to: "research", delivered: "please" },
-  { name: "unknown @word is text", text: "@nobody hi", to: "jarvis", delivered: "@nobody hi" },
-  {
-    name: "name inside a longer word",
-    text: "@researchers hi",
-    to: "jarvis",
-    delivered: "@researchers hi",
-  },
-  { name: "archived assistant", text: "@old hi", to: "jarvis", delivered: "@old hi" },
   {
     name: "mention later in the text",
     text: "ask @research",
@@ -200,6 +192,20 @@ it.effect("naming an assistant with no text switches without sending", () => {
     assert.deepEqual(yield* texts, ["You are now talking to Research."]);
     assert.equal((yield* outboxRows)[0]!.message.senderName, "T3 Code");
     assert.equal(channelSends()[0]!.threadId, "assistant:research:1");
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("@ alone or an unknown @name lists the assistants instead of sending", () => {
+  const { layer, channelSends } = harness();
+  return Effect.gen(function* () {
+    const gateway = yield* ChannelGateway;
+    for (const text of ["@", " @nobody hi", "@researchers hi", "@old hi"]) {
+      yield* gateway.ingest(inbound({ text }));
+    }
+    const roster =
+      "Your assistants: Jarvis, Research Bot, Research, Fresh. Start a message with @Name to talk to one; Jarvis answers otherwise.";
+    assert.deepEqual(yield* texts, [roster, roster, roster, roster]);
+    assert.equal(channelSends().length, 0);
   }).pipe(Effect.provide(layer));
 });
 

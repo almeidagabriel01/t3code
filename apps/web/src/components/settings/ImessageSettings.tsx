@@ -306,7 +306,8 @@ export function ImessageSettingsPanel() {
           <p className="px-3 text-sm leading-normal text-muted-foreground sm:px-4">
             Talk to your assistants from Messages on this Mac. Start a message with @Name to pick an
             assistant; Jarvis answers otherwise, and the chat stays with the last assistant you
-            picked. Works while T3 Code is running on this Mac.
+            picked. Send @ on its own to list your assistants. Works while T3 Code is running on
+            this Mac.
           </p>
           {environmentIds.map((id, index) => (
             <ImessageEnvironment

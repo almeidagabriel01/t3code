@@ -42,7 +42,7 @@ const persistenceFailed = (cause: unknown) =>
 
 /**
  * The assistant a message is addressed to: `@<name>` at the start, longest name first so names
- * with spaces win over a shorter prefix, then the text after it. Unknown `@word` is plain text.
+ * with spaces win over a shorter prefix, then the text after it.
  */
 function routeByName<A extends { readonly name: string }>(
   text: string,
@@ -105,6 +105,11 @@ const make = Effect.gen(function* () {
         VALUES (${message.connectionId}, ${message.conversationKey}, ${named.assistant.id})`;
       return { assistant: named.assistant, text: named.text };
     }
+    // `@` alone or an unknown `@name` asks who is there; the chat has no other way to find out.
+    if (message.text.trimStart().startsWith("@")) {
+      const listed = active.length > 0 ? active : [yield* assistants.ensureDefault];
+      return { roster: listed.toSorted((a, b) => Number(b.isDefault) - Number(a.isDefault)) };
+    }
     const sticky = yield* sql<{ readonly assistant_id: string }>`
       SELECT assistant_id FROM channel_conversations
       WHERE connection_id = ${message.connectionId} AND conversation_key = ${message.conversationKey}`;
@@ -130,6 +135,16 @@ const make = Effect.gen(function* () {
         message,
         "failed",
         "I could not reach your assistants right now. Please try again.",
+      );
+      yield* markSent(message);
+      return;
+    }
+    if ("roster" in picked.success) {
+      const [first] = picked.success.roster;
+      yield* reply(
+        message,
+        "roster",
+        `Your assistants: ${picked.success.roster.map((entry) => entry.name).join(", ")}. Start a message with @Name to talk to one${first?.isDefault ? `; ${first.name} answers otherwise` : ""}.`,
       );
       yield* markSent(message);
       return;

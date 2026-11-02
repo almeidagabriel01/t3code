@@ -261,8 +261,8 @@ export function SettingsImessageRouteScreen() {
       >
         <Text textRole="footnote" className="px-4 text-foreground-muted">
           Talk to your assistants from Messages on the Mac running T3 Code. Start with @Name to pick
-          an assistant; Jarvis answers otherwise, and the chat stays with the last one picked. It
-          works while T3 Code is running on that Mac.
+          an assistant; Jarvis answers otherwise, and the chat stays with the last one picked. Send
+          @ on its own to list them. It works while T3 Code is running on that Mac.
         </Text>
         {environmentIds.length === 0 ? (
           <EmptyState
