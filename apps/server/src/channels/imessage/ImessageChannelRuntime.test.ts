@@ -42,6 +42,7 @@ const friendRow = (rowid: number, patch: Partial<ImessageRow> = {}): ImessageRow
   chat_identifier: FRIEND,
   style: 45,
   chat_join_count: 1,
+  account: null,
   ...patch,
 });
 const selfRow = (rowid: number, patch: Partial<ImessageRow> = {}) =>

@@ -12,7 +12,7 @@ import { classifyImessageDbFailure, openImessageChatDb } from "./imessageChatDb.
 
 const SCHEMA = `CREATE TABLE message (guid TEXT, text TEXT, attributedBody BLOB, handle_id INTEGER,
   is_from_me INTEGER, date INTEGER, associated_message_type INTEGER, item_type INTEGER,
-  balloon_bundle_id TEXT, cache_has_attachments INTEGER, service TEXT);
+  balloon_bundle_id TEXT, cache_has_attachments INTEGER, service TEXT, account TEXT);
   CREATE TABLE handle (id TEXT, service TEXT);
   CREATE TABLE chat (guid TEXT, chat_identifier TEXT, style INTEGER);
   CREATE TABLE chat_message_join (message_id INTEGER, chat_id INTEGER);`;

@@ -44,6 +44,7 @@ const friendRow = (patch: Partial<ImessageRow> = {}): ImessageRow => ({
   chat_identifier: FRIEND,
   style: 45,
   chat_join_count: 1,
+  account: null,
   ...patch,
 });
 const selfRow = (patch: Partial<ImessageRow> = {}): ImessageRow =>
@@ -218,10 +219,36 @@ const cases: ReadonlyArray<Case> = [
     expect: MESSAGE,
   },
   {
-    name: "self chat: a reply sent into another chat is not this one's echo",
+    name: "self chat: a reply sent to your other address echoes here and is still skipped",
     row: selfRow({ text: "Jarvis: hi" }),
-    memory: { sent: [sentFor("Jarvis: hi", { chatGuid: "iMessage;-;+15550000009" })], seen: [] },
+    memory: { sent: [sentFor("Jarvis: hi", { chatGuid: `iMessage;-;${ME_MAIL}` })], seen: [] },
+    expect: "own_reply",
+  },
+  {
+    name: "self chat: the Mac sends from your email, so a message there is answered on your number",
+    row: selfRow({
+      chat_guid: `any;-;${ME_MAIL}`,
+      chat_identifier: ME_MAIL,
+      account: `E:${ME_MAIL}`,
+    }),
     expect: MESSAGE,
+    check: (a) =>
+      expect(a).toMatchObject({
+        chatGuid: `any;-;${ME}`,
+        remember: { chatGuid: `any;-;${ME_MAIL}` },
+      }),
+  },
+  {
+    name: "self chat: on your number while the Mac sends from your email, it stays",
+    row: selfRow({ account: `E:${ME_MAIL}` }),
+    expect: MESSAGE,
+    check: (a) => expect(a).toMatchObject({ chatGuid: CHAT }),
+  },
+  {
+    name: "self chat: the Mac sends from your number, so the answer goes to your email",
+    row: selfRow({ account: `p:${ME}` }),
+    expect: MESSAGE,
+    check: (a) => expect(a).toMatchObject({ chatGuid: `iMessage;-;${ME_MAIL}` }),
   },
   {
     name: "self chat: twin copy of a message already seen moments ago",

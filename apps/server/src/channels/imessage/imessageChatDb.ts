@@ -23,6 +23,8 @@ export interface ImessageRow {
   readonly chat_identifier: string | null;
   readonly style: number | null;
   readonly chat_join_count: number;
+  /** The Mac's own iMessage login for this row, such as `E:me@example.com`. */
+  readonly account: string | null;
 }
 
 export const ImessageDbCategory = Schema.Literals([
@@ -70,7 +72,7 @@ const SELECT = `SELECT m.ROWID AS rowid, m.guid, m.text, m.attributedBody, m.is_
   CAST(m.date AS REAL) AS date,
   m.associated_message_type, m.item_type, m.balloon_bundle_id, m.cache_has_attachments,
   m.service AS message_service, h.id AS sender_handle, h.service AS sender_service,
-  c.guid AS chat_guid, c.chat_identifier, c.style,
+  c.guid AS chat_guid, c.chat_identifier, c.style, m.account,
   (SELECT COUNT(*) FROM chat_message_join AS j WHERE j.message_id = m.ROWID) AS chat_join_count
   FROM message AS m
   LEFT JOIN handle AS h ON h.ROWID = m.handle_id

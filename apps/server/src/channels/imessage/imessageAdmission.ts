@@ -178,9 +178,9 @@ export function admitImessageRow(
   const dateMs = appleDateToEpochMs(row.date) ?? 0;
   const textHash = fingerprintText(text);
   const remember = { chatGuid: row.chat_guid, textHash, dateMs };
+  // Your chats with yourself are one conversation: a reply sent to your number echoes in that chat.
   const own = memory.sent.find(
     (sent) =>
-      sent.chatGuid === row.chat_guid &&
       sent.textHash === textHash &&
       dateMs >= sent.sentAtMs - MIRROR_WINDOW_MS &&
       dateMs <= sent.sentAtMs + OWN_REPLY_WINDOW_MS,
@@ -189,15 +189,28 @@ export function admitImessageRow(
     return { type: "skip", reason: "own_reply", consumeSentId: own.id, remember };
   if (
     memory.seen.some(
-      (seen) =>
-        seen.chatGuid === row.chat_guid &&
-        seen.textHash === textHash &&
-        Math.abs(seen.dateMs - dateMs) <= MIRROR_WINDOW_MS,
+      (seen) => seen.textHash === textHash && Math.abs(seen.dateMs - dateMs) <= MIRROR_WINDOW_MS,
     )
   ) {
     return skip("mirrored");
   }
-  return { ...base, senderHandle: chatHandle, via: "self_chat", remember };
+  // Messages sends from the Mac's own login. Answering on your other address makes the reply
+  // read as incoming on your phone, and every chat with yourself becomes that one conversation.
+  const macHandle =
+    row.account === null ? undefined : normalizeHandle(row.account.replace(/^[a-z]+:/i, ""));
+  const replyHandle =
+    macHandle === undefined
+      ? chatHandle
+      : ([chatHandle, ...config.selfHandles].find((handle) => handle !== macHandle) ?? chatHandle);
+  return {
+    ...base,
+    ...(replyHandle === chatHandle
+      ? {}
+      : { chatGuid: row.chat_guid.replace(/;-;[^;]+$/, `;-;${replyHandle}`) }),
+    senderHandle: chatHandle,
+    via: "self_chat",
+    remember,
+  };
 }
 
 export function toImessageInbound(
