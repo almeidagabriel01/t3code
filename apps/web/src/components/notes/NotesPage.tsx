@@ -411,7 +411,6 @@ function EnvironmentNotes(
       >
         {props.path ? (
           <NoteLoader
-            key={props.path}
             environmentId={environmentId}
             path={props.path}
             summary={state?.notes.get(props.path)}

@@ -21,7 +21,7 @@ import {
   Trash2Icon,
   XIcon,
 } from "lucide-react";
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { cn } from "../../lib/utils";
@@ -38,7 +38,14 @@ import { NoteConflictDialog } from "./NoteConflictDialog";
 import { NoteEditor } from "./NoteEditor";
 import { NoteFileDialog } from "./NoteFileDialog";
 import { NoteStartWorkDialog } from "./NoteStartWorkDialog";
-import { isNoteDirty, noteErrorMessage, NoteSession, type NoteEditState } from "./noteState";
+import {
+  isNoteDirty,
+  isNoteErrorReason,
+  noteErrorMessage,
+  NoteSession,
+  untitledRenameTarget,
+  type NoteEditState,
+} from "./noteState";
 import { useNoteCommand } from "./useNoteCommand";
 
 const ISSUE_REASON = {
@@ -53,17 +60,24 @@ interface NotePaneProps {
   /** False until the live list has arrived, so a missing summary means nothing yet. */
   listReady: boolean;
   autoFocus: boolean;
-  onSelect: (path: string | undefined) => void;
+  onSelect: (path: string | undefined, options?: { replace?: boolean }) => void;
   onExitEditor: () => void;
   /** Set where notes are not a routed page: shows the back button at every width and skips /notes. */
   onBack?: (() => void) | undefined;
 }
 
 export function NoteLoader(props: NotePaneProps & { path: string }) {
+  // The editor is keyed by identity, not path: a rename to the title moves the path under it.
+  const [identity, setIdentity] = useState(props.path);
+  const [moved, setMoved] = useState<NoteDocument | null>(null);
+  if (props.path !== identity && props.path !== moved?.path) {
+    setIdentity(props.path);
+    setMoved(null);
+  }
   const query = useEnvironmentQuery(
     notesEnvironment.note({ environmentId: props.environmentId, input: { path: props.path } }),
   );
-  const document = query.data;
+  const document = query.data ?? (props.path === moved?.path ? moved : null);
   return (
     <>
       {!document && <BackToNotes className="mx-4 mt-3" onBack={props.onBack} />}
@@ -79,7 +93,15 @@ export function NoteLoader(props: NotePaneProps & { path: string }) {
         </div>
       )}
       {document ? (
-        <NoteDetail {...props} document={document} />
+        <NoteDetail
+          key={identity}
+          {...props}
+          document={document}
+          onRenamed={(next) => {
+            setMoved(next);
+            props.onSelect(next.path, { replace: true });
+          }}
+        />
       ) : !query.error ? (
         <p
           role="status"
@@ -93,19 +115,24 @@ export function NoteLoader(props: NotePaneProps & { path: string }) {
   );
 }
 
-function NoteDetail(props: NotePaneProps & { document: NoteDocument }) {
+function NoteDetail(
+  props: NotePaneProps & { document: NoteDocument; onRenamed: (document: NoteDocument) => void },
+) {
   const { environmentId } = props;
   const write = useNoteCommand(notesEnvironment.write);
   const read = useNoteCommand(notesEnvironment.read);
   const update = useNoteCommand(notesEnvironment.update);
+  const moveNote = useNoteCommand(notesEnvironment.move);
   const readCurrent = useStableCallback((path: string) => read({ environmentId, input: { path } }));
   const writeCurrent = useStableCallback((input: Parameters<typeof write>[0]["input"]) =>
     write({ environmentId, input }),
   );
-  // NoteLoader keys this pane by path, so a session never outlives its path.
-  const [session] = useState(
-    () => new NoteSession(props.document, writeCurrent, () => readCurrent(props.document.path)),
-  );
+  const [session] = useState(() => {
+    const created: NoteSession = new NoteSession(props.document, writeCurrent, () =>
+      readCurrent(created.getSnapshot().document.path),
+    );
+    return created;
+  });
   const state = useSyncExternalStore(session.subscribe, session.getSnapshot);
   const canWrite = useAtomValue(notesEnvironment.write.permissionAtom(environmentId));
   const canMove = useAtomValue(notesEnvironment.move.permissionAtom(environmentId));
@@ -123,9 +150,21 @@ function NoteDetail(props: NotePaneProps & { document: NoteDocument }) {
   // Focus only on the first mount; an editor remounted by a reload must not take focus back.
   const [focusOnMount] = useState(props.autoFocus);
   // A note that was listed and then left the list was removed or moved elsewhere.
-  const [listed, setListed] = useState(false);
-  if (props.summary !== undefined && !listed) setListed(true);
-  const removed = listed && props.listReady && props.summary === undefined;
+  // Set by the autosave: only a note this session saved is renamed, never one merely opened.
+  const savedHere = useRef(false);
+  const [renaming, setRenaming] = useState(false);
+  // The path our own rename moved to; leaving for it is not leaving the note.
+  const movedTo = useRef<string | null>(null);
+  // Tracked by path: after a rename the new path is not removed just because its row is not listed yet.
+  const [listedPath, setListedPath] = useState<string | null>(null);
+  if (props.summary !== undefined && listedPath !== props.summary.path)
+    setListedPath(props.summary.path);
+  const removed =
+    !renaming &&
+    listedPath === props.document.path &&
+    props.listReady &&
+    props.summary === undefined;
+
   const dirty = isNoteDirty(state);
   const issue = state.document.issue;
 
@@ -149,10 +188,12 @@ function NoteDetail(props: NotePaneProps & { document: NoteDocument }) {
       state.saving ||
       state.error ||
       state.refreshing ||
-      state.refreshError
+      state.refreshError ||
+      renaming
     )
       return;
     const timeout = setTimeout(() => {
+      savedHere.current = true;
       void session.save(state.body);
     }, 600);
     return () => clearTimeout(timeout);
@@ -167,9 +208,40 @@ function NoteDetail(props: NotePaneProps & { document: NoteDocument }) {
     canWrite,
     dirty,
     removed,
+    renaming,
   ]);
+  const settled = !dirty && !state.saving && !state.incoming && !state.refreshing && !renaming;
+  const current = state.document;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- renames the file once, after a save gives an untitled note its title
+  useEffect(() => {
+    if (!savedHere.current || !settled || removed || !canWrite || !canMove) return;
+    if (untitledRenameTarget(current.path, current.title) === null) return;
+    savedHere.current = false;
+    // oxlint-disable-next-line react/set-state-in-effect -- holds the autosave while the move is in flight
+    setRenaming(true);
+    void (async () => {
+      // A name taken since the list loaded fails as "exists"; step to the next suffix.
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const to = untitledRenameTarget(current.path, current.title, attempt);
+        if (to === null) break;
+        const result = await moveNote({
+          environmentId,
+          input: { from: current.path, to, baseRevision: current.revision },
+        });
+        if (result.ok) {
+          session.receive(result.value);
+          movedTo.current = result.value.path;
+          props.onRenamed(result.value);
+          break;
+        }
+        if (!isNoteErrorReason(result.error, "exists")) break;
+      }
+      setRenaming(false);
+    })();
+  });
   useBlocker({
     shouldBlockFn: ({ current, next }) =>
+      !("path" in next.search && next.search.path === movedTo.current) &&
       (current.pathname !== next.pathname ||
         ("path" in current.search ? current.search.path : undefined) !==
           ("path" in next.search ? next.search.path : undefined)) &&

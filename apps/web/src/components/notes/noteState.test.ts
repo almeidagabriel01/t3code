@@ -1,5 +1,9 @@
-import { NoteConflictError, type NoteDocument, type NotesWriteInput } from "@t3tools/contracts";
-import { NotePath } from "@t3tools/contracts";
+import {
+  NoteConflictError,
+  NotePath,
+  type NoteDocument,
+  type NotesWriteInput,
+} from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { describe, expect, it, vi } from "vite-plus/test";
 

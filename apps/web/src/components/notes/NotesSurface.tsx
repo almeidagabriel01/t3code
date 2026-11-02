@@ -51,7 +51,6 @@ export function NotesSurface({ threadRef, projectId }: NotesSurfaceProps) {
     return (
       <div className="flex h-full min-h-0 flex-col overflow-y-auto">
         <NoteLoader
-          key={path}
           environmentId={environmentId}
           path={path}
           summary={state?.notes.get(path)}
