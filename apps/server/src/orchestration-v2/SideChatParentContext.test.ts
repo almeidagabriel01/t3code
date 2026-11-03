@@ -96,6 +96,32 @@ describe("sideChatParentContext", () => {
     ).toContain("Status: waiting for the user to approve a request (command)");
   });
 
+  it.each([
+    [{ status: "starting" }, "starting a turn"],
+    [{ status: "running", latestRunStopRequested: true }, "running, the user asked it to stop"],
+    [{ status: "waiting" }, "the provider finished its turn and T3 Code is settling it"],
+    [{ status: "completed" }, "idle, its latest turn completed"],
+    [{ status: "failed", lastError: "tests failed" }, "idle, its latest turn failed: tests failed"],
+    [{ status: "failed" }, "idle, its latest turn failed"],
+    [{ status: "cancelled" }, "idle, its latest turn was cancelled"],
+    [{ status: "rolled_back" }, "idle, its latest turn was rolled back"],
+  ] as const)("describes a %o parent", (overrides, line) => {
+    expect(sideChatParentContext({ shell: shell(overrides), messages: [], plans: [] })).toContain(
+      `Status: ${line}\n`,
+    );
+  });
+
+  it("shows an active proposed plan as its markdown", () => {
+    const plan = {
+      ...todo("active"),
+      kind: "proposed_plan" as const,
+      markdown: "1. Ship the tarball",
+    };
+    expect(sideChatParentContext({ shell: shell(), messages: [], plans: [plan] })).toContain(
+      "Proposed plan (active):\n1. Ship the tarball",
+    );
+  });
+
   it("keeps the newest messages within the budget and drops system notes", () => {
     const messages = Array.from({ length: 30 }, (_, index) =>
       message(index % 2 === 0 ? "user" : "assistant", `turn ${index} ${"x".repeat(2_000)}`),
