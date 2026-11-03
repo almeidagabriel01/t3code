@@ -70,6 +70,7 @@ import {
 import type { ThreadDetailScreenProps } from "./ThreadDetailScreen";
 import { ThreadScreenBinding, ThreadScreenFallback, ThreadScreenHost } from "./ThreadScreenHost";
 import { draftRouteIdentity } from "./thread-route-state";
+import { useUnavailableThreadDraftRedirect } from "./useUnavailableThreadDraftRedirect";
 import { NewTaskDraftRouteScreen, type NewTaskDraftRouteParams } from "./NewTaskDraftRouteScreen";
 import { GitOverviewSheet } from "./git/GitOverviewSheet";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -85,7 +86,6 @@ import {
 import { resolveLatestMergeBackRun } from "@t3tools/client-runtime/state/thread-workflows";
 import { threadEnvironment, useThreadFamily } from "../../state/threads";
 import { EMPTY_ENVIRONMENT_THREAD_STATE } from "@t3tools/client-runtime/state/threads";
-import { useProjects } from "../../state/entities";
 import { projectThreadContentPresentation } from "./threadContentPresentation";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import {
@@ -203,26 +203,7 @@ function ThreadUnavailableScreen(props: {
 
 /** A thread that can't load opens a new task in its environment instead of a dead end. */
 function UnavailableThreadDraftRedirect(props: { readonly environmentId: EnvironmentId }) {
-  const navigation = useNavigation();
-  const projects = useProjects();
-  const openDraft = useEffectEvent(() => {
-    const project = projects.find((candidate) => candidate.environmentId === props.environmentId);
-    navigation.dispatch(
-      StackActions.replace("Thread", {
-        draft: project
-          ? {
-              requestId: uuidv4(),
-              environmentId: String(project.environmentId),
-              projectId: String(project.id),
-            }
-          : { requestId: uuidv4() },
-      }),
-    );
-  });
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- replaces this route with a new draft thread route for the environment's project on mount
-  useEffect(() => {
-    openDraft();
-  }, []);
+  useUnavailableThreadDraftRedirect(props.environmentId);
   return <OpeningThreadLoadingScreen />;
 }
 

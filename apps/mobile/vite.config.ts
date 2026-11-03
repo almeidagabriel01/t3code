@@ -28,6 +28,7 @@ const reactTests = [
   "src/components/ProjectFavicon.test.tsx",
   "src/components/ui/Dialog.android.test.tsx",
   "src/components/ui/Menu.test.tsx",
+  "src/features/threads/useUnavailableThreadDraftRedirect.test.tsx",
   "src/features/pull-requests/usePullRequestList.test.tsx",
   "src/features/files/ZipArchiveView.test.tsx",
   "src/features/pull-requests/guide/useReviewGuide.test.tsx",

@@ -10,6 +10,7 @@ const { mocks } = vi.hoisted(() => ({
     confirm: vi.fn(),
     open: vi.fn(),
     parent: null as unknown,
+    ready: true,
   },
 }));
 
@@ -39,6 +40,11 @@ vi.mock("@t3tools/client-runtime/state/runtime", () => ({
 vi.mock("../../state/entities", () => ({ useQuietThreadShell: () => mocks.parent }));
 vi.mock("../../state/threads", () => ({
   threadEnvironment: { delete: "delete", forkSideChat: "forkSideChat" },
+  environmentThreadShells: { threadShellAtom: () => "shell" },
+}));
+vi.mock("../../state/atom-registry", () => ({ appAtomRegistry: { get: () => null } }));
+vi.mock("./threadForkNavigation", () => ({
+  waitForThreadShellReady: async () => mocks.ready,
 }));
 vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: (command: string) => mocks.commands[command],
@@ -77,6 +83,7 @@ describe("ThreadSideChatBar", () => {
   beforeEach(() => {
     (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     for (const mock of [mocks.alert, mocks.confirm, mocks.open]) mock.mockReset();
+    mocks.ready = true;
     mocks.commands = {
       delete: vi.fn(async () => ({ _tag: "Success" })),
       forkSideChat: vi.fn(async () => ({ _tag: "Success" })),
@@ -127,6 +134,16 @@ describe("ThreadSideChatBar", () => {
     expect(mocks.alert).toHaveBeenCalledWith("Could not start a side chat", "offline");
     expect(mocks.commands.delete).not.toHaveBeenCalled();
     expect(mocks.open).not.toHaveBeenCalled();
+    await act(async () => root.unmount());
+  });
+
+  it("keeps this side chat when the fresh one has not reached the device", async () => {
+    mocks.ready = false;
+    const { host, root } = await mount();
+    await confirmStartOver(host);
+    expect(mocks.alert).toHaveBeenCalledWith("Side chat created", expect.any(String));
+    expect(mocks.open).not.toHaveBeenCalled();
+    expect(mocks.commands.delete).not.toHaveBeenCalled();
     await act(async () => root.unmount());
   });
 
