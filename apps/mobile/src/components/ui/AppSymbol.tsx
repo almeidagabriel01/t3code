@@ -100,6 +100,7 @@ import IconLink from "@tabler/icons-react-native/IconLink";
 import IconListNumbers from "@tabler/icons-react-native/IconListNumbers";
 import IconMenu2 from "@tabler/icons-react-native/IconMenu2";
 import IconMessageCircleQuestion from "@tabler/icons-react-native/IconMessageCircleQuestion";
+import IconMessageUp from "@tabler/icons-react-native/IconMessageUp";
 import IconMessage from "@tabler/icons-react-native/IconMessage";
 import IconMessagePlus from "@tabler/icons-react-native/IconMessagePlus";
 import IconMinus from "@tabler/icons-react-native/IconMinus";
@@ -172,6 +173,7 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   "arrow.up.left.and.arrow.down.right": IconArrowsDiagonal2,
   "arrow.down.right.and.arrow.up.left": IconArrowsMinimize,
   "arrow.up.right": IconArrowUpRight,
+  "arrow.up.message": IconMessageUp,
   "arrow.up.right.circle": IconArrowUpRightCircle,
   "arrow.uturn.backward": IconArrowBackUp,
   "arrow.uturn.forward": IconArrowForwardUp,

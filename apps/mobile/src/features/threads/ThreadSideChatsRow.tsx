@@ -1,10 +1,15 @@
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { Pressable, ScrollView, View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { cn } from "../../lib/cn";
+import * as Dialog from "../../components/ui/Dialog";
+import { Menu } from "../../components/ui/Menu";
 import { useSideChats } from "../../state/entities";
+import { threadEnvironment } from "../../state/threads";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { useOpenLinkedThread } from "./useOpenLinkedThread";
 
 /**
@@ -17,6 +22,22 @@ export function ThreadSideChatsRow(props: {
 }) {
   const sideChats = useSideChats({ environmentId: props.environmentId, threadId: props.threadId });
   const openLinkedThread = useOpenLinkedThread();
+  const updateMetadata = useAtomCommand(threadEnvironment.updateMetadata);
+  const turnIntoThread = async (threadId: ThreadId) => {
+    const result = await updateMetadata({
+      environmentId: props.environmentId,
+      input: { threadId, detachSideChat: true },
+    });
+    if (result._tag === "Failure") {
+      const cause = squashAtomCommandFailure(result);
+      Dialog.alert(
+        "Could not turn into thread",
+        cause instanceof Error ? cause.message : "Try again.",
+      );
+      return;
+    }
+    openLinkedThread({ environmentId: props.environmentId, threadId });
+  };
   if (sideChats.length === 0) return null;
   return (
     <View className="flex-row items-center gap-2 pb-2 pl-4">
@@ -36,27 +57,35 @@ export function ThreadSideChatsRow(props: {
                   ? "input"
                   : null;
             return (
-              <Pressable
+              <Menu
                 key={sideChat.id}
-                accessibilityRole="button"
-                accessibilityLabel={`Open side chat ${sideChat.title}${needs === null ? "" : `, needs ${needs}`}`}
-                className="max-w-48 flex-row items-center gap-1.5 rounded-full bg-subtle px-2.5 py-1"
-                onPress={() =>
-                  openLinkedThread({ environmentId: props.environmentId, threadId: sideChat.id })
-                }
+                shouldOpenOnLongPress
+                actions={[{ id: "detach", title: "Turn into thread", image: "arrow.up.message" }]}
+                onPressAction={() => void turnIntoThread(sideChat.id)}
               >
-                {needs === null ? null : (
-                  <View
-                    className={cn(
-                      "h-1.5 w-1.5 shrink-0 rounded-full",
-                      needs === "approval" ? "bg-warning-foreground" : "bg-adaptive-indigo-600-300",
-                    )}
-                  />
-                )}
-                <Text className="shrink text-xs text-foreground" numberOfLines={1}>
-                  {sideChat.title}
-                </Text>
-              </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Open side chat ${sideChat.title}${needs === null ? "" : `, needs ${needs}`}`}
+                  className="max-w-48 flex-row items-center gap-1.5 rounded-full bg-subtle px-2.5 py-1"
+                  onPress={() =>
+                    openLinkedThread({ environmentId: props.environmentId, threadId: sideChat.id })
+                  }
+                >
+                  {needs === null ? null : (
+                    <View
+                      className={cn(
+                        "h-1.5 w-1.5 shrink-0 rounded-full",
+                        needs === "approval"
+                          ? "bg-warning-foreground"
+                          : "bg-adaptive-indigo-600-300",
+                      )}
+                    />
+                  )}
+                  <Text className="shrink text-xs text-foreground" numberOfLines={1}>
+                    {sideChat.title}
+                  </Text>
+                </Pressable>
+              </Menu>
             );
           })}
         </View>
