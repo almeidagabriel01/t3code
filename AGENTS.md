@@ -226,6 +226,9 @@ This checkout is a personal fork that adds features (notes, kanban, memory, dest
 - On the mobile simulator, Expo's floating "Tools button" sits over the thread header's right button and swallows taps. Turn it off in the dev menu before driving the header.
 - The iOS simulator's Files picker is empty until you copy a file into `File Provider Storage/` under `xcrun simctl get_app_container <udid> com.apple.DocumentsApp groups` (the LocalStorage group); it then shows under Browse → On My iPhone.
 - Never start Metro with `CI=1`: Expo then stops watching files, so edits never reach the device and every device test runs stale code. Prove a reload with a visible text change before trusting a result.
+- Pair a mobile dev client with `.agents/skills/test-t3-mobile/scripts/pair-client.sh`; it opens `t3code-dev://connections/new`, while `t3code-dev://pair` is "Route not found".
+- The Android Files picker ignores a scripted tap on a file row: long-press the row to select it, then tap "Select" in the top bar.
+- Android drops the app's websocket while a system picker is open, so work started on return must wait for the reconnect (`prepareTurnAttachments` does).
 
 ### Layout and design
 

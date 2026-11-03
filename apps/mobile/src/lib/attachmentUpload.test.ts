@@ -465,6 +465,37 @@ describe("prepareTurnAttachments", () => {
     expect((await prepared).status).toBe("ready");
   });
 
+  it("abandons an upload cancelled while it waited for the connection", async () => {
+    mocks.connectionListeners = [];
+    mocks.readAtom.mockReturnValueOnce(Option.none());
+    const controller = new AbortController();
+
+    const prepared = prepareTurnAttachments({
+      environmentId,
+      attachments: [file],
+      signal: controller.signal,
+    });
+    await vi.waitFor(() => expect(mocks.connectionListeners).toHaveLength(1));
+    controller.abort();
+    mocks.connectionListeners[0]?.(Option.some({ httpBaseUrl: "https://environment.example/" }));
+
+    expect(await prepared).toEqual({ status: "abandoned" });
+    expect(mocks.runAtomCommand).not.toHaveBeenCalled();
+  });
+
+  it("gives up when the connection does not come back", async () => {
+    vi.useFakeTimers();
+    try {
+      mocks.readAtom.mockReturnValue(Option.none());
+      const prepared = prepareTurnAttachments({ environmentId, attachments: [file] });
+      const rejected = expect(prepared).rejects.toThrow("The environment is not connected.");
+      await vi.advanceTimersByTimeAsync(10_000);
+      await rejected;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("uses the current connection when an environment reconnects during URL creation", async () => {
     mocks.readAtom
       .mockReturnValueOnce(Option.some({ httpBaseUrl: "https://old-environment.example/" }))

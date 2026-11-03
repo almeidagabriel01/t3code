@@ -298,6 +298,10 @@ export async function prepareTurnAttachments(input: {
     releaseConnection();
     throw new Error("The environment is not connected.");
   }
+  if (input.signal?.aborted) {
+    releaseConnection();
+    return { status: "abandoned" };
+  }
   try {
     requireUploadAccess();
   } catch (error) {
