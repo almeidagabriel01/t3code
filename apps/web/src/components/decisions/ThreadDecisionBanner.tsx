@@ -50,7 +50,10 @@ function DecisionBannerRow(props: {
             <MessageCircleQuestionMarkIcon />
           </ComposerBanner.Icon>
           <ComposerBanner.Content>
-            <span className="shrink-0 text-muted-foreground">Decision needed:</span>
+            {/* A narrow pane keeps the title and expiry; the icon already marks a decision. */}
+            <span className="shrink-0 text-muted-foreground @max-[26rem]:sr-only">
+              Decision needed:
+            </span>
             <span className="min-w-0 truncate">{decision.title}</span>
             {expiry ? (
               <>
@@ -81,7 +84,7 @@ function DecisionBannerRow(props: {
         </ComposerBanner.Row>
         {expanded ? (
           <ComposerBanner.Scroll>
-            <div className="px-3 pt-1 pb-2">
+            <div className="px-3 pt-1 pb-3">
               <ConnectedDecisionCard entry={props.entry} inThread embedded />
             </div>
           </ComposerBanner.Scroll>

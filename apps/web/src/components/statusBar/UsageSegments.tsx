@@ -670,7 +670,8 @@ function UsageSegmentsBody() {
   const items = allItems.filter((item) => isStatusBarItemShown(hidden, item.entry.instanceId));
   if (items.length === 0) return null;
   return (
-    <div className="flex min-w-0 items-center gap-1.5">
+    // Narrow windows clip the chips instead of drawing them over the ports and memory segments.
+    <div className="flex min-w-0 items-center gap-1.5 overflow-hidden">
       <Popover>
         <PopoverTrigger
           render={<Button variant="status-bar" size="status-bar" aria-label="Usage" />}
