@@ -120,6 +120,9 @@ const deliveryText = (row: DecisionRow): string => {
           `Chosen: ${chosen.label}${chosen.consequence === undefined ? "" : ` (${chosen.consequence})`}`,
         ]),
     ...(decision.answer?.text === undefined ? [] : [`Answer: ${decision.answer.text}`]),
+    ...(decision.answer?.attachments?.length
+      ? [`Attached: ${decision.answer.attachments.map((file) => file.name).join(", ")}`]
+      : []),
   ].join("\n");
 };
 
@@ -135,7 +138,7 @@ export class DecisionService extends Context.Service<
     readonly get: (decisionId: DecisionId) => Effect.Effect<Decision, DecisionError>;
     /** A snapshot, then one event per change. */
     readonly subscribe: Stream.Stream<DecisionsEvent, DecisionError>;
-    /** Refuses a decision that is no longer open, or whose time has passed. */
+    /** Refuses a decision that is no longer open, or whose time has passed. Attachments must already be claimed to the requesting thread (see `DecisionAttachmentIntake`). */
     readonly answer: (input: DecisionsAnswerInput) => Effect.Effect<Decision, DecisionError>;
     /** The user declines; the agent is told, never told it was approved. */
     readonly dismiss: (decisionId: DecisionId) => Effect.Effect<Decision, DecisionError>;
@@ -335,7 +338,8 @@ const make = Effect.gen(function* () {
             messageId: MessageId.make(`decision-answer:${row.decision_id}`),
             threadId: row.from_thread_id as ThreadId,
             text: deliveryText(row),
-            attachments: [],
+            // Already claimed to this thread when the answer was taken.
+            attachments: toDecision(row).answer?.attachments ?? [],
             mode: "queue",
             createdBy: "user",
             creationSource: "server",
@@ -416,12 +420,16 @@ const make = Effect.gen(function* () {
       if (row.status !== "open") {
         return yield* decisionError("not_open", `This decision is already ${row.status}.`);
       }
+      const attachments = input.attachments ?? [];
+      if (attachments.length > 0 && row.approval_request_id !== null) {
+        return yield* invalid("This decision mirrors an approval and cannot take attachments.");
+      }
       const options = toDecision(row).options;
       if (optionId !== undefined && !options.some((option) => option.id === optionId)) {
         return yield* invalid("optionId is not one of this decision's options.");
       }
-      if (optionId === undefined && text === undefined) {
-        return yield* invalid("Choose an option or write an answer.");
+      if (optionId === undefined && text === undefined && attachments.length === 0) {
+        return yield* invalid("Choose an option, write an answer or attach a file.");
       }
       const now = yield* nowIso;
       if (row.expires_at !== null && row.expires_at <= now) {
@@ -430,6 +438,7 @@ const make = Effect.gen(function* () {
       const answer = encodeAnswer({
         ...(optionId === undefined ? {} : { optionId }),
         ...(text === undefined ? {} : { text }),
+        ...(attachments.length === 0 ? {} : { attachments }),
       });
       const settled = yield* settle(
         input.decisionId,

@@ -16,6 +16,7 @@ import { useNavigateToPullRequest } from "../../native/useOpenPullRequest";
 import { useDecisionActions } from "../../state/decisions";
 import { useLiveThreadLinkLabels, useThreadShell } from "../../state/entities";
 import { useMarkdownPreviewStyles } from "../files/FileMarkdownPreview";
+import { DecisionAttachmentControls, useDecisionAttachments } from "./DecisionAttachments";
 
 /** Long context folds behind "Show more" instead of pushing the options off screen. */
 const CONTEXT_FOLD_LENGTH = 280;
@@ -129,6 +130,11 @@ function OpenCard(props: DecisionCardProps) {
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState<"answer" | "dismiss" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const files = useDecisionAttachments({
+    environmentId: props.environmentId,
+    decisionId: decision.id,
+    approval: decision.approvalRequestId !== undefined,
+  });
   const text = note.trim();
   const off = !actions.canAct || busy !== null;
 
@@ -140,9 +146,11 @@ function OpenCard(props: DecisionCardProps) {
         ? await actions.answer(decision.id, {
             ...(optionId === null ? {} : { optionId }),
             ...(text === "" ? {} : { text }),
+            ...(files.uploaded.length === 0 ? {} : { attachments: files.uploaded }),
           })
         : await actions.dismiss(decision.id);
     setBusy(null);
+    if (reply.ok) files.clear();
     // The settled decision arrives on the stream and replaces this card; a refusal stays here.
     if (!reply.ok) setError(reply.message);
   };
@@ -231,6 +239,13 @@ function OpenCard(props: DecisionCardProps) {
           </Text>
         </Pressable>
       )}
+      {files.canAttach ? (
+        <DecisionAttachmentControls
+          environmentId={props.environmentId}
+          attachments={files}
+          disabled={off}
+        />
+      ) : null}
       {error ? (
         <Text accessibilityRole="alert" className="font-sans text-xs text-danger-foreground">
           {error}
@@ -247,7 +262,11 @@ function OpenCard(props: DecisionCardProps) {
         <Button
           label="Answer"
           tone="primary"
-          disabled={off || (optionId === null && text === "")}
+          disabled={
+            off ||
+            !files.settled ||
+            (optionId === null && text === "" && files.uploaded.length === 0)
+          }
           loading={busy === "answer"}
           onPress={() => void run("answer")}
         />

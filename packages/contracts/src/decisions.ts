@@ -1,5 +1,10 @@
 import * as Schema from "effect/Schema";
 
+import {
+  ChatFileAttachment,
+  ChatImageAttachment,
+  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+} from "./chatAttachment.ts";
 import { IsoDateTime, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 /**
@@ -29,9 +34,15 @@ export type DecisionOption = typeof DecisionOption.Type;
 export const DecisionStatus = Schema.Literals(["open", "answered", "expired", "withdrawn"]);
 export type DecisionStatus = typeof DecisionStatus.Type;
 
+/** Same shape and cap as question-answer attachments; uploaded first, then named by id. */
+export const DecisionAnswerAttachments = Schema.Array(
+  Schema.Union([ChatImageAttachment, ChatFileAttachment]),
+).pipe(Schema.check(Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_ATTACHMENTS)));
+
 export const DecisionAnswer = Schema.Struct({
   optionId: Schema.optional(Schema.String),
   text: Schema.optional(Schema.String.check(Schema.isMaxLength(DECISION_ANSWER_TEXT_MAX_LENGTH))),
+  attachments: Schema.optional(DecisionAnswerAttachments),
 });
 export type DecisionAnswer = typeof DecisionAnswer.Type;
 
@@ -78,11 +89,13 @@ export const DecisionsEvent = Schema.Union([
 ]);
 export type DecisionsEvent = typeof DecisionsEvent.Type;
 
-/** An option id, free text, or both; text alone is the answer when no option fits. */
+/** An option id, free text, attachments, or any mix; text alone is the answer when no option fits. */
 export const DecisionsAnswerInput = Schema.Struct({
   decisionId: DecisionId,
   optionId: Schema.optional(Schema.String),
   text: Schema.optional(Schema.String.check(Schema.isMaxLength(DECISION_ANSWER_TEXT_MAX_LENGTH))),
+  /** Not allowed on a decision that mirrors a provider approval. */
+  attachments: Schema.optional(DecisionAnswerAttachments),
 });
 export type DecisionsAnswerInput = typeof DecisionsAnswerInput.Type;
 

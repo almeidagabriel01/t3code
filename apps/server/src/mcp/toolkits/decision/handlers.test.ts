@@ -136,9 +136,29 @@ it.effect("an agent requests a decision without waiting, and a repeat lands on t
     const listed = yield* call({ action: "list" });
     expect(listed.decisions).toHaveLength(2);
 
-    yield* decisions.answer({ decisionId: first.decisionId, optionId: "o2" });
+    yield* decisions.answer({
+      decisionId: first.decisionId,
+      optionId: "o2",
+      attachments: [
+        {
+          type: "file",
+          id: "thread-1-a" as never,
+          name: "plan.pdf",
+          mimeType: "application/pdf",
+          sizeBytes: 3,
+        },
+      ],
+    });
     const answered = yield* call({ action: "read", decisionId: first.decisionId });
-    expect(answered).toMatchObject({ status: "answered", answer: { optionId: "o2" } });
+    expect(answered).toMatchObject({
+      status: "answered",
+      answer: {
+        optionId: "o2",
+        attachments: [
+          { id: "thread-1-a", name: "plan.pdf", type: "file", mimeType: "application/pdf" },
+        ],
+      },
+    });
     const withdrawn = yield* call({ action: "withdraw", decisionId: first.decisionId });
     expect(withdrawn).toMatchObject({ status: "answered" });
 

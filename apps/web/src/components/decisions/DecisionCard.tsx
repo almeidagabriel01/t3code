@@ -2,17 +2,24 @@ import {
   describeSettledDecision,
   formatDecisionExpiry,
 } from "@t3tools/client-runtime/state/decisions";
-import type { Decision } from "@t3tools/contracts";
-import { useState } from "react";
+import {
+  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+  type ChatFileAttachment,
+  type ChatImageAttachment,
+  type Decision,
+} from "@t3tools/contracts";
+import { PaperclipIcon, XIcon } from "lucide-react";
+import { useRef, useState } from "react";
 
 import { useNowMinuteMs } from "../../hooks/useNowMinute";
-import { cn } from "../../lib/utils";
+import { cn, randomUUID } from "../../lib/utils";
 import type { DecisionReply } from "../../state/decisions";
 import ChatMarkdown from "../ChatMarkdown";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Label } from "../ui/label";
 import { Radio, RadioGroup } from "../ui/radio-group";
+import { Spinner } from "../ui/spinner";
 import { Textarea } from "../ui/textarea";
 
 /** Long context folds behind "Show more" instead of pushing the options off screen. */
@@ -22,7 +29,15 @@ export interface DecisionCardProps {
   readonly decision: Decision;
   /** False when this connection cannot answer: the card still reads, its buttons are off. */
   readonly canAct: boolean;
-  readonly onAnswer: (input: { optionId?: string; text?: string }) => Promise<DecisionReply>;
+  readonly onAnswer: (input: {
+    optionId?: string;
+    text?: string;
+    attachments?: ReadonlyArray<ChatImageAttachment | ChatFileAttachment>;
+  }) => Promise<DecisionReply>;
+  /** Uploads one file ahead of the answer. Omitted where attaching is not possible. */
+  readonly onUploadFile?:
+    | ((file: File) => Promise<{ readonly attachmentId: string; readonly mimeType: string }>)
+    | undefined;
   readonly onDismiss: () => Promise<DecisionReply>;
   /** Opens the requesting thread; omitted where the card already sits in it. */
   readonly onOpenThread?: (() => void) | undefined;
@@ -99,6 +114,50 @@ function SettledCard(props: DecisionCardProps) {
   );
 }
 
+type PickedFile = {
+  readonly key: string;
+  readonly name: string;
+  readonly sizeBytes: number;
+  readonly status: "uploading" | "ready" | "failed";
+  readonly attachment?: ChatImageAttachment | ChatFileAttachment;
+  readonly error?: string;
+};
+
+function AttachmentStrip(props: {
+  files: ReadonlyArray<PickedFile>;
+  onRemove: (key: string) => void;
+}) {
+  return (
+    <ul aria-label="Attachments" className="flex flex-wrap gap-1.5">
+      {props.files.map((file) => (
+        <li
+          key={file.key}
+          className="flex max-w-full items-center gap-1.5 rounded-md border border-foreground/12 bg-foreground/5 py-0.5 pr-0.5 pl-2 text-xs"
+        >
+          {file.status === "uploading" ? <Spinner size="xs" tone="muted" /> : null}
+          <span
+            className={cn(
+              "min-w-0 truncate",
+              file.status === "failed" && "text-destructive-foreground",
+            )}
+          >
+            {file.name}
+            {file.status === "failed" ? " (upload failed)" : null}
+          </span>
+          <Button
+            variant="ghost-muted"
+            size="icon-xs"
+            aria-label={`Remove ${file.name}`}
+            onClick={() => props.onRemove(file.key)}
+          >
+            <XIcon />
+          </Button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function OpenCard(props: DecisionCardProps) {
   const { decision } = props;
   const [optionId, setOptionId] = useState<string | null>(null);
@@ -106,9 +165,57 @@ function OpenCard(props: DecisionCardProps) {
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState<"answer" | "dismiss" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [files, setFiles] = useState<ReadonlyArray<PickedFile>>([]);
+  const fileInput = useRef<HTMLInputElement>(null);
   const text = note.trim();
-  const ready = optionId !== null || text !== "";
+  const attachments = files.flatMap((file) => (file.attachment ? [file.attachment] : []));
+  const uploading = files.some((file) => file.status === "uploading");
+  const ready = optionId !== null || text !== "" || attachments.length > 0;
   const off = !props.canAct || busy !== null;
+  // An approval mirror has no channel for files.
+  const canAttach = props.onUploadFile !== undefined && decision.approvalRequestId === undefined;
+
+  const patchFile = (key: string, patch: Partial<PickedFile>) =>
+    setFiles((current) => current.map((file) => (file.key === key ? { ...file, ...patch } : file)));
+
+  const pick = (picked: ReadonlyArray<File>) => {
+    const upload = props.onUploadFile;
+    if (!upload) return;
+    const room = Math.max(0, PROVIDER_SEND_TURN_MAX_ATTACHMENTS - files.length);
+    const next = picked.slice(0, room).map((file) => ({
+      file,
+      key: randomUUID(),
+    }));
+    setFiles((current) => [
+      ...current,
+      ...next.map(({ file, key }): PickedFile => ({
+        key,
+        name: file.name || "file",
+        sizeBytes: file.size,
+        status: "uploading",
+      })),
+    ]);
+    for (const { file, key } of next) {
+      upload(file).then(
+        ({ attachmentId, mimeType }) =>
+          patchFile(key, {
+            status: "ready",
+            attachment: {
+              type: mimeType.startsWith("image/") ? "image" : "file",
+              id: attachmentId,
+              name: file.name || "file",
+              mimeType,
+              sizeBytes: file.size,
+            } as ChatImageAttachment | ChatFileAttachment,
+          }),
+        (cause: unknown) =>
+          patchFile(key, {
+            status: "failed",
+            error: cause instanceof Error ? cause.message : "Upload failed",
+          }),
+      );
+    }
+  };
 
   const run = async (kind: "answer" | "dismiss") => {
     setBusy(kind);
@@ -118,6 +225,7 @@ function OpenCard(props: DecisionCardProps) {
         ? await props.onAnswer({
             ...(optionId === null ? {} : { optionId }),
             ...(text === "" ? {} : { text }),
+            ...(attachments.length === 0 ? {} : { attachments }),
           })
         : await props.onDismiss();
     setBusy(null);
@@ -182,6 +290,37 @@ function OpenCard(props: DecisionCardProps) {
           Other answer or add a note
         </button>
       )}
+      {canAttach ? (
+        <div className="flex flex-col gap-1.5">
+          <input
+            ref={fileInput}
+            type="file"
+            multiple
+            hidden
+            aria-label="Choose files to attach"
+            onChange={(event) => {
+              pick([...(event.target.files ?? [])]);
+              event.target.value = "";
+            }}
+          />
+          <Button
+            variant="ghost-muted"
+            size="xs"
+            className="w-fit"
+            disabled={off || files.length >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS}
+            onClick={() => fileInput.current?.click()}
+          >
+            <PaperclipIcon />
+            Attach files
+          </Button>
+          {files.length > 0 ? (
+            <AttachmentStrip
+              files={files}
+              onRemove={(key) => setFiles((current) => current.filter((file) => file.key !== key))}
+            />
+          ) : null}
+        </div>
+      ) : null}
       {error ? (
         <p role="alert" className="text-xs text-destructive-foreground">
           {error}
@@ -191,7 +330,7 @@ function OpenCard(props: DecisionCardProps) {
         <Button variant="ghost-muted" size="sm" disabled={off} onClick={() => void run("dismiss")}>
           Dismiss
         </Button>
-        <Button size="sm" disabled={off || !ready} onClick={() => void run("answer")}>
+        <Button size="sm" disabled={off || !ready || uploading} onClick={() => void run("answer")}>
           {busy === "answer" ? "Answering…" : "Answer"}
         </Button>
       </div>

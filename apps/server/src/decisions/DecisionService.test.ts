@@ -507,3 +507,58 @@ it.effect("an approval decision answers its request instead of sending a message
     assert.lengthOf(sends, 0);
   }).pipe(Effect.provide(layer));
 });
+
+const upload = {
+  type: "file",
+  id: "thread-1-claimed-id",
+  name: "plan.pdf",
+  mimeType: "application/pdf",
+  sizeBytes: 12,
+} as const;
+
+it.effect("attachments alone answer, are stored, and reach the thread by name", () => {
+  const { layer, sends } = harness();
+  return Effect.gen(function* () {
+    const decisions = yield* Decisions.DecisionService;
+    const decision = yield* ask(decisions);
+    const answered = yield* decisions.answer({
+      decisionId: decision.id,
+      attachments: [upload as never],
+    });
+    assert.deepEqual(
+      answered.answer?.attachments?.map((file) => file.id),
+      [upload.id],
+    );
+    assert.deepEqual(
+      sends[0]!.attachments.map((file) => file.id),
+      [upload.id],
+    );
+    assert.include(sends[0]!.text, "Attached: plan.pdf");
+    assert.equal(
+      (yield* refusal(decisions.answer({ decisionId: decision.id }))).reason,
+      "not_open",
+    );
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("an approval decision refuses attachments and an empty answer is still refused", () => {
+  const { layer, requests } = harness();
+  requests.push({ id: "r1", status: "pending", responseCapability: { type: "live" } });
+  return Effect.gen(function* () {
+    const decisions = yield* Decisions.DecisionService;
+    const decision = yield* ask(decisions, {
+      approvalRequestId: "r1",
+      options: [{ id: "accept", label: "Approve" }],
+      recommended: undefined,
+    });
+    const refused = yield* refusal(
+      decisions.answer({
+        decisionId: decision.id,
+        optionId: "accept",
+        attachments: [upload as never],
+      }),
+    );
+    assert.equal(refused.reason, "invalid");
+    assert.equal((yield* decisions.get(decision.id)).status, "open");
+  }).pipe(Effect.provide(layer));
+});

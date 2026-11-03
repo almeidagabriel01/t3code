@@ -47,6 +47,16 @@ const brief = (decision: Decision, withContext: boolean): Out => ({
         answer: {
           ...(decision.answer.optionId === undefined ? {} : { optionId: decision.answer.optionId }),
           ...(decision.answer.text === undefined ? {} : { text: decision.answer.text }),
+          ...(decision.answer.attachments?.length
+            ? {
+                attachments: decision.answer.attachments.map(({ id, name, type, mimeType }) => ({
+                  id,
+                  name,
+                  type,
+                  mimeType,
+                })),
+              }
+            : {}),
         },
       }),
   ...(decision.deliveredAt === undefined ? {} : { delivered: true }),

@@ -8,6 +8,13 @@ const { mocks, Children } = vi.hoisted(() => ({
   mocks: {
     shell: null as null | { projectId: string },
     navigateToPullRequest: vi.fn(),
+    answer: vi.fn(() => Promise.resolve({ ok: true })),
+    clear: vi.fn(),
+    files: {
+      canAttach: true,
+      settled: true,
+      uploaded: [] as unknown[],
+    },
   },
 }));
 vi.mock("react-native", () => ({
@@ -23,7 +30,15 @@ vi.mock("@react-navigation/native", () => ({
 }));
 vi.mock("../../components/ui/AppText", () => ({ AppText: Children, AppTextInput: () => null }));
 vi.mock("../../components/ui/AppSymbol", () => ({ SymbolView: () => null }));
-vi.mock("../../components/ui/Button", () => ({ Button: () => null }));
+vi.mock("../../components/ui/Button", () => ({
+  Button: (props: { label: string; disabled?: boolean; onPress: () => void }) => (
+    <button data-label={props.label} disabled={props.disabled} onClick={props.onPress} />
+  ),
+}));
+vi.mock("./DecisionAttachments", () => ({
+  useDecisionAttachments: () => ({ ...mocks.files, clear: mocks.clear }),
+  DecisionAttachmentControls: () => <i data-attach-controls />,
+}));
 vi.mock("../../lib/clock", () => ({ useNowMinuteMs: () => 0 }));
 vi.mock("../../native/SelectableMarkdownText", () => ({
   SelectableMarkdownText: (props: { markdown: string; onLinkPress: (href: string) => void }) => (
@@ -36,7 +51,7 @@ vi.mock("../../native/useOpenPullRequest", () => ({
   useNavigateToPullRequest: () => mocks.navigateToPullRequest,
 }));
 vi.mock("../../state/decisions", () => ({
-  useDecisionActions: () => ({ canAct: true, answer: vi.fn(), dismiss: vi.fn() }),
+  useDecisionActions: () => ({ canAct: true, answer: mocks.answer, dismiss: vi.fn() }),
 }));
 vi.mock("../../state/entities", () => ({
   useLiveThreadLinkLabels: (markdown: string) => markdown,
@@ -67,6 +82,9 @@ beforeEach(() => {
   container = window.document.createElement("div");
   root = createRoot(container);
   mocks.navigateToPullRequest.mockReset();
+  mocks.answer.mockClear();
+  mocks.clear.mockClear();
+  mocks.files = { canAttach: true, settled: true, uploaded: [] };
 });
 const render = (shell: { projectId: string } | null) => {
   mocks.shell = shell;
@@ -88,5 +106,28 @@ describe("DecisionCard context links", () => {
     render(null);
     openLink();
     expect(mocks.navigateToPullRequest).toHaveBeenCalledWith("https://github.com/o/r/pull/7", null);
+  });
+});
+
+describe("DecisionCard attachments", () => {
+  const answerButton = () =>
+    container.querySelector<HTMLButtonElement>('button[data-label="Answer"]')!;
+
+  it("answers with attachments alone, and clears the draft once accepted", async () => {
+    const file = { type: "file", id: "pending-1", name: "plan.pdf", mimeType: "x", sizeBytes: 1 };
+    mocks.files = { canAttach: true, settled: true, uploaded: [file] };
+    render(null);
+    expect(container.querySelector("[data-attach-controls]")).not.toBeNull();
+    expect(answerButton().disabled).toBe(false);
+    await act(async () => answerButton().click());
+    expect(mocks.answer).toHaveBeenCalledWith("d1", { attachments: [file] });
+    expect(mocks.clear).toHaveBeenCalledTimes(1);
+  });
+
+  it("holds the answer while files are still uploading, and hides attaching when it cannot", () => {
+    mocks.files = { canAttach: false, settled: false, uploaded: [{}] };
+    render(null);
+    expect(container.querySelector("[data-attach-controls]")).toBeNull();
+    expect(answerButton().disabled).toBe(true);
   });
 });

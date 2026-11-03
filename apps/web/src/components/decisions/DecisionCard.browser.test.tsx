@@ -77,3 +77,107 @@ it("reads a settled decision without controls", async () => {
   await expect.element(page.getByText("Answered")).toBeVisible();
   await expect.element(page.getByRole("button", { name: "Answer" })).not.toBeInTheDocument();
 });
+
+it("attaches files alone, waits for uploads, and hides attaching for approvals", async () => {
+  const onAnswer = vi.fn(ok);
+  let finish: (value: { attachmentId: string; mimeType: string }) => void = () => {};
+  const onUploadFile = vi.fn(
+    () =>
+      new Promise<{ attachmentId: string; mimeType: string }>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  await using _screen = await render(
+    <DecisionCard
+      decision={open}
+      canAct
+      onAnswer={onAnswer}
+      onDismiss={ok}
+      onUploadFile={onUploadFile}
+    />,
+    { router: false }, // no navigation in the card
+  );
+  await userEvent.upload(
+    page.getByLabelText("Choose files to attach"),
+    new File(["x"], "plan.pdf", { type: "application/pdf" }),
+  );
+  await expect.element(page.getByText("plan.pdf")).toBeVisible();
+  await expect.element(page.getByRole("button", { name: "Answer" })).toBeDisabled();
+
+  finish({ attachmentId: "pending-1", mimeType: "application/pdf" });
+  await expect.element(page.getByRole("button", { name: "Answer" })).toBeEnabled();
+  await userEvent.click(page.getByRole("button", { name: "Answer" }));
+  expect(onAnswer).toHaveBeenCalledWith({
+    attachments: [
+      {
+        type: "file",
+        id: "pending-1",
+        name: "plan.pdf",
+        mimeType: "application/pdf",
+        sizeBytes: 1,
+      },
+    ],
+  });
+});
+
+it("keeps a failed upload out of the answer and lets it be removed", async () => {
+  await using _screen = await render(
+    <DecisionCard
+      decision={open}
+      canAct
+      onAnswer={ok}
+      onDismiss={ok}
+      onUploadFile={() => Promise.reject(new Error("Too big"))}
+    />,
+    { router: false }, // no navigation in the card
+  );
+  await userEvent.upload(
+    page.getByLabelText("Choose files to attach"),
+    new File(["x"], "huge.bin", { type: "application/octet-stream" }),
+  );
+  await expect.element(page.getByText("huge.bin (upload failed)")).toBeVisible();
+  await expect.element(page.getByRole("button", { name: "Answer" })).toBeDisabled();
+  await userEvent.click(page.getByRole("button", { name: "Remove huge.bin" }));
+  await expect.element(page.getByText("huge.bin (upload failed)")).not.toBeInTheDocument();
+});
+
+it("offers no attach button on an approval decision, and names files once answered", async () => {
+  await using _screen = await render(
+    <DecisionCard
+      decision={{ ...open, approvalRequestId: "r1" }}
+      canAct
+      onAnswer={ok}
+      onDismiss={ok}
+      onUploadFile={() => Promise.reject(new Error("unused"))}
+    />,
+    { router: false }, // no navigation in the card
+  );
+  await expect.element(page.getByText("Attach files")).not.toBeInTheDocument();
+});
+
+it("shows attachment names on an answered decision", async () => {
+  await using _screen = await render(
+    <DecisionCard
+      decision={{
+        ...open,
+        status: "answered",
+        answer: {
+          attachments: [
+            {
+              type: "file",
+              id: "a" as never,
+              name: "plan.pdf",
+              mimeType: "application/pdf",
+              sizeBytes: 1,
+            },
+          ],
+        },
+      }}
+      canAct
+      onAnswer={ok}
+      onDismiss={ok}
+    />,
+    { router: false }, // no navigation in the card
+  );
+  await expect.element(page.getByText(/plan\.pdf/)).toBeVisible();
+});

@@ -111,9 +111,11 @@ export function describeSettledDecision(decision: Decision): {
   }
   const label = decision.options.find((option) => option.id === decision.answer?.optionId)?.label;
   const note = decision.answer?.text;
+  const files = decision.answer?.attachments?.map((file) => file.name).join(", ");
   return {
     outcome: "Answered",
-    detail: [label, note].filter((part) => part !== undefined && part !== "").join(" · ") || null,
+    detail:
+      [label, note, files].filter((part) => part !== undefined && part !== "").join(" · ") || null,
   };
 }
 

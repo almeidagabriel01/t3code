@@ -2,6 +2,7 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { DecisionEntry } from "@t3tools/client-runtime/state/decisions";
 import { useNavigate } from "@tanstack/react-router";
 
+import { uploadStandaloneAttachment } from "../../lib/attachmentUploadQueue";
 import { useDecisionActions } from "../../state/decisions";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { DecisionCard } from "./DecisionCard";
@@ -22,6 +23,7 @@ export function ConnectedDecisionCard(props: {
       canAct={actions.canAct}
       onAnswer={(input) => actions.answer(decision.id, input)}
       onDismiss={() => actions.dismiss(decision.id)}
+      onUploadFile={(file) => uploadStandaloneAttachment(environmentId, file)}
       embedded={props.embedded ?? false}
       onOpenThread={
         props.inThread

@@ -279,7 +279,8 @@ An agent that needs your choice, for example in a scheduled or background run, c
 decision: a question with options and the one it recommends. Open decisions show at the top of
 **Activity** and on the mobile Home screen, and as a **Decision needed** bar above the
 thread's composer. Pick an option (or write your own answer) and the agent gets it as a
-message in its thread and continues. **Dismiss** tells the agent nothing was approved; a
+message in its thread and continues. Use **Attach files** to add files or images to your
+answer (not available on provider approvals). **Dismiss** tells the agent nothing was approved; a
 decision that expires does the same, so silence never approves.
 
 ## Goals

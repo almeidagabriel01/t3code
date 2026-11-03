@@ -128,6 +128,7 @@ import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts"
 import * as DocumentText from "./provider/DocumentText.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
+import * as DecisionAttachmentIntake from "./decisions/DecisionAttachmentIntake.ts";
 import * as Decisions from "./decisions/DecisionService.ts";
 import * as Assistants from "./assistants/AssistantService.ts";
 import * as Kanban from "./kanban/KanbanService.ts";
@@ -2383,7 +2384,8 @@ export const layerWsRpc = (
         [WS_METHODS.decisionsList]: (input) =>
           decisions.list(input).pipe(Effect.map((list) => ({ decisions: list }))),
         [WS_METHODS.decisionsSubscribe]: (_input) => decisions.subscribe,
-        [WS_METHODS.decisionsAnswer]: (input) => decisions.answer(input),
+        [WS_METHODS.decisionsAnswer]: (input) =>
+          DecisionAttachmentIntake.answerDecision(input).pipe(Effect.provide(intakeContext)),
         [WS_METHODS.decisionsDismiss]: (input) => decisions.dismiss(input.decisionId),
         [WS_METHODS.assistantsSubscribe]: (_input) => assistants.subscribe,
         [WS_METHODS.assistantsCreate]: (input) => assistants.create(input),

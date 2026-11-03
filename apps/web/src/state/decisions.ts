@@ -12,6 +12,7 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 import {
   AuthOrchestrationReadScope,
   type DecisionId,
+  type DecisionsAnswerInput,
   type EnvironmentId,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -112,7 +113,7 @@ export function useDecisionActions(environmentId: EnvironmentId) {
       : { ok: false, message: decisionErrorMessage(squashAtomCommandFailure(result)) };
   return {
     canAct,
-    answer: async (decisionId: DecisionId, input: { optionId?: string; text?: string }) =>
+    answer: async (decisionId: DecisionId, input: Omit<DecisionsAnswerInput, "decisionId">) =>
       reply(await answer({ environmentId, input: { decisionId, ...input } })),
     dismiss: async (decisionId: DecisionId) =>
       reply(await dismiss({ environmentId, input: { decisionId } })),

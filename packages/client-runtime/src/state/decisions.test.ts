@@ -118,6 +118,23 @@ describe("decisions state", () => {
       settled({ status: "answered", answer: { optionId: "a", text: "soon" } }),
       { outcome: "Answered", detail: "A · soon" },
     );
+    assert.deepStrictEqual(
+      settled({
+        status: "answered",
+        answer: {
+          attachments: [
+            {
+              type: "file",
+              id: "x" as never,
+              name: "plan.pdf",
+              mimeType: "text/plain",
+              sizeBytes: 1,
+            },
+          ],
+        },
+      }),
+      { outcome: "Answered", detail: "plan.pdf" },
+    );
     assert.equal(settled({ status: "withdrawn", answeredAt: at(0) }).outcome, "Dismissed");
     assert.equal(settled({ status: "withdrawn" }).outcome, "Withdrawn");
     assert.equal(settled({ status: "expired" }).outcome, "Expired");
