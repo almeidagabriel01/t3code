@@ -107,10 +107,6 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
       label: "environment-data:orchestration:stop-workflow",
       tag: ORCHESTRATION_V2_WS_METHODS.stopWorkflow,
     }),
-    restartProviderSession: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:orchestration:restart-provider-session",
-      tag: ORCHESTRATION_V2_WS_METHODS.restartProviderSession,
-    }),
     handoffThread: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:orchestration:handoff-thread",
       tag: ORCHESTRATION_V2_WS_METHODS.handoffThread,

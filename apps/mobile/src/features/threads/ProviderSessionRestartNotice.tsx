@@ -1,12 +1,16 @@
-import { useAtomValue } from "@effect/atom-react";
 import { deriveProviderSessionRestartNotice } from "@t3tools/client-runtime/providerSessionRestart";
-import type { ScopedThreadRef, ServerProvider } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  type ScopedThreadRef,
+  type ServerProvider,
+} from "@t3tools/contracts";
 import { View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
-import { orchestrationEnvironment } from "../../state/orchestration";
+import { useEnvironmentScope } from "../../state/session";
+import { threadEnvironment } from "../../state/threads";
 import { useQuietThreadStructure } from "../../state/use-thread-detail";
 import { useAtomCommand } from "../../state/use-atom-command";
 
@@ -22,11 +26,10 @@ export function ProviderSessionRestartNotice(props: {
   readonly running: boolean;
 }) {
   const structure = useQuietThreadStructure(props.threadRef);
-  const restart = useAtomCommand(orchestrationEnvironment.restartProviderSession);
-  const canRestart = useAtomValue(
-    orchestrationEnvironment.restartProviderSession.permissionAtom(
-      props.threadRef?.environmentId ?? null,
-    ),
+  const restart = useAtomCommand(threadEnvironment.stopSession);
+  const canRestart = useEnvironmentScope(
+    props.threadRef?.environmentId ?? null,
+    AuthOrchestrationOperateScope,
   );
   const notice =
     props.threadRef === null || structure === null

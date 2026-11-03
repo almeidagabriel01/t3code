@@ -234,7 +234,6 @@ import {
   ORCHESTRATION_V2_WS_METHODS,
   OrchestrationGetWorkflowScriptError,
   OrchestrationV2StopWorkflowError,
-  OrchestrationV2RestartProviderSessionError,
   OrchestrationV2ThreadHandoffError,
   OrchestrationV2ForceStopThreadError,
   OrchestrationV2DispatchCommandError,
@@ -1994,18 +1993,6 @@ const WsOrchestrationV2StopWorkflowRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.st
   error: Schema.Union([OrchestrationV2StopWorkflowError, EnvironmentAuthorizationError]),
 });
 
-const WsOrchestrationV2RestartProviderSessionRpc = Rpc.make(
-  ORCHESTRATION_V2_WS_METHODS.restartProviderSession,
-  {
-    payload: OrchestrationV2RpcSchemas.restartProviderSession.input,
-    success: OrchestrationV2RpcSchemas.restartProviderSession.output,
-    error: Schema.Union([
-      OrchestrationV2RestartProviderSessionError,
-      EnvironmentAuthorizationError,
-    ]),
-  },
-);
-
 const WsOrchestrationV2HandoffThreadRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.handoffThread, {
   payload: OrchestrationV2RpcSchemas.handoffThread.input,
   success: OrchestrationV2RpcSchemas.handoffThread.output,
@@ -2681,7 +2668,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2DispatchCommandRpc,
   WsOrchestrationV2GetWorkflowScriptRpc,
   WsOrchestrationV2StopWorkflowRpc,
-  WsOrchestrationV2RestartProviderSessionRpc,
   WsOrchestrationV2HandoffThreadRpc,
   WsOrchestrationV2ForceStopThreadRpc,
   WsOrchestrationV2GetTurnItemRpc,

@@ -75,6 +75,18 @@ describe("thread menu", () => {
     expect(ids({ canHandoff: false })).not.toContain("handoff");
   });
 
+  it("offers Restart agent session only on the open thread and routes it", () => {
+    expect(ids()).not.toContain("restart-session");
+    expect(ids({ restartSession: true })).toContain("restart-session");
+    const restartSession = vi.fn();
+    runThreadMenuEvent("restart-session", { restartSession } as unknown as ThreadMenuHandlers, {
+      displayedPresets: [],
+      presets: undefined,
+      now: new Date(0),
+    });
+    expect(restartSession).toHaveBeenCalledTimes(1);
+  });
+
   it("builds the full card menu in order, ending with archive and delete", () => {
     expect(ids()).toEqual([
       "new-thread-on-branch",

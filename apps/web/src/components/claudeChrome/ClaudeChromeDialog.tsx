@@ -3,15 +3,21 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import type { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  type EnvironmentId,
+  type ProviderInstanceId,
+  type ThreadId,
+} from "@t3tools/contracts";
 import { CLAUDE_CHROME_LINKS } from "@t3tools/shared/claudeChrome";
 import { CheckIcon, DownloadIcon, RefreshCwIcon, ShieldCheckIcon, UnplugIcon } from "lucide-react";
 import { useState } from "react";
 
 import { ensureLocalApi } from "../../localApi";
-import { orchestrationEnvironment } from "../../state/orchestration";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
+import { useEnvironmentScope } from "../../state/session";
+import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
 import {
@@ -64,12 +70,10 @@ function ApplyToThread(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
 }) {
-  const restart = useAtomCommand(orchestrationEnvironment.restartProviderSession, {
+  const restart = useAtomCommand(threadEnvironment.stopSession, {
     reportFailure: false,
   });
-  const canRestart = useAtomValue(
-    orchestrationEnvironment.restartProviderSession.permissionAtom(props.environmentId),
-  );
+  const canRestart = useEnvironmentScope(props.environmentId, AuthOrchestrationOperateScope);
   const [state, setState] = useState<
     | { readonly kind: "idle" | "busy" | "done" }
     | { readonly kind: "failed"; readonly message: string }

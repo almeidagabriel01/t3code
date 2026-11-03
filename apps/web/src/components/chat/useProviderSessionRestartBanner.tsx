@@ -1,17 +1,18 @@
-import { useAtomValue } from "@effect/atom-react";
 import {
   deriveProviderSessionRestartNotice,
   type ProviderSessionRestartNotice,
 } from "@t3tools/client-runtime/providerSessionRestart";
-import type {
-  EnvironmentId,
-  OrchestrationV2ProviderSession,
-  ServerProvider,
-  ThreadId,
+import {
+  AuthOrchestrationOperateScope,
+  type EnvironmentId,
+  type OrchestrationV2ProviderSession,
+  type ServerProvider,
+  type ThreadId,
 } from "@t3tools/contracts";
 import { RefreshCwIcon } from "lucide-react";
 
-import { orchestrationEnvironment } from "../../state/orchestration";
+import { useEnvironmentScope } from "../../state/session";
+import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -30,9 +31,11 @@ export function useProviderSessionRestartBanner(input: {
   readonly providers: ReadonlyArray<ServerProvider>;
   readonly running: boolean;
 }): ComposerBannerStackItem | null {
-  const restart = useAtomCommand(orchestrationEnvironment.restartProviderSession);
-  const canRestart = useAtomValue(
-    orchestrationEnvironment.restartProviderSession.permissionAtom(input.environmentId ?? null),
+  // Same path as the palette's "Restart agent session": the next message reopens on the new binary.
+  const restart = useAtomCommand(threadEnvironment.stopSession);
+  const canRestart = useEnvironmentScope(
+    input.environmentId ?? null,
+    AuthOrchestrationOperateScope,
   );
   const notice =
     input.environmentId === undefined || input.sessions === undefined

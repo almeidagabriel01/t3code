@@ -3607,7 +3607,6 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   getThreadProjection: "orchestration.getThreadProjection",
   getWorkflowScript: "orchestration.getWorkflowScript",
   stopWorkflow: "orchestration.stopWorkflow",
-  restartProviderSession: "orchestration.restartProviderSession",
   handoffThread: "orchestration.handoffThread",
   forceStopThread: "orchestration.forceStopThread",
   getTurnItem: "orchestration.getTurnItem",
@@ -3969,34 +3968,6 @@ export class OrchestrationV2ThreadLaunchError extends Schema.TaggedError<Orchest
   },
 ) {}
 
-export const OrchestrationV2RestartProviderSessionInput = Schema.Struct({
-  threadId: ThreadId,
-});
-export type OrchestrationV2RestartProviderSessionInput =
-  typeof OrchestrationV2RestartProviderSessionInput.Type;
-
-export class OrchestrationV2RestartProviderSessionError extends Schema.TaggedError<OrchestrationV2RestartProviderSessionError>()(
-  "OrchestrationV2RestartProviderSessionError",
-  {
-    threadId: ThreadId,
-    reason: Schema.Literals(["running", "shared", "unavailable", "restart-failed"]),
-    cause: Schema.optional(Schema.Defect()),
-  },
-) {
-  override get message(): string {
-    switch (this.reason) {
-      case "running":
-        return "Wait for the current turn to finish before restarting the session.";
-      case "shared":
-        return "This provider session is shared by several threads and cannot be restarted from one.";
-      case "unavailable":
-        return "This thread has no provider session to restart.";
-      case "restart-failed":
-        return "Failed to restart the provider session.";
-    }
-  }
-}
-
 export const OrchestrationV2ThreadHandoffMode = Schema.Literals(["focused", "full", "summary"]);
 export type OrchestrationV2ThreadHandoffMode = typeof OrchestrationV2ThreadHandoffMode.Type;
 
@@ -4303,10 +4274,6 @@ export const OrchestrationV2RpcSchemas = {
   },
   stopWorkflow: {
     input: OrchestrationV2StopWorkflowInput,
-    output: Schema.Void,
-  },
-  restartProviderSession: {
-    input: OrchestrationV2RestartProviderSessionInput,
     output: Schema.Void,
   },
   handoffThread: {

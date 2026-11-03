@@ -9,6 +9,9 @@ const { mocks } = vi.hoisted(() => ({
     projects: [] as unknown[],
     notesEnvironmentIds: [] as string[],
     navigate: vi.fn(),
+    stopSession: vi.fn(),
+    refreshProviders: vi.fn(),
+    alert: vi.fn(),
   },
 }));
 
@@ -51,7 +54,18 @@ vi.mock("./CustomSnoozeSheet", () => ({ CustomSnoozeSheet: () => null }));
 vi.mock("./openThreadHandoff", () => ({ openThreadHandoff: vi.fn() }));
 vi.mock("./thread-handoff", () => ({ canHandoffThread: () => false }));
 vi.mock("./copyThreadMenuReference", () => ({ copyThreadMenuReference: vi.fn() }));
-vi.mock("../../components/ui/Dialog", () => ({ alert: vi.fn() }));
+vi.mock("../../components/ui/Dialog", () => ({ alert: mocks.alert }));
+vi.mock("../../state/threads", () => ({ threadEnvironment: { stopSession: "stopSession" } }));
+vi.mock("../../state/server", () => ({
+  serverEnvironment: { refreshProviders: "refreshProviders" },
+}));
+vi.mock("../../state/use-atom-command", () => ({
+  useAtomCommand: (command: "stopSession" | "refreshProviders") => mocks[command],
+}));
+vi.mock("@t3tools/client-runtime/state/runtime", () => ({
+  isAtomCommandInterrupted: () => false,
+  squashAtomCommandFailure: (result: { error: unknown }) => result.error,
+}));
 
 import { useThreadMenu } from "./useThreadMenu";
 
@@ -69,8 +83,9 @@ const thread = {
 
 let root: Root;
 const seen = vi.fn<(items: AppBarMenuItem[] | null) => void>();
+let probed: unknown = thread;
 function Probe() {
-  seen(useThreadMenu(thread, vi.fn()).items);
+  seen(useThreadMenu(probed as never, vi.fn()).items);
   return null;
 }
 
@@ -78,6 +93,10 @@ beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   mocks.navigate.mockReset();
   seen.mockReset();
+  mocks.alert.mockReset();
+  mocks.stopSession.mockReset();
+  mocks.refreshProviders.mockReset();
+  probed = thread;
   root = createRoot(document.createElement("div"));
 });
 afterEach(() => act(() => root.unmount()));
@@ -108,5 +127,62 @@ describe("useThreadMenu Notes item", () => {
     mocks.projects = [{ environmentId: "env", id: "p1", title: "Scratch", isScratch: true }];
     await mount();
     expect(notes()).toBeUndefined();
+  });
+});
+
+describe("useThreadMenu Restart agent session", () => {
+  const press = async () => {
+    const item = seen.mock.lastCall?.[0]?.find((entry) => entry.id === "restart-session");
+    await act(async () => (item as { onPress: () => void }).onPress());
+  };
+
+  it("ends a live session, then reloads the provider fresh in the thread's checkout", async () => {
+    mocks.projects = [{ environmentId: "env", id: "p1", workspaceRoot: "/repo" }];
+    probed = {
+      ...(thread as object),
+      runtime: { providerInstanceId: "claude" },
+      modelSelection: { instanceId: "codex" },
+      worktreePath: "/repo/wt",
+    };
+    mocks.stopSession.mockResolvedValue({ _tag: "Success" });
+    mocks.refreshProviders.mockResolvedValue({ _tag: "Success" });
+    await mount();
+    await press();
+    expect(mocks.stopSession).toHaveBeenCalledWith({
+      environmentId: "env",
+      input: { threadId: "t1" },
+    });
+    expect(mocks.refreshProviders).toHaveBeenCalledWith({
+      environmentId: "env",
+      input: { instanceId: "claude", cwd: "/repo/wt", fresh: true },
+    });
+    expect(mocks.alert).toHaveBeenCalledWith(
+      "Agent session will restart",
+      "Your next message starts a fresh session.",
+    );
+  });
+
+  it("skips stopping an idle thread and reports a failed reload", async () => {
+    mocks.projects = [{ environmentId: "env", id: "p1", workspaceRoot: "/repo" }];
+    probed = { ...(thread as object), modelSelection: { instanceId: "codex" }, worktreePath: null };
+    mocks.refreshProviders.mockResolvedValue({ _tag: "Failure", error: new Error("offline") });
+    await mount();
+    await press();
+    expect(mocks.stopSession).not.toHaveBeenCalled();
+    expect(mocks.refreshProviders).toHaveBeenCalledWith({
+      environmentId: "env",
+      input: { instanceId: "codex", cwd: "/repo", fresh: true },
+    });
+    expect(mocks.alert).toHaveBeenCalledWith("Could not restart the agent session", "offline");
+  });
+
+  it("stops at a failed session stop", async () => {
+    mocks.projects = [];
+    probed = { ...(thread as object), runtime: { providerInstanceId: "claude" } };
+    mocks.stopSession.mockResolvedValue({ _tag: "Failure", error: "nope" });
+    await mount();
+    await press();
+    expect(mocks.refreshProviders).not.toHaveBeenCalled();
+    expect(mocks.alert).toHaveBeenCalledWith("Could not restart the agent session", "Try again.");
   });
 });

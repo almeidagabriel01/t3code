@@ -66,6 +66,8 @@ export interface ThreadMenuInput {
   readonly autoSettle: { readonly supported: boolean; readonly enabled: boolean };
   readonly titleRegeneration: { readonly supported: boolean; readonly regenerating: boolean };
   readonly canHandoff: boolean;
+  /** The open thread only, like the palette's action on web. */
+  readonly restartSession?: boolean;
   /** The project's notes are reachable: the environment supports notes and the thread has a real project. */
   readonly notes?: boolean;
   readonly turnIntoProject: { readonly archivable: boolean } | null;
@@ -153,6 +155,9 @@ function buildBaseThreadMenuActions(input: ThreadMenuInput): MenuAction[] {
       isRegenerating: input.titleRegeneration.regenerating,
     }),
     ...(input.canHandoff ? [{ id: "handoff", title: HANDOFF_LABEL, image: HANDOFF_ICON }] : []),
+    ...(input.restartSession
+      ? [{ id: "restart-session", title: "Restart agent session", image: "arrow.counterclockwise" }]
+      : []),
     ...(input.turnIntoProject
       ? [
           {
@@ -239,6 +244,7 @@ export interface ThreadMenuHandlers {
   readonly rename: () => void;
   readonly regenerateTitle: () => void;
   readonly handoff: () => void;
+  readonly restartSession?: () => void;
   readonly openNotes?: () => void;
   readonly turnIntoProject: () => void;
   readonly resetAssistant?: () => void;
@@ -294,6 +300,8 @@ export function runThreadMenuEvent(
       return handlers.regenerateTitle();
     case "handoff":
       return handlers.handoff();
+    case "restart-session":
+      return handlers.restartSession?.();
     case "notes":
       return handlers.openNotes?.();
     case "turn-into-project":

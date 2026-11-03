@@ -1,6 +1,11 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { StaticScreenProps } from "@react-navigation/native";
-import type { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  type EnvironmentId,
+  type ProviderInstanceId,
+  type ThreadId,
+} from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { CLAUDE_CHROME_LINKS } from "@t3tools/shared/claudeChrome";
 import { useState } from "react";
@@ -13,9 +18,10 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { ListActionRow } from "../../components/ui/ListActionRow";
 import { ListToggleRow } from "../../components/ui/ListToggleRow";
 import { ScreenScrollView } from "../../components/ui/ScreenScrollView";
-import { orchestrationEnvironment } from "../../state/orchestration";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
+import { useEnvironmentScope } from "../../state/session";
+import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useQuietThreadStructure } from "../../state/use-thread-detail";
 import { BLOCKED_REASON } from "../threads/ProviderSessionRestartNotice";
@@ -44,10 +50,8 @@ export function ClaudeChromeRouteScreen({ route }: StaticScreenProps<ClaudeChrom
   const canSet = useAtomValue(
     serverEnvironment.setClaudeChromeDefault.permissionAtom(environmentId),
   );
-  const restart = useAtomCommand(orchestrationEnvironment.restartProviderSession);
-  const canRestart = useAtomValue(
-    orchestrationEnvironment.restartProviderSession.permissionAtom(environmentId),
-  );
+  const restart = useAtomCommand(threadEnvironment.stopSession);
+  const canRestart = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
   const structure = useQuietThreadStructure(threadId ? { environmentId, threadId } : null);
   const shared =
     structure?.projection.providerSessions.some(

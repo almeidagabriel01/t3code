@@ -99,7 +99,6 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.assistantsReset]: AuthOrchestrationOperateScope,
   [WS_METHODS.imessageChannelConfigure]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: AuthOrchestrationOperateScope,
-  [ORCHESTRATION_V2_WS_METHODS.restartProviderSession]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.handoffThread]: AuthOrchestrationOperateScope,
   [WS_METHODS.memorySearch]: AuthMemoryReadScope,
   [WS_METHODS.memoryList]: AuthMemoryReadScope,

@@ -22,6 +22,7 @@ import { threadCanArchive } from "../home/threadArchive";
 import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
 import { CustomSnoozeSheet } from "./CustomSnoozeSheet";
 import { openThreadHandoff } from "./openThreadHandoff";
+import { useRestartAgentSession } from "./useRestartAgentSession";
 import { canHandoffThread } from "./thread-handoff";
 import { copyThreadMenuReference } from "./copyThreadMenuReference";
 import {
@@ -59,6 +60,7 @@ export function useThreadMenu(
     assistantEntry?.environmentId ?? thread?.environmentId ?? ("" as EnvironmentId),
   );
   const openAssistantEditor = useOpenAssistantEditor();
+  const restartAgentSession = useRestartAgentSession();
   const actions = useThreadListActions((action) => {
     if (action === "archive" || action === "delete") onRemoved();
   });
@@ -92,6 +94,7 @@ export function useThreadMenu(
       regenerating: thread.titleRegeneration != null,
     },
     canHandoff: canHandoffThread(thread),
+    restartSession: true,
     notes: canOpenThreadNotes(thread, notesEnvironmentIds, projects),
     turnIntoProject: canTurnIntoProject ? { archivable: threadCanArchive(thread.runtime) } : null,
     snoozePresetActions: buildSnoozePresetActions(snoozePresets),
@@ -131,6 +134,7 @@ export function useThreadMenu(
         rename: () => actions.renameThread(thread),
         regenerateTitle: () => void actions.regenerateThreadTitle(thread),
         handoff: () => openThreadHandoff(thread),
+        restartSession: () => void restartAgentSession(thread),
         openNotes: () =>
           whenRootNavigationReady(() =>
             rootNavigationRef.navigate("SettingsNotes", {
