@@ -57,6 +57,8 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { RpcSchema } from "effect/rpc";
 
+import { appAtomRegistry } from "~/rpc/atomRegistry";
+
 export const ENVIRONMENT_ID = EnvironmentId.make("environment-render");
 export const PROJECT_ID = ProjectId.make("project-render");
 const CODEX = ProviderInstanceId.make("codex");
@@ -699,6 +701,8 @@ export function installFakeEnvironment(
     [Symbol.dispose]: () => {
       globalThis.fetch = realFetch;
       threads = [];
+      // The app caches the environment's config and capabilities here; the next test starts cold.
+      appAtomRegistry.reset();
     },
   };
 }
