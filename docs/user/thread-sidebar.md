@@ -141,29 +141,22 @@ rename a thread, regenerate its title, or link and unlink a pull request. These 
 appear on web, desktop, and mobile without requiring the originating browser to remain
 open.
 
-### Follow Priority in Activity
+### Follow what needs you in Activity
 
-On web and desktop, the sidebar opens in **Projects**. Choose the bell at the top of the sidebar, or
-press `mod+alt+u`, to switch to **Activity**, which shows **Priority** above your projects. The
-sidebar remembers your choice on that device, and the bell shows how many threads are in Priority.
-Priority holds threads with work in progress, pending approvals or answers, unread completions, or
-an unacknowledged return from snooze. A delegated task needing approval or an answer brings its
-parent here too, and the parent row shows **Approval** or **Input**. Pinned and settled threads can
-appear in Priority; when they no longer need attention, they return to their previous section.
-Threads in Priority cannot be dragged.
+On web and desktop, choose the bell at the top of the sidebar or in the rail, or press
+`mod+alt+u`, to open **Activity**. The bell's badge counts the threads there. Open decisions come
+first, then threads grouped as **Needs you** (pending approvals or answers, including a delegated
+task's parent, which shows **Approval** or **Input**), **Working**, and **Unread** (unread
+completions and unacknowledged returns from snooze). Select a row to read the thread beside the
+list, or open it as a full thread. Press the bell again to go back to where you were.
 
-A thread you read stays in Priority while you keep Activity open, so rows do not move while you
-work through them. Switch to Projects and back to move read threads out. Settling a thread clears
-an unacknowledged wake and moves the row right away. Unsettling moves it right away too.
+A thread you read stays in the list while Activity is open, so rows do not move while you work
+through them.
 
-Choose **Mark all as read** from Priority's menu to acknowledge unread completions and
-unacknowledged wakes on connections you can change. Those rows leave Priority. Work in progress
-and pending requests stay.
-
-When Priority holds threads you already read, or unread completions and wakes on connections you
-can change, **Clear read threads** appears beside its menu. It marks those unread threads read and
-moves all of them out of Priority at once. Work in progress, pending requests, and unread threads
-on connections you cannot change stay. Nothing is archived or deleted.
+Choose **Mark all as read** from the **⋯** menu to acknowledge unread completions and
+unacknowledged wakes on connections you can change. **Clear read** also removes the threads you
+already read from the list. Work in progress and pending requests stay. Nothing is archived or
+deleted.
 
 On mobile, Home shows the same threads in a **Needs you** section, and the tablet sidebar does too.
 Its menu has **Mark all as read** and **Clear read**.
@@ -188,12 +181,9 @@ While this is on, the active list is ordered by when each thread last came back 
 ## Get around with the rail
 
 On web and desktop, the icon rail on the left edge of the window holds **Home**, which starts a
-new thread, and **Settings**, plus **Running**, **Board**, **Pull requests**, **Usage**,
+new thread, and **Settings**, plus **Activity**, **Board**, **Pull requests**, **Usage**,
 **Scheduled tasks**, and **Archived**. Click the page you are on to go back to your thread. In
 narrow windows these shortcuts move to the bottom of the sidebar.
-
-**Running** lists every thread that is working or needs you, grouped by project; its badge
-counts them. Threads that need you come first.
 
 **Board** shows every project's cards; filter by project, or switch to **By project**. For tasks
 that belong to no project, pick **No project** in **New card**: those cards live on their own
