@@ -124,7 +124,8 @@ it.effect("refuses approval decisions, files that are not fresh uploads, and mis
     assert.equal(missing.reason, "invalid");
 
     const heavyImage = {
-      ...file,
+      id: file.id,
+      name: "huge.png",
       type: "image" as const,
       mimeType: "image/png",
       sizeBytes: 81 * 1024 * 1024,
