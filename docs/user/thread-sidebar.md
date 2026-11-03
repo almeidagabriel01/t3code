@@ -165,6 +165,9 @@ can change, **Clear read threads** appears beside its menu. It marks those unrea
 moves all of them out of Priority at once. Work in progress, pending requests, and unread threads
 on connections you cannot change stay. Nothing is archived or deleted.
 
+On mobile, Home shows the same threads in a **Needs you** section, and the tablet sidebar does too.
+Its menu has **Mark all as read** and **Clear read**.
+
 ### Fold working threads (beta)
 
 Threads the agent is working on by itself, or waiting on work they will resume from, move into a
@@ -196,6 +199,8 @@ counts them. Threads that need you come first.
 that belong to no project, pick **No project** in **New card**: those cards live on their own
 board, and an agent started from one runs as a thread without a project. On mobile, the board is
 under **Settings → Board**, where **New board** creates a board for a project that has none.
+Long-press a card for quick actions: rename, move, labels, due date, archive, and delete. **New
+card** on the all-projects board adds a card to any project, and the card screen takes attachments.
 
 Select **+** at the bottom of the rail to show or hide items and move them up or down. Home and
 Settings always stay. **Add provider** appears on its own while your main machine has no working
@@ -356,7 +361,7 @@ choose **Delete** at the top of the side chat. Deleting a thread also deletes it
 side chats.
 
 On mobile, a thread lists its side chats above the composer. Tap one to open it and
-answer its questions.
+answer its questions, or long-press it and choose **Turn into thread**.
 
 ## Snooze until later
 

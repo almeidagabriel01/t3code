@@ -52,7 +52,8 @@ column, and **Unlink**. If the card is deleted, the note says so and you can unl
 
 In the mobile app, open **Settings → Notes** or search the command palette for **Notes**. Notes
 open as rendered markdown; tap a checkbox to tick it, or **Edit** to change the markdown and add
-images. Pin, **Start work**, and the linked card work as on desktop.
+images. Search the list from the field above it, or open a thread's menu and choose **Notes** to see
+that project's notes. Pin, **Start work**, and the linked card work as on desktop.
 
 Edits save on the phone first, so you can write offline. They sync when the phone reconnects. If
 the note changed elsewhere in the meantime, only that note waits: **Compare versions** shows both,
