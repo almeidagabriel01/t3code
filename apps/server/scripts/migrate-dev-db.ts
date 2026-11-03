@@ -233,6 +233,14 @@ const copySourceSlice = Effect.fn("copyDevDbSourceSlice")(function* (sourcePath:
   const threadColumns = yield* sql<{ name: string; notnull: number }>`
     SELECT m.name, c."notnull" FROM src.sqlite_master m, pragma_table_info(m.name, 'src') c
     WHERE m.type = 'table' AND c.name = 'thread_id'`;
+  // table_info omits generated columns, which `INSERT ... SELECT *` cannot fill.
+  const columnRows = yield* sql<{ table: string; name: string }>`
+    SELECT m.name AS "table", c.name FROM src.sqlite_master m, pragma_table_info(m.name, 'src') c
+    WHERE m.type = 'table' ORDER BY m.name, c.cid`;
+  const columnsByTable = new Map<string, string[]>();
+  for (const { table, name } of columnRows) {
+    columnsByTable.set(table, [...(columnsByTable.get(table) ?? []), `"${name}"`]);
+  }
   const threadIdNullable = new Map(threadColumns.map((row) => [row.name, row.notnull === 0]));
   // FTS5 makes its own shadow tables and contentless rows cannot be copied:
   // create the virtual table, skip its shadow tables and rows, and rebuild the
@@ -285,8 +293,10 @@ const copySourceSlice = Effect.fn("copyDevDbSourceSlice")(function* (sourcePath:
             : nullable === undefined || name === PROVIDER_SESSIONS_TABLE
               ? ""
               : `WHERE thread_id IN (SELECT thread_id FROM copied_threads)${nullable ? " OR thread_id IS NULL" : ""}`;
-        yield* sql.unsafe(`INSERT INTO main."${name}" SELECT * FROM src."${name}" ${filter}`)
-          .unprepared;
+        const columns = (columnsByTable.get(name) ?? []).join(", ");
+        yield* sql.unsafe(
+          `INSERT INTO main."${name}" (${columns}) SELECT ${columns} FROM src."${name}" ${filter}`,
+        ).unprepared;
       }
       yield* sql`DELETE FROM main.sqlite_sequence`;
       yield* sql`INSERT INTO main.sqlite_sequence SELECT name, seq FROM src.sqlite_sequence`;
