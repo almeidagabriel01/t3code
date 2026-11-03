@@ -11,22 +11,25 @@ import { useSideChats } from "../../state/entities";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useOpenLinkedThread } from "./useOpenLinkedThread";
+import { useStartSideChat } from "./useStartSideChat";
 
 /**
- * The thread's side chats, started on web or desktop. Each opens as a normal thread, so its
+ * The thread's side chats, and a way to start one. Each opens as a normal thread, so its
  * approvals and questions can be answered from the phone.
  */
 export function ThreadSideChatsRow(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
+  readonly canOperate: boolean;
 }) {
   const sideChats = useSideChats({ environmentId: props.environmentId, threadId: props.threadId });
   const openLinkedThread = useOpenLinkedThread();
+  const startSideChat = useStartSideChat(props.environmentId);
   const updateMetadata = useAtomCommand(threadEnvironment.updateMetadata);
   const turnIntoThread = async (threadId: ThreadId) => {
     const result = await updateMetadata({
       environmentId: props.environmentId,
-      input: { threadId, detachSideChat: true },
+      input: { threadId, detachSideChat: true, regenerateTitle: true },
     });
     if (result._tag === "Failure") {
       const cause = squashAtomCommandFailure(result);
@@ -38,7 +41,7 @@ export function ThreadSideChatsRow(props: {
     }
     openLinkedThread({ environmentId: props.environmentId, threadId });
   };
-  if (sideChats.length === 0) return null;
+  if (sideChats.length === 0 && !props.canOperate) return null;
   return (
     <View className="flex-row items-center gap-2 pb-2 pl-4">
       <SymbolView
@@ -47,6 +50,16 @@ export function ThreadSideChatsRow(props: {
         tintColorClassName="accent-foreground-muted"
       />
       <Text className="text-xs text-foreground-muted">Side chats</Text>
+      {props.canOperate ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="New side chat"
+          hitSlop={8}
+          onPress={() => void startSideChat(props.threadId)}
+        >
+          <SymbolView name="plus.bubble" size={14} tintColorClassName="accent-foreground-muted" />
+        </Pressable>
+      ) : null}
       <ScrollView horizontal showsHorizontalScrollIndicator={false} className="flex-1">
         <View className="flex-row gap-1 pr-4">
           {sideChats.map((sideChat) => {

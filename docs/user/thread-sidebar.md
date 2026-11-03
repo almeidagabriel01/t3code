@@ -343,15 +343,21 @@ in its composer.
 To use what you learned, choose **Bring back**. The thread gets the side chat with
 your next message there. Bring back is available while the thread is idle.
 
+The header shows what the main thread is doing, such as Working or Needs approval.
+Choose **Start over** to discard the side chat and open a fresh one from the main
+thread's latest state.
+
 To keep a side chat and continue it on its own, choose **Turn into thread**. It
-becomes a normal thread in the sidebar and opens as the main thread.
+becomes a normal thread in the sidebar, gets a new title, and opens as the main thread.
 
 Closing a side chat you never sent a message in deletes it. To delete one you used,
 choose **Delete** at the top of the side chat. Deleting a thread also deletes its
 side chats.
 
-On mobile, a thread lists its side chats above the composer. Tap one to open it and
-answer its questions, or long-press it and choose **Turn into thread**.
+On mobile, a thread lists its side chats above the composer, with a **+** to start
+one. Tap a side chat to open it and answer its questions, or long-press it and
+choose **Turn into thread**. An open side chat shows its main thread's status and
+the **Start over** button.
 
 ## Snooze until later
 

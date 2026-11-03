@@ -115,6 +115,37 @@ export function threadRuntimeIsActive(runtime: ThreadStructureRuntime | null | u
   return runtime !== null && runtime !== undefined && threadRunStatusIsActive(runtime.status);
 }
 
+export type SideChatParentTone = "active" | "attention" | "idle" | "error";
+
+/** What a side chat's header says the main thread is doing right now. */
+export function sideChatParentStatus(
+  parent: Pick<
+    EnvironmentThreadShell,
+    "runtime" | "latestRun" | "hasPendingApprovals" | "hasPendingUserInput" | "goal"
+  >,
+): { readonly label: string; readonly tone: SideChatParentTone } {
+  if (parent.hasPendingApprovals) return { label: "Needs approval", tone: "attention" };
+  if (parent.hasPendingUserInput) return { label: "Needs input", tone: "attention" };
+  switch (parent.runtime?.status) {
+    case "preparing":
+    case "queued":
+    case "starting":
+      return { label: "Starting", tone: "active" };
+    case "running":
+    case "waiting":
+      return { label: "Working", tone: "active" };
+  }
+  if (parent.goal?.status === "paused") return { label: "Goal paused", tone: "attention" };
+  switch (parent.latestRun?.status) {
+    case "interrupted":
+      return { label: "Interrupted", tone: "idle" };
+    case "failed":
+      return { label: "Failed", tone: "error" };
+    default:
+      return { label: "Idle", tone: "idle" };
+  }
+}
+
 export function threadRuntimeCanArchive(runtime: ThreadRuntimeSummary | null | undefined): boolean {
   if (runtime?.status === "queued") return runtime.activeRunId === null;
   return (

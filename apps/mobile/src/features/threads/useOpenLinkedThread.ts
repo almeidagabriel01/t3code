@@ -11,9 +11,17 @@ export function useOpenLinkedThread() {
   const route = useRoute<Route<string, { environmentId?: string; threadId?: string }>>();
   const openInspector = useOpenThreadInspector();
   const openInInspector = use(ThreadInspectorNavigationContext);
-  return (target: { readonly environmentId: string; readonly threadId: string }) => {
+  return (
+    target: { readonly environmentId: string; readonly threadId: string },
+    // Replace the current thread, e.g. one that is about to be deleted, so Back skips it.
+    options?: { readonly replace?: boolean },
+  ) => {
     if (openInInspector) {
       openInInspector({ type: "thread", ...target });
+      return;
+    }
+    if (options?.replace && route.name === "Thread") {
+      navigation.dispatch(StackActions.replace("Thread", target));
       return;
     }
     const state = navigation.getState();

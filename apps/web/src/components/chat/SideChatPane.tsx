@@ -1,5 +1,5 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/shell";
+import { sideChatParentStatus, threadRuntimeIsActive } from "@t3tools/client-runtime/state/shell";
 import { resolveLatestMergeBackRun } from "@t3tools/client-runtime/state/thread-workflows";
 import {
   isAtomCommandInterrupted,
@@ -12,7 +12,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { MessageSquarePlusIcon, Trash2Icon, XIcon } from "lucide-react";
+import { MessageSquarePlusIcon, RotateCcwIcon, Trash2Icon, XIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { ComposerHandleContext } from "../../composerHandleContext";
@@ -31,8 +31,19 @@ import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { BackgroundThreadContext } from "./backgroundThread";
+import { useSideChat } from "./useSideChat";
 
-/** A side chat tab: its title, Bring back, Turn into thread, Delete and Close, over the side chat's own chat. */
+const PARENT_TONE_CLASSES = {
+  active: { text: "text-info-foreground", dot: "bg-info" },
+  attention: {
+    text: "text-amber-600 dark:text-amber-300/90",
+    dot: "bg-amber-500 dark:bg-amber-300/90",
+  },
+  idle: { text: "text-muted-foreground", dot: "bg-muted-foreground/60" },
+  error: { text: "text-red-600 dark:text-red-300/90", dot: "bg-red-500 dark:bg-red-300/90" },
+} as const;
+
+/** A side chat tab: its title, the main thread's status, Bring back, Turn into thread, Start over, Delete and Close, over the side chat's own chat. */
 export default function SideChatPane(props: {
   readonly parentRef: ScopedThreadRef;
   readonly threadId: ThreadId;
@@ -61,6 +72,13 @@ export default function SideChatPane(props: {
   const [bringingBack, setBringingBack] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [promoting, setPromoting] = useState(false);
+  const [restarting, setRestarting] = useState(false);
+  const sideChat = useSideChat({
+    threadRef: parentRef,
+    onError: (description) =>
+      toastManager.add({ type: "error", title: "Could not start over", description }),
+  });
+  const parentStatus = parent === null ? null : sideChatParentStatus(parent);
   const mergeRun = projection ? resolveLatestMergeBackRun(projection) : null;
   // A pending merge-back would fail the main thread's queued message, so the server refuses it.
   const bringBackBlockedReason = !canOperate
@@ -100,7 +118,7 @@ export default function SideChatPane(props: {
     setPromoting(true);
     const result = await updateMetadata({
       environmentId: parentRef.environmentId,
-      input: { threadId, detachSideChat: true },
+      input: { threadId, detachSideChat: true, regenerateTitle: true },
     });
     setPromoting(false);
     if (result._tag === "Success") {
@@ -121,20 +139,15 @@ export default function SideChatPane(props: {
 
   const deleteSideChat = async () => {
     if (!canOperate || shell === null || deleting) return;
-    if (confirmThreadDelete) {
-      const api = readLocalApi();
-      if (!api) return;
-      const confirmed = await settlePromise(() =>
-        api.dialogs.confirm(
-          [
-            `Delete side chat "${shell.title}"?`,
-            "This permanently clears its conversation history.",
-          ].join("\n"),
-          { variant: "destructive" },
-        ),
-      );
-      if (confirmed._tag === "Failure" || !confirmed.value) return;
-    }
+    if (
+      !(await confirmDiscard(
+        [
+          `Delete side chat "${shell.title}"?`,
+          "This permanently clears its conversation history.",
+        ].join("\n"),
+      ))
+    )
+      return;
     setDeleting(true);
     const result = await deleteThread({
       environmentId: parentRef.environmentId,
@@ -153,12 +166,69 @@ export default function SideChatPane(props: {
     }
   };
 
+  const confirmDiscard = async (message: string) => {
+    if (!confirmThreadDelete) return true;
+    const api = readLocalApi();
+    if (!api) return false;
+    const confirmed = await settlePromise(() =>
+      api.dialogs.confirm(message, { variant: "destructive" }),
+    );
+    return confirmed._tag === "Success" && confirmed.value;
+  };
+
+  const startOver = async () => {
+    if (!canOperate || shell === null || restarting || deleting) return;
+    if (
+      !(await confirmDiscard(
+        [
+          `Start "${shell.title}" over?`,
+          "This permanently clears its conversation history and opens a fresh side chat.",
+        ].join("\n"),
+      ))
+    )
+      return;
+    setRestarting(true);
+    // The new side chat opens first so a failed start leaves this one untouched.
+    if (await sideChat.open()) {
+      const result = await deleteThread({
+        environmentId: parentRef.environmentId,
+        input: { threadId },
+      });
+      useRightPanelStore.getState().closeSurface(parentRef, `side-chat:${threadId}`);
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        toastManager.add({ type: "error", title: "Could not delete the old side chat" });
+      }
+    }
+    setRestarting(false);
+  };
+
   return (
     <div data-side-chat-pane className="flex h-full min-h-0 flex-col">
-      <div className="flex h-9 shrink-0 items-center gap-1 border-b border-border pr-1 pl-3">
+      <div className="@container/side-chat flex h-9 shrink-0 items-center gap-1 border-b border-border pr-1 pl-3">
         <span className="min-w-0 flex-1 truncate text-xs font-medium">
           {shell?.title ?? "Side chat"}
         </span>
+        {parentStatus === null ? null : (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <span
+                  role="status"
+                  aria-label={`Main thread: ${parentStatus.label}`}
+                  className={`inline-flex shrink-0 items-center gap-1 text-2xs ${PARENT_TONE_CLASSES[parentStatus.tone].text}`}
+                  data-side-chat-parent-status={parentStatus.tone}
+                />
+              }
+            >
+              <span
+                aria-hidden
+                className={`size-1.5 rounded-full ${PARENT_TONE_CLASSES[parentStatus.tone].dot}`}
+              />
+              <span className="@max-sm/side-chat:hidden">{parentStatus.label}</span>
+            </TooltipTrigger>
+            <TooltipPopup side="bottom">Main thread: {parentStatus.label}</TooltipPopup>
+          </Tooltip>
+        )}
         <Tooltip>
           <TooltipTrigger
             render={
@@ -191,6 +261,22 @@ export default function SideChatPane(props: {
             }
           />
           <TooltipPopup side="bottom">Keep this side chat as its own thread.</TooltipPopup>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                aria-label="Start over"
+                disabled={!canOperate || shell === null || restarting || deleting}
+                onClick={() => void startOver()}
+              >
+                <RotateCcwIcon />
+              </Button>
+            }
+          />
+          <TooltipPopup side="bottom">Discard this side chat and start a fresh one.</TooltipPopup>
         </Tooltip>
         <Button
           variant="ghost"

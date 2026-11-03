@@ -201,6 +201,7 @@ import { ComposerQueuedEditBanner } from "./ComposerQueuedEdit";
 import { useThreadQueuedCount } from "./ThreadQueueControl";
 import { ThreadGuestShareBar } from "./ThreadGuestShareBar";
 import { ThreadKanbanCardChip } from "../kanban/ThreadKanbanCardChip";
+import { ThreadSideChatBar } from "./ThreadSideChatBar";
 import { ThreadSideChatsRow } from "./ThreadSideChatsRow";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
 import { resolveThreadFeedSubmissionAnchor } from "./thread-feed-live-follow";
@@ -1551,10 +1552,19 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
                     environmentId={props.environmentId}
                     threadId={props.selectedThread.id}
                   />
-                  {props.draftMode ? null : (
+                  {props.draftMode ? null : props.selectedThread.lineage.sideChat === true &&
+                    props.selectedThread.lineage.parentThreadId ? (
+                    <ThreadSideChatBar
+                      environmentId={props.environmentId}
+                      threadId={props.selectedThread.id}
+                      parentThreadId={props.selectedThread.lineage.parentThreadId}
+                      canOperate={props.canOperateThread}
+                    />
+                  ) : (
                     <ThreadSideChatsRow
                       environmentId={props.environmentId}
                       threadId={props.selectedThread.id}
+                      canOperate={props.canOperateThread}
                     />
                   )}
                   {props.feedbackSubmissions.map((submission) => (
