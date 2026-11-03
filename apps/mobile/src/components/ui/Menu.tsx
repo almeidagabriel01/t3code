@@ -41,6 +41,9 @@ const ThemedMenuView = withUniwind(
   },
 );
 
+// UIKit can request a menu configuration for a tap and then neither display nor end the menu.
+const DEFERRED_PRESS_FALLBACK_MS = 250;
+
 export function Menu(props: MenuProps) {
   const { themeAppearance } = useAppearancePreferences();
   const isDarkMode = themeAppearance === "dark";
@@ -69,7 +72,14 @@ export function Menu(props: MenuProps) {
         if (isTouch && menuPress.current.isPreparing) {
           // A release can precede native display; let UIKit's display/cancel callback decide its outcome.
           event.persist();
-          pendingPress.current = () => child.props.onPress?.(event);
+          const press = () => child.props.onPress?.(event);
+          pendingPress.current = press;
+          setTimeout(() => {
+            if (pendingPress.current !== press || menuPress.current.isOpen) return;
+            pendingPress.current = null;
+            menuPress.current.isPreparing = false;
+            press();
+          }, DEFERRED_PRESS_FALLBACK_MS);
           return;
         }
         child.props.onPress?.(event);

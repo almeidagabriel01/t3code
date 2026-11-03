@@ -5,6 +5,7 @@ import "vite-plus/test/config";
 
 const reactTests = [
   "src/features/threads/ThreadSideChatsRow.test.tsx",
+  "src/features/threads/ThreadSideChatBar.test.tsx",
   "src/features/connection/ConnectionEnvironmentRow.test.tsx",
   "src/features/kanban/KanbanBoardRouteScreen.test.tsx",
   "src/features/kanban/KanbanCardMenu.test.tsx",
@@ -26,6 +27,7 @@ const reactTests = [
   "src/features/pull-requests/usePullRequestDiff.test.tsx",
   "src/components/ProjectFavicon.test.tsx",
   "src/components/ui/Dialog.android.test.tsx",
+  "src/components/ui/Menu.test.tsx",
   "src/features/pull-requests/usePullRequestList.test.tsx",
   "src/features/files/ZipArchiveView.test.tsx",
   "src/features/pull-requests/guide/useReviewGuide.test.tsx",
