@@ -13,6 +13,7 @@ import { getRouter } from "~/router";
 import {
   ENVIRONMENT_ID,
   PROJECT_ID,
+  fakeCommands,
   installFakeEnvironment,
   threadWithHistory,
   type FakeDriver,
@@ -27,6 +28,12 @@ vi.mock("../../../../packages/client-runtime/src/connection/driver.ts", async (i
     import("effect/Layer"),
   ]);
   return { ...actual, layer: Layer.succeed(actual.ConnectionDriver, fakeDriver) };
+});
+
+const toast = vi.hoisted(() => vi.fn());
+vi.mock(import("./ui/toast"), async (original) => {
+  const actual = await original();
+  return { ...actual, toastManager: { ...actual.toastManager, add: toast } };
 });
 
 vi.mock(import("~/rpc/requestLatencyState"), async (original) => ({
@@ -58,6 +65,55 @@ it("Toggle side chat starts a side chat and shows its pane, and toggles it close
   await expect
     .element(page.getByRole("button", { name: "Close side chat" }))
     .not.toBeInTheDocument();
+});
+
+async function openSideChat() {
+  await page.viewport(1400, 900);
+  const parent = threadWithHistory("thread-parent", 1);
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${parent.id}`] }),
+  );
+  await router.load();
+  return { parent, router };
+}
+
+it("Turn into thread detaches the side chat, closes its pane and opens the thread", async () => {
+  const { parent, router } = await openSideChat();
+  using _environment = installFakeEnvironment([parent], { sideChats: true });
+  await using _app = await render(<AppRoot router={router} />, { router: false });
+  await page.getByRole("button", { name: "Toggle side chat" }).click();
+  await page.getByRole("button", { name: "Turn into thread" }).click();
+  await expect
+    .element(page.getByRole("button", { name: "Turn into thread" }))
+    .not.toBeInTheDocument();
+  const fork = fakeCommands.dispatched.find((command) => command.type === "thread.fork");
+  const detach = fakeCommands.dispatched.find(
+    (command) => command.type === "thread.metadata.update",
+  );
+  expect(detach).toMatchObject({ threadId: fork?.targetThreadId, detachSideChat: true });
+  expect(router.state.location.pathname).toBe(`/${ENVIRONMENT_ID}/${fork?.targetThreadId}`);
+});
+
+it("Turn into thread shows an error toast and keeps the pane open when the server refuses", async () => {
+  const { parent, router } = await openSideChat();
+  using _environment = installFakeEnvironment([parent], { sideChats: true });
+  toast.mockClear();
+  await using _app = await render(<AppRoot router={router} />, { router: false });
+  await page.getByRole("button", { name: "Toggle side chat" }).click();
+  await expect.element(page.getByRole("button", { name: "Turn into thread" })).toBeVisible();
+  fakeCommands.failTypes.add("thread.metadata.update");
+  await page.getByRole("button", { name: "Turn into thread" }).click();
+  await vi.waitFor(() =>
+    expect(toast).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Could not turn the side chat into a thread" }),
+    ),
+  );
+  await expect.element(page.getByRole("button", { name: "Turn into thread" })).toBeVisible();
+  expect(router.state.location.pathname).toBe(`/${ENVIRONMENT_ID}/${parent.id}`);
 });
 
 it("a new draft does not load its reserved thread before the server lists it", async () => {

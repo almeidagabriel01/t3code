@@ -49,6 +49,7 @@ import type {
 import type { WsRpcProtocolClient } from "@t3tools/client-runtime/rpc";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { APP_VERSION } from "~/branding";
+import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Queue from "effect/Queue";
@@ -397,6 +398,10 @@ const handlers: Record<string, (input: never) => unknown> = {
     subscribe([{ version: 1 as const, type: "snapshot" as const, config: currentServerConfig() }]),
 };
 
+class FakeCommandRejected extends Data.TaggedError("FakeCommandRejected")<{
+  readonly message: string;
+}> {}
+
 // Forking a side chat adds an empty thread under its parent, as the server does.
 handlers[ORCHESTRATION_V2_WS_METHODS.dispatchCommand] = (command: {
   readonly type: string;
@@ -404,34 +409,53 @@ handlers[ORCHESTRATION_V2_WS_METHODS.dispatchCommand] = (command: {
   readonly targetThreadId?: ThreadId;
   readonly title?: string;
 }) =>
-  Effect.sync(() => {
-    sequence += 1;
-    if (command.type === "thread.fork" && command.sourceThreadId && command.targetThreadId) {
-      const child: FakeThread = {
-        id: command.targetThreadId,
-        title: command.title ?? "Side chat",
-        runs: [],
-        items: [],
-      };
-      threads = [...threads, child];
-      const shell = shellOf(child);
-      const thread = {
-        ...shell,
-        lineage: {
-          rootThreadId: command.sourceThreadId,
-          parentThreadId: command.sourceThreadId,
-          relationshipToParent: null,
-          sideChat: true,
-        },
-      };
-      for (const queue of shellSubscribers) {
-        Effect.runSync(
-          Queue.offer(queue, { kind: "thread.updated", sequence, location: "active", thread }),
-        );
-      }
+  Effect.suspend(() => {
+    fakeCommands.dispatched.push(command);
+    if (fakeCommands.failTypes.has(command.type)) {
+      return Effect.fail(new FakeCommandRejected({ message: `${command.type} failed` }));
     }
-    return { sequence };
+    return Effect.sync(() => dispatchCommand(command));
   });
+
+/** Commands the fake server received, and the command types it rejects. */
+export const fakeCommands = {
+  dispatched: [] as Array<{ readonly type: string; readonly [key: string]: unknown }>,
+  failTypes: new Set<string>(),
+};
+
+const dispatchCommand = (command: {
+  readonly type: string;
+  readonly sourceThreadId?: ThreadId;
+  readonly targetThreadId?: ThreadId;
+  readonly title?: string;
+}) => {
+  sequence += 1;
+  if (command.type === "thread.fork" && command.sourceThreadId && command.targetThreadId) {
+    const child: FakeThread = {
+      id: command.targetThreadId,
+      title: command.title ?? "Side chat",
+      runs: [],
+      items: [],
+    };
+    threads = [...threads, child];
+    const shell = shellOf(child);
+    const thread = {
+      ...shell,
+      lineage: {
+        rootThreadId: command.sourceThreadId,
+        parentThreadId: command.sourceThreadId,
+        relationshipToParent: null,
+        sideChat: true,
+      },
+    };
+    for (const queue of shellSubscribers) {
+      Effect.runSync(
+        Queue.offer(queue, { kind: "thread.updated", sequence, location: "active", thread }),
+      );
+    }
+  }
+  return { sequence };
+};
 
 /** Decisions the fake server holds, and the answer and dismiss calls it received. */
 export const fakeDecisions = {
@@ -701,6 +725,8 @@ export function installFakeEnvironment(
     [Symbol.dispose]: () => {
       globalThis.fetch = realFetch;
       threads = [];
+      fakeCommands.dispatched.length = 0;
+      fakeCommands.failTypes.clear();
       // The app caches the environment's config and capabilities here; the next test starts cold.
       appAtomRegistry.reset();
     },
