@@ -102,7 +102,7 @@ it("keeps a submenu's icon in the native menu", () => {
         <V5StackHeader canGoBack={false} options={{ unstable_headerRightItems: () => items }} />,
       ),
     );
-    expect(bridge.ios?.trailingItems).toMatchObject([
+    expect((bridge.ios as StackHeaderConfigProps["ios"])?.trailingItems).toMatchObject([
       {
         menu: {
           children: [{ type: "menu", title: "Snooze", icon: { type: "sfSymbol", name: "clock" } }],
