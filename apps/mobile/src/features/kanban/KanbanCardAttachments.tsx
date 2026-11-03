@@ -1,3 +1,4 @@
+import type { MenuAction } from "@react-native-menu/menu";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import type {
   AssetResource,
@@ -10,6 +11,9 @@ import { Pressable, View } from "react-native";
 
 import type { FilePreviewSource } from "../../components/FilePreviewModal";
 import { AppText as Text } from "../../components/ui/AppText";
+import { SymbolView } from "../../components/ui/AppSymbol";
+import * as Dialog from "../../components/ui/Dialog";
+import { Menu } from "../../components/ui/Menu";
 import { assetImageSource } from "../../lib/assetImageSource";
 import { relativeTime } from "../../lib/time";
 import { useAssetUrl } from "../../state/assets";
@@ -103,34 +107,102 @@ export function KanbanCardCoverImage(props: {
   );
 }
 
+type AttachmentId = KanbanCardAttachment["attachmentId"];
+type AttachmentPatch = {
+  readonly removeAttachmentIds?: readonly AttachmentId[];
+  readonly coverAttachmentId?: AttachmentId | null;
+};
+
+export function kanbanAttachmentMenuActions(image: boolean, cover: boolean): MenuAction[] {
+  return [
+    ...(image
+      ? [
+          cover
+            ? { id: "uncover", title: "Remove cover", image: "rectangle.slash" }
+            : { id: "cover", title: "Make cover", image: "photo" },
+        ]
+      : []),
+    { id: "delete", title: "Delete", image: "trash", attributes: { destructive: true } },
+  ];
+}
+
+function AttachmentMenu(props: {
+  readonly attachment: KanbanCardAttachment;
+  readonly cover: boolean;
+  readonly onPatch: (patch: AttachmentPatch) => void;
+}) {
+  const { attachment } = props;
+  const run = (id: string) => {
+    if (id === "cover") props.onPatch({ coverAttachmentId: attachment.attachmentId });
+    else if (id === "uncover") props.onPatch({ coverAttachmentId: null });
+    else if (id === "delete")
+      Dialog.confirm({
+        title: `Delete ${attachment.name}?`,
+        message: "The file is removed from this card for good.",
+        confirmText: "Delete",
+        destructive: true,
+        onConfirm: () => props.onPatch({ removeAttachmentIds: [attachment.attachmentId] }),
+      });
+  };
+  return (
+    <Menu
+      actions={kanbanAttachmentMenuActions(isImage(attachment), props.cover)}
+      onPressAction={({ nativeEvent }) => run(nativeEvent.event)}
+    >
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`${attachment.name} actions`}
+        hitSlop={8}
+        className="size-9 items-center justify-center rounded-full active:opacity-70"
+      >
+        <SymbolView
+          name="ellipsis"
+          size={18}
+          tintColorClassName="accent-icon-subtle"
+          type="monochrome"
+        />
+      </Pressable>
+    </Menu>
+  );
+}
+
 export function KanbanCardAttachmentList(props: {
   readonly environmentId: EnvironmentId;
   readonly card: KanbanCard;
   readonly onPress: (source: FilePreviewSource) => void;
+  /** Absent on read-only connections. */
+  readonly onPatch?: (patch: AttachmentPatch) => void;
 }) {
   return (
     <View className="gap-3">
-      {props.card.attachments.map((attachment) => (
-        <Pressable
-          key={attachment.attachmentId}
-          accessibilityRole="button"
-          accessibilityLabel={`Open ${attachment.name}`}
-          onPress={() => props.onPress(previewOf(props.environmentId, attachment))}
-          className="flex-row items-center gap-3 active:opacity-70"
-        >
-          <Thumbnail environmentId={props.environmentId} attachment={attachment} />
-          <View className="min-w-0 flex-1 gap-0.5">
-            <Text textRole="body" numberOfLines={1} className="font-t3-medium text-foreground">
-              {attachment.name}
-            </Text>
-            <Text textRole="footnote" className="text-foreground-muted">
-              {props.card.coverAttachmentId === attachment.attachmentId ? "Cover · " : ""}
-              Added {relativeTime(attachment.addedAt)} ago ·{" "}
-              {formatAttachmentSize(attachment.sizeBytes)}
-            </Text>
+      {props.card.attachments.map((attachment) => {
+        const cover = props.card.coverAttachmentId === attachment.attachmentId;
+        return (
+          <View key={attachment.attachmentId} className="flex-row items-center gap-1">
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Open ${attachment.name}`}
+              onPress={() => props.onPress(previewOf(props.environmentId, attachment))}
+              className="min-w-0 flex-1 flex-row items-center gap-3 active:opacity-70"
+            >
+              <Thumbnail environmentId={props.environmentId} attachment={attachment} />
+              <View className="min-w-0 flex-1 gap-0.5">
+                <Text textRole="body" numberOfLines={1} className="font-t3-medium text-foreground">
+                  {attachment.name}
+                </Text>
+                <Text textRole="footnote" className="text-foreground-muted">
+                  {cover ? "Cover · " : ""}
+                  Added {relativeTime(attachment.addedAt)} ago ·{" "}
+                  {formatAttachmentSize(attachment.sizeBytes)}
+                </Text>
+              </View>
+            </Pressable>
+            {props.onPatch ? (
+              <AttachmentMenu attachment={attachment} cover={cover} onPatch={props.onPatch} />
+            ) : null}
           </View>
-        </Pressable>
-      ))}
+        );
+      })}
     </View>
   );
 }

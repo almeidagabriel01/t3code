@@ -567,6 +567,9 @@ function KanbanCardDetail(props: {
               environmentId={environmentId}
               card={card}
               onPress={setExpandedImage}
+              {...(disabled
+                ? {}
+                : { onPatch: (patch) => void actions.updateCard({ cardId, ...patch }) })}
             />
             {disabled ? null : (
               <KanbanAddAttachmentButton environmentId={environmentId} cardId={cardId} />
