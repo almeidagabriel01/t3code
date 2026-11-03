@@ -74,3 +74,43 @@ it.each(["leadingItems", "trailingItems", "toolbarItems"] as const)(
     }
   },
 );
+
+it("keeps a submenu's icon in the native menu", () => {
+  bridge.ios = undefined;
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const root = createRoot(document.createElement("div"));
+  const onPress = () => {};
+  try {
+    const items: NativeStackHeaderItem[] = [
+      {
+        type: "menu",
+        label: "More",
+        menu: {
+          items: [
+            {
+              type: "submenu",
+              label: "Snooze",
+              icon: { type: "sfSymbol", name: "clock" },
+              items: [{ type: "action", label: "In 1 hour", onPress }],
+            },
+          ],
+        },
+      },
+    ];
+    act(() =>
+      root.render(
+        <V5StackHeader canGoBack={false} options={{ unstable_headerRightItems: () => items }} />,
+      ),
+    );
+    expect(bridge.ios?.trailingItems).toMatchObject([
+      {
+        menu: {
+          children: [{ type: "menu", title: "Snooze", icon: { type: "sfSymbol", name: "clock" } }],
+        },
+      },
+    ]);
+  } finally {
+    act(() => root.unmount());
+    vi.unstubAllGlobals();
+  }
+});
