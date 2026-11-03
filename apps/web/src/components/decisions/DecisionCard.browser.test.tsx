@@ -120,6 +120,42 @@ it("attaches files alone, waits for uploads, and hides attaching for approvals",
   });
 });
 
+it("deletes a file removed before answering, even one still uploading", async () => {
+  const onDiscardFile = vi.fn();
+  let finishSlow: (value: { attachmentId: string; mimeType: string }) => void = () => {};
+  const onUploadFile = vi.fn((file: File) =>
+    file.name === "fast.txt"
+      ? Promise.resolve({ attachmentId: "pending-fast", mimeType: "text/plain" })
+      : new Promise<{ attachmentId: string; mimeType: string }>((resolve) => {
+          finishSlow = resolve;
+        }),
+  );
+  await using _screen = await render(
+    <DecisionCard
+      decision={open}
+      canAct
+      onAnswer={ok}
+      onDismiss={ok}
+      onUploadFile={onUploadFile}
+      onDiscardFile={onDiscardFile}
+    />,
+    { router: false }, // no navigation in the card
+  );
+  await userEvent.upload(page.getByLabelText("Choose files to attach"), [
+    new File(["x"], "fast.txt", { type: "text/plain" }),
+    new File(["y"], "slow.txt", { type: "text/plain" }),
+  ]);
+  await expect.element(page.getByRole("button", { name: "Remove fast.txt" })).toBeVisible();
+  await userEvent.click(page.getByRole("button", { name: "Remove fast.txt" }));
+  expect(onDiscardFile).toHaveBeenCalledWith("pending-fast");
+
+  await userEvent.click(page.getByRole("button", { name: "Remove slow.txt" }));
+  expect(onDiscardFile).toHaveBeenCalledTimes(1);
+  finishSlow({ attachmentId: "pending-slow", mimeType: "text/plain" });
+  await vi.waitFor(() => expect(onDiscardFile).toHaveBeenLastCalledWith("pending-slow"));
+  await expect.element(page.getByText("slow.txt")).not.toBeInTheDocument();
+});
+
 it("keeps a failed upload out of the answer and lets it be removed", async () => {
   await using _screen = await render(
     <DecisionCard

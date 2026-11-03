@@ -166,6 +166,11 @@ function uploadBytes(input: {
   return { done, abort: () => xhr.abort() };
 }
 
+/** Deletes a standalone upload the user removed before sending it. */
+export function discardStandaloneAttachment(environmentId: EnvironmentId, attachmentId: string) {
+  deletePendingUpload(environmentId, attachmentId);
+}
+
 /** Uploads one file outside any composer draft; supported images upload as images. */
 export async function uploadStandaloneAttachment(
   environmentId: EnvironmentId,

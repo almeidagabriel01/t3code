@@ -7,7 +7,8 @@ import type {
   EnvironmentId,
 } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
-import { useState } from "react";
+import type { DecisionsState } from "@t3tools/client-runtime/state/decisions";
+import { useEffect, useState } from "react";
 import { View } from "react-native";
 
 import { ComposerAttachmentStrip } from "../../components/ComposerAttachmentStrip";
@@ -15,6 +16,7 @@ import * as Dialog from "../../components/ui/Dialog";
 import { AppText as Text } from "../../components/ui/AppText";
 import { pickComposerFiles, pickComposerMedia } from "../../lib/composerImages";
 import { appAtomRegistry } from "../../state/atom-registry";
+import { useDecisionStates } from "../../state/decisions";
 import { useServerConfigs } from "../../state/entities";
 import {
   appendComposerDraftAttachments,
@@ -27,6 +29,40 @@ import { ComposerAttachmentButton } from "../threads/ComposerAttachmentButton";
 /** Environment ids end the key before its last colon, which is how uploads find their server. */
 export const decisionAttachmentDraftKey = (environmentId: EnvironmentId, decisionId: DecisionId) =>
   `${environmentId}:decision-${encodeURIComponent(decisionId)}`;
+
+const DECISION_DRAFT_MARKER = ":decision-";
+
+/** Decision drafts whose decision is settled or gone in an environment that has loaded its decisions. */
+export function settledDecisionDraftKeys(
+  draftKeys: ReadonlyArray<string>,
+  states: ReadonlyArray<readonly [EnvironmentId, DecisionsState]>,
+): ReadonlyArray<string> {
+  const byEnvironment = new Map(states);
+  return draftKeys.filter((key) => {
+    const marker = key.lastIndexOf(DECISION_DRAFT_MARKER);
+    if (marker < 0) return false;
+    const state = byEnvironment.get(key.slice(0, marker) as EnvironmentId);
+    if (state === undefined) return false;
+    const id = decodeURIComponent(key.slice(marker + DECISION_DRAFT_MARKER.length)) as DecisionId;
+    return state.decisions.get(id)?.status !== "open";
+  });
+}
+
+/** Clears the files of decisions answered elsewhere; watches decisions only while such drafts exist. */
+export function DecisionDraftPruner() {
+  const drafts = useAtomValue(composerDraftsAtom);
+  const keys = Object.keys(drafts).filter((key) => key.includes(DECISION_DRAFT_MARKER));
+  return keys.length === 0 ? null : <PruneDecisionDrafts keys={keys} />;
+}
+
+function PruneDecisionDrafts(props: { readonly keys: ReadonlyArray<string> }) {
+  const settled = settledDecisionDraftKeys(props.keys, useDecisionStates()).join("\n");
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears persisted composer drafts (an external store) once their decision settles
+  useEffect(() => {
+    if (settled !== "") for (const key of settled.split("\n")) clearComposerDraft(key);
+  }, [settled]);
+  return null;
+}
 
 /**
  * The files picked for one decision's answer, kept as a composer draft so uploads run in the

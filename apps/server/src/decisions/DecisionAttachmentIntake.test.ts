@@ -18,6 +18,7 @@ import * as DecisionAttachmentIntake from "./DecisionAttachmentIntake.ts";
 import * as Decisions from "./DecisionService.ts";
 
 const thread = ThreadId.make("thread-1");
+const target = { deletedAt: null as string | null, archivedAt: null as string | null };
 const options = [{ id: "yes", label: "Yes" }];
 
 const layer = Decisions.layer.pipe(
@@ -27,6 +28,7 @@ const layer = Decisions.layer.pipe(
       NodeCrypto.layer,
       Layer.mock(ThreadManagement.ThreadManagementService)({
         sendToThread: () => Effect.succeed({} as never),
+        getThreadRecords: () => Effect.succeed({ thread: { ...target } } as never),
       }),
     ),
   ),
@@ -136,6 +138,29 @@ it.effect("refuses approval decisions, files that are not fresh uploads, and mis
     }).pipe(Effect.flip);
     assert.include(tooBig.message, "80 MiB");
     assert.equal((yield* decisions.get(plain.id)).status, "open");
+  }).pipe(Effect.provide(layer)),
+);
+
+it.effect("refuses files for a thread that was archived or deleted, claiming nothing", () =>
+  Effect.gen(function* () {
+    const decisions = yield* Decisions.DecisionService;
+    const { file, dir } = yield* stage("orphan.txt");
+    const decision = yield* request(decisions);
+    const before = NodeFS.readdirSync(dir).sort();
+    for (const gone of [
+      { deletedAt: "2026-11-03T00:00:00.000Z" },
+      { archivedAt: "2026-11-03T00:00:00.000Z" },
+    ]) {
+      Object.assign(target, { deletedAt: null, archivedAt: null }, gone);
+      const error = yield* DecisionAttachmentIntake.answerDecision({
+        decisionId: decision.id,
+        attachments: [file],
+      }).pipe(Effect.flip);
+      assert.include(error.message, "archived or deleted");
+    }
+    Object.assign(target, { deletedAt: null, archivedAt: null });
+    assert.deepEqual(NodeFS.readdirSync(dir).sort(), before);
+    assert.equal((yield* decisions.get(decision.id)).status, "open");
   }).pipe(Effect.provide(layer)),
 );
 

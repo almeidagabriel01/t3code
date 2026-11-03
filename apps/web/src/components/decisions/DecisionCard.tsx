@@ -38,6 +38,8 @@ export interface DecisionCardProps {
   readonly onUploadFile?:
     | ((file: File) => Promise<{ readonly attachmentId: string; readonly mimeType: string }>)
     | undefined;
+  /** Deletes an uploaded file the user removed before answering. */
+  readonly onDiscardFile?: ((attachmentId: string) => void) | undefined;
   readonly onDismiss: () => Promise<DecisionReply>;
   /** Opens the requesting thread; omitted where the card already sits in it. */
   readonly onOpenThread?: (() => void) | undefined;
@@ -167,6 +169,7 @@ function OpenCard(props: DecisionCardProps) {
   const [error, setError] = useState<string | null>(null);
   const [files, setFiles] = useState<ReadonlyArray<PickedFile>>([]);
   const fileInput = useRef<HTMLInputElement>(null);
+  const removedKeys = useRef(new Set<string>());
   const text = note.trim();
   const attachments = files.flatMap((file) => (file.attachment ? [file.attachment] : []));
   const uploading = files.some((file) => file.status === "uploading");
@@ -197,7 +200,9 @@ function OpenCard(props: DecisionCardProps) {
     ]);
     for (const { file, key } of next) {
       upload(file).then(
-        ({ attachmentId, mimeType }) =>
+        ({ attachmentId, mimeType }) => {
+          // Removed while it was still uploading: nothing will send it, so delete it now.
+          if (removedKeys.current.has(key)) return props.onDiscardFile?.(attachmentId);
           patchFile(key, {
             status: "ready",
             attachment: {
@@ -207,7 +212,8 @@ function OpenCard(props: DecisionCardProps) {
               mimeType,
               sizeBytes: file.size,
             } as ChatImageAttachment | ChatFileAttachment,
-          }),
+          });
+        },
         (cause: unknown) =>
           patchFile(key, {
             status: "failed",
@@ -215,6 +221,13 @@ function OpenCard(props: DecisionCardProps) {
           }),
       );
     }
+  };
+
+  const remove = (key: string) => {
+    const removed = files.find((file) => file.key === key);
+    if (removed?.attachment) props.onDiscardFile?.(removed.attachment.id);
+    else removedKeys.current.add(key);
+    setFiles((current) => current.filter((file) => file.key !== key));
   };
 
   const run = async (kind: "answer" | "dismiss") => {
@@ -313,12 +326,7 @@ function OpenCard(props: DecisionCardProps) {
             <PaperclipIcon />
             Attach files
           </Button>
-          {files.length > 0 ? (
-            <AttachmentStrip
-              files={files}
-              onRemove={(key) => setFiles((current) => current.filter((file) => file.key !== key))}
-            />
-          ) : null}
+          {files.length > 0 ? <AttachmentStrip files={files} onRemove={remove} /> : null}
         </div>
       ) : null}
       {error ? (

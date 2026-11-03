@@ -13,6 +13,7 @@ const { mocks, Children } = vi.hoisted(() => ({
     remove: vi.fn(),
     clearDraft: vi.fn(),
     alert: vi.fn(),
+    states: [] as unknown[],
   },
 }));
 vi.mock("react-native", () => ({ View: Children }));
@@ -56,6 +57,7 @@ vi.mock("../../state/entities", () => ({
         : { environment: { capabilities: mocks.capabilities } },
   }),
 }));
+vi.mock("../../state/decisions", () => ({ useDecisionStates: () => mocks.states }));
 vi.mock("../../state/use-composer-drafts", () => ({
   composerDraftsAtom: {},
   appendComposerDraftAttachments: mocks.append,
@@ -65,7 +67,9 @@ vi.mock("../../state/use-composer-drafts", () => ({
 
 import {
   DecisionAttachmentControls,
+  DecisionDraftPruner,
   decisionAttachmentDraftKey,
+  settledDecisionDraftKeys,
   useDecisionAttachments,
 } from "./DecisionAttachments";
 
@@ -111,6 +115,34 @@ beforeEach(() => {
   mocks.capabilities = {};
 });
 afterEach(() => act(() => root.unmount()));
+
+describe("settled decision drafts", () => {
+  const decisions = (entries: Record<string, string>) =>
+    ({
+      decisions: new Map(Object.entries(entries).map(([id, status]) => [id, { status }])),
+    }) as never;
+  const keyFor = (id: string, env = "hub") => decisionAttachmentDraftKey(env as never, id as never);
+
+  it("picks drafts whose decision settled or left, only in environments that loaded", () => {
+    const states = [["hub", decisions({ "d:1": "open", "d:2": "answered" })] as const];
+    expect(
+      settledDecisionDraftKeys(
+        [keyFor("d:1"), keyFor("d:2"), keyFor("d:3"), keyFor("d:9", "other"), "hub:thread-1"],
+        states as never,
+      ),
+    ).toEqual([keyFor("d:2"), keyFor("d:3")]);
+  });
+
+  it("clears those drafts and watches nothing while no decision has a draft", () => {
+    mocks.states = [["hub", decisions({ "d:1": "answered" })]];
+    mocks.drafts = { "hub:thread-1": { attachments: [] } };
+    act(() => root.render(<DecisionDraftPruner />));
+    expect(mocks.clearDraft).not.toHaveBeenCalled();
+    mocks.drafts = { [key]: { attachments: [] } };
+    act(() => root.render(<DecisionDraftPruner />));
+    expect(mocks.clearDraft).toHaveBeenCalledWith(key);
+  });
+});
 
 describe("decision attachments", () => {
   it("keys the draft by environment so uploads find their server", () => {

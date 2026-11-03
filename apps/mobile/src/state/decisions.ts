@@ -64,6 +64,11 @@ const openDecisionThreadKeysAtom = Atom.make((get) =>
   openDecisionThreadKeys(get(decisionStatesAtom)),
 ).pipe(Atom.withLabel("mobile-open-decision-thread-keys"));
 
+/** Each environment's loaded decisions; opens the decisions feeds while mounted. */
+export function useDecisionStates() {
+  return useAtomValue(decisionStatesAtom);
+}
+
 /** Open decisions by urgency and recent settled ones, across the environments that have them. */
 export function useDecisionEntries() {
   return useAtomValue(decisionEntriesAtom);

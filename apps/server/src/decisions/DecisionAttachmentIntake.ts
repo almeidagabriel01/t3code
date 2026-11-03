@@ -2,6 +2,7 @@ import { DecisionError, type DecisionsAnswerInput } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
 import * as AttachmentClaims from "../orchestration-v2/AttachmentClaims.ts";
+import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as DecisionService from "./DecisionService.ts";
 
 /**
@@ -26,6 +27,18 @@ export const answerDecision = Effect.fn("DecisionAttachmentIntake.answerDecision
     return yield* new DecisionError({
       reason: "invalid",
       message: "Attachments must be fresh uploads.",
+    });
+  }
+  // Files claimed to an archived or deleted thread could never be delivered and would stay on disk.
+  const threadIsGone = yield* ThreadManagement.ThreadManagementService.pipe(
+    Effect.flatMap((threads) => threads.getThreadRecords(decision.fromThreadId, [])),
+    Effect.map(({ thread }) => thread.deletedAt !== null || thread.archivedAt !== null),
+    Effect.orElseSucceed(() => true),
+  );
+  if (threadIsGone) {
+    return yield* new DecisionError({
+      reason: "invalid",
+      message: "The thread that asked was archived or deleted, so it cannot receive files.",
     });
   }
   yield* AttachmentClaims.validateAttachmentLimits(attachments).pipe(
