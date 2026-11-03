@@ -111,7 +111,7 @@ vi.mock("./kanban", () => ({ readThreadKanbanCardRecord: () => undefined }));
 vi.mock("./threads", () => ({ threadEnvironment: {} }));
 vi.mock("./use-atom-command", () => ({ useAtomCommand: () => async () => undefined }));
 vi.mock("./session", async () => {
-  const { Atom } = await import("effect/reactivity");
+  const { AsyncResult, Atom } = await import("effect/reactivity");
   const Option = await import("effect/Option");
   return {
     readEnvironmentScope: () => native.canOperate,
@@ -120,6 +120,7 @@ vi.mock("./session", async () => {
       preparedConnectionValueAtom: Atom.family(() =>
         Atom.make(Option.some({ httpBaseUrl: "https://environment.example/" })),
       ),
+      transportSessionAtom: Atom.family(() => Atom.make(AsyncResult.success(Option.some({})))),
     },
   };
 });

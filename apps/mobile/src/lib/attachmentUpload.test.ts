@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   preparedConnection: Symbol("prepared-connection"),
   runAtomCommand: vi.fn(),
   readAtom: vi.fn(),
+  connectionListeners: [] as Array<(value: unknown) => void>,
   upload: vi.fn(),
   writeFile: vi.fn(),
   deleteFile: vi.fn(),
@@ -26,7 +27,14 @@ vi.mock("@t3tools/client-runtime/state/runtime", () => ({
 }));
 
 vi.mock("../state/atom-registry", () => ({
-  appAtomRegistry: { get: mocks.readAtom },
+  appAtomRegistry: {
+    get: mocks.readAtom,
+    mount: () => () => {},
+    subscribe: (_atom: unknown, listener: (value: unknown) => void) => {
+      mocks.connectionListeners.push(listener);
+      return () => {};
+    },
+  },
 }));
 
 vi.mock("./composerAttachmentPreviewRetention", () => ({
@@ -48,6 +56,7 @@ vi.mock("../state/session", () => ({
   readEnvironmentScope: () => mocks.canOperate,
   environmentSession: {
     preparedConnectionValueAtom: () => mocks.preparedConnection,
+    transportSessionAtom: () => Symbol("transport-session"),
   },
 }));
 
@@ -441,6 +450,19 @@ describe("prepareTurnAttachments", () => {
       uploadedAttachmentId: MINTED_ID,
       uploadEnvironmentId: environmentId,
     });
+  });
+
+  it("waits for the environment to reconnect before uploading", async () => {
+    mocks.connectionListeners = [];
+    mocks.readAtom
+      .mockReturnValueOnce(Option.none())
+      .mockReturnValue(Option.some({ httpBaseUrl: "https://environment.example/" }));
+
+    const prepared = prepareTurnAttachments({ environmentId, attachments: [file] });
+    await vi.waitFor(() => expect(mocks.connectionListeners).toHaveLength(1));
+    mocks.connectionListeners[0]?.(Option.some({ httpBaseUrl: "https://environment.example/" }));
+
+    expect((await prepared).status).toBe("ready");
   });
 
   it("uses the current connection when an environment reconnects during URL creation", async () => {

@@ -16,6 +16,7 @@ import {
   PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
+import { AsyncResult, Atom } from "effect/reactivity";
 
 import { appAtomRegistry } from "../state/atom-registry";
 import { assetEnvironment } from "../state/assets";
@@ -289,13 +290,19 @@ export async function prepareTurnAttachments(input: {
       throw new Error("This connection cannot upload attachments.");
     }
   };
-  requireUploadAccess();
 
-  const connection = appAtomRegistry.get(
-    environmentSession.preparedConnectionValueAtom(environmentId),
-  );
-  if (Option.isNone(connection)) {
+  // Android drops the socket while a system picker is open; uploads started on return must wait for it.
+  const connectionAtom = connectedPreparedConnectionAtom(environmentId);
+  const releaseConnection = appAtomRegistry.mount(connectionAtom);
+  if (Option.isNone(await waitForConnection(connectionAtom))) {
+    releaseConnection();
     throw new Error("The environment is not connected.");
+  }
+  try {
+    requireUploadAccess();
+  } catch (error) {
+    releaseConnection();
+    throw error;
   }
 
   const uploadedAttachments: UploadedMobileAttachment[] = [];
@@ -400,5 +407,37 @@ export async function prepareTurnAttachments(input: {
     throw error;
   } finally {
     input.signal?.removeEventListener("abort", abort);
+    releaseConnection();
   }
+}
+
+const CONNECTION_WAIT_MS = 10_000;
+
+const connectedPreparedConnectionAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make((get) =>
+    Option.isSome(
+      AsyncResult.getOrElse(get(environmentSession.transportSessionAtom(environmentId)), () =>
+        Option.none(),
+      ),
+    )
+      ? get(environmentSession.preparedConnectionValueAtom(environmentId))
+      : Option.none(),
+  ).pipe(Atom.withLabel(`mobile-upload-connection:${environmentId}`)),
+);
+
+function waitForConnection<A>(atom: Atom.Atom<Option.Option<A>>): Promise<Option.Option<A>> {
+  const current = appAtomRegistry.get(atom);
+  if (Option.isSome(current)) return Promise.resolve(current);
+  return new Promise((resolve) => {
+    const timeout = setTimeout(() => {
+      unsubscribe();
+      resolve(Option.none());
+    }, CONNECTION_WAIT_MS);
+    const unsubscribe = appAtomRegistry.subscribe(atom, (value) => {
+      if (Option.isNone(value)) return;
+      clearTimeout(timeout);
+      unsubscribe();
+      resolve(value);
+    });
+  });
 }
