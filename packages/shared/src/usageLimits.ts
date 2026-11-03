@@ -674,6 +674,9 @@ export function paceRemainingPercent(
 
 export type LimitPace = "ahead" | "on" | "under";
 
+/** Points of drift from the window's elapsed share that still count as on pace. */
+export const PACE_TOLERANCE_POINTS = 5;
+
 export function paceOf(window: ServerProviderUsageWindow, now: number): LimitPace | null {
   const elapsed = elapsedShare(window, now);
   return elapsed === null ? null : paceOfShares(window.usedPercent, elapsed);
@@ -681,8 +684,8 @@ export function paceOf(window: ServerProviderUsageWindow, now: number): LimitPac
 
 function paceOfShares(usedPercent: number, elapsed: number): LimitPace {
   const gap = usedPercent - elapsed * 100;
-  if (gap > 5) return "ahead";
-  if (gap < -5) return "under";
+  if (gap > PACE_TOLERANCE_POINTS) return "ahead";
+  if (gap < -PACE_TOLERANCE_POINTS) return "under";
   return "on";
 }
 

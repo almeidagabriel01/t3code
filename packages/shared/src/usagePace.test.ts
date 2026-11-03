@@ -35,6 +35,25 @@ describe("pacePresentation", () => {
     expect(left.projectionText).toBe("≈50% at reset");
   });
 
+  it("counts drift within paceOf's tolerance as on pace", () => {
+    const at = (usedPercent: number) => {
+      const view = pacePresentation({
+        window: { ...window, usedPercent },
+        now,
+        display: "used",
+        settings,
+        formatAt,
+      })!;
+      return [view.paceText, view.deficit];
+    };
+    expect([at(65), at(55), at(65.5), at(54)]).toEqual([
+      ["on pace", false],
+      ["on pace", false],
+      ["5.5% over pace", true],
+      ["6% under pace", false],
+    ]);
+  });
+
   it("names the run-out time on a deficit and honors the toggles", () => {
     const hot = { ...window, usedPercent: 80 };
     const view = pacePresentation({ window: hot, now, display: "used", settings, formatAt })!;
