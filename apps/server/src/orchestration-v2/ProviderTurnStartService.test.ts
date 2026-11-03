@@ -43,6 +43,7 @@ import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import { withInlineContext } from "./ContextHandoffDelivery.ts";
+import { SIDE_CHAT_NOTE } from "./SideChatNote.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
@@ -490,6 +491,16 @@ function makeLocalCommandHarness(input: {
   const parentRecords = {
     ...projection,
     thread: { ...projection.thread, id: parentThreadId },
+    messages: [
+      {
+        ...projection.messages[0]!,
+        id: MessageId.make("side-chat-parent-message"),
+        role: "user" as const,
+        text: "PARENT_LAST_MESSAGE",
+        streaming: false,
+        createdAt: now,
+      },
+    ],
     runs: [
       {
         ...run,
@@ -914,6 +925,21 @@ function makeLocalCommandHarness(input: {
         }),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getThreadRecords,
+          getThreadShell: (id) =>
+            Effect.succeed(
+              id === parentThreadId
+                ? ({
+                    title: "Parent task",
+                    status: "failed",
+                    latestRunStopRequested: false,
+                    pendingRuntimeRequest: null,
+                    goal: null,
+                    branch: null,
+                    worktreePath: null,
+                    lastError: "PARENT_BOOM",
+                  } as never)
+                : null,
+            ),
           getTurnStartContext,
           getRuntimeRecoveryProjection: () =>
             Effect.as(failReadIfRunning, {
@@ -1236,9 +1262,23 @@ effectIt.effect.each([
       expect(harness.open).toHaveBeenCalledWith(
         expect.objectContaining({ runtimePolicy: expect.objectContaining({ runtimeMode }) }),
       );
-      expect(harness.startTurn.mock.calls.map(([turn]) => turn.message.text)).toEqual([
-        withInlineContext(context, "What is the main thread doing?"),
-      ]);
+      const [text] = harness.startTurn.mock.calls.map(([turn]) => turn.message.text);
+      if (context === "") {
+        // A later turn: the boundary and the parent's live state, not the first-turn digest.
+        expect(text).toMatch(/^<side_chat>[\s\S]*<\/side_chat>\n\n<parent_thread>/);
+        expect(text).toMatch(
+          /<\/parent_thread>\n\nUser message:\nWhat is the main thread doing\?$/,
+        );
+        expect(text).not.toContain("SIDE_CHAT_CONTEXT");
+        expect(text).toContain("Status: idle, its latest turn failed: PARENT_BOOM");
+        expect(text).toContain("] PARENT_LAST_MESSAGE");
+      } else {
+        // The first turn carries upstream's digest plus the boundary, without the parent block.
+        expect(text).toBe(
+          withInlineContext(`${context}\n\n${SIDE_CHAT_NOTE}`, "What is the main thread doing?"),
+        );
+        expect(text).not.toContain("<parent_thread>\n");
+      }
       expect(harness.projection().contextHandoffs).toMatchObject([
         {
           id: "side-chat-context",
@@ -1247,6 +1287,22 @@ effectIt.effect.each([
         },
       ]);
     }),
+);
+
+effectIt.effect("keeps provider slash commands at the start of a side chat prompt", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "/review the diff",
+      sideChat: { contextRun: "delivered" },
+    });
+    harness.tryHandlePromptCommand.mockImplementation(() => Effect.succeed(false));
+
+    yield* harness.start;
+
+    expect(harness.startTurn.mock.calls.map(([turn]) => turn.message.text)).toEqual([
+      "/review the diff",
+    ]);
+  }),
 );
 
 effectIt.effect.each([

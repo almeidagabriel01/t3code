@@ -20,6 +20,7 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -40,6 +41,8 @@ import { projectComposerContextForProvider } from "@t3tools/shared/composerConte
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import { buildCodexAdditionalContext } from "../../apps/server/src/provider/CodexDeveloperInstructions.ts";
 import { makeSideChatContext } from "../../apps/server/src/orchestration-v2/ContextHandoffService.ts";
+import { SIDE_CHAT_NOTE } from "../../apps/server/src/orchestration-v2/SideChatNote.ts";
+import { sideChatParentContext } from "../../apps/server/src/orchestration-v2/SideChatParentContext.ts";
 import { withInlineContext } from "../../apps/server/src/orchestration-v2/ContextHandoffDelivery.ts";
 import { AttachmentToolkit } from "../../apps/server/src/mcp/toolkits/attachment/tools.ts";
 import { AssistantToolkit } from "../../apps/server/src/mcp/toolkits/assistant/tools.ts";
@@ -258,9 +261,27 @@ export const McpToolUseCase = Schema.Struct({
     shellMocks: Schema.optional(
       Schema.Array(Schema.Struct({ match: Schema.String, output: Schema.String })),
     ),
-    /** The thread is a side chat's first turn: T3 puts the parent's digest ahead of `prompt`. */
+    /**
+     * The thread is a side chat. On the `first` turn (default) T3 puts the parent's digest and the
+     * side-chat note ahead of `prompt`. On a `later` turn it sends the note and the parent's live
+     * state (`parent`, or "could not be read" when absent); the digest is not sent.
+     */
     sideChat: Schema.optional(
-      Schema.Struct({ parentThreadId: Schema.String, digest: Schema.Array(Schema.String) }),
+      Schema.Struct({
+        parentThreadId: Schema.String,
+        digest: Schema.Array(Schema.String),
+        turn: Schema.optional(Schema.Literals(["first", "later"])),
+        parent: Schema.optional(
+          Schema.Struct({
+            title: Schema.String,
+            status: Schema.Literals(["idle", "running", "completed", "interrupted", "failed"]),
+            lastError: Schema.optional(Schema.String),
+            messages: Schema.Array(
+              Schema.Struct({ role: Schema.Literals(["user", "assistant"]), text: Schema.String }),
+            ),
+          }),
+        ),
+      }),
     ),
   }),
   prompt: Schema.String,
@@ -895,14 +916,40 @@ export const buildMessages = (sample: Sample) => {
       ? testCase.prompt
       : projectComposerContextForProvider({ text: testCase.prompt, ...testCase.promptContext });
   const sideChat = testCase.setup.sideChat;
+  const sideChatParent = sideChat?.parent;
   const prompt =
     sideChat === undefined
       ? userText
       : withInlineContext(
-          makeSideChatContext({
-            parentThreadId: ThreadId.make(sideChat.parentThreadId),
-            digest: sideChat.digest,
-          }),
+          sideChat.turn === "later"
+            ? [
+                SIDE_CHAT_NOTE,
+                sideChatParentContext(
+                  sideChatParent === undefined
+                    ? null
+                    : {
+                        shell: {
+                          ...sideChatParent,
+                          lastError: sideChatParent.lastError ?? null,
+                          goal: null,
+                          latestRunStopRequested: false,
+                          pendingRuntimeRequest: null,
+                          branch: null,
+                          worktreePath: null,
+                        },
+                        messages: sideChatParent.messages.map((message) => ({
+                          ...message,
+                          streaming: false,
+                          createdAt: DateTime.makeUnsafe("2026-01-01T00:00:00Z"),
+                        })),
+                        plans: [],
+                      },
+                ),
+              ].join("\n\n")
+            : `${makeSideChatContext({
+                parentThreadId: ThreadId.make(sideChat.parentThreadId),
+                digest: sideChat.digest,
+              })}\n\n${SIDE_CHAT_NOTE}`,
           userText,
         );
   const childPrompt = () => taskPrompt({ task: prompt, role: delegateRole });

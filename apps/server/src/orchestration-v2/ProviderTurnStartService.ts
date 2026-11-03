@@ -49,6 +49,7 @@ import {
 import { deliverContextHandoffs, withInlineContext } from "./ContextHandoffDelivery.ts";
 import { AssistantDirectory } from "../assistants/AssistantDirectory.ts";
 import { assistantNote } from "../assistants/assistantNote.ts";
+import { sideChatNote } from "./SideChatNote.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -1628,7 +1629,17 @@ export const layer: Layer.Layer<
             sideChatHandoff === undefined || compact || goalCommand
               ? ""
               : sideChatHandoff.summaryText;
-          const context = [delivery.context, sideChatContext, restartNote]
+          // Every prompted turn restates the boundary; later turns add the parent's live state.
+          const sideChatBoundary =
+            compact || goalCommand
+              ? ""
+              : yield* sideChatNote(
+                  projectionStore,
+                  projection.thread,
+                  userText,
+                  sideChatContext !== "",
+                );
+          const context = [delivery.context, sideChatContext, sideChatBoundary, restartNote]
             .filter((part) => part !== "")
             .join("\n\n");
           const { restartContinuationOfRunId: _resumedRunId, ...promptedInput } = turnInput;
@@ -1695,6 +1706,7 @@ export const layer: Layer.Layer<
         effectiveHandoffs.length === 0 &&
         retryHandoff.length === 0 &&
         sideChatHandoff === undefined &&
+        projection.thread.lineage.sideChat !== true &&
         restartNote === "" &&
         !noteContinuation
           ? session
