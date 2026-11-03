@@ -243,7 +243,11 @@ const runOnServer = Effect.fn("Opencode2TextGeneration.runOnServer")(function* (
         text: input.prompt,
         ...(images.length === 0 ? {} : { files: images }),
       })
-      .pipe(Effect.asVoid, Effect.raceFirst(Deferred.await(outcome).pipe(Effect.asVoid)));
+      // Memory runs end the stalled prompt as soon as a tool request is rejected.
+      .pipe(
+        Effect.asVoid,
+        memory ? Effect.raceFirst(Deferred.await(outcome).pipe(Effect.asVoid)) : (effect) => effect,
+      );
     return yield* Deferred.await(outcome);
   });
   const result = yield* generate.pipe(
@@ -311,8 +315,9 @@ export const make = Effect.fn("OpenCode2TextGeneration.make")(function* (
             )
         : server.withConnection((connection) => runOnServer(connection, input))
     ).pipe(
+      // Backstop for connecting; it must outlast runOnServer's own limit plus its interrupt.
       Effect.timeoutOrElse({
-        duration: GENERATION_TIMEOUT,
+        duration: "4 minutes",
         orElse: () =>
           Effect.fail(
             new TextGenerationError({
