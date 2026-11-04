@@ -16,7 +16,7 @@ export function PaceBar({
   return (
     <span
       className={cn(
-        "relative shrink-0 rounded-full bg-muted",
+        "relative shrink-0 rounded-full bg-foreground/12",
         thin ? "h-[5px]" : "h-1.5",
         className,
       )}
