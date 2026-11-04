@@ -6,6 +6,7 @@ import {
   CheckpointId,
   CheckpointRef,
   CheckpointScopeId,
+  ComposerContextId,
   MessageId,
   type ModelSelection,
   type OrchestrationV2ProviderThread,
@@ -1912,7 +1913,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
                     records: [
                       {
                         version: 1 as const,
-                        contextId: "kanban-card-2",
+                        contextId: ComposerContextId.make("kanban-card-2"),
                         label: "#2 Card",
                         kind: "kanban-card" as const,
                         cardId: "card-2",

@@ -692,7 +692,7 @@ describe("threadHistoryPaging", () => {
         message(3, undefined, "kanban-card"),
         message(4, undefined, "file"),
       ],
-    } as typeof projection;
+    } as unknown as typeof projection;
 
     const bounded = buildBoundedThreadProjection({ projection: full, snapshotSequence: 9 });
 
