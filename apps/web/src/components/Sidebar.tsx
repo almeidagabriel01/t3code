@@ -67,10 +67,10 @@ import type { OlderSettledScope } from "@t3tools/client-runtime/state/threads";
 import {
   CheckIcon,
   ChevronDownIcon,
+  EllipsisIcon,
   FolderIcon,
   ListFilterIcon,
   PlusIcon,
-  SettingsIcon,
 } from "lucide-react";
 import {
   useEffect,
@@ -129,6 +129,7 @@ import {
 } from "../hooks/useThreadActions";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useOrderWhileOpen } from "../hooks/useOrderWhileOpen";
+import { showProjectRowMenu } from "./sidebar/projectRowMenu";
 import { useProjectPin } from "../hooks/useProjectGroupUpdate";
 import { useSidebarProjectGroups } from "../hooks/useSidebarProjectGroups";
 import { useTerminalFocus } from "../hooks/useTerminalFocus";
@@ -1154,7 +1155,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       });
     },
   );
-  const { canPinProjectGroup: canPinProject, toggleProjectGroupPin } = useProjectPin();
+  const {
+    canPinProjectGroup: canPinProject,
+    toggleProjectGroupPin,
+    toggleProjectGroupArchive,
+  } = useProjectPin();
   const handleProjectSettings = useStableCallback(
     (
       event: ReactMouseEvent<HTMLElement> | ReactKeyboardEvent<HTMLInputElement>,
@@ -1165,6 +1170,32 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       suppressNextScopeChangeRef.current = true;
       dispatchProjectScopeMenu({ type: "project-settings-opened" });
       openProjectSettings(projectGroup);
+    },
+  );
+  const handleProjectRowMenu = useStableCallback(
+    (
+      event: ReactMouseEvent<HTMLElement>,
+      projectGroup: SidebarProjectSnapshot,
+      position: { x: number; y: number },
+    ) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const api = readLocalApi();
+      if (!api) return;
+      void settlePromise(() =>
+        showProjectRowMenu({
+          show: (items, position) => api.contextMenu.show(items, position),
+          archived: projectGroup.archived,
+          canArchive: canPinProject(projectGroup),
+          position,
+          onSettings: () => {
+            suppressNextScopeChangeRef.current = true;
+            dispatchProjectScopeMenu({ type: "project-settings-opened" });
+            openProjectSettings(projectGroup);
+          },
+          onToggleArchive: () => void toggleProjectGroupArchive(projectGroup),
+        }),
+      );
     },
   );
   const {
@@ -2832,13 +2863,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const showJumpHints = useThreadJumpHintsVisible(shouldShowJumpHintsNow);
 
   const handleNewThreadClick = (event?: ReactMouseEvent) => {
-    if (
-      shouldCreateNewThreadInCurrentProject(
-        event?.shiftKey ?? false,
-        scopeGroups.length,
-        projectGroups.length,
-      )
-    ) {
+    if (shouldCreateNewThreadInCurrentProject(event?.shiftKey ?? false, projectGroups.length)) {
       if (isMobile) setOpenMobile(false);
       // With no current or open project, such as when every project is archived, pick one.
       void startNewThreadFromContext({
@@ -2857,7 +2882,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
 
   const newThreadShortcutLabel =
     shortcutLabelForCommand(keybindings, "chat.new") ??
-    (shouldCreateNewThreadInCurrentProject(false, scopeGroups.length, projectGroups.length)
+    (shouldCreateNewThreadInCurrentProject(false, projectGroups.length)
       ? shortcutLabelForCommand(keybindings, "chat.newLocal")
       : undefined);
   const newThreadInProjectShortcutLabel = shortcutLabelForCommand(keybindings, "chat.newLocal");
@@ -3006,7 +3031,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             // The icon badge marks selection; Base UI's single value would shade one row.
                             data-selected={undefined}
                             onContextMenu={(event) => {
-                              if (project) handleProjectSettings(event, project);
+                              if (project)
+                                handleProjectRowMenu(event, project, {
+                                  x: event.clientX,
+                                  y: event.clientY,
+                                });
                             }}
                           >
                             <ProjectScopeRowIcon isSelected={isSelected}>
@@ -3038,14 +3067,19 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 variant="ghost-muted"
                                 tabIndex={-1}
                                 aria-hidden="true"
-                                title={`Project settings for ${project.displayName}`}
+                                aria-label={`Actions for ${project.displayName}`}
+                                title={`Actions for ${project.displayName}`}
                                 className={canPinProject(project) ? undefined : "ml-auto"}
                                 onPointerDown={(event) => event.stopPropagation()}
                                 onClick={(event) => {
-                                  void handleProjectSettings(event, project);
+                                  const rect = event.currentTarget.getBoundingClientRect();
+                                  handleProjectRowMenu(event, project, {
+                                    x: rect.left,
+                                    y: rect.bottom,
+                                  });
                                 }}
                               >
-                                <SettingsIcon className="size-3.5" />
+                                <EllipsisIcon className="size-3.5" />
                               </Button>
                             ) : null}
                           </ComboboxItem>
@@ -3061,11 +3095,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               newThreadShortcutLabel={newThreadShortcutLabel}
               newThreadInProjectShortcutLabel={newThreadInProjectShortcutLabel}
               showNewThreadInProjectHint={
-                !shouldCreateNewThreadInCurrentProject(
-                  false,
-                  scopeGroups.length,
-                  projectGroups.length,
-                )
+                !shouldCreateNewThreadInCurrentProject(false, projectGroups.length)
               }
               searchInputRef={threadSearchInputRef}
               searchQuery={threadSearchQuery}

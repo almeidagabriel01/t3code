@@ -18,6 +18,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { useThreadActions } from "../../hooks/useThreadActions";
+import { useProjectPin } from "../../hooks/useProjectGroupUpdate";
 import { readLocalApi } from "../../localApi";
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
 import { RelativeTime } from "../RelativeTime";
@@ -66,6 +67,37 @@ function RestoreToAssistantButton(props: {
       <ArchiveRestoreIcon className="size-3.5" />
       <span>Restore to {props.assistant.name}</span>
     </Button>
+  );
+}
+
+export function ArchivedProjectsSection() {
+  const { groups } = useSettingsScope();
+  const { canPinProjectGroup, toggleProjectGroupArchive } = useProjectPin();
+  const archived = groups.filter((group) => group.archived);
+  if (archived.length === 0) return null;
+  return (
+    <SettingsSection title="Archived projects" icon={<ArchiveIcon className="size-3.5" />}>
+      {archived.map((group) => (
+        <SettingsRow
+          key={group.projectKey}
+          title={group.displayName}
+          description="Hidden from the sidebar. Threads and files are kept."
+          control={
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="shrink-0"
+              disabled={!canPinProjectGroup(group)}
+              onClick={() => void toggleProjectGroupArchive(group)}
+            >
+              <ArchiveX className="size-3.5" />
+              <span>Unarchive project</span>
+            </Button>
+          }
+        />
+      ))}
+    </SettingsSection>
   );
 }
 
@@ -238,6 +270,7 @@ export function ArchivedThreadsPanel() {
 
   return (
     <SettingsPageContainer>
+      <ArchivedProjectsSection />
       {archivedGroups.length === 0 ? (
         <SettingsSection
           id={isLoadingArchive ? undefined : searchableSetting("archive").id}

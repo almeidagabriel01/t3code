@@ -54,6 +54,8 @@ import {
   BrainIcon,
   UserRoundIcon,
   UserRoundPlusIcon,
+  ArchiveIcon,
+  ArchiveRestoreIcon,
   BellIcon,
   MessageCircleQuestionMarkIcon,
   ArrowLeftIcon,
@@ -563,7 +565,7 @@ function OpenCommandPaletteDialog(props: {
       group,
     ]),
   );
-  const { canPinProjectGroup, toggleProjectGroupPin } = useProjectPin();
+  const { canPinProjectGroup, toggleProjectGroupPin, toggleProjectGroupArchive } = useProjectPin();
   // A row's target record can change when another machine's copy loads, so the kept
   // order follows the project group instead.
   const rowOrderKey = (prefix: string) => (item: CommandPaletteActionItem) =>
@@ -1792,6 +1794,21 @@ function OpenCommandPaletteDialog(props: {
         <PinIcon className={ITEM_ICON_CLASS} />
       ),
       run: async () => toggleProjectGroupPin(currentProjectGroup),
+    });
+  }
+  if (currentProjectGroup && canPinProjectGroup(currentProjectGroup)) {
+    actionItems.push({
+      kind: "action",
+      value: "action:project-archive",
+      searchTerms: ["archive", "unarchive", "hide", "project"],
+      title: currentProjectGroup.archived ? "Unarchive project" : "Archive project",
+      description: currentProjectGroup.displayName,
+      icon: currentProjectGroup.archived ? (
+        <ArchiveRestoreIcon className={ITEM_ICON_CLASS} />
+      ) : (
+        <ArchiveIcon className={ITEM_ICON_CLASS} />
+      ),
+      run: async () => void (await toggleProjectGroupArchive(currentProjectGroup)),
     });
   }
   const contextualProjectGroup = currentProjectGroup ?? projectGroups[0] ?? null;

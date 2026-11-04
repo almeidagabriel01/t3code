@@ -118,10 +118,20 @@ export function useProjectPin() {
       pinned ? "Failed to pin project" : "Failed to unpin project",
     );
   };
+  const toggleProjectGroupArchive = (group: {
+    readonly memberProjects: ReadonlyArray<ProjectGroupMember>;
+    readonly archived: boolean;
+  }) =>
+    updateProjectGroup(
+      group.memberProjects,
+      { archived: !group.archived },
+      group.archived ? "Failed to unarchive project" : "Failed to archive project",
+    );
   return {
     canPinProjectGroup,
     setProjectGroupPinned,
     toggleProjectGroupPin: (group: PinnableGroup) => setProjectGroupPinned(group, !group.pinned),
+    toggleProjectGroupArchive,
   };
 }
 

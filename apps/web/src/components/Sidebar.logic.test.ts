@@ -1787,11 +1787,12 @@ describe("Activity Priority", () => {
 });
 
 describe("shouldCreateNewThreadInCurrentProject", () => {
-  it("opens the picker when several projects are open, or only archived ones exist", () => {
-    expect(shouldCreateNewThreadInCurrentProject(false, 2, 3)).toBe(false);
-    expect(shouldCreateNewThreadInCurrentProject(false, 0, 2)).toBe(false);
-    expect(shouldCreateNewThreadInCurrentProject(false, 1, 3)).toBe(true);
-    expect(shouldCreateNewThreadInCurrentProject(false, 0, 0)).toBe(true);
-    expect(shouldCreateNewThreadInCurrentProject(true, 2, 2)).toBe(true);
+  it.each([
+    { shift: false, groups: 1, expected: false },
+    { shift: false, groups: 3, expected: false },
+    { shift: true, groups: 3, expected: true },
+    { shift: false, groups: 0, expected: true },
+  ])("shift=$shift groups=$groups -> $expected", ({ shift, groups, expected }) => {
+    expect(shouldCreateNewThreadInCurrentProject(shift, groups)).toBe(expected);
   });
 });

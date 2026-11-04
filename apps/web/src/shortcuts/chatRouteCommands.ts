@@ -130,11 +130,7 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
         if (
           !boringSidebarEnabled &&
           !legacySidebarEnabled &&
-          !shouldCreateNewThreadInCurrentProject(
-            false,
-            groups.filter((group) => !group.archived).length,
-            groups.length,
-          )
+          !shouldCreateNewThreadInCurrentProject(false, groups.length)
         ) {
           claim(event);
           openCommandPalette({ open: "new-thread-in" });
