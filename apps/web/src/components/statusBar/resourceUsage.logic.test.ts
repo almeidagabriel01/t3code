@@ -1,7 +1,7 @@
 import type { ResourceTelemetryProcess } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { appBreakdown, attributeTerminalUsage } from "./resourceUsage.logic";
+import { appBreakdown, attributeTerminalUsage, buildResourceTree } from "./resourceUsage.logic";
 
 const proc = (
   pid: number,
@@ -61,5 +61,119 @@ describe("appBreakdown", () => {
     expect(groups.get("renderer")?.rssBytes).toBe(50);
     expect(groups.get("server")?.rssBytes).toBe(10);
     expect(groups.get("other")).toEqual({ rssBytes: 7, cpuPercent: 3, processCount: 1 });
+  });
+});
+
+describe("buildResourceTree", () => {
+  const p = (
+    pid: number,
+    childPids: number[],
+    residentBytes: number,
+    cpuPercent: number,
+    name = "node",
+    command = name,
+  ) =>
+    ({
+      identity: { pid, startTimeMs: 0 },
+      childPids,
+      residentBytes,
+      cpuPercent,
+      category: "server-child",
+      name,
+      command,
+    }) as unknown as ResourceTelemetryProcess;
+
+  const table = [
+    p(1, [], 5, 0, "t3-server"),
+    p(10, [11], 100, 10, "zsh"), // terminal in project A, owns a build
+    p(11, [], 300, 50, "gradle"),
+    p(20, [21], 10, 1, "codex"), // agent in project A
+    p(21, [], 200, 5, "cargo"),
+    p(30, [], 40, 2, "claude"), // agent with an unknown thread
+    p(40, [41, 43], 20, 0, "node", "node hub.js"), // device hub
+    p(41, [42], 5, 0, "emulator", "emulator -avd Pixel_8 -no-window"),
+    p(42, [], 2000, 90, "qemu-system-aarch64", "qemu-system-aarch64 -avd Pixel_8"),
+    p(43, [], 30, 1, "adb"),
+    p(44, [], 8, 0, "stray"), // not claimed by anything
+  ];
+  const run = (overrides: Partial<Parameters<typeof buildResourceTree>[0]> = {}) =>
+    buildResourceTree({
+      processes: table,
+      terminals: [{ key: "t1:a", name: "dev", threadId: "t1", projectKey: "A", pid: 10 }],
+      agents: [
+        { pid: 20, threadId: "t1" },
+        { pid: 30, threadId: "ghost" },
+        { pid: 999, threadId: "dead" },
+      ],
+      hubPids: [40],
+      sort: "memory",
+      projectOfThread: (threadId) => (threadId === "t1" ? "A" : null),
+      projectTitle: (key) => (key === null ? "Unattributed" : `Project ${key}`),
+      threadTitle: (threadId) => (threadId === "t1" ? "Fix build" : "Agent"),
+      ...overrides,
+    });
+
+  it("lists agents and terminals under their project, each process once", () => {
+    const tree = run();
+    const projectA = tree.projects.find((project) => project.projectKey === "A")!;
+    expect(projectA.rows.map((row) => [row.kind, row.name, row.usage.rssBytes])).toEqual([
+      ["terminal", "dev", 400],
+      ["agent", "Fix build", 210],
+    ]);
+    expect(projectA.usage.rssBytes).toBe(610);
+    expect(tree.app.get("other")).toEqual({ rssBytes: 8 + 5, cpuPercent: 0, processCount: 2 });
+  });
+
+  it("puts agents of unknown threads under Unattributed and hides dead agents", () => {
+    const tree = run();
+    const orphan = tree.projects.find((project) => project.projectKey === null)!;
+    expect(orphan.title).toBe("Unattributed");
+    expect(orphan.rows.map((row) => row.name)).toEqual(["Agent"]);
+    expect(
+      tree.projects.flatMap((project) => project.rows).some((row) => row.threadId === "dead"),
+    ).toBe(false);
+  });
+
+  it("lets a terminal keep a pid an agent also reaches", () => {
+    const tree = run({ agents: [{ pid: 10, threadId: "t1" }] });
+    expect(tree.projects[0]!.rows.map((row) => row.kind)).toEqual(["terminal"]);
+  });
+
+  it("names emulators from -avd, keeps the hub rest as tools, and sorts by usage", () => {
+    const { devices } = run();
+    expect(devices.map((device) => [device.label, device.platform, device.usage.rssBytes])).toEqual(
+      [
+        ["Pixel 8", "android", 2005],
+        ["Device tools", "tools", 50],
+      ],
+    );
+  });
+
+  it("recognises the iOS simulator and skips devices without processes", () => {
+    const ios = [p(50, [51], 1, 0, "node"), p(51, [], 700, 20, "Simulator")];
+    const { devices } = run({ processes: ios, hubPids: [50, 60] });
+    expect(devices.map((device) => [device.label, device.platform])).toEqual([
+      ["iOS Simulator", "ios"],
+      ["Device tools", "tools"],
+    ]);
+  });
+
+  it.each([
+    ["memory", ["Project B", "Project A"]],
+    ["cpu", ["Project A", "Project B"]],
+    ["name", ["Project A", "Project B"]],
+  ] as const)("orders projects by %s", (sort, expected) => {
+    const processes = [p(1, [], 100, 9), p(2, [], 900, 1)];
+    const tree = run({
+      processes,
+      terminals: [
+        { key: "a", name: "a", threadId: "x", projectKey: "A", pid: 1 },
+        { key: "b", name: "b", threadId: "y", projectKey: "B", pid: 2 },
+      ],
+      agents: [],
+      hubPids: [],
+      sort,
+    });
+    expect(tree.projects.map((project) => project.title)).toEqual(expected);
   });
 });

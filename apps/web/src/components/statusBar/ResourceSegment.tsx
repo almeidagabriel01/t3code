@@ -5,15 +5,19 @@ import {
   type EnvironmentId,
   type ProjectId,
   type ResourceTelemetrySnapshot,
+  type ThreadId,
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 import {
+  BotIcon,
   ChevronDownIcon,
   ChevronRightIcon,
   MemoryStickIcon,
+  SmartphoneIcon,
   TerminalIcon,
+  WrenchIcon,
   XIcon,
 } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -32,10 +36,11 @@ import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   addUsage,
-  appBreakdown,
-  attributeTerminalUsage,
+  buildResourceTree,
   EMPTY_USAGE,
   type AppProcessGroup,
+  type DevicePlatform,
+  type ResourceSort,
   type ResourceUsage,
 } from "./resourceUsage.logic";
 import { formatMemory, sparklinePoints } from "./statusBar.logic";
@@ -47,7 +52,7 @@ import {
   type EnvironmentResources,
 } from "./useEnvironmentResources";
 
-type SortOption = "name" | "cpu" | "memory";
+type SortOption = ResourceSort;
 
 const APP_GROUP_LABEL: Record<AppProcessGroup, string> = {
   main: "Desktop main",
@@ -154,48 +159,61 @@ function ChevronToggle({ open }: { readonly open: boolean }) {
   );
 }
 
-const byMetric =
-  (sort: SortOption, usageOf: (key: string) => ResourceUsage | undefined) =>
-  (a: string, b: string) => {
-    if (sort === "name") return a.localeCompare(b);
-    const left = usageOf(a) ?? EMPTY_USAGE;
-    const right = usageOf(b) ?? EMPTY_USAGE;
-    return sort === "cpu" ? right.cpuPercent - left.cpuPercent : right.rssBytes - left.rssBytes;
-  };
+const DEVICE_ICON: Record<DevicePlatform, typeof SmartphoneIcon> = {
+  android: SmartphoneIcon,
+  ios: SmartphoneIcon,
+  tools: WrenchIcon,
+};
 
-function TerminalRow({
+function UsageRow({
+  icon,
   label,
   detail,
-  busy,
+  suffix,
   usage,
   onOpen,
+  closeLabel,
   onClose,
 }: {
+  readonly icon: React.ReactNode;
   readonly label: string;
   readonly detail: string;
-  readonly busy: boolean;
+  readonly suffix?: string | null;
   readonly usage: ResourceUsage | null;
-  readonly onOpen: () => void;
-  readonly onClose: (() => void) | null;
+  /** Rows with nowhere to go render as plain text. */
+  readonly onOpen: (() => void) | null;
+  readonly closeLabel?: string;
+  readonly onClose?: (() => void) | null;
 }) {
+  const text = (
+    <>
+      {label}
+      {suffix ? <span className="text-foreground/70"> · {suffix}</span> : null}
+    </>
+  );
   return (
-    <div className="group/row flex items-center gap-2 py-1.5 pl-10 pr-3 hover:bg-muted/60">
-      <TerminalIcon aria-hidden className="size-3 shrink-0 text-muted-foreground" />
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <button
-              type="button"
-              onClick={onOpen}
-              className="min-w-0 flex-1 truncate text-start text-2xs text-muted-foreground outline-none hover:text-foreground focus-visible:text-foreground"
-            />
-          }
-        >
-          {label}
-          {busy ? <span className="text-foreground/70"> · running</span> : null}
-        </TooltipTrigger>
-        <TooltipPopup side="top">{detail}</TooltipPopup>
-      </Tooltip>
+    <div className="group/row flex items-center gap-2 py-1.5 pl-10 pr-3 hover:bg-foreground/8">
+      <span className="shrink-0 text-muted-foreground [&>svg]:size-3">{icon}</span>
+      {onOpen === null ? (
+        <span className="min-w-0 flex-1 truncate text-start text-2xs text-muted-foreground">
+          {text}
+        </span>
+      ) : (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                onClick={onOpen}
+                className="min-w-0 flex-1 cursor-pointer truncate rounded-sm text-start text-2xs text-muted-foreground outline-none hover:text-foreground focus-visible:text-foreground focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+              />
+            }
+          >
+            {text}
+          </TooltipTrigger>
+          <TooltipPopup side="top">{detail}</TooltipPopup>
+        </Tooltip>
+      )}
       <Metrics usage={usage} />
       <span
         className={cn(
@@ -203,21 +221,21 @@ function TerminalRow({
           "opacity-0 group-focus-within/row:opacity-100 group-hover/row:opacity-100 pointer-coarse:opacity-100",
         )}
       >
-        {onClose === null ? null : (
+        {onClose === null || onClose === undefined ? null : (
           <Tooltip>
             <TooltipTrigger
               render={
                 <Button
                   variant="ghost-destructive"
                   size="icon-micro"
-                  aria-label={`End terminal ${label}`}
+                  aria-label={`${closeLabel} ${label}`}
                   onClick={onClose}
                 />
               }
             >
               <XIcon aria-hidden />
             </TooltipTrigger>
-            <TooltipPopup side="top">End terminal</TooltipPopup>
+            <TooltipPopup side="top">{closeLabel}</TooltipPopup>
           </Tooltip>
         )}
       </span>
@@ -259,51 +277,69 @@ function ProjectGroup({
   );
 }
 
-function EnvironmentSection({
+interface ThreadInfo {
+  readonly projectId: ProjectId;
+  readonly title: string;
+}
+
+export function EnvironmentSection({
   resources,
   snapshot,
   sort,
   label,
-  projectIdByThread,
+  threadInfo,
   projectTitleById,
 }: {
   readonly resources: EnvironmentResources;
   readonly snapshot: ResourceTelemetrySnapshot | null;
   readonly sort: SortOption;
   readonly label: string | null;
-  readonly projectIdByThread: ReadonlyMap<string, ProjectId>;
+  readonly threadInfo: ReadonlyMap<string, ThreadInfo>;
   readonly projectTitleById: ReadonlyMap<ProjectId, string>;
 }) {
   const { environmentId } = resources;
   const navigate = useNavigate();
   const { canClose, close } = useCloseTerminal(environmentId);
   const [appOpen, setAppOpen] = useState(false);
-  const running = resources.terminals.filter((session) => session.state.status === "running");
-  const rows = running.map((session) => ({
-    session,
-    key: `${session.target.threadId}:${session.target.terminalId}`,
-    projectId: projectIdByThread.get(`${environmentId}:${session.target.threadId}`) ?? null,
-  }));
-  const attributed = attributeTerminalUsage(
-    snapshot?.processes ?? [],
-    rows.map(({ session, key, projectId }) => ({
+  const infoOf = (threadId: string) => threadInfo.get(`${environmentId}:${threadId}`);
+  const openThread = (threadId: ThreadId) =>
+    void navigate({
+      to: "/$environmentId/$threadId",
+      params: buildThreadRouteParams(scopeThreadRef(environmentId, threadId)),
+    });
+  const sessions = new Map(
+    resources.terminals
+      .filter((session) => session.state.status === "running")
+      .map((session) => [`${session.target.threadId}:${session.target.terminalId}`, session]),
+  );
+  const owners = snapshot?.owners ?? [];
+  const tree = buildResourceTree({
+    processes: snapshot?.processes ?? [],
+    terminals: [...sessions].map(([key, session]) => ({
       key,
-      projectKey: projectId,
+      name: session.state.summary?.label || session.target.terminalId,
+      threadId: session.target.threadId,
+      projectKey: infoOf(session.target.threadId)?.projectId ?? null,
       pid: session.state.summary?.pid ?? null,
     })),
-  );
-  const groups = new Map<ProjectId | null, Array<(typeof rows)[number]>>();
-  for (const row of rows) groups.set(row.projectId, [...(groups.get(row.projectId) ?? []), row]);
-  const titleOf = (projectId: ProjectId | null) =>
-    projectId === null ? UNATTRIBUTED : (projectTitleById.get(projectId) ?? UNATTRIBUTED);
-  const groupKeys = [...groups.keys()].map((projectId) => projectId ?? "");
-  const orderedGroups = groupKeys
-    .toSorted(
-      byMetric(sort, (key) => attributed.projects.get(key === "" ? null : (key as ProjectId))),
-    )
-    .map((key) => (key === "" ? null : (key as ProjectId)));
-  const app = snapshot === null ? null : appBreakdown(snapshot.processes, attributed.claimed);
+    agents: owners.flatMap((owner) =>
+      owner.kind === "agent" ? [{ pid: owner.pid, threadId: owner.threadId }] : [],
+    ),
+    hubPids: owners.flatMap((owner) => (owner.kind === "device-hub" ? [owner.pid] : [])),
+    sort,
+    projectOfThread: (threadId) => infoOf(threadId)?.projectId ?? null,
+    projectTitle: (projectKey) =>
+      projectKey === null
+        ? UNATTRIBUTED
+        : (projectTitleById.get(projectKey as ProjectId) ?? UNATTRIBUTED),
+    threadTitle: (threadId) => infoOf(threadId)?.title || "Agent",
+  });
+  const app = snapshot === null ? null : tree.app;
   const appTotal = app === null ? null : [...app.values()].reduce(addUsage, EMPTY_USAGE);
+  const deviceTotal = tree.devices.reduce(
+    (sum, device) => addUsage(sum, device.usage),
+    EMPTY_USAGE,
+  );
 
   return (
     <div>
@@ -314,59 +350,81 @@ function EnvironmentSection({
       )}
       <HostTotals environmentId={environmentId} />
       <ResourceHistory environmentId={environmentId} />
-      {orderedGroups.length === 0 ? (
+      {tree.projects.length === 0 && tree.devices.length === 0 ? (
         <div className="px-3 py-4 text-center text-xs text-muted-foreground">
           Nothing running right now
         </div>
       ) : null}
-      {orderedGroups.map((projectId) => {
-        const group = groups.get(projectId) ?? [];
-        const ordered = group.toSorted((a, b) =>
-          byMetric(sort, (key) => attributed.terminals.get(key))(a.key, b.key),
-        );
-        return (
-          <ProjectGroup
-            key={projectId ?? UNATTRIBUTED}
-            title={titleOf(projectId)}
-            count={group.length}
-            usage={snapshot === null ? null : (attributed.projects.get(projectId) ?? null)}
-          >
-            {ordered.map(({ session, key }) => {
-              const summary = session.state.summary;
-              const name = summary?.label || session.target.terminalId;
+      {tree.projects.map((project) => (
+        <ProjectGroup
+          key={project.projectKey ?? UNATTRIBUTED}
+          title={project.title}
+          count={project.rows.length}
+          usage={snapshot === null ? null : project.usage}
+        >
+          {project.rows.map((row) => {
+            const usage = snapshot === null ? null : row.usage;
+            if (row.kind === "agent") {
               return (
-                <TerminalRow
-                  key={key}
-                  label={name}
-                  detail={summary?.cwd ?? name}
-                  busy={session.state.hasRunningSubprocess}
-                  usage={snapshot === null ? null : (attributed.terminals.get(key) ?? null)}
-                  onOpen={() =>
-                    void navigate({
-                      to: "/$environmentId/$threadId",
-                      params: buildThreadRouteParams(
-                        scopeThreadRef(environmentId, session.target.threadId),
-                      ),
-                    })
-                  }
-                  onClose={
-                    canClose
-                      ? () =>
-                          void close(
-                            {
-                              threadId: session.target.threadId,
-                              terminalId: session.target.terminalId,
-                            },
-                            name,
-                          )
-                      : null
-                  }
+                <UsageRow
+                  key={row.key}
+                  icon={<BotIcon aria-hidden />}
+                  label={row.name}
+                  detail={`Agent · ${row.name}`}
+                  usage={usage}
+                  onOpen={() => openThread(row.threadId as ThreadId)}
                 />
               );
-            })}
-          </ProjectGroup>
-        );
-      })}
+            }
+            const session = sessions.get(row.key);
+            return (
+              <UsageRow
+                key={row.key}
+                icon={<TerminalIcon aria-hidden />}
+                label={row.name}
+                detail={session?.state.summary?.cwd ?? row.name}
+                suffix={session?.state.hasRunningSubprocess ? "running" : null}
+                usage={usage}
+                onOpen={() => openThread(row.threadId as ThreadId)}
+                closeLabel="End terminal"
+                onClose={
+                  canClose && session !== undefined
+                    ? () =>
+                        void close(
+                          {
+                            threadId: session.target.threadId,
+                            terminalId: session.target.terminalId,
+                          },
+                          row.name,
+                        )
+                    : null
+                }
+              />
+            );
+          })}
+        </ProjectGroup>
+      ))}
+      {tree.devices.length === 0 ? null : (
+        <ProjectGroup
+          title="Devices"
+          count={tree.devices.filter((device) => device.platform !== "tools").length}
+          usage={deviceTotal}
+        >
+          {tree.devices.map((device) => {
+            const Icon = DEVICE_ICON[device.platform];
+            return (
+              <UsageRow
+                key={device.key}
+                icon={<Icon aria-hidden />}
+                label={device.label}
+                detail={device.label}
+                usage={device.usage}
+                onOpen={null}
+              />
+            );
+          })}
+        </ProjectGroup>
+      )}
       {app === null || appTotal === null ? null : (
         <div className="border-t border-border/50">
           <Collapsible open={appOpen} onOpenChange={setAppOpen}>
@@ -448,8 +506,11 @@ function ResourceManager({
   const projectTitleById = new Map<ProjectId, string>(
     projects.map((project) => [project.id, project.title]),
   );
-  const projectIdByThread = new Map(
-    threads.map((thread) => [`${thread.environmentId}:${thread.id}`, thread.projectId] as const),
+  const threadInfo = new Map<string, ThreadInfo>(
+    threads.map((thread) => [
+      `${thread.environmentId}:${thread.id}`,
+      { projectId: thread.projectId, title: thread.title },
+    ]),
   );
   const totals = [...snapshots.values()].reduce<ResourceUsage>(
     (sum, { groups }) =>
@@ -485,7 +546,7 @@ function ResourceManager({
             snapshot={snapshots.get(environment.environmentId) ?? null}
             sort={sort}
             label={resources.length > 1 ? environment.label : null}
-            projectIdByThread={projectIdByThread}
+            threadInfo={threadInfo}
             projectTitleById={projectTitleById}
           />
         ))}

@@ -14,6 +14,39 @@ export const addUsage = (a: ResourceUsage, b: ResourceUsage): ResourceUsage => (
   processCount: a.processCount + b.processCount,
 });
 
+export interface UsageRoot {
+  readonly key: string;
+  readonly pid: number | null;
+}
+
+/** Each process counts once: a pid an earlier root claimed adds nothing to a later one. */
+function claimUsage(
+  processes: ReadonlyArray<ResourceTelemetryProcess>,
+  roots: ReadonlyArray<UsageRoot>,
+  claimed: Set<number> = new Set(),
+): ReadonlyMap<string, ResourceUsage> {
+  const byPid = new Map(processes.map((process) => [process.identity.pid, process]));
+  const perRoot = new Map<string, ResourceUsage>();
+  for (const root of roots) {
+    let usage = EMPTY_USAGE;
+    const pending = root.pid === null ? [] : [root.pid];
+    while (pending.length > 0) {
+      const pid = pending.pop()!;
+      const process = byPid.get(pid);
+      if (process === undefined || claimed.has(pid)) continue;
+      claimed.add(pid);
+      usage = addUsage(usage, {
+        rssBytes: process.residentBytes,
+        cpuPercent: process.cpuPercent,
+        processCount: 1,
+      });
+      pending.push(...process.childPids);
+    }
+    perRoot.set(root.key, usage);
+  }
+  return perRoot;
+}
+
 export interface TerminalRoot {
   readonly key: string;
   /** Null when the terminal's thread has no known project. */
@@ -29,35 +62,17 @@ export interface AttributedUsage {
   readonly claimed: ReadonlySet<number>;
 }
 
-/** Each process counts once: a pid already claimed by an earlier terminal adds nothing to a later one. */
 export function attributeTerminalUsage(
   processes: ReadonlyArray<ResourceTelemetryProcess>,
   terminals: ReadonlyArray<TerminalRoot>,
 ): AttributedUsage {
-  const byPid = new Map(processes.map((process) => [process.identity.pid, process]));
   const claimed = new Set<number>();
-  const perTerminal = new Map<string, ResourceUsage>();
+  const perTerminal = claimUsage(processes, terminals, claimed);
   const perProject = new Map<string | null, ResourceUsage>();
-
   for (const terminal of terminals) {
-    let usage = EMPTY_USAGE;
-    const pending = terminal.pid === null ? [] : [terminal.pid];
-    while (pending.length > 0) {
-      const pid = pending.pop()!;
-      const process = byPid.get(pid);
-      if (process === undefined || claimed.has(pid)) continue;
-      claimed.add(pid);
-      usage = addUsage(usage, {
-        rssBytes: process.residentBytes,
-        cpuPercent: process.cpuPercent,
-        processCount: 1,
-      });
-      pending.push(...process.childPids);
-    }
-    perTerminal.set(terminal.key, usage);
     perProject.set(
       terminal.projectKey,
-      addUsage(perProject.get(terminal.projectKey) ?? EMPTY_USAGE, usage),
+      addUsage(perProject.get(terminal.projectKey) ?? EMPTY_USAGE, perTerminal.get(terminal.key)!),
     );
   }
   return { terminals: perTerminal, projects: perProject, claimed };
@@ -92,4 +107,195 @@ export function appBreakdown(
     );
   }
   return groups;
+}
+
+export type ResourceSort = "name" | "cpu" | "memory";
+
+export interface TreeTerminal {
+  readonly key: string;
+  readonly name: string;
+  readonly threadId: string;
+  readonly projectKey: string | null;
+  readonly pid: number | null;
+}
+
+export interface TreeAgent {
+  readonly pid: number;
+  readonly threadId: string;
+}
+
+export type ProjectRow =
+  | {
+      readonly kind: "terminal";
+      readonly key: string;
+      readonly name: string;
+      readonly threadId: string;
+      readonly usage: ResourceUsage;
+    }
+  | {
+      readonly kind: "agent";
+      readonly key: string;
+      readonly name: string;
+      readonly threadId: string;
+      readonly usage: ResourceUsage;
+    };
+
+export interface ProjectNode {
+  readonly projectKey: string | null;
+  readonly title: string;
+  readonly usage: ResourceUsage;
+  readonly rows: ReadonlyArray<ProjectRow>;
+}
+
+export type DevicePlatform = "android" | "ios" | "tools";
+
+export interface DeviceRow {
+  readonly key: string;
+  readonly label: string;
+  readonly platform: DevicePlatform;
+  readonly usage: ResourceUsage;
+}
+
+export interface ResourceTree {
+  readonly projects: ReadonlyArray<ProjectNode>;
+  readonly devices: ReadonlyArray<DeviceRow>;
+  readonly app: ReadonlyMap<AppProcessGroup, ResourceUsage>;
+}
+
+const EMULATOR_AVD = /(?:^|\s)-avd[ =](\S+)/;
+const isEmulatorProcess = (process: ResourceTelemetryProcess) =>
+  /emulator|qemu-system/i.test(process.name) && EMULATOR_AVD.test(process.command);
+
+const humanizeAvd = (avd: string) => avd.replaceAll("_", " ");
+
+/** Emulators and the iOS Simulator the device hub started, then what is left of the hub itself. */
+function deviceRoots(
+  processes: ReadonlyArray<ResourceTelemetryProcess>,
+  hubPids: ReadonlyArray<number>,
+): ReadonlyArray<{
+  readonly key: string;
+  readonly label: string;
+  readonly platform: DevicePlatform;
+  readonly pid: number;
+}> {
+  const byPid = new Map(processes.map((process) => [process.identity.pid, process]));
+  const roots: Array<{
+    key: string;
+    label: string;
+    platform: DevicePlatform;
+    pid: number;
+  }> = [];
+  const seen = new Set<number>();
+  for (const hubPid of hubPids) {
+    const pending = [hubPid];
+    while (pending.length > 0) {
+      const pid = pending.pop()!;
+      const process = byPid.get(pid);
+      if (process === undefined || seen.has(pid)) continue;
+      seen.add(pid);
+      const avd = isEmulatorProcess(process) ? EMULATOR_AVD.exec(process.command)?.[1] : undefined;
+      if (avd !== undefined) {
+        // The launcher forwards to qemu: the topmost match owns the pair.
+        roots.push({ key: `android:${avd}`, label: humanizeAvd(avd), platform: "android", pid });
+        continue;
+      }
+      if (process.name === "Simulator") {
+        roots.push({ key: `ios:${pid}`, label: "iOS Simulator", platform: "ios", pid });
+        continue;
+      }
+      pending.push(...process.childPids);
+    }
+  }
+  return [
+    ...roots,
+    ...hubPids.map((pid) => ({
+      key: `tools:${pid}`,
+      label: "Device tools",
+      platform: "tools" as const,
+      pid,
+    })),
+  ];
+}
+
+const compareUsage =
+  (sort: ResourceSort) =>
+  (left: ResourceUsage, right: ResourceUsage, leftName: string, rightName: string) =>
+    sort === "name"
+      ? leftName.localeCompare(rightName)
+      : sort === "cpu"
+        ? right.cpuPercent - left.cpuPercent
+        : right.rssBytes - left.rssBytes;
+
+/**
+ * Terminals claim their subtree first, then agents, then devices: a process counts once, so
+ * work a terminal started never also shows under the agent.
+ */
+export function buildResourceTree(input: {
+  readonly processes: ReadonlyArray<ResourceTelemetryProcess>;
+  readonly terminals: ReadonlyArray<TreeTerminal>;
+  readonly agents: ReadonlyArray<TreeAgent>;
+  readonly hubPids: ReadonlyArray<number>;
+  readonly sort: ResourceSort;
+  readonly projectOfThread: (threadId: string) => string | null;
+  readonly projectTitle: (projectKey: string | null) => string;
+  readonly threadTitle: (threadId: string) => string;
+}): ResourceTree {
+  const { processes, sort } = input;
+  const claimed = new Set<number>();
+  const terminalUsage = claimUsage(processes, input.terminals, claimed);
+  const agentUsage = claimUsage(
+    processes,
+    input.agents.map((agent) => ({ key: agent.threadId, pid: agent.pid })),
+    claimed,
+  );
+  const deviceList = deviceRoots(processes, input.hubPids);
+  const deviceUsage = claimUsage(processes, deviceList, claimed);
+
+  const rowsByProject = new Map<string | null, ProjectRow[]>();
+  const push = (projectKey: string | null, row: ProjectRow) =>
+    rowsByProject.set(projectKey, [...(rowsByProject.get(projectKey) ?? []), row]);
+  for (const terminal of input.terminals) {
+    push(terminal.projectKey, {
+      kind: "terminal",
+      key: terminal.key,
+      name: terminal.name,
+      threadId: terminal.threadId,
+      usage: terminalUsage.get(terminal.key) ?? EMPTY_USAGE,
+    });
+  }
+  for (const agent of input.agents) {
+    const usage = agentUsage.get(agent.threadId) ?? EMPTY_USAGE;
+    if (usage.processCount === 0) continue;
+    push(input.projectOfThread(agent.threadId), {
+      kind: "agent",
+      key: `agent:${agent.threadId}`,
+      name: input.threadTitle(agent.threadId),
+      threadId: agent.threadId,
+      usage,
+    });
+  }
+
+  const compare = compareUsage(sort);
+  const projects = [...rowsByProject].map(([projectKey, rows]): ProjectNode => {
+    const ordered = rows.toSorted((a, b) => compare(a.usage, b.usage, a.name, b.name));
+    return {
+      projectKey,
+      title: input.projectTitle(projectKey),
+      usage: ordered.reduce((sum, row) => addUsage(sum, row.usage), EMPTY_USAGE),
+      rows: ordered,
+    };
+  });
+  projects.sort((a, b) => compare(a.usage, b.usage, a.title, b.title));
+
+  const devices = deviceList
+    .map((device): DeviceRow => ({
+      key: device.key,
+      label: device.label,
+      platform: device.platform,
+      usage: deviceUsage.get(device.key) ?? EMPTY_USAGE,
+    }))
+    .filter((device) => device.usage.processCount > 0)
+    .toSorted((a, b) => compare(a.usage, b.usage, a.label, b.label));
+
+  return { projects, devices, app: appBreakdown(processes, claimed) };
 }

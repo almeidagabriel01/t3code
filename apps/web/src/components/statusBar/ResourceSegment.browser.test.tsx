@@ -1,0 +1,118 @@
+import type {
+  EnvironmentId,
+  ProjectId,
+  ResourceTelemetryProcess,
+  ResourceTelemetrySnapshot,
+} from "@t3tools/contracts";
+import { describe, expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
+
+import { render } from "../../../test/render";
+
+const closeTerminal = vi.hoisted(() => vi.fn());
+
+vi.mock("./useKillTarget", () => ({
+  useCloseTerminal: () => ({ canClose: true, close: closeTerminal }),
+}));
+vi.mock("../../state/session", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../state/session")>()),
+  useEnvironmentScope: () => false,
+}));
+vi.mock("../../state/query", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../state/query")>()),
+  useEnvironmentQuery: () => ({ data: null, refresh: () => undefined }),
+}));
+
+import { EnvironmentSection } from "./ResourceSegment";
+
+const environmentId = "env" as EnvironmentId;
+const projectId = "p1" as ProjectId;
+
+const proc = (
+  pid: number,
+  childPids: number[],
+  residentBytes: number,
+  name = "node",
+  command = name,
+) =>
+  ({
+    identity: { pid, startTimeMs: 0 },
+    childPids,
+    residentBytes,
+    cpuPercent: 10,
+    category: "server-child",
+    name,
+    command,
+  }) as unknown as ResourceTelemetryProcess;
+
+const snapshot = {
+  processes: [
+    proc(10, [], 1_000_000),
+    proc(20, [21], 2_000_000),
+    proc(21, [], 3_000_000),
+    proc(40, [41], 1_000_000),
+    proc(41, [], 5_000_000, "emulator", "emulator -avd Pixel_8"),
+  ],
+  owners: [
+    { kind: "agent", pid: 20, threadId: "t1" },
+    { kind: "device-hub", pid: 40 },
+  ],
+} as unknown as ResourceTelemetrySnapshot;
+
+const terminal = {
+  target: { threadId: "t1", terminalId: "term" },
+  state: {
+    status: "running",
+    hasRunningSubprocess: true,
+    summary: { label: "dev", cwd: "/w", pid: 10 },
+  },
+};
+
+function setup() {
+  closeTerminal.mockReset();
+  return {
+    resources: { environmentId, label: "Local", terminals: [terminal] },
+    threadInfo: new Map([[`${environmentId}:t1`, { projectId, title: "Fix build" }]]),
+    projectTitleById: new Map([[projectId, "My project"]]),
+  } as never as {
+    resources: Parameters<typeof EnvironmentSection>[0]["resources"];
+    threadInfo: Parameters<typeof EnvironmentSection>[0]["threadInfo"];
+    projectTitleById: Parameters<typeof EnvironmentSection>[0]["projectTitleById"];
+  };
+}
+
+describe("EnvironmentSection", () => {
+  it("groups the agent, terminal and device under their project and Devices, and opens a thread", async () => {
+    const props = setup();
+    await using screen = await render(
+      <EnvironmentSection {...props} snapshot={snapshot} sort="memory" label="Local" />,
+      { router: "/" },
+    );
+    await expect.element(screen.getByRole("button", { name: /My project/ })).toBeVisible();
+    await expect.element(screen.getByRole("button", { name: "Fix build" })).toBeVisible();
+    await expect.element(screen.getByRole("button", { name: /^dev/ })).toBeVisible();
+    await expect.element(screen.getByRole("button", { name: /Devices/ })).toBeVisible();
+    await expect.element(screen.getByText("Pixel 8")).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Fix build" }));
+    expect(screen.router?.state.location.pathname).toContain("t1");
+    await userEvent.click(screen.getByRole("button", { name: "End terminal dev" }), {
+      force: true,
+    });
+    expect(closeTerminal).toHaveBeenCalledWith({ threadId: "t1", terminalId: "term" }, "dev");
+  });
+
+  it("says nothing is running and shows no usage before the first sample", async () => {
+    const props = setup();
+    await using screen = await render(
+      <EnvironmentSection
+        {...props}
+        resources={{ ...props.resources, terminals: [] }}
+        snapshot={null}
+        sort="cpu"
+        label={null}
+      />,
+      { router: "/" },
+    );
+    await expect.element(screen.getByText("Nothing running right now")).toBeVisible();
+  });
+});
