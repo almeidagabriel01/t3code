@@ -1215,7 +1215,7 @@ export const layerDeviceToolkit = Layer.mergeAll(
   layerDeviceScreenshotRegistration,
 );
 
-const layerComputerToolkit = Layer.mergeAll(
+export const layerComputerToolkit = Layer.mergeAll(
   toolkitRegistration(ComputerStandardToolkit, ComputerHandlers.layerStandard),
   imageToolRegistration(registerComputerScreenshot(), ComputerHandlers.layerScreenshot),
 );

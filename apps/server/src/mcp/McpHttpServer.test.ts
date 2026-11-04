@@ -5,6 +5,7 @@ import { expect, it } from "@effect/vitest";
 import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  ComputerUseError,
   DeviceId,
   DeviceOperationError,
   EnvironmentId,
@@ -29,6 +30,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as PullRequestSyncReactor from "../orchestration-v2/PullRequestSyncReactor.ts";
+import * as ComputerUse from "../computerUse/ComputerUse.ts";
 import * as DeviceService from "../device/DeviceService.ts";
 import * as PullRequestReviewGuideService from "../pullRequest/PullRequestReviewGuideService.ts";
 import * as ServerConfig from "../config.ts";
@@ -223,6 +225,50 @@ it.effect.each([
           Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
           Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-device-mcp-test-" })),
           Layer.provide(NodeServices.layer),
+        ),
+      ),
+      Effect.scoped,
+    ),
+);
+
+it.effect.each([
+  {
+    shot: Effect.succeed({ png: new Uint8Array(33), width: 640, height: 360 }),
+    isError: false,
+  },
+  {
+    shot: Effect.fail(new ComputerUseError({ reason: "screen_recording_missing" })),
+    isError: true,
+  },
+])(
+  "returns the Mac screenshot as an image, or says which permission is missing",
+  ({ shot, isError }) =>
+    Effect.gen(function* () {
+      const server = yield* McpServer.McpServer;
+      const result = yield* server
+        .callTool({ name: "computer_screenshot", arguments: {} })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      expect(result.isError).toBe(isError);
+      if (isError) {
+        expect(result.content).toEqual([
+          {
+            type: "text",
+            text: expect.stringContaining("Settings > Mac permissions"),
+          },
+        ]);
+      } else {
+        expect(result.content.map((part) => part.type)).toEqual(["text", "image"]);
+        expect(result.structuredContent).toMatchObject({ screenshot: { mimeType: "image/png" } });
+      }
+    }).pipe(
+      Effect.provide(
+        McpHttpServer.layerComputerToolkit.pipe(
+          Layer.provideMerge(McpServer.McpServer.layer),
+          Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
+          Layer.provide(Layer.mock(ComputerUse.ComputerUse)({ screenshot: shot })),
         ),
       ),
       Effect.scoped,
