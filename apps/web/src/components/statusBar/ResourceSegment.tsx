@@ -405,11 +405,7 @@ export function EnvironmentSection({
         </ProjectGroup>
       ))}
       {tree.devices.length === 0 ? null : (
-        <ProjectGroup
-          title="Devices"
-          count={tree.devices.filter((device) => device.platform !== "tools").length}
-          usage={deviceTotal}
-        >
+        <ProjectGroup title="Devices" count={tree.devices.length} usage={deviceTotal}>
           {tree.devices.map((device) => {
             const Icon = DEVICE_ICON[device.platform];
             return (
