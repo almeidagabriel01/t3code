@@ -5,7 +5,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { ChevronDownIcon, FolderOpenIcon } from "lucide-react";
 import { SortableContext, useSortable, type SortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { useState, type ReactNode } from "react";
+import { useState, type MouseEvent, type ReactNode } from "react";
 
 import { resolveSidebarThreadStatus } from "@t3tools/client-runtime/state/thread-attention";
 import { cn } from "~/lib/utils";
@@ -182,6 +182,11 @@ type ProjectGroupProps = {
     projectRow: string,
   ) => ReactNode;
   onToggleProject: (project: ProjectLayout["project"], expanded: boolean) => void;
+  /** Right-click on a project header opens the same menu as the project picker (settings, archive). */
+  onProjectContextMenu?: (
+    event: MouseEvent<HTMLElement>,
+    project: ProjectLayout["project"],
+  ) => void;
   onToggleSettled: (projectKey: string) => void;
   onShowMoreSettled: (projectKey: string) => void;
   onOpenSubagent: (threadRef: ScopedThreadRef) => void;
@@ -364,7 +369,14 @@ function SidebarProjectGroup(props: ProjectGroupProps) {
       className={cn("list-none", !props.first && "mt-2", isDragging && "relative z-20 opacity-80")}
       style={{ transform: CSS.Translate.toString(transform), transition }}
     >
-      <div className="group/project-header relative rounded-(--control-radius) hover:bg-sidebar-row-hover">
+      <div
+        className="group/project-header relative rounded-(--control-radius) hover:bg-sidebar-row-hover"
+        onContextMenu={
+          props.onProjectContextMenu
+            ? (event) => props.onProjectContextMenu?.(event, project)
+            : undefined
+        }
+      >
         <button
           type="button"
           ref={setActivatorNodeRef}

@@ -3302,6 +3302,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           subagentChildrenByParent={subagentChildrenByParent}
                           renderThreadRow={renderThreadRow}
                           onToggleProject={projectLayout.toggleProject}
+                          onProjectContextMenu={projectRowMenu.onContextMenu}
                           onToggleSettled={(projectKey) => {
                             projectLayout.toggleSettled(projectKey);
                             expandSettledShelf();
