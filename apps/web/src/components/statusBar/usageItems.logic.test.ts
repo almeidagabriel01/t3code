@@ -5,6 +5,7 @@ import {
   collectUsageItems,
   limitsStatus,
   STALE_AFTER_MS,
+  usageEnvironments,
   type UsagePresentations,
 } from "./usageItems.logic";
 
@@ -108,6 +109,19 @@ describe("collectUsageItems", () => {
     );
     expect(items).toHaveLength(1);
     expect(items[0]?.environmentLabel).toBe("Local, Remote");
+  });
+});
+
+describe("usageEnvironments", () => {
+  it.each([
+    { phase: "connected", shown: true },
+    { phase: "reconnecting", shown: true },
+    { phase: "connecting", shown: false },
+    { phase: "offline", shown: false },
+    { phase: "error", shown: false },
+  ] as const)("$phase environment keeps its usage: $shown", ({ phase, shown }) => {
+    const all = new Map([["env-a" as EnvironmentId, { connection: { phase } }]]);
+    expect([...usageEnvironments(all).keys()]).toEqual(shown ? ["env-a"] : []);
   });
 });
 

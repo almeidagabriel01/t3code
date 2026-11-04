@@ -1,7 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 
 import { environmentPresentations } from "../../state/presentation";
-import { collectUsageItems, type UsageItem } from "./usageItems.logic";
+import { collectUsageItems, usageEnvironments, type UsageItem } from "./usageItems.logic";
 
 /** One item per usage-reporting provider instance of every connected environment. */
 export function useUsageItems(): {
@@ -9,8 +9,9 @@ export function useUsageItems(): {
   readonly items: ReadonlyArray<UsageItem>;
 } {
   const all = useAtomValue(environmentPresentations.presentationsWithProvidersAtom);
-  const connected = new Map(
-    [...all].filter(([, presentation]) => presentation.connection.phase === "connected"),
+  const shown = usageEnvironments(all);
+  const connected = [...shown].flatMap(([environmentId, presentation]) =>
+    presentation.connection.phase === "connected" ? [environmentId] : [],
   );
-  return { environmentIds: [...connected.keys()], items: collectUsageItems(connected) };
+  return { environmentIds: connected, items: collectUsageItems(shown) };
 }

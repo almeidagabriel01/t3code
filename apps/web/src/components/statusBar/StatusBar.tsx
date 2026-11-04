@@ -27,7 +27,7 @@ export function StatusBar() {
         }}
       >
         <UsageSegments />
-        <div className="flex shrink-0 items-center gap-3">
+        <div className="ml-auto flex shrink-0 items-center gap-3">
           <KeepAwakeSegment />
           <PortsSegment />
           <ResourceSegment />

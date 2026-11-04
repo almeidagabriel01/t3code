@@ -18,6 +18,20 @@ export type UsagePresentations = ReadonlyMap<
   }
 >;
 
+/**
+ * A dropped connection that is coming back keeps its last-known usage on screen; hiding it made
+ * the whole usage block vanish and the right-hand items jump whenever the app stalled.
+ */
+export function usageEnvironments<T extends { readonly connection: { readonly phase: string } }>(
+  all: ReadonlyMap<EnvironmentId, T>,
+): ReadonlyMap<EnvironmentId, T> {
+  return new Map(
+    [...all].filter(([, presentation]) =>
+      ["connected", "reconnecting"].includes(presentation.connection.phase),
+    ),
+  );
+}
+
 /** API-key instances have no subscription limits; their cost is what matters. */
 export const isApiKeyItem = (snapshot: ProviderInstanceEntry["snapshot"]) =>
   snapshot.auth.type === "apiKey";
