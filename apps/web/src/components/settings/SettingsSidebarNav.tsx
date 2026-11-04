@@ -20,6 +20,7 @@ import {
   GitForkIcon,
   GlobeIcon,
   InfoIcon,
+  MonitorCogIcon,
   KeyboardIcon,
   KeyRoundIcon,
   MessageCircleIcon,
@@ -109,6 +110,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/threads": MessagesSquareIcon,
   "/settings/browser": GlobeIcon,
   "/settings/devices": SmartphoneIcon,
+  "/settings/mac-permissions": MonitorCogIcon,
   "/settings/scheduled-tasks": CalendarClockIcon,
   "/settings/kanban": SquareKanbanIcon,
   "/settings/source-control": GitBranchIcon,
@@ -152,7 +154,10 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
     ...group,
     paths: group.paths.filter(
       (to) =>
-        (to !== "/settings/memory" && to !== "/settings/imessage" && to !== "/settings/telegram") ||
+        (to !== "/settings/memory" &&
+          to !== "/settings/imessage" &&
+          to !== "/settings/telegram" &&
+          to !== "/settings/mac-permissions") ||
         searchableItems.some((entry) => entry.to === to),
     ),
   })).filter((group) => group.paths.length > 0);

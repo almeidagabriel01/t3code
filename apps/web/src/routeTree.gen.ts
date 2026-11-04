@@ -38,6 +38,7 @@ import { Route as ChatSettingsProjectsRouteImport } from './routes/_chat.setting
 import { Route as ChatSettingsOpenSourceLicensesRouteImport } from './routes/_chat.settings.open-source-licenses'
 import { Route as ChatSettingsMemoryRouteImport } from './routes/_chat.settings.memory'
 import { Route as ChatSettingsMaintenanceRouteImport } from './routes/_chat.settings.maintenance'
+import { Route as ChatSettingsMacPermissionsRouteImport } from './routes/_chat.settings.mac-permissions'
 import { Route as ChatSettingsLabsRouteImport } from './routes/_chat.settings.labs'
 import { Route as ChatSettingsKeybindingsRouteImport } from './routes/_chat.settings.keybindings'
 import { Route as ChatSettingsKanbanRouteImport } from './routes/_chat.settings.kanban'
@@ -207,6 +208,12 @@ const ChatSettingsMaintenanceRoute = ChatSettingsMaintenanceRouteImport.update({
   path: '/maintenance',
   getParentRoute: () => ChatSettingsRoute,
 } as any)
+const ChatSettingsMacPermissionsRoute =
+  ChatSettingsMacPermissionsRouteImport.update({
+    id: '/mac-permissions',
+    path: '/mac-permissions',
+    getParentRoute: () => ChatSettingsRoute,
+  } as any)
 const ChatSettingsLabsRoute = ChatSettingsLabsRouteImport.update({
   id: '/labs',
   path: '/labs',
@@ -351,6 +358,7 @@ export interface FileRoutesByFullPath {
   '/settings/kanban': typeof ChatSettingsKanbanRoute
   '/settings/keybindings': typeof ChatSettingsKeybindingsRoute
   '/settings/labs': typeof ChatSettingsLabsRoute
+  '/settings/mac-permissions': typeof ChatSettingsMacPermissionsRoute
   '/settings/maintenance': typeof ChatSettingsMaintenanceRoute
   '/settings/memory': typeof ChatSettingsMemoryRoute
   '/settings/open-source-licenses': typeof ChatSettingsOpenSourceLicensesRoute
@@ -402,6 +410,7 @@ export interface FileRoutesByTo {
   '/settings/kanban': typeof ChatSettingsKanbanRoute
   '/settings/keybindings': typeof ChatSettingsKeybindingsRoute
   '/settings/labs': typeof ChatSettingsLabsRoute
+  '/settings/mac-permissions': typeof ChatSettingsMacPermissionsRoute
   '/settings/maintenance': typeof ChatSettingsMaintenanceRoute
   '/settings/memory': typeof ChatSettingsMemoryRoute
   '/settings/open-source-licenses': typeof ChatSettingsOpenSourceLicensesRoute
@@ -455,6 +464,7 @@ export interface FileRoutesById {
   '/_chat/settings/kanban': typeof ChatSettingsKanbanRoute
   '/_chat/settings/keybindings': typeof ChatSettingsKeybindingsRoute
   '/_chat/settings/labs': typeof ChatSettingsLabsRoute
+  '/_chat/settings/mac-permissions': typeof ChatSettingsMacPermissionsRoute
   '/_chat/settings/maintenance': typeof ChatSettingsMaintenanceRoute
   '/_chat/settings/memory': typeof ChatSettingsMemoryRoute
   '/_chat/settings/open-source-licenses': typeof ChatSettingsOpenSourceLicensesRoute
@@ -508,6 +518,7 @@ export interface FileRouteTypes {
     | '/settings/kanban'
     | '/settings/keybindings'
     | '/settings/labs'
+    | '/settings/mac-permissions'
     | '/settings/maintenance'
     | '/settings/memory'
     | '/settings/open-source-licenses'
@@ -559,6 +570,7 @@ export interface FileRouteTypes {
     | '/settings/kanban'
     | '/settings/keybindings'
     | '/settings/labs'
+    | '/settings/mac-permissions'
     | '/settings/maintenance'
     | '/settings/memory'
     | '/settings/open-source-licenses'
@@ -611,6 +623,7 @@ export interface FileRouteTypes {
     | '/_chat/settings/kanban'
     | '/_chat/settings/keybindings'
     | '/_chat/settings/labs'
+    | '/_chat/settings/mac-permissions'
     | '/_chat/settings/maintenance'
     | '/_chat/settings/memory'
     | '/_chat/settings/open-source-licenses'
@@ -842,6 +855,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatSettingsMaintenanceRouteImport
       parentRoute: typeof ChatSettingsRoute
     }
+    '/_chat/settings/mac-permissions': {
+      id: '/_chat/settings/mac-permissions'
+      path: '/mac-permissions'
+      fullPath: '/settings/mac-permissions'
+      preLoaderRoute: typeof ChatSettingsMacPermissionsRouteImport
+      parentRoute: typeof ChatSettingsRoute
+    }
     '/_chat/settings/labs': {
       id: '/_chat/settings/labs'
       path: '/labs'
@@ -1012,6 +1032,7 @@ interface ChatSettingsRouteChildren {
   ChatSettingsKanbanRoute: typeof ChatSettingsKanbanRoute
   ChatSettingsKeybindingsRoute: typeof ChatSettingsKeybindingsRoute
   ChatSettingsLabsRoute: typeof ChatSettingsLabsRoute
+  ChatSettingsMacPermissionsRoute: typeof ChatSettingsMacPermissionsRoute
   ChatSettingsMaintenanceRoute: typeof ChatSettingsMaintenanceRoute
   ChatSettingsMemoryRoute: typeof ChatSettingsMemoryRoute
   ChatSettingsOpenSourceLicensesRoute: typeof ChatSettingsOpenSourceLicensesRoute
@@ -1048,6 +1069,7 @@ const ChatSettingsRouteChildren: ChatSettingsRouteChildren = {
   ChatSettingsKanbanRoute: ChatSettingsKanbanRoute,
   ChatSettingsKeybindingsRoute: ChatSettingsKeybindingsRoute,
   ChatSettingsLabsRoute: ChatSettingsLabsRoute,
+  ChatSettingsMacPermissionsRoute: ChatSettingsMacPermissionsRoute,
   ChatSettingsMaintenanceRoute: ChatSettingsMaintenanceRoute,
   ChatSettingsMemoryRoute: ChatSettingsMemoryRoute,
   ChatSettingsOpenSourceLicensesRoute: ChatSettingsOpenSourceLicensesRoute,

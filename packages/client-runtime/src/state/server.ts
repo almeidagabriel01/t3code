@@ -1369,6 +1369,17 @@ export function createServerEnvironmentAtoms<R, E>(
       staleTimeMs: 5 * 60_000,
     }),
     claudeChromeStatus,
+    /** The host Mac's privacy permissions; a macOS prompt can follow a read, so never refresh on a timer. */
+    macPermissions: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:mac-permissions",
+      tag: WS_METHODS.computerUsePermissions,
+      idleTtlMs: 0,
+      staleTimeMs: 0,
+    }),
+    openMacSettings: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:mac-permissions:open-settings",
+      tag: WS_METHODS.computerUseOpenSettings,
+    }),
     setClaudeChromeDefault: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:claude-chrome:set-default",
       tag: WS_METHODS.providerClaudeChromeSetDefault,

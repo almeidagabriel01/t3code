@@ -24,6 +24,7 @@ import {
   type Assistant,
   type AssistantSpend,
   type ForkUpdateStatus,
+  type MacPermissions,
   type ImessageChannelAccess,
   type ImessageChannelSettings,
   type ImessageChannelSettingsErrorReason,
@@ -325,14 +326,16 @@ function projectionOf(thread: FakeThread): OrchestrationV2ThreadProjection {
 }
 
 let extraCapabilities: Record<string, boolean> = {};
+let hostOs: "linux" | "darwin" = "linux";
 // The same object when nothing is added, so scenarios that count renders see no new config.
 const currentServerConfig = (): ServerConfig =>
-  Object.keys(extraCapabilities).length === 0
+  Object.keys(extraCapabilities).length === 0 && hostOs === "linux"
     ? serverConfig
     : {
         ...serverConfig,
         environment: {
           ...serverConfig.environment,
+          platform: { ...serverConfig.environment.platform, os: hostOs },
           capabilities: { ...serverConfig.environment.capabilities, ...extraCapabilities },
         },
       };
@@ -680,6 +683,25 @@ export const fakeForkUpdate: {
   commands: [],
 };
 handlers[WS_METHODS.serverForkUpdateStatus] = () => Effect.sync(() => fakeForkUpdate.status);
+export const fakeMacPermissions: {
+  permissions: MacPermissions;
+  opened: Array<string>;
+} = {
+  permissions: {
+    supported: true,
+    screenRecording: "granted",
+    accessibility: "denied",
+    automation: "unknown",
+  },
+  opened: [],
+};
+handlers[WS_METHODS.computerUsePermissions] = () =>
+  Effect.sync(() => fakeMacPermissions.permissions);
+handlers[WS_METHODS.computerUseOpenSettings] = (input: { readonly pane: string }) =>
+  Effect.sync(() => {
+    fakeMacPermissions.opened.push(input.pane);
+    return {};
+  });
 handlers[WS_METHODS.projectsMutate] = (input: { readonly type: string }) => {
   fakeForkUpdate.commands.push(input as (typeof fakeForkUpdate.commands)[number]);
   return Effect.succeed({ ...input, createdAt: AT, updatedAt: AT });
@@ -734,6 +756,7 @@ const encodeDescriptor = (capabilities: Record<string, boolean>) =>
   encodeEnvironmentDescriptor(
     decodeEnvironmentDescriptor({
       ...descriptor,
+      platform: { ...descriptor.platform, os: hostOs },
       capabilities: { ...descriptor.capabilities, ...capabilities },
     }),
   );
@@ -747,10 +770,13 @@ export function installFakeEnvironment(
     readonly imessageChannel?: boolean;
     readonly telegramChannel?: boolean;
     readonly sideChats?: boolean;
+    /** The host reports macOS, as a Mac running T3 Code does. */
+    readonly mac?: boolean;
     readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
   } = {},
 ): Disposable {
   threads = fixtures;
+  hostOs = options.mac ? "darwin" : "linux";
   extraCapabilities = {
     ...(options.decisions ? { decisions: true } : {}),
     ...(options.assistants ? { assistants: true } : {}),

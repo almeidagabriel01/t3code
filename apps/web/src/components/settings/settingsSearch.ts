@@ -34,6 +34,7 @@ export type SettingsPath =
   | "/settings/threads"
   | "/settings/browser"
   | "/settings/devices"
+  | "/settings/mac-permissions"
   | "/settings/scheduled-tasks"
   | "/settings/kanban"
   | "/settings/source-control"
@@ -118,6 +119,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/threads": "Threads",
   "/settings/browser": "Browser",
   "/settings/devices": "Devices",
+  "/settings/mac-permissions": "Mac permissions",
   "/settings/scheduled-tasks": "Scheduled tasks",
   "/settings/kanban": "Kanban",
   "/settings/source-control": "Source control",
@@ -161,6 +163,7 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
       "/settings/threads",
       "/settings/browser",
       "/settings/devices",
+      "/settings/mac-permissions",
       "/settings/scheduled-tasks",
       "/settings/kanban",
     ],
@@ -536,6 +539,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Project hover card",
     to: "/settings/general",
     searchTerms: ["sidebar hover preview ports terminals resources path"],
+  },
+  {
+    id: "mac-permissions",
+    title: "Mac permissions",
+    to: "/settings/mac-permissions",
+    searchTerms: [
+      "computer use screen recording accessibility automation click screenshot privacy system settings",
+    ],
+    macProviderSettingsOnly: true,
   },
   {
     id: "fork-updates-folder",
@@ -1486,6 +1498,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/threads": null,
   "/settings/browser": null,
   "/settings/devices": null,
+  "/settings/mac-permissions": null,
   "/settings/source-control": "environment-defaults",
   "/settings/worktrees": "project-defaults",
   "/settings/status-bar": null,

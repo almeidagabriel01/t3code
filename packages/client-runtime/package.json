@@ -251,6 +251,10 @@
       "types": "./src/state/assistants.ts",
       "default": "./src/state/assistants.ts"
     },
+    "./state/mac-permissions": {
+      "types": "./src/state/macPermissions.ts",
+      "default": "./src/state/macPermissions.ts"
+    },
     "./state/decisions": {
       "types": "./src/state/decisions.ts",
       "default": "./src/state/decisions.ts"
