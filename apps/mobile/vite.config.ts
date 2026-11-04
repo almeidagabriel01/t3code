@@ -4,6 +4,10 @@ import { defineConfig, normalizePath } from "vite-plus";
 import "vite-plus/test/config";
 
 const reactTests = [
+  "src/features/threads/useVisibleNewTaskScopes.test.tsx",
+  "src/features/archive/ArchivedThreadsRouteScreen.test.tsx",
+  "src/features/archive/ArchivedThreadsScreen.test.tsx",
+  "src/features/home/archiveProjectMenus.test.tsx",
   "src/features/archive/ArchivedProjectRow.test.tsx",
   "src/features/projects/useProjectOrganize.test.tsx",
   "src/features/threads/ThreadSideChatsRow.test.tsx",

@@ -1,4 +1,4 @@
-import { useProjectOrganize } from "../projects/useProjectOrganize";
+import { useArchiveSelectedProject } from "../projects/useProjectOrganize";
 import { uuidv4 } from "../../lib/uuid";
 import { ThreadUndoNotice } from "./ThreadUndoNotice";
 import { Toolbar } from "../../components/ui/Toolbar";
@@ -147,7 +147,7 @@ export function HomeRouteScreen() {
       sidebarProjectGroupingOverrides: {},
     },
   );
-  const projectScopes = useMemo(
+  const projectFilterOptions = useMemo(
     () =>
       pickableProjectGroups(
         buildHomeProjectScopes({
@@ -155,26 +155,22 @@ export function HomeRouteScreen() {
           environmentId: selectedEnvironmentId,
           projectGroupingMode: listOptions.projectGroupingMode,
         }),
-      ),
+      ).map((scope) => ({
+        key: scope.key,
+        label: scope.title,
+      })),
     [listOptions.projectGroupingMode, projects, selectedEnvironmentId],
-  );
-  const projectFilterOptions = useMemo(
-    () => projectScopes.map((scope) => ({ key: scope.key, label: scope.title })),
-    [projectScopes],
   );
   const selectedProjectKey = projectFilterOptions.some(
     (project) => project.key === resolvedProjectKey,
   )
     ? resolvedProjectKey
     : null;
-  const { canOrganizeRefs, setScopeArchived } = useProjectOrganize();
-  const selectedProjectRefs = projectScopes.find(
-    (scope) => scope.key === selectedProjectKey,
-  )?.projectRefs;
-  const archiveSelectedProject =
-    selectedProjectRefs && canOrganizeRefs(selectedProjectRefs)
-      ? () => void setScopeArchived(selectedProjectRefs, true)
-      : undefined;
+  const archiveSelectedProject = useArchiveSelectedProject({
+    environmentId: selectedEnvironmentId,
+    projectGroupingMode: listOptions.projectGroupingMode,
+    selectedKey: selectedProjectKey,
+  });
 
   if (layout.usesSplitView && !nativePrimaryColumn) {
     return (

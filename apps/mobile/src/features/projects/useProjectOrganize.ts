@@ -1,4 +1,9 @@
-import { AuthOrchestrationOperateScope, type EnvironmentId } from "@t3tools/contracts";
+import { pickableProjectGroups } from "@t3tools/client-runtime/state/project-grouping";
+import {
+  AuthOrchestrationOperateScope,
+  type EnvironmentId,
+  type SidebarProjectGroupingMode,
+} from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -6,6 +11,7 @@ import {
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 
 import * as Dialog from "../../components/ui/Dialog";
+import { buildHomeProjectScopes } from "../home/homeThreadList";
 import { useProjects, useServerConfigs } from "../../state/entities";
 import { projectEnvironment } from "../../state/projects";
 import { readEnvironmentScope, useEnvironmentsWithScope } from "../../state/session";
@@ -94,4 +100,22 @@ export function useProjectOrganize() {
       archived: boolean,
     ) => organize(members(refs), { archived }),
   };
+}
+
+/** Archives the selected project's checkouts, when this connection may; otherwise nothing to offer. */
+export function useArchiveSelectedProject(scope: {
+  readonly environmentId: EnvironmentId | null;
+  readonly projectGroupingMode: SidebarProjectGroupingMode;
+  readonly selectedKey: string | null;
+}) {
+  const { canOrganizeRefs, setScopeArchived } = useProjectOrganize();
+  const projects = useProjects();
+  const refs = pickableProjectGroups(
+    buildHomeProjectScopes({
+      projects,
+      environmentId: scope.environmentId,
+      projectGroupingMode: scope.projectGroupingMode,
+    }),
+  ).find((candidate) => candidate.key === scope.selectedKey)?.projectRefs;
+  return refs && canOrganizeRefs(refs) ? () => setScopeArchived(refs, true) : undefined;
 }

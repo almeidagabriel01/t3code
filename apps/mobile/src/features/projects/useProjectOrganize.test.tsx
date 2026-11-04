@@ -9,7 +9,14 @@ const mocks = vi.hoisted(() => ({
   organization: true,
   operable: new Set<string>(["hub"]),
 }));
-const project = (id: string, environmentId: string) => ({ environmentId, id, title: `T${id}` });
+const project = (id: string, environmentId: string) => ({
+  environmentId,
+  id,
+  title: `T${id}`,
+  workspaceRoot: `/w/${id}`,
+  repositoryIdentity: null,
+  archivedAt: null,
+});
 vi.mock("../../components/ui/Dialog", () => ({ alert: mocks.alert }));
 vi.mock("../../state/entities", () => ({
   useProjects: () => [project("a", "hub"), project("b", "hub")],
@@ -26,7 +33,8 @@ vi.mock("../../state/session", () => ({
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => mocks.update }));
 
 import * as Cause from "effect/Cause";
-import { useProjectOrganize } from "./useProjectOrganize";
+import { buildHomeProjectScopes } from "../home/homeThreadList";
+import { useArchiveSelectedProject, useProjectOrganize } from "./useProjectOrganize";
 
 let api: ReturnType<typeof useProjectOrganize>;
 function Probe() {
@@ -86,5 +94,49 @@ describe("useProjectOrganize", () => {
     await act(() => createRoot(window.document.createElement("div")).render(<Probe />));
     expect(api.canOrganizeRefs(refs)).toBe(expected);
     expect(api.canOrganizeRefs([{ environmentId: "hub", projectId: "gone" }] as never)).toBe(false);
+  });
+});
+
+describe("useArchiveSelectedProject", () => {
+  const scopeKey = (projectId: string) =>
+    buildHomeProjectScopes({
+      projects: [project("a", "hub"), project("b", "hub")] as never,
+      environmentId: null,
+      projectGroupingMode: "separate",
+    }).find((scope) => scope.projectRefs.some((ref) => ref.projectId === projectId))!.key;
+  let archive: ReturnType<typeof useArchiveSelectedProject>;
+  function ArchiveProbe(props: { selectedKey: string | null }) {
+    archive = useArchiveSelectedProject({
+      environmentId: null,
+      projectGroupingMode: "separate",
+      selectedKey: props.selectedKey,
+    });
+    return null;
+  }
+  const mountArchive = (selectedKey: string | null) =>
+    act(() =>
+      createRoot(window.document.createElement("div")).render(
+        <ArchiveProbe selectedKey={selectedKey} />,
+      ),
+    );
+
+  it("archives only the selected scope's checkouts", async () => {
+    await mountArchive(scopeKey("b"));
+    await archive!();
+    expect(mocks.update).toHaveBeenCalledTimes(1);
+    expect(mocks.update).toHaveBeenCalledWith({
+      environmentId: "hub",
+      input: { projectId: "b", archived: true },
+    });
+  });
+
+  it.each([
+    { name: "nothing selected", selected: () => null, operable: ["hub"] },
+    { name: "unknown scope", selected: () => "gone", operable: ["hub"] },
+    { name: "read-only", selected: () => scopeKey("a"), operable: [] },
+  ])("offers nothing: $name", async ({ selected, operable }) => {
+    mocks.operable = new Set(operable);
+    await mountArchive(selected());
+    expect(archive).toBeUndefined();
   });
 });

@@ -1,9 +1,6 @@
 import { Pressable, ScrollView } from "react-native";
 import { SymbolView } from "../../components/ui/AppSymbol";
-import {
-  ARCHIVE_PROJECT_ACTION_ID,
-  archiveProjectMenuActions,
-} from "../projects/archiveProjectMenu";
+import { archiveProjectMenuActions, runArchiveProjectAction } from "../projects/archiveProjectMenu";
 import { ListFilterMenu } from "../workspace/ListFilterMenu";
 import type { HomeHeaderProps } from "./HomeHeader.types";
 
@@ -79,11 +76,11 @@ export function ThreadListFilters(
             title: project.needsAttention ? `${project.label} •` : project.label,
             state: project.key === props.selectedProjectKey ? ("on" as const) : ("off" as const),
           })),
-          ...(props.onArchiveProject ? archiveProjectMenuActions(selectedProject) : []),
+          ...archiveProjectMenuActions(selectedProject, props.onArchiveProject),
         ]}
         onSelect={(id) => {
-          if (id === ARCHIVE_PROJECT_ACTION_ID) props.onArchiveProject?.();
-          else if (id === "all") props.onProjectChange(null);
+          if (runArchiveProjectAction(id, props.onArchiveProject)) return;
+          if (id === "all") props.onProjectChange(null);
           else {
             const project = props.projects.find(
               (candidate) => JSON.stringify(candidate.key) === id,

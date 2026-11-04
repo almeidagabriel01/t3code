@@ -1,9 +1,6 @@
 import type { MenuAction } from "@react-native-menu/menu";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
-import {
-  ARCHIVE_PROJECT_ACTION_ID,
-  archiveProjectMenuActions,
-} from "../projects/archiveProjectMenu";
+import { archiveProjectMenuActions, runArchiveProjectAction } from "../projects/archiveProjectMenu";
 import { ThreadListToolbar } from "./ThreadListToolbar";
 import type { HomeHeaderProps } from "./HomeHeader.types";
 
@@ -53,11 +50,10 @@ export function HomeHeader(props: HomeHeaderProps) {
             ],
           },
         ] satisfies MenuAction[])),
-    ...(props.onArchiveProject
-      ? archiveProjectMenuActions(
-          props.projects.find((project) => project.key === props.selectedProjectKey),
-        )
-      : []),
+    ...archiveProjectMenuActions(
+      props.projects.find((project) => project.key === props.selectedProjectKey),
+      props.onArchiveProject,
+    ),
   ];
   const handleMenuAction = (event: { nativeEvent: { event: string } }) => {
     const id = event.nativeEvent.event;
@@ -77,10 +73,7 @@ export function HomeHeader(props: HomeHeaderProps) {
       return;
     }
 
-    if (id === ARCHIVE_PROJECT_ACTION_ID) {
-      props.onArchiveProject?.();
-      return;
-    }
+    if (runArchiveProjectAction(id, props.onArchiveProject)) return;
 
     if (id === "project:all") {
       props.onProjectChange(null);

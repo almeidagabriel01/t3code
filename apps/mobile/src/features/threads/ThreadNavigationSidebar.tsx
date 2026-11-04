@@ -54,11 +54,8 @@ import { useThreadJumpShortcuts } from "../keyboard/threadKeyboardShortcuts";
 import { requestThreadMessageJump } from "./threadMessageJump";
 import { useThreadListSearchMatches } from "./useThreadListSearchMatches";
 import { useHomeListOptions } from "../home/home-list-options";
-import {
-  ARCHIVE_PROJECT_ACTION_ID,
-  archiveProjectMenuActions,
-} from "../projects/archiveProjectMenu";
-import { useProjectOrganize } from "../projects/useProjectOrganize";
+import { archiveProjectMenuActions, runArchiveProjectAction } from "../projects/archiveProjectMenu";
+import { useArchiveSelectedProject } from "../projects/useProjectOrganize";
 import { buildHomeListFilterMenu } from "../home/home-list-filter-menu";
 import { buildHomeProjectScopes } from "../home/homeThreadList";
 import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "../home/thread-swipe-actions";
@@ -165,7 +162,6 @@ function ThreadNavigationSidebarPane(
   const enabledTabs = useEnabledNavigationTabs();
   const floatingTabs = floatingTabsMetrics(enabledTabs.length + 1, scale, fabSize, props.width);
   const projects = useProjects();
-  const { canOrganizeRefs, setScopeArchived } = useProjectOrganize();
   const threads = useNavigationThreadShells();
   const { environments: workspaceEnvironments, state: catalogState } = useWorkspaceState();
   const { savedConnectionsById } = useSavedRemoteConnections();
@@ -355,10 +351,11 @@ function ThreadNavigationSidebarPane(
           },
         ]
       : threadListV2Items;
-  const archiveSelectedProject =
-    selectedProjectScope && canOrganizeRefs(selectedProjectScope.projectRefs)
-      ? () => void setScopeArchived(selectedProjectScope.projectRefs, true)
-      : undefined;
+  const archiveSelectedProject = useArchiveSelectedProject({
+    environmentId: options.selectedEnvironmentId,
+    projectGroupingMode: options.projectGroupingMode,
+    selectedKey: selectedProjectKey,
+  });
   const listMenuActions = [
     {
       id: "environment",
@@ -401,11 +398,10 @@ function ThreadNavigationSidebarPane(
             ],
           },
         ] satisfies MenuAction[])),
-    ...(archiveSelectedProject
-      ? archiveProjectMenuActions(
-          projectFilterOptions.find((project) => project.key === selectedProjectKey),
-        )
-      : []),
+    ...archiveProjectMenuActions(
+      projectFilterOptions.find((project) => project.key === selectedProjectKey),
+      archiveSelectedProject,
+    ),
   ] satisfies MenuAction[];
   const handleListMenuAction = ({
     nativeEvent,
@@ -424,10 +420,7 @@ function ThreadNavigationSidebarPane(
       if (environment) setSelectedEnvironmentId(environment.environmentId);
       return;
     }
-    if (event === ARCHIVE_PROJECT_ACTION_ID) {
-      archiveSelectedProject?.();
-      return;
-    }
+    if (runArchiveProjectAction(event, archiveSelectedProject)) return;
     if (event === "project:all") {
       setSelectedProjectKey(null);
       return;
