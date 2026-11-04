@@ -1,8 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { AtomRegistry } from "effect/reactivity";
+import { describe, expect, it } from "vite-plus/test";
 
 import {
   composerKanbanCardChipState,
-  consumeKanbanCardSkip,
+  kanbanCardSkipAtom,
+  takeKanbanCardSkip,
   kanbanCardSkipKey,
 } from "./kanbanCardSkip.ts";
 
@@ -21,8 +23,12 @@ describe("kanban card skip", () => {
   });
 
   it("a send consumes the flag", () => {
-    expect(consumeKanbanCardSkip(true)).toEqual({ attach: false, skipped: false });
-    expect(consumeKanbanCardSkip(false)).toEqual({ attach: true, skipped: false });
+    const registry = AtomRegistry.make();
+    const key = kanbanCardSkipKey("e", "t");
+    expect(takeKanbanCardSkip(registry, key)).toBe(true);
+    registry.set(kanbanCardSkipAtom(key), true);
+    expect(takeKanbanCardSkip(registry, key)).toBe(false);
+    expect(takeKanbanCardSkip(registry, key)).toBe(true);
   });
 
   it("keys by environment and thread", () => {

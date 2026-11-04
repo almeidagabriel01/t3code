@@ -1,4 +1,4 @@
-import { Atom } from "effect/reactivity";
+import { Atom, type AtomRegistry } from "effect/reactivity";
 
 import { shouldDeliverKanbanCard } from "./kanbanLogic.ts";
 
@@ -11,9 +11,15 @@ export function kanbanCardSkipKey(environmentId: string, threadId: string): stri
   return `${environmentId}\n${threadId}`;
 }
 
-/** Whether to attach the card to this send, and the flag value to leave behind. */
-export function consumeKanbanCardSkip(skipped: boolean): { attach: boolean; skipped: false } {
-  return { attach: !skipped, skipped: false };
+/** Clears the flag as a send consumes it; true when that send should carry the card. */
+export function takeKanbanCardSkip(
+  registry: AtomRegistry.AtomRegistry,
+  threadKey: string,
+): boolean {
+  const atom = kanbanCardSkipAtom(threadKey);
+  const skipped = registry.get(atom);
+  if (skipped) registry.set(atom, false);
+  return !skipped;
 }
 
 /** What the composer shows for a thread's linked card: nothing once delivered, else the chip or its removed form. */
