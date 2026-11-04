@@ -47,6 +47,8 @@ interface RendererRecord {
     | "dom-ready"
     | "sample"
     | "render-process-gone"
+    | "unresponsive"
+    | "responsive"
     | "destroyed";
   readonly webContentsId: number;
   readonly surface: RendererIdentity["surface"];
@@ -206,6 +208,9 @@ const make = Effect.fn("DesktopRendererHistory.make")(function* () {
         renderer.gone = true;
         record(renderer, "render-process-gone", details);
       };
+      // A hung page keeps its process, so only these show when it stopped and came back.
+      const onUnresponsive = () => record(renderer, "unresponsive");
+      const onResponsive = () => record(renderer, "responsive");
       const onDestroyed = () => {
         record(renderer, "destroyed");
         active.delete(webContents.id);
@@ -222,6 +227,8 @@ const make = Effect.fn("DesktopRendererHistory.make")(function* () {
           webContents.removeListener("dom-ready", onDomReady);
           webContents.removeListener("devtools-opened", onDevToolsOpened);
           webContents.removeListener("render-process-gone", onGone);
+          webContents.removeListener("unresponsive", onUnresponsive);
+          webContents.removeListener("responsive", onResponsive);
           webContents.removeListener("destroyed", onDestroyed);
         },
       };
@@ -229,6 +236,8 @@ const make = Effect.fn("DesktopRendererHistory.make")(function* () {
       webContents.on("dom-ready", onDomReady);
       webContents.on("devtools-opened", onDevToolsOpened);
       webContents.on("render-process-gone", onGone);
+      webContents.on("unresponsive", onUnresponsive);
+      webContents.on("responsive", onResponsive);
       webContents.once("destroyed", onDestroyed);
       record(renderer, "created");
     }).pipe(

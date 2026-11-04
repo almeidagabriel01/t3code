@@ -253,6 +253,15 @@ describe("DesktopRendererHistory", () => {
           yield* history.recordMetrics(metrics);
           assert.equal((yield* Deferred.await(replacementSampled)).rendererCreationTimeMs, 700_300);
 
+          for (const event of ["unresponsive", "responsive"] as const) {
+            const written = yield* Deferred.make<Record>();
+            milestone = { matches: (row) => row.event === event, written };
+            preview.emit(event);
+            const row = yield* Deferred.await(written);
+            assert.equal(row.rendererPid, 7_003);
+            assert.equal(row.tabId, "preview-tab");
+          }
+
           const crashed = yield* Deferred.make<Record>();
           milestone = { matches: (row) => row.event === "render-process-gone", written: crashed };
           previewPid = 0;
