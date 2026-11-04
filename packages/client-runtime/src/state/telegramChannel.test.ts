@@ -89,7 +89,7 @@ describe("labels", () => {
 
 describe("createTelegramChannelEnvironmentAtoms", () => {
   it("builds the settings query, status stream and the guarded configure command", () => {
-    const atoms = createTelegramChannelEnvironmentAtoms(Atom.runtime(Layer.empty));
+    const atoms = createTelegramChannelEnvironmentAtoms(Atom.runtime(Layer.empty) as never);
     expect(Object.keys(atoms).sort()).toEqual(["configure", "settings", "status"]);
     expect(atoms.settings({ environmentId: "hub" as never, input: {} })).toBeDefined();
     expect(atoms.status({ environmentId: "hub" as never, input: null })).toBeDefined();
