@@ -14,8 +14,8 @@ export interface ContinuationCandidate {
 /**
  * The terminal run events of live threads whose messages are not yet summarized, or whose
  * consolidation is due. The worker re-derives deterministic work from them, so a reader snapshot
- * one commit behind only repeats a no-op insert. On the reader this multi-join scan (hundreds of
- * milliseconds on a large history) no longer occupies the writer the whole server shares.
+ * one commit behind only repeats a no-op insert. It runs on the reader so it never occupies the writer the whole server shares; the per-thread
+ * lookups depend on the thread event indexes (a 2 GB history took tens of seconds without them).
  */
 export const selectContinuationCandidates = (
   sql: SqlClient.SqlClient,
