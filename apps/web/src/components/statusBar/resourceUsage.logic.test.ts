@@ -158,6 +158,45 @@ describe("buildResourceTree", () => {
     ]);
   });
 
+  it("lists each row's processes once", () => {
+    const tree = run();
+    const rows = tree.projects.find((project) => project.projectKey === "A")!.rows;
+    const pids = (owner: { processes: ReadonlyArray<ResourceTelemetryProcess> }) =>
+      owner.processes.map((process) => process.identity.pid);
+    expect(rows.map(pids)).toEqual([
+      [11, 10],
+      [21, 20],
+    ]);
+    expect(tree.devices.map(pids)).toEqual([
+      [42, 41],
+      [43, 40],
+    ]);
+    const all = [...rows, ...tree.devices].flatMap(pids);
+    expect(new Set(all).size).toBe(all.length);
+  });
+
+  it.each([
+    ["memory", [2, 3, 1]],
+    ["cpu", [3, 1, 2]],
+    ["name", [1, 3, 2]],
+  ] as const)("sorts a row's processes by %s", (sort, expected) => {
+    const processes = [
+      p(1, [2, 3], 100, 5, "a", "zeta"),
+      p(2, [], 900, 1, "node", "node /x/node_modules/vite/bin/vite.js"),
+      p(3, [], 500, 80, "node", "node scripts/build.js"),
+    ];
+    const tree = run({
+      processes,
+      terminals: [{ key: "a", name: "a", threadId: "x", projectKey: "A", pid: 1 }],
+      agents: [],
+      hubPids: [],
+      sort,
+    });
+    expect(tree.projects[0]!.rows[0]!.processes.map((process) => process.identity.pid)).toEqual(
+      expected,
+    );
+  });
+
   it.each([
     ["memory", ["Project B", "Project A"]],
     ["cpu", ["Project A", "Project B"]],

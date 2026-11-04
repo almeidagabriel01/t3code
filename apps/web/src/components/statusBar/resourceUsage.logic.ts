@@ -1,5 +1,7 @@
 import type { ResourceTelemetryProcess } from "@t3tools/contracts";
 
+import { processLabel } from "./processLabel.logic";
+
 export interface ResourceUsage {
   readonly rssBytes: number;
   readonly cpuPercent: number;
@@ -24,17 +26,23 @@ function claimUsage(
   processes: ReadonlyArray<ResourceTelemetryProcess>,
   roots: ReadonlyArray<UsageRoot>,
   claimed: Set<number> = new Set(),
-): ReadonlyMap<string, ResourceUsage> {
+): {
+  readonly usage: ReadonlyMap<string, ResourceUsage>;
+  readonly processes: ReadonlyMap<string, ReadonlyArray<ResourceTelemetryProcess>>;
+} {
   const byPid = new Map(processes.map((process) => [process.identity.pid, process]));
   const perRoot = new Map<string, ResourceUsage>();
+  const processesPerRoot = new Map<string, ResourceTelemetryProcess[]>();
   for (const root of roots) {
     let usage = EMPTY_USAGE;
+    const owned: ResourceTelemetryProcess[] = [];
     const pending = root.pid === null ? [] : [root.pid];
     while (pending.length > 0) {
       const pid = pending.pop()!;
       const process = byPid.get(pid);
       if (process === undefined || claimed.has(pid)) continue;
       claimed.add(pid);
+      owned.push(process);
       usage = addUsage(usage, {
         rssBytes: process.residentBytes,
         cpuPercent: process.cpuPercent,
@@ -43,8 +51,9 @@ function claimUsage(
       pending.push(...process.childPids);
     }
     perRoot.set(root.key, usage);
+    processesPerRoot.set(root.key, owned);
   }
-  return perRoot;
+  return { usage: perRoot, processes: processesPerRoot };
 }
 
 export interface TerminalRoot {
@@ -67,7 +76,7 @@ export function attributeTerminalUsage(
   terminals: ReadonlyArray<TerminalRoot>,
 ): AttributedUsage {
   const claimed = new Set<number>();
-  const perTerminal = claimUsage(processes, terminals, claimed);
+  const perTerminal = claimUsage(processes, terminals, claimed).usage;
   const perProject = new Map<string | null, ResourceUsage>();
   for (const terminal of terminals) {
     perProject.set(
@@ -131,6 +140,7 @@ export type ProjectRow =
       readonly name: string;
       readonly threadId: string;
       readonly usage: ResourceUsage;
+      readonly processes: ReadonlyArray<ResourceTelemetryProcess>;
     }
   | {
       readonly kind: "agent";
@@ -138,6 +148,7 @@ export type ProjectRow =
       readonly name: string;
       readonly threadId: string;
       readonly usage: ResourceUsage;
+      readonly processes: ReadonlyArray<ResourceTelemetryProcess>;
     };
 
 export interface ProjectNode {
@@ -154,6 +165,7 @@ export interface DeviceRow {
   readonly label: string;
   readonly platform: DevicePlatform;
   readonly usage: ResourceUsage;
+  readonly processes: ReadonlyArray<ResourceTelemetryProcess>;
 }
 
 export interface ResourceTree {
@@ -217,6 +229,14 @@ function deviceRoots(
   ];
 }
 
+const compareProcesses =
+  (sort: ResourceSort) => (left: ResourceTelemetryProcess, right: ResourceTelemetryProcess) =>
+    sort === "name"
+      ? processLabel(left).localeCompare(processLabel(right))
+      : sort === "cpu"
+        ? right.cpuPercent - left.cpuPercent
+        : right.residentBytes - left.residentBytes;
+
 const compareUsage =
   (sort: ResourceSort) =>
   (left: ResourceUsage, right: ResourceUsage, leftName: string, rightName: string) =>
@@ -242,14 +262,17 @@ export function buildResourceTree(input: {
 }): ResourceTree {
   const { processes, sort } = input;
   const claimed = new Set<number>();
-  const terminalUsage = claimUsage(processes, input.terminals, claimed);
-  const agentUsage = claimUsage(
+  const terminalClaim = claimUsage(processes, input.terminals, claimed);
+  const agentClaim = claimUsage(
     processes,
     input.agents.map((agent) => ({ key: agent.threadId, pid: agent.pid })),
     claimed,
   );
   const deviceList = deviceRoots(processes, input.hubPids);
-  const deviceUsage = claimUsage(processes, deviceList, claimed);
+  const deviceClaim = claimUsage(processes, deviceList, claimed);
+  const compareProcess = compareProcesses(sort);
+  const sortedProcesses = (claim: ReturnType<typeof claimUsage>, key: string) =>
+    (claim.processes.get(key) ?? []).toSorted(compareProcess);
 
   const rowsByProject = new Map<string | null, ProjectRow[]>();
   const push = (projectKey: string | null, row: ProjectRow) =>
@@ -260,11 +283,12 @@ export function buildResourceTree(input: {
       key: terminal.key,
       name: terminal.name,
       threadId: terminal.threadId,
-      usage: terminalUsage.get(terminal.key) ?? EMPTY_USAGE,
+      usage: terminalClaim.usage.get(terminal.key) ?? EMPTY_USAGE,
+      processes: sortedProcesses(terminalClaim, terminal.key),
     });
   }
   for (const agent of input.agents) {
-    const usage = agentUsage.get(agent.threadId) ?? EMPTY_USAGE;
+    const usage = agentClaim.usage.get(agent.threadId) ?? EMPTY_USAGE;
     if (usage.processCount === 0) continue;
     push(input.projectOfThread(agent.threadId), {
       kind: "agent",
@@ -272,6 +296,7 @@ export function buildResourceTree(input: {
       name: input.threadTitle(agent.threadId),
       threadId: agent.threadId,
       usage,
+      processes: sortedProcesses(agentClaim, agent.threadId),
     });
   }
 
@@ -292,7 +317,8 @@ export function buildResourceTree(input: {
       key: device.key,
       label: device.label,
       platform: device.platform,
-      usage: deviceUsage.get(device.key) ?? EMPTY_USAGE,
+      usage: deviceClaim.usage.get(device.key) ?? EMPTY_USAGE,
+      processes: sortedProcesses(deviceClaim, device.key),
     }))
     .filter((device) => device.usage.processCount > 0)
     .toSorted((a, b) => compare(a.usage, b.usage, a.label, b.label));

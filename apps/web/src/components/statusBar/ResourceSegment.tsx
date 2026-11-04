@@ -4,6 +4,7 @@ import {
   AuthOrchestrationReadScope,
   type EnvironmentId,
   type ProjectId,
+  type ResourceTelemetryProcess,
   type ResourceTelemetrySnapshot,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -34,6 +35,7 @@ import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { processLabel } from "./processLabel.logic";
 import {
   addUsage,
   buildResourceTree,
@@ -66,6 +68,9 @@ const CPU_COLUMN = "w-12 text-right";
 const MEM_COLUMN = "w-16 text-right";
 const GUTTER = "flex w-5 shrink-0 items-center justify-end";
 const METRICS = "flex shrink-0 items-center tabular-nums";
+
+const HEAVY_CPU_PERCENT = 50;
+const HEAVY_RSS_BYTES = 1024 ** 3;
 
 const formatCpu = (cpuPercent: number) => `${Math.round(cpuPercent)}%`;
 
@@ -165,6 +170,58 @@ const DEVICE_ICON: Record<DevicePlatform, typeof SmartphoneIcon> = {
   tools: WrenchIcon,
 };
 
+function ProcessList({
+  processes,
+}: {
+  readonly processes: ReadonlyArray<ResourceTelemetryProcess>;
+}) {
+  return (
+    <div>
+      {processes.map((process) => {
+        const heavy =
+          process.cpuPercent >= HEAVY_CPU_PERCENT || process.residentBytes >= HEAVY_RSS_BYTES;
+        const label = processLabel(process);
+        return (
+          <div
+            key={process.identity.pid}
+            className="flex items-center gap-2 py-1 pl-16 pr-3 hover:bg-foreground/8"
+          >
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <div
+                    data-heavy={heavy ? "" : undefined}
+                    className={cn(
+                      "flex min-w-0 flex-1 cursor-default items-baseline gap-2 text-2xs",
+                      heavy ? "text-warning" : "text-muted-foreground",
+                    )}
+                  />
+                }
+              >
+                <span className="max-w-[45%] shrink-0 truncate font-medium">{label}</span>
+                <span dir="rtl" className="min-w-0 flex-1 truncate text-left opacity-70">
+                  <bdi dir="ltr">{process.command}</bdi>
+                </span>
+              </TooltipTrigger>
+              <TooltipPopup side="top" className="max-w-sm break-all">
+                {process.command} · pid {process.identity.pid}
+              </TooltipPopup>
+            </Tooltip>
+            <Metrics
+              usage={{
+                cpuPercent: process.cpuPercent,
+                rssBytes: process.residentBytes,
+                processCount: 1,
+              }}
+            />
+            <span className={GUTTER} aria-hidden />
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function UsageRow({
   icon,
   label,
@@ -174,6 +231,7 @@ function UsageRow({
   onOpen,
   closeLabel,
   onClose,
+  processes,
 }: {
   readonly icon: React.ReactNode;
   readonly label: string;
@@ -184,7 +242,11 @@ function UsageRow({
   readonly onOpen: (() => void) | null;
   readonly closeLabel?: string;
   readonly onClose?: (() => void) | null;
+  /** Rows with processes expand to list them; only an open row renders the list. */
+  readonly processes?: ReadonlyArray<ResourceTelemetryProcess> | undefined;
 }) {
+  const [expanded, setExpanded] = useState(false);
+  const expandable = processes !== undefined && processes.length > 0;
   const text = (
     <>
       {label}
@@ -192,54 +254,73 @@ function UsageRow({
     </>
   );
   return (
-    <div className="group/row flex items-center gap-2 py-1.5 pl-10 pr-3 hover:bg-foreground/8">
-      <span className="shrink-0 text-muted-foreground [&>svg]:size-3">{icon}</span>
-      {onOpen === null ? (
-        <span className="min-w-0 flex-1 truncate text-start text-2xs text-muted-foreground">
-          {text}
-        </span>
-      ) : (
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <button
-                type="button"
-                onClick={onOpen}
-                className="min-w-0 flex-1 cursor-pointer truncate rounded-sm text-start text-2xs text-muted-foreground outline-none hover:text-foreground focus-visible:text-foreground focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
-              />
-            }
-          >
-            {text}
-          </TooltipTrigger>
-          <TooltipPopup side="top">{detail}</TooltipPopup>
-        </Tooltip>
-      )}
-      <Metrics usage={usage} />
-      <span
+    <>
+      <div
         className={cn(
-          GUTTER,
-          "opacity-0 group-focus-within/row:opacity-100 group-hover/row:opacity-100 pointer-coarse:opacity-100",
+          "group/row flex items-center gap-2 py-1.5 pr-3 hover:bg-foreground/8",
+          expandable ? "pl-5" : "pl-10",
         )}
       >
-        {onClose === null || onClose === undefined ? null : (
+        {expandable ? (
+          <button
+            type="button"
+            aria-expanded={expanded}
+            aria-label={`${expanded ? "Hide" : "Show"} processes of ${label}`}
+            onClick={() => setExpanded((value) => !value)}
+            className="flex w-5 shrink-0 cursor-pointer items-center justify-center self-stretch rounded-sm outline-none hover:bg-foreground/8 focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+          >
+            <ChevronToggle open={expanded} />
+          </button>
+        ) : null}
+        <span className="shrink-0 text-muted-foreground [&>svg]:size-3">{icon}</span>
+        {onOpen === null ? (
+          <span className="min-w-0 flex-1 truncate text-start text-2xs text-muted-foreground">
+            {text}
+          </span>
+        ) : (
           <Tooltip>
             <TooltipTrigger
               render={
-                <Button
-                  variant="ghost-destructive"
-                  size="icon-micro"
-                  aria-label={`${closeLabel} ${label}`}
-                  onClick={onClose}
+                <button
+                  type="button"
+                  onClick={onOpen}
+                  className="min-w-0 flex-1 cursor-pointer truncate rounded-sm text-start text-2xs text-muted-foreground outline-none hover:text-foreground focus-visible:text-foreground focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
                 />
               }
             >
-              <XIcon aria-hidden />
+              {text}
             </TooltipTrigger>
-            <TooltipPopup side="top">{closeLabel}</TooltipPopup>
+            <TooltipPopup side="top">{detail}</TooltipPopup>
           </Tooltip>
         )}
-      </span>
-    </div>
+        <Metrics usage={usage} />
+        <span
+          className={cn(
+            GUTTER,
+            "opacity-0 group-focus-within/row:opacity-100 group-hover/row:opacity-100 pointer-coarse:opacity-100",
+          )}
+        >
+          {onClose === null || onClose === undefined ? null : (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant="ghost-destructive"
+                    size="icon-micro"
+                    aria-label={`${closeLabel} ${label}`}
+                    onClick={onClose}
+                  />
+                }
+              >
+                <XIcon aria-hidden />
+              </TooltipTrigger>
+              <TooltipPopup side="top">{closeLabel}</TooltipPopup>
+            </Tooltip>
+          )}
+        </span>
+      </div>
+      {expandable && expanded ? <ProcessList processes={processes} /> : null}
+    </>
   );
 }
 
@@ -372,6 +453,7 @@ export function EnvironmentSection({
                   label={row.name}
                   detail={`Agent · ${row.name}`}
                   usage={usage}
+                  processes={snapshot === null ? undefined : row.processes}
                   onOpen={() => openThread(row.threadId as ThreadId)}
                 />
               );
@@ -385,6 +467,7 @@ export function EnvironmentSection({
                 detail={session?.state.summary?.cwd ?? row.name}
                 suffix={session?.state.hasRunningSubprocess ? "running" : null}
                 usage={usage}
+                processes={snapshot === null ? undefined : row.processes}
                 onOpen={() => openThread(row.threadId as ThreadId)}
                 closeLabel="End terminal"
                 onClose={
@@ -415,6 +498,7 @@ export function EnvironmentSection({
                 label={device.label}
                 detail={device.label}
                 usage={device.usage}
+                processes={device.processes}
                 onOpen={null}
               />
             );

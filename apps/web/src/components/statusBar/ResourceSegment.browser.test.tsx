@@ -101,6 +101,39 @@ describe("EnvironmentSection", () => {
     expect(closeTerminal).toHaveBeenCalledWith({ threadId: "t1", terminalId: "term" }, "dev");
   });
 
+  it("expands a row to list its processes with usage and the full command", async () => {
+    const props = setup();
+    const deep = {
+      ...snapshot,
+      processes: [
+        proc(10, [11], 1_000_000, "zsh", 'zsh -c "npm run dev"'),
+        {
+          ...proc(11, [], 2 * 1024 ** 3, "node", "node /x/node_modules/vite/bin/vite.js"),
+          cpuPercent: 80,
+        },
+      ],
+      owners: [],
+    } as unknown as ResourceTelemetrySnapshot;
+    await using screen = await render(
+      <EnvironmentSection {...props} snapshot={deep} sort="memory" label={null} />,
+      { router: "/" },
+    );
+    expect(screen.container.textContent).not.toContain("vite");
+    const toggle = screen.getByRole("button", { name: /processes of dev/ });
+    await expect.element(toggle).toHaveAttribute("aria-expanded", "false");
+    await userEvent.click(toggle);
+    await expect.element(toggle).toHaveAttribute("aria-expanded", "true");
+    await expect.element(screen.getByText("vite", { exact: true })).toBeVisible();
+    await expect.element(screen.getByText("npm run dev", { exact: true })).toBeVisible();
+    expect(screen.container.querySelector("[data-heavy]")?.textContent).toContain("vite");
+    await userEvent.hover(screen.getByText("vite", { exact: true }));
+    await expect
+      .element(screen.getByText("node /x/node_modules/vite/bin/vite.js · pid 11"))
+      .toBeVisible();
+    await userEvent.click(toggle);
+    await expect.element(toggle).toHaveAttribute("aria-expanded", "false");
+  });
+
   it("says nothing is running and shows no usage before the first sample", async () => {
     const props = setup();
     await using screen = await render(
