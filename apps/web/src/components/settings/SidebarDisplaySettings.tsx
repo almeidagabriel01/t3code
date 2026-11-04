@@ -16,6 +16,7 @@ type SidebarDisplayValues = Pick<
   ClientSettings,
   | "sidebarShowSubagents"
   | "sidebarShowAgentsSection"
+  | "sidebarShowAssistantsSection"
   | "sidebarAgentActivityDisplayMode"
   | "projectHoverCardProperties"
 >;
@@ -40,6 +41,19 @@ export function SidebarDisplaySettingsRows({
 }) {
   return (
     <>
+      <SettingsRow
+        {...searchableSetting("sidebar-show-assistants-section")}
+        description="Pin your assistants above the agents and projects. Collapsed, they fit on one line."
+        control={
+          <Switch
+            checked={settings.sidebarShowAssistantsSection}
+            onCheckedChange={(checked) =>
+              updateSettings({ sidebarShowAssistantsSection: Boolean(checked) })
+            }
+            aria-label="Show Assistants section"
+          />
+        }
+      />
       <SettingsRow
         {...searchableSetting("sidebar-show-agents-section")}
         description="Pin the agents that are working or just finished, from every project, above the project list."

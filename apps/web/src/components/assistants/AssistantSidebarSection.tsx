@@ -2,6 +2,7 @@ import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environ
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import {
   ArchiveIcon,
+  ChevronRightIcon,
   UserRoundIcon,
   EllipsisIcon,
   PlusIcon,
@@ -11,6 +12,7 @@ import {
 import { memo, type KeyboardEvent as ReactKeyboardEvent } from "react";
 
 import { cn } from "~/lib/utils";
+import { updateClientSettings, useClientSettings } from "../../hooks/useSettings";
 import { type AssistantEntry, useAssistantEntries } from "../../state/assistants";
 import { useThreadShell } from "../../state/entities";
 import { useUiStateStore } from "../../uiStateStore";
@@ -26,14 +28,9 @@ import { AssistantAvatar } from "./assistantPresentation";
 import { openAssistantDialog } from "./assistantDialogState";
 import { useAssistantFlows } from "./useAssistantFlows";
 
-const AssistantRow = memo(function AssistantRow(props: {
-  readonly entry: AssistantEntry;
-  readonly environmentLabel: string | null;
-  readonly isActive: boolean;
-  readonly onOpen: (threadRef: ScopedThreadRef) => void;
-}) {
-  const { assistant, environmentId } = props.entry;
-  const flows = useAssistantFlows(environmentId);
+/** What a row and a collapsed avatar both show: working, the attention dot, and how to open. */
+function useAssistantState(entry: AssistantEntry, onOpen: (threadRef: ScopedThreadRef) => void) {
+  const { assistant, environmentId } = entry;
   const threadRef =
     assistant.threadId === null ? null : scopeThreadRef(environmentId, assistant.threadId);
   const thread = useThreadShell(threadRef);
@@ -51,8 +48,20 @@ const AssistantRow = memo(function AssistantRow(props: {
           hasOpenDecision: false,
         });
   const open = () => {
-    if (threadRef !== null) props.onOpen(threadRef);
+    if (threadRef !== null) onOpen(threadRef);
   };
+  return { working, dotClass, open };
+}
+
+const AssistantRow = memo(function AssistantRow(props: {
+  readonly entry: AssistantEntry;
+  readonly environmentLabel: string | null;
+  readonly isActive: boolean;
+  readonly onOpen: (threadRef: ScopedThreadRef) => void;
+}) {
+  const { assistant, environmentId } = props.entry;
+  const flows = useAssistantFlows(environmentId);
+  const { working, dotClass, open } = useAssistantState(props.entry, props.onOpen);
   const onKeyDown = (event: ReactKeyboardEvent) => {
     if ((event.target as HTMLElement).closest("button")) return;
     if (event.key === "Enter" || event.key === " ") {
@@ -140,6 +149,54 @@ const AssistantRow = memo(function AssistantRow(props: {
   );
 });
 
+const COLLAPSED_AVATARS = 5;
+
+/** One assistant in the collapsed strip: its initial, its state, and one click to its chat. */
+const AssistantAvatarButton = memo(function AssistantAvatarButton(props: {
+  readonly entry: AssistantEntry;
+  readonly isActive: boolean;
+  readonly onOpen: (threadRef: ScopedThreadRef) => void;
+}) {
+  const { assistant } = props.entry;
+  const { working, dotClass, open } = useAssistantState(props.entry, props.onOpen);
+  const label = `Open ${assistant.name}${working ? ", working" : dotClass ? ", unread" : ""}`;
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            aria-label={label}
+            aria-current={props.isActive ? "page" : undefined}
+            disabled={assistant.threadId === null}
+            onClick={(event) => {
+              event.stopPropagation();
+              open();
+            }}
+            className={cn(
+              "relative inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-full outline-none hover:bg-foreground/8 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:cursor-default",
+              props.isActive && "ring-1 ring-foreground/30",
+            )}
+          />
+        }
+      >
+        <AssistantAvatar assistant={assistant} />
+        {working ? (
+          <span className="absolute -right-0.5 -bottom-0.5 inline-flex rounded-full bg-sidebar">
+            <Spinner size="xs" tone="muted" aria-hidden />
+          </span>
+        ) : (
+          <SidebarNotificationDot
+            dotClass={dotClass}
+            className="absolute top-0 right-0 ring-2 ring-sidebar"
+          />
+        )}
+      </TooltipTrigger>
+      <TooltipPopup side="top">{assistant.name}</TooltipPopup>
+    </Tooltip>
+  );
+});
+
 /** Pinned above the project groups: one row per active assistant, and a way to add another. */
 export const AssistantSidebarSection = memo(function AssistantSidebarSection(props: {
   readonly routeThreadKey: string | null;
@@ -147,52 +204,115 @@ export const AssistantSidebarSection = memo(function AssistantSidebarSection(pro
   readonly onOpenThread: (threadRef: ScopedThreadRef) => void;
 }) {
   const { active } = useAssistantEntries();
-  if (active.length === 0) return null;
+  const enabled = useClientSettings((settings) => settings.sidebarShowAssistantsSection);
+  const collapsed = useClientSettings((settings) => settings.sidebarAssistantsCollapsed);
+  if (!enabled || active.length === 0) return null;
   const environmentCount = new Set(active.map((entry) => entry.environmentId)).size;
+  const keyOf = (entry: AssistantEntry) =>
+    entry.assistant.threadId
+      ? scopedThreadKey(scopeThreadRef(entry.environmentId, entry.assistant.threadId))
+      : null;
+  const strip = active.slice(0, COLLAPSED_AVATARS);
+  const overflow = active.length - strip.length;
+  const toggle = () => void updateClientSettings({ sidebarAssistantsCollapsed: !collapsed });
   return (
     <>
       <li
-        role="presentation"
-        className="flex h-7 list-none items-center gap-1 px-(--sidebar-row-content-inset)"
+        role="treeitem"
+        tabIndex={-1}
+        aria-expanded={!collapsed}
+        aria-label={`Assistants, ${active.length}`}
+        data-sidebar-row="section:assistants"
+        className="flex h-7 cursor-pointer list-none items-center gap-1 rounded-md px-(--sidebar-row-content-inset) outline-none hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+        onClick={(event) => {
+          if ((event.target as HTMLElement).closest("button")) return;
+          toggle();
+        }}
+        onKeyDown={(event) => {
+          if (event.target !== event.currentTarget) return;
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            toggle();
+          }
+        }}
       >
         <UserRoundIcon aria-hidden className="size-3.5 shrink-0 text-(--sidebar-icon-color)" />
-        <span className="min-w-0 flex-1 truncate text-xs font-medium text-secondary-label">
+        <span className="shrink-0 truncate text-xs font-medium text-secondary-label">
           Assistants
         </span>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <button
-                type="button"
-                aria-label="New assistant"
-                onClick={() => openAssistantDialog()}
-                className="inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-foreground/8 hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-              />
-            }
-          >
-            <PlusIcon className="size-4" />
-          </TooltipTrigger>
-          <TooltipPopup side="top">New assistant</TooltipPopup>
-        </Tooltip>
-      </li>
-      {active.map((entry) => {
-        const key = entry.assistant.threadId
-          ? scopedThreadKey(scopeThreadRef(entry.environmentId, entry.assistant.threadId))
-          : null;
-        return (
-          <AssistantRow
-            key={`${entry.environmentId}:${entry.assistant.id}`}
-            entry={entry}
-            environmentLabel={
-              environmentCount > 1
-                ? (props.environmentLabelById.get(entry.environmentId) ?? null)
-                : null
-            }
-            isActive={key !== null && key === props.routeThreadKey}
-            onOpen={props.onOpenThread}
+        <span className="flex min-w-0 flex-1 items-center gap-0.5 ps-1.5">
+          {collapsed
+            ? strip.map((entry) => {
+                const key = keyOf(entry);
+                return (
+                  <AssistantAvatarButton
+                    key={`${entry.environmentId}:${entry.assistant.id}`}
+                    entry={entry}
+                    isActive={key !== null && key === props.routeThreadKey}
+                    onOpen={props.onOpenThread}
+                  />
+                );
+              })
+            : null}
+          {collapsed && overflow > 0 ? (
+            <button
+              type="button"
+              aria-label={`Show all ${active.length} assistants`}
+              onClick={toggle}
+              className="inline-flex h-6 shrink-0 cursor-pointer items-center rounded-md px-1 text-2xs text-muted-foreground tabular-nums outline-none hover:bg-foreground/8 hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+            >
+              +{overflow}
+            </button>
+          ) : null}
+        </span>
+        {collapsed ? null : (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  aria-label="New assistant"
+                  onClick={() => openAssistantDialog()}
+                  className="inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-foreground/8 hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                />
+              }
+            >
+              <PlusIcon className="size-4" />
+            </TooltipTrigger>
+            <TooltipPopup side="top">New assistant</TooltipPopup>
+          </Tooltip>
+        )}
+        <button
+          type="button"
+          aria-label={collapsed ? "Expand assistants" : "Collapse assistants"}
+          aria-expanded={!collapsed}
+          onClick={toggle}
+          className="inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+        >
+          <ChevronRightIcon
+            aria-hidden
+            className={cn("size-3.5 shrink-0", !collapsed && "rotate-90")}
           />
-        );
-      })}
+        </button>
+      </li>
+      {collapsed
+        ? null
+        : active.map((entry) => {
+            const key = keyOf(entry);
+            return (
+              <AssistantRow
+                key={`${entry.environmentId}:${entry.assistant.id}`}
+                entry={entry}
+                environmentLabel={
+                  environmentCount > 1
+                    ? (props.environmentLabelById.get(entry.environmentId) ?? null)
+                    : null
+                }
+                isActive={key !== null && key === props.routeThreadKey}
+                onOpen={props.onOpenThread}
+              />
+            );
+          })}
       <li
         aria-hidden
         data-testid="sidebar-assistants-divider"

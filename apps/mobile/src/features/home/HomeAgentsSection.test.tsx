@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 const { mocks, Children } = vi.hoisted(() => ({
   Children: ({ children }: { children?: ReactNode }) => children,
-  mocks: { select: vi.fn() },
+  mocks: { select: vi.fn(), toggle: vi.fn(), expanded: false },
 }));
 vi.mock("react-native", () => ({
   View: Children,
@@ -39,6 +39,15 @@ vi.mock("../../state/entities", () => ({
       projectIcon: null,
     },
   ],
+}));
+vi.mock("../../components/ui/AppSymbol", () => ({
+  SymbolView: (props: { name: string }) => <s>{`chevron:${props.name}`}</s>,
+}));
+vi.mock("./useHomeSectionPreferences", () => ({
+  useHomeSectionPreferences: () => ({
+    agentsDoneExpanded: mocks.expanded,
+    toggleAgentsDone: mocks.toggle,
+  }),
 }));
 vi.mock("./UnreadActionsMenu", () => ({ UnreadActionsMenu: () => <i>unread-actions</i> }));
 vi.mock("../threads/SubagentStatusDot", () => ({ SubagentStatusDot: () => <u>done-dot</u> }));
@@ -89,6 +98,8 @@ beforeEach(() => {
   container = window.document.createElement("div");
   root = createRoot(container);
   mocks.select.mockReset();
+  mocks.toggle.mockReset();
+  mocks.expanded = false;
 });
 afterEach(() => act(() => root.unmount()));
 
@@ -112,14 +123,15 @@ describe("HomeAgentsSection", () => {
     expect(container.textContent).toContain(`spinner${label}`);
   });
 
-  it("lists working then done agents with their project, and opens one by id", async () => {
+  it("lists working then done agents on one line, and opens one by id", async () => {
+    mocks.expanded = true;
     render([
       finished("fin"),
       working("busy", "2026-03-09T10:00:00.000Z"),
       working("lost", null, { projectId: "gone" }),
     ]);
     expect(container.textContent).toMatch(
-      /Agents.*Working · 2.*icon:Alpha.*Title busy.*Alpha.*10m.*Title lost.*Unknown project.*Done · 1unread-actions.*Title fin.*done-dot/,
+      /Agents.*Working · 2.*icon:Alpha.*Title busy.*10m.*Title lost.*Done · 1.*chevron:chevron.down.*unread-actions.*Title fin.*done-dot/,
     );
     const row = container.querySelector<HTMLButtonElement>(
       '[aria-label="Title fin, Alpha, finished"]',
@@ -132,5 +144,17 @@ describe("HomeAgentsSection", () => {
     expect(
       container.querySelector('[aria-label="Title lost, Unknown project, working"]'),
     ).not.toBeNull();
+  });
+
+  it("keeps Done collapsed behind a chevron row and toggles it", async () => {
+    render([finished("fin"), working("busy", "2026-03-09T10:00:00.000Z")]);
+    expect(container.textContent).toContain("Title busy");
+    expect(container.textContent).toContain("Done · 1chevron:chevron.right");
+    expect(container.textContent).toContain("unread-actions");
+    expect(container.textContent).not.toContain("Title fin");
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label="Done, 1"]')?.click(),
+    );
+    expect(mocks.toggle).toHaveBeenCalledOnce();
   });
 });

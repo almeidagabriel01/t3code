@@ -10,6 +10,7 @@ const state = vi.hoisted(() => ({
   entries: [] as ActivityEntry[],
   enabled: true,
   collapsed: false,
+  doneCollapsed: false,
   update: vi.fn(),
 }));
 vi.mock("../activity/useActivity", () => ({ useActivityEntries: () => state.entries }));
@@ -27,7 +28,11 @@ vi.mock("../../state/entities", () => ({
 }));
 vi.mock("../../hooks/useSettings", () => ({
   useClientSettings: (select: (settings: Record<string, boolean>) => unknown) =>
-    select({ sidebarShowAgentsSection: state.enabled, sidebarAgentsCollapsed: state.collapsed }),
+    select({
+      sidebarShowAgentsSection: state.enabled,
+      sidebarAgentsCollapsed: state.collapsed,
+      sidebarAgentsDoneCollapsed: state.doneCollapsed,
+    }),
   updateClientSettings: state.update,
 }));
 vi.mock("../../hooks/useNowMinute", () => ({
@@ -47,10 +52,14 @@ const entry = (id: string, rank: 1 | 2, at: string | null, projectId = "p1"): Ac
   } as unknown as ActivityEntry["thread"],
 });
 
-function setup(entries: ActivityEntry[], options: { enabled?: boolean; collapsed?: boolean } = {}) {
+function setup(
+  entries: ActivityEntry[],
+  options: { enabled?: boolean; collapsed?: boolean; doneCollapsed?: boolean } = {},
+) {
   state.entries = entries;
   state.enabled = options.enabled ?? true;
   state.collapsed = options.collapsed ?? false;
+  state.doneCollapsed = options.doneCollapsed ?? false;
   state.update.mockClear();
 }
 
@@ -107,6 +116,26 @@ describe("AgentsSidebarSection", () => {
     expect(screen.container.querySelector('[data-testid="sidebar-agent-row"]')).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "Agents, 1" }));
     expect(state.update).toHaveBeenLastCalledWith({ sidebarAgentsCollapsed: false });
+  });
+
+  it("folds the done agents behind one row and keeps the working ones in view", async () => {
+    const entries = [entry("a", 1, "2026-03-09T10:00:00Z"), entry("b", 2, "2026-03-09T10:05:00Z")];
+    setup(entries, { doneCollapsed: true });
+    await using screen = await render(element());
+    const labels = () =>
+      [...screen.container.querySelectorAll<HTMLElement>('[data-testid="sidebar-agent-row"]')].map(
+        (row) => row.getAttribute("aria-label"),
+      );
+    expect(labels()).toEqual(["Title a, Alpha, Working 10m"]);
+    const done = screen.getByRole("button", { name: "Done · 1" });
+    await expect.element(done).toHaveAttribute("aria-expanded", "false");
+    await userEvent.click(done);
+    expect(state.update).toHaveBeenCalledWith({ sidebarAgentsDoneCollapsed: false });
+    setup(entries, { doneCollapsed: false });
+    await screen.rerender(element());
+    expect(labels()).toEqual(["Title a, Alpha, Working 10m", "Title b, Alpha, Finished"]);
+    await userEvent.click(screen.getByRole("button", { name: "Done · 1" }));
+    expect(state.update).toHaveBeenLastCalledWith({ sidebarAgentsDoneCollapsed: true });
   });
 
   it("caps a group and links the rest to Activity", async () => {

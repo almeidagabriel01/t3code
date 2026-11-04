@@ -13,11 +13,12 @@ import { formatElapsedDurationLabel } from "../../timestampFormat";
 import { useActivityEntries } from "../activity/useActivity";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { Spinner } from "../ui/spinner";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 const VISIBLE_ROWS = 6;
 
 const rowClass =
-  "group/sidebar-row flex min-h-9 w-full cursor-pointer items-center gap-2 rounded-md px-(--sidebar-row-content-inset) py-1 text-left text-sidebar-foreground outline-none select-none hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
+  "group/sidebar-row flex h-8 w-full cursor-pointer items-center gap-2 rounded-md px-(--sidebar-row-content-inset) text-left text-sidebar-foreground outline-none select-none hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
 
 function AgentRow(props: {
   readonly entry: ReturnType<typeof selectAgentsSection>["working"][number];
@@ -36,32 +37,38 @@ function AgentRow(props: {
     : "Finished";
   return (
     <li className="list-none py-0.5">
-      <button
-        type="button"
-        data-testid="sidebar-agent-row"
-        aria-label={`${thread.title}, ${projectName}, ${state}`}
-        aria-current={props.isActive ? "page" : undefined}
-        className={cn(rowClass, props.isActive && "bg-sidebar-row-active")}
-        onClick={() => props.onOpen(scopeThreadRef(thread.environmentId, thread.id))}
-      >
-        {props.project ? (
-          <ProjectFavicon project={props.project} className="size-4 shrink-0" />
-        ) : (
-          <BotIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
-        )}
-        <span className="flex min-w-0 flex-1 flex-col">
-          <span className="truncate text-sm font-medium">{thread.title}</span>
-          <span className="truncate text-xs text-muted-foreground">{projectName}</span>
-        </span>
-        {working ? (
-          <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground tabular-nums">
-            <Spinner size="xs" tone="muted" aria-hidden />
-            {at === null ? null : formatElapsedDurationLabel(at, props.nowMs)}
-          </span>
-        ) : (
-          <CheckIcon aria-hidden className="size-3.5 shrink-0 text-success" />
-        )}
-      </button>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <button
+              type="button"
+              data-testid="sidebar-agent-row"
+              aria-label={`${thread.title}, ${projectName}, ${state}`}
+              aria-current={props.isActive ? "page" : undefined}
+              className={cn(rowClass, props.isActive && "bg-sidebar-row-active")}
+              onClick={() => props.onOpen(scopeThreadRef(thread.environmentId, thread.id))}
+            />
+          }
+        >
+          {props.project ? (
+            <ProjectFavicon project={props.project} className="size-4 shrink-0" />
+          ) : (
+            <BotIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+          )}
+          <span className="min-w-0 flex-1 truncate text-sm font-medium">{thread.title}</span>
+          {working ? (
+            <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground tabular-nums">
+              <Spinner size="xs" tone="muted" aria-hidden />
+              {at === null ? null : formatElapsedDurationLabel(at, props.nowMs)}
+            </span>
+          ) : (
+            <CheckIcon aria-hidden className="size-3.5 shrink-0 text-success" />
+          )}
+        </TooltipTrigger>
+        <TooltipPopup side="right">
+          {thread.title} · {projectName}
+        </TooltipPopup>
+      </Tooltip>
     </li>
   );
 }
@@ -73,6 +80,7 @@ export const AgentsSidebarSection = memo(function AgentsSidebarSection(props: {
 }) {
   const enabled = useClientSettings((settings) => settings.sidebarShowAgentsSection);
   const collapsed = useClientSettings((settings) => settings.sidebarAgentsCollapsed);
+  const doneCollapsed = useClientSettings((settings) => settings.sidebarAgentsDoneCollapsed);
   const entries = useActivityEntries();
   const projects = useProjects();
   const nowMs = useNowMinuteMs();
@@ -111,12 +119,32 @@ export const AgentsSidebarSection = memo(function AgentsSidebarSection(props: {
       {collapsed
         ? null
         : groups.map((group) => {
-            const shown = group.items.slice(0, VISIBLE_ROWS);
+            const hidden = group.id === "done" && doneCollapsed;
+            const shown = hidden ? [] : group.items.slice(0, VISIBLE_ROWS);
             return (
               <li key={group.id} role="presentation" className="list-none">
-                <p className="px-(--sidebar-row-content-inset) pt-1 text-2xs text-muted-foreground">
-                  {group.heading} · {group.items.length}
-                </p>
+                {group.id === "done" ? (
+                  <button
+                    type="button"
+                    aria-expanded={!doneCollapsed}
+                    onClick={() =>
+                      void updateClientSettings({ sidebarAgentsDoneCollapsed: !doneCollapsed })
+                    }
+                    className="flex h-6 w-full cursor-pointer items-center gap-1 rounded-md px-(--sidebar-row-content-inset) text-left text-2xs text-muted-foreground outline-none hover:bg-sidebar-row-hover hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                  >
+                    <span className="min-w-0 flex-1 truncate">
+                      {group.heading} · {group.items.length}
+                    </span>
+                    <ChevronRightIcon
+                      aria-hidden
+                      className={cn("size-3 shrink-0", !doneCollapsed && "rotate-90")}
+                    />
+                  </button>
+                ) : (
+                  <p className="px-(--sidebar-row-content-inset) pt-1 text-2xs text-muted-foreground">
+                    {group.heading} · {group.items.length}
+                  </p>
+                )}
                 <ul>
                   {shown.map((entry) => (
                     <AgentRow
@@ -131,7 +159,7 @@ export const AgentsSidebarSection = memo(function AgentsSidebarSection(props: {
                     />
                   ))}
                 </ul>
-                {group.items.length > VISIBLE_ROWS ? (
+                {!hidden && group.items.length > VISIBLE_ROWS ? (
                   <button
                     type="button"
                     onClick={() => void navigate({ to: "/activity" })}

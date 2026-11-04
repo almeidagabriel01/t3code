@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   docs: new Map<string, unknown>(),
   write: vi.fn(),
   move: vi.fn(),
+  canWrite: true,
 }));
 
 vi.mock("./useNoteCommand", async () => {
@@ -27,12 +28,13 @@ vi.mock("./useNoteCommand", async () => {
 vi.mock("../../state/notes", async (importOriginal) => {
   const { Atom } = await import("effect/reactivity");
   const allowed = Atom.make(true);
+  const denied = Atom.make(false);
   const command = () => ({ permissionAtom: () => allowed });
   return {
     ...(await importOriginal<object>()),
     notesEnvironment: {
       note: ({ input }: { input: { path: string } }) => input.path,
-      write: command(),
+      write: { permissionAtom: () => (mocks.canWrite ? allowed : denied) },
       move: command(),
       read: command(),
       update: command(),
@@ -192,4 +194,90 @@ it("opens another note when the selected path changes, and tracks the listed sum
   await expect.element(body).toHaveTextContent("alpha body");
   await userEvent.click(page.getByRole("button", { name: "Open B" }));
   await expect.element(body).toHaveTextContent("bravo body");
+});
+
+async function openTitled(body = "# Plan\ntext", path = "Plan.md", canWrite = true) {
+  mocks.canWrite = canWrite;
+  mocks.docs.clear();
+  mocks.docs.set(path, document(path, body, "Plan", "a"));
+  mocks.write
+    .mockReset()
+    .mockImplementation(async ({ input }: { input: { body: string; path: string } }) => ({
+      ok: true,
+      value: document(input.path, input.body, input.body.split("\n")[0]!.replace(/^# /u, ""), "b"),
+    }));
+  mocks.move.mockReset().mockImplementation(async ({ input }: { input: { to: string } }) => ({
+    ok: true,
+    value: document(input.to, "# Roadmap\ntext", "Roadmap", "c"),
+  }));
+  const onSelect = vi.fn();
+  const screen = await render(
+    <NoteLoader
+      environmentId={environmentId}
+      path={path}
+      summary={undefined}
+      listReady={false}
+      autoFocus={false}
+      onSelect={onSelect}
+      onExitEditor={() => undefined}
+    />,
+  );
+  return { onSelect, screen };
+}
+
+it("renames from the header: the first line takes the title and the file that carried the old one follows", async () => {
+  const { onSelect, screen } = await openTitled();
+  await using _screen = screen;
+  await userEvent.click(page.getByRole("button", { name: "Rename Plan" }));
+  const input = page.getByRole("textbox", { name: "Note title" });
+  await userEvent.fill(input, "Roadmap");
+  await userEvent.keyboard("{Enter}");
+  await vi.waitFor(() =>
+    expect(mocks.write).toHaveBeenCalledWith({
+      environmentId,
+      input: expect.objectContaining({ path: "Plan.md", body: "# Roadmap\ntext" }),
+    }),
+  );
+  await vi.waitFor(() =>
+    expect(mocks.move).toHaveBeenCalledWith({
+      environmentId,
+      input: { from: "Plan.md", to: "Roadmap.md", baseRevision: revision("b") },
+    }),
+  );
+  await vi.waitFor(() => expect(onSelect).toHaveBeenCalledWith("Roadmap.md", { replace: true }));
+});
+
+it("keeps a hand-named file's name when the title changes, and opens with F2", async () => {
+  const { screen } = await openTitled("# Plan\ntext", "mine.md");
+  await using _screen = screen;
+  const button = page.getByRole("button", { name: "Rename Plan" });
+  button.element().focus();
+  await userEvent.keyboard("{F2}");
+  await userEvent.fill(page.getByRole("textbox", { name: "Note title" }), "Roadmap");
+  await page.getByRole("button", { name: "Back to notes" }).element().focus();
+  await vi.waitFor(() => expect(mocks.write).toHaveBeenCalled());
+  expect(mocks.move).not.toHaveBeenCalled();
+});
+
+it("Escape, an empty title and an unchanged title leave the note alone", async () => {
+  const { screen } = await openTitled();
+  await using _screen = screen;
+  for (const [text, key] of [
+    ["Other", "{Escape}"],
+    ["  ", "{Enter}"],
+    ["Plan", "{Enter}"],
+  ] as const) {
+    await userEvent.click(page.getByRole("button", { name: "Rename Plan" }));
+    await userEvent.fill(page.getByRole("textbox", { name: "Note title" }), text);
+    await userEvent.keyboard(key);
+    await expect.element(page.getByRole("button", { name: "Rename Plan" })).toBeVisible();
+  }
+  expect(mocks.write).not.toHaveBeenCalled();
+});
+
+it("shows a plain title when the connection cannot write", async () => {
+  const { screen } = await openTitled("# Plan\ntext", "Plan.md", false);
+  await using _screen = screen;
+  await expect.element(page.getByRole("heading", { name: "Plan" })).toBeVisible();
+  expect(page.getByRole("button", { name: "Rename Plan" }).elements()).toHaveLength(0);
 });

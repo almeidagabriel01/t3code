@@ -70,6 +70,8 @@ const reactTests = [
   "src/features/settings/SettingsScheduledTasksRouteScreen.test.tsx",
   "src/features/decisions/HomeDecisionsSection.test.tsx",
   "src/features/home/HomeAgentsSection.test.tsx",
+  "src/features/assistants/HomeAssistantsSection.test.tsx",
+  "src/features/home/useHomeSectionPreferences.test.tsx",
   "src/features/home/HomeNeedsYouSection.test.tsx",
   "src/features/home/UnreadActionsMenu.test.tsx",
   "src/features/decisions/DecisionCard.test.tsx",

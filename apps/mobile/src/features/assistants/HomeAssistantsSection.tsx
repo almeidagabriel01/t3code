@@ -17,15 +17,11 @@ import { SubagentStatusDot } from "../threads/SubagentStatusDot";
 import { AssistantAvatar } from "./assistantPresentation";
 import { useAssistantFlows } from "./useAssistantFlows";
 import { useOpenAssistantEditor } from "./openAssistantEditor";
+import { useHomeSectionPreferences } from "../home/useHomeSectionPreferences";
 
-function AssistantRow(props: {
-  readonly entry: AssistantEntry;
-  readonly environmentLabel: string | null;
-  readonly sidebar: boolean;
-}) {
-  const { assistant, environmentId } = props.entry;
-  const flows = useAssistantFlows(environmentId);
-  const openEditor = useOpenAssistantEditor();
+const COLLAPSED_AVATAR_LIMIT = 5;
+
+function useAssistantStatus({ assistant, environmentId }: AssistantEntry) {
   const thread = useQuietThreadShell(
     assistant.threadId === null ? null : scopeThreadRef(environmentId, assistant.threadId),
   );
@@ -35,6 +31,46 @@ function AssistantRow(props: {
     hasSidebarNotification(
       thread.lastVisitedAt === undefined ? { ...thread, latestRun: null } : thread,
     );
+  return { working, needsYou } as const;
+}
+
+function statusLabel(name: string, status: { working: boolean; needsYou: boolean }) {
+  return `${name}${status.working ? ", working" : status.needsYou ? ", needs attention" : ""}`;
+}
+
+/** Collapsed header: the avatar alone, with a dot when the assistant works or wants you. */
+function AssistantAvatarButton(props: { readonly entry: AssistantEntry }) {
+  const { assistant, environmentId } = props.entry;
+  const flows = useAssistantFlows(environmentId);
+  const status = useAssistantStatus(props.entry);
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={statusLabel(assistant.name, status)}
+      disabled={assistant.threadId === null}
+      hitSlop={4}
+      onPress={() => flows.openConversation(assistant)}
+      className="active:opacity-70"
+    >
+      <AssistantAvatar assistant={assistant} size={28} />
+      {status.working || status.needsYou ? (
+        <View className="absolute -right-0.5 -top-0.5">
+          <SubagentStatusDot tone={status.working ? "working" : "completed"} placement="sheet" />
+        </View>
+      ) : null}
+    </Pressable>
+  );
+}
+
+function AssistantRow(props: {
+  readonly entry: AssistantEntry;
+  readonly environmentLabel: string | null;
+  readonly sidebar: boolean;
+}) {
+  const { assistant, environmentId } = props.entry;
+  const flows = useAssistantFlows(environmentId);
+  const openEditor = useOpenAssistantEditor();
+  const { working, needsYou } = useAssistantStatus(props.entry);
   const actions: MenuAction[] = [
     {
       id: "reset",
@@ -66,7 +102,7 @@ function AssistantRow(props: {
     >
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={`${assistant.name}${working ? ", working" : needsYou ? ", needs attention" : ""}`}
+        accessibilityLabel={statusLabel(assistant.name, { working, needsYou })}
         disabled={assistant.threadId === null}
         onPress={() => flows.openConversation(assistant)}
         className="min-h-12 flex-row items-center gap-3 rounded-2xl px-2 active:opacity-70"
@@ -110,20 +146,68 @@ export function HomeAssistantsSection(props: {
 }) {
   const { active } = useAssistantEntries();
   const openEditor = useOpenAssistantEditor();
+  const { assistantsCollapsed, toggleAssistants } = useHomeSectionPreferences();
   const sidebar = props.sidebar === true;
   if (active.length === 0) return null;
+  const shown = active.slice(0, COLLAPSED_AVATAR_LIMIT);
+  const hidden = active.length - shown.length;
   const environmentCount = new Set(active.map((entry) => entry.environmentId)).size;
   return (
     <View className="gap-1 pb-3 pt-2" style={{ paddingHorizontal: props.gutter }}>
       <View className="flex-row items-center">
-        <Text
-          className={cn(
-            "flex-1 font-t3-bold text-2xs uppercase tracking-[1.1px]",
-            sidebar ? "text-drawer-foreground-muted" : "text-foreground-secondary",
-          )}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Assistants"
+          accessibilityState={{ expanded: !assistantsCollapsed }}
+          hitSlop={8}
+          onPress={toggleAssistants}
+          className="min-h-9 flex-row items-center gap-1 active:opacity-70"
         >
-          Assistants
-        </Text>
+          <Text
+            className={cn(
+              "font-t3-bold text-2xs uppercase tracking-[1.1px]",
+              sidebar ? "text-drawer-foreground-muted" : "text-foreground-secondary",
+            )}
+          >
+            Assistants
+          </Text>
+          <SymbolView
+            name={assistantsCollapsed ? "chevron.right" : "chevron.down"}
+            size={11}
+            tintColorClassName={sidebar ? "accent-drawer-foreground-muted" : "accent-icon-subtle"}
+            type="monochrome"
+          />
+        </Pressable>
+        <View className="min-w-0 flex-1 flex-row items-center justify-end gap-2 pr-1">
+          {assistantsCollapsed ? (
+            <>
+              {shown.map((entry) => (
+                <AssistantAvatarButton
+                  key={`${entry.environmentId}:${entry.assistant.id}`}
+                  entry={entry}
+                />
+              ))}
+              {hidden > 0 ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`${hidden} more assistants`}
+                  hitSlop={4}
+                  onPress={toggleAssistants}
+                  className="active:opacity-70"
+                >
+                  <Text
+                    className={cn(
+                      "text-xs font-t3-medium",
+                      sidebar ? "text-drawer-foreground-muted" : "text-foreground-secondary",
+                    )}
+                  >
+                    +{hidden}
+                  </Text>
+                </Pressable>
+              ) : null}
+            </>
+          ) : null}
+        </View>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="New assistant"
@@ -139,18 +223,20 @@ export function HomeAssistantsSection(props: {
           />
         </Pressable>
       </View>
-      {active.map((entry) => (
-        <AssistantRow
-          key={`${entry.environmentId}:${entry.assistant.id}`}
-          entry={entry}
-          sidebar={sidebar}
-          environmentLabel={
-            environmentCount > 1
-              ? (props.environmentLabelById.get(entry.environmentId) ?? null)
-              : null
-          }
-        />
-      ))}
+      {assistantsCollapsed
+        ? null
+        : active.map((entry) => (
+            <AssistantRow
+              key={`${entry.environmentId}:${entry.assistant.id}`}
+              entry={entry}
+              sidebar={sidebar}
+              environmentLabel={
+                environmentCount > 1
+                  ? (props.environmentLabelById.get(entry.environmentId) ?? null)
+                  : null
+              }
+            />
+          ))}
     </View>
   );
 }

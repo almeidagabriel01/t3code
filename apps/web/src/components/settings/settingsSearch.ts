@@ -517,6 +517,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["hide fold running monitoring threads inbox sidebar shelf"],
   },
   {
+    id: "sidebar-show-assistants-section",
+    title: "Show Assistants section",
+    to: "/settings/general",
+    searchTerms: ["sidebar assistants jarvis pinned hide"],
+  },
+  {
     id: "sidebar-show-agents-section",
     title: "Show Agents section",
     to: "/settings/general",

@@ -15,7 +15,9 @@ import { useProjects } from "../../state/entities";
 import { SubagentStatusDot } from "../threads/SubagentStatusDot";
 import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
 import { buildHomeActivityEntries } from "./homeActivityEntries";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { UnreadActionsMenu } from "./UnreadActionsMenu";
+import { useHomeSectionPreferences } from "./useHomeSectionPreferences";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 
 function elapsedLabel(startedAt: string | null, nowMs: number): string {
@@ -41,6 +43,7 @@ export function HomeAgentsSection(props: {
   const projects = useProjects();
   const nowMs = useNowMinuteMs();
   const selectDetail = useSelectWorkspaceDetail();
+  const { agentsDoneExpanded, toggleAgentsDone } = useHomeSectionPreferences();
   const { working, done } = selectAgentsSection(
     buildHomeActivityEntries({ threads: props.threads, now: props.now, openDecisionThreadKeys }),
   );
@@ -82,20 +85,15 @@ export function HomeAgentsSection(props: {
             workspaceRoot={project.workspaceRoot}
           />
         ) : null}
-        <View className="min-w-0 flex-1">
-          <Text
-            className={cn(
-              "text-base font-t3-medium",
-              sidebar ? "text-drawer-foreground" : "text-foreground",
-            )}
-            numberOfLines={1}
-          >
-            {thread.title}
-          </Text>
-          <Text className={cn("text-xs", muted)} numberOfLines={1}>
-            {project?.title ?? "Unknown project"}
-          </Text>
-        </View>
+        <Text
+          className={cn(
+            "min-w-0 flex-1 text-base font-t3-medium",
+            sidebar ? "text-drawer-foreground" : "text-foreground",
+          )}
+          numberOfLines={1}
+        >
+          {thread.title}
+        </Text>
         {isWorking ? (
           <View className="flex-row items-center gap-1.5">
             <AppActivityIndicator size="small" colorClassName="accent-icon-muted" />
@@ -113,9 +111,32 @@ export function HomeAgentsSection(props: {
       {groups.map((group) => (
         <View key={group.heading}>
           <View className="min-h-9 flex-row items-center">
-            <Text className={cn("flex-1 px-2 pb-1 pt-2 text-xs font-t3-medium", muted)}>
-              {group.heading} · {group.items.length}
-            </Text>
+            {group.heading === "Done" ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Done, ${group.items.length}`}
+                accessibilityState={{ expanded: agentsDoneExpanded }}
+                hitSlop={8}
+                onPress={toggleAgentsDone}
+                className="min-h-9 flex-1 flex-row items-center gap-1 px-2 active:opacity-70"
+              >
+                <Text className={cn("text-xs font-t3-medium", muted)}>
+                  {group.heading} · {group.items.length}
+                </Text>
+                <SymbolView
+                  name={agentsDoneExpanded ? "chevron.down" : "chevron.right"}
+                  size={11}
+                  tintColorClassName={
+                    sidebar ? "accent-drawer-foreground-muted" : "accent-icon-subtle"
+                  }
+                  type="monochrome"
+                />
+              </Pressable>
+            ) : (
+              <Text className={cn("flex-1 px-2 pb-1 pt-2 text-xs font-t3-medium", muted)}>
+                {group.heading} · {group.items.length}
+              </Text>
+            )}
             {group.heading === "Done" ? (
               <UnreadActionsMenu
                 threads={group.items.map((entry) => entry.thread)}
@@ -124,7 +145,7 @@ export function HomeAgentsSection(props: {
               />
             ) : null}
           </View>
-          {group.items.map(renderRow)}
+          {group.heading === "Done" && !agentsDoneExpanded ? null : group.items.map(renderRow)}
         </View>
       ))}
     </View>

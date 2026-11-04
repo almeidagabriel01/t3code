@@ -474,6 +474,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       : []),
     ...(settings.sidebarShowSubagents !== DEFAULT_UNIFIED_SETTINGS.sidebarShowSubagents ||
     settings.sidebarShowAgentsSection !== DEFAULT_UNIFIED_SETTINGS.sidebarShowAgentsSection ||
+    settings.sidebarShowAssistantsSection !==
+      DEFAULT_UNIFIED_SETTINGS.sidebarShowAssistantsSection ||
     settings.sidebarAgentActivityDisplayMode !==
       DEFAULT_UNIFIED_SETTINGS.sidebarAgentActivityDisplayMode ||
     settings.projectHoverCardProperties.join() !==
@@ -666,6 +668,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarWorkingShelfEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled,
       sidebarShowSubagents: DEFAULT_UNIFIED_SETTINGS.sidebarShowSubagents,
       sidebarShowAgentsSection: DEFAULT_UNIFIED_SETTINGS.sidebarShowAgentsSection,
+      sidebarShowAssistantsSection: DEFAULT_UNIFIED_SETTINGS.sidebarShowAssistantsSection,
       sidebarAgentActivityDisplayMode: DEFAULT_UNIFIED_SETTINGS.sidebarAgentActivityDisplayMode,
       projectHoverCardProperties: DEFAULT_UNIFIED_SETTINGS.projectHoverCardProperties,
       statusBarVisible: DEFAULT_UNIFIED_SETTINGS.statusBarVisible,
