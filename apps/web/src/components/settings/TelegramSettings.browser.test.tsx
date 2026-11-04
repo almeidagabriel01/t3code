@@ -72,13 +72,13 @@ it("lists Telegram in the settings navigation", async () => {
     .toBeVisible();
 });
 
-it("explains how to make a bot and find a user id", async () => {
+it("explains how to make a bot and get allowed", async () => {
   resetFakeTelegram();
   await using _screen = await openTelegram();
   await expect
     .element(page.getByText("@BotFather and send /newbot", { exact: false }))
     .toBeVisible();
-  await expect.element(page.getByText("@userinfobot", { exact: false })).toBeVisible();
+  await expect.element(page.getByText("4. Allow yourself")).toBeVisible();
 });
 
 it("shows live status, the bot's name, and the last delivery failure", async () => {
@@ -107,14 +107,12 @@ it("shows live status, the bot's name, and the last delivery failure", async () 
     .toBeVisible();
 });
 
-it("keeps the switch off until a token and a user id exist, then turns Telegram on", async () => {
+it("keeps the switch off until a token exists, then turns Telegram on without any user id", async () => {
   resetFakeTelegram();
   await using _screen = await openTelegram();
   const toggle = page.getByRole("switch", { name: "Use Telegram" });
   await expect.element(toggle).toBeDisabled();
-  await expect
-    .element(page.getByText("Add the bot token and at least one user id", { exact: false }))
-    .toBeVisible();
+  await expect.element(page.getByText("Add the bot token before turning this on.")).toBeVisible();
 
   const token = page.getByLabelText("Bot token");
   await expect.element(token).toHaveAttribute("type", "password");
@@ -125,19 +123,53 @@ it("keeps the switch off until a token and a user id exist, then turns Telegram 
   );
   await expect.element(page.getByText("Saved", { exact: true })).toBeVisible();
   await expect.element(token).toHaveValue("");
-  await expect
-    .element(page.getByText("Add at least one user id before turning this on."))
-    .toBeVisible();
-
-  await userEvent.fill(page.getByLabelText("Telegram user ids"), "1a2b3");
-  await expect.element(page.getByLabelText("Telegram user ids")).toHaveValue("123");
-  await userEvent.click(page.getByRole("button", { name: "Add" }));
-  await eventually(() =>
-    expect(fakeTelegram.configures.at(-1)).toEqual({ allowedUserIds: ["123"] }),
-  );
   await expect.element(toggle).toBeEnabled();
   await userEvent.click(toggle);
   await eventually(() => expect(fakeTelegram.configures.at(-1)).toEqual({ enabled: true }));
+});
+
+it("lists people waiting for approval, and allows or ignores them", async () => {
+  resetFakeTelegram({
+    enabled: true,
+    tokenConfigured: true,
+    allowedUserIds: ["111"],
+    status: "running",
+    pendingSenders: [
+      { userId: "222", firstName: "Bo", username: "bo_x", lastSeenAt: "2026-10-01T12:00:00.000Z" },
+      { userId: "333", lastSeenAt: "2026-10-01T11:00:00.000Z" },
+    ],
+  });
+  await using _screen = await openTelegram();
+  publishTelegramStatus({
+    status: "running",
+    pendingSenders: fakeTelegram.settings.pendingSenders!,
+  });
+  await expect.element(page.getByText("Waiting for approval", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("Bo", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("@bo_x", { exact: false })).toBeVisible();
+  await userEvent.click(page.getByRole("button", { name: "Allow Bo" }));
+  await eventually(() =>
+    expect(fakeTelegram.configures.at(-1)).toEqual({ allowedUserIds: ["111", "222"] }),
+  );
+  await expect.element(page.getByRole("button", { name: "Remove 222" })).toBeVisible();
+  await expect.element(page.getByRole("button", { name: "Allow Bo" })).not.toBeInTheDocument();
+
+  await userEvent.click(page.getByRole("button", { name: "Ignore 333" }));
+  await eventually(() =>
+    expect(fakeTelegram.configures.at(-1)).toEqual({ dismissUserIds: ["333"] }),
+  );
+  await expect
+    .element(page.getByText("Waiting for approval", { exact: true }))
+    .not.toBeInTheDocument();
+
+  publishTelegramStatus({
+    status: "running",
+    pendingSenders: [{ userId: "444", firstName: "Cy", lastSeenAt: "2026-10-01T12:30:00.000Z" }],
+  });
+  await expect.element(page.getByRole("button", { name: "Allow Cy" })).toBeVisible();
+  fakeTelegram.failConfigure = "persistence_failed";
+  await userEvent.click(page.getByRole("button", { name: "Allow Cy" }));
+  await expect.element(page.getByText("Could not save the Telegram settings.")).toBeVisible();
 });
 
 it("replaces and removes the token without ever showing it", async () => {

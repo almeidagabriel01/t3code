@@ -660,6 +660,18 @@ handlers[WS_METHODS.telegramChannelConfigure] = (input: TelegramChannelConfigure
       input.botToken !== undefined ? true : clearing ? false : current.tokenConfigured,
     allowedUserIds: input.allowedUserIds ?? current.allowedUserIds,
   };
+  const waiting = (current.pendingSenders ?? []).filter(
+    (sender) =>
+      !input.dismissUserIds?.includes(sender.userId) &&
+      !fakeTelegram.settings.allowedUserIds.includes(sender.userId),
+  );
+  const { pendingSenders: _dropped, ...rest } = fakeTelegram.settings;
+  fakeTelegram.settings = waiting.length === 0 ? rest : { ...rest, pendingSenders: waiting };
+  // The live stream carries the waiting list too, as the real runtime publishes after a change.
+  publishTelegramStatus({
+    status: current.status,
+    ...(waiting.length === 0 ? {} : { pendingSenders: waiting }),
+  });
   return Effect.succeed(fakeTelegram.settings);
 };
 

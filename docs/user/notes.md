@@ -11,7 +11,7 @@ jumps to search. Change the shortcuts under **Notes: Open** and **Notes: New** i
 **Settings → Keybindings**.
 
 A new note starts as `Untitled.md` and saves as you type. Its first heading becomes its title.
-Pin a note to keep it at the top of the list. Use **Rename or move…** to name the file or put it in
+Pin a note to keep it at the top of the list. Use **Rename** to change the title, or click the title above the note. **Move or rename file…** names the file or puts it in
 a folder; folders go one level deep and show as groups in the list. The palette's **Search notes**
 finds a note by title.
 

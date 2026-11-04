@@ -1,6 +1,7 @@
 import {
   compactTelegramUserId,
   telegramDeliveryErrorReason,
+  telegramSenderLabel,
   telegramStatusLabel,
   telegramSwitchHint,
 } from "@t3tools/client-runtime/state/telegramChannel";
@@ -92,6 +93,46 @@ function ItemRow(props: {
             Remove
           </Text>
         </Pressable>
+      }
+    />
+  );
+}
+
+/** A person who wrote to the bot, with the two ways to answer: let them in or forget them. */
+function PendingRow(props: {
+  readonly name: string;
+  readonly detail: string | undefined;
+  readonly disabled: boolean;
+  readonly onAllow: () => void;
+  readonly onIgnore: () => void;
+}) {
+  return (
+    <ListRowLayout
+      icon="person.badge.clock"
+      label={props.name}
+      description={props.detail}
+      accessory={
+        <View className="flex-row items-center gap-2">
+          {(
+            [
+              ["Allow", props.onAllow],
+              ["Ignore", props.onIgnore],
+            ] as const
+          ).map(([action, onPress]) => (
+            <Pressable
+              key={action}
+              accessibilityRole="button"
+              accessibilityLabel={`${action} ${props.name}`}
+              disabled={props.disabled}
+              onPress={onPress}
+              className="rounded-full bg-subtle px-3 py-2 active:opacity-70"
+            >
+              <Text textRole="footnote" className="font-t3-medium text-foreground">
+                {action}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
       }
     />
   );
@@ -194,9 +235,31 @@ function TelegramEnvironment(props: {
           />
         ) : null}
       </ListSection>
+      {settings.pendingSenders && settings.pendingSenders.length > 0 ? (
+        <ListSection
+          title={`Waiting for approval${suffix}`}
+          footer="These people wrote to the bot. Their messages are not passed on until you allow them."
+        >
+          {settings.pendingSenders.map((sender) => {
+            const name = telegramSenderLabel(sender);
+            return (
+              <PendingRow
+                key={sender.userId}
+                name={name}
+                detail={sender.firstName && sender.username ? `@${sender.username}` : undefined}
+                disabled={disabled}
+                onAllow={() =>
+                  void change({ allowedUserIds: [...settings.allowedUserIds, sender.userId] })
+                }
+                onIgnore={() => void change({ dismissUserIds: [sender.userId] })}
+              />
+            );
+          })}
+        </ListSection>
+      ) : null}
       <ListSection
         title="Who can write to the bot"
-        footer="Only these Telegram user ids are heard. Anyone else who writes to the bot is ignored."
+        footer="Only these people are heard. Allow someone from the waiting list above, or add their Telegram user id here."
       >
         {settings.allowedUserIds.map((id) => (
           <ItemRow
@@ -232,14 +295,19 @@ function TelegramEnvironment(props: {
           description="In Telegram, open @BotFather and send /newbot. Pick a name and a username; it replies with the bot token."
         />
         <ListRowLayout
-          icon="person.2"
-          label="2. Find your user id"
-          description="Open @userinfobot and press Start. It replies with your numeric Id; add it above."
+          icon="bolt.circle"
+          label="2. Paste the token and turn it on"
+          description="Save the token above, then switch on Use Telegram."
         />
         <ListRowLayout
           icon="text.bubble"
-          label="3. Say hello"
-          description="Open your bot, press Start, and send @ to see your assistants."
+          label="3. Message the bot"
+          description="Open your bot, press Start and say hello. You then show up under Waiting for approval here."
+        />
+        <ListRowLayout
+          icon="person.fill.checkmark"
+          label="4. Allow yourself"
+          description="Press Allow next to your name. Then send @ to see your assistants."
         />
       </ListSection>
       <ListSection title="Good to know">
@@ -275,7 +343,7 @@ export function SettingsTelegramRouteScreen() {
         <Text textRole="footnote" className="px-4 text-foreground-muted">
           Talk to your assistants from Telegram, on any computer. Start with @Name to pick an
           assistant; Jarvis answers otherwise, and the chat stays with the last one picked. Send @
-          on its own to list them. It works while T3 Code is running.
+          on its own to list them, or use the / menu in Telegram. It works while T3 Code is running.
         </Text>
         {environmentIds.length === 0 ? (
           <EmptyState

@@ -51,6 +51,7 @@ it("shows the status and disables every change without permission", async () => 
     tokenConfigured: true,
     allowedUserIds: ["111"],
     status: "running",
+    pendingSenders: [{ userId: "222", firstName: "Bo", lastSeenAt: "2026-10-01T12:00:00.000Z" }],
   });
   const container = document.createElement("div");
   container.style.cssText = "height: 900px; width: 1400px;";
@@ -66,5 +67,7 @@ it("shows the status and disables every change without permission", async () => 
   await expect.element(page.getByRole("button", { name: "Remove token" })).toBeDisabled();
   await expect.element(page.getByLabelText("Telegram user ids")).toBeDisabled();
   await expect.element(page.getByRole("button", { name: "Remove 111" })).toBeDisabled();
+  await expect.element(page.getByRole("button", { name: "Allow Bo" })).toBeDisabled();
+  await expect.element(page.getByRole("button", { name: "Ignore Bo" })).toBeDisabled();
   expect(fakeTelegram.configures).toEqual([]);
 });

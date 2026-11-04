@@ -1,6 +1,6 @@
 /**
  * Settings behind the `telegramChannel.*` RPCs. `<stateDir>/telegram-channel-settings.json` holds
- * whether Telegram is on and which user ids are heard; the bot token is a secret and lives in the
+ * whether Telegram is on and which user ids are heard; unknown senders wait in memory for approval; the bot token is a secret and lives in the
  * server secret store, never in that file and never in a reply. `start` must run once at server start.
  */
 import {
@@ -183,7 +183,6 @@ export const make = Effect.fn("TelegramChannelSettings.make")(function* () {
         // Without a token the channel cannot run, so clearing it also turns Telegram off.
         const enabled = clearing ? false : (input.enabled ?? stored.enabled);
         if (enabled && Option.isNone(token)) return yield* fail("no_token");
-        if (enabled && allowedUserIds.length === 0) return yield* fail("no_user_ids");
         if (newToken !== undefined) {
           yield* secretFailure(
             secrets.set(TELEGRAM_TOKEN_SECRET, new TextEncoder().encode(newToken)),
@@ -193,6 +192,7 @@ export const make = Effect.fn("TelegramChannelSettings.make")(function* () {
         }
         const next: StoredSettings = { version: 1, enabled, allowedUserIds };
         yield* save(next);
+        if (input.dismissUserIds !== undefined) yield* runtime.dismiss(input.dismissUserIds);
         yield* apply(next, token);
         return yield* snapshot(next, token);
       }),

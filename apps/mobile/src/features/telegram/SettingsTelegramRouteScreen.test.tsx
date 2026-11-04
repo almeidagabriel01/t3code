@@ -172,20 +172,47 @@ describe("Telegram settings", () => {
   it("explains how to make a bot", () => {
     render();
     expect(container.textContent).toContain("@BotFather and send /newbot");
-    expect(container.textContent).toContain("@userinfobot");
+    expect(container.textContent).toContain("4. Allow yourself");
   });
 
-  it("keeps the switch off until a token and a user id exist, then sends {enabled:true}", async () => {
+  it("needs only a token before the switch can be turned on, then sends {enabled:true}", async () => {
     render();
     expect(input("Use Telegram")!.disabled).toBe(true);
-    expect(container.textContent).toContain("Add the bot token and at least one user id");
+    expect(container.textContent).toContain("Add the bot token before turning this on.");
     render({ tokenConfigured: true });
-    expect(input("Use Telegram")!.disabled).toBe(true);
-    expect(container.textContent).toContain("Add at least one user id before turning this on.");
-    render({ tokenConfigured: true, allowedUserIds: ["111"] });
     expect(input("Use Telegram")!.disabled).toBe(false);
     await act(async () => input("Use Telegram")!.click());
     expect(mocks.configure).toHaveBeenCalledWith({ enabled: true });
+  });
+
+  it("lists people waiting for approval, and allows or ignores them", async () => {
+    render({ allowedUserIds: ["111"] });
+    const titles = () => [...container.querySelectorAll("h3")].map((title) => title.textContent);
+    expect(titles()).not.toContain("Waiting for approval");
+    render({
+      allowedUserIds: ["111"],
+      pendingSenders: [
+        {
+          userId: "222",
+          firstName: "Bo",
+          username: "bo_x",
+          lastSeenAt: "2026-10-01T00:00:00.000Z",
+        },
+        { userId: "333", lastSeenAt: "2026-10-01T00:00:00.000Z" },
+      ],
+    });
+    expect(titles()).toContain("Waiting for approval");
+    expect(container.textContent).toContain("@bo_x");
+    await press("Allow Bo");
+    expect(mocks.configure).toHaveBeenLastCalledWith({ allowedUserIds: ["111", "222"] });
+    await press("Ignore 333");
+    expect(mocks.configure).toHaveBeenLastCalledWith({ dismissUserIds: ["333"] });
+    mocks.can = false;
+    render({
+      pendingSenders: [{ userId: "222", firstName: "Bo", lastSeenAt: "2026-10-01T00:00:00.000Z" }],
+    });
+    expect(button("Allow Bo")!.disabled).toBe(true);
+    expect(button("Ignore Bo")!.disabled).toBe(true);
   });
 
   it("lets an enabled channel be turned off", async () => {

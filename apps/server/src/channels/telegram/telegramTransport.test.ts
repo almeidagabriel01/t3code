@@ -27,6 +27,7 @@ const harness = (
   const api: TelegramApi = {
     getMe: Effect.succeed({ username: "bot" }),
     getUpdates: () => Effect.succeed([]),
+    setMyCommands: () => Effect.void,
     sendMessage: ({ text }) =>
       Effect.suspend(() => {
         const failure = script(text, sent.length + 1);

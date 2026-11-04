@@ -47,6 +47,7 @@ const Message = Schema.Struct({
       id: Schema.Number,
       is_bot: Schema.optional(Schema.Boolean),
       first_name: Schema.optional(Schema.String),
+      username: Schema.optional(Schema.String),
     }),
   ),
 });
@@ -96,6 +97,10 @@ export interface TelegramApi {
     readonly chatId: string;
     readonly text: string;
   }) => Effect.Effect<{ readonly messageId: string }, TelegramApiError>;
+  /** Replaces the bot's "/" menu. */
+  readonly setMyCommands: (
+    commands: ReadonlyArray<{ readonly command: string; readonly description: string }>,
+  ) => Effect.Effect<void, TelegramApiError>;
 }
 
 export const makeTelegramApi = (
@@ -143,6 +148,7 @@ export const makeTelegramApi = (
       );
 
   return {
+    setMyCommands: (commands) => call("setMyCommands", { commands }, 0).pipe(Effect.asVoid),
     getMe: call("getMe", {}, 0).pipe(
       Effect.map((result) => {
         const bot = decodeBot(result);

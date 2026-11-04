@@ -29,11 +29,25 @@ it("hears only allowed people writing to the bot in a private chat", () => {
   assert.strictEqual(skipReason(update(undefined)), "kind");
   assert.strictEqual(skipReason(update({ chat: { id: -5, type: "supergroup" } })), "chat");
   assert.strictEqual(skipReason(update({ from: undefined })), "sender");
-  assert.strictEqual(skipReason(update({ from: { id: 222 } })), "sender");
   assert.strictEqual(skipReason(update({ from: { id: 111, is_bot: true } })), "sender");
   assert.strictEqual(skipReason(update({ text: undefined })), "text");
   assert.strictEqual(skipReason(update({ text: "   " })), "text");
   assert.strictEqual(skipReason(update({})), "message");
+});
+
+it("reports a private message from an unknown person so the owner can allow them", () => {
+  const admission = admitTelegramUpdate(
+    update({ from: { id: 222, first_name: " Bo ", username: "bo_x" } }),
+    ALLOWED,
+    "telegram",
+  );
+  assert.deepStrictEqual(admission, {
+    type: "unknown_sender",
+    chatId: "111",
+    sender: { userId: "222", firstName: "Bo", username: "bo_x" },
+  });
+  const bare = admitTelegramUpdate(update({ from: { id: 333 }, text: undefined }), ALLOWED, "t");
+  assert.deepStrictEqual(bare.type === "unknown_sender" && bare.sender, { userId: "333" });
 });
 
 it("hands the gateway a message keyed by chat and update, so a redelivery is one message", () => {

@@ -2,6 +2,7 @@ import {
   WS_METHODS,
   type TelegramChannelDeliveryError,
   type TelegramChannelErrorCode,
+  type TelegramPendingSender,
   type TelegramChannelSettings,
   type TelegramChannelStatusEvent,
 } from "@t3tools/contracts";
@@ -25,6 +26,7 @@ export function applyTelegramStatusEvent(
     lastError: _lastError,
     lastDeliveryError: _lastDeliveryError,
     botUsername: _botUsername,
+    pendingSenders: _pendingSenders,
     ...rest
   } = settings;
   const botUsername = event.botUsername ?? settings.botUsername;
@@ -36,6 +38,7 @@ export function applyTelegramStatusEvent(
       ? {}
       : { lastDeliveryError: event.lastDeliveryError }),
     ...(botUsername === undefined ? {} : { botUsername }),
+    ...(event.pendingSenders === undefined ? {} : { pendingSenders: event.pendingSenders }),
   };
 }
 
@@ -109,12 +112,14 @@ export function telegramDeliveryErrorReason(
 
 /** Why the switch cannot be turned on yet, or null when it can. */
 export function telegramSwitchHint(
-  settings: Pick<TelegramChannelSettings, "tokenConfigured" | "allowedUserIds">,
+  settings: Pick<TelegramChannelSettings, "tokenConfigured">,
 ): string | null {
-  const noToken = !settings.tokenConfigured;
-  const noIds = settings.allowedUserIds.length === 0;
-  if (noToken && noIds) return "Add the bot token and at least one user id before turning this on.";
-  if (noToken) return "Add the bot token before turning this on.";
-  if (noIds) return "Add at least one user id before turning this on.";
-  return null;
+  return settings.tokenConfigured ? null : "Add the bot token before turning this on.";
+}
+
+/** A waiting sender as a person would name them: first name, else @username, else the id. */
+export function telegramSenderLabel(
+  sender: Pick<TelegramPendingSender, "userId" | "firstName" | "username">,
+): string {
+  return sender.firstName || (sender.username ? `@${sender.username}` : sender.userId);
 }

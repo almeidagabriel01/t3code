@@ -1,18 +1,26 @@
 import {
   compactTelegramUserId,
   telegramDeliveryErrorReason,
+  telegramSenderLabel,
   telegramStatusLabel,
   telegramSwitchHint,
 } from "@t3tools/client-runtime/state/telegramChannel";
-import type { EnvironmentId, TelegramChannelSettings } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  TelegramChannelSettings,
+  TelegramPendingSender,
+} from "@t3tools/contracts";
 import {
+  CheckIcon,
   CircleHelpIcon,
   InfoIcon,
   KeyRoundIcon,
   PlusIcon,
   SendIcon,
   Trash2Icon,
+  UserRoundCheckIcon,
   UserRoundIcon,
+  XIcon,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -139,6 +147,87 @@ function TokenSection(props: {
   );
 }
 
+function PendingSection(props: {
+  readonly senders: ReadonlyArray<TelegramPendingSender>;
+  readonly userIds: ReadonlyArray<string>;
+  readonly canAct: boolean;
+  readonly save: (input: {
+    readonly allowedUserIds?: ReadonlyArray<string>;
+    readonly dismissUserIds?: ReadonlyArray<string>;
+  }) => Promise<TelegramReply>;
+  readonly suffix: string;
+}) {
+  const { senders, userIds, canAct, save } = props;
+  const [error, setError] = useState<string | null>(null);
+  if (senders.length === 0) return null;
+
+  const settle = async (input: Parameters<typeof save>[0]) => {
+    const reply = await save(input);
+    setError(reply.ok ? null : reply.message);
+  };
+
+  return (
+    <SettingsSection
+      title={`Waiting for approval${props.suffix}`}
+      icon={<UserRoundCheckIcon className={SECTION_ICON} />}
+    >
+      <SettingsRow
+        title="People who wrote to the bot"
+        description="Their messages are not passed on until you allow them."
+        status={<FieldError message={error} />}
+      />
+      {senders.map((sender) => {
+        const when = formatRelativeTimeLabel(sender.lastSeenAt);
+        const name = telegramSenderLabel(sender);
+        return (
+          // A plain row: SettingsRow stacks its control under the title in a narrow panel.
+          <div
+            key={sender.userId}
+            className="flex items-center justify-between gap-3 px-3 py-3 sm:px-4"
+          >
+            <span className="flex min-w-0 flex-col">
+              <span className="truncate text-sm font-medium text-foreground">{name}</span>
+              <span className="truncate text-xs text-muted-foreground">
+                {[sender.firstName && sender.username ? `@${sender.username}` : null, when]
+                  .filter(Boolean)
+                  .join(" · ") || `Id ${sender.userId}`}
+              </span>
+            </span>
+            <span className="flex shrink-0 items-center gap-1">
+              <Button
+                variant="outline"
+                size="sm"
+                aria-label={`Allow ${name}`}
+                disabled={!canAct}
+                onClick={() => void settle({ allowedUserIds: [...userIds, sender.userId] })}
+              >
+                <CheckIcon />
+                Allow
+              </Button>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      size="icon-xs"
+                      variant="ghost-muted"
+                      aria-label={`Ignore ${name}`}
+                      disabled={!canAct}
+                      onClick={() => void settle({ dismissUserIds: [sender.userId] })}
+                    />
+                  }
+                >
+                  <XIcon />
+                </TooltipTrigger>
+                <TooltipPopup side="top">Ignore {name}</TooltipPopup>
+              </Tooltip>
+            </span>
+          </div>
+        );
+      })}
+    </SettingsSection>
+  );
+}
+
 function UserIdSection(props: {
   readonly userIds: ReadonlyArray<string>;
   readonly canAct: boolean;
@@ -171,7 +260,7 @@ function UserIdSection(props: {
     >
       <SettingsRow
         title="Telegram user ids"
-        description="Only these people are heard. Anyone else who writes to the bot is ignored."
+        description="Only these people are heard. Allow someone from the waiting list above, or add their number here."
         status={<FieldError message={error} />}
         control={
           <div className="flex w-full items-center gap-2 @min-[32rem]/settings-row:w-72">
@@ -291,7 +380,7 @@ function TelegramEnvironment(props: {
         />
         <SettingsRow
           title="Use Telegram"
-          description={hint ?? "Answer messages from the people listed below."}
+          description={hint ?? "Answer messages from the people you allow."}
           status={<FieldError message={switchError} />}
           control={
             <Switch
@@ -306,6 +395,14 @@ function TelegramEnvironment(props: {
 
       <TokenSection
         configured={settings.tokenConfigured}
+        canAct={canAct}
+        save={settled}
+        suffix={suffix}
+      />
+
+      <PendingSection
+        senders={settings.pendingSenders ?? []}
+        userIds={settings.allowedUserIds}
         canAct={canAct}
         save={settled}
         suffix={suffix}
@@ -340,7 +437,8 @@ export function TelegramSettingsPanel() {
           <p className="px-3 text-sm leading-normal text-muted-foreground sm:px-4">
             Talk to your assistants from Telegram, on any computer. Start a message with @Name to
             pick an assistant; Jarvis answers otherwise, and the chat stays with the last assistant
-            you picked. Send @ on its own to list your assistants. Works while T3 Code is running.
+            you picked. Send @ on its own to list your assistants, or use the / menu in Telegram.
+            Works while T3 Code is running.
           </p>
           {environmentIds.map((id, index) => (
             <TelegramEnvironment
@@ -356,12 +454,16 @@ export function TelegramSettingsPanel() {
               description="In Telegram, open @BotFather and send /newbot. Pick a name and a username; it replies with the bot token."
             />
             <SettingsRow
-              title="2. Find your user id"
-              description="Open @userinfobot and press Start. It replies with your numeric Id; add it above."
+              title="2. Paste the token and turn it on"
+              description="Save the token above, then switch on Use Telegram."
             />
             <SettingsRow
-              title="3. Say hello"
-              description="Open your bot, press Start, and send @ to see your assistants."
+              title="3. Message the bot"
+              description="Open your bot, press Start and say hello. You then show up under Waiting for approval here."
+            />
+            <SettingsRow
+              title="4. Allow yourself"
+              description="Press Allow next to your name. Then send @ to see your assistants."
             />
           </SettingsSection>
           <SettingsSection title="Good to know" icon={<InfoIcon className={SECTION_ICON} />}>

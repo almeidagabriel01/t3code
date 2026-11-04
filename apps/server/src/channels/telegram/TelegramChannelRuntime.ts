@@ -3,10 +3,12 @@
  * update offset is stored per bot, so a restart neither replays history nor loses a message that
  * arrived while the server was off. A failing token or network backs off instead of looping.
  */
-import type {
-  TelegramChannelDeliveryError,
-  TelegramChannelErrorCode,
-  TelegramChannelStatusEvent,
+import {
+  assistantCommandNames,
+  type TelegramChannelDeliveryError,
+  type TelegramChannelErrorCode,
+  type TelegramChannelStatusEvent,
+  type TelegramPendingSender,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -20,9 +22,10 @@ import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
 import * as SqlClient from "effect/sql/SqlClient";
-import type * as Stream from "effect/Stream";
+import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
+import * as AssistantService from "../../assistants/AssistantService.ts";
 import * as ChannelGateway from "../ChannelGateway.ts";
 import * as ChannelTransport from "../ChannelTransport.ts";
 import { admitTelegramUpdate } from "./telegramAdmission.ts";
@@ -41,6 +44,11 @@ const BACKOFF_CAP_SECONDS = 60;
 /** A wrong token stays wrong until a person fixes it, so it is retried rarely. */
 const INVALID_TOKEN_CAP_SECONDS = 300;
 const STORAGE_RETRY_SECONDS = 5;
+const MAX_PENDING_SENDERS = 5;
+/** Bounds the memory of who was already answered; a forgotten sender is answered once more. */
+const MAX_REPLIED = 500;
+const APPROVAL_NOTICE =
+  "Your message is waiting for the owner's approval in T3 Code. You can chat here once they allow you.";
 
 export interface TelegramConfig {
   readonly token: Redacted.Redacted<string>;
@@ -56,6 +64,8 @@ export class TelegramChannelRuntime extends Context.Service<
   {
     /** Starts polling with this configuration, replacing the previous one; `null` stops it. */
     readonly apply: (config: TelegramConfig | null) => Effect.Effect<void>;
+    /** Forgets waiting senders, e.g. after the owner dismissed them. */
+    readonly dismiss: (userIds: ReadonlyArray<string>) => Effect.Effect<void>;
     readonly status: Effect.Effect<TelegramRuntimeStatus>;
     /** The current status first, then each change. */
     readonly streamStatus: Stream.Stream<TelegramRuntimeStatus>;
@@ -81,6 +91,7 @@ export const make = Effect.fn("TelegramChannelRuntime.make")(function* (
   const http = yield* HttpClient.HttpClient;
   const gateway = yield* ChannelGateway.ChannelGateway;
   const registry = yield* ChannelTransport.ChannelTransportRegistry;
+  const assistants = yield* AssistantService.AssistantService;
   const layerScope = yield* Effect.scope;
   const lock = yield* Semaphore.make(1);
   const config = yield* Ref.make<TelegramConfig | null>(null);
@@ -91,6 +102,11 @@ export const make = Effect.fn("TelegramChannelRuntime.make")(function* (
   const pollError = yield* Ref.make<TelegramChannelErrorCode | undefined>(undefined);
   const sendError = yield* Ref.make<TelegramChannelErrorCode | undefined>(undefined);
   const deliveryError = yield* Ref.make<TelegramChannelDeliveryError | undefined>(undefined);
+  const pending = yield* Ref.make<ReadonlyArray<TelegramPendingSender>>([]);
+  const replied = yield* Ref.make<ReadonlySet<string>>(new Set());
+  const watcher = yield* Ref.make<Fiber.Fiber<void> | undefined>(undefined);
+  const syncedCommands = yield* Ref.make<string | undefined>(undefined);
+  const syncLock = yield* Semaphore.make(1);
   const statusRef = yield* SubscriptionRef.make<TelegramRuntimeStatus>(DISABLED);
 
   const publish = Effect.gen(function* () {
@@ -98,12 +114,59 @@ export const make = Effect.fn("TelegramChannelRuntime.make")(function* (
     const lastError = (yield* Ref.get(pollError)) ?? (yield* Ref.get(sendError));
     const lastDeliveryError = yield* Ref.get(deliveryError);
     const username = yield* Ref.get(botUsername);
+    const waiting = yield* Ref.get(pending);
     yield* SubscriptionRef.set(statusRef, {
+      ...(waiting.length === 0 ? {} : { pendingSenders: waiting }),
       status: lastError === undefined ? "running" : "error",
       ...(lastError === undefined ? {} : { lastError }),
       ...(lastDeliveryError === undefined ? {} : { lastDeliveryError }),
       ...(username ? { botUsername: username } : {}),
     });
+  });
+
+  /** Puts the bot's "/" menu in step with the active assistants; a failure is logged, never fatal. */
+  const syncCommands = Effect.gen(function* () {
+    const client = yield* Ref.get(api);
+    if (client === undefined || (yield* Ref.get(botUsername)) === undefined) return;
+    const active = (yield* assistants.list).filter((assistant) => assistant.archivedAt === null);
+    const commands = assistantCommandNames(active).map(({ command, assistant }) => ({
+      command,
+      description: assistant.name.slice(0, 256),
+    }));
+    const key = commands.map((entry) => `${entry.command}\n${entry.description}`).join("\n\n");
+    if ((yield* Ref.get(syncedCommands)) === key) return;
+    yield* client.setMyCommands(commands);
+    yield* Ref.set(syncedCommands, key);
+  }).pipe(
+    syncLock.withPermits(1),
+    Effect.catchCause((cause) => Effect.logWarning("Telegram command menu not updated", { cause })),
+  );
+
+  const dismiss: TelegramChannelRuntime["Service"]["dismiss"] = (userIds) =>
+    Ref.update(pending, (list) => list.filter((entry) => !userIds.includes(entry.userId))).pipe(
+      Effect.andThen(publish),
+    );
+
+  /** Remembers the sender and, once per sender, tells them their message waits for approval. */
+  const meetStranger = Effect.fn("TelegramChannelRuntime.meetStranger")(function* (
+    client: TelegramApi,
+    admission: Extract<ReturnType<typeof admitTelegramUpdate>, { type: "unknown_sender" }>,
+  ) {
+    const { sender } = admission;
+    const seenAt = DateTime.formatIso(yield* DateTime.now);
+    yield* Ref.update(pending, (list) =>
+      [
+        { ...sender, lastSeenAt: seenAt },
+        ...list.filter((entry) => entry.userId !== sender.userId),
+      ].slice(0, MAX_PENDING_SENDERS),
+    );
+    yield* publish;
+    const known = yield* Ref.get(replied);
+    if (known.has(sender.userId)) return;
+    yield* Ref.set(replied, new Set([...known, sender.userId].slice(-MAX_REPLIED)));
+    yield* client
+      .sendMessage({ chatId: admission.chatId, text: APPROVAL_NOTICE })
+      .pipe(Effect.ignore);
   });
 
   const setPollError = (code: TelegramChannelErrorCode | undefined) =>
@@ -168,6 +231,7 @@ export const make = Effect.fn("TelegramChannelRuntime.make")(function* (
     for (const update of updates.toSorted((a, b) => a.updateId - b.updateId)) {
       const admission = admitTelegramUpdate(update, allowed, TELEGRAM_CONNECTION_ID);
       if (admission.type === "message") yield* gateway.ingest(admission.inbound);
+      if (admission.type === "unknown_sender") yield* meetStranger(client, admission);
       // Stored only once the gateway has the message, so a storage failure retries this update.
       yield* saveOffset(botId, update.updateId + 1);
     }
@@ -186,6 +250,7 @@ export const make = Effect.fn("TelegramChannelRuntime.make")(function* (
         if ((yield* Ref.get(botUsername)) === undefined) {
           const me = yield* client.getMe;
           yield* Ref.set(botUsername, me.username ?? "");
+          yield* syncCommands;
         }
         yield* processBatch(current, client);
       }),
@@ -221,7 +286,18 @@ export const make = Effect.fn("TelegramChannelRuntime.make")(function* (
         const previous = yield* Ref.get(loop);
         if (previous !== undefined) yield* Fiber.interrupt(previous);
         yield* Ref.set(loop, undefined);
+        const previousWatcher = yield* Ref.get(watcher);
+        if (previousWatcher !== undefined) yield* Fiber.interrupt(previousWatcher);
+        yield* Ref.set(watcher, undefined);
+        yield* Ref.set(syncedCommands, undefined);
         yield* Ref.set(config, next);
+        if (next === null) {
+          yield* Ref.set(pending, []);
+          yield* Ref.set(replied, new Set());
+        } else {
+          const allowed = new Set(next.allowedUserIds);
+          yield* Ref.update(pending, (list) => list.filter((entry) => !allowed.has(entry.userId)));
+        }
         yield* Ref.set(api, next === null ? undefined : makeTelegramApi(http, next.token));
         yield* Ref.set(failures, 0);
         yield* Ref.set(botUsername, undefined);
@@ -229,7 +305,19 @@ export const make = Effect.fn("TelegramChannelRuntime.make")(function* (
         yield* Ref.set(sendError, undefined);
         yield* Ref.set(deliveryError, undefined);
         yield* publish;
-        if (next === null || options.autoPoll === false) return;
+        if (next === null) return;
+        // A renamed, added or archived assistant changes the "/" menu; identical menus are not resent.
+        yield* Ref.set(
+          watcher,
+          yield* Effect.forkIn(
+            assistants.subscribe.pipe(
+              Stream.runForEach(() => syncCommands),
+              Effect.ignore,
+            ),
+            layerScope,
+          ),
+        );
+        if (options.autoPoll === false) return;
         const fiber = yield* Effect.forkIn(
           pollOnce.pipe(
             // A finished long poll goes straight to the next one; only a failure waits.
@@ -246,6 +334,7 @@ export const make = Effect.fn("TelegramChannelRuntime.make")(function* (
 
   return TelegramChannelRuntime.of({
     apply,
+    dismiss,
     status: SubscriptionRef.get(statusRef),
     streamStatus: SubscriptionRef.changes(statusRef),
     pollOnce,

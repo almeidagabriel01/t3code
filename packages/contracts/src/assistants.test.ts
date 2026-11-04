@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   Assistant,
+  assistantCommandNames,
   AssistantHandle,
   assistantHandleFromName,
   assistantIdFromThreadId,
@@ -27,6 +28,34 @@ describe("assistantHandleFromName", () => {
     const result = assistantHandleFromName(name);
     expect(result).toBe(handle);
     if (result !== null) expect(isAssistantHandle(result)).toBe(true);
+  });
+});
+
+describe("assistantCommandNames", () => {
+  const names = (handles: string[]) =>
+    assistantCommandNames(handles.map((handle) => ({ handle }))).map((entry) => entry.command);
+
+  it.each([
+    [
+      ["jarvis", "code-reviewer"],
+      ["jarvis", "code_reviewer"],
+    ],
+    [
+      ["Research Bot", "Ação"],
+      ["research_bot", "a__o"],
+    ],
+    [
+      ["x-y", "x_y", "x-y"],
+      ["x_y", "x_y_2", "x_y_3"],
+    ],
+    [
+      ["a".repeat(40), "a".repeat(32)],
+      ["a".repeat(32), `${"a".repeat(30)}_2`],
+    ],
+    [["--"], ["__"]],
+  ])("%j → %j", (handles, commands) => {
+    expect(names(handles)).toEqual(commands);
+    for (const command of commands) expect(command).toMatch(/^[a-z0-9_]{1,32}$/);
   });
 });
 

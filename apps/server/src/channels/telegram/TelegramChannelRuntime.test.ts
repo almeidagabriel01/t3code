@@ -5,9 +5,12 @@ import * as Effect from "effect/Effect";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Redacted from "effect/Redacted";
+import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import * as AssistantService from "../../assistants/AssistantService.ts";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import { ChannelGateway } from "../ChannelGateway.ts";
 import * as ChannelTransport from "../ChannelTransport.ts";
@@ -26,7 +29,7 @@ const privateMessage = (updateId: number, from = 111, text = `message ${updateId
     date: 1_800_000_000,
     text,
     chat: { id: from, type: "private" },
-    from: { id: from, first_name: "Ana" },
+    from: { id: from, first_name: "Ana", ...(from === 111 ? {} : { username: "stranger" }) },
   },
 });
 
@@ -35,14 +38,40 @@ const harness = () => {
   const state = {
     failure: undefined as Response | undefined,
     ingestFails: false,
+    commandsFail: false,
     calls: [] as Array<{ method: string; body: Record<string, unknown> }>,
   };
   const ingested: ChannelInboundMessage[] = [];
+  const assistants: Array<{ handle: string; name: string; archivedAt: string | null }> = [
+    { handle: "jarvis", name: "Jarvis", archivedAt: null },
+    { handle: "old-one", name: "Old", archivedAt: "2026-01-01T00:00:00.000Z" },
+  ];
+  const queues: { events?: Queue.Queue<{ type: "snapshot" }> } = {};
+  const assistantEvents = Effect.suspend(() => Queue.offer(queues.events!, { type: "snapshot" }));
+  let commandWaiter: { count: number; resolve: () => void } | undefined;
+  const commandsSet = () => state.calls.filter((call) => call.method === "setMyCommands");
+  const whenCommandsSet = (count: number) =>
+    new Promise<void>((resolve) => {
+      if (commandsSet().length >= count) return resolve();
+      commandWaiter = { count, resolve };
+    });
   const fetch: typeof globalThis.fetch = async (url, init) => {
     const method = String(url).split("/").at(-1) ?? "";
     const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
     state.calls.push({ method, body });
+    if (
+      method === "setMyCommands" &&
+      commandWaiter &&
+      commandsSet().length >= commandWaiter.count
+    ) {
+      commandWaiter.resolve();
+    }
     if (state.failure !== undefined) return state.failure.clone();
+    if (method === "setMyCommands") {
+      return state.commandsFail
+        ? json({ ok: false, error_code: 400 }, 400)
+        : json({ ok: true, result: true });
+    }
     if (method === "getMe") return json({ ok: true, result: { username: "my_bot" } });
     if (method === "sendMessage") return json({ ok: true, result: { message_id: 9 } });
     const offset = Number(body.offset);
@@ -60,12 +89,36 @@ const harness = () => {
           : Effect.sync(() => void ingested.push(message)),
     }),
   );
-  const layer = Layer.mergeAll(gateway, ChannelTransport.layer, FetchHttpClient.layer).pipe(
-    Layer.provideMerge(SqlitePersistence.layerMemory),
+  const assistantService = Layer.effect(
+    AssistantService.AssistantService,
+    Effect.gen(function* () {
+      queues.events = yield* Queue.unbounded<{ type: "snapshot" }>();
+      return AssistantService.AssistantService.of({
+        list: Effect.sync(() => assistants),
+        subscribe: Stream.fromQueue(queues.events),
+      } as never);
+    }),
   );
+  const layer = Layer.mergeAll(
+    gateway,
+    assistantService,
+    ChannelTransport.layer,
+    FetchHttpClient.layer,
+  ).pipe(Layer.provideMerge(SqlitePersistence.layerMemory));
   const withFetch = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     effect.pipe(Effect.provideService(FetchHttpClient.Fetch, fetch));
-  return { backlog, state, ingested, layer, withFetch, fetch };
+  return {
+    backlog,
+    state,
+    ingested,
+    layer,
+    withFetch,
+    fetch,
+    assistants,
+    assistantEvents,
+    commandsSet,
+    whenCommandsSet,
+  };
 };
 
 const offsetRow = Effect.gen(function* () {
@@ -251,4 +304,90 @@ it.effect("stops the request in flight the moment it is turned off", () => {
     yield* Effect.promise(() => abortedSignal);
     assert.deepStrictEqual(yield* runtime.status, { status: "disabled" });
   }).pipe(Effect.provideService(FetchHttpClient.Fetch, fetch), Effect.provide(layer));
+});
+
+const replies = (calls: ReadonlyArray<{ method: string; body: Record<string, unknown> }>) =>
+  calls.filter((call) => call.method === "sendMessage").map((call) => call.body.chat_id);
+
+it.effect(
+  "remembers unknown senders without routing them, answers each once, and drops them once allowed",
+  () => {
+    const { backlog, state, ingested, layer, withFetch } = harness();
+    return withFetch(
+      Effect.gen(function* () {
+        const runtime = yield* Runtime.make({ autoPoll: false });
+        yield* runtime.apply({ ...config, allowedUserIds: [] });
+        yield* runtime.pollOnce;
+        backlog.push(privateMessage(1, 222), privateMessage(2, 333), privateMessage(3, 222));
+        yield* runtime.pollOnce;
+        assert.lengthOf(ingested, 0);
+        assert.deepStrictEqual(replies(state.calls), ["222", "333"]);
+        const status = yield* runtime.status;
+        assert.deepStrictEqual(
+          status.pendingSenders?.map((sender) => [
+            sender.userId,
+            sender.firstName,
+            sender.username,
+          ]),
+          [
+            ["222", "Ana", "stranger"],
+            ["333", "Ana", "stranger"],
+          ],
+        );
+
+        // Allowing one keeps the other waiting; dismissing the other empties the list.
+        yield* runtime.apply({ ...config, allowedUserIds: ["333"] });
+        assert.deepStrictEqual(
+          (yield* runtime.status).pendingSenders?.map((sender) => sender.userId),
+          ["222"],
+        );
+        yield* runtime.dismiss(["222"]);
+        assert.isUndefined((yield* runtime.status).pendingSenders);
+
+        // The list keeps only the newest five.
+        for (let id = 10; id < 17; id += 1) backlog.push(privateMessage(id, 500 + id));
+        yield* runtime.pollOnce;
+        assert.lengthOf((yield* runtime.status).pendingSenders ?? [], 5);
+        assert.strictEqual((yield* runtime.status).pendingSenders?.[0]?.userId, "516");
+        yield* runtime.apply(null);
+        assert.deepStrictEqual(yield* runtime.status, { status: "disabled" });
+      }),
+    ).pipe(Effect.provide(layer));
+  },
+);
+
+it.effect("sets the bot's / menu after getMe and again when the assistants change", () => {
+  const { layer, withFetch, assistants, assistantEvents, commandsSet, whenCommandsSet, state } =
+    harness();
+  return withFetch(
+    Effect.gen(function* () {
+      const runtime = yield* Runtime.make({ autoPoll: false });
+      yield* runtime.apply(config);
+      yield* runtime.pollOnce;
+      assert.deepStrictEqual(
+        commandsSet().map((call) => call.body),
+        [{ commands: [{ command: "jarvis", description: "Jarvis" }] }],
+      );
+
+      // Nothing changed: the menu is not sent again.
+      yield* assistantEvents;
+      assistants.push({ handle: "code-reviewer", name: "Code Reviewer", archivedAt: null });
+      const second = whenCommandsSet(2);
+      yield* assistantEvents;
+      yield* Effect.promise(() => second);
+      assert.deepStrictEqual(commandsSet().at(-1)?.body.commands, [
+        { command: "jarvis", description: "Jarvis" },
+        { command: "code_reviewer", description: "Code Reviewer" },
+      ]);
+
+      // A refused menu is logged, polling carries on, and the next change retries.
+      state.commandsFail = true;
+      assistants.pop();
+      const third = whenCommandsSet(3);
+      yield* assistantEvents;
+      yield* Effect.promise(() => third);
+      assert.strictEqual((yield* runtime.status).status, "running");
+      assert.deepStrictEqual(yield* runtime.pollOnce, Duration.zero);
+    }),
+  ).pipe(Effect.provide(layer));
 });

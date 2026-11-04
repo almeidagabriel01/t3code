@@ -9,6 +9,7 @@ import {
   createTelegramChannelEnvironmentAtoms,
   telegramDeliveryErrorReason,
   telegramStatusLabel,
+  telegramSenderLabel,
   telegramSwitchHint,
 } from "./telegramChannel.ts";
 
@@ -39,6 +40,13 @@ describe("applyTelegramStatusEvent", () => {
         lastDeliveryError: { code: "timeout", at: "2026-10-01T00:00:00.000Z" },
       },
     );
+    const waiting = [{ userId: "9", firstName: "Bo", lastSeenAt: "2026-10-01T00:00:00.000Z" }];
+    const withWaiting = applyTelegramStatusEvent(settings, {
+      status: "running",
+      pendingSenders: waiting,
+    });
+    assert.deepStrictEqual(withWaiting.pendingSenders, waiting);
+    assert.isUndefined(applyTelegramStatusEvent(withWaiting, { status: "running" }).pendingSenders);
     const { lastError: _gone, ...withoutError } = settings;
     assert.deepStrictEqual(
       applyTelegramStatusEvent(settings, { status: "running", botUsername: "other_bot" }),
@@ -73,13 +81,18 @@ describe("labels", () => {
     );
   });
 
-  it("says what is missing before the switch can be turned on", () => {
-    const hint = (tokenConfigured: boolean, ids: string[]) =>
-      telegramSwitchHint({ tokenConfigured, allowedUserIds: ids });
-    assert.include(hint(false, []) ?? "", "bot token and at least one user id");
-    assert.strictEqual(hint(false, ["1"]), "Add the bot token before turning this on.");
-    assert.strictEqual(hint(true, []), "Add at least one user id before turning this on.");
-    assert.isNull(hint(true, ["1"]));
+  it("needs only the token before the switch can be turned on", () => {
+    assert.strictEqual(
+      telegramSwitchHint({ tokenConfigured: false }),
+      "Add the bot token before turning this on.",
+    );
+    assert.isNull(telegramSwitchHint({ tokenConfigured: true }));
+  });
+
+  it("names a waiting sender by first name, @username or id", () => {
+    assert.strictEqual(telegramSenderLabel({ userId: "1", firstName: "Ana" }), "Ana");
+    assert.strictEqual(telegramSenderLabel({ userId: "1", username: "ana" }), "@ana");
+    assert.strictEqual(telegramSenderLabel({ userId: "1" }), "1");
   });
 
   it("keeps only the digits of a typed user id", () => {

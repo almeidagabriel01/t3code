@@ -1,6 +1,7 @@
 import { filterNotes } from "@t3tools/client-runtime/notes/search";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
+import { moveToTitle, replaceNoteTitle } from "@t3tools/client-runtime/notes/title";
 import { selectNotesInOrder } from "@t3tools/client-runtime/state/notes";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { NotePath, type EnvironmentId, type NoteSummary, type ProjectId } from "@t3tools/contracts";
@@ -259,11 +260,14 @@ function NoteRow(props: {
   const navigation = useNavigation();
   const { canAct } = useNoteDraftAccess(environmentId);
   const canUpdate = useAtomValue(notesEnvironment.update.permissionAtom(environmentId));
+  const canWrite = useAtomValue(notesEnvironment.write.permissionAtom(environmentId));
   const canMove = useAtomValue(notesEnvironment.move.permissionAtom(environmentId));
   const canDelete = useAtomValue(notesEnvironment.delete.permissionAtom(environmentId));
   const canStart = useAtomValue(notesEnvironment.startWork.permissionAtom(environmentId));
   const update = useAtomCommand(notesEnvironment.update, notesCommandOptions);
   const move = useAtomCommand(notesEnvironment.move, notesCommandOptions);
+  const read = useAtomCommand(notesEnvironment.read, notesCommandOptions);
+  const write = useAtomCommand(notesEnvironment.write, notesCommandOptions);
   const remove = useAtomCommand(notesEnvironment.delete, notesCommandOptions);
   const sync = noteSyncLabel(row.sync);
   // A pending draft would conflict with a header or file change made on the server.
@@ -272,6 +276,7 @@ function NoteRow(props: {
       ? noteRowMenuActions(summary, {
           update: canUpdate,
           start: canStart,
+          write: canWrite,
           move: canMove,
           delete: canDelete,
         })
@@ -279,6 +284,32 @@ function NoteRow(props: {
   const fail = (result: AsyncResult.AsyncResult<unknown, unknown>) => {
     if (AsyncResult.isFailure(result))
       Dialog.alert("Couldn't change the note", notesError(squashAtomCommandFailure(result)));
+  };
+  // Rewrites the first line of the latest body, then lets the file follow its title.
+  const rename = async (target: NoteSummary, title: string) => {
+    const current = await read({ environmentId, input: { path: target.path } });
+    if (!AsyncResult.isSuccess(current)) return fail(current);
+    const saved = await write({
+      environmentId,
+      input: {
+        path: target.path,
+        body: replaceNoteTitle(current.value.body, title),
+        baseRevision: current.value.revision,
+      },
+    });
+    if (!AsyncResult.isSuccess(saved)) return fail(saved);
+    if (!canMove) return;
+    await moveToTitle(
+      async (input) => {
+        const result = await move({ environmentId, input });
+        return AsyncResult.isSuccess(result)
+          ? { ok: true, value: result.value }
+          : { ok: false, error: AsyncResult.isFailure(result) ? squashAtomCommandFailure(result) : result };
+      },
+      saved.value,
+      current.value.title,
+      saved.value.title,
+    );
   };
   const run = (id: NoteRowActionId) => {
     if (summary === undefined) return;
@@ -292,9 +323,21 @@ function NoteRow(props: {
         path: summary.path,
         ...(summary.card === null ? {} : { another: true }),
       });
+    } else if (id === "rename") {
+      Dialog.prompt({
+        title: "Rename",
+        message: "The note's title, which is its first line.",
+        placeholder: "Title",
+        initialValue: summary.title,
+        confirmText: "Rename",
+        onConfirm: (value) => {
+          const title = value.trim();
+          if (title.length > 0 && title !== summary.title) void rename(summary, title);
+        },
+      });
     } else if (id === "move") {
       Dialog.prompt({
-        title: "Rename or move",
+        title: "Move or rename file",
         message: "A file name, optionally inside one folder: folder/name.md",
         placeholder: "name.md",
         initialValue: summary.path,

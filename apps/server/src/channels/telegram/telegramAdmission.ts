@@ -8,11 +8,21 @@ const MAX_DATE_SECONDS = 4_102_444_800;
 
 export type TelegramAdmission =
   | { readonly type: "skip"; readonly reason: "kind" | "chat" | "sender" | "text" }
+  | {
+      readonly type: "unknown_sender";
+      readonly chatId: string;
+      readonly sender: {
+        readonly userId: string;
+        readonly firstName?: string;
+        readonly username?: string;
+      };
+    }
   | { readonly type: "message"; readonly inbound: ChannelInboundMessage };
 
 /**
  * Decides whether an update is something an allowed person said to the bot in a private chat.
- * Everything else, including groups, bots, unknown senders and attachments, is ignored.
+ * Private messages from unknown people are not routed but reported, so the owner can allow them.
+ * Everything else, including groups, bots and attachments, is ignored.
  * `/start`, the first thing Telegram sends, lists the assistants like a bare `@`.
  */
 export function admitTelegramUpdate(
@@ -24,8 +34,19 @@ export function admitTelegramUpdate(
   if (message === undefined) return { type: "skip", reason: "kind" };
   if (message.chat.type !== "private") return { type: "skip", reason: "chat" };
   const from = message.from;
-  if (from === undefined || from.is_bot === true || !allowedUserIds.has(String(from.id))) {
-    return { type: "skip", reason: "sender" };
+  if (from === undefined || from.is_bot === true) return { type: "skip", reason: "sender" };
+  if (!allowedUserIds.has(String(from.id))) {
+    const firstName = from.first_name?.trim();
+    const username = from.username?.trim();
+    return {
+      type: "unknown_sender",
+      chatId: String(message.chat.id),
+      sender: {
+        userId: String(from.id),
+        ...(firstName ? { firstName } : {}),
+        ...(username ? { username } : {}),
+      },
+    };
   }
   const raw = message.text?.trim();
   if (!raw) return { type: "skip", reason: "text" };

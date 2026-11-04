@@ -229,6 +229,60 @@ it.effect("@ alone or an unknown @name lists the assistants instead of sending",
   }).pipe(Effect.provide(layer));
 });
 
+const telegramMessage = (text: string) =>
+  inbound({
+    kind: "telegram",
+    text,
+    conversationKey: "42",
+    replyAddress: { kind: "telegram", connectionId: "c1", chatId: "42" },
+  });
+
+const slashRouting: ReadonlyArray<readonly [string, string, string]> = [
+  ["/research hi there", "research", "hi there"],
+  ["/research_bot go", "research_bot", "go"],
+  ["/RESEARCH@my_bot hi", "research", "hi"],
+  ["/research@my_bot\nplease", "research", "please"],
+  ["/jarvis@my_bot x", "jarvis", "x"],
+  ["@research hi", "research", "hi"],
+];
+
+it.effect.each(slashRouting)("telegram /command routes like @Name: %s", ([text, to, delivered]) => {
+  const { layer, channelSends } = harness();
+  return Effect.gen(function* () {
+    yield* (yield* ChannelGateway).ingest(telegramMessage(text));
+    const [sent] = channelSends();
+    assert.equal(sent!.threadId, `assistant:${to!.replace("_", "-")}:1`);
+    assert.equal(sent!.text, delivered);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect(
+  "telegram: a bare /command switches, unknown or archived ones list, paths pass through",
+  () => {
+    const { layer, channelSends } = harness();
+    return Effect.gen(function* () {
+      const gateway = yield* ChannelGateway;
+      yield* gateway.ingest(telegramMessage("/research"));
+      yield* gateway.ingest(telegramMessage("/nobody hi"));
+      yield* gateway.ingest(telegramMessage("/old hi"));
+      yield* gateway.ingest(telegramMessage("/etc/hosts please"));
+      // Only Telegram has a command menu; iMessage text is never read as a command.
+      yield* gateway.ingest(inbound({ text: "/research hi" }));
+      const rows = yield* texts;
+      const roster =
+        "Your assistants: Jarvis, Research Bot, Research, Fresh. Start a message with @Name to talk to one; Jarvis answers otherwise.";
+      assert.deepEqual(rows, ["You are now talking to Research.", roster, roster]);
+      assert.deepEqual(
+        channelSends().map((send) => [send.threadId, send.text]),
+        [
+          ["assistant:research:1", "/etc/hosts please"],
+          ["assistant:jarvis:1", "/research hi"],
+        ],
+      );
+    }).pipe(Effect.provide(layer));
+  },
+);
+
 it.effect("a message that cannot be delivered gets a failure line", () => {
   const { layer, state, sends } = harness();
   return Effect.gen(function* () {

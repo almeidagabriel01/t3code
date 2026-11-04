@@ -115,13 +115,15 @@ that runs T3 Code; it needs no public address. It works while T3 Code is running
 1. In Telegram, open `@BotFather`, send `/newbot` and follow the steps. It replies with a bot token.
 2. Paste the token under **Bot token**. It stays on the server and is never shown again; paste a new
    one to replace it, or remove it.
-3. Open `@userinfobot` and press Start to see your numeric Id, then add it under **Who can write to
-   the bot**. Anyone else who writes to the bot is ignored.
-4. Turn on **Use Telegram**, open your bot and press Start.
+3. Turn on **Use Telegram**, open your bot, press Start and say hello. You show up under **Waiting
+   for approval**; press **Allow** next to your name. Anyone else who writes to the bot waits there
+   until you allow or ignore them, and is told that their message is waiting. If you prefer, add a
+   numeric Telegram user id by hand under **Who can write to the bot**.
 
 Start a message with `@Name` to pick an assistant; the default one answers otherwise, and the chat
-stays with the last one you picked. Send `@` on its own to list them. Approvals arrive as numbered
-choices: reply with the number. Only private chats with the bot are heard; groups and attachments
+stays with the last one you picked. Send `@` on its own to list them. Telegram's `/` menu lists them
+too: `/name text` works like `@Name text`, and `/name` alone switches to that assistant. Approvals
+arrive as numbered choices: reply with the number. Only private chats with the bot are heard; groups and attachments
 are not. More than 10 messages a minute from one person are held back, with one notice.
 
 If the status shows an error, it says what to fix; T3 Code keeps retrying, waiting longer after each

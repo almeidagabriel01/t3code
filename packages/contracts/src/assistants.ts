@@ -36,6 +36,30 @@ export function assistantHandleFromName(name: string): string | null {
   return slug.length === 0 ? null : slug;
 }
 
+/**
+ * Chat command names (`/name`, `[a-z0-9_]{1,32}`) for each assistant, from its handle, in list
+ * order; a name another assistant already took gets `_2`, `_3`, ….
+ */
+export function assistantCommandNames<A extends { readonly handle: string }>(
+  assistants: ReadonlyArray<A>,
+): ReadonlyArray<{ readonly command: string; readonly assistant: A }> {
+  const taken = new Set<string>();
+  return assistants.map((assistant) => {
+    const base =
+      assistant.handle
+        .toLowerCase()
+        .replace(/[^a-z0-9_]/g, "_")
+        .slice(0, 32) || "assistant";
+    let command = base;
+    for (let n = 2; taken.has(command); n += 1) {
+      const suffix = `_${n}`;
+      command = `${base.slice(0, 32 - suffix.length)}${suffix}`;
+    }
+    taken.add(command);
+    return { command, assistant };
+  });
+}
+
 /** Enforced through the thread's runtime mode and, for read-only, a read-only sandbox. */
 export const AssistantToolAccess = Schema.Literals(["read-only", "workspace-write", "full"]);
 export type AssistantToolAccess = typeof AssistantToolAccess.Type;

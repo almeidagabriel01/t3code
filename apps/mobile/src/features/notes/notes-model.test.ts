@@ -99,14 +99,15 @@ describe("note sync presentation", () => {
 });
 
 describe("note row menu", () => {
-  const all = { update: true, start: true, move: true, delete: true };
+  const all = { update: true, start: true, write: true, move: true, delete: true };
 
   it("offers pin, start, move and a destructive delete, by permission", () => {
     const pinned = { pinned: true, card: null };
     expect(noteRowMenuActions(pinned, all).map((action) => [action.id, action.title])).toEqual([
       ["pin", "Unpin"],
       ["start", "Start work"],
-      ["move", "Rename or move"],
+      ["rename", "Rename"],
+      ["move", "Move or rename file"],
       ["delete", "Delete"],
     ]);
     expect(noteRowMenuActions(pinned, all).at(-1)?.attributes).toEqual({ destructive: true });
@@ -114,7 +115,7 @@ describe("note row menu", () => {
       noteRowMenuActions({ pinned: false, card: {} }, { ...all, update: false }).map(
         (action) => action.title,
       ),
-    ).toEqual(["Start another card", "Rename or move", "Delete"]);
+    ).toEqual(["Start another card", "Rename", "Move or rename file", "Delete"]);
   });
 
   it("hides pin and start for a note the server could not parse", () => {
@@ -123,6 +124,7 @@ describe("note row menu", () => {
         (action) => action.id,
       ),
     ).toEqual(["move", "delete"]);
+    expect(noteRowMenuActions({ pinned: false, card: null }, { ...all, write: false }).map((a) => a.id)).not.toContain("rename");
   });
 });
 

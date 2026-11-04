@@ -1,4 +1,5 @@
 import {
+  assistantCommandNames,
   channelChatKey,
   ChannelGatewayError,
   ChannelInboundMessage,
@@ -63,6 +64,23 @@ function routeByName<A extends { readonly name: string }>(
   return undefined;
 }
 
+/**
+ * Telegram's "/" menu: `/command text` or `/command@bot text` for an assistant's command name.
+ * `assistant` is undefined when the text is a command no assistant has.
+ */
+function routeByCommand<A extends { readonly handle: string }>(
+  text: string,
+  assistants: ReadonlyArray<A>,
+): { readonly assistant: A | undefined; readonly text: string } | undefined {
+  const match = /^\/([A-Za-z0-9_]+)(?:@\w+)?(?=\s|$)/.exec(text.trimStart());
+  if (match === null) return undefined;
+  const command = match[1]!.toLowerCase();
+  const assistant = assistantCommandNames(assistants).find(
+    (entry) => entry.command === command,
+  )?.assistant;
+  return { assistant, text: text.trimStart().slice(match[0].length).trim() };
+}
+
 export class ChannelBridge extends Context.Service<
   ChannelBridge,
   {
@@ -102,7 +120,11 @@ const make = Effect.gen(function* () {
     message: ChannelInboundMessage,
   ) {
     const active = (yield* assistants.list).filter((assistant) => assistant.archivedAt === null);
-    const named = routeByName(message.text, active);
+    const slash = message.kind === "telegram" ? routeByCommand(message.text, active) : undefined;
+    const named =
+      slash?.assistant === undefined
+        ? routeByName(message.text, active)
+        : { assistant: slash.assistant, text: slash.text };
     if (named !== undefined) {
       yield* sql`
         INSERT OR REPLACE INTO channel_conversations (connection_id, conversation_key, assistant_id)
@@ -110,7 +132,7 @@ const make = Effect.gen(function* () {
       return { assistant: named.assistant, text: named.text };
     }
     // `@` alone or an unknown `@name` asks who is there; the chat has no other way to find out.
-    if (message.text.trimStart().startsWith("@")) {
+    if (slash !== undefined || message.text.trimStart().startsWith("@")) {
       const listed = active.length > 0 ? active : [yield* assistants.ensureDefault];
       return { roster: listed.toSorted((a, b) => Number(b.isDefault) - Number(a.isDefault)) };
     }

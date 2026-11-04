@@ -19,6 +19,7 @@ const TOKEN = "123456:ABCDEFGHIJKLMNOPQRSTUVWXYZ_secret";
 const OTHER_TOKEN = "654321:ZYXWVUTSRQPONMLKJIHGFEDCBA_other";
 
 const harness = () => {
+  const dismissed: Array<ReadonlyArray<string>> = [];
   const applied: Array<{ token: string; allowedUserIds: ReadonlyArray<string> } | null> = [];
   const runtime = Layer.succeed(
     Runtime.TelegramChannelRuntime,
@@ -32,6 +33,7 @@ const harness = () => {
                 : { token: Redacted.value(config.token), allowedUserIds: config.allowedUserIds },
             ),
         ),
+      dismiss: (ids) => Effect.sync(() => void dismissed.push(ids)),
       status: Effect.succeed({ status: "running", botUsername: "my_bot" }),
       streamStatus: Stream.make({ status: "running" } as const),
       pollOnce: Effect.die("not polled"),
@@ -43,7 +45,7 @@ const harness = () => {
     Layer.provideMerge(runtime),
     Layer.provideMerge(NodeServices.layer),
   );
-  return { applied, layer };
+  return { applied, dismissed, layer };
 };
 
 const reason = <A>(effect: Effect.Effect<A, TelegramChannelSettingsError>) =>
@@ -111,6 +113,18 @@ it.effect("keeps the token in the secret store only, and never hands it back", (
   }).pipe(Effect.provide(layer));
 });
 
+it.effect("turns on with only a token, and passes dismissed senders to the runtime", () => {
+  const { applied, dismissed, layer } = harness();
+  return Effect.gen(function* () {
+    const settings = yield* Settings.TelegramChannelSettings;
+    const result = yield* settings.configure({ enabled: true, botToken: TOKEN });
+    assert.deepStrictEqual([result.enabled, result.allowedUserIds], [true, []]);
+    assert.deepStrictEqual(applied.at(-1), { token: TOKEN, allowedUserIds: [] });
+    yield* settings.configure({ dismissUserIds: ["555"] });
+    assert.deepStrictEqual(dismissed, [["555"]]);
+  }).pipe(Effect.provide(layer));
+});
+
 it.effect("clearing the token removes it and turns Telegram off", () => {
   const { applied, layer } = harness();
   return Effect.gen(function* () {
@@ -132,10 +146,6 @@ it.effect("refuses what cannot work, without saving or applying anything", () =>
   return Effect.gen(function* () {
     const settings = yield* Settings.TelegramChannelSettings;
     assert.strictEqual((yield* reason(settings.configure({ enabled: true })))?.reason, "no_token");
-    assert.strictEqual(
-      (yield* reason(settings.configure({ enabled: true, botToken: TOKEN })))?.reason,
-      "no_user_ids",
-    );
     const badToken = yield* reason(settings.configure({ botToken: "not-a-token secret" }));
     assert.strictEqual(badToken?.reason, "invalid_token");
     assert.isUndefined(badToken?.detail);
