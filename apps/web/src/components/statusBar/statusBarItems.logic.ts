@@ -3,6 +3,7 @@ import type { ServerProviderUsageWindow, StatusBarUsagePercentage } from "@t3too
 export const STATUS_BAR_USAGE_ITEM = "usage";
 export const STATUS_BAR_PORTS_ITEM = "ports";
 export const STATUS_BAR_RESOURCE_ITEM = "resource-usage";
+export const STATUS_BAR_KEEP_AWAKE_ITEM = "keep-awake";
 
 /** Hidden ids are stored, so an instance added later shows by default. */
 export const isStatusBarItemShown = (hidden: ReadonlyArray<string>, id: string): boolean =>

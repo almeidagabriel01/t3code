@@ -20,6 +20,7 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { Switch } from "../ui/switch";
 import {
   isStatusBarItemShown,
+  STATUS_BAR_KEEP_AWAKE_ITEM,
   STATUS_BAR_PORTS_ITEM,
   STATUS_BAR_RESOURCE_ITEM,
   STATUS_BAR_USAGE_ITEM,
@@ -258,6 +259,13 @@ function StatusBarSettingsSections({
           id={STATUS_BAR_RESOURCE_ITEM}
           label="Resource usage"
           description="Memory, CPU and running terminals."
+        />
+        <SegmentRow
+          {...segment}
+          search={searchableSetting("status-bar-segment-keep-awake")}
+          id={STATUS_BAR_KEEP_AWAKE_ITEM}
+          label="Keep awake"
+          description="A coffee cup while this computer is being held awake."
         />
       </SettingsSection>
 

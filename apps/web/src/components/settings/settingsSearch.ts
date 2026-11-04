@@ -601,6 +601,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["status bar show hide memory cpu terminals"],
   },
   {
+    id: "status-bar-segment-keep-awake",
+    title: "Keep awake segment",
+    to: "/settings/status-bar",
+    searchTerms: ["status bar show hide coffee sleep"],
+  },
+  {
     id: "status-bar-items",
     title: "Status bar accounts",
     to: "/settings/status-bar",
@@ -913,6 +919,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [
       "balanced performance battery saver advanced git fetch provider health refresh host power monitor idle policy",
     ],
+  },
+  {
+    id: "keep-awake",
+    title: "Keep this computer awake",
+    to: "/settings/maintenance",
+    scope: "environment-defaults",
+    searchTerms: ["sleep caffeinate prevent idle lid laptop agents working always power"],
   },
   {
     id: "new-threads",

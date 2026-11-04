@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import { useClientSettings } from "../../hooks/useSettings";
+import { KeepAwakeSegment } from "./KeepAwakeSegment";
 import { PortsSegment } from "./PortsSegment";
 import { ResourceSegment } from "./ResourceSegment";
 import { StatusBarVisibilityMenu, type StatusBarMenuPoint } from "./StatusBarVisibilityMenu";
@@ -27,6 +28,7 @@ export function StatusBar() {
       >
         <UsageSegments />
         <div className="flex shrink-0 items-center gap-3">
+          <KeepAwakeSegment />
           <PortsSegment />
           <ResourceSegment />
         </div>

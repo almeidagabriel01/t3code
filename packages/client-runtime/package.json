@@ -247,6 +247,10 @@
       "types": "./src/state/imessageChannel.ts",
       "default": "./src/state/imessageChannel.ts"
     },
+    "./state/keepAwake": {
+      "types": "./src/state/keepAwake.ts",
+      "default": "./src/state/keepAwake.ts"
+    },
     "./state/telegramChannel": {
       "types": "./src/state/telegramChannel.ts",
       "default": "./src/state/telegramChannel.ts"

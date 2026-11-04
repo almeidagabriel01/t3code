@@ -18,6 +18,7 @@ import {
 } from "../ui/menu";
 import {
   isStatusBarItemShown,
+  STATUS_BAR_KEEP_AWAKE_ITEM,
   STATUS_BAR_PORTS_ITEM,
   STATUS_BAR_RESOURCE_ITEM,
   STATUS_BAR_USAGE_ITEM,
@@ -29,6 +30,7 @@ const SEGMENTS = [
   { id: STATUS_BAR_USAGE_ITEM, label: "Usage" },
   { id: STATUS_BAR_PORTS_ITEM, label: "Ports" },
   { id: STATUS_BAR_RESOURCE_ITEM, label: "Resource usage" },
+  { id: STATUS_BAR_KEEP_AWAKE_ITEM, label: "Keep awake" },
 ] as const;
 
 export interface StatusBarMenuPoint {
