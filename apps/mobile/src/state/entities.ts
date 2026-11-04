@@ -262,3 +262,14 @@ export function useThreadReportedModelSelection(ref: ScopedThreadRef | null) {
     selectReportedModelSelection,
   );
 }
+
+const selectThreadMessages = (thread: EnvironmentThread | null) =>
+  thread?.projection.messages ?? null;
+
+/** The messages the client holds for a thread, or null while its detail has not loaded. */
+export function useThreadMessages(ref: ScopedThreadRef | null) {
+  return useAtomValue(
+    ref === null ? EMPTY_THREAD_ATOM : environmentThreadDetails.threadAtom(ref),
+    selectThreadMessages,
+  );
+}

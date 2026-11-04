@@ -508,3 +508,16 @@ export function kanbanCardRecordForThread(
   }
   return undefined;
 }
+
+/** The cards a thread can be switched to: newest first, narrowed by a `#N title` search. */
+export function kanbanCardPickerRows(
+  cards: Iterable<KanbanCard>,
+  query: string,
+  limit: number,
+): ReadonlyArray<KanbanCard> {
+  const text = query.trim().toLowerCase();
+  return [...cards]
+    .sort((left, right) => right.number - left.number)
+    .filter((card) => text === "" || `#${card.number} ${card.title}`.toLowerCase().includes(text))
+    .slice(0, limit);
+}

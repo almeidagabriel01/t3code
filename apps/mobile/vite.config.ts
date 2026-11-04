@@ -15,6 +15,7 @@ const reactTests = [
   "src/features/connection/ConnectionEnvironmentRow.test.tsx",
   "src/features/kanban/KanbanBoardRouteScreen.test.tsx",
   "src/features/kanban/KanbanCardMenu.test.tsx",
+  "src/features/kanban/ThreadKanbanCardControls.test.tsx",
   "src/features/kanban/KanbanCardAttachments.test.tsx",
   "src/features/threads/useThreadMenu.test.tsx",
   "src/features/kanban/KanbanCardRouteScreen.test.tsx",

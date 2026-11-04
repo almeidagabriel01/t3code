@@ -1,4 +1,5 @@
 import type { KanbanBoardState } from "@t3tools/client-runtime/state/kanban";
+import { kanbanCardPickerRows } from "@t3tools/client-runtime/state/kanbanLogic";
 import type { EnvironmentId, KanbanCard, ThreadId } from "@t3tools/contracts";
 import { BotIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
@@ -195,15 +196,8 @@ export function KanbanLinkCardDialog(props: {
     state === null || state === undefined
       ? undefined
       : [...state.boards.values()].find((entry) => entry.projectId === props.projectId);
-  const cards = board
-    ? [...board.cards.values()].toSorted((left, right) => right.number - left.number)
-    : [];
-  const matches = (query: string) => {
-    const text = query.trim().toLowerCase();
-    return cards
-      .filter((card) => text === "" || `#${card.number} ${card.title}`.toLowerCase().includes(text))
-      .slice(0, MAX_ROWS);
-  };
+  const matches = (query: string) =>
+    board ? kanbanCardPickerRows(board.cards.values(), query, MAX_ROWS) : [];
   return (
     <PickerDialog
       title={current === null ? "Link to card" : "Switch card"}

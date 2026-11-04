@@ -10,6 +10,11 @@ import {
   type KanbanCard,
   type ThreadId,
 } from "@t3tools/contracts";
+import {
+  consumeKanbanCardSkip,
+  kanbanCardSkipAtom,
+  kanbanCardSkipKey,
+} from "@t3tools/client-runtime/state/kanbanCardSkip";
 import { kanbanCardRecordForThread } from "@t3tools/client-runtime/state/kanbanLogic";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
@@ -78,8 +83,15 @@ export function useThreadKanbanCard(
   return useAtomValue(threadCardAtom(`${environmentId}\n${threadId}`));
 }
 
-/** The card record a send should carry for a thread linked to a card, read at dispatch time. */
-export function readThreadKanbanCardRecord(environmentId: EnvironmentId, threadId: ThreadId) {
+/**
+ * The card record a send should carry for a thread linked to a card, read at dispatch time.
+ * Consumes the composer's "send without the card" choice, so it applies to one message.
+ */
+export function takeThreadKanbanCardRecord(environmentId: EnvironmentId, threadId: ThreadId) {
+  const skipAtom = kanbanCardSkipAtom(kanbanCardSkipKey(environmentId, threadId));
+  const send = consumeKanbanCardSkip(appAtomRegistry.get(skipAtom));
+  appAtomRegistry.set(skipAtom, send.skipped);
+  if (!send.attach) return undefined;
   if (
     appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
       .kanban !== true

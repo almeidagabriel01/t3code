@@ -131,6 +131,7 @@ import { SettingsProjectOverviewRouteScreen } from "./features/settings/Settings
 import { KanbanBoardRouteScreen } from "./features/kanban/KanbanBoardRouteScreen";
 import { KanbanCardRouteScreen } from "./features/kanban/KanbanCardRouteScreen";
 import { KanbanArchiveRouteScreen } from "./features/kanban/KanbanArchiveRouteScreen";
+import { KanbanLinkCardRouteScreen } from "./features/kanban/KanbanLinkCardRouteScreen";
 import { KanbanLinkThreadRouteScreen } from "./features/kanban/KanbanLinkThreadRouteScreen";
 import { NotesRouteScreen } from "./features/notes/NotesRouteScreen";
 import { AssistantEditRouteScreen } from "./features/assistants/AssistantEditRouteScreen";
@@ -573,6 +574,10 @@ const SETTINGS_SCREENS = {
   SettingsKanbanLinkThread: createNativeStackScreen({
     screen: KanbanLinkThreadRouteScreen,
     options: { ...SETTINGS_PAGE_OPTIONS, title: "Link thread" },
+  }),
+  SettingsKanbanLinkCard: createNativeStackScreen({
+    screen: KanbanLinkCardRouteScreen,
+    options: { ...SETTINGS_PAGE_OPTIONS, title: "Switch card" },
   }),
   SettingsMemory: createNativeStackScreen({
     screen: SettingsMemoryRouteScreen,

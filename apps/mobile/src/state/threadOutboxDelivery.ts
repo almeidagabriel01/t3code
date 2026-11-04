@@ -39,7 +39,7 @@ import {
   forgetAcknowledgedThreadMessage,
 } from "./acknowledged-thread-messages";
 import { appAtomRegistry } from "./atom-registry";
-import { readThreadKanbanCardRecord } from "./kanban";
+import { takeThreadKanbanCardRecord } from "./kanban";
 import { restoredNewTaskDraftKey } from "./new-task-draft-key";
 import {
   clearPendingThreadCreationOutcome,
@@ -866,7 +866,7 @@ export function createThreadOutboxDelivery(): {
       currentConfig.providers,
     );
     if (!hasAccess()) return true;
-    const linkedCard = readThreadKanbanCardRecord(
+    const linkedCard = takeThreadKanbanCardRecord(
       queuedMessage.environmentId,
       queuedMessage.threadId,
     );

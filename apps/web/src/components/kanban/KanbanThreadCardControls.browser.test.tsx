@@ -5,18 +5,29 @@ import { page, userEvent } from "vite-plus/test/browser";
 import "~/index.css";
 import { render } from "../../../test/render";
 import { ComposerKanbanCardChip } from "./ComposerKanbanCardChip";
+import { KanbanLinkCardDialog } from "./KanbanLinkDialogs";
 import { KanbanThreadCardBadge } from "./KanbanThreadCardBadge";
 
 const mocks = vi.hoisted(() => ({
   unlinkCardThread: vi.fn(),
+  linkCardThread: vi.fn(),
+  states: [] as unknown[],
   card: null as KanbanCard | null,
   canEdit: true,
 }));
 
-vi.mock("../../state/kanban", () => ({ useThreadKanbanCard: () => mocks.card }));
+vi.mock("../../state/kanban", () => ({
+  useThreadKanbanCard: () => mocks.card,
+  useProviderEntry: () => undefined,
+  useThreadCardMap: () => new Map(),
+}));
 vi.mock("./useKanban", () => ({
   useKanbanCanEdit: () => mocks.canEdit,
-  useKanbanActions: () => ({ unlinkCardThread: mocks.unlinkCardThread }),
+  useKanbanActions: () => ({
+    unlinkCardThread: mocks.unlinkCardThread,
+    linkCardThread: mocks.linkCardThread,
+  }),
+  useKanbanStates: () => mocks.states,
 }));
 
 const environmentId = EnvironmentId.make("env-1");
@@ -24,6 +35,7 @@ const threadId = ThreadId.make("thread-1");
 
 function setup(options: { canEdit?: boolean } = {}) {
   mocks.unlinkCardThread.mockReset().mockResolvedValue({ sequence: 1 });
+  mocks.linkCardThread.mockReset().mockResolvedValue({ sequence: 2 });
   mocks.canEdit = options.canEdit ?? true;
   mocks.card = { id: "c1", number: 7, title: "Fix header" } as KanbanCard;
 }
@@ -108,5 +120,61 @@ describe("ComposerKanbanCardChip", () => {
       />,
     );
     expect(screen.container.textContent).toBe("");
+  });
+});
+
+describe("KanbanLinkCardDialog", () => {
+  it("lets go of the current card before linking the picked one", async () => {
+    setup();
+    const other = {
+      id: "c2",
+      number: 8,
+      title: "Another card",
+      columnId: "col",
+      linkedThreadIds: [],
+    };
+    mocks.states = [
+      {
+        environmentId,
+        state: {
+          boards: new Map([
+            [
+              "b1",
+              {
+                projectId: "p1",
+                columns: [{ id: "col", name: "To do" }],
+                cards: new Map([
+                  [
+                    "c1",
+                    {
+                      id: "c1",
+                      number: 7,
+                      title: "Fix header",
+                      columnId: "col",
+                      linkedThreadIds: [threadId],
+                    },
+                  ],
+                  ["c2", other],
+                ]),
+              },
+            ],
+          ]),
+        },
+      },
+    ];
+    const onClose = vi.fn();
+    await using _screen = await render(
+      <KanbanLinkCardDialog
+        environmentId={environmentId}
+        threadId={threadId}
+        projectId="p1"
+        onClose={onClose}
+      />,
+    );
+    await expect.element(page.getByText("Switch card")).toBeVisible();
+    await userEvent.click(page.getByText("Another card"));
+    expect(mocks.unlinkCardThread).toHaveBeenCalledWith({ cardId: "c1", threadId });
+    expect(mocks.linkCardThread).toHaveBeenCalledWith({ cardId: "c2", threadId });
+    await vi.waitFor(() => expect(onClose).toHaveBeenCalledOnce());
   });
 });

@@ -12,6 +12,7 @@ import type {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  kanbanCardPickerRows,
   applyMoveLocally,
   checklistProgress,
   collectGlobalBoards,
@@ -460,5 +461,23 @@ describe("a card's context on a thread", () => {
       record,
     );
     expect(both.context.records).toEqual([other, record]);
+  });
+});
+
+describe("kanbanCardPickerRows", () => {
+  const cards = [
+    { number: 1, title: "Alpha" },
+    { number: 12, title: "Beta fix" },
+    { number: 3, title: "Gamma" },
+  ] as never;
+
+  it.each([
+    ["", 10, [12, 3, 1]],
+    ["  ", 2, [12, 3]],
+    ["fix", 10, [12]],
+    ["#3", 10, [3]],
+    ["zzz", 10, []],
+  ])("query %j limit %d", (query, limit, expected) => {
+    expect(kanbanCardPickerRows(cards, query, limit).map((card) => card.number)).toEqual(expected);
   });
 });

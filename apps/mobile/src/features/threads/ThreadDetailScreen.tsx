@@ -200,6 +200,7 @@ import { useThreadTurnSubagents } from "./ThreadAgentsSheet";
 import { ComposerQueuedEditBanner } from "./ComposerQueuedEdit";
 import { useThreadQueuedCount } from "./ThreadQueueControl";
 import { ThreadGuestShareBar } from "./ThreadGuestShareBar";
+import { ThreadComposerKanbanCardChip } from "../kanban/ThreadComposerKanbanCardChip";
 import { ThreadKanbanCardChip } from "../kanban/ThreadKanbanCardChip";
 import { ThreadSideChatBar } from "./ThreadSideChatBar";
 import { ThreadSideChatsRow } from "./ThreadSideChatsRow";
@@ -1717,6 +1718,12 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
                           />
                         </View>
                       ) : null}
+                      {props.draftMode ? null : (
+                        <ThreadComposerKanbanCardChip
+                          environmentId={props.environmentId}
+                          threadRef={props.selectedThreadDetailRef}
+                        />
+                      )}
                       <ThreadComposer
                         isDraft={Boolean(props.draftMode)}
                         canOperateThread={props.canOperateThread}

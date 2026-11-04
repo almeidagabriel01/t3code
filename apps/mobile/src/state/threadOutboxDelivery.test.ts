@@ -92,7 +92,7 @@ vi.mock("./server", async () => {
 });
 
 vi.mock("./git", () => ({ gitEnvironment: {} }));
-vi.mock("./kanban", () => ({ readThreadKanbanCardRecord: () => undefined }));
+vi.mock("./kanban", () => ({ takeThreadKanbanCardRecord: () => undefined }));
 
 vi.mock("./threads", async () => {
   const { Atom } = await import("effect/reactivity");
