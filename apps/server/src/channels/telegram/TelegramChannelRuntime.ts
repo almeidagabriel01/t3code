@@ -1,0 +1,257 @@
+/**
+ * Long-polls the Telegram Bot API and hands the admitted messages to the gateway. The next
+ * update offset is stored per bot, so a restart neither replays history nor loses a message that
+ * arrived while the server was off. A failing token or network backs off instead of looping.
+ */
+import type {
+  TelegramChannelDeliveryError,
+  TelegramChannelErrorCode,
+  TelegramChannelStatusEvent,
+} from "@t3tools/contracts";
+import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as HttpClient from "effect/http/HttpClient";
+import * as Layer from "effect/Layer";
+import * as Redacted from "effect/Redacted";
+import * as Ref from "effect/Ref";
+import * as Semaphore from "effect/Semaphore";
+import * as SqlClient from "effect/sql/SqlClient";
+import type * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
+
+import * as ChannelGateway from "../ChannelGateway.ts";
+import * as ChannelTransport from "../ChannelTransport.ts";
+import { admitTelegramUpdate } from "./telegramAdmission.ts";
+import {
+  LONG_POLL_SECONDS,
+  makeTelegramApi,
+  type TelegramApi,
+  type TelegramApiError,
+} from "./telegramApi.ts";
+import { makeTelegramTransport, type TelegramSendReport } from "./telegramTransport.ts";
+
+const TELEGRAM_CONNECTION_ID = "telegram";
+const SENT_RETENTION_MS = 24 * 60 * 60_000;
+const BACKOFF_BASE_SECONDS = 2;
+const BACKOFF_CAP_SECONDS = 60;
+/** A wrong token stays wrong until a person fixes it, so it is retried rarely. */
+const INVALID_TOKEN_CAP_SECONDS = 300;
+const STORAGE_RETRY_SECONDS = 5;
+
+export interface TelegramConfig {
+  readonly token: Redacted.Redacted<string>;
+  readonly allowedUserIds: ReadonlyArray<string>;
+}
+
+export type TelegramRuntimeStatus = TelegramChannelStatusEvent;
+
+const DISABLED: TelegramRuntimeStatus = { status: "disabled" };
+
+export class TelegramChannelRuntime extends Context.Service<
+  TelegramChannelRuntime,
+  {
+    /** Starts polling with this configuration, replacing the previous one; `null` stops it. */
+    readonly apply: (config: TelegramConfig | null) => Effect.Effect<void>;
+    readonly status: Effect.Effect<TelegramRuntimeStatus>;
+    /** The current status first, then each change. */
+    readonly streamStatus: Stream.Stream<TelegramRuntimeStatus>;
+    /** One poll now; resolves to how long the loop waits before the next one. */
+    readonly pollOnce: Effect.Effect<Duration.Duration>;
+  }
+>()("t3/channels/telegram/TelegramChannelRuntime") {}
+
+export interface TelegramRuntimeOptions {
+  /** Tests turn the loop off and call `pollOnce` themselves. */
+  readonly autoPoll?: boolean;
+}
+
+const errorCodeOf = (error: TelegramApiError): TelegramChannelErrorCode =>
+  error.code === "invalid_token" || error.code === "conflict" || error.code === "rate_limited"
+    ? error.code
+    : "unreachable";
+
+export const make = Effect.fn("TelegramChannelRuntime.make")(function* (
+  options: TelegramRuntimeOptions = {},
+) {
+  const sql = yield* SqlClient.SqlClient;
+  const http = yield* HttpClient.HttpClient;
+  const gateway = yield* ChannelGateway.ChannelGateway;
+  const registry = yield* ChannelTransport.ChannelTransportRegistry;
+  const layerScope = yield* Effect.scope;
+  const lock = yield* Semaphore.make(1);
+  const config = yield* Ref.make<TelegramConfig | null>(null);
+  const api = yield* Ref.make<TelegramApi | undefined>(undefined);
+  const loop = yield* Ref.make<Fiber.Fiber<void> | undefined>(undefined);
+  const failures = yield* Ref.make(0);
+  const botUsername = yield* Ref.make<string | undefined>(undefined);
+  const pollError = yield* Ref.make<TelegramChannelErrorCode | undefined>(undefined);
+  const sendError = yield* Ref.make<TelegramChannelErrorCode | undefined>(undefined);
+  const deliveryError = yield* Ref.make<TelegramChannelDeliveryError | undefined>(undefined);
+  const statusRef = yield* SubscriptionRef.make<TelegramRuntimeStatus>(DISABLED);
+
+  const publish = Effect.gen(function* () {
+    if ((yield* Ref.get(config)) === null) return yield* SubscriptionRef.set(statusRef, DISABLED);
+    const lastError = (yield* Ref.get(pollError)) ?? (yield* Ref.get(sendError));
+    const lastDeliveryError = yield* Ref.get(deliveryError);
+    const username = yield* Ref.get(botUsername);
+    yield* SubscriptionRef.set(statusRef, {
+      status: lastError === undefined ? "running" : "error",
+      ...(lastError === undefined ? {} : { lastError }),
+      ...(lastDeliveryError === undefined ? {} : { lastDeliveryError }),
+      ...(username ? { botUsername: username } : {}),
+    });
+  });
+
+  const setPollError = (code: TelegramChannelErrorCode | undefined) =>
+    Ref.set(pollError, code).pipe(Effect.andThen(publish));
+
+  const report = Effect.fn("TelegramChannelRuntime.report")(function* (result: TelegramSendReport) {
+    if (result.ok) {
+      yield* Ref.set(sendError, undefined);
+      yield* Ref.set(deliveryError, undefined);
+    } else {
+      yield* Ref.set(deliveryError, {
+        code: result.code,
+        at: DateTime.formatIso(yield* DateTime.now),
+      });
+      yield* Ref.set(sendError, result.invalidToken ? "invalid_token" : undefined);
+    }
+    yield* publish;
+  });
+
+  yield* registry.register(
+    makeTelegramTransport({
+      connectionId: TELEGRAM_CONNECTION_ID,
+      api: Ref.get(api),
+      sql,
+      report,
+    }),
+  );
+
+  const loadOffset = (botId: string) =>
+    sql<{ readonly update_offset: number }>`
+      SELECT update_offset FROM telegram_cursor WHERE id = ${botId}`.pipe(
+      Effect.map((rows) => rows[0]?.update_offset),
+      Effect.orDie,
+    );
+  const saveOffset = (botId: string, offset: number) =>
+    sql`
+      INSERT OR REPLACE INTO telegram_cursor (id, update_offset) VALUES (${botId}, ${offset})`.pipe(
+      Effect.orDie,
+    );
+
+  const backoff = (code: TelegramChannelErrorCode, failed: number, retryAfter?: number) => {
+    const cap = code === "invalid_token" ? INVALID_TOKEN_CAP_SECONDS : BACKOFF_CAP_SECONDS;
+    const seconds = Math.min(cap, BACKOFF_BASE_SECONDS * 2 ** Math.min(failed - 1, 10));
+    return Duration.seconds(Math.max(seconds, retryAfter ?? 0));
+  };
+
+  /** Reads one batch of updates and passes the admitted messages on, in order. */
+  const processBatch = Effect.fn("TelegramChannelRuntime.processBatch")(function* (
+    current: TelegramConfig,
+    client: TelegramApi,
+  ) {
+    const botId = Redacted.value(current.token).split(":")[0] ?? "";
+    const allowed = new Set(current.allowedUserIds);
+    const offset = yield* loadOffset(botId);
+    if (offset === undefined) {
+      // First enable for this bot: start from now, never from the backlog Telegram still holds.
+      const latest = yield* client.getUpdates({ offset: -1, timeoutSeconds: 0 });
+      const newest = Math.max(-1, ...latest.map((update) => update.updateId));
+      return yield* saveOffset(botId, newest + 1);
+    }
+    const updates = yield* client.getUpdates({ offset, timeoutSeconds: LONG_POLL_SECONDS });
+    for (const update of updates.toSorted((a, b) => a.updateId - b.updateId)) {
+      const admission = admitTelegramUpdate(update, allowed, TELEGRAM_CONNECTION_ID);
+      if (admission.type === "message") yield* gateway.ingest(admission.inbound);
+      // Stored only once the gateway has the message, so a storage failure retries this update.
+      yield* saveOffset(botId, update.updateId + 1);
+    }
+    const now = (yield* DateTime.now).epochMilliseconds;
+    yield* sql`DELETE FROM telegram_sent WHERE sent_at_ms < ${now - SENT_RETENTION_MS}`.pipe(
+      Effect.orDie,
+    );
+  });
+
+  const pollOnce: TelegramChannelRuntime["Service"]["pollOnce"] = Effect.gen(function* () {
+    const current = yield* Ref.get(config);
+    const client = yield* Ref.get(api);
+    if (current === null || client === undefined) return Duration.zero;
+    const outcome = yield* Effect.result(
+      Effect.gen(function* () {
+        if ((yield* Ref.get(botUsername)) === undefined) {
+          const me = yield* client.getMe;
+          yield* Ref.set(botUsername, me.username ?? "");
+        }
+        yield* processBatch(current, client);
+      }),
+    );
+    if (outcome._tag === "Success") {
+      yield* Ref.set(failures, 0);
+      yield* setPollError(undefined);
+      return Duration.zero;
+    }
+    const failed = yield* Ref.updateAndGet(failures, (count) => count + 1);
+    if (outcome.failure._tag === "TelegramApiError") {
+      const code = errorCodeOf(outcome.failure);
+      yield* setPollError(code);
+      return backoff(code, failed, outcome.failure.retryAfterSeconds);
+    }
+    // The gateway could not store the message; the same update is tried again after a pause.
+    yield* Effect.logWarning("Telegram message was not stored; retrying", {
+      failure: outcome.failure,
+    });
+    return Duration.seconds(STORAGE_RETRY_SECONDS);
+  }).pipe(
+    Effect.catchCause((cause) =>
+      Effect.logWarning("Telegram poll failed", { cause }).pipe(
+        Effect.as(Duration.seconds(STORAGE_RETRY_SECONDS)),
+      ),
+    ),
+    Effect.withSpan("TelegramChannelRuntime.pollOnce"),
+  );
+
+  const apply: TelegramChannelRuntime["Service"]["apply"] = (next) =>
+    lock.withPermits(1)(
+      Effect.gen(function* () {
+        const previous = yield* Ref.get(loop);
+        if (previous !== undefined) yield* Fiber.interrupt(previous);
+        yield* Ref.set(loop, undefined);
+        yield* Ref.set(config, next);
+        yield* Ref.set(api, next === null ? undefined : makeTelegramApi(http, next.token));
+        yield* Ref.set(failures, 0);
+        yield* Ref.set(botUsername, undefined);
+        yield* Ref.set(pollError, undefined);
+        yield* Ref.set(sendError, undefined);
+        yield* Ref.set(deliveryError, undefined);
+        yield* publish;
+        if (next === null || options.autoPoll === false) return;
+        const fiber = yield* Effect.forkIn(
+          pollOnce.pipe(
+            // A finished long poll goes straight to the next one; only a failure waits.
+            Effect.flatMap((delay) =>
+              Duration.isZero(delay) ? Effect.yieldNow : Effect.sleep(delay),
+            ),
+            Effect.forever,
+          ),
+          layerScope,
+        );
+        yield* Ref.set(loop, fiber);
+      }),
+    );
+
+  return TelegramChannelRuntime.of({
+    apply,
+    status: SubscriptionRef.get(statusRef),
+    streamStatus: SubscriptionRef.changes(statusRef),
+    pollOnce,
+  });
+});
+
+export const layer = Layer.effect(TelegramChannelRuntime, make()).pipe(
+  Layer.provide(FetchHttpClient.layer),
+);
