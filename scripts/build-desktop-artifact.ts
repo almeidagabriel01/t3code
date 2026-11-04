@@ -1243,6 +1243,14 @@ function normalizePasskeyRpDomain(value: string): string {
   return parsed.hostname;
 }
 
+/** Passkeys need an Associated Domains profile for the app id. A fork on another Apple team cannot get one, so it signs without. */
+export function wantsMacPasskeySigning(
+  options: { readonly platform: string; readonly signed: boolean },
+  skipPasskeySigning: boolean,
+): boolean {
+  return options.platform === "mac" && options.signed && !skipPasskeySigning;
+}
+
 export function resolveMacPasskeySigningConfiguration(
   env: Readonly<Record<string, string | undefined>>,
 ): MacPasskeySigningConfiguration {
@@ -2802,7 +2810,10 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   // Missing publish config infers a GitHub feed from tokens; staging has no repository, so manifest generation would crash.
   buildConfig.publish = null;
   if (!isDesktopPreviewVersion(version)) {
-    const publishConfig = yield* resolveGitHubPublishConfig(updateChannel);
+    // Squirrel.Mac refuses to install an update into an app without a Developer ID signature,
+    // so an unsigned mac build ships as a plain DMG with no feed to follow.
+    const publishConfig =
+      platform === "mac" && !signed ? undefined : yield* resolveGitHubPublishConfig(updateChannel);
     if (publishConfig) {
       buildConfig.publish = [publishConfig];
     } else if (mockUpdates) {
@@ -3794,13 +3805,15 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
   const stageProdResourcesDir = path.join(stageAppDir, "apps/desktop/prod-resources");
   yield* fs.copy(stageResourcesDir, stageProdResourcesDir);
 
-  const configuredMacPasskeySigning =
-    options.platform === "mac" && options.signed
-      ? yield* Effect.try({
-          try: () => resolveMacPasskeySigningConfiguration(loadRepoEnv({ repoRoot })),
-          catch: MacPasskeySigningConfigurationResolutionError.fromCause,
-        })
-      : undefined;
+  const skipPasskeySigning = yield* Config.Boolean("T3CODE_DESKTOP_SKIP_PASSKEY_SIGNING").pipe(
+    Config.withDefault(false),
+  );
+  const configuredMacPasskeySigning = wantsMacPasskeySigning(options, skipPasskeySigning)
+    ? yield* Effect.try({
+        try: () => resolveMacPasskeySigningConfiguration(loadRepoEnv({ repoRoot })),
+        catch: MacPasskeySigningConfigurationResolutionError.fromCause,
+      })
+    : undefined;
   const macPasskeySigning = configuredMacPasskeySigning
     ? {
         ...configuredMacPasskeySigning,

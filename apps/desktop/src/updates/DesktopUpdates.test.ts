@@ -963,3 +963,26 @@ describe("describeUpdateErrorCause", () => {
     assert.equal(DesktopUpdates.describeUpdateErrorCause(unreadable), "UnknownError");
   });
 });
+
+describe("getAutoUpdateDisabledReason", () => {
+  const base = {
+    isDevelopment: false,
+    isPackaged: true,
+    platform: "darwin",
+    isDebPackage: false,
+    disabledByEnv: false,
+    hasUpdateFeedConfig: true,
+  } as const;
+
+  it("says macOS updates need a signed build when the feed is missing", () => {
+    const mac = DesktopUpdates.getAutoUpdateDisabledReason({ ...base, hasUpdateFeedConfig: false });
+    const linux = DesktopUpdates.getAutoUpdateDisabledReason({
+      ...base,
+      platform: "linux",
+      hasUpdateFeedConfig: false,
+    });
+    assert.include(mac ?? "", "Developer ID");
+    assert.notInclude(linux ?? "", "Developer ID");
+    assert.isNull(DesktopUpdates.getAutoUpdateDisabledReason(base));
+  });
+});

@@ -29,6 +29,7 @@ import {
   parseWslRuntimeArchiveMembers,
   readWorkspaceConfig,
   createBuildConfig,
+  wantsMacPasskeySigning,
   DESKTOP_FILE_EXCLUSIONS,
   InvalidMacPasskeyRpDomainError,
   InvalidMacPasskeyPublishableKeyError,
@@ -511,7 +512,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         "mac",
         "dmg",
         "0.0.33",
-        false,
+        true,
         false,
         undefined,
         undefined,
@@ -541,6 +542,57 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       Effect.provide(
         ConfigProvider.layer(
           ConfigProvider.fromEnv({ env: { GITHUB_REPOSITORY: "pingdotgg/t3code" } }),
+        ),
+      ),
+    ),
+  );
+
+  it.each([
+    ["mac", true, false, true],
+    ["mac", true, true, false],
+    ["mac", false, false, false],
+    ["linux", true, false, false],
+  ] as const)(
+    "passkey signing for %s, signed %s, skip %s: %s",
+    (platform, signed, skip, wanted) => {
+      assert.strictEqual(wantsMacPasskeySigning({ platform, signed }, skip), wanted);
+    },
+  );
+
+  it.effect.each([
+    { platform: "mac", signed: false, feed: false },
+    { platform: "mac", signed: true, feed: true },
+    { platform: "linux", signed: false, feed: true },
+  ] as const)("update feed for $platform, signed $signed: $feed", ({ platform, signed, feed }) =>
+    Effect.gen(function* () {
+      const config = yield* createBuildConfig(
+        platform,
+        platform === "mac" ? "dmg" : "AppImage",
+        "0.1.6-fork.1",
+        signed,
+        false,
+        undefined,
+        undefined,
+      );
+      assert.deepStrictEqual(
+        config.publish,
+        feed
+          ? [
+              {
+                provider: "github",
+                owner: "almeidagabriel01",
+                repo: "t3code",
+                releaseType: "release",
+              },
+            ]
+          : null,
+      );
+    }).pipe(
+      Effect.provide(
+        ConfigProvider.layer(
+          ConfigProvider.fromEnv({
+            env: { T3CODE_DESKTOP_UPDATE_REPOSITORY: "almeidagabriel01/t3code" },
+          }),
         ),
       ),
     ),
