@@ -14,6 +14,11 @@ import {
   withMessageContext,
   makeThreadErrorSetter,
 } from "../ChatView.logic";
+import {
+  consumeKanbanCardSkip,
+  kanbanCardSkipAtom,
+  kanbanCardSkipKey,
+} from "@t3tools/client-runtime/state/kanbanCardSkip";
 import { readThreadKanbanCardRecord } from "../../state/kanban";
 import { CLAUDE_CHROME_COMMAND_NAME } from "@t3tools/shared/claudeChrome";
 import { isUsageLimitsCommand } from "@t3tools/shared/usageLimits";
@@ -1352,7 +1357,12 @@ export function useComposerSend(input: ComposerSendInput) {
           ? scopeThreadRef(environmentId, threadIdForSend)
           : null;
       if (backgroundThreadRef) beginBackgroundDraftSubmissionByRef(backgroundThreadRef);
-      const linkedKanbanCard = readThreadKanbanCardRecord(environmentId, threadIdForSend);
+      const skipAtom = kanbanCardSkipAtom(kanbanCardSkipKey(environmentId, threadIdForSend));
+      const kanbanSend = consumeKanbanCardSkip(appAtomRegistry.get(skipAtom));
+      appAtomRegistry.set(skipAtom, kanbanSend.skipped);
+      const linkedKanbanCard = kanbanSend.attach
+        ? readThreadKanbanCardRecord(environmentId, threadIdForSend)
+        : undefined;
       const startPromise = startThreadTurn({
         environmentId,
         input: {

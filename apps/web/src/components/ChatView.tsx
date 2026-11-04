@@ -264,6 +264,7 @@ import {
 } from "../state/entities";
 import { useEnvironmentShellHasSnapshot } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
+import { ComposerKanbanCardChip } from "./kanban/ComposerKanbanCardChip";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { ExpandedImageDialogHost, openExpandedImagePreview } from "./chat/ExpandedImageDialog";
 import {
@@ -3675,6 +3676,15 @@ export default function ChatView(props: ChatViewProps) {
                                 effortLabel={providerSubagentEffortLabel}
                                 status={providerSubagentStatus}
                                 onOpenParent={parentThreadLink?.open ?? null}
+                              />
+                            ) : null}
+                            {composerMounted &&
+                            routeKind === "server" &&
+                            activeThreadId !== null ? (
+                              <ComposerKanbanCardChip
+                                environmentId={environmentId}
+                                threadId={activeThreadId}
+                                messages={serverProjection?.messages ?? null}
                               />
                             ) : null}
                             {!composerMounted ? null : (

@@ -489,6 +489,11 @@ export const ChatHeader = memo(function ChatHeader({
           threadId={activeThreadId}
           showTitle
           titleClassName="@max-xl/header:hidden"
+          onLinkAnother={
+            activeProject && kanbanSupported && canEditKanban
+              ? () => setLinkingCard(true)
+              : undefined
+          }
         />
       ) : null}
       {linkingCard && activeProject ? (

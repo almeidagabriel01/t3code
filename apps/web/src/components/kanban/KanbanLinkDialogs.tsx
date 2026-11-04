@@ -4,7 +4,7 @@ import { BotIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
 import { useQuietThreadShells } from "../../state/entities";
-import { useProviderEntry, useThreadCardMap } from "../../state/kanban";
+import { useProviderEntry, useThreadCardMap, useThreadKanbanCard } from "../../state/kanban";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { Badge } from "../ui/badge";
@@ -188,6 +188,7 @@ export function KanbanLinkCardDialog(props: {
   readonly onClose: () => void;
 }) {
   const actions = useKanbanActions(props.environmentId);
+  const current = useThreadKanbanCard(props.environmentId, props.threadId);
   const states = useKanbanStates();
   const state = states.find((entry) => entry.environmentId === props.environmentId)?.state;
   const board =
@@ -205,7 +206,7 @@ export function KanbanLinkCardDialog(props: {
   };
   return (
     <PickerDialog
-      title="Link to card"
+      title={current === null ? "Link to card" : "Switch card"}
       description="Pick a card on this project's board. This thread then counts as working on it."
       emptyLabel={board ? "No cards found." : "This project has no board yet."}
       onClose={props.onClose}
@@ -220,6 +221,16 @@ export function KanbanLinkCardDialog(props: {
               key={card.id}
               disabled={already}
               onPick={async () => {
+                // A thread belongs to one card, so switching lets go of the old one first.
+                if (
+                  current !== null &&
+                  (await actions.unlinkCardThread({
+                    cardId: current.id,
+                    threadId: props.threadId,
+                  })) === null
+                ) {
+                  return;
+                }
                 if (
                   (await actions.linkCardThread({ cardId: card.id, threadId: props.threadId })) !==
                   null

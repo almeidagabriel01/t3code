@@ -235,6 +235,10 @@
       "types": "./src/state/usageSessions.ts",
       "default": "./src/state/usageSessions.ts"
     },
+    "./state/kanbanCardSkip": {
+      "types": "./src/state/kanbanCardSkip.ts",
+      "default": "./src/state/kanbanCardSkip.ts"
+    },
     "./state/kanbanLogic": {
       "types": "./src/state/kanbanLogic.ts",
       "default": "./src/state/kanbanLogic.ts"
