@@ -38,6 +38,8 @@ export function buildHomeListFilterMenu(props: {
   readonly selectedProjectKey: string | null;
   readonly onEnvironmentChange: (environmentId: EnvironmentId | null) => void;
   readonly onProjectChange: (projectKey: string | null) => void;
+  /** Set when the selected project can be archived from here. */
+  readonly onArchiveProject?: (() => void) | undefined;
 }): HomeListFilterMenu {
   const items: Array<HomeListFilterMenuAction | HomeListFilterMenuSubmenu> = [];
 
@@ -83,6 +85,18 @@ export function buildHomeListFilterMenu(props: {
           onPress: () => props.onProjectChange(project.key),
         })),
       ],
+    });
+  }
+
+  const selectedProject = props.projects.find(
+    (project) => project.key === props.selectedProjectKey,
+  );
+  if (props.onArchiveProject && selectedProject) {
+    items.push({
+      type: "action",
+      title: "Archive project",
+      subtitle: selectedProject.label,
+      onPress: props.onArchiveProject,
     });
   }
 

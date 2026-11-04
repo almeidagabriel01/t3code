@@ -1,5 +1,9 @@
 import { Pressable, ScrollView } from "react-native";
 import { SymbolView } from "../../components/ui/AppSymbol";
+import {
+  ARCHIVE_PROJECT_ACTION_ID,
+  archiveProjectMenuActions,
+} from "../projects/archiveProjectMenu";
 import { ListFilterMenu } from "../workspace/ListFilterMenu";
 import type { HomeHeaderProps } from "./HomeHeader.types";
 
@@ -12,6 +16,7 @@ export function ThreadListFilters(
     | "selectedProjectKey"
     | "onEnvironmentChange"
     | "onProjectChange"
+    | "onArchiveProject"
   > & {
     /** List padding the scroller bleeds through so pills start where row content does. */
     readonly gutter: number;
@@ -74,9 +79,11 @@ export function ThreadListFilters(
             title: project.needsAttention ? `${project.label} •` : project.label,
             state: project.key === props.selectedProjectKey ? ("on" as const) : ("off" as const),
           })),
+          ...(props.onArchiveProject ? archiveProjectMenuActions(selectedProject) : []),
         ]}
         onSelect={(id) => {
-          if (id === "all") props.onProjectChange(null);
+          if (id === ARCHIVE_PROJECT_ACTION_ID) props.onArchiveProject?.();
+          else if (id === "all") props.onProjectChange(null);
           else {
             const project = props.projects.find(
               (candidate) => JSON.stringify(candidate.key) === id,

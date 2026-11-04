@@ -1,3 +1,4 @@
+import { useProjectOrganize } from "../projects/useProjectOrganize";
 import { uuidv4 } from "../../lib/uuid";
 import { ThreadUndoNotice } from "./ThreadUndoNotice";
 import { Toolbar } from "../../components/ui/Toolbar";
@@ -146,7 +147,7 @@ export function HomeRouteScreen() {
       sidebarProjectGroupingOverrides: {},
     },
   );
-  const projectFilterOptions = useMemo(
+  const projectScopes = useMemo(
     () =>
       pickableProjectGroups(
         buildHomeProjectScopes({
@@ -154,17 +155,26 @@ export function HomeRouteScreen() {
           environmentId: selectedEnvironmentId,
           projectGroupingMode: listOptions.projectGroupingMode,
         }),
-      ).map((scope) => ({
-        key: scope.key,
-        label: scope.title,
-      })),
+      ),
     [listOptions.projectGroupingMode, projects, selectedEnvironmentId],
+  );
+  const projectFilterOptions = useMemo(
+    () => projectScopes.map((scope) => ({ key: scope.key, label: scope.title })),
+    [projectScopes],
   );
   const selectedProjectKey = projectFilterOptions.some(
     (project) => project.key === resolvedProjectKey,
   )
     ? resolvedProjectKey
     : null;
+  const { canOrganizeRefs, setScopeArchived } = useProjectOrganize();
+  const selectedProjectRefs = projectScopes.find(
+    (scope) => scope.key === selectedProjectKey,
+  )?.projectRefs;
+  const archiveSelectedProject =
+    selectedProjectRefs && canOrganizeRefs(selectedProjectRefs)
+      ? () => void setScopeArchived(selectedProjectRefs, true)
+      : undefined;
 
   if (layout.usesSplitView && !nativePrimaryColumn) {
     return (
@@ -235,6 +245,7 @@ export function HomeRouteScreen() {
           selectedProjectKey={selectedProjectKey}
           onEnvironmentChange={setSelectedEnvironmentId}
           onProjectChange={setSelectedProjectKey}
+          onArchiveProject={archiveSelectedProject}
           onOpenEnvironments={() => openSettings(navigation, "SettingsEnvironments")}
           onOpenSettings={() => selectTab("settings")}
           onSearchQueryChange={setSearchQuery}
@@ -259,6 +270,7 @@ export function HomeRouteScreen() {
           onRegenerateThreadTitle={regenerateThreadTitle}
           onEnvironmentChange={setSelectedEnvironmentId}
           onProjectChange={setSelectedProjectKey}
+          onArchiveProject={archiveSelectedProject}
           onOpenSettings={() => selectTab("settings")}
           onSearchQueryChange={setSearchQuery}
           onSelectThread={handleSelectThread}

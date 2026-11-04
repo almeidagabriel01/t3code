@@ -29,7 +29,12 @@ import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useServerConfigs } from "../../state/entities";
 import { useEnvironmentScope } from "../../state/session";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
-import type { ArchivedThreadGroup, ArchivedThreadSortOrder } from "./archivedThreadList";
+import type {
+  ArchivedProjectItem,
+  ArchivedThreadGroup,
+  ArchivedThreadSortOrder,
+} from "./archivedThreadList";
+import { ArchivedProjectRow } from "./ArchivedProjectRow";
 import { SettingsScreenContent } from "../settings/components/SettingsScreen";
 
 export interface AssistantRestore {
@@ -142,7 +147,8 @@ type ArchivedThreadListItem =
       readonly isFirst: boolean;
       readonly isLast: boolean;
       readonly thread: EnvironmentThreadShell;
-    };
+    }
+  | { readonly kind: "archived-project"; readonly key: string; readonly item: ArchivedProjectItem };
 
 function ProjectGroupLabel(props: {
   readonly environmentLabel: string | null;
@@ -317,6 +323,9 @@ export function ArchivedThreadsScreen(props: {
   readonly environments: ReadonlyArray<ArchivedThreadsHeaderEnvironment>;
   readonly error: string | null;
   readonly groups: ReadonlyArray<ArchivedThreadGroup>;
+  readonly archivedProjects: ReadonlyArray<ArchivedProjectItem>;
+  readonly canUnarchiveProject: (item: ArchivedProjectItem) => boolean;
+  readonly onUnarchiveProject: (item: ArchivedProjectItem) => void;
   readonly isLoading: boolean;
   readonly searchQuery: string;
   readonly selectedEnvironmentId: EnvironmentId | null;
@@ -344,7 +353,11 @@ export function ArchivedThreadsScreen(props: {
   );
   const serverConfigs = useServerConfigs();
   const listItems = useMemo<ReadonlyArray<ArchivedThreadListItem>>(() => {
-    const items: ArchivedThreadListItem[] = [];
+    const items: ArchivedThreadListItem[] = props.archivedProjects.map((item) => ({
+      kind: "archived-project",
+      key: `${item.key}:archived-project`,
+      item,
+    }));
     for (const group of props.groups) {
       const environmentLabel = environmentLabelsById.get(group.project.environmentId) ?? null;
       items.push({
@@ -369,7 +382,7 @@ export function ArchivedThreadsScreen(props: {
       });
     }
     return items;
-  }, [environmentLabelsById, props.groups, serverConfigs]);
+  }, [environmentLabelsById, props.archivedProjects, props.groups, serverConfigs]);
   const handleSwipeableWillOpen = (methods: SwipeableMethods) => {
     if (openSwipeableRef.current && openSwipeableRef.current !== methods) {
       openSwipeableRef.current.close();
@@ -381,9 +394,24 @@ export function ArchivedThreadsScreen(props: {
       openSwipeableRef.current = null;
     }
   };
-  const isInitialLoad = props.isLoading && props.groups.length === 0 && props.error === null;
+  const isInitialLoad =
+    props.isLoading &&
+    props.groups.length === 0 &&
+    props.archivedProjects.length === 0 &&
+    props.error === null;
   const isFiltered = props.searchQuery.trim().length > 0 || props.selectedEnvironmentId !== null;
   const renderListItem = ({ item }: { item: ArchivedThreadListItem }) => {
+    if (item.kind === "archived-project") {
+      return (
+        <View className="pb-2">
+          <ArchivedProjectRow
+            item={item.item}
+            canUnarchive={props.canUnarchiveProject(item.item)}
+            onUnarchive={props.onUnarchiveProject}
+          />
+        </View>
+      );
+    }
     if (item.kind === "project") {
       return (
         <View className="pt-4">

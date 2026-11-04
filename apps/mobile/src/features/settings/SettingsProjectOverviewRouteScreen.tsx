@@ -19,6 +19,7 @@ import { useRef, useState } from "react";
 import { Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { useProjectOrganize } from "../projects/useProjectOrganize";
 import { projectEnvironment } from "../../state/projects";
 import { useThreadShells } from "../../state/entities";
 import { appAtomRegistry } from "../../state/atom-registry";
@@ -157,10 +158,7 @@ function ProjectOverviewContent(props: {
     label: "project name update",
     reportFailure: true,
   });
-  const organizeProject = useAtomCommand(projectEnvironment.update, {
-    label: "project update",
-    reportFailure: true,
-  });
+  const { organize: organizeMembers } = useProjectOrganize();
   const [isOrganizing, setIsOrganizing] = useState(false);
   const memberTargets = allMembers.map((member) =>
     props.connectedTargets.find((entry) => entry.environmentId === member.environmentId),
@@ -178,29 +176,9 @@ function ProjectOverviewContent(props: {
         target === undefined ||
         target.serverConfig.environment.capabilities.projectOrganization === true,
     );
-  // One machine at a time, stopping at the first failure, as web does.
   const organize = async (input: { readonly pinned?: boolean; readonly archived?: boolean }) => {
     setIsOrganizing(true);
-    for (const member of allMembers) {
-      if (!readEnvironmentScope(member.environmentId, AuthOrchestrationOperateScope)) {
-        Dialog.alert("Failed to update project", "This connection can no longer change it.");
-        break;
-      }
-      const result = await organizeProject({
-        environmentId: member.environmentId,
-        input: { projectId: member.id, ...input },
-      });
-      if (result._tag === "Failure") {
-        if (!isAtomCommandInterrupted(result)) {
-          const error = squashAtomCommandFailure(result);
-          Dialog.alert(
-            `Failed to update "${member.title}"`,
-            error instanceof Error ? error.message : "An error occurred.",
-          );
-        }
-        break;
-      }
-    }
+    await organizeMembers(allMembers, input);
     setIsOrganizing(false);
   };
   const nextName = (draftName ?? displayName).trim();

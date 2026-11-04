@@ -13,7 +13,14 @@ import {
   ArchivedThreadsScreen,
   type ArchivedThreadsHeaderEnvironment,
 } from "./ArchivedThreadsScreen";
-import { buildArchivedThreadGroups, type ArchivedThreadSortOrder } from "./archivedThreadList";
+import {
+  buildArchivedProjectItems,
+  buildArchivedThreadGroups,
+  type ArchivedThreadSortOrder,
+} from "./archivedThreadList";
+import { useHomeListOptions } from "../home/home-list-options";
+import { useProjectOrganize } from "../projects/useProjectOrganize";
+import { useProjects } from "../../state/entities";
 import {
   refreshArchivedThreadsForEnvironment,
   useArchivedThreadSnapshots,
@@ -83,6 +90,19 @@ export function ArchivedThreadsRouteScreen() {
       sortOrder,
     ],
   );
+  const projects = useProjects();
+  const { projectGroupingMode } = useHomeListOptions(new Set(environmentIds)).options;
+  const archivedProjects = useMemo(
+    () =>
+      buildArchivedProjectItems({
+        projects,
+        environmentId: selectedEnvironmentId,
+        projectGroupingMode,
+        searchQuery,
+      }),
+    [projectGroupingMode, projects, searchQuery, selectedEnvironmentId],
+  );
+  const { canOrganizeRefs, setScopeArchived } = useProjectOrganize();
   const assistantRestoreFor = (thread: EnvironmentThreadShell) => {
     const assistantId = assistantIdFromThreadId(thread.id);
     if (assistantId === null) return undefined;
@@ -122,6 +142,9 @@ export function ArchivedThreadsRouteScreen() {
       environments={environments}
       error={error}
       groups={groups}
+      archivedProjects={archivedProjects}
+      canUnarchiveProject={(item) => canOrganizeRefs(item.projectRefs)}
+      onUnarchiveProject={(item) => void setScopeArchived(item.projectRefs, false)}
       isLoading={isLoading}
       onDeleteThread={confirmDeleteThread}
       onEnvironmentChange={setSelectedEnvironmentId}

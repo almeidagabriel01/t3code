@@ -15,6 +15,8 @@ export interface HomeHeaderProps {
   readonly onSearchQueryChange: (query: string) => void;
   readonly onEnvironmentChange: (environmentId: EnvironmentId | null) => void;
   readonly onProjectChange: (projectKey: string | null) => void;
+  /** Set when the selected project can be archived from here. */
+  readonly onArchiveProject?: (() => void) | undefined;
   readonly onOpenEnvironments: () => void;
   readonly onOpenSettings: () => void;
   readonly onStartNewTask: () => void;

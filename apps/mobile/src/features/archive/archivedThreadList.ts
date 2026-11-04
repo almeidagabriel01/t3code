@@ -6,12 +6,13 @@ import {
   type EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 import { threadSearchSubject } from "@t3tools/client-runtime/state/thread-search";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, SidebarProjectGroupingMode } from "@t3tools/contracts";
 import { foldSearchQuery, rankSearchItems, scoreThreadSearch } from "@t3tools/shared/paletteSearch";
 import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
 
 import { scopedProjectKey } from "../../lib/scopedEntities";
+import { buildHomeProjectScopes } from "../home/homeThreadList";
 
 export type ArchivedThreadSortOrder = "newest" | "oldest";
 
@@ -110,4 +111,29 @@ export function buildArchivedThreadGroups(input: {
       }),
     ),
   );
+}
+
+export interface ArchivedProjectItem {
+  readonly key: string;
+  readonly title: string;
+  readonly representative: EnvironmentProject;
+  readonly projectRefs: ReadonlyArray<{ environmentId: EnvironmentId; projectId: string }>;
+}
+
+/** Projects hidden from the sidebar, as one entry per logical project. */
+export function buildArchivedProjectItems(input: {
+  readonly projects: ReadonlyArray<EnvironmentProject>;
+  readonly environmentId: EnvironmentId | null;
+  readonly projectGroupingMode: SidebarProjectGroupingMode;
+  readonly searchQuery: string;
+}): ReadonlyArray<ArchivedProjectItem> {
+  const query = input.searchQuery.trim().toLocaleLowerCase();
+  return buildHomeProjectScopes(input)
+    .filter((scope) => scope.archived && matchesQuery(scope.title, query))
+    .map(({ key, title, representative, projectRefs }) => ({
+      key,
+      title,
+      representative,
+      projectRefs,
+    }));
 }
