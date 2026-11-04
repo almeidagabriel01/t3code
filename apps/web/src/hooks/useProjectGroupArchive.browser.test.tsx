@@ -1,5 +1,6 @@
 import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../test/render";
 
@@ -33,7 +34,9 @@ function Probe(props: { archived: boolean }) {
       onClick={() =>
         void toggleProjectGroupArchive({
           archived: props.archived,
-          memberProjects: [{ environmentId: "env" as never, id: "p1" as never }],
+          memberProjects: [
+            { environmentId: "env" as never, id: "p1" as never, environmentLabel: null },
+          ],
         })
       }
     >
@@ -46,7 +49,7 @@ describe("toggleProjectGroupArchive", () => {
   it.each([true, false])("writes archived=%s's opposite to every member", async (archived) => {
     testState.update.mockReset().mockResolvedValue(AsyncResult.success(undefined));
     await using screen = await render(<Probe archived={archived} />, { router: false });
-    screen.getByRole("button").element().click();
+    await userEvent.click(screen.getByRole("button"));
     await vi.waitFor(() =>
       expect(testState.update).toHaveBeenCalledWith({
         environmentId: "env",
