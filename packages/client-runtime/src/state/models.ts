@@ -268,15 +268,9 @@ function shellRuntime(thread: OrchestrationV2ThreadShell): ThreadRuntimeSummary 
   const parkAtIdle =
     backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? []) &&
     thread.status !== "failed";
-  if (
-    thread.latestRunId === null &&
-    thread.activeProviderThreadId === null &&
-    !parkAtIdle &&
-    !thread.activityRunStatus
-  ) {
-    return null;
-  }
   const status = parkAtIdle ? "idle" : (thread.activityRunStatus ?? thread.status);
+  // A thread that never ran (imported, or a session with no turn yet) is not "waiting".
+  if (status === "idle" && !parkAtIdle) return null;
   return {
     status,
     activeRunId: thread.activeRunId,

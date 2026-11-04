@@ -8,6 +8,7 @@ import {
   activeSubagentChildrenByParent,
   hasSidebarNotification,
   hasUnseenCompletion,
+  resolveSidebarThreadStatus,
 } from "./threadAttention.ts";
 
 const environmentId = EnvironmentId.make("environment-local");
@@ -57,6 +58,36 @@ describe("activeSubagentChildrenByParent", () => {
 
   it("drops a parent once every child is terminal", () => {
     expect(activeSubagentChildrenByParent([child("b", "completed")]).size).toBe(0);
+  });
+});
+
+describe("resolveSidebarThreadStatus for runless threads", () => {
+  const runless = {
+    ...v2ThreadShell,
+    latestRunId: null,
+    activeRunId: null,
+    activityRunStatus: null,
+    status: "idle" as const,
+  };
+
+  it.each([
+    ["an imported thread that never ran", {}, "ready"],
+    [
+      "an idle thread held open by awaited background work",
+      {
+        pendingBackgroundTasks: [
+          { taskId: "bg-1", description: "Watch build", kind: "monitor", awaited: true },
+        ],
+      },
+      "waiting",
+    ],
+  ] as const)("reports %s as %s", (_name, overrides, expected) => {
+    const shell = presentThreadShell(environmentId, {
+      ...runless,
+      activeProviderThreadId: v2ThreadShell.activeProviderThreadId ?? ("provider-thread" as never),
+      ...overrides,
+    } as never);
+    expect(resolveSidebarThreadStatus(shell)).toBe(expected);
   });
 });
 
