@@ -58,6 +58,7 @@ import { useThreadListV2 } from "../threads/useThreadListV2";
 import { useThreadListNow } from "../threads/use-thread-list-now";
 import { useThreadJumpShortcuts } from "../keyboard/threadKeyboardShortcuts";
 import { HomeAssistantsSection } from "../assistants/HomeAssistantsSection";
+import { HomeAgentsSection } from "./HomeAgentsSection";
 import { HomeNeedsYouSection } from "./HomeNeedsYouSection";
 import { HomeDecisionsSection } from "../decisions/HomeDecisionsSection";
 import { decisionThreadKey, useOpenDecisionThreadKeys } from "../../state/decisions";
@@ -785,6 +786,7 @@ export function HomeScreen(props: HomeScreenProps) {
           }
         />
       )}
+      <HomeAgentsSection threads={props.threads} now={now} gutter={primaryColumn ? 8 : 16} />
       <HomeNeedsYouSection
         threads={props.threads}
         now={now}

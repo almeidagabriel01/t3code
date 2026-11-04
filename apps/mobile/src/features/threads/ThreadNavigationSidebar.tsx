@@ -1,5 +1,6 @@
 import { useActiveNewTask } from "../../state/active-new-task";
 import { HomeAssistantsSection } from "../assistants/HomeAssistantsSection";
+import { HomeAgentsSection } from "../home/HomeAgentsSection";
 import { HomeNeedsYouSection } from "../home/HomeNeedsYouSection";
 import { HomeDecisionsSection } from "../decisions/HomeDecisionsSection";
 import { ThreadUndoNotice } from "../home/ThreadUndoNotice";
@@ -724,6 +725,7 @@ function ThreadNavigationSidebarPane(
             )
           }
         />
+        <HomeAgentsSection threads={threads} now={now} gutter={4} sidebar />
         <HomeNeedsYouSection
           threads={threads}
           now={now}

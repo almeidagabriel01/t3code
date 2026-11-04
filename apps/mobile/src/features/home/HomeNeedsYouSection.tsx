@@ -2,7 +2,6 @@ import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environ
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import {
-  buildActivityEntries,
   selectActivityClear,
   selectSidebarMarkReadTargets,
   type ActivityRank,
@@ -22,13 +21,12 @@ import { useOpenDecisionThreadKeys } from "../../state/decisions";
 import { useEnvironmentsWithScope } from "../../state/session";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { buildHomeActivityEntries } from "./homeActivityEntries";
 import {
   buildThreadListV2ListItems,
   type ThreadListV2ThreadListItem,
 } from "../threads/threadListV2";
 
-const NO_DELEGATED: ReadonlySet<string> = new Set();
-const NO_HOLDS = new Map<string, never>();
 const GROUPS: readonly { rank: ActivityRank; heading: string }[] = [
   { rank: 0, heading: "Waiting for you" },
   { rank: 1, heading: "Working" },
@@ -51,15 +49,8 @@ export function HomeNeedsYouSection(props: {
   const openDecisionThreadKeys = useOpenDecisionThreadKeys();
   const operable = useEnvironmentsWithScope(props.threads, AuthOrchestrationOperateScope);
   const visitThread = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
-  const entries = buildActivityEntries({
-    // Older servers keep no visit time, so a finished run would never clear.
-    threads: props.threads.map((thread) =>
-      thread.lastVisitedAt === undefined ? { ...thread, latestRun: null } : thread,
-    ),
-    delegatedUnderParent: NO_DELEGATED,
-    localLastVisitedAtByKey: {},
-    holds: NO_HOLDS,
-    releases: NO_DELEGATED,
+  const entries = buildHomeActivityEntries({
+    threads: props.threads,
     now: props.now,
     openDecisionThreadKeys,
   }).filter((entry) => props.includeWorking || entry.rank !== 1);
