@@ -13,6 +13,13 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("../../state/keepAwake", () => ({ useKeepAwakeStatus: () => mocks.status }));
+vi.mock("../../hooks/useSettings", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../hooks/useSettings")>()),
+  usePrimarySettings: (select: (settings: { keepAwake: typeof mocks.keepAwake }) => unknown) =>
+    select({ keepAwake: mocks.keepAwake }),
+  usePrimarySettingsAvailable: () => true,
+  useUpdatePrimarySettings: () => mocks.update,
+}));
 vi.mock("../../state/environments", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../state/environments")>()),
   usePrimaryEnvironmentId: () => "env",
@@ -93,22 +100,41 @@ it("disables the choices when this host cannot stay awake", async () => {
     .toHaveAttribute("aria-disabled", "true");
 });
 
-it("shows nothing while the host is not held awake", async () => {
-  setup({ status: { supported: true, active: false } });
+it.each([
+  { name: "off", keepAwake: "off", label: "This computer can sleep" },
+  {
+    name: "waiting for work",
+    keepAwake: "while-working",
+    label: "Keeps this computer awake while agents work",
+  },
+] as const)("keeps a muted cup in the bar while $name", async ({ keepAwake, label }) => {
+  setup({ status: { supported: true, active: false }, keepAwake });
   await using screen = await render(<KeepAwakeSegment />, { router: false }); // router is mocked
-  await expect
-    .element(screen.getByRole("button", { name: "Keeping this computer awake" }))
-    .not.toBeInTheDocument();
+  const cup = screen.getByRole("button", { name: label });
+  await expect.element(cup).toBeVisible();
+  await expect.element(cup).not.toHaveAttribute("data-active");
 });
 
-it("shows the coffee cup while the host is held awake, and opens the setting", async () => {
-  setup({ status: { supported: true, active: true } });
+it("shows no cup on a host that cannot stay awake", async () => {
+  setup({ status: { supported: false, active: false } });
   await using screen = await render(<KeepAwakeSegment />, { router: false }); // router is mocked
-  const chip = screen.getByRole("button", { name: "Keeping this computer awake" });
-  await userEvent.hover(chip);
+  expect(screen.container.querySelector("button")).toBeNull();
+});
+
+it("lights the cup while held awake and switches the mode from its menu", async () => {
+  setup({ status: { supported: true, active: true }, keepAwake: "always" });
+  await using screen = await render(<KeepAwakeSegment />, { router: false }); // router is mocked
+  const cup = screen.getByRole("button", { name: "Keeping this computer awake" });
+  await expect.element(cup).toHaveAttribute("data-active");
+  await userEvent.hover(cup);
   await expect
     .element(page.getByText("Keeping this computer awake", { exact: true }))
     .toBeVisible();
-  await chip.click();
+  await cup.click();
+  await expect.element(page.getByRole("menuitemradio", { name: "Always" })).toBeChecked();
+  await page.getByRole("menuitemradio", { name: "While agents are working" }).click();
+  expect(mocks.update).toHaveBeenLastCalledWith({ keepAwake: "while-working" });
+  await cup.click();
+  await page.getByRole("menuitem", { name: "Keep-awake settings" }).click();
   expect(mocks.navigate).toHaveBeenCalledWith({ to: "/settings/maintenance", hash: "keep-awake" });
 });
