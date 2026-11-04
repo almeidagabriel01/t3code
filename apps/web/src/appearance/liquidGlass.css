@@ -20,6 +20,9 @@ html:is(
       transparent
     );
     --lg-edge: inset 0 0 0 1px color-mix(in srgb, var(--contrast-foreground) 7%, transparent);
+    /* Whatever sits behind the window shows through the panes, so muted text that reads on a
+       solid surface fades; it leans toward the foreground to stay legible. */
+    --glass-text-lift: 50%;
     background: var(--lg-backdrop, var(--background)) center / cover no-repeat fixed !important;
 
     body {

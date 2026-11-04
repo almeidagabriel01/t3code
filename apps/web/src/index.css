@@ -1669,23 +1669,47 @@ html[data-theme-id="t3-chat"] [data-app-sidebar] {
   );
   --contrast-muted-foreground: color-mix(
     in oklab,
-    color-mix(in oklab, var(--muted-foreground) var(--appearance-contrast-base), var(--background)),
-    var(--appearance-contrast-target) var(--appearance-contrast-boost)
+    color-mix(
+      in oklab,
+      color-mix(
+        in oklab,
+        var(--muted-foreground) var(--appearance-contrast-base),
+        var(--background)
+      ),
+      var(--appearance-contrast-target) var(--appearance-contrast-boost)
+    ),
+    var(--foreground) var(--glass-text-lift, 0%)
   );
   --contrast-placeholder: color-mix(
     in oklab,
-    color-mix(in oklab, var(--placeholder) var(--appearance-contrast-base), var(--background)),
-    var(--appearance-contrast-target) var(--appearance-contrast-boost)
+    color-mix(
+      in oklab,
+      color-mix(in oklab, var(--placeholder) var(--appearance-contrast-base), var(--background)),
+      var(--appearance-contrast-target) var(--appearance-contrast-boost)
+    ),
+    var(--foreground) var(--glass-text-lift, 0%)
   );
   --contrast-secondary-label: color-mix(
     in oklab,
-    color-mix(in oklab, var(--secondary-label) var(--appearance-contrast-base), var(--background)),
-    var(--appearance-contrast-target) var(--appearance-contrast-boost)
+    color-mix(
+      in oklab,
+      color-mix(
+        in oklab,
+        var(--secondary-label) var(--appearance-contrast-base),
+        var(--background)
+      ),
+      var(--appearance-contrast-target) var(--appearance-contrast-boost)
+    ),
+    var(--foreground) var(--glass-text-lift, 0%)
   );
   --contrast-icon-muted: color-mix(
     in oklab,
-    color-mix(in oklab, var(--icon-muted) var(--appearance-contrast-base), var(--background)),
-    var(--appearance-contrast-target) var(--appearance-contrast-boost)
+    color-mix(
+      in oklab,
+      color-mix(in oklab, var(--icon-muted) var(--appearance-contrast-base), var(--background)),
+      var(--appearance-contrast-target) var(--appearance-contrast-boost)
+    ),
+    var(--foreground) var(--glass-text-lift, 0%)
   );
   --contrast-card-foreground: color-mix(
     in oklab,
@@ -1729,10 +1753,14 @@ html[data-theme-id="t3-chat"] [data-app-sidebar] {
     in oklab,
     color-mix(
       in oklab,
-      var(--sidebar-muted-foreground) var(--appearance-contrast-base),
-      var(--sidebar)
+      color-mix(
+        in oklab,
+        var(--sidebar-muted-foreground) var(--appearance-contrast-base),
+        var(--sidebar)
+      ),
+      var(--appearance-contrast-target) var(--appearance-contrast-boost)
     ),
-    var(--appearance-contrast-target) var(--appearance-contrast-boost)
+    var(--sidebar-foreground) var(--glass-text-lift, 0%)
   );
   --contrast-sidebar-border: color-mix(
     in srgb,

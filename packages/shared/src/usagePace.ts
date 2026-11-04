@@ -29,7 +29,7 @@ export const BAND_TEXT: Record<UsageBand, string> = {
 export const BAND_FILL: Record<UsageBand, string> = {
   critical: "bg-destructive",
   watch: "bg-warning",
-  ok: "bg-muted-foreground/40",
+  ok: "bg-muted-foreground",
 };
 
 export function windowBand(window: ServerProviderUsageWindow, settings: UsagePaceSettings) {

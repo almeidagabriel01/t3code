@@ -54,7 +54,7 @@ export function AssistantAvatar(props: {
       )}
       style={{
         backgroundColor: `oklch(0.72 0.12 ${hue} / 0.28)`,
-        color: `oklch(0.62 0.16 ${hue})`,
+        color: `light-dark(oklch(0.45 0.15 ${hue}), oklch(0.84 0.11 ${hue}))`,
       }}
     >
       {props.assistant.name.trim().slice(0, 1).toUpperCase()}
