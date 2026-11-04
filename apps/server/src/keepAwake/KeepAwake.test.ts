@@ -28,6 +28,7 @@ const harness = (input: {
   mode: KeepAwakeMode;
   inhibitor?: typeof INHIBITOR;
   spawnFails?: boolean;
+  settingsFail?: boolean;
 }) =>
   Effect.gen(function* () {
     const events = yield* Queue.unbounded<unknown>();
@@ -67,7 +68,9 @@ const harness = (input: {
             inhibitor: Effect.succeed(input.inhibitor ?? INHIBITOR),
           }),
           Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
-          Layer.mock(Orchestrator.OrchestratorV2)({ streamDomainEvents: Stream.fromQueue(events) }),
+          Layer.mock(Orchestrator.OrchestratorV2)({
+            streamDomainEvents: Stream.fromQueue(events) as never,
+          }),
           Layer.mock(ServerSettings.ServerSettingsService)({
             getSettings: input.settingsFail
               ? (Effect.fail("unreadable") as never)
