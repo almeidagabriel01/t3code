@@ -1,4 +1,5 @@
 import {
+  channelChatKey,
   ChannelGatewayError,
   ChannelInboundMessage,
   ChannelReplyAddress,
@@ -201,7 +202,9 @@ const make = Effect.gen(function* () {
       SELECT c.decision_id FROM channel_cards c
       JOIN channel_outbox o ON o.delivery_id = c.delivery_id
       WHERE json_extract(o.message_json, '$.destination.connectionId') = ${message.connectionId}
-        AND json_extract(o.message_json, '$.destination.chatGuid') = ${message.replyAddress.chatGuid}
+        AND json_extract(o.message_json, '$.destination.kind') = ${message.replyAddress.kind}
+        AND COALESCE(json_extract(o.message_json, '$.destination.chatGuid'),
+          json_extract(o.message_json, '$.destination.chatId')) = ${channelChatKey(message.replyAddress)}
       ORDER BY o.rowid DESC LIMIT 20`;
     for (const card of cards) {
       const decision = yield* decisions.get(DecisionId.make(card.decision_id)).pipe(Effect.result);

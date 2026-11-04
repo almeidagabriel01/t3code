@@ -203,6 +203,8 @@ import * as ChannelReplyReactor from "./channels/ChannelReplyReactor.ts";
 import * as ChannelTransport from "./channels/ChannelTransport.ts";
 import * as ImessageChannelRuntime from "./channels/imessage/ImessageChannelRuntime.ts";
 import * as ImessageChannelSettings from "./channels/imessage/ImessageChannelSettings.ts";
+import * as TelegramChannelRuntime from "./channels/telegram/TelegramChannelRuntime.ts";
+import * as TelegramChannelSettings from "./channels/telegram/TelegramChannelSettings.ts";
 import * as InstanceSpend from "./usage/InstanceSpend.ts";
 import * as CodexUsageHistory from "./usage/CodexUsageHistory.ts";
 import * as RuntimeLayer from "./orchestration-v2/runtimeLayer.ts";
@@ -635,9 +637,11 @@ const layerProviderInstallationRefresh = Layer.effectDiscard(
   }),
 );
 
-// One transport registry: the iMessage runtime registers into the same one the outbox resolves from.
-const layerChannels = ImessageChannelSettings.layer.pipe(
-  Layer.provideMerge(ImessageChannelRuntime.layer),
+// One transport registry: each channel runtime registers into the same one the outbox resolves from.
+const layerChannels = Layer.mergeAll(
+  ImessageChannelSettings.layer.pipe(Layer.provideMerge(ImessageChannelRuntime.layer)),
+  TelegramChannelSettings.layer.pipe(Layer.provideMerge(TelegramChannelRuntime.layer)),
+).pipe(
   Layer.provideMerge(Layer.mergeAll(ChannelBridge.layer, ChannelReplyReactor.layer)),
   Layer.provideMerge(ChannelOutbox.layer),
   Layer.provideMerge(ChannelTransport.layer),
@@ -710,6 +714,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
       yield* (yield* ChannelBridge.ChannelBridge).start();
       yield* (yield* ChannelReplyReactor.ChannelReplyReactor).start();
       yield* (yield* ImessageChannelSettings.ImessageChannelSettings).start;
+      yield* (yield* TelegramChannelSettings.TelegramChannelSettings).start;
     }),
   ),
   ProviderUsageLimitsIngestion.layer,

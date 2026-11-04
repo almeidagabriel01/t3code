@@ -1,6 +1,6 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
-import type { ChannelInboundMessage } from "@t3tools/contracts";
+import type { ChannelInboundMessage, ChannelReplyAddress } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -333,7 +333,7 @@ it.each(parseRows)("number reply parsing: $text", (row) => {
 });
 
 /** Records the card the reactor would have sent, so a number reply can find it. */
-const sendCard = (decisionId: string, address: typeof dmAddress = dmAddress) =>
+const sendCard = (decisionId: string, address: ChannelReplyAddress = dmAddress) =>
   Effect.gen(function* () {
     const outbox = yield* ChannelOutbox.ChannelOutbox;
     const sql = yield* SqlClient.SqlClient;
@@ -385,6 +385,29 @@ it.effect("a number answers the open card of that chat once; others are told or 
     assert.deepEqual((yield* texts).slice(1), ["Reply with a number from 1 to 2."]);
   }).pipe(Effect.provide(layer));
 });
+
+it.effect(
+  "a Telegram chat answers its own card, and an iMessage chat with the same key cannot",
+  () => {
+    const { layer, request } = decisionHarness();
+    const telegram = { kind: "telegram", connectionId: "c1", chatId: "chat-1" } as const;
+    const sameKeyImessage = { ...dmAddress, chatGuid: "chat-1" };
+    return Effect.gen(function* () {
+      const gateway = yield* ChannelGateway;
+      const decisions = yield* DecisionService.DecisionService;
+      const decision = yield* request;
+      yield* sendCard(decision.id, telegram);
+      yield* gateway.ingest(
+        inbound({ text: "1", conversationKey: "chat-1", replyAddress: sameKeyImessage }),
+      );
+      assert.equal((yield* decisions.get(decision.id)).status, "open");
+      yield* gateway.ingest(
+        inbound({ kind: "telegram", text: "1", conversationKey: "chat-1", replyAddress: telegram }),
+      );
+      assert.equal((yield* decisions.get(decision.id)).answer?.optionId, "yes");
+    }).pipe(Effect.provide(layer));
+  },
+);
 
 it.effect(
   "a number for a card answered elsewhere is not forwarded; a failing answer says so",

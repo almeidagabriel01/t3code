@@ -455,6 +455,14 @@ import {
   ImessageChannelSubscribeStatusInput,
 } from "./imessageChannel.ts";
 import {
+  TelegramChannelConfigureInput,
+  TelegramChannelGetSettingsInput,
+  TelegramChannelSettings,
+  TelegramChannelSettingsError,
+  TelegramChannelStatusEvent,
+  TelegramChannelSubscribeStatusInput,
+} from "./telegramChannel.ts";
+import {
   NoteConflictError,
   NoteDocument,
   NoteError,
@@ -703,6 +711,9 @@ export const WS_METHODS = {
   imessageChannelConfigure: "imessageChannel.configure",
   imessageChannelSubscribeStatus: "imessageChannel.subscribeStatus",
   imessageChannelCheckAccess: "imessageChannel.checkAccess",
+  telegramChannelGetSettings: "telegramChannel.getSettings",
+  telegramChannelConfigure: "telegramChannel.configure",
+  telegramChannelSubscribeStatus: "telegramChannel.subscribeStatus",
 
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
@@ -2204,6 +2215,27 @@ const WsImessageChannelCheckAccessRpc = Rpc.make(WS_METHODS.imessageChannelCheck
   error: ImessageChannelRpcErrors,
 });
 
+const TelegramChannelRpcErrors = Schema.Union([
+  TelegramChannelSettingsError,
+  EnvironmentAuthorizationError,
+]);
+const WsTelegramChannelGetSettingsRpc = Rpc.make(WS_METHODS.telegramChannelGetSettings, {
+  payload: TelegramChannelGetSettingsInput,
+  success: TelegramChannelSettings,
+  error: TelegramChannelRpcErrors,
+});
+const WsTelegramChannelConfigureRpc = Rpc.make(WS_METHODS.telegramChannelConfigure, {
+  payload: TelegramChannelConfigureInput,
+  success: TelegramChannelSettings,
+  error: TelegramChannelRpcErrors,
+});
+const WsTelegramChannelSubscribeStatusRpc = Rpc.make(WS_METHODS.telegramChannelSubscribeStatus, {
+  payload: TelegramChannelSubscribeStatusInput,
+  success: TelegramChannelStatusEvent,
+  error: TelegramChannelRpcErrors,
+  stream: true,
+});
+
 const WsKanbanSubscribeRpc = Rpc.make(WS_METHODS.kanbanSubscribe, {
   payload: KanbanSubscribeInput,
   success: KanbanStreamItem,
@@ -2541,6 +2573,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsImessageChannelConfigureRpc,
   WsImessageChannelSubscribeStatusRpc,
   WsImessageChannelCheckAccessRpc,
+  WsTelegramChannelGetSettingsRpc,
+  WsTelegramChannelConfigureRpc,
+  WsTelegramChannelSubscribeStatusRpc,
   WsServerReportClientActivityRpc,
   WsCloudGetRelayClientStatusRpc,
   WsCloudInstallRelayClientRpc,

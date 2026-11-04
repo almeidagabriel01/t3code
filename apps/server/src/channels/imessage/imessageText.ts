@@ -67,26 +67,40 @@ const numberedChoices = (choices: ReadonlyArray<ChannelChoice>) =>
     "Reply with the number.",
   ].join("\n");
 
+export interface ChannelTextLimits {
+  readonly chunkLimit: number;
+  readonly maxMessages: number;
+}
+
 /**
  * The messages one reply is sent as. Each starts with the speaker's name so replies read apart
  * from your own messages in a chat with yourself; choices end the last message as a numbered list.
  */
-export function formatImessageMessages(input: {
-  readonly senderName: string;
-  readonly text: string;
-  readonly choices?: ReadonlyArray<ChannelChoice> | undefined;
-}): Array<string> {
+export function formatChannelMessages(
+  input: {
+    readonly senderName: string;
+    readonly text: string;
+    readonly choices?: ReadonlyArray<ChannelChoice> | undefined;
+  },
+  { chunkLimit, maxMessages }: ChannelTextLimits,
+): Array<string> {
   const choices =
     input.choices !== undefined && input.choices.length > 0 ? input.choices : undefined;
-  const room = IMESSAGE_MAX_MESSAGES - (choices === undefined ? 0 : 1);
-  const body = chunkParagraphs(toPlainText(input.text));
+  const room = maxMessages - (choices === undefined ? 0 : 1);
+  const body = chunkParagraphs(toPlainText(input.text), chunkLimit);
   const kept = body.length <= room ? body : [...body.slice(0, room - 1), IMESSAGE_TRUNCATED_NOTE];
   if (choices !== undefined) {
     const block = numberedChoices(choices);
     const last = kept.at(-1);
-    if (last !== undefined && last.length + block.length + 2 <= IMESSAGE_CHUNK_LIMIT) {
+    if (last !== undefined && last.length + block.length + 2 <= chunkLimit) {
       kept[kept.length - 1] = `${last}\n\n${block}`;
     } else kept.push(block);
   }
   return kept.map((chunk) => `${input.senderName}: ${chunk}`);
 }
+
+export const formatImessageMessages = (input: Parameters<typeof formatChannelMessages>[0]) =>
+  formatChannelMessages(input, {
+    chunkLimit: IMESSAGE_CHUNK_LIMIT,
+    maxMessages: IMESSAGE_MAX_MESSAGES,
+  });

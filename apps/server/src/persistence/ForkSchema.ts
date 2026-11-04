@@ -300,6 +300,22 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
       date_ms INTEGER NOT NULL
     )
   `;
+  // Telegram long polling: the next update offset, and the reply pieces already sent so a
+  // retried delivery does not repeat them.
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS telegram_cursor (
+      id TEXT PRIMARY KEY,
+      update_offset INTEGER NOT NULL
+    )
+  `;
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS telegram_sent (
+      delivery_id TEXT NOT NULL,
+      chunk_index INTEGER NOT NULL,
+      sent_at_ms INTEGER NOT NULL,
+      PRIMARY KEY (delivery_id, chunk_index)
+    )
+  `;
   yield* sql`
     CREATE TABLE IF NOT EXISTS channel_cards (
       decision_id TEXT PRIMARY KEY,

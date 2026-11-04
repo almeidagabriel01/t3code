@@ -154,6 +154,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   assistants: Schema.optionalKey(Schema.Boolean),
   /** Hide iMessage when absent; only Mac servers can run it. */
   imessageChannel: Schema.optionalKey(Schema.Boolean),
+  /** Hide Telegram when absent; older servers have no Telegram methods. */
+  telegramChannel: Schema.optionalKey(Schema.Boolean),
   pullRequestStackActions: Schema.optionalKey(Schema.Boolean),
   serverSelfUpdate: Schema.optionalKey(ServerSelfUpdateCapability),
   /** Server answers server.getNpmRelease using its configured npm registry. */

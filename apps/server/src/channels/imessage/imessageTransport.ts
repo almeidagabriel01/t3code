@@ -33,7 +33,7 @@ export function makeImessageTransport(input: {
     kind: "imessage",
     send: Effect.fn("ImessageTransport.send")(function* (message) {
       const target = message.destination;
-      if (target.connectionId !== input.connectionId) {
+      if (target.kind !== "imessage" || target.connectionId !== input.connectionId) {
         return yield* new ChannelGatewayError({ reason: "invalid_input" });
       }
       if (!(yield* input.isActive)) {

@@ -71,6 +71,7 @@ export * from "./decisions.ts";
 export * from "./assistants.ts";
 export * from "./channels.ts";
 export * from "./imessageChannel.ts";
+export * from "./telegramChannel.ts";
 export * from "./notes.ts";
 export * from "./worktreeMcp.ts";
 export * from "./resourceTelemetry.ts";

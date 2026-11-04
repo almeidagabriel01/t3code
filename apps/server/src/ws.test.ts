@@ -109,6 +109,7 @@ import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 import * as UsageService from "./usage/UsageService.ts";
 import * as AssistantSpend from "./assistants/AssistantSpend.ts";
 import * as ImessageChannelSettings from "./channels/imessage/ImessageChannelSettings.ts";
+import * as TelegramChannelSettings from "./channels/telegram/TelegramChannelSettings.ts";
 import * as InstanceSpend from "./usage/InstanceSpend.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
@@ -576,6 +577,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(InstanceSpend.InstanceSpend)({}),
   Layer.mock(AssistantSpend.AssistantSpend)({}),
   Layer.mock(ImessageChannelSettings.ImessageChannelSettings)({}),
+  Layer.mock(TelegramChannelSettings.TelegramChannelSettings)({}),
   Layer.mock(VcsProvisioningService.VcsProvisioningService)({}),
   Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({}),
   Layer.mock(WorkspaceEntries.WorkspaceEntries)({}),

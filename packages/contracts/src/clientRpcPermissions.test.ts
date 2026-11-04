@@ -83,15 +83,16 @@ describe("assistant client guards", () => {
   });
 });
 
-describe("iMessage channel client guards", () => {
+describe("chat channel client guards", () => {
   it("guards configure and leaves reads open to readers", () => {
-    expect(clientRpcRequiredScopes(WS_METHODS.imessageChannelConfigure, {})).toEqual([
-      "orchestration:operate",
-    ]);
+    for (const method of [WS_METHODS.imessageChannelConfigure, WS_METHODS.telegramChannelConfigure])
+      expect(clientRpcRequiredScopes(method, {})).toEqual(["orchestration:operate"]);
     for (const method of [
       WS_METHODS.imessageChannelGetSettings,
       WS_METHODS.imessageChannelSubscribeStatus,
       WS_METHODS.imessageChannelCheckAccess,
+      WS_METHODS.telegramChannelGetSettings,
+      WS_METHODS.telegramChannelSubscribeStatus,
     ])
       expect(Object.hasOwn(CLIENT_GUARDED_RPC_SCOPES, method)).toBe(false);
   });

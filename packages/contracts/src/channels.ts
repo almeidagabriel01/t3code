@@ -3,19 +3,26 @@ import * as Schema from "effect/Schema";
 import { IsoDateTime, PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 /**
- * Messages from chat apps (iMessage) to assistants and back. A transport turns its events into a
+ * Messages from chat apps (iMessage, Telegram) to assistants and back. A transport turns its events into a
  * `ChannelInboundMessage` for the gateway and delivers `ChannelOutboundMessage`s it is handed.
  */
 
-export const ChannelKind = Schema.Literals(["imessage"]);
+export const ChannelKind = Schema.Literals(["imessage", "telegram"]);
 export type ChannelKind = typeof ChannelKind.Type;
 
-/** Where a reply goes: the iMessage chat, by its Messages chat guid. */
-export const ChannelReplyAddress = Schema.Struct({
-  kind: Schema.Literal("imessage"),
-  connectionId: TrimmedNonEmptyString,
-  chatGuid: TrimmedNonEmptyString,
-});
+/** Where a reply goes: an iMessage chat by its Messages chat guid, or a Telegram chat by its id. */
+export const ChannelReplyAddress = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("imessage"),
+    connectionId: TrimmedNonEmptyString,
+    chatGuid: TrimmedNonEmptyString,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("telegram"),
+    connectionId: TrimmedNonEmptyString,
+    chatId: TrimmedNonEmptyString,
+  }),
+]);
 export type ChannelReplyAddress = typeof ChannelReplyAddress.Type;
 
 /** What a transport observed about the sender. Never a source of permissions on its own. */
@@ -110,3 +117,7 @@ export class ChannelGatewayError extends Schema.TaggedError<ChannelGatewayError>
     return CHANNEL_GATEWAY_FAILURE_MESSAGES[this.reason];
   }
 }
+
+/** The chat a reply address names, whatever the channel calls it. */
+export const channelChatKey = (address: ChannelReplyAddress) =>
+  address.kind === "imessage" ? address.chatGuid : address.chatId;
