@@ -142,9 +142,15 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
           if (!positions.has(node) && position.height > 0) fadeCount++;
         }
       }
+      const hasRows = (rows: Map<HTMLElement, RowPosition>) =>
+        Array.from(rows.values()).some((position) => position.height > 0);
+      // A list that empties or fills is a project collapsing or expanding: no row has a neighbor
+      // to ride with, so every row would slide alone. Toggle it at once instead.
       const shouldAnimate =
         animate &&
         positions !== null &&
+        hasRows(positions) &&
+        hasRows(next) &&
         !reducedMotion?.matches &&
         fadeCount <= MAX_FADED_ROWS_PER_UPDATE;
       const movedDelta = new Map<HTMLElement, number>();
