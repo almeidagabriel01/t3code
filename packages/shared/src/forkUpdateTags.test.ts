@@ -28,6 +28,13 @@ describe("fork update tags", () => {
     expect(latestChannelTag(["v0.1.3"], "nightly")).toBeNull();
   });
 
+  it("ignores the fork's own release tags and keeps a fork version on stable", () => {
+    const withForkTags = [...tags, "v0.1.6-fork.1", "v0.1.6-fork.12", "v0.1.11-fork.1"];
+    expect(latestChannelTag(withForkTags, "stable")).toBe("v0.1.10");
+    expect(latestChannelTag(withForkTags, "nightly")).toBe("v0.1.4-nightly.20261028.3900");
+    expect(inferChannel("0.1.6-fork.1")).toBe("stable");
+  });
+
   it("infers the channel from the desktop version", () => {
     expect(inferChannel("0.1.3")).toBe("stable");
     expect(inferChannel("0.1.4-nightly.20261028.3824")).toBe("nightly");
