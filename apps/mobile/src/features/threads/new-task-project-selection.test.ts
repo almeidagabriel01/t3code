@@ -5,7 +5,7 @@ import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { HomeProjectScope } from "../home/homeThreadList";
 import {
   getProjectScopeSelectionTarget,
-  newTaskDestination,
+  orderScopesByLastProject,
   resolveDraftProjectSelection,
   resolveEnvironmentProjectMatch,
   resolveNewTaskScratchOption,
@@ -166,105 +166,57 @@ describe("resolveDraftProjectSelection", () => {
   });
 });
 
-describe("newTaskDestination", () => {
-  const picker = { draft: { requestId: "request" } };
+describe("orderScopesByLastProject", () => {
+  const scope = (id: string, environmentId = "environment") =>
+    ({
+      key: `${environmentId}:${id}`,
+      projectRefs: [{ environmentId, projectId: id }],
+    }) as unknown as HomeProjectScope;
+  const scopes = [scope("first"), scope("second"), scope("third", "other-environment")];
 
-  function destination(options: {
-    readonly useLastProject: boolean | undefined;
-    readonly projects: ReadonlyArray<EnvironmentProject>;
-    readonly current?: EnvironmentProject;
-    readonly last?: { readonly environmentId: string; readonly projectId: string };
-  }) {
-    return newTaskDestination({
-      projects: options.projects,
-      requestId: "request",
-      useLastProject: options.useLastProject,
-      currentProject: options.current && {
-        environmentId: options.current.environmentId,
-        projectId: options.current.id,
-      },
-      lastProject: options.last,
+  it.each([
+    {
+      name: "moves the last-used project first and marks it",
+      last: { environmentId: "environment", projectId: "second" },
+      useLast: true,
+      order: ["second", "first", "third"],
+      lastUsedKey: "environment:second",
+    },
+    {
+      name: "treats an unset preference as on",
+      last: { environmentId: "other-environment", projectId: "third" },
+      useLast: undefined,
+      order: ["third", "first", "second"],
+      lastUsedKey: "other-environment:third",
+    },
+    {
+      name: "keeps the order when the preference is off",
+      last: { environmentId: "environment", projectId: "second" },
+      useLast: false,
+      order: ["first", "second", "third"],
+      lastUsedKey: null,
+    },
+    {
+      name: "ignores a project id from another environment",
+      last: { environmentId: "removed-environment", projectId: "second" },
+      useLast: true,
+      order: ["first", "second", "third"],
+      lastUsedKey: null,
+    },
+    {
+      name: "keeps the order with nothing remembered",
+      last: undefined,
+      useLast: true,
+      order: ["first", "second", "third"],
+      lastUsedKey: null,
+    },
+  ])("$name", ({ last, useLast, order, lastUsedKey }) => {
+    const result = orderScopesByLastProject(scopes, {
+      ...(last ? { lastThreadProject: last } : {}),
+      ...(useLast === undefined ? {} : { useLastProjectForNewThreads: useLast }),
     });
-  }
-
-  it("starts in the current thread's project ahead of the remembered one", () => {
-    const projects = [makeProject("remembered"), makeProject("current", "other-environment")];
-    expect(
-      destination({
-        useLastProject: true,
-        projects,
-        current: projects[1],
-        last: { environmentId: "environment", projectId: "remembered" },
-      }),
-    ).toEqual({
-      draft: { requestId: "request", environmentId: "other-environment", projectId: "current" },
-    });
-  });
-
-  it("opens the picker for an archived last project, but keeps an archived current one", () => {
-    const archived = { ...makeProject("archived"), archivedAt: "2026-01-01T00:00:00.000Z" };
-    expect(
-      destination({
-        useLastProject: true,
-        projects: [archived],
-        last: { environmentId: "environment", projectId: "archived" },
-      }),
-    ).toEqual(picker);
-    expect(destination({ useLastProject: true, projects: [archived], current: archived })).toEqual({
-      draft: { requestId: "request", environmentId: "environment", projectId: "archived" },
-    });
-  });
-
-  it("treats an unset preference as on", () => {
-    const projects = [makeProject("first"), makeProject("current")];
-    expect(destination({ useLastProject: undefined, projects, current: projects[1] })).toEqual({
-      draft: { requestId: "request", environmentId: "environment", projectId: "current" },
-    });
-  });
-
-  it("starts in the remembered project of its own environment when there is no current one", () => {
-    const projects = [makeProject("chosen"), makeProject("chosen", "other-environment")];
-    expect(
-      destination({
-        useLastProject: true,
-        projects,
-        last: { environmentId: "other-environment", projectId: "chosen" },
-      }),
-    ).toEqual({
-      draft: { requestId: "request", environmentId: "other-environment", projectId: "chosen" },
-    });
-  });
-
-  it("ignores a remembered project id from another environment", () => {
-    expect(
-      destination({
-        useLastProject: true,
-        projects: [makeProject("chosen")],
-        last: { environmentId: "removed-environment", projectId: "chosen" },
-      }),
-    ).toEqual(picker);
-  });
-
-  it("opens the picker rather than the first project when nothing matches", () => {
-    expect(
-      destination({
-        useLastProject: true,
-        projects: [makeProject("first"), makeProject("second")],
-        current: makeProject("removed"),
-      }),
-    ).toEqual(picker);
-  });
-
-  it("always opens the picker when the preference is off", () => {
-    const only = makeProject("only");
-    expect(
-      destination({
-        useLastProject: false,
-        projects: [only],
-        current: only,
-        last: { environmentId: "environment", projectId: "only" },
-      }),
-    ).toEqual(picker);
+    expect(result.scopes.map((entry) => entry.projectRefs[0]!.projectId)).toEqual(order);
+    expect(result.lastUsedKey).toBe(lastUsedKey);
   });
 });
 

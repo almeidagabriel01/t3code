@@ -28,6 +28,9 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { useProjects, useServerConfigs } from "../../state/entities";
 import { projectEnvironment } from "../../state/projects";
+import { useAtomValue } from "@effect/atom-react";
+import { AsyncResult } from "effect/reactivity";
+import { mobilePreferencesAtom } from "../../state/preferences";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useRemoteConnectionStatus } from "../../state/use-remote-environment-registry";
 import type { WorkspaceState } from "../../state/workspaceModel";
@@ -39,6 +42,7 @@ import {
   filterProjectScopes,
   getProjectScopeSelectionTarget,
   resolveNewTaskScratchOption,
+  orderScopesByLastProject,
 } from "./new-task-project-selection";
 import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
 
@@ -182,7 +186,10 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
         isScratchProject(project, serverConfigs.get(project.environmentId)?.scratchWorkspaceRoot),
       ),
   );
-  const visibleScopes = filterProjectScopes(listScopes, searchText);
+  const preferences = useAtomValue(mobilePreferencesAtom);
+  const saved = AsyncResult.isSuccess(preferences) ? preferences.value : undefined;
+  const { scopes: orderedScopes, lastUsedKey } = orderScopesByLastProject(listScopes, saved);
+  const visibleScopes = filterProjectScopes(orderedScopes, searchText);
   const resumedDestinationKeyRef = useRef<string | null>(null);
   const reservedDestinationProject = incomingShare?.destination
     ? (projects.find(
@@ -480,9 +487,10 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                       key={scope.key}
                       title={scope.title}
                       subtitle={
-                        hasMultipleProjects
+                        (scope.key === lastUsedKey ? "Last used · " : "") +
+                        (hasMultipleProjects
                           ? `${scope.projects.length} workspaces`
-                          : selectionTarget.workspaceRoot
+                          : selectionTarget.workspaceRoot)
                       }
                       subtitleNumberOfLines={1}
                       subtitleEllipsizeMode="middle"
@@ -532,6 +540,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                           ellipsizeMode="middle"
                           numberOfLines={1}
                         >
+                          {scope.key === lastUsedKey ? "Last used · " : ""}
                           {hasMultipleProjects
                             ? `${scope.projects.length} workspaces`
                             : selectionTarget.workspaceRoot}

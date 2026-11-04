@@ -242,7 +242,7 @@ export function NewThreadSettingsSection() {
       <SettingsSwitchRow
         icon="square.and.pencil"
         label="Use last project"
-        subtitle="Start new threads in the last project you used on this device."
+        subtitle="New threads still ask for the project, with the last one you used on this device first."
         value={useLastProject}
         onValueChange={(value) => savePreferences({ useLastProjectForNewThreads: value })}
       />

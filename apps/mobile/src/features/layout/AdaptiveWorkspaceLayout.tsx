@@ -48,10 +48,7 @@ import {
 } from "../../lib/layout";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import type { ThreadListFilters } from "../../persistence/mobile-preferences";
-import { appAtomRegistry } from "../../state/atom-registry";
-import { useProjects } from "../../state/entities";
 import { useThreadCwd } from "../../state/use-selected-thread-worktree";
-import { environmentThreadShells } from "../../state/threads";
 import { mobilePreferencesAtom } from "../../state/preferences";
 import {
   DEFAULT_MOBILE_PROJECT_GROUPING_SETTINGS,
@@ -79,7 +76,6 @@ import {
 import { startOpeningDetail } from "../workspace/useSelectWorkspaceDetail";
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
 import { HomeListOptionsProvider } from "../home/home-list-options";
-import { newTaskDestination } from "../threads/new-task-project-selection";
 import { usePendingTaskListActions } from "../home/usePendingTaskListActions";
 import { ThreadNavigationSidebar } from "../threads/ThreadNavigationSidebar";
 import { useOpenThreadPullRequests } from "../threads/use-open-thread-pull-requests";
@@ -591,44 +587,9 @@ function AdaptiveWorkspaceLayoutContent(
   const handleSelectThreadRoute = (params: ReactNavigation.RootParamList["Thread"]) =>
     handleSelectDetail({ name: "Thread", params });
 
-  const projects = useProjects();
   const compactAndroidSettings =
     Platform.OS === "android" && androidSettingsOpen && !layout.usesSplitView;
-  // Reads the open page when pressed, so the layout context doesn't change on every navigation.
-  const handleStartNewTask = () => {
-    const state = rootStackState(navigation);
-    const currentRoute = workspaceRoutesOf(
-      state?.routes.slice(0, state.index + 1) ?? [],
-    ).workspace.at(-1);
-    const params =
-      currentRoute?.name === "Thread"
-        ? (currentRoute.params as ReactNavigation.RootParamList["Thread"])
-        : undefined;
-    const first = (value: string | string[] | undefined) =>
-      Array.isArray(value) ? value[0] : value;
-    const environmentId = first(params?.environmentId);
-    const threadId = first(params?.threadId);
-    // The full index, not the sidebar list: subagent and archived threads are current threads too.
-    const projectId =
-      environmentId && threadId
-        ? appAtomRegistry
-            .get(
-              environmentThreadShells.environmentThreadIndexAtom(EnvironmentId.make(environmentId)),
-            )
-            .get(ThreadId.make(threadId))?.projectId
-        : undefined;
-    const preferences = appAtomRegistry.get(mobilePreferencesAtom);
-    const saved = AsyncResult.isSuccess(preferences) ? preferences.value : undefined;
-    handleSelectThreadRoute(
-      newTaskDestination({
-        projects,
-        requestId: uuidv4(),
-        useLastProject: saved?.useLastProjectForNewThreads,
-        currentProject: environmentId && projectId ? { environmentId, projectId } : undefined,
-        lastProject: saved?.lastThreadProject,
-      }),
-    );
-  };
+  const handleStartNewTask = () => handleSelectThreadRoute({ draft: { requestId: uuidv4() } });
 
   useHardwareKeyboardCommand("newTask", () => {
     handleStartNewTask();

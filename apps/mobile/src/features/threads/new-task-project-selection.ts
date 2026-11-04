@@ -145,33 +145,31 @@ export function resolveDraftProjectSelection(
   return onlyScope ? { kind: "select", project: onlyScope.representative } : { kind: "pick" };
 }
 
-type ProjectRef = { readonly environmentId: string; readonly projectId: string };
-
-export function newTaskDestination(options: {
-  readonly projects: ReadonlyArray<EnvironmentProject>;
-  readonly requestId: string;
-  readonly useLastProject: boolean | undefined;
-  readonly currentProject: ProjectRef | undefined;
-  readonly lastProject: ProjectRef | undefined;
-}) {
-  const find = (ref: ProjectRef | undefined) =>
-    ref &&
-    options.projects.find(
-      (project) => project.environmentId === ref.environmentId && project.id === ref.projectId,
-    );
-  // A remembered project that was archived since opens the picker; the current one still wins.
-  const last = find(options.lastProject);
-  const project =
-    options.useLastProject === false
-      ? undefined
-      : (find(options.currentProject) ?? (last?.archivedAt == null ? last : undefined));
-  return project
-    ? {
-        draft: {
-          requestId: options.requestId,
-          environmentId: String(project.environmentId),
-          projectId: String(project.id),
-        },
+/**
+ * A new task always asks for the project. The last-used project, when the preference is on,
+ * moves to the front of the list and is marked, so it is one tap away.
+ */
+export function orderScopesByLastProject(
+  scopes: ReadonlyArray<HomeProjectScope>,
+  preferences:
+    | {
+        readonly lastThreadProject?: { readonly environmentId: string; readonly projectId: string };
+        readonly useLastProjectForNewThreads?: boolean;
       }
-    : { draft: { requestId: options.requestId } };
+    | undefined,
+): { readonly scopes: ReadonlyArray<HomeProjectScope>; readonly lastUsedKey: string | null } {
+  const lastProject = preferences?.lastThreadProject;
+  const last =
+    preferences?.useLastProjectForNewThreads === false || !lastProject
+      ? undefined
+      : scopes.find((scope) =>
+          scope.projectRefs.some(
+            (ref) =>
+              ref.environmentId === lastProject.environmentId &&
+              ref.projectId === lastProject.projectId,
+          ),
+        );
+  return last
+    ? { scopes: [last, ...scopes.filter((scope) => scope !== last)], lastUsedKey: last.key }
+    : { scopes, lastUsedKey: null };
 }
