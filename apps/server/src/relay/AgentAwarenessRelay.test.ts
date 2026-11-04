@@ -277,6 +277,8 @@ const makeTestRelay = Effect.fnUntraced(function* (
       answer: unused,
       dismiss: unused,
       withdraw: unused,
+      claimExecution: unused,
+      releaseExecution: unused,
       expireDue: unused(),
       deliverPending: unused(),
     }),

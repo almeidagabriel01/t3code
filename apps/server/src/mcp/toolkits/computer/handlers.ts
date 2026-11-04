@@ -39,7 +39,7 @@ const run = Effect.fn("mcp.computer.run")(
   function* (input: ComputerParameters) {
     const computer = yield* ComputerUse.ComputerUse;
     if (input.action === "permissions") {
-      return { ...(yield* computer.permissions) } satisfies Out;
+      return { ...(yield* computer.permissions({ automation: true })) } satisfies Out;
     }
     const context = yield* loadCaller();
     const caller = {
@@ -48,9 +48,11 @@ const run = Effect.fn("mcp.computer.run")(
       threadTitle: context.caller!.title,
     };
     const clientRequestId = input.clientRequestId;
+    const target = yield* need(input.target, "target", input.action);
     switch (input.action) {
       case "click":
         yield* computer.click(caller, {
+          target,
           x: yield* need(input.x, "x", "click"),
           y: yield* need(input.y, "y", "click"),
           button: input.button,
@@ -60,12 +62,14 @@ const run = Effect.fn("mcp.computer.run")(
         return done("click");
       case "type":
         yield* computer.type(caller, {
+          target,
           text: yield* need(input.text, "text", "type"),
           clientRequestId,
         });
         return done("type");
       case "key":
         yield* computer.key(caller, {
+          target,
           key: yield* need(input.key, "key", "key"),
           modifiers: input.modifiers,
           clientRequestId,

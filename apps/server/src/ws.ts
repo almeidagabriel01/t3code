@@ -2391,7 +2391,8 @@ export const layerWsRpc = (
         [WS_METHODS.decisionsAnswer]: (input) =>
           DecisionAttachmentIntake.answerDecision(input).pipe(Effect.provide(intakeContext)),
         [WS_METHODS.decisionsDismiss]: (input) => decisions.dismiss(input.decisionId),
-        [WS_METHODS.computerUsePermissions]: (_input) => computerUse.permissions,
+        [WS_METHODS.computerUsePermissions]: (input) =>
+          computerUse.permissions({ automation: input.automation === true }),
         [WS_METHODS.computerUseOpenSettings]: (input) =>
           computerUse.openSettings(input).pipe(Effect.as({})),
         [WS_METHODS.assistantsSubscribe]: (_input) => assistants.subscribe,

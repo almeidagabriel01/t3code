@@ -42,12 +42,13 @@ const harness = (client?: "read-only") => {
   const refuse = (reason: ComputerUseError["reason"]) =>
     Effect.fail(new ComputerUseError({ reason }));
   const computer = Layer.mock(ComputerUse.ComputerUse)({
-    permissions: Effect.succeed({
-      supported: true,
-      screenRecording: "granted",
-      accessibility: "denied",
-      automation: "unknown",
-    }),
+    permissions: () =>
+      Effect.succeed({
+        supported: true,
+        screenRecording: "granted",
+        accessibility: "denied",
+        automation: "unknown",
+      }),
     screenshot: Effect.succeed({ png, width: 640, height: 360 }),
     click: (caller, input) =>
       input.x === 99
@@ -130,6 +131,7 @@ it.effect("passes the caller, arguments and request id through, and says what is
     });
     const clicked = yield* call({
       action: "click",
+      target: "the Save button",
       x: 10,
       y: 20,
       button: "right",
@@ -137,13 +139,24 @@ it.effect("passes the caller, arguments and request id through, and says what is
       clientRequestId: "c1",
     });
     expect(clicked).toMatchObject({ ok: true, action: "click" });
-    yield* call({ action: "type", text: "hello" });
-    yield* call({ action: "key", key: "a", modifiers: ["command"] });
+    yield* call({ action: "type", target: "the name field", text: "hello" });
+    yield* call({ action: "key", target: "the editor", key: "a", modifiers: ["command"] });
     const caller = { threadId: "thread-1", projectId, threadTitle: "Tidy settings" };
     expect(seen).toMatchObject([
-      ["click", caller, { x: 10, y: 20, button: "right", double: true, clientRequestId: "c1" }],
-      ["type", caller, { text: "hello" }],
-      ["key", caller, { key: "a", modifiers: ["command"] }],
+      [
+        "click",
+        caller,
+        {
+          target: "the Save button",
+          x: 10,
+          y: 20,
+          button: "right",
+          double: true,
+          clientRequestId: "c1",
+        },
+      ],
+      ["type", caller, { target: "the name field", text: "hello" }],
+      ["key", caller, { target: "the editor", key: "a", modifiers: ["command"] }],
     ]);
     expect(yield* shoot).toEqual({
       screenshot: { mimeType: "image/png", data: expect.any(String), width: 640, height: 360 },
@@ -155,14 +168,15 @@ it.effect("reports a missing argument or a refused action as a failure the agent
   Effect.gen(function* () {
     const { call, seen } = yield* harness();
     for (const input of [
-      { action: "click", y: 1 },
-      { action: "click", x: 1 },
-      { action: "type" },
-      { action: "key" },
+      { action: "click", target: "t", y: 1 },
+      { action: "click", target: "t", x: 1 },
+      { action: "type", target: "t" },
+      { action: "key", target: "t" },
+      { action: "click", x: 1, y: 1 },
     ] satisfies ComputerParameters[]) {
       expect(yield* call(input)).toMatchObject({ code: "invalid_request" });
     }
-    const refused = yield* call({ action: "click", x: 99, y: 1 });
+    const refused = yield* call({ action: "click", target: "t", x: 99, y: 1 });
     expect(refused).toMatchObject({ code: "invalid_request" });
     expect(refused.message).toContain("did not approve");
     expect(seen).toEqual([]);
@@ -173,7 +187,7 @@ it.effect("a read-only client can read permissions but not act", () =>
   Effect.gen(function* () {
     const { call, seen } = yield* harness("read-only");
     expect(yield* call({ action: "permissions" })).toMatchObject({ supported: true });
-    expect(yield* call({ action: "click", x: 1, y: 1 })).toMatchObject({
+    expect(yield* call({ action: "click", target: "t", x: 1, y: 1 })).toMatchObject({
       code: expect.any(String),
     });
     expect(seen).toEqual([]);

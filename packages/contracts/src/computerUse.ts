@@ -17,7 +17,10 @@ export const MacPermissions = Schema.Struct({
 });
 export type MacPermissions = typeof MacPermissions.Type;
 
-export const ComputerUsePermissionsInput = Schema.Struct({});
+/** Reading Automation can make macOS prompt, so it is only read when `automation` is true. */
+export const ComputerUsePermissionsInput = Schema.Struct({
+  automation: Schema.optional(Schema.Boolean),
+});
 export type ComputerUsePermissionsInput = typeof ComputerUsePermissionsInput.Type;
 
 export const ComputerUseOpenSettingsInput = Schema.Struct({ pane: MacPermissionPane });

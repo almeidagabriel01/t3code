@@ -328,6 +328,10 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
   if (!decisionColumns.some((column) => column.name === "approval_request_id")) {
     yield* sql`ALTER TABLE decisions ADD COLUMN approval_request_id TEXT`;
   }
+  // When a computer-use action ran for this approval, so a restart can never run it twice.
+  if (!decisionColumns.some((column) => column.name === "executed_at")) {
+    yield* sql`ALTER TABLE decisions ADD COLUMN executed_at TEXT`;
+  }
   const assistantColumns = yield* sql<{ readonly name: string }>`PRAGMA table_info(assistants)`;
   if (!assistantColumns.some((column) => column.name === "budget_json")) {
     yield* sql`ALTER TABLE assistants ADD COLUMN budget_json TEXT`;

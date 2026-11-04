@@ -147,6 +147,13 @@ export class DecisionService extends Context.Service<
       readonly decisionId: DecisionId;
       readonly fromThreadId: ThreadId;
     }) => Effect.Effect<Decision, DecisionError>;
+    /**
+     * Records that the action this answered decision approved is about to run. True for the one
+     * caller that gets to run it, false for every later one, including after a restart.
+     */
+    readonly claimExecution: (decisionId: DecisionId) => Effect.Effect<boolean, DecisionError>;
+    /** Gives the claim back after the action failed without running, so a retry may run it. */
+    readonly releaseExecution: (decisionId: DecisionId) => Effect.Effect<void, DecisionError>;
     /** Marks open decisions past `expiresAt` as expired. Delivery is a separate step. */
     readonly expireDue: Effect.Effect<void, DecisionError>;
     /** Sends each answered, dismissed or expired decision to its thread once. */
@@ -490,6 +497,23 @@ const make = Effect.gen(function* () {
     storage,
   );
 
+  const claimExecution: DecisionService["Service"]["claimExecution"] = Effect.fn(
+    "DecisionService.claimExecution",
+  )(function* (decisionId) {
+    const now = yield* nowIso;
+    const claimed = yield* sql`
+      UPDATE decisions SET executed_at = ${now}
+      WHERE decision_id = ${decisionId} AND status = 'answered' AND executed_at IS NULL
+      RETURNING decision_id`;
+    return claimed.length > 0;
+  }, storage);
+
+  const releaseExecution: DecisionService["Service"]["releaseExecution"] = Effect.fn(
+    "DecisionService.releaseExecution",
+  )(function* (decisionId) {
+    yield* sql`UPDATE decisions SET executed_at = NULL WHERE decision_id = ${decisionId}`;
+  }, storage);
+
   const sweep = expireDue.pipe(
     Effect.andThen(deliverPending),
     Effect.catchCause((cause) => Effect.logWarning("decision sweep failed", { cause })),
@@ -509,6 +533,8 @@ const make = Effect.gen(function* () {
     answer,
     dismiss,
     withdraw,
+    claimExecution,
+    releaseExecution,
     expireDue,
     deliverPending,
   });

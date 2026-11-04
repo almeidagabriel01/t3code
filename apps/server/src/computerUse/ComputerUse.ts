@@ -14,7 +14,6 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
 import * as DecisionService from "../decisions/DecisionService.ts";
@@ -25,6 +24,7 @@ const APPROVAL_WAIT = "2 minutes";
 const DECISION_EXPIRES_IN_MINUTES = 30;
 const COMMAND_TIMEOUT = "15 seconds";
 const MAX_TYPED_CHARS = 2_000;
+const MAX_TARGET_CHARS = 200;
 const MAX_COORDINATE = 20_000;
 const MIN_PNG_BYTES = 1_024;
 
@@ -37,15 +37,22 @@ const PANE_URLS = {
 
 /** Values reach these scripts only as `argv`, never spliced into the source. */
 const PERMISSIONS_SCRIPT = `ObjC.import('CoreGraphics'); ObjC.import('ApplicationServices');
-function run() {
+function run(argv) {
   let automation = 'unknown';
-  try { Application('System Events').processes.length; automation = 'granted'; }
-  catch (error) { automation = String(error).includes('-1743') ? 'denied' : 'unknown'; }
+  if (argv[0] === 'automation') {
+    try { Application('System Events').processes.length; automation = 'granted'; }
+    catch (error) { automation = String(error).includes('-1743') ? 'denied' : 'unknown'; }
+  }
   return JSON.stringify({
     screenRecording: $.CGPreflightScreenCaptureAccess() ? 'granted' : 'denied',
     accessibility: $.AXIsProcessTrusted() ? 'granted' : 'denied',
     automation,
   });
+}`;
+
+const FRONTMOST_SCRIPT = `function run() {
+  const front = Application('System Events').processes.whose({ frontmost: true });
+  return front.length > 0 ? front[0].name() : '';
 }`;
 
 const SCREEN_SIZE_SCRIPT = `ObjC.import('AppKit');
@@ -115,6 +122,8 @@ export interface ComputerUseCaller {
 
 /** `clientRequestId` makes a repeat land on the same decision; omitted, it derives from the arguments. */
 export interface ClickInput {
+  /** What the user is shown beside the coordinates, so they never approve blind. */
+  readonly target: string;
   readonly x: number;
   readonly y: number;
   readonly button?: "left" | "right" | undefined;
@@ -122,10 +131,12 @@ export interface ClickInput {
   readonly clientRequestId?: string | undefined;
 }
 export interface TypeInput {
+  readonly target: string;
   readonly text: string;
   readonly clientRequestId?: string | undefined;
 }
 export interface KeyInput {
+  readonly target: string;
   readonly key: string;
   readonly modifiers?: ReadonlyArray<string> | undefined;
   readonly clientRequestId?: string | undefined;
@@ -141,8 +152,13 @@ export interface ScreenshotResult {
 export class ComputerUse extends Context.Service<
   ComputerUse,
   {
-    /** Never fails: off macOS it reports `supported: false`. */
-    readonly permissions: Effect.Effect<MacPermissions>;
+    /**
+     * Never fails: off macOS it reports `supported: false`. Reading Automation can make macOS
+     * prompt, so it is only read when asked; otherwise it is `unknown`.
+     */
+    readonly permissions: (options: {
+      readonly automation: boolean;
+    }) => Effect.Effect<MacPermissions>;
     readonly openSettings: (
       input: ComputerUseOpenSettingsInput,
     ) => Effect.Effect<void, ComputerUseError>;
@@ -197,8 +213,6 @@ const make = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const crypto = yield* Crypto.Crypto;
   const decisions = yield* DecisionService.DecisionService;
-  // In memory: a restart forgets which approvals already ran. ponytail: persist if restarts mid-approval matter.
-  const executed = yield* Ref.make<ReadonlySet<DecisionId>>(new Set());
 
   /** A repeat of the same action derives the same id, so it lands on the same decision. */
   const idFor = Effect.fn("ComputerUse.idFor")(function* (
@@ -229,20 +243,22 @@ const make = Effect.gen(function* () {
   const jxa = (script: string, args: ReadonlyArray<string> = []) =>
     run("/usr/bin/osascript", ["-l", "JavaScript", "-e", script, ...args]);
 
-  const permissions: ComputerUse["Service"]["permissions"] = Effect.gen(function* () {
-    if (platform !== "darwin") {
-      return {
-        supported: false,
-        screenRecording: "unknown",
-        accessibility: "unknown",
-        automation: "unknown",
-      } as const;
-    }
-    return yield* jxa(PERMISSIONS_SCRIPT).pipe(
-      Effect.map(parsePermissions),
-      Effect.orElseSucceed(() => parsePermissions("")),
-    );
-  }).pipe(Effect.withSpan("ComputerUse.permissions"));
+  const permissions: ComputerUse["Service"]["permissions"] = Effect.fn("ComputerUse.permissions")(
+    function* (options) {
+      if (platform !== "darwin") {
+        return {
+          supported: false,
+          screenRecording: "unknown",
+          accessibility: "unknown",
+          automation: "unknown",
+        } as const;
+      }
+      return yield* jxa(PERMISSIONS_SCRIPT, options.automation ? ["automation"] : []).pipe(
+        Effect.map(parsePermissions),
+        Effect.orElseSucceed(() => parsePermissions("")),
+      );
+    },
+  );
 
   const openSettings: ComputerUse["Service"]["openSettings"] = Effect.fn(
     "ComputerUse.openSettings",
@@ -253,9 +269,6 @@ const make = Effect.gen(function* () {
 
   const screenshot: ComputerUse["Service"]["screenshot"] = Effect.gen(function* () {
     yield* requireMac;
-    if ((yield* permissions).screenRecording === "denied") {
-      return yield* fail("screen_recording_missing");
-    }
     return yield* Effect.scoped(
       Effect.gen(function* () {
         const directory = yield* fs
@@ -269,9 +282,12 @@ const make = Effect.gen(function* () {
         }
         yield* run("/usr/bin/sips", ["-z", String(height), String(width), file]);
         const png = yield* fs.readFile(file).pipe(Effect.mapError(failed));
-        // Without the permission macOS can hand back an empty or wallpaper-only capture.
-        // ponytail: size check only; add a pixel check if a blank-but-large capture slips through.
-        if (png.byteLength < MIN_PNG_BYTES) return yield* fail("screen_recording_missing");
+        // Without the permission macOS can hand back an empty or wallpaper-only capture, however
+        // large, so the permission decides; a tiny file is blank whatever macOS says.
+        const { screenRecording } = yield* permissions({ automation: false });
+        if (screenRecording === "denied" || png.byteLength < MIN_PNG_BYTES) {
+          return yield* fail("screen_recording_missing");
+        }
         return { png, width, height };
       }),
     );
@@ -332,11 +348,8 @@ const make = Effect.gen(function* () {
     if (settled.status !== "answered" || settled.answer?.optionId !== "accept") {
       return yield* fail("not_approved");
     }
-    const claimed = yield* Ref.modify(executed, (seen) =>
-      seen.has(decision.id)
-        ? ([false, seen] as const)
-        : ([true, new Set(seen).add(decision.id)] as const),
-    );
+    // Stored on the decision, so a restart cannot run an approved action a second time.
+    const claimed = yield* decisions.claimExecution(decision.id).pipe(Effect.mapError(failed));
     if (!claimed) {
       return yield* fail(
         "already_executed",
@@ -345,19 +358,14 @@ const make = Effect.gen(function* () {
     }
     // A failed action releases the approval so the same decision can be retried.
     return yield* act.pipe(
-      Effect.tapError(() =>
-        Ref.update(executed, (seen) => {
-          const next = new Set(seen);
-          next.delete(decision.id);
-          return next;
-        }),
-      ),
+      Effect.tapError(() => Effect.ignore(decisions.releaseExecution(decision.id))),
     );
   });
 
+  /** Checks the permissions the action needs and returns them. Automation is read for every action. */
   const ready = Effect.fn("ComputerUse.ready")(function* (needAutomation: boolean) {
     yield* requireMac;
-    const current = yield* permissions;
+    const current = yield* permissions({ automation: true });
     if (current.accessibility === "denied") return yield* fail("accessibility_missing");
     if (needAutomation && current.automation === "denied") {
       return yield* fail(
@@ -365,10 +373,54 @@ const make = Effect.gen(function* () {
         "T3 Code is not allowed to control System Events (Automation permission). Ask the user to grant it in Settings > Mac permissions, then try again.",
       );
     }
+    return current;
   });
+
+  /** The app in front, read through System Events only when macOS already allows it. */
+  const frontmostApp = Effect.fn("ComputerUse.frontmostApp")(function* (current: MacPermissions) {
+    if (current.automation !== "granted") return undefined;
+    const name = yield* jxa(FRONTMOST_SCRIPT).pipe(
+      Effect.map((stdout) => stdout.trim()),
+      Effect.orElseSucceed(() => ""),
+    );
+    return name === "" ? undefined : name;
+  });
+
+  /** What the user reads before approving: what the agent says it is doing, then the exact action. */
+  const describe = Effect.fn("ComputerUse.describe")(function* (
+    current: MacPermissions,
+    target: string,
+    summary: string,
+    action: string,
+    detail = "",
+  ) {
+    const app = yield* frontmostApp(current);
+    return {
+      title: `${clip(target, 60)}: ${summary}`,
+      context: [
+        `**Target:** ${target}`,
+        `**Action:** ${action}`,
+        ...(app === undefined ? [] : [`**App in front:** ${app}`]),
+        ...(detail === "" ? [] : ["", detail]),
+      ].join("\n"),
+    };
+  });
+
+  const checkTarget = (input: { readonly target: string }) => {
+    const target = input.target.trim();
+    return target === "" || target.length > MAX_TARGET_CHARS
+      ? Effect.fail(
+          fail(
+            "invalid",
+            `target must be 1-${MAX_TARGET_CHARS} characters: say what you are acting on, such as "the blue Save button in System Settings".`,
+          ),
+        )
+      : Effect.succeed(target);
+  };
 
   const click: ComputerUse["Service"]["click"] = Effect.fn("ComputerUse.click")(
     function* (caller, input) {
+      const target = yield* checkTarget(input);
       const { x, y } = input;
       if (
         !Number.isFinite(x) ||
@@ -386,16 +438,21 @@ const make = Effect.gen(function* () {
       const point = { x: Math.round(x), y: Math.round(y) };
       const button = input.button ?? "left";
       const count = input.double === true ? 2 : 1;
-      yield* ready(false);
+      const current = yield* ready(false);
       const verb = count === 2 ? "double-click" : "click";
+      const summary = `${verb} at (${point.x}, ${point.y})`;
       return yield* approved(
         caller,
         {
           clientRequestId:
             input.clientRequestId?.trim() ||
             (yield* idFor("click", [point.x, point.y, button, count])),
-          title: `${count === 2 ? "Double-click" : "Click"} at (${point.x}, ${point.y})`,
-          context: `An agent wants to ${button}-${verb} at **(${point.x}, ${point.y})** on your Mac's main screen.`,
+          ...(yield* describe(
+            current,
+            target,
+            summary,
+            `${button}-${verb} at **(${point.x}, ${point.y})** on your Mac's main screen.`,
+          )),
         },
         jxa(CLICK_SCRIPT, [String(point.x), String(point.y), button, String(count)]).pipe(
           Effect.asVoid,
@@ -406,16 +463,22 @@ const make = Effect.gen(function* () {
 
   const type: ComputerUse["Service"]["type"] = Effect.fn("ComputerUse.type")(
     function* (caller, input) {
+      const target = yield* checkTarget(input);
       if (input.text === "" || input.text.length > MAX_TYPED_CHARS) {
         return yield* fail("invalid", `text must be 1-${MAX_TYPED_CHARS} characters.`);
       }
-      yield* ready(true);
+      const current = yield* ready(true);
       return yield* approved(
         caller,
         {
           clientRequestId: input.clientRequestId?.trim() || (yield* idFor("type", [input.text])),
-          title: `Type "${clip(input.text.replaceAll("\n", " "), 60)}" (${input.text.length} chars)`,
-          context: `An agent wants to type this text into whatever is focused on your Mac:\n\n\`\`\`\n${input.text.replaceAll("```", "'''")}\n\`\`\``,
+          ...(yield* describe(
+            current,
+            target,
+            `type "${clip(input.text.replaceAll("\n", " "), 30)}" (${input.text.length} chars)`,
+            `type ${input.text.length} characters into whatever is focused:`,
+            `\`\`\`\n${input.text.replaceAll("```", "'''")}\n\`\`\``,
+          )),
         },
         jxa(KEY_SCRIPT, ["text", input.text]).pipe(Effect.asVoid),
       );
@@ -424,6 +487,7 @@ const make = Effect.gen(function* () {
 
   const key: ComputerUse["Service"]["key"] = Effect.fn("ComputerUse.key")(
     function* (caller, input) {
+      const target = yield* checkTarget(input);
       const name = input.key.trim();
       const lower = name.toLowerCase();
       const code = KEY_CODES[lower];
@@ -441,14 +505,13 @@ const make = Effect.gen(function* () {
       const sorted = [...new Set(modifiers)].sort();
       const keyName = code === undefined ? name : lower;
       const label = [...sorted, keyName].join("+");
-      yield* ready(true);
+      const current = yield* ready(true);
       return yield* approved(
         caller,
         {
           clientRequestId:
             input.clientRequestId?.trim() || (yield* idFor("key", [keyName, ...sorted])),
-          title: `Press ${label}`,
-          context: `An agent wants to press **${label}** on your Mac.`,
+          ...(yield* describe(current, target, `press ${label}`, `press **${label}**.`)),
         },
         jxa(
           KEY_SCRIPT,

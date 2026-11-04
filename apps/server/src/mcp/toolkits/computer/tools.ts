@@ -11,6 +11,12 @@ const Coordinate = Schema.Union([Schema.Number, Schema.NumberFromString]);
 
 export const ComputerParameters = Schema.Struct({
   action: Schema.Literals(["permissions", "click", "type", "key"]),
+  target: Schema.optional(
+    Schema.String.annotate({
+      description:
+        "Required for click, type and key: what you are acting on, shown to the user in the approval, e.g. 'the blue Save button in System Settings > Privacy'.",
+    }),
+  ),
   x: Schema.optional(Coordinate),
   y: Schema.optional(Coordinate),
   button: Schema.optional(Schema.Literals(["left", "right"])),
@@ -37,7 +43,7 @@ const dependencies = [
 
 const ComputerTool = Tool.make("t3_computer", {
   description:
-    "Operate the user's Mac (macOS hosts only). `permissions` reports which macOS permissions T3 Code has: screenRecording, accessibility, automation. `click` (x, y in the pixels of your latest computer_screenshot; button left|right; double), `type` (text) and `key` (key = one character or return, tab, space, escape, delete, left, right, up, down, home, end, pageup, pagedown, f1-f12; modifiers command, shift, option, control) each ask the user to approve that exact action, wait for the answer, and act only on Approve, once. Never click or type blind: take computer_screenshot first and again after each action to check the result. `approval_pending` means the user has not answered yet: call again with the same arguments to keep waiting. A denied or expired action is final: do not retry it or reach the same effect another way. A missing permission is reported, not fixable by you: tell the user to grant it in Settings > Mac permissions and stop. Repeating the same call reuses the same approval; pass a new clientRequestId only to deliberately repeat an action that already ran. Use files and the terminal for work they can do.",
+    'Operate the user\'s Mac (macOS hosts only). `permissions` reports which macOS permissions T3 Code has: screenRecording, accessibility, automation. `click` (x, y in the pixels of your latest computer_screenshot; button left|right; double), `type` (text) and `key` (key = one character or return, tab, space, escape, delete, left, right, up, down, home, end, pageup, pagedown, f1-f12; modifiers command, shift, option, control) each need `target`, a short plain description of what you are acting on ("the blue Save button in System Settings > Privacy"), and each ask the user to approve that exact action: the user sees target, coordinates or text, and the app in front, so be specific and honest. They wait for the answer and act only on Approve, once. Never click or type blind: take computer_screenshot first and again after each action to check the result. `approval_pending` means the user has not answered yet: call again with the same arguments to keep waiting. A denied or expired action is final: do not retry it or reach the same effect another way. A missing permission is reported, not fixable by you: tell the user to grant it in Settings > Mac permissions and stop. Repeating the same call reuses the same approval; pass a new clientRequestId only to deliberately repeat an action that already ran. Use files and the terminal for work they can do.',
   parameters: ComputerParameters,
   success: Schema.Record(Schema.String, Schema.Json),
   failure: OrchestratorMcpFailure,
