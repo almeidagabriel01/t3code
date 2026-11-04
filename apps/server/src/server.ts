@@ -204,6 +204,7 @@ import * as ChannelReplyReactor from "./channels/ChannelReplyReactor.ts";
 import * as ChannelTransport from "./channels/ChannelTransport.ts";
 import * as ImessageChannelRuntime from "./channels/imessage/ImessageChannelRuntime.ts";
 import * as ImessageChannelSettings from "./channels/imessage/ImessageChannelSettings.ts";
+import * as KeepAwake from "./keepAwake/KeepAwake.ts";
 import * as TelegramChannelRuntime from "./channels/telegram/TelegramChannelRuntime.ts";
 import * as TelegramChannelSettings from "./channels/telegram/TelegramChannelSettings.ts";
 import * as InstanceSpend from "./usage/InstanceSpend.ts";
@@ -658,6 +659,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   HeldHooksWaker.layer,
   layerThreadSettlementWorker,
   layerIdleCompactionWorker,
+  KeepAwake.layer.pipe(Layer.provide(KeepAwake.layerHost)),
   StorageCleanup.layer.pipe(Layer.provide(ProjectionStoreV2.layer)),
   DatabaseStorage.layer.pipe(
     Layer.provide(ProjectionMaintenance.layer),

@@ -265,6 +265,7 @@ import type { TelemetryOwner } from "./telemetry/Identify.ts";
 import * as UsageService from "./usage/UsageService.ts";
 import * as AssistantSpend from "./assistants/AssistantSpend.ts";
 import * as ImessageChannelSettings from "./channels/imessage/ImessageChannelSettings.ts";
+import * as KeepAwake from "./keepAwake/KeepAwake.ts";
 import * as TelegramChannelSettings from "./channels/telegram/TelegramChannelSettings.ts";
 import * as InstanceSpend from "./usage/InstanceSpend.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
@@ -1334,6 +1335,7 @@ export const layerWsRpc = (
       const assistants = yield* Assistants.AssistantService;
       const assistantSpend = yield* AssistantSpend.AssistantSpend;
       const imessageChannelSettings = yield* ImessageChannelSettings.ImessageChannelSettings;
+      const keepAwake = yield* KeepAwake.KeepAwake;
       const telegramChannelSettings = yield* TelegramChannelSettings.TelegramChannelSettings;
       const noteWork = yield* NoteWork.NoteWorkService;
       const secretRequests = yield* SecretRequests.SecretRequests;
@@ -2406,6 +2408,7 @@ export const layerWsRpc = (
         [WS_METHODS.imessageChannelConfigure]: (input) => imessageChannelSettings.configure(input),
         [WS_METHODS.imessageChannelSubscribeStatus]: () => imessageChannelSettings.streamStatus,
         [WS_METHODS.imessageChannelCheckAccess]: () => imessageChannelSettings.checkAccess,
+        [WS_METHODS.keepAwakeSubscribeStatus]: () => keepAwake.streamStatus,
         [WS_METHODS.telegramChannelGetSettings]: () => telegramChannelSettings.get,
         [WS_METHODS.telegramChannelConfigure]: (input) => telegramChannelSettings.configure(input),
         [WS_METHODS.telegramChannelSubscribeStatus]: () => telegramChannelSettings.streamStatus,

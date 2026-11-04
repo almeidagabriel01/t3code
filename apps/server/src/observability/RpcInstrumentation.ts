@@ -126,6 +126,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.imessageChannelConfigure]: "imessageChannel",
   [WS_METHODS.imessageChannelSubscribeStatus]: "imessageChannel",
   [WS_METHODS.imessageChannelCheckAccess]: "imessageChannel",
+  [WS_METHODS.keepAwakeSubscribeStatus]: "keepAwake",
   [WS_METHODS.telegramChannelGetSettings]: "telegramChannel",
   [WS_METHODS.telegramChannelConfigure]: "telegramChannel",
   [WS_METHODS.telegramChannelSubscribeStatus]: "telegramChannel",

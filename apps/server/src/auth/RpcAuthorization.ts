@@ -185,6 +185,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.imessageChannelSubscribeStatus]: AuthOrchestrationReadScope,
   [WS_METHODS.imessageChannelCheckAccess]: AuthOrchestrationReadScope,
   [WS_METHODS.imessageChannelConfigure]: AuthOrchestrationOperateScope,
+  [WS_METHODS.keepAwakeSubscribeStatus]: AuthOrchestrationReadScope,
   [WS_METHODS.telegramChannelGetSettings]: AuthOrchestrationReadScope,
   [WS_METHODS.telegramChannelSubscribeStatus]: AuthOrchestrationReadScope,
   [WS_METHODS.telegramChannelConfigure]: AuthOrchestrationOperateScope,

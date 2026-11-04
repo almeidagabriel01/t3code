@@ -469,6 +469,7 @@ import {
   TelegramChannelStatusEvent,
   TelegramChannelSubscribeStatusInput,
 } from "./telegramChannel.ts";
+import { KeepAwakeStatus, KeepAwakeSubscribeStatusInput } from "./keepAwake.ts";
 import {
   NoteConflictError,
   NoteDocument,
@@ -720,6 +721,7 @@ export const WS_METHODS = {
   imessageChannelConfigure: "imessageChannel.configure",
   imessageChannelSubscribeStatus: "imessageChannel.subscribeStatus",
   imessageChannelCheckAccess: "imessageChannel.checkAccess",
+  keepAwakeSubscribeStatus: "keepAwake.subscribeStatus",
   telegramChannelGetSettings: "telegramChannel.getSettings",
   telegramChannelConfigure: "telegramChannel.configure",
   telegramChannelSubscribeStatus: "telegramChannel.subscribeStatus",
@@ -2236,6 +2238,13 @@ const WsImessageChannelCheckAccessRpc = Rpc.make(WS_METHODS.imessageChannelCheck
   error: ImessageChannelRpcErrors,
 });
 
+const WsKeepAwakeSubscribeStatusRpc = Rpc.make(WS_METHODS.keepAwakeSubscribeStatus, {
+  payload: KeepAwakeSubscribeStatusInput,
+  success: KeepAwakeStatus,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
 const TelegramChannelRpcErrors = Schema.Union([
   TelegramChannelSettingsError,
   EnvironmentAuthorizationError,
@@ -2596,6 +2605,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsImessageChannelConfigureRpc,
   WsImessageChannelSubscribeStatusRpc,
   WsImessageChannelCheckAccessRpc,
+  WsKeepAwakeSubscribeStatusRpc,
   WsTelegramChannelGetSettingsRpc,
   WsTelegramChannelConfigureRpc,
   WsTelegramChannelSubscribeStatusRpc,

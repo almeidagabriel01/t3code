@@ -1305,7 +1305,13 @@ const LenientFolderModelDefaults = Schema.Array(Schema.Unknown).pipe(
   ),
 );
 
+export const KEEP_AWAKE_MODES = ["off", "while-working", "always"] as const;
+export const KeepAwakeMode = Schema.Literals(KEEP_AWAKE_MODES);
+export type KeepAwakeMode = typeof KeepAwakeMode.Type;
+
 export const ServerSettings = Schema.Struct({
+  /** Stops the host computer from sleeping. The server runs the OS inhibitor. */
+  keepAwake: KeepAwakeMode.pipe(Schema.withDecodingDefault(Effect.succeed("off" as const))),
   memoryOwnerSourceReadPolicyVersion: NonNegativeInt.pipe(
     Schema.withDecodingDefault(Effect.succeed(0)),
   ),
@@ -1868,6 +1874,7 @@ const ServerSettingsPatchFields = Schema.Struct({
   usageModelAliases: Schema.optionalKey(
     Schema.Record(TrimmedNonEmptyString, Schema.NullOr(TrimmedNonEmptyString)),
   ),
+  keepAwake: Schema.optionalKey(KeepAwakeMode),
   enableAgentMemoryAccess: Schema.optionalKey(Schema.Boolean),
   memoryEnabled: Schema.optionalKey(Schema.Boolean),
   memoryModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
