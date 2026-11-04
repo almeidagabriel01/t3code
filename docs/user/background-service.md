@@ -42,6 +42,17 @@ downloaded versions after showing you the list and asking once. Your projects,
 threads, and settings under `~/.t3/userdata` are kept, along with `service.env`
 under T3 home. Pass `--yes` from a script.
 
+## Keep the computer awake
+
+Agents stop when the computer sleeps. In Settings → Maintenance (and on mobile,
+Settings → Maintenance), **Keep this computer awake** can hold the machine that
+runs T3 Code awake **while agents are working** or **always**. It is off by
+default, works on macOS and on Linux with `systemd-inhibit`, and shows a coffee
+cup in the status bar while it is active.
+
+Closing a laptop lid still puts it to sleep unless it is plugged in with an
+external display.
+
 ## Local network access
 
 A new service answers only on this machine. Other devices reach it through

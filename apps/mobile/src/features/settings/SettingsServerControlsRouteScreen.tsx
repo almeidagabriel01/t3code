@@ -42,6 +42,7 @@ import {
 } from "./settings-scoped-server";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import { AutoSettleSettingsRows } from "./ThreadSettingsSections";
+import { KeepAwakeSection } from "./components/KeepAwakeSection";
 import { FallbackModelsSection } from "./components/FallbackModelsSection";
 import { FolderModelsSection } from "./components/FolderModelsSection";
 import { sameFallbackModels } from "@t3tools/shared/serverSettings";
@@ -521,6 +522,14 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                         />
                       ))}
                     </SettingsSection>
+                  ) : null}
+                  {!projectSelected ? (
+                    <KeepAwakeSection
+                      environmentId={reference.environment.environmentId}
+                      value={isMixed("keepAwake") ? null : uniform("keepAwake")}
+                      disabled={disabledFor("keepAwake")}
+                      onChange={(mode) => write({ keepAwake: mode })}
+                    />
                   ) : null}
                   <SettingsSection title="Updates">
                     <SettingsSwitchRow
