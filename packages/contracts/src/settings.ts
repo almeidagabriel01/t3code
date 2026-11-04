@@ -532,6 +532,8 @@ export const ClientSettingsSchema = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed("activity" as const)),
   ),
   sidebarShowSubagents: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  sidebarShowAgentsSection: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  sidebarAgentsCollapsed: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   destinationRail: DestinationRailPreferences.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   // Plain ids so a client never fails to decode a surface another app version added.
   rightPanelQuickButtons: Schema.Array(TrimmedNonEmptyString).pipe(
@@ -1980,6 +1982,8 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarWorkingShelfEnabled: Schema.optionalKey(Schema.Boolean),
   sidebarThreadOrder: Schema.optionalKey(SidebarThreadOrder),
   sidebarShowSubagents: Schema.optionalKey(Schema.Boolean),
+  sidebarShowAgentsSection: Schema.optionalKey(Schema.Boolean),
+  sidebarAgentsCollapsed: Schema.optionalKey(Schema.Boolean),
   destinationRail: Schema.optionalKey(DestinationRailPreferences),
   rightPanelQuickButtons: Schema.optionalKey(Schema.Array(TrimmedNonEmptyString)),
   sidebarAgentActivityDisplayMode: Schema.optionalKey(SidebarAgentActivityDisplayMode),

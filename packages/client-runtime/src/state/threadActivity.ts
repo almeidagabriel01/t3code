@@ -239,6 +239,34 @@ export function countActivityBadge(entries: readonly ActivityEntry[]): number {
   return entries.filter((entry) => entry.rank !== 1).length;
 }
 
+export interface AgentsSectionEntry extends ActivityEntry {
+  /** Run start for working rows, run completion for finished ones; null when the shell has none. */
+  readonly at: string | null;
+}
+
+/**
+ * The sidebar's Agents section: Activity's working and unread rows, newest first, minus what
+ * needs the user (the Activity page and Needs you cover that).
+ */
+export function selectAgentsSection(entries: readonly ActivityEntry[]): {
+  readonly working: AgentsSectionEntry[];
+  readonly done: AgentsSectionEntry[];
+} {
+  const stamped = (rank: ActivityRank, pick: (entry: ActivityEntry) => string | null) =>
+    entries
+      .filter((entry) => entry.rank === rank)
+      .map((entry): AgentsSectionEntry => ({ ...entry, at: pick(entry) }))
+      .sort((left, right) => firstValidTimestampMs(right.at) - firstValidTimestampMs(left.at));
+  return {
+    working: stamped(
+      1,
+      ({ thread }) =>
+        thread.latestRun?.startedAt ?? thread.latestRun?.requestedAt ?? thread.createdAt,
+    ),
+    done: stamped(2, ({ thread }) => thread.latestRun?.completedAt ?? thread.updatedAt ?? null),
+  };
+}
+
 export interface ActivityReadPlan<T> {
   readonly markRead: readonly T[];
   readonly releaseKeys: readonly string[];

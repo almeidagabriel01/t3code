@@ -14,7 +14,10 @@ import { searchableSetting } from "./settingsSearch";
 
 type SidebarDisplayValues = Pick<
   ClientSettings,
-  "sidebarShowSubagents" | "sidebarAgentActivityDisplayMode" | "projectHoverCardProperties"
+  | "sidebarShowSubagents"
+  | "sidebarShowAgentsSection"
+  | "sidebarAgentActivityDisplayMode"
+  | "projectHoverCardProperties"
 >;
 
 const ACTIVITY_MODE_LABELS: Record<SidebarAgentActivityDisplayMode, string> = {
@@ -37,6 +40,19 @@ export function SidebarDisplaySettingsRows({
 }) {
   return (
     <>
+      <SettingsRow
+        {...searchableSetting("sidebar-show-agents-section")}
+        description="Pin the agents that are working or just finished, from every project, above the project list."
+        control={
+          <Switch
+            checked={settings.sidebarShowAgentsSection}
+            onCheckedChange={(checked) =>
+              updateSettings({ sidebarShowAgentsSection: Boolean(checked) })
+            }
+            aria-label="Show Agents section"
+          />
+        }
+      />
       <SettingsRow
         {...searchableSetting("sidebar-show-subagents")}
         description="List a thread's active subagents under it in the sidebar."

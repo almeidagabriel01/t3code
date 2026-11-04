@@ -509,6 +509,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["hide fold running monitoring threads inbox sidebar shelf"],
   },
   {
+    id: "sidebar-show-agents-section",
+    title: "Show Agents section",
+    to: "/settings/general",
+    searchTerms: ["sidebar working finished unread agents across projects pinned"],
+  },
+  {
     id: "sidebar-show-subagents",
     title: "Show subagents",
     to: "/settings/general",

@@ -10,24 +10,27 @@ import { buildActivityEntries, countActivityBadge } from "./activity.logic";
 const NO_HOLDS = new Map<string, never>();
 const NO_RELEASES: ReadonlySet<string> = new Set();
 
-/** Threads that need the user or finished unseen, for the bell and rail badges. */
-export function useActivityBadge(): number {
+/** Activity's rows with no page holds, so a read thread leaves at once. */
+export function useActivityEntries() {
   const threads = useThreadShells();
   const delegatedUnderParent = useDelegatedUnderParent();
   const localLastVisitedAtByKey = useUiStateStore((state) => state.threadLastVisitedAtById);
   const now = useNowMinute();
   const openDecisionThreadKeys = useOpenDecisionThreadKeys();
-  return countActivityBadge(
-    buildActivityEntries({
-      threads,
-      delegatedUnderParent,
-      localLastVisitedAtByKey,
-      holds: NO_HOLDS,
-      releases: NO_RELEASES,
-      now,
-      openDecisionThreadKeys,
-    }),
-  );
+  return buildActivityEntries({
+    threads,
+    delegatedUnderParent,
+    localLastVisitedAtByKey,
+    holds: NO_HOLDS,
+    releases: NO_RELEASES,
+    now,
+    openDecisionThreadKeys,
+  });
+}
+
+/** Threads that need the user or finished unseen, for the bell and rail badges. */
+export function useActivityBadge(): number {
+  return countActivityBadge(useActivityEntries());
 }
 
 export function useActivityOpen(): boolean {

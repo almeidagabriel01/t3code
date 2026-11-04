@@ -257,6 +257,7 @@ import {
   type SidebarSweepAction,
 } from "./sidebar/SidebarThreadRow";
 import { AssistantSidebarSection } from "./assistants/AssistantSidebarSection";
+import { AgentsSidebarSection } from "./sidebar/AgentsSidebarSection";
 import { SidebarDraftBlock } from "./sidebar/SidebarDraftBlock";
 import { SidebarProjectGroups } from "./sidebar/SidebarProjectGroups";
 import {
@@ -3259,6 +3260,13 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           key="assistants"
                           routeThreadKey={routeThreadKey}
                           environmentLabelById={environmentLabelById}
+                          onOpenThread={navigateToThread}
+                        />,
+                      );
+                      items.push(
+                        <AgentsSidebarSection
+                          key="agents"
+                          routeThreadKey={routeThreadKey}
                           onOpenThread={navigateToThread}
                         />,
                       );

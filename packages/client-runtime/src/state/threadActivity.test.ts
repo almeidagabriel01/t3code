@@ -11,6 +11,7 @@ import {
   markActivityRead,
   resolveSidebarPriorityRank,
   selectActivityClear,
+  selectAgentsSection,
   selectSidebarMarkReadTargets,
 } from "./threadActivity.ts";
 
@@ -167,5 +168,49 @@ describe("read plan", () => {
     expect(released).toEqual([["a", "b"]]);
     expect(restored).toHaveLength(1);
     expect(restored[0]).toContain("unread");
+  });
+});
+
+describe("selectAgentsSection", () => {
+  const run = (startedAt: string | null, completedAt: string | null = null) => ({
+    startedAt,
+    requestedAt: null,
+    completedAt,
+    status: "completed",
+  });
+  it.each([
+    {
+      name: "splits working from unread, drops needs-you, sorts newest first with fallbacks",
+      threads: [
+        shell("w-old", {
+          runtime: { status: "running" },
+          latestRun: run("2026-03-09T09:10:00.000Z"),
+        }),
+        shell("w-new", {
+          runtime: { status: "running" },
+          latestRun: run("2026-03-09T09:50:00.000Z"),
+        }),
+        shell("w-none", { runtime: { status: "running" }, createdAt: "2026-03-09T09:20:00.000Z" }),
+        shell("d-old", {
+          latestRun: run(null, "2026-03-09T10:01:00.000Z"),
+          lastVisitedAt: "2026-03-09T09:00:00.000Z",
+        }),
+        shell("d-new", { latestRun: run(null, "2026-03-09T10:05:00.000Z"), lastVisitedAt: before }),
+        shell("approval", { hasPendingApprovals: true }),
+        shell("quiet"),
+      ],
+      working: ["w-new", "w-none", "w-old"],
+      done: ["d-new", "d-old"],
+    },
+    {
+      name: "is empty when nothing runs or finished",
+      threads: [shell("quiet")],
+      working: [],
+      done: [],
+    },
+  ])("$name", ({ threads, working, done }) => {
+    const section = selectAgentsSection(build(threads));
+    expect(section.working.map((entry) => entry.thread.id)).toEqual(working);
+    expect(section.done.map((entry) => entry.thread.id)).toEqual(done);
   });
 });
