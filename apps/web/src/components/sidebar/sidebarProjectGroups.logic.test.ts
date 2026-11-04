@@ -12,6 +12,7 @@ import {
   groupListItemsByScope,
   groupThreadsByProject,
   isProjectDragId,
+  isProjectGroupListed,
   projectDragId,
   projectKeyFromDragId,
   resolveVisibleProjectThreads,
@@ -49,6 +50,25 @@ describe("groupThreadsByProject", () => {
       settled: [],
     });
     expect(result.flatMap((group) => group.openThreads)).toEqual([]);
+  });
+});
+
+describe("isProjectGroupListed", () => {
+  const group = {
+    projectKey: "alpha",
+    openThreads: [thread("a1", alpha)],
+    settledThreads: [thread("s1", alpha)],
+  };
+  it.each([
+    { archived: false, route: null, listed: true },
+    { archived: true, route: null, listed: false },
+    { archived: true, route: "b1", listed: false },
+    { archived: true, route: "a1", listed: true },
+    { archived: true, route: "s1", listed: true },
+  ])("archived=$archived with route $route lists it: $listed", ({ archived, route, listed }) => {
+    expect(
+      isProjectGroupListed({ archived, group, routeThreadKey: route, getKey: (t) => t.id }),
+    ).toBe(listed);
   });
 });
 

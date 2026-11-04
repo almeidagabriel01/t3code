@@ -59,6 +59,20 @@ export function groupThreadsByProject<T extends ProjectBound>(input: {
   }));
 }
 
+/** An archived project leaves the sidebar, except while one of its threads is the open route. */
+export function isProjectGroupListed<T>(input: {
+  readonly archived: boolean;
+  readonly group: SidebarProjectThreadGroup<T>;
+  readonly routeThreadKey: string | null;
+  readonly getKey: (thread: T) => string;
+}): boolean {
+  if (!input.archived) return true;
+  if (input.routeThreadKey === null) return false;
+  return [...input.group.openThreads, ...input.group.settledThreads].some(
+    (thread) => input.getKey(thread) === input.routeThreadKey,
+  );
+}
+
 /**
  * What a project group renders, plus what stays reachable (keyboard, handlers) for the open
  * route thread. A settled thread only renders inside an expanded Settled group.

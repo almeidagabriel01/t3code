@@ -15,6 +15,7 @@ import {
 } from "../../uiStateStore";
 import {
   groupThreadsByProject,
+  isProjectGroupListed,
   PROJECT_SETTLED_INITIAL_COUNT,
   PROJECT_SETTLED_PAGE_COUNT,
   resolveVisibleProjectThreads,
@@ -53,6 +54,16 @@ export function useSidebarProjectLayout(input: {
   const layout = groups.flatMap((group) => {
     const project = projectByKey.get(group.projectKey);
     if (project === undefined) return [];
+    if (
+      !isProjectGroupListed({
+        archived: project.archived,
+        group,
+        routeThreadKey: input.routeThreadKey,
+        getKey: threadKeyOf,
+      })
+    ) {
+      return [];
+    }
     const expanded = resolveProjectExpanded(projectExpandedById, projectExpansionKeys(project));
     const settledState = settledByProject[group.projectKey];
     const settledExpanded = settledState?.expanded ?? false;
