@@ -15,11 +15,11 @@ export function threadCardMenuActions(canEdit: boolean): MenuAction[] {
     { id: "open", title: "Open card", image: "arrow.up.right.square" },
     ...(canEdit
       ? [
-          { id: "switch", title: "Link to another card…", image: "arrow.triangle.2.circlepath" },
+          { id: "switch", title: "Link to another card…", image: "arrow.left.arrow.right" },
           {
             id: "unlink",
             title: "Unlink from this thread",
-            image: "xmark.circle",
+            image: "xmark.circle.fill",
             attributes: { destructive: true },
           },
         ]
