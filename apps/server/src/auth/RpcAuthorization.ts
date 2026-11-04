@@ -172,6 +172,9 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.decisionsSubscribe]: AuthOrchestrationReadScope,
   [WS_METHODS.decisionsAnswer]: AuthOrchestrationOperateScope,
   [WS_METHODS.decisionsDismiss]: AuthOrchestrationOperateScope,
+  [WS_METHODS.computerUsePermissions]: AuthOrchestrationReadScope,
+  // Opens a pane in the host Mac's System Settings.
+  [WS_METHODS.computerUseOpenSettings]: AuthSettingsWriteScope,
   [WS_METHODS.assistantsSubscribe]: AuthOrchestrationReadScope,
   [WS_METHODS.assistantsSpend]: AuthOrchestrationReadScope,
   [WS_METHODS.assistantsCreate]: AuthOrchestrationOperateScope,

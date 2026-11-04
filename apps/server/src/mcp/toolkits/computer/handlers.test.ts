@@ -1,0 +1,181 @@
+import { expect, it } from "@effect/vitest";
+import {
+  ComputerUseError,
+  EnvironmentId,
+  ProjectId,
+  ProviderInstanceId,
+  ThreadId,
+  type OrchestrationV2ThreadShell,
+} from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
+
+import * as ComputerUse from "../../../computerUse/ComputerUse.ts";
+import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
+import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import * as McpToolAccess from "../../McpToolAccess.ts";
+import * as ComputerHandlers from "./handlers.ts";
+import { ComputerParameters, ComputerScreenshotToolkit, ComputerStandardToolkit } from "./tools.ts";
+
+it("accepts coordinates as numbers or quoted numbers", () => {
+  const decode = Schema.decodeUnknownSync(ComputerParameters);
+  expect(decode({ action: "click", x: 12, y: "3" })).toMatchObject({ x: 12, y: 3 });
+  // Not a number: the service refuses it as an invalid coordinate.
+  expect(decode({ action: "click", x: "left", y: 1 }).x).toBeNaN();
+});
+
+const projectId = ProjectId.make("project-a");
+const providerInstanceId = ProviderInstanceId.make("codex");
+
+/** A PNG header is enough for the dimensions reader. */
+const png = new Uint8Array(33);
+new DataView(png.buffer).setUint32(0, 0x89504e47);
+new DataView(png.buffer).setUint32(4, 0x0d0a1a0a);
+new DataView(png.buffer).setUint32(12, 0x49484452);
+new DataView(png.buffer).setUint32(16, 640);
+new DataView(png.buffer).setUint32(20, 360);
+
+const harness = (client?: "read-only") => {
+  const seen: Array<readonly [string, unknown, unknown]> = [];
+  const refuse = (reason: ComputerUseError["reason"]) =>
+    Effect.fail(new ComputerUseError({ reason }));
+  const computer = Layer.mock(ComputerUse.ComputerUse)({
+    permissions: Effect.succeed({
+      supported: true,
+      screenRecording: "granted",
+      accessibility: "denied",
+      automation: "unknown",
+    }),
+    screenshot: Effect.succeed({ png, width: 640, height: 360 }),
+    click: (caller, input) =>
+      input.x === 99
+        ? refuse("not_approved")
+        : Effect.sync(() => void seen.push(["click", caller, input])),
+    type: (caller, input) => Effect.sync(() => void seen.push(["type", caller, input])),
+    key: (caller, input) => Effect.sync(() => void seen.push(["key", caller, input])),
+  });
+  const deps = Layer.mergeAll(
+    computer,
+    Layer.succeed(McpInvocationContext.McpInvocationContext, {
+      environmentId: EnvironmentId.make("environment"),
+      requestNamespace: "thread:test",
+      thread: {
+        threadId: ThreadId.make("thread-1"),
+        providerSessionId: "session",
+        providerInstanceId,
+      },
+      client:
+        client === undefined ? undefined : { sessionId: "client", label: "Client", access: client },
+      issuedAt: 0,
+      capabilities: new Set(["orchestration" as const]),
+    }),
+    Layer.mock(ThreadManagement.ThreadManagementService)({
+      getThreadShell: (id) =>
+        Effect.succeed({
+          id,
+          projectId,
+          title: "Tidy settings",
+          deletedAt: null,
+          archivedAt: null,
+          activeRunId: "run-1",
+          providerInstanceId,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+        } as unknown as OrchestrationV2ThreadShell),
+    }),
+  );
+  return Effect.gen(function* () {
+    const context = Layer.succeedContext(yield* Layer.build(deps));
+    const standard = yield* ComputerStandardToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ComputerHandlers.layerStandard).pipe(
+          Layer.provide(context),
+        ),
+      ),
+    );
+    const screenshot = yield* ComputerScreenshotToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ComputerHandlers.layerScreenshot).pipe(
+          Layer.provide(context),
+        ),
+      ),
+    );
+    const call = (input: ComputerParameters) =>
+      standard.handle("t3_computer", input).pipe(
+        Stream.unwrap,
+        Stream.runCollect,
+        Effect.map((results) => results.at(-1)?.result as Record<string, any>),
+        Effect.provide(context),
+      );
+    const shoot = screenshot.handle("computer_screenshot", {}).pipe(
+      Stream.unwrap,
+      Stream.runCollect,
+      Effect.map((results) => results.at(-1)?.result as Record<string, any>),
+      Effect.provide(context),
+    );
+    return { call, shoot, seen };
+  });
+};
+
+it.effect("passes the caller, arguments and request id through, and says what is next", () =>
+  Effect.gen(function* () {
+    const { call, shoot, seen } = yield* harness();
+    expect(yield* call({ action: "permissions" })).toEqual({
+      supported: true,
+      screenRecording: "granted",
+      accessibility: "denied",
+      automation: "unknown",
+    });
+    const clicked = yield* call({
+      action: "click",
+      x: 10,
+      y: 20,
+      button: "right",
+      double: true,
+      clientRequestId: "c1",
+    });
+    expect(clicked).toMatchObject({ ok: true, action: "click" });
+    yield* call({ action: "type", text: "hello" });
+    yield* call({ action: "key", key: "a", modifiers: ["command"] });
+    const caller = { threadId: "thread-1", projectId, threadTitle: "Tidy settings" };
+    expect(seen).toMatchObject([
+      ["click", caller, { x: 10, y: 20, button: "right", double: true, clientRequestId: "c1" }],
+      ["type", caller, { text: "hello" }],
+      ["key", caller, { key: "a", modifiers: ["command"] }],
+    ]);
+    expect(yield* shoot).toEqual({
+      screenshot: { mimeType: "image/png", data: expect.any(String), width: 640, height: 360 },
+    });
+  }).pipe(Effect.scoped),
+);
+
+it.effect("reports a missing argument or a refused action as a failure the agent can read", () =>
+  Effect.gen(function* () {
+    const { call, seen } = yield* harness();
+    for (const input of [
+      { action: "click", y: 1 },
+      { action: "click", x: 1 },
+      { action: "type" },
+      { action: "key" },
+    ] satisfies ComputerParameters[]) {
+      expect(yield* call(input)).toMatchObject({ code: "invalid_request" });
+    }
+    const refused = yield* call({ action: "click", x: 99, y: 1 });
+    expect(refused).toMatchObject({ code: "invalid_request" });
+    expect(refused.message).toContain("did not approve");
+    expect(seen).toEqual([]);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("a read-only client can read permissions but not act", () =>
+  Effect.gen(function* () {
+    const { call, seen } = yield* harness("read-only");
+    expect(yield* call({ action: "permissions" })).toMatchObject({ supported: true });
+    expect(yield* call({ action: "click", x: 1, y: 1 })).toMatchObject({
+      code: expect.any(String),
+    });
+    expect(seen).toEqual([]);
+  }).pipe(Effect.scoped),
+);

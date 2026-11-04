@@ -56,7 +56,9 @@ import * as ThreadLaunchService from "./ThreadLaunchService.ts";
 import * as ThreadForkService from "./ThreadForkService.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
+import * as ComputerUse from "../computerUse/ComputerUse.ts";
 import * as DecisionService from "../decisions/DecisionService.ts";
+import * as ProcessRunner from "../processRunner.ts";
 import * as AssistantDirectory from "../assistants/AssistantDirectory.ts";
 import * as AssistantRuntimePolicy from "../assistants/AssistantRuntimePolicy.ts";
 import * as AssistantService from "../assistants/AssistantService.ts";
@@ -384,6 +386,11 @@ export const layer = Layer.mergeAll(
   layerLegacyV1ThreadImporterProvided,
 );
 
+// One instance: ComputerUse waits on the same decision stream the user's answer is published to.
+const layerDecisionsProvided = DecisionService.layer.pipe(
+  Layer.provide(layerThreadManagementProvided),
+);
+
 export const layerProduction = Layer.mergeAll(
   layer.pipe(Layer.provide(layerProjectService)),
   layerProjectService,
@@ -394,7 +401,8 @@ export const layerProduction = Layer.mergeAll(
   NotesLayers.layer.pipe(Layer.provideMerge(KanbanService.layerLive)),
   layerScratchThreadPromotionProvided,
   layerSecretRequestsProvided,
-  DecisionService.layer.pipe(Layer.provide(layerThreadManagementProvided)),
+  layerDecisionsProvided,
+  ComputerUse.layer.pipe(Layer.provide(layerDecisionsProvided), Layer.provide(ProcessRunner.layer)),
   AssistantService.layer.pipe(
     Layer.provide(
       Layer.mergeAll(

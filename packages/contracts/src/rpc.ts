@@ -422,6 +422,13 @@ import {
   KanbanTemplateUpsertInput,
 } from "./kanban.ts";
 import {
+  ComputerUseError,
+  ComputerUseOpenSettingsInput,
+  ComputerUseOpenSettingsResult,
+  ComputerUsePermissionsInput,
+  MacPermissions,
+} from "./computerUse.ts";
+import {
   Decision,
   DecisionError,
   DecisionsAnswerInput,
@@ -701,6 +708,8 @@ export const WS_METHODS = {
   decisionsSubscribe: "decisions.subscribe",
   decisionsAnswer: "decisions.answer",
   decisionsDismiss: "decisions.dismiss",
+  computerUsePermissions: "computerUse.permissions",
+  computerUseOpenSettings: "computerUse.openSettings",
   assistantsSubscribe: "assistants.subscribe",
   assistantsCreate: "assistants.create",
   assistantsUpdate: "assistants.update",
@@ -2156,6 +2165,18 @@ const WsDecisionsDismissRpc = Rpc.make(WS_METHODS.decisionsDismiss, {
   error: DecisionRpcErrors,
 });
 
+const ComputerUseRpcErrors = Schema.Union([ComputerUseError, EnvironmentAuthorizationError]);
+const WsComputerUsePermissionsRpc = Rpc.make(WS_METHODS.computerUsePermissions, {
+  payload: ComputerUsePermissionsInput,
+  success: MacPermissions,
+  error: ComputerUseRpcErrors,
+});
+const WsComputerUseOpenSettingsRpc = Rpc.make(WS_METHODS.computerUseOpenSettings, {
+  payload: ComputerUseOpenSettingsInput,
+  success: ComputerUseOpenSettingsResult,
+  error: ComputerUseRpcErrors,
+});
+
 const AssistantRpcErrors = Schema.Union([AssistantError, EnvironmentAuthorizationError]);
 const WsAssistantsSubscribeRpc = Rpc.make(WS_METHODS.assistantsSubscribe, {
   payload: AssistantsSubscribeInput,
@@ -2563,6 +2584,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsDecisionsSubscribeRpc,
   WsDecisionsAnswerRpc,
   WsDecisionsDismissRpc,
+  WsComputerUsePermissionsRpc,
+  WsComputerUseOpenSettingsRpc,
   WsAssistantsSubscribeRpc,
   WsAssistantsCreateRpc,
   WsAssistantsUpdateRpc,

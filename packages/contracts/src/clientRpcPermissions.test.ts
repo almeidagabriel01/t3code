@@ -69,6 +69,15 @@ describe("decision client guards", () => {
   });
 });
 
+describe("computer use client guards", () => {
+  it("guards opening a System Settings pane and leaves the status read open to readers", () => {
+    expect(clientRpcRequiredScopes(WS_METHODS.computerUseOpenSettings, {})).toEqual([
+      "settings:write",
+    ]);
+    expect(Object.hasOwn(CLIENT_GUARDED_RPC_SCOPES, WS_METHODS.computerUsePermissions)).toBe(false);
+  });
+});
+
 describe("assistant client guards", () => {
   it("guards every assistant mutation and leaves the subscription open to readers", () => {
     for (const method of [

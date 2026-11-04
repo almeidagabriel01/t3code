@@ -83,6 +83,7 @@ import * as ReviewService from "./review/ReviewService.ts";
 import * as MemoryService from "./memory/MemoryService.ts";
 import * as MemorySyncService from "./memory/MemorySyncService.ts";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
+import * as ComputerUse from "./computerUse/ComputerUse.ts";
 import * as Decisions from "./decisions/DecisionService.ts";
 import * as Assistants from "./assistants/AssistantService.ts";
 import * as Kanban from "./kanban/KanbanService.ts";
@@ -553,6 +554,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(Kanban.KanbanService)({}),
   Layer.mock(Notes.NotesService)({}),
   Layer.mock(Decisions.DecisionService)({}),
+  Layer.mock(ComputerUse.ComputerUse)({}),
   Layer.mock(Assistants.AssistantService)({}),
   Layer.mock(NoteWork.NoteWorkService)({}),
   Layer.mock(SecretRequests.SecretRequests)({}),

@@ -93,6 +93,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.notesStartWork]: AuthOrchestrationOperateScope,
   [WS_METHODS.decisionsAnswer]: AuthOrchestrationOperateScope,
   [WS_METHODS.decisionsDismiss]: AuthOrchestrationOperateScope,
+  [WS_METHODS.computerUseOpenSettings]: AuthSettingsWriteScope,
   [WS_METHODS.assistantsCreate]: AuthOrchestrationOperateScope,
   [WS_METHODS.assistantsUpdate]: AuthOrchestrationOperateScope,
   [WS_METHODS.assistantsDelete]: AuthOrchestrationOperateScope,

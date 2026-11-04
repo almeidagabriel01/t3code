@@ -46,6 +46,7 @@ import { sideChatParentContext } from "../../apps/server/src/orchestration-v2/Si
 import { withInlineContext } from "../../apps/server/src/orchestration-v2/ContextHandoffDelivery.ts";
 import { AttachmentToolkit } from "../../apps/server/src/mcp/toolkits/attachment/tools.ts";
 import { AssistantToolkit } from "../../apps/server/src/mcp/toolkits/assistant/tools.ts";
+import { ComputerToolkit } from "../../apps/server/src/mcp/toolkits/computer/tools.ts";
 import { DecisionToolkit } from "../../apps/server/src/mcp/toolkits/decision/tools.ts";
 import { DeviceToolkit } from "../../apps/server/src/mcp/toolkits/device/tools.ts";
 import { DocsToolkit } from "../../apps/server/src/mcp/toolkits/docs/tools.ts";
@@ -404,6 +405,7 @@ const t3SourceTools: ReadonlyArray<Tool.Any> = [
   PullRequestsToolkit,
   PreviewToolkit,
   DeviceToolkit,
+  ComputerToolkit,
   HtmlToolkit,
 ].flatMap((toolkit): ReadonlyArray<Tool.Any> => Object.values(toolkit.tools));
 const t3Tools: ReadonlyArray<ApiTool> = t3SourceTools.map((tool) => ({

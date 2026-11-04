@@ -33,6 +33,7 @@ import { PreviewManager } from "../preview/Manager.ts";
 import { PreviewBrowser } from "../preview/PreviewBrowser.ts";
 import { ManagedProjectFolders } from "../project/ManagedProjectFolders.ts";
 import { AssistantService } from "../assistants/AssistantService.ts";
+import { ComputerUse } from "../computerUse/ComputerUse.ts";
 import { DecisionService } from "../decisions/DecisionService.ts";
 import { KanbanService } from "../kanban/KanbanService.ts";
 import { NoteWorkService } from "../notes/NoteWorkService.ts";
@@ -73,6 +74,7 @@ const toolHandlerServices = Layer.mergeAll(
   Layer.mock(NotesService)({}),
   Layer.mock(AssistantService)({}),
   Layer.mock(DecisionService)({}),
+  Layer.mock(ComputerUse)({}),
   Layer.mock(NoteWorkService)({}),
   Layer.mock(OrchestratorV2)({}),
   Layer.mock(PeerForwarding)({}),
