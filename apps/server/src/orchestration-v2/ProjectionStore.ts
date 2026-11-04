@@ -3446,6 +3446,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       WHERE thread_id = ${threadId}
                         AND status IN ('queued', 'preparing', 'starting', 'running', 'waiting')
                     )
+                    OR EXISTS (
+                      SELECT 1 FROM json_each(message.payload_json, '$.context.records') AS record
+                      WHERE json_extract(record.value, '$.kind') = 'kanban-card'
+                    )
                   )
                 ORDER BY created_at ASC, message_id ASC
               `,

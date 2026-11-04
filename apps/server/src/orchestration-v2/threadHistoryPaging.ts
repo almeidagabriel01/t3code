@@ -569,7 +569,9 @@ function messagesForBoundedProjection(
       (message.runId !== null && retainedRunIds.has(String(message.runId))) ||
       message.delegatedCompletion !== undefined ||
       // Keep the workflow script outside the history window; clients use it to open the coordinator thread.
-      message.workflowScript === true,
+      message.workflowScript === true ||
+      // Clients read these to send a linked card once; a window that drops them would resend it.
+      message.context?.records.some((record) => record.kind === "kanban-card") === true,
   );
 }
 

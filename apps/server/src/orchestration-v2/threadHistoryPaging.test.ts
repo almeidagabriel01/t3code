@@ -664,9 +664,9 @@ describe("threadHistoryPaging", () => {
     );
   });
 
-  it("keeps a workflow coordinator's script outside the bounded window", () => {
+  it("keeps a workflow coordinator's script and card-bearing messages outside the bounded window", () => {
     const projection = makeProjection(Array.from({ length: 120 }, (_, index) => makeRow(index)));
-    const message = (index: number, workflowScript?: boolean) => ({
+    const message = (index: number, workflowScript?: boolean, kind?: string) => ({
       id: MessageId.make(`message-${index}`),
       threadId: THREAD,
       runId: RunId.make(`old-run-${index}`),
@@ -680,16 +680,25 @@ describe("threadHistoryPaging", () => {
       createdAt: NOW,
       updatedAt: NOW,
       ...(workflowScript === undefined ? {} : { workflowScript }),
+      ...(kind === undefined ? {} : { context: { version: 1, records: [{ kind }] } }),
     });
     const full = {
       ...projection,
-      messages: [message(0, true), message(1, false), message(2)],
+      // The send path reads this window to decide whether a linked card was already delivered.
+      messages: [
+        message(0, true),
+        message(1, false),
+        message(2),
+        message(3, undefined, "kanban-card"),
+        message(4, undefined, "file"),
+      ],
     } as typeof projection;
 
     const bounded = buildBoundedThreadProjection({ projection: full, snapshotSequence: 9 });
 
     expect(bounded.projection.messages.map((retained) => retained.id)).toEqual([
       MessageId.make("message-0"),
+      MessageId.make("message-3"),
     ]);
   });
 

@@ -1904,6 +1904,32 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             nodeId: NodeId.make(`node:bounded-sql-history:${ordinal}`),
             role: "user",
             text: `Turn ${ordinal}`,
+            // The card was delivered in the oldest message; the window must still report it.
+            ...(ordinal === 1
+              ? {
+                  context: {
+                    version: 1 as const,
+                    records: [
+                      {
+                        version: 1 as const,
+                        contextId: "kanban-card-2",
+                        label: "#2 Card",
+                        kind: "kanban-card" as const,
+                        cardId: "card-2",
+                        boardId: "board-1",
+                        number: 2,
+                        title: "Card",
+                        description: "",
+                        checklist: [],
+                        acceptanceCriteria: [],
+                        type: null,
+                        priority: "none",
+                        labels: [],
+                      },
+                    ],
+                  },
+                }
+              : {}),
             attachments: [],
             streaming: false,
             createdAt: now,
@@ -1968,7 +1994,10 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         assert.strictEqual(snapshot.projection.turnItems.at(-1)?.ordinal, 1_000);
         assert.deepEqual(
           snapshot.projection.messages.map((message) => message.id),
-          [MessageId.make("message:bounded-sql-history:1000")],
+          [
+            MessageId.make("message:bounded-sql-history:1000"),
+            MessageId.make("message:bounded-sql-history:1"),
+          ],
         );
         assert.deepEqual(
           snapshot.projection.checkpointScopes.map((scope) => scope.id),
