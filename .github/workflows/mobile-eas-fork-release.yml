@@ -1,0 +1,69 @@
+name: Mobile EAS fork release
+
+# Builds the fork's mobile app with EAS under the `fork` profile of apps/mobile/eas.json.
+# Manual only, and never on the upstream repository. The app version is the upstream base
+# of the fork version (iOS only takes numeric versions); EAS counts the build number
+# (`autoIncrement`, remote version source). `vp run fork:version` keeps the profile current.
+# See docs/operations/fork-releases.md.
+
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: "Platform to build"
+        type: choice
+        options: [ios, android]
+        default: ios
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: EAS build (${{ inputs.platform }})
+    if: github.repository != 'pingdotgg/t3code'
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    env:
+      NODE_OPTIONS: --max-old-space-size=8192
+    steps:
+      - id: expo-token
+        name: Check for EXPO_FORK_TOKEN
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_FORK_TOKEN }}
+        run: |
+          if [ -z "$EXPO_TOKEN" ]; then
+            echo "::error::EXPO_FORK_TOKEN is not set. See docs/operations/fork-releases.md."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v6
+
+      - name: Setup dependencies
+        uses: ./.github/actions/setup-ci-deps
+        with:
+          install-args: --filter=@t3tools/mobile...
+
+      - name: Setup EAS
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_FORK_TOKEN }}
+          packager: npm
+
+      - name: Check the version matches the fork version
+        run: |
+          fork="$(node -p 'require("./apps/desktop/package.json").version')"
+          mobile="$(node -p 'require("./apps/mobile/eas.json").build.fork.env.T3CODE_MOBILE_VERSION')"
+          if [ "${fork%%-fork.*}" != "$mobile" ]; then
+            echo "::error::eas.json fork profile says $mobile but the fork version is $fork. Run 'vp run fork:version' and commit it."
+            exit 1
+          fi
+          echo "Building app version $mobile for fork version $fork."
+
+      - name: Build
+        working-directory: apps/mobile
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_FORK_TOKEN }}
+        run: |
+          eas env:pull production --non-interactive
+          eas build --platform "${{ inputs.platform }}" --profile fork --non-interactive --no-wait

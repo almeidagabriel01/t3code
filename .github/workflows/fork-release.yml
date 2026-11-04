@@ -1,0 +1,144 @@
+name: Fork release
+
+# Publishes the fork's macOS desktop build as a GitHub Release that installed
+# apps pick up as an update. Manual only, and never on the upstream repository.
+# Bump the version first (`vp run fork:version`) and commit it: the release tag
+# is `v<version from apps/desktop/package.json>`. See docs/operations/fork-releases.md.
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Create the GitHub Release. Off builds the artifacts and attaches them to the run only."
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish macOS arm64
+    if: github.repository != 'pingdotgg/t3code'
+    runs-on: macos-latest
+    timeout-minutes: 60
+    concurrency:
+      group: fork-release
+      cancel-in-progress: false
+    env:
+      # Writes the fork's own GitHub feed into the app, so installed copies look for
+      # updates here and never at the upstream releases.
+      T3CODE_DESKTOP_UPDATE_REPOSITORY: ${{ github.repository }}
+      # The Apple team that owns the upstream app id also owns its passkey profile, so a
+      # fork signs with its own Developer ID and without the Associated Domains entitlement.
+      T3CODE_DESKTOP_SKIP_PASSKEY_SIGNING: "true"
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          version="$(node -p 'require("./apps/desktop/package.json").version')"
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-fork\.[0-9]+$ ]]; then
+            echo "::error::apps/desktop/package.json says '$version', not X.Y.Z-fork.N. Run 'vp run fork:version' and commit it."
+            exit 1
+          fi
+          for manifest in apps/server apps/web packages/contracts; do
+            if [[ "$(node -p "require('./$manifest/package.json').version")" != "$version" ]]; then
+              echo "::error::$manifest/package.json is not at $version. Run 'vp run fork:version' and commit it."
+              exit 1
+            fi
+          done
+          if gh release view "v$version" >/dev/null 2>&1; then
+            echo "::error::Release v$version already exists. Bump the version first."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Setup dependencies
+        uses: ./.github/actions/setup-ci-deps
+        with:
+          install-args: --filter=@t3tools/desktop... --filter=t3... --filter=@t3tools/scripts...
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: stable
+          targets: aarch64-apple-darwin
+
+      - name: Build desktop artifact
+        id: build
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          args=(--platform mac --target dmg --arch arm64 --build-version "$VERSION" --verbose)
+
+          if [[ -n "$CSC_LINK" && -n "$CSC_KEY_PASSWORD" && -n "$APPLE_API_KEY" && -n "$APPLE_API_KEY_ID" && -n "$APPLE_API_ISSUER" ]]; then
+            key_path="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
+            printf '%s' "$APPLE_API_KEY" > "$key_path"
+            export APPLE_API_KEY="$key_path"
+            args+=(--signed)
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+            echo "macOS signing and notarization enabled."
+          else
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Apple signing secrets are missing: building an UNSIGNED DMG with no update feed. Installed apps will not offer it as an update. See docs/operations/fork-releases.md."
+          fi
+
+          vp run dist:desktop:artifact "${args[@]}"
+
+      - name: Collect release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-publish
+          shopt -s nullglob
+          for file in release/*.dmg release/*.zip release/*.blockmap release/latest-mac.yml; do
+            cp "$file" release-publish/
+          done
+          ls -la release-publish
+          if [[ "${{ steps.build.outputs.signed }}" == "true" && ! -f release-publish/latest-mac.yml ]]; then
+            echo "::error::The signed build produced no latest-mac.yml, so installed apps could not see this release."
+            exit 1
+          fi
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: fork-desktop-mac-arm64
+          path: release-publish/*
+          if-no-files-found: error
+
+      # Not a draft and not a prerelease: electron-updater's GitHub provider follows the
+      # repository's latest release and skips anything flagged prerelease, even though
+      # `-fork.N` is a semver prerelease.
+      - name: Create GitHub Release
+        if: inputs.publish
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          SIGNED: ${{ steps.build.outputs.signed }}
+        run: |
+          notes="Fork release $VERSION, based on upstream v${VERSION%%-fork.*}."
+          if [[ "$SIGNED" != "true" ]]; then
+            notes="$notes Unsigned build: install it from the DMG. It does not update itself."
+          fi
+          gh release create "v$VERSION" release-publish/* \
+            --target "$GITHUB_SHA" \
+            --title "v$VERSION" \
+            --notes "$notes" \
+            --latest
