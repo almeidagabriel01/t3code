@@ -56,6 +56,7 @@ import { useAssistantEntries } from "../../state/assistants";
 import { useOpenAssistantEditor } from "../assistants/openAssistantEditor";
 import { useHasKanbanEnvironments } from "../../state/kanban";
 import { useImessageEnvironmentIds } from "../../state/imessageChannel";
+import { useTelegramEnvironmentIds } from "../../state/telegramChannel";
 import { useHasMemoryEnvironments } from "../../state/memory";
 import { useHasNotesEnvironments } from "../../state/notes";
 import { useThreadSearch } from "../../state/queries";
@@ -241,6 +242,7 @@ export function CommandPalette(props: {
   const hasNotes = useHasNotesEnvironments();
   const hasMemory = useHasMemoryEnvironments();
   const hasImessage = useImessageEnvironmentIds().length > 0;
+  const hasTelegram = useTelegramEnvironmentIds().length > 0;
   const assistants = useAssistantEntries().active;
   const openAssistantEditor = useOpenAssistantEditor();
   const threads = useThreadShells();
@@ -375,6 +377,17 @@ export function CommandPalette(props: {
               title: "iMessage",
               searchTerms: ["messages", "assistants", "chat", "full disk access"],
               run: () => openSettings(navigation, "SettingsImessage"),
+            },
+          ]
+        : []),
+      ...(hasTelegram
+        ? [
+            {
+              key: "telegram",
+              kind: "action" as const,
+              title: "Telegram",
+              searchTerms: ["bot", "botfather", "assistants", "chat", "token", "user id"],
+              run: () => openSettings(navigation, "SettingsTelegram"),
             },
           ]
         : []),
@@ -565,6 +578,7 @@ export function CommandPalette(props: {
     hasNotes,
     hasMemory,
     hasImessage,
+    hasTelegram,
     assistants,
     openAssistantEditor,
     canTriage,

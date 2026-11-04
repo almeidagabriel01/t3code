@@ -79,6 +79,7 @@ const SETTINGS_SEARCH_TERMS = {
     "numbers",
     "emails",
   ],
+  SettingsTelegram: ["telegram", "bot", "botfather", "token", "user id", "assistants", "chat"],
   SettingsNotes: ["notes", "markdown", "ideas", "capture", "start work"],
   SettingsArchive: ["archive", "archived", "restore", "unarchive"],
   SettingsProviderAccounts: [

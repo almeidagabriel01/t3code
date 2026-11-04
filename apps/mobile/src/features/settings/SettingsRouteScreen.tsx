@@ -38,6 +38,7 @@ import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
 import { useAssistantsEnvironmentIds } from "../../state/assistants";
 import { useHasKanbanEnvironments } from "../../state/kanban";
 import { useImessageEnvironmentIds } from "../../state/imessageChannel";
+import { useTelegramEnvironmentIds } from "../../state/telegramChannel";
 import { useHasMemoryEnvironments } from "../../state/memory";
 import { useHasNotesEnvironments } from "../../state/notes";
 import { filterSettingsSections } from "./settings-search";
@@ -221,6 +222,7 @@ function useSettingsIndexSections(): SettingsListSection[] {
   const hasNotes = useHasNotesEnvironments();
   const hasMemory = useHasMemoryEnvironments();
   const hasImessage = useImessageEnvironmentIds().length > 0;
+  const hasTelegram = useTelegramEnvironmentIds().length > 0;
   const hasAssistants = useAssistantsEnvironmentIds().length > 0;
   const selectedProject = projectGroups.find((group) => group.key === selectedProjectKey);
   const scopedProjectMembers =
@@ -269,6 +271,7 @@ function useSettingsIndexSections(): SettingsListSection[] {
         serverPage("SettingsThreads", "text.bubble", "Threads"),
         ...(hasAssistants ? [page("SettingsAssistants", "person.2", "Assistants")] : []),
         ...(hasImessage ? [page("SettingsImessage", "text.bubble", "iMessage")] : []),
+        ...(hasTelegram ? [page("SettingsTelegram", "paperplane", "Telegram")] : []),
         page("SettingsScheduledTasks", "clock", "Scheduled tasks"),
         ...(hasBoards ? [page("SettingsKanban", "square.grid.2x2", "Board")] : []),
         ...(hasNotes ? [page("SettingsNotes", "doc.text", "Notes")] : []),

@@ -137,6 +137,7 @@ import { AssistantEditRouteScreen } from "./features/assistants/AssistantEditRou
 import { AssistantModelPickerRouteScreen } from "./features/assistants/AssistantModelPickerRouteScreen";
 import { SettingsAssistantsRouteScreen } from "./features/assistants/SettingsAssistantsRouteScreen";
 import { SettingsImessageRouteScreen } from "./features/imessage/SettingsImessageRouteScreen";
+import { SettingsTelegramRouteScreen } from "./features/telegram/SettingsTelegramRouteScreen";
 import { SettingsMemoryRouteScreen } from "./features/settings/SettingsMemoryRouteScreen";
 import { ClaudeChromeRouteScreen } from "./features/settings/ClaudeChromeRouteScreen";
 import { FallbackModelPickerRouteScreen } from "./features/settings/FallbackModelPickerRouteScreen";
@@ -441,6 +442,11 @@ const SETTINGS_SCREENS = {
     screen: SettingsImessageRouteScreen,
     linking: "settings/imessage",
     options: { ...SETTINGS_PAGE_OPTIONS, title: "iMessage" },
+  }),
+  SettingsTelegram: createNativeStackScreen({
+    screen: SettingsTelegramRouteScreen,
+    linking: "settings/telegram",
+    options: { ...SETTINGS_PAGE_OPTIONS, title: "Telegram" },
   }),
   SettingsAssistants: createNativeStackScreen({
     screen: SettingsAssistantsRouteScreen,

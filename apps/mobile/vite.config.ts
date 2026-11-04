@@ -76,6 +76,8 @@ const reactTests = [
   "src/features/assistants/SettingsAssistantsRouteScreen.test.tsx",
   "src/features/imessage/SettingsImessageRouteScreen.test.tsx",
   "src/state/imessageChannel.test.tsx",
+  "src/features/telegram/SettingsTelegramRouteScreen.test.tsx",
+  "src/state/telegramChannel.test.tsx",
   "src/features/threads/SubagentRow.memory.test.tsx",
 ];
 
