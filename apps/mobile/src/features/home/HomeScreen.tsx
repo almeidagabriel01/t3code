@@ -790,7 +790,6 @@ export function HomeScreen(props: HomeScreenProps) {
       <HomeNeedsYouSection
         threads={props.threads}
         now={now}
-        includeWorking={!workingShelfEnabled}
         gutter={primaryColumn ? 8 : 16}
         renderRow={(item) => renderV2Item({ item })}
       />

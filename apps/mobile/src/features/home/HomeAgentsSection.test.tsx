@@ -40,6 +40,7 @@ vi.mock("../../state/entities", () => ({
     },
   ],
 }));
+vi.mock("./UnreadActionsMenu", () => ({ UnreadActionsMenu: () => <i>unread-actions</i> }));
 vi.mock("../threads/SubagentStatusDot", () => ({ SubagentStatusDot: () => <u>done-dot</u> }));
 vi.mock("../workspace/useSelectWorkspaceDetail", () => ({
   useSelectWorkspaceDetail: () => mocks.select,
@@ -118,7 +119,7 @@ describe("HomeAgentsSection", () => {
       working("lost", null, { projectId: "gone" }),
     ]);
     expect(container.textContent).toMatch(
-      /Agents.*Working · 2.*icon:Alpha.*Title busy.*Alpha.*10m.*Title lost.*Unknown project.*Done · 1.*Title fin.*done-dot/,
+      /Agents.*Working · 2.*icon:Alpha.*Title busy.*Alpha.*10m.*Title lost.*Unknown project.*Done · 1unread-actions.*Title fin.*done-dot/,
     );
     const row = container.querySelector<HTMLButtonElement>(
       '[aria-label="Title fin, Alpha, finished"]',

@@ -1,5 +1,4 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
-import * as Cause from "effect/Cause";
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -72,13 +71,12 @@ const unread = (id: string) => shell(id, { latestRun, lastVisitedAt: "2026-03-09
 
 let root: Root;
 let container: HTMLDivElement;
-const render = (threads: EnvironmentThreadShell[], includeWorking = true) =>
+const render = (threads: EnvironmentThreadShell[]) =>
   act(() =>
     root.render(
       <HomeNeedsYouSection
         threads={threads}
         now={now}
-        includeWorking={includeWorking}
         gutter={4}
         renderRow={(item) => (
           <button onClick={() => mocks.open(item.item.thread.id, item.item.wokeAt)}>
@@ -113,63 +111,16 @@ describe("HomeNeedsYouSection", () => {
     expect(container.textContent).toBe("");
   });
 
-  it("lists needs-you, working, then unread, and opens a thread by id", async () => {
-    const threads = [
+  it("lists only threads waiting on the user, and opens a thread by id", async () => {
+    render([
       unread("done"),
       shell("busy", { runtime: { status: "running" } }),
       shell("ask", { hasPendingUserInput: true }),
-    ];
-    render(threads);
-    expect(container.textContent).toMatch(
-      /Needs you.*Waiting for you · 1.*Title ask.*Working · 1.*Title busy.*Unread · 1.*Title done/,
-    );
+    ]);
+    expect(container.textContent).toBe("Needs youTitle ask");
 
     await press("Title ask");
     expect(mocks.open).toHaveBeenCalledWith("ask", null);
-
-    render(threads, false);
-    expect(container.textContent).not.toContain("Working");
-  });
-
-  it("marks unread threads read, and reports a failed visit", async () => {
-    render([unread("one"), unread("two")]);
-    await press("Mark all as read");
-    expect(mocks.visit).toHaveBeenCalledTimes(2);
-    expect(mocks.visit).toHaveBeenCalledWith({
-      environmentId: "hub",
-      input: { threadId: "one", visitedAt: now },
-    });
-    expect(mocks.alert).not.toHaveBeenCalled();
-
-    mocks.visit.mockResolvedValue({ _tag: "Failure", cause: Cause.interrupt() });
-    await press("Mark all as read");
-    expect(mocks.alert).not.toHaveBeenCalled();
-
-    mocks.visit.mockResolvedValue({ _tag: "Failure", cause: Cause.fail("nope") });
-    await press("Mark all as read");
-    expect(mocks.alert).toHaveBeenCalledTimes(1);
-
-    mocks.operable = new Set();
-    render([unread("one"), unread("two")]);
-    mocks.visit.mockClear();
-    await press("Mark all as read");
-    expect(mocks.visit).not.toHaveBeenCalled();
-  });
-
-  it("clears read threads through the same visits, skipping what it cannot operate", async () => {
-    render([unread("one"), shell("ask", { hasPendingUserInput: true })]);
-    await press("Clear read");
-    expect(mocks.visit).toHaveBeenCalledTimes(1);
-    expect(mocks.visit).toHaveBeenCalledWith({
-      environmentId: "hub",
-      input: { threadId: "one", visitedAt: now },
-    });
-
-    mocks.operable = new Set();
-    render([unread("one")]);
-    mocks.visit.mockClear();
-    await press("Clear read");
-    expect(mocks.visit).not.toHaveBeenCalled();
   });
 
   it("treats a server without visit times as having nothing unread", () => {

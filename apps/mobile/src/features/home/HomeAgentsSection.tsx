@@ -15,6 +15,7 @@ import { useProjects } from "../../state/entities";
 import { SubagentStatusDot } from "../threads/SubagentStatusDot";
 import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
 import { buildHomeActivityEntries } from "./homeActivityEntries";
+import { UnreadActionsMenu } from "./UnreadActionsMenu";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 
 function elapsedLabel(startedAt: string | null, nowMs: number): string {
@@ -111,9 +112,18 @@ export function HomeAgentsSection(props: {
       <Text className={cn("font-t3-bold text-2xs uppercase tracking-[1.1px]", muted)}>Agents</Text>
       {groups.map((group) => (
         <View key={group.heading}>
-          <Text className={cn("px-2 pb-1 pt-2 text-xs font-t3-medium", muted)}>
-            {group.heading} · {group.items.length}
-          </Text>
+          <View className="min-h-9 flex-row items-center">
+            <Text className={cn("flex-1 px-2 pb-1 pt-2 text-xs font-t3-medium", muted)}>
+              {group.heading} · {group.items.length}
+            </Text>
+            {group.heading === "Done" ? (
+              <UnreadActionsMenu
+                threads={group.items.map((entry) => entry.thread)}
+                now={props.now}
+                sidebar={sidebar}
+              />
+            ) : null}
+          </View>
           {group.items.map(renderRow)}
         </View>
       ))}

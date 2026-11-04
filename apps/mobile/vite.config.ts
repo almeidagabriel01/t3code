@@ -69,6 +69,7 @@ const reactTests = [
   "src/features/decisions/HomeDecisionsSection.test.tsx",
   "src/features/home/HomeAgentsSection.test.tsx",
   "src/features/home/HomeNeedsYouSection.test.tsx",
+  "src/features/home/UnreadActionsMenu.test.tsx",
   "src/features/decisions/DecisionCard.test.tsx",
   "src/features/decisions/DecisionAttachments.test.tsx",
   "src/features/assistants/AssistantSchedulesSection.test.tsx",

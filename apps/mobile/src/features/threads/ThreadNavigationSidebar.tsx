@@ -729,7 +729,6 @@ function ThreadNavigationSidebarPane(
         <HomeNeedsYouSection
           threads={threads}
           now={now}
-          includeWorking={!workingShelfEnabled}
           gutter={4}
           sidebar
           renderRow={(item) => renderListItem({ item })}
