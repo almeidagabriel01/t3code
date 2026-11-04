@@ -78,6 +78,27 @@ While a conversation is in Messages, the T3 Code mobile app does not also push i
 the assistant a message from the app and its notifications come back. More than 10 messages a
 minute from one person are held back, with one notice.
 
+## Talk to them over Telegram
+
+**Settings → Telegram** lets you message your assistants from the Telegram app, on any computer
+that runs T3 Code; it needs no public address. It works while T3 Code is running.
+
+1. In Telegram, open `@BotFather`, send `/newbot` and follow the steps. It replies with a bot token.
+2. Paste the token under **Bot token**. It stays on the server and is never shown again; paste a new
+   one to replace it, or remove it.
+3. Open `@userinfobot` and press Start to see your numeric Id, then add it under **Who can write to
+   the bot**. Anyone else who writes to the bot is ignored.
+4. Turn on **Use Telegram**, open your bot and press Start.
+
+Start a message with `@Name` to pick an assistant; the default one answers otherwise, and the chat
+stays with the last one you picked. Send `@` on its own to list them. Approvals arrive as numbered
+choices: reply with the number. Only private chats with the bot are heard; groups and attachments
+are not. More than 10 messages a minute from one person are held back, with one notice.
+
+If the status shows an error, it says what to fix; T3 Code keeps retrying, waiting longer after each
+failure, and turning the switch off stops it at once. Two programs cannot read the same bot at the
+same time, so use one bot per T3 Code server.
+
 ## Memory follows the project
 
 An assistant shares memory with its project (and your user memory). To keep one assistant's memory

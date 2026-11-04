@@ -70,3 +70,19 @@ least once, so a timed-out send is never retried as if it surely failed. The iMe
   that one conversation so stickiness and numbered answers carry across.
 - `send … to chat id` uses SMS when the chat also has an SMS route; replies go to the handle on the
   iMessage account and fall back to the chat id.
+
+## Telegram channel
+
+The Telegram transport long-polls the Bot API (`getUpdates`), so it needs no public webhook. Traps:
+
+- The bot token is part of every request URL, and an `HttpClientError` carries the request. The API
+  client therefore replaces every transport failure with a fixed code and never logs or wraps the
+  cause; the token itself lives in the server secret store, never in the settings file.
+- The update offset is stored per bot id (the token's numeric prefix) and advances only after the
+  gateway stored the message, so a storage failure retries the same update. First enable skips the
+  backlog Telegram still holds by asking for the newest update with offset -1.
+- Two pollers on one bot get HTTP 409; it surfaces as the `conflict` status. A wrong token backs
+  off up to five minutes instead of looping.
+- Replies are plain text with no `parse_mode`, cut at 3900 characters per message to leave room for
+  the speaker's name under Telegram's 4096 limit. `ChannelReplyAddress` is a union by `kind`; the
+  bridge finds an open card by kind and chat, so ids of two channels never collide.
