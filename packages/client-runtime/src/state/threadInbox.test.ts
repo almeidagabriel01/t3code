@@ -1,6 +1,7 @@
 import { EnvironmentId, ProviderInstanceId, RunId, ThreadId } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
+import { sortActiveThreadsByOrderKey } from "./threadSort.ts";
 import {
   createInboxReturnTracker,
   isThreadRunUserStarted,
@@ -267,5 +268,75 @@ describe("sortWorkingThreadsBySend", () => {
     expect(
       sortWorkingThreadsBySend([launched, sentFirst, sentLast]).map((thread) => thread.id),
     ).toEqual(["sent-last", "sent-first", "launched"]);
+  });
+});
+
+describe("sortInboxThreadsByReturn: a message you just sent", () => {
+  const at = (hour: number) => `2026-06-01T${String(hour).padStart(2, "0")}:00:00.000Z`;
+  const base = { ...thread("x", false), createdAt: at(0) };
+  const run = (status: "running" | "waiting" | "completed" | "failed", requested: number) => ({
+    runId: RunId.make(`run:${requested}`),
+    status,
+    requestedAt: at(requested),
+    startedAt: at(requested),
+    completedAt: status === "completed" || status === "failed" ? at(requested + 1) : null,
+    assistantMessageId: null,
+  });
+  const idle = { ...base, id: ThreadId.make("idle"), latestRun: run("completed", 6) };
+
+  it.each([
+    {
+      name: "sent into a run waiting on a background command",
+      subject: { latestRun: run("waiting", 2), latestUserAuthoredMessageAt: at(10) },
+      top: "subject",
+    },
+    {
+      name: "sent into a running run",
+      subject: { latestRun: run("running", 2), latestUserAuthoredMessageAt: at(10) },
+      top: "subject",
+    },
+    {
+      name: "finished unread after the idle thread",
+      subject: { latestRun: run("completed", 8), latestUserAuthoredMessageAt: at(8) },
+      top: "subject",
+    },
+    {
+      name: "failed after the idle thread",
+      subject: { latestRun: run("failed", 8), latestUserAuthoredMessageAt: null },
+      top: "subject",
+    },
+    {
+      name: "needs approval, nothing newer than the idle thread",
+      subject: {
+        latestRun: run("waiting", 2),
+        hasPendingApprovals: true,
+        latestUserAuthoredMessageAt: at(3),
+      },
+      top: "idle",
+    },
+    {
+      name: "idle thread stays above an older waiting run with no message",
+      subject: { latestRun: run("waiting", 2), latestUserAuthoredMessageAt: null },
+      top: "idle",
+    },
+  ])("$name", ({ subject, top }) => {
+    const entry = { ...base, id: ThreadId.make("subject"), ...subject };
+    expect(sortInboxThreadsByReturn([idle, entry])[0]?.id).toBe(top);
+    expect(sortInboxThreadsByReturn([entry, idle])[0]?.id).toBe(top);
+  });
+
+  it("leaves Fixed order to the dragged keys, whatever you sent", () => {
+    const sent = {
+      ...base,
+      id: ThreadId.make("subject"),
+      activeOrderKey: "b",
+      latestRun: run("waiting", 2),
+      latestUserAuthoredMessageAt: at(10),
+    };
+    const parked = { ...idle, activeOrderKey: "a" };
+    expect(sortActiveThreadsByOrderKey([sent, parked], "fixed").map((t) => t.id)).toEqual([
+      "idle",
+      "subject",
+    ]);
   });
 });

@@ -44,7 +44,7 @@ export function isThreadRunUserStarted(
 
 type InboxThreadInput = Pick<
   EnvironmentThreadShell,
-  "id" | "environmentId" | "createdAt" | "unsettledAt" | "latestRun"
+  "id" | "environmentId" | "createdAt" | "unsettledAt" | "latestRun" | "latestUserAuthoredMessageAt"
 >;
 
 export function sortInboxThreadsByReturn<T extends InboxThreadInput>(
@@ -59,6 +59,8 @@ export function sortInboxThreadsByReturn<T extends InboxThreadInput>(
         toSortableTimestamp(thread.unsettledAt ?? undefined) ?? 0,
         toSortableTimestamp(thread.latestRun?.requestedAt ?? undefined) ?? 0,
         toSortableTimestamp(thread.latestRun?.completedAt ?? undefined) ?? 0,
+        // A message sent into a run already in flight keeps that run's old requestedAt.
+        toSortableTimestamp(thread.latestUserAuthoredMessageAt ?? undefined) ?? 0,
         observedReturnAt?.(thread) ?? 0,
       ),
     ]),
