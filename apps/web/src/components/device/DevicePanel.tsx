@@ -207,7 +207,7 @@ export function DevicePanel(props: {
       <div className="relative flex min-h-0 flex-1 flex-col">
         <div
           className={cn(
-            "shrink-0 bg-background",
+            "shrink-0 surface-glass",
             loading && "absolute inset-x-0 top-0 z-10 max-h-[40%] overflow-y-auto",
           )}
         >
