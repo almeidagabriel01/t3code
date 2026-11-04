@@ -243,6 +243,10 @@
       "types": "./src/state/imessageChannel.ts",
       "default": "./src/state/imessageChannel.ts"
     },
+    "./state/telegramChannel": {
+      "types": "./src/state/telegramChannel.ts",
+      "default": "./src/state/telegramChannel.ts"
+    },
     "./state/assistants": {
       "types": "./src/state/assistants.ts",
       "default": "./src/state/assistants.ts"

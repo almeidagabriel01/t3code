@@ -16,6 +16,7 @@ import {
   ScheduledTaskError,
   ServerConfig,
   ImessageChannelSettingsError,
+  TelegramChannelSettingsError,
   ThreadId,
   TurnItemId,
   WS_METHODS,
@@ -27,6 +28,10 @@ import {
   type ImessageChannelSettings,
   type ImessageChannelSettingsErrorReason,
   type ImessageChannelStatusEvent,
+  type TelegramChannelConfigureInput,
+  type TelegramChannelSettings,
+  type TelegramChannelSettingsErrorReason,
+  type TelegramChannelStatusEvent,
   type ScheduledTask,
   type AssistantsEvent,
   type Decision,
@@ -607,6 +612,54 @@ handlers[WS_METHODS.imessageChannelConfigure] = (input: {
   return Effect.succeed(fakeImessage.settings);
 };
 
+/** Telegram settings the fake server holds, and the calls it received. */
+const TELEGRAM_DEFAULTS: TelegramChannelSettings = {
+  enabled: false,
+  tokenConfigured: false,
+  allowedUserIds: [],
+  status: "disabled",
+};
+export const fakeTelegram = {
+  settings: TELEGRAM_DEFAULTS,
+  failConfigure: null as TelegramChannelSettingsErrorReason | null,
+  configures: [] as TelegramChannelConfigureInput[],
+};
+/** Starts a Telegram scenario from a clean server. */
+export function resetFakeTelegram(settings: Partial<TelegramChannelSettings> = {}): void {
+  fakeTelegram.settings = { ...TELEGRAM_DEFAULTS, ...settings };
+  fakeTelegram.failConfigure = null;
+  fakeTelegram.configures = [];
+}
+const telegramStatusSubscribers = new Set<Queue.Queue<TelegramChannelStatusEvent>>();
+/** Pushes a live status event to the open subscription. */
+export function publishTelegramStatus(event: TelegramChannelStatusEvent): void {
+  for (const queue of telegramStatusSubscribers) Effect.runSync(Queue.offer(queue, event));
+}
+handlers[WS_METHODS.telegramChannelGetSettings] = () => Effect.sync(() => fakeTelegram.settings);
+handlers[WS_METHODS.telegramChannelSubscribeStatus] = () =>
+  subscribe<TelegramChannelStatusEvent>([], (queue) => {
+    telegramStatusSubscribers.add(queue);
+    return () => telegramStatusSubscribers.delete(queue);
+  });
+handlers[WS_METHODS.telegramChannelConfigure] = (input: TelegramChannelConfigureInput) => {
+  fakeTelegram.configures.push(input);
+  if (fakeTelegram.failConfigure !== null) {
+    return Effect.fail(
+      new TelegramChannelSettingsError({ reason: fakeTelegram.failConfigure, detail: "nope" }),
+    );
+  }
+  const current = fakeTelegram.settings;
+  const clearing = input.clearToken === true && input.botToken === undefined;
+  fakeTelegram.settings = {
+    ...current,
+    enabled: clearing ? false : (input.enabled ?? current.enabled),
+    tokenConfigured:
+      input.botToken !== undefined ? true : clearing ? false : current.tokenConfigured,
+    allowedUserIds: input.allowedUserIds ?? current.allowedUserIds,
+  };
+  return Effect.succeed(fakeTelegram.settings);
+};
+
 export const fakeForkUpdate: {
   status: ForkUpdateStatus;
   commands: Array<{ readonly type: string } & Record<string, unknown>>;
@@ -692,6 +745,7 @@ export function installFakeEnvironment(
     readonly decisions?: boolean;
     readonly assistants?: boolean;
     readonly imessageChannel?: boolean;
+    readonly telegramChannel?: boolean;
     readonly sideChats?: boolean;
     readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
   } = {},
@@ -701,6 +755,7 @@ export function installFakeEnvironment(
     ...(options.decisions ? { decisions: true } : {}),
     ...(options.assistants ? { assistants: true } : {}),
     ...(options.imessageChannel ? { imessageChannel: true } : {}),
+    ...(options.telegramChannel ? { telegramChannel: true } : {}),
     ...(options.sideChats ? { sideChats: true } : {}),
   };
   const encodedDescriptor = encodeDescriptor(extraCapabilities);

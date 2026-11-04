@@ -26,6 +26,7 @@ import { Route as ChatKanbanRouteImport } from './routes/_chat.kanban'
 import { Route as ChatActivityRouteImport } from './routes/_chat.activity'
 import { Route as ChatSettingsWorktreesRouteImport } from './routes/_chat.settings.worktrees'
 import { Route as ChatSettingsThreadsRouteImport } from './routes/_chat.settings.threads'
+import { Route as ChatSettingsTelegramRouteImport } from './routes/_chat.settings.telegram'
 import { Route as ChatSettingsStorageRouteImport } from './routes/_chat.settings.storage'
 import { Route as ChatSettingsStatusBarRouteImport } from './routes/_chat.settings.status-bar'
 import { Route as ChatSettingsSourceControlRouteImport } from './routes/_chat.settings.source-control'
@@ -141,6 +142,11 @@ const ChatSettingsWorktreesRoute = ChatSettingsWorktreesRouteImport.update({
 const ChatSettingsThreadsRoute = ChatSettingsThreadsRouteImport.update({
   id: '/threads',
   path: '/threads',
+  getParentRoute: () => ChatSettingsRoute,
+} as any)
+const ChatSettingsTelegramRoute = ChatSettingsTelegramRouteImport.update({
+  id: '/telegram',
+  path: '/telegram',
   getParentRoute: () => ChatSettingsRoute,
 } as any)
 const ChatSettingsStorageRoute = ChatSettingsStorageRouteImport.update({
@@ -356,6 +362,7 @@ export interface FileRoutesByFullPath {
   '/settings/source-control': typeof ChatSettingsSourceControlRoute
   '/settings/status-bar': typeof ChatSettingsStatusBarRoute
   '/settings/storage': typeof ChatSettingsStorageRoute
+  '/settings/telegram': typeof ChatSettingsTelegramRoute
   '/settings/threads': typeof ChatSettingsThreadsRoute
   '/settings/worktrees': typeof ChatSettingsWorktreesRoute
 }
@@ -406,6 +413,7 @@ export interface FileRoutesByTo {
   '/settings/source-control': typeof ChatSettingsSourceControlRoute
   '/settings/status-bar': typeof ChatSettingsStatusBarRoute
   '/settings/storage': typeof ChatSettingsStorageRoute
+  '/settings/telegram': typeof ChatSettingsTelegramRoute
   '/settings/threads': typeof ChatSettingsThreadsRoute
   '/settings/worktrees': typeof ChatSettingsWorktreesRoute
 }
@@ -458,6 +466,7 @@ export interface FileRoutesById {
   '/_chat/settings/source-control': typeof ChatSettingsSourceControlRoute
   '/_chat/settings/status-bar': typeof ChatSettingsStatusBarRoute
   '/_chat/settings/storage': typeof ChatSettingsStorageRoute
+  '/_chat/settings/telegram': typeof ChatSettingsTelegramRoute
   '/_chat/settings/threads': typeof ChatSettingsThreadsRoute
   '/_chat/settings/worktrees': typeof ChatSettingsWorktreesRoute
 }
@@ -510,6 +519,7 @@ export interface FileRouteTypes {
     | '/settings/source-control'
     | '/settings/status-bar'
     | '/settings/storage'
+    | '/settings/telegram'
     | '/settings/threads'
     | '/settings/worktrees'
   fileRoutesByTo: FileRoutesByTo
@@ -560,6 +570,7 @@ export interface FileRouteTypes {
     | '/settings/source-control'
     | '/settings/status-bar'
     | '/settings/storage'
+    | '/settings/telegram'
     | '/settings/threads'
     | '/settings/worktrees'
   id:
@@ -611,6 +622,7 @@ export interface FileRouteTypes {
     | '/_chat/settings/source-control'
     | '/_chat/settings/status-bar'
     | '/_chat/settings/storage'
+    | '/_chat/settings/telegram'
     | '/_chat/settings/threads'
     | '/_chat/settings/worktrees'
   fileRoutesById: FileRoutesById
@@ -744,6 +756,13 @@ declare module '@tanstack/react-router' {
       path: '/threads'
       fullPath: '/settings/threads'
       preLoaderRoute: typeof ChatSettingsThreadsRouteImport
+      parentRoute: typeof ChatSettingsRoute
+    }
+    '/_chat/settings/telegram': {
+      id: '/_chat/settings/telegram'
+      path: '/telegram'
+      fullPath: '/settings/telegram'
+      preLoaderRoute: typeof ChatSettingsTelegramRouteImport
       parentRoute: typeof ChatSettingsRoute
     }
     '/_chat/settings/storage': {
@@ -1004,6 +1023,7 @@ interface ChatSettingsRouteChildren {
   ChatSettingsSourceControlRoute: typeof ChatSettingsSourceControlRoute
   ChatSettingsStatusBarRoute: typeof ChatSettingsStatusBarRoute
   ChatSettingsStorageRoute: typeof ChatSettingsStorageRoute
+  ChatSettingsTelegramRoute: typeof ChatSettingsTelegramRoute
   ChatSettingsThreadsRoute: typeof ChatSettingsThreadsRoute
   ChatSettingsWorktreesRoute: typeof ChatSettingsWorktreesRoute
 }
@@ -1039,6 +1059,7 @@ const ChatSettingsRouteChildren: ChatSettingsRouteChildren = {
   ChatSettingsSourceControlRoute: ChatSettingsSourceControlRoute,
   ChatSettingsStatusBarRoute: ChatSettingsStatusBarRoute,
   ChatSettingsStorageRoute: ChatSettingsStorageRoute,
+  ChatSettingsTelegramRoute: ChatSettingsTelegramRoute,
   ChatSettingsThreadsRoute: ChatSettingsThreadsRoute,
   ChatSettingsWorktreesRoute: ChatSettingsWorktreesRoute,
 }

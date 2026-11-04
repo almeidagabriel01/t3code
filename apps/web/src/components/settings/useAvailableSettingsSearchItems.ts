@@ -52,6 +52,12 @@ export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch
         (scopeSearch.machine === undefined || environment.environmentId === scopeSearch.machine) &&
         environment.serverConfig?.environment.capabilities.imessageChannel === true,
     ) === true;
+  const hasTelegram =
+    environments.some(
+      (environment) =>
+        (scopeSearch.machine === undefined || environment.environmentId === scopeSearch.machine) &&
+        environment.serverConfig?.environment.capabilities.telegramChannel === true,
+    ) === true;
   const hasThreadAutoSettlement =
     getThreadAutoSettlementSearchAvailability(environments).eligibleEnvironmentIds.length > 0;
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -84,5 +90,6 @@ export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch
     hasPeerLinkHost,
     hasMemory,
     hasImessage,
+    hasTelegram,
   });
 }

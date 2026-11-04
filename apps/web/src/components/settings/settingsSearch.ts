@@ -29,6 +29,7 @@ export type SettingsPath =
   | "/settings/providers"
   | "/settings/assistants"
   | "/settings/imessage"
+  | "/settings/telegram"
   | "/settings/memory"
   | "/settings/threads"
   | "/settings/browser"
@@ -78,6 +79,7 @@ export interface SettingsSearchItem {
   readonly peerLinksOnly?: boolean;
   readonly requiresMemory?: boolean;
   readonly requiresImessage?: boolean;
+  readonly requiresTelegram?: boolean;
   readonly secondary?: boolean;
   readonly requiresThreadAutoSettlement?: boolean;
   readonly requiresDesktopWindowMaterial?: boolean;
@@ -96,6 +98,7 @@ export interface SettingsSearchAvailability {
   readonly hasPeerLinkHost?: boolean;
   readonly hasMemory?: boolean;
   readonly hasImessage?: boolean;
+  readonly hasTelegram?: boolean;
 }
 
 export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
@@ -110,6 +113,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/providers": "Providers",
   "/settings/assistants": "Assistants",
   "/settings/imessage": "iMessage",
+  "/settings/telegram": "Telegram",
   "/settings/memory": "Memory",
   "/settings/threads": "Threads",
   "/settings/browser": "Browser",
@@ -152,6 +156,7 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
       "/settings/providers",
       "/settings/assistants",
       "/settings/imessage",
+      "/settings/telegram",
       "/settings/memory",
       "/settings/threads",
       "/settings/browser",
@@ -670,6 +675,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     requiresImessage: true,
     searchTerms: [
       "imessage messages text sms mac full disk access automation handles phone number email chat with yourself allowed assistants jarvis",
+    ],
+  },
+  {
+    id: "telegram",
+    title: "Telegram",
+    to: "/settings/telegram",
+    requiresTelegram: true,
+    searchTerms: [
+      "telegram bot botfather token user id chat allowed senders assistants jarvis messages phone",
     ],
   },
   {
@@ -1467,6 +1481,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/providers": null,
   "/settings/assistants": null,
   "/settings/imessage": null,
+  "/settings/telegram": null,
   "/settings/memory": null,
   "/settings/threads": null,
   "/settings/browser": null,
@@ -1601,6 +1616,7 @@ export function filterAvailableSettingsSearchItems(
     (item) =>
       (!item.requiresMemory || availability.hasMemory === true) &&
       (!item.requiresImessage || availability.hasImessage === true) &&
+      (!item.requiresTelegram || availability.hasTelegram === true) &&
       (!item.cloudOnly || availability.hasCloudPublicConfig) &&
       (!item.environmentOnly || availability.hasEnvironment) &&
       (!item.providerSettingsOnly || availability.hasProviderSettingsEnvironment) &&
