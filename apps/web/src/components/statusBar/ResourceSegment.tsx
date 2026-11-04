@@ -258,7 +258,7 @@ function UsageRow({
       <div
         className={cn(
           "group/row flex items-center gap-2 py-1.5 pr-3 hover:bg-foreground/8",
-          expandable ? "pl-5" : "pl-10",
+          expandable ? "pl-3" : "pl-10",
         )}
       >
         {expandable ? (

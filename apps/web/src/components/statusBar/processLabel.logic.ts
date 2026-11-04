@@ -2,6 +2,8 @@ const INTERPRETERS = new Set(["node", "bun", "deno", "python", "python3", "ruby"
 const SHELLS = new Set(["sh", "bash", "zsh"]);
 const PACKAGE_RUNNERS = new Set(["npx", "pnpm", "vp"]);
 const RUNNER_VERBS = new Set(["run", "exec", "dlx", "x"]);
+// Inline code is not a file name: label the interpreter itself.
+const EVAL_FLAGS = new Set(["-e", "--eval", "-p", "--print", "-c"]);
 
 const basename = (path: string) => path.split(/[\\/]/).findLast((part) => part !== "") ?? path;
 
@@ -30,6 +32,9 @@ export function processLabel(process: { readonly name: string; readonly command:
     return words.slice(0, 3).join(" ") || fallback;
   }
   if (INTERPRETERS.has(exe)) {
+    if (args.some((arg) => EVAL_FLAGS.has(arg))) return fallback;
+    const module = args.indexOf("-m");
+    if (module >= 0 && args[module + 1] !== undefined) return args[module + 1]!;
     const script = positional[0];
     return script === undefined ? fallback : scriptLabel(script);
   }
