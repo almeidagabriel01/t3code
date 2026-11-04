@@ -3,12 +3,14 @@ import type { EnvironmentId, NoteSummary } from "@t3tools/contracts";
 import {
   EllipsisIcon,
   FolderInputIcon,
+  PencilIcon,
   PinIcon,
   PinOffIcon,
   PlayIcon,
   Trash2Icon,
   type LucideIcon,
 } from "lucide-react";
+import { moveToTitle, replaceNoteTitle } from "@t3tools/client-runtime/notes/title";
 import { Fragment, useState, type MouseEvent, type ReactNode } from "react";
 
 import { readLocalApi } from "../../localApi";
@@ -22,7 +24,7 @@ import { NoteStartWorkDialog } from "./NoteStartWorkDialog";
 import { noteErrorMessage } from "./noteState";
 import { useNoteCommand } from "./useNoteCommand";
 
-type RowActionId = "pin" | "start" | "move" | "delete";
+type RowActionId = "pin" | "start" | "rename" | "move" | "delete";
 
 interface RowAction {
   readonly id: RowActionId;
@@ -38,6 +40,10 @@ export interface NoteRowActions {
   actions: (note: NoteSummary) => ReadonlyArray<RowAction>;
   run: (note: NoteSummary, id: RowActionId) => void;
   showContextMenu: (event: MouseEvent, note: NoteSummary) => void;
+  /** The path of the row being renamed in place, if any. */
+  renaming: string | null;
+  commitRename: (note: NoteSummary, title: string) => void;
+  cancelRename: () => void;
   dialogs: ReactNode;
 }
 
@@ -48,6 +54,11 @@ export function useNoteRowActions(
   onSelect: (path: string) => void,
 ): NoteRowActions {
   const update = useNoteCommand(notesEnvironment.update);
+  const read = useNoteCommand(notesEnvironment.read);
+  const write = useNoteCommand(notesEnvironment.write);
+  const move = useNoteCommand(notesEnvironment.move);
+  const canWrite = useAtomValue(notesEnvironment.write.permissionAtom(environmentId));
+  const [renaming, setRenaming] = useState<string | null>(null);
   const canUpdate = useAtomValue(notesEnvironment.update.permissionAtom(environmentId));
   const canMove = useAtomValue(notesEnvironment.move.permissionAtom(environmentId));
   const canDelete = useAtomValue(notesEnvironment.delete.permissionAtom(environmentId));
@@ -74,10 +85,12 @@ export function useNoteRowActions(
         icon: PlayIcon,
         menuIcon: "play",
       });
+    if (canWrite && !note.issue)
+      list.push({ id: "rename", label: "Rename", icon: PencilIcon, menuIcon: "pencil" });
     if (canMove)
       list.push({
         id: "move",
-        label: "Rename or move…",
+        label: "Move or rename file…",
         icon: FolderInputIcon,
         menuIcon: "folder",
       });
@@ -105,12 +118,45 @@ export function useNoteRowActions(
             );
         },
       );
+    } else if (id === "rename") {
+      setRenaming(note.path);
     } else {
       setDialog({
         note,
         kind: id === "start" ? (note.card === null ? "first" : "another") : id,
       });
     }
+  };
+  const failRename = (error: unknown) =>
+    toastManager.add(
+      stackedThreadToast({
+        type: "error",
+        title: "Couldn’t rename the note",
+        description: noteErrorMessage(error),
+      }),
+    );
+  // Reads the body so the title edit applies to the latest text, not the list's summary.
+  const commitRename = async (note: NoteSummary, title: string) => {
+    setRenaming(null);
+    const current = await read({ environmentId, input: { path: note.path } });
+    if (!current.ok) return failRename(current.error);
+    const saved = await write({
+      environmentId,
+      input: {
+        path: note.path,
+        body: replaceNoteTitle(current.value.body, title),
+        baseRevision: current.value.revision,
+      },
+    });
+    if (!saved.ok) return failRename(saved.error);
+    if (!canMove) return;
+    const moved = await moveToTitle(
+      (input) => move({ environmentId, input }),
+      saved.value,
+      current.value.title,
+      saved.value.title,
+    );
+    if (moved && note.path === selectedPath) onSelect(moved.path);
   };
   const showContextMenu = (event: MouseEvent, note: NoteSummary) => {
     const api = readLocalApi();
@@ -136,6 +182,9 @@ export function useNoteRowActions(
     actions,
     run,
     showContextMenu,
+    renaming,
+    commitRename: (note, title) => void commitRename(note, title),
+    cancelRename: () => setRenaming(null),
     dialogs: dialog ? (
       dialog.kind === "move" || dialog.kind === "delete" ? (
         <NoteFileDialog

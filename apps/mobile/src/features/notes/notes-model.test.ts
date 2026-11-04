@@ -124,7 +124,9 @@ describe("note row menu", () => {
         (action) => action.id,
       ),
     ).toEqual(["move", "delete"]);
-    expect(noteRowMenuActions({ pinned: false, card: null }, { ...all, write: false }).map((a) => a.id)).not.toContain("rename");
+    expect(
+      noteRowMenuActions({ pinned: false, card: null }, { ...all, write: false }).map((a) => a.id),
+    ).not.toContain("rename");
   });
 });
 

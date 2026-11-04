@@ -304,7 +304,10 @@ function NoteRow(props: {
         const result = await move({ environmentId, input });
         return AsyncResult.isSuccess(result)
           ? { ok: true, value: result.value }
-          : { ok: false, error: AsyncResult.isFailure(result) ? squashAtomCommandFailure(result) : result };
+          : {
+              ok: false,
+              error: AsyncResult.isFailure(result) ? squashAtomCommandFailure(result) : result,
+            };
       },
       saved.value,
       current.value.title,

@@ -7,6 +7,11 @@ import type {
   NotesUpdateInput,
   ThreadId,
 } from "@t3tools/contracts";
+import {
+  moveToTitle,
+  replaceNoteTitle,
+  titleRenameTarget,
+} from "@t3tools/client-runtime/notes/title";
 import { Link, useBlocker, useNavigate } from "@tanstack/react-router";
 import {
   ArrowLeftIcon,
@@ -37,15 +42,9 @@ import { NoteProjectMenu } from "./NoteProjectMenu";
 import { NoteConflictDialog } from "./NoteConflictDialog";
 import { NoteEditor } from "./NoteEditor";
 import { NoteFileDialog } from "./NoteFileDialog";
+import { EditableNoteTitle } from "./NoteTitle";
 import { NoteStartWorkDialog } from "./NoteStartWorkDialog";
-import {
-  isNoteDirty,
-  isNoteErrorReason,
-  noteErrorMessage,
-  NoteSession,
-  untitledRenameTarget,
-  type NoteEditState,
-} from "./noteState";
+import { isNoteDirty, noteErrorMessage, NoteSession, type NoteEditState } from "./noteState";
 import { useNoteCommand } from "./useNoteCommand";
 
 const ISSUE_REASON = {
@@ -153,6 +152,8 @@ function NoteDetail(
   // Set by the autosave: only a note this session saved is renamed, never one merely opened.
   const savedHere = useRef(false);
   const [renaming, setRenaming] = useState(false);
+  // The title before an explicit rename, so the file that carried it follows the new one.
+  const renamedFrom = useRef<string | null>(null);
   // The path our own rename moved to; leaving for it is not leaving the note.
   const movedTo = useRef<string | null>(null);
   // Tracked by path: after a rename the new path is not removed just because its row is not listed yet.
@@ -212,29 +213,28 @@ function NoteDetail(
   ]);
   const settled = !dirty && !state.saving && !state.incoming && !state.refreshing && !renaming;
   const current = state.document;
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- renames the file once, after a save gives an untitled note its title
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- renames the file once, after a save gives the note a title its file name should follow
   useEffect(() => {
     if (!savedHere.current || !settled || removed || !canWrite || !canMove) return;
-    if (untitledRenameTarget(current.path, current.title) === null) return;
+    const previous = renamedFrom.current ?? "";
+    if (titleRenameTarget(current.path, previous, current.title) === null) {
+      renamedFrom.current = null;
+      return;
+    }
     savedHere.current = false;
-    // oxlint-disable-next-line react/set-state-in-effect -- holds the autosave while the move is in flight
+    renamedFrom.current = null;
     setRenaming(true);
     void (async () => {
-      // A name taken since the list loaded fails as "exists"; step to the next suffix.
-      for (let attempt = 0; attempt < 5; attempt++) {
-        const to = untitledRenameTarget(current.path, current.title, attempt);
-        if (to === null) break;
-        const result = await moveNote({
-          environmentId,
-          input: { from: current.path, to, baseRevision: current.revision },
-        });
-        if (result.ok) {
-          session.receive(result.value);
-          movedTo.current = result.value.path;
-          props.onRenamed(result.value);
-          break;
-        }
-        if (!isNoteErrorReason(result.error, "exists")) break;
+      const moved = await moveToTitle(
+        (input) => moveNote({ environmentId, input }),
+        current,
+        previous,
+        current.title,
+      );
+      if (moved) {
+        session.receive(moved);
+        movedTo.current = moved.path;
+        props.onRenamed(moved);
       }
       setRenaming(false);
     })();
@@ -265,19 +265,23 @@ function NoteDetail(
     if (result.ok) session.receive(result.value);
     else setActionError(noteErrorMessage(result.error));
   };
-  const fileName = state.document.path.slice(state.document.path.lastIndexOf("/") + 1);
+  const renameTitle = (title: string) => {
+    renamedFrom.current = state.document.title;
+    session.rewrite(replaceNoteTitle(state.body, title));
+  };
+  const canRenameTitle = canWrite && !removed && !issue && !state.incoming && !renaming;
 
   return (
     <article className="@container/note flex min-w-0 flex-1 flex-col" aria-label="Selected note">
       <div className="border-b border-border bg-background" data-glass-layer>
         <div className="mx-auto flex h-11 w-full max-w-3xl items-center gap-2 px-3 @2xl/note:px-8">
           <BackToNotes onBack={props.onBack} />
-          <p className="min-w-0 truncate text-sm font-medium">
-            {state.document.folder ? (
-              <span className="font-normal text-muted-foreground">{state.document.folder} / </span>
-            ) : null}
-            {fileName}
-          </p>
+          <EditableNoteTitle
+            title={state.document.title}
+            folder={state.document.folder}
+            editable={canRenameTitle}
+            onCommit={renameTitle}
+          />
           {issue ? null : (
             <SaveState
               state={state}

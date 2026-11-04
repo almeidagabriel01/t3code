@@ -17,6 +17,11 @@ const { mocks, Children } = vi.hoisted(() => ({
     connected: false,
     taskIndex: 0,
     taskText: "task",
+    menus: undefined as
+      | undefined
+      | ReadonlyArray<{
+          items: ReadonlyArray<{ id: string; disabled?: boolean; onPress: () => void }>;
+        }>,
     read: vi.fn(),
     enqueue: vi.fn(),
     restore: vi.fn(),
@@ -27,15 +32,24 @@ const { mocks, Children } = vi.hoisted(() => ({
 vi.mock("react-native", () => ({
   View: Children,
   Linking: { openURL: vi.fn() },
+  Pressable: (props: { disabled?: boolean; onPress: () => void; children?: ReactNode }) => (
+    <button data-testid="title" disabled={props.disabled} onClick={props.onPress}>
+      {props.children}
+    </button>
+  ),
   TextInput: (props: {
     value: string;
     onChangeText: (value: string) => void;
-    editable: boolean;
+    editable?: boolean;
+    accessibilityLabel?: string;
+    onBlur?: () => void;
   }) => (
     <textarea
+      aria-label={props.accessibilityLabel}
       value={props.value}
-      disabled={!props.editable}
+      disabled={props.editable === false}
       onChange={(event) => props.onChangeText(event.target.value)}
+      onBlur={props.onBlur}
     />
   ),
 }));
@@ -49,7 +63,12 @@ vi.mock("@react-navigation/native", () => ({
   useNavigation: () => ({ goBack: vi.fn(), dispatch: vi.fn(), navigate: vi.fn() }),
   usePreventRemove: () => undefined,
 }));
-vi.mock("../settings/components/SettingsScreen", () => ({ SettingsScreen: Children }));
+vi.mock("../settings/components/SettingsScreen", () => ({
+  SettingsScreen: ({ children, menus }: { children?: ReactNode; menus?: typeof mocks.menus }) => {
+    mocks.menus = menus;
+    return children;
+  },
+}));
 vi.mock("../../components/FilePreviewModal", () => ({ FilePreviewModal: () => null }));
 vi.mock("../../components/ui/AppText", () => ({ AppText: Children }));
 vi.mock("../../components/ui/Dialog", () => ({ alert: vi.fn(), confirm: vi.fn() }));
@@ -300,6 +319,50 @@ describe("note editor snapshot", () => {
     expect(container.querySelector("textarea")?.value).toBe("unsaved B");
     await act(async () => button("Save").click());
     expect(mocks.enqueue).toHaveBeenCalledWith(expect.objectContaining({ body: "unsaved B" }));
+  });
+});
+
+describe("title rename", () => {
+  const titleButton = () => container.querySelector<HTMLButtonElement>('[data-testid="title"]')!;
+  const titleInput = () =>
+    container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Note title"]')!;
+  const typeTitle = (value: string) => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(
+      titleInput(),
+      value,
+    );
+    titleInput().dispatchEvent(new Event("input", { bubbles: true }));
+  };
+  const commit = () => titleInput().dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+
+  it("rewrites the first line through the outbox when the title is tapped, edited and left", async () => {
+    mocks.rows = [{ ...row(), body: "# Old\nbody" }];
+    await act(async () => render());
+    act(() => titleButton().click());
+    expect(titleInput().value).toBe("note");
+    act(() => typeTitle("New"));
+    await act(async () => commit());
+    expect(mocks.enqueue).toHaveBeenCalledWith(expect.objectContaining({ body: "# New\nbody" }));
+    expect(titleInput()).toBeNull();
+  });
+
+  it("opens from the note menu and ignores an empty or unchanged title", async () => {
+    await act(async () => render());
+    const rename = mocks.menus![0]!.items.find((item) => item.id === "rename")!;
+    expect(rename.disabled).toBe(false);
+    act(() => rename.onPress());
+    act(() => typeTitle("   "));
+    await act(async () => commit());
+    act(() => titleButton().click());
+    await act(async () => commit());
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+  });
+
+  it("cannot rename while the note is in conflict or being edited", async () => {
+    mocks.rows = [{ ...row(), state: "conflict", current: noteDocument("theirs") }];
+    await act(async () => render());
+    expect(titleButton().disabled).toBe(true);
+    expect(mocks.menus![0]!.items[0]!.disabled).toBe(true);
   });
 });
 

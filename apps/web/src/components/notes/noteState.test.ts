@@ -1,10 +1,4 @@
-import {
-  NoteConflictError,
-  NotePath,
-  type NoteDocument,
-  type NotesWriteInput,
-} from "@t3tools/contracts";
-import * as Schema from "effect/Schema";
+import { NoteConflictError, type NoteDocument, type NotesWriteInput } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
@@ -12,11 +6,8 @@ import {
   isNoteDirty,
   NoteSession,
   untitledNotePath,
-  untitledRenameTarget,
   type NoteReply,
 } from "./noteState";
-
-const isNotePathForTest = Schema.is(NotePath);
 
 const document = (body = "Original", revision = "a".repeat(64)): NoteDocument => ({
   id: null,
@@ -66,6 +57,14 @@ describe("note edit session", () => {
       body: "Second edit",
     });
     expect(isNoteDirty(session.getSnapshot())).toBe(false);
+  });
+  it("rewrite replaces the draft, reloads the editor, and marks it dirty; same body is a no-op", () => {
+    const session = new NoteSession(document(), vi.fn());
+    session.rewrite("Original");
+    expect(session.getSnapshot().editorVersion).toBe(0);
+    session.rewrite("Renamed");
+    expect(session.getSnapshot()).toMatchObject({ body: "Renamed", editorVersion: 1 });
+    expect(isNoteDirty(session.getSnapshot())).toBe(true);
   });
   it("keeps an incoming external edit separate and pauses saving until compare", async () => {
     const write = vi.fn();
@@ -341,31 +340,5 @@ describe("note list", () => {
     expect(untitledNotePath(taken, null)).toBe("Untitled 2.md");
     expect(untitledNotePath(taken, "work")).toBe("work/Untitled 3.md");
     expect(untitledNotePath(taken, "work", 1)).toBe("work/Untitled 4.md");
-  });
-});
-
-describe("untitledRenameTarget", () => {
-  it.each([
-    ["Untitled.md", "Plan", 0, "Plan.md"],
-    ["Untitled 7.md", "Plan", 0, "Plan.md"],
-    ["Untitled.md", "Plan", 1, "Plan 2.md"],
-    ["Untitled.md", "Plan", 2, "Plan 3.md"],
-    ["project/Untitled 2.md", "Plan", 0, "project/Plan.md"],
-    ["Untitled.md", "  a/b: c\\d  ", 0, "a b c d.md"],
-    ["Untitled.md", "..hidden.", 0, "hidden.md"],
-    ["Untitled.md", "e\u0301", 0, "\u00e9.md"],
-    ["Untitled.md", "x".repeat(200), 0, `${"x".repeat(80)}.md`],
-    ["Untitled.md", `${"x".repeat(79)}\u{1F600}`, 0, `${"x".repeat(79)}.md`],
-    ["Untitled.md", "", 0, null],
-    ["Untitled.md", "Untitled", 0, null],
-    ["Untitled.md", "Untitled 3", 0, null],
-    ["Untitled.md", " / : ", 0, null],
-    ["Untitled.md", "...", 0, null],
-    ["plan.md", "Other", 0, null],
-    ["Untitled notes.md", "Other", 0, null],
-    ["project/idea.md", "Other", 0, null],
-  ] as const)("%s titled %j attempt %i -> %j", (path, title, attempt, expected) => {
-    expect(untitledRenameTarget(path, title, attempt)).toBe(expected);
-    if (expected !== null) expect(isNotePathForTest(expected)).toBe(true);
   });
 });

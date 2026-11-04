@@ -2,11 +2,18 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import * as Cause from "effect/Cause";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const { mocks, Children } = vi.hoisted(() => ({
   Children: ({ children }: { children?: ReactNode }) => children,
-  mocks: { projects: [] as unknown[], notes: [] as unknown[], navigate: vi.fn() },
+  mocks: {
+    projects: [] as unknown[],
+    notes: [] as unknown[],
+    navigate: vi.fn(),
+    canAct: false,
+    commands: new Map<unknown, ReturnType<typeof vi.fn>>(),
+  },
 }));
 
 vi.mock("react-native", () => ({
@@ -70,15 +77,19 @@ vi.mock("../../components/ui/ScreenScrollView", () => ({ ScreenScrollView: Child
 vi.mock("../settings/components/SettingsScreen", () => ({ SettingsScreen: Children }));
 vi.mock("../../state/entities", () => ({ useProjects: () => mocks.projects }));
 vi.mock("../../state/workspace", () => ({ useWorkspaceEnvironments: () => [] }));
-vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
+vi.mock("../../state/use-atom-command", () => ({
+  useAtomCommand: (command: unknown) => mocks.commands.get(command) ?? vi.fn(),
+}));
 vi.mock("../../state/notes", () => {
-  const permission = { permissionAtom: () => "perm" };
+  const permission = () => ({ permissionAtom: () => "perm" });
   return {
     notesEnvironment: {
-      update: permission,
-      move: permission,
-      delete: permission,
-      startWork: permission,
+      update: permission(),
+      move: permission(),
+      delete: permission(),
+      startWork: permission(),
+      read: permission(),
+      write: permission(),
     },
     useNotesEnvironmentIds: () => ["env"],
     useNotesFeed: () =>
@@ -92,7 +103,7 @@ vi.mock("../../state/notes", () => {
 });
 vi.mock("./notes-state", () => ({
   notesCommandOptions: {},
-  useNoteDraftAccess: () => ({ canEdit: true, canAct: false, connected: true }),
+  useNoteDraftAccess: () => ({ canEdit: true, canAct: mocks.canAct, connected: true }),
   useNotesOutbox: () => [],
 }));
 
@@ -121,6 +132,8 @@ let host: HTMLElement;
 beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   mocks.navigate.mockReset();
+  mocks.canAct = false;
+  mocks.commands.clear();
   mocks.projects = [
     project("p1", "app", "/work/a/app"),
     project("p2", "app", "/work/b/app"),
@@ -183,6 +196,76 @@ describe("NotesRouteScreen", () => {
     expect(mocks.navigate).toHaveBeenCalledWith("SettingsNote", {
       environmentId,
       path: expect.stringMatching(/\.md$/),
+    });
+  });
+
+  describe("row rename", () => {
+    const arrange = async () => {
+      const { notesEnvironment } = await import("../../state/notes");
+      const Dialog = await import("../../components/ui/Dialog");
+      const read = vi
+        .fn()
+        .mockResolvedValue(
+          AsyncResult.success({ ...note("one.md", "one", "p1"), body: "# one\nbody" }),
+        );
+      const write = vi
+        .fn()
+        .mockResolvedValue(
+          AsyncResult.success({ ...note("one.md", "Plan", "p1"), revision: "r3" }),
+        );
+      const move = vi
+        .fn()
+        .mockResolvedValue(AsyncResult.success({ ...note("Plan.md", "Plan", "p1") }));
+      mocks.commands.set(notesEnvironment.read, read);
+      mocks.commands.set(notesEnvironment.write, write);
+      mocks.commands.set(notesEnvironment.move, move);
+      mocks.canAct = true;
+      await mount();
+      const prompt = vi.mocked(Dialog.prompt);
+      prompt.mockReset();
+      await choose("Rename");
+      return { read, write, move, prompt, alert: vi.mocked(Dialog.alert) };
+    };
+
+    it("rewrites the first line from the latest body and moves the file after its title", async () => {
+      const { read, write, move, prompt } = await arrange();
+      const options = prompt.mock.calls[0]![0];
+      expect(options.initialValue).toBe("Groceries");
+      await act(async () => options.onConfirm("Plan"));
+      expect(read).toHaveBeenCalledWith({ environmentId, input: { path: "one.md" } });
+      expect(write).toHaveBeenCalledWith({
+        environmentId,
+        input: { path: "one.md", body: "# Plan\nbody", baseRevision: "r" },
+      });
+      expect(move).toHaveBeenCalledWith({
+        environmentId,
+        input: { from: "one.md", to: "Plan.md", baseRevision: "r3" },
+      });
+    });
+
+    it("ignores an empty or unchanged title", async () => {
+      const { read, prompt } = await arrange();
+      await act(async () => prompt.mock.calls[0]![0].onConfirm("   "));
+      await act(async () => prompt.mock.calls[0]![0].onConfirm("Groceries"));
+      expect(read).not.toHaveBeenCalled();
+    });
+
+    it("alerts when the read or the write fails, and leaves the file alone", async () => {
+      const { read, write, move, prompt, alert } = await arrange();
+      read.mockResolvedValueOnce(AsyncResult.failure(Cause.fail(new Error("offline"))));
+      await act(async () => prompt.mock.calls[0]![0].onConfirm("Plan"));
+      write.mockResolvedValueOnce(AsyncResult.failure(Cause.fail(new Error("conflict"))));
+      await act(async () => prompt.mock.calls[0]![0].onConfirm("Plan"));
+      expect(alert).toHaveBeenCalledTimes(2);
+      expect(move).not.toHaveBeenCalled();
+    });
+
+    it("keeps the file name when the move is refused", async () => {
+      const { move, prompt, alert } = await arrange();
+      move.mockResolvedValue(AsyncResult.failure(Cause.fail(new Error("denied"))));
+      await act(async () => prompt.mock.calls[0]![0].onConfirm("Plan"));
+      expect(move).toHaveBeenCalledOnce();
+      expect(alert).not.toHaveBeenCalled();
     });
   });
 });

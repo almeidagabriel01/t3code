@@ -287,6 +287,10 @@
       "types": "./src/notes/search.ts",
       "default": "./src/notes/search.ts"
     },
+    "./notes/title": {
+      "types": "./src/notes/title.ts",
+      "default": "./src/notes/title.ts"
+    },
     "./notes/work": {
       "types": "./src/notes/work.ts",
       "default": "./src/notes/work.ts"

@@ -19,7 +19,7 @@ import {
 export { SettingsScreenContent };
 
 export function SettingsScreen(
-  props: Pick<AppBarProps, "title" | "actions" | "trailing" | "search"> & {
+  props: Pick<AppBarProps, "title" | "actions" | "menus" | "trailing" | "search"> & {
     readonly children: ReactNode;
     readonly formSheet?: boolean;
     readonly workspaceRoot?: boolean;
@@ -56,6 +56,7 @@ export function SettingsScreen(
         <AppBar
           title={props.title}
           actions={props.actions}
+          menus={props.menus}
           search={props.search}
           trailing={Platform.OS === "android" ? props.trailing : undefined}
           sidebar={false}

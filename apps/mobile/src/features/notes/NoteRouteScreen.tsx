@@ -4,11 +4,12 @@ import {
   attachmentImageMarkdown,
   parseAttachmentImageSrc,
 } from "@t3tools/shared/attachmentImageRefs";
+import { replaceNoteTitle } from "@t3tools/client-runtime/notes/title";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
-import { Linking, TextInput as RNTextInput, View } from "react-native";
+import { Linking, Pressable, TextInput as RNTextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
@@ -73,6 +74,8 @@ function NoteContent(props: NoteParams) {
   // An acknowledgement can remove the outbox row while this editor still owns newer text.
   const [hasSnapshot, setHasSnapshot] = useState(Boolean(row) || Boolean(props.create));
   const [editing, setEditing] = useState(Boolean(props.create));
+  const [renamingTitle, setRenamingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState("");
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -266,6 +269,19 @@ function NoteContent(props: NoteParams) {
   const project = latest ? (latest.project ?? null) : (note?.project ?? null);
   const card = latest ? latest.card : (note?.card ?? null);
   const bodyAvailable = hasSnapshot || note !== null || row !== undefined;
+  const title =
+    note?.title ?? latest?.title ?? props.path.split("/").at(-1)!.slice(0, -".md".length);
+  const canRenameTitle =
+    canEdit && restored && bodyAvailable && !saving && !uploading && !editing && !conflicted;
+  const startRename = () => {
+    setTitleDraft(title);
+    setRenamingTitle(true);
+  };
+  const commitTitle = () => {
+    setRenamingTitle(false);
+    const next = titleDraft.trim();
+    if (next.length > 0 && next !== title) void save(replaceNoteTitle(localBody.current, next));
+  };
   const status = saving
     ? "Saving on this device…"
     : uploading
@@ -287,7 +303,22 @@ function NoteContent(props: NoteParams) {
 
   return (
     <SettingsScreen
-      title={note?.title ?? latest?.title ?? props.path.split("/").at(-1)!.slice(0, -".md".length)}
+      title={title}
+      menus={[
+        {
+          title: "Note actions",
+          icon: "ellipsis",
+          items: [
+            {
+              id: "rename",
+              title: "Rename",
+              icon: "pencil",
+              disabled: !canRenameTitle,
+              onPress: startRename,
+            },
+          ],
+        },
+      ]}
       actions={[
         {
           accessibilityLabel: pinned ? "Unpin note" : "Pin note",
@@ -305,6 +336,31 @@ function NoteContent(props: NoteParams) {
         contentContainerClassName="gap-4 p-5"
         contentContainerStyle={{ paddingBottom: insets.bottom + 24 }}
       >
+        {renamingTitle ? (
+          <RNTextInput
+            accessibilityLabel="Note title"
+            autoFocus
+            selectTextOnFocus
+            returnKeyType="done"
+            value={titleDraft}
+            onChangeText={setTitleDraft}
+            onSubmitEditing={commitTitle}
+            onBlur={commitTitle}
+            className="rounded-xl bg-grouped-card px-4 py-3 font-sans text-xl font-semibold text-foreground"
+          />
+        ) : (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Rename ${title}`}
+            accessibilityHint="Edits the note title"
+            disabled={!canRenameTitle}
+            onPress={startRename}
+          >
+            <Text textRole="title" className="text-foreground">
+              {title}
+            </Text>
+          </Pressable>
+        )}
         <View className="gap-1">
           <Text textRole="footnote" className="text-foreground-muted">
             {props.path}

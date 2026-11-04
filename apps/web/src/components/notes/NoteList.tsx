@@ -11,6 +11,7 @@ import { Kbd } from "../ui/kbd";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { NoteRowMenu, useNoteRowActions, type NoteRowActions } from "./NoteRowMenu";
 import { filterNotes } from "@t3tools/client-runtime/notes/search";
+import { NoteTitleInput } from "./NoteTitle";
 import { groupNotes, openablePath } from "./noteState";
 
 function NoteRow(props: {
@@ -24,6 +25,19 @@ function NoteRow(props: {
   onKeyDown: (event: KeyboardEvent<HTMLButtonElement>) => void;
 }) {
   const { note } = props;
+  if (props.rows.renaming === note.path)
+    return (
+      <li className="py-0.5">
+        <div className="rounded-lg border border-primary/60 bg-primary/12 px-2 py-1.5">
+          <NoteTitleInput
+            title={note.title}
+            label={`Rename ${note.title}`}
+            onCommit={(title) => props.rows.commitRename(note, title)}
+            onCancel={props.rows.cancelRename}
+          />
+        </div>
+      </li>
+    );
   return (
     <li className="group/row relative py-0.5">
       <button

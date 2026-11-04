@@ -134,7 +134,9 @@ describe("NoteList row menu", () => {
     mocks.read.mockReset();
     await using _screen = await render(list(), { router: false });
     await userEvent.click(page.getByRole("button", { name: "Actions for Plan" }));
-    await expect.element(page.getByRole("menuitem", { name: "Move or rename file…" })).toBeVisible();
+    await expect
+      .element(page.getByRole("menuitem", { name: "Move or rename file…" }))
+      .toBeVisible();
     await userEvent.click(page.getByRole("menuitem", { name: "Rename", exact: true }));
     await userEvent.fill(page.getByRole("textbox", { name: "Rename Plan" }), "Other");
     await userEvent.keyboard("{Escape}");
@@ -147,7 +149,10 @@ describe("NoteList row menu", () => {
     [
       "the note changed underneath",
       () => {
-        mocks.read.mockResolvedValue({ ok: true, value: { ...note, body: "Plan", revision: "r2" } });
+        mocks.read.mockResolvedValue({
+          ok: true,
+          value: { ...note, body: "Plan", revision: "r2" },
+        });
         mocks.write.mockResolvedValue({ ok: false, error: new Error("Changed elsewhere") });
       },
     ],
