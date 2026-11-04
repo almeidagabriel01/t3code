@@ -343,6 +343,10 @@
       "types": "./src/nodeRuntime.ts",
       "import": "./src/nodeRuntime.ts"
     },
+    "./ProcessOwners": {
+      "types": "./src/ProcessOwners.ts",
+      "import": "./src/ProcessOwners.ts"
+    },
     "./AgentScope": {
       "types": "./src/AgentScope.ts",
       "import": "./src/AgentScope.ts"

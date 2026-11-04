@@ -14,6 +14,8 @@ import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
+import { ProcessOwners } from "@t3tools/shared/ProcessOwners";
+import * as ProcessOwnersLive from "../process/processOwners.ts";
 import * as DesktopTelemetryReceiver from "./DesktopTelemetryReceiver.ts";
 import * as NativeTelemetryClient from "./NativeTelemetryClient.ts";
 import * as ResourceAttribution from "./ResourceAttribution.ts";
@@ -269,6 +271,39 @@ describe("ResourceTelemetry", () => {
         expect(snapshot.groups.electron.processStarts).toBe(1);
         expect(snapshot.groups.backend.processStarts).toBe(3);
       }),
+  );
+
+  it.effect("reports registered owners that are in the process table and forgets the rest", () =>
+    Effect.gen(function* () {
+      const sampledAtUnixMs = DateTime.toEpochMillis(yield* DateTime.now);
+      const sample = nativeSnapshot({
+        sequence: 1,
+        sampledAtUnixMs,
+        childCpuTimeMs: 100,
+        childWriteBytes: 1_000,
+      });
+      const layerNative = NativeTelemetryClient.layerTest({
+        sampleNow: Effect.succeed(nativeGeneration(sample, 0)),
+      });
+      const layerTelemetry = ResourceTelemetry.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            layerNative,
+            DesktopTelemetryReceiver.layerTest(),
+            ResourceAttribution.layer,
+          ),
+        ),
+        Layer.provideMerge(ProcessOwnersLive.layer),
+      );
+      yield* Effect.gen(function* () {
+        const owners = yield* ProcessOwners;
+        yield* owners.register({ kind: "agent", pid: CODEX_PID, threadId: "thread-1" });
+        yield* owners.register({ kind: "device-hub", pid: SERVER_PID + 99 });
+        const telemetry = yield* ResourceTelemetry.ResourceTelemetry;
+        const snapshot = yield* telemetry.refresh;
+        expect(snapshot.owners).toEqual([{ kind: "agent", pid: CODEX_PID, threadId: "thread-1" }]);
+      }).pipe(Effect.provide(layerTelemetry));
+    }),
   );
 
   it.effect("rejects buffered snapshots from an earlier sidecar generation", () =>

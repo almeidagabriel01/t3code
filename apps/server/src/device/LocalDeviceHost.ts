@@ -1,4 +1,5 @@
 import { pruneLocalDeviceTools } from "./deviceToolMaintenance.ts";
+import { registerOwner } from "@t3tools/shared/ProcessOwners";
 import { deviceToolInstallMessage } from "@t3tools/contracts";
 // The hub runs at origin root; T3 strips its prefix and the Device panel derives stream URLs from it.
 import {
@@ -451,6 +452,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
               }),
           ),
         );
+      yield* registerOwner({ kind: "device-hub", pid: child.pid });
       const startedAtMillis = yield* Clock.currentTimeMillis;
       const hub: HubProcess = { child, scope, origin, startedAtMillis, nodePath };
       yield* Effect.forkIn(observeHubOutput(hub), scope);

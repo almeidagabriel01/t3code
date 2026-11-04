@@ -1,4 +1,5 @@
 import * as DocumentText from "../../provider/DocumentText.ts";
+import { ProcessOwners } from "@t3tools/shared/ProcessOwners";
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
 import { claudeTaskOutputRoot, tailClaudeTaskOutput } from "./ClaudeTaskOutputTail.ts";
 import {
@@ -1035,9 +1036,17 @@ export const layerQueryRunner: Layer.Layer<
           let spawnedProcess: ClaudeSpawnedProcess | undefined;
           let processExited = false;
           let processExit: Promise<void> | undefined;
+          const processOwners = yield* ProcessOwners;
           const spawnClaudeCodeProcess = (spawnOptions: ClaudeSpawnOptions) => {
             const child = spawnProcess(spawnOptions);
             spawnedProcess = child;
+            // The SDK's process type omits `pid`; the Node child behind it has one.
+            const childPid = (child as { readonly pid?: number }).pid;
+            if (childPid !== undefined) {
+              void runFork(
+                processOwners.register({ kind: "agent", pid: childPid, threadId: input.threadId }),
+              );
+            }
             // A spawn that fails emits only "error".
             const releaseAgent = portDiscovery.trackAgent();
             child.once("exit", releaseAgent);

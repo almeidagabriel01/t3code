@@ -439,10 +439,22 @@ export const ResourceAttributionSnapshot = Schema.Struct({
 });
 export type ResourceAttributionSnapshot = typeof ResourceAttributionSnapshot.Type;
 
+/** A root process T3 started for an agent conversation or the device hub; clients walk `childPids` from it. */
+export const ResourceTelemetryOwner = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("agent"),
+    pid: PositiveInt,
+    threadId: TrimmedNonEmptyString,
+  }),
+  Schema.Struct({ kind: Schema.Literal("device-hub"), pid: PositiveInt }),
+]);
+export type ResourceTelemetryOwner = typeof ResourceTelemetryOwner.Type;
+
 export const ResourceTelemetrySnapshot = Schema.Struct({
   readAt: Schema.DateTimeUtc,
   sampleIntervalMs: NonNegativeInt,
   processes: Schema.Array(ResourceTelemetryProcess),
+  owners: Schema.optionalKey(Schema.Array(ResourceTelemetryOwner)),
   groups: ResourceTelemetryGroups,
   power: HostPowerSnapshot,
   speedLimitPercent: Schema.Option(Schema.Number),

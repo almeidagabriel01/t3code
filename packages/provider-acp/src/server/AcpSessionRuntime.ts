@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import { registerOwner } from "@t3tools/shared/ProcessOwners";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
@@ -1460,6 +1461,11 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
           }),
       ),
     );
+
+  const ownerThreadId = yield* AgentScopeThreadId;
+  if (ownerThreadId !== undefined) {
+    yield* registerOwner({ kind: "agent", pid: child.pid, threadId: ownerThreadId });
+  }
 
   // Detached children can keep stdout open, delaying protocol termination.
   if (scopeUnit !== undefined) {

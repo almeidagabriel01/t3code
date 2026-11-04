@@ -1,4 +1,5 @@
 import { pipe } from "effect/Function";
+import { registerOwner } from "@t3tools/shared/ProcessOwners";
 import * as DocumentText from "../../provider/DocumentText.ts";
 import { revertCodexThread } from "../../provider/CodexThreadRevert.ts";
 import { historyResponseItems } from "@t3tools/provider-core/server/handoffBudget";
@@ -1548,6 +1549,7 @@ export const layerAppServerClientFactory: Layer.Layer<
               }),
           ),
         );
+        yield* registerOwner({ kind: "agent", pid: handle.pid, threadId: input.threadId });
         const protocolLogger = makeCodexAppServerProtocolLogger({
           nativeEventLogger,
           threadId: input.threadId,

@@ -7,6 +7,7 @@ import type {
   ResourceTelemetryRetryResult,
   ResourceTelemetrySnapshot,
 } from "@t3tools/contracts";
+import { ProcessOwners } from "@t3tools/shared/ProcessOwners";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -30,6 +31,7 @@ import {
 } from "./Model.ts";
 import * as NativeTelemetryClient from "./NativeTelemetryClient.ts";
 import * as ResourceAttribution from "./ResourceAttribution.ts";
+import { liveOwners } from "./Owners.ts";
 import {
   buildResourceTelemetryHistory,
   normalizeResourceTelemetryHistoryInput,
@@ -143,6 +145,7 @@ export const make = Effect.fn("resourceTelemetry.resourceTelemetry.make")(functi
   const nativeClient = yield* NativeTelemetryClient.NativeTelemetryClient;
   const desktopReceiver = yield* DesktopTelemetryReceiver.DesktopTelemetryReceiver;
   const attribution = yield* ResourceAttribution.ResourceAttribution;
+  const processOwners = yield* ProcessOwners;
   const mutex = yield* Semaphore.make(1);
   const changes = yield* PubSub.sliding<ResourceTelemetrySnapshot>(8);
   const initialReadAt = yield* DateTime.now;
@@ -290,10 +293,18 @@ export const make = Effect.fn("resourceTelemetry.resourceTelemetry.make")(functi
           updatePrevious: input.updatePrevious,
         });
         const readAt = DateTime.makeUnsafe(merged.sampledAtMs);
+        const owners = liveOwners(yield* processOwners.list, merged.processes);
+        // Before the first native sample the table is empty, which would forget every owner.
+        if (Option.isSome(nativeSnapshot)) {
+          yield* processOwners.retain(
+            new Set(merged.processes.map((process) => process.identity.pid)),
+          );
+        }
         const snapshot: ResourceTelemetrySnapshot = {
           readAt,
           sampleIntervalMs: nativeHealth.sampleIntervalMs,
           processes: merged.processes,
+          owners,
           groups: merged.groups,
           power: Option.match(desktopSnapshot, {
             onNone: () => unknownPower(readAt),
