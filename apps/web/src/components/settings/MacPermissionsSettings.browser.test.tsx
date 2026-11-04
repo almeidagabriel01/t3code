@@ -52,17 +52,29 @@ async function openPanel() {
 it("shows each permission, opens its System Settings pane and checks again", async () => {
   using _environment = installFakeEnvironment([threadWithHistory("thread-a", 2)], { mac: true });
   fakeMacPermissions.opened = [];
+  fakeMacPermissions.reads = [];
+  fakeMacPermissions.permissions = { ...fakeMacPermissions.permissions, automation: "denied" };
   await using _screen = await openPanel();
 
   await expect.element(page.getByText("Screen Recording")).toBeVisible();
   await expect.element(page.getByText("Granted")).toBeVisible();
-  await expect.element(page.getByText("Not granted")).toBeVisible();
-  await expect.element(page.getByText("Unknown")).toBeVisible();
+  await expect.element(page.getByText("Not granted").first()).toBeVisible();
+  // Opening the page never reads Automation, which can make macOS prompt.
+  await expect.element(page.getByText("Not checked")).toBeVisible();
+  expect(fakeMacPermissions.reads).toEqual([false]);
 
   await userEvent.click(page.getByRole("button", { name: "Open System Settings" }).nth(1));
   await vi.waitFor(() => expect(fakeMacPermissions.opened).toEqual(["accessibility"]));
 
-  fakeMacPermissions.permissions = { ...fakeMacPermissions.permissions, accessibility: "granted" };
+  await userEvent.click(page.getByRole("button", { name: "Check again" }));
+  await expect.element(page.getByText("Not checked")).not.toBeInTheDocument();
+  expect(fakeMacPermissions.reads.at(-1)).toBe(true);
+
+  fakeMacPermissions.permissions = {
+    ...fakeMacPermissions.permissions,
+    accessibility: "granted",
+    automation: "granted",
+  };
   await userEvent.click(page.getByRole("button", { name: "Check again" }));
   await expect.element(page.getByText("Not granted")).not.toBeInTheDocument();
 });

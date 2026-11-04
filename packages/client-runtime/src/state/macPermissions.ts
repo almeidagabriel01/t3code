@@ -26,9 +26,16 @@ export const MAC_PERMISSION_ROWS: ReadonlyArray<MacPermissionRow> = [
     pane: "automation",
     label: "Automation",
     description:
-      "Lets agents type and press keys through System Events, once you approve each one.",
+      "Lets agents type and press keys through System Events, once you approve each one. Checked when you press Check again, since macOS may ask.",
   },
 ];
 
-export const macPermissionStatusLabel = (status: MacPermissionStatus): string =>
-  status === "granted" ? "Granted" : status === "denied" ? "Not granted" : "Unknown";
+/** `checked` is false for a status that was deliberately not read, such as Automation before Check again. */
+export const macPermissionStatusLabel = (status: MacPermissionStatus, checked = true): string =>
+  !checked
+    ? "Not checked"
+    : status === "granted"
+      ? "Granted"
+      : status === "denied"
+        ? "Not granted"
+        : "Unknown";

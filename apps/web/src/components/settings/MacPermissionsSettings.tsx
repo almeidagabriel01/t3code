@@ -5,7 +5,7 @@ import {
 } from "@t3tools/client-runtime/state/mac-permissions";
 import type { EnvironmentId, MacPermissionPane, MacPermissionStatus } from "@t3tools/contracts";
 import { AccessibilityIcon, MonitorIcon, WorkflowIcon } from "lucide-react";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { useEnvironmentQuery } from "../../state/query";
@@ -41,7 +41,11 @@ function useMacEnvironmentId(): EnvironmentId | null {
 }
 
 function MacPermissionsSections({ environmentId }: { readonly environmentId: EnvironmentId }) {
-  const query = useEnvironmentQuery(serverEnvironment.macPermissions({ environmentId, input: {} }));
+  // Reading Automation can make macOS prompt, so only Check again reads it, never opening the page.
+  const [automationChecked, setAutomationChecked] = useState(false);
+  const query = useEnvironmentQuery(
+    serverEnvironment.macPermissions({ environmentId, input: { automation: automationChecked } }),
+  );
   const canOpen = useAtomValue(serverEnvironment.openMacSettings.permissionAtom(environmentId));
   const openSettings = useAtomCommand(serverEnvironment.openMacSettings);
   const permissions = query.data;
@@ -49,7 +53,12 @@ function MacPermissionsSections({ environmentId }: { readonly environmentId: Env
     <SettingsSection
       title="Mac permissions"
       headerAction={
-        <Button variant="outline" size="compact" disabled={query.isPending} onClick={query.refresh}>
+        <Button
+          variant="outline"
+          size="compact"
+          disabled={query.isPending}
+          onClick={automationChecked ? query.refresh : () => setAutomationChecked(true)}
+        >
           {query.isPending ? "Checking..." : "Check again"}
         </Button>
       }
@@ -71,7 +80,10 @@ function MacPermissionsSections({ environmentId }: { readonly environmentId: Env
             description={row.description}
             status={
               <Badge variant={STATUS_VARIANTS[permissions[row.key]]}>
-                {macPermissionStatusLabel(permissions[row.key])}
+                {macPermissionStatusLabel(
+                  permissions[row.key],
+                  row.key !== "automation" || automationChecked,
+                )}
               </Badge>
             }
             control={

@@ -12,6 +12,7 @@ const { mocks, Children } = vi.hoisted(() => ({
     can: true,
     refresh: vi.fn(),
     open: vi.fn(),
+    asked: [] as unknown[],
   },
 }));
 vi.mock("react-native", () => ({ View: Children }));
@@ -66,7 +67,10 @@ vi.mock("../../state/query", () => ({
 }));
 vi.mock("../../state/server", () => ({
   serverEnvironment: {
-    macPermissions: () => "permissions-atom",
+    macPermissions: (request: unknown) => {
+      mocks.asked.push(request);
+      return "permissions-atom";
+    },
     openMacSettings: { permissionAtom: () => "permission-atom" },
   },
 }));
@@ -96,15 +100,21 @@ beforeEach(() => {
   mocks.can = true;
   mocks.refresh.mockReset();
   mocks.open.mockReset();
+  mocks.asked = [];
 });
 afterEach(() => act(() => root.unmount()));
 
 describe("Mac permissions settings", () => {
   it("shows each permission's status, checks again and opens the matching pane", async () => {
     render();
-    for (const text of ["Screen Recording", "Granted", "Not granted", "Unknown"]) {
+    for (const text of ["Screen Recording", "Granted", "Not granted", "Not checked"]) {
       expect(container.textContent).toContain(text);
     }
+    // Opening the page never reads Automation; the first Check again does, the next only refreshes.
+    expect(mocks.asked.every((ask) => (ask as any).input.automation === false)).toBe(true);
+    await act(async () => button("Check again")!.click());
+    expect((mocks.asked.at(-1) as any).input.automation).toBe(true);
+    expect(container.textContent).toContain("Unknown");
     await act(async () => button("Check again")!.click());
     expect(mocks.refresh).toHaveBeenCalledOnce();
     await act(async () => button("Open Accessibility settings")!.click());

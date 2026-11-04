@@ -4,6 +4,7 @@ import {
   macPermissionStatusLabel,
 } from "@t3tools/client-runtime/state/mac-permissions";
 import type { EnvironmentId, MacPermissionPane } from "@t3tools/contracts";
+import { useState } from "react";
 import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -29,7 +30,11 @@ const PANE_ICONS: Record<MacPermissionPane, AppSymbolName> = {
 
 function MacEnvironment(props: { readonly environmentId: EnvironmentId; readonly title?: string }) {
   const { environmentId } = props;
-  const query = useEnvironmentQuery(serverEnvironment.macPermissions({ environmentId, input: {} }));
+  // Reading Automation can make macOS prompt, so only Check again reads it, never opening the page.
+  const [automationChecked, setAutomationChecked] = useState(false);
+  const query = useEnvironmentQuery(
+    serverEnvironment.macPermissions({ environmentId, input: { automation: automationChecked } }),
+  );
   const canOpen = useAtomValue(serverEnvironment.openMacSettings.permissionAtom(environmentId));
   const openSettings = useAtomCommand(serverEnvironment.openMacSettings);
   const permissions = query.data;
@@ -50,7 +55,10 @@ function MacEnvironment(props: { readonly environmentId: EnvironmentId; readonly
               icon={PANE_ICONS[row.pane]}
               label={row.label}
               description={row.description}
-              detail={macPermissionStatusLabel(permissions[row.key])}
+              detail={macPermissionStatusLabel(
+                permissions[row.key],
+                row.key !== "automation" || automationChecked,
+              )}
             />
           ))
         )}
@@ -58,7 +66,7 @@ function MacEnvironment(props: { readonly environmentId: EnvironmentId; readonly
           icon="arrow.clockwise"
           label="Check again"
           disabled={query.isPending}
-          onPress={query.refresh}
+          onPress={automationChecked ? query.refresh : () => setAutomationChecked(true)}
         />
       </ListSection>
       <ListSection title={`Open on the Mac${suffix}`}>

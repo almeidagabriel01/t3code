@@ -686,6 +686,8 @@ handlers[WS_METHODS.serverForkUpdateStatus] = () => Effect.sync(() => fakeForkUp
 export const fakeMacPermissions: {
   permissions: MacPermissions;
   opened: Array<string>;
+  /** Whether each status read asked for Automation. */
+  reads: Array<boolean>;
 } = {
   permissions: {
     supported: true,
@@ -694,9 +696,14 @@ export const fakeMacPermissions: {
     automation: "unknown",
   },
   opened: [],
+  reads: [],
 };
-handlers[WS_METHODS.computerUsePermissions] = () =>
-  Effect.sync(() => fakeMacPermissions.permissions);
+handlers[WS_METHODS.computerUsePermissions] = (input: { readonly automation?: boolean }) =>
+  Effect.sync(() => {
+    fakeMacPermissions.reads.push(input.automation === true);
+    const { permissions } = fakeMacPermissions;
+    return input.automation === true ? permissions : { ...permissions, automation: "unknown" };
+  });
 handlers[WS_METHODS.computerUseOpenSettings] = (input: { readonly pane: string }) =>
   Effect.sync(() => {
     fakeMacPermissions.opened.push(input.pane);
