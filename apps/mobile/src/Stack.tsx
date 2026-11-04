@@ -136,6 +136,7 @@ import { NotesRouteScreen } from "./features/notes/NotesRouteScreen";
 import { AssistantEditRouteScreen } from "./features/assistants/AssistantEditRouteScreen";
 import { AssistantModelPickerRouteScreen } from "./features/assistants/AssistantModelPickerRouteScreen";
 import { SettingsAssistantsRouteScreen } from "./features/assistants/SettingsAssistantsRouteScreen";
+import { SettingsMacPermissionsRouteScreen } from "./features/settings/SettingsMacPermissionsRouteScreen";
 import { SettingsImessageRouteScreen } from "./features/imessage/SettingsImessageRouteScreen";
 import { SettingsTelegramRouteScreen } from "./features/telegram/SettingsTelegramRouteScreen";
 import { SettingsMemoryRouteScreen } from "./features/settings/SettingsMemoryRouteScreen";
@@ -447,6 +448,11 @@ const SETTINGS_SCREENS = {
     screen: SettingsTelegramRouteScreen,
     linking: "settings/telegram",
     options: { ...SETTINGS_PAGE_OPTIONS, title: "Telegram" },
+  }),
+  SettingsMacPermissions: createNativeStackScreen({
+    screen: SettingsMacPermissionsRouteScreen,
+    linking: "settings/mac-permissions",
+    options: { ...SETTINGS_PAGE_OPTIONS, title: "Mac permissions" },
   }),
   SettingsAssistants: createNativeStackScreen({
     screen: SettingsAssistantsRouteScreen,

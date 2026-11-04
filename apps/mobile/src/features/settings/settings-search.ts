@@ -80,6 +80,16 @@ const SETTINGS_SEARCH_TERMS = {
     "emails",
   ],
   SettingsTelegram: ["telegram", "bot", "botfather", "token", "user id", "assistants", "chat"],
+  SettingsMacPermissions: [
+    "mac permissions",
+    "computer use",
+    "screen recording",
+    "accessibility",
+    "automation",
+    "screenshot",
+    "click",
+    "privacy",
+  ],
   SettingsNotes: ["notes", "markdown", "ideas", "capture", "start work"],
   SettingsArchive: ["archive", "archived", "restore", "unarchive"],
   SettingsProviderAccounts: [

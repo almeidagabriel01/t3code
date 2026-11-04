@@ -19,6 +19,7 @@ const reactTests = [
   "src/features/threads/useThreadMenu.test.tsx",
   "src/features/kanban/KanbanCardRouteScreen.test.tsx",
   "src/features/notes/NotesRouteScreen.test.tsx",
+  "src/features/settings/SettingsMacPermissionsRouteScreen.test.tsx",
   "src/features/kanban/KanbanAddAttachmentButton.test.tsx",
   "src/features/workspace/workspace-tabs-state.test.ts",
   "src/state/use-thread-pr.demand.test.tsx",
