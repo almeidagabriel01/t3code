@@ -267,6 +267,9 @@ function codexTurnId(metadata: unknown): string | null {
   return decoded.value.turn_id;
 }
 
+const CLAUDE_COMPACTION_PROMPT_PREFIX =
+  "Below is a conversation log from a Claude Code coding session";
+
 function isHiddenClaudeRecord(record: DecodedTranscriptRecord): boolean {
   return record.isSidechain === true || record.isMeta === true || record.isCompactSummary === true;
 }
@@ -568,6 +571,13 @@ function parseAgentSessionRecords(
     ({ codexResponseUser: _codexResponseUser, ...message }) => message,
   );
   if (providerSessionId.trim().length === 0 || firstUserMessage === undefined) return null;
+  // Claude Code's own compaction run is a session of its own; it carries no marker but this prompt.
+  if (
+    input.source === "claudeAgent" &&
+    firstUserMessage.text.startsWith(CLAUDE_COMPACTION_PROMPT_PREFIX)
+  ) {
+    return null;
+  }
   const firstUserMessageRetained = messages.includes(firstUserMessage);
   const { codexResponseUser: _codexResponseUser, ...visibleFirstUserMessage } = firstUserMessage;
   const retainedMessages = firstUserMessageRetained
@@ -1564,6 +1574,7 @@ export const make = Effect.gen(function* () {
       (source) => `${source.providerInstanceId}\0${source.filePath}`,
     );
     const importedSessions = new Set<string>();
+    const seenFiles = new Set<string>();
     const codexThreadNamesByHome = new Map<string, ReadonlyMap<string, string>>();
     let bytesRemaining = MAX_IMPORT_BYTES;
     let transcriptsRemaining = MAX_IMPORT_TRANSCRIPTS;
@@ -1585,6 +1596,12 @@ export const make = Effect.gen(function* () {
             return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
           }
           const identity = transcriptIdentity(transcript.filePath, stats.value);
+          // Instances whose homes alias the same files (symlinked projects dir) see one transcript.
+          if (identity.inode !== null) {
+            const fileKey = `${candidate.source}\0${identity.device}\0${identity.inode}`;
+            if (seenFiles.has(fileKey)) return Option.none<AgentSessionRecentThread>();
+            seenFiles.add(fileKey);
+          }
           const completedSource = completed?.find(
             (source) =>
               source.provider === candidate.source && sameTranscriptIdentity(source, identity),

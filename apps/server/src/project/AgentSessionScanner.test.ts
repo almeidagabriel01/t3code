@@ -1804,6 +1804,53 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         expect(threads.map((thread) => thread.providerInstanceId)).toEqual(["codex-work"]);
       }),
     );
+
+    it.effect.skipIf(!symlinksSupported)(
+      "imports one transcript once when two instances' project dirs are the same files",
+      () =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+          yield* TestClock.setTime(nowMs);
+          const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+          const aliasHome = yield* makeTempDir("t3code-claude-alias-");
+          const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+          const workspace = yield* makeTempDir("t3code-workspace-");
+          const sessionId = "11111111-1111-4111-8111-111111111111";
+          yield* writeTranscript({
+            filePath: path.join(claudeHomePath, "projects", "-slug", `${sessionId}.jsonl`),
+            contents: [
+              JSON.stringify({
+                type: "user",
+                cwd: workspace,
+                sessionId,
+                message: { role: "user", content: "Hello" },
+              }),
+              JSON.stringify({ type: "assistant", message: { role: "assistant", content: "Hi" } }),
+            ].join("\n"),
+            mtimeMs: nowMs,
+          });
+          yield* fileSystem.symlink(
+            path.join(claudeHomePath, "projects"),
+            path.join(aliasHome, "projects"),
+          );
+
+          const outcomes = yield* runRecentThreadOutcomes({
+            claudeHomePath,
+            codexHomePath,
+            workspaceRoot: workspace,
+            providerInstances: {
+              [ProviderInstanceId.make("claudeAgent_alias")]: {
+                driver: ProviderDriverKind.make("claudeAgent"),
+                config: { homePath: aliasHome },
+              },
+            },
+          });
+
+          expect(outcomes.map((outcome) => outcome._tag)).toEqual(["Importable"]);
+        }),
+    );
   });
 });
 
@@ -1822,6 +1869,25 @@ describe("parseAgentSessionTranscript", () => {
       else expect(thread?.messages.map((message) => message.text)).toEqual(["First prompt"]);
     },
   );
+
+  it("skips Claude Code's own compaction-summary sessions", () => {
+    const parse = (source: "claudeAgent" | "codex", text: string) =>
+      AgentSessionScanner.parseAgentSessionTranscript({
+        contents: JSON.stringify({
+          type: "user",
+          sessionId: "s",
+          message: { role: "user", content: text },
+        }),
+        source,
+        providerInstanceId: ProviderInstanceId.make(source),
+        fallbackSessionId: "s",
+        lastActiveAtMs: 0,
+      });
+    const prompt =
+      "Below is a conversation log from a Claude Code coding session.\nCreate a summary";
+    expect(parse("claudeAgent", prompt)).toBeNull();
+    expect(parse("claudeAgent", "Fix the bug")).not.toBeNull();
+  });
 
   it("keeps Claude text and titles while dropping malformed and tool records", () => {
     const thread = AgentSessionScanner.parseAgentSessionTranscript({
