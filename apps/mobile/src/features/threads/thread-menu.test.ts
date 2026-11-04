@@ -75,6 +75,11 @@ describe("thread menu", () => {
     expect(ids({ canHandoff: false })).not.toContain("handoff");
   });
 
+  it("offers Link to board card only when the open thread can take one", () => {
+    expect(ids()).not.toContain("link-card");
+    expect(ids({ linkCard: true })).toContain("link-card");
+  });
+
   it("offers Restart agent session only on the open thread and routes it", () => {
     expect(ids()).not.toContain("restart-session");
     expect(ids({ restartSession: true })).toContain("restart-session");
@@ -154,6 +159,7 @@ describe("thread menu", () => {
         "rename",
         "regenerateTitle",
         "handoff",
+        "linkCard",
         "turnIntoProject",
         "delete",
         "openCustomSnooze",
@@ -164,12 +170,14 @@ describe("thread menu", () => {
     const snooze = { displayedPresets: [], presets: undefined, now: new Date(0) };
 
     runThreadMenuEvent("handoff", handlers, snooze);
+    runThreadMenuEvent("link-card", handlers, snooze);
     runThreadMenuEvent("auto-settle:disabled", handlers, snooze);
     runThreadMenuEvent("delete", handlers, snooze);
     runThreadMenuEvent("snooze:custom", handlers, snooze);
     runThreadMenuEvent("arrange", handlers, snooze);
 
     expect(handlers.handoff).toHaveBeenCalledTimes(1);
+    expect(handlers.linkCard).toHaveBeenCalledTimes(1);
     expect(handlers.setAutoSettle).toHaveBeenCalledWith(false);
     expect(handlers.delete).toHaveBeenCalledTimes(1);
     expect(handlers.openCustomSnooze).toHaveBeenCalledTimes(1);

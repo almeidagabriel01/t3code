@@ -16,10 +16,10 @@ import { useKanbanActions } from "./useKanbanActions";
 
 const MAX_ROWS = 50;
 
-/** Switches a thread to another card on the board of the card it is linked to now. */
+/** Links a thread to a card of its project's board, or switches it to another card on that board. */
 export function KanbanLinkCardRouteScreen({
   route,
-}: StaticScreenProps<{ environmentId: string; threadId: string }>) {
+}: StaticScreenProps<{ environmentId: string; threadId: string; projectId?: string }>) {
   const environmentId = EnvironmentId.make(route.params.environmentId);
   const threadId = ThreadId.make(route.params.threadId);
   const navigation = useNavigation();
@@ -27,12 +27,19 @@ export function KanbanLinkCardRouteScreen({
   const current = useThreadKanbanCard(environmentId, threadId);
   const states = useKanbanStates();
   const [query, setQuery] = useState("");
+  const boards = collectGlobalBoards(states);
   const board =
-    current === null ? null : findCardInBoards(collectGlobalBoards(states), current.id)?.board;
+    current === null
+      ? boards.find(
+          (entry) =>
+            entry.environmentId === environmentId &&
+            entry.board.projectId === route.params.projectId,
+        )?.board
+      : findCardInBoards(boards, current.id)?.board;
   const rows = board ? kanbanCardPickerRows(board.cards.values(), query, MAX_ROWS) : [];
   return (
     <SettingsScreen
-      title="Switch card"
+      title={current === null ? "Link to card" : "Switch card"}
       search={{ value: query, onChangeText: setQuery, placeholder: "Search cards" }}
     >
       {rows.length === 0 ? (

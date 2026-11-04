@@ -8,6 +8,9 @@ const { mocks } = vi.hoisted(() => ({
   mocks: {
     projects: [] as unknown[],
     notesEnvironmentIds: [] as string[],
+    kanbanEnvironmentIds: [] as string[],
+    linkedCard: null as unknown,
+    canEditKanban: true,
     navigate: vi.fn(),
     stopSession: vi.fn(),
     refreshProviders: vi.fn(),
@@ -31,6 +34,13 @@ vi.mock("../../lib/uuid", () => ({ uuidv4: () => "id" }));
 vi.mock("../../state/entities", () => ({ useProjects: () => mocks.projects }));
 vi.mock("../../state/notes", () => ({ useNotesEnvironmentIds: () => mocks.notesEnvironmentIds }));
 vi.mock("../../state/assistants", () => ({ useThreadAssistant: () => null }));
+vi.mock("../../state/kanban", () => ({
+  useKanbanEnvironmentIds: () => mocks.kanbanEnvironmentIds,
+  useThreadKanbanCard: () => mocks.linkedCard,
+}));
+vi.mock("../kanban/useKanbanActions", () => ({
+  useKanbanActions: () => ({ canEdit: mocks.canEditKanban }),
+}));
 vi.mock("../../state/presentation", () => ({ threadListEnvironmentsAtom: "atom" }));
 vi.mock("../../state/session", () => ({ useEnvironmentScope: () => true }));
 vi.mock("./turnThreadIntoProject", () => ({
@@ -127,6 +137,35 @@ describe("useThreadMenu Notes item", () => {
     mocks.projects = [{ environmentId: "env", id: "p1", title: "Scratch", isScratch: true }];
     await mount();
     expect(notes()).toBeUndefined();
+  });
+});
+
+describe("useThreadMenu Link to board card", () => {
+  const linkCard = () => seen.mock.lastCall?.[0]?.find((item) => item.id === "link-card");
+
+  it("opens the card picker on the thread's project board", async () => {
+    mocks.kanbanEnvironmentIds = ["env"];
+    mocks.linkedCard = null;
+    mocks.canEditKanban = true;
+    await mount();
+    act(() => (linkCard() as { onPress: () => void }).onPress());
+    expect(mocks.navigate).toHaveBeenCalledWith("SettingsKanbanLinkCard", {
+      environmentId: "env",
+      threadId: "t1",
+      projectId: "p1",
+    });
+  });
+
+  it.each([
+    { name: "a linked thread", linked: { id: "c1" }, envs: ["env"], canEdit: true },
+    { name: "an environment without boards", linked: null, envs: [], canEdit: true },
+    { name: "a read-only session", linked: null, envs: ["env"], canEdit: false },
+  ])("is absent for $name", async ({ linked, envs, canEdit }) => {
+    mocks.linkedCard = linked;
+    mocks.kanbanEnvironmentIds = envs;
+    mocks.canEditKanban = canEdit;
+    await mount();
+    expect(linkCard()).toBeUndefined();
   });
 });
 

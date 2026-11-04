@@ -107,6 +107,7 @@ beforeEach(() => {
           [
             "b",
             {
+              projectId: "p1",
               cards: new Map([
                 ["c1", current],
                 ["c2", other],
@@ -195,5 +196,18 @@ describe("KanbanLinkCardRouteScreen", () => {
     mocks.card = null;
     await mount(screen());
     expect(host.textContent).toContain("No cards found");
+  });
+
+  it("links an unlinked thread to a card of its project's board", async () => {
+    mocks.card = null;
+    await mount(
+      <KanbanLinkCardRouteScreen
+        route={{ params: { environmentId, threadId, projectId: "p1" } } as never}
+      />,
+    );
+    await click("button:not([disabled])");
+    expect(mocks.unlinkCardThread).not.toHaveBeenCalled();
+    expect(mocks.linkCardThread).toHaveBeenCalledWith({ cardId: "c2", threadId });
+    expect(mocks.goBack).toHaveBeenCalledOnce();
   });
 });

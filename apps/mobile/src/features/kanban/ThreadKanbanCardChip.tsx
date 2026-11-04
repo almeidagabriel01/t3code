@@ -1,7 +1,7 @@
 import { useNavigation } from "@react-navigation/native";
 import type { MenuAction } from "@react-native-menu/menu";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { Pressable } from "react-native";
+import { Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
@@ -19,7 +19,7 @@ export function threadCardMenuActions(canEdit: boolean): MenuAction[] {
           {
             id: "unlink",
             title: "Unlink from this thread",
-            image: "link.badge.plus",
+            image: "xmark.circle",
             attributes: { destructive: true },
           },
         ]
@@ -52,25 +52,26 @@ export function ThreadKanbanCardChip(props: {
     }
   };
   return (
-    <Menu
-      actions={threadCardMenuActions(actions.canEdit)}
-      onPressAction={({ nativeEvent }) => run(nativeEvent.event)}
-      className="mx-3 mb-2 self-start"
-    >
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={`Card #${card.number} actions`}
-        className="min-h-9 flex-row items-center gap-2 rounded-full bg-secondary px-3 active:opacity-70"
+    <View className="mx-3 mb-2 self-start">
+      <Menu
+        actions={threadCardMenuActions(actions.canEdit)}
+        onPressAction={({ nativeEvent }) => run(nativeEvent.event)}
       >
-        <SymbolView name="square.grid.2x2" size={14} tintColorClassName="accent-icon-muted" />
-        <Text
-          textRole="footnote"
-          numberOfLines={1}
-          className="shrink font-t3-medium text-foreground"
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Card #${card.number} actions`}
+          className="min-h-9 flex-row items-center gap-2 rounded-full bg-secondary px-3 active:opacity-70"
         >
-          #{card.number} {card.title}
-        </Text>
-      </Pressable>
-    </Menu>
+          <SymbolView name="square.grid.2x2" size={14} tintColorClassName="accent-icon-muted" />
+          <Text
+            textRole="footnote"
+            numberOfLines={1}
+            className="shrink font-t3-medium text-foreground"
+          >
+            #{card.number} {card.title}
+          </Text>
+        </Pressable>
+      </Menu>
+    </View>
   );
 }

@@ -66,6 +66,8 @@ export interface ThreadMenuInput {
   readonly autoSettle: { readonly supported: boolean; readonly enabled: boolean };
   readonly titleRegeneration: { readonly supported: boolean; readonly regenerating: boolean };
   readonly canHandoff: boolean;
+  /** The open thread only: it has no card yet and the session can edit the board. */
+  readonly linkCard?: boolean;
   /** The open thread only, like the palette's action on web. */
   readonly restartSession?: boolean;
   /** The project's notes are reachable: the environment supports notes and the thread has a real project. */
@@ -155,6 +157,7 @@ function buildBaseThreadMenuActions(input: ThreadMenuInput): MenuAction[] {
       isRegenerating: input.titleRegeneration.regenerating,
     }),
     ...(input.canHandoff ? [{ id: "handoff", title: HANDOFF_LABEL, image: HANDOFF_ICON }] : []),
+    ...(input.linkCard ? [{ id: "link-card", title: "Link to board card…", image: "link" }] : []),
     ...(input.restartSession
       ? [{ id: "restart-session", title: "Restart agent session", image: "arrow.counterclockwise" }]
       : []),
@@ -244,6 +247,7 @@ export interface ThreadMenuHandlers {
   readonly rename: () => void;
   readonly regenerateTitle: () => void;
   readonly handoff: () => void;
+  readonly linkCard?: () => void;
   readonly restartSession?: () => void;
   readonly openNotes?: () => void;
   readonly turnIntoProject: () => void;
@@ -300,6 +304,8 @@ export function runThreadMenuEvent(
       return handlers.regenerateTitle();
     case "handoff":
       return handlers.handoff();
+    case "link-card":
+      return handlers.linkCard?.();
     case "restart-session":
       return handlers.restartSession?.();
     case "notes":

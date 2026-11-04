@@ -41,22 +41,27 @@ function CardChip(props: {
   return (
     <View className="mx-3 mb-2 flex-row items-center gap-2 self-start">
       {state === "attached" ? (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Send without the card"
-          onPress={() => setSkipped(true)}
-          className="min-h-9 flex-row items-center gap-2 rounded-full bg-secondary px-3 active:opacity-70"
-        >
-          <SymbolView name="square.grid.2x2" size={14} tintColorClassName="accent-icon-muted" />
-          <Text
-            textRole="footnote"
-            numberOfLines={1}
-            className="shrink font-t3-medium text-foreground"
+        <>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Send without the card"
+            onPress={() => setSkipped(true)}
+            className="min-h-9 flex-row items-center gap-2 rounded-full bg-secondary px-3 active:opacity-70"
           >
-            {label}
+            <SymbolView name="square.grid.2x2" size={14} tintColorClassName="accent-icon-muted" />
+            <Text
+              textRole="footnote"
+              numberOfLines={1}
+              className="shrink font-t3-medium text-foreground"
+            >
+              {label}
+            </Text>
+            <SymbolView name="xmark" size={12} tintColorClassName="accent-icon-muted" />
+          </Pressable>
+          <Text textRole="footnote" numberOfLines={1} className="shrink text-foreground-muted">
+            goes with this message
           </Text>
-          <SymbolView name="xmark" size={12} tintColorClassName="accent-icon-muted" />
-        </Pressable>
+        </>
       ) : (
         <Pressable
           accessibilityRole="button"

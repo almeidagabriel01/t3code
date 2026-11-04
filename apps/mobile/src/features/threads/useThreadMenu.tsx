@@ -1,7 +1,11 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { canSnooze, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
-import { AuthOrchestrationOperateScope, type EnvironmentId } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  type EnvironmentId,
+  type ThreadId,
+} from "@t3tools/contracts";
 import { useState, type ReactNode } from "react";
 
 import type { AppBarMenuItem } from "../../components/ui/AppBar.types";
@@ -11,6 +15,8 @@ import { uuidv4 } from "../../lib/uuid";
 import { useProjects } from "../../state/entities";
 import { useNotesEnvironmentIds } from "../../state/notes";
 import { useThreadAssistant } from "../../state/assistants";
+import { useKanbanEnvironmentIds, useThreadKanbanCard } from "../../state/kanban";
+import { useKanbanActions } from "../kanban/useKanbanActions";
 import { threadListEnvironmentsAtom } from "../../state/presentation";
 import { useEnvironmentScope } from "../../state/session";
 import { turnThreadIntoProject, canTurnThreadIntoProject } from "./turnThreadIntoProject";
@@ -61,6 +67,12 @@ export function useThreadMenu(
   );
   const openAssistantEditor = useOpenAssistantEditor();
   const restartAgentSession = useRestartAgentSession();
+  const kanbanEnvironmentIds = useKanbanEnvironmentIds();
+  const linkedCard = useThreadKanbanCard(
+    thread?.environmentId ?? ("" as EnvironmentId),
+    thread?.id ?? ("" as ThreadId),
+  );
+  const kanbanActions = useKanbanActions(thread?.environmentId ?? ("" as EnvironmentId));
   const actions = useThreadListActions((action) => {
     if (action === "archive" || action === "delete") onRemoved();
   });
@@ -94,6 +106,8 @@ export function useThreadMenu(
       regenerating: thread.titleRegeneration != null,
     },
     canHandoff: canHandoffThread(thread),
+    linkCard:
+      linkedCard === null && kanbanActions.canEdit && kanbanEnvironmentIds.includes(environmentId),
     restartSession: true,
     notes: canOpenThreadNotes(thread, notesEnvironmentIds, projects),
     turnIntoProject: canTurnIntoProject ? { archivable: threadCanArchive(thread.runtime) } : null,
@@ -134,6 +148,14 @@ export function useThreadMenu(
         rename: () => actions.renameThread(thread),
         regenerateTitle: () => void actions.regenerateThreadTitle(thread),
         handoff: () => openThreadHandoff(thread),
+        linkCard: () =>
+          whenRootNavigationReady(() =>
+            rootNavigationRef.navigate("SettingsKanbanLinkCard", {
+              environmentId,
+              threadId: thread.id,
+              projectId: thread.projectId,
+            }),
+          ),
         restartSession: () => void restartAgentSession(thread),
         openNotes: () =>
           whenRootNavigationReady(() =>

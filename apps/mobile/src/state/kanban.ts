@@ -42,6 +42,10 @@ const kanbanEnvironmentIdsAtom = Atom.make((get): ReadonlyArray<EnvironmentId> =
   return ids;
 }).pipe(Atom.withLabel("mobile-kanban-environment-ids"));
 
+export function useKanbanEnvironmentIds(): ReadonlyArray<EnvironmentId> {
+  return useAtomValue(kanbanEnvironmentIdsAtom);
+}
+
 /** For entry points that only decide whether to show themselves. */
 export function useHasKanbanEnvironments(): boolean {
   return useAtomValue(kanbanEnvironmentIdsAtom).length > 0;
