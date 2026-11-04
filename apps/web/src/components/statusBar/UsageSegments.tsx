@@ -4,14 +4,13 @@ import type {
   InstanceBudgetStatus,
   StatusBarUsageMode,
   StatusBarUsagePercentage,
-  ServerProviderUsageLimits,
   ServerProviderUsageWindow,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { ChevronRightIcon, SettingsIcon } from "lucide-react";
 import { RegistryContext } from "@effect/atom-react";
-import { Fragment, useContext, useEffect, useState } from "react";
+import { useContext, useEffect, useState } from "react";
 
 import { cn } from "../../lib/utils";
 import { observeVisibleAnimation } from "../../lib/visibleAnimation";
@@ -24,8 +23,6 @@ import {
   pacePresentation,
   selectUsagePaceSettings,
   windowBand,
-  type PaceView,
-  type UsagePaceSettings,
 } from "@t3tools/shared/usagePace";
 import { useProjects, useThreadShells } from "../../state/entities";
 import { serverEnvironment } from "../../state/server";
@@ -39,7 +36,9 @@ import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
-import { formatCompactCountdown, selectBarWindows } from "./statusBar.logic";
+import { formatCompactCountdown } from "./statusBar.logic";
+import { PaceBar } from "./UsageBarChip";
+import { ChipSummary, deltaTone } from "./UsageChipSummary";
 import {
   displayedPercent,
   isStatusBarItemShown,
@@ -56,7 +55,6 @@ import {
 import { useUsageItems } from "./useUsageItems";
 import { useMinuteNow } from "./useMinuteNow";
 
-const DELTA_TEXT = { deficit: "text-warning", reserve: "text-success" } as const;
 const SESSIONS_SHOWN = 8;
 const SESSION_STATE: Record<UsageSessionState, { label: string; dot: string }> = {
   waiting: { label: "Waiting for you", dot: "bg-warning" },
@@ -121,44 +119,6 @@ function useUsageRefresh(environmentIds: ReadonlyArray<EnvironmentId>) {
   return { refresh, refreshing };
 }
 
-function PaceBar({
-  usedPercent,
-  fillClass,
-  tickPercent,
-  className,
-  thin = false,
-}: {
-  readonly usedPercent: number;
-  readonly fillClass: string;
-  readonly tickPercent: number | null;
-  readonly className: string;
-  readonly thin?: boolean;
-}) {
-  return (
-    <span
-      className={cn(
-        "relative shrink-0 rounded-full bg-muted",
-        thin ? "h-[5px]" : "h-1.5",
-        className,
-      )}
-    >
-      <span className="absolute inset-0 overflow-hidden rounded-full">
-        <span
-          className={cn("block h-full rounded-full", fillClass)}
-          style={{ width: `${Math.min(100, Math.max(0, usedPercent))}%` }}
-        />
-      </span>
-      {tickPercent === null ? null : (
-        <span
-          aria-hidden
-          className="absolute -inset-y-px w-px -translate-x-1/2 bg-foreground"
-          style={{ left: `${Math.min(100, Math.max(0, tickPercent))}%` }}
-        />
-      )}
-    </span>
-  );
-}
-
 function useWindowPace(
   window: ServerProviderUsageWindow,
   now: number,
@@ -174,102 +134,6 @@ function useWindowPace(
     formatAt: (ms) => formatUpcomingTimestamp(new Date(ms).toISOString(), timestampFormat, now),
   });
   return { settings, view };
-}
-
-function deltaTone(view: PaceView) {
-  return view.deficit ? DELTA_TEXT.deficit : DELTA_TEXT.reserve;
-}
-
-function ChipWindow({
-  window,
-  countdown,
-  now,
-  display,
-  compact,
-  settings,
-}: {
-  readonly window: ServerProviderUsageWindow;
-  readonly countdown: boolean;
-  readonly now: number;
-  readonly display: StatusBarUsagePercentage;
-  readonly compact: boolean;
-  readonly settings: UsagePaceSettings;
-}) {
-  const resets = countdown ? formatCompactCountdown(window.resetsAt, now) : null;
-  const paceInBar = useClientSettings((current) => current.statusBarUsagePaceVisible);
-  const view = paceInBar
-    ? pacePresentation({ window, now, display, settings, formatAt: () => "" })
-    : null;
-  return (
-    <span className={cn("whitespace-nowrap", BAND_TEXT[windowBand(window, settings)])}>
-      {countdown ? "" : `${window.label} `}
-      {displayedPercent(window.usedPercent, display)}%
-      {view === null ? null : (
-        <span className={cn("text-3xs", deltaTone(view))}>
-          {" "}
-          {compact ? view.deltaText.charAt(0) : view.deltaText}
-        </span>
-      )}
-      {resets ? ` ${resets}` : ""}
-    </span>
-  );
-}
-
-function ChipSummary({
-  limits,
-  mode,
-  display,
-}: {
-  readonly limits: ServerProviderUsageLimits;
-  readonly mode: StatusBarUsageMode;
-  readonly display: StatusBarUsagePercentage;
-}) {
-  const now = useMinuteNow();
-  const settings = useClientSettings(selectUsagePaceSettings);
-  const paceInBar = useClientSettings((current) => current.statusBarUsagePaceVisible);
-  const tightest = limits.windows.reduce((a, b) => (b.usedPercent > a.usedPercent ? b : a));
-  const { primary, extra } = selectBarWindows(limits.windows);
-  const shown =
-    mode === "compact"
-      ? [{ window: tightest, countdown: true }]
-      : [
-          ...primary.map((window) => ({ window, countdown: true })),
-          ...extra.map((window) => ({ window, countdown: false })),
-        ];
-  const tightestPace = pacePresentation({
-    window: tightest,
-    now,
-    display,
-    settings,
-    formatAt: () => "",
-  });
-  return (
-    <>
-      {mode === "verbose" ? (
-        <PaceBar
-          usedPercent={displayedPercent(tightest.usedPercent, display)}
-          fillClass={BAND_FILL[windowBand(tightest, settings)]}
-          tickPercent={paceInBar ? (tightestPace?.tickPercent ?? null) : null}
-          className="w-12"
-        />
-      ) : null}
-      <span className="flex items-center gap-1 tabular-nums">
-        {shown.map(({ window, countdown }, position) => (
-          <Fragment key={window.id}>
-            {position > 0 ? <span className="text-muted-foreground/50">·</span> : null}
-            <ChipWindow
-              window={window}
-              countdown={countdown}
-              now={now}
-              display={display}
-              compact={mode === "compact"}
-              settings={settings}
-            />
-          </Fragment>
-        ))}
-      </span>
-    </>
-  );
 }
 
 export function ItemIcon({ item }: { readonly item: UsageItem }) {

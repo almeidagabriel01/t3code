@@ -5,6 +5,7 @@ import {
   formatCompactCountdown,
   formatMemory,
   portAddress,
+  selectChipEntries,
   selectBarWindows,
   sparklinePoints,
 } from "./statusBar.logic";
@@ -62,5 +63,60 @@ describe("portAddress", () => {
     expect(portAddress("::1", 3000)).toBe("localhost:3000");
     expect(portAddress("192.168.1.5", 80)).toBe("192.168.1.5:80");
     expect(portAddress("fe80:0:0:0:1:2:3:4", 80)).toBe("[fe80:0:0:0:1:2:3:4]:80");
+  });
+});
+
+describe("selectChipEntries", () => {
+  const w = (
+    id: string,
+    kind: ServerProviderUsageWindow["kind"],
+    usedPercent: number,
+    resetsAt?: string,
+  ): ServerProviderUsageWindow =>
+    ({ id, kind, label: `${id} label`, usedPercent, resetsAt }) as ServerProviderUsageWindow;
+  const summary = (windows: ServerProviderUsageWindow[], mode: "verbose" | "compact") =>
+    selectChipEntries(windows, mode, NOW).map((e) => [e.window.id, e.bar, e.label, e.labelFirst]);
+
+  it.each([
+    {
+      name: "session and weekly each get a bar, session shows its countdown, weekly wk",
+      windows: [w("s", "session", 45, at(2 * 3_600_000)), w("w", "weekly", 30, at(3 * 86_400_000))],
+      mode: "verbose" as const,
+      expected: [
+        ["s", true, "2h0m", false],
+        ["w", true, "wk", false],
+      ],
+    },
+    {
+      name: "session without a reset time falls back to its label",
+      windows: [w("s", "session", 45)],
+      mode: "verbose" as const,
+      expected: [["s", true, "s label", false]],
+    },
+    {
+      name: "extra windows are text only and lead with their name",
+      windows: [w("s", "session", 5), w("opus", "weekly", 5), w("w", "weekly", 5)],
+      mode: "verbose" as const,
+      expected: [
+        ["s", true, "s label", false],
+        ["opus", true, "wk", false],
+        ["w", false, "w label", true],
+      ],
+    },
+    {
+      name: "compact keeps only the tightest window, no bar",
+      windows: [w("s", "session", 10, at(12 * 60_000)), w("w", "weekly", 80)],
+      mode: "compact" as const,
+      expected: [["w", false, "w label", false]],
+    },
+    {
+      name: "compact shows the countdown of the tightest window",
+      windows: [w("s", "session", 90, at(12 * 60_000)), w("w", "weekly", 80)],
+      mode: "compact" as const,
+      expected: [["s", false, "12m", false]],
+    },
+    { name: "no windows", windows: [], mode: "verbose" as const, expected: [] },
+  ])("$name", ({ windows, mode, expected }) => {
+    expect(summary(windows, mode)).toEqual(expected);
   });
 });

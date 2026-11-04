@@ -27,6 +27,42 @@ export function selectBarWindows(windows: ReadonlyArray<ServerProviderUsageWindo
   };
 }
 
+export interface ChipEntry {
+  readonly window: ServerProviderUsageWindow;
+  /** Session and weekly each get their own bar; compact mode and extra windows are text only. */
+  readonly bar: boolean;
+  /** Extra windows lead with their name ("Opus 10%"); the others trail the percentage. */
+  readonly labelFirst: boolean;
+  readonly label: string;
+}
+
+/** Session shows its reset countdown, weekly "wk", each as Orca's inline usage bars label them. */
+export function selectChipEntries(
+  windows: ReadonlyArray<ServerProviderUsageWindow>,
+  mode: "verbose" | "compact",
+  now: number,
+): ChipEntry[] {
+  if (windows.length === 0) return [];
+  if (mode === "compact") {
+    const tightest = windows.reduce((a, b) => (b.usedPercent > a.usedPercent ? b : a));
+    const label = formatCompactCountdown(tightest.resetsAt, now) ?? tightest.label;
+    return [{ window: tightest, bar: false, labelFirst: false, label }];
+  }
+  const { primary, extra } = selectBarWindows(windows);
+  return [
+    ...primary.map((window) => ({
+      window,
+      bar: true,
+      labelFirst: false,
+      label:
+        window.kind === "weekly"
+          ? "wk"
+          : (formatCompactCountdown(window.resetsAt, now) ?? window.label),
+    })),
+    ...extra.map((window) => ({ window, bar: false, labelFirst: true, label: window.label })),
+  ];
+}
+
 export function formatMemory(bytes: number): string {
   const gb = bytes / 1024 ** 3;
   if (gb >= 1) return `${gb.toFixed(2)} GB`;
