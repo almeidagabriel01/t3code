@@ -19,6 +19,7 @@ import {
   MenuPopup,
   MenuRadioGroup,
   MenuRadioItem,
+  MenuRadioItemIndicator,
   MenuSeparator,
   MenuTrigger,
 } from "../ui/menu";
@@ -62,7 +63,7 @@ function KeepAwakeSegmentBody() {
             />
           }
         >
-          <CoffeeIcon />
+          <CoffeeIcon className={status.active ? "text-primary" : undefined} />
         </TooltipTrigger>
         <TooltipPopup side="top">{summary}</TooltipPopup>
       </Tooltip>
@@ -78,7 +79,10 @@ function KeepAwakeSegmentBody() {
           >
             {KEEP_AWAKE_MODES.map((option) => (
               <MenuRadioItem key={option} value={option} disabled={!canWrite} closeOnClick>
-                {MODE_LABELS[option]}
+                <span className="flex items-center gap-3">
+                  <span className="flex-1">{MODE_LABELS[option]}</span>
+                  <MenuRadioItemIndicator />
+                </span>
               </MenuRadioItem>
             ))}
           </MenuRadioGroup>
