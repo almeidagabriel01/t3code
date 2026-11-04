@@ -115,6 +115,15 @@ vi.mock("./components/SettingsSwitchRow", () => ({
 }));
 vi.mock("./components/SettingsRow", () => ({ SettingsRow: () => null }));
 vi.mock("./components/FallbackModelsSection", () => ({ FallbackModelsSection: () => null }));
+vi.mock("./components/KeepAwakeSection", () => ({
+  KeepAwakeSection: (props: { value: string | null; onChange: (mode: "always") => void }) => (
+    <button
+      aria-label="keep awake"
+      data-value={String(props.value)}
+      onClick={() => props.onChange("always")}
+    />
+  ),
+}));
 vi.mock("./components/FolderModelsSection", () => ({ FolderModelsSection: () => null }));
 vi.mock("./components/BranchNamingSettings", () => ({
   BranchNamingSettings: (props: { onChange: (patch: ServerSettingsPatch) => void }) => {
@@ -139,6 +148,7 @@ vi.mock("./settings-environment-filter", () => ({
 }));
 
 import {
+  SettingsEnvironmentMaintenanceRouteScreen,
   SettingsThreadsRouteScreen,
   SettingsWorktreesRouteScreen,
 } from "./SettingsServerControlsRouteScreen";
@@ -217,6 +227,17 @@ describe("SettingsServerControlsRouteScreen", () => {
     // Both rewrite the whole project override, so a second write planned now would drop the first.
     expect(mocks.updateSettings).toHaveBeenCalledOnce();
     await act(async () => pending.resolve(AsyncResult.success(undefined)));
+  });
+
+  it("saves the keep-awake mode picked on the Maintenance page", () => {
+    act(() => root.render(<SettingsEnvironmentMaintenanceRouteScreen />));
+    const section = container.querySelector<HTMLButtonElement>('[aria-label="keep awake"]')!;
+    expect(section.dataset.value).toBe("off");
+    act(() => section.click());
+    expect(mocks.updateSettings).toHaveBeenCalledWith({
+      environmentId: "local",
+      input: { patch: { keepAwake: "always" } },
+    });
   });
 
   it("disables auto-settle when a selected environment cannot save settings", () => {

@@ -1,5 +1,8 @@
 import { assert, describe, it } from "@effect/vitest";
 import type { KeepAwakeMode, KeepAwakeStatus } from "@t3tools/contracts";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as FileSystem from "effect/FileSystem";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -66,7 +69,9 @@ const harness = (input: {
           Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
           Layer.mock(Orchestrator.OrchestratorV2)({ streamDomainEvents: Stream.fromQueue(events) }),
           Layer.mock(ServerSettings.ServerSettingsService)({
-            getSettings: Effect.succeed({ keepAwake: input.mode } as never),
+            getSettings: input.settingsFail
+              ? (Effect.fail("unreadable") as never)
+              : Effect.succeed({ keepAwake: input.mode } as never),
             subscribeChanges: Effect.succeed(Stream.fromQueue(settingsChanges) as never),
           }),
         ),
@@ -75,10 +80,12 @@ const harness = (input: {
     const service = Context.get(yield* Layer.build(layer), KeepAwake.KeepAwake);
     const until = (predicate: (status: KeepAwakeStatus) => boolean) =>
       service.streamStatus.pipe(Stream.filter(predicate), Stream.take(1), Stream.runDrain);
+    const other = Queue.offer(events, { type: "thread.created", payload: {} });
     const run = (id: string, status: string) =>
       Queue.offer(events, { type: "run.updated", payload: { id, status } });
     return {
       children,
+      other,
       until,
       run,
       setMode: (keepAwake: KeepAwakeMode) => Queue.offer(settingsChanges, { keepAwake }),
@@ -176,6 +183,61 @@ describe("KeepAwake", () => {
       assert.strictEqual(h.children.length, 0);
     }),
   );
+
+  it.effect("ignores other events and falls back to off when settings cannot be read", () =>
+    Effect.gen(function* () {
+      const h = yield* harness({ mode: "always", settingsFail: true });
+      yield* h.other;
+      yield* h.run("a", "running");
+      yield* h.setMode("always");
+      yield* h.until((s) => s.active);
+      assert.strictEqual(h.children.length, 1);
+    }),
+  );
+
+  it.effect("a child that lived a while is replaced after the short delay again", () =>
+    Effect.gen(function* () {
+      const h = yield* harness({ mode: "always" });
+      yield* h.until((s) => s.active);
+      yield* Deferred.succeed(h.children[0]!.exit, 1);
+      yield* h.until((s) => !s.active);
+      yield* TestClock.adjust(Duration.seconds(1));
+      yield* h.until((s) => s.active);
+      yield* TestClock.adjust(Duration.minutes(2));
+      yield* Deferred.succeed(h.children[1]!.exit, 1);
+      yield* h.until((s) => !s.active);
+      yield* TestClock.adjust(Duration.seconds(1));
+      yield* h.until((s) => s.active);
+      assert.strictEqual(h.children.length, 3);
+    }),
+  );
+
+  describe("layerHost", () => {
+    const inhibitorOn = (platform: NodeJS.Platform, pathDir: string) =>
+      Effect.gen(function* () {
+        const host = yield* KeepAwake.KeepAwakeHost;
+        return yield* host.inhibitor;
+      }).pipe(
+        Effect.provide(KeepAwake.layerHost.pipe(Layer.provide(NodeServices.layer))),
+        Effect.provideService(HostProcess.Platform, platform),
+        Effect.provideService(HostProcess.Environment, { PATH: `/nonexistent::${pathDir}` }),
+      );
+
+    it.effect("finds systemd-inhibit on PATH only on Linux", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const withTool = yield* fs.makeTempDirectoryScoped();
+        const without = yield* fs.makeTempDirectoryScoped();
+        const tool = `${withTool}/systemd-inhibit`;
+        yield* fs.writeFileString(tool, "#!/bin/sh\n");
+        yield* fs.chmod(tool, 0o755);
+        assert.isTrue(Option.isSome(yield* inhibitorOn("linux", withTool)));
+        assert.isTrue(Option.isNone(yield* inhibitorOn("linux", without)));
+        assert.isTrue(Option.isSome(yield* inhibitorOn("darwin", without)));
+        assert.isTrue(Option.isNone(yield* inhibitorOn("win32", withTool)));
+      }).pipe(Effect.provide(NodeServices.layer)),
+    );
+  });
 
   describe("inhibitorFor", () => {
     const cases = [

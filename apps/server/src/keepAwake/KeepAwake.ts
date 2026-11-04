@@ -66,8 +66,9 @@ export const layerHost = Layer.effect(
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const platform = yield* HostProcess.Platform;
+    const pathVariable = (yield* HostProcess.Environment).PATH ?? "";
     const onPath = (name: string) =>
-      Effect.forEach((process.env.PATH ?? "").split(":").filter(Boolean), (dir) =>
+      Effect.forEach(pathVariable.split(":").filter(Boolean), (dir) =>
         fs.access(path.join(dir, name), { ok: true }).pipe(
           Effect.as(true),
           Effect.orElseSucceed(() => false),
