@@ -403,7 +403,7 @@ export function ArchivedThreadsScreen(props: {
   const renderListItem = ({ item }: { item: ArchivedThreadListItem }) => {
     if (item.kind === "archived-project") {
       return (
-        <View className="pb-2">
+        <View className="mb-2 overflow-hidden rounded-[20px]">
           <ArchivedProjectRow
             item={item.item}
             canUnarchive={props.canUnarchiveProject(item.item)}

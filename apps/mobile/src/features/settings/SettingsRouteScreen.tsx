@@ -272,9 +272,17 @@ function useSettingsIndexSections(): SettingsListSection[] {
         serverPage("SettingsProviderAccounts", "person.crop.circle", "Providers"),
         serverPage("SettingsThreads", "text.bubble", "Threads"),
         ...(hasAssistants ? [page("SettingsAssistants", "person.2", "Assistants")] : []),
-        ...(hasImessage ? [page("SettingsImessage", "text.bubble", "iMessage")] : []),
+        ...(hasImessage ? [page("SettingsImessage", "bubble.left", "iMessage")] : []),
         ...(hasTelegram ? [page("SettingsTelegram", "paperplane", "Telegram")] : []),
-        ...(hasMac ? [page("SettingsMacPermissions", "desktopcomputer", "Mac permissions")] : []),
+        ...(hasMac
+          ? [
+              page(
+                "SettingsMacPermissions",
+                { ios: "lock.shield", android: "lock" },
+                "Mac permissions",
+              ),
+            ]
+          : []),
         page("SettingsScheduledTasks", "clock", "Scheduled tasks"),
         ...(hasBoards ? [page("SettingsKanban", "square.grid.2x2", "Board")] : []),
         ...(hasNotes ? [page("SettingsNotes", "doc.text", "Notes")] : []),

@@ -10,7 +10,12 @@ describe("archiveProjectMenuActions", () => {
   it("offers Archive project only for a selected project that can be archived", () => {
     const archive = vi.fn();
     expect(archiveProjectMenuActions({ label: "Alpha" }, archive)).toEqual([
-      { id: ARCHIVE_PROJECT_ACTION_ID, title: "Archive project", subtitle: "Alpha" },
+      {
+        id: ARCHIVE_PROJECT_ACTION_ID,
+        title: "Archive project",
+        subtitle: "Alpha",
+        image: "archivebox",
+      },
     ]);
     expect(archiveProjectMenuActions(undefined, archive)).toEqual([]);
     expect(archiveProjectMenuActions({ label: "Alpha" }, undefined)).toEqual([]);

@@ -6,7 +6,14 @@ export function archiveProjectMenuActions(
   archive: (() => unknown) | undefined,
 ) {
   return project && archive
-    ? [{ id: ARCHIVE_PROJECT_ACTION_ID, title: "Archive project", subtitle: project.label }]
+    ? [
+        {
+          id: ARCHIVE_PROJECT_ACTION_ID,
+          title: "Archive project",
+          subtitle: project.label,
+          image: "archivebox",
+        },
+      ]
     : [];
 }
 
