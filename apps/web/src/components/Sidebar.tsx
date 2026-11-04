@@ -64,14 +64,7 @@ import {
 } from "@t3tools/contracts";
 import type { OlderSettledScope } from "@t3tools/client-runtime/state/threads";
 
-import {
-  CheckIcon,
-  ChevronDownIcon,
-  EllipsisIcon,
-  FolderIcon,
-  ListFilterIcon,
-  PlusIcon,
-} from "lucide-react";
+import { CheckIcon, ChevronDownIcon, FolderIcon, ListFilterIcon, PlusIcon } from "lucide-react";
 import {
   useEffect,
   useLayoutEffect,
@@ -129,7 +122,8 @@ import {
 } from "../hooks/useThreadActions";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useOrderWhileOpen } from "../hooks/useOrderWhileOpen";
-import { showProjectRowMenu } from "./sidebar/projectRowMenu";
+import { ProjectRowMenuButton } from "./sidebar/ProjectRowMenuButton";
+import { useProjectRowMenu } from "./sidebar/useProjectRowMenu";
 import { useProjectPin } from "../hooks/useProjectGroupUpdate";
 import { useSidebarProjectGroups } from "../hooks/useSidebarProjectGroups";
 import { useTerminalFocus } from "../hooks/useTerminalFocus";
@@ -239,7 +233,6 @@ import {
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { copyThreadReference } from "../lib/copyThreadReference";
 import { threadChipCopyTarget } from "@t3tools/client-runtime/thread-reference";
-import { Button } from "./ui/button";
 import { isProjectPinShortcut, ProjectPinButton } from "./ProjectPinButton";
 import {
   Combobox,
@@ -1155,49 +1148,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       });
     },
   );
-  const {
-    canPinProjectGroup: canPinProject,
-    toggleProjectGroupPin,
-    toggleProjectGroupArchive,
-  } = useProjectPin();
-  const handleProjectSettings = useStableCallback(
-    (
-      event: ReactMouseEvent<HTMLElement> | ReactKeyboardEvent<HTMLInputElement>,
-      projectGroup: SidebarProjectSnapshot,
-    ) => {
-      event.preventDefault();
-      event.stopPropagation();
+  const { canPinProjectGroup: canPinProject, toggleProjectGroupPin } = useProjectPin();
+  const projectRowMenu = useProjectRowMenu({
+    openSettings: (projectGroup: SidebarProjectSnapshot) => {
       suppressNextScopeChangeRef.current = true;
       dispatchProjectScopeMenu({ type: "project-settings-opened" });
       openProjectSettings(projectGroup);
     },
-  );
-  const handleProjectRowMenu = useStableCallback(
-    (
-      event: ReactMouseEvent<HTMLElement>,
-      projectGroup: SidebarProjectSnapshot,
-      position: { x: number; y: number },
-    ) => {
-      event.preventDefault();
-      event.stopPropagation();
-      const api = readLocalApi();
-      if (!api) return;
-      void settlePromise(() =>
-        showProjectRowMenu({
-          show: (items, position) => api.contextMenu.show(items, position),
-          archived: projectGroup.archived,
-          canArchive: canPinProject(projectGroup),
-          position,
-          onSettings: () => {
-            suppressNextScopeChangeRef.current = true;
-            dispatchProjectScopeMenu({ type: "project-settings-opened" });
-            openProjectSettings(projectGroup);
-          },
-          onToggleArchive: () => void toggleProjectGroupArchive(projectGroup),
-        }),
-      );
-    },
-  );
+  });
   const {
     threadOrder,
     workingShelfEnabled,
@@ -3000,13 +2958,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           toggleProjectScopeKey(project.projectKey);
                           return;
                         }
-                        if (
-                          event.key !== "ContextMenu" &&
-                          !(event.shiftKey && event.key === "F10")
-                        ) {
-                          return;
-                        }
-                        if (project) handleProjectSettings(event, project);
+                        if (project) projectRowMenu.onKeyDown(event, project);
                       }}
                       onChange={(event) =>
                         dispatchProjectScopeMenu({
@@ -3031,11 +2983,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             // The icon badge marks selection; Base UI's single value would shade one row.
                             data-selected={undefined}
                             onContextMenu={(event) => {
-                              if (project)
-                                handleProjectRowMenu(event, project, {
-                                  x: event.clientX,
-                                  y: event.clientY,
-                                });
+                              if (project) projectRowMenu.onContextMenu(event, project);
                             }}
                           >
                             <ProjectScopeRowIcon isSelected={isSelected}>
@@ -3062,25 +3010,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                               />
                             ) : null}
                             {project ? (
-                              <Button
-                                size="icon-xs"
-                                variant="ghost-muted"
-                                tabIndex={-1}
-                                aria-hidden="true"
-                                aria-label={`Actions for ${project.displayName}`}
-                                title={`Actions for ${project.displayName}`}
-                                className={canPinProject(project) ? undefined : "ml-auto"}
-                                onPointerDown={(event) => event.stopPropagation()}
-                                onClick={(event) => {
-                                  const rect = event.currentTarget.getBoundingClientRect();
-                                  handleProjectRowMenu(event, project, {
-                                    x: rect.left,
-                                    y: rect.bottom,
-                                  });
-                                }}
-                              >
-                                <EllipsisIcon className="size-3.5" />
-                              </Button>
+                              <ProjectRowMenuButton
+                                name={project.displayName}
+                                takesRightEdge={!canPinProject(project)}
+                                onOpen={(event) => projectRowMenu.onButtonClick(event, project)}
+                              />
                             ) : null}
                           </ComboboxItem>
                         );

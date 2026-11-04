@@ -1,10 +1,12 @@
 import type { EnvironmentId, EnvironmentMachineKind } from "@t3tools/contracts";
+import { ArchiveIcon, ArchiveRestoreIcon } from "lucide-react";
 
 import type { SidebarProjectSnapshot } from "../sidebarProjectGrouping";
 import type { Project } from "../types";
 import {
   buildCommandPaletteProjectMetadata,
   buildProjectActionItems,
+  type CommandPaletteActionItem,
   type CommandPaletteItemPin,
   type CommandPaletteProject,
   ITEM_ICON_CLASS,
@@ -118,4 +120,30 @@ function ProjectLocationDescription(props: {
       <span className="truncate">{props.workspaceRoot}</span>
     </span>
   );
+}
+
+/** Archives the project, or brings it back when it is archived. */
+export function buildProjectArchiveActionItems<
+  TGroup extends Pick<SidebarProjectSnapshot, "archived" | "displayName">,
+>(
+  group: TGroup | null,
+  canArchive: (group: TGroup) => boolean,
+  toggleArchive: (group: TGroup) => unknown,
+): CommandPaletteActionItem[] {
+  if (!group || !canArchive(group)) return [];
+  return [
+    {
+      kind: "action",
+      value: "action:project-archive",
+      searchTerms: ["archive", "unarchive", "hide", "project"],
+      title: group.archived ? "Unarchive project" : "Archive project",
+      description: group.displayName,
+      icon: group.archived ? (
+        <ArchiveRestoreIcon className={ITEM_ICON_CLASS} />
+      ) : (
+        <ArchiveIcon className={ITEM_ICON_CLASS} />
+      ),
+      run: async () => void (await toggleArchive(group)),
+    },
+  ];
 }

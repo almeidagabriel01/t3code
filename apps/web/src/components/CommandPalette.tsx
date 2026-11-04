@@ -54,8 +54,6 @@ import {
   BrainIcon,
   UserRoundIcon,
   UserRoundPlusIcon,
-  ArchiveIcon,
-  ArchiveRestoreIcon,
   BellIcon,
   MessageCircleQuestionMarkIcon,
   ArrowLeftIcon,
@@ -228,6 +226,7 @@ import {
 } from "./CommandPaletteLookups";
 import {
   buildNewThreadInProjectItems,
+  buildProjectArchiveActionItems,
   buildProjectSearchItems,
 } from "./CommandPaletteProjectItems";
 import {
@@ -1796,21 +1795,13 @@ function OpenCommandPaletteDialog(props: {
       run: async () => toggleProjectGroupPin(currentProjectGroup),
     });
   }
-  if (currentProjectGroup && canPinProjectGroup(currentProjectGroup)) {
-    actionItems.push({
-      kind: "action",
-      value: "action:project-archive",
-      searchTerms: ["archive", "unarchive", "hide", "project"],
-      title: currentProjectGroup.archived ? "Unarchive project" : "Archive project",
-      description: currentProjectGroup.displayName,
-      icon: currentProjectGroup.archived ? (
-        <ArchiveRestoreIcon className={ITEM_ICON_CLASS} />
-      ) : (
-        <ArchiveIcon className={ITEM_ICON_CLASS} />
-      ),
-      run: async () => void (await toggleProjectGroupArchive(currentProjectGroup)),
-    });
-  }
+  actionItems.push(
+    ...buildProjectArchiveActionItems(
+      currentProjectGroup,
+      canPinProjectGroup,
+      toggleProjectGroupArchive,
+    ),
+  );
   const contextualProjectGroup = currentProjectGroup ?? projectGroups[0] ?? null;
   if (contextualProjectGroup) {
     actionItems.push({
