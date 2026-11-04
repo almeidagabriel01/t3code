@@ -1,4 +1,4 @@
-const INTERPRETERS = new Set(["node", "bun", "deno", "python", "python3", "ruby"]);
+const INTERPRETERS = new Set(["node", "bun", "deno", "python", "ruby"]);
 const SHELLS = new Set(["sh", "bash", "zsh"]);
 const PACKAGE_RUNNERS = new Set(["npx", "pnpm", "vp"]);
 const RUNNER_VERBS = new Set(["run", "exec", "dlx", "x"]);
@@ -22,16 +22,21 @@ export function processLabel(process: { readonly name: string; readonly command:
   const exe = basename(process.name || tokens[0] || "");
   const args = tokens.slice(1);
   const fallback = exe || process.command;
-  if (SHELLS.has(exe)) {
+  // macOS names the framework binary "Python"; Linux has "python3.12"; Windows adds ".exe".
+  const kind = exe
+    .toLowerCase()
+    .replace(/\.exe$/, "")
+    .replace(/^python[\d.]*$/, "python");
+  if (SHELLS.has(kind)) {
     const flag = args.indexOf("-c");
     return (flag >= 0 ? args[flag + 1] : undefined) || fallback;
   }
   const positional = args.filter((arg) => !arg.startsWith("-"));
-  if (PACKAGE_RUNNERS.has(exe)) {
+  if (PACKAGE_RUNNERS.has(kind)) {
     const words = RUNNER_VERBS.has(positional[0] ?? "") ? positional.slice(1) : positional;
     return words.slice(0, 3).join(" ") || fallback;
   }
-  if (INTERPRETERS.has(exe)) {
+  if (INTERPRETERS.has(kind)) {
     if (args.some((arg) => EVAL_FLAGS.has(arg))) return fallback;
     const module = args.indexOf("-m");
     if (module >= 0 && args[module + 1] !== undefined) return args[module + 1]!;
