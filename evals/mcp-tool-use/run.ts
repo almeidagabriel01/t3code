@@ -13,6 +13,7 @@ import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  AssistantToolAccess,
   ComposerContextRecord,
   DeviceOperationError,
   DeviceSummary,
@@ -52,6 +53,7 @@ import { sideChatParentContext } from "../../apps/server/src/orchestration-v2/Si
 import { withInlineContext } from "../../apps/server/src/orchestration-v2/ContextHandoffDelivery.ts";
 import { AttachmentToolkit } from "../../apps/server/src/mcp/toolkits/attachment/tools.ts";
 import { AssistantToolkit } from "../../apps/server/src/mcp/toolkits/assistant/tools.ts";
+import { assistantNoteFor } from "../../apps/server/src/assistants/assistantNote.ts";
 import { ComputerToolkit } from "../../apps/server/src/mcp/toolkits/computer/tools.ts";
 import { WatchToolkit } from "../../apps/server/src/mcp/toolkits/autonomy/tools.ts";
 import { DecisionToolkit } from "../../apps/server/src/mcp/toolkits/decision/tools.ts";
@@ -289,6 +291,25 @@ export const McpToolUseCase = Schema.Struct({
      * side-chat note ahead of `prompt`. On a `later` turn it sends the note and the parent's live
      * state (`parent`, or "could not be read" when absent); the digest is not sent.
      */
+    /**
+     * The thread is an assistant's. T3 puts the assistant note, with its role and team, ahead of
+     * `prompt` on every turn.
+     */
+    assistant: Schema.optional(
+      Schema.Struct({
+        name: Schema.String,
+        handle: Schema.String,
+        role: Schema.String,
+        toolAccess: AssistantToolAccess,
+        instructions: Schema.String,
+        leader: Schema.NullOr(
+          Schema.Struct({ name: Schema.String, handle: Schema.String, threadId: Schema.String }),
+        ),
+        reports: Schema.Array(
+          Schema.Struct({ name: Schema.String, handle: Schema.String, threadId: Schema.String }),
+        ),
+      }),
+    ),
     sideChat: Schema.optional(
       Schema.Struct({
         parentThreadId: Schema.String,
@@ -1007,8 +1028,23 @@ export const buildMessages = (sample: Sample) => {
     testCase.promptContext === undefined
       ? testCase.prompt
       : projectComposerContextForProvider({ text: testCase.prompt, ...testCase.promptContext });
+  const assistant = testCase.setup.assistant;
+  const note =
+    assistant === undefined
+      ? ""
+      : assistantNoteFor(assistant, userText, {
+          leader:
+            assistant.leader === null
+              ? null
+              : { ...assistant.leader, threadId: ThreadId.make(assistant.leader.threadId) },
+          reports: assistant.reports.map((report) => ({
+            ...report,
+            threadId: ThreadId.make(report.threadId),
+          })),
+        });
+  const notedText = note === "" ? userText : `${note}\n\n${userText}`;
   const prompt =
-    sideChatContext === undefined ? userText : withInlineContext(sideChatContext, userText);
+    sideChatContext === undefined ? notedText : withInlineContext(sideChatContext, notedText);
   const childPrompt = () => taskPrompt({ task: prompt, role: delegateRole });
   if (testCase.prompt !== "")
     push("user", text(role === "delegated-child" ? childPrompt() : prompt));
