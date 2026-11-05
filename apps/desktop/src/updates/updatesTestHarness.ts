@@ -39,6 +39,8 @@ export interface UpdatesHarnessOptions {
   readonly packageType?: string | undefined;
   /** An unsigned macOS build: the manual-update marker plus a GitHub feed in app-update.yml. */
   readonly manualUpdate?: boolean;
+  /** Replaces the manual build's app-update.yml, e.g. a feed missing its owner and repo. */
+  readonly manualFeed?: string;
   readonly installRecord?: string | undefined;
   readonly policy?: DesktopUpdatePolicy.UpdatePolicy;
   readonly appVersion?: string;
@@ -265,7 +267,9 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
         return Effect.succeed("");
       }
       if (options.manualUpdate && path.endsWith("app-update.yml")) {
-        return Effect.succeed("provider: github\nowner: fork-owner\nrepo: fork-repo\n");
+        return Effect.succeed(
+          options.manualFeed ?? "provider: github\nowner: fork-owner\nrepo: fork-repo\n",
+        );
       }
       return path === "/missing/resources/package-type" && options.packageType !== undefined
         ? Effect.succeed(options.packageType)

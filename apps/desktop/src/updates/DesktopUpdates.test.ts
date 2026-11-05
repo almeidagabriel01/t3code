@@ -947,8 +947,21 @@ describe("DesktopUpdates on an unsigned macOS build", () => {
     ).pipe(Effect.provide(harness.layer));
   });
 
-  it.effect("download opens the release page instead of downloading", () => {
-    const harness = makeHarness(harnessOptions);
+  it.effect.each([
+    {
+      name: "opens the release page",
+      manualFeed: undefined,
+      accepted: true,
+      urls: ["https://github.com/fork-owner/fork-repo/releases/tag/v0.1.7-fork.2"],
+    },
+    {
+      name: "refuses a feed with no repository",
+      manualFeed: "provider: github\n",
+      accepted: false,
+      urls: [],
+    },
+  ])("download on a manual build $name and never downloads", ({ manualFeed, accepted, urls }) => {
+    const harness = makeHarness({ ...harnessOptions, ...(manualFeed ? { manualFeed } : {}) });
     return Effect.scoped(
       Effect.gen(function* () {
         const updates = yield* DesktopUpdates.DesktopUpdates;
@@ -956,11 +969,9 @@ describe("DesktopUpdates on an unsigned macOS build", () => {
         harness.emit("update-available", { version: "0.1.7-fork.2" });
         yield* flushCallbacks;
         const result = yield* updates.download;
-        assert.equal(result.accepted, true);
+        assert.equal(result.accepted, accepted);
         assert.equal(result.completed, false);
-        assert.deepEqual(harness.openedUrls, [
-          "https://github.com/fork-owner/fork-repo/releases/tag/v0.1.7-fork.2",
-        ]);
+        assert.deepEqual(harness.openedUrls, urls);
         assert.equal(harness.downloadCount(), 0);
         assert.equal(result.state.status, "available");
       }),
