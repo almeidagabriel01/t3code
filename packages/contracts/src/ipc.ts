@@ -285,6 +285,8 @@ export interface DesktopUpdateState {
   notAppliedVersion?: string;
   /** Off only because a managed policy rules out this channel; switching channels turns it on. */
   channelBlockedByPolicy?: true;
+  /** An unsigned macOS build cannot install updates itself, so its update action opens the release page. */
+  manualDownload?: true;
 }
 
 export interface DesktopUpdateReleaseNote {

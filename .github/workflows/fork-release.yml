@@ -96,7 +96,7 @@ jobs:
             echo "macOS signing and notarization enabled."
           else
             echo "signed=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::Apple signing secrets are missing: building an UNSIGNED DMG with no update feed. Installed apps will not offer it as an update. See docs/operations/fork-releases.md."
+            echo "::warning::Apple signing secrets are missing: building an UNSIGNED DMG. Installed apps will announce it with a download link but cannot install it themselves. See docs/operations/fork-releases.md."
           fi
 
           vp run dist:desktop:artifact "${args[@]}"
@@ -135,7 +135,7 @@ jobs:
         run: |
           notes="Fork release $VERSION, based on upstream v${VERSION%%-fork.*}."
           if [[ "$SIGNED" != "true" ]]; then
-            notes="$notes Unsigned build: install it from the DMG. It does not update itself."
+            notes="$notes Unsigned build: install it from the DMG. Installed copies announce new versions and open this page to download them."
           fi
           gh release create "v$VERSION" release-publish/* \
             --target "$GITHUB_SHA" \

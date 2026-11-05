@@ -560,42 +560,45 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   );
 
   it.effect.each([
-    { platform: "mac", signed: false, feed: false },
-    { platform: "mac", signed: true, feed: true },
-    { platform: "linux", signed: false, feed: true },
-  ] as const)("update feed for $platform, signed $signed: $feed", ({ platform, signed, feed }) =>
-    Effect.gen(function* () {
-      const config = yield* createBuildConfig(
-        platform,
-        platform === "mac" ? "dmg" : "AppImage",
-        "0.1.6-fork.1",
-        signed,
-        false,
-        undefined,
-        undefined,
-      );
-      assert.deepStrictEqual(
-        config.publish,
-        feed
-          ? [
-              {
-                provider: "github",
-                owner: "almeidagabriel01",
-                repo: "t3code",
-                releaseType: "release",
-              },
-            ]
-          : null,
-      );
-    }).pipe(
-      Effect.provide(
-        ConfigProvider.layer(
-          ConfigProvider.fromEnv({
-            env: { T3CODE_DESKTOP_UPDATE_REPOSITORY: "almeidagabriel01/t3code" },
-          }),
+    { platform: "mac", signed: false, manual: true },
+    { platform: "mac", signed: true, manual: false },
+    { platform: "linux", signed: false, manual: false },
+  ] as const)(
+    "update feed for $platform, signed $signed, manual-update $manual",
+    ({ platform, signed, manual }) =>
+      Effect.gen(function* () {
+        const config = yield* createBuildConfig(
+          platform,
+          platform === "mac" ? "dmg" : "AppImage",
+          "0.1.6-fork.1",
+          signed,
+          false,
+          undefined,
+          undefined,
+        );
+        assert.deepStrictEqual(config.publish, [
+          {
+            provider: "github",
+            owner: "almeidagabriel01",
+            repo: "t3code",
+            releaseType: "release",
+          },
+        ]);
+        assert.strictEqual(
+          (config.extraResources as ReadonlyArray<{ to: string }>).some(
+            (resource) => resource.to === "manual-update",
+          ),
+          manual,
+        );
+      }).pipe(
+        Effect.provide(
+          ConfigProvider.layer(
+            ConfigProvider.fromEnv({
+              env: { T3CODE_DESKTOP_UPDATE_REPOSITORY: "almeidagabriel01/t3code" },
+            }),
+          ),
         ),
       ),
-    ),
   );
 
   // pnpm writes "set this to true or false" placeholders into allowBuilds when a

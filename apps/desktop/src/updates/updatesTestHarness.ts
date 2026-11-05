@@ -10,6 +10,7 @@ import * as Option from "effect/Option";
 import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
@@ -36,6 +37,8 @@ export interface UpdatesHarnessOptions {
   readonly env?: Record<string, string | undefined>;
   readonly platform?: NodeJS.Platform;
   readonly packageType?: string | undefined;
+  /** An unsigned macOS build: the manual-update marker plus a GitHub feed in app-update.yml. */
+  readonly manualUpdate?: boolean;
   readonly installRecord?: string | undefined;
   readonly policy?: DesktopUpdatePolicy.UpdatePolicy;
   readonly appVersion?: string;
@@ -56,6 +59,17 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
   const listeners = new Map<string, Set<(...args: readonly unknown[]) => void>>();
   const sentStates: DesktopUpdateState[] = [];
   const installSteps: string[] = [];
+  const openedUrls: string[] = [];
+  const layerShell = Layer.succeed(ElectronShell.ElectronShell, {
+    openExternal: Effect.fn("test.openExternal")(function* (url) {
+      openedUrls.push(String(url));
+      return true;
+    }),
+    openSystemSettings: Effect.fn("test.openSystemSettings")(function* () {
+      return true;
+    }),
+    copyText: Effect.fn("test.copyText")(function* () {}),
+  });
 
   const addListener = (eventName: string, listener: (...args: readonly unknown[]) => void) => {
     const eventListeners = listeners.get(eventName) ?? new Set();
@@ -247,6 +261,12 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
         ? (installRecords.get(path) ?? previousInstallRecord)
         : undefined;
       if (installRecord !== undefined) return Effect.succeed(installRecord);
+      if (options.manualUpdate && path === "/missing/resources/manual-update") {
+        return Effect.succeed("");
+      }
+      if (options.manualUpdate && path.endsWith("app-update.yml")) {
+        return Effect.succeed("provider: github\nowner: fork-owner\nrepo: fork-repo\n");
+      }
       return path === "/missing/resources/package-type" && options.packageType !== undefined
         ? Effect.succeed(options.packageType)
         : Effect.fail(
@@ -277,6 +297,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     Layer.provide(DesktopUpdatePolicy.layerTest(options.policy)),
     Layer.provideMerge(layerUpdater),
     Layer.provideMerge(layerWindow),
+    Layer.provide(layerShell),
     Layer.provideMerge(layerBackend),
     Layer.provideMerge(DesktopState.layer),
     Layer.provideMerge(layerSettings),
@@ -297,6 +318,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     checkCount: () => checkCount,
     quitAndInstalls: () => quitAndInstallCount,
     installSteps,
+    openedUrls,
     updateRestartMarkers,
     installRecords,
     previousInstallRecord: () => previousInstallRecord,

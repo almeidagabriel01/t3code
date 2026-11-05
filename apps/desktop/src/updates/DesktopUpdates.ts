@@ -30,6 +30,7 @@ import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopObservability from "../app/DesktopObservability.ts";
 import * as DesktopState from "../app/DesktopState.ts";
+import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as IpcChannels from "../ipc/channels.ts";
@@ -367,6 +368,7 @@ export const make = Effect.gen(function* () {
   const config = yield* DesktopConfig.DesktopConfig;
   const pool = yield* DesktopBackendPool.DesktopBackendPool;
   const desktopState = yield* DesktopState.DesktopState;
+  const electronShell = yield* ElectronShell.ElectronShell;
   const electronUpdater = yield* ElectronUpdater.ElectronUpdater;
   const electronWindow = yield* ElectronWindow.ElectronWindow;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
@@ -449,6 +451,18 @@ export const make = Effect.gen(function* () {
           .readFileString(environment.path.join(environment.resourcesPath, "package-type"))
           .pipe(
             Effect.map((packageType) => packageType.trim() === "deb"),
+            Effect.orElseSucceed(() => false),
+          )
+      : false;
+
+  // The build script drops this file into unsigned macOS builds: Squirrel.Mac cannot install
+  // into them, so a newer release is announced with a link to download it instead.
+  const manualDownload =
+    environment.platform === "darwin" && environment.isPackaged
+      ? yield* fileSystem
+          .readFileString(environment.path.join(environment.resourcesPath, "manual-update"))
+          .pipe(
+            Effect.as(true),
             Effect.orElseSucceed(() => false),
           )
       : false;
@@ -595,6 +609,17 @@ export const make = Effect.gen(function* () {
       return { accepted: false, completed: false };
     }
 
+    if (manualDownload) {
+      const feed = Option.getOrUndefined(yield* Ref.get(appUpdateYmlConfigRef));
+      if (!feed?.owner || !feed.repo || !state.availableVersion) {
+        return { accepted: false, completed: false };
+      }
+      const opened = yield* electronShell.openExternal(
+        `https://github.com/${feed.owner}/${feed.repo}/releases/tag/v${encodeURIComponent(state.availableVersion)}`,
+      );
+      return { accepted: opened, completed: false };
+    }
+
     if (!(yield* tryStartUpdateAction("download"))) {
       return { accepted: false, completed: false };
     }
@@ -701,6 +726,7 @@ export const make = Effect.gen(function* () {
       Effect.map((notAppliedVersion) => ({
         ...createBaseUpdateState(channel, disabledReason, environment),
         // Callers fall back to the channel's reason only when nothing else turns updates off.
+        ...(manualDownload ? { manualDownload: true as const } : {}),
         ...(Option.isSome(disabledReason) &&
         disabledReason.value === Option.getOrUndefined(channelBlockedReason(channel))
           ? { channelBlockedByPolicy: true as const }

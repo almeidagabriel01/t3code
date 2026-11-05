@@ -35,9 +35,10 @@ versions as semver (`0.1.6-fork.2` < `0.1.6-fork.3` < `0.1.7-fork.1`).
 ## What an unsigned build does
 
 macOS installs an update only into an app signed with a Developer ID certificate. Without the Apple
-secrets the workflow still produces a DMG and warns, but the app is built with no update feed, so
-it never offers updates and says that macOS updates need a signed build when you choose Check for Updates. Install
-it from the DMG each time. Local `vp run fork:update` builds behave the same way.
+secrets the workflow still produces a DMG and warns. The app still checks the fork's releases, but
+instead of downloading anything it shows the usual update button, and the button opens the release
+page so you can download the new DMG and install it by hand. The build marks itself with a
+`manual-update` resource file. Local `vp run fork:update` builds carry no feed, so they never announce releases.
 
 ## GitHub secrets
 

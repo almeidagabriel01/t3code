@@ -1090,6 +1090,11 @@ export const DESKTOP_EXTRA_RESOURCES = [
     to: "resource-monitor",
   },
 ] as const;
+/** Squirrel.Mac only installs into a Developer ID signed app. The desktop reads this file to announce releases with a download link instead. */
+export const MANUAL_UPDATE_EXTRA_RESOURCE = {
+  from: "apps/desktop/prod-resources/manual-update",
+  to: "manual-update",
+} as const;
 export const LINUX_CAPTURE_EXTRA_RESOURCES = [
   {
     from: "apps/desktop/prod-resources/hyprland-capture",
@@ -2805,16 +2810,14 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       ...(platform === "linux" ? LINUX_BROWSER_SECRET_EXTRA_RESOURCES : []),
       ...(platform === "win" ? WINDOWS_SERVER_EXTRA_RESOURCES : []),
       ...(platform === "win" && wslRuntimeBundled ? WSL_RUNTIME_EXTRA_RESOURCES : []),
+      ...(platform === "mac" && !signed ? [MANUAL_UPDATE_EXTRA_RESOURCE] : []),
     ],
   };
   const updateChannel = resolveDesktopUpdateChannel(version);
   // Missing publish config infers a GitHub feed from tokens; staging has no repository, so manifest generation would crash.
   buildConfig.publish = null;
   if (!isDesktopPreviewVersion(version)) {
-    // Squirrel.Mac refuses to install an update into an app without a Developer ID signature,
-    // so an unsigned mac build ships as a plain DMG with no feed to follow.
-    const publishConfig =
-      platform === "mac" && !signed ? undefined : yield* resolveGitHubPublishConfig(updateChannel);
+    const publishConfig = yield* resolveGitHubPublishConfig(updateChannel);
     if (publishConfig) {
       buildConfig.publish = [publishConfig];
     } else if (mockUpdates) {
@@ -3806,6 +3809,9 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
   // electron-builder is filtering out stageResourcesDir directory in the AppImage for production
   const stageProdResourcesDir = path.join(stageAppDir, "apps/desktop/prod-resources");
   yield* fs.copy(stageResourcesDir, stageProdResourcesDir);
+  if (options.platform === "mac" && !options.signed) {
+    yield* fs.writeFileString(path.join(stageProdResourcesDir, "manual-update"), "");
+  }
 
   const skipPasskeySigning = yield* Config.Boolean("T3CODE_DESKTOP_SKIP_PASSKEY_SIGNING").pipe(
     Config.withDefault(false),

@@ -917,6 +917,73 @@ describe("DesktopUpdates", () => {
   );
 });
 
+describe("DesktopUpdates on an unsigned macOS build", () => {
+  const harnessOptions = { manualUpdate: true, appVersion: "0.1.7-fork.1" } as const;
+
+  it.effect.each([
+    { latest: "0.1.7-fork.2", offered: true },
+    { latest: "0.1.8-fork.1", offered: true },
+    { latest: "0.1.7-fork.1", offered: false },
+    { latest: "0.1.6-fork.9", offered: false },
+  ])("a feed at $latest is offered: $offered", ({ latest, offered }) => {
+    const harness = makeHarness({
+      ...harnessOptions,
+      checkForUpdates: Effect.void,
+    });
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        yield* updates.check("test");
+        // electron-updater compares semver and emits update-available only for a newer release.
+        if (offered) harness.emit("update-available", { version: latest });
+        else harness.emit("update-not-available");
+        yield* flushCallbacks;
+        const state = yield* updates.getState;
+        assert.equal(state.manualDownload, true);
+        assert.equal(state.status, offered ? "available" : "up-to-date");
+        assert.equal(state.availableVersion, offered ? latest : null);
+      }),
+    ).pipe(Effect.provide(harness.layer));
+  });
+
+  it.effect("download opens the release page instead of downloading", () => {
+    const harness = makeHarness(harnessOptions);
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        harness.emit("update-available", { version: "0.1.7-fork.2" });
+        yield* flushCallbacks;
+        const result = yield* updates.download;
+        assert.equal(result.accepted, true);
+        assert.equal(result.completed, false);
+        assert.deepEqual(harness.openedUrls, [
+          "https://github.com/fork-owner/fork-repo/releases/tag/v0.1.7-fork.2",
+        ]);
+        assert.equal(harness.downloadCount(), 0);
+        assert.equal(result.state.status, "available");
+      }),
+    ).pipe(Effect.provide(harness.layer));
+  });
+
+  it.effect("signed builds keep the download path", () => {
+    const harness = makeHarness();
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        assert.equal((yield* updates.getState).manualDownload, undefined);
+        harness.emit("update-available", { version: "1.2.4" });
+        yield* flushCallbacks;
+        yield* updates.download;
+        assert.equal(harness.downloadCount(), 1);
+        assert.deepEqual(harness.openedUrls, []);
+      }),
+    ).pipe(Effect.provide(harness.layer));
+  });
+});
+
 describe("describeUpdateErrorCause", () => {
   it("removes URLs, credentials, response bodies, and headers from summaries", () => {
     const messages = [
