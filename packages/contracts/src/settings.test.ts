@@ -51,7 +51,7 @@ describe("autonomy settings", () => {
     const settings = decodeServerSettings({}).autonomy;
     expect(settings).toMatchObject({ enabled: false, waitingMinutes: 30, stuckMinutes: 15 });
     expect(settings.maxWakesPerDay).toBe(20);
-    const patch = encodeServerSettingsPatch({ autonomy: { ...settings, enabled: true } });
+    const patch = decodeServerSettingsPatch({ autonomy: { ...settings, enabled: true } });
     expect(patch.autonomy?.enabled).toBe(true);
   });
 });
