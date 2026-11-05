@@ -304,7 +304,7 @@ function UsageChip({
   const now = useMinuteNow();
   const status = limitsStatus(item, now);
   return (
-    <span className="inline-flex items-center gap-1.5">
+    <span className="inline-flex items-center gap-2">
       <ItemIconWithActivity item={item} />
       {item.environmentLabel === null ? null : (
         <span className="max-w-20 truncate text-muted-foreground">{item.environmentLabel}</span>
@@ -540,7 +540,7 @@ function UsageSegmentsBody() {
         <PopoverTrigger
           render={<Button variant="status-bar" size="status-bar" aria-label="Usage" />}
         >
-          <span className="flex items-center gap-3">
+          <span className="flex items-center gap-5">
             {items.map((item) => (
               <UsageChip key={item.key} item={item} mode={mode} display={display} />
             ))}

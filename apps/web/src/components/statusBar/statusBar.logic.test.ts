@@ -72,48 +72,61 @@ describe("selectChipEntries", () => {
     kind: ServerProviderUsageWindow["kind"],
     usedPercent: number,
     resetsAt?: string,
+    label = `${id} label`,
   ): ServerProviderUsageWindow =>
-    ({ id, kind, label: `${id} label`, usedPercent, resetsAt }) as ServerProviderUsageWindow;
+    ({ id, kind, label, usedPercent, resetsAt }) as ServerProviderUsageWindow;
   const summary = (windows: ServerProviderUsageWindow[], mode: "verbose" | "compact") =>
-    selectChipEntries(windows, mode, NOW).map((e) => [e.window.id, e.bar, e.label, e.labelFirst]);
+    selectChipEntries(windows, mode, NOW).map((e) => [e.window.id, e.bar, e.name, e.resets]);
 
   it.each([
     {
-      name: "session and weekly each get a bar, session shows its countdown, weekly wk",
+      name: "session and weekly each get a bar and a plain name; only the session shows time left",
       windows: [w("s", "session", 45, at(2 * 3_600_000)), w("w", "weekly", 30, at(3 * 86_400_000))],
       mode: "verbose" as const,
       expected: [
-        ["s", true, "2h0m", false],
-        ["w", true, "wk", false],
+        ["s", true, "Session", "2h0m"],
+        ["w", true, "Week", null],
       ],
     },
     {
-      name: "session without a reset time falls back to its label",
+      name: "a session without a reset time shows no time left",
       windows: [w("s", "session", 45)],
       mode: "verbose" as const,
-      expected: [["s", true, "s label", false]],
+      expected: [["s", true, "Session", null]],
     },
     {
-      name: "extra windows are text only and lead with their name",
-      windows: [w("s", "session", 5), w("opus", "weekly", 5), w("w", "weekly", 5)],
+      name: "a model's own weekly limit reads as the model, text only",
+      windows: [
+        w("s", "session", 5),
+        w("w", "weekly", 5, undefined, "Weekly"),
+        w("fable", "weekly", 0, undefined, "Weekly · Fable"),
+        w("credit", "monthly", 3, undefined, "Monthly credit limit"),
+      ],
       mode: "verbose" as const,
       expected: [
-        ["s", true, "s label", false],
-        ["opus", true, "wk", false],
-        ["w", false, "w label", true],
+        ["s", true, "Session", null],
+        ["w", true, "Week", null],
+        ["fable", false, "Fable", null],
+        ["credit", false, "Month", null],
       ],
     },
     {
       name: "compact keeps only the tightest window, no bar",
       windows: [w("s", "session", 10, at(12 * 60_000)), w("w", "weekly", 80)],
       mode: "compact" as const,
-      expected: [["w", false, "w label", false]],
+      expected: [["w", false, "Week", null]],
     },
     {
-      name: "compact shows the countdown of the tightest window",
+      name: "compact shows the time left of the tightest window",
       windows: [w("s", "session", 90, at(12 * 60_000)), w("w", "weekly", 80)],
       mode: "compact" as const,
-      expected: [["s", false, "12m", false]],
+      expected: [["s", false, "Session", "12m"]],
+    },
+    {
+      name: "a window of another kind keeps its own label",
+      windows: [w("o", "other", 20, undefined, "Credits")],
+      mode: "compact" as const,
+      expected: [["o", false, "Credits", null]],
     },
     { name: "no windows", windows: [], mode: "verbose" as const, expected: [] },
   ])("$name", ({ windows, mode, expected }) => {

@@ -31,12 +31,23 @@ export interface ChipEntry {
   readonly window: ServerProviderUsageWindow;
   /** Session and weekly each get their own bar; compact mode and extra windows are text only. */
   readonly bar: boolean;
-  /** Extra windows lead with their name ("Opus 10%"); the others trail the percentage. */
-  readonly labelFirst: boolean;
-  readonly label: string;
+  /** Short name read before the percentage: "Session", "Week", or a model such as "Fable". */
+  readonly name: string;
+  /** Time left before the window resets, read after the bar; null when it is not shown. */
+  readonly resets: string | null;
 }
 
-/** Session shows its reset countdown, weekly "wk", each as Orca's inline usage bars label them. */
+/** "Weekly · Fable" reads as "Fable": the chip is already grouped under its window kind. */
+function shortWindowName(window: ServerProviderUsageWindow): string {
+  const scoped = /^(?:weekly|monthly)\s*·\s*(.+)$/i.exec(window.label);
+  if (scoped?.[1]) return scoped[1];
+  if (window.kind === "session") return "Session";
+  if (window.kind === "weekly") return "Week";
+  if (window.kind === "monthly") return "Month";
+  return window.label;
+}
+
+/** Each window reads name, percentage, bar, then the session's time left. */
 export function selectChipEntries(
   windows: ReadonlyArray<ServerProviderUsageWindow>,
   mode: "verbose" | "compact",
@@ -45,21 +56,24 @@ export function selectChipEntries(
   if (windows.length === 0) return [];
   if (mode === "compact") {
     const tightest = windows.reduce((a, b) => (b.usedPercent > a.usedPercent ? b : a));
-    const label = formatCompactCountdown(tightest.resetsAt, now) ?? tightest.label;
-    return [{ window: tightest, bar: false, labelFirst: false, label }];
+    return [
+      {
+        window: tightest,
+        bar: false,
+        name: shortWindowName(tightest),
+        resets: formatCompactCountdown(tightest.resetsAt, now),
+      },
+    ];
   }
   const { primary, extra } = selectBarWindows(windows);
   return [
     ...primary.map((window) => ({
       window,
       bar: true,
-      labelFirst: false,
-      label:
-        window.kind === "weekly"
-          ? "wk"
-          : (formatCompactCountdown(window.resetsAt, now) ?? window.label),
+      name: shortWindowName(window),
+      resets: window.kind === "session" ? formatCompactCountdown(window.resetsAt, now) : null,
     })),
-    ...extra.map((window) => ({ window, bar: false, labelFirst: true, label: window.label })),
+    ...extra.map((window) => ({ window, bar: false, name: shortWindowName(window), resets: null })),
   ];
 }
 

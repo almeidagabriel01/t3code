@@ -38,8 +38,8 @@ export function ChipSummary({
   const paceInBar = useClientSettings((current) => current.statusBarUsagePaceVisible);
   const entries = selectChipEntries(limits.windows, mode, now);
   return (
-    <span className="flex items-center gap-2 tabular-nums">
-      {entries.map((entry) => {
+    <span className="flex items-center tabular-nums">
+      {entries.map((entry, index) => {
         const { window } = entry;
         const view = paceInBar
           ? pacePresentation({ window, now, display, settings, formatAt: () => "" })
@@ -49,9 +49,11 @@ export function ChipSummary({
           <UsageBarChip
             key={window.id}
             percent={displayedPercent(window.usedPercent, display)}
-            label={entry.label}
-            labelFirst={entry.labelFirst}
+            name={entry.name}
+            resets={entry.resets}
             bar={entry.bar}
+            extra={!entry.bar && mode === "verbose"}
+            divider={index > 0}
             fillClass={BAND_FILL[band]}
             textClass={BAND_TEXT[band]}
             tickPercent={view?.tickPercent ?? null}

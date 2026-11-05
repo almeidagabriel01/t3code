@@ -7,9 +7,11 @@ import { ChipSummary } from "./UsageChipSummary";
 
 const base = {
   percent: 45,
-  label: "2h",
-  labelFirst: false,
+  name: "Session",
+  resets: "2h",
   bar: true,
+  extra: false,
+  divider: false,
   fillClass: "bg-warning",
   textClass: "text-warning",
   tickPercent: 40,
@@ -17,29 +19,38 @@ const base = {
 } as const;
 
 describe("UsageBarChip", () => {
-  it("draws a bar with its own fill, tick, percentage, label and pace delta", async () => {
+  it("reads name, percentage, bar, then time left and pace delta", async () => {
     await using screen = await render(<UsageBarChip {...base} />, { router: false });
     const fill = screen.container.querySelector<HTMLElement>(".bg-warning");
     expect(fill?.style.width).toBe("45%");
-    expect(screen.container.querySelector("[aria-hidden]")).not.toBeNull();
-    await expect.element(screen.getByText("45% 2h")).toBeVisible();
-    await expect.element(screen.getByText("+5%")).toBeInTheDocument();
+    const chip = screen.container.firstElementChild!;
+    // The number comes before its bar, never after it.
+    const parts = [...chip.children].map((part) =>
+      part.querySelector("[style*='width']") ? "bar" : part.textContent,
+    );
+    expect(parts).toEqual(["Session", "45%", "bar", "2h", "+5%"]);
+    expect(chip.querySelector(".bg-foreground\\/15")).toBeNull();
   });
 
-  it("renders extra windows as text led by their name, without bar or delta", async () => {
+  it("renders an extra window as name and percentage after a divider, without bar or delta", async () => {
     await using screen = await render(
       <UsageBarChip
         {...base}
         bar={false}
-        labelFirst
-        label="Opus"
+        extra
+        divider
+        name="Fable"
+        resets={null}
         tickPercent={null}
         delta={null}
       />,
       { router: false },
     );
     expect(screen.container.querySelector(".bg-warning")).toBeNull();
-    await expect.element(screen.getByText("Opus 45%")).toBeInTheDocument();
+    const chip = screen.container.firstElementChild!;
+    expect(chip.className).toContain("max-xl:hidden");
+    expect(chip.textContent).toBe("Fable45%");
+    expect(chip.firstElementChild?.getAttribute("aria-hidden")).toBe("true");
   });
 });
 
@@ -57,9 +68,10 @@ describe("ChipSummary", () => {
       <ChipSummary limits={limits} mode="verbose" display="used" />,
       { router: false },
     );
-    await expect.element(screen.getByText("45% Session")).toBeInTheDocument();
-    await expect.element(screen.getByText("30% wk")).toBeInTheDocument();
+    expect(screen.container.textContent).toBe("Session45%Week30%");
     expect(screen.container.querySelectorAll("[style*='width']").length).toBe(2);
+    // One divider, between the two windows.
+    expect(screen.container.querySelectorAll("[aria-hidden='true'].w-px").length).toBe(1);
   });
 
   it("shows only the tightest window, without a bar, in compact mode", async () => {
@@ -67,8 +79,7 @@ describe("ChipSummary", () => {
       <ChipSummary limits={limits} mode="compact" display="remaining" />,
       { router: false },
     );
-    await expect.element(screen.getByText("55% Session")).toBeInTheDocument();
-    expect(screen.container.textContent).not.toContain("wk");
+    expect(screen.container.textContent).toBe("Session55%");
     expect(screen.container.querySelectorAll("[style*='width']").length).toBe(0);
   });
 });
