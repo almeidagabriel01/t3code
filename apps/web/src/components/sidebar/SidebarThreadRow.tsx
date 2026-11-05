@@ -1289,7 +1289,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               {pinIndicator}
               {multiline ? null : terminalStatusIcon}
               {multiline ? null : (
-                <KanbanThreadCardBadge environmentId={thread.environmentId} threadId={thread.id} />
+                <span className="flex shrink-0 items-center text-secondary-label text-xs">
+                  <KanbanThreadCardBadge
+                    environmentId={thread.environmentId}
+                    threadId={thread.id}
+                  />
+                </span>
               )}
               {isRegeneratingTitle ? (
                 <span role="status" className="sr-only">
