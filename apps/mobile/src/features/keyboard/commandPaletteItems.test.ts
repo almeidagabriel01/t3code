@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { filterCommandPaletteItems, type CommandPaletteItem } from "./commandPaletteItems";
+import { vi } from "vite-plus/test";
+
+import {
+  autonomyPauseItems,
+  filterCommandPaletteItems,
+  type CommandPaletteItem,
+} from "./commandPaletteItems";
 
 const NOW = Date.UTC(2026, 9, 23);
 
@@ -52,5 +58,24 @@ describe("filterCommandPaletteItems", () => {
       ["siva:one", true],
     ]);
     expect(filterCommandPaletteItems(items, "> layout", ["siva:one"], NOW)).toEqual([]);
+  });
+});
+
+describe("autonomyPauseItems", () => {
+  it("offers pause or resume by the current state, and nothing without a server", () => {
+    expect(autonomyPauseItems(null)).toEqual([]);
+    const toggle = vi.fn();
+    const [pause] = autonomyPauseItems({ enabled: true, toggle });
+    expect(pause?.title).toBe("Pause assistant notifications");
+    expect(
+      keys(
+        filterCommandPaletteItems(autonomyPauseItems({ enabled: true, toggle }), "mute", [], NOW),
+      ),
+    ).toEqual(["toggle-assistant-notifications"]);
+    pause?.run();
+    expect(toggle).toHaveBeenCalledOnce();
+    expect(autonomyPauseItems({ enabled: false, toggle })[0]?.title).toBe(
+      "Turn on assistant notifications",
+    );
   });
 });

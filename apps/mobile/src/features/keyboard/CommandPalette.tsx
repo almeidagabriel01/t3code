@@ -53,6 +53,7 @@ import {
   useVisibleThreadShells,
 } from "../../state/entities";
 import { useAssistantEntries } from "../../state/assistants";
+import { useAutonomyPause } from "../../state/autonomy";
 import { useOpenAssistantEditor } from "../assistants/openAssistantEditor";
 import { useHasKanbanEnvironments } from "../../state/kanban";
 import { useImessageEnvironmentIds } from "../../state/imessageChannel";
@@ -74,6 +75,7 @@ import { useStartTriage } from "../triage/useStartTriage";
 import { useNewTaskFlow } from "../threads/new-task-flow-provider";
 import { useActiveNewTask } from "../../state/active-new-task";
 import {
+  autonomyPauseItems,
   filterCommandPaletteItems,
   nextPaletteIndex,
   type CommandPaletteItem,
@@ -246,6 +248,7 @@ export function CommandPalette(props: {
   const hasTelegram = useTelegramEnvironmentIds().length > 0;
   const hasMac = useMacEnvironmentIds().length > 0;
   const assistants = useAssistantEntries().active;
+  const autonomyPause = useAutonomyPause();
   const openAssistantEditor = useOpenAssistantEditor();
   const threads = useVisibleThreadShells();
   const activeThreadRef = parseActiveThreadPath(props.pathname);
@@ -581,7 +584,7 @@ export function CommandPalette(props: {
         (right.threadSearch ? threadRecentUse(right.threadSearch) : 0) -
         (left.threadSearch ? threadRecentUse(left.threadSearch) : 0),
     );
-    return [...actions, ...projectItems, ...threadItems];
+    return [...actions, ...autonomyPauseItems(autonomyPause), ...projectItems, ...threadItems];
   }, [
     selectTab,
     activeThread,
@@ -594,6 +597,7 @@ export function CommandPalette(props: {
     hasTelegram,
     hasMac,
     assistants,
+    autonomyPause,
     openAssistantEditor,
     canTriage,
     navigation,

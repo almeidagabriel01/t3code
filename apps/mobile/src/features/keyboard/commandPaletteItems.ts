@@ -26,6 +26,33 @@ export interface CommandPaletteItem {
   readonly run: () => void;
 }
 
+/** The reverse-able pause for assistant notifications; absent when no server runs assistants. */
+export function autonomyPauseItems(
+  pause: { readonly enabled: boolean; readonly toggle: () => unknown } | null,
+): CommandPaletteItem[] {
+  return pause === null
+    ? []
+    : [
+        {
+          key: "toggle-assistant-notifications",
+          kind: "action",
+          title: pause.enabled
+            ? "Pause assistant notifications"
+            : "Turn on assistant notifications",
+          searchTerms: [
+            "assistant",
+            "notifications",
+            "autonomy",
+            "pause",
+            "resume",
+            "mute",
+            "wake",
+          ],
+          run: () => void pause.toggle(),
+        },
+      ];
+}
+
 export interface CommandPaletteResult extends CommandPaletteItem {
   /** Listed because its messages match; the row shows the message snippet. */
   readonly fromMessages?: boolean;
