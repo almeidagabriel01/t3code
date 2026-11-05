@@ -493,6 +493,8 @@ export type ResourceTelemetryOwner = typeof ResourceTelemetryOwner.Type;
 export const ResourceTelemetrySnapshot = Schema.Struct({
   readAt: Schema.DateTimeUtc,
   sampleIntervalMs: NonNegativeInt,
+  /** Logical cores on the host; process CPU percents count 100 per core. Absent from older servers. */
+  cpuCount: Schema.optionalKey(PositiveInt),
   processes: Schema.Array(ResourceTelemetryProcess),
   owners: Schema.optionalKey(Schema.Array(ResourceTelemetryOwner)),
   groups: ResourceTelemetryGroups,

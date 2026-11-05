@@ -7,6 +7,7 @@ import type {
   ResourceTelemetryRetryResult,
   ResourceTelemetrySnapshot,
 } from "@t3tools/contracts";
+import * as NodeOS from "node:os";
 import { ProcessOwners } from "@t3tools/shared/ProcessOwners";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -183,6 +184,7 @@ export const make = Effect.fn("resourceTelemetry.resourceTelemetry.make")(functi
   const initialSnapshot: ResourceTelemetrySnapshot = {
     readAt: initialReadAt,
     sampleIntervalMs: initialNativeHealth.sampleIntervalMs,
+    cpuCount: Math.max(1, NodeOS.cpus().length),
     processes: initialMerge.processes,
     groups: initialMerge.groups,
     power: Option.match(initialDesktop, {
@@ -303,6 +305,7 @@ export const make = Effect.fn("resourceTelemetry.resourceTelemetry.make")(functi
         const snapshot: ResourceTelemetrySnapshot = {
           readAt,
           sampleIntervalMs: nativeHealth.sampleIntervalMs,
+          cpuCount: Math.max(1, NodeOS.cpus().length),
           processes: merged.processes,
           owners,
           groups: merged.groups,

@@ -1,4 +1,8 @@
-import type { ResourceTelemetryProcess } from "@t3tools/contracts";
+import type {
+  ResourceTelemetryAggregate,
+  ResourceTelemetryProcess,
+  ResourceTelemetrySnapshot,
+} from "@t3tools/contracts";
 
 import { processLabel } from "./processLabel.logic";
 
@@ -324,4 +328,36 @@ export function buildResourceTree(input: {
     .toSorted((a, b) => compare(a.usage, b.usage, a.label, b.label));
 
   return { projects, devices, app: appBreakdown(processes, claimed) };
+}
+
+const machineShares = new WeakMap<ResourceTelemetrySnapshot, ResourceTelemetrySnapshot>();
+
+/**
+ * The snapshot with CPU as a share of the whole machine (100% = every core busy), like the menu
+ * bar meters. The server counts 100% per core; an older server without `cpuCount` stays per core.
+ */
+export function toMachineShare(snapshot: ResourceTelemetrySnapshot): ResourceTelemetrySnapshot {
+  const cores = snapshot.cpuCount ?? 1;
+  if (cores <= 1) return snapshot;
+  const cached = machineShares.get(snapshot);
+  if (cached) return cached;
+  const group = (aggregate: ResourceTelemetryAggregate): ResourceTelemetryAggregate => ({
+    ...aggregate,
+    currentCpuPercent: aggregate.currentCpuPercent / cores,
+  });
+  const shared: ResourceTelemetrySnapshot = {
+    ...snapshot,
+    processes: snapshot.processes.map((process) => ({
+      ...process,
+      cpuPercent: process.cpuPercent / cores,
+    })),
+    groups: {
+      backend: group(snapshot.groups.backend),
+      electron: group(snapshot.groups.electron),
+      monitor: group(snapshot.groups.monitor),
+      allT3: group(snapshot.groups.allT3),
+    },
+  };
+  machineShares.set(snapshot, shared);
+  return shared;
 }

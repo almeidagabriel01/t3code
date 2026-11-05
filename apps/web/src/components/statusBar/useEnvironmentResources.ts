@@ -15,6 +15,7 @@ import { serverEnvironment } from "../../state/server";
 import { useEnvironmentsWithScope } from "../../state/session";
 import { selectKnownTerminalSessions } from "../../state/terminalSessions";
 import { terminalEnvironment } from "../../state/terminal";
+import { toMachineShare } from "./resourceUsage.logic";
 
 export interface EnvironmentResources {
   readonly environmentId: EnvironmentId;
@@ -67,7 +68,7 @@ export function useEnvironmentSnapshots(
   return new Map(
     readable.flatMap((environmentId, index) => {
       const snapshot = valueOrNull(results[index]);
-      return snapshot === null ? [] : [[environmentId, snapshot] as const];
+      return snapshot === null ? [] : [[environmentId, toMachineShare(snapshot)] as const];
     }),
   );
 }

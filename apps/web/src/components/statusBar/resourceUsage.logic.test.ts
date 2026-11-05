@@ -1,7 +1,12 @@
-import type { ResourceTelemetryProcess } from "@t3tools/contracts";
+import type { ResourceTelemetryProcess, ResourceTelemetrySnapshot } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { appBreakdown, attributeTerminalUsage, buildResourceTree } from "./resourceUsage.logic";
+import {
+  appBreakdown,
+  attributeTerminalUsage,
+  buildResourceTree,
+  toMachineShare,
+} from "./resourceUsage.logic";
 
 const proc = (
   pid: number,
@@ -214,5 +219,30 @@ describe("buildResourceTree", () => {
       sort,
     });
     expect(tree.projects.map((project) => project.title)).toEqual(expected);
+  });
+});
+
+describe("toMachineShare", () => {
+  const aggregate = { currentCpuPercent: 300, currentRssBytes: 1, processCount: 2 };
+  const snapshot = (cpuCount?: number) =>
+    ({
+      ...(cpuCount === undefined ? {} : { cpuCount }),
+      processes: [proc(1, [], 10, 250)],
+      groups: { backend: aggregate, electron: aggregate, monitor: aggregate, allT3: aggregate },
+    }) as unknown as ResourceTelemetrySnapshot;
+
+  it.each([
+    ["ten cores", 10, 25, 30],
+    ["one core", 1, 250, 300],
+    ["an older server without a core count", undefined, 250, 300],
+  ])("on %s shows CPU as a share of the machine", (_case, cores, process, allT3) => {
+    const shared = toMachineShare(snapshot(cores));
+    expect(shared.processes[0]?.cpuPercent).toBe(process);
+    expect(shared.groups.allT3.currentCpuPercent).toBe(allT3);
+  });
+
+  it("returns the same object for the same snapshot", () => {
+    const source = snapshot(10);
+    expect(toMachineShare(source)).toBe(toMachineShare(source));
   });
 });

@@ -21,7 +21,7 @@ import {
   WrenchIcon,
   XIcon,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { createContext, use, useEffect, useState } from "react";
 
 import { useClientSettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
@@ -69,14 +69,15 @@ const MEM_COLUMN = "w-16 text-right";
 const GUTTER = "flex w-5 shrink-0 items-center justify-end";
 const METRICS = "flex shrink-0 items-center tabular-nums";
 
-const HEAVY_CPU_PERCENT = 50;
+// Half a core; process CPU arrives as a share of the whole machine.
+const HEAVY_CPU_PERCENT_OF_CORE = 50;
+const HostCoresContext = createContext(1);
 const HEAVY_RSS_BYTES = 1024 ** 3;
 
-const formatCpu = (cpuPercent: number) => `${Math.round(cpuPercent)}%`;
-const formatCores = (cpuPercent: number) =>
-  cpuPercent < 100 ? "" : ` · ${(cpuPercent / 100).toFixed(1)} cores`;
-const CPU_SCALE_HINT =
-  "As in Activity Monitor, 100% is one full CPU core. Several busy processes add up past 100%.";
+// Shares of the whole machine are small; one decimal keeps a busy process from reading as 0%.
+const formatCpu = (cpuPercent: number) =>
+  cpuPercent > 0 && cpuPercent < 10 ? `${cpuPercent.toFixed(1)}%` : `${Math.round(cpuPercent)}%`;
+const CPU_SCALE_HINT = "Share of the whole machine: 100% means every CPU core is busy.";
 
 function Metrics({ usage }: { readonly usage: ResourceUsage | null }) {
   return (
@@ -179,11 +180,13 @@ function ProcessList({
 }: {
   readonly processes: ReadonlyArray<ResourceTelemetryProcess>;
 }) {
+  const cores = use(HostCoresContext);
   return (
     <div>
       {processes.map((process) => {
         const heavy =
-          process.cpuPercent >= HEAVY_CPU_PERCENT || process.residentBytes >= HEAVY_RSS_BYTES;
+          process.cpuPercent * cores >= HEAVY_CPU_PERCENT_OF_CORE ||
+          process.residentBytes >= HEAVY_RSS_BYTES;
         const label = processLabel(process);
         return (
           <div
@@ -427,118 +430,120 @@ export function EnvironmentSection({
   );
 
   return (
-    <div>
-      {label === null ? null : (
-        <div className="border-b border-border/50 bg-muted/30 px-3 py-1 text-3xs font-medium uppercase tracking-wide text-muted-foreground">
-          {label}
-        </div>
-      )}
-      <HostTotals environmentId={environmentId} />
-      <ResourceHistory environmentId={environmentId} />
-      {tree.projects.length === 0 && tree.devices.length === 0 ? (
-        <div className="px-3 py-4 text-center text-xs text-muted-foreground">
-          Nothing running right now
-        </div>
-      ) : null}
-      {tree.projects.map((project) => (
-        <ProjectGroup
-          key={project.projectKey ?? UNATTRIBUTED}
-          title={project.title}
-          count={project.rows.length}
-          usage={snapshot === null ? null : project.usage}
-        >
-          {project.rows.map((row) => {
-            const usage = snapshot === null ? null : row.usage;
-            if (row.kind === "agent") {
+    <HostCoresContext value={snapshot?.cpuCount ?? 1}>
+      <div>
+        {label === null ? null : (
+          <div className="border-b border-border/50 bg-muted/30 px-3 py-1 text-3xs font-medium uppercase tracking-wide text-muted-foreground">
+            {label}
+          </div>
+        )}
+        <HostTotals environmentId={environmentId} />
+        <ResourceHistory environmentId={environmentId} />
+        {tree.projects.length === 0 && tree.devices.length === 0 ? (
+          <div className="px-3 py-4 text-center text-xs text-muted-foreground">
+            Nothing running right now
+          </div>
+        ) : null}
+        {tree.projects.map((project) => (
+          <ProjectGroup
+            key={project.projectKey ?? UNATTRIBUTED}
+            title={project.title}
+            count={project.rows.length}
+            usage={snapshot === null ? null : project.usage}
+          >
+            {project.rows.map((row) => {
+              const usage = snapshot === null ? null : row.usage;
+              if (row.kind === "agent") {
+                return (
+                  <UsageRow
+                    key={row.key}
+                    icon={<BotIcon aria-hidden />}
+                    label={row.name}
+                    detail={`Agent · ${row.name}`}
+                    usage={usage}
+                    processes={snapshot === null ? undefined : row.processes}
+                    onOpen={() => openThread(row.threadId as ThreadId)}
+                  />
+                );
+              }
+              const session = sessions.get(row.key);
               return (
                 <UsageRow
                   key={row.key}
-                  icon={<BotIcon aria-hidden />}
+                  icon={<TerminalIcon aria-hidden />}
                   label={row.name}
-                  detail={`Agent · ${row.name}`}
+                  detail={session?.state.summary?.cwd ?? row.name}
+                  suffix={session?.state.hasRunningSubprocess ? "running" : null}
                   usage={usage}
                   processes={snapshot === null ? undefined : row.processes}
                   onOpen={() => openThread(row.threadId as ThreadId)}
+                  closeLabel="End terminal"
+                  onClose={
+                    canClose && session !== undefined
+                      ? () =>
+                          void close(
+                            {
+                              threadId: session.target.threadId,
+                              terminalId: session.target.terminalId,
+                            },
+                            row.name,
+                          )
+                      : null
+                  }
                 />
               );
-            }
-            const session = sessions.get(row.key);
-            return (
-              <UsageRow
-                key={row.key}
-                icon={<TerminalIcon aria-hidden />}
-                label={row.name}
-                detail={session?.state.summary?.cwd ?? row.name}
-                suffix={session?.state.hasRunningSubprocess ? "running" : null}
-                usage={usage}
-                processes={snapshot === null ? undefined : row.processes}
-                onOpen={() => openThread(row.threadId as ThreadId)}
-                closeLabel="End terminal"
-                onClose={
-                  canClose && session !== undefined
-                    ? () =>
-                        void close(
-                          {
-                            threadId: session.target.threadId,
-                            terminalId: session.target.terminalId,
-                          },
-                          row.name,
-                        )
-                    : null
-                }
-              />
-            );
-          })}
-        </ProjectGroup>
-      ))}
-      {tree.devices.length === 0 ? null : (
-        <ProjectGroup title="Devices" count={tree.devices.length} usage={deviceTotal}>
-          {tree.devices.map((device) => {
-            const Icon = DEVICE_ICON[device.platform];
-            return (
-              <UsageRow
-                key={device.key}
-                icon={<Icon aria-hidden />}
-                label={device.label}
-                detail={device.label}
-                usage={device.usage}
-                processes={device.processes}
-                onOpen={null}
-              />
-            );
-          })}
-        </ProjectGroup>
-      )}
-      {app === null || appTotal === null ? null : (
-        <div className="border-t border-border/50">
-          <Collapsible open={appOpen} onOpenChange={setAppOpen}>
-            <CollapsibleTrigger className="flex w-full items-center py-2 pl-2 pr-3 hover:bg-muted/50">
-              <span className="flex w-5 shrink-0 items-center justify-center">
-                <ChevronToggle open={appOpen} />
-              </span>
-              <span className="min-w-0 flex-1 truncate text-start text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
-                T3 Code
-              </span>
-              <Metrics usage={appTotal} />
-              <span className={GUTTER} aria-hidden />
-            </CollapsibleTrigger>
-            <CollapsiblePanel animate={false}>
-              <div className="border-t border-border/30">
-                {[...app].map(([group, usage]) => (
-                  <div key={group} className="flex items-center gap-2 py-1.5 pl-10 pr-3">
-                    <span className="min-w-0 flex-1 truncate text-2xs text-muted-foreground">
-                      {APP_GROUP_LABEL[group]} ({usage.processCount})
-                    </span>
-                    <Metrics usage={usage} />
-                    <span className={GUTTER} aria-hidden />
-                  </div>
-                ))}
-              </div>
-            </CollapsiblePanel>
-          </Collapsible>
-        </div>
-      )}
-    </div>
+            })}
+          </ProjectGroup>
+        ))}
+        {tree.devices.length === 0 ? null : (
+          <ProjectGroup title="Devices" count={tree.devices.length} usage={deviceTotal}>
+            {tree.devices.map((device) => {
+              const Icon = DEVICE_ICON[device.platform];
+              return (
+                <UsageRow
+                  key={device.key}
+                  icon={<Icon aria-hidden />}
+                  label={device.label}
+                  detail={device.label}
+                  usage={device.usage}
+                  processes={device.processes}
+                  onOpen={null}
+                />
+              );
+            })}
+          </ProjectGroup>
+        )}
+        {app === null || appTotal === null ? null : (
+          <div className="border-t border-border/50">
+            <Collapsible open={appOpen} onOpenChange={setAppOpen}>
+              <CollapsibleTrigger className="flex w-full items-center py-2 pl-2 pr-3 hover:bg-muted/50">
+                <span className="flex w-5 shrink-0 items-center justify-center">
+                  <ChevronToggle open={appOpen} />
+                </span>
+                <span className="min-w-0 flex-1 truncate text-start text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  T3 Code
+                </span>
+                <Metrics usage={appTotal} />
+                <span className={GUTTER} aria-hidden />
+              </CollapsibleTrigger>
+              <CollapsiblePanel animate={false}>
+                <div className="border-t border-border/30">
+                  {[...app].map(([group, usage]) => (
+                    <div key={group} className="flex items-center gap-2 py-1.5 pl-10 pr-3">
+                      <span className="min-w-0 flex-1 truncate text-2xs text-muted-foreground">
+                        {APP_GROUP_LABEL[group]} ({usage.processCount})
+                      </span>
+                      <Metrics usage={usage} />
+                      <span className={GUTTER} aria-hidden />
+                    </div>
+                  ))}
+                </div>
+              </CollapsiblePanel>
+            </Collapsible>
+          </div>
+        )}
+      </div>
+    </HostCoresContext>
   );
 }
 
@@ -618,9 +623,7 @@ function ResourceManager({
               render={<span className="cursor-default font-medium text-foreground" />}
             >
               {formatCpu(totals.cpuPercent)}{" "}
-              <span className="font-normal text-muted-foreground">
-                CPU{formatCores(totals.cpuPercent)}
-              </span>
+              <span className="font-normal text-muted-foreground">CPU</span>
             </TooltipTrigger>
             <TooltipPopup side="bottom" className="max-w-xs">
               {CPU_SCALE_HINT}
