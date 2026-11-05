@@ -73,6 +73,10 @@ const HEAVY_CPU_PERCENT = 50;
 const HEAVY_RSS_BYTES = 1024 ** 3;
 
 const formatCpu = (cpuPercent: number) => `${Math.round(cpuPercent)}%`;
+const formatCores = (cpuPercent: number) =>
+  cpuPercent < 100 ? "" : ` · ${(cpuPercent / 100).toFixed(1)} cores`;
+const CPU_SCALE_HINT =
+  "As in Activity Monitor, 100% is one full CPU core. Several busy processes add up past 100%.";
 
 function Metrics({ usage }: { readonly usage: ResourceUsage | null }) {
   return (
@@ -609,7 +613,19 @@ function ResourceManager({
       </div>
       {snapshots.size === 0 ? null : (
         <div className="flex items-baseline gap-3 border-b border-border px-3 py-2 text-xs tabular-nums">
-          <span className="font-medium text-foreground">{formatCpu(totals.cpuPercent)}</span>
+          <Tooltip>
+            <TooltipTrigger
+              render={<span className="cursor-default font-medium text-foreground" />}
+            >
+              {formatCpu(totals.cpuPercent)}{" "}
+              <span className="font-normal text-muted-foreground">
+                CPU{formatCores(totals.cpuPercent)}
+              </span>
+            </TooltipTrigger>
+            <TooltipPopup side="bottom" className="max-w-xs">
+              {CPU_SCALE_HINT}
+            </TooltipPopup>
+          </Tooltip>
           <span className="text-muted-foreground/50">·</span>
           <span className="font-medium text-foreground">
             {formatMemory(totals.rssBytes)}{" "}
