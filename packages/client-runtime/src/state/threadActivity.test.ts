@@ -180,7 +180,7 @@ describe("selectAgentsSection", () => {
   });
   it.each([
     {
-      name: "splits working from unread, drops needs-you, sorts newest first with fallbacks",
+      name: "puts what needs the user first, then working, then unread, newest first",
       threads: [
         shell("w-old", {
           runtime: { status: "running" },
@@ -196,20 +196,29 @@ describe("selectAgentsSection", () => {
           lastVisitedAt: "2026-03-09T09:00:00.000Z",
         }),
         shell("d-new", { latestRun: run(null, "2026-03-09T10:05:00.000Z"), lastVisitedAt: before }),
-        shell("approval", { hasPendingApprovals: true }),
+        shell("approval", { hasPendingApprovals: true, updatedAt: "2026-03-09T09:00:00.000Z" }),
+        shell("input", {
+          hasPendingUserInput: true,
+          runtime: { status: "running" },
+          updatedAt: "2026-03-09T11:00:00.000Z",
+        }),
+        shell("guest", { pendingGuestMessageCount: 1, updatedAt: "2026-03-09T10:00:00.000Z" }),
         shell("quiet"),
       ],
+      needsYou: ["input", "guest", "approval"],
       working: ["w-new", "w-none", "w-old"],
       done: ["d-new", "d-old"],
     },
     {
       name: "is empty when nothing runs or finished",
       threads: [shell("quiet")],
+      needsYou: [],
       working: [],
       done: [],
     },
-  ])("$name", ({ threads, working, done }) => {
+  ])("$name", ({ threads, needsYou, working, done }) => {
     const section = selectAgentsSection(build(threads));
+    expect(section.needsYou.map((entry) => entry.thread.id)).toEqual(needsYou);
     expect(section.working.map((entry) => entry.thread.id)).toEqual(working);
     expect(section.done.map((entry) => entry.thread.id)).toEqual(done);
   });

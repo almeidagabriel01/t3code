@@ -93,7 +93,8 @@ export function resolveSidebarPriorityRank(input: {
     ...input.thread,
     blockedOnThreadWait: input.thread.blockedOnThreadWait === true,
   });
-  if (status === "approval" || status === "input") return 0;
+  // A guest waiting on the owner needs the user as much as an agent's own request does.
+  if (status === "approval" || status === "input" || status === "request") return 0;
   if (status === "working" || status === "waiting") return 1;
   const lastVisitedAt = resolveThreadLastVisitedAt(
     input.thread.lastVisitedAt,
@@ -244,11 +245,9 @@ export interface AgentsSectionEntry extends ActivityEntry {
   readonly at: string | null;
 }
 
-/**
- * The sidebar's Agents section: Activity's working and unread rows, newest first, minus what
- * needs the user (the Activity page and Needs you cover that).
- */
+/** The sidebar's Agents section: Activity's rows by rank, newest first in each group. */
 export function selectAgentsSection(entries: readonly ActivityEntry[]): {
+  readonly needsYou: AgentsSectionEntry[];
   readonly working: AgentsSectionEntry[];
   readonly done: AgentsSectionEntry[];
 } {
@@ -258,6 +257,7 @@ export function selectAgentsSection(entries: readonly ActivityEntry[]): {
       .map((entry): AgentsSectionEntry => ({ ...entry, at: pick(entry) }))
       .sort((left, right) => firstValidTimestampMs(right.at) - firstValidTimestampMs(left.at));
   return {
+    needsYou: stamped(0, ({ thread }) => thread.updatedAt ?? thread.latestRun?.startedAt ?? null),
     working: stamped(
       1,
       ({ thread }) =>

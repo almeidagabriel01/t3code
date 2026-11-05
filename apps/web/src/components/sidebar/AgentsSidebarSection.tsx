@@ -2,7 +2,7 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { selectAgentsSection } from "@t3tools/client-runtime/state/thread-activity";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { BotIcon, CheckIcon, ChevronRightIcon } from "lucide-react";
+import { BotIcon, CheckIcon, ChevronRightIcon, CircleAlertIcon } from "lucide-react";
 import { memo } from "react";
 
 import { updateClientSettings, useClientSettings } from "../../hooks/useSettings";
@@ -28,13 +28,16 @@ function AgentRow(props: {
   readonly onOpen: (threadRef: ScopedThreadRef) => void;
 }) {
   const { thread, at } = props.entry;
+  const needsYou = props.entry.rank === 0;
   const working = props.entry.rank === 1;
   const projectName = props.project?.title ?? "Unknown project";
-  const state = working
-    ? at === null
-      ? "Working"
-      : `Working ${formatElapsedDurationLabel(at, props.nowMs)}`
-    : "Finished";
+  const state = needsYou
+    ? "Needs you"
+    : working
+      ? at === null
+        ? "Working"
+        : `Working ${formatElapsedDurationLabel(at, props.nowMs)}`
+      : "Finished";
   return (
     <li className="list-none py-0.5">
       <Tooltip>
@@ -56,7 +59,12 @@ function AgentRow(props: {
             <BotIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
           )}
           <span className="min-w-0 flex-1 truncate text-sm font-medium">{thread.title}</span>
-          {working ? (
+          {needsYou ? (
+            <CircleAlertIcon
+              aria-hidden
+              className="size-3.5 shrink-0 text-warning"
+            />
+          ) : working ? (
             <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground tabular-nums">
               <Spinner size="xs" tone="muted" aria-hidden />
               {at === null ? null : formatElapsedDurationLabel(at, props.nowMs)}
@@ -73,7 +81,7 @@ function AgentRow(props: {
   );
 }
 
-/** Pinned below the Assistants: threads working or finished unseen, from every project. */
+/** Pinned below the Assistants: threads that need the user, work, or finished unseen. */
 export const AgentsSidebarSection = memo(function AgentsSidebarSection(props: {
   readonly routeThreadKey: string | null;
   readonly onOpenThread: (threadRef: ScopedThreadRef) => void;
@@ -85,13 +93,14 @@ export const AgentsSidebarSection = memo(function AgentsSidebarSection(props: {
   const projects = useProjects();
   const nowMs = useNowMinuteMs();
   const navigate = useNavigate();
-  const { working, done } = selectAgentsSection(entries);
-  const total = working.length + done.length;
+  const { needsYou, working, done } = selectAgentsSection(entries);
+  const total = needsYou.length + working.length + done.length;
   if (!enabled || total === 0) return null;
   const projectByKey = new Map(
     projects.map((project) => [`${project.environmentId}:${project.id}`, project]),
   );
   const groups = [
+    { id: "needs-you" as const, heading: "Needs you", items: needsYou },
     { id: "working" as const, heading: "Working", items: working },
     { id: "done" as const, heading: "Done", items: done },
   ].filter((group) => group.items.length > 0);
