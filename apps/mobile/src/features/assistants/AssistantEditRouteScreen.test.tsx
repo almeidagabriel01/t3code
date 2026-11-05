@@ -142,6 +142,8 @@ const assistant = (budget: unknown = null) =>
     threadId: "thread-1",
     instructions: "",
     toolAccess: "full",
+    role: "",
+    reportsTo: null,
     autonomy: DEFAULT_ASSISTANT_AUTONOMY,
     budget,
     isDefault: false,

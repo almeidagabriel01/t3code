@@ -2,6 +2,7 @@ import {
   type Assistant,
   type AssistantId,
   type AssistantToolAccess,
+  assistantDescendantIds,
   assistantIdFromThreadId,
   isAssistantThreadId,
   AssistantAutonomy,
@@ -30,6 +31,8 @@ export interface AssistantRow {
   readonly archived_at: string | null;
   readonly budget_json: string | null;
   readonly autonomy_json: string | null;
+  readonly role: string;
+  readonly reports_to: string | null;
   readonly created_at: string;
   readonly updated_at: string;
 }
@@ -56,6 +59,8 @@ export const toAssistant = (row: AssistantRow): Assistant => ({
   threadId: row.thread_id as ThreadId | null,
   generation: row.generation,
   archivedAt: row.archived_at,
+  role: row.role,
+  reportsTo: row.reports_to as AssistantId | null,
   budget: row.budget_json === null ? null : decodeBudget(row.budget_json),
   autonomy:
     row.autonomy_json === null
@@ -65,7 +70,33 @@ export const toAssistant = (row: AssistantRow): Assistant => ({
   updatedAt: row.updated_at,
 });
 
+/**
+ * An assistant with any org relation may only message its descendants; one with none is free.
+ * Reports answer through the run their leader waits on, so a message upward never exists and
+ * a loop of assistants messaging each other cannot form.
+ */
+export function assistantMayMessage(
+  edges: ReadonlyArray<{ readonly id: string; readonly reportsTo: string | null }>,
+  senderId: string,
+  targetId: string,
+): boolean {
+  if (senderId === targetId) return true;
+  const related = (id: string) =>
+    edges.some((edge) => (edge.id === id ? edge.reportsTo !== null : edge.reportsTo === id));
+  return (
+    !(related(senderId) || related(targetId)) ||
+    assistantDescendantIds(edges, senderId).has(targetId)
+  );
+}
+
 export interface AssistantDirectoryShape {
+  /** True unless both are assistant threads and the org chart forbids the send. */
+  readonly mayMessage: (sender: ThreadId, target: ThreadId) => Effect.Effect<boolean>;
+  /** Who the assistant reports to and who reports to it, archived ones left out. */
+  readonly teamOf: (assistant: Assistant) => Effect.Effect<{
+    readonly leader: Assistant | null;
+    readonly reports: ReadonlyArray<Assistant>;
+  }>;
   /** None without a query unless `threadId` is an assistant thread id. */
   readonly forThread: (
     threadId: ThreadId,
@@ -79,7 +110,34 @@ export class AssistantDirectory extends Context.Service<
 
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
-  return AssistantDirectory.of({
+  const live =
+    sql<AssistantRow>`SELECT * FROM assistants WHERE archived_at IS NULL ORDER BY created_at ASC`.pipe(
+      Effect.orDie,
+    );
+  const directory: AssistantDirectoryShape = {
+    mayMessage: Effect.fn("AssistantDirectory.mayMessage")(function* (senderThread, targetThread) {
+      const sender = yield* directory.forThread(senderThread);
+      if (Option.isNone(sender)) return true;
+      const target = yield* directory.forThread(targetThread);
+      if (Option.isNone(target)) return true;
+      const rows = yield* sql<{
+        readonly assistant_id: string;
+        readonly reports_to: string | null;
+      }>`
+        SELECT assistant_id, reports_to FROM assistants`.pipe(Effect.orDie);
+      return assistantMayMessage(
+        rows.map((row) => ({ id: row.assistant_id, reportsTo: row.reports_to })),
+        sender.value.assistant.id,
+        target.value.assistant.id,
+      );
+    }),
+    teamOf: Effect.fn("AssistantDirectory.teamOf")(function* (assistant) {
+      const all = (yield* live).map(toAssistant);
+      return {
+        leader: all.find((other) => other.id === assistant.reportsTo) ?? null,
+        reports: all.filter((other) => other.reportsTo === assistant.id),
+      };
+    }),
     forThread: Effect.fn("AssistantDirectory.forThread")(function* (threadId) {
       if (!isAssistantThreadId(threadId)) return Option.none();
       const current =
@@ -94,7 +152,8 @@ const make = Effect.gen(function* () {
         : Option.some({ assistant: toAssistant(owner[0]), current: false });
       // A failed read must not look like "not an assistant": that would drop its read-only limit.
     }, Effect.orDie),
-  });
+  };
+  return AssistantDirectory.of(directory);
 });
 
 export const layer = Layer.effect(AssistantDirectory, make);

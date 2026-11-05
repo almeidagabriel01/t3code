@@ -9,20 +9,24 @@ import { type AssistantParameters, AssistantToolkit } from "./tools.ts";
 
 type Out = Record<string, Schema.Json>;
 
-const brief = (assistant: Assistant): Out => ({
+const brief = (assistant: Assistant, all: ReadonlyArray<Assistant>): Out => ({
   assistantId: assistant.id,
   handle: assistant.handle,
   name: assistant.name,
   projectId: assistant.projectId,
   threadId: assistant.threadId,
   toolAccess: assistant.toolAccess,
+  role: assistant.role,
+  reportsTo: all.find((other) => other.id === assistant.reportsTo)?.handle ?? null,
+  reports: all.filter((other) => other.reportsTo === assistant.id).map((other) => other.handle),
   archived: assistant.archivedAt !== null,
 });
 
 const run = Effect.fn("mcp.assistant.run")(function* (input: AssistantParameters) {
   const assistants = yield* AssistantService.AssistantService;
   const all = yield* assistants.list.pipe(Effect.mapError(unavailable));
-  if (input.action === "list") return { assistants: all.map(brief) } satisfies Out;
+  if (input.action === "list")
+    return { assistants: all.map((assistant) => brief(assistant, all)) } satisfies Out;
   const wanted = input.handle?.trim().replace(/^@/, "").toLowerCase();
   if (wanted === undefined || wanted === "") {
     return yield* new OrchestratorMcpFailure({
@@ -37,7 +41,7 @@ const run = Effect.fn("mcp.assistant.run")(function* (input: AssistantParameters
       message: `No assistant has the handle "${wanted}". Use list.`,
     });
   }
-  return brief(found);
+  return brief(found, all);
 });
 
 export const layer = McpToolAccess.toLayer(AssistantToolkit, {

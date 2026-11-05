@@ -30,6 +30,8 @@ const assistant = {
   isDefault: false,
   threadId: "assistant:a1:1",
   generation: 1,
+  role: "",
+  reportsTo: null,
   budget: null,
   autonomy: DEFAULT_ASSISTANT_AUTONOMY,
   archivedAt: null,

@@ -584,6 +584,8 @@ const ASSISTANT_REFUSALS = {
     "This is an assistant's conversation. Reset it, or archive or delete the assistant, instead.",
   old_generation:
     "Restore an earlier assistant conversation with the assistant's reset and restore.",
+  not_your_report:
+    "This assistant has a place in the team: it can only message assistants below it. Answer upward through your run result.",
 } as const;
 
 const RUNTIME_MODE_RANK: Record<RuntimeMode, number> = {
@@ -850,8 +852,32 @@ const make = Effect.gen(function* () {
     );
   };
 
+  /** A send between assistants of a team only goes down the chain; see `assistantMayMessage`. */
+  const guardAssistantSend = (
+    command: OrchestrationV2ServerCommand,
+  ): Effect.Effect<OrchestrationV2ServerCommand, Orchestrator.OrchestratorCommandRejectedError> => {
+    const sender = "senderThreadId" in command ? command.senderThreadId : undefined;
+    if (Option.isNone(assistantDirectory) || sender === undefined || !("threadId" in command)) {
+      return Effect.succeed(command);
+    }
+    return assistantDirectory.value.mayMessage(sender, command.threadId).pipe(
+      Effect.flatMap((allowed) =>
+        allowed
+          ? Effect.succeed(command)
+          : Effect.fail(
+              new Orchestrator.OrchestratorCommandRejectedError({
+                commandId: command.commandId,
+                commandType: command.type,
+                cause: new Error(ASSISTANT_REFUSALS.not_your_report),
+              }),
+            ),
+      ),
+    );
+  };
+
   const dispatch: ThreadManagementServiceShape["dispatch"] = (command) =>
-    guardAssistantThread(command).pipe(
+    guardAssistantSend(command).pipe(
+      Effect.flatMap(guardAssistantThread),
       Effect.flatMap((guarded) =>
         ensureCommandTranscripts(guarded).pipe(
           Effect.andThen(assertDispatchTargetEnabled(guarded)),

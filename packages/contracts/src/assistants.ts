@@ -1,7 +1,13 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import { IsoDateTime, ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  IsoDateTime,
+  ProjectId,
+  ThreadId,
+  TrimmedNonEmptyString,
+  TrimmedString,
+} from "./baseSchemas.ts";
 import { AssistantAutonomy, DEFAULT_ASSISTANT_AUTONOMY } from "./autonomy.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import type { RuntimeMode } from "./providerPolicy.ts";
@@ -12,11 +18,38 @@ import { InstanceBudgetStatus, ProviderBudget } from "./usage.ts";
  * The thread's own model selection is the assistant's model; a reset starts a new generation.
  */
 export const ASSISTANT_NAME_MAX_LENGTH = 60;
+export const ASSISTANT_ROLE_MAX_LENGTH = 60;
 export const ASSISTANT_INSTRUCTIONS_MAX_CHARS = 8_000;
 export const DEFAULT_ASSISTANT_ID = "jarvis";
 
 export const AssistantId = TrimmedNonEmptyString.pipe(Schema.brand("AssistantId"));
 export type AssistantId = typeof AssistantId.Type;
+
+const AssistantRole = TrimmedString.check(Schema.isMaxLength(ASSISTANT_ROLE_MAX_LENGTH));
+
+/** `id` and everyone below it in the reports-to tree; a cycle in bad data still ends. */
+export function assistantDescendantIds(
+  assistants: ReadonlyArray<{ readonly id: string; readonly reportsTo: string | null }>,
+  id: string,
+): Set<string> {
+  const found = new Set<string>();
+  const queue = [id];
+  for (let next = queue.pop(); next !== undefined; next = queue.pop()) {
+    if (found.has(next)) continue;
+    found.add(next);
+    for (const assistant of assistants) if (assistant.reportsTo === next) queue.push(assistant.id);
+  }
+  return found;
+}
+
+/** The standup task is recognised by this opening line, so a rename of its title is harmless. */
+export const ASSISTANT_STANDUP_PROMPT_HEAD = "Daily team standup.";
+export const ASSISTANT_STANDUP_TASK_TITLE = "Daily standup";
+export const ASSISTANT_STANDUP_PROMPT = [
+  ASSISTANT_STANDUP_PROMPT_HEAD,
+  "Ask each of your direct reports (see your team note) for a short status: t3_thread_send to its threadId, then t3_thread_wait on the run it returns.",
+  "Then write one short report for the user: what each report did, what is blocked, and what needs the user. Skip a report that did not answer and say so.",
+].join("\n");
 
 /** Lowercase slug, unique per environment; channels route `@handle` to it. */
 export const AssistantHandle = Schema.String.check(
@@ -108,6 +141,10 @@ export const Assistant = Schema.Struct({
   generation: Schema.Number,
   /** Spending cap over every conversation it had; priced like provider budgets. */
   budget: Schema.NullOr(ProviderBudget).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  /** Free text such as "CEO" or "Engineer"; empty when it has none. */
+  role: AssistantRole.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  /** The leader it answers to; null for a top-level assistant. */
+  reportsTo: Schema.NullOr(AssistantId).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   /** Whether and how it wakes on its own; see `autonomy.ts`. */
   autonomy: AssistantAutonomy.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_ASSISTANT_AUTONOMY)),
@@ -140,6 +177,8 @@ export const AssistantsCreateInput = Schema.Struct({
   toolAccess: AssistantToolAccess,
   budget: Schema.optional(Schema.NullOr(ProviderBudget)),
   autonomy: Schema.optional(AssistantAutonomy),
+  role: Schema.optional(AssistantRole),
+  reportsTo: Schema.optional(Schema.NullOr(AssistantId)),
 });
 export type AssistantsCreateInput = typeof AssistantsCreateInput.Type;
 
@@ -157,6 +196,11 @@ export const AssistantsUpdateInput = Schema.Struct({
   /** Null removes the cap. */
   budget: Schema.optional(Schema.NullOr(ProviderBudget)),
   autonomy: Schema.optional(AssistantAutonomy),
+  role: Schema.optional(AssistantRole),
+  /** Null makes it top-level. */
+  reportsTo: Schema.optional(Schema.NullOr(AssistantId)),
+  /** Adds the daily standup schedule once; it stays an ordinary scheduled task afterwards. */
+  addStandup: Schema.optional(Schema.Literal(true)),
   archived: Schema.optional(Schema.Boolean),
 });
 export type AssistantsUpdateInput = typeof AssistantsUpdateInput.Type;

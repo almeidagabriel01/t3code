@@ -817,6 +817,10 @@ const layerAssistantGuardTest = (dispatched: Array<unknown>) =>
     ),
     Layer.provide(
       Layer.succeed(AssistantDirectory, {
+        // The org chart itself is covered by assistantMayMessage; here "old" is a report of "current".
+        mayMessage: (sender, target) =>
+          Effect.succeed(!(sender === guardThreads.old && target === guardThreads.current)),
+        teamOf: () => Effect.succeed({ leader: null, reports: [] }),
         forThread: (threadId) =>
           Effect.succeed(
             threadId === guardThreads.plain
@@ -903,5 +907,42 @@ it.effect("assistant guard: a first message cannot rename an assistant thread", 
       });
     }
     expect(dispatched.map((command) => "titleSeed" in (command as object))).toEqual([false, true]);
+  }).pipe(Effect.provide(layerAssistantGuardTest(dispatched)));
+});
+
+it.effect.each([
+  ["a report messaging its leader", guardThreads.old, guardThreads.current, "Answer upward"],
+  ["a leader messaging its report", guardThreads.current, guardThreads.old, null],
+  ["a plain thread messaging an assistant", undefined, guardThreads.current, null],
+] as const)("assistant guard: %s", ([, sender, target, refusal]) => {
+  const dispatched: Array<unknown> = [];
+  return Effect.gen(function* () {
+    const threads = yield* ThreadManagementService.ThreadManagementService;
+    const result = yield* Effect.flip(
+      threads.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("command:guard:send"),
+        threadId: target,
+        messageId: MessageId.make("message:guard:send"),
+        text: "hi",
+        attachments: [],
+        dispatchMode: { type: "queue_after_active" },
+        ...(sender === undefined ? {} : { senderThreadId: sender }),
+        createdBy: "agent",
+        creationSource: "mcp",
+      }),
+    ).pipe(
+      Effect.asSome,
+      Effect.orElseSucceed(() => Option.none()),
+    );
+    if (refusal === null) {
+      expect(Option.isNone(result)).toBe(true);
+      expect(dispatched).toHaveLength(1);
+    } else {
+      expect(Option.getOrThrow(result)).toMatchObject({
+        cause: { message: expect.stringContaining(refusal) },
+      });
+      expect(dispatched).toEqual([]);
+    }
   }).pipe(Effect.provide(layerAssistantGuardTest(dispatched)));
 });

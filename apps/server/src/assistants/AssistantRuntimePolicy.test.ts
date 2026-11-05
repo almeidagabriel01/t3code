@@ -36,7 +36,7 @@ const resolveFor = (threadId: ThreadId, toolAccess: AssistantToolAccess) =>
           }),
         ),
         Layer.provide(
-          Layer.succeed(AssistantDirectory, {
+          Layer.mock(AssistantDirectory)({
             forThread: (id) =>
               Effect.succeed(
                 id === assistantThread

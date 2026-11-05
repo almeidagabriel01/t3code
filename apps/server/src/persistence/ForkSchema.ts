@@ -340,6 +340,12 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
   if (!assistantColumns.some((column) => column.name === "autonomy_json")) {
     yield* sql`ALTER TABLE assistants ADD COLUMN autonomy_json TEXT`;
   }
+  if (!assistantColumns.some((column) => column.name === "role")) {
+    yield* sql`ALTER TABLE assistants ADD COLUMN role TEXT NOT NULL DEFAULT ''`;
+  }
+  if (!assistantColumns.some((column) => column.name === "reports_to")) {
+    yield* sql`ALTER TABLE assistants ADD COLUMN reports_to TEXT`;
+  }
   yield* sql`
     CREATE TABLE IF NOT EXISTS autonomy_watches (
       watch_id TEXT PRIMARY KEY,

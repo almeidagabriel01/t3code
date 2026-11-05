@@ -10,17 +10,38 @@ const escapeAttribute = (value: string) =>
 /** Never closes the block early, whatever the user typed into the instructions. */
 const escapeBody = (value: string) => value.replace(/<\/t3_assistant/gi, "<\\/t3_assistant");
 
+type Colleague = Pick<Assistant, "name" | "handle" | "threadId">;
+
+const colleague = (other: Colleague) =>
+  `${other.name} (@${other.handle}, threadId ${other.threadId ?? "none yet"})`;
+
+/** One line the model can act on: who to ask, who it answers to. Empty without an org relation. */
+function teamLine(leader: Colleague | null, reports: ReadonlyArray<Colleague>): string {
+  const parts = [
+    leader === null
+      ? ""
+      : `You report to ${colleague(leader)}; answer them through your run result, never by messaging them.`,
+    reports.length === 0 ? "" : `Your direct reports: ${reports.map(colleague).join("; ")}.`,
+  ].filter((part) => part !== "");
+  return escapeBody(parts.join(" "));
+}
+
 export function assistantNoteFor(
-  assistant: Pick<Assistant, "name" | "handle" | "toolAccess" | "instructions">,
+  assistant: Pick<Assistant, "name" | "handle" | "toolAccess" | "instructions" | "role">,
   userText: string,
+  team: { readonly leader: Colleague | null; readonly reports: ReadonlyArray<Colleague> } = {
+    leader: null,
+    reports: [],
+  },
 ): string {
   // Provider-native slash commands must stay at the start of the prompt.
   if (userText.trimStart().startsWith("/")) return "";
-  const open = `<t3_assistant name="${escapeAttribute(assistant.name)}" handle="${assistant.handle}" access="${assistant.toolAccess}">`;
-  const instructions = assistant.instructions.trim();
-  return instructions === ""
-    ? `${open}\n</t3_assistant>`
-    : `${open}\n${escapeBody(instructions)}\n</t3_assistant>`;
+  const role = assistant.role === "" ? "" : ` role="${escapeAttribute(assistant.role)}"`;
+  const open = `<t3_assistant name="${escapeAttribute(assistant.name)}" handle="${assistant.handle}"${role} access="${assistant.toolAccess}">`;
+  const body = [teamLine(team.leader, team.reports), escapeBody(assistant.instructions.trim())]
+    .filter((part) => part !== "")
+    .join("\n");
+  return body === "" ? `${open}\n</t3_assistant>` : `${open}\n${body}\n</t3_assistant>`;
 }
 
 /**
@@ -34,5 +55,10 @@ export const assistantNote = Effect.fn("AssistantNote.forTurn")(function* (
 ) {
   if (Option.isNone(directory)) return "";
   const found = yield* directory.value.forThread(threadId);
-  return Option.isNone(found) ? "" : assistantNoteFor(found.value.assistant, userText);
+  if (Option.isNone(found)) return "";
+  const { assistant } = found.value;
+  const team = userText.trimStart().startsWith("/")
+    ? undefined
+    : yield* directory.value.teamOf(assistant);
+  return assistantNoteFor(assistant, userText, team);
 });

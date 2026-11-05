@@ -1,4 +1,6 @@
 import {
+  ASSISTANT_STANDUP_PROMPT_HEAD,
+  ASSISTANT_STANDUP_TASK_TITLE,
   assistantIdFromThreadId,
   AutonomyError,
   AutonomyWatch,
@@ -391,21 +393,21 @@ const make = Effect.gen(function* () {
     );
   });
 
-  /** An autonomy wake ended: the answer goes to the configured channels, with or without a chat. */
-  const deliver = Effect.fn("AutonomyService.deliver")(function* (run: {
+  type FinishedRun = {
     readonly id: string;
     readonly threadId: ThreadId;
     readonly status: string;
     readonly userMessageId: string;
-  }) {
-    const wakeKey = run.userMessageId.slice(WAKE_MESSAGE_PREFIX.length);
-    const config = yield* settings;
-    if (!config.enabled) return;
+  };
+
+  const deliverResult = Effect.fn("AutonomyService.deliverResult")(function* (
+    run: FinishedRun,
+    label: string,
+    config: AutonomySettings,
+  ) {
     const assistantRows = yield* sql<AssistantRow>`
       SELECT * FROM assistants WHERE thread_id = ${run.threadId}`;
-    const wakes = yield* sql<{ readonly label: string }>`
-      SELECT label FROM autonomy_wakes WHERE wake_key = ${wakeKey}`;
-    if (assistantRows[0] === undefined || wakes[0] === undefined) return;
+    if (assistantRows[0] === undefined) return;
     const assistant = toAssistant(assistantRows[0]);
     const text = yield* answerOf(run);
     if (text === undefined) return;
@@ -434,7 +436,7 @@ const make = Effect.gen(function* () {
             chatId: ownerChat,
           },
           senderName: assistant.name,
-          text: `${wakes[0].label}\n\n${text}`,
+          text: `${label}\n\n${text}`,
         });
       }
     }
@@ -447,11 +449,36 @@ const make = Effect.gen(function* () {
         projectId: assistant.projectId,
         threadTitle: shell?.title ?? assistant.name,
         clientRequestId: `${DecisionService.NOTICE_REQUEST_PREFIX}${run.id}`,
-        title: `${assistant.name}: ${wakes[0].label}`.slice(0, 120),
+        title: `${assistant.name}: ${label}`.slice(0, 120),
         context: text.slice(0, 4_000),
         options: [{ id: "ok", label: "Got it" }],
       });
     }
+  });
+
+  /** An autonomy wake ended: the answer goes to the configured channels, with or without a chat. */
+  const deliver = Effect.fn("AutonomyService.deliver")(function* (run: FinishedRun) {
+    const wakeKey = run.userMessageId.slice(WAKE_MESSAGE_PREFIX.length);
+    const config = yield* settings;
+    if (!config.enabled) return;
+    const wakes = yield* sql<{ readonly label: string }>`
+      SELECT label FROM autonomy_wakes WHERE wake_key = ${wakeKey}`;
+    if (wakes[0] === undefined) return;
+    yield* deliverResult(run, wakes[0].label, config);
+  });
+
+  /**
+   * A leader's scheduled standup ended. The user asked for it by adding the schedule, so it
+   * reaches them even with autonomy off; the assistant's channels still decide where.
+   */
+  const deliverStandup = Effect.fn("AutonomyService.deliverStandup")(function* (run: FinishedRun) {
+    const standups = yield* sql<{ readonly one: number }>`
+      SELECT 1 AS one FROM scheduled_tasks
+      WHERE ${run.userMessageId} LIKE 'scheduled-task-message:' || task_id || ':%'
+        AND prompt LIKE ${`${ASSISTANT_STANDUP_PROMPT_HEAD}%`}`;
+    if (standups.length === 0) return false;
+    yield* deliverResult(run, ASSISTANT_STANDUP_TASK_TITLE, yield* settings);
+    return true;
   });
 
   const handleEvent: AutonomyService["Service"]["handleEvent"] = Effect.fn(
@@ -491,6 +518,9 @@ const make = Effect.gen(function* () {
           if (run.userMessageId.startsWith(WAKE_MESSAGE_PREFIX)) {
             yield* deliver(run);
             return;
+          }
+          if (run.userMessageId.startsWith("scheduled-task-message:")) {
+            if (yield* deliverStandup(run)) return;
           }
           if (run.status === "cancelled") return;
           const failed = run.status === "failed" || run.status === "interrupted";

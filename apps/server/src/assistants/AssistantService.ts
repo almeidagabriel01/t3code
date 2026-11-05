@@ -6,6 +6,10 @@ import {
   type AssistantsEvent,
   type AssistantsResetInput,
   type AssistantsUpdateInput,
+  ASSISTANT_STANDUP_PROMPT,
+  ASSISTANT_STANDUP_PROMPT_HEAD,
+  ASSISTANT_STANDUP_TASK_TITLE,
+  assistantDescendantIds,
   assistantHandleFromName,
   assistantIdFromThreadId,
   assistantThreadIdFor,
@@ -357,6 +361,79 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  /** `self` is absent on create, where no cycle is possible yet. */
+  const checkReportsTo = Effect.fn("AssistantService.checkReportsTo")(function* (
+    self: string | undefined,
+    leaderId: string,
+  ) {
+    const all = yield* allRows;
+    const leader = all.find((row) => row.assistant_id === leaderId);
+    if (leader === undefined) return yield* invalid("That leader does not exist.");
+    if (leader.archived_at !== null) return yield* invalid("That leader is archived.");
+    if (self === undefined) return;
+    if (leaderId === self) return yield* invalid("An assistant can't report to itself.");
+    const below = assistantDescendantIds(
+      all.map((row) => ({ id: row.assistant_id, reportsTo: row.reports_to })),
+      self,
+    );
+    if (below.has(leaderId)) {
+      return yield* invalid(
+        "That leader already reports to this assistant, which would be a loop.",
+      );
+    }
+  });
+
+  /** Reports of a leader that is archived or deleted become top-level; each is announced. */
+  const releaseReports = Effect.fn("AssistantService.releaseReports")(function* (leaderId: string) {
+    const reports = yield* sql<{ readonly assistant_id: string }>`
+      SELECT assistant_id FROM assistants WHERE reports_to = ${leaderId}`;
+    if (reports.length === 0) return;
+    yield* sql`UPDATE assistants SET reports_to = NULL, updated_at = ${yield* nowIso} WHERE reports_to = ${leaderId}`;
+    yield* Effect.forEach(reports, (report) => publish(report.assistant_id), { discard: true });
+  });
+
+  /** Once per assistant: an existing standup, even a renamed or paused one, is left as it is. */
+  const addStandup = Effect.fn("AssistantService.addStandup")(function* (assistantId: string) {
+    const row = yield* findRow(assistantId);
+    if (row.archived_at !== null || row.thread_id === null) {
+      return yield* invalid("Unarchive the assistant before adding a standup.");
+    }
+    const reports = yield* sql<{ readonly one: number }>`
+      SELECT 1 AS one FROM assistants WHERE reports_to = ${assistantId} AND archived_at IS NULL`;
+    if (reports.length === 0) return yield* invalid("Only a leader with reports has a standup.");
+    const listed = yield* scheduledTasks
+      .list()
+      .pipe(Effect.catch(threadFailure("Could not read the assistant's schedules.")));
+    if (
+      listed.tasks.some(
+        (task) =>
+          task.threadId === row.thread_id && task.prompt.startsWith(ASSISTANT_STANDUP_PROMPT_HEAD),
+      )
+    ) {
+      return;
+    }
+    const thread = yield* inspectThread(row.thread_id as ThreadId);
+    const modelSelection =
+      thread?.modelSelection ?? (yield* defaultModelSelection(row.project_id as ProjectId));
+    yield* scheduledTasks
+      .upsert({
+        commandId: CommandId.make(`assistant-standup:${assistantId}`),
+        title: ASSISTANT_STANDUP_TASK_TITLE,
+        prompt: ASSISTANT_STANDUP_PROMPT,
+        enabled: true,
+        schedule: { type: "fixed_time", timeOfDay: "09:00", weekdays: [1, 2, 3, 4, 5] },
+        projectId: row.project_id as ProjectId,
+        threadId: row.thread_id as ThreadId,
+        workspaceStrategy: { type: "root" },
+        modelSelection,
+        runtimeMode: runtimeModeForToolAccess(toAssistant(row).toolAccess),
+        interactionMode: "default",
+        createdBy: "system",
+        creationSource: "server",
+      })
+      .pipe(Effect.catch(threadFailure("Could not add the standup schedule.")));
+  });
+
   const create: AssistantService["Service"]["create"] = Effect.fn("AssistantService.create")(
     function* (input) {
       const handle = input.handle ?? assistantHandleFromName(input.name);
@@ -367,15 +444,17 @@ const make = Effect.gen(function* () {
       return yield* lock.withPermits(1)(
         Effect.gen(function* () {
           yield* handleTaken(handle);
+          if (input.reportsTo != null) yield* checkReportsTo(undefined, input.reportsTo);
           const now = yield* nowIso;
           yield* sql`
             INSERT INTO assistants (
               assistant_id, handle, name, project_id, instructions, tool_access, is_default,
-              generation, budget_json, autonomy_json, created_at, updated_at
+              generation, budget_json, autonomy_json, role, reports_to, created_at, updated_at
             ) VALUES (
               ${id}, ${handle}, ${input.name}, ${input.projectId}, ${input.instructions},
               ${input.toolAccess}, 0, 1, ${input.budget ? encodeBudget(input.budget) : null},
-              ${input.autonomy ? encodeAutonomy(input.autonomy) : null}, ${now}, ${now}
+              ${input.autonomy ? encodeAutonomy(input.autonomy) : null}, ${input.role?.trim() ?? ""},
+              ${input.reportsTo ?? null}, ${now}, ${now}
             )`;
           const row = yield* findRow(id);
           const threadId = yield* launchGeneration(row, 1, input.modelSelection).pipe(
@@ -403,6 +482,9 @@ const make = Effect.gen(function* () {
           }
           if (input.handle !== undefined && input.handle !== row.handle) {
             yield* handleTaken(input.handle, row.assistant_id);
+          }
+          if (input.reportsTo != null && input.reportsTo !== row.reports_to) {
+            yield* checkReportsTo(row.assistant_id, input.reportsTo);
           }
           const projectChanged =
             input.projectId !== undefined && input.projectId !== row.project_id;
@@ -434,6 +516,8 @@ const make = Effect.gen(function* () {
                   : encodeBudget(input.budget),
             autonomyJson:
               input.autonomy === undefined ? row.autonomy_json : encodeAutonomy(input.autonomy),
+            role: input.role?.trim() ?? row.role,
+            reportsTo: input.reportsTo === undefined ? row.reports_to : input.reportsTo,
           };
           const now = yield* nowIso;
           if (projectChanged) {
@@ -453,7 +537,8 @@ const make = Effect.gen(function* () {
               UPDATE assistants SET name = ${next.name}, handle = ${next.handle},
                 instructions = ${next.instructions}, tool_access = ${next.toolAccess},
                 project_id = ${next.projectId}, thread_id = ${threadId}, generation = ${generation},
-                budget_json = ${next.budgetJson}, autonomy_json = ${next.autonomyJson}, archived_at = ${archivedAt}, updated_at = ${now}
+                budget_json = ${next.budgetJson}, autonomy_json = ${next.autonomyJson},
+                role = ${next.role}, reports_to = ${next.reportsTo}, archived_at = ${archivedAt}, updated_at = ${now}
               WHERE assistant_id = ${row.assistant_id}`;
             yield* followSchedules({ ...row, generation }, threadId, next.projectId);
             yield* retire(previousThreadId);
@@ -463,7 +548,8 @@ const make = Effect.gen(function* () {
             yield* sql`
               UPDATE assistants SET name = ${next.name}, handle = ${next.handle},
                 instructions = ${next.instructions}, tool_access = ${next.toolAccess},
-                budget_json = ${next.budgetJson}, autonomy_json = ${next.autonomyJson}, archived_at = ${archivedAt}, updated_at = ${now}
+                budget_json = ${next.budgetJson}, autonomy_json = ${next.autonomyJson},
+                role = ${next.role}, reports_to = ${next.reportsTo}, archived_at = ${archivedAt}, updated_at = ${now}
               WHERE assistant_id = ${row.assistant_id}`;
             if (
               previousThreadId !== null &&
@@ -503,9 +589,16 @@ const make = Effect.gen(function* () {
             }
           }
           yield* publish(row.assistant_id);
+          if (archivedAt !== null && row.archived_at === null) {
+            yield* releaseReports(row.assistant_id);
+          }
           if (archivedAt === null && row.archived_at !== null) {
             // Unarchiving a row whose conversation was deleted while archived.
             yield* ensureLaunched(row.assistant_id);
+            yield* publish(row.assistant_id);
+          }
+          if (input.addStandup === true) {
+            yield* addStandup(row.assistant_id);
             yield* publish(row.assistant_id);
           }
           return toAssistant(yield* findRow(row.assistant_id));
@@ -528,6 +621,7 @@ const make = Effect.gen(function* () {
           }
           // The row goes first: the thread guards only protect a live assistant's conversation.
           yield* sql`DELETE FROM assistants WHERE assistant_id = ${assistantId}`;
+          yield* releaseReports(assistantId);
           yield* PubSub.publish(events, {
             type: "removed",
             assistantId: row.assistant_id as AssistantId,

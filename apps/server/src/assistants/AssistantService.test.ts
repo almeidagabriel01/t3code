@@ -1,12 +1,14 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
 import {
+  type AssistantError,
   type AssistantsCreateInput,
   DEFAULT_ASSISTANT_ID,
   type ModelSelection,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  ASSISTANT_STANDUP_PROMPT,
   ProviderDriverKind,
   type ServerProvider,
   type ServerProviderModel,
@@ -49,6 +51,7 @@ const harness = () => {
   const dispatched: Array<{ type: string; threadId: string; extra?: unknown }> = [];
   const retargets: Array<{ from: ReadonlyArray<string>; to: string; projectId: string }> = [];
   const taskDeletes: string[] = [];
+  const tasks: Array<{ threadId: string | null; prompt: string; [key: string]: unknown }> = [];
   const failingTaskDeletes = new Set<string>();
   const pointers: Array<{ type: string; threadId: string; pointer: string | null; rows: number }> =
     [];
@@ -125,6 +128,11 @@ const harness = () => {
         });
         return Effect.void;
       },
+      list: () => Effect.succeed({ tasks } as never),
+      upsert: (input) => {
+        tasks.push(input as never);
+        return Effect.succeed({} as never);
+      },
       deleteForThread: (threadId) => {
         taskDeletes.push(threadId);
         return failingTaskDeletes.has(threadId) ? Effect.fail("boom" as never) : Effect.void;
@@ -150,6 +158,7 @@ const harness = () => {
     retargets,
     taskDeletes,
     failingTaskDeletes,
+    tasks,
   };
 };
 
@@ -556,4 +565,82 @@ it.each([
     selection === null ? null : `${selection.instanceId}:${selection.model}`,
     expected,
   );
+});
+
+it.effect(
+  "reports-to is validated, loops are refused, and a leader that leaves frees its reports",
+  () => {
+    const { layer } = harness();
+    return Effect.gen(function* () {
+      const assistants = yield* Assistants.AssistantService;
+      const reason = <A>(effect: Effect.Effect<A, AssistantError>) =>
+        effect.pipe(
+          Effect.flip,
+          Effect.map((error) => `${error.reason}: ${error.message}`),
+        );
+      const ceo = yield* assistants.create(create({ name: "Ceo", role: "  CEO  " }));
+      assert.equal(ceo.role, "CEO");
+      assert.isNull(ceo.reportsTo);
+      const lead = yield* assistants.create(create({ name: "Lead", reportsTo: ceo.id }));
+      const eng = yield* assistants.create(create({ name: "Eng", reportsTo: lead.id }));
+      assert.equal(eng.reportsTo, lead.id);
+
+      const refused = [
+        yield* reason(assistants.update({ assistantId: ceo.id, reportsTo: ceo.id })),
+        yield* reason(assistants.update({ assistantId: ceo.id, reportsTo: eng.id })),
+        yield* reason(assistants.update({ assistantId: lead.id, reportsTo: eng.id })),
+        yield* reason(assistants.update({ assistantId: eng.id, reportsTo: "ghost" as never })),
+        yield* reason(assistants.create(create({ name: "Orphan", reportsTo: "ghost" as never }))),
+      ];
+      assert.deepEqual(
+        refused.map((text) => text.split(":")[0]),
+        ["invalid", "invalid", "invalid", "invalid", "invalid"],
+      );
+      assert.include(refused[0], "itself");
+      assert.include(refused[1], "loop");
+
+      // Archived leaders can't be chosen, and archiving one frees its reports.
+      yield* assistants.update({ assistantId: lead.id, archived: true });
+      assert.isNull((yield* assistants.list).find((entry) => entry.id === eng.id)!.reportsTo);
+      assert.include(
+        yield* reason(assistants.update({ assistantId: eng.id, reportsTo: lead.id })),
+        "archived",
+      );
+      // Null makes it top-level again; deleting a leader frees its reports.
+      yield* assistants.update({ assistantId: eng.id, reportsTo: ceo.id });
+      assert.equal(
+        (yield* assistants.update({ assistantId: eng.id, reportsTo: null })).reportsTo,
+        null,
+      );
+      yield* assistants.update({ assistantId: eng.id, reportsTo: ceo.id, role: "Engineer" });
+      yield* assistants.remove(ceo.id);
+      const after = (yield* assistants.list).find((entry) => entry.id === eng.id)!;
+      assert.isNull(after.reportsTo);
+      assert.equal(after.role, "Engineer");
+    }).pipe(Effect.provide(layer));
+  },
+);
+
+it.effect("addStandup creates one weekday 09:00 task bound to the leader, only for leaders", () => {
+  const { layer, tasks } = harness();
+  return Effect.gen(function* () {
+    const assistants = yield* Assistants.AssistantService;
+    const leader = yield* assistants.create(create({ name: "Boss", modelSelection: model("m1") }));
+    const standup = (assistantId: string) =>
+      assistants.update({ assistantId: assistantId as never, addStandup: true });
+    assert.equal((yield* standup(leader.id).pipe(Effect.flip)).reason, "invalid");
+    const report = yield* assistants.create(create({ name: "Worker", reportsTo: leader.id }));
+    assert.equal((yield* standup(report.id).pipe(Effect.flip)).reason, "invalid");
+
+    yield* standup(leader.id);
+    yield* standup(leader.id);
+    assert.lengthOf(tasks, 1);
+    assert.deepInclude(tasks[0]!, {
+      threadId: leader.threadId,
+      prompt: ASSISTANT_STANDUP_PROMPT,
+      enabled: true,
+      schedule: { type: "fixed_time", timeOfDay: "09:00", weekdays: [1, 2, 3, 4, 5] },
+      modelSelection: model("m1"),
+    });
+  }).pipe(Effect.provide(layer));
 });
