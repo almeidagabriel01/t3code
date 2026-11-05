@@ -20,9 +20,11 @@ vi.mock("react-native", () => ({
     value: string;
     onChangeText: (value: string) => void;
     onEndEditing: () => void;
+    editable?: boolean;
   }) => (
     <input
       aria-label={props.accessibilityLabel}
+      readOnly={props.editable === false}
       value={props.value}
       onChange={(event) => props.onChangeText(event.target.value)}
       onBlur={props.onEndEditing}
@@ -51,11 +53,13 @@ vi.mock("../../components/ui/ListToggleRow", () => ({
   ListToggleRow: (props: {
     label: string;
     value: boolean;
+    disabled?: boolean;
     onValueChange: (value: boolean) => void;
   }) => (
     <input
       type="checkbox"
       aria-label={props.label}
+      data-disabled={props.disabled ? "" : undefined}
       checked={props.value}
       onChange={() => props.onValueChange(!props.value)}
     />
@@ -107,6 +111,19 @@ describe("autonomy settings", () => {
     render();
     toggle("Assistants can notify you");
     expect(mocks.write).toHaveBeenLastCalledWith({ ...DEFAULT_AUTONOMY_SETTINGS, enabled: true });
+  });
+
+  it.each([
+    [false, true],
+    [true, false],
+  ])("locks rules, limits and channels while paused (enabled: %s)", (enabled, locked) => {
+    mocks.autonomy = { ...DEFAULT_AUTONOMY_SETTINGS, enabled };
+    render();
+    expect(input("Assistants can notify you").hasAttribute("data-disabled")).toBe(false);
+    for (const label of ["Run looks stuck", "Notify on Telegram"]) {
+      expect(input(label).hasAttribute("data-disabled")).toBe(locked);
+    }
+    expect(input("Waiting for you after").readOnly).toBe(locked);
   });
 
   it.each([

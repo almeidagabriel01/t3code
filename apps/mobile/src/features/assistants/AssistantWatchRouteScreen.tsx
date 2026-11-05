@@ -201,6 +201,7 @@ function WatchForm(props: { readonly editor: AssistantWatchEditor }) {
         <TextField
           label="Title"
           description="How the watch is listed."
+          placeholder="Review finished runs"
           value={draft.title}
           maxLength={120}
           autoCapitalize="sentences"
@@ -234,7 +235,7 @@ function WatchForm(props: { readonly editor: AssistantWatchEditor }) {
         ) : null}
         <TextField
           label="What it should do"
-          description="What the assistant is asked to do when it wakes."
+          description="For example: check that the agent did everything it was asked and tell me what it missed."
           value={draft.instruction}
           maxLength={AUTONOMY_WATCH_INSTRUCTION_MAX_LENGTH}
           multiline

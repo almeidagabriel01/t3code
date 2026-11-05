@@ -50,6 +50,7 @@ function BoundedNumberRow(props: {
   readonly unit: string;
   readonly value: number;
   readonly bounds: { readonly min: number; readonly max: number };
+  readonly disabled: boolean;
   readonly onCommit: (value: number) => void;
 }) {
   const [text, setText] = useState(String(props.value));
@@ -76,7 +77,9 @@ function BoundedNumberRow(props: {
               autoCapitalize="none"
               autoCorrect={false}
               selectTextOnFocus
-              className="min-h-8 w-16 rounded-lg bg-subtle px-2 text-right font-sans text-base text-foreground"
+              editable={!props.disabled}
+              accessibilityState={{ disabled: props.disabled }}
+              className={`min-h-8 w-16 rounded-lg bg-subtle px-2 text-right font-sans text-base text-foreground ${props.disabled ? "opacity-50" : ""}`}
             />
             <Text textRole="footnote" className="text-foreground-muted">
               {props.unit}
@@ -119,6 +122,7 @@ export function AutonomySettingsSection(props: {
   const { environmentId } = props;
   const { autonomy, write } = useAutonomySettings(environmentId);
   const telegramAvailable = useTelegramEnvironmentIds().includes(environmentId);
+  const paused = !autonomy.enabled;
   return (
     <ListSection
       title={`Autonomy${props.suffix}`}
@@ -138,6 +142,7 @@ export function AutonomySettingsSection(props: {
           label={option.label}
           description={option.description}
           value={autonomy.rules[option.rule]}
+          disabled={paused}
           onValueChange={(on) => void write(withAutonomyRule(autonomy, option.rule, on))}
         />
       ))}
@@ -149,6 +154,7 @@ export function AutonomySettingsSection(props: {
         unit="minutes"
         value={autonomy.waitingMinutes}
         bounds={AUTONOMY_MINUTES_BOUNDS}
+        disabled={paused}
         onCommit={(waitingMinutes) => void write({ ...autonomy, waitingMinutes })}
       />
       <BoundedNumberRow
@@ -159,6 +165,7 @@ export function AutonomySettingsSection(props: {
         unit="minutes"
         value={autonomy.stuckMinutes}
         bounds={AUTONOMY_MINUTES_BOUNDS}
+        disabled={paused}
         onCommit={(stuckMinutes) => void write({ ...autonomy, stuckMinutes })}
       />
       <BoundedNumberRow
@@ -169,6 +176,7 @@ export function AutonomySettingsSection(props: {
         unit="per day"
         value={autonomy.maxWakesPerDay}
         bounds={AUTONOMY_WAKES_BOUNDS}
+        disabled={paused}
         onCommit={(maxWakesPerDay) => void write({ ...autonomy, maxWakesPerDay })}
       />
       {CHANNEL_ROWS.map((row) => (
@@ -178,6 +186,7 @@ export function AutonomySettingsSection(props: {
           label={`Notify on ${AUTONOMY_CHANNEL_LABELS[row.channel]}`}
           description={row.description}
           value={autonomy.channels.includes(row.channel)}
+          disabled={paused}
           onValueChange={(on) => void write(withAutonomyChannel(autonomy, row.channel, on))}
         />
       ))}

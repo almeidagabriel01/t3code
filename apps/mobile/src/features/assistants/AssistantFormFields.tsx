@@ -96,11 +96,13 @@ export function TextField(props: {
   readonly keyboardType?: "decimal-pad" | "number-pad";
   readonly footer?: ReactNode;
   readonly disabled?: boolean;
+  readonly placeholder?: string;
 }) {
   return (
     <Field label={props.label} description={props.description} footer={props.footer}>
       <TextInput
         accessibilityLabel={props.label}
+        placeholder={props.placeholder}
         value={props.value}
         readOnly={props.disabled}
         onChangeText={props.onChange}
