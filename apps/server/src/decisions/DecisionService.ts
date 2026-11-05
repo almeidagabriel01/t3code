@@ -40,7 +40,14 @@ const SWEEP_INTERVAL = "30 seconds";
 const MAX_DELIVERY_ATTEMPTS = 20;
 const MAX_EXPIRES_IN_MINUTES = 60 * 24 * 30;
 
+/**
+ * A decision whose request id starts with this is an informational notice (autonomy wakes): it
+ * shows in Activity until dismissed, and settling it tells nobody, so it cannot wake the assistant.
+ */
+export const NOTICE_REQUEST_PREFIX = "autonomy:";
+
 interface DecisionRow {
+  readonly client_request_id: string;
   readonly decision_id: string;
   readonly from_thread_id: string;
   readonly project_id: string;
@@ -337,21 +344,23 @@ const make = Effect.gen(function* () {
   const markDelivery = Effect.fn("DecisionService.markDelivery")(function* (row: DecisionRow) {
     const now = yield* nowIso;
     const result = yield* (
-      row.approval_request_id === null
-        ? threads.sendToThread({
-            projectId: row.project_id as ProjectId,
-            // The row id is the receipt: a retry after a crash replays this send instead of repeating it.
-            commandId: CommandId.make(`decision-answer:${row.decision_id}`),
-            messageId: MessageId.make(`decision-answer:${row.decision_id}`),
-            threadId: row.from_thread_id as ThreadId,
-            text: deliveryText(row),
-            // Already claimed to this thread when the answer was taken.
-            attachments: toDecision(row).answer?.attachments ?? [],
-            mode: "queue",
-            createdBy: "user",
-            creationSource: "server",
-          })
-        : respondToApproval(row)
+      row.client_request_id.startsWith(NOTICE_REQUEST_PREFIX)
+        ? Effect.void
+        : row.approval_request_id === null
+          ? threads.sendToThread({
+              projectId: row.project_id as ProjectId,
+              // The row id is the receipt: a retry after a crash replays this send instead of repeating it.
+              commandId: CommandId.make(`decision-answer:${row.decision_id}`),
+              messageId: MessageId.make(`decision-answer:${row.decision_id}`),
+              threadId: row.from_thread_id as ThreadId,
+              text: deliveryText(row),
+              // Already claimed to this thread when the answer was taken.
+              attachments: toDecision(row).answer?.attachments ?? [],
+              mode: "queue",
+              createdBy: "user",
+              creationSource: "server",
+            })
+          : respondToApproval(row)
     ).pipe(Effect.result);
     if (result._tag === "Success") {
       yield* sql`

@@ -66,6 +66,7 @@ import {
   ProviderDriverKind,
 } from "./providerInstance.ts";
 import { PullRequestMergeMethod } from "./pullRequest.ts";
+import { AutonomySettings, DEFAULT_AUTONOMY_SETTINGS } from "./autonomy.ts";
 
 export const TimestampFormat = Schema.Literals(["locale", "12-hour", "24-hour"]);
 export type TimestampFormat = typeof TimestampFormat.Type;
@@ -1315,6 +1316,10 @@ export const KeepAwakeMode = Schema.Literals(KEEP_AWAKE_MODES);
 export type KeepAwakeMode = typeof KeepAwakeMode.Type;
 
 export const ServerSettings = Schema.Struct({
+  /** Global switches for assistants that wake on their own. Off by default. */
+  autonomy: AutonomySettings.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_AUTONOMY_SETTINGS)),
+  ),
   /** Stops the host computer from sleeping. The server runs the OS inhibitor. */
   keepAwake: KeepAwakeMode.pipe(Schema.withDecodingDefault(Effect.succeed("off" as const))),
   memoryOwnerSourceReadPolicyVersion: NonNegativeInt.pipe(
@@ -1917,6 +1922,7 @@ const ServerSettingsPatchFields = Schema.Struct({
     Schema.Record(TrimmedNonEmptyString, Schema.NullOr(TrimmedNonEmptyString)),
   ),
   keepAwake: Schema.optionalKey(KeepAwakeMode),
+  autonomy: Schema.optionalKey(AutonomySettings),
   enableAgentMemoryAccess: Schema.optionalKey(Schema.Boolean),
   memoryEnabled: Schema.optionalKey(Schema.Boolean),
   memoryModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),

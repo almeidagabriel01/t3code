@@ -453,6 +453,16 @@ import {
   AssistantsUpdateInput,
 } from "./assistants.ts";
 import {
+  AutonomyError,
+  AutonomyWatch,
+  AutonomyWatchDeleteInput,
+  AutonomyWatchDeleteResult,
+  AutonomyWatchesListInput,
+  AutonomyWatchesListResult,
+  AutonomyWatchSetEnabledInput,
+  AutonomyWatchUpsertInput,
+} from "./autonomy.ts";
+import {
   ImessageChannelCheckAccessInput,
   ImessageChannelCheckAccessResult,
   ImessageChannelConfigureInput,
@@ -718,6 +728,10 @@ export const WS_METHODS = {
   assistantsDelete: "assistants.delete",
   assistantsReset: "assistants.reset",
   assistantsSpend: "assistants.spend",
+  autonomyWatchesList: "autonomy.watches.list",
+  autonomyWatchUpsert: "autonomy.watches.upsert",
+  autonomyWatchSetEnabled: "autonomy.watches.setEnabled",
+  autonomyWatchDelete: "autonomy.watches.delete",
   imessageChannelGetSettings: "imessageChannel.getSettings",
   imessageChannelConfigure: "imessageChannel.configure",
   imessageChannelSubscribeStatus: "imessageChannel.subscribeStatus",
@@ -2230,6 +2244,28 @@ const WsAssistantsSpendRpc = Rpc.make(WS_METHODS.assistantsSpend, {
   error: AssistantRpcErrors,
 });
 
+const AutonomyRpcErrors = Schema.Union([AutonomyError, EnvironmentAuthorizationError]);
+const WsAutonomyWatchesListRpc = Rpc.make(WS_METHODS.autonomyWatchesList, {
+  payload: AutonomyWatchesListInput,
+  success: AutonomyWatchesListResult,
+  error: AutonomyRpcErrors,
+});
+const WsAutonomyWatchUpsertRpc = Rpc.make(WS_METHODS.autonomyWatchUpsert, {
+  payload: AutonomyWatchUpsertInput,
+  success: AutonomyWatch,
+  error: AutonomyRpcErrors,
+});
+const WsAutonomyWatchSetEnabledRpc = Rpc.make(WS_METHODS.autonomyWatchSetEnabled, {
+  payload: AutonomyWatchSetEnabledInput,
+  success: AutonomyWatch,
+  error: AutonomyRpcErrors,
+});
+const WsAutonomyWatchDeleteRpc = Rpc.make(WS_METHODS.autonomyWatchDelete, {
+  payload: AutonomyWatchDeleteInput,
+  success: AutonomyWatchDeleteResult,
+  error: AutonomyRpcErrors,
+});
+
 const ImessageChannelRpcErrors = Schema.Union([
   ImessageChannelSettingsError,
   EnvironmentAuthorizationError,
@@ -2619,6 +2655,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsAssistantsDeleteRpc,
   WsAssistantsResetRpc,
   WsAssistantsSpendRpc,
+  WsAutonomyWatchesListRpc,
+  WsAutonomyWatchUpsertRpc,
+  WsAutonomyWatchSetEnabledRpc,
+  WsAutonomyWatchDeleteRpc,
   WsImessageChannelGetSettingsRpc,
   WsImessageChannelConfigureRpc,
   WsImessageChannelSubscribeStatusRpc,

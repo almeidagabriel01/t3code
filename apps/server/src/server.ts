@@ -202,6 +202,7 @@ import * as CursorUsageAccounts from "@t3tools/provider-cursor/server/CursorUsag
 import * as UsageService from "./usage/UsageService.ts";
 import * as AssistantApprovalReactor from "./assistants/AssistantApprovalReactor.ts";
 import * as AssistantDirectory from "./assistants/AssistantDirectory.ts";
+import * as AutonomyService from "./autonomy/AutonomyService.ts";
 import * as AssistantSpend from "./assistants/AssistantSpend.ts";
 import * as ChannelBridge from "./channels/ChannelBridge.ts";
 import * as ChannelOutbox from "./channels/ChannelOutbox.ts";
@@ -681,10 +682,13 @@ const layerProviderInstallationRefresh = Layer.effectDiscard(
 );
 
 // One transport registry: each channel runtime registers into the same one the outbox resolves from.
-const layerChannels = Layer.mergeAll(
-  ImessageChannelSettings.layer.pipe(Layer.provideMerge(ImessageChannelRuntime.layer)),
-  TelegramChannelSettings.layer.pipe(Layer.provideMerge(TelegramChannelRuntime.layer)),
-).pipe(
+const layerChannels = AutonomyService.layer.pipe(
+  Layer.provideMerge(
+    Layer.mergeAll(
+      ImessageChannelSettings.layer.pipe(Layer.provideMerge(ImessageChannelRuntime.layer)),
+      TelegramChannelSettings.layer.pipe(Layer.provideMerge(TelegramChannelRuntime.layer)),
+    ),
+  ),
   Layer.provideMerge(Layer.mergeAll(ChannelBridge.layer, ChannelReplyReactor.layer)),
   Layer.provideMerge(ChannelOutbox.layer),
   Layer.provideMerge(ChannelTransport.layer),
@@ -752,6 +756,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
       yield* (yield* ChannelOutbox.ChannelOutbox).start();
       yield* (yield* ChannelBridge.ChannelBridge).start();
       yield* (yield* ChannelReplyReactor.ChannelReplyReactor).start();
+      yield* (yield* AutonomyService.AutonomyService).start();
       yield* (yield* ImessageChannelSettings.ImessageChannelSettings).start;
       yield* (yield* TelegramChannelSettings.TelegramChannelSettings).start;
     }),

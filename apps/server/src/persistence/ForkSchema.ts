@@ -337,6 +337,36 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
   if (!assistantColumns.some((column) => column.name === "budget_json")) {
     yield* sql`ALTER TABLE assistants ADD COLUMN budget_json TEXT`;
   }
+  if (!assistantColumns.some((column) => column.name === "autonomy_json")) {
+    yield* sql`ALTER TABLE assistants ADD COLUMN autonomy_json TEXT`;
+  }
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS autonomy_watches (
+      watch_id TEXT PRIMARY KEY,
+      assistant_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      filter_json TEXT NOT NULL,
+      instruction TEXT NOT NULL,
+      one_shot INTEGER NOT NULL,
+      expires_at TEXT,
+      enabled INTEGER NOT NULL,
+      trigger_count INTEGER NOT NULL DEFAULT 0,
+      last_triggered_at TEXT,
+      created_at TEXT NOT NULL
+    )
+  `;
+  // One row per wake, keyed by (run or thread, rule): a replayed event finds it and does nothing.
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS autonomy_wakes (
+      wake_key TEXT PRIMARY KEY,
+      assistant_id TEXT NOT NULL,
+      watched_thread_id TEXT NOT NULL,
+      -- 'rule' wakes share a minimum interval per thread; 'watch' wakes are asked for and exempt.
+      source TEXT NOT NULL,
+      label TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    )
+  `;
 
   // The destination's memory ceiling, captured when a person or agent saved the task.
   const scheduledColumns = yield* sql<{

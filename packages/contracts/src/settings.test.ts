@@ -46,6 +46,16 @@ const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const encodeServerSettingsPatch = Schema.encodeSync(ServerSettingsPatch);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
 
+describe("autonomy settings", () => {
+  it("is off for existing installations and takes a whole-object patch", () => {
+    const settings = decodeServerSettings({}).autonomy;
+    expect(settings).toMatchObject({ enabled: false, waitingMinutes: 30, stuckMinutes: 15 });
+    expect(settings.maxWakesPerDay).toBe(20);
+    const patch = encodeServerSettingsPatch({ autonomy: { ...settings, enabled: true } });
+    expect(patch.autonomy?.enabled).toBe(true);
+  });
+});
+
 describe("storage cleanup settings", () => {
   it("keeps cleanup disabled for existing installations", () => {
     expect(decodeServerSettings({}).worktreeCleanup).toBeNull();

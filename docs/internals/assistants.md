@@ -53,6 +53,25 @@ A runtime layer that forgets to provide it silently loses enforcement; `runtimeL
 would lose it at compaction, native resume or a provider switch, and an edit to the instructions
 would not reach a running conversation. Slash commands skip it so they stay at the start of the prompt.
 
+## Autonomy and the loop guard
+
+`AutonomyService` turns domain events into wakes with no model. An assistant's wake is an ordinary
+queued message on its thread (`autonomy-wake:<key>` is the message and command id), so it runs
+through the same turn path as any message. Three things keep it from feeding itself:
+
+- Signals about `assistant:` threads, subagents, delegated children and side chats are dropped
+  before any rule or watch is read. An assistant's own run therefore never triggers a rule.
+- A wake is keyed by (run or thread, event, rule or watch, assistant) in `autonomy_wakes`, claimed
+  before the send and given back if the send fails, so a replayed event wakes once.
+- Rule wakes also share a minimum interval per thread, and every wake counts against
+  `maxWakesPerDay`. Watches are asked for, so only the daily cap limits them.
+
+Delivery to the user ends at the wake's run. Activity hides assistant threads, so it gets a decision
+whose request id starts with `autonomy:`; `DecisionService` settles such a notice without sending
+the assistant anything, otherwise dismissing it would wake the assistant again. Telegram goes to the
+first allowed user's chat, unless a reply target already points at Telegram (the reply reactor posts
+the run there).
+
 ## iMessage channel
 
 `apps/server/src/channels` keeps chat transports out of assistant code: a transport turns its input

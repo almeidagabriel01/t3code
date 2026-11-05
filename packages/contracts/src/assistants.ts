@@ -2,6 +2,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import { IsoDateTime, ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { AssistantAutonomy, DEFAULT_ASSISTANT_AUTONOMY } from "./autonomy.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import type { RuntimeMode } from "./providerPolicy.ts";
 import { InstanceBudgetStatus, ProviderBudget } from "./usage.ts";
@@ -107,6 +108,10 @@ export const Assistant = Schema.Struct({
   generation: Schema.Number,
   /** Spending cap over every conversation it had; priced like provider budgets. */
   budget: Schema.NullOr(ProviderBudget).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  /** Whether and how it wakes on its own; see `autonomy.ts`. */
+  autonomy: AssistantAutonomy.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_ASSISTANT_AUTONOMY)),
+  ),
   archivedAt: Schema.NullOr(IsoDateTime),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -134,6 +139,7 @@ export const AssistantsCreateInput = Schema.Struct({
   instructions: Schema.String.check(Schema.isMaxLength(ASSISTANT_INSTRUCTIONS_MAX_CHARS)),
   toolAccess: AssistantToolAccess,
   budget: Schema.optional(Schema.NullOr(ProviderBudget)),
+  autonomy: Schema.optional(AssistantAutonomy),
 });
 export type AssistantsCreateInput = typeof AssistantsCreateInput.Type;
 
@@ -150,6 +156,7 @@ export const AssistantsUpdateInput = Schema.Struct({
   toolAccess: Schema.optional(AssistantToolAccess),
   /** Null removes the cap. */
   budget: Schema.optional(Schema.NullOr(ProviderBudget)),
+  autonomy: Schema.optional(AssistantAutonomy),
   archived: Schema.optional(Schema.Boolean),
 });
 export type AssistantsUpdateInput = typeof AssistantsUpdateInput.Type;

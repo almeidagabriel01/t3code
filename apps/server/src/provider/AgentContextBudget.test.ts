@@ -1,4 +1,5 @@
 import { MemoryService } from "../memory/MemoryService.ts";
+import * as AutonomyService from "../autonomy/AutonomyService.ts";
 import { MemorySyncService } from "../memory/MemorySyncService.ts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -97,6 +98,7 @@ const toolHandlerServices = Layer.mergeAll(
   Layer.mock(HostResources)({}),
   Layer.mock(ProcessResourceMonitor)({}),
   Layer.mock(ResourceTelemetry)({}),
+  Layer.mock(AutonomyService.AutonomyService)({}),
   Layer.mock(RemoteDelegation)({}),
   Layer.mock(ScheduledTaskService)({}),
   Layer.mock(SecretRequests)({}),

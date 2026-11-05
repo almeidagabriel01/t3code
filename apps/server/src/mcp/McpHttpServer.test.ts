@@ -1,4 +1,5 @@
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import * as AutonomyService from "../autonomy/AutonomyService.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import { expect, it } from "@effect/vitest";
@@ -96,6 +97,7 @@ const layerPullRequestsTest = McpHttpServer.layerPullRequestsToolkit.pipe(
   Layer.provideMerge(McpToolAccessTestkit.liveThreadsLayer),
   Layer.provide(
     Layer.mergeAll(
+      Layer.mock(AutonomyService.AutonomyService)({}),
       Layer.mock(ProjectService.ProjectService)({}),
       Layer.mock(PullRequestReviewGuideService.PullRequestReviewGuideService)({}),
       Layer.mock(PullRequestService.PullRequestService)({}),

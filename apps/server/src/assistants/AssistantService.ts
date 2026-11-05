@@ -40,7 +40,12 @@ import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
-import { type AssistantRow, encodeBudget, toAssistant } from "./AssistantDirectory.ts";
+import {
+  type AssistantRow,
+  encodeAutonomy,
+  encodeBudget,
+  toAssistant,
+} from "./AssistantDirectory.ts";
 
 const JARVIS_INSTRUCTIONS = [
   "You are Jarvis, the user's general assistant across all of their projects.",
@@ -366,11 +371,11 @@ const make = Effect.gen(function* () {
           yield* sql`
             INSERT INTO assistants (
               assistant_id, handle, name, project_id, instructions, tool_access, is_default,
-              generation, budget_json, created_at, updated_at
+              generation, budget_json, autonomy_json, created_at, updated_at
             ) VALUES (
               ${id}, ${handle}, ${input.name}, ${input.projectId}, ${input.instructions},
               ${input.toolAccess}, 0, 1, ${input.budget ? encodeBudget(input.budget) : null},
-              ${now}, ${now}
+              ${input.autonomy ? encodeAutonomy(input.autonomy) : null}, ${now}, ${now}
             )`;
           const row = yield* findRow(id);
           const threadId = yield* launchGeneration(row, 1, input.modelSelection).pipe(
@@ -427,6 +432,8 @@ const make = Effect.gen(function* () {
                 : input.budget === null
                   ? null
                   : encodeBudget(input.budget),
+            autonomyJson:
+              input.autonomy === undefined ? row.autonomy_json : encodeAutonomy(input.autonomy),
           };
           const now = yield* nowIso;
           if (projectChanged) {
@@ -446,7 +453,7 @@ const make = Effect.gen(function* () {
               UPDATE assistants SET name = ${next.name}, handle = ${next.handle},
                 instructions = ${next.instructions}, tool_access = ${next.toolAccess},
                 project_id = ${next.projectId}, thread_id = ${threadId}, generation = ${generation},
-                budget_json = ${next.budgetJson}, archived_at = ${archivedAt}, updated_at = ${now}
+                budget_json = ${next.budgetJson}, autonomy_json = ${next.autonomyJson}, archived_at = ${archivedAt}, updated_at = ${now}
               WHERE assistant_id = ${row.assistant_id}`;
             yield* followSchedules({ ...row, generation }, threadId, next.projectId);
             yield* retire(previousThreadId);
@@ -456,7 +463,7 @@ const make = Effect.gen(function* () {
             yield* sql`
               UPDATE assistants SET name = ${next.name}, handle = ${next.handle},
                 instructions = ${next.instructions}, tool_access = ${next.toolAccess},
-                budget_json = ${next.budgetJson}, archived_at = ${archivedAt}, updated_at = ${now}
+                budget_json = ${next.budgetJson}, autonomy_json = ${next.autonomyJson}, archived_at = ${archivedAt}, updated_at = ${now}
               WHERE assistant_id = ${row.assistant_id}`;
             if (
               previousThreadId !== null &&

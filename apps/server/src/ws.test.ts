@@ -1,4 +1,5 @@
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
+import * as AutonomyService from "./autonomy/AutonomyService.ts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -757,6 +758,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(InstanceSpend.InstanceSpend)({}),
   Layer.mock(AssistantSpend.AssistantSpend)({}),
   Layer.mock(ImessageChannelSettings.ImessageChannelSettings)({}),
+  Layer.mock(AutonomyService.AutonomyService)({}),
   Layer.mock(KeepAwake.KeepAwake)({}),
   Layer.mock(TelegramChannelSettings.TelegramChannelSettings)({}),
   Layer.mock(VcsProvisioningService.VcsProvisioningService)({}),

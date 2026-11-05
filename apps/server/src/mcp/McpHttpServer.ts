@@ -50,6 +50,8 @@ import { EnvironmentToolkit } from "./toolkits/environment/tools.ts";
 import * as EnvironmentHandlers from "./toolkits/environment/handlers.ts";
 import { AssistantToolkit } from "./toolkits/assistant/tools.ts";
 import * as AssistantHandlers from "./toolkits/assistant/handlers.ts";
+import { WatchToolkit } from "./toolkits/autonomy/tools.ts";
+import * as WatchHandlers from "./toolkits/autonomy/handlers.ts";
 import { DecisionToolkit } from "./toolkits/decision/tools.ts";
 import * as DecisionHandlers from "./toolkits/decision/handlers.ts";
 import { KanbanToolkit } from "./toolkits/kanban/tools.ts";
@@ -1203,6 +1205,8 @@ const layerNoteToolkit = toolkitRegistration(NoteToolkit, NoteHandlers.layer);
 
 const layerDecisionToolkit = toolkitRegistration(DecisionToolkit, DecisionHandlers.layer);
 
+const layerWatchToolkit = toolkitRegistration(WatchToolkit, WatchHandlers.layer);
+
 const layerAssistantToolkit = toolkitRegistration(AssistantToolkit, AssistantHandlers.layer);
 
 const layerHostToolkit = toolkitRegistration(HostToolkit, HostHandlers.layer);
@@ -1310,6 +1314,7 @@ export const layerTools = Layer.mergeAll(
   layerNoteToolkit,
   layerDecisionToolkit,
   layerAssistantToolkit,
+  layerWatchToolkit,
   layerDocsToolkit,
   layerHostToolkit,
   layerMemoryToolkit,

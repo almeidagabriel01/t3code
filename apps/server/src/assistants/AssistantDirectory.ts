@@ -4,6 +4,8 @@ import {
   type AssistantToolAccess,
   assistantIdFromThreadId,
   isAssistantThreadId,
+  AssistantAutonomy,
+  DEFAULT_ASSISTANT_AUTONOMY,
   ProviderBudget,
   type ProjectId,
   type ThreadId,
@@ -27,6 +29,7 @@ export interface AssistantRow {
   readonly generation: number;
   readonly archived_at: string | null;
   readonly budget_json: string | null;
+  readonly autonomy_json: string | null;
   readonly created_at: string;
   readonly updated_at: string;
 }
@@ -36,6 +39,11 @@ const BudgetJson = Schema.fromJsonString(ProviderBudget);
 const decodeBudgetOption = Schema.decodeOption(BudgetJson);
 const decodeBudget = (json: string) => Option.getOrNull(decodeBudgetOption(json));
 export const encodeBudget = Schema.encodeSync(BudgetJson);
+
+const AutonomyJson = Schema.fromJsonString(AssistantAutonomy);
+// A row that no longer decodes falls back to "only answers", the safe default.
+const decodeAutonomyOption = Schema.decodeOption(AutonomyJson);
+export const encodeAutonomy = Schema.encodeSync(AutonomyJson);
 
 export const toAssistant = (row: AssistantRow): Assistant => ({
   id: row.assistant_id as AssistantId,
@@ -49,6 +57,10 @@ export const toAssistant = (row: AssistantRow): Assistant => ({
   generation: row.generation,
   archivedAt: row.archived_at,
   budget: row.budget_json === null ? null : decodeBudget(row.budget_json),
+  autonomy:
+    row.autonomy_json === null
+      ? DEFAULT_ASSISTANT_AUTONOMY
+      : Option.getOrElse(decodeAutonomyOption(row.autonomy_json), () => DEFAULT_ASSISTANT_AUTONOMY),
   createdAt: row.created_at,
   updatedAt: row.updated_at,
 });

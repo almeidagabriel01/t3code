@@ -98,6 +98,15 @@ describe("Assistant", () => {
     expect(decode(row).budget).toBeNull();
   });
 
+  it("reads a row saved before autonomy existed as only answering", () => {
+    expect(decode(row).autonomy).toEqual({
+      mode: "reply-only",
+      rules: null,
+      projectIds: null,
+      channels: null,
+    });
+  });
+
   it("keeps a budget, filling the provider budget defaults", () => {
     const budget = decode({
       ...row,

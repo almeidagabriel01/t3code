@@ -264,6 +264,7 @@ import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import { commandFeatureUsage, featureUsage } from "./telemetry/FeatureUsage.ts";
 import type { TelemetryOwner } from "./telemetry/Identify.ts";
 import * as UsageService from "./usage/UsageService.ts";
+import * as AutonomyService from "./autonomy/AutonomyService.ts";
 import * as AssistantSpend from "./assistants/AssistantSpend.ts";
 import * as ImessageChannelSettings from "./channels/imessage/ImessageChannelSettings.ts";
 import * as KeepAwake from "./keepAwake/KeepAwake.ts";
@@ -1457,6 +1458,7 @@ export const layerWsRpc = (
       const computerUse = yield* ComputerUse.ComputerUse;
       const assistants = yield* Assistants.AssistantService;
       const assistantSpend = yield* AssistantSpend.AssistantSpend;
+      const autonomy = yield* AutonomyService.AutonomyService;
       const imessageChannelSettings = yield* ImessageChannelSettings.ImessageChannelSettings;
       const keepAwake = yield* KeepAwake.KeepAwake;
       const telegramChannelSettings = yield* TelegramChannelSettings.TelegramChannelSettings;
@@ -2535,6 +2537,11 @@ export const layerWsRpc = (
           assistants.remove(input.assistantId).pipe(Effect.as({ assistantId: input.assistantId })),
         [WS_METHODS.assistantsReset]: (input) => assistants.reset(input),
         [WS_METHODS.assistantsSpend]: (input) => assistantSpend.read(input.assistantId),
+        [WS_METHODS.autonomyWatchesList]: () =>
+          autonomy.listWatches.pipe(Effect.map((watches) => ({ watches }))),
+        [WS_METHODS.autonomyWatchUpsert]: (input) => autonomy.upsertWatch(input),
+        [WS_METHODS.autonomyWatchSetEnabled]: (input) => autonomy.setWatchEnabled(input),
+        [WS_METHODS.autonomyWatchDelete]: (input) => autonomy.deleteWatch(input),
         [WS_METHODS.imessageChannelGetSettings]: () => imessageChannelSettings.get,
         [WS_METHODS.imessageChannelConfigure]: (input) => imessageChannelSettings.configure(input),
         [WS_METHODS.imessageChannelSubscribeStatus]: () => imessageChannelSettings.streamStatus,

@@ -76,6 +76,35 @@ the task editor already pointed at that conversation. Schedules belong to the as
 it through a reset, a restore or a project change. An assistant can also schedule its own work when
 you ask it to.
 
+## Autonomy
+
+Assistants can wake on their own when something needs you, instead of waiting to be asked. T3 Code
+watches its own events with no model involved, and only a match sends the assistant a short message.
+The assistant investigates with its own model and tells you; it does not change anything.
+
+Autonomy is **off** until you turn it on in **Settings → Assistants → Autonomy**, which holds:
+
+- **Pause switch.** Off stops every rule and watch at once.
+- **Rules.** Run failed or interrupted, waiting for you too long (30 minutes by default), run stuck
+  with no activity (15 minutes; waiting for an approval doesn't count), and PR checks failed. Each one
+  can be turned off.
+- **Channels.** The answer reaches you in **Activity** (T3 and the mobile app) and on **Telegram**
+  (the first allowed user), even when you are not chatting with that assistant there.
+- **Daily limit** on wake-ups, 20 by default.
+
+Each assistant decides for itself: **Only answers** (the default) never wakes on its own, **Answers
+and notifies** does. It can use its own rule list, only some projects, and its own channels; the most
+specific setting wins. An assistant's spending limit still applies. Assistants, subagents and
+delegated tasks never trigger anything, so an assistant can't set off itself.
+
+### Reminders and watches
+
+Ask an assistant in plain words. "Remind me tomorrow at 9am to renew the domain" creates a one-time
+schedule. "Tell me when the checks on PR 42 pass" creates a **watch**: a filter (project, thread,
+event, PR) plus what to do when it matches, which can fire once or stay on, and can expire. Pause or
+delete a watch whenever you like; it stops immediately. Watches only wake assistants set to answer
+and notify.
+
 ## Spending limit
 
 Turn on **Spending limit** in an assistant's settings to cap it by day, week or month. Spending is

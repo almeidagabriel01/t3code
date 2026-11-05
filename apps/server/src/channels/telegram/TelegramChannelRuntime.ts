@@ -37,7 +37,7 @@ import {
 } from "./telegramApi.ts";
 import { makeTelegramTransport, type TelegramSendReport } from "./telegramTransport.ts";
 
-const TELEGRAM_CONNECTION_ID = "telegram";
+export const TELEGRAM_CONNECTION_ID = "telegram";
 const SENT_RETENTION_MS = 24 * 60 * 60_000;
 const BACKOFF_BASE_SECONDS = 2;
 const BACKOFF_CAP_SECONDS = 60;
