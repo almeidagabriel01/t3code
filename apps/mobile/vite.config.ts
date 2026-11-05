@@ -85,6 +85,7 @@ const reactTests = [
   "src/features/assistants/AssistantSchedulesSection.test.tsx",
   "src/features/assistants/AssistantEditRouteScreen.test.tsx",
   "src/features/assistants/SettingsAssistantsRouteScreen.test.tsx",
+  "src/features/assistants/AutonomySettingsSection.test.tsx",
   "src/features/imessage/SettingsImessageRouteScreen.test.tsx",
   "src/state/imessageChannel.test.tsx",
   "src/features/telegram/SettingsTelegramRouteScreen.test.tsx",

@@ -9,11 +9,13 @@ import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScroll
 import {
   useAssistantEntries,
   useAssistantSpend,
+  useAssistantsEnvironmentIds,
   type AssistantEntry,
 } from "../../state/assistants";
 import { useProjects } from "../../state/entities";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
+import { AutonomySettingsSection } from "./AutonomySettingsSection";
 import { AssistantAvatar, toolAccessLabel } from "./assistantPresentation";
 import { useOpenAssistantEditor } from "./openAssistantEditor";
 
@@ -66,6 +68,7 @@ export function SettingsAssistantsRouteScreen() {
     environmentCount > 1 && savedConnectionsById[entry.environmentId]
       ? [savedConnectionsById[entry.environmentId]!.environmentLabel]
       : [];
+  const environmentIds = useAssistantsEnvironmentIds();
   const firstEnvironmentId = active[0]?.environmentId ?? archived[0]?.environmentId ?? null;
   return (
     <SettingsScreen
@@ -120,6 +123,17 @@ export function SettingsAssistantsRouteScreen() {
                 ))}
               </ListSection>
             ) : null}
+            {environmentIds.map((environmentId) => (
+              <AutonomySettingsSection
+                key={environmentId}
+                environmentId={environmentId}
+                suffix={
+                  environmentIds.length > 1
+                    ? ` · ${savedConnectionsById[environmentId]?.environmentLabel ?? environmentId}`
+                    : ""
+                }
+              />
+            ))}
           </>
         )}
       </ScrollView>
