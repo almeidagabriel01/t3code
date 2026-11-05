@@ -629,6 +629,12 @@ it.effect("addStandup creates one weekday 09:00 task bound to the leader, only f
     const standup = (assistantId: string) =>
       assistants.update({ assistantId: assistantId as never, addStandup: true });
     assert.equal((yield* standup(leader.id).pipe(Effect.flip)).reason, "invalid");
+    const archivedLeader = yield* assistants.create(create({ name: "Old boss" }));
+    yield* assistants.update({ assistantId: archivedLeader.id, archived: true });
+    assert.include(
+      (yield* standup(archivedLeader.id).pipe(Effect.flip)).message,
+      "Unarchive the assistant",
+    );
     const report = yield* assistants.create(create({ name: "Worker", reportsTo: leader.id }));
     assert.equal((yield* standup(report.id).pipe(Effect.flip)).reason, "invalid");
 

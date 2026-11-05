@@ -1,0 +1,47 @@
+import { assert, it } from "@effect/vitest";
+import type { Assistant } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+
+import * as AssistantService from "../../../assistants/AssistantService.ts";
+import { run } from "./handlers.ts";
+
+const assistant = (id: string, extra: Partial<Assistant>) =>
+  ({
+    id,
+    handle: id,
+    name: id.toUpperCase(),
+    projectId: "p1",
+    threadId: `assistant:${id}:1`,
+    toolAccess: "full",
+    role: "",
+    reportsTo: null,
+    archivedAt: null,
+    ...extra,
+  }) as unknown as Assistant;
+
+const layer = Layer.mock(AssistantService.AssistantService)({
+  list: Effect.succeed([
+    assistant("ceo", { role: "CEO" }),
+    assistant("eng", { role: "Engineer", reportsTo: "ceo" as never }),
+  ]),
+});
+
+it.effect("list and read give each assistant its role, leader and reports by handle", () =>
+  Effect.gen(function* () {
+    const listed = yield* run({ action: "list" });
+    assert.deepInclude(listed.assistants?.[0] as object, {
+      handle: "ceo",
+      role: "CEO",
+      reportsTo: null,
+      reports: ["eng"],
+    });
+    const read = yield* run({ action: "read", handle: "@ENG" });
+    assert.deepInclude(read, { role: "Engineer", reportsTo: "ceo", reports: [] });
+    assert.strictEqual((yield* Effect.flip(run({ action: "read" }))).code, "invalid_request");
+    assert.strictEqual(
+      (yield* Effect.flip(run({ action: "read", handle: "nobody" }))).code,
+      "invalid_request",
+    );
+  }).pipe(Effect.provide(layer)),
+);

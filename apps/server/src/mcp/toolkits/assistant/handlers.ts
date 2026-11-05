@@ -22,7 +22,7 @@ const brief = (assistant: Assistant, all: ReadonlyArray<Assistant>): Out => ({
   archived: assistant.archivedAt !== null,
 });
 
-const run = Effect.fn("mcp.assistant.run")(function* (input: AssistantParameters) {
+export const run = Effect.fn("mcp.assistant.run")(function* (input: AssistantParameters) {
   const assistants = yield* AssistantService.AssistantService;
   const all = yield* assistants.list.pipe(Effect.mapError(unavailable));
   if (input.action === "list")
