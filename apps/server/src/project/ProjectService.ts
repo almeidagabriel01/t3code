@@ -196,10 +196,11 @@ export const make = Effect.gen(function* () {
   });
 
   const hydrate = Effect.fn("ProjectService.hydrate")(function* (row: ProjectStore.ProjectRow) {
+    // Deleted rows skip the cache: requests queued before a delete's invalidate refill it later, so a retried delete would differ.
     const enrichment =
       row.deletedAt === null
         ? yield* projectEnrichment.getAvailable(row.workspaceRoot)
-        : yield* projectEnrichment.peek(row.workspaceRoot);
+        : { repositoryIdentity: null, faviconPath: null, repositoryIdentityResolved: false };
     return toProject(row, enrichment);
   });
 
