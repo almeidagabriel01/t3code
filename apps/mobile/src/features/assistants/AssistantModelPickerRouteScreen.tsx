@@ -43,6 +43,7 @@ export function AssistantModelPickerRouteScreen() {
 
   return (
     <ThreadSettingsPickerScreen
+      title="Model and effort"
       environmentId={editor.environmentId}
       projectId={projectId}
       providerGroups={providerGroups}
