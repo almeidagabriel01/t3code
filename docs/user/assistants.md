@@ -84,26 +84,30 @@ The assistant investigates with its own model and tells you; it does not change 
 
 Autonomy is **off** until you turn it on in **Settings → Assistants → Autonomy**, which holds:
 
-- **Pause switch.** Off stops every rule and watch at once.
+- **Assistants can notify you.** The pause switch: off stops every rule and watch at once. The
+  command palette has **Pause assistant notifications** / **Turn on assistant notifications**.
 - **Rules.** Run failed or interrupted, waiting for you too long (30 minutes by default), run stuck
   with no activity (15 minutes; waiting for an approval doesn't count), and PR checks failed. Each one
   can be turned off.
 - **Channels.** The answer reaches you in **Activity** (T3 and the mobile app) and on **Telegram**
-  (the first allowed user), even when you are not chatting with that assistant there.
-- **Daily limit** on wake-ups, 20 by default.
+  (the first allowed user), even when you are not chatting with that assistant there. If Telegram
+  is not set up, the section says so and links to its settings.
+- **Notifications per day**, 20 by default.
 
-Each assistant decides for itself: **Only answers** (the default) never wakes on its own, **Answers
-and notifies** does. It can use its own rule list, only some projects, and its own channels; the most
-specific setting wins. An assistant's spending limit still applies. Assistants, subagents and
-delegated tasks never trigger anything, so an assistant can't set off itself.
+Each assistant decides for itself, under **Notifications** in its settings: **Only reply when I
+message it** (the default) never wakes on its own, **Reply and notify me** does. It can use its own
+rule list, only some projects, and its own channels; the most specific setting wins. An assistant's
+spending limit still applies. Assistants, subagents and delegated tasks never trigger anything, so
+an assistant can't set off itself.
 
 ### Reminders and watches
 
 Ask an assistant in plain words. "Remind me tomorrow at 9am to renew the domain" creates a one-time
 schedule. "Tell me when the checks on PR 42 pass" creates a **watch**: a filter (project, thread,
 event, PR) plus what to do when it matches, which can fire once or stay on, and can expire. Pause or
-delete a watch whenever you like; it stops immediately. Watches only wake assistants set to answer
-and notify.
+delete a watch whenever you like; it stops immediately. Watches only wake assistants set to reply
+and notify. An assistant's settings list its watches under **Watches**, where you can also add,
+edit, pause or delete one by hand.
 
 ## Spending limit
 

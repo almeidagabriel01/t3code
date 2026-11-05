@@ -1,6 +1,8 @@
 import { createMemoryHistory } from "@tanstack/react-router";
 import {
+  DEFAULT_AUTONOMY_SETTINGS,
   ScheduledTaskId,
+  type AutonomyWatch,
   type Assistant,
   type AssistantId,
   type ProjectId,
@@ -15,6 +17,7 @@ import { page, userEvent } from "vite-plus/test/browser";
 import "~/index.css";
 
 import { AppRoot } from "~/AppRoot";
+import { openCommandPalette } from "~/commandPaletteBus";
 import { __setClientSettingsForTests } from "~/hooks/useSettings";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { getRouter } from "~/router";
@@ -22,6 +25,10 @@ import { assistantDialogAtom } from "./assistantDialogState";
 import {
   fakeAssistantEdits,
   fakeAssistants,
+  fakeSettings,
+  resetFakeTelegram,
+  fakeWatches,
+  setFakeAutonomy,
   fakeScheduledTasks,
   publishAssistants,
   publishScheduledTasks,
@@ -48,7 +55,10 @@ vi.mock(import("~/rpc/requestLatencyState"), async (original) => ({
   trackRpcRequestSent: () => {},
 }));
 
-installFakeEnvironment([threadWithHistory("thread-a", 2)], { assistants: true });
+installFakeEnvironment([threadWithHistory("thread-a", 2)], {
+  assistants: true,
+  telegramChannel: true,
+});
 await page.viewport(1400, 900);
 __setClientSettingsForTests({
   ...DEFAULT_CLIENT_SETTINGS,
@@ -276,5 +286,228 @@ it("starts a new schedule bound to the assistant's conversation", async () => {
     expect(screen.router.state.location.search).toMatchObject({
       threadId: "assistant:jarvis:1",
     }),
+  );
+});
+
+const watch = (id: string, overrides: Partial<AutonomyWatch> = {}): AutonomyWatch => ({
+  id: id as AutonomyWatch["id"],
+  assistantId: "jarvis",
+  title: "CI on PR 42",
+  filter: { event: "pr_checks_failed", prNumber: 42 },
+  instruction: "Find out why",
+  oneShot: false,
+  expiresAt: null,
+  enabled: true,
+  triggerCount: 0,
+  lastTriggeredAt: null,
+  createdAt: "2026-03-17T19:00:00.000Z",
+  ...overrides,
+});
+
+it("writes the whole autonomy object when a switch changes", async () => {
+  fakeSettings.patches = [];
+  fakeAssistants.items = [assistant("jarvis", "Jarvis", { isDefault: true })];
+  await using _screen = await openApp("/settings/assistants");
+  await userEvent.click(page.getByRole("switch", { name: "Assistants can notify you" }));
+  await userEvent.click(page.getByRole("switch", { name: "Run looks stuck" }));
+  await userEvent.click(page.getByRole("switch", { name: "Notify on Telegram" }));
+  await eventually(() => expect(fakeSettings.patches).toHaveLength(3));
+  // Each patch carries every field, so a write never drops a sibling setting.
+  expect(fakeSettings.patches).toEqual([
+    { autonomy: { ...DEFAULT_AUTONOMY_SETTINGS, enabled: true } },
+    {
+      autonomy: {
+        ...DEFAULT_AUTONOMY_SETTINGS,
+        rules: { ...DEFAULT_AUTONOMY_SETTINGS.rules, stuck: false },
+      },
+    },
+    { autonomy: { ...DEFAULT_AUTONOMY_SETTINGS, channels: ["t3"] } },
+  ]);
+});
+
+it("saves valid numbers once and refuses out-of-range ones", async () => {
+  fakeSettings.patches = [];
+  fakeAssistants.items = [assistant("jarvis", "Jarvis", { isDefault: true })];
+  await using _screen = await openApp("/settings/assistants");
+  await userEvent.fill(page.getByLabelText("Waiting minutes"), "45");
+  await userEvent.keyboard("{Enter}");
+  await userEvent.fill(page.getByLabelText("Notifications per day"), "5000");
+  await expect.element(page.getByText("Enter a whole number from 1 to 1000.")).toBeVisible();
+  await userEvent.keyboard("{Enter}");
+  await userEvent.fill(page.getByLabelText("Stuck minutes"), "10");
+  await userEvent.keyboard("{Enter}");
+  await eventually(() => expect(fakeSettings.patches).toHaveLength(2));
+  expect(fakeSettings.patches).toEqual([
+    { autonomy: { ...DEFAULT_AUTONOMY_SETTINGS, waitingMinutes: 45 } },
+    { autonomy: { ...DEFAULT_AUTONOMY_SETTINGS, stuckMinutes: 10 } },
+  ]);
+});
+
+it("links to Telegram settings until a bot is connected", async () => {
+  fakeAssistants.items = [assistant("jarvis", "Jarvis", { isDefault: true })];
+  resetFakeTelegram();
+  await using screen = await openApp("/settings/assistants");
+  await expect.element(page.getByText("Telegram is not set up")).toBeVisible();
+  await userEvent.click(page.getByRole("link", { name: "Open Telegram settings" }));
+  await eventually(() => expect(screen.router.state.location.pathname).toBe("/settings/telegram"));
+});
+
+it("shows no Telegram notice once a bot is connected", async () => {
+  fakeAssistants.items = [assistant("jarvis", "Jarvis", { isDefault: true })];
+  resetFakeTelegram({ enabled: true, tokenConfigured: true });
+  // The first test's Telegram settings are still cached.
+  appAtomRegistry.reset();
+  await using _screen = await openApp("/settings/assistants");
+  await expect.element(page.getByRole("switch", { name: "Notify on Telegram" })).toBeVisible();
+  expect(page.getByText("Telegram is not set up").query()).toBeNull();
+});
+
+it("saves the assistant's notification choices, inherited or custom", async () => {
+  publishAssistants([assistant("jarvis", "Jarvis")]);
+  fakeAssistantEdits.updates = [];
+  await using _screen = await openEditDialog("Jarvis");
+  expect(page.getByText("When to notify").query()).toBeNull();
+  await userEvent.click(page.getByRole("radio", { name: "Reply and notify me" }));
+  await userEvent.click(page.getByRole("button", { name: "Save" }));
+  await eventually(() =>
+    expect(fakeAssistantEdits.updates).toMatchObject([
+      { autonomy: { mode: "reply-and-notify", rules: null, projectIds: null, channels: null } },
+    ]),
+  );
+
+  fakeAssistantEdits.updates = [];
+  await userEvent.click(page.getByRole("button", { name: "Edit Jarvis" }));
+  await userEvent.click(page.getByRole("radio", { name: "Reply and notify me" }));
+  await userEvent.click(page.getByRole("radio", { name: "Only for these" }));
+  await userEvent.click(page.getByRole("checkbox", { name: "Run looks stuck" }));
+  await userEvent.click(page.getByRole("radio", { name: "Only these projects" }));
+  await userEvent.click(page.getByRole("radio", { name: "Only on these" }));
+  await userEvent.click(page.getByRole("checkbox", { name: "Telegram" }));
+  await userEvent.click(page.getByRole("button", { name: "Save" }));
+  await eventually(() =>
+    expect(fakeAssistantEdits.updates).toMatchObject([
+      {
+        autonomy: {
+          mode: "reply-and-notify",
+          rules: ["runFailed", "waitingTooLong", "ciFailed"],
+          projectIds: ["project-1"],
+          channels: ["t3"],
+        },
+      },
+    ]),
+  );
+});
+
+it("keeps an unchanged assistant's autonomy out of the update", async () => {
+  publishAssistants([
+    assistant("jarvis", "Jarvis", {
+      autonomy: { mode: "reply-and-notify", rules: [], projectIds: null, channels: null },
+    }),
+  ]);
+  fakeAssistantEdits.updates = [];
+  await using _screen = await openEditDialog("Jarvis");
+  await userEvent.click(page.getByRole("radio", { name: "Same as global" }).first());
+  await userEvent.click(page.getByRole("radio", { name: "Only reply when I message it" }));
+  await userEvent.click(page.getByRole("button", { name: "Save" }));
+  await eventually(() =>
+    expect(fakeAssistantEdits.updates).toMatchObject([
+      { autonomy: { mode: "reply-only", rules: null } },
+    ]),
+  );
+});
+
+it("creates an assistant with its notification choice", async () => {
+  fakeAssistantEdits.creates = [];
+  publishAssistants([assistant("jarvis", "Jarvis")]);
+  appAtomRegistry.set(assistantDialogAtom, null);
+  await using _screen = await openApp("/settings/assistants");
+  await userEvent.click(page.getByRole("button", { name: "New assistant" }));
+  await userEvent.fill(page.getByLabelText("Name"), "Scout");
+  await userEvent.click(page.getByRole("radio", { name: "Reply and notify me" }));
+  await userEvent.click(page.getByRole("button", { name: "Create assistant" }));
+  await eventually(() =>
+    expect(fakeAssistantEdits.creates).toMatchObject([
+      { name: "Scout", autonomy: { mode: "reply-and-notify" } },
+    ]),
+  );
+  appAtomRegistry.set(assistantDialogAtom, null);
+});
+
+it("creates, edits, pauses and deletes a watch", async () => {
+  publishAssistants([assistant("jarvis", "Jarvis")]);
+  fakeWatches.items = [watch("other", { assistantId: "someone", title: "Not mine" })];
+  fakeWatches.calls = [];
+  await using _screen = await openEditDialog("Jarvis");
+  await expect.element(page.getByText("No watches yet.", { exact: false })).toBeVisible();
+  expect(page.getByText("Not mine").query()).toBeNull();
+
+  await userEvent.click(page.getByRole("button", { name: "New watch" }));
+  await userEvent.click(page.getByRole("button", { name: "Save watch" }));
+  await expect.element(page.getByText("Give the watch a title.")).toBeVisible();
+  await userEvent.fill(page.getByLabelText("Title"), "CI on PR 42");
+  await userEvent.fill(page.getByLabelText("PR number"), "42");
+  await userEvent.fill(page.getByLabelText("What it should do"), "Find out why");
+  await userEvent.click(page.getByRole("checkbox", { name: "Only once" }));
+  await userEvent.click(page.getByRole("button", { name: "Save watch" }));
+  await eventually(() =>
+    expect(fakeWatches.calls).toMatchObject([
+      {
+        tag: "upsert",
+        input: {
+          assistantId: "jarvis",
+          title: "CI on PR 42",
+          filter: { event: "pr_checks_failed", prNumber: 42 },
+          instruction: "Find out why",
+          oneShot: true,
+          expiresAt: null,
+        },
+      },
+    ]),
+  );
+  await expect.element(page.getByText("PR checks fail · PR #42", { exact: false })).toBeVisible();
+
+  await userEvent.click(page.getByRole("button", { name: "Edit CI on PR 42" }));
+  await userEvent.click(page.getByRole("combobox", { name: "Wake it when" }));
+  await userEvent.click(page.getByRole("option", { name: "A run fails" }));
+  expect(page.getByLabelText("PR number").query()).toBeNull();
+  await userEvent.fill(page.getByLabelText("Expires"), "2030-01-02T10:30");
+  await userEvent.click(page.getByRole("button", { name: "Save watch" }));
+  await eventually(() =>
+    expect(fakeWatches.calls.at(-1)).toMatchObject({
+      tag: "upsert",
+      input: { id: "new-watch", filter: { event: "run_failed" } },
+    }),
+  );
+  expect((fakeWatches.calls.at(-1)!.input as { expiresAt: string }).expiresAt).toMatch(/^2030-/);
+
+  await userEvent.click(page.getByRole("switch", { name: "Pause CI on PR 42" }));
+  await eventually(() =>
+    expect(fakeWatches.calls.at(-1)).toEqual({
+      tag: "setEnabled",
+      input: { id: "new-watch", enabled: false },
+    }),
+  );
+
+  await userEvent.click(page.getByRole("button", { name: "Delete CI on PR 42" }));
+  await userEvent.click(page.getByRole("button", { name: "Confirm" }));
+  await eventually(() => expect(fakeWatches.calls.at(-1)?.tag).toBe("delete"));
+  await expect.element(page.getByText("No watches yet.", { exact: false })).toBeVisible();
+});
+
+it.each([
+  [true, "Pause assistant notifications"],
+  [false, "Turn on assistant notifications"],
+])("toggles assistant notifications from the palette (enabled: %s)", async (enabled, title) => {
+  setFakeAutonomy({ ...DEFAULT_AUTONOMY_SETTINGS, enabled });
+  appAtomRegistry.reset();
+  fakeSettings.patches = [];
+  publishAssistants([assistant("jarvis", "Jarvis", { isDefault: true })]);
+  await using _screen = await openApp("/settings/assistants");
+  openCommandPalette({ query: "notifications" });
+  await page.getByRole("option", { name: title }).click();
+  await eventually(() =>
+    expect(fakeSettings.patches).toEqual([
+      { autonomy: { ...DEFAULT_AUTONOMY_SETTINGS, enabled: !enabled } },
+    ]),
   );
 });

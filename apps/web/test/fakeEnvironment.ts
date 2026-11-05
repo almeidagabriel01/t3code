@@ -22,6 +22,9 @@ import {
   WS_METHODS,
   WsRpcGroup,
   type Assistant,
+  type AutonomySettings,
+  type AutonomyWatch,
+  type AutonomyWatchUpsertInput,
   type AssistantSpend,
   type ForkUpdateStatus,
   type MacPermissions,
@@ -337,11 +340,19 @@ function projectionOf(thread: FakeThread): OrchestrationV2ThreadProjection {
 let extraCapabilities: Record<string, boolean> = {};
 let hostOs: "linux" | "darwin" = "linux";
 // The same object when nothing is added, so scenarios that count renders see no new config.
+let autonomyOverride: AutonomySettings | null = null;
+/** Starts the server with these autonomy settings; reset when the environment is disposed. */
+export function setFakeAutonomy(autonomy: AutonomySettings | null): void {
+  autonomyOverride = autonomy;
+}
 const currentServerConfig = (): ServerConfig =>
-  Object.keys(extraCapabilities).length === 0 && hostOs === "linux"
+  Object.keys(extraCapabilities).length === 0 && hostOs === "linux" && autonomyOverride === null
     ? serverConfig
     : {
         ...serverConfig,
+        settings: autonomyOverride
+          ? { ...serverConfig.settings, autonomy: autonomyOverride }
+          : serverConfig.settings,
         environment: {
           ...serverConfig.environment,
           platform: { ...serverConfig.environment.platform, os: hostOs },
@@ -540,6 +551,7 @@ export function publishAssistants(items: Assistant[]): void {
 export const fakeAssistantEdits = {
   spend: null as AssistantSpend | null,
   updates: [] as unknown[],
+  creates: [] as unknown[],
 };
 handlers[WS_METHODS.assistantsSpend] = () =>
   fakeAssistantEdits.spend ? Effect.succeed(fakeAssistantEdits.spend) : Effect.never;
@@ -547,6 +559,59 @@ handlers[WS_METHODS.assistantsUpdate] = (input: { readonly assistantId: string }
   fakeAssistantEdits.updates.push(input);
   const found = fakeAssistants.items.find((item) => item.id === input.assistantId);
   return found ? Effect.succeed(found) : Effect.never;
+};
+
+/** Settings patches the fake server received. */
+export const fakeSettings = { patches: [] as unknown[] };
+handlers[WS_METHODS.serverUpdateSettings] = (input: { readonly patch: object }) => {
+  fakeSettings.patches.push(input.patch);
+  return Effect.succeed({ ...serverConfig.settings, ...input.patch });
+};
+
+handlers[WS_METHODS.assistantsCreate] = (input: object) => {
+  fakeAssistantEdits.creates.push(input);
+  return Effect.never;
+};
+
+/** Autonomy watches the fake server holds, and the calls it received. */
+export const fakeWatches = {
+  items: [] as AutonomyWatch[],
+  calls: [] as Array<{ readonly tag: string; readonly input: unknown }>,
+};
+handlers[WS_METHODS.autonomyWatchesList] = () =>
+  Effect.sync(() => ({ watches: fakeWatches.items }));
+handlers[WS_METHODS.autonomyWatchUpsert] = (input: AutonomyWatchUpsertInput) => {
+  fakeWatches.calls.push({ tag: "upsert", input });
+  const saved: AutonomyWatch = {
+    id: input.id ?? ("new-watch" as AutonomyWatch["id"]),
+    enabled: input.enabled ?? true,
+    triggerCount: 0,
+    lastTriggeredAt: null,
+    createdAt: "2026-03-17T19:12:28.000Z",
+    assistantId: input.assistantId,
+    title: input.title,
+    filter: input.filter,
+    instruction: input.instruction,
+    oneShot: input.oneShot,
+    expiresAt: input.expiresAt,
+  };
+  fakeWatches.items = [...fakeWatches.items.filter((item) => item.id !== saved.id), saved];
+  return Effect.succeed(saved);
+};
+handlers[WS_METHODS.autonomyWatchSetEnabled] = (input: {
+  readonly id: string;
+  readonly enabled: boolean;
+}) => {
+  fakeWatches.calls.push({ tag: "setEnabled", input });
+  fakeWatches.items = fakeWatches.items.map((item) =>
+    item.id === input.id ? { ...item, enabled: input.enabled } : item,
+  );
+  return Effect.succeed(fakeWatches.items.find((item) => item.id === input.id)!);
+};
+handlers[WS_METHODS.autonomyWatchDelete] = (input: { readonly id: string }) => {
+  fakeWatches.calls.push({ tag: "delete", input });
+  fakeWatches.items = fakeWatches.items.filter((item) => item.id !== input.id);
+  return Effect.succeed({ id: input.id });
 };
 
 /** Scheduled tasks the fake server holds; `failToggle` makes the next toggle fail with it. */
@@ -852,6 +917,10 @@ export function installFakeEnvironment(
       threads = [];
       fakeCommands.dispatched.length = 0;
       fakeCommands.failTypes.clear();
+      autonomyOverride = null;
+      fakeSettings.patches = [];
+      fakeWatches.items = [];
+      fakeWatches.calls = [];
       // The app caches the environment's config and capabilities here; the next test starts cold.
       appAtomRegistry.reset();
     },

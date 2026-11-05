@@ -1,4 +1,5 @@
 import type { EnvironmentId } from "@t3tools/contracts";
+import { Fragment } from "react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   ArchiveIcon,
@@ -27,6 +28,7 @@ import { getDisplayModelName } from "../chat/providerIconUtils";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { AutonomySection } from "./AutonomySettings";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 
@@ -231,29 +233,34 @@ export function AssistantsSettingsPanel() {
         </SettingsSection>
       ) : (
         byEnvironment(active).map(([environmentId, entries], index) => (
-          <SettingsSection
-            key={environmentId}
-            title={multipleEnvironments ? `Assistants · ${labelOf(environmentId)}` : "Assistants"}
-            icon={<UserRoundIcon className="size-4 text-muted-foreground" />}
-            headerAction={
-              <Button
-                size="xs"
-                variant="ghost-muted"
-                onClick={() => openAssistantDialog({ environmentId })}
-              >
-                <PlusIcon />
-                New assistant
-              </Button>
-            }
-          >
-            {entries.map((entry, rowIndex) => (
-              <AssistantRow
-                key={entryKey(entry)}
-                entry={entry}
-                first={index === 0 && rowIndex === 0}
-              />
-            ))}
-          </SettingsSection>
+          <Fragment key={environmentId}>
+            <SettingsSection
+              title={multipleEnvironments ? `Assistants · ${labelOf(environmentId)}` : "Assistants"}
+              icon={<UserRoundIcon className="size-4 text-muted-foreground" />}
+              headerAction={
+                <Button
+                  size="xs"
+                  variant="ghost-muted"
+                  onClick={() => openAssistantDialog({ environmentId })}
+                >
+                  <PlusIcon />
+                  New assistant
+                </Button>
+              }
+            >
+              {entries.map((entry, rowIndex) => (
+                <AssistantRow
+                  key={entryKey(entry)}
+                  entry={entry}
+                  first={index === 0 && rowIndex === 0}
+                />
+              ))}
+            </SettingsSection>
+            <AutonomySection
+              environmentId={environmentId}
+              suffix={multipleEnvironments ? ` · ${labelOf(environmentId)}` : ""}
+            />
+          </Fragment>
         ))
       )}
       {archived.length > 0

@@ -57,6 +57,8 @@ import {
   UserRoundIcon,
   UserRoundPlusIcon,
   BellIcon,
+  BellOffIcon,
+  BellRingIcon,
   MessageCircleQuestionMarkIcon,
   ArrowLeftIcon,
   BugIcon,
@@ -86,6 +88,7 @@ import {
   NotebookPenIcon,
   SquareKanbanIcon,
 } from "lucide-react";
+import { useAutonomyPause } from "./assistants/useAutonomyPause";
 import { useActivityOpen, useToggleActivity } from "./activity/useActivity";
 import { openThreadFind } from "./chat/threadFindStore";
 import { useKanbanEnvironmentIds } from "../state/kanban";
@@ -422,6 +425,7 @@ function OpenCommandPaletteDialog(props: {
   const { openChildSearch, setOpen } = props;
   const activityOpen = useActivityOpen();
   const toggleActivity = useToggleActivity();
+  const autonomyPause = useAutonomyPause();
   // Keyed by palette session: the intent and restored search only seed this
   // mount, and closing must not change what the closing palette shows.
   const [initialSearch] = useState(
@@ -1277,6 +1281,23 @@ function OpenCommandPaletteDialog(props: {
     shortcutCommand: "sidebar.toggleActivity",
     run: async () => toggleActivity(),
   });
+
+  if (autonomyPause) {
+    actionItems.push({
+      kind: "action",
+      value: "action:toggle-assistant-notifications",
+      searchTerms: ["assistant", "notifications", "autonomy", "pause", "resume", "mute", "wake"],
+      title: autonomyPause.enabled
+        ? "Pause assistant notifications"
+        : "Turn on assistant notifications",
+      icon: autonomyPause.enabled ? (
+        <BellOffIcon className={ITEM_ICON_CLASS} />
+      ) : (
+        <BellRingIcon className={ITEM_ICON_CLASS} />
+      ),
+      run: async () => autonomyPause.toggle(),
+    });
+  }
 
   if (openDecisionCount > 0) {
     actionItems.push({

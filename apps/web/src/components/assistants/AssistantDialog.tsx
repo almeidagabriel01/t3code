@@ -5,11 +5,14 @@ import {
   assistantHandleFromName,
   AssistantHandle,
   BudgetPeriod,
+  DEFAULT_ASSISTANT_AUTONOMY,
+  type AssistantAutonomy,
   type AssistantToolAccess,
   type EnvironmentId,
   type ModelSelection,
   type ProjectId,
 } from "@t3tools/contracts";
+import { sameAssistantAutonomy } from "@t3tools/client-runtime/autonomy";
 import { createModelSelection } from "@t3tools/shared/model";
 import { Link, useRouter } from "@tanstack/react-router";
 import * as Schema from "effect/Schema";
@@ -58,7 +61,9 @@ import { Radio, RadioGroup } from "../ui/radio-group";
 import { Switch } from "../ui/switch";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Textarea } from "../ui/textarea";
+import { AssistantNotifications } from "./AssistantNotifications";
 import { AssistantSchedules } from "./AssistantSchedules";
+import { AssistantWatches } from "./AssistantWatches";
 import { budgetFromDraft, budgetToDraft, spendLine, type BudgetDraft } from "./assistantBudget";
 import { assistantDialogAtom, type AssistantDialogTarget } from "./assistantDialogState";
 import { useAssistantFlows } from "./useAssistantFlows";
@@ -211,6 +216,9 @@ function AssistantDialog(props: {
   const [projectId, setProjectId] = useState<ProjectId | null>(assistant?.projectId ?? null);
   const [pickedModel, setPickedModel] = useState<ModelSelection | null>(null);
   const [budgetDraft, setBudgetDraft] = useState(() => budgetToDraft(assistant?.budget ?? null));
+  const [autonomy, setAutonomy] = useState<AssistantAutonomy>(
+    assistant?.autonomy ?? DEFAULT_ASSISTANT_AUTONOMY,
+  );
   const spend = useAssistantSpend(
     (environmentId ?? "") as EnvironmentId,
     assistant && assistant.budget !== null ? assistant.id : null,
@@ -229,6 +237,10 @@ function AssistantDialog(props: {
   const effectiveProjectId =
     projectId ?? projects.find((project) => project.isScratch)?.id ?? projects[0]?.id ?? null;
   const effectiveProject = projects.find((project) => project.id === effectiveProjectId) ?? null;
+  const projectOptions = projects.map((project) => ({
+    id: project.id,
+    label: project.isScratch ? "No project" : projectName(project),
+  }));
 
   const settings = useEnvironmentSettings((environmentId ?? "") as EnvironmentId);
   const providersByEnvironment = useEnvironmentProviders();
@@ -278,6 +290,7 @@ function AssistantDialog(props: {
           ...(instructions !== assistant.instructions ? { instructions } : {}),
           ...(toolAccess !== assistant.toolAccess ? { toolAccess } : {}),
           budget: budget.budget,
+          ...(sameAssistantAutonomy(autonomy, assistant.autonomy) ? {} : { autonomy }),
         })
       : await actions.create({
           name: trimmedName,
@@ -287,6 +300,7 @@ function AssistantDialog(props: {
           instructions,
           toolAccess,
           ...(budget.budget ? { budget: budget.budget } : {}),
+          ...(sameAssistantAutonomy(autonomy, DEFAULT_ASSISTANT_AUTONOMY) ? {} : { autonomy }),
         });
     setSaving(false);
     if (!reply.ok) return setError(reply.message);
@@ -509,11 +523,26 @@ function AssistantDialog(props: {
               onChange={(patch) => setBudgetDraft((current) => ({ ...current, ...patch }))}
               spent={spend ? spendLine(spend) : null}
             />
+            <AssistantNotifications
+              value={autonomy}
+              onChange={setAutonomy}
+              globalAutonomy={settings.autonomy}
+              projects={projectOptions}
+              defaultProjectId={effectiveProjectId}
+            />
             {assistant?.threadId && environmentId !== null ? (
               <AssistantSchedules
                 environmentId={environmentId}
                 threadId={assistant.threadId}
                 onNavigate={props.onClose}
+              />
+            ) : null}
+            {assistant && environmentId !== null ? (
+              <AssistantWatches
+                environmentId={environmentId}
+                assistantId={assistant.id}
+                notifies={autonomy.mode === "reply-and-notify"}
+                projects={projectOptions}
               />
             ) : null}
             <div className="flex flex-col gap-0.5">
