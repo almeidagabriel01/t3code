@@ -6,7 +6,7 @@ import {
   ArchiveIcon,
   ArrowDownIcon,
   ArrowUpIcon,
-  BellIcon,
+  ActivityIcon,
   CalendarClockIcon,
   ChartNoAxesColumnIcon,
   HouseIcon,
@@ -92,7 +92,7 @@ const RAIL_ITEMS: Record<
   RailItemId,
   { label: string; icon: LucideIcon | PullRequestGlyphIcon; unavailable?: string }
 > = {
-  activity: { label: "Activity", icon: BellIcon },
+  activity: { label: "Activity", icon: ActivityIcon },
   board: {
     label: "Board",
     icon: SquareKanbanIcon,
@@ -180,7 +180,7 @@ const ActivityRailItem = memo(function ActivityRailItem(props: {
         className={railItemClassName(props.active)}
         onClick={props.onClick}
       >
-        <BellIcon aria-hidden />
+        <ActivityIcon aria-hidden />
         <RailCount count={count} />
       </Link>
     </RailTooltip>

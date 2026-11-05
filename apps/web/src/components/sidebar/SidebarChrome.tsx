@@ -66,6 +66,8 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
     environmentIdentificationMode === "pill"
       ? resolveEnvironmentIdentificationPillLabel(stageLabel)
       : null;
+  // Activity has its own rail item; this toggle is its entry only where the rail folds away.
+  const railVisible = useDestinationRailVisible();
 
   return (
     <div
@@ -100,7 +102,7 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
           </div>
         ) : null}
       </div>
-      <SidebarViewToggles onBackdrop={backdropVariant !== null} />
+      {railVisible ? null : <SidebarViewToggles onBackdrop={backdropVariant !== null} />}
     </div>
   );
 });

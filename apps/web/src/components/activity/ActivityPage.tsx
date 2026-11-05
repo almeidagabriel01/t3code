@@ -1,6 +1,6 @@
 import { useNavigate } from "@tanstack/react-router";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { ArrowLeftIcon, BellIcon, EllipsisIcon, ExternalLinkIcon } from "lucide-react";
+import { ArrowLeftIcon, ActivityIcon, EllipsisIcon, ExternalLinkIcon } from "lucide-react";
 import { lazy, Suspense, useState } from "react";
 
 import { useNowMinute } from "../../hooks/useNowMinute";
@@ -152,7 +152,7 @@ export function ActivityPage() {
           </TooltipTrigger>
           <TooltipPopup side="bottom">Close</TooltipPopup>
         </Tooltip>
-        <BellIcon aria-hidden className="size-4 text-muted-foreground" />
+        <ActivityIcon aria-hidden className="size-4 text-muted-foreground" />
         <h1 className="text-sm font-medium">Activity</h1>
         <span className="text-xs text-muted-foreground tabular-nums" role="status">
           {summary}

@@ -56,7 +56,7 @@ import {
   BrainIcon,
   UserRoundIcon,
   UserRoundPlusIcon,
-  BellIcon,
+  ActivityIcon,
   BellOffIcon,
   BellRingIcon,
   MessageCircleQuestionMarkIcon,
@@ -1277,7 +1277,7 @@ function OpenCommandPaletteDialog(props: {
     value: "action:toggle-activity",
     searchTerms: ["activity", "bell", "unread", "running", "working", "needs you", "waiting"],
     title: activityOpen ? "Close activity" : "Open activity",
-    icon: <BellIcon className={ITEM_ICON_CLASS} />,
+    icon: <ActivityIcon className={ITEM_ICON_CLASS} />,
     shortcutCommand: "sidebar.toggleActivity",
     run: async () => toggleActivity(),
   });

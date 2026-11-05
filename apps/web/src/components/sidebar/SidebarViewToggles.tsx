@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import { BellIcon } from "lucide-react";
+import { ActivityIcon } from "lucide-react";
 
 import { shortcutLabelForCommand } from "../../keybindings";
 import { primaryServerKeybindingsAtom } from "../../state/server";
@@ -31,7 +31,7 @@ export function SidebarViewToggles(props: { readonly onBackdrop: boolean }) {
               data-pressed={open ? "" : undefined}
               onClick={toggleActivity}
             >
-              <BellIcon />
+              <ActivityIcon />
             </Button>
           }
         />
