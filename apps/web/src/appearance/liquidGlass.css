@@ -149,38 +149,4 @@ html:is(
       );
     }
   }
-
-  html[data-desktop-client][data-appearance-preset="liquid-glass"]:not(
-      [data-glass-solid],
-      [data-desktop-glass-opaque]
-    ):is(
-      [data-desktop-window-material="macos-glass"],
-      [data-desktop-window-material="windows-mica"]
-    ) {
-    .dialog-glass {
-      background: color-mix(
-        in srgb,
-        var(--background) var(--glass-surface-opacity),
-        transparent
-      ) !important;
-    }
-    .dialog-backdrop {
-      background: color-mix(in srgb, var(--background) 60%, transparent) !important;
-    }
-    .dropdown-glass {
-      background: color-mix(
-        in srgb,
-        var(--popover) var(--glass-surface-opacity),
-        transparent
-      ) !important;
-    }
-    .dialog-backdrop {
-      -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
-      backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
-    }
-    :is(.dialog-glass, .dropdown-glass) {
-      -webkit-backdrop-filter: blur(var(--glass-surface-blur)) saturate(var(--glass-saturation));
-      backdrop-filter: blur(var(--glass-surface-blur)) saturate(var(--glass-saturation));
-    }
-  }
 }

@@ -59,13 +59,30 @@ html[data-desktop-client]:is(
     background: linear-gradient(transparent 0 var(--workspace-topbar-height), var(--background) 0);
   }
 
-  :is(.dialog-glass, .dialog-backdrop, .dropdown-glass) {
+  /* Chromium's backdrop-filter keeps the unblurred backdrop under its output in a transparent
+     window, so a translucent floating surface shows crisp text sliding behind it. Float solid. */
+  --glass-surface-opacity: 100%;
+
+  .dialog-glass {
     background: var(--background) !important;
-    -webkit-backdrop-filter: none;
-    backdrop-filter: none;
+  }
+
+  /* A dim, not a wall: the app stays visible around a modal. */
+  .dialog-backdrop {
+    background: color-mix(in srgb, var(--background) 60%, transparent) !important;
   }
 
   .dropdown-glass {
     background: var(--popover) !important;
+  }
+
+  :is(.surface-glass, .alert-glass, .dialog-glass, .dialog-backdrop, .dropdown-glass),
+  [data-app-modal][data-glass-pane],
+  [data-slot="composer-shell"]::before,
+  [data-composer-banner-surface]::before,
+  [data-chat-composer-main-surface],
+  [data-slot="composer-banner-peek"] {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
   }
 }

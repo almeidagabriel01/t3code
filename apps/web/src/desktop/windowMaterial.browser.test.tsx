@@ -85,11 +85,11 @@ it("exposes only native chrome, keeps content and overlays solid, and restores C
     );
   }
   expect(alpha(element(screen.container, '[data-testid="transcript"]'))).toBe(255);
-  for (const selector of [".dialog-glass", ".dialog-backdrop", ".dropdown-glass"]) {
-    const node = element(screen.container, selector);
-    expect(alpha(node)).toBe(255);
-    expect(getComputedStyle(node).backdropFilter).toBe("none");
-  }
+  // A transparent window can't blur content behind a surface, so floating surfaces go solid.
+  assertOpaque(screen.container, { dimmedBackdrop: true });
+  await act(() => persistClientSettingsPatch({ appearancePreset: "liquid-glass" }));
+  assertOpaque(screen.container, { dimmedBackdrop: true });
+  await act(() => persistClientSettingsPatch({ appearancePreset: "default" }));
   await act(() => fixture.push(materialState({ revision: 2, applied: "none", reason: "off" })));
   expect(alpha(root)).toBe(255);
   expect(alpha(element(screen.container, ".surface-glass"))).toBeLessThan(255);
@@ -117,7 +117,7 @@ it("exposes only native chrome, keeps content and overlays solid, and restores C
   expect(root.style.getPropertyValue("--glass-saturation")).toBe("");
 });
 
-function assertOpaque(container: HTMLElement) {
+function assertOpaque(container: HTMLElement, options?: { dimmedBackdrop: boolean }) {
   for (const selector of [
     ".surface-glass",
     ".alert-glass",
@@ -127,7 +127,11 @@ function assertOpaque(container: HTMLElement) {
     "[data-chat-composer-main-surface]",
   ]) {
     const node = element(container, selector);
-    expect(alpha(node)).toBe(255);
+    if (options?.dimmedBackdrop && selector === ".dialog-backdrop") {
+      expect(alpha(node)).toBeLessThan(255);
+    } else {
+      expect(alpha(node), selector).toBe(255);
+    }
     expect(getComputedStyle(node).backdropFilter).toBe("none");
   }
   for (const selector of ['[data-slot="composer-shell"]', "[data-composer-banner-surface]"]) {
