@@ -88,13 +88,13 @@ export function useThreadListV2(input: {
       computeThreadMoveAvailability({
         allThreads: threads,
         section,
-        threadOrder,
         pendingOrder: input.pendingOrder,
         reorderableEnvironmentIds:
           section === "pinned" ? input.pinReorderEnvironmentIds : input.activeReorderEnvironmentIds,
         ordered: getThreadListV2OrderedSection({
           threads,
           section,
+          threadOrder,
           pendingOrder: input.pendingOrder,
           now: layoutTime,
           settlementEnvironmentIds: input.settlementEnvironmentIds,
