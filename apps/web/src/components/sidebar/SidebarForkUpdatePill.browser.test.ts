@@ -66,9 +66,14 @@ it("keeps the rail entry for a fork checkout and dots it only for a new upstream
     upstreamTag: "v1.1.0",
     channel: "latest",
   };
-  await using screen = await render(createElement(SidebarForkUpdatePill, { placement: "rail" }));
-  using _timers = vi.useFakeTimers();
-  await vi.advanceTimersByTimeAsync(2 * 60_000);
-  await expect.element(railEntry()).toHaveAccessibleName(/v1\.1\.0 is out upstream/);
-  expect(screen.container.querySelector("[data-slot=fork-update-dot]")).not.toBeNull();
+  // The delayed first check starts its timer on mount, so the clock is faked before rendering.
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    await using screen = await render(createElement(SidebarForkUpdatePill, { placement: "rail" }));
+    await vi.advanceTimersByTimeAsync(2 * 60_000);
+    await expect.element(railEntry()).toHaveAccessibleName(/v1\.1\.0 is out upstream/);
+    expect(screen.container.querySelector("[data-slot=fork-update-dot]")).not.toBeNull();
+  } finally {
+    vi.useRealTimers();
+  }
 });
