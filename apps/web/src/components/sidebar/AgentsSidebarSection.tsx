@@ -60,10 +60,7 @@ function AgentRow(props: {
           )}
           <span className="min-w-0 flex-1 truncate text-sm font-medium">{thread.title}</span>
           {needsYou ? (
-            <CircleAlertIcon
-              aria-hidden
-              className="size-3.5 shrink-0 text-warning"
-            />
+            <CircleAlertIcon aria-hidden className="size-3.5 shrink-0 text-warning" />
           ) : working ? (
             <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground tabular-nums">
               <Spinner size="xs" tone="muted" aria-hidden />
