@@ -1,4 +1,8 @@
-import type { Assistant } from "@t3tools/contracts";
+import {
+  DEFAULT_ASSISTANT_AUTONOMY,
+  DEFAULT_AUTONOMY_SETTINGS,
+  type Assistant,
+} from "@t3tools/contracts";
 import { act, useSyncExternalStore, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -97,6 +101,11 @@ vi.mock("../../state/use-remote-environment-registry", () => ({
   useSavedRemoteConnections: () => ({ savedConnectionsById: {} }),
 }));
 vi.mock("./AssistantSchedulesSection", () => ({ AssistantSchedulesSection: () => null }));
+vi.mock("./AssistantWatchesSection", () => ({
+  AssistantWatchesSection: (props: { notifies: boolean }) => (
+    <p data-watches>{props.notifies ? "notifies" : "silent"}</p>
+  ),
+}));
 vi.mock("./useAssistantFlows", () => ({ useAssistantFlows: () => ({ canAct: true }) }));
 vi.mock("./useAssistantEditor", async () => {
   const draft = await import("./assistantDraft");
@@ -115,6 +124,7 @@ vi.mock("./useAssistantEditor", async () => {
         effectiveProject: project,
         modelLabel: "GPT",
         modelSelection: null,
+        globalAutonomy: DEFAULT_AUTONOMY_SETTINGS,
       };
     },
   };
@@ -132,6 +142,7 @@ const assistant = (budget: unknown = null) =>
     threadId: "thread-1",
     instructions: "",
     toolAccess: "full",
+    autonomy: DEFAULT_ASSISTANT_AUTONOMY,
     budget,
     isDefault: false,
     archivedAt: null,
@@ -224,5 +235,48 @@ describe("assistant spending limit", () => {
     expect(field("Amount (USD)")).toBeNull();
     await act(async () => pick("Save"));
     expect(mocks.update.mock.calls[0]?.[0].budget).toBeNull();
+  });
+});
+
+describe("assistant notifications", () => {
+  const checked = (label: string) =>
+    container.querySelector(`button[aria-label="${label}"]`)?.getAttribute("aria-checked");
+
+  it("hides the scopes until it notifies, then saves the whole autonomy object", async () => {
+    render(assistant());
+    expect(container.querySelector("[data-watches]")?.textContent).toBe("silent");
+    expect(container.textContent).not.toContain("When to notify");
+    pick("Reply and notify me");
+    expect(container.querySelector("[data-watches]")?.textContent).toBe("notifies");
+    expect(checked("Reply and notify me")).toBe("true");
+    expect(container.textContent).toContain("When to notify");
+
+    // Custom lists start from the global rules, projects and channels, then toggle one value.
+    pick("Only for these");
+    pick("PR checks failed");
+    pick("Only these projects");
+    pick("Alpha");
+    pick("Only on these");
+    pick("Telegram");
+    await act(async () => pick("Save"));
+    expect(mocks.update.mock.calls[0]?.[0].autonomy).toEqual({
+      mode: "reply-and-notify",
+      rules: ["runFailed", "waitingTooLong", "stuck"],
+      projectIds: [],
+      channels: ["t3"],
+    });
+  });
+
+  it("goes back to inheriting, and a round trip saves nothing", async () => {
+    render(assistant());
+    pick("Reply and notify me");
+    pick("Only for these");
+    pick("Same as global");
+    pick("Only reply when I message it");
+    expect(container.textContent).not.toContain("When to notify");
+    expect(
+      Array.from(container.querySelectorAll("button")).find((b) => b.textContent === "Save")!
+        .disabled,
+    ).toBe(true);
   });
 });

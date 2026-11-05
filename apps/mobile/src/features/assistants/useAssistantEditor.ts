@@ -1,7 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
-import type { ModelSelection } from "@t3tools/contracts";
+import { DEFAULT_AUTONOMY_SETTINGS, type ModelSelection } from "@t3tools/contracts";
 
 import { buildModelOptions } from "../../lib/modelOptions";
 import { useEnvironmentServerConfig, useProjects, useThreadShell } from "../../state/entities";
@@ -42,5 +42,14 @@ export function useAssistantEditor() {
             option.selection.instanceId === modelSelection.instanceId &&
             option.selection.model === modelSelection.model,
         )?.label ?? modelSelection.model);
-  return { editor, projects, effectiveProject, config, modelSelection, modelLabel };
+  const globalAutonomy = config?.settings.autonomy ?? DEFAULT_AUTONOMY_SETTINGS;
+  return {
+    editor,
+    projects,
+    effectiveProject,
+    config,
+    modelSelection,
+    modelLabel,
+    globalAutonomy,
+  };
 }

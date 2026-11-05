@@ -8,22 +8,20 @@ import {
   type ProjectId,
 } from "@t3tools/contracts";
 import type { MenuAction } from "@react-native-menu/menu";
-import { useRef, useState, type ReactNode } from "react";
-import { Platform, Pressable, TextInput, View } from "react-native";
+import { useRef, useState } from "react";
+import { Platform, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/ui/AppText";
-import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import { ListActionRow } from "../../components/ui/ListActionRow";
 import { ListRow } from "../../components/ui/ListRow";
 import { ListRowLayout } from "../../components/ui/ListRowLayout";
 import { ListSection } from "../../components/ui/ListSection";
-import { Menu } from "../../components/ui/Menu";
 import { RowPressable } from "../../components/ui/RowPressable";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
-import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import {
   useAssistantActions,
@@ -47,7 +45,10 @@ import {
   updateAssistantDraft,
   type AssistantEditor,
 } from "./assistantDraft";
+import { MenuField, SwitchRow, TextField } from "./AssistantFormFields";
+import { AssistantNotificationsSection } from "./AssistantNotificationsSection";
 import { AssistantSchedulesSection } from "./AssistantSchedulesSection";
+import { AssistantWatchesSection } from "./AssistantWatchesSection";
 import {
   BUDGET_PERIOD_OPTIONS,
   budgetSpendLine,
@@ -55,123 +56,6 @@ import {
 } from "./assistantPresentation";
 import { assistantProjectName, useAssistantEditor } from "./useAssistantEditor";
 import { useAssistantFlows } from "./useAssistantFlows";
-
-function Field(props: {
-  readonly label: string;
-  readonly description: string;
-  readonly children: ReactNode;
-  readonly footer?: ReactNode;
-}) {
-  return (
-    <View className="gap-2">
-      <View className="gap-0.5 px-2">
-        <Text textRole="footnote" className="font-t3-medium text-foreground">
-          {props.label}
-        </Text>
-        <Text textRole="footnote" className="text-foreground-muted">
-          {props.description}
-        </Text>
-      </View>
-      <View className="overflow-hidden rounded-2xl bg-grouped-card px-4 py-3">
-        {props.children}
-      </View>
-      {props.footer}
-    </View>
-  );
-}
-
-function TextField(props: {
-  readonly label: string;
-  readonly description: string;
-  readonly value: string;
-  readonly onChange: (value: string) => void;
-  readonly maxLength?: number;
-  readonly multiline?: boolean;
-  readonly autoCapitalize?: "none" | "sentences";
-  readonly keyboardType?: "decimal-pad" | "number-pad";
-  readonly footer?: ReactNode;
-  readonly disabled?: boolean;
-}) {
-  return (
-    <Field label={props.label} description={props.description} footer={props.footer}>
-      <TextInput
-        accessibilityLabel={props.label}
-        value={props.value}
-        readOnly={props.disabled}
-        onChangeText={props.onChange}
-        maxLength={props.maxLength}
-        multiline={props.multiline}
-        autoCapitalize={props.autoCapitalize}
-        keyboardType={props.keyboardType}
-        autoCorrect={false}
-        textAlignVertical={props.multiline ? "top" : "center"}
-        placeholderTextColorClassName="accent-foreground-muted"
-        className={
-          props.multiline
-            ? "min-h-36 font-sans text-base text-foreground"
-            : "min-h-8 font-sans text-base text-foreground"
-        }
-      />
-    </Field>
-  );
-}
-
-function SwitchRow(props: {
-  readonly icon: AppSymbolName;
-  readonly label: string;
-  readonly value: boolean;
-  readonly onChange: (value: boolean) => void;
-}) {
-  return (
-    <View className="bg-grouped-card">
-      <ListRowLayout
-        icon={props.icon}
-        label={props.label}
-        accessory={
-          <ThemedSwitch
-            accessibilityLabel={props.label}
-            value={props.value}
-            onValueChange={props.onChange}
-          />
-        }
-      />
-    </View>
-  );
-}
-
-function MenuField(props: {
-  readonly label: string;
-  readonly description: string;
-  readonly value: string;
-  readonly actions: MenuAction[];
-  readonly onSelect: (id: string) => void;
-  readonly footer?: ReactNode;
-}) {
-  return (
-    <Field label={props.label} description={props.description} footer={props.footer}>
-      <Menu
-        actions={props.actions}
-        onPressAction={({ nativeEvent }) => props.onSelect(nativeEvent.event)}
-      >
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={`${props.label}, ${props.value}`}
-          className="min-h-8 flex-row items-center gap-3 active:opacity-70"
-        >
-          <Text textRole="body" className="min-w-0 flex-1 text-foreground" numberOfLines={1}>
-            {props.value}
-          </Text>
-          <SymbolView
-            name="chevron.down"
-            size={14}
-            tintColorClassName="accent-chevron"
-            type="monochrome"
-          />
-        </Pressable>
-      </Menu>
-    </Field>
-  );
-}
 
 export function AssistantEditRouteScreen() {
   const { editor } = useAssistantEditor();
@@ -188,7 +72,8 @@ export function AssistantEditRouteScreen() {
 function AssistantForm(props: { readonly editor: AssistantEditor }) {
   const { editor } = props;
   const { assistant, current, environmentId } = editor;
-  const { projects, effectiveProject, modelLabel, modelSelection } = useAssistantEditor();
+  const { projects, effectiveProject, modelLabel, modelSelection, globalAutonomy } =
+    useAssistantEditor();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const actions = useAssistantActions(environmentId);
@@ -273,6 +158,11 @@ function AssistantForm(props: { readonly editor: AssistantEditor }) {
     id: project.id,
     title: assistantProjectName(project),
     state: project.id === effectiveProject?.id ? "on" : "off",
+  }));
+
+  const projectOptions = projects.map((project) => ({
+    id: project.id,
+    label: assistantProjectName(project),
   }));
 
   return (
@@ -562,12 +452,27 @@ function AssistantForm(props: { readonly editor: AssistantEditor }) {
             />
           </ListSection>
         </View>
+        <AssistantNotificationsSection
+          value={current.autonomy}
+          onChange={(autonomy) => updateAssistantDraft({ autonomy })}
+          globalAutonomy={globalAutonomy}
+          projects={projectOptions}
+          defaultProjectId={effectiveProject?.id ?? null}
+        />
         {assistant?.threadId ? (
           <AssistantSchedulesSection
             environmentId={environmentId}
             environmentLabel={environmentLabel(environmentId)}
             assistant={assistant}
             modelSelection={modelSelection}
+          />
+        ) : null}
+        {assistant ? (
+          <AssistantWatchesSection
+            environmentId={environmentId}
+            assistantId={assistant.id}
+            notifies={current.autonomy.mode === "reply-and-notify"}
+            projects={projectOptions}
           />
         ) : null}
         {error ? (

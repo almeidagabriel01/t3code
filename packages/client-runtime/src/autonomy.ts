@@ -135,7 +135,7 @@ function pad(value: number): string {
 }
 
 /** `YYYY-MM-DDTHH:mm` in local time, the shape a watch draft keeps its expiry in. */
-function localDateTimeString(date: Date): string {
+export function localDateTimeString(date: Date): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 

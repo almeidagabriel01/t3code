@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { watchReply, type WatchReply } from "@t3tools/client-runtime/autonomy";
+import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import {
   DEFAULT_AUTONOMY_SETTINGS,
   type AutonomySettings,
@@ -8,6 +9,9 @@ import {
   type EnvironmentId,
 } from "@t3tools/contracts";
 
+import { useMemo } from "react";
+
+import { appAtomRegistry } from "./atom-registry";
 import { useAssistantsEnvironmentIds } from "./assistants";
 import { useEnvironmentQuery } from "./query";
 import { serverEnvironment } from "./server";
@@ -33,15 +37,31 @@ export function useAutonomySettings(environmentId: EnvironmentId | null) {
   };
 }
 
+/** Flips the pause switch from the settings as they are now, so a held-over closure cannot undo another edit. */
+export function toggleAutonomyPause(environmentId: EnvironmentId) {
+  const autonomy =
+    appAtomRegistry.get(serverEnvironment.settingsValueAtom(environmentId))?.autonomy ??
+    DEFAULT_AUTONOMY_SETTINGS;
+  return runAtomCommand(
+    appAtomRegistry,
+    serverEnvironment.updateSettings,
+    { environmentId, input: { patch: { autonomy: { ...autonomy, enabled: !autonomy.enabled } } } },
+    { label: "autonomy pause", reportFailure: true, reportDefect: true },
+  );
+}
+
 /** The pause switch of the first environment that runs assistants; null when none does. */
 export function useAutonomyPause() {
   const environmentId = useAssistantsEnvironmentIds()[0] ?? null;
-  const { autonomy, write } = useAutonomySettings(environmentId);
-  if (environmentId === null) return null;
-  return {
-    enabled: autonomy.enabled,
-    toggle: () => write({ ...autonomy, enabled: !autonomy.enabled }),
-  };
+  const { autonomy } = useAutonomySettings(environmentId);
+  const enabled = autonomy.enabled;
+  return useMemo(
+    () =>
+      environmentId === null
+        ? null
+        : { enabled, toggle: () => void toggleAutonomyPause(environmentId) },
+    [environmentId, enabled],
+  );
 }
 
 /** Every watch on the environment; filter by assistant where it is shown. */
