@@ -47,6 +47,26 @@ describe("runMigrations", () => {
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 
+  it.effect(
+    "a database that ran the fork's old 77 index runs upstream's 77 and keeps the index",
+    () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* runMigrations({ toMigrationInclusive: 76 });
+        yield* sql`INSERT INTO effect_sql_migrations (migration_id, name) VALUES (77, 'ThreadEventTypeIndex')`;
+
+        yield* runMigrations();
+
+        const names = new Map(migrationManifest);
+        assert.strictEqual((yield* history).find(([id]) => id === 77)?.[1], names.get(77));
+        const indexes = yield* sql`
+        SELECT name FROM sqlite_master
+        WHERE type = 'index' AND name = 'orchestration_events_v2_thread_type_sequence_idx'
+      `;
+        assert.strictEqual(indexes.length, 1);
+      }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  );
+
   it.effect("refuses to start when another migration took a V2 id", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
