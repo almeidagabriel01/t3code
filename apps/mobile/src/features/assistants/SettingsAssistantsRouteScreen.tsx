@@ -31,9 +31,10 @@ function AssistantListRow(props: { readonly entry: AssistantEntry; readonly deta
     ?.budget?.state;
   const detail = [
     `@${assistant.handle}`,
+    // Role and leader first: the line truncates at the end on a phone.
+    ...props.detail,
     toolAccessLabel(assistant.toolAccess),
     project ? (project.isScratch === true ? "No project" : project.title) : null,
-    ...props.detail,
     budgetState === "exceeded" ? "Limit reached" : budgetState === "warn" ? "Near limit" : null,
   ].filter((part): part is string => part !== null);
   return (

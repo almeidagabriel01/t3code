@@ -108,8 +108,8 @@ describe("assistant list budget state", () => {
     mocks.budgetState = state;
     act(() => root.render(<SettingsAssistantsRouteScreen />));
     const label = labelOf("Jarvis")!;
-    expect(label).toBe(`Jarvis, @jarvis, Full access, CEO${suffix}`);
-    expect(labelOf("Plain")).toBe("Plain, @plain, Full access, reports to Jarvis");
+    expect(label).toBe(`Jarvis, @jarvis, CEO, Full access${suffix}`);
+    expect(labelOf("Plain")).toBe("Plain, @plain, reports to Jarvis, Full access");
     expect(mocks.spendQuery).toHaveBeenCalledWith("hub", "a1");
     expect(mocks.spendQuery).toHaveBeenCalledWith("hub", null);
   });
