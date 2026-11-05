@@ -66,6 +66,7 @@ const assistant = (id: string, name: string, overrides: Partial<Assistant> = {})
   threadId: `assistant:${id}:1` as ThreadId,
   generation: 1,
   budget: null,
+  autonomy: { mode: "reply-only", rules: null, projectIds: null, channels: null },
   archivedAt: null,
   createdAt: "2026-03-17T19:00:00.000Z",
   updatedAt: "2026-03-17T19:00:00.000Z",
