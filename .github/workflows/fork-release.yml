@@ -125,6 +125,26 @@ jobs:
           if [[ "${{ steps.build.outputs.signed }}" == "true" ]]; then flags+=(--notarized); fi
           bash scripts/verify-mac-desktop-artifact.sh "${flags[@]+"${flags[@]}"}" release-publish/*.dmg release-publish/*.zip
 
+      # Packaging can succeed and the app still not open: launch the shipped DMG's app.
+      - name: Launch check
+        shell: bash
+        run: |
+          set -euo pipefail
+          mount="$RUNNER_TEMP/desktop-launch-dmg"
+          hdiutil attach -nobrowse -readonly -mountpoint "$mount" "$(ls release-publish/*.dmg)"
+          trap 'hdiutil detach "$mount" -force >/dev/null || true' EXIT
+          app=$(ls -d "$mount"/*.app)
+          executable=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$app/Contents/Info.plist")
+          node scripts/smoke-desktop-app.ts --artifacts-dir "$RUNNER_TEMP/desktop-launch-check" --executable "$app/Contents/MacOS/$executable"
+
+      - name: Upload launch check output
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: fork-desktop-launch-check
+          path: ${{ runner.temp }}/desktop-launch-check
+          if-no-files-found: ignore
+
       - name: Upload build artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
