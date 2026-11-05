@@ -1,4 +1,8 @@
 import {
+  buildTraitsTriggerDisplay,
+  getPromptControlledTraits,
+} from "@t3tools/client-runtime/model-traits";
+import {
   normalizeProviderAccentColor,
   resolveProviderInstanceDisplayName,
   shouldShowInstanceBadge,
@@ -487,4 +491,27 @@ export function groupByProvider(options: ReadonlyArray<ModelOption>): ReadonlyAr
     models: group.models,
     ...(group.updateRequired ? { updateRequired: group.updateRequired } : {}),
   }));
+}
+
+/** "Haiku 5.5 · Medium": the model's name with its effort and other chosen options, if it has any. */
+export function modelWithEffortLabel(
+  selection: ModelSelection,
+  option: ModelOption | undefined,
+): string {
+  const label = option?.label ?? selection.model;
+  if (!option?.capabilities || !isProviderDriverKind(option.providerDriver)) return label;
+  const descriptors = getProviderOptionDescriptors({
+    caps: option.capabilities,
+    selections: selection.options,
+  });
+  if (descriptors.length === 0) return label;
+  const traits = getPromptControlledTraits(descriptors, "");
+  const summary = buildTraitsTriggerDisplay({
+    provider: option.providerDriver,
+    descriptors,
+    primarySelectDescriptorId: traits.primarySelectDescriptor?.id ?? null,
+    ultrathinkPromptControlled: false,
+    modelSelection: selection,
+  }).label;
+  return summary ? `${label} · ${summary}` : label;
 }

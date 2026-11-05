@@ -3,7 +3,7 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { DEFAULT_AUTONOMY_SETTINGS, type ModelSelection } from "@t3tools/contracts";
 
-import { buildModelOptions } from "../../lib/modelOptions";
+import { buildModelOptions, modelWithEffortLabel } from "../../lib/modelOptions";
 import { useEnvironmentServerConfig, useProjects, useThreadShell } from "../../state/entities";
 import { scheduledTaskDefaultModel } from "../settings/scheduledTaskDraft";
 import { assistantEditorAtom } from "./assistantDraft";
@@ -37,11 +37,14 @@ export function useAssistantEditor() {
   const modelLabel =
     modelSelection === null
       ? null
-      : (buildModelOptions(config, modelSelection, undefined, effectiveProject?.id ?? null).find(
-          (option) =>
-            option.selection.instanceId === modelSelection.instanceId &&
-            option.selection.model === modelSelection.model,
-        )?.label ?? modelSelection.model);
+      : modelWithEffortLabel(
+          modelSelection,
+          buildModelOptions(config, modelSelection, undefined, effectiveProject?.id ?? null).find(
+            (option) =>
+              option.selection.instanceId === modelSelection.instanceId &&
+              option.selection.model === modelSelection.model,
+          ),
+        );
   const globalAutonomy = config?.settings.autonomy ?? DEFAULT_AUTONOMY_SETTINGS;
   return {
     editor,

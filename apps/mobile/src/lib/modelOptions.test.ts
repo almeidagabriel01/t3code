@@ -1,3 +1,4 @@
+import { createModelCapabilities } from "@t3tools/shared/model";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -15,6 +16,7 @@ import {
   describeUnavailableModelSelection,
   groupByProvider,
   isModelSelectionUnavailable,
+  modelWithEffortLabel,
   resolveDefaultableModelSelection,
   resolveNewTaskModelSelection,
   resolveSelectableModelSelection,
@@ -854,5 +856,49 @@ describe("synchronized mobile model visibility", () => {
         detail: "Example Corp's policy does not allow the Claude provider. Choose another model.",
       });
     });
+  });
+});
+
+describe("modelWithEffortLabel", () => {
+  const capabilities = createModelCapabilities({
+    optionDescriptors: [
+      {
+        id: "effort",
+        label: "Reasoning",
+        type: "select",
+        role: "reasoning",
+        currentValue: "medium",
+        options: [
+          { id: "medium", label: "Medium", isDefault: true },
+          { id: "high", label: "High" },
+        ],
+      },
+    ],
+  });
+  const option = (overrides: Partial<ModelOption>) =>
+    ({
+      label: "Haiku 5.5",
+      providerDriver: "claudeAgent",
+      capabilities,
+      ...overrides,
+    }) as ModelOption;
+  const selection = (options?: ModelSelection["options"]): ModelSelection => ({
+    instanceId: ProviderInstanceId.make("claudeAgent"),
+    model: "claude-haiku-5-5",
+    ...(options ? { options } : {}),
+  });
+
+  it.each([
+    [
+      "the chosen effort",
+      option({}),
+      selection([{ id: "effort", value: "high" }]),
+      "Haiku 5.5 · High",
+    ],
+    ["the default effort", option({}), selection(), "Haiku 5.5 · Medium"],
+    ["no options", option({ capabilities: null }), selection(), "Haiku 5.5"],
+    ["an unknown model", undefined, selection(), "claude-haiku-5-5"],
+  ])("labels %s", (_case, modelOption, modelSelection, expected) => {
+    expect(modelWithEffortLabel(modelSelection, modelOption)).toBe(expected);
   });
 });

@@ -316,7 +316,7 @@ function AssistantForm(props: { readonly editor: AssistantEditor }) {
         <View className="gap-2">
           <View className="gap-0.5 px-2">
             <Text textRole="footnote" className="font-t3-medium text-foreground">
-              Model
+              Model and effort
             </Text>
             <Text textRole="footnote" className="text-foreground-muted">
               {assistant
