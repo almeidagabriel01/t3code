@@ -50,6 +50,7 @@ import { useKanbanCanEdit } from "../kanban/useKanban";
 import { useKanbanEnvironmentIds, useThreadKanbanCard } from "../../state/kanban";
 import { AssistantAvatar } from "../assistants/assistantPresentation";
 import { useThreadAssistant } from "../../state/assistants";
+import { AssistantPresenceStack } from "./AssistantPresenceStack";
 import { ThreadNotesButton } from "../notes/ThreadNotesButton";
 
 interface ChatHeaderProps {
@@ -460,6 +461,12 @@ export const ChatHeader = memo(function ChatHeader({
           ) : null}
         </WorkspaceBreadcrumbItem>
       </WorkspaceBreadcrumb>
+      {isServerThread ? (
+        <AssistantPresenceStack
+          environmentId={activeThreadEnvironmentId}
+          threadId={activeThreadId}
+        />
+      ) : null}
       {onToggleSideChat ? (
         <Tooltip>
           <TooltipTrigger render={<span className="flex shrink-0" />}>

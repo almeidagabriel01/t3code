@@ -100,6 +100,7 @@ import { TimelineSystemDivider } from "./TimelineSystemDivider";
 
 import { forwardWheelToTimeline } from "./timelineMinimapWheel";
 import { TimelineMinimap } from "./TimelineMinimap";
+import { attachTimelineJump } from "./timelineJump";
 import {
   type TimelineRowSharedState,
   type TimelineRowActivityState,
@@ -1116,6 +1117,22 @@ const ConversationTimeline = memo(function ConversationTimeline({
       {historyControls ? <TimelineHistoryControl {...historyControls} /> : null}
       {parentThreadLink !== null ? listHeaderLeadingContent : null}
     </>
+  );
+
+  const jumpToMessage = useStableCallback((messageId: string) => {
+    const index = rows.findIndex((row) => row.kind === "message" && row.message.id === messageId);
+    if (index < 0) return;
+    navigateTimeline();
+    void listRef.current?.scrollToIndex({
+      index,
+      animated: !window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+      viewOffset: 24,
+    });
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers this list with the header's assistant jump while it shows the thread
+  useEffect(
+    () => attachTimelineJump({ threadKey: listIdentityKey, jumpToMessage }),
+    [listIdentityKey, jumpToMessage],
   );
 
   const canvas = useChatCanvas();

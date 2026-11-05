@@ -1,5 +1,6 @@
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
+import { messageAssistantId } from "@t3tools/client-runtime/assistantPresence";
 import { isLiveSubagentTurnItem } from "@t3tools/client-runtime/state/subagentRuntime";
 import * as DateTime from "effect/DateTime";
 import * as Equal from "effect/Equal";
@@ -601,6 +602,8 @@ type MessagesTimelineRowContent =
       groupedWithPrevious?: boolean;
       /** Set when the message above is a steer too, so the label shows once. */
       continuesSteer?: boolean;
+      /** The first message of an assistant in this thread; a "joined" divider leads it. */
+      assistantJoined?: boolean;
     }
   | {
       kind: "assistant-meta";
@@ -2141,9 +2144,18 @@ export function deriveMessagesTimelineRows(input: {
   const result = attachTrailingToolGroupsToAssistant(
     attachCreatedThreadSummaries(nextRows, timelineEntries, collapsedFoldMemberIds),
   );
+  const joinedAssistantIds = new Set<string>();
   return result.map((row, index) => {
     if (timelineRowIsWorkLog(row) && timelineRowIsWorkLog(result[index + 1])) {
       return { ...row, continuesWorkLog: true };
+    }
+    if (row.kind === "message" && row.message.role === "user") {
+      const assistantId = messageAssistantId(row.message);
+      if (assistantId !== null) {
+        if (joinedAssistantIds.has(assistantId)) return row;
+        joinedAssistantIds.add(assistantId);
+        return { ...row, assistantJoined: true };
+      }
     }
     if (!timelineRowIsOwnUserMessage(row)) return row;
     const previous = result[index - 1];
@@ -2510,7 +2522,8 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.revertTurnCount === bm.revertTurnCount &&
         a.groupedWithNext === bm.groupedWithNext &&
         a.groupedWithPrevious === bm.groupedWithPrevious &&
-        a.continuesSteer === bm.continuesSteer
+        a.continuesSteer === bm.continuesSteer &&
+        a.assistantJoined === bm.assistantJoined
       );
     }
   }

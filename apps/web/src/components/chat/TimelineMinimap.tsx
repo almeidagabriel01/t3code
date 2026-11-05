@@ -12,6 +12,7 @@ import {
 } from "./MessagesTimeline.logic";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
+import { assistantAccent } from "@t3tools/client-runtime/assistantPresence";
 
 function timelineMinimapEventTargetsPreview(target: EventTarget): boolean {
   return target instanceof Element && target.closest("[data-minimap-preview]") !== null;
@@ -217,15 +218,23 @@ export function TimelineMinimap({
                 <span
                   aria-hidden="true"
                   className={cn(
-                    "pointer-events-none absolute left-0 h-0.5 w-6 origin-left -translate-y-1/2 rounded-full transition-transform duration-150 after:absolute after:inset-0 after:rounded-full after:bg-foreground/55 after:opacity-0 after:transition-opacity after:duration-150 data-[in-view=true]:after:opacity-100",
-                    activeDistance === 0 ? "bg-muted-foreground/60" : "bg-muted-foreground/25",
-                    activeDistance === 0
-                      ? "scale-x-100"
-                      : activeDistance === 1
-                        ? "scale-x-[0.667]"
-                        : activeDistance === 2
-                          ? "scale-x-[0.417]"
-                          : "scale-x-[0.333]",
+                    "pointer-events-none absolute left-0 origin-left -translate-y-1/2 rounded-full transition-transform duration-150 after:absolute after:inset-0 after:rounded-full after:opacity-0 after:transition-opacity after:duration-150 data-[in-view=true]:after:opacity-100",
+                    // An assistant's mark is a round dot in its accent; it keeps its shape under the fisheye.
+                    item.assistantId !== null
+                      ? "size-2 after:ring-2 after:ring-foreground/60 after:ring-inset"
+                      : cn(
+                          "h-0.5 w-6 after:bg-foreground/55",
+                          activeDistance === 0
+                            ? "bg-muted-foreground/60"
+                            : "bg-muted-foreground/25",
+                          activeDistance === 0
+                            ? "scale-x-100"
+                            : activeDistance === 1
+                              ? "scale-x-[0.667]"
+                              : activeDistance === 2
+                                ? "scale-x-[0.417]"
+                                : "scale-x-[0.333]",
+                        ),
                   )}
                   data-in-view="false"
                   data-minimap-strip
@@ -237,7 +246,11 @@ export function TimelineMinimap({
                       stripMap.delete(item.id);
                     }
                   }}
-                  style={{ top }}
+                  style={
+                    item.assistantId === null
+                      ? { top }
+                      : { top, backgroundColor: assistantAccent(item.assistantId) }
+                  }
                 />
               );
             })}

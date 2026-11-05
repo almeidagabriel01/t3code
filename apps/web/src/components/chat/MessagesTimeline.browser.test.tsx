@@ -856,6 +856,29 @@ describe("MessagesTimeline agent messages", () => {
     expect(screen.text()).not.toContain("drops the index");
   });
 
+  it("shows an assistant as itself and announces it once", async () => {
+    setup();
+    const onOpenThread = vi.fn();
+    const assistantThread = ThreadId.make("assistant:jarvis:1");
+    await using screen = await renderTimeline(
+      [
+        message("First note", { createdBy: "agent", senderThreadId: assistantThread }, "a-1"),
+        message("Second note", { createdBy: "agent", senderThreadId: assistantThread }, "a-2"),
+        message(AGENT_MESSAGE, { createdBy: "agent", senderThreadId: SENDER_THREAD_ID }, "other"),
+      ],
+      { onOpenThread },
+    );
+    expect(
+      screen.container.querySelectorAll('[data-user-message-attribution="assistant"]'),
+    ).toHaveLength(2);
+    expect(screen.container.querySelectorAll("[data-assistant-joined]")).toHaveLength(1);
+    expect(screen.text()).toContain("First note");
+    expect(screen.text()).toContain("Second note");
+    expect(screen.buttons(/^Agent/)).toHaveLength(1);
+    await click(screen.buttons("Open thread")[0]!);
+    expect(onOpenThread).toHaveBeenCalledWith(assistantThread);
+  });
+
   it("leaves messages sent by T3 Code as full bubbles", async () => {
     setup();
     await using screen = await renderTimeline([

@@ -1,3 +1,4 @@
+import { messageAssistantId } from "@t3tools/client-runtime/assistantPresence";
 import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
 import { isAttachmentOnlyBootstrapPrompt } from "@t3tools/shared/composerContextReferences";
 import type { Nodes } from "mdast";
@@ -12,6 +13,8 @@ export interface TimelineMinimapItem {
   readonly rowIndex: number;
   readonly userText: string | null;
   readonly assistantText: string | null;
+  /** Set when an assistant wrote the message; its mark takes the assistant's accent. */
+  readonly assistantId: string | null;
 }
 
 export function deriveTimelineMinimapItems(
@@ -29,6 +32,7 @@ export function deriveTimelineMinimapItems(
       rowIndex: index,
       userText: isAttachmentOnlyBootstrapPrompt(row.message.text) ? "" : row.message.text,
       assistantText: resolveFinalAssistantTextForTurn(rows, index),
+      assistantId: messageAssistantId(row.message),
     });
   }
   return items;

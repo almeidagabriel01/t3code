@@ -9,6 +9,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
+import { assistantAccent, messageAssistantId } from "@t3tools/client-runtime/assistantPresence";
 import { Link } from "@tanstack/react-router";
 import { useQuietThreadShell } from "../../state/entities";
 import { useEnvironmentQuery } from "../../state/query";
@@ -85,6 +86,8 @@ import {
   MessageAuthorHeading,
   TimelineRowTimestamp,
 } from "./TimelineRowParts";
+import { AssistantAccentAvatar, toolAccessLabel } from "../assistants/assistantPresentation";
+import { useAssistantEntries } from "../../state/assistants";
 import { UserMessageContextReferenceChip } from "./UserMessageContextChips";
 import {
   resolvePreviewAnnotationImage,
@@ -270,8 +273,99 @@ function UserMessageContent({ row }: { row: Extract<TimelineRow, { kind: "messag
     />
   ) : resolveUserMessagePresentation(row.message).attribution === "automation" ? (
     <AutomationMessageRow row={row} />
+  ) : resolveUserMessagePresentation(row.message).attribution === "agent" &&
+    messageAssistantId(row.message) !== null ? (
+    <AssistantSentMessageRow row={row} assistantId={messageAssistantId(row.message)!} />
   ) : (
     <UserTimelineRow row={row} />
+  );
+}
+
+/** An assistant speaking in this conversation shows as itself, not as a folded agent note. */
+function AssistantSentMessageRow({
+  row,
+  assistantId,
+}: {
+  row: Extract<TimelineRow, { kind: "message" }>;
+  assistantId: string;
+}) {
+  const ctx = use(TimelineRowCtx);
+  const { active, archived } = useAssistantEntries();
+  const assistant = [...active, ...archived].find(
+    (entry) =>
+      entry.environmentId === ctx.activeThreadEnvironmentId && entry.assistant.id === assistantId,
+  )?.assistant;
+  const name = assistant?.name ?? "Assistant";
+  const accent = assistantAccent(assistantId);
+  const senderThreadId = row.message.senderThreadId;
+  const { text } = resolveUserMessagePresentation(row.message);
+  const plainText = replaceComposerContextReferences(text, (reference) => reference.label);
+  const time = formatDayAwareTimestamp(row.message.createdAt, ctx.timestampFormat);
+  return (
+    <div className="group flex flex-col gap-2" data-user-message-attribution="assistant">
+      {row.assistantJoined ? (
+        <div
+          className="flex items-center gap-2 text-xs text-muted-foreground before:h-px before:flex-1 before:bg-foreground/12 after:h-px after:flex-1 after:bg-foreground/12"
+          data-assistant-joined={assistantId}
+        >
+          <AssistantAccentAvatar
+            assistantId={assistantId}
+            name={name}
+            className="size-4 text-3xs"
+          />
+          <span className="tabular-nums">
+            {name} joined the conversation · {time}
+          </span>
+        </div>
+      ) : null}
+      <div className="flex items-start gap-2.5">
+        <AssistantAccentAvatar assistantId={assistantId} name={name} className="mt-0.5" />
+        <div className="flex min-w-0 max-w-[80%] flex-col gap-1">
+          <MessageAuthorHeading>{name}</MessageAuthorHeading>
+          <div className="flex items-center gap-1.5 text-xs" aria-hidden>
+            <b className="font-semibold text-foreground">{name}</b>
+            <span className="rounded-md border border-foreground/12 px-1.5 text-2xs text-muted-foreground">
+              {assistant ? `assistant · ${toolAccessLabel(assistant.toolAccess)}` : "assistant"}
+            </span>
+          </div>
+          <div
+            className={cn("min-w-0 rounded-2xl rounded-tl-sm border p-3", BUBBLE_CHIP_CLASS_NAME)}
+            style={{
+              backgroundColor: `color-mix(in srgb, ${accent} 12%, transparent)`,
+              borderColor: `color-mix(in srgb, ${accent} 35%, transparent)`,
+            }}
+          >
+            <CollapsibleUserMessageBody
+              text={plainText}
+              renderContextReference={() => null}
+              skills={ctx.skills}
+              markdownCwd={ctx.markdownCwd}
+            />
+          </div>
+          <div
+            className={cn(
+              "flex items-center gap-2 ps-1 text-xs tabular-nums",
+              ACTIONS_REVEAL_CLASS_NAME,
+            )}
+          >
+            {senderThreadId ? (
+              <InlineButton onClick={() => ctx.onOpenThread(senderThreadId)} tone="muted">
+                Open thread
+              </InlineButton>
+            ) : null}
+            <Tooltip>
+              <TooltipTrigger render={<p className="text-muted-foreground text-xs tabular-nums" />}>
+                {time}
+              </TooltipTrigger>
+              <TooltipPopup>
+                {formatChatTimestampTooltip(row.message.createdAt, ctx.timestampFormat)}
+              </TooltipPopup>
+            </Tooltip>
+            {plainText ? <MessageCopyButton text={plainText} variant="ghost" /> : null}
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 

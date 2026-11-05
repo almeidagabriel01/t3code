@@ -1,6 +1,7 @@
 import type { Assistant, AssistantToolAccess } from "@t3tools/contracts";
 import { LockIcon, PenLineIcon, ShieldOffIcon, type LucideIcon } from "lucide-react";
 
+import { assistantAccent, assistantInitial } from "@t3tools/client-runtime/assistantPresence";
 import { cn } from "~/lib/utils";
 
 export const TOOL_ACCESS_OPTIONS: ReadonlyArray<{
@@ -58,6 +59,26 @@ export function AssistantAvatar(props: {
       }}
     >
       {props.assistant.name.trim().slice(0, 1).toUpperCase()}
+    </span>
+  );
+}
+
+/** The assistant's initial on its accent color, the same on every client and in every thread. */
+export function AssistantAccentAvatar(props: {
+  readonly assistantId: string;
+  readonly name: string;
+  readonly className?: string;
+}) {
+  return (
+    <span
+      aria-hidden
+      className={cn(
+        "inline-flex size-7 shrink-0 items-center justify-center rounded-full text-xs leading-none font-semibold text-white",
+        props.className,
+      )}
+      style={{ backgroundColor: assistantAccent(props.assistantId) }}
+    >
+      {assistantInitial(props.name)}
     </span>
   );
 }
