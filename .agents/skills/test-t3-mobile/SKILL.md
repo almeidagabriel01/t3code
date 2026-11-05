@@ -67,8 +67,9 @@ arguments stored in `agent_device_command` and the Bash array
   "$agent_device_command" "${agent_device_target_args[@]}"
 ```
 
-It issues a fresh credential and opens T3 Code Dev's existing pairing route
-through AgentDevice. For a backend on the device host, use
+Target arguments are optional: the command `device_open` returns is already bound
+to its device. It issues a fresh credential and opens T3 Code Dev's existing
+pairing route through AgentDevice. For a backend on the device host, use
 `http://127.0.0.1:<server-port>` on iOS or `http://10.0.2.2:<server-port>`
 on Android. For a remote backend, use its reachable origin.
 

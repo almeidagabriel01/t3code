@@ -3,11 +3,11 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: $0 <server-port> <base-dir> <mobile-origin> <agent-device-command> <target-args...>" >&2
+  echo "Usage: $0 <server-port> <base-dir> <mobile-origin> <agent-device-command> [target-args...]" >&2
   exit 2
 }
 
-[[ $# -ge 5 ]] || usage
+[[ $# -ge 4 ]] || usage
 
 server_port="$1"
 base_dir="$2"
