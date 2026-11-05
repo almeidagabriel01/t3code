@@ -406,7 +406,7 @@ it("saves the assistant's notification choices, inherited or custom", async () =
       {
         autonomy: {
           mode: "reply-and-notify",
-          rules: ["runFailed", "waitingTooLong", "ciFailed"],
+          rules: ["runFailed", "waitingTooLong", "ciFailed", "reviewIncomplete"],
           projectIds: ["project-1"],
           channels: ["t3"],
         },
