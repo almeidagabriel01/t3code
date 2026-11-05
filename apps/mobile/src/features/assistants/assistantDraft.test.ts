@@ -1,4 +1,10 @@
-import type { Assistant, EnvironmentId, ModelSelection, ProjectId } from "@t3tools/contracts";
+import {
+  DEFAULT_ASSISTANT_AUTONOMY,
+  type Assistant,
+  type EnvironmentId,
+  type ModelSelection,
+  type ProjectId,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -25,6 +31,7 @@ const assistant = {
   threadId: "assistant:a1:1",
   generation: 1,
   budget: null,
+  autonomy: DEFAULT_ASSISTANT_AUTONOMY,
   archivedAt: null,
   createdAt: "2026-01-01T00:00:00.000Z",
   updatedAt: "2026-01-01T00:00:00.000Z",
@@ -148,5 +155,28 @@ describe("assistant draft", () => {
         editorFor(assistant, { budget: { ...budgetDraftFor(null), enabled: true } }),
       ),
     ).toBe(true);
+  });
+
+  it("sends the whole autonomy object only when it differs, and an inherit round-trip is no change", () => {
+    const notify = { ...DEFAULT_ASSISTANT_AUTONOMY, mode: "reply-and-notify" as const };
+    const custom = { ...notify, rules: ["ciFailed" as const], channels: ["t3" as const] };
+    expect(
+      assistantCreateInput(editorFor(null, { name: "S" }), "p1" as ProjectId),
+    ).not.toHaveProperty("autonomy");
+    expect(
+      assistantCreateInput(editorFor(null, { name: "S", autonomy: custom }), "p1" as ProjectId),
+    ).toMatchObject({ autonomy: custom });
+    expect(
+      assistantUpdateInput(editorFor(assistant, { autonomy: notify }), "p1" as ProjectId),
+    ).toMatchObject({ autonomy: notify });
+    const saved = { ...assistant, autonomy: custom } as Assistant;
+    const backToInherit = editorFor(saved, { autonomy: { ...custom, rules: null } });
+    expect(assistantUpdateInput(backToInherit, "p1" as ProjectId)).toMatchObject({
+      autonomy: { rules: null, channels: ["t3"] },
+    });
+    expect(assistantDraftHasChanges(backToInherit)).toBe(true);
+    const reordered = editorFor(saved, { autonomy: { ...custom, rules: [...custom.rules] } });
+    expect(assistantDraftHasChanges(reordered)).toBe(false);
+    expect(assistantUpdateInput(reordered, "p1" as ProjectId)).toEqual({ assistantId: "a1" });
   });
 });

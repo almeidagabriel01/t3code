@@ -1,7 +1,10 @@
+import { sameAssistantAutonomy } from "@t3tools/client-runtime/autonomy";
 import {
   assistantHandleFromName,
   AssistantHandle,
+  DEFAULT_ASSISTANT_AUTONOMY,
   type Assistant,
+  type AssistantAutonomy,
   type AssistantsCreateInput,
   type AssistantsUpdateInput,
   type AssistantToolAccess,
@@ -27,6 +30,7 @@ export interface AssistantDraft {
   readonly instructions: string;
   readonly toolAccess: AssistantToolAccess;
   readonly budget: BudgetDraft;
+  readonly autonomy: AssistantAutonomy;
 }
 
 /** The spending limit as typed: amount and warn-at stay text until they are saved. */
@@ -119,6 +123,7 @@ export function assistantDraftFor(assistant: Assistant | null): AssistantDraft {
     instructions: assistant?.instructions ?? "",
     toolAccess: assistant?.toolAccess ?? "full",
     budget: budgetDraftFor(assistant?.budget),
+    autonomy: assistant?.autonomy ?? DEFAULT_ASSISTANT_AUTONOMY,
   };
 }
 
@@ -147,11 +152,12 @@ export function discardAssistantEditor() {
 }
 
 export function assistantDraftHasChanges(editor: AssistantEditor): boolean {
-  const { budget: initialBudget, ...initial } = editor.initial;
-  const { budget: currentBudget, ...current } = editor.current;
+  const { budget: initialBudget, autonomy: initialAutonomy, ...initial } = editor.initial;
+  const { budget: currentBudget, autonomy: currentAutonomy, ...current } = editor.current;
   return (
     JSON.stringify(initial) !== JSON.stringify(current) ||
-    budgetDraftChanged(initialBudget, currentBudget)
+    budgetDraftChanged(initialBudget, currentBudget) ||
+    !sameAssistantAutonomy(initialAutonomy, currentAutonomy)
   );
 }
 
@@ -188,6 +194,9 @@ export function assistantCreateInput(
     instructions: current.instructions,
     toolAccess: current.toolAccess,
     ...(current.budget.enabled ? { budget: budgetFromDraft(current.budget) } : {}),
+    ...(sameAssistantAutonomy(current.autonomy, DEFAULT_ASSISTANT_AUTONOMY)
+      ? {}
+      : { autonomy: current.autonomy }),
   };
 }
 
@@ -214,6 +223,9 @@ export function assistantUpdateInput(
     ...(budgetDraftChanged(editor.initial.budget, current.budget)
       ? { budget: budgetFromDraft(current.budget) }
       : {}),
+    ...(sameAssistantAutonomy(current.autonomy, assistant.autonomy)
+      ? {}
+      : { autonomy: current.autonomy }),
   };
 }
 
