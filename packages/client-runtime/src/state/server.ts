@@ -1345,6 +1345,10 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:scheduled-task:webhook-delivery",
       tag: WS_METHODS.scheduledTasksGetWebhookDelivery,
     }),
+    autonomyWatches: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:autonomy-watches",
+      tag: WS_METHODS.autonomyWatchesList,
+    }),
     scheduledTasksLive: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:server:scheduled-tasks:live",
       tag: WS_METHODS.scheduledTasksSubscribe,
@@ -1603,6 +1607,24 @@ export function createServerEnvironmentAtoms<R, E>(
     setScheduledTaskEnabled: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:scheduled-task:set-enabled",
       tag: WS_METHODS.scheduledTasksSetEnabled,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
+    upsertAutonomyWatch: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:autonomy-watch:upsert",
+      tag: WS_METHODS.autonomyWatchUpsert,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
+    setAutonomyWatchEnabled: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:autonomy-watch:set-enabled",
+      tag: WS_METHODS.autonomyWatchSetEnabled,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
+    deleteAutonomyWatch: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:autonomy-watch:delete",
+      tag: WS_METHODS.autonomyWatchDelete,
       scheduler: configScheduler,
       concurrency: configConcurrency,
     }),

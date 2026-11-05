@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./autonomy": {
+      "types": "./src/autonomy.ts",
+      "default": "./src/autonomy.ts"
+    },
     "./assembly-highlighting": {
       "types": "./src/assemblyHighlighting.ts",
       "default": "./src/assemblyHighlighting.ts"
