@@ -4,6 +4,7 @@ import {
   AssistantHandle,
   DEFAULT_ASSISTANT_AUTONOMY,
   type Assistant,
+  type AssistantId,
   type AssistantAutonomy,
   type AssistantsCreateInput,
   type AssistantsUpdateInput,
@@ -29,6 +30,8 @@ export interface AssistantDraft {
   readonly modelSelection: ModelSelection | null;
   readonly instructions: string;
   readonly toolAccess: AssistantToolAccess;
+  readonly role: string;
+  readonly reportsTo: AssistantId | null;
   readonly budget: BudgetDraft;
   readonly autonomy: AssistantAutonomy;
 }
@@ -122,6 +125,8 @@ export function assistantDraftFor(assistant: Assistant | null): AssistantDraft {
     modelSelection: null,
     instructions: assistant?.instructions ?? "",
     toolAccess: assistant?.toolAccess ?? "full",
+    role: assistant?.role ?? "",
+    reportsTo: assistant?.reportsTo ?? null,
     budget: budgetDraftFor(assistant?.budget),
     autonomy: assistant?.autonomy ?? DEFAULT_ASSISTANT_AUTONOMY,
   };
@@ -193,6 +198,8 @@ export function assistantCreateInput(
     ...(current.modelSelection ? { modelSelection: current.modelSelection } : {}),
     instructions: current.instructions,
     toolAccess: current.toolAccess,
+    ...(current.role.trim() === "" ? {} : { role: current.role.trim() }),
+    ...(current.reportsTo === null ? {} : { reportsTo: current.reportsTo }),
     ...(current.budget.enabled ? { budget: budgetFromDraft(current.budget) } : {}),
     ...(sameAssistantAutonomy(current.autonomy, DEFAULT_ASSISTANT_AUTONOMY)
       ? {}
@@ -220,6 +227,8 @@ export function assistantUpdateInput(
       ? { instructions: current.instructions }
       : {}),
     ...(current.toolAccess !== assistant.toolAccess ? { toolAccess: current.toolAccess } : {}),
+    ...(current.role.trim() !== assistant.role ? { role: current.role.trim() } : {}),
+    ...(current.reportsTo !== assistant.reportsTo ? { reportsTo: current.reportsTo } : {}),
     ...(budgetDraftChanged(editor.initial.budget, current.budget)
       ? { budget: budgetFromDraft(current.budget) }
       : {}),

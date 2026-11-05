@@ -1,3 +1,4 @@
+import { teamSubtitle } from "@t3tools/client-runtime/assistantTeam";
 import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -64,10 +65,19 @@ export function SettingsAssistantsRouteScreen() {
   const { savedConnectionsById } = useSavedRemoteConnections();
   const environmentCount = new Set([...active, ...archived].map((entry) => entry.environmentId))
     .size;
-  const detailFor = (entry: AssistantEntry) =>
-    environmentCount > 1 && savedConnectionsById[entry.environmentId]
+  const teamOf = (entry: AssistantEntry) =>
+    teamSubtitle(
+      entry.assistant,
+      [...active, ...archived]
+        .filter((other) => other.environmentId === entry.environmentId)
+        .map((other) => other.assistant),
+    );
+  const detailFor = (entry: AssistantEntry) => [
+    ...(teamOf(entry) === null ? [] : [teamOf(entry)!]),
+    ...(environmentCount > 1 && savedConnectionsById[entry.environmentId]
       ? [savedConnectionsById[entry.environmentId]!.environmentLabel]
-      : [];
+      : []),
+  ];
   const environmentIds = useAssistantsEnvironmentIds();
   const firstEnvironmentId = active[0]?.environmentId ?? archived[0]?.environmentId ?? null;
   return (

@@ -50,11 +50,25 @@ vi.mock("../../state/assistants", () => ({
     active: [
       {
         environmentId: "hub",
-        assistant: { id: "a1", name: "Jarvis", handle: "jarvis", budget: {} },
+        assistant: {
+          id: "a1",
+          name: "Jarvis",
+          handle: "jarvis",
+          budget: {},
+          role: "CEO",
+          reportsTo: null,
+        },
       },
       {
         environmentId: "hub",
-        assistant: { id: "a2", name: "Plain", handle: "plain", budget: null },
+        assistant: {
+          id: "a2",
+          name: "Plain",
+          handle: "plain",
+          budget: null,
+          role: "",
+          reportsTo: "a1",
+        },
       },
     ],
     archived: [],
@@ -94,8 +108,8 @@ describe("assistant list budget state", () => {
     mocks.budgetState = state;
     act(() => root.render(<SettingsAssistantsRouteScreen />));
     const label = labelOf("Jarvis")!;
-    expect(label).toBe(`Jarvis, @jarvis, Full access${suffix}`);
-    expect(labelOf("Plain")).toBe("Plain, @plain, Full access");
+    expect(label).toBe(`Jarvis, @jarvis, Full access, CEO${suffix}`);
+    expect(labelOf("Plain")).toBe("Plain, @plain, Full access, reports to Jarvis");
     expect(mocks.spendQuery).toHaveBeenCalledWith("hub", "a1");
     expect(mocks.spendQuery).toHaveBeenCalledWith("hub", null);
   });

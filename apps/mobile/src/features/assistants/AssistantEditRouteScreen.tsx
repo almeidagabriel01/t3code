@@ -2,11 +2,18 @@ import { useNavigation, usePreventRemove } from "@react-navigation/native";
 import {
   ASSISTANT_INSTRUCTIONS_MAX_CHARS,
   ASSISTANT_NAME_MAX_LENGTH,
+  ASSISTANT_ROLE_MAX_LENGTH,
+  type AssistantId,
   type AssistantToolAccess,
   type BudgetPeriod,
   type EnvironmentId,
   type ProjectId,
 } from "@t3tools/contracts";
+import {
+  directReports,
+  leaderChoices,
+  NO_LEADER_LABEL,
+} from "@t3tools/client-runtime/assistantTeam";
 import type { MenuAction } from "@react-native-menu/menu";
 import { useRef, useState } from "react";
 import { Platform, View } from "react-native";
@@ -90,8 +97,23 @@ function AssistantForm(props: { readonly editor: AssistantEditor }) {
   const spend = useAssistantSpend(environmentId, assistant?.id ?? null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [standup, setStandup] = useState<"idle" | "adding" | "added">("idle");
   // Set once the save lands, so the removal guard lets the form close.
   const closing = useRef(false);
+
+  const team = [...entries.active, ...entries.archived]
+    .filter((entry) => entry.environmentId === environmentId)
+    .map((entry) => entry.assistant);
+  const leaders = leaderChoices(team, assistant?.id ?? null);
+  const reports = live ? directReports(team, live.id) : [];
+  const addStandup = async () => {
+    if (!live) return;
+    setStandup("adding");
+    setError(null);
+    const reply = await actions.update({ assistantId: live.id, addStandup: true });
+    setStandup(reply.ok ? "added" : "idle");
+    if (!reply.ok) setError(reply.message);
+  };
 
   const budget = current.budget;
   const updateBudget = (change: Partial<typeof budget>) =>
@@ -324,6 +346,54 @@ function AssistantForm(props: { readonly editor: AssistantEditor }) {
             ))}
           </ListSection>
         </View>
+        <TextField
+          label="Role"
+          description="What it is to the others, such as CEO or Engineer. Agents see it."
+          value={current.role}
+          maxLength={ASSISTANT_ROLE_MAX_LENGTH}
+          placeholder="CEO, Engineer…"
+          autoCapitalize="sentences"
+          onChange={(role) => updateAssistantDraft({ role })}
+        />
+        <MenuField
+          label="Reports to"
+          description="Its leader can ask it for work and gets the answer back. It never messages up on its own."
+          value={leaders.find((leader) => leader.id === current.reportsTo)?.name ?? NO_LEADER_LABEL}
+          actions={[
+            { id: "", title: NO_LEADER_LABEL, state: current.reportsTo === null ? "on" : "off" },
+            ...leaders.map((leader) => ({
+              id: leader.id,
+              title: leader.name,
+              state: leader.id === current.reportsTo ? ("on" as const) : ("off" as const),
+            })),
+          ]}
+          onSelect={(id) =>
+            updateAssistantDraft({ reportsTo: id === "" ? null : (id as AssistantId) })
+          }
+        />
+        {reports.length > 0 ? (
+          <View className="gap-2">
+            <View className="gap-0.5 px-2">
+              <Text textRole="footnote" className="font-t3-medium text-foreground">
+                Daily standup
+              </Text>
+              <Text textRole="footnote" className="text-foreground-muted">
+                {standup === "added"
+                  ? "Added to its schedules below, where you can change or remove it."
+                  : `Weekdays at 9:00 it asks ${reports.map((report) => report.name).join(", ")} for status and sends you one short report.`}
+              </Text>
+            </View>
+            <ListSection>
+              <ListActionRow
+                icon="calendar.badge.clock"
+                label="Add daily standup"
+                loading={standup === "adding"}
+                disabled={standup === "added" || !actions.canAct}
+                onPress={() => void addStandup()}
+              />
+            </ListSection>
+          </View>
+        ) : null}
         <View className="gap-2">
           <View className="gap-0.5 px-2">
             <Text textRole="footnote" className="font-t3-medium text-foreground">

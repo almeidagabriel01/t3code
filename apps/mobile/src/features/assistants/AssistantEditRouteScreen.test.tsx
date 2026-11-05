@@ -12,6 +12,7 @@ const { mocks, Children } = vi.hoisted(() => ({
   mocks: {
     spend: null as unknown,
     update: vi.fn(),
+    entries: [] as unknown[],
   },
 }));
 vi.mock("react-native", () => ({
@@ -45,7 +46,13 @@ vi.mock("../../components/ui/Button", () => ({
   ),
 }));
 vi.mock("../../components/ui/Dialog", () => ({ alert: vi.fn() }));
-vi.mock("../../components/ui/ListActionRow", () => ({ ListActionRow: () => null }));
+vi.mock("../../components/ui/ListActionRow", () => ({
+  ListActionRow: (props: { label: string; disabled?: boolean; onPress: () => void }) => (
+    <button disabled={props.disabled} onClick={props.onPress}>
+      {props.label}
+    </button>
+  ),
+}));
 vi.mock("../../components/ui/ListRow", () => ({ ListRow: () => null }));
 vi.mock("../../components/ui/ListRowLayout", () => ({
   ListRowLayout: (props: { label: string; accessory?: ReactNode }) => (
@@ -56,7 +63,24 @@ vi.mock("../../components/ui/ListRowLayout", () => ({
   ),
 }));
 vi.mock("../../components/ui/ListSection", () => ({ ListSection: Children }));
-vi.mock("../../components/ui/Menu", () => ({ Menu: Children }));
+vi.mock("../../components/ui/Menu", () => ({
+  Menu: (props: {
+    actions: Array<{ id: string; title: string }>;
+    onPressAction: (event: { nativeEvent: { event: string } }) => void;
+    children?: ReactNode;
+  }) => (
+    <>
+      {props.children}
+      {props.actions.map((action) => (
+        <button
+          key={action.id}
+          aria-label={`menu:${action.title}`}
+          onClick={() => props.onPressAction({ nativeEvent: { event: action.id } })}
+        />
+      ))}
+    </>
+  ),
+}));
 vi.mock("../../components/ui/RowPressable", () => ({
   RowPressable: (props: {
     accessibilityLabel: string;
@@ -93,7 +117,7 @@ vi.mock("../layout/native-glass-header-items", () => ({ withNativeGlassHeaderIte
 vi.mock("../settings/components/SettingsScreen", () => ({ SettingsScreen: Children }));
 vi.mock("../../state/assistants", () => ({
   useAssistantActions: () => ({ canAct: true, update: mocks.update, create: vi.fn() }),
-  useAssistantEntries: () => ({ active: [], archived: [] }),
+  useAssistantEntries: () => ({ active: mocks.entries, archived: [] }),
   useAssistantSpend: () => ({ data: mocks.spend }),
   useAssistantsEnvironmentIds: () => ["hub"],
 }));
@@ -179,6 +203,7 @@ beforeEach(() => {
   container = window.document.createElement("div");
   root = createRoot(container);
   mocks.spend = undefined;
+  mocks.entries = [];
   mocks.update.mockReset().mockResolvedValue({ ok: true });
 });
 afterEach(() => act(() => root.unmount()));
@@ -280,5 +305,68 @@ describe("assistant notifications", () => {
       Array.from(container.querySelectorAll("button")).find((b) => b.textContent === "Save")!
         .disabled,
     ).toBe(true);
+  });
+});
+
+describe("assistant team", () => {
+  const entry = (id: string, name: string, extra: object = {}) => ({
+    environmentId: "hub",
+    assistant: { ...assistant(), id, name, handle: id, ...extra } as Assistant,
+  });
+
+  it("saves the role and leader, never offering itself or anyone below it", async () => {
+    const me = assistant();
+    mocks.entries = [
+      entry("a1", "Jarvis"),
+      entry("boss", "Boss"),
+      entry("kid", "Kid", { reportsTo: "a1" }),
+    ];
+    render(me);
+    type("Role", " Chief ");
+    expect(container.querySelector('button[aria-label="menu:Kid"]')).toBeNull();
+    expect(container.querySelector('button[aria-label="menu:Jarvis"]')).toBeNull();
+    pick("menu:Boss");
+    await act(async () => pick("Save"));
+    expect(mocks.update.mock.calls[0]?.[0]).toMatchObject({ role: "Chief", reportsTo: "boss" });
+  });
+
+  it("clears the leader with Nobody and creates under one", async () => {
+    mocks.entries = [entry("boss", "Boss")];
+    render(assistant());
+    pick("menu:Boss");
+    pick("menu:Nobody");
+    expect(
+      Array.from(container.querySelectorAll("button")).find((b) => b.textContent === "Save")!
+        .disabled,
+    ).toBe(true);
+  });
+
+  it("offers the standup only to a leader and adds it once", async () => {
+    mocks.entries = [entry("a1", "Jarvis"), entry("kid", "Kid", { reportsTo: "a1" })];
+    render(assistant());
+    await act(async () => pick("Add daily standup"));
+    expect(mocks.update).toHaveBeenCalledWith({ assistantId: "a1", addStandup: true });
+    expect(container.textContent).toContain("Added to its schedules");
+    expect(
+      Array.from(container.querySelectorAll("button")).find(
+        (b) => b.textContent === "Add daily standup",
+      )!.disabled,
+    ).toBe(true);
+  });
+
+  it("shows a refused standup and lets the user retry", async () => {
+    mocks.entries = [entry("a1", "Jarvis"), entry("kid", "Kid", { reportsTo: "a1" })];
+    mocks.update.mockResolvedValueOnce({ ok: false, message: "Nope." });
+    render(assistant());
+    await act(async () => pick("Add daily standup"));
+    expect(container.textContent).toContain("Nope.");
+    await act(async () => pick("Add daily standup"));
+    expect(container.textContent).toContain("Added to its schedules");
+  });
+
+  it("has no standup for an assistant without reports", () => {
+    mocks.entries = [entry("a1", "Jarvis")];
+    render(assistant());
+    expect(container.textContent).not.toContain("Add daily standup");
   });
 });

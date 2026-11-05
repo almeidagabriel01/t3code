@@ -1,6 +1,7 @@
 import {
   DEFAULT_ASSISTANT_AUTONOMY,
   type Assistant,
+  type AssistantId,
   type EnvironmentId,
   type ModelSelection,
   type ProjectId,
@@ -157,6 +158,31 @@ describe("assistant draft", () => {
         editorFor(assistant, { budget: { ...budgetDraftFor(null), enabled: true } }),
       ),
     ).toBe(true);
+  });
+
+  it("sends the trimmed role and leader only when they changed", () => {
+    const boss = "boss" as AssistantId;
+    expect(
+      assistantUpdateInput(
+        editorFor(assistant, { role: " Lead ", reportsTo: boss }),
+        "p1" as ProjectId,
+      ),
+    ).toEqual({ assistantId: "a1", role: "Lead", reportsTo: boss });
+    const led = { ...assistant, role: "Eng", reportsTo: boss } as Assistant;
+    expect(assistantUpdateInput(editorFor(led, { reportsTo: null }), "p1" as ProjectId)).toEqual({
+      assistantId: "a1",
+      reportsTo: null,
+    });
+    expect(
+      assistantCreateInput(
+        editorFor(null, { name: "S", role: " QA ", reportsTo: boss }),
+        "p1" as ProjectId,
+      ),
+    ).toMatchObject({ role: "QA", reportsTo: boss });
+    expect(
+      assistantCreateInput(editorFor(null, { name: "S" }), "p1" as ProjectId),
+    ).not.toHaveProperty("role");
+    expect(assistantDraftHasChanges(editorFor(assistant, { reportsTo: boss }))).toBe(true);
   });
 
   it("sends the whole autonomy object only when it differs, and an inherit round-trip is no change", () => {
