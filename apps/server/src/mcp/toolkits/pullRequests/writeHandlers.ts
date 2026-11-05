@@ -1,5 +1,5 @@
 import { CommandId, OrchestratorMcpFailure, type PullRequestRef } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Hex from "effect/encoding/Hex";
 import * as Schema from "effect/Schema";
 import * as DateTime from "effect/DateTime";
@@ -166,7 +166,7 @@ export const makePullRequestWriteHandlers = Effect.fn("PullRequestsToolkit.makeW
       }
     });
 
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* Digest.Digest;
     const write = Effect.fn("PullRequestsToolkit.write")(function* (
       input: PullRequestWriteParameters,
     ) {
@@ -180,7 +180,7 @@ export const makePullRequestWriteHandlers = Effect.fn("PullRequestsToolkit.makeW
       const fingerprint = Hex.encode(
         yield* crypto
           .digest(
-            "SHA-256",
+            Digest.sha256,
             new TextEncoder().encode(encodeJson([input.action, target.url, payload])),
           )
           .pipe(Effect.orDie),

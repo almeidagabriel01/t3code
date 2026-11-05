@@ -75,7 +75,12 @@ const decodeTarget = Schema.decodeUnknownEffect(OrchestratorMcpTarget);
 
 const layerOrchestratorService = OrchestratorMcpService.layer.pipe(
   Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
-  Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+  Layer.provide(
+    Layer.mock(GitVcsDriver.GitVcsDriver)({
+      resolvePrimaryRemoteName: () => Effect.succeed(null),
+      resolveCommit: () => Effect.fail(new Error("no repository") as never),
+    }),
+  ),
 );
 
 describe("OrchestratorMcpService", () => {
@@ -2596,6 +2601,7 @@ describe("OrchestratorMcpService provider resolution", () => {
               Layer.provide(
                 Layer.mergeAll(
                   NodeServices.layer,
+                  NodeCrypto.layer,
                   Layer.mock(ThreadManagementService.ThreadManagementService)({}),
                   ServerSettings.layerTest(settings),
                   Layer.mock(ProviderRegistry.ProviderRegistry)({

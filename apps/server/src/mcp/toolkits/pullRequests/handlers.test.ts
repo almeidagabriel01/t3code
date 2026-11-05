@@ -14,6 +14,7 @@ import {
   SourceControlProviderKind,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -228,7 +229,7 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
       dispatch,
     }),
     Layer.succeed(SecureRandom.SecureRandom, testCrypto),
-    McpToolAccessTestkit.liveThreadsLayer,
+    Digest.layerWebCrypto,
   );
   const toolkit = yield* PullRequestsToolkit.pipe(
     Effect.provide(

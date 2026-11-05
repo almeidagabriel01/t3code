@@ -47,6 +47,7 @@ import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts"
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
 import * as DesktopApplicationMenu from "../window/DesktopApplicationMenu.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
+import * as DesktopWindowMaterial from "../window/material/DesktopWindowMaterial.ts";
 import * as DesktopWslBackend from "../wsl/DesktopWslBackend.ts";
 
 import * as BrowserImport from "../preview/BrowserImport/BrowserImport.ts";
@@ -159,6 +160,10 @@ it.effect(
           Effect.provideService(DesktopState.DesktopState, {
             quitting,
           } as DesktopState.DesktopState["Service"]),
+          Effect.provideService(
+            DesktopWindowMaterial.DesktopWindowMaterial,
+            {} as DesktopWindowMaterial.DesktopWindowMaterial["Service"],
+          ),
           Effect.provideService(DesktopWindow.DesktopWindow, {
             ensureMain: record("window").pipe(
               Effect.andThen(Deferred.succeed(windowStarted, undefined)),

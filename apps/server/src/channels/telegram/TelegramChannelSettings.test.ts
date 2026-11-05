@@ -1,3 +1,4 @@
+import * as CryptoLayer from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import type { TelegramChannelSettingsError } from "@t3tools/contracts";
@@ -43,7 +44,7 @@ const harness = () => {
     Layer.provideMerge(Secrets.layer),
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-telegram-settings-" })),
     Layer.provideMerge(runtime),
-    Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, CryptoLayer.layer)),
   );
   return { applied, dismissed, layer };
 };

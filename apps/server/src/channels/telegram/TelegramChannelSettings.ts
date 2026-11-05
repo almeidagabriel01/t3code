@@ -11,7 +11,7 @@ import {
   type TelegramChannelStatusEvent,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -79,7 +79,7 @@ export class TelegramChannelSettings extends Context.Service<
 export const make = Effect.fn("TelegramChannelSettings.make")(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const config = yield* ServerConfig.ServerConfig;
   const secrets = yield* Secrets.ServerSecretStore;
   const runtime = yield* TelegramChannelRuntime.TelegramChannelRuntime;
@@ -126,7 +126,7 @@ export const make = Effect.fn("TelegramChannelSettings.make")(function* () {
   const save = Effect.fn("TelegramChannelSettings.save")(
     function* (stored: StoredSettings) {
       const contents = yield* encodeStored(stored);
-      const tempPath = `${settingsPath}.${yield* crypto.randomUUIDv4()}.tmp`;
+      const tempPath = `${settingsPath}.${yield* random.uuidV4()}.tmp`;
       yield* fs.makeDirectory(config.stateDir, { recursive: true });
       yield* Effect.gen(function* () {
         yield* fs.writeFileString(tempPath, `${contents}\n`, { mode: 0o600 });

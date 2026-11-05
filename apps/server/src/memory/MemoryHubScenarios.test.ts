@@ -1,10 +1,11 @@
 import { watchedEvents } from "../testUtils/watchedEvents.testkit.ts";
 import { assert, describe, it } from "@effect/vitest";
 import * as M from "@t3tools/contracts";
+import * as CryptoLayer from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Hex from "effect/encoding/Hex";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -20,6 +21,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpBody from "effect/http/HttpBody";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as Settings from "../serverSettings.ts";
 import * as ServerConfig from "../config.ts";
 import * as Secrets from "../auth/ServerSecretStore.ts";
@@ -74,11 +76,13 @@ const makeScenario = (fileSystem?: FileSystem.FileSystem) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-memory-hub-scenario-" });
-    const settings = Settings.layer.pipe(
-      Layer.provideMerge(Secrets.layer),
-      Layer.provideMerge(Sqlite.layerMemory),
-      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
-    );
+    const settings = Settings.layer
+      .pipe(Layer.provide(ManagedPolicy.layerTest()))
+      .pipe(
+        Layer.provideMerge(Secrets.layer),
+        Layer.provideMerge(Sqlite.layerMemory),
+        Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
+      );
     const core = Service.layer.pipe(
       Layer.provideMerge(Quota.layer.pipe(Layer.provideMerge(Store.layer))),
       Layer.provideMerge(Environment.layerIdentity),
@@ -100,8 +104,11 @@ const makeScenario = (fileSystem?: FileSystem.FileSystem) =>
       Layer.provideMerge(routes),
       Layer.provideMerge(
         fileSystem === undefined
-          ? NodeServices.layer
-          : Layer.merge(NodeServices.layer, Layer.succeed(FileSystem.FileSystem, fileSystem)),
+          ? Layer.mergeAll(NodeServices.layer, CryptoLayer.layer)
+          : Layer.merge(
+              Layer.mergeAll(NodeServices.layer, CryptoLayer.layer),
+              Layer.succeed(FileSystem.FileSystem, fileSystem),
+            ),
       ),
     );
     const memoMap = yield* Layer.makeMemoMap;
@@ -168,9 +175,9 @@ const makeScenario = (fileSystem?: FileSystem.FileSystem) =>
       yield* run(
         Effect.gen(function* () {
           const sql = yield* SqlClient.SqlClient;
-          const crypto = yield* Crypto.Crypto;
+          const crypto = yield* Digest.Digest;
           const digest = Hex.encode(
-            yield* crypto.digest("SHA-256", new TextEncoder().encode(hubCredential)),
+            yield* crypto.digest(Digest.sha256, new TextEncoder().encode(hubCredential)),
           );
           yield* sql`INSERT INTO memory_hub_members(space,environment,credential_digest,credential_version,status,joined_at) VALUES (${space},${hubEnv},${digest},1,'active',0)`;
           const compactor = yield* Compactor.MemoryCompactor;
@@ -331,7 +338,7 @@ describe("Memory hub assembled HTTP scenarios", () => {
           }
         }
         yield* s.finishReload;
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, CryptoLayer.layer))),
   );
 
   it.effect("observes external disable before provider-history SQL finishes", () =>
@@ -350,7 +357,7 @@ describe("Memory hub assembled HTTP scenarios", () => {
       const configuration = Context.get(s.context, Hub.MemoryHubConfiguration);
       assert.isNull(yield* s.run(store.transact(configuration.read)));
       yield* s.finishReload;
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, CryptoLayer.layer))),
   );
 
   it.effect("fences transactions begun immediately after disable commit", () =>
@@ -398,7 +405,7 @@ describe("Memory hub assembled HTTP scenarios", () => {
         .pipe(Effect.result);
       assert.strictEqual(result._tag, "Failure");
       if (result._tag === "Failure") assert.strictEqual(result.failure._tag, "MemoryHubError");
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, CryptoLayer.layer))),
   );
 
   it.effect.each([false, true] as const)(
@@ -642,7 +649,7 @@ describe("Memory hub assembled HTTP scenarios", () => {
           )).length,
           0,
         );
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, CryptoLayer.layer))),
   );
 
   it.effect(
@@ -774,7 +781,7 @@ describe("Memory hub assembled HTTP scenarios", () => {
             );
           }),
         );
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, CryptoLayer.layer))),
   );
 
   it.effect("uses bearer identity for 401/403 and withdraws live advertisement when disabled", () =>
@@ -809,7 +816,7 @@ describe("Memory hub assembled HTTP scenarios", () => {
         yield* s.run(Hub.MemoryHubConfiguration.use((configuration) => configuration.read)),
         null,
       );
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, CryptoLayer.layer))),
   );
   it.effect("serves externally registered hub routes across the server MemoMap boundary", () =>
     Effect.gen(function* () {
@@ -862,7 +869,7 @@ describe("Memory hub assembled HTTP scenarios", () => {
         enabled.capabilities;
       assert.deepStrictEqual(disabled.capabilities, enabledCapabilities);
       assert.strictEqual((yield* request()).status, 503);
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, CryptoLayer.layer))),
   );
 
   it.effect("keeps waiting after readiness failure and starts once", () =>
@@ -927,7 +934,7 @@ describe("Memory hub assembled HTTP scenarios", () => {
       yield* s.configure("disabled");
       yield* s.configure("hub");
       assert.strictEqual(starts, 1);
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, CryptoLayer.layer))),
   );
 
   it.effect("retries a disabled initial sweep, starts once and stops with application Scope", () =>
@@ -1054,6 +1061,6 @@ describe("Memory hub assembled HTTP scenarios", () => {
       yield* TestClock.adjust(M.MEMORY_CHECKPOINT_INTERVAL_MS);
       yield* s.run(Hub.MemoryHubActivity.use((activity) => activity.notify));
       assert.deepStrictEqual(yield* retention, after);
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, CryptoLayer.layer))),
   );
 });

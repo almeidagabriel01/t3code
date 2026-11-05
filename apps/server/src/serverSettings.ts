@@ -473,11 +473,25 @@ const PersistedResponseStreamingMode = Schema.Union([
     }),
   ),
 );
-/** Test settings; `managedPolicy` only tells consumers a policy applies, it does not lock values. */
-export const layerTest = (
-  overrides: DeepPartial<ServerSettings> = {},
-  managedPolicy?: ManagedPolicySummary,
-) => Layer.effect(ServerSettingsService, makeTest(overrides, managedPolicy));
+const PersistedServerSettings = Schema.Struct({
+  ...ServerSettings.fields,
+  _memoryHubTransition: Schema.optionalKey(MemoryHubTransitionMarker),
+  responseStreamingMode: PersistedResponseStreamingMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed("paragraph" as const)),
+  ),
+  projectSettingsOverrides: Schema.Record(
+    ProjectId,
+    keepUnknownOverrideKeys(
+      Schema.Struct({
+        ...ProjectSettingsOverrides.fields,
+        responseStreamingMode: Schema.optionalKey(PersistedResponseStreamingMode),
+      }),
+    ),
+  ).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+});
+// Parse first and decode second, so a managed policy can fill its defaults in between.
+const decodeSettingsFileJsonExit = Schema.decodeUnknownExit(fromLenientJson(Schema.Unknown));
+const decodePersistedServerSettingsExit = Schema.decodeUnknownExit(PersistedServerSettings);
 // Only the hub epoch is read from a file replaced outside this process.
 const decodeCommittedHubJson = Schema.decodeUnknownExit(
   fromLenientJson(

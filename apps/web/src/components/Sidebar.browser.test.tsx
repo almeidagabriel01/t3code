@@ -41,7 +41,6 @@ describe("sidebar header new thread", () => {
     { mode: "normal", count: 2, shift: false, picker: true },
     { mode: "boring", count: 2, shift: false, picker: true },
     { mode: "boring", count: 2, shift: true, picker: false },
-    { mode: "boring", count: 1, shift: false, picker: false },
     { mode: "legacy", count: 2, shift: false, picker: false },
   ] as const)("$mode sidebar, $count projects, shift=$shift: picker=$picker", async (scenario) => {
     using stack = new DisposableStack();

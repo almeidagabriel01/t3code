@@ -99,7 +99,9 @@ function withFakeClaudeEnv<A, E, R>(
     const pathDelimiter = (yield* HostProcess.isWindows) ? ";" : ":";
     const updates = {
       PATH: `${binDir}${pathDelimiter}${process.env.PATH ?? ""}`,
-      T3_FAKE_CLAUDE_REJECTS_NO_SESSION_PERSISTENCE: input.rejectsNoSessionPersistence ? "1" : undefined,
+      T3_FAKE_CLAUDE_REJECTS_NO_SESSION_PERSISTENCE: input.rejectsNoSessionPersistence
+        ? "1"
+        : undefined,
       T3_FAKE_CLAUDE_OUTPUT: input.output,
       T3_FAKE_CLAUDE_EXIT_CODE: input.exitCode === undefined ? undefined : String(input.exitCode),
       T3_FAKE_CLAUDE_STDERR: input.stderr,
@@ -486,7 +488,7 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
         memoryRunnerContext: memoryContext,
         cwdMustNotBe: memorySummary.cwd,
         argsMustContain:
-          "--tools  --disable-slash-commands --strict-mcp-config --permission-mode dontAsk",
+          "--tools  --disable-slash-commands --no-session-persistence --strict-mcp-config --permission-mode dontAsk",
         stdinMustContain: "<untrusted_memory_data>",
       },
       (generation) =>

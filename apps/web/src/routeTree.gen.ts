@@ -20,11 +20,16 @@ import { Route as ProjectsProjectKeyRouteImport } from './routes/projects.$proje
 import { Route as ChatUsageRouteImport } from './routes/_chat.usage'
 import { Route as ChatSettingsRouteImport } from './routes/_chat.settings'
 import { Route as ChatPullRequestsRouteImport } from './routes/_chat.pull-requests'
+import { Route as ChatNotesRouteImport } from './routes/_chat.notes'
 import { Route as ChatNewRouteImport } from './routes/_chat.new'
+import { Route as ChatKanbanRouteImport } from './routes/_chat.kanban'
+import { Route as ChatActivityRouteImport } from './routes/_chat.activity'
 import { Route as ThreadsEnvironmentIdThreadIdRouteImport } from './routes/threads.$environmentId.$threadId'
 import { Route as ChatSettingsWorktreesRouteImport } from './routes/_chat.settings.worktrees'
 import { Route as ChatSettingsThreadsRouteImport } from './routes/_chat.settings.threads'
+import { Route as ChatSettingsTelegramRouteImport } from './routes/_chat.settings.telegram'
 import { Route as ChatSettingsStorageRouteImport } from './routes/_chat.settings.storage'
+import { Route as ChatSettingsStatusBarRouteImport } from './routes/_chat.settings.status-bar'
 import { Route as ChatSettingsSourceControlRouteImport } from './routes/_chat.settings.source-control'
 import { Route as ChatSettingsSnapShotRouteImport } from './routes/_chat.settings.snap-shot'
 import { Route as ChatSettingsSecretsRouteImport } from './routes/_chat.settings.secrets'
@@ -32,11 +37,16 @@ import { Route as ChatSettingsScheduledTasksRouteImport } from './routes/_chat.s
 import { Route as ChatSettingsProvidersRouteImport } from './routes/_chat.settings.providers'
 import { Route as ChatSettingsProjectsRouteImport } from './routes/_chat.settings.projects'
 import { Route as ChatSettingsOpenSourceLicensesRouteImport } from './routes/_chat.settings.open-source-licenses'
+import { Route as ChatSettingsMemoryRouteImport } from './routes/_chat.settings.memory'
 import { Route as ChatSettingsMaintenanceRouteImport } from './routes/_chat.settings.maintenance'
+import { Route as ChatSettingsMacPermissionsRouteImport } from './routes/_chat.settings.mac-permissions'
 import { Route as ChatSettingsLabsRouteImport } from './routes/_chat.settings.labs'
 import { Route as ChatSettingsKeybindingsRouteImport } from './routes/_chat.settings.keybindings'
+import { Route as ChatSettingsKanbanRouteImport } from './routes/_chat.settings.kanban'
 import { Route as ChatSettingsIntegrationsRouteImport } from './routes/_chat.settings.integrations'
+import { Route as ChatSettingsImessageRouteImport } from './routes/_chat.settings.imessage'
 import { Route as ChatSettingsGeneralRouteImport } from './routes/_chat.settings.general'
+import { Route as ChatSettingsForkUpdatesRouteImport } from './routes/_chat.settings.fork-updates'
 import { Route as ChatSettingsDiffsRouteImport } from './routes/_chat.settings.diffs'
 import { Route as ChatSettingsDiagnosticsRouteImport } from './routes/_chat.settings.diagnostics'
 import { Route as ChatSettingsDevicesRouteImport } from './routes/_chat.settings.devices'
@@ -44,6 +54,7 @@ import { Route as ChatSettingsConnectionsRouteImport } from './routes/_chat.sett
 import { Route as ChatSettingsChatRouteImport } from './routes/_chat.settings.chat'
 import { Route as ChatSettingsBrowserRouteImport } from './routes/_chat.settings.browser'
 import { Route as ChatSettingsBetaRouteImport } from './routes/_chat.settings.beta'
+import { Route as ChatSettingsAssistantsRouteImport } from './routes/_chat.settings.assistants'
 import { Route as ChatSettingsArchivedRouteImport } from './routes/_chat.settings.archived'
 import { Route as ChatSettingsAppearanceRouteImport } from './routes/_chat.settings.appearance'
 import { Route as ChatSettingsAccessRouteImport } from './routes/_chat.settings.access'
@@ -105,9 +116,24 @@ const ChatPullRequestsRoute = ChatPullRequestsRouteImport.update({
   path: '/pull-requests',
   getParentRoute: () => ChatRoute,
 } as any)
+const ChatNotesRoute = ChatNotesRouteImport.update({
+  id: '/notes',
+  path: '/notes',
+  getParentRoute: () => ChatRoute,
+} as any)
 const ChatNewRoute = ChatNewRouteImport.update({
   id: '/new',
   path: '/new',
+  getParentRoute: () => ChatRoute,
+} as any)
+const ChatKanbanRoute = ChatKanbanRouteImport.update({
+  id: '/kanban',
+  path: '/kanban',
+  getParentRoute: () => ChatRoute,
+} as any)
+const ChatActivityRoute = ChatActivityRouteImport.update({
+  id: '/activity',
+  path: '/activity',
   getParentRoute: () => ChatRoute,
 } as any)
 const ThreadsEnvironmentIdThreadIdRoute =
@@ -126,9 +152,19 @@ const ChatSettingsThreadsRoute = ChatSettingsThreadsRouteImport.update({
   path: '/threads',
   getParentRoute: () => ChatSettingsRoute,
 } as any)
+const ChatSettingsTelegramRoute = ChatSettingsTelegramRouteImport.update({
+  id: '/telegram',
+  path: '/telegram',
+  getParentRoute: () => ChatSettingsRoute,
+} as any)
 const ChatSettingsStorageRoute = ChatSettingsStorageRouteImport.update({
   id: '/storage',
   path: '/storage',
+  getParentRoute: () => ChatSettingsRoute,
+} as any)
+const ChatSettingsStatusBarRoute = ChatSettingsStatusBarRouteImport.update({
+  id: '/status-bar',
+  path: '/status-bar',
   getParentRoute: () => ChatSettingsRoute,
 } as any)
 const ChatSettingsSourceControlRoute =
@@ -169,11 +205,22 @@ const ChatSettingsOpenSourceLicensesRoute =
     path: '/open-source-licenses',
     getParentRoute: () => ChatSettingsRoute,
   } as any)
+const ChatSettingsMemoryRoute = ChatSettingsMemoryRouteImport.update({
+  id: '/memory',
+  path: '/memory',
+  getParentRoute: () => ChatSettingsRoute,
+} as any)
 const ChatSettingsMaintenanceRoute = ChatSettingsMaintenanceRouteImport.update({
   id: '/maintenance',
   path: '/maintenance',
   getParentRoute: () => ChatSettingsRoute,
 } as any)
+const ChatSettingsMacPermissionsRoute =
+  ChatSettingsMacPermissionsRouteImport.update({
+    id: '/mac-permissions',
+    path: '/mac-permissions',
+    getParentRoute: () => ChatSettingsRoute,
+  } as any)
 const ChatSettingsLabsRoute = ChatSettingsLabsRouteImport.update({
   id: '/labs',
   path: '/labs',
@@ -184,15 +231,30 @@ const ChatSettingsKeybindingsRoute = ChatSettingsKeybindingsRouteImport.update({
   path: '/keybindings',
   getParentRoute: () => ChatSettingsRoute,
 } as any)
+const ChatSettingsKanbanRoute = ChatSettingsKanbanRouteImport.update({
+  id: '/kanban',
+  path: '/kanban',
+  getParentRoute: () => ChatSettingsRoute,
+} as any)
 const ChatSettingsIntegrationsRoute =
   ChatSettingsIntegrationsRouteImport.update({
     id: '/integrations',
     path: '/integrations',
     getParentRoute: () => ChatSettingsRoute,
   } as any)
+const ChatSettingsImessageRoute = ChatSettingsImessageRouteImport.update({
+  id: '/imessage',
+  path: '/imessage',
+  getParentRoute: () => ChatSettingsRoute,
+} as any)
 const ChatSettingsGeneralRoute = ChatSettingsGeneralRouteImport.update({
   id: '/general',
   path: '/general',
+  getParentRoute: () => ChatSettingsRoute,
+} as any)
+const ChatSettingsForkUpdatesRoute = ChatSettingsForkUpdatesRouteImport.update({
+  id: '/fork-updates',
+  path: '/fork-updates',
   getParentRoute: () => ChatSettingsRoute,
 } as any)
 const ChatSettingsDiffsRoute = ChatSettingsDiffsRouteImport.update({
@@ -228,6 +290,11 @@ const ChatSettingsBrowserRoute = ChatSettingsBrowserRouteImport.update({
 const ChatSettingsBetaRoute = ChatSettingsBetaRouteImport.update({
   id: '/beta',
   path: '/beta',
+  getParentRoute: () => ChatSettingsRoute,
+} as any)
+const ChatSettingsAssistantsRoute = ChatSettingsAssistantsRouteImport.update({
+  id: '/assistants',
+  path: '/assistants',
   getParentRoute: () => ChatSettingsRoute,
 } as any)
 const ChatSettingsArchivedRoute = ChatSettingsArchivedRouteImport.update({
@@ -269,7 +336,10 @@ export interface FileRoutesByFullPath {
   '/guest': typeof GuestRoute
   '/pair': typeof PairRoute
   '/welcome': typeof WelcomeRoute
+  '/activity': typeof ChatActivityRoute
+  '/kanban': typeof ChatKanbanRoute
   '/new': typeof ChatNewRoute
+  '/notes': typeof ChatNotesRoute
   '/pull-requests': typeof ChatPullRequestsRoute
   '/settings': typeof ChatSettingsRouteWithChildren
   '/usage': typeof ChatUsageRoute
@@ -280,6 +350,7 @@ export interface FileRoutesByFullPath {
   '/settings/access': typeof ChatSettingsAccessRoute
   '/settings/appearance': typeof ChatSettingsAppearanceRoute
   '/settings/archived': typeof ChatSettingsArchivedRoute
+  '/settings/assistants': typeof ChatSettingsAssistantsRoute
   '/settings/beta': typeof ChatSettingsBetaRoute
   '/settings/browser': typeof ChatSettingsBrowserRoute
   '/settings/chat': typeof ChatSettingsChatRoute
@@ -287,11 +358,16 @@ export interface FileRoutesByFullPath {
   '/settings/devices': typeof ChatSettingsDevicesRoute
   '/settings/diagnostics': typeof ChatSettingsDiagnosticsRoute
   '/settings/diffs': typeof ChatSettingsDiffsRoute
+  '/settings/fork-updates': typeof ChatSettingsForkUpdatesRoute
   '/settings/general': typeof ChatSettingsGeneralRoute
+  '/settings/imessage': typeof ChatSettingsImessageRoute
   '/settings/integrations': typeof ChatSettingsIntegrationsRoute
+  '/settings/kanban': typeof ChatSettingsKanbanRoute
   '/settings/keybindings': typeof ChatSettingsKeybindingsRoute
   '/settings/labs': typeof ChatSettingsLabsRoute
+  '/settings/mac-permissions': typeof ChatSettingsMacPermissionsRoute
   '/settings/maintenance': typeof ChatSettingsMaintenanceRoute
+  '/settings/memory': typeof ChatSettingsMemoryRoute
   '/settings/open-source-licenses': typeof ChatSettingsOpenSourceLicensesRoute
   '/settings/projects': typeof ChatSettingsProjectsRoute
   '/settings/providers': typeof ChatSettingsProvidersRoute
@@ -299,7 +375,9 @@ export interface FileRoutesByFullPath {
   '/settings/secrets': typeof ChatSettingsSecretsRoute
   '/settings/snap-shot': typeof ChatSettingsSnapShotRoute
   '/settings/source-control': typeof ChatSettingsSourceControlRoute
+  '/settings/status-bar': typeof ChatSettingsStatusBarRoute
   '/settings/storage': typeof ChatSettingsStorageRoute
+  '/settings/telegram': typeof ChatSettingsTelegramRoute
   '/settings/threads': typeof ChatSettingsThreadsRoute
   '/settings/worktrees': typeof ChatSettingsWorktreesRoute
   '/threads/$environmentId/$threadId': typeof ThreadsEnvironmentIdThreadIdRoute
@@ -310,7 +388,10 @@ export interface FileRoutesByTo {
   '/guest': typeof GuestRoute
   '/pair': typeof PairRoute
   '/welcome': typeof WelcomeRoute
+  '/activity': typeof ChatActivityRoute
+  '/kanban': typeof ChatKanbanRoute
   '/new': typeof ChatNewRoute
+  '/notes': typeof ChatNotesRoute
   '/pull-requests': typeof ChatPullRequestsRoute
   '/settings': typeof ChatSettingsRouteWithChildren
   '/usage': typeof ChatUsageRoute
@@ -322,6 +403,7 @@ export interface FileRoutesByTo {
   '/settings/access': typeof ChatSettingsAccessRoute
   '/settings/appearance': typeof ChatSettingsAppearanceRoute
   '/settings/archived': typeof ChatSettingsArchivedRoute
+  '/settings/assistants': typeof ChatSettingsAssistantsRoute
   '/settings/beta': typeof ChatSettingsBetaRoute
   '/settings/browser': typeof ChatSettingsBrowserRoute
   '/settings/chat': typeof ChatSettingsChatRoute
@@ -329,11 +411,16 @@ export interface FileRoutesByTo {
   '/settings/devices': typeof ChatSettingsDevicesRoute
   '/settings/diagnostics': typeof ChatSettingsDiagnosticsRoute
   '/settings/diffs': typeof ChatSettingsDiffsRoute
+  '/settings/fork-updates': typeof ChatSettingsForkUpdatesRoute
   '/settings/general': typeof ChatSettingsGeneralRoute
+  '/settings/imessage': typeof ChatSettingsImessageRoute
   '/settings/integrations': typeof ChatSettingsIntegrationsRoute
+  '/settings/kanban': typeof ChatSettingsKanbanRoute
   '/settings/keybindings': typeof ChatSettingsKeybindingsRoute
   '/settings/labs': typeof ChatSettingsLabsRoute
+  '/settings/mac-permissions': typeof ChatSettingsMacPermissionsRoute
   '/settings/maintenance': typeof ChatSettingsMaintenanceRoute
+  '/settings/memory': typeof ChatSettingsMemoryRoute
   '/settings/open-source-licenses': typeof ChatSettingsOpenSourceLicensesRoute
   '/settings/projects': typeof ChatSettingsProjectsRoute
   '/settings/providers': typeof ChatSettingsProvidersRoute
@@ -341,7 +428,9 @@ export interface FileRoutesByTo {
   '/settings/secrets': typeof ChatSettingsSecretsRoute
   '/settings/snap-shot': typeof ChatSettingsSnapShotRoute
   '/settings/source-control': typeof ChatSettingsSourceControlRoute
+  '/settings/status-bar': typeof ChatSettingsStatusBarRoute
   '/settings/storage': typeof ChatSettingsStorageRoute
+  '/settings/telegram': typeof ChatSettingsTelegramRoute
   '/settings/threads': typeof ChatSettingsThreadsRoute
   '/settings/worktrees': typeof ChatSettingsWorktreesRoute
   '/threads/$environmentId/$threadId': typeof ThreadsEnvironmentIdThreadIdRoute
@@ -354,7 +443,10 @@ export interface FileRoutesById {
   '/guest': typeof GuestRoute
   '/pair': typeof PairRoute
   '/welcome': typeof WelcomeRoute
+  '/_chat/activity': typeof ChatActivityRoute
+  '/_chat/kanban': typeof ChatKanbanRoute
   '/_chat/new': typeof ChatNewRoute
+  '/_chat/notes': typeof ChatNotesRoute
   '/_chat/pull-requests': typeof ChatPullRequestsRoute
   '/_chat/settings': typeof ChatSettingsRouteWithChildren
   '/_chat/usage': typeof ChatUsageRoute
@@ -366,6 +458,7 @@ export interface FileRoutesById {
   '/_chat/settings/access': typeof ChatSettingsAccessRoute
   '/_chat/settings/appearance': typeof ChatSettingsAppearanceRoute
   '/_chat/settings/archived': typeof ChatSettingsArchivedRoute
+  '/_chat/settings/assistants': typeof ChatSettingsAssistantsRoute
   '/_chat/settings/beta': typeof ChatSettingsBetaRoute
   '/_chat/settings/browser': typeof ChatSettingsBrowserRoute
   '/_chat/settings/chat': typeof ChatSettingsChatRoute
@@ -373,11 +466,16 @@ export interface FileRoutesById {
   '/_chat/settings/devices': typeof ChatSettingsDevicesRoute
   '/_chat/settings/diagnostics': typeof ChatSettingsDiagnosticsRoute
   '/_chat/settings/diffs': typeof ChatSettingsDiffsRoute
+  '/_chat/settings/fork-updates': typeof ChatSettingsForkUpdatesRoute
   '/_chat/settings/general': typeof ChatSettingsGeneralRoute
+  '/_chat/settings/imessage': typeof ChatSettingsImessageRoute
   '/_chat/settings/integrations': typeof ChatSettingsIntegrationsRoute
+  '/_chat/settings/kanban': typeof ChatSettingsKanbanRoute
   '/_chat/settings/keybindings': typeof ChatSettingsKeybindingsRoute
   '/_chat/settings/labs': typeof ChatSettingsLabsRoute
+  '/_chat/settings/mac-permissions': typeof ChatSettingsMacPermissionsRoute
   '/_chat/settings/maintenance': typeof ChatSettingsMaintenanceRoute
+  '/_chat/settings/memory': typeof ChatSettingsMemoryRoute
   '/_chat/settings/open-source-licenses': typeof ChatSettingsOpenSourceLicensesRoute
   '/_chat/settings/projects': typeof ChatSettingsProjectsRoute
   '/_chat/settings/providers': typeof ChatSettingsProvidersRoute
@@ -385,7 +483,9 @@ export interface FileRoutesById {
   '/_chat/settings/secrets': typeof ChatSettingsSecretsRoute
   '/_chat/settings/snap-shot': typeof ChatSettingsSnapShotRoute
   '/_chat/settings/source-control': typeof ChatSettingsSourceControlRoute
+  '/_chat/settings/status-bar': typeof ChatSettingsStatusBarRoute
   '/_chat/settings/storage': typeof ChatSettingsStorageRoute
+  '/_chat/settings/telegram': typeof ChatSettingsTelegramRoute
   '/_chat/settings/threads': typeof ChatSettingsThreadsRoute
   '/_chat/settings/worktrees': typeof ChatSettingsWorktreesRoute
   '/threads/$environmentId/$threadId': typeof ThreadsEnvironmentIdThreadIdRoute
@@ -399,7 +499,10 @@ export interface FileRouteTypes {
     | '/guest'
     | '/pair'
     | '/welcome'
+    | '/activity'
+    | '/kanban'
     | '/new'
+    | '/notes'
     | '/pull-requests'
     | '/settings'
     | '/usage'
@@ -410,6 +513,7 @@ export interface FileRouteTypes {
     | '/settings/access'
     | '/settings/appearance'
     | '/settings/archived'
+    | '/settings/assistants'
     | '/settings/beta'
     | '/settings/browser'
     | '/settings/chat'
@@ -417,11 +521,16 @@ export interface FileRouteTypes {
     | '/settings/devices'
     | '/settings/diagnostics'
     | '/settings/diffs'
+    | '/settings/fork-updates'
     | '/settings/general'
+    | '/settings/imessage'
     | '/settings/integrations'
+    | '/settings/kanban'
     | '/settings/keybindings'
     | '/settings/labs'
+    | '/settings/mac-permissions'
     | '/settings/maintenance'
+    | '/settings/memory'
     | '/settings/open-source-licenses'
     | '/settings/projects'
     | '/settings/providers'
@@ -429,7 +538,9 @@ export interface FileRouteTypes {
     | '/settings/secrets'
     | '/settings/snap-shot'
     | '/settings/source-control'
+    | '/settings/status-bar'
     | '/settings/storage'
+    | '/settings/telegram'
     | '/settings/threads'
     | '/settings/worktrees'
     | '/threads/$environmentId/$threadId'
@@ -440,7 +551,10 @@ export interface FileRouteTypes {
     | '/guest'
     | '/pair'
     | '/welcome'
+    | '/activity'
+    | '/kanban'
     | '/new'
+    | '/notes'
     | '/pull-requests'
     | '/settings'
     | '/usage'
@@ -452,6 +566,7 @@ export interface FileRouteTypes {
     | '/settings/access'
     | '/settings/appearance'
     | '/settings/archived'
+    | '/settings/assistants'
     | '/settings/beta'
     | '/settings/browser'
     | '/settings/chat'
@@ -459,11 +574,16 @@ export interface FileRouteTypes {
     | '/settings/devices'
     | '/settings/diagnostics'
     | '/settings/diffs'
+    | '/settings/fork-updates'
     | '/settings/general'
+    | '/settings/imessage'
     | '/settings/integrations'
+    | '/settings/kanban'
     | '/settings/keybindings'
     | '/settings/labs'
+    | '/settings/mac-permissions'
     | '/settings/maintenance'
+    | '/settings/memory'
     | '/settings/open-source-licenses'
     | '/settings/projects'
     | '/settings/providers'
@@ -471,7 +591,9 @@ export interface FileRouteTypes {
     | '/settings/secrets'
     | '/settings/snap-shot'
     | '/settings/source-control'
+    | '/settings/status-bar'
     | '/settings/storage'
+    | '/settings/telegram'
     | '/settings/threads'
     | '/settings/worktrees'
     | '/threads/$environmentId/$threadId'
@@ -483,7 +605,10 @@ export interface FileRouteTypes {
     | '/guest'
     | '/pair'
     | '/welcome'
+    | '/_chat/activity'
+    | '/_chat/kanban'
     | '/_chat/new'
+    | '/_chat/notes'
     | '/_chat/pull-requests'
     | '/_chat/settings'
     | '/_chat/usage'
@@ -495,6 +620,7 @@ export interface FileRouteTypes {
     | '/_chat/settings/access'
     | '/_chat/settings/appearance'
     | '/_chat/settings/archived'
+    | '/_chat/settings/assistants'
     | '/_chat/settings/beta'
     | '/_chat/settings/browser'
     | '/_chat/settings/chat'
@@ -502,11 +628,16 @@ export interface FileRouteTypes {
     | '/_chat/settings/devices'
     | '/_chat/settings/diagnostics'
     | '/_chat/settings/diffs'
+    | '/_chat/settings/fork-updates'
     | '/_chat/settings/general'
+    | '/_chat/settings/imessage'
     | '/_chat/settings/integrations'
+    | '/_chat/settings/kanban'
     | '/_chat/settings/keybindings'
     | '/_chat/settings/labs'
+    | '/_chat/settings/mac-permissions'
     | '/_chat/settings/maintenance'
+    | '/_chat/settings/memory'
     | '/_chat/settings/open-source-licenses'
     | '/_chat/settings/projects'
     | '/_chat/settings/providers'
@@ -514,7 +645,9 @@ export interface FileRouteTypes {
     | '/_chat/settings/secrets'
     | '/_chat/settings/snap-shot'
     | '/_chat/settings/source-control'
+    | '/_chat/settings/status-bar'
     | '/_chat/settings/storage'
+    | '/_chat/settings/telegram'
     | '/_chat/settings/threads'
     | '/_chat/settings/worktrees'
     | '/threads/$environmentId/$threadId'
@@ -610,11 +743,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatPullRequestsRouteImport
       parentRoute: typeof ChatRoute
     }
+    '/_chat/notes': {
+      id: '/_chat/notes'
+      path: '/notes'
+      fullPath: '/notes'
+      preLoaderRoute: typeof ChatNotesRouteImport
+      parentRoute: typeof ChatRoute
+    }
     '/_chat/new': {
       id: '/_chat/new'
       path: '/new'
       fullPath: '/new'
       preLoaderRoute: typeof ChatNewRouteImport
+      parentRoute: typeof ChatRoute
+    }
+    '/_chat/kanban': {
+      id: '/_chat/kanban'
+      path: '/kanban'
+      fullPath: '/kanban'
+      preLoaderRoute: typeof ChatKanbanRouteImport
+      parentRoute: typeof ChatRoute
+    }
+    '/_chat/activity': {
+      id: '/_chat/activity'
+      path: '/activity'
+      fullPath: '/activity'
+      preLoaderRoute: typeof ChatActivityRouteImport
       parentRoute: typeof ChatRoute
     }
     '/threads/$environmentId/$threadId': {
@@ -638,11 +792,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatSettingsThreadsRouteImport
       parentRoute: typeof ChatSettingsRoute
     }
+    '/_chat/settings/telegram': {
+      id: '/_chat/settings/telegram'
+      path: '/telegram'
+      fullPath: '/settings/telegram'
+      preLoaderRoute: typeof ChatSettingsTelegramRouteImport
+      parentRoute: typeof ChatSettingsRoute
+    }
     '/_chat/settings/storage': {
       id: '/_chat/settings/storage'
       path: '/storage'
       fullPath: '/settings/storage'
       preLoaderRoute: typeof ChatSettingsStorageRouteImport
+      parentRoute: typeof ChatSettingsRoute
+    }
+    '/_chat/settings/status-bar': {
+      id: '/_chat/settings/status-bar'
+      path: '/status-bar'
+      fullPath: '/settings/status-bar'
+      preLoaderRoute: typeof ChatSettingsStatusBarRouteImport
       parentRoute: typeof ChatSettingsRoute
     }
     '/_chat/settings/source-control': {
@@ -694,11 +862,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatSettingsOpenSourceLicensesRouteImport
       parentRoute: typeof ChatSettingsRoute
     }
+    '/_chat/settings/memory': {
+      id: '/_chat/settings/memory'
+      path: '/memory'
+      fullPath: '/settings/memory'
+      preLoaderRoute: typeof ChatSettingsMemoryRouteImport
+      parentRoute: typeof ChatSettingsRoute
+    }
     '/_chat/settings/maintenance': {
       id: '/_chat/settings/maintenance'
       path: '/maintenance'
       fullPath: '/settings/maintenance'
       preLoaderRoute: typeof ChatSettingsMaintenanceRouteImport
+      parentRoute: typeof ChatSettingsRoute
+    }
+    '/_chat/settings/mac-permissions': {
+      id: '/_chat/settings/mac-permissions'
+      path: '/mac-permissions'
+      fullPath: '/settings/mac-permissions'
+      preLoaderRoute: typeof ChatSettingsMacPermissionsRouteImport
       parentRoute: typeof ChatSettingsRoute
     }
     '/_chat/settings/labs': {
@@ -715,6 +897,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatSettingsKeybindingsRouteImport
       parentRoute: typeof ChatSettingsRoute
     }
+    '/_chat/settings/kanban': {
+      id: '/_chat/settings/kanban'
+      path: '/kanban'
+      fullPath: '/settings/kanban'
+      preLoaderRoute: typeof ChatSettingsKanbanRouteImport
+      parentRoute: typeof ChatSettingsRoute
+    }
     '/_chat/settings/integrations': {
       id: '/_chat/settings/integrations'
       path: '/integrations'
@@ -722,11 +911,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatSettingsIntegrationsRouteImport
       parentRoute: typeof ChatSettingsRoute
     }
+    '/_chat/settings/imessage': {
+      id: '/_chat/settings/imessage'
+      path: '/imessage'
+      fullPath: '/settings/imessage'
+      preLoaderRoute: typeof ChatSettingsImessageRouteImport
+      parentRoute: typeof ChatSettingsRoute
+    }
     '/_chat/settings/general': {
       id: '/_chat/settings/general'
       path: '/general'
       fullPath: '/settings/general'
       preLoaderRoute: typeof ChatSettingsGeneralRouteImport
+      parentRoute: typeof ChatSettingsRoute
+    }
+    '/_chat/settings/fork-updates': {
+      id: '/_chat/settings/fork-updates'
+      path: '/fork-updates'
+      fullPath: '/settings/fork-updates'
+      preLoaderRoute: typeof ChatSettingsForkUpdatesRouteImport
       parentRoute: typeof ChatSettingsRoute
     }
     '/_chat/settings/diffs': {
@@ -776,6 +979,13 @@ declare module '@tanstack/react-router' {
       path: '/beta'
       fullPath: '/settings/beta'
       preLoaderRoute: typeof ChatSettingsBetaRouteImport
+      parentRoute: typeof ChatSettingsRoute
+    }
+    '/_chat/settings/assistants': {
+      id: '/_chat/settings/assistants'
+      path: '/assistants'
+      fullPath: '/settings/assistants'
+      preLoaderRoute: typeof ChatSettingsAssistantsRouteImport
       parentRoute: typeof ChatSettingsRoute
     }
     '/_chat/settings/archived': {
@@ -828,6 +1038,7 @@ interface ChatSettingsRouteChildren {
   ChatSettingsAccessRoute: typeof ChatSettingsAccessRoute
   ChatSettingsAppearanceRoute: typeof ChatSettingsAppearanceRoute
   ChatSettingsArchivedRoute: typeof ChatSettingsArchivedRoute
+  ChatSettingsAssistantsRoute: typeof ChatSettingsAssistantsRoute
   ChatSettingsBetaRoute: typeof ChatSettingsBetaRoute
   ChatSettingsBrowserRoute: typeof ChatSettingsBrowserRoute
   ChatSettingsChatRoute: typeof ChatSettingsChatRoute
@@ -835,11 +1046,16 @@ interface ChatSettingsRouteChildren {
   ChatSettingsDevicesRoute: typeof ChatSettingsDevicesRoute
   ChatSettingsDiagnosticsRoute: typeof ChatSettingsDiagnosticsRoute
   ChatSettingsDiffsRoute: typeof ChatSettingsDiffsRoute
+  ChatSettingsForkUpdatesRoute: typeof ChatSettingsForkUpdatesRoute
   ChatSettingsGeneralRoute: typeof ChatSettingsGeneralRoute
+  ChatSettingsImessageRoute: typeof ChatSettingsImessageRoute
   ChatSettingsIntegrationsRoute: typeof ChatSettingsIntegrationsRoute
+  ChatSettingsKanbanRoute: typeof ChatSettingsKanbanRoute
   ChatSettingsKeybindingsRoute: typeof ChatSettingsKeybindingsRoute
   ChatSettingsLabsRoute: typeof ChatSettingsLabsRoute
+  ChatSettingsMacPermissionsRoute: typeof ChatSettingsMacPermissionsRoute
   ChatSettingsMaintenanceRoute: typeof ChatSettingsMaintenanceRoute
+  ChatSettingsMemoryRoute: typeof ChatSettingsMemoryRoute
   ChatSettingsOpenSourceLicensesRoute: typeof ChatSettingsOpenSourceLicensesRoute
   ChatSettingsProjectsRoute: typeof ChatSettingsProjectsRoute
   ChatSettingsProvidersRoute: typeof ChatSettingsProvidersRoute
@@ -847,7 +1063,9 @@ interface ChatSettingsRouteChildren {
   ChatSettingsSecretsRoute: typeof ChatSettingsSecretsRoute
   ChatSettingsSnapShotRoute: typeof ChatSettingsSnapShotRoute
   ChatSettingsSourceControlRoute: typeof ChatSettingsSourceControlRoute
+  ChatSettingsStatusBarRoute: typeof ChatSettingsStatusBarRoute
   ChatSettingsStorageRoute: typeof ChatSettingsStorageRoute
+  ChatSettingsTelegramRoute: typeof ChatSettingsTelegramRoute
   ChatSettingsThreadsRoute: typeof ChatSettingsThreadsRoute
   ChatSettingsWorktreesRoute: typeof ChatSettingsWorktreesRoute
 }
@@ -857,6 +1075,7 @@ const ChatSettingsRouteChildren: ChatSettingsRouteChildren = {
   ChatSettingsAccessRoute: ChatSettingsAccessRoute,
   ChatSettingsAppearanceRoute: ChatSettingsAppearanceRoute,
   ChatSettingsArchivedRoute: ChatSettingsArchivedRoute,
+  ChatSettingsAssistantsRoute: ChatSettingsAssistantsRoute,
   ChatSettingsBetaRoute: ChatSettingsBetaRoute,
   ChatSettingsBrowserRoute: ChatSettingsBrowserRoute,
   ChatSettingsChatRoute: ChatSettingsChatRoute,
@@ -864,11 +1083,16 @@ const ChatSettingsRouteChildren: ChatSettingsRouteChildren = {
   ChatSettingsDevicesRoute: ChatSettingsDevicesRoute,
   ChatSettingsDiagnosticsRoute: ChatSettingsDiagnosticsRoute,
   ChatSettingsDiffsRoute: ChatSettingsDiffsRoute,
+  ChatSettingsForkUpdatesRoute: ChatSettingsForkUpdatesRoute,
   ChatSettingsGeneralRoute: ChatSettingsGeneralRoute,
+  ChatSettingsImessageRoute: ChatSettingsImessageRoute,
   ChatSettingsIntegrationsRoute: ChatSettingsIntegrationsRoute,
+  ChatSettingsKanbanRoute: ChatSettingsKanbanRoute,
   ChatSettingsKeybindingsRoute: ChatSettingsKeybindingsRoute,
   ChatSettingsLabsRoute: ChatSettingsLabsRoute,
+  ChatSettingsMacPermissionsRoute: ChatSettingsMacPermissionsRoute,
   ChatSettingsMaintenanceRoute: ChatSettingsMaintenanceRoute,
+  ChatSettingsMemoryRoute: ChatSettingsMemoryRoute,
   ChatSettingsOpenSourceLicensesRoute: ChatSettingsOpenSourceLicensesRoute,
   ChatSettingsProjectsRoute: ChatSettingsProjectsRoute,
   ChatSettingsProvidersRoute: ChatSettingsProvidersRoute,
@@ -876,7 +1100,9 @@ const ChatSettingsRouteChildren: ChatSettingsRouteChildren = {
   ChatSettingsSecretsRoute: ChatSettingsSecretsRoute,
   ChatSettingsSnapShotRoute: ChatSettingsSnapShotRoute,
   ChatSettingsSourceControlRoute: ChatSettingsSourceControlRoute,
+  ChatSettingsStatusBarRoute: ChatSettingsStatusBarRoute,
   ChatSettingsStorageRoute: ChatSettingsStorageRoute,
+  ChatSettingsTelegramRoute: ChatSettingsTelegramRoute,
   ChatSettingsThreadsRoute: ChatSettingsThreadsRoute,
   ChatSettingsWorktreesRoute: ChatSettingsWorktreesRoute,
 }
@@ -886,7 +1112,10 @@ const ChatSettingsRouteWithChildren = ChatSettingsRoute._addFileChildren(
 )
 
 interface ChatRouteChildren {
+  ChatActivityRoute: typeof ChatActivityRoute
+  ChatKanbanRoute: typeof ChatKanbanRoute
   ChatNewRoute: typeof ChatNewRoute
+  ChatNotesRoute: typeof ChatNotesRoute
   ChatPullRequestsRoute: typeof ChatPullRequestsRoute
   ChatSettingsRoute: typeof ChatSettingsRouteWithChildren
   ChatUsageRoute: typeof ChatUsageRoute
@@ -896,7 +1125,10 @@ interface ChatRouteChildren {
 }
 
 const ChatRouteChildren: ChatRouteChildren = {
+  ChatActivityRoute: ChatActivityRoute,
+  ChatKanbanRoute: ChatKanbanRoute,
   ChatNewRoute: ChatNewRoute,
+  ChatNotesRoute: ChatNotesRoute,
   ChatPullRequestsRoute: ChatPullRequestsRoute,
   ChatSettingsRoute: ChatSettingsRouteWithChildren,
   ChatUsageRoute: ChatUsageRoute,

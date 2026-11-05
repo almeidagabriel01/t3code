@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import * as M from "@t3tools/contracts";
+import * as CryptoLayer from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -14,6 +15,7 @@ import * as Config from "../config.ts";
 import * as Persistence from "../persistence/Sqlite.ts";
 import * as Secrets from "../auth/ServerSecretStore.ts";
 import * as Identity from "../environment/ServerEnvironment.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as Settings from "../serverSettings.ts";
 import * as Store from "./MemoryStore.ts";
 import * as Hub from "./MemoryHubService.ts";
@@ -36,12 +38,12 @@ const dependencies = Store.layer.pipe(
       getEnvironmentId: Effect.succeed(environmentId),
     }),
   ),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, CryptoLayer.layer)),
 );
 const id = (n: number) =>
   M.MemoryOperationId.make(`00000000-0000-4000-8000-${String(n).padStart(12, "0")}`);
 const settingsSession = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-  effect.pipe(Effect.provide(Settings.layer));
+  effect.pipe(Effect.provide(Settings.layer.pipe(Layer.provide(ManagedPolicy.layerTest()))));
 const start = Effect.gen(function* () {
   const settings = yield* Settings.ServerSettingsService;
   yield* settings.start;
@@ -71,6 +73,7 @@ it.effect(
           });
           const clientSettings = Settings.redactServerSettingsForClient(
             yield* (yield* Settings.ServerSettingsService).getSettings,
+            { secretReferences: true },
           );
           assert.isFalse(Object.hasOwn(clientSettings, "memoryHubProvenance"));
           yield* decodeClientSettings(yield* encodeClientSettings(clientSettings), {

@@ -1516,7 +1516,12 @@ describe("ClaudeAdapterV2 memory delivery", () => {
     ],
   })!;
   const noMemory = Option.getOrUndefined(Option.none<typeof snapshot>());
-  const layers = Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer);
+  const layers = Layer.mergeAll(
+    IdAllocator.layer,
+    McpProviderSessions.layer,
+    NodeServices.layer,
+    NodeCrypto.layer,
+  );
 
   it.effect(
     "appends the framed snapshot to the admitted user message, fresh at each admission",

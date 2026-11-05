@@ -10,7 +10,7 @@ import {
 } from "@t3tools/contracts";
 import { buildThreadHandoffPrompt } from "@t3tools/shared/threadHandoffPrompt";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as Layer from "effect/Layer";
@@ -48,7 +48,7 @@ const make = Effect.gen(function* () {
   const launches = yield* ThreadLaunch.ThreadLaunchService;
   const projects = yield* ProjectService.ProjectService;
   const summaries = yield* ThreadHandoffSummary.ThreadHandoffSummary;
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* Digest.Digest;
 
   const handoff: ThreadHandoffService["Service"]["handoff"] = Effect.fn(
     "ThreadHandoffService.handoff",
@@ -132,7 +132,7 @@ const make = Effect.gen(function* () {
       `latest:${lastUser.id}:${input.mode}:${instanceId}:${model}:${instructions ?? ""}`;
     const key = `${input.sourceThreadId.length}:${input.sourceThreadId}${requestId}`;
     const digest = yield* crypto
-      .digest("SHA-256", new TextEncoder().encode(key))
+      .digest(Digest.sha256, new TextEncoder().encode(key))
       .pipe(Effect.mapError(failed));
     const commandId = CommandId.make(`handoff:${Hex.encode(digest)}`);
     const branch = thread.branch === null ? {} : { branch: thread.branch };

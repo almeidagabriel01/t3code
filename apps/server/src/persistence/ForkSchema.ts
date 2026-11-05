@@ -351,16 +351,21 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
 
   // The memory continuation scan asks for a thread's newest `run.updated`, first `message.updated`
   // and whether it is a subagent. Without these each lookup walked every event of the thread.
-  yield* sql`
+  const eventTables = yield* sql`
+    SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'orchestration_events'
+  `;
+  if (eventTables.length > 0) {
+    yield* sql`
     CREATE INDEX IF NOT EXISTS orchestration_events_v2_thread_type_sequence_idx
     ON orchestration_events(stream_id, event_type, sequence)
     WHERE application_event_version = 2 AND aggregate_kind = 'thread'
   `;
-  yield* sql`
+    yield* sql`
     CREATE INDEX IF NOT EXISTS orchestration_events_v2_created_lineage_idx
     ON orchestration_events(stream_id, (json_extract(payload_json, '$.lineage.relationshipToParent')))
     WHERE application_event_version = 2 AND aggregate_kind = 'thread' AND event_type = 'thread.created'
   `;
+  }
 
   yield* ensureMemorySchema();
 });
