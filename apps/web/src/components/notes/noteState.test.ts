@@ -1,13 +1,7 @@
 import { NoteConflictError, type NoteDocument, type NotesWriteInput } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import {
-  groupNotes,
-  isNoteDirty,
-  NoteSession,
-  untitledNotePath,
-  type NoteReply,
-} from "./noteState";
+import { groupNotes, isNoteDirty, NoteSession, type NoteReply } from "./noteState";
 
 const document = (body = "Original", revision = "a".repeat(64)): NoteDocument => ({
   id: null,
@@ -333,12 +327,5 @@ describe("note list", () => {
       ["b", ["b/new.md", "b/old.md"]],
       ["empty", []],
     ]);
-  });
-
-  it("names a new note after the first free Untitled slot", () => {
-    const taken = new Set(["Untitled.md", "work/Untitled.md", "work/Untitled 2.md"]);
-    expect(untitledNotePath(taken, null)).toBe("Untitled 2.md");
-    expect(untitledNotePath(taken, "work")).toBe("work/Untitled 3.md");
-    expect(untitledNotePath(taken, "work", 1)).toBe("work/Untitled 4.md");
   });
 });

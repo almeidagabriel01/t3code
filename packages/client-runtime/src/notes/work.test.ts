@@ -22,6 +22,8 @@ const projects = [
 describe("start work project", () => {
   it("picks the project named like the note's folder, ignoring case", () => {
     expect(defaultWorkProject(projects, "web", ["api" as ProjectId])).toBe("web");
+    const repo = project("repo", "org/repo", "/code/repo", "2026-01-01T00:00:00.000Z");
+    expect(defaultWorkProject([...projects, repo], "org repo", [])).toBe("repo");
   });
 
   it("otherwise picks the most recently active project, then the most recently updated", () => {

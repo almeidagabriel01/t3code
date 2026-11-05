@@ -1,4 +1,5 @@
-import type { NoteDocument, NotesMoveInput } from "@t3tools/contracts";
+import { NoteFolder, type NoteDocument, type NotesMoveInput } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 
 /** A note's title is the first heading, else its first non-empty line, as the server reads it. */
 const HEADING = /^(#{1,6})([ \t]+)(.+?)[ \t]*#*[ \t]*$/u;
@@ -62,6 +63,33 @@ export function titleRenameTarget(
   if (!named) return null;
   const to = `${path.slice(0, slash + 1)}${stem}${attempt > 0 ? ` ${attempt + 1}` : ""}.md`;
   return to === path ? null : to;
+}
+
+const isNoteFolder = Schema.is(NoteFolder);
+
+/**
+ * The folder a project's new notes go in, so each project numbers its own Untitled notes apart
+ * from other projects and from unscoped notes at the root. Null when the title has no usable name.
+ */
+// ponytail: two projects whose titles clean to the same name share a folder and its numbering.
+export function projectNoteFolder(title: string | null | undefined): NoteFolder | null {
+  const folder = title ? fileStem(title) : "";
+  return isNoteFolder(folder) ? folder : null;
+}
+
+/** The skip-th free Untitled.md, Untitled 2.md, ... in the folder (the root when null). */
+export function untitledNotePath(
+  taken: ReadonlySet<string>,
+  folder: string | null,
+  skip = 0,
+): string {
+  const prefix = folder ? `${folder}/` : "";
+  let skipped = 0;
+  for (let index = 1; ; index++) {
+    const path = `${prefix}Untitled${index === 1 ? "" : ` ${index}`}.md`;
+    if (taken.has(path)) continue;
+    if (skipped++ === skip) return path;
+  }
 }
 
 const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");

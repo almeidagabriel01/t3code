@@ -1,5 +1,6 @@
 import type { EnvironmentProject } from "../state/models.ts";
 import { projectPickerLabels } from "../projectLabels.ts";
+import { projectNoteFolder } from "./title.ts";
 import type { NoteFolder, ProjectId } from "@t3tools/contracts";
 
 export interface WorkProjectOption {
@@ -11,6 +12,7 @@ export interface WorkProjectOption {
 export const NO_PROJECT_WORK = "no-project" as ProjectId;
 
 const folderName = (value: string) => value.normalize("NFC").toLocaleLowerCase();
+const projectFolderName = (title: string) => folderName(projectNoteFolder(title) ?? title);
 
 /**
  * The project a note's work most likely belongs to: one named like the note's folder, else the
@@ -24,7 +26,7 @@ export function defaultWorkProject(
   const named =
     folder === null
       ? undefined
-      : projects.find((project) => folderName(project.title) === folderName(folder));
+      : projects.find((project) => projectFolderName(project.title) === folderName(folder));
   if (named) return named.id;
   const known = new Set(projects.map((project) => project.id));
   const latest = recent.find((id) => known.has(id));

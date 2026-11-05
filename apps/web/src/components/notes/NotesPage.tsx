@@ -256,7 +256,7 @@ function EnvironmentNotes(
   const create = useStableCallback(() => {
     if (!canCreate) return;
     setCreateError(null);
-    void createNote(null, scopeProjectId ?? undefined).then((result) => {
+    void createNote(scopeProjectId ?? undefined).then((result) => {
       if (result.ok) {
         setFocusPath(result.value.path);
         void navigate({

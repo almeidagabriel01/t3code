@@ -2,7 +2,14 @@ import { NotePath } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { moveToTitle, replaceNoteTitle, titleRenameTarget, type NoteMoveReply } from "./title.ts";
+import {
+  moveToTitle,
+  projectNoteFolder,
+  replaceNoteTitle,
+  titleRenameTarget,
+  untitledNotePath,
+  type NoteMoveReply,
+} from "./title.ts";
 import type { NoteDocument } from "@t3tools/contracts";
 
 const isNotePath = Schema.is(NotePath);
@@ -87,5 +94,27 @@ describe("moveToTitle", () => {
     const move = vi.fn().mockResolvedValue({ ok: false, error: { reason: "exists" } });
     expect(await moveToTitle(move, note, "Plan", "Roadmap")).toBeNull();
     expect(move).toHaveBeenCalledTimes(5);
+  });
+});
+
+describe("projectNoteFolder", () => {
+  it.each([
+    ["a plain title", "t3code", "t3code"],
+    ["an owner/repo title", "almeidagabriel01/t3code", "almeidagabriel01 t3code"],
+    ["a title with colons and backslashes", "a:b\\c", "a b c"],
+    ["a leading dot", ".config", "config"],
+    ["only unusable characters", "/:/", null],
+    ["no title", null, null],
+    ["an over-long title", "x".repeat(200), "x".repeat(80)],
+  ])("cleans %s", (_case, title, folder) => {
+    expect(projectNoteFolder(title)).toBe(folder);
+  });
+
+  it("numbers Untitled notes per project folder, apart from the root", () => {
+    const taken = new Set(["Untitled.md", "Untitled 2.md", "alpha/Untitled.md"]);
+    expect(untitledNotePath(taken, projectNoteFolder("org/beta"))).toBe("org beta/Untitled.md");
+    expect(untitledNotePath(taken, projectNoteFolder("alpha"))).toBe("alpha/Untitled 2.md");
+    expect(untitledNotePath(taken, projectNoteFolder("alpha"), 1)).toBe("alpha/Untitled 3.md");
+    expect(untitledNotePath(taken, null)).toBe("Untitled 3.md");
   });
 });

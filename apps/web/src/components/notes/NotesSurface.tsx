@@ -40,7 +40,7 @@ export function NotesSurface({ threadRef, projectId }: NotesSurfaceProps) {
   };
   const create = () => {
     setCreateError(null);
-    void createNote(null, projectId).then((result) => {
+    void createNote(projectId).then((result) => {
       if (result.ok) {
         setFocusPath(result.value.path);
         setPath(threadKey, result.value.path);

@@ -51,20 +51,6 @@ export function openablePath(notes: ReadonlyArray<NoteSummary>, query: string): 
 }
 
 /** Untitled.md, Untitled 2.md, ...; skip lets a retry step past a name taken since the list loaded. */
-export function untitledNotePath(
-  taken: ReadonlySet<string>,
-  folder: string | null,
-  skip = 0,
-): string {
-  const prefix = folder ? `${folder}/` : "";
-  let skipped = 0;
-  for (let index = 1; ; index++) {
-    const path = `${prefix}Untitled${index === 1 ? "" : ` ${index}`}.md`;
-    if (taken.has(path)) continue;
-    if (skipped++ === skip) return path;
-  }
-}
-
 export type NoteReply<A> = { ok: true; value: A } | { ok: false; error: unknown };
 
 export function noteErrorMessage(error: unknown): string {

@@ -484,7 +484,6 @@ export const ChatHeader = memo(function ChatHeader({
         threadId={activeThreadId}
         isServerThread={isServerThread}
         projectId={activeProject && !activeProject.isScratch ? activeProject.id : null}
-        projectTitle={activeProject && !activeProject.isScratch ? activeProject.title : null}
       />
       {isServerThread ? (
         <KanbanThreadCardBadge

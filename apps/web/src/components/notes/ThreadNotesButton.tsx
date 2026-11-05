@@ -1,11 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { selectNotesInOrder } from "@t3tools/client-runtime/state/notes";
-import { NoteFolder, type EnvironmentId, type ProjectId, type ThreadId } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
-import * as Schema from "effect/Schema";
 import { NotebookPenIcon, PanelRightIcon, PlusIcon, XIcon } from "lucide-react";
 import { useState } from "react";
 
@@ -22,7 +21,6 @@ import { useNotesPanelStore } from "./notesPanelStore";
 import { useCreateNote } from "./useCreateNote";
 import { useNoteCommand } from "./useNoteCommand";
 
-const isNoteFolder = Schema.is(NoteFolder);
 const LINK_RESULTS = 6;
 
 /** Notes related to a thread live on the thread's own environment, so the button needs notes there. */
@@ -32,7 +30,6 @@ export function ThreadNotesButton(props: {
   /** A draft has no durable id to link notes to, so only the project panel toggle shows. */
   isServerThread: boolean;
   projectId: ProjectId | null;
-  projectTitle: string | null;
 }) {
   const supported = useNotesEnvironmentIds().includes(props.environmentId);
   if (!supported) return null;
@@ -45,7 +42,6 @@ function ThreadNotes(props: {
   /** A draft has no durable id to link notes to, so only the project panel toggle shows. */
   isServerThread: boolean;
   projectId: ProjectId | null;
-  projectTitle: string | null;
 }) {
   const { environmentId } = props;
   const state = Option.getOrNull(
@@ -71,11 +67,14 @@ function ThreadNotes(props: {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const notes = state === null ? [] : selectNotesInOrder(state);
-  const createNote = useCreateNote(environmentId, notes);
+  const allNotes = state === null ? [] : selectNotesInOrder(state);
+  const createNote = useCreateNote(environmentId, allNotes);
+  // A project thread offers its project's notes; one without a project, the unscoped notes.
+  const notes = allNotes.filter((note) => (note.project ?? null) === props.projectId);
   const showLinks = props.isServerThread && state !== null && (notes.length > 0 || canWrite);
   if (!showLinks && props.projectId === null) return null;
-  const linked = notes.filter((note) => note.related.includes(props.threadId));
+  // A note linked to this thread stays listed whatever its project.
+  const linked = allNotes.filter((note) => note.related.includes(props.threadId));
   const suggestions = filterNotes(
     notes.filter((note) => !note.related.includes(props.threadId)),
     query,
@@ -90,9 +89,7 @@ function ThreadNotes(props: {
   };
   const createForThread = async () => {
     setError(null);
-    const folder =
-      props.projectTitle && isNoteFolder(props.projectTitle) ? props.projectTitle : null;
-    const created = await createNote(folder, props.projectId ?? undefined);
+    const created = await createNote(props.projectId ?? undefined);
     if (!created.ok) {
       setError(noteErrorMessage(created.error));
       return;
@@ -195,7 +192,7 @@ function ThreadNotes(props: {
               ))}
             </ul>
           )}
-          {canUpdate && notes.length > linked.length ? (
+          {canUpdate && notes.some((note) => !note.related.includes(props.threadId)) ? (
             <div className="grid grid-cols-[minmax(0,1fr)] gap-1">
               <Input
                 size="sm"
