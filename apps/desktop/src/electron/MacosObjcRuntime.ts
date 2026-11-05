@@ -16,6 +16,8 @@ export interface ObjcRuntime {
   readonly bool: (receiver: bigint, selector: bigint) => boolean;
   readonly setBool: (receiver: bigint, selector: bigint, value: boolean) => void;
   readonly color: (receiver: bigint, selector: bigint, rgba: readonly number[]) => bigint;
+  /** Calls a libobjc C function; strings are passed as C strings. Ignore the result of void or BOOL functions. */
+  readonly function: (name: string, args: readonly (bigint | string)[]) => bigint;
 }
 
 export class MacosObjcRuntime extends Context.Service<
@@ -104,6 +106,12 @@ async function loadRuntime(): Promise<ObjcRuntime> {
         "objc_msgSend",
         [P, P, DataType.Double, DataType.Double, DataType.Double, DataType.Double],
         [receiver, selector, ...rgba],
+      ),
+    function: (name, args) =>
+      pointerCall(
+        name,
+        args.map((arg) => (typeof arg === "string" ? DataType.String : P)),
+        [...args],
       ),
   };
 }

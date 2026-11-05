@@ -1,5 +1,5 @@
 import type { ObjcRuntime } from "../../electron/MacosObjcRuntime.ts";
-import { GLASS_ABI } from "./macosGlassAdapter.ts";
+import { APPLY_KEY_STATE, GLASS_ABI, KEY_STABLE_GLASS_CLASS } from "./macosGlassAdapter.ts";
 
 export function fakeObjcRuntime(
   options: {
@@ -9,6 +9,7 @@ export function fakeObjcRuntime(
     missingMethod?: string;
     mainThread?: boolean;
     fail?: string;
+    keyStateEncoding?: string;
   } = {},
 ) {
   let next = 100n;
@@ -34,6 +35,10 @@ export function fakeObjcRuntime(
     onTint: undefined as (() => void) | undefined,
     onRemove: undefined as (() => void) | undefined,
     fail: options.fail,
+    registered: false,
+    allocatedFrom: [] as string[],
+    methods: new Map<string, string>(),
+    keyStateApplied: 0,
   };
   const allocate = (kind: string, owner?: bigint) => {
     const value = next++;
@@ -54,12 +59,17 @@ export function fakeObjcRuntime(
     }
   };
   const runtime: ObjcRuntime = {
-    classNamed: (name) => (name === options.missingClass ? 0n : id(name)),
+    classNamed: (name) =>
+      name === options.missingClass || (name === KEY_STABLE_GLASS_CLASS && !state.registered)
+        ? 0n
+        : id(name),
     selector: (name) => (name === options.missingSelector ? 0n : id(name)),
     encoding: (cls, selector, dispatch) => {
       const method = names.get(selector);
       if (method === options.missingMethod) return null;
       if (method === options.mismatch) return "wrong-ABI";
+      if (method === "_windowChangedKeyState") return options.keyStateEncoding ?? "v16@0:8";
+      if (method === "self") return "@16@0:8";
       return (
         GLASS_ABI.find(
           ([name, kind, sel]) => names.get(cls) === name && kind === dispatch && sel === method,
@@ -72,6 +82,7 @@ export function fakeObjcRuntime(
       const name = names.get(selector);
       if (name === "alloc") {
         if (state.fail === "alloc-null") return 0n;
+        state.allocatedFrom.push(names.get(receiver) ?? "");
         state.allocations++;
         owned = true;
         const glass = allocate("glass");
@@ -115,6 +126,8 @@ export function fakeObjcRuntime(
           const object = objects.get(receiver);
           if (object) object.live = false;
         }
+      } else if (name === APPLY_KEY_STATE) {
+        state.keyStateApplied++;
       } else if (name === "removeFromSuperview") {
         state.onRemove?.();
         inserted = false;
@@ -139,6 +152,17 @@ export function fakeObjcRuntime(
           if (object) object.live = false;
         }
       } else fail("tamic");
+    },
+    function: (name, args) => {
+      if (name === "class_getInstanceMethod")
+        return id(`method:${names.get(args[0] as bigint)}.${names.get(args[1] as bigint)}`);
+      if (name === "method_getImplementation") return id(`imp:${names.get(args[0] as bigint)}`);
+      if (name === "objc_allocateClassPair") return id(args[1] as string);
+      if (name === "class_addMethod")
+        state.methods.set(names.get(args[1] as bigint) ?? "", names.get(args[2] as bigint) ?? "");
+      else if (name === "objc_registerClassPair") state.registered = true;
+      else throw new Error("Unexpected runtime function");
+      return 1n;
     },
     color: (_receiver, _selector, rgba) => {
       if (state.fail === "color-null") return 0n;
