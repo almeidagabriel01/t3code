@@ -16,6 +16,8 @@ import { cn } from "../../lib/utils";
 type ForkUpdatePlacement = "footer" | "rail";
 
 const ANNOUNCED_TAG_KEY = "t3code:fork-update-announced-tag";
+// Remembers a fork checkout so the rail shows its entry at startup, before the delayed first check.
+const FORK_CHECKOUT_KEY = "t3code:fork-checkout-known";
 // The rail and the footer can both mount the pill; one toast per tag per window.
 const announcedThisSession = new Set<string>();
 
@@ -47,7 +49,6 @@ function ForkUpdatePill({
   readonly environmentId: EnvironmentId;
   readonly placement: ForkUpdatePlacement;
 }) {
-  const inRail = placement === "rail";
   const navigate = useNavigate();
   const dismissedTag = useClientSettings((settings) => settings.forkUpdatesDismissedTag);
   const { status } = useForkUpdateStatus(environmentId);
@@ -59,9 +60,38 @@ function ForkUpdatePill({
       announceForkUpdate(notifyTag, () => void navigate({ to: "/settings/fork-updates" }));
     }
   }, [notifyTag, navigate]);
-  if (status === null || notifyTag === null) return null;
-  const tag = notifyTag;
-  const label = `T3 Code ${tag} is out upstream (${status.channel}). Update your fork.`;
+  const available = status?.available ?? null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- localStorage is external; it lets the next start show the rail entry before its delayed check
+  useEffect(() => {
+    if (available !== null) setLocalStorageItem(FORK_CHECKOUT_KEY, available, Schema.Boolean);
+  }, [available]);
+  if (status === null || notifyTag === null) {
+    return placement === "rail" && (status?.available ?? knownForkCheckout()) ? (
+      <ForkUpdatesLink tag={null} label="Fork updates" />
+    ) : null;
+  }
+  return (
+    <ForkUpdatesLink
+      tag={notifyTag}
+      placement={placement}
+      label={`T3 Code ${notifyTag} is out upstream (${status.channel}). Update your fork.`}
+    />
+  );
+}
+
+const knownForkCheckout = () => getLocalStorageItem(FORK_CHECKOUT_KEY, Schema.Boolean) === true;
+
+/** The rail keeps this entry for a fork checkout; the dot and dismiss appear only for a new tag. */
+function ForkUpdatesLink({
+  tag,
+  label,
+  placement = "rail",
+}: {
+  readonly tag: string | null;
+  readonly label: string;
+  readonly placement?: ForkUpdatePlacement;
+}) {
+  const inRail = placement === "rail";
 
   const control = (
     <>
@@ -79,35 +109,39 @@ function ForkUpdatePill({
               )}
             >
               <GitForkIcon className={inRail ? "size-5" : "size-4"} />
-              <span
-                aria-hidden
-                data-slot="fork-update-dot"
-                className={cn(
-                  "absolute size-2 rounded-full bg-primary ring-2 ring-sidebar",
-                  inRail
-                    ? "top-1.5 right-1.5 group-hover/fork-update:opacity-0"
-                    : "top-0.5 right-0.5",
-                )}
-              />
+              {tag === null ? null : (
+                <span
+                  aria-hidden
+                  data-slot="fork-update-dot"
+                  className={cn(
+                    "absolute size-2 rounded-full bg-primary ring-2 ring-sidebar",
+                    inRail
+                      ? "top-1.5 right-1.5 group-hover/fork-update:opacity-0"
+                      : "top-0.5 right-0.5",
+                  )}
+                />
+              )}
             </Link>
           }
         />
         <TooltipPopup side={inRail ? "right" : "top"}>{label}</TooltipPopup>
       </Tooltip>
-      <button
-        type="button"
-        aria-label={`Dismiss ${tag}`}
-        className={cn(
-          "inline-flex cursor-pointer items-center justify-center rounded-full text-(--sidebar-icon-color) hover:text-sidebar-foreground",
-          // The rail has no room beside the button, so dismiss sits on its corner while hovered.
-          inRail
-            ? "absolute -top-1 -right-1 size-4 bg-background opacity-0 group-hover/fork-update:opacity-100 focus-visible:opacity-100"
-            : "size-5",
-        )}
-        onClick={() => void updateClientSettings({ forkUpdatesDismissedTag: tag })}
-      >
-        <XIcon className="size-3" />
-      </button>
+      {tag === null ? null : (
+        <button
+          type="button"
+          aria-label={`Dismiss ${tag}`}
+          className={cn(
+            "inline-flex cursor-pointer items-center justify-center rounded-full text-(--sidebar-icon-color) hover:text-sidebar-foreground",
+            // The rail has no room beside the button, so dismiss sits on its corner while hovered.
+            inRail
+              ? "absolute -top-1 -right-1 size-4 bg-background opacity-0 group-hover/fork-update:opacity-100 focus-visible:opacity-100"
+              : "size-5",
+          )}
+          onClick={() => void updateClientSettings({ forkUpdatesDismissedTag: tag })}
+        >
+          <XIcon className="size-3" />
+        </button>
+      )}
     </>
   );
 
@@ -142,7 +176,10 @@ function useAfterStartupDelay() {
   return ready;
 }
 
-/** Hidden unless the local server holds a fork checkout that is behind a newer upstream release. */
+/**
+ * The rail keeps a Fork updates entry for a fork checkout, with a dot while a newer upstream
+ * release is waiting; the footer pill shows only then.
+ */
 export function SidebarForkUpdatePill({
   placement = "footer",
 }: {
@@ -150,7 +187,10 @@ export function SidebarForkUpdatePill({
 }) {
   const environmentId = useForkUpdatesEnvironmentId();
   const ready = useAfterStartupDelay();
-  return environmentId === null || !ready ? null : (
-    <ForkUpdatePill environmentId={environmentId} placement={placement} />
-  );
+  if (environmentId === null) return null;
+  if (!ready)
+    return placement === "rail" && knownForkCheckout() ? (
+      <ForkUpdatesLink tag={null} label="Fork updates" />
+    ) : null;
+  return <ForkUpdatePill environmentId={environmentId} placement={placement} />;
 }

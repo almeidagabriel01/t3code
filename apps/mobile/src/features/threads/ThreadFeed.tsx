@@ -280,6 +280,8 @@ import { resolveUserMessageIntentBadge } from "./userMessageIntentBadge";
 import { fileChipClipboardPath, fileChipMenu, resolveFileChipTarget } from "./fileChipMenu";
 import { useFileChipShare } from "./useFileChipShare";
 import { useOpenLinkedThread } from "./useOpenLinkedThread";
+import { assistantSenders, messageAssistantId } from "@t3tools/client-runtime/assistantPresence";
+import { AssistantFeedMessage } from "../assistants/AssistantPresence";
 import {
   MarkdownImageAvailableWidthContext,
   ThreadMarkdownImage,
@@ -1702,6 +1704,7 @@ function renderFeedEntry(
     readonly threadTitle: string;
     readonly workflowOpening: WorkflowOpening | null;
     readonly userMessageGrouping: GroupedThreadFeedRow["userMessageGrouping"];
+    readonly assistantFirstMessageIds: ReadonlySet<string>;
   },
 ) {
   const entry = info.item;
@@ -1939,6 +1942,27 @@ function renderFeedEntry(
           linkHandlers={props.markdownLinkHandlers}
           renderImage={props.renderMarkdownImage}
         />
+      );
+    }
+    const presenceAssistantId = isUser ? messageAssistantId(message) : null;
+    if (presenceAssistantId !== null) {
+      return (
+        <AssistantFeedMessage
+          environmentId={props.environmentId}
+          assistantId={presenceAssistantId}
+          joinedAtLabel={props.assistantFirstMessageIds.has(message.id) ? timestampLabel : null}
+        >
+          <UserMessageContent
+            text={renderedText}
+            environmentId={props.environmentId}
+            context={message.context}
+            markdownStyles={markdownStyles.assistant}
+            reviewCommentColors={props.reviewCommentColors}
+            skills={props.skills}
+            linkHandlers={props.markdownLinkHandlers}
+            renderImage={props.renderMarkdownImage}
+          />
+        </AssistantFeedMessage>
       );
     }
     if (isUser) {
@@ -3441,6 +3465,16 @@ export const ThreadFeed = memo(function ThreadFeed({
     { anchorOffset: anchorTopInset + CHAT_LIST_ANCHOR_OFFSET },
   );
   const failedRunIds = failedFeedRunIds(props.feed, props.latestRun);
+  const assistantFirstMessageIds = useMemo(
+    () =>
+      new Set(
+        assistantSenders(
+          props.feed.flatMap((entry) => (entry.type === "message" ? [entry.message] : [])),
+          [],
+        ).map((sender) => sender.firstMessageId),
+      ),
+    [props.feed],
+  );
   const terminalAssistantMessageIds = (() => {
     const terminalIdsByTurn = new Map<RunId, string>();
     for (const entry of props.feed) {
@@ -3742,6 +3776,7 @@ export const ThreadFeed = memo(function ThreadFeed({
             />
           ) : null}
           {renderFeedEntry(info, {
+            assistantFirstMessageIds,
             userMessageGrouping: info.item.userMessageGrouping,
             environmentId: props.environmentId,
             dispatchingMessageId: props.dispatchingMessageId,

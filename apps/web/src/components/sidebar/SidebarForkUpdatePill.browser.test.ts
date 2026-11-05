@@ -1,7 +1,27 @@
+import { createElement } from "react";
 import { expect, it, vi } from "vite-plus/test";
+import { page } from "vite-plus/test/browser";
 
+import { render } from "../../../test/render";
 import { toastManager } from "../ui/toast";
-import { announceForkUpdate } from "./SidebarForkUpdatePill";
+import { announceForkUpdate, SidebarForkUpdatePill } from "./SidebarForkUpdatePill";
+
+const fork = vi.hoisted(() => ({
+  status: null as null | {
+    available: boolean;
+    behind: number;
+    headTag: string | null;
+    upstreamTag: string | null;
+    channel: string;
+  },
+}));
+vi.mock("../forkUpdates/useForkUpdates", () => ({
+  useForkUpdatesEnvironmentId: () => "env",
+  useForkUpdateStatus: () => ({ status: fork.status, checking: false, check: () => {} }),
+}));
+
+const CHECKOUT_KEY = "t3code:fork-checkout-known";
+const railEntry = () => page.getByRole("link", { name: /Fork updates|is out upstream/ });
 
 const KEY = "t3code:fork-update-announced-tag";
 
@@ -22,4 +42,33 @@ it("announces each upstream tag once, across both pills and across reloads", () 
   announceForkUpdate("v9.0.3", open);
   expect(add).toHaveBeenCalledTimes(2);
   expect(JSON.parse(localStorage.getItem(KEY)!)).toBe("v9.0.3");
+});
+
+it("keeps the rail entry for a fork checkout and dots it only for a new upstream tag", async () => {
+  using _add = vi.spyOn(toastManager, "add").mockReturnValue("toast");
+  localStorage.removeItem(CHECKOUT_KEY);
+  fork.status = null;
+  {
+    // Not known as a fork yet, and the delayed first check has not run.
+    await using _screen = await render(createElement(SidebarForkUpdatePill, { placement: "rail" }));
+    await expect.element(railEntry()).not.toBeInTheDocument();
+  }
+  localStorage.setItem(CHECKOUT_KEY, "true");
+  {
+    await using screen = await render(createElement(SidebarForkUpdatePill, { placement: "rail" }));
+    await expect.element(railEntry()).toHaveAccessibleName("Fork updates");
+    expect(screen.container.querySelector("[data-slot=fork-update-dot]")).toBeNull();
+  }
+  fork.status = {
+    available: true,
+    behind: 3,
+    headTag: "v1.0.0",
+    upstreamTag: "v1.1.0",
+    channel: "latest",
+  };
+  await using screen = await render(createElement(SidebarForkUpdatePill, { placement: "rail" }));
+  using _timers = vi.useFakeTimers();
+  await vi.advanceTimersByTimeAsync(2 * 60_000);
+  await expect.element(railEntry()).toHaveAccessibleName(/v1\.1\.0 is out upstream/);
+  expect(screen.container.querySelector("[data-slot=fork-update-dot]")).not.toBeNull();
 });

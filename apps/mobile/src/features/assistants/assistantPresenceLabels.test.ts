@@ -1,0 +1,29 @@
+import { describe, expect, it } from "vite-plus/test";
+
+import {
+  accentWash,
+  presenceMessageCount,
+  presenceStatusLabel,
+  splitPresenceStack,
+} from "./assistantPresenceLabels";
+
+describe("assistant presence presentation", () => {
+  it.each([
+    [0, 0, 0],
+    [3, 3, 0],
+    [5, 3, 2],
+  ])("stack of %i shows %i and hides %i", (total, shown, hidden) => {
+    const result = splitPresenceStack(Array.from({ length: total }, (_, index) => index));
+    expect(result.shown).toHaveLength(shown);
+    expect(result.hidden).toBe(hidden);
+  });
+
+  it("builds hex washes, labels status and counts", () => {
+    expect(accentWash("#8b5cf6", 0.12)).toBe("#8b5cf61f");
+    expect(accentWash("#8b5cf6", 0.02)).toBe("#8b5cf605");
+    expect(presenceStatusLabel(true)).toBe("Working");
+    expect(presenceStatusLabel(false)).toBe("Idle");
+    expect(presenceMessageCount({ count: 1 })).toBe("1 message here");
+    expect(presenceMessageCount({ count: 2 })).toBe("2 messages here");
+  });
+});

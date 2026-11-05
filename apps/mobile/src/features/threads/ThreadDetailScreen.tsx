@@ -85,6 +85,7 @@ import {
   useContext,
   useEffect,
   useEffectEvent,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -206,6 +207,7 @@ import { WorkspaceMutationIdProvider } from "./WorkspaceMutationIdProvider";
 import { useThreadTurnSubagents } from "./ThreadAgentsSheet";
 import { ComposerQueuedEditBanner } from "./ComposerQueuedEdit";
 import { useThreadQueuedCount } from "./ThreadQueueControl";
+import { ThreadAssistantStack } from "../assistants/AssistantPresence";
 import { ThreadGuestShareBar } from "./ThreadGuestShareBar";
 import { ThreadComposerKanbanCardChip } from "../kanban/ThreadComposerKanbanCardChip";
 import { ThreadKanbanCardChip } from "../kanban/ThreadKanbanCardChip";
@@ -871,6 +873,10 @@ function ThreadDetailBody(
       (entry) => "acknowledged" in entry && entry.acknowledged === true,
     );
   const selectedThreadFeed = props.selectedThreadFeed;
+  const presenceMessages = useMemo(
+    () => selectedThreadFeed.flatMap((entry) => (entry.type === "message" ? [entry.message] : [])),
+    [selectedThreadFeed],
+  );
   // A palette message result opens the thread at that message: earlier
   // history loads until the message is in the feed, which then scrolls to it.
   const jumpMessageId = useSyncExternalStore(subscribeThreadMessageJump, () =>
@@ -1647,6 +1653,13 @@ function ThreadDetailBody(
                       threadRef={props.selectedThreadDetailRef}
                       canOperateThread={props.canOperateThread}
                     />
+                    {props.draftMode ? null : (
+                      <ThreadAssistantStack
+                        environmentId={props.environmentId}
+                        threadId={props.selectedThread.id}
+                        messages={presenceMessages}
+                      />
+                    )}
                     <ThreadKanbanCardChip
                       environmentId={props.environmentId}
                       threadId={props.selectedThread.id}
