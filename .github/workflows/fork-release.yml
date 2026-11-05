@@ -116,6 +116,15 @@ jobs:
             exit 1
           fi
 
+      # A bundle without a valid signature opens as "damaged" once downloaded: never publish one.
+      - name: Verify the app opens after download
+        shell: bash
+        run: |
+          set -euo pipefail
+          flags=()
+          if [[ "${{ steps.build.outputs.signed }}" == "true" ]]; then flags+=(--notarized); fi
+          bash scripts/verify-mac-desktop-artifact.sh "${flags[@]+"${flags[@]}"}" release-publish/*.dmg release-publish/*.zip
+
       - name: Upload build artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:

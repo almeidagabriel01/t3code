@@ -40,6 +40,16 @@ instead of downloading anything it shows the usual update button, and the button
 page so you can download the new DMG and install it by hand. The build marks itself with a
 `manual-update` resource file. Local `vp run fork:update` builds carry no feed, so they never announce releases.
 
+Without a Developer ID the app is still signed ad hoc as a whole bundle. Electron's own linker
+signature alone stops matching once the bundle is assembled, and macOS then reports a downloaded
+copy as "damaged" with no way to open it; a local build hides this because it carries no quarantine
+flag. The workflow runs `scripts/verify-mac-desktop-artifact.sh` on the DMG and zip and publishes
+nothing that fails. To check a release by hand, run the same script on the file downloaded from the
+release page.
+
+Opening an unsigned build the first time: macOS refuses it once, then System Settings → Privacy &
+Security shows **Open Anyway** for it. Right-click → Open no longer skips that step on recent macOS.
+
 ## GitHub secrets
 
 Add these under Settings → Secrets and variables → Actions. Without them the desktop build is

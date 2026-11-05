@@ -220,6 +220,7 @@ This checkout is a personal fork that adds features (notes, kanban, memory, dest
 
 - A UI change is not done until you have looked at it in a running client: dark, light and liquid glass; right-panel width (~360–540px) and full-page width; and the mobile simulator when mobile changed (`test-t3-mobile`). Tests and typecheck do not count as seeing it.
 - If the Browser panel's screenshots time out, drive the dev app with Playwright from `node_modules/.pnpm/playwright@*` (pair with `node apps/server/src/bin.ts pair --base-dir <worktree>/.t3`) and read the PNGs. Keep scripted steps in a JSON file. Pair and browse on the same host the web port answers on (Vite may bind only `[::1]`, so use `localhost` there): the pairing cookie does not carry across hosts.
+- Before telling the developer to install a desktop release, download its DMG from the release page and run `scripts/verify-mac-desktop-artifact.sh` on it: a local build skips the quarantine checks a download gets.
 - Save captures you will show the developer, and the scripts that make them, outside `/tmp`: macOS empties it on restart, and a report's images then show as unavailable.
 - Never drive the command palette or type into the app from a script: keystrokes land in whatever editor has focus and change user data or settings. Toggle appearance by setting the attribute on the test page only, and restore anything you changed in `<worktree>/.t3/userdata`.
 - Subagents do not verify visually. The session that integrates their work captures and reads the screenshots before reporting.
