@@ -215,7 +215,7 @@ export function NoteRowMenu(props: { note: NoteSummary; rows: NoteRowActions; ta
   const list = props.rows.actions(props.note);
   if (list.length === 0) return null;
   return (
-    <div className="absolute end-1.5 top-1.5 text-muted-foreground group-hover/row:text-foreground has-[[data-popup-open]]:text-foreground">
+    <div className="absolute end-1.5 top-1.5 text-muted-foreground sm:top-2 group-hover/row:text-foreground has-[[data-popup-open]]:text-foreground">
       <Menu>
         <MenuTrigger
           render={
