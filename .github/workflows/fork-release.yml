@@ -37,6 +37,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
         with:
+          # Full history and tags, so the release notes can list what changed since the last release.
+          fetch-depth: 0
           sparse-checkout: |
             /*
             !/.repos/
@@ -165,6 +167,20 @@ jobs:
           notes="Fork release $VERSION, based on upstream v${VERSION%%-fork.*}."
           if [[ "$SIGNED" != "true" ]]; then
             notes="$notes Unsigned build: install it from the DMG. Installed copies announce new versions and open this page to download them."
+          fi
+          previous="$(gh release view --json tagName --jq .tagName 2>/dev/null || true)"
+          if [[ -n "$previous" ]] && git rev-parse -q --verify "refs/tags/$previous" >/dev/null; then
+            # First parent only: an upstream merge reads as one line, not every upstream commit.
+            log="$(git log --first-parent --format=%s "$previous..$GITHUB_SHA")"
+            section() {
+              local items
+              items="$(grep -E "^($2)(\([^)]*\))?!?: " <<<"$log" | sed -E 's/^[a-z]+(\([^)]*\))?!?: //' |
+                awk '!seen[$0]++ { print "- " toupper(substr($0, 1, 1)) substr($0, 2) }' || true)"
+              [[ -n "$items" ]] && printf '\n\n### %s\n\n%s' "$1" "$items"
+              return 0
+            }
+            changes="$(section Features feat)$(section Fixes 'fix|perf')$(section Upstream merge)"
+            notes="$notes"$'\n\n'"## Changes since $previous${changes:-$'\n\nMaintenance only.'}"
           fi
           gh release create "v$VERSION" release-publish/* \
             --target "$GITHUB_SHA" \

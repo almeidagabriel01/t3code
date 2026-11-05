@@ -28,6 +28,8 @@ versions as semver (`0.1.6-fork.2` < `0.1.6-fork.3` < `0.1.7-fork.1`).
 2. Desktop: run the `Fork release` workflow (`gh workflow run fork-release.yml -f publish=true`).
    With `publish=false` it only builds and attaches the files to the run. It refuses to run if the
    versions disagree or `v<version>` already exists, and it never runs on `pingdotgg/t3code`.
+   The release notes list the `feat`, `fix`/`perf` and upstream `merge` commit subjects since the
+   previous release, so those subjects are what users read.
 3. Mobile: run `Mobile EAS fork release` (`gh workflow run mobile-eas-fork-release.yml -f platform=ios`).
    iOS accepts only numeric versions, so the app version is the upstream base (`0.1.6`) and EAS
    counts the build number.
