@@ -62,8 +62,10 @@ const run = Effect.fn("mcp.watch.run")(
         ...(input.prNumber === undefined ? {} : { prNumber: input.prNumber }),
       };
       // A repeat of the same request lands on the watch it made, so a retry never doubles it.
+      // A finished one-shot watch is disabled, and asking again must make a live one.
       const same = mine.find(
         (watch) =>
+          watch.enabled &&
           watch.title === title &&
           watch.instruction === (instruction ?? "") &&
           JSON.stringify(watch.filter) === JSON.stringify(filter),

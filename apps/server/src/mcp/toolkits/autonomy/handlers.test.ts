@@ -126,10 +126,16 @@ it.effect(
       });
       expect((yield* call(create)).result.watchId).toBe(first.watchId);
       expect(watches).toHaveLength(1);
+      // Once it fired and switched itself off, the same request makes a new live watch.
+      watches[0] = { ...watches[0]!, enabled: false };
+      const again = (yield* call(create)).result;
+      expect(again.watchId).not.toBe(first.watchId);
+      expect(again.enabled).toBe(true);
+      watches.shift();
       expect((yield* call({ action: "list" })).result.watches).toHaveLength(1);
-      expect((yield* call({ action: "pause", watchId: first.watchId })).result.enabled).toBe(false);
-      expect((yield* call({ action: "resume", watchId: first.watchId })).result.enabled).toBe(true);
-      expect((yield* call({ action: "delete", watchId: first.watchId })).result).toMatchObject({
+      expect((yield* call({ action: "pause", watchId: again.watchId })).result.enabled).toBe(false);
+      expect((yield* call({ action: "resume", watchId: again.watchId })).result.enabled).toBe(true);
+      expect((yield* call({ action: "delete", watchId: again.watchId })).result).toMatchObject({
         deleted: true,
       });
       expect(watches).toHaveLength(0);
