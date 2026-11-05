@@ -26,6 +26,7 @@ function BoundedNumberField(props: {
   readonly value: number;
   readonly bounds: { readonly min: number; readonly max: number };
   readonly unit: string;
+  readonly disabled: boolean;
   readonly onCommit: (value: number) => void;
 }) {
   const [text, setText] = useState(String(props.value));
@@ -41,6 +42,7 @@ function BoundedNumberField(props: {
           aria-label={props.label}
           className="w-24"
           inputMode="numeric"
+          disabled={props.disabled}
           aria-invalid={parsed === null}
           value={text}
           onChange={(event) => setText(event.target.value)}
@@ -49,7 +51,7 @@ function BoundedNumberField(props: {
             if (event.key === "Enter") event.currentTarget.blur();
           }}
         />
-        <span className="text-xs text-muted-foreground">{props.unit}</span>
+        <span className="w-12 text-xs text-muted-foreground">{props.unit}</span>
       </div>
       {parsed === null ? (
         <p className="text-xs text-destructive-foreground">
@@ -91,6 +93,7 @@ export function AutonomySection(props: {
   const update = useUpdateEnvironmentSettings(environmentId);
   const telegramIds = useTelegramEnvironmentIds();
   const write = (next: AutonomySettings) => update({ autonomy: next });
+  const paused = !autonomy.enabled;
 
   return (
     <SettingsSection title={`Autonomy${props.suffix}`} icon={<BellRingIcon className={ICON} />}>
@@ -114,6 +117,7 @@ export function AutonomySection(props: {
             <Switch
               checked={autonomy.rules[option.rule]}
               aria-label={option.label}
+              disabled={paused}
               onCheckedChange={(on) => write(withAutonomyRule(autonomy, option.rule, on))}
             />
           }
@@ -129,6 +133,7 @@ export function AutonomySection(props: {
             value={autonomy.waitingMinutes}
             bounds={AUTONOMY_MINUTES_BOUNDS}
             unit="minutes"
+            disabled={paused}
             onCommit={(waitingMinutes) => write({ ...autonomy, waitingMinutes })}
           />
         }
@@ -143,6 +148,7 @@ export function AutonomySection(props: {
             value={autonomy.stuckMinutes}
             bounds={AUTONOMY_MINUTES_BOUNDS}
             unit="minutes"
+            disabled={paused}
             onCommit={(stuckMinutes) => write({ ...autonomy, stuckMinutes })}
           />
         }
@@ -157,6 +163,7 @@ export function AutonomySection(props: {
             value={autonomy.maxWakesPerDay}
             bounds={AUTONOMY_WAKES_BOUNDS}
             unit="per day"
+            disabled={paused}
             onCommit={(maxWakesPerDay) => write({ ...autonomy, maxWakesPerDay })}
           />
         }
@@ -174,6 +181,7 @@ export function AutonomySection(props: {
             <Switch
               checked={autonomy.channels.includes(channel)}
               aria-label={`Notify on ${AUTONOMY_CHANNEL_LABELS[channel]}`}
+              disabled={paused}
               onCheckedChange={(on) => write(withAutonomyChannel(autonomy, channel, on))}
             />
           }

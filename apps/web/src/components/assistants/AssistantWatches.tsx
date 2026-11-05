@@ -52,6 +52,7 @@ function WatchForm(props: {
         <Label htmlFor="watch-title">Title</Label>
         <Input
           id="watch-title"
+          placeholder="Review finished runs"
           value={draft.title}
           maxLength={120}
           onChange={(event) => props.onChange({ title: event.target.value })}
@@ -115,6 +116,7 @@ function WatchForm(props: {
         <Textarea
           id="watch-instruction"
           rows={3}
+          placeholder="Check that the agent did everything it was asked and tell me what it missed."
           value={draft.instruction}
           maxLength={AUTONOMY_WATCH_INSTRUCTION_MAX_LENGTH}
           onChange={(event) => props.onChange({ instruction: event.target.value })}

@@ -307,6 +307,9 @@ const watch = (id: string, overrides: Partial<AutonomyWatch> = {}): AutonomyWatc
 it("writes the whole autonomy object when a switch changes", async () => {
   fakeSettings.patches = [];
   fakeAssistants.items = [assistant("jarvis", "Jarvis", { isDefault: true })];
+  const on = { ...DEFAULT_AUTONOMY_SETTINGS, enabled: true };
+  setFakeAutonomy(on);
+  appAtomRegistry.reset();
   await using _screen = await openApp("/settings/assistants");
   await userEvent.click(page.getByRole("switch", { name: "Assistants can notify you" }));
   await userEvent.click(page.getByRole("switch", { name: "Run looks stuck" }));
@@ -314,20 +317,32 @@ it("writes the whole autonomy object when a switch changes", async () => {
   await eventually(() => expect(fakeSettings.patches).toHaveLength(3));
   // Each patch carries every field, so a write never drops a sibling setting.
   expect(fakeSettings.patches).toEqual([
-    { autonomy: { ...DEFAULT_AUTONOMY_SETTINGS, enabled: true } },
-    {
-      autonomy: {
-        ...DEFAULT_AUTONOMY_SETTINGS,
-        rules: { ...DEFAULT_AUTONOMY_SETTINGS.rules, stuck: false },
-      },
-    },
-    { autonomy: { ...DEFAULT_AUTONOMY_SETTINGS, channels: ["t3"] } },
+    { autonomy: { ...on, enabled: false } },
+    { autonomy: { ...on, rules: { ...on.rules, stuck: false } } },
+    { autonomy: { ...on, channels: ["t3"] } },
   ]);
+});
+
+it("locks the rules, limits and channels while notifications are paused", async () => {
+  fakeAssistants.items = [assistant("jarvis", "Jarvis", { isDefault: true })];
+  setFakeAutonomy(DEFAULT_AUTONOMY_SETTINGS);
+  appAtomRegistry.reset();
+  await using _screen = await openApp("/settings/assistants");
+  await expect
+    .element(page.getByRole("switch", { name: "Assistants can notify you" }))
+    .toBeEnabled();
+  for (const name of ["Run looks stuck", "Notify on Telegram"]) {
+    await expect.element(page.getByRole("switch", { name })).toBeDisabled();
+  }
+  await expect.element(page.getByLabelText("Waiting minutes")).toBeDisabled();
 });
 
 it("saves valid numbers once and refuses out-of-range ones", async () => {
   fakeSettings.patches = [];
   fakeAssistants.items = [assistant("jarvis", "Jarvis", { isDefault: true })];
+  const on = { ...DEFAULT_AUTONOMY_SETTINGS, enabled: true };
+  setFakeAutonomy(on);
+  appAtomRegistry.reset();
   await using _screen = await openApp("/settings/assistants");
   await userEvent.fill(page.getByLabelText("Waiting minutes"), "45");
   await userEvent.keyboard("{Enter}");
@@ -338,8 +353,8 @@ it("saves valid numbers once and refuses out-of-range ones", async () => {
   await userEvent.keyboard("{Enter}");
   await eventually(() => expect(fakeSettings.patches).toHaveLength(2));
   expect(fakeSettings.patches).toEqual([
-    { autonomy: { ...DEFAULT_AUTONOMY_SETTINGS, waitingMinutes: 45 } },
-    { autonomy: { ...DEFAULT_AUTONOMY_SETTINGS, stuckMinutes: 10 } },
+    { autonomy: { ...on, waitingMinutes: 45 } },
+    { autonomy: { ...on, stuckMinutes: 10 } },
   ]);
 });
 
