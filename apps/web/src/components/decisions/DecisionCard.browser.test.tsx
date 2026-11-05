@@ -64,6 +64,24 @@ it("dismisses without choosing, and shows a refusal inline", async () => {
   await expect.element(page.getByRole("alert")).toHaveTextContent("Already expired.");
 });
 
+it("an assistant's notice only offers to acknowledge it", async () => {
+  const onDismiss = vi.fn(ok);
+  await using _screen = await render(
+    <DecisionCard
+      decision={{ ...open, notice: true, options: [{ id: "ok", label: "Got it" }] }}
+      canAct
+      onAnswer={ok}
+      onDismiss={onDismiss}
+    />,
+    { router: false }, // no navigation in the card
+  );
+  await expect.element(page.getByText("Two ways to do it.")).toBeVisible();
+  expect(page.getByRole("button", { name: "Answer" }).elements()).toHaveLength(0);
+  expect(page.getByText("Other answer or add a note").elements()).toHaveLength(0);
+  await userEvent.click(page.getByRole("button", { name: "Got it" }));
+  expect(onDismiss).toHaveBeenCalledTimes(1);
+});
+
 it("reads a settled decision without controls", async () => {
   await using _screen = await render(
     <DecisionCard

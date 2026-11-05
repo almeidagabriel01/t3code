@@ -275,6 +275,44 @@ function OpenCard(props: DecisionCardProps) {
   );
 }
 
+/** An assistant's notice only informs: read it, then acknowledge it. */
+function NoticeCard(props: DecisionCardProps) {
+  const { decision } = props;
+  const actions = useDecisionActions(props.environmentId);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const acknowledge = async () => {
+    setBusy(true);
+    const reply = await actions.dismiss(decision.id);
+    setBusy(false);
+    if (!reply.ok) setError(reply.message);
+  };
+  return (
+    <View className="gap-3">
+      <Heading decision={decision} onOpenThread={props.onOpenThread} />
+      <Context
+        markdown={decision.context}
+        environmentId={props.environmentId}
+        threadId={decision.fromThreadId}
+      />
+      {error ? (
+        <Text accessibilityRole="alert" className="font-sans text-xs text-danger-foreground">
+          {error}
+        </Text>
+      ) : null}
+      <View className="flex-row justify-end">
+        <Button
+          label="Got it"
+          tone="primary"
+          disabled={!actions.canAct || busy}
+          loading={busy}
+          onPress={() => void acknowledge()}
+        />
+      </View>
+    </View>
+  );
+}
+
 function SettledCard(props: DecisionCardProps) {
   const { outcome, detail } = describeSettledDecision(props.decision);
   return (
@@ -292,7 +330,13 @@ function SettledCard(props: DecisionCardProps) {
 export function DecisionCard(props: DecisionCardProps) {
   return (
     <View className="rounded-[20px] border border-border bg-card-alt p-4">
-      {props.decision.status === "open" ? <OpenCard {...props} /> : <SettledCard {...props} />}
+      {props.decision.status !== "open" ? (
+        <SettledCard {...props} />
+      ) : props.decision.notice ? (
+        <NoticeCard {...props} />
+      ) : (
+        <OpenCard {...props} />
+      )}
     </View>
   );
 }

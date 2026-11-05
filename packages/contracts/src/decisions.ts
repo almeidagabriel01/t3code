@@ -69,6 +69,8 @@ export const Decision = Schema.Struct({
   deliveredAt: Schema.optional(IsoDateTime),
   /** Set when the decision mirrors a provider approval; answering responds to that request. */
   approvalRequestId: Schema.optional(Schema.String),
+  /** Set on an assistant's notice: it only informs, so the user acknowledges it instead of answering. */
+  notice: Schema.optional(Schema.Literal(true)),
   createdAt: IsoDateTime,
 });
 export type Decision = typeof Decision.Type;

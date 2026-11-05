@@ -105,6 +105,7 @@ const toDecision = (row: DecisionRow): Decision => ({
   ...(row.answered_at === null ? {} : { answeredAt: row.answered_at }),
   ...(row.delivered_at === null ? {} : { deliveredAt: row.delivered_at }),
   ...(row.approval_request_id === null ? {} : { approvalRequestId: row.approval_request_id }),
+  ...(row.client_request_id.startsWith(NOTICE_REQUEST_PREFIX) ? { notice: true as const } : {}),
   createdAt: row.created_at,
 });
 

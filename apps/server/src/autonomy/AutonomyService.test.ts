@@ -514,6 +514,7 @@ it.effect(
       const decisions = yield* DecisionService.DecisionService;
       const [notice] = yield* decisions.list({});
       assert.equal(notice!.options[0]!.label, "Got it");
+      assert.isTrue(notice!.notice);
       assert.include(notice!.context, "missing env var");
       const before = h.sent.length;
       yield* decisions.dismiss(notice!.id);

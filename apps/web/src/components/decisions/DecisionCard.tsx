@@ -346,6 +346,34 @@ function OpenCard(props: DecisionCardProps) {
   );
 }
 
+/** An assistant's notice only informs: read it, then acknowledge it. */
+function NoticeCard(props: DecisionCardProps) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const acknowledge = async () => {
+    setBusy(true);
+    const reply = await props.onDismiss();
+    setBusy(false);
+    if (!reply.ok) setError(reply.message);
+  };
+  return (
+    <div className="flex flex-col gap-3">
+      <Heading decision={props.decision} onOpenThread={props.onOpenThread} />
+      <Context text={props.decision.context} />
+      {error ? (
+        <p role="alert" className="text-xs text-destructive-foreground">
+          {error}
+        </p>
+      ) : null}
+      <div className="flex justify-end">
+        <Button size="sm" disabled={!props.canAct || busy} onClick={() => void acknowledge()}>
+          Got it
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 /** One decision an agent put to the user: answer it, dismiss it, or read how it ended. */
 export function DecisionCard(props: DecisionCardProps) {
   return (
@@ -358,7 +386,13 @@ export function DecisionCard(props: DecisionCardProps) {
           "surface-glass rounded-xl border border-foreground/12 p-3 shadow-xs @2xl:p-4",
       )}
     >
-      {props.decision.status === "open" ? <OpenCard {...props} /> : <SettledCard {...props} />}
+      {props.decision.status !== "open" ? (
+        <SettledCard {...props} />
+      ) : props.decision.notice ? (
+        <NoticeCard {...props} />
+      ) : (
+        <OpenCard {...props} />
+      )}
     </article>
   );
 }

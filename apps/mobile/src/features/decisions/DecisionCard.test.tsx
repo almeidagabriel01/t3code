@@ -9,6 +9,7 @@ const { mocks, Children } = vi.hoisted(() => ({
     shell: null as null | { projectId: string },
     navigateToPullRequest: vi.fn(),
     answer: vi.fn(() => Promise.resolve({ ok: true })),
+    dismiss: vi.fn(() => Promise.resolve({ ok: true })),
     clear: vi.fn(),
     files: {
       canAttach: true,
@@ -51,7 +52,7 @@ vi.mock("../../native/useOpenPullRequest", () => ({
   useNavigateToPullRequest: () => mocks.navigateToPullRequest,
 }));
 vi.mock("../../state/decisions", () => ({
-  useDecisionActions: () => ({ canAct: true, answer: mocks.answer, dismiss: vi.fn() }),
+  useDecisionActions: () => ({ canAct: true, answer: mocks.answer, dismiss: mocks.dismiss }),
 }));
 vi.mock("../../state/entities", () => ({
   useLiveThreadLinkLabels: (markdown: string) => markdown,
@@ -83,12 +84,13 @@ beforeEach(() => {
   root = createRoot(container);
   mocks.navigateToPullRequest.mockReset();
   mocks.answer.mockClear();
+  mocks.dismiss.mockClear();
   mocks.clear.mockClear();
   mocks.files = { canAttach: true, settled: true, uploaded: [] };
 });
-const render = (shell: { projectId: string } | null) => {
+const render = (shell: { projectId: string } | null, shown: Decision = decision) => {
   mocks.shell = shell;
-  act(() => root.render(<DecisionCard environmentId={"hub" as never} decision={decision} />));
+  act(() => root.render(<DecisionCard environmentId={"hub" as never} decision={shown} />));
 };
 afterEach(() => act(() => root.unmount()));
 
@@ -129,5 +131,20 @@ describe("DecisionCard attachments", () => {
     render(null);
     expect(container.querySelector("[data-attach-controls]")).toBeNull();
     expect(answerButton().disabled).toBe(true);
+  });
+});
+
+describe("DecisionCard notice", () => {
+  it("an assistant's notice only offers to acknowledge it", async () => {
+    render(null, { ...decision, notice: true });
+    const labels = [...container.querySelectorAll("button[data-label]")].map((button) =>
+      button.getAttribute("data-label"),
+    );
+    expect(labels).toEqual(["Got it"]);
+    expect(container.querySelector("[data-attach-controls]")).toBeNull();
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('button[data-label="Got it"]')!.click(),
+    );
+    expect(mocks.dismiss).toHaveBeenCalledWith("d1");
   });
 });
