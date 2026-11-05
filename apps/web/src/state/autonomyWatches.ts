@@ -1,13 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { watchReply, type WatchReply } from "@t3tools/client-runtime/autonomy";
 import type { AutonomyWatch, AutonomyWatchUpsertInput, EnvironmentId } from "@t3tools/contracts";
-import type * as Cause from "effect/Cause";
 
 import { useEnvironmentQuery } from "./query";
 import { serverEnvironment } from "./server";
 import { useAtomCommand } from "./use-atom-command";
-
-export type WatchReply = { readonly ok: true } | { readonly ok: false; readonly message: string };
 
 /** Every watch on the environment; filter by assistant where it is shown. */
 export function useAutonomyWatches(environmentId: EnvironmentId) {
@@ -23,20 +20,10 @@ export function useAutonomyWatchActions(environmentId: EnvironmentId) {
     reportFailure: false,
   });
   const remove = useAtomCommand(serverEnvironment.deleteAutonomyWatch, { reportFailure: false });
-  const settle = (
-    result:
-      | { readonly _tag: "Success" }
-      | { readonly _tag: "Failure"; readonly cause: Cause.Cause<unknown> },
-  ): WatchReply => {
-    if (result._tag === "Success") {
-      refresh();
-      return { ok: true };
-    }
-    const error = squashAtomCommandFailure(result);
-    return {
-      ok: false,
-      message: error instanceof Error ? error.message : "The request failed. Try again.",
-    };
+  const settle = (result: Parameters<typeof watchReply>[0]): WatchReply => {
+    const reply = watchReply(result);
+    if (reply.ok) refresh();
+    return reply;
   };
   return {
     canAct,

@@ -9,6 +9,9 @@ import {
   type AutonomyWatchUpsertInput,
   type ProjectId,
 } from "@t3tools/contracts";
+import type * as Cause from "effect/Cause";
+
+import { squashAtomCommandFailure } from "./state/runtime.ts";
 
 export const AUTONOMY_MINUTES_BOUNDS = { min: 1, max: 24 * 60 } as const;
 export const AUTONOMY_WAKES_BOUNDS = { min: 1, max: 1000 } as const;
@@ -131,9 +134,12 @@ function pad(value: number): string {
   return String(value).padStart(2, "0");
 }
 
+/** `YYYY-MM-DDTHH:mm` in local time, the shape a watch draft keeps its expiry in. */
+function localDateTimeString(date: Date): string {
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
 export function watchDraftFromWatch(watch: AutonomyWatch): AutonomyWatchDraft {
-  // @effect-diagnostics-next-line globalDate:off
-  const expires = watch.expiresAt === null ? null : new Date(watch.expiresAt);
   return {
     id: watch.id,
     title: watch.title,
@@ -142,9 +148,24 @@ export function watchDraftFromWatch(watch: AutonomyWatch): AutonomyWatchDraft {
     prNumber: watch.filter.prNumber === undefined ? "" : String(watch.filter.prNumber),
     instruction: watch.instruction,
     oneShot: watch.oneShot,
-    expiresAt: expires
-      ? `${expires.getFullYear()}-${pad(expires.getMonth() + 1)}-${pad(expires.getDate())}T${pad(expires.getHours())}:${pad(expires.getMinutes())}`
-      : "",
+    // @effect-diagnostics-next-line globalDate:off
+    expiresAt: watch.expiresAt === null ? "" : localDateTimeString(new Date(watch.expiresAt)),
+  };
+}
+
+export type WatchReply = { readonly ok: true } | { readonly ok: false; readonly message: string };
+
+/** A watch change's result as a reply the form can show where it happened. */
+export function watchReply(
+  result:
+    | { readonly _tag: "Success" }
+    | { readonly _tag: "Failure"; readonly cause: Cause.Cause<unknown> },
+): WatchReply {
+  if (result._tag === "Success") return { ok: true };
+  const error = squashAtomCommandFailure(result);
+  return {
+    ok: false,
+    message: error instanceof Error ? error.message : "The request failed. Try again.",
   };
 }
 

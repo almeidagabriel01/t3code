@@ -1,5 +1,6 @@
 import { ProjectId, type AutonomyWatch } from "@t3tools/contracts";
 import { DEFAULT_AUTONOMY_SETTINGS } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -11,6 +12,7 @@ import {
   toggleInList,
   watchDraftFromWatch,
   watchInputFromDraft,
+  watchReply,
   watchSummary,
   withAutonomyChannel,
   withAutonomyRule,
@@ -98,5 +100,21 @@ describe("sameAssistantAutonomy", () => {
     expect(
       sameAssistantAutonomy({ ...base, projectIds: [project] }, { ...base, projectIds: [] }),
     ).toBe(false);
+  });
+});
+
+describe("watchReply", () => {
+  it.each([
+    [{ _tag: "Success" as const }, { ok: true }],
+    [
+      { _tag: "Failure" as const, cause: Cause.fail(new Error("Too many watches")) },
+      { ok: false, message: "Too many watches" },
+    ],
+    [
+      { _tag: "Failure" as const, cause: Cause.fail("boom") },
+      { ok: false, message: "The request failed. Try again." },
+    ],
+  ])("settles %# into a reply", (result, reply) => {
+    expect(watchReply(result)).toEqual(reply);
   });
 });
