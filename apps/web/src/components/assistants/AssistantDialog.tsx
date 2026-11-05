@@ -2,21 +2,28 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   ASSISTANT_INSTRUCTIONS_MAX_CHARS,
   ASSISTANT_NAME_MAX_LENGTH,
+  ASSISTANT_ROLE_MAX_LENGTH,
   assistantHandleFromName,
   AssistantHandle,
   BudgetPeriod,
   DEFAULT_ASSISTANT_AUTONOMY,
   type AssistantAutonomy,
+  type AssistantId,
   type AssistantToolAccess,
   type EnvironmentId,
   type ModelSelection,
   type ProjectId,
 } from "@t3tools/contracts";
+import {
+  directReports,
+  leaderChoices,
+  NO_LEADER_LABEL,
+} from "@t3tools/client-runtime/assistantTeam";
 import { sameAssistantAutonomy } from "@t3tools/client-runtime/autonomy";
 import { createModelSelection } from "@t3tools/shared/model";
 import { Link, useRouter } from "@tanstack/react-router";
 import * as Schema from "effect/Schema";
-import { BrainIcon } from "lucide-react";
+import { BrainIcon, CalendarPlusIcon } from "lucide-react";
 import { useState } from "react";
 
 import { useEnvironmentSettings } from "../../hooks/useSettings";
@@ -71,6 +78,8 @@ import { TOOL_ACCESS_OPTIONS } from "./assistantPresentation";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 
 const isValidHandle = Schema.is(AssistantHandle);
+/** Select values are non-empty strings; no assistant id looks like this. */
+const NO_LEADER_VALUE = "__nobody__";
 
 /** Renders the create/edit dialog once, wherever it was asked for. */
 export function AssistantDialogHost() {
@@ -215,6 +224,9 @@ function AssistantDialog(props: {
   );
   const [projectId, setProjectId] = useState<ProjectId | null>(assistant?.projectId ?? null);
   const [pickedModel, setPickedModel] = useState<ModelSelection | null>(null);
+  const [role, setRole] = useState(assistant?.role ?? "");
+  const [reportsTo, setReportsTo] = useState<AssistantId | null>(assistant?.reportsTo ?? null);
+  const [standupAdded, setStandupAdded] = useState(false);
   const [budgetDraft, setBudgetDraft] = useState(() => budgetToDraft(assistant?.budget ?? null));
   const [autonomy, setAutonomy] = useState<AssistantAutonomy>(
     assistant?.autonomy ?? DEFAULT_ASSISTANT_AUTONOMY,
@@ -226,6 +238,11 @@ function AssistantDialog(props: {
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
+  const team = [...active, ...archived]
+    .filter((entry) => entry.environmentId === environmentId)
+    .map((entry) => entry.assistant);
+  const leaders = leaderChoices(team, assistant?.id ?? null);
+  const reports = assistant ? directReports(team, assistant.id) : [];
   const projects = useProjects().filter((project) => project.environmentId === environmentId);
   const groups = useSidebarProjectGroups();
   const projectName = (candidate: (typeof projects)[number]) =>
@@ -273,6 +290,16 @@ function AssistantDialog(props: {
     handleValid &&
     effectiveProjectId !== null;
 
+  const addStandup = async () => {
+    if (!assistant || saving) return;
+    setSaving(true);
+    setError(null);
+    const reply = await actions.update({ assistantId: assistant.id, addStandup: true });
+    setSaving(false);
+    if (reply.ok) setStandupAdded(true);
+    else setError(reply.message);
+  };
+
   const save = async () => {
     if (!canSave || effectiveProjectId === null) return;
     const budget = budgetFromDraft(budgetDraft, Intl.DateTimeFormat().resolvedOptions().timeZone);
@@ -289,6 +316,8 @@ function AssistantDialog(props: {
           ...(pickedModel ? { modelSelection: pickedModel } : {}),
           ...(instructions !== assistant.instructions ? { instructions } : {}),
           ...(toolAccess !== assistant.toolAccess ? { toolAccess } : {}),
+          ...(role.trim() !== assistant.role ? { role: role.trim() } : {}),
+          ...(reportsTo !== assistant.reportsTo ? { reportsTo } : {}),
           budget: budget.budget,
           ...(sameAssistantAutonomy(autonomy, assistant.autonomy) ? {} : { autonomy }),
         })
@@ -299,6 +328,8 @@ function AssistantDialog(props: {
           ...(pickedModel ? { modelSelection: pickedModel } : {}),
           instructions,
           toolAccess,
+          ...(role.trim() === "" ? {} : { role: role.trim() }),
+          ...(reportsTo === null ? {} : { reportsTo }),
           ...(budget.budget ? { budget: budget.budget } : {}),
           ...(sameAssistantAutonomy(autonomy, DEFAULT_ASSISTANT_AUTONOMY) ? {} : { autonomy }),
         });
@@ -517,6 +548,74 @@ function AssistantDialog(props: {
                   </label>
                 ))}
               </RadioGroup>
+            </fieldset>
+            <fieldset className="flex flex-col gap-3">
+              <legend className="text-sm font-medium">Team</legend>
+              <div className="flex flex-col gap-1.5">
+                <FieldLabel
+                  htmlFor="assistant-role"
+                  label="Role"
+                  description="What it is to the others, such as CEO or Engineer. Agents see it."
+                />
+                <Input
+                  id="assistant-role"
+                  placeholder="CEO, Engineer…"
+                  value={role}
+                  maxLength={ASSISTANT_ROLE_MAX_LENGTH}
+                  onChange={(event) => setRole(event.target.value)}
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <FieldLabel
+                  htmlFor="assistant-reports-to"
+                  label="Reports to"
+                  description="Its leader can ask it for work and gets the answer back. It never messages up on its own."
+                />
+                <Select
+                  value={reportsTo ?? NO_LEADER_VALUE}
+                  onValueChange={(next) =>
+                    setReportsTo(next === NO_LEADER_VALUE ? null : (next as AssistantId))
+                  }
+                >
+                  <SelectTrigger id="assistant-reports-to" aria-label="Reports to">
+                    <SelectValue>
+                      {leaders.find((leader) => leader.id === reportsTo)?.name ?? NO_LEADER_LABEL}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectPopup alignItemWithTrigger={false}>
+                    <SelectItem hideIndicator value={NO_LEADER_VALUE}>
+                      {NO_LEADER_LABEL}
+                    </SelectItem>
+                    {leaders.map((leader) => (
+                      <SelectItem hideIndicator key={leader.id} value={leader.id}>
+                        {leader.name}
+                      </SelectItem>
+                    ))}
+                  </SelectPopup>
+                </Select>
+              </div>
+              {reports.length > 0 ? (
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-sm font-medium">Daily standup</span>
+                    <p className="text-xs text-muted-foreground">
+                      {standupAdded
+                        ? "Added to its schedules below, where you can change or remove it."
+                        : `Weekdays at 9:00 it asks ${reports.map((report) => report.name).join(", ")} for status and sends you one short report.`}
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    size="xs"
+                    variant="outline"
+                    disabled={saving || standupAdded || !actions.canAct}
+                    onClick={() => void addStandup()}
+                  >
+                    <CalendarPlusIcon />
+                    Add daily standup
+                  </Button>
+                </div>
+              ) : null}
             </fieldset>
             <BudgetFields
               draft={budgetDraft}

@@ -1,5 +1,6 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { Fragment } from "react";
+import { teamSubtitle } from "@t3tools/client-runtime/assistantTeam";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   ArchiveIcon,
@@ -58,7 +59,11 @@ function IconAction(props: {
   );
 }
 
-function AssistantRow(props: { readonly entry: AssistantEntry; readonly first: boolean }) {
+function AssistantRow(props: {
+  readonly entry: AssistantEntry;
+  readonly first: boolean;
+  readonly team: string | null;
+}) {
   const { assistant, environmentId } = props.entry;
   const archived = assistant.archivedAt !== null;
   const flows = useAssistantFlows(environmentId);
@@ -103,6 +108,7 @@ function AssistantRow(props: { readonly entry: AssistantEntry; readonly first: b
       }
       description={[
         `@${assistant.handle}`,
+        props.team,
         projectName,
         toolAccessLabel(assistant.toolAccess),
         model,
@@ -217,6 +223,13 @@ export function AssistantsSettingsPanel() {
     return [...groups];
   };
   const environmentIds = [...new Set([...active, ...archived].map((e) => e.environmentId))];
+  const teamOf = (entry: AssistantEntry) =>
+    teamSubtitle(
+      entry.assistant,
+      [...active, ...archived]
+        .filter((other) => other.environmentId === entry.environmentId)
+        .map((other) => other.assistant),
+    );
 
   return (
     <SettingsPageContainer>
@@ -253,6 +266,7 @@ export function AssistantsSettingsPanel() {
                   key={entryKey(entry)}
                   entry={entry}
                   first={index === 0 && rowIndex === 0}
+                  team={teamOf(entry)}
                 />
               ))}
             </SettingsSection>
@@ -271,7 +285,12 @@ export function AssistantsSettingsPanel() {
               icon={<ArchiveIcon className="size-4 text-muted-foreground" />}
             >
               {entries.map((entry) => (
-                <AssistantRow key={entryKey(entry)} entry={entry} first={false} />
+                <AssistantRow
+                  key={entryKey(entry)}
+                  entry={entry}
+                  first={false}
+                  team={teamOf(entry)}
+                />
               ))}
             </SettingsSection>
           ))

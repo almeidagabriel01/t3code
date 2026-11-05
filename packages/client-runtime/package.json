@@ -7,6 +7,10 @@
       "types": "./src/autonomy.ts",
       "default": "./src/autonomy.ts"
     },
+    "./assistantTeam": {
+      "types": "./src/assistantTeam.ts",
+      "default": "./src/assistantTeam.ts"
+    },
     "./assembly-highlighting": {
       "types": "./src/assemblyHighlighting.ts",
       "default": "./src/assemblyHighlighting.ts"
