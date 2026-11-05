@@ -2,7 +2,7 @@ import { createElement } from "react";
 import { expect, it, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
 
-import { render } from "../../../test/render";
+import { fakeTimers, render } from "../../../test/render";
 import { toastManager } from "../ui/toast";
 import { announceForkUpdate, SidebarForkUpdatePill } from "./SidebarForkUpdatePill";
 
@@ -67,13 +67,9 @@ it("keeps the rail entry for a fork checkout and dots it only for a new upstream
     channel: "latest",
   };
   // The delayed first check starts its timer on mount, so the clock is faked before rendering.
-  vi.useFakeTimers({ shouldAdvanceTime: true });
-  try {
-    await using screen = await render(createElement(SidebarForkUpdatePill, { placement: "rail" }));
-    await vi.advanceTimersByTimeAsync(2 * 60_000);
-    await expect.element(railEntry()).toHaveAccessibleName(/v1\.1\.0 is out upstream/);
-    expect(screen.container.querySelector("[data-slot=fork-update-dot]")).not.toBeNull();
-  } finally {
-    vi.useRealTimers();
-  }
+  using _timers = fakeTimers({ shouldAdvanceTime: true });
+  await using screen = await render(createElement(SidebarForkUpdatePill, { placement: "rail" }));
+  await vi.advanceTimersByTimeAsync(2 * 60_000);
+  await expect.element(railEntry()).toHaveAccessibleName(/v1\.1\.0 is out upstream/);
+  expect(screen.container.querySelector("[data-slot=fork-update-dot]")).not.toBeNull();
 });
