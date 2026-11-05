@@ -59,6 +59,7 @@ import type {
 } from "@t3tools/client-runtime/connection";
 import type { WsRpcProtocolClient } from "@t3tools/client-runtime/rpc";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
+import { createModelCapabilities } from "@t3tools/shared/model";
 import { APP_VERSION } from "~/branding";
 import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
@@ -339,6 +340,23 @@ function projectionOf(thread: FakeThread): OrchestrationV2ThreadProjection {
 
 let extraCapabilities: Record<string, boolean> = {};
 let hostOs: "linux" | "darwin" = "linux";
+let reasoningEffort = false;
+const effortCapabilities = createModelCapabilities({
+  optionDescriptors: [
+    {
+      id: "reasoningEffort",
+      label: "Reasoning",
+      type: "select",
+      role: "reasoning",
+      currentValue: "medium",
+      options: [
+        { id: "low", label: "Low" },
+        { id: "medium", label: "Medium" },
+        { id: "high", label: "High" },
+      ],
+    },
+  ],
+});
 // The same object when nothing is added, so scenarios that count renders see no new config.
 let autonomyOverride: AutonomySettings | null = null;
 /** Starts the server with these autonomy settings; reset when the environment is disposed. */
@@ -346,10 +364,22 @@ export function setFakeAutonomy(autonomy: AutonomySettings | null): void {
   autonomyOverride = autonomy;
 }
 const currentServerConfig = (): ServerConfig =>
-  Object.keys(extraCapabilities).length === 0 && hostOs === "linux" && autonomyOverride === null
+  Object.keys(extraCapabilities).length === 0 &&
+  hostOs === "linux" &&
+  autonomyOverride === null &&
+  !reasoningEffort
     ? serverConfig
     : {
         ...serverConfig,
+        providers: reasoningEffort
+          ? serverConfig.providers.map((provider) => ({
+              ...provider,
+              models: provider.models.map((model) => ({
+                ...model,
+                capabilities: effortCapabilities,
+              })),
+            }))
+          : serverConfig.providers,
         settings: autonomyOverride
           ? { ...serverConfig.settings, autonomy: autonomyOverride }
           : serverConfig.settings,
@@ -884,10 +914,13 @@ export function installFakeEnvironment(
     /** The host reports macOS, as a Mac running T3 Code does. */
     readonly mac?: boolean;
     readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
+    /** Models offer a Low/Medium/High reasoning effort. */
+    readonly reasoningEffort?: boolean;
   } = {},
 ): Disposable {
   threads = fixtures;
   hostOs = options.mac ? "darwin" : "linux";
+  reasoningEffort = options.reasoningEffort ?? false;
   extraCapabilities = {
     ...(options.decisions ? { decisions: true } : {}),
     ...(options.assistants ? { assistants: true } : {}),

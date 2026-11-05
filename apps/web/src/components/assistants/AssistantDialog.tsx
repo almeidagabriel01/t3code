@@ -33,6 +33,7 @@ import { useSidebarProjectGroups } from "../../hooks/useSidebarProjectGroups";
 import {
   getCustomModelOptionsByInstance,
   resolveEffectiveDefaultModelSelection,
+  selectsPlanAgent,
 } from "../../modelSelection";
 import {
   providerInstanceEntriesFor,
@@ -52,6 +53,7 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { validateMemorySettingsSearch } from "../settings/MemorySettings.logic";
 import { cn } from "../../lib/utils";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
+import { getTraitsSectionVisibility, TraitsPicker } from "../chat/TraitsPicker";
 import { BUDGET_PERIOD_LABELS } from "../settings/ProviderBudgetSection";
 import { SETTINGS_PICKER_TRIGGER_CLASSNAME } from "../settings/settingsLayout";
 import { Alert, AlertDescription } from "../ui/alert";
@@ -318,6 +320,19 @@ function AssistantDialog(props: {
   const currentModel: ModelSelection | null = thread?.modelSelection ?? defaultModel;
   const model = pickedModel ?? currentModel;
   const entries = providerInstanceEntriesFor(providers, settings, effectiveProjectId);
+  const modelEntry =
+    model === null ? undefined : entries.find((entry) => entry.instanceId === model.instanceId);
+  const traits =
+    model === null || modelEntry === undefined
+      ? null
+      : {
+          provider: modelEntry.driverKind,
+          models: modelEntry.models,
+          model: model.model,
+          modelOptions: model.options ?? [],
+          allowPromptInjectedEffort: false,
+          planModeEnabled: settings.planModeEnabled || selectsPlanAgent(model.options),
+        };
 
   const derivedHandle = assistantHandleFromName(name) ?? "";
   const handle = handleInput ?? (assistant ? assistant.handle : derivedHandle);
@@ -543,6 +558,31 @@ function AssistantDialog(props: {
                 )}
               </div>
             </div>
+            {model !== null &&
+            traits !== null &&
+            getTraitsSectionVisibility(traits).hasAnyControls ? (
+              <div className="flex flex-col gap-1.5">
+                <FieldLabel
+                  htmlFor="assistant-effort"
+                  label="Effort"
+                  description="How much it reasons on each turn, plus the other options this model has."
+                />
+                <div id="assistant-effort">
+                  <TraitsPicker
+                    {...traits}
+                    triggerClassName={cn(
+                      SETTINGS_PICKER_TRIGGER_CLASSNAME,
+                      "min-h-9 w-full justify-start text-left sm:min-h-8 sm:max-w-none",
+                    )}
+                    onModelOptionsChange={(modelOptions) =>
+                      setPickedModel(
+                        createModelSelection(model.instanceId, model.model, modelOptions),
+                      )
+                    }
+                  />
+                </div>
+              </div>
+            ) : null}
             <div className="flex flex-col gap-1.5">
               <FieldLabel
                 htmlFor="assistant-instructions"

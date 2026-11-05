@@ -59,6 +59,7 @@ vi.mock(import("~/rpc/requestLatencyState"), async (original) => ({
 installFakeEnvironment([threadWithHistory("thread-a", 2)], {
   assistants: true,
   telegramChannel: true,
+  reasoningEffort: true,
 });
 await page.viewport(1400, 900);
 __setClientSettingsForTests({
@@ -179,6 +180,23 @@ it("saves the spending limit the user sets and shows what was spent", async () =
       {
         assistantId: "jarvis",
         budget: { amountUsd: 12.5, period: "monthly", warnAtPercent: 90, blockWhenExceeded: true },
+      },
+    ]),
+  );
+});
+
+it("saves the effort the user picks with the assistant's model", async () => {
+  publishAssistants([assistant("jarvis", "Jarvis")]);
+  fakeAssistantEdits.updates = [];
+  await using _screen = await openEditDialog("Jarvis");
+  await userEvent.click(page.getByRole("button", { name: /Medium/ }));
+  await userEvent.click(page.getByRole("menuitemradio", { name: "High" }));
+  await userEvent.click(page.getByRole("button", { name: "Save" }));
+  await eventually(() =>
+    expect(fakeAssistantEdits.updates).toMatchObject([
+      {
+        assistantId: "jarvis",
+        modelSelection: { model: "gpt-5.4", options: [{ id: "reasoningEffort", value: "high" }] },
       },
     ]),
   );
