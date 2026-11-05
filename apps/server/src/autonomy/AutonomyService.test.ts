@@ -41,14 +41,14 @@ type Shell = {
   title: string;
   projectId: string;
   lineage: { relationshipToParent: string | null };
-  sideChatOf: unknown;
+  sideChatOf?: unknown;
   delegatedFrom?: unknown;
 };
+// Real shells omit `sideChatOf` unless the thread is a side chat.
 const plain: Shell = {
   title: "Fix login",
   projectId: "p1",
   lineage: { relationshipToParent: null },
-  sideChatOf: null,
 };
 
 const harness = () => {

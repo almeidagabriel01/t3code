@@ -15,6 +15,7 @@ import {
   type OrchestrationV2DomainEvent,
   type ProjectId,
   type ThreadId,
+  isSideChatThread,
 } from "@t3tools/contracts";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import * as Clock from "effect/Clock";
@@ -333,7 +334,7 @@ const make = Effect.gen(function* () {
               assistantIdFromThreadId(signal.threadId) !== null ||
               shell.lineage.relationshipToParent === "subagent" ||
               shell.delegatedFrom !== undefined ||
-              shell.sideChatOf !== null
+              isSideChatThread(shell)
             ) {
               return;
             }
