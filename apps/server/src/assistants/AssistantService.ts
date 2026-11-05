@@ -72,11 +72,11 @@ const threadFailure = (message: string) => (cause: unknown) =>
 export class AssistantService extends Context.Service<
   AssistantService,
   {
-    /** Every assistant, archived included; makes sure Jarvis and each active thread exist first. */
+    /** Every assistant, archived included; seeds Jarvis once and makes sure each active thread exists first. */
     readonly list: Effect.Effect<ReadonlyArray<Assistant>, AssistantError>;
     /** A snapshot, then one event per change. */
     readonly subscribe: Stream.Stream<AssistantsEvent, AssistantError>;
-    /** Idempotent: creates Jarvis and his conversation once, and replaces a deleted conversation. */
+    /** Restores Jarvis: recreates or unarchives him and replaces a deleted conversation. */
     readonly ensureDefault: Effect.Effect<Assistant, AssistantError>;
     readonly create: (input: AssistantsCreateInput) => Effect.Effect<Assistant, AssistantError>;
     readonly update: (input: AssistantsUpdateInput) => Effect.Effect<Assistant, AssistantError>;
@@ -266,9 +266,16 @@ const make = Effect.gen(function* () {
     yield* publish(assistantId);
   });
 
-  const ensureDefaultRow = Effect.gen(function* () {
-    const existing = yield* sql<{ readonly one: number }>`
-      SELECT 1 AS one FROM assistants WHERE assistant_id = ${DEFAULT_ASSISTANT_ID}`;
+  const markSeeded = Effect.gen(function* () {
+    yield* sql`
+      INSERT OR IGNORE INTO assistant_seeds (assistant_id, seeded_at)
+      VALUES (${DEFAULT_ASSISTANT_ID}, ${yield* nowIso})`;
+  });
+
+  /** Creates Jarvis if missing, unarchives him if archived, and makes sure he has a conversation. */
+  const restoreDefaultRow = Effect.gen(function* () {
+    const existing = yield* sql<{ readonly archived_at: string | null }>`
+      SELECT archived_at FROM assistants WHERE assistant_id = ${DEFAULT_ASSISTANT_ID}`;
     if (existing.length === 0) {
       const project = yield* folders.ensureAssistantProject.pipe(
         Effect.catch(threadFailure("Could not create the project for assistants.")),
@@ -282,19 +289,35 @@ const make = Effect.gen(function* () {
           ${DEFAULT_ASSISTANT_ID}, ${DEFAULT_ASSISTANT_ID}, 'Jarvis', ${project.projectId},
           ${JARVIS_INSTRUCTIONS}, 'full', 1, 1, ${now}, ${now}
         )`;
+    } else if (existing[0]!.archived_at !== null) {
+      const row = yield* findRow(DEFAULT_ASSISTANT_ID);
+      yield* sql`
+        UPDATE assistants SET archived_at = NULL, updated_at = ${yield* nowIso}
+        WHERE assistant_id = ${DEFAULT_ASSISTANT_ID}`;
+      if (row.thread_id !== null) {
+        const thread = yield* inspectThread(row.thread_id as ThreadId);
+        if (thread !== undefined && thread.deletedAt === null) {
+          yield* archiveThread(row.thread_id as ThreadId, false);
+        }
+      }
     }
+    yield* markSeeded;
     yield* ensureLaunched(DEFAULT_ASSISTANT_ID);
     return yield* findRow(DEFAULT_ASSISTANT_ID);
   });
 
-  /** Jarvis first, so a broken assistant never keeps the others from loading. */
+  /** Jarvis exists on first use only: a deleted or archived one stays that way until restored. */
+  const seedDefault = Effect.gen(function* () {
+    const seeded = yield* sql<{ readonly one: number }>`
+      SELECT 1 AS one FROM assistant_seeds WHERE assistant_id = ${DEFAULT_ASSISTANT_ID}`;
+    if (seeded.length === 0) yield* restoreDefaultRow;
+  });
+
   const ensureAll = Effect.gen(function* () {
-    yield* ensureDefaultRow;
-    const others = (yield* allRows).filter(
-      (row) => row.assistant_id !== DEFAULT_ASSISTANT_ID && row.archived_at === null,
-    );
+    yield* seedDefault;
+    const active = (yield* allRows).filter((row) => row.archived_at === null);
     yield* Effect.forEach(
-      others,
+      active,
       (row) =>
         ensureLaunched(row.assistant_id).pipe(
           Effect.catch((cause) =>
@@ -313,7 +336,7 @@ const make = Effect.gen(function* () {
   );
 
   const ensureDefault: AssistantService["Service"]["ensureDefault"] = lock
-    .withPermits(1)(ensureDefaultRow)
+    .withPermits(1)(restoreDefaultRow.pipe(Effect.tap(() => publish(DEFAULT_ASSISTANT_ID))))
     .pipe(Effect.map(toAssistant), storage, Effect.withSpan("AssistantService.ensureDefault"));
 
   const list: AssistantService["Service"]["list"] = lock
@@ -436,6 +459,7 @@ const make = Effect.gen(function* () {
 
   const create: AssistantService["Service"]["create"] = Effect.fn("AssistantService.create")(
     function* (input) {
+      if (input.restoreDefault === true) return yield* ensureDefault;
       const handle = input.handle ?? assistantHandleFromName(input.name);
       if (handle === null)
         return yield* invalid("Give the assistant a name with letters or digits.");
@@ -477,9 +501,6 @@ const make = Effect.gen(function* () {
       return yield* lock.withPermits(1)(
         Effect.gen(function* () {
           let row = yield* findRow(input.assistantId);
-          if (input.archived === true && row.is_default === 1) {
-            return yield* assistantError("default_protected", "Jarvis can't be archived.");
-          }
           if (input.handle !== undefined && input.handle !== row.handle) {
             yield* handleTaken(input.handle, row.assistant_id);
           }
@@ -616,9 +637,6 @@ const make = Effect.gen(function* () {
       yield* lock.withPermits(1)(
         Effect.gen(function* () {
           const row = yield* findRow(assistantId);
-          if (row.is_default === 1) {
-            return yield* assistantError("default_protected", "Jarvis can't be deleted.");
-          }
           // The row goes first: the thread guards only protect a live assistant's conversation.
           yield* sql`DELETE FROM assistants WHERE assistant_id = ${assistantId}`;
           yield* releaseReports(assistantId);

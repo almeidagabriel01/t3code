@@ -173,28 +173,21 @@ function AssistantRow(props: {
                   Reset conversation
                 </MenuItem>
               )}
-              {assistant.isDefault ? null : (
-                <>
-                  {archived ? null : <MenuSeparator />}
-                  {archived ? null : (
-                    <MenuItem
-                      disabled={!flows.canAct}
-                      onClick={() => void flows.archive(assistant)}
-                    >
-                      <ArchiveIcon />
-                      Archive assistant
-                    </MenuItem>
-                  )}
-                  <MenuItem
-                    variant="destructive"
-                    disabled={!flows.canAct}
-                    onClick={() => void flows.remove(assistant)}
-                  >
-                    <Trash2Icon />
-                    Delete assistant
-                  </MenuItem>
-                </>
+              {archived ? null : <MenuSeparator />}
+              {archived ? null : (
+                <MenuItem disabled={!flows.canAct} onClick={() => void flows.archive(assistant)}>
+                  <ArchiveIcon />
+                  Archive assistant
+                </MenuItem>
               )}
+              <MenuItem
+                variant="destructive"
+                disabled={!flows.canAct}
+                onClick={() => void flows.remove(assistant)}
+              >
+                <Trash2Icon />
+                Delete assistant
+              </MenuItem>
             </MenuPopup>
           </Menu>
         </span>
@@ -207,22 +200,41 @@ function entryKey(entry: AssistantEntry): string {
   return `${entry.environmentId}:${entry.assistant.id}`;
 }
 
+function RestoreJarvisRow(props: { readonly environmentId: EnvironmentId }) {
+  const flows = useAssistantFlows(props.environmentId);
+  return (
+    <SettingsRow
+      title={
+        <span className="inline-flex items-center gap-2">
+          <UserRoundIcon className="size-4 text-muted-foreground" />
+          Jarvis
+        </span>
+      }
+      description="The default assistant was deleted. Restore him to chat with Jarvis again."
+      control={
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={!flows.canAct}
+          onClick={() => void flows.restoreDefault()}
+        >
+          <ArchiveRestoreIcon />
+          Restore Jarvis
+        </Button>
+      }
+    />
+  );
+}
+
 export function AssistantsSettingsPanel() {
-  const { active, archived } = useAssistantEntries();
+  const { active, archived, environmentIds } = useAssistantEntries();
   const { environments } = useEnvironments();
-  const multipleEnvironments =
-    new Set([...active, ...archived].map((e) => e.environmentId)).size > 1;
+  const multipleEnvironments = environmentIds.length > 1;
   const labelOf = (environmentId: EnvironmentId) =>
     environments.find((environment) => environment.environmentId === environmentId)?.label ??
     environmentId;
-  const byEnvironment = (entries: ReadonlyArray<AssistantEntry>) => {
-    const groups = new Map<EnvironmentId, AssistantEntry[]>();
-    for (const entry of entries) {
-      groups.set(entry.environmentId, [...(groups.get(entry.environmentId) ?? []), entry]);
-    }
-    return [...groups];
-  };
-  const environmentIds = [...new Set([...active, ...archived].map((e) => e.environmentId))];
+  const inEnvironment = (entries: ReadonlyArray<AssistantEntry>, environmentId: EnvironmentId) =>
+    entries.filter((entry) => entry.environmentId === environmentId);
   const teamOf = (entry: AssistantEntry) =>
     teamSubtitle(
       entry.assistant,
@@ -245,56 +257,66 @@ export function AssistantsSettingsPanel() {
           />
         </SettingsSection>
       ) : (
-        byEnvironment(active).map(([environmentId, entries], index) => (
-          <Fragment key={environmentId}>
-            <SettingsSection
-              title={multipleEnvironments ? `Assistants · ${labelOf(environmentId)}` : "Assistants"}
-              icon={<UserRoundIcon className="size-4 text-muted-foreground" />}
-              headerAction={
-                <Button
-                  size="xs"
-                  variant="ghost-muted"
-                  onClick={() => openAssistantDialog({ environmentId })}
-                >
-                  <PlusIcon />
-                  New assistant
-                </Button>
-              }
-            >
-              {entries.map((entry, rowIndex) => (
-                <AssistantRow
-                  key={entryKey(entry)}
-                  entry={entry}
-                  first={index === 0 && rowIndex === 0}
-                  team={teamOf(entry)}
-                />
-              ))}
-            </SettingsSection>
-            <AutonomySection
-              environmentId={environmentId}
-              suffix={multipleEnvironments ? ` · ${labelOf(environmentId)}` : ""}
-            />
-          </Fragment>
-        ))
+        environmentIds.map((environmentId, index) => {
+          const entries = inEnvironment(active, environmentId);
+          const hasDefault = [...entries, ...inEnvironment(archived, environmentId)].some(
+            (entry) => entry.assistant.isDefault,
+          );
+          return (
+            <Fragment key={environmentId}>
+              <SettingsSection
+                title={
+                  multipleEnvironments ? `Assistants · ${labelOf(environmentId)}` : "Assistants"
+                }
+                icon={<UserRoundIcon className="size-4 text-muted-foreground" />}
+                headerAction={
+                  <Button
+                    size="xs"
+                    variant="ghost-muted"
+                    onClick={() => openAssistantDialog({ environmentId })}
+                  >
+                    <PlusIcon />
+                    New assistant
+                  </Button>
+                }
+              >
+                {entries.map((entry, rowIndex) => (
+                  <AssistantRow
+                    key={entryKey(entry)}
+                    entry={entry}
+                    first={index === 0 && rowIndex === 0}
+                    team={teamOf(entry)}
+                  />
+                ))}
+                {hasDefault ? null : <RestoreJarvisRow environmentId={environmentId} />}
+              </SettingsSection>
+              <AutonomySection
+                environmentId={environmentId}
+                suffix={multipleEnvironments ? ` · ${labelOf(environmentId)}` : ""}
+              />
+            </Fragment>
+          );
+        })
       )}
-      {archived.length > 0
-        ? byEnvironment(archived).map(([environmentId, entries]) => (
-            <SettingsSection
-              key={environmentId}
-              title={multipleEnvironments ? `Archived · ${labelOf(environmentId)}` : "Archived"}
-              icon={<ArchiveIcon className="size-4 text-muted-foreground" />}
-            >
-              {entries.map((entry) => (
-                <AssistantRow
-                  key={entryKey(entry)}
-                  entry={entry}
-                  first={false}
-                  team={teamOf(entry)}
-                />
-              ))}
-            </SettingsSection>
-          ))
-        : null}
+      {environmentIds.map((environmentId) => {
+        const entries = inEnvironment(archived, environmentId);
+        return entries.length === 0 ? null : (
+          <SettingsSection
+            key={environmentId}
+            title={multipleEnvironments ? `Archived · ${labelOf(environmentId)}` : "Archived"}
+            icon={<ArchiveIcon className="size-4 text-muted-foreground" />}
+          >
+            {entries.map((entry) => (
+              <AssistantRow
+                key={entryKey(entry)}
+                entry={entry}
+                first={false}
+                team={teamOf(entry)}
+              />
+            ))}
+          </SettingsSection>
+        );
+      })}
     </SettingsPageContainer>
   );
 }

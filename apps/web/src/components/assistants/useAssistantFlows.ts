@@ -1,5 +1,9 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import type { Assistant, EnvironmentId } from "@t3tools/contracts";
+import {
+  ASSISTANTS_RESTORE_DEFAULT_INPUT,
+  type Assistant,
+  type EnvironmentId,
+} from "@t3tools/contracts";
 import { useRouter } from "@tanstack/react-router";
 
 import { requestConfirmDialog } from "../../confirmDialog";
@@ -52,6 +56,9 @@ export function useAssistantFlows(environmentId: EnvironmentId) {
         "Could not unarchive the assistant",
         await actions.update({ assistantId: assistant.id, archived: false }),
       );
+    },
+    async restoreDefault() {
+      failed("Could not restore Jarvis", await actions.create(ASSISTANTS_RESTORE_DEFAULT_INPUT));
     },
     async remove(assistant: Assistant) {
       const confirmed = await requestConfirmDialog(

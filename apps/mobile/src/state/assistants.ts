@@ -69,14 +69,16 @@ export interface AssistantEntry {
 const assistantEntriesAtom = Atom.make((get) => {
   const active: AssistantEntry[] = [];
   const archived: AssistantEntry[] = [];
+  const environmentIds: EnvironmentId[] = [];
   for (const [environmentId, state] of get(assistantStatesAtom)) {
+    environmentIds.push(environmentId);
     for (const assistant of selectActiveAssistants(state))
       active.push({ environmentId, assistant });
     for (const assistant of selectArchivedAssistants(state)) {
       archived.push({ environmentId, assistant });
     }
   }
-  return { active, archived };
+  return { active, archived, environmentIds };
 }).pipe(Atom.withLabel("mobile-assistant-entries"));
 
 /** What an assistant spent across its conversations; idle (null) when it has no budget to show. */
@@ -96,7 +98,7 @@ export function useAssistantsEnvironmentIds(): ReadonlyArray<EnvironmentId> {
   return useAtomValue(assistantsEnvironmentIdsAtom);
 }
 
-/** Active and archived assistants across the environments that have them; Jarvis first. */
+/** Active and archived assistants of every loaded environment, listed even when it has none. */
 export function useAssistantEntries() {
   return useAtomValue(assistantEntriesAtom);
 }

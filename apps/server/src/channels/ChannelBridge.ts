@@ -133,8 +133,8 @@ const make = Effect.gen(function* () {
     }
     // `@` alone or an unknown `@name` asks who is there; the chat has no other way to find out.
     if (slash !== undefined || message.text.trimStart().startsWith("@")) {
-      const listed = active.length > 0 ? active : [yield* assistants.ensureDefault];
-      return { roster: listed.toSorted((a, b) => Number(b.isDefault) - Number(a.isDefault)) };
+      if (active.length === 0) return { none: true as const };
+      return { roster: active.toSorted((a, b) => Number(b.isDefault) - Number(a.isDefault)) };
     }
     const sticky = yield* sql<{ readonly assistant_id: string }>`
       SELECT assistant_id FROM channel_conversations
@@ -142,7 +142,8 @@ const make = Effect.gen(function* () {
     const assistant =
       active.find((candidate) => candidate.id === sticky[0]?.assistant_id) ??
       active.find((candidate) => candidate.isDefault) ??
-      (yield* assistants.ensureDefault);
+      active[0];
+    if (assistant === undefined) return { none: true as const };
     return { assistant, text: message.text };
   });
 
@@ -161,6 +162,15 @@ const make = Effect.gen(function* () {
         message,
         "failed",
         "I could not reach your assistants right now. Please try again.",
+      );
+      yield* markSent(message);
+      return;
+    }
+    if ("none" in picked.success) {
+      yield* reply(
+        message,
+        "none",
+        "No assistants are set up. Create one in Settings → Assistants.",
       );
       yield* markSent(message);
       return;

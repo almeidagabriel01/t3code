@@ -348,24 +348,52 @@ it.effect(
   },
 );
 
-it.effect("Jarvis can be edited and reset but not archived or deleted", () => {
-  const { layer, dispatched } = harness();
+it.effect(
+  "Jarvis can be archived or deleted, stays gone, and comes back only when restored",
+  () => {
+    const { layer } = harness();
+    return Effect.gen(function* () {
+      const assistants = yield* Assistants.AssistantService;
+      const jarvis = (yield* assistants.list)[0]!;
+      const edited = yield* assistants.update({ assistantId: jarvis.id, instructions: "Mine." });
+      assert.equal(edited.instructions, "Mine.");
+
+      yield* assistants.update({ assistantId: jarvis.id, archived: true });
+      assert.equal((yield* assistants.list)[0]!.archivedAt === null, false);
+      const unarchived = yield* assistants.create(create({ restoreDefault: true }));
+      assert.equal(unarchived.archivedAt, null);
+      assert.equal(unarchived.instructions, "Mine.");
+
+      yield* assistants.remove(jarvis.id);
+      assert.deepEqual(yield* assistants.list, []);
+      assert.deepEqual(yield* assistants.list, []);
+      const restored = yield* assistants.create(create({ restoreDefault: true }));
+      assert.equal(restored.id, DEFAULT_ASSISTANT_ID);
+      assert.equal(restored.isDefault, true);
+      assert.notEqual(restored.instructions, "Mine.");
+      assert.equal(restored.threadId, jarvisThread(1));
+      assert.equal((yield* assistants.list).length, 1);
+    }).pipe(Effect.provide(layer));
+  },
+);
+
+it.effect("an install that already had Jarvis keeps him archived and never reseeds", () => {
+  const { layer } = harness();
   return Effect.gen(function* () {
     const assistants = yield* Assistants.AssistantService;
-    const jarvis = yield* assistants.ensureDefault;
-    assert.equal(
-      (yield* assistants.update({ assistantId: jarvis.id, archived: true }).pipe(Effect.flip))
-        .reason,
-      "default_protected",
+    const sql = yield* SqlClient.SqlClient;
+    yield* assistants.list;
+    yield* assistants.update({ assistantId: DEFAULT_ASSISTANT_ID as never, archived: true });
+    // An install from before seeds were recorded: the backfill is this same statement.
+    yield* sql`DELETE FROM assistant_seeds`;
+    yield* sql`
+      INSERT OR IGNORE INTO assistant_seeds (assistant_id, seeded_at)
+      SELECT assistant_id, created_at FROM assistants WHERE is_default = 1`;
+    const all = yield* assistants.list;
+    assert.deepEqual(
+      all.map((assistant) => [assistant.id, assistant.archivedAt === null]),
+      [[DEFAULT_ASSISTANT_ID, false]],
     );
-    assert.equal(
-      (yield* assistants.remove(jarvis.id).pipe(Effect.flip)).reason,
-      "default_protected",
-    );
-    const edited = yield* assistants.update({ assistantId: jarvis.id, instructions: "Mine." });
-    assert.equal(edited.instructions, "Mine.");
-    assert.lengthOf(dispatched, 0);
-    assert.equal((yield* assistants.ensureDefault).instructions, "Mine.");
   }).pipe(Effect.provide(layer));
 });
 

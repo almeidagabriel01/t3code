@@ -602,7 +602,7 @@ function AssistantForm(props: { readonly editor: AssistantEditor }) {
               disabled={!flows.canAct || live.threadId === null}
               onPress={() => flows.reset(live, { openAfter: true })}
             />
-            {live.isDefault ? null : live.archivedAt === null ? (
+            {live.archivedAt === null ? (
               <ListActionRow
                 icon="archivebox"
                 label="Archive assistant"
@@ -619,16 +619,14 @@ function AssistantForm(props: { readonly editor: AssistantEditor }) {
                 onPress={() => void flows.unarchive(live)}
               />
             )}
-            {live.isDefault ? null : (
-              <ListActionRow
-                icon="trash"
-                tone="danger"
-                label="Delete assistant"
-                description="Permanently deletes it and every conversation it had."
-                disabled={!flows.canAct}
-                onPress={() => flows.remove(live, close)}
-              />
-            )}
+            <ListActionRow
+              icon="trash"
+              tone="danger"
+              label="Delete assistant"
+              description="Permanently deletes it and every conversation it had."
+              disabled={!flows.canAct}
+              onPress={() => flows.remove(live, close)}
+            />
           </ListSection>
         ) : null}
       </ScrollView>

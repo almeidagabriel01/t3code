@@ -1,9 +1,11 @@
 import { teamSubtitle } from "@t3tools/client-runtime/assistantTeam";
+import type { EnvironmentId } from "@t3tools/contracts";
 import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { EmptyState } from "../../components/ui/EmptyState";
+import { ListActionRow } from "../../components/ui/ListActionRow";
 import { ListSection } from "../../components/ui/ListSection";
 import { RowPressable } from "../../components/ui/RowPressable";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
@@ -19,6 +21,7 @@ import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { AutonomySettingsSection } from "./AutonomySettingsSection";
 import { AssistantAvatar, toolAccessLabel } from "./assistantPresentation";
 import { useOpenAssistantEditor } from "./openAssistantEditor";
+import { useAssistantFlows } from "./useAssistantFlows";
 
 function AssistantListRow(props: { readonly entry: AssistantEntry; readonly detail: string[] }) {
   const { assistant, environmentId } = props.entry;
@@ -59,13 +62,25 @@ function AssistantListRow(props: { readonly entry: AssistantEntry; readonly deta
   );
 }
 
+function RestoreJarvisRow(props: { readonly environmentId: EnvironmentId }) {
+  const flows = useAssistantFlows(props.environmentId);
+  return (
+    <ListActionRow
+      icon="arrow.uturn.backward"
+      label="Restore Jarvis"
+      description="The default assistant was deleted. Brings him back."
+      disabled={!flows.canAct}
+      onPress={() => void flows.restoreDefault()}
+    />
+  );
+}
+
 export function SettingsAssistantsRouteScreen() {
-  const { active, archived } = useAssistantEntries();
+  const { active, archived, environmentIds: loadedEnvironmentIds } = useAssistantEntries();
   const insets = useSafeAreaInsets();
   const openEditor = useOpenAssistantEditor();
   const { savedConnectionsById } = useSavedRemoteConnections();
-  const environmentCount = new Set([...active, ...archived].map((entry) => entry.environmentId))
-    .size;
+  const environmentCount = loadedEnvironmentIds.length;
   const teamOf = (entry: AssistantEntry) =>
     teamSubtitle(
       entry.assistant,
@@ -80,7 +95,7 @@ export function SettingsAssistantsRouteScreen() {
       : []),
   ];
   const environmentIds = useAssistantsEnvironmentIds();
-  const firstEnvironmentId = active[0]?.environmentId ?? archived[0]?.environmentId ?? null;
+  const firstEnvironmentId = loadedEnvironmentIds[0] ?? null;
   return (
     <SettingsScreen
       title="Assistants"
@@ -103,7 +118,7 @@ export function SettingsAssistantsRouteScreen() {
         contentContainerClassName="gap-5 px-5 pt-4"
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
-        {active.length === 0 && archived.length === 0 ? (
+        {loadedEnvironmentIds.length === 0 ? (
           <EmptyState
             variant="plain"
             title="No assistants"
@@ -122,6 +137,16 @@ export function SettingsAssistantsRouteScreen() {
                   detail={detailFor(entry)}
                 />
               ))}
+              {loadedEnvironmentIds
+                .filter(
+                  (environmentId) =>
+                    ![...active, ...archived].some(
+                      (entry) => entry.environmentId === environmentId && entry.assistant.isDefault,
+                    ),
+                )
+                .map((environmentId) => (
+                  <RestoreJarvisRow key={environmentId} environmentId={environmentId} />
+                ))}
             </ListSection>
             {archived.length > 0 ? (
               <ListSection title="Archived">

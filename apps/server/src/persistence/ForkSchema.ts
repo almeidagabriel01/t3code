@@ -215,6 +215,17 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
     )
   `;
   yield* sql`CREATE UNIQUE INDEX IF NOT EXISTS assistants_default_idx ON assistants(is_default) WHERE is_default = 1`;
+  // Jarvis is created on first use only; this marker keeps a deleted one from coming back.
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS assistant_seeds (
+      assistant_id TEXT PRIMARY KEY,
+      seeded_at TEXT NOT NULL
+    )
+  `;
+  yield* sql`
+    INSERT OR IGNORE INTO assistant_seeds (assistant_id, seeded_at)
+    SELECT assistant_id, created_at FROM assistants WHERE is_default = 1
+  `;
 
   // Chat-app bridge. The inbox is keyed by the transport's idempotency key so a redelivery is a
   // no-op; the outbox by delivery id so a replayed event never posts twice.

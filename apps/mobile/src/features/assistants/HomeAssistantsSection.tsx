@@ -79,16 +79,12 @@ function AssistantRow(props: {
       attributes: { disabled: !flows.canAct || working },
     },
     { id: "settings", title: `${assistant.name} settings`, image: "gearshape" },
-    ...(assistant.isDefault
-      ? []
-      : [
-          {
-            id: "archive",
-            title: "Archive assistant",
-            image: "archivebox",
-            attributes: { disabled: !flows.canAct },
-          },
-        ]),
+    {
+      id: "archive",
+      title: "Archive assistant",
+      image: "archivebox",
+      attributes: { disabled: !flows.canAct },
+    },
   ];
   return (
     <Menu

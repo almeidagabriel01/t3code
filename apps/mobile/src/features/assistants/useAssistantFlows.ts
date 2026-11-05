@@ -1,4 +1,9 @@
-import type { Assistant, EnvironmentId, ThreadId } from "@t3tools/contracts";
+import {
+  ASSISTANTS_RESTORE_DEFAULT_INPUT,
+  type Assistant,
+  type EnvironmentId,
+  type ThreadId,
+} from "@t3tools/contracts";
 
 import * as Dialog from "../../components/ui/Dialog";
 import { useAssistantActions, type AssistantReply } from "../../state/assistants";
@@ -58,6 +63,9 @@ export function useAssistantFlows(environmentId: EnvironmentId) {
         "Could not unarchive the assistant",
         await actions.update({ assistantId: assistant.id, archived: false }),
       );
+    },
+    async restoreDefault() {
+      failed("Could not restore Jarvis", await actions.create(ASSISTANTS_RESTORE_DEFAULT_INPUT));
     },
     remove(assistant: Assistant, onRemoved?: () => void) {
       Dialog.confirm({

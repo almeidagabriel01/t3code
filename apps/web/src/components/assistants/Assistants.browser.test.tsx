@@ -142,6 +142,23 @@ it("lists assistants in Settings with an Archived section", async () => {
   await expect.element(page.getByRole("button", { name: "Unarchive" })).toBeVisible();
 });
 
+it("Jarvis can be deleted like any assistant, and Restore Jarvis asks the server for him", async () => {
+  fakeAssistantEdits.creates = [];
+  fakeAssistants.items = [assistant("jarvis", "Jarvis", { isDefault: true })];
+  appAtomRegistry.reset();
+  await using _screen = await openApp("/settings/assistants");
+  expect(page.getByRole("button", { name: "Restore Jarvis" }).query()).toBeNull();
+  await userEvent.click(page.getByRole("button", { name: "Jarvis actions" }));
+  await expect.element(page.getByRole("menuitem", { name: "Archive assistant" })).toBeVisible();
+  await expect.element(page.getByRole("menuitem", { name: "Delete assistant" })).toBeVisible();
+  await userEvent.keyboard("{Escape}");
+  publishAssistants([]);
+  await userEvent.click(page.getByRole("button", { name: "Restore Jarvis" }));
+  await eventually(() =>
+    expect(fakeAssistantEdits.creates).toMatchObject([{ restoreDefault: true }]),
+  );
+});
+
 it("saves the spending limit the user sets and shows what was spent", async () => {
   publishAssistants([
     assistant("jarvis", "Jarvis", {

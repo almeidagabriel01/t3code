@@ -53,7 +53,6 @@ const harness = () => {
           list: Effect.suspend(() =>
             state.listFails ? Effect.fail({ reason: "storage" }) : Effect.succeed(state.assistants),
           ) as never,
-          ensureDefault: Effect.sync(() => state.assistants[0]) as never,
         }),
         Layer.mock(ThreadManagement.ThreadManagementService)({
           sendToThread: (input) => {
@@ -225,6 +224,19 @@ it.effect("@ alone or an unknown @name lists the assistants instead of sending",
     const roster =
       "Your assistants: Jarvis, Research Bot, Research, Fresh. Start a message with @Name to talk to one; Jarvis answers otherwise.";
     assert.deepEqual(yield* texts, [roster, roster, roster, roster]);
+    assert.equal(channelSends().length, 0);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("with no active assistant a message and a roster ask say none is set up", () => {
+  const { layer, state, channelSends } = harness();
+  return Effect.gen(function* () {
+    state.assistants = [];
+    const gateway = yield* ChannelGateway;
+    yield* gateway.ingest(inbound({ text: "hello" }));
+    yield* gateway.ingest(inbound({ text: "@" }));
+    const none = "No assistants are set up. Create one in Settings \u2192 Assistants.";
+    assert.deepEqual(yield* texts, [none, none]);
     assert.equal(channelSends().length, 0);
   }).pipe(Effect.provide(layer));
 });

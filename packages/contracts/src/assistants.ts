@@ -134,7 +134,7 @@ export const Assistant = Schema.Struct({
   projectId: ProjectId,
   instructions: Schema.String.check(Schema.isMaxLength(ASSISTANT_INSTRUCTIONS_MAX_CHARS)),
   toolAccess: AssistantToolAccess,
-  /** Jarvis; it always exists and can't be archived or deleted. */
+  /** Jarvis: made on first use, then archived, deleted and restored like any other. */
   isDefault: Schema.Boolean,
   /** The current conversation; null only until its first launch lands. */
   threadId: Schema.NullOr(ThreadId),
@@ -179,8 +179,19 @@ export const AssistantsCreateInput = Schema.Struct({
   autonomy: Schema.optional(AssistantAutonomy),
   role: Schema.optional(AssistantRole),
   reportsTo: Schema.optional(Schema.NullOr(AssistantId)),
+  /** Brings Jarvis back (recreated or unarchived) and ignores every other field. */
+  restoreDefault: Schema.optional(Schema.Boolean),
 });
 export type AssistantsCreateInput = typeof AssistantsCreateInput.Type;
+
+/** The other fields are placeholders: the server only reads `restoreDefault`. */
+export const ASSISTANTS_RESTORE_DEFAULT_INPUT: AssistantsCreateInput = {
+  name: TrimmedNonEmptyString.make("Jarvis"),
+  projectId: ProjectId.make("restore-default"),
+  instructions: "",
+  toolAccess: "full",
+  restoreDefault: true,
+};
 
 /** Changing `projectId` starts a new generation: a thread can't move between projects. */
 export const AssistantsUpdateInput = Schema.Struct({
@@ -233,6 +244,6 @@ export const AssistantsDeleteResult = Schema.Struct({ assistantId: AssistantId }
 export type AssistantsDeleteResult = typeof AssistantsDeleteResult.Type;
 
 export class AssistantError extends Schema.TaggedError<AssistantError>()("AssistantError", {
-  reason: Schema.Literals(["not_found", "handle_taken", "default_protected", "invalid", "storage"]),
+  reason: Schema.Literals(["not_found", "handle_taken", "invalid", "storage"]),
   message: Schema.String,
 }) {}

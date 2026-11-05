@@ -133,15 +133,11 @@ const AssistantRow = memo(function AssistantRow(props: {
               <SettingsIcon />
               Assistant settings
             </MenuItem>
-            {assistant.isDefault ? null : (
-              <>
-                <MenuSeparator />
-                <MenuItem disabled={!flows.canAct} onClick={() => void flows.archive(assistant)}>
-                  <ArchiveIcon />
-                  Archive assistant
-                </MenuItem>
-              </>
-            )}
+            <MenuSeparator />
+            <MenuItem disabled={!flows.canAct} onClick={() => void flows.archive(assistant)}>
+              <ArchiveIcon />
+              Archive assistant
+            </MenuItem>
           </MenuPopup>
         </Menu>
       </div>

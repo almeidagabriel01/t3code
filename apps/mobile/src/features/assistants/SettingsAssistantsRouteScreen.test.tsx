@@ -9,7 +9,17 @@ const { mocks, Children } = vi.hoisted(() => ({
     environmentIds: ["hub"] as string[],
     spendQuery: vi.fn(),
     openEditor: vi.fn(),
+    restoreDefault: vi.fn(),
+    hasDefault: true,
   },
+}));
+vi.mock("../../components/ui/ListActionRow", () => ({
+  ListActionRow: (props: { label: string; onPress: () => void }) => (
+    <button aria-label={props.label} onClick={props.onPress} />
+  ),
+}));
+vi.mock("./useAssistantFlows", () => ({
+  useAssistantFlows: () => ({ canAct: true, restoreDefault: mocks.restoreDefault }),
 }));
 vi.mock("react-native", () => ({ View: Children }));
 vi.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ bottom: 0 }) }));
@@ -47,12 +57,14 @@ vi.mock("../../state/use-remote-environment-registry", () => ({
 }));
 vi.mock("../../state/assistants", () => ({
   useAssistantEntries: () => ({
+    environmentIds: mocks.environmentIds,
     active: [
       {
         environmentId: "hub",
         assistant: {
           id: "a1",
           name: "Jarvis",
+          isDefault: mocks.hasDefault,
           handle: "jarvis",
           budget: {},
           role: "CEO",
@@ -96,6 +108,8 @@ beforeEach(() => {
   mocks.spendQuery.mockReset();
   mocks.openEditor.mockReset();
   mocks.environmentIds = ["hub"];
+  mocks.hasDefault = true;
+  mocks.restoreDefault.mockReset();
 });
 afterEach(() => act(() => root.unmount()));
 
@@ -126,5 +140,17 @@ describe("assistant list autonomy", () => {
     expect(
       Array.from(container.querySelectorAll("[data-autonomy]")).map((n) => n.textContent),
     ).toEqual(["Autonomy:hub · hub", "Autonomy:lab · Lab"]);
+  });
+});
+
+describe("restoring Jarvis", () => {
+  it("offers Restore Jarvis only while no assistant is the default", () => {
+    act(() => root.render(<SettingsAssistantsRouteScreen />));
+    expect(container.querySelector('[aria-label="Restore Jarvis"]')).toBeNull();
+    mocks.hasDefault = false;
+    act(() => root.render(<SettingsAssistantsRouteScreen key="gone" />));
+    const button = container.querySelector<HTMLButtonElement>('[aria-label="Restore Jarvis"]')!;
+    act(() => button.click());
+    expect(mocks.restoreDefault).toHaveBeenCalledOnce();
   });
 });
