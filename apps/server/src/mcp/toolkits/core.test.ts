@@ -614,7 +614,7 @@ it.effect("t3_thread_transfer handoff starts the new thread through the handoff 
           return outcomes.shift()!;
         },
       }).pipe(
-        Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
         Layer.provide(NodeCrypto.layer),
         Layer.provide(
           Layer.mock(ThreadManagement.ThreadManagementService)({
@@ -851,6 +851,9 @@ it.effect.each([
         Layer.provide(NodeCrypto.layer),
         Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
         Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
+        Layer.provide(Layer.mock(ThreadHandoffService.ThreadHandoffService)({})),
+        Layer.provide(Layer.mock(CheckpointDiffQuery.CheckpointDiffQuery)({})),
+        Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
         Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
         Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
         Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
@@ -1161,7 +1164,7 @@ it.effect("t3_thread_diff reads one turn or the whole thread, cut at the read bu
             }),
         },
       ).pipe(
-        Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
         Layer.provide(NodeCrypto.layer),
         Layer.provide(
           Layer.mock(ThreadManagement.ThreadManagementService)({
@@ -1253,7 +1256,7 @@ it.effect(
                   ),
           },
         ).pipe(
-          Layer.provideMerge(McpServer.McpServer.layer),
+          Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
           Layer.provide(NodeCrypto.layer),
           Layer.provide(
             Layer.mock(ThreadManagement.ThreadManagementService)({
@@ -1310,7 +1313,7 @@ const diffHarness = (options: {
     {},
     { getFullThreadDiff: diffService("full") as never, getTurnDiff: diffService("turn") as never },
   ).pipe(
-    Layer.provideMerge(McpServer.McpServer.layer),
+    Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
     Layer.provide(NodeCrypto.layer),
     Layer.provide(
       Layer.mock(ThreadManagement.ThreadManagementService)({
@@ -1477,7 +1480,7 @@ const retryHarness = (options: {
         }),
     },
   ).pipe(
-    Layer.provideMerge(McpServer.McpServer.layer),
+    Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
     Layer.provide(NodeCrypto.layer),
     Layer.provide(
       Layer.mock(ThreadManagement.ThreadManagementService)({
@@ -1639,7 +1642,7 @@ it.effect.each([
           );
         },
       }).pipe(
-        Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
         Layer.provide(NodeCrypto.layer),
         Layer.provide(liveProjectThreads),
       ),
@@ -1695,7 +1698,7 @@ it.effect(
             return Effect.succeed({ threadId: ThreadId.make("handed") });
           },
         }).pipe(
-          Layer.provideMerge(McpServer.McpServer.layer),
+          Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
           Layer.provide(NodeCrypto.layer),
           Layer.provide(liveProjectThreads),
         ),

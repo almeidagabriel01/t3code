@@ -77,7 +77,7 @@ const layerOrchestratorService = OrchestratorMcpService.layer.pipe(
   Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
   Layer.provide(
     Layer.mock(GitVcsDriver.GitVcsDriver)({
-      resolvePrimaryRemoteName: () => Effect.succeed(null),
+      resolvePrimaryRemoteName: () => Effect.fail(new Error("no remote") as never),
       resolveCommit: () => Effect.fail(new Error("no repository") as never),
     }),
   ),

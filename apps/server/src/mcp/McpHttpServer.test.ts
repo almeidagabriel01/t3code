@@ -276,7 +276,7 @@ it.effect.each([
     }).pipe(
       Effect.provide(
         McpHttpServer.layerComputerToolkit.pipe(
-          Layer.provideMerge(McpServer.McpServer.layer),
+          Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
           Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
           Layer.provide(Layer.mock(ComputerUse.ComputerUse)({ screenshot: shot })),
         ),

@@ -76,13 +76,12 @@ const makeScenario = (fileSystem?: FileSystem.FileSystem) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-memory-hub-scenario-" });
-    const settings = Settings.layer
-      .pipe(Layer.provide(ManagedPolicy.layerTest()))
-      .pipe(
-        Layer.provideMerge(Secrets.layer),
-        Layer.provideMerge(Sqlite.layerMemory),
-        Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
-      );
+    const settings = Settings.layer.pipe(
+      Layer.provide(ManagedPolicy.layerTest()),
+      Layer.provideMerge(Secrets.layer),
+      Layer.provideMerge(Sqlite.layerMemory),
+      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
+    );
     const core = Service.layer.pipe(
       Layer.provideMerge(Quota.layer.pipe(Layer.provideMerge(Store.layer))),
       Layer.provideMerge(Environment.layerIdentity),

@@ -806,7 +806,9 @@ export const make = Effect.gen(function* () {
       yield* material
         .afterReveal(window)
         .pipe(
-          Effect.catchCause((cause) => logWindowWarning("window material reveal failed", { cause })),
+          Effect.catchCause((cause) =>
+            logWindowWarning("window material reveal failed", { cause }),
+          ),
         );
       yield* dismissConnectingSplash;
     });

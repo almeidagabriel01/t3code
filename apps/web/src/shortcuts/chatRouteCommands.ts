@@ -125,10 +125,7 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
       "chat.new": (event) => {
         const { legacySidebarEnabled } = getClientSettings();
         const groups = readProjectGroups();
-        if (
-          !legacySidebarEnabled &&
-          !shouldCreateNewThreadInCurrentProject(false, groups.length)
-        ) {
+        if (!legacySidebarEnabled && !shouldCreateNewThreadInCurrentProject(false, groups.length)) {
           claim(event);
           openCommandPalette({ open: "new-thread-in" });
           return;

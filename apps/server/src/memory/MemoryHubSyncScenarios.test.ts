@@ -68,13 +68,12 @@ const environment = (label: "H" | "A" | "B", resolve?: Resolve) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const home = yield* fs.makeTempDirectoryScoped({ prefix: `goat-wp3-l5-${label}-` });
-    const settings = Settings.layer
-      .pipe(Layer.provide(ManagedPolicy.layerTest()))
-      .pipe(
-        Layer.provideMerge(Secrets.layer),
-        Layer.provideMerge(Sqlite.layerConfig),
-        Layer.provideMerge(Config.layerTest(home, home)),
-      );
+    const settings = Settings.layer.pipe(
+      Layer.provide(ManagedPolicy.layerTest()),
+      Layer.provideMerge(Secrets.layer),
+      Layer.provideMerge(Sqlite.layerConfig),
+      Layer.provideMerge(Config.layerTest(home, home)),
+    );
     const core = Service.layer.pipe(
       Layer.provideMerge(Quota.layer.pipe(Layer.provideMerge(Store.layer))),
       Layer.provideMerge(Environment.layerIdentity),

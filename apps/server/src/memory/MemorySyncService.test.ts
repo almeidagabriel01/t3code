@@ -4178,13 +4178,12 @@ it.effect.each(["pull", "ack"] as const)(
             }
             return statement;
           });
-        const settingsLayer = Settings.layer
-          .pipe(Layer.provide(ManagedPolicy.layerTest()))
-          .pipe(
-            Layer.provideMerge(Secrets.layer),
-            Layer.provideMerge(Sqlite.layerMemory),
-            Layer.provideMerge(configLayer),
-          );
+        const settingsLayer = Settings.layer.pipe(
+          Layer.provide(ManagedPolicy.layerTest()),
+          Layer.provideMerge(Secrets.layer),
+          Layer.provideMerge(Sqlite.layerMemory),
+          Layer.provideMerge(configLayer),
+        );
         const realCore = Service.layer.pipe(
           Layer.provide(
             Layer.succeed(Settings.MemoryHubCommittedSettings, {
@@ -4926,16 +4925,15 @@ it.effect.each(["bootstrap", "exchange"] as const)(
   (phase) =>
     Effect.scoped(
       Effect.gen(function* () {
-        const settingsLayer = Settings.layer
-          .pipe(Layer.provide(ManagedPolicy.layerTest()))
-          .pipe(
-            Layer.provideMerge(Secrets.layer),
-            Layer.provideMerge(Sqlite.layerMemory),
-            Layer.provideMerge(
-              ServerConfig.layerTest(process.cwd(), { prefix: "t3-l4-self-bootstrap-" }),
-            ),
-            Layer.provideMerge(Layer.mergeAll(NodeServices.layer, CryptoLayer.layer)),
-          );
+        const settingsLayer = Settings.layer.pipe(
+          Layer.provide(ManagedPolicy.layerTest()),
+          Layer.provideMerge(Secrets.layer),
+          Layer.provideMerge(Sqlite.layerMemory),
+          Layer.provideMerge(
+            ServerConfig.layerTest(process.cwd(), { prefix: "t3-l4-self-bootstrap-" }),
+          ),
+          Layer.provideMerge(Layer.mergeAll(NodeServices.layer, CryptoLayer.layer)),
+        );
         const selfCore = Service.layer.pipe(
           Layer.provideMerge(Quota.layer.pipe(Layer.provideMerge(Store.layer))),
           Layer.provideMerge(settingsLayer),

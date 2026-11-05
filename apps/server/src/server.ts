@@ -21,7 +21,6 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as SecureRandom from "effect/crypto/SecureRandom";
-import * as Digest from "effect/crypto/Digest";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -1318,6 +1317,5 @@ export const runServer: Effect.Effect<
   | Path.Path
   | ChildProcessSpawner.ChildProcessSpawner
   | SecureRandom.SecureRandom
-  | Digest.Digest
   | ServerConfig.ServerConfig
-> = Layer.launch(layerMakeServer);
+> = Layer.launch(layerMakeServer.pipe(Layer.provide(NetService.layer)));

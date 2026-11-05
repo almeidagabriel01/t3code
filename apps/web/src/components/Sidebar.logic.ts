@@ -668,22 +668,6 @@ export interface ThreadStatusPill {
   pulse: boolean;
 }
 
-type ThreadStatusInput = Pick<
-  SidebarThreadSummary,
-  | "hasActionableProposedPlan"
-  | "hasPendingApprovals"
-  | "hasPendingUserInput"
-  | "pendingSubagentRequest"
-  | "pendingGuestMessageCount"
-  | "interactionMode"
-  | "latestRun"
-  | "runtime"
-> & {
-  lastVisitedAt?: string | null | undefined;
-  pendingBackgroundTasks?: SidebarThreadSummary["pendingBackgroundTasks"] | undefined;
-  blockedOnThreadWait?: boolean | undefined;
-};
-
 /**
  * Thread jump hints appear once the jump modifier has been held for a moment,
  * so a quick shortcut never flashes them, and hide as soon as it is released.
