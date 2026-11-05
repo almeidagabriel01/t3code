@@ -469,7 +469,7 @@ const make = Effect.gen(function* () {
 
   /**
    * A leader's scheduled standup ended. The user asked for it by adding the schedule, so it
-   * reaches them even with autonomy off; the assistant's channels still decide where.
+   * reaches them whatever the assistant's mode; the pause switch still silences it.
    */
   const deliverStandup = Effect.fn("AutonomyService.deliverStandup")(function* (run: FinishedRun) {
     const standups = yield* sql<{ readonly one: number }>`
@@ -477,7 +477,8 @@ const make = Effect.gen(function* () {
       WHERE ${run.userMessageId} LIKE 'scheduled-task-message:' || task_id || ':%'
         AND prompt LIKE ${`${ASSISTANT_STANDUP_PROMPT_HEAD}%`}`;
     if (standups.length === 0) return false;
-    yield* deliverResult(run, ASSISTANT_STANDUP_TASK_TITLE, yield* settings);
+    const config = yield* settings;
+    if (config.enabled) yield* deliverResult(run, ASSISTANT_STANDUP_TASK_TITLE, config);
     return true;
   });
 

@@ -653,7 +653,7 @@ it.effect("a failed wake run delivers its error, and a paused server delivers no
 });
 
 it.effect(
-  "a leader's standup run reaches the user even with autonomy paused; other schedules do not",
+  "a leader's standup run reaches the user unless autonomy is paused; other schedules do not",
   () => {
     const h = harness();
     return Effect.gen(function* () {
@@ -670,10 +670,15 @@ it.effect(
           'full-access', 'default', 'system', 'server', '2026-01-01', '2026-01-01', 'never', 0)`;
       yield* task("standup:1", `${ASSISTANT_STANDUP_PROMPT_HEAD}\nAsk everyone.`);
       yield* task("other:1", "Check the weather.");
-      yield* Ref.set(h.settings, { ...ON, enabled: false });
       h.answers.set("assistant:jarvis:1", "Eng shipped, nothing blocked.");
       const finish = (id: string, message: string) =>
         service.handleEvent(run("completed", id, "assistant:jarvis:1", message));
+
+      // The pause switch silences the standup too.
+      yield* Ref.set(h.settings, { ...ON, enabled: false });
+      yield* finish("r0", "scheduled-task-message:standup:1:1600:schedule");
+      assert.lengthOf(yield* outboxRows, 0);
+      yield* Ref.set(h.settings, ON);
 
       yield* finish("r1", "scheduled-task-message:other:1:1700:schedule");
       assert.lengthOf(yield* outboxRows, 0);

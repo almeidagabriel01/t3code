@@ -86,7 +86,8 @@ shows each one's role and leader.
 On a leader, **Add daily standup** creates an ordinary schedule for weekdays at 9:00 (your local
 time) that asks each direct report for status and then writes one short report. The report reaches
 you like an autonomy notice, in **Activity** and on **Telegram**, following the assistant's
-channels, even when autonomy is off. Edit the time or delete the schedule under **Schedules**. The
+channels, even if that assistant only replies when you message it. Pausing **Assistants can notify
+you** silences it too. Edit the time or delete the schedule under **Schedules**. The
 standup is recognised by the first line of its prompt, so keep that line when you edit it.
 
 ## Schedules

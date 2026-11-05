@@ -75,7 +75,7 @@ through the same turn path as any message. Three things keep it from feeding its
 A leader's standup is an ordinary scheduled task whose prompt starts with
 `ASSISTANT_STANDUP_PROMPT_HEAD`; `AutonomyService` matches that line on the finished run's task, so a
 renamed task still delivers, and sends the result through the same Activity and Telegram path as a
-wake, whether or not autonomy is on.
+wake, whatever the assistant's mode; only the global pause silences it.
 
 Delivery to the user ends at the wake's run. Activity hides assistant threads, so it gets a decision
 whose request id starts with `autonomy:`; `DecisionService` settles such a notice without sending
