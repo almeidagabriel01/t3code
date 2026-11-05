@@ -13,9 +13,11 @@ import {
   type EnvironmentId,
   type ModelSelection,
   type ProjectId,
+  type ThreadId,
 } from "@t3tools/contracts";
 import {
   directReports,
+  hasStandupTask,
   leaderChoices,
   NO_LEADER_LABEL,
 } from "@t3tools/client-runtime/assistantTeam";
@@ -44,7 +46,8 @@ import {
 } from "../../state/assistants";
 import { useEnvironmentProviders, useEnvironments } from "../../state/environments";
 import { useProjects, useThreadShell } from "../../state/entities";
-import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
+import { useEnvironmentQuery } from "../../state/query";
+import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { validateMemorySettingsSearch } from "../settings/MemorySettings.logic";
 import { cn } from "../../lib/utils";
@@ -80,6 +83,45 @@ import { appAtomRegistry } from "~/rpc/atomRegistry";
 const isValidHandle = Schema.is(AssistantHandle);
 /** Select values are non-empty strings; no assistant id looks like this. */
 const NO_LEADER_VALUE = "__nobody__";
+
+/** Offers the leader's standup until its conversation has one; then points at its schedule. */
+function DailyStandup(props: {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId | null;
+  readonly reportNames: ReadonlyArray<string>;
+  readonly added: boolean;
+  readonly disabled: boolean;
+  readonly onAdd: () => void;
+}) {
+  const tasksQuery = useEnvironmentQuery(
+    serverEnvironment.scheduledTasksLive({ environmentId: props.environmentId, input: {} }),
+  );
+  const exists = props.added || hasStandupTask(tasksQuery.data?.tasks ?? [], props.threadId);
+  return (
+    <div className="flex items-start justify-between gap-3">
+      <div className="flex flex-col gap-0.5">
+        <span className="text-sm font-medium">Daily standup</span>
+        <p className="text-xs text-muted-foreground">
+          {exists
+            ? "It is in its schedules below, where you can change or remove it."
+            : `Weekdays at 9:00 it asks ${props.reportNames.join(", ")} for status and sends you one short report.`}
+        </p>
+      </div>
+      {exists ? null : (
+        <Button
+          type="button"
+          size="xs"
+          variant="outline"
+          disabled={props.disabled}
+          onClick={props.onAdd}
+        >
+          <CalendarPlusIcon />
+          Add daily standup
+        </Button>
+      )}
+    </div>
+  );
+}
 
 /** Renders the create/edit dialog once, wherever it was asked for. */
 export function AssistantDialogHost() {
@@ -551,6 +593,9 @@ function AssistantDialog(props: {
             </fieldset>
             <fieldset className="flex flex-col gap-3">
               <legend className="text-sm font-medium">Team</legend>
+              <p className="text-xs text-muted-foreground">
+                Its place among your assistants: a leader asks its reports for work.
+              </p>
               <div className="flex flex-col gap-1.5">
                 <FieldLabel
                   htmlFor="assistant-role"
@@ -594,27 +639,15 @@ function AssistantDialog(props: {
                   </SelectPopup>
                 </Select>
               </div>
-              {reports.length > 0 ? (
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex flex-col gap-0.5">
-                    <span className="text-sm font-medium">Daily standup</span>
-                    <p className="text-xs text-muted-foreground">
-                      {standupAdded
-                        ? "Added to its schedules below, where you can change or remove it."
-                        : `Weekdays at 9:00 it asks ${reports.map((report) => report.name).join(", ")} for status and sends you one short report.`}
-                    </p>
-                  </div>
-                  <Button
-                    type="button"
-                    size="xs"
-                    variant="outline"
-                    disabled={saving || standupAdded || !actions.canAct}
-                    onClick={() => void addStandup()}
-                  >
-                    <CalendarPlusIcon />
-                    Add daily standup
-                  </Button>
-                </div>
+              {assistant && environmentId !== null && reports.length > 0 ? (
+                <DailyStandup
+                  environmentId={environmentId}
+                  threadId={assistant.threadId}
+                  reportNames={reports.map((report) => report.name)}
+                  added={standupAdded}
+                  disabled={saving || !actions.canAct}
+                  onAdd={() => void addStandup()}
+                />
               ) : null}
             </fieldset>
             <BudgetFields

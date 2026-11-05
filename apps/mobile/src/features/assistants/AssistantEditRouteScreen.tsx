@@ -8,9 +8,11 @@ import {
   type BudgetPeriod,
   type EnvironmentId,
   type ProjectId,
+  type ThreadId,
 } from "@t3tools/contracts";
 import {
   directReports,
+  hasStandupTask,
   leaderChoices,
   NO_LEADER_LABEL,
 } from "@t3tools/client-runtime/assistantTeam";
@@ -36,6 +38,8 @@ import {
   useAssistantSpend,
   useAssistantsEnvironmentIds,
 } from "../../state/assistants";
+import { useEnvironmentQuery } from "../../state/query";
+import { serverEnvironment } from "../../state/server";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { withNativeGlassHeaderItem } from "../layout/native-glass-header-items";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
@@ -63,6 +67,46 @@ import {
 } from "./assistantPresentation";
 import { assistantProjectName, useAssistantEditor } from "./useAssistantEditor";
 import { useAssistantFlows } from "./useAssistantFlows";
+
+/** Offers the leader's standup until its conversation has one; then points at its schedule. */
+function DailyStandupSection(props: {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId | null;
+  readonly reportNames: ReadonlyArray<string>;
+  readonly state: "idle" | "adding" | "added";
+  readonly disabled: boolean;
+  readonly onAdd: () => void;
+}) {
+  const tasks = useEnvironmentQuery(
+    serverEnvironment.scheduledTasksLive({ environmentId: props.environmentId, input: {} }),
+  );
+  const exists = props.state === "added" || hasStandupTask(tasks.data?.tasks ?? [], props.threadId);
+  return (
+    <View className="gap-2">
+      <View className="gap-0.5 px-2">
+        <Text textRole="footnote" className="font-t3-medium text-foreground">
+          Daily standup
+        </Text>
+        <Text textRole="footnote" className="text-foreground-muted">
+          {exists
+            ? "It is in its schedules below, where you can change or remove it."
+            : `Weekdays at 9:00 it asks ${props.reportNames.join(", ")} for status and sends you one short report.`}
+        </Text>
+      </View>
+      {exists ? null : (
+        <ListSection>
+          <ListActionRow
+            icon="calendar.badge.clock"
+            label="Add daily standup"
+            loading={props.state === "adding"}
+            disabled={props.disabled}
+            onPress={props.onAdd}
+          />
+        </ListSection>
+      )}
+    </View>
+  );
+}
 
 export function AssistantEditRouteScreen() {
   const { editor } = useAssistantEditor();
@@ -371,28 +415,15 @@ function AssistantForm(props: { readonly editor: AssistantEditor }) {
             updateAssistantDraft({ reportsTo: id === "" ? null : (id as AssistantId) })
           }
         />
-        {reports.length > 0 ? (
-          <View className="gap-2">
-            <View className="gap-0.5 px-2">
-              <Text textRole="footnote" className="font-t3-medium text-foreground">
-                Daily standup
-              </Text>
-              <Text textRole="footnote" className="text-foreground-muted">
-                {standup === "added"
-                  ? "Added to its schedules below, where you can change or remove it."
-                  : `Weekdays at 9:00 it asks ${reports.map((report) => report.name).join(", ")} for status and sends you one short report.`}
-              </Text>
-            </View>
-            <ListSection>
-              <ListActionRow
-                icon="calendar.badge.clock"
-                label="Add daily standup"
-                loading={standup === "adding"}
-                disabled={standup === "added" || !actions.canAct}
-                onPress={() => void addStandup()}
-              />
-            </ListSection>
-          </View>
+        {live && environmentId !== null && reports.length > 0 ? (
+          <DailyStandupSection
+            environmentId={environmentId}
+            threadId={live.threadId}
+            reportNames={reports.map((report) => report.name)}
+            state={standup}
+            disabled={!actions.canAct}
+            onAdd={() => void addStandup()}
+          />
         ) : null}
         <View className="gap-2">
           <View className="gap-0.5 px-2">

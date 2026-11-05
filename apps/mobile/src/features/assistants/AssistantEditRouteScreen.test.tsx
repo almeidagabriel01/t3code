@@ -1,4 +1,5 @@
 import {
+  ASSISTANT_STANDUP_PROMPT_HEAD,
   DEFAULT_ASSISTANT_AUTONOMY,
   DEFAULT_AUTONOMY_SETTINGS,
   type Assistant,
@@ -13,7 +14,14 @@ const { mocks, Children } = vi.hoisted(() => ({
     spend: null as unknown,
     update: vi.fn(),
     entries: [] as unknown[],
+    tasks: [] as Array<{ threadId: string | null; prompt: string }>,
   },
+}));
+vi.mock("../../state/query", () => ({
+  useEnvironmentQuery: () => ({ data: { tasks: mocks.tasks } }),
+}));
+vi.mock("../../state/server", () => ({
+  serverEnvironment: { scheduledTasksLive: () => null },
 }));
 vi.mock("react-native", () => ({
   View: Children,
@@ -204,6 +212,7 @@ beforeEach(() => {
   root = createRoot(container);
   mocks.spend = undefined;
   mocks.entries = [];
+  mocks.tasks = [];
   mocks.update.mockReset().mockResolvedValue({ ok: true });
 });
 afterEach(() => act(() => root.unmount()));
@@ -346,12 +355,16 @@ describe("assistant team", () => {
     render(assistant());
     await act(async () => pick("Add daily standup"));
     expect(mocks.update).toHaveBeenCalledWith({ assistantId: "a1", addStandup: true });
-    expect(container.textContent).toContain("Added to its schedules");
-    expect(
-      Array.from(container.querySelectorAll("button")).find(
-        (b) => b.textContent === "Add daily standup",
-      )!.disabled,
-    ).toBe(true);
+    expect(container.textContent).toContain("It is in its schedules below");
+    expect(container.textContent).not.toContain("Add daily standup");
+  });
+
+  it("does not offer a standup the conversation already has, even renamed", () => {
+    mocks.entries = [entry("a1", "Jarvis"), entry("kid", "Kid", { reportsTo: "a1" })];
+    mocks.tasks = [{ threadId: "thread-1", prompt: `${ASSISTANT_STANDUP_PROMPT_HEAD}\nAsk.` }];
+    render(assistant());
+    expect(container.textContent).toContain("It is in its schedules below");
+    expect(container.textContent).not.toContain("Add daily standup");
   });
 
   it("shows a refused standup and lets the user retry", async () => {
@@ -361,7 +374,7 @@ describe("assistant team", () => {
     await act(async () => pick("Add daily standup"));
     expect(container.textContent).toContain("Nope.");
     await act(async () => pick("Add daily standup"));
-    expect(container.textContent).toContain("Added to its schedules");
+    expect(container.textContent).toContain("It is in its schedules below");
   });
 
   it("has no standup for an assistant without reports", () => {

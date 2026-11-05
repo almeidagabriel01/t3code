@@ -1,4 +1,8 @@
-import { type Assistant, assistantDescendantIds } from "@t3tools/contracts";
+import {
+  type Assistant,
+  ASSISTANT_STANDUP_PROMPT_HEAD,
+  assistantDescendantIds,
+} from "@t3tools/contracts";
 
 type TeamMember = Pick<Assistant, "id" | "name" | "role" | "reportsTo" | "archivedAt">;
 
@@ -27,5 +31,18 @@ export function teamSubtitle(assistant: TeamMember, assistants: ReadonlyArray<Te
     [assistant.role, leader ? `reports to ${leader.name}` : ""]
       .filter((part) => part !== "")
       .join(" · ") || null
+  );
+}
+
+/** Whether the assistant's conversation already has its standup, renamed or paused alike. */
+export function hasStandupTask(
+  tasks: ReadonlyArray<{ readonly threadId: string | null; readonly prompt: string }>,
+  threadId: string | null,
+): boolean {
+  return (
+    threadId !== null &&
+    tasks.some(
+      (task) => task.threadId === threadId && task.prompt.startsWith(ASSISTANT_STANDUP_PROMPT_HEAD),
+    )
   );
 }

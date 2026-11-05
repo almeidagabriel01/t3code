@@ -1,5 +1,6 @@
 import { createMemoryHistory } from "@tanstack/react-router";
 import {
+  ASSISTANT_STANDUP_PROMPT_HEAD,
   DEFAULT_AUTONOMY_SETTINGS,
   ScheduledTaskId,
   type AutonomyWatch,
@@ -484,19 +485,34 @@ it("offers the daily standup only to a leader, once", async () => {
     assistant("jarvis", "Jarvis"),
     assistant("eng", "Engineer", { reportsTo: "jarvis" as AssistantId }),
   ]);
+  publishScheduledTasks([]);
   fakeAssistantEdits.updates = [];
   {
     await using _engineer = await openEditDialog("Engineer");
     await expect.element(page.getByLabelText("Role")).toBeVisible();
     expect(page.getByRole("button", { name: "Add daily standup" }).query()).toBeNull();
   }
-  await using _leader = await openEditDialog("Jarvis");
-  await userEvent.click(page.getByRole("button", { name: "Add daily standup" }));
-  await eventually(() =>
-    expect(fakeAssistantEdits.updates).toMatchObject([{ assistantId: "jarvis", addStandup: true }]),
-  );
-  await expect.element(page.getByText(/Added to its schedules/)).toBeVisible();
-  await expect.element(page.getByRole("button", { name: "Add daily standup" })).toBeDisabled();
+  {
+    await using _leader = await openEditDialog("Jarvis");
+    await userEvent.click(page.getByRole("button", { name: "Add daily standup" }));
+    await eventually(() =>
+      expect(fakeAssistantEdits.updates).toMatchObject([
+        { assistantId: "jarvis", addStandup: true },
+      ]),
+    );
+    await expect.element(page.getByText(/It is in its schedules below/)).toBeVisible();
+    expect(page.getByRole("button", { name: "Add daily standup" }).query()).toBeNull();
+  }
+  // A standup that already exists, even renamed, is not offered again.
+  publishScheduledTasks([
+    {
+      ...scheduledTask("standup", "Renamed", "assistant:jarvis:1"),
+      prompt: `${ASSISTANT_STANDUP_PROMPT_HEAD}\nAsk everyone.`,
+    },
+  ]);
+  await using _again = await openEditDialog("Jarvis");
+  await expect.element(page.getByText(/It is in its schedules below/)).toBeVisible();
+  expect(page.getByRole("button", { name: "Add daily standup" }).query()).toBeNull();
 });
 
 it("creates an assistant with its notification choice", async () => {
