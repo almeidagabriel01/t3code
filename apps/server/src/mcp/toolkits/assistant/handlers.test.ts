@@ -30,7 +30,7 @@ const layer = Layer.mock(AssistantService.AssistantService)({
 it.effect("list and read give each assistant its role, leader and reports by handle", () =>
   Effect.gen(function* () {
     const listed = yield* run({ action: "list" });
-    assert.deepInclude(listed.assistants?.[0] as object, {
+    assert.deepInclude((listed.assistants as Array<object>)[0], {
       handle: "ceo",
       role: "CEO",
       reportsTo: null,

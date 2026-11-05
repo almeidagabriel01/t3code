@@ -12,7 +12,7 @@ export type AssistantParameters = typeof AssistantParameters.Type;
 
 const AssistantTool = Tool.make("t3_assistant", {
   description:
-    "The user's named assistants (Jarvis, others): each a long-lived thread. `list`, or `read` a `handle`: {handle, name, threadId, toolAccess, role, reportsTo, reports, archived}. To ask one something, t3_thread_send to its threadId, then t3_thread_wait. A leader may only ask its reports (and theirs); a report answers through its run result, never by sending upward. You cannot create or configure assistants.",
+    "The user's named assistants (Jarvis, others): each a long-lived thread. `list`, or `read` a `handle`: {handle, name, threadId, toolAccess, role, reportsTo, reports, archived}. To ask one something, t3_thread_send to its threadId, then t3_thread_wait. You cannot create or configure assistants.",
   parameters: AssistantParameters,
   success: Schema.Record(Schema.String, Schema.Json),
   failure: OrchestratorMcpFailure,
