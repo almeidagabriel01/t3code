@@ -712,6 +712,20 @@ function stripDefaultServerSettings(current: unknown, defaults: unknown): unknow
   return Object.is(current, defaults) ? undefined : current;
 }
 
+const encodeSettingsFieldExit = Schema.encodeUnknownExit(Schema.Struct(ServerSettings.fields));
+
+/** A field whose schema has no per-field defaults cannot be written half-stripped: keep it whole. */
+function keepWholeWhereRequired(stripped: unknown, settings: ServerSettings): unknown {
+  return Object.fromEntries(
+    Object.entries(stripped as Record<string, unknown>).map(([key, value]) => [
+      key,
+      key in settings && Exit.isFailure(encodeSettingsFieldExit({ [key]: value }))
+        ? settings[key as keyof ServerSettings]
+        : value,
+    ]),
+  );
+}
+
 const decodeProjectScriptsJson = Schema.decodeUnknownOption(
   Schema.fromJsonString(Schema.Array(ProjectScript)),
 );
@@ -881,7 +895,10 @@ const make = Effect.gen(function* () {
   const writeSettingsAtomically = Effect.fnUntraced(
     function* (settings: ServerSettings, transition?: HubTransitionMarker) {
       const marker = transition ?? (yield* Ref.get(hubMarkerRef));
-      const stripped = stripDefaultServerSettings(settings, managed.defaults) ?? {};
+      const stripped = keepWholeWhereRequired(
+        stripDefaultServerSettings(settings, managed.defaults) ?? {},
+        settings,
+      );
       const sparseSettingsJson = yield* encodeServerSettingsJson({
         ...((managed.keepStored === undefined
           ? stripped

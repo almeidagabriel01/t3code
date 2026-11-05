@@ -1096,6 +1096,19 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
     }).pipe(Effect.provide(layerServerSettings())),
   );
 
+  it.effect("saves a whole-object setting when only some of its fields left the default", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      // Autonomy has no per-field defaults, so a half-stripped value cannot be written.
+      const autonomy = { ...DEFAULT_SERVER_SETTINGS.autonomy, enabled: true };
+      yield* serverSettings.updateSettings({ autonomy });
+      const persisted = JSON.parse(yield* fileSystem.readFileString(serverConfig.settingsPath));
+      assert.deepEqual(persisted.autonomy, autonomy);
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
   it.effect("keeps a default-off provider's new instance disabled and sparse on disk", () =>
     Effect.gen(function* () {
       const serverConfig = yield* ServerConfig.ServerConfig;
