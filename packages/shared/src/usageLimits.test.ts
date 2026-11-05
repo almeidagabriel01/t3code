@@ -177,7 +177,8 @@ describe("pace", () => {
     expect(elapsedShare(window, now)).toBeCloseTo(0.6);
     expect(paceRemainingPercent(window, now)).toBe(40);
     expect(paceOf(window, now)).toBe("under");
-    expect(paceOf({ ...window, usedPercent: 62 }, now)).toBe("on");
+    expect(paceOf({ ...window, usedPercent: 60 }, now)).toBe("on");
+    expect(paceOf({ ...window, usedPercent: 61 }, now)).toBe("ahead");
     expect(paceOf({ ...window, usedPercent: 80 }, now)).toBe("ahead");
   });
 });

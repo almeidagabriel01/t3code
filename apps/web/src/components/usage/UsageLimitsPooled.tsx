@@ -38,6 +38,7 @@ import {
   poolPacePresentation,
   selectUsagePaceSettings,
   windowBand,
+  paceTextClass,
 } from "@t3tools/shared/usagePace";
 import { cn } from "../../lib/utils";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
@@ -210,8 +211,7 @@ function SegmentPopover({
         ) : null}
         {timeLeft !== null && pace ? (
           <Row label="Even pace">
-            {timeLeft}% left by now ·{" "}
-            <span className={pace.deficit ? "text-warning" : "text-success"}>{pace.paceText}</span>
+            {timeLeft}% left by now · <span className={paceTextClass(pace)}>{pace.paceText}</span>
           </Row>
         ) : null}
         {pace?.projectionText ? <Row label="Projection">{pace.projectionText}</Row> : null}
@@ -596,7 +596,7 @@ function PoolWindowCard({
         </span>
         {pace ? (
           <span className="text-xs text-muted-foreground tabular-nums">
-            <span className={pace.deficit ? "text-warning" : "text-success"}>{pace.paceText}</span>
+            <span className={paceTextClass(pace)}>{pace.paceText}</span>
             {pace.projectionText ? ` · ${pace.projectionText}` : ""}
           </span>
         ) : null}

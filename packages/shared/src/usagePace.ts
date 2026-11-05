@@ -40,9 +40,14 @@ const shown = (usedShare: number, display: StatusBarUsagePercentage) =>
   Math.round(display === "remaining" ? 100 - usedShare : usedShare);
 
 // Same tolerance as paceOf, so every surface agrees on what "on pace" means.
-const overPace = (deltaPoints: number) => deltaPoints > PACE_TOLERANCE_POINTS;
+const overPace = (deltaPoints: number) => deltaPoints >= PACE_TOLERANCE_POINTS;
+const underPace = (deltaPoints: number) => deltaPoints <= -PACE_TOLERANCE_POINTS;
+
+/** Spending faster than the window elapses is red, slower is green, dead even stays neutral. */
+export const paceTextClass = (view: Pick<PaceView, "deficit" | "reserve">) =>
+  view.deficit ? "text-destructive" : view.reserve ? "text-success" : "";
 const paceText = (deltaPoints: number) =>
-  Math.abs(deltaPoints) <= PACE_TOLERANCE_POINTS
+  Math.abs(deltaPoints) < PACE_TOLERANCE_POINTS
     ? "on pace"
     : `${Math.round(Math.abs(deltaPoints) * 10) / 10}% ${deltaPoints > 0 ? "over" : "under"} pace`;
 
@@ -54,6 +59,8 @@ export interface PaceView {
   /** "8% over pace", "12% under pace" or "on pace". */
   readonly paceText: string;
   readonly deficit: boolean;
+  /** Under pace by more than the tolerance. */
+  readonly reserve: boolean;
   readonly expectedText: string;
   readonly projectionText: string | null;
   readonly dailyText: string | null;
@@ -77,6 +84,7 @@ export function pacePresentation(input: {
     deltaText: formatPaceDelta(pace.deltaPoints),
     paceText: paceText(pace.deltaPoints),
     deficit: overPace(pace.deltaPoints),
+    reserve: underPace(pace.deltaPoints),
     expectedText: `Expected ${shown(expected, display)}%`,
     projectionText:
       !settings.projection || projection === null
@@ -95,7 +103,7 @@ export function pacePresentation(input: {
 export function poolPacePresentation(input: {
   readonly shares: { readonly used: number; readonly elapsed: number } | null;
   readonly settings: UsagePaceSettings;
-}): Pick<PaceView, "deltaText" | "paceText" | "deficit" | "projectionText"> | null {
+}): Pick<PaceView, "deltaText" | "paceText" | "deficit" | "reserve" | "projectionText"> | null {
   const { shares, settings } = input;
   if (!settings.pace || shares === null) return null;
   const atReset = settings.projection ? projectedAtReset(shares.used, shares.elapsed) : null;
@@ -103,6 +111,7 @@ export function poolPacePresentation(input: {
     deltaText: formatPaceDelta(shares.used - shares.elapsed * 100),
     paceText: paceText(shares.used - shares.elapsed * 100),
     deficit: overPace(shares.used - shares.elapsed * 100),
+    reserve: underPace(shares.used - shares.elapsed * 100),
     projectionText:
       atReset === null
         ? null

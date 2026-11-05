@@ -28,7 +28,12 @@ import { ProviderIcon } from "../../components/ProviderIcon";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { environmentPresentations } from "../../state/presentation";
 import { ResetCredits } from "./UsageLimitsSection";
-import { PaceDetail, UsagePaceSettingsSection, useUsagePaceSettings } from "./usagePaceSettings";
+import {
+  PaceDetail,
+  paceTone,
+  UsagePaceSettingsSection,
+  useUsagePaceSettings,
+} from "./usagePaceSettings";
 import {
   collectAccountSessions,
   groupSessionsByProject,
@@ -220,15 +225,7 @@ function PoolWindowCard({
         </View>
         {poolPace ? (
           <View className={wide ? "gap-0.5" : "items-end gap-0.5"}>
-            <Text
-              className={
-                poolPace.deficit
-                  ? "text-xs text-danger-foreground"
-                  : "text-xs text-foreground-tertiary"
-              }
-            >
-              {poolPace.paceText}
-            </Text>
+            <Text className={`text-xs ${paceTone(poolPace)}`}>{poolPace.paceText}</Text>
             {poolPace.projectionText ? (
               <Text className="text-xs text-foreground-tertiary">{poolPace.projectionText}</Text>
             ) : null}

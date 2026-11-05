@@ -44,13 +44,7 @@ export function PaceDetail(props: {
   if (view === null) return null;
   return (
     <View className="gap-0.5">
-      <Text
-        className={
-          view.deficit ? "text-xs text-danger-foreground" : "text-xs text-foreground-tertiary"
-        }
-      >
-        {view.paceText}
-      </Text>
+      <Text className={`text-xs ${paceTone(view)}`}>{view.paceText}</Text>
       {view.projectionText ? (
         <Text className="text-xs text-foreground-tertiary">{view.projectionText}</Text>
       ) : null}
@@ -96,4 +90,13 @@ export function UsagePaceSettingsSection() {
       />
     </SettingsSection>
   );
+}
+
+/** Over pace is red, under pace green, dead even neutral, matching web. */
+export function paceTone(view: { readonly deficit: boolean; readonly reserve: boolean }) {
+  return view.deficit
+    ? "text-danger-foreground"
+    : view.reserve
+      ? "text-adaptive-emerald-600"
+      : "text-foreground-tertiary";
 }

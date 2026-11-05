@@ -1,7 +1,12 @@
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
-import { pacePresentation, poolPacePresentation, type UsagePaceSettings } from "./usagePace.ts";
+import {
+  pacePresentation,
+  paceTextClass,
+  poolPacePresentation,
+  type UsagePaceSettings,
+} from "./usagePace.ts";
 
 const settings: UsagePaceSettings = {
   pace: true,
@@ -35,7 +40,7 @@ describe("pacePresentation", () => {
     expect(left.projectionText).toBe("≈50% at reset");
   });
 
-  it("counts drift within paceOf's tolerance as on pace", () => {
+  it("calls any visible overspend over pace, with no grace margin", () => {
     const at = (usedPercent: number) => {
       const view = pacePresentation({
         window: { ...window, usedPercent },
@@ -44,13 +49,13 @@ describe("pacePresentation", () => {
         settings,
         formatAt,
       })!;
-      return [view.paceText, view.deficit];
+      return [view.paceText, paceTextClass(view)];
     };
-    expect([at(65), at(55), at(65.5), at(54)]).toEqual([
-      ["on pace", false],
-      ["on pace", false],
-      ["5.5% over pace", true],
-      ["6% under pace", false],
+    expect([at(60), at(60.05), at(61.7), at(54)]).toEqual([
+      ["on pace", ""],
+      ["on pace", ""],
+      ["1.7% over pace", "text-destructive"],
+      ["6% under pace", "text-success"],
     ]);
   });
 
@@ -99,6 +104,7 @@ describe("poolPacePresentation", () => {
       deltaText: "+20%",
       paceText: "20% over pace",
       deficit: true,
+      reserve: false,
       projectionText: "On course to run out",
     });
     expect(poolPacePresentation({ shares: null, settings })).toBeNull();

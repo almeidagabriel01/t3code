@@ -23,6 +23,7 @@ import {
   pacePresentation,
   selectUsagePaceSettings,
   windowBand,
+  paceTextClass,
 } from "@t3tools/shared/usagePace";
 import { useProjects, useThreadShells } from "../../state/entities";
 import { serverEnvironment } from "../../state/server";
@@ -38,7 +39,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { formatCompactCountdown } from "./statusBar.logic";
 import { PaceBar } from "./UsageBarChip";
-import { ChipSummary, deltaTone } from "./UsageChipSummary";
+import { ChipSummary } from "./UsageChipSummary";
 import {
   displayedPercent,
   isStatusBarItemShown,
@@ -374,7 +375,7 @@ function RosterMetric({
       </span>
       {view === null ? null : (
         <span className="pl-15.5 text-3xs text-muted-foreground tabular-nums">
-          {view.expectedText} · <span className={deltaTone(view)}>{view.paceText}</span>
+          {view.expectedText} · <span className={paceTextClass(view)}>{view.paceText}</span>
           {details.map((line) => ` · ${line}`).join("")}
         </span>
       )}

@@ -7,9 +7,9 @@ import {
   BAND_FILL,
   BAND_TEXT,
   pacePresentation,
+  paceTextClass,
   selectUsagePaceSettings,
   windowBand,
-  type PaceView,
 } from "@t3tools/shared/usagePace";
 
 import { useClientSettings } from "../../hooks/useSettings";
@@ -17,12 +17,6 @@ import { selectChipEntries } from "./statusBar.logic";
 import { displayedPercent } from "./statusBarItems.logic";
 import { UsageBarChip } from "./UsageBarChip";
 import { useMinuteNow } from "./useMinuteNow";
-
-const DELTA_TEXT = { deficit: "text-warning", reserve: "text-success" } as const;
-
-export function deltaTone(view: PaceView) {
-  return view.deficit ? DELTA_TEXT.deficit : DELTA_TEXT.reserve;
-}
 
 export function ChipSummary({
   limits,
@@ -62,7 +56,7 @@ export function ChipSummary({
                 ? null
                 : {
                     text: mode === "compact" ? view.deltaText.charAt(0) : view.deltaText,
-                    className: deltaTone(view),
+                    className: paceTextClass(view),
                   }
             }
           />
