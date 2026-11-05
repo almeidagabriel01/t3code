@@ -653,6 +653,7 @@ const IMESSAGE_DEFAULTS: ImessageChannelSettings = {
 export const fakeImessage = {
   settings: IMESSAGE_DEFAULTS,
   access: "ok" as ImessageChannelAccess,
+  ownHandles: [] as ReadonlyArray<string>,
   failConfigure: null as ImessageChannelSettingsErrorReason | null,
   configures: [] as unknown[],
   accessChecks: 0,
@@ -664,6 +665,7 @@ export function resetFakeImessage(
 ): void {
   fakeImessage.settings = { ...IMESSAGE_DEFAULTS, ...settings };
   fakeImessage.access = access;
+  fakeImessage.ownHandles = [];
   fakeImessage.failConfigure = null;
   fakeImessage.configures = [];
   fakeImessage.accessChecks = 0;
@@ -677,7 +679,7 @@ handlers[WS_METHODS.imessageChannelGetSettings] = () => Effect.sync(() => fakeIm
 handlers[WS_METHODS.imessageChannelCheckAccess] = () =>
   Effect.sync(() => {
     fakeImessage.accessChecks += 1;
-    return { access: fakeImessage.access };
+    return { access: fakeImessage.access, ownHandles: fakeImessage.ownHandles };
   });
 handlers[WS_METHODS.imessageChannelSubscribeStatus] = () =>
   subscribe<ImessageChannelStatusEvent>([], (queue) => {

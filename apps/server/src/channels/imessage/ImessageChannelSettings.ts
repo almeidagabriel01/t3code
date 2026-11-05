@@ -175,7 +175,7 @@ export const make = Effect.fn("ImessageChannelSettings.make")(function* (
     get: Effect.flatMap(readStored, snapshot),
     configure,
     streamStatus: runtime.streamStatus,
-    checkAccess: Effect.map(runtime.checkAccess, (access) => ({ access })),
+    checkAccess: runtime.checkAccess,
     start: lock.withPermits(1)(
       Effect.flatMap(readStored, apply).pipe(
         Effect.catch(() => Effect.logWarning("iMessage could not be started; it stays off.")),

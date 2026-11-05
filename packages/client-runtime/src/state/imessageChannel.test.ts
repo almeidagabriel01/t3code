@@ -6,6 +6,7 @@ import {
   compactImessageHandle,
   formatImessageHandleInput,
   imessageDefaultCallingCode,
+  imessageSuggestedSelfHandles,
 } from "./imessageChannel.ts";
 
 const settings: ImessageChannelSettings = {
@@ -65,6 +66,18 @@ describe("compactImessageHandle", () => {
   it("drops mask separators from numbers and lowercases emails", () => {
     assert.strictEqual(compactImessageHandle("+55 (35) 99999-8888"), "+5535999998888");
     assert.strictEqual(compactImessageHandle(" Me@Example.com "), "me@example.com");
+  });
+});
+
+describe("imessageSuggestedSelfHandles", () => {
+  it("offers only the Mac's handles that neither list has, however they are written", () => {
+    assert.deepEqual(
+      imessageSuggestedSelfHandles(["me@example.com", "+15551234567", "+15550000001"], {
+        selfHandles: ["Me@Example.com"],
+        allowedHandles: ["+1 (555) 000-0001"],
+      }),
+      ["+15551234567"],
+    );
   });
 });
 

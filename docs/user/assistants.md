@@ -124,9 +124,10 @@ replies in the same chat. It works while T3 Code is running on that Mac.
 
 1. Turn on T3 Code in System Settings → Privacy & Security → **Full Disk Access**, then **Check
    again**.
-2. Add your own phone number and Apple ID email under **Chat with yourself**. If the Mac's Messages
-   uses an Apple ID of its own, add the people allowed to write to it under **Other accounts**
-   instead.
+2. Add your own phone number and Apple ID email under **Chat with yourself**. Once access is
+   granted, the numbers and emails this Mac's Messages sends from show there, ready to add with one
+   click. If the Mac's Messages uses an Apple ID of its own, add the people allowed to write to it
+   under **Other accounts** instead.
 3. Turn on **Use iMessage** and send yourself a message. Allow T3 Code to control Messages when
    macOS asks.
 

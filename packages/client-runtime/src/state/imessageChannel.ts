@@ -112,6 +112,20 @@ const group = (digits: string, sizes: ReadonlyArray<number>, separators: Readonl
 export const compactImessageHandle = (value: string) =>
   value.includes("@") ? value.trim().toLowerCase() : value.replace(/[\s\-().]/g, "");
 
+/** The Mac's own numbers and emails that neither list has yet, so one tap can add them. */
+export function imessageSuggestedSelfHandles(
+  ownHandles: ReadonlyArray<string>,
+  settings: {
+    readonly selfHandles: ReadonlyArray<string>;
+    readonly allowedHandles: ReadonlyArray<string>;
+  },
+): ReadonlyArray<string> {
+  const known = new Set(
+    [...settings.selfHandles, ...settings.allowedHandles].map(compactImessageHandle),
+  );
+  return ownHandles.filter((handle) => !known.has(compactImessageHandle(handle)));
+}
+
 /**
  * Formats a phone number as it is typed; emails pass through. A number typed without `+` is
  * national and gets `callingCode`. Separators only appear before a digit, so backspace never sticks.

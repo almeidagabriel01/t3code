@@ -10,3 +10,13 @@ export function normalizeHandle(raw: string): string | undefined {
   const phone = value.replace(/[\s\-().]/g, "");
   return /^\+[1-9]\d{5,14}$/.test(phone) ? phone : undefined;
 }
+
+/** Messages records its own login as `E:me@example.com` or `P:+15551234567`. */
+export function ownHandlesFrom(raw: ReadonlyArray<string | null>): ReadonlyArray<string> {
+  const out = new Set<string>();
+  for (const value of raw) {
+    const handle = value === null ? undefined : normalizeHandle(value.replace(/^[EP]:/i, ""));
+    if (handle !== undefined) out.add(handle);
+  }
+  return [...out];
+}

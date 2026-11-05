@@ -44,6 +44,8 @@ export interface ImessageChatDb {
     limit: number,
   ) => Effect.Effect<ReadonlyArray<ImessageRow>, ImessageDbError>;
   readonly rowById: (rowId: number) => Effect.Effect<ImessageRow | undefined, ImessageDbError>;
+  /** Raw sender logins (`account`, `destination_caller_id`) of recent sent messages, newest first. */
+  readonly ownLogins: Effect.Effect<ReadonlyArray<string | null>, ImessageDbError>;
   readonly close: Effect.Effect<void>;
 }
 
@@ -114,6 +116,19 @@ export const openImessageChatDb = (file: string) =>
                 | ImessageRow
                 | undefined,
           ),
+        ownLogins: query(() =>
+          (
+            db
+              .prepare(
+                `SELECT account, destination_caller_id FROM message
+                 WHERE is_from_me = 1 ORDER BY ROWID DESC LIMIT 500`,
+              )
+              .all() as unknown as ReadonlyArray<{
+              readonly account: string | null;
+              readonly destination_caller_id: string | null;
+            }>
+          ).flatMap((row) => [row.account, row.destination_caller_id]),
+        ),
         close: Effect.sync(() => {
           try {
             db.close();

@@ -12,7 +12,8 @@ import { classifyImessageDbFailure, openImessageChatDb } from "./imessageChatDb.
 
 const SCHEMA = `CREATE TABLE message (guid TEXT, text TEXT, attributedBody BLOB, handle_id INTEGER,
   is_from_me INTEGER, date INTEGER, associated_message_type INTEGER, item_type INTEGER,
-  balloon_bundle_id TEXT, cache_has_attachments INTEGER, service TEXT, account TEXT);
+  balloon_bundle_id TEXT, cache_has_attachments INTEGER, service TEXT, account TEXT,
+  destination_caller_id TEXT);
   CREATE TABLE handle (id TEXT, service TEXT);
   CREATE TABLE chat (guid TEXT, chat_identifier TEXT, style INTEGER);
   CREATE TABLE chat_message_join (message_id INTEGER, chat_id INTEGER);`;
@@ -92,6 +93,20 @@ describe("read-only chat database", () => {
         assert.equal((yield* db.rowById(1))?.chat_join_count, 0);
         assert.equal((yield* db.rowById(3))?.chat_join_count, 2);
         assert.isUndefined(yield* db.rowById(99));
+        assert.deepEqual(yield* db.ownLogins, []);
+        yield* Effect.sync(() => {
+          const writer = new NodeSqlite.DatabaseSync(file);
+          writer.exec(
+            "INSERT INTO message (guid,is_from_me,account,destination_caller_id) VALUES ('s1',1,'E:me@example.com','+15551234567'); INSERT INTO message (guid,is_from_me,account,destination_caller_id) VALUES ('s2',1,NULL,'+15557654321');",
+          );
+          writer.close();
+        });
+        assert.deepEqual(yield* db.ownLogins, [
+          null,
+          "+15557654321",
+          "E:me@example.com",
+          "+15551234567",
+        ]);
         yield* db.close;
         yield* db.close;
       }),

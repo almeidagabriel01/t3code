@@ -47,7 +47,12 @@ export function useImessageSettings(environmentId: EnvironmentId) {
 /** Whether the server can read the Messages database; `refresh` is the "Check again" button. */
 export function useImessageAccess(environmentId: EnvironmentId) {
   const query = useEnvironmentQuery(imessageEnvironment.access({ environmentId, input: {} }));
-  return { access: query.data?.access ?? null, error: query.error, refresh: query.refresh };
+  return {
+    access: query.data?.access ?? null,
+    ownHandles: query.data?.ownHandles ?? [],
+    error: query.error,
+    refresh: query.refresh,
+  };
 }
 
 export type ImessageReply =

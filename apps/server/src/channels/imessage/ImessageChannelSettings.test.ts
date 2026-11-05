@@ -26,7 +26,7 @@ const harness = (platform: NodeJS.Platform = "darwin") => {
       apply: (config) => Effect.sync(() => void applied.push(config)),
       status: Effect.succeed({ status: "error", lastError: "full_disk_access_missing" }),
       streamStatus: Stream.make({ status: "running" } as const),
-      checkAccess: Effect.sync(() => state.access),
+      checkAccess: Effect.sync(() => ({ access: state.access, ownHandles: [] })),
       pollOnce: Effect.void,
     }),
   );
@@ -209,9 +209,12 @@ it.effect("checkAccess and the status stream come from the runtime", () => {
   const { state, layer } = harness();
   return Effect.gen(function* () {
     const settings = yield* Settings.ImessageChannelSettings;
-    assert.deepStrictEqual(yield* settings.checkAccess, { access: "ok" });
+    assert.deepStrictEqual(yield* settings.checkAccess, { access: "ok", ownHandles: [] });
     state.access = "full_disk_access_missing";
-    assert.deepStrictEqual(yield* settings.checkAccess, { access: "full_disk_access_missing" });
+    assert.deepStrictEqual(yield* settings.checkAccess, {
+      access: "full_disk_access_missing",
+      ownHandles: [],
+    });
     assert.deepStrictEqual(yield* Stream.runCollect(settings.streamStatus), [
       { status: "running" },
     ]);

@@ -2,6 +2,7 @@ import {
   compactImessageHandle,
   formatImessageHandleInput,
   imessageDefaultCallingCode,
+  imessageSuggestedSelfHandles,
 } from "@t3tools/client-runtime/state/imessageChannel";
 import type { EnvironmentId } from "@t3tools/contracts";
 import {
@@ -62,10 +63,12 @@ function HandleSection(props: {
   readonly emptyTitle: string;
   readonly icon: React.ReactNode;
   readonly handles: ReadonlyArray<string>;
+  /** Handles found on the Mac that one click adds. */
+  readonly suggestions?: ReadonlyArray<string>;
   readonly canAct: boolean;
   readonly save: (handles: ReadonlyArray<string>) => Promise<ImessageReply>;
 }) {
-  const { handles, canAct, save } = props;
+  const { handles, canAct, save, suggestions = [] } = props;
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
 
@@ -78,6 +81,11 @@ function HandleSection(props: {
     if (!reply.ok) return setError(reply.message);
     setError(null);
     setDraft("");
+  };
+
+  const addFound = async () => {
+    const reply = await save([...handles, ...suggestions]);
+    setError(reply.ok ? null : reply.message);
   };
 
   const remove = async (handle: string) => {
@@ -112,6 +120,18 @@ function HandleSection(props: {
           </div>
         }
       />
+      {suggestions.length > 0 ? (
+        <SettingsRow
+          title="Found on this Mac"
+          description={`Messages here sends from ${suggestions.map((handle) => formatImessageHandleInput(handle)).join(" and ")}.`}
+          control={
+            <Button variant="outline" disabled={!canAct} onClick={() => void addFound()}>
+              <PlusIcon />
+              {suggestions.length === 1 ? "Add it" : "Add them"}
+            </Button>
+          }
+        />
+      ) : null}
       {handles.length === 0 ? (
         <SettingsRow title={props.emptyTitle} />
       ) : (
@@ -151,7 +171,7 @@ function ImessageEnvironment(props: {
 }) {
   const { environmentId, suffix } = props;
   const { settings, error, refresh } = useImessageSettings(environmentId);
-  const { access, refresh: checkAgain } = useImessageAccess(environmentId);
+  const { access, ownHandles, refresh: checkAgain } = useImessageAccess(environmentId);
   const actions = useImessageActions(environmentId);
   const [switchError, setSwitchError] = useState<string | null>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- handles and permissions change outside this client, so a cached read is refetched on open
@@ -269,6 +289,7 @@ function ImessageEnvironment(props: {
         emptyTitle="No numbers or emails yet"
         icon={<UserRoundIcon className={SECTION_ICON} />}
         handles={settings.selfHandles}
+        suggestions={imessageSuggestedSelfHandles(ownHandles, settings)}
         canAct={canAct}
         save={(selfHandles) => settled({ selfHandles })}
       />

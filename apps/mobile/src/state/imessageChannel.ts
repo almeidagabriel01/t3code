@@ -58,6 +58,7 @@ export function useImessageChannel(environmentId: EnvironmentId) {
     settings,
     loadError: settingsQuery.error,
     access: accessQuery.data?.access ?? null,
+    ownHandles: accessQuery.data?.ownHandles ?? [],
     checkAccess: accessQuery.refresh,
     canConfigure,
     configure: async (input: ImessageChannelConfigureInput): Promise<ImessageReply> => {

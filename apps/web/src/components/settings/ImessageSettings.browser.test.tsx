@@ -165,6 +165,22 @@ it("adds and removes handles, sending the full list each time", async () => {
   );
 });
 
+it("offers the Mac's own handles that are not listed yet and adds them in one click", async () => {
+  resetFakeImessage({ allowedHandles: ["a@example.com"] });
+  fakeImessage.ownHandles = ["me@example.com", "+15551230000", "a@example.com"];
+  await using _screen = await openImessage();
+  await expect
+    .element(page.getByText("Messages here sends from me@example.com and +1 (555) 123-0000."))
+    .toBeVisible();
+  await userEvent.click(page.getByRole("button", { name: "Add them" }));
+  await eventually(() =>
+    expect(fakeImessage.configures.at(-1)).toEqual({
+      selfHandles: ["me@example.com", "+15551230000"],
+    }),
+  );
+  await expect.element(page.getByText("Found on this Mac")).not.toBeInTheDocument();
+});
+
 it("ignores repeated handles and shows the server's refusal", async () => {
   resetFakeImessage({ selfHandles: ["+15551230000"] });
   await using _screen = await openImessage();

@@ -8,6 +8,7 @@ const { mocks, Children } = vi.hoisted(() => ({
     ids: ["hub"] as string[],
     settings: null as unknown,
     access: "ok" as string | null,
+    ownHandles: [] as string[],
     can: true,
     configure: vi.fn(),
     checkAccess: vi.fn(),
@@ -65,9 +66,15 @@ vi.mock("../../components/ui/ListSection", () => ({
 vi.mock("../../components/ui/ScreenScrollView", () => ({ ScreenScrollView: Children }));
 vi.mock("../settings/components/SettingsScreen", () => ({ SettingsScreen: Children }));
 vi.mock("../settings/components/SettingsActionRow", () => ({
-  SettingsActionRow: (props: { label: string; disabled?: boolean; onPress: () => void }) => (
+  SettingsActionRow: (props: {
+    label: string;
+    description?: string;
+    disabled?: boolean;
+    onPress: () => void;
+  }) => (
     <button aria-label={props.label} disabled={props.disabled} onClick={props.onPress}>
       {props.label}
+      {props.description}
     </button>
   ),
 }));
@@ -105,6 +112,7 @@ vi.mock("../../state/imessageChannel", () => ({
     settings: mocks.settings,
     loadError: null,
     access: mocks.access,
+    ownHandles: mocks.ownHandles,
     checkAccess: mocks.checkAccess,
     canConfigure: mocks.can,
     configure: mocks.configure,
@@ -147,6 +155,7 @@ beforeEach(() => {
   root = createRoot(container);
   mocks.ids = ["hub"];
   mocks.access = "ok";
+  mocks.ownHandles = [];
   mocks.can = true;
   mocks.configure.mockReset().mockResolvedValue({ ok: true });
   mocks.checkAccess.mockReset();
@@ -213,6 +222,19 @@ describe("iMessage settings", () => {
     expect(mocks.configure).toHaveBeenLastCalledWith({ allowedHandles: [] });
     await press("Remove +5511999999999");
     expect(mocks.configure).toHaveBeenLastCalledWith({ selfHandles: [] });
+  });
+
+  it("adds the Mac's own handles that neither list has in one tap", async () => {
+    mocks.ownHandles = ["me@x.com", "+5511999999999", "a@b.com"];
+    render({ allowedHandles: ["a@b.com"] });
+    expect(container.textContent).toContain("me@x.com");
+    await press("Add the ones found on this Mac");
+    expect(mocks.configure).toHaveBeenLastCalledWith({
+      selfHandles: ["+5511999999999", "me@x.com"],
+    });
+    mocks.ownHandles = ["+5511999999999"];
+    render();
+    expect(button("Add the ones found on this Mac")).toBeNull();
   });
 
   it("rejects duplicates locally and shows the server's validation error", async () => {

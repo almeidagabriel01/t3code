@@ -1,6 +1,7 @@
 import {
   formatImessageHandleInput,
   imessageDefaultCallingCode,
+  imessageSuggestedSelfHandles,
 } from "@t3tools/client-runtime/state/imessageChannel";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useState, type ComponentProps } from "react";
@@ -109,10 +110,13 @@ function HandleSection(props: {
   readonly addLabel: string;
   readonly icon: ComponentProps<typeof SymbolView>["name"];
   readonly handles: ReadonlyArray<string>;
+  /** Handles found on the Mac that one tap adds. */
+  readonly suggestions?: ReadonlyArray<string>;
   readonly disabled: boolean;
   readonly onChange: (handles: ReadonlyArray<string>) => Promise<boolean>;
   readonly onError: (text: string) => void;
 }) {
+  const suggestions = props.suggestions ?? [];
   const [draft, setDraft] = useState("");
   const add = async () => {
     const parsed = parseImessageHandle(draft, props.handles);
@@ -124,6 +128,15 @@ function HandleSection(props: {
   };
   return (
     <ListSection title={props.title} footer={props.footer}>
+      {suggestions.length > 0 ? (
+        <SettingsActionRow
+          icon="laptopcomputer"
+          label="Add the ones found on this Mac"
+          description={suggestions.map((handle) => formatImessageHandleInput(handle)).join(", ")}
+          disabled={props.disabled}
+          onPress={() => void props.onChange([...props.handles, ...suggestions])}
+        />
+      ) : null}
       {props.handles.map((handle) => (
         <ItemRow
           key={handle}
@@ -214,6 +227,7 @@ function ImessageEnvironment(props: {
         addLabel="Add yours"
         icon="person.crop.circle"
         handles={settings.selfHandles}
+        suggestions={imessageSuggestedSelfHandles(imessage.ownHandles, settings)}
         disabled={!imessage.canConfigure}
         onChange={(selfHandles) => change({ selfHandles })}
         onError={setError}

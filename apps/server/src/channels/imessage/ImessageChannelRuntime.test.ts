@@ -78,6 +78,11 @@ const harness = () => {
     rowsAfter: (cursor, limit) =>
       Effect.succeed(rows.filter((row) => row.rowid > cursor).slice(0, limit)),
     rowById: (id) => Effect.succeed(rows.find((row) => row.rowid === id)),
+    ownLogins: Effect.suspend(() =>
+      state.queryFails
+        ? Effect.fail(new ImessageDbError({ category: "database_unavailable" }))
+        : Effect.succeed(["E:Me@Example.com", "+1 (555) 123-4567", null, "e:me@example.com", "x"]),
+    ),
     close: Effect.sync(() => void (state.closes += 1)),
   };
   const sender: ImessageSender = {
@@ -288,18 +293,25 @@ it.effect("reports why it cannot read, recovers, and goes quiet when disabled", 
       state.openFailure = category;
       yield* runtime.pollOnce;
       assert.deepEqual(yield* runtime.status, { status: "error", lastError: category });
-      assert.equal(yield* runtime.checkAccess, category);
+      assert.deepEqual(yield* runtime.checkAccess, { access: category, ownHandles: [] });
     }
     state.openFailure = undefined;
     state.queryFails = true;
     yield* runtime.pollOnce;
     assert.deepEqual(yield* runtime.status, { status: "error", lastError: "database_unavailable" });
-    assert.equal(yield* runtime.checkAccess, "database_unavailable");
+    assert.deepEqual(yield* runtime.checkAccess, {
+      access: "database_unavailable",
+      ownHandles: [],
+    });
     state.queryFails = false;
     rows.push(friendRow(1));
     yield* runtime.pollOnce;
     assert.deepEqual(yield* runtime.status, { status: "running" });
-    assert.equal(yield* runtime.checkAccess, "ok");
+    // The Mac's own logins, normalized and deduplicated, newest first.
+    assert.deepEqual(yield* runtime.checkAccess, {
+      access: "ok",
+      ownHandles: ["me@example.com", "+15551234567"],
+    });
     // Only opens that failed leave nothing to close.
     assert.equal(state.opens, state.closes + 6);
 

@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import { IsoDateTime } from "./baseSchemas.ts";
@@ -70,7 +71,11 @@ export const ImessageChannelAccess = Schema.Literals([
 ]);
 export type ImessageChannelAccess = typeof ImessageChannelAccess.Type;
 
-export const ImessageChannelCheckAccessResult = Schema.Struct({ access: ImessageChannelAccess });
+export const ImessageChannelCheckAccessResult = Schema.Struct({
+  access: ImessageChannelAccess,
+  /** Numbers and emails this Mac's Messages sends from, newest first; empty without access. */
+  ownHandles: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+});
 export type ImessageChannelCheckAccessResult = typeof ImessageChannelCheckAccessResult.Type;
 
 const IMESSAGE_CHANNEL_FAILURE_MESSAGES = {

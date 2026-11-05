@@ -8,7 +8,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import type {
-  ImessageChannelAccess,
+  ImessageChannelCheckAccessResult,
   ImessageChannelDeliveryError,
   ImessageChannelErrorCode,
   ImessageChannelStatusEvent,
@@ -41,6 +41,7 @@ import {
   type ImessageChatDb,
   type ImessageRow,
 } from "./imessageChatDb.ts";
+import { ownHandlesFrom } from "./imessageHandles.ts";
 import { makeOsascriptImessageSender, type ImessageSender } from "./imessageSender.ts";
 import { makeImessageTransport, type ImessageSendReport } from "./imessageTransport.ts";
 
@@ -68,8 +69,8 @@ export class ImessageChannelRuntime extends Context.Service<
     readonly status: Effect.Effect<ImessageRuntimeStatus>;
     /** The current status first, then each change. */
     readonly streamStatus: Stream.Stream<ImessageRuntimeStatus>;
-    /** Reads chat.db once, read-only, to show whether the permission is granted. */
-    readonly checkAccess: Effect.Effect<ImessageChannelAccess>;
+    /** Reads chat.db once, read-only: whether the permission is granted, and the Mac's own logins. */
+    readonly checkAccess: Effect.Effect<ImessageChannelCheckAccessResult>;
     /** One poll now; the loop calls this every two seconds. */
     readonly pollOnce: Effect.Effect<void>;
   }
@@ -317,9 +318,9 @@ export const make = Effect.fn("ImessageChannelRuntime.make")(function* (
     );
 
   const checkAccess: ImessageChannelRuntime["Service"]["checkAccess"] = options.openDb.pipe(
-    Effect.flatMap((db) => db.maxRowId.pipe(Effect.ensuring(db.close))),
-    Effect.as("ok" as const),
-    Effect.catch((failure) => Effect.succeed(failure.category)),
+    Effect.flatMap((db) => db.ownLogins.pipe(Effect.ensuring(db.close))),
+    Effect.map((logins) => ({ access: "ok" as const, ownHandles: ownHandlesFrom(logins) })),
+    Effect.catch((failure) => Effect.succeed({ access: failure.category, ownHandles: [] })),
   );
 
   return ImessageChannelRuntime.of({
