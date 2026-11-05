@@ -1,7 +1,11 @@
 import { filterNotes } from "@t3tools/client-runtime/notes/search";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
-import { moveToTitle, replaceNoteTitle } from "@t3tools/client-runtime/notes/title";
+import {
+  moveToTitle,
+  projectNoteFolder,
+  replaceNoteTitle,
+} from "@t3tools/client-runtime/notes/title";
 import { selectNotesInOrder } from "@t3tools/client-runtime/state/notes";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { NotePath, type EnvironmentId, type NoteSummary, type ProjectId } from "@t3tools/contracts";
@@ -22,13 +26,14 @@ import { NavigationRow } from "../../components/ui/NavigationRow";
 import { SearchField } from "../../components/ui/SearchField";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { notesEnvironment, useNotesEnvironmentIds, useNotesFeed } from "../../state/notes";
+import { useProjects } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useWorkspaceEnvironments } from "../../state/workspace";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { NoteProjectPicker } from "./NoteProjectPicker";
 import { notesError } from "./delivery";
 import {
-  newNotePath,
+  newNoteTarget,
   noteListRows,
   noteRowMenuActions,
   noteSyncLabel,
@@ -122,6 +127,10 @@ function EnvironmentNotes(props: {
   const rows = filterNotes(inProject, query);
   const noMatch = query.trim() !== "" && inProject.length > 0;
   const groups = groupRows(rows);
+  const owner = useProjects().find(
+    (candidate) => candidate.environmentId === environmentId && candidate.id === project,
+  );
+  const folder = owner && owner.isScratch !== true ? projectNoteFolder(owner.title) : null;
 
   const create = () =>
     Dialog.prompt({
@@ -131,7 +140,7 @@ function EnvironmentNotes(props: {
       initialValue: "",
       confirmText: "Create",
       onConfirm: (value) => {
-        const path = newNotePath(value.trim() || "Untitled");
+        const path = newNoteTarget(value, folder, new Set(allRows.map((row) => row.path)));
         if (!isNotePath(path)) {
           Dialog.alert(
             "Can't use that name",

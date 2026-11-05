@@ -2,7 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 
 import {
   canEditNoteDraft,
-  newNotePath,
+  newNoteTarget,
   noteListRows,
   noteRowMenuActions,
   noteSyncLabel,
@@ -68,9 +68,16 @@ describe("notes list", () => {
     expect(rows[0]).toMatchObject({ pinned: true, group: "Pinned", sync: "pending" });
   });
 
-  it("adds the markdown extension to a typed note name only when missing", () => {
-    expect(newNotePath(" ideas ")).toBe("ideas.md");
-    expect(newNotePath("project/plan.md")).toBe("project/plan.md");
+  it.each([
+    ["a bare name, unscoped", " ideas ", null, "ideas.md"],
+    ["a bare name in a project", "ideas", "org alpha", "org alpha/ideas.md"],
+    ["a typed folder", "project/plan.md", "org alpha", "project/plan.md"],
+    ["no name, unscoped", "", null, "Untitled 2.md"],
+    ["no name in a project", " ", "org alpha", "org alpha/Untitled.md"],
+    ["no name in a project that has one", "", "beta", "beta/Untitled 2.md"],
+  ])("places %s", (_case, input, folder, path) => {
+    const taken = new Set(["Untitled.md", "beta/Untitled.md"]);
+    expect(newNoteTarget(input, folder, taken)).toBe(path);
   });
 });
 

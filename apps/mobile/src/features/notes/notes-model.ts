@@ -1,4 +1,5 @@
 import type { NoteOutboxRow } from "@t3tools/client-runtime/notes/outbox";
+import { untitledNotePath } from "@t3tools/client-runtime/notes/title";
 import type { EnvironmentId, NoteSummary, ProjectId } from "@t3tools/contracts";
 
 export type NoteSyncState = "synced" | "pending" | "syncing" | "conflict";
@@ -90,9 +91,23 @@ export function noteSyncLabel(state: NoteSyncState) {
 }
 
 /** A new note's path from what the person typed: `name` or `folder/name`, `.md` optional. */
-export function newNotePath(input: string): string {
+function newNotePath(input: string): string {
   const path = input.trim().normalize("NFC");
   return path.toLowerCase().endsWith(".md") ? path : `${path}.md`;
+}
+
+/**
+ * Where a new note goes: a typed folder/name as written, a bare name in the project's folder (the
+ * root when there is none), and no name at all the next free Untitled there.
+ */
+export function newNoteTarget(
+  input: string,
+  folder: string | null,
+  taken: ReadonlySet<string>,
+): string {
+  const name = input.trim();
+  if (name === "") return untitledNotePath(taken, folder);
+  return newNotePath(name.includes("/") || folder === null ? name : `${folder}/${name}`);
 }
 
 export type NoteRowActionId = "pin" | "start" | "rename" | "move" | "delete";
