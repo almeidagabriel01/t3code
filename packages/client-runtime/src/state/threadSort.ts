@@ -246,9 +246,15 @@ type ActiveSortInput = Partial<
     | "pendingSubagentRequest"
     | "interactionMode"
     | "hasActionableProposedPlan"
+    | "pendingGuestMessageCount"
+    | "lastVisitedAt"
   >
 > & {
-  readonly latestRun?: { readonly requestedAt: string | null } | null;
+  readonly latestRun?: {
+    readonly requestedAt: string | null;
+    readonly completedAt?: string | null;
+  } | null;
+  readonly runtime?: { readonly status: string } | null;
   readonly id: string;
   readonly createdAt: string;
   readonly unsettledAt?: string | null | undefined;
@@ -261,8 +267,21 @@ function activeThreadNeedsUser(thread: ActiveSortInput): boolean {
     thread.hasPendingApprovals === true ||
     thread.hasPendingUserInput === true ||
     thread.pendingSubagentRequest != null ||
+    (thread.pendingGuestMessageCount ?? 0) > 0 ||
     (thread.interactionMode === "plan" && thread.hasActionableProposedPlan === true)
   );
+}
+
+const WORKING_RUNTIME = new Set(["preparing", "queued", "starting", "running", "waiting"]);
+
+/** Recent activity leads with what needs you or finished unseen, then running agents, then the rest. */
+export function activeThreadActivityRank(thread: ActiveSortInput): 0 | 1 | 2 {
+  if (activeThreadNeedsUser(thread)) return 0;
+  if (thread.runtime != null && WORKING_RUNTIME.has(thread.runtime.status)) return 1;
+  const completedAt = Date.parse(thread.latestRun?.completedAt ?? "");
+  if (Number.isNaN(completedAt)) return 2;
+  const visitedAt = Date.parse(thread.lastVisitedAt ?? "");
+  return Number.isNaN(visitedAt) || completedAt > visitedAt ? 0 : 2;
 }
 
 // Only a message the user sent counts; latestUserMessageAt also advances on wakes.
@@ -298,7 +317,7 @@ export function sortActiveThreadsByOrderKey<T extends ActiveSortInput>(
     let comparison = 0;
     if (activity) {
       comparison =
-        Number(activeThreadNeedsUser(right)) - Number(activeThreadNeedsUser(left)) ||
+        activeThreadActivityRank(left) - activeThreadActivityRank(right) ||
         timestamps.get(right)! - timestamps.get(left)!;
     } else {
       const leftKey = left.activeOrderKey;

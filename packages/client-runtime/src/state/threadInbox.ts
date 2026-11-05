@@ -1,6 +1,6 @@
 // @effect-diagnostics globalTimers:off - Shelf placement timers run in web and native clients, outside an Effect runtime.
 import { threadRuntimeIsActive, type EnvironmentThreadShell } from "./models.ts";
-import { toSortableTimestamp } from "./threadSort.ts";
+import { activeThreadActivityRank, toSortableTimestamp } from "./threadSort.ts";
 import { effectiveSnoozed } from "./threadSettled.ts";
 
 type WorkingThreadInput = Pick<
@@ -45,12 +45,14 @@ export function isThreadRunUserStarted(
 type InboxThreadInput = Pick<
   EnvironmentThreadShell,
   "id" | "environmentId" | "createdAt" | "unsettledAt" | "latestRun" | "latestUserAuthoredMessageAt"
->;
+> &
+  Parameters<typeof activeThreadActivityRank>[0];
 
 export function sortInboxThreadsByReturn<T extends InboxThreadInput>(
   threads: readonly T[],
   observedReturnAt?: (thread: T) => number | undefined,
 ): T[] {
+  const ranks = new Map(threads.map((thread) => [thread, activeThreadActivityRank(thread)]));
   const timestamps = new Map(
     threads.map((thread) => [
       thread,
@@ -65,7 +67,7 @@ export function sortInboxThreadsByReturn<T extends InboxThreadInput>(
       ),
     ]),
   );
-  return sortNewestFirst(threads, timestamps);
+  return sortNewestFirst(threads, timestamps, ranks);
 }
 
 type WorkingSortInput = Pick<
@@ -93,9 +95,11 @@ export function sortWorkingThreadsBySend<T extends WorkingSortInput>(threads: re
 function sortNewestFirst<T extends Pick<EnvironmentThreadShell, "id" | "environmentId">>(
   threads: readonly T[],
   timestamps: ReadonlyMap<T, number>,
+  ranks?: ReadonlyMap<T, number>,
 ): T[] {
   return [...threads].sort(
     (left, right) =>
+      (ranks ? ranks.get(left)! - ranks.get(right)! : 0) ||
       timestamps.get(right)! - timestamps.get(left)! ||
       left.id.localeCompare(right.id) ||
       left.environmentId.localeCompare(right.environmentId),

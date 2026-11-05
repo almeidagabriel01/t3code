@@ -282,7 +282,13 @@ describe("sortInboxThreadsByReturn: a message you just sent", () => {
     completedAt: status === "completed" || status === "failed" ? at(requested + 1) : null,
     assistantMessageId: null,
   });
-  const idle = { ...base, id: ThreadId.make("idle"), latestRun: run("completed", 6) };
+  const idle = {
+    ...base,
+    id: ThreadId.make("idle"),
+    latestRun: run("completed", 6),
+    lastVisitedAt: at(9),
+  };
+  const { runtime: running } = thread("running", true);
 
   it.each([
     {
@@ -312,7 +318,16 @@ describe("sortInboxThreadsByReturn: a message you just sent", () => {
         hasPendingApprovals: true,
         latestUserAuthoredMessageAt: at(3),
       },
-      top: "idle",
+      top: "subject",
+    },
+    {
+      name: "an agent still running since before the idle thread finished",
+      subject: {
+        latestRun: run("running", 2),
+        runtime: running,
+        latestUserAuthoredMessageAt: null,
+      },
+      top: "subject",
     },
     {
       name: "idle thread stays above an older waiting run with no message",
@@ -323,6 +338,21 @@ describe("sortInboxThreadsByReturn: a message you just sent", () => {
     const entry = { ...base, id: ThreadId.make("subject"), ...subject };
     expect(sortInboxThreadsByReturn([idle, entry])[0]?.id).toBe(top);
     expect(sortInboxThreadsByReturn([entry, idle])[0]?.id).toBe(top);
+  });
+
+  it("puts what needs you or finished unseen first, then running agents, then idle threads", () => {
+    const done = { ...base, id: ThreadId.make("done"), latestRun: run("completed", 1) };
+    const working = {
+      ...base,
+      id: ThreadId.make("working"),
+      latestRun: run("running", 2),
+      runtime: running,
+    };
+    expect(sortInboxThreadsByReturn([idle, working, done]).map((entry) => entry.id)).toEqual([
+      "done",
+      "working",
+      "idle",
+    ]);
   });
 
   it("leaves Fixed order to the dragged keys, whatever you sent", () => {

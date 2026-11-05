@@ -371,19 +371,28 @@ describe("sortActiveThreadsByOrderKey", () => {
     expect(ids(sortActiveThreadsByOrderKey(threads, "activity"))).toEqual(["placed", "unplaced"]);
   });
 
-  it("activity: threads that need you come first", () => {
+  it("activity: what needs you or finished unseen comes first, then running agents", () => {
+    const finished = { ...running, status: "completed", completedAt: at(51) } as const;
     const threads = [
       thread("messaged", 30, { latestUserAuthoredMessageAt: at(50) }),
       thread("approval", 10, { hasPendingApprovals: true }),
       thread("question", 5, { hasPendingUserInput: true }),
       thread("plan", 3, { interactionMode: "plan", hasActionableProposedPlan: true }),
+      thread("guest", 4, { pendingGuestMessageCount: 1 }),
+      thread("done", 1, { latestRun: finished }),
+      thread("seen", 40, { latestRun: finished, lastVisitedAt: at(52) }),
+      thread("working", 2, { runtime: { status: "running" } }),
       thread("idle", 20),
     ];
     expect(ids(sortActiveThreadsByOrderKey(threads, "activity"))).toEqual([
       "approval",
       "question",
+      "guest",
       "plan",
+      "done",
+      "working",
       "messaged",
+      "seen",
       "idle",
     ]);
   });

@@ -1093,6 +1093,8 @@ describe("Working shelf (beta)", () => {
         input.completedAt === undefined
           ? null
           : { ...makeLatestRun({ completedAt: input.completedAt }), requestedAt: input.createdAt },
+      // Seen, so these rows compare by time alone.
+      lastVisitedAt: "2026-03-10T00:00:00.000Z",
     });
 
     it("puts the thread that finished last on top, whatever its age", () => {
@@ -1617,8 +1619,9 @@ describe("Activity Priority", () => {
     expect(rank(makeThread({ pendingSubagentRequest: "user_input" }))).toBe(0);
   });
 
-  it.each(["running", "idle"] as const)("includes %s work without unread completion", (status) => {
-    expect(rank(makeThread({ runtime: runtimeOf(status) }))).toBe(1);
+  it("includes running work without unread completion, but not an idle session", () => {
+    expect(rank(makeThread({ runtime: runtimeOf("running") }))).toBe(1);
+    expect(rank(makeThread({ runtime: runtimeOf("idle") }))).toBeNull();
   });
 
   it("uses server visits authoritatively and falls back to local visits on older servers", () => {

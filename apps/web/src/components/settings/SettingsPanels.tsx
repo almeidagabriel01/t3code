@@ -948,7 +948,7 @@ export function GeneralSettingsPanel() {
           {...searchableSetting("thread-order")}
           description={
             settings.sidebarThreadOrder === "activity"
-              ? "Threads you message or that need you move to the top."
+              ? "What needs you or finished unseen comes first, then running agents, then the rest."
               : "Threads stay where they are; drag to reorder."
           }
           resetAction={

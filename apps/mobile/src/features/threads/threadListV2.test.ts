@@ -1711,7 +1711,10 @@ describe("Working section beta", () => {
       latestUserAuthoredMessageAt: "2026-06-01T01:00:00.000Z",
       latestRun: runFrom("woken", "2026-06-01T06:00:00.000Z"),
     });
-    const layout = build({ threads: [...threads.slice(0, 2), messaged, woken] });
+    const seen = threads
+      .slice(0, 2)
+      .map((thread) => ({ ...thread, lastVisitedAt: "2026-06-01T09:00:00.000Z" }));
+    const layout = build({ threads: [...seen, messaged, woken] });
     expect(ids(layout)).toEqual(["messaged", "finished-late", "finished-early"]);
     expect(layout.workingCount).toBe(1);
   });

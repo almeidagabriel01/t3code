@@ -191,7 +191,8 @@ const THREAD_ORDER_OPTIONS: ReadonlyArray<{
   {
     order: "activity",
     label: "Recent activity",
-    description: "Threads you message or that need you move to the top.",
+    description:
+      "What needs you or finished unseen comes first, then running agents, then the rest.",
   },
   {
     order: "fixed",

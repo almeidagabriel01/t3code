@@ -113,9 +113,9 @@ after the drop.
 **Settings → General → Thread order** (**Settings → General** on iOS and Android) picks how the
 active list is ordered:
 
-- **Recent activity** (default): threads that need an approval or an answer come first, then the
-  thread you last messaged, created, or un-settled. A thread does not move when it starts or
-  finishes working on its own.
+- **Recent activity** (default): threads that need an approval or an answer, or finished since you
+  last opened them, come first. Threads with an agent still running come next, then the rest. Within
+  each group, the thread you last messaged, created, or un-settled leads.
 - **Fixed**: threads stay where they are. New and un-settled threads appear above the threads you
   have arranged, and messages, work, and approvals never reorder the list.
 
