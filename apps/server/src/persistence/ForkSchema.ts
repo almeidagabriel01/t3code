@@ -4,7 +4,8 @@ import { ensureMemorySchema } from "./MemorySchema.ts";
 
 // Fork-only tables live outside the numbered migrations: a fork id would collide with the next
 // upstream migration, and the migrator refuses histories whose names differ (see Migrations.ts).
-const FORK_MIGRATION_NAMES = ["Kanban"];
+// "ThreadEventTypeIndex" was briefly numbered 77, which upstream v0.1.7 took for another migration.
+const FORK_MIGRATION_NAMES = ["Kanban", "ThreadEventTypeIndex"];
 
 /** Drops numbered records older fork builds wrote, before the migrator checks the history. */
 export const forgetForkMigrations = Effect.fn("ForkSchema.forgetForkMigrations")(function* () {
@@ -347,6 +348,19 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
   ) {
     yield* sql`ALTER TABLE scheduled_tasks ADD COLUMN memory_grant_ceiling TEXT NOT NULL DEFAULT 'none'`;
   }
+
+  // The memory continuation scan asks for a thread's newest `run.updated`, first `message.updated`
+  // and whether it is a subagent. Without these each lookup walked every event of the thread.
+  yield* sql`
+    CREATE INDEX IF NOT EXISTS orchestration_events_v2_thread_type_sequence_idx
+    ON orchestration_events(stream_id, event_type, sequence)
+    WHERE application_event_version = 2 AND aggregate_kind = 'thread'
+  `;
+  yield* sql`
+    CREATE INDEX IF NOT EXISTS orchestration_events_v2_created_lineage_idx
+    ON orchestration_events(stream_id, (json_extract(payload_json, '$.lineage.relationshipToParent')))
+    WHERE application_event_version = 2 AND aggregate_kind = 'thread' AND event_type = 'thread.created'
+  `;
 
   yield* ensureMemorySchema();
 });

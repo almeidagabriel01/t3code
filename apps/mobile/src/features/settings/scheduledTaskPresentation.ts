@@ -86,6 +86,10 @@ export const DAYS = [
 
 export function describeSchedule(task: ScheduledTask): string {
   if (task.schedule.type === "webhook") return "On webhook";
+  if (task.schedule.type === "once") {
+    const runAt = new Date(task.schedule.runAt);
+    return `Once, ${formatRunAtDate(runAt)} at ${formatRunAtTime(runAt)}`;
+  }
   if (task.schedule.type === "interval") return formatScheduledTaskInterval(task.schedule.everyMs);
   const days = task.schedule.weekdays?.length ? repeatLabel(task.schedule.weekdays) : "Every day";
   return `${days} at ${formatTime(task.schedule.timeOfDay)}`;
@@ -97,6 +101,14 @@ export function formatTime(value: string): string {
   const time = new Date();
   time.setHours(hours ?? 9, minutes ?? 0, 0, 0);
   return time.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
+export function formatRunAtDate(value: Date): string {
+  return value.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" });
+}
+
+export function formatRunAtTime(value: Date): string {
+  return value.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
 export function repeatLabel(weekdays: ReadonlyArray<number>): string {
