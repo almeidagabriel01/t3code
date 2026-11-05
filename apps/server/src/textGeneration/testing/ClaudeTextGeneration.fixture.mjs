@@ -35,6 +35,13 @@ if (process.env.T3_FAKE_CLAUDE_SPAWN_MARKER) {
     fail("memory generation must exclude user and project settings sources", 12);
   }
 }
+if (process.env.T3_FAKE_CLAUDE_REJECTS_NO_SESSION_PERSISTENCE === "1") {
+  if (argv.includes("--no-session-persistence")) {
+    fail("error: unknown option '--no-session-persistence'", 1);
+  }
+} else if (!argv.includes("--no-session-persistence")) {
+  fail("text generation must not save a resumable session", 16);
+}
 const settingsIndex = argv.indexOf("--settings");
 if (settingsIndex === -1 || JSON.parse(argv[settingsIndex + 1]).disableAllHooks !== true) {
   fail("text generation must disable hooks", 10);

@@ -31,6 +31,7 @@ import * as Rpc from "effect/rpc/Rpc";
 import * as Exit from "effect/Exit";
 import { assert, it } from "@effect/vitest";
 import * as M from "@t3tools/contracts";
+import * as CryptoLayer from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
@@ -52,6 +53,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as RepositoryResolver from "../project/RepositoryIdentityResolver.ts";
 import * as Environment from "../environment/ServerEnvironment.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as Settings from "../serverSettings.ts";
 import * as Secrets from "../auth/ServerSecretStore.ts";
 import * as Events from "../orchestration-v2/EventSink.ts";
@@ -597,7 +599,7 @@ it.effect(
       const joint = Worker.layer.pipe(
         Layer.provideMerge(Maintenance.layer.pipe(Layer.provideMerge(core))),
         Layer.provideMerge(observedStorage.pipe(Layer.provideMerge(fixture(peer(), model)))),
-        Layer.provide(NodeServices.layer),
+        Layer.provide(Layer.mergeAll(NodeServices.layer, CryptoLayer.layer)),
         Layer.provide(
           Layer.succeed(RuntimeIdentity.RuntimeIdentity, { instanceId: "synthetic-worker" }),
         ),
@@ -4177,6 +4179,7 @@ it.effect.each(["pull", "ack"] as const)(
             return statement;
           });
         const settingsLayer = Settings.layer.pipe(
+          Layer.provide(ManagedPolicy.layerTest()),
           Layer.provideMerge(Secrets.layer),
           Layer.provideMerge(Sqlite.layerMemory),
           Layer.provideMerge(configLayer),
@@ -4256,7 +4259,10 @@ it.effect.each(["pull", "ack"] as const)(
           Layer.provideMerge(shared),
           Layer.provideMerge(settingsLayer),
           Layer.provideMerge(
-            Layer.merge(NodeServices.layer, Layer.succeed(FileSystem.FileSystem, controlledFs)),
+            Layer.merge(
+              Layer.mergeAll(NodeServices.layer, CryptoLayer.layer),
+              Layer.succeed(FileSystem.FileSystem, controlledFs),
+            ),
           ),
         );
         const context = yield* Layer.build(app).pipe(
@@ -4280,7 +4286,7 @@ it.effect.each(["pull", "ack"] as const)(
               "completed",
             );
         }).pipe(Effect.provideContext(context));
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, CryptoLayer.layer))),
     ),
 );
 
@@ -4920,12 +4926,13 @@ it.effect.each(["bootstrap", "exchange"] as const)(
     Effect.scoped(
       Effect.gen(function* () {
         const settingsLayer = Settings.layer.pipe(
+          Layer.provide(ManagedPolicy.layerTest()),
           Layer.provideMerge(Secrets.layer),
           Layer.provideMerge(Sqlite.layerMemory),
           Layer.provideMerge(
             ServerConfig.layerTest(process.cwd(), { prefix: "t3-l4-self-bootstrap-" }),
           ),
-          Layer.provideMerge(NodeServices.layer),
+          Layer.provideMerge(Layer.mergeAll(NodeServices.layer, CryptoLayer.layer)),
         );
         const selfCore = Service.layer.pipe(
           Layer.provideMerge(Quota.layer.pipe(Layer.provideMerge(Store.layer))),

@@ -33,6 +33,8 @@ export const requireOpenCodeMemoryIsolation = (operation: MemoryOperationName) =
 
 const isTextGenerationError = Schema.is(TextGenerationError);
 
+const GENERATION_TIMEOUT = "3 minutes";
+
 const OpenCodeTextGenerationOperation = Schema.Literals([
   "resolveMemoryConflict",
   "generateMemorySummary",
@@ -93,13 +95,38 @@ export class OpenCodeTextGenerationPromptResponseError extends Schema.TaggedErro
   {
     ...openCodePromptErrorContext,
     providerErrorName: Schema.optional(Schema.String),
-    providerMessage: Schema.String,
+    statusCode: Schema.optional(Schema.Int),
+    cause: Schema.Defect(),
   },
 ) {
   override get message(): string {
     const providerError = this.providerErrorName ? ` ${this.providerErrorName}` : "";
-    return `OpenCode prompt${providerError} failed for ${this.operation} in ${this.cwd} using ${this.providerId}/${this.modelId} (session ${this.sessionId}): ${this.providerMessage}`;
+    const status = this.statusCode === undefined ? "" : `, HTTP ${this.statusCode}`;
+    return `OpenCode prompt${providerError} failed for ${this.operation} in ${this.cwd} using ${this.providerId}/${this.modelId} (session ${this.sessionId}${status}).`;
   }
+}
+
+function openCodePromptResponseErrorDetail(error: OpenCodeTextGenerationPromptResponseError) {
+  if (
+    error.providerErrorName === "ProviderAuthError" ||
+    error.statusCode === 401 ||
+    error.statusCode === 403
+  ) {
+    return "The model provider rejected the credentials. Check the provider's sign-in or API key in OpenCode.";
+  }
+  if (error.statusCode === 429) {
+    return "The model provider's usage or rate limit was reached. Try again later.";
+  }
+  if (error.providerErrorName === "ContextOverflowError") {
+    return "The prompt is too long for the selected model's context window.";
+  }
+  if (error.providerErrorName === "MessageAbortedError") {
+    return "OpenCode stopped the generation.";
+  }
+  if (error.statusCode !== undefined) {
+    return `The model provider failed the request (HTTP ${error.statusCode}).`;
+  }
+  return "OpenCode could not generate the text.";
 }
 
 export class OpenCodeTextGenerationEmptyOutputError extends Schema.TaggedError<OpenCodeTextGenerationEmptyOutputError>()(
@@ -117,7 +144,7 @@ export class OpenCodeTextGenerationEmptyOutputError extends Schema.TaggedError<O
 
 interface OpenCodePromptFailure {
   readonly name?: string;
-  readonly message: string;
+  readonly statusCode?: number;
 }
 
 interface OpenCodeTextPart {
@@ -134,26 +161,21 @@ function getOpenCodePromptFailure(error: unknown): OpenCodePromptFailure | null 
     "name" in error && typeof error.name === "string" && error.name.trim().length > 0
       ? error.name.trim()
       : undefined;
-  const message =
-    "data" in error &&
-    error.data &&
-    typeof error.data === "object" &&
-    "message" in error.data &&
-    typeof error.data.message === "string"
-      ? error.data.message.trim()
-      : "";
-  if (message.length > 0) {
-    return {
-      ...(name ? { name } : {}),
-      message,
-    };
+  const data = "data" in error && error.data && typeof error.data === "object" ? error.data : {};
+  const statusCode =
+    "statusCode" in data && typeof data.statusCode === "number" && Number.isInteger(data.statusCode)
+      ? data.statusCode
+      : undefined;
+  const hasMessage =
+    "message" in data && typeof data.message === "string" && data.message.trim().length > 0;
+  if (!name && statusCode === undefined && !hasMessage) {
+    return null;
   }
 
-  if (name) {
-    return { name, message: name };
-  }
-
-  return null;
+  return {
+    ...(name ? { name } : {}),
+    ...(statusCode !== undefined ? { statusCode } : {}),
+  };
 }
 
 function isOpenCodeTextPart(part: unknown): part is OpenCodeTextPart {
@@ -321,7 +343,14 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
               client.session.create(
                 {
                   title: `T3 Code ${input.operation}`,
-                  permission: [{ permission: "*", pattern: "*", action: "deny" }],
+                  // OpenCode Zen refuses free-model requests that carry no tools, so keep read
+                  // outside memory runs, whose tool list is disabled below.
+                  permission: memory
+                    ? [{ permission: "*", pattern: "*", action: "deny" }]
+                    : [
+                        { permission: "*", pattern: "*", action: "deny" },
+                        { permission: "read", pattern: "*", action: "allow" },
+                      ],
                 },
                 { signal },
               ),
@@ -339,6 +368,14 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
             });
           }
           sessionId = session.data.id;
+          if (!memory) {
+            const id = session.data.id;
+            yield* Effect.addFinalizer(() =>
+              OpenCodeRuntime.runOpenCodeSdk("session.delete", (signal) =>
+                client.session.delete({ sessionID: id }, { signal }),
+              ).pipe(Effect.timeout("5 seconds"), Effect.ignore({ log: "Warn" })),
+            );
+          }
           if (memory) {
             const id = session.data.id;
             yield* Effect.addFinalizer(() =>
@@ -414,12 +451,16 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
           if (memory && (yield* Deferred.isDone(rejected))) return yield* Deferred.await(rejected);
           if (memory && result.data?.parts.some((part) => part.type === "tool"))
             return yield* reject().pipe(Effect.andThen(Deferred.await(rejected)));
-          const promptFailure = getOpenCodePromptFailure(result.data?.info?.error);
+          const promptError = result.data?.info?.error;
+          const promptFailure = getOpenCodePromptFailure(promptError);
           if (promptFailure) {
             return yield* new OpenCodeTextGenerationPromptResponseError({
               ...promptContext,
               ...(promptFailure.name ? { providerErrorName: promptFailure.name } : {}),
-              providerMessage: promptFailure.message,
+              ...(promptFailure.statusCode !== undefined
+                ? { statusCode: promptFailure.statusCode }
+                : {}),
+              cause: promptError,
             });
           }
           if (
@@ -440,6 +481,7 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
           }
           return rawText;
         },
+        Effect.scoped,
         Effect.catchTags({
           OpenCodeTextGenerationSessionRequestError: (cause) =>
             Effect.fail(
@@ -469,7 +511,7 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
             Effect.fail(
               new TextGenerationError({
                 operation: cause.operation,
-                detail: cause.providerMessage,
+                detail: openCodePromptResponseErrorDetail(cause),
                 cause,
               }),
             ),
@@ -505,6 +547,16 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
               .pipe(Effect.flatMap(runAgainstServer), Effect.scoped)
           : serverOwner.withServer(runAgainstServer);
       const rawOutput = yield* serverOutput.pipe(
+        Effect.timeoutOrElse({
+          duration: GENERATION_TIMEOUT,
+          orElse: () =>
+            Effect.fail(
+              new TextGenerationError({
+                operation: input.operation,
+                detail: "OpenCode did not finish generating in time.",
+              }),
+            ),
+        }),
         Effect.catchTags({
           OpenCodeRuntimeError: (cause) =>
             Effect.fail(

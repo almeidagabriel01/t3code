@@ -100,8 +100,13 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
           cause: forkableSourceRunStatusError(sourceRun),
         });
       }
-      // A fork is a side chat only when asked, even when its source is one.
-      const { sideChatOf: _sourceSideChatOf, ...sourceThread } = input.sourceProjection.thread;
+      // A fork is a side chat only when asked, even when its source is one, and the remote
+      // parent delegated the source thread, not its forks.
+      const {
+        sideChatOf: _sourceSideChatOf,
+        delegatedFrom: _delegatedFrom,
+        ...sourceThread
+      } = input.sourceProjection.thread;
       const targetThread: OrchestrationV2AppThread = {
         ...sourceThread,
         // PR context follows the conversation; watching remains the source thread's responsibility.
@@ -134,6 +139,11 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
         settledAt: null,
         snoozedUntil: null,
         snoozedAt: null,
+        lastSnoozeWakeAt: null,
+        pinnedAt: null,
+        pinOrderKey: null,
+        activeOrderKey: null,
+        autoSettleDisabledAt: null,
         // A guest link belongs to the thread it was made for.
         guestShare: null,
         lastVisitedAt: null,

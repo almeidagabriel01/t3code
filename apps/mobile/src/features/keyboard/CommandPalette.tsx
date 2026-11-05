@@ -50,7 +50,7 @@ import {
   useProjects,
   useServerConfigs,
   useThreadShell,
-  useThreadShells,
+  useVisibleThreadShells,
 } from "../../state/entities";
 import { useAssistantEntries } from "../../state/assistants";
 import { useOpenAssistantEditor } from "../assistants/openAssistantEditor";
@@ -247,7 +247,7 @@ export function CommandPalette(props: {
   const hasMac = useMacEnvironmentIds().length > 0;
   const assistants = useAssistantEntries().active;
   const openAssistantEditor = useOpenAssistantEditor();
-  const threads = useThreadShells();
+  const threads = useVisibleThreadShells();
   const activeThreadRef = parseActiveThreadPath(props.pathname);
   const activeThread = useThreadShell(activeThreadRef);
   const visitThread = useAtomCommand(threadEnvironment.visit, { reportFailure: false });

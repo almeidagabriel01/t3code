@@ -22,7 +22,7 @@ import {
 } from "@t3tools/contracts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -97,7 +97,7 @@ export function firstUsableProviderModel(
 
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const threads = yield* ThreadManagement.ThreadManagementService;
   const launches = yield* ThreadLaunch.ThreadLaunchService;
   const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
@@ -195,7 +195,7 @@ const make = Effect.gen(function* () {
   const dispatchThread = Effect.fn("AssistantService.dispatchThread")(function* (
     command: (commandId: CommandId) => Parameters<typeof threads.dispatch>[0],
   ) {
-    const id = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
+    const id = yield* random.uuidV4().pipe(Effect.orDie);
     yield* threads
       .dispatch(command(CommandId.make(`assistant-cmd:${id}`)))
       .pipe(Effect.catch(threadFailure("Could not update the assistant's conversation.")));
@@ -358,7 +358,7 @@ const make = Effect.gen(function* () {
       if (handle === null)
         return yield* invalid("Give the assistant a name with letters or digits.");
       yield* requireProject(input.projectId);
-      const id = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
+      const id = yield* random.uuidV4().pipe(Effect.orDie);
       return yield* lock.withPermits(1)(
         Effect.gen(function* () {
           yield* handleTaken(handle);

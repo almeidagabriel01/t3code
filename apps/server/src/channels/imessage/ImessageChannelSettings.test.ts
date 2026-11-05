@@ -1,3 +1,4 @@
+import * as CryptoLayer from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import type { ImessageChannelAccess, ImessageChannelSettingsError } from "@t3tools/contracts";
@@ -32,7 +33,7 @@ const harness = (platform: NodeJS.Platform = "darwin") => {
   const layer = Layer.effect(Settings.ImessageChannelSettings, Settings.make({ platform })).pipe(
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-imessage-settings-" })),
     Layer.provideMerge(runtime),
-    Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, CryptoLayer.layer)),
   );
   return { applied, state, layer };
 };

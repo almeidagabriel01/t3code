@@ -1,5 +1,5 @@
 import { NoteRevision, OrchestratorMcpFailure, ThreadId } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 
@@ -41,7 +41,7 @@ const NoteTool = Tool.make("t3_note", {
     NotesService.NotesService,
     NoteWorkService.NoteWorkService,
     ProjectService.ProjectService,
-    Crypto.Crypto,
+    SecureRandom.SecureRandom,
   ],
 }).annotate(Tool.Destructive, false);
 

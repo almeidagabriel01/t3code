@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import * as M from "@t3tools/contracts";
+import * as CryptoLayer from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -11,6 +12,7 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Client from "./MemoryHubClient.ts";
 import { sourceReadLocatorDigest } from "./MemoryOwnerSourceReader.ts";
 import * as Secrets from "../auth/ServerSecretStore.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as Settings from "../serverSettings.ts";
 import * as Sqlite from "../persistence/Sqlite.ts";
 import * as Config from "../config.ts";
@@ -39,11 +41,11 @@ const input = Schema.decodeSync(M.MemoryHubSourceReadCollectInput)({
   limit: 32,
 });
 const live = Client.layer.pipe(
-  Layer.provideMerge(Settings.layer),
+  Layer.provideMerge(Settings.layer.pipe(Layer.provide(ManagedPolicy.layerTest()))),
   Layer.provideMerge(Sqlite.layerMemory),
   Layer.provideMerge(Secrets.layer),
   Layer.provideMerge(Config.layerTest(process.cwd(), { prefix: "t3-hub-client-test-" })),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, CryptoLayer.layer)),
 );
 const seed = Effect.gen(function* () {
   const transitions = yield* Settings.MemoryHubSettingsTransitions;

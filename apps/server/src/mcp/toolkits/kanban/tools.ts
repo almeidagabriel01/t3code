@@ -1,5 +1,5 @@
 import { OrchestratorMcpFailure, ThreadId } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 import * as McpSchema from "effect/ai/McpSchema";
@@ -76,7 +76,7 @@ const KanbanTool = Tool.make("t3_kanban", {
     KanbanService.KanbanService,
     ProjectService.ProjectService,
     ManagedProjectFolders.ManagedProjectFolders,
-    Crypto.Crypto,
+    SecureRandom.SecureRandom,
   ],
 })
   .annotate(Tool.Destructive, false)

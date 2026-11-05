@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import * as M from "@t3tools/contracts";
+import * as CryptoLayer from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as Context from "effect/Context";
@@ -37,6 +38,7 @@ import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServer from "effect/http/HttpServer";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Config from "../config.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as Settings from "../serverSettings.ts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as Secrets from "../auth/ServerSecretStore.ts";
@@ -67,6 +69,7 @@ const environment = (label: "H" | "A" | "B", resolve?: Resolve) =>
     const fs = yield* FileSystem.FileSystem;
     const home = yield* fs.makeTempDirectoryScoped({ prefix: `goat-wp3-l5-${label}-` });
     const settings = Settings.layer.pipe(
+      Layer.provide(ManagedPolicy.layerTest()),
       Layer.provideMerge(Secrets.layer),
       Layer.provideMerge(Sqlite.layerConfig),
       Layer.provideMerge(Config.layerTest(home, home)),
@@ -86,7 +89,7 @@ const environment = (label: "H" | "A" | "B", resolve?: Resolve) =>
     );
     const application = Layer.mergeAll(Environment.layer, Client.layer).pipe(
       Layer.provideMerge(routes),
-      Layer.provideMerge(NodeServices.layer),
+      Layer.provideMerge(Layer.mergeAll(NodeServices.layer, CryptoLayer.layer)),
       Layer.provideMerge(FetchHttpClient.layer),
       Layer.provideMerge(HttpRouter.layer),
     );
@@ -610,7 +613,7 @@ it.effect(
         );
         assert.isTrue(yield* fs.exists(dbPath));
       }
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, CryptoLayer.layer))),
 );
 
 type Replica = Effect.Success<ReturnType<typeof environment>>;
@@ -734,7 +737,7 @@ it.effect("a: A write propagates through real H HTTP to B", () =>
       assert.strictEqual(activeText(yield* replica.aggregate(c.space, target)), "A shared fact");
       assert.strictEqual(replica.generated(), 0);
     }
-  }).pipe(Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, CryptoLayer.layer))),
 );
 
 it.effect("b: A forget dominates B concurrent edit and purges every replica", () =>
@@ -761,7 +764,7 @@ it.effect("b: A forget dominates B concurrent edit and purges every replica", ()
       assert.isTrue(aggregate.revisions.every((r) => r.payload === null));
       assert.strictEqual(replica.generated(), 0);
     }
-  }).pipe(Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, CryptoLayer.layer))),
 );
 
 it.effect(
@@ -791,7 +794,7 @@ it.effect(
       assert.strictEqual(c.b.generated(), 1);
       assert.strictEqual(c.a.generated(), 0);
       yield* c.b.sync.shutdown;
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, CryptoLayer.layer))),
 );
 
 it.effect(
@@ -862,7 +865,7 @@ it.effect(
       for (const replica of [c.a, c.h, c.b])
         assert.strictEqual(activeText(yield* replica.aggregate(c.space, target)), "A original");
       assert.strictEqual(c.b.generated(), 1);
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, CryptoLayer.layer))),
 );
 
 it.effect(
@@ -938,7 +941,7 @@ it.effect(
         (yield* c.h.aggregate(c.space, target)).resolutions[0]?.resolvingEnvironmentId,
         c.a.identity,
       );
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, CryptoLayer.layer))),
 );
 
 it.effect(
@@ -1047,7 +1050,7 @@ it.effect(
         activeText(yield* c.a.aggregate(c.space, other)),
         "ordinary sync survives source denial",
       );
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, CryptoLayer.layer))),
 );
 
 it.effect(
@@ -1110,7 +1113,7 @@ it.effect(
       assert.strictEqual(replica.generated(), 0);
       yield* replica.sync.shutdown;
       assert.strictEqual(yield* replica.sync.activeResolutions, 0);
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, CryptoLayer.layer))),
 );
 
 it.effect(
@@ -1138,7 +1141,7 @@ it.effect(
         assert.strictEqual(replica.generated(), 0);
       }
       assert.strictEqual((yield* c.h.sync.readLocalReadiness()).bootstrap, "ready");
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, CryptoLayer.layer))),
 );
 
 it.effect(
@@ -1180,7 +1183,7 @@ it.effect(
       assert.strictEqual(c.a.probes(), 1);
       assert.strictEqual(c.a.rearmObservations(), 0);
       yield* c.a.sync.shutdown;
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, CryptoLayer.layer))),
 );
 
 // A real three-environment hub/HTTP/SQL/Sync/owner reader chain. Only the
@@ -1416,7 +1419,7 @@ it.effect.each([false, true])(
             );
           }),
         );
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, CryptoLayer.layer))),
 );
 
 it.effect.each([false, true])(
@@ -1467,7 +1470,7 @@ it.effect.each([false, true])(
         Client.MemoryHubClient.use((client) => client.respondSourceRead(connection, revoke)),
       );
       assert.deepStrictEqual(first, second);
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, CryptoLayer.layer))),
 );
 
 it.effect(
@@ -1498,7 +1501,7 @@ it.effect(
       assert.strictEqual((yield* Fiber.join(first))._tag, "Failure");
       const secondResult = yield* Fiber.join(second);
       assert.strictEqual(secondResult.kind, "available");
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, CryptoLayer.layer))),
 );
 
 it.effect("requester rejects a denied live caller permit before hub admission", () =>
@@ -1513,7 +1516,7 @@ it.effect("requester rejects a denied live caller permit before hub admission", 
         assert.strictEqual((yield* sql`SELECT 1 FROM memory_hub_source_reads`).length, 0);
       }),
     );
-  }).pipe(Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, CryptoLayer.layer))),
 );
 
 it.effect(
@@ -1578,7 +1581,7 @@ it.effect(
       );
       yield* Deferred.succeed(nextGate, undefined);
       assert.strictEqual((yield* Fiber.join(next)).kind, "available");
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, CryptoLayer.layer))),
 );
 
 it.effect(
@@ -1731,7 +1734,7 @@ it.effect(
           );
         }),
       );
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, CryptoLayer.layer))),
 );
 
 it.effect.each(["deleted thread", "pending forget"] as const)(
@@ -1765,7 +1768,7 @@ it.effect.each(["deleted thread", "pending forget"] as const)(
       assert.notStrictEqual(c.owner.sourceResponses[0]?.kind, "available");
       assert.isFalse(JSON.stringify(c.owner.sourceResponses).includes("synthetic original"));
       assert.isFalse(JSON.stringify(outcome).includes("synthetic original"));
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, CryptoLayer.layer))),
 );
 
 it.effect.each(["failure", "budget"] as const)(
@@ -1787,5 +1790,5 @@ it.effect.each(["failure", "budget"] as const)(
       assert.strictEqual(committed.policy.enrollments[0]?.state, "active");
       assert.isAbove(committed.policy.enrollments[0]!.ownerPolicyEpoch, 2);
       assert.deepStrictEqual(committed.policy.allowedRequesterEnvironmentIds, [c.a.identity]);
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, CryptoLayer.layer))),
 );

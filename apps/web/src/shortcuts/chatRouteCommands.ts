@@ -123,15 +123,9 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
         void scratch.startScratchThread(environmentId);
       },
       "chat.new": (event) => {
-        // The boring sidebar's folders already show the context, so it starts in
-        // the current project like the legacy sidebar did.
-        const { boringSidebarEnabled, legacySidebarEnabled } = getClientSettings();
+        const { legacySidebarEnabled } = getClientSettings();
         const groups = readProjectGroups();
-        if (
-          !boringSidebarEnabled &&
-          !legacySidebarEnabled &&
-          !shouldCreateNewThreadInCurrentProject(false, groups.length)
-        ) {
+        if (!legacySidebarEnabled && !shouldCreateNewThreadInCurrentProject(false, groups.length)) {
           claim(event);
           openCommandPalette({ open: "new-thread-in" });
           return;

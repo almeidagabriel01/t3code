@@ -1,3 +1,4 @@
+import * as CryptoLayer from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -39,12 +40,12 @@ it.live("the served environment descriptor advertises import once the reader is 
       Effect.provide(
         app.layerServerEnvironment.pipe(
           Layer.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
-          Layer.provide(NodeServices.layer),
+          Layer.provide(Layer.mergeAll(NodeServices.layer, CryptoLayer.layer)),
         ),
       ),
     );
     expect(descriptor.capabilities.memory?.importProvider).toBe(true);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, CryptoLayer.layer))),
 );
 
 it.live(
@@ -68,10 +69,10 @@ it.live(
           app.layerMemoryHubAdministrator.pipe(
             Layer.provideMerge(ServerSecretStore.layer),
             Layer.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
-            Layer.provide(NodeServices.layer),
+            Layer.provide(Layer.mergeAll(NodeServices.layer, CryptoLayer.layer)),
           ),
         ),
       );
       expect(administrator._tag).toBe("Some");
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, CryptoLayer.layer))),
 );

@@ -1,4 +1,5 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as CryptoLayer from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { ProjectId, ThreadId } from "@t3tools/contracts";
@@ -71,7 +72,7 @@ const harness = (options: {
           }).pipe(Effect.orDie),
       });
     }),
-  ).pipe(Layer.provide(NodeServices.layer));
+  ).pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, CryptoLayer.layer)));
   const decisions = DecisionService.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -84,7 +85,9 @@ const harness = (options: {
     ),
   );
   const layer = ComputerUse.layer.pipe(
-    Layer.provideMerge(Layer.mergeAll(runner, decisions, NodeServices.layer)),
+    Layer.provideMerge(
+      Layer.mergeAll(runner, decisions, Layer.mergeAll(NodeServices.layer, CryptoLayer.layer)),
+    ),
     Layer.provide(Layer.succeed(HostProcess.Platform, options.platform ?? "darwin")),
   );
   return { calls, scripted, layer };

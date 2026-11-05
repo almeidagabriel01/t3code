@@ -385,8 +385,6 @@ function SidebarProjectGroup(props: ProjectGroupProps) {
           className="flex h-8 w-full cursor-pointer items-center gap-2.5 rounded-(--control-radius) px-(--sidebar-row-content-inset) text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
           {...attributes}
           {...listeners}
-          role="treeitem"
-          tabIndex={-1}
           data-sidebar-row={projectRowId(scope)}
         >
           {isFolder ? (

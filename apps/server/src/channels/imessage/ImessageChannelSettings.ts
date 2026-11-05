@@ -12,7 +12,7 @@ import {
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -79,7 +79,7 @@ export const make = Effect.fn("ImessageChannelSettings.make")(function* (
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const config = yield* ServerConfig.ServerConfig;
   const runtime = yield* ImessageChannelRuntime.ImessageChannelRuntime;
   const settingsPath = path.join(config.stateDir, SETTINGS_FILE_NAME);
@@ -112,7 +112,7 @@ export const make = Effect.fn("ImessageChannelSettings.make")(function* (
   const save = Effect.fn("ImessageChannelSettings.save")(
     function* (stored: StoredSettings) {
       const contents = yield* encodeStored(stored);
-      const tempPath = `${settingsPath}.${yield* crypto.randomUUIDv4()}.tmp`;
+      const tempPath = `${settingsPath}.${yield* random.uuidV4()}.tmp`;
       yield* fs.makeDirectory(config.stateDir, { recursive: true });
       yield* Effect.gen(function* () {
         yield* fs.writeFileString(tempPath, `${contents}\n`, { mode: 0o600 });

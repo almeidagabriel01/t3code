@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
+import * as Redacted from "effect/Redacted";
 import * as FileSystem from "effect/FileSystem";
 import * as PlatformError from "effect/PlatformError";
 import * as Sink from "effect/Sink";
@@ -30,7 +31,8 @@ describe("Claude memory registry isolation", () => {
       const spawner = lazyChildProcessSpawner((command) => {
         if (command._tag !== "StandardCommand") return Effect.die("Unexpected pipeline");
         expect(command.command).toBe("reg.exe");
-        const candidate = command.args[1]!;
+        const raw = command.args[1]!;
+        const candidate = typeof raw === "string" ? raw : Redacted.value(raw);
         queries.push(candidate);
         if (scenario === "reg.exe unavailable")
           return Effect.fail(

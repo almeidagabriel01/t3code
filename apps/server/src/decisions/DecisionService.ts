@@ -19,7 +19,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -163,7 +163,7 @@ export class DecisionService extends Context.Service<
 
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const threads = yield* ThreadManagement.ThreadManagementService;
   const lock = yield* Semaphore.make(1);
   const events = yield* PubSub.unbounded<DecisionsEvent>();
@@ -230,7 +230,7 @@ const make = Effect.gen(function* () {
         return yield* invalid(`expiresInMinutes must be 1-${MAX_EXPIRES_IN_MINUTES}.`);
       }
       yield* Effect.annotateCurrentSpan({ "decision.thread_id": input.fromThreadId });
-      const decisionId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
+      const decisionId = yield* random.uuidV4().pipe(Effect.orDie);
       return yield* lock.withPermits(1)(
         Effect.gen(function* () {
           const existing = yield* sql<DecisionRow>`

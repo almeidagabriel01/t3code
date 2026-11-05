@@ -24,6 +24,7 @@ import {
   ThreadId,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurn,
+  type ProviderOptionSelection,
 } from "@t3tools/contracts";
 import { OpenCodeSettings } from "../settings.ts";
 import * as Effect from "effect/Effect";
@@ -156,6 +157,10 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
   nativeSessionId: string,
   client: object,
   host: Partial<ProviderHost.ProviderHost["Service"]> = {},
+  turnSettings: {
+    readonly options?: ReadonlyArray<ProviderOptionSelection>;
+    readonly interactionMode?: ProviderAdapter.ProviderAdapterV2RuntimePolicy["interactionMode"];
+  } = {},
   memory: Pick<
     ProviderAdapter.ProviderAdapterV2TurnInput,
     "memoryContext" | "refreshMemoryContext"
@@ -166,9 +171,12 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
   const modelSelection = {
     instanceId,
     model: "anthropic/claude-sonnet",
-    options: [],
+    options: turnSettings.options ?? [],
   };
-  const policy = runtimePolicy("full-access", { cwd: "/workspace" });
+  const policy = runtimePolicy("full-access", {
+    cwd: "/workspace",
+    interactionMode: turnSettings.interactionMode ?? "default",
+  });
   const adapter = yield* makeOpenCodeAdapterV2({
     instanceId,
     settings: OPEN_CODE_TEST_SETTINGS,
@@ -209,7 +217,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
         providerInstanceId: modelSelection.instanceId,
         modelSelection,
         runtimeMode: "full-access",
-        interactionMode: "default",
+        interactionMode: policy.interactionMode,
         branch: null,
         worktreePath: null,
         activeProviderThreadId: providerThread.id,
@@ -293,6 +301,7 @@ describe("OpenCodeAdapterV2", () => {
           "root",
           client,
           {},
+          {},
           {
             memoryContext: memorySnapshot,
           },
@@ -306,6 +315,7 @@ describe("OpenCodeAdapterV2", () => {
           "memory-bad",
           "root",
           client,
+          {},
           {},
           {
             memoryContext: { ...memorySnapshot, renderedText: "tampered" },
@@ -874,6 +884,30 @@ describe("OpenCodeAdapterV2", () => {
             properties: {
               sessionID: nativeSessionId,
               part: {
+                id: "part-exit",
+                sessionID: nativeSessionId,
+                messageID: "late-assistant",
+                type: "tool",
+                callID: "call-exit",
+                tool: "bash",
+                state: {
+                  status: "completed",
+                  input: { command: "vp test" },
+                  output: "1 failed\n",
+                  title: "Run tests",
+                  metadata: { output: "1 failed\n", exit: 1, truncated: false },
+                  time: { start: 4, end: 5 },
+                },
+              },
+            },
+          }),
+        );
+        yield* Effect.promise(() =>
+          nativeEvents.push({
+            type: "message.part.updated",
+            properties: {
+              sessionID: nativeSessionId,
+              part: {
                 id: "part-read",
                 sessionID: nativeSessionId,
                 messageID: "late-assistant",
@@ -942,14 +976,21 @@ describe("OpenCodeAdapterV2", () => {
         const commands = items.filter((item) => item.type === "command_execution");
         assert.deepEqual(
           commands.map((item) => item.status),
-          ["pending", "running", "completed", "failed"],
+          ["pending", "running", "completed", "failed", "failed"],
         );
         assert.deepEqual(
           commands.map((item) => item.input),
-          ["pwd", "pwd", "pwd", "pwd"],
+          ["pwd", "pwd", "pwd", "pwd", "vp test"],
         );
         assert.equal(commands[2]?.output, "/repo\n");
         assert.equal(commands[3]?.output, "Command failed");
+        assert.equal(commands[4]?.exitCode, 1);
+        assert.equal(
+          events
+            .flatMap((event) => (event.type === "node.updated" ? [event.node] : []))
+            .findLast((node) => node.id === commands[4]?.nodeId)?.status,
+          "failed",
+        );
         assert.isTrue(
           events.some(
             (event) =>
@@ -1428,7 +1469,7 @@ describe("OpenCodeAdapterV2", () => {
             return { stream: nativeEvents.stream };
           },
         },
-        command: { list: async () => ({ data: [{ name: "review" }] }) },
+        command: { list: async () => ({ data: [{ name: "git/review" }] }) },
         session: {
           create: async () => ({ data: { id: sessionId, time: { created: 1, updated: 1 } } }),
           command: async (input: {
@@ -1447,9 +1488,9 @@ describe("OpenCodeAdapterV2", () => {
           },
         },
       });
-      const start = yield* harness.startTurn("/review staged changes").pipe(Effect.forkScoped);
+      const start = yield* harness.startTurn("/git/review staged changes").pipe(Effect.forkScoped);
       const call = yield* Queue.take(calls);
-      assert.equal(call.command, "review");
+      assert.equal(call.command, "git/review");
       assert.equal(call.arguments, "staged changes");
       assert.equal(call.model, "anthropic/claude-sonnet");
       yield* Effect.promise(() =>
@@ -1655,6 +1696,62 @@ describe("OpenCodeAdapterV2", () => {
         ["user-kept", "assistant-kept"],
       );
       assert.equal(snapshot.providerThread.nativeConversationHeadRef?.nativeId, "user-kept");
+    }).pipe(
+      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+      Effect.scoped,
+    ),
+  );
+
+  it.effect("steers with the turn's agent, reasoning variant and system instructions", () =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      const promptInputs: Array<{ agent?: string; variant?: string; system?: string }> = [];
+      const harness = yield* makeOpenCodeRuntimeHarness(
+        "steer-agent",
+        "root",
+        {
+          event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+          session: {
+            create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+            get: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+            messages: async () => ({ data: [] }),
+            promptAsync: async (input: { agent?: string; variant?: string; system?: string }) => {
+              promptInputs.push(input);
+              return { data: true };
+            },
+            abort: async () => ({ data: true }),
+            children: async () => ({ data: [] }),
+          },
+        },
+        {},
+        { options: [{ id: "variant", value: "high" }], interactionMode: "plan" },
+      );
+      yield* harness.startTurn();
+      const snapshot = yield* harness.runtime.readThreadSnapshot({
+        providerThread: harness.providerThread,
+      });
+      yield* harness.runtime.steerTurn({
+        threadId: harness.threadId,
+        runId: harness.runId,
+        providerThread: harness.providerThread,
+        providerTurnId: snapshot.providerTurns.at(-1)!.id,
+        message: {
+          messageId: MessageId.make("message-opencode-steer-agent"),
+          text: "also cover the README",
+          attachments: [],
+          createdBy: "user",
+          creationSource: "web",
+        },
+      });
+
+      const [start, steer] = promptInputs;
+      assert.equal(start?.agent, "plan");
+      assert.equal(start?.variant, "high");
+      assert.include(start?.system ?? "", "OpenCode");
+      assert.deepEqual(
+        { agent: steer?.agent, variant: steer?.variant, system: steer?.system },
+        { agent: start?.agent, variant: start?.variant, system: start?.system },
+      );
     }).pipe(
       Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
       Effect.scoped,
@@ -2516,7 +2613,14 @@ describe("OpenCodeAdapterV2", () => {
         method: "session.prompt",
         payload: { prompt: secret, nested: { token: secret } },
       });
+      yield* logProtocolEvent({
+        direction: "incoming",
+        messageKind: "notification",
+        method: "message.part.delta",
+        payload: { type: "message.part.delta", properties: { delta: secret } },
+      });
 
+      assert.lengthOf(records, 1);
       const serialized = encodeUnknownJson(records);
       assert.notInclude(serialized, secret);
       assert.include(serialized, '"protocol":"opencode-sdk.sse"');

@@ -97,7 +97,7 @@ describe("AssistantSidebarSection", () => {
     await screen.rerender(element());
     expect(rows(screen.container)).toHaveLength(0);
     expect(screen.container.querySelector('[aria-label="New assistant"]')).toBeNull();
-    await userEvent.click(screen.getByRole("treeitem", { name: "Assistants, 2" }));
+    await userEvent.click(screen.getByRole("button", { name: "Assistants, 2" }));
     expect(state.update).toHaveBeenLastCalledWith({ sidebarAssistantsCollapsed: false });
   });
 

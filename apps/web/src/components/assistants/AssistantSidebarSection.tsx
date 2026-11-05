@@ -72,8 +72,8 @@ const AssistantRow = memo(function AssistantRow(props: {
   return (
     <li className="list-none py-0.5">
       <div
-        role="treeitem"
-        tabIndex={-1}
+        role="button"
+        tabIndex={0}
         data-sidebar-row={`assistant:${environmentId}:${assistant.id}`}
         aria-label={`${assistant.name}${working ? ", working" : ""}`}
         aria-current={props.isActive ? "page" : undefined}
@@ -218,8 +218,8 @@ export const AssistantSidebarSection = memo(function AssistantSidebarSection(pro
   return (
     <>
       <li
-        role="treeitem"
-        tabIndex={-1}
+        role="button"
+        tabIndex={0}
         aria-expanded={!collapsed}
         aria-label={`Assistants, ${active.length}`}
         data-sidebar-row="section:assistants"

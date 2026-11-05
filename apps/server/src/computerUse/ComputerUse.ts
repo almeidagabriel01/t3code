@@ -9,7 +9,7 @@ import {
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -211,7 +211,7 @@ const make = Effect.gen(function* () {
   const platform = yield* HostProcess.Platform;
   const runner = yield* ProcessRunner.ProcessRunner;
   const fs = yield* FileSystem.FileSystem;
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* Digest.Digest;
   const decisions = yield* DecisionService.DecisionService;
 
   /** A repeat of the same action derives the same id, so it lands on the same decision. */
@@ -220,7 +220,7 @@ const make = Effect.gen(function* () {
     parts: ReadonlyArray<string | number>,
   ) {
     const digest = yield* crypto
-      .digest("SHA-256", new TextEncoder().encode(parts.join("\u0000")))
+      .digest(Digest.sha256, new TextEncoder().encode(parts.join("\u0000")))
       .pipe(Effect.mapError(failed));
     const hex = Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
     return `computer:${action}:${hex.slice(0, 32)}`;

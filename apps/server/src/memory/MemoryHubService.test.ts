@@ -32,8 +32,10 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
 import * as Option from "effect/Option";
+import * as CryptoLayer from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Persistence from "../persistence/Sqlite.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as Settings from "../serverSettings.ts";
 import * as FileSystem from "effect/FileSystem";
 import * as Secrets from "../auth/ServerSecretStore.ts";
@@ -440,7 +442,7 @@ describe("MemoryHubService source relay", () => {
 
 const adminDependencies = Secrets.layer.pipe(
   Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-wp3-l2-admin-" })),
-  Layer.provide(NodeServices.layer),
+  Layer.provide(Layer.mergeAll(NodeServices.layer, CryptoLayer.layer)),
   Layer.provideMerge(core),
   Layer.provideMerge(
     Layer.succeed(Environment.ServerEnvironmentIdentity, {
@@ -1636,7 +1638,10 @@ describe("MemoryHubService resolution approval", () => {
   );
 });
 
-const bootstrapDependencies = Layer.mergeAll(Store.layer, Settings.layer).pipe(
+const bootstrapDependencies = Layer.mergeAll(
+  Store.layer,
+  Settings.layer.pipe(Layer.provide(ManagedPolicy.layerTest())),
+).pipe(
   Layer.provideMerge(Persistence.layerConfig),
   Layer.provideMerge(Secrets.layer),
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-wp3-l6-bootstrap-" })),
@@ -1645,7 +1650,7 @@ const bootstrapDependencies = Layer.mergeAll(Store.layer, Settings.layer).pipe(
       getEnvironmentId: Effect.succeed(hubEnv),
     }),
   ),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, CryptoLayer.layer)),
 );
 const encodeHubAdminRequest = Schema.encodeEffect(
   Schema.fromJsonString(M.MemoryHubSettingsUpdateInput),
@@ -1741,9 +1746,10 @@ it.effect(
       }).pipe(
         Effect.provide(
           Layer.fresh(
-            Layer.mergeAll(Store.layer, Settings.layer).pipe(
-              Layer.provideMerge(Persistence.layerConfig),
-            ),
+            Layer.mergeAll(
+              Store.layer,
+              Settings.layer.pipe(Layer.provide(ManagedPolicy.layerTest())),
+            ).pipe(Layer.provideMerge(Persistence.layerConfig)),
           ),
         ),
       );
@@ -1881,9 +1887,10 @@ it.effect(
       }).pipe(
         Effect.provide(
           Layer.fresh(
-            Layer.mergeAll(Store.layer, Settings.layer).pipe(
-              Layer.provideMerge(Persistence.layerConfig),
-            ),
+            Layer.mergeAll(
+              Store.layer,
+              Settings.layer.pipe(Layer.provide(ManagedPolicy.layerTest())),
+            ).pipe(Layer.provideMerge(Persistence.layerConfig)),
           ),
         ),
       );
@@ -2203,9 +2210,10 @@ it.effect.each(
         }).pipe(
           Effect.provide(
             Layer.fresh(
-              Layer.mergeAll(Store.layer, Settings.layer).pipe(
-                Layer.provideMerge(Persistence.layerConfig),
-              ),
+              Layer.mergeAll(
+                Store.layer,
+                Settings.layer.pipe(Layer.provide(ManagedPolicy.layerTest())),
+              ).pipe(Layer.provideMerge(Persistence.layerConfig)),
             ),
           ),
         );
@@ -2236,9 +2244,10 @@ it.effect.each(
       }).pipe(
         Effect.provide(
           Layer.fresh(
-            Layer.mergeAll(Store.layer, Settings.layer).pipe(
-              Layer.provideMerge(Persistence.layerConfig),
-            ),
+            Layer.mergeAll(
+              Store.layer,
+              Settings.layer.pipe(Layer.provide(ManagedPolicy.layerTest())),
+            ).pipe(Layer.provideMerge(Persistence.layerConfig)),
           ),
         ),
       );
@@ -2386,9 +2395,10 @@ it.effect(
       }).pipe(
         Effect.provide(
           Layer.fresh(
-            Layer.mergeAll(Store.layer, Settings.layer).pipe(
-              Layer.provideMerge(Persistence.layerConfig),
-            ),
+            Layer.mergeAll(
+              Store.layer,
+              Settings.layer.pipe(Layer.provide(ManagedPolicy.layerTest())),
+            ).pipe(Layer.provideMerge(Persistence.layerConfig)),
           ),
         ),
       );

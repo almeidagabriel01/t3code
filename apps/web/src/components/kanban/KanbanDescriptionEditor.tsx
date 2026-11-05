@@ -34,6 +34,8 @@ const EXTENSIONS = [
     code: false,
     listKeymap: false,
     italic: false,
+    bold: false,
+    strike: false,
   }),
   ...RICH_MARKDOWN_EXTENSIONS,
   AttachmentImage,

@@ -62,7 +62,7 @@ const makeLayer = <E, R>(serviceCore: Layer.Layer<Layer.Success<typeof core>, E,
   McpHttpServer.layerMemoryToolkit.pipe(
     Layer.provideMerge(serviceCore),
     Layer.provide(sync),
-    Layer.provideMerge(McpServer.McpServer.layer),
+    Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
     Layer.provideMerge(McpToolAccessTestkit.liveThreadsLayer),
     Layer.provide(NodeServices.layer),
   );

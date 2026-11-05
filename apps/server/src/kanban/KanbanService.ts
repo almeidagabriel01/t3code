@@ -48,7 +48,7 @@ import {
 } from "@t3tools/contracts";
 import { generateSpreadPinOrderKeys, pinOrderKeyBetween } from "@t3tools/shared/orderKey";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -396,7 +396,7 @@ export const layer = Layer.effect(
   KanbanService,
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    const crypto = yield* Crypto.Crypto;
+    const random = yield* SecureRandom.SecureRandom;
     const pricing = yield* KanbanPricing;
     const templateSource = yield* KanbanTemplateSource;
     const cardImages = yield* KanbanCardImages;
@@ -404,7 +404,7 @@ export const layer = Layer.effect(
     const deltas = yield* PubSub.unbounded<KanbanStreamItem>();
 
     const nowIso = DateTime.now.pipe(Effect.map(DateTime.formatIso));
-    const newId = crypto.randomUUIDv4().pipe(Effect.orDie);
+    const newId = random.uuidV4().pipe(Effect.orDie);
 
     const currentSequence = Effect.fn("KanbanService.currentSequence")(function* () {
       const rows = yield* sql<{
