@@ -14,11 +14,14 @@ export interface AutonomySignal {
     | "pr_checks_failed"
     | "pr_checks_passed"
     | "card_moved"
+    | "review_incomplete"
     | "waiting"
     | "stuck";
   /** Stable per (run or thread, event): the same occurrence always yields the same key. */
   readonly key: string;
   readonly threadId: string | null;
+  /** What rule spacing groups by when there is no thread, such as a card id. */
+  readonly subject?: string;
   readonly projectId: string | null;
   readonly prNumber: number | null;
   /** One line naming what happened, shown to the assistant and the user. */
@@ -30,6 +33,7 @@ const RULE_OF_EVENT: Partial<Record<AutonomySignal["event"], AutonomyRule>> = {
   pr_checks_failed: "ciFailed",
   waiting: "waitingTooLong",
   stuck: "stuck",
+  review_incomplete: "reviewIncomplete",
 };
 
 const ruleOfSignal = (signal: AutonomySignal): AutonomyRule | undefined =>
@@ -110,6 +114,7 @@ const RULE_LABELS: Record<AutonomyRule, string> = {
   waitingTooLong: "Waiting for you too long",
   stuck: "Run looks stuck",
   ciFailed: "PR checks failed",
+  reviewIncomplete: "Card in Review with open items",
 };
 
 export const sourceLabel = (source: AutonomyCandidate["source"]): string =>

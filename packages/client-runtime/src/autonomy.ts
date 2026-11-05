@@ -41,6 +41,11 @@ export const AUTONOMY_RULE_OPTIONS: ReadonlyArray<{
     label: "PR checks failed",
     description: "Checks failed on a pull request you follow.",
   },
+  {
+    rule: "reviewIncomplete",
+    label: "Card in Review with open items",
+    description: "A card reached Review with checklist items still unchecked.",
+  },
 ];
 
 export const AUTONOMY_CHANNEL_LABELS: Record<AutonomyChannel, string> = {

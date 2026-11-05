@@ -1106,6 +1106,16 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       yield* serverSettings.updateSettings({ autonomy });
       const persisted = JSON.parse(yield* fileSystem.readFileString(serverConfig.settingsPath));
       assert.deepEqual(persisted.autonomy, autonomy);
+
+      // A rule added later turns on for settings saved before it existed.
+      const { reviewIncomplete: _added, ...olderRules } = autonomy.rules;
+      yield* fileSystem.writeFileString(
+        serverConfig.settingsPath,
+        JSON.stringify({ autonomy: { ...autonomy, rules: olderRules } }),
+      );
+      const reloaded = yield* serverSettings.getSettings;
+      assert.isTrue(reloaded.autonomy.enabled);
+      assert.isTrue(reloaded.autonomy.rules.reviewIncomplete);
     }).pipe(Effect.provide(layerServerSettings())),
   );
 

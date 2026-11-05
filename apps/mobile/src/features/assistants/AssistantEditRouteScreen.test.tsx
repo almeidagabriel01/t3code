@@ -261,7 +261,7 @@ describe("assistant notifications", () => {
     await act(async () => pick("Save"));
     expect(mocks.update.mock.calls[0]?.[0].autonomy).toEqual({
       mode: "reply-and-notify",
-      rules: ["runFailed", "waitingTooLong", "stuck"],
+      rules: ["runFailed", "waitingTooLong", "stuck", "reviewIncomplete"],
       projectIds: [],
       channels: ["t3"],
     });

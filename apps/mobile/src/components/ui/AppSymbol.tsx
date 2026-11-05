@@ -13,6 +13,7 @@ import IconArrowsMaximize from "@tabler/icons-react-native/IconArrowsMaximize";
 import IconCalendar from "@tabler/icons-react-native/IconCalendar";
 import IconCircleHalf2 from "@tabler/icons-react-native/IconCircleHalf2";
 import IconClipboardCopy from "@tabler/icons-react-native/IconClipboardCopy";
+import IconListCheck from "@tabler/icons-react-native/IconListCheck";
 import IconLogout from "@tabler/icons-react-native/IconLogout";
 import IconNote from "@tabler/icons-react-native/IconNote";
 import IconZoomIn from "@tabler/icons-react-native/IconZoomIn";
@@ -198,6 +199,7 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   circle: IconCircle,
   "circle.fill": IconCircleFilled,
   "circle.dashed": IconCircleDashed,
+  "checklist.unchecked": IconListCheck,
   "circle.inset.filled": IconCircleDot,
   "circle.dashed.inset.filled": IconCircleDot,
   "calendar.badge.clock": IconCalendarClock,

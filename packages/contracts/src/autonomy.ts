@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import { IsoDateTime, ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
@@ -6,7 +7,13 @@ import { IsoDateTime, ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseS
  * Autonomy lets assistants wake on their own. The server evaluates fixed rules and watches against
  * its own events without a model; only a match sends the assistant a compact message.
  */
-export const AUTONOMY_RULES = ["runFailed", "waitingTooLong", "stuck", "ciFailed"] as const;
+export const AUTONOMY_RULES = [
+  "runFailed",
+  "waitingTooLong",
+  "stuck",
+  "ciFailed",
+  "reviewIncomplete",
+] as const;
 export const AutonomyRule = Schema.Literals(AUTONOMY_RULES);
 export type AutonomyRule = typeof AutonomyRule.Type;
 
@@ -24,6 +31,8 @@ export const AutonomySettings = Schema.Struct({
     waitingTooLong: Schema.Boolean,
     stuck: Schema.Boolean,
     ciFailed: Schema.Boolean,
+    // Added after the first release: settings saved before it have no key.
+    reviewIncomplete: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   }),
   waitingMinutes: Minutes,
   stuckMinutes: Minutes,
@@ -34,7 +43,13 @@ export type AutonomySettings = typeof AutonomySettings.Type;
 
 export const DEFAULT_AUTONOMY_SETTINGS: AutonomySettings = {
   enabled: false,
-  rules: { runFailed: true, waitingTooLong: true, stuck: true, ciFailed: true },
+  rules: {
+    runFailed: true,
+    waitingTooLong: true,
+    stuck: true,
+    ciFailed: true,
+    reviewIncomplete: true,
+  },
   waitingMinutes: 30,
   stuckMinutes: 15,
   channels: ["telegram", "t3"],

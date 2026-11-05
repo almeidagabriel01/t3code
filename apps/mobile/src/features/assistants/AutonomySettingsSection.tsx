@@ -27,6 +27,7 @@ const RULE_ICONS: Record<AutonomyRule, AppSymbolName> = {
   waitingTooLong: "person.badge.clock",
   stuck: "hourglass",
   ciFailed: PullRequestGlyph.pullRequest,
+  reviewIncomplete: "checklist.unchecked",
 };
 
 const CHANNEL_ROWS: ReadonlyArray<{

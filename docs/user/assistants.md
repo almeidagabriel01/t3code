@@ -87,8 +87,8 @@ Autonomy is **off** until you turn it on in **Settings → Assistants → Autono
 - **Assistants can notify you.** The pause switch: off stops every rule and watch at once. The
   command palette has **Pause assistant notifications** / **Turn on assistant notifications**.
 - **Rules.** Run failed or interrupted, waiting for you too long (30 minutes by default), run stuck
-  with no activity (15 minutes; waiting for an approval doesn't count), and PR checks failed. Each one
-  can be turned off.
+  with no activity (15 minutes; waiting for an approval doesn't count), PR checks failed, and a card
+  that reaches Review with unchecked checklist items. Each one can be turned off.
 - **Channels.** The answer reaches you in **Activity** (T3 and the mobile app) and on **Telegram**
   (the first allowed user), even when you are not chatting with that assistant there. If Telegram
   is not set up, the section says so and links to its settings.

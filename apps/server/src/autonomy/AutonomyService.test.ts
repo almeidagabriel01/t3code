@@ -432,6 +432,71 @@ it.effect(
   },
 );
 
+it.effect("a card entering Review with unchecked items wakes once per entry, per card", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const service = yield* Autonomy.AutonomyService;
+    yield* addAssistant();
+    const columns = [
+      { id: "c1", name: "Doing", role: "in-progress" },
+      { id: "c2", name: "Review", role: "review" },
+    ];
+    const item = (done: boolean) => ({ id: "i1", text: "Add tests", done });
+    const card = (
+      id: string,
+      columnId: string,
+      done: boolean,
+      updatedAt: string,
+      archivedAt: string | null = null,
+    ) => ({
+      id,
+      boardId: "b1",
+      columnId,
+      number: id === "k1" ? 9 : 10,
+      title: id === "k1" ? "Ship" : "Polish",
+      checklist: [item(done)],
+      archivedAt,
+      updatedAt,
+    });
+    const upsert = (value: ReturnType<typeof card>) =>
+      service.handleKanban({ kind: "card.upserted", sequence: 1, card: value } as never);
+    // A card already waiting in Review at startup is not news.
+    yield* service.handleKanban({
+      kind: "snapshot",
+      sequence: 0,
+      boards: [{ id: "b1", projectId: "p1", columns, cards: [card("k2", "c2", false, "t0")] }],
+    } as never);
+    yield* upsert(card("k2", "c2", false, "t1"));
+    assert.lengthOf(h.sent, 0);
+
+    yield* upsert(card("k1", "c1", false, "t1"));
+    yield* upsert(card("k1", "c2", false, "t2"));
+    yield* upsert(card("k1", "c2", false, "t3"));
+    assert.lengthOf(h.sent, 1);
+    assert.include(h.sent[0]!.text, "Card in Review with open items");
+    assert.include(
+      h.sent[0]!.text,
+      'Card #9 "Ship" is in Review with 1 unchecked item(s): Add tests.',
+    );
+
+    // Done items, or an archived card, leave the state; another card is spaced on its own.
+    yield* upsert(card("k1", "c2", true, "t4"));
+    yield* upsert(card("k2", "c2", false, "t5", "2026-01-01"));
+    yield* upsert(card("k2", "c1", false, "t6"));
+    yield* upsert(card("k2", "c2", false, "t7"));
+    assert.lengthOf(h.sent, 2);
+    assert.include(h.sent[1]!.text, 'Card #10 "Polish"');
+
+    // Re-entering the state wakes again only after the per-card interval.
+    yield* upsert(card("k1", "c2", false, "t8"));
+    assert.lengthOf(h.sent, 2);
+    yield* TestClock.adjust(2 * 60 * MIN);
+    yield* upsert(card("k1", "c2", true, "t9"));
+    yield* upsert(card("k1", "c2", false, "t10"));
+    assert.lengthOf(h.sent, 3);
+  }).pipe(Effect.provide(h.layer));
+});
+
 it.effect(
   "watch storage rejects an unknown assistant, a missing watch and keeps fields on update",
   () => {

@@ -11,6 +11,8 @@ import {
   type AutonomyWatchDeleteInput,
   type AutonomyWatchSetEnabledInput,
   type AutonomyWatchUpsertInput,
+  type KanbanBoard,
+  type KanbanCard,
   type KanbanStreamItem,
   type OrchestrationV2DomainEvent,
   type ProjectId,
@@ -144,7 +146,12 @@ const make = Effect.gen(function* () {
   );
   const checksState = new Map<string, string>();
   const columnOf = new Map<string, string>();
-  const boards = new Map<string, { projectId: string; columns: ReadonlyMap<string, string> }>();
+  const boards = new Map<
+    string,
+    { projectId: string; columns: ReadonlyMap<string, { name: string; role: string }> }
+  >();
+  // Cards sitting in Review with unchecked items; the rule fires on entering this state only.
+  const incompleteInReview = new Set<string>();
 
   const iso = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(ms));
   const settings = settingsService.getSettings.pipe(
@@ -248,7 +255,7 @@ const make = Effect.gen(function* () {
     const isWatch = "watch" in candidate.source;
     const wakeKey = `${signal.key}:${isWatch ? `watch:${candidate.source.watch.id}` : candidate.source.rule}:${assistant.id}`;
     if ((yield* sql`SELECT 1 FROM autonomy_wakes WHERE wake_key = ${wakeKey}`).length > 0) return;
-    const watchedThreadId = signal.threadId ?? "";
+    const watchedThreadId = signal.threadId ?? signal.subject ?? "";
     if (!isWatch) {
       const recent = yield* sql`
         SELECT 1 FROM autonomy_wakes WHERE assistant_id = ${assistant.id} AND source = 'rule'
@@ -544,23 +551,30 @@ const make = Effect.gen(function* () {
       ),
   );
 
+  const columnsOf = (board: KanbanBoard) =>
+    new Map(board.columns.map((column) => [column.id, { name: column.name, role: column.role }]));
+  const reviewIncomplete = (card: KanbanCard) =>
+    card.archivedAt === null &&
+    boards.get(card.boardId)?.columns.get(card.columnId)?.role === "review" &&
+    card.checklist.some((entry) => !entry.done);
+
   const handleKanban: AutonomyService["Service"]["handleKanban"] = Effect.fn(
     "AutonomyService.handleKanban",
   )(function* (item) {
     if (item.kind === "snapshot") {
       for (const board of item.boards) {
-        boards.set(board.id, {
-          projectId: board.projectId,
-          columns: new Map(board.columns.map((column) => [column.id, column.name])),
-        });
-        for (const card of board.cards) columnOf.set(card.id, card.columnId);
+        boards.set(board.id, { projectId: board.projectId, columns: columnsOf(board) });
+        for (const card of board.cards) {
+          columnOf.set(card.id, card.columnId);
+          if (reviewIncomplete(card)) incompleteInReview.add(card.id);
+        }
       }
       return;
     }
     if (item.kind === "board.upserted") {
       boards.set(item.board.id, {
         projectId: item.board.projectId,
-        columns: new Map(item.board.columns.map((column) => [column.id, column.name])),
+        columns: columnsOf(item.board),
       });
       return;
     }
@@ -569,14 +583,31 @@ const make = Effect.gen(function* () {
     const from = columnOf.get(card.id);
     columnOf.set(card.id, card.columnId);
     const board = boards.get(card.boardId);
-    if (from === undefined || from === card.columnId || board === undefined) return;
+    if (board === undefined) return;
+    const columnName = board.columns.get(card.columnId)?.name ?? "another column";
+    if (!reviewIncomplete(card)) {
+      incompleteInReview.delete(card.id);
+    } else if (!incompleteInReview.has(card.id)) {
+      incompleteInReview.add(card.id);
+      const open = card.checklist.filter((entry) => !entry.done).map((entry) => entry.text);
+      yield* fire({
+        event: "review_incomplete",
+        key: `review:${card.id}:${card.updatedAt}`,
+        threadId: null,
+        subject: `card:${card.id}`,
+        projectId: board.projectId,
+        prNumber: null,
+        summary: `Card #${card.number} "${card.title}" is in ${columnName} with ${open.length} unchecked item(s): ${open.slice(0, 5).join("; ")}.`,
+      });
+    }
+    if (from === undefined || from === card.columnId) return;
     yield* fire({
       event: "card_moved",
       key: `card:${card.id}:${card.columnId}:${card.updatedAt}`,
       threadId: null,
       projectId: board.projectId,
       prNumber: null,
-      summary: `Card #${card.number} "${card.title}" moved to ${board.columns.get(card.columnId) ?? "another column"}.`,
+      summary: `Card #${card.number} "${card.title}" moved to ${columnName}.`,
     });
   });
 
