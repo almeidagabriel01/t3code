@@ -16,6 +16,7 @@ Open **Settings → Assistants**, or use **+** next to Assistants in the sidebar
 - **Instructions**. Sent with every message, so they keep applying after a long conversation is
   compacted, resumed or moved to another provider. An edit applies from the next message.
 - **Tool access**, described below.
+- **Role** and **Reports to**, which put it in a team (see [Teams](#teams)).
 
 ## Tool access
 
@@ -68,6 +69,25 @@ Assistants don't talk to each other on their own. Ask one to consult another, fo
 researcher assistant for the three most cited papers and summarize them". It finds that assistant
 with the `t3_assistant` tool, messages its conversation, and waits for the reply. Any agent can do
 this, not only assistants.
+
+## Teams
+
+Give assistants a **Role** (such as CEO or Engineer) and choose who each **Reports to** in its
+settings. A leader sees its reports, with their handles, in its instructions, and the assistant list
+shows each one's role and leader.
+
+- A leader can ask its reports, and their reports, for work. The report answers through the reply
+  the leader is waiting on. A report can't message its leader or anyone outside its branch, so
+  assistants never end up messaging each other in a loop. T3 Code refuses such a message and says so.
+- Assistants that are in no team keep talking to each other freely.
+- Archiving or deleting a leader makes its reports top-level again. A leader can't report to its own
+  report.
+
+On a leader, **Add daily standup** creates an ordinary schedule for weekdays at 9:00 (your local
+time) that asks each direct report for status and then writes one short report. The report reaches
+you like an autonomy notice, in **Activity** and on **Telegram**, following the assistant's
+channels, even when autonomy is off. Edit the time or delete the schedule under **Schedules**. The
+standup is recognised by the first line of its prompt, so keep that line when you edit it.
 
 ## Schedules
 

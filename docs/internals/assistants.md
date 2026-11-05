@@ -30,7 +30,7 @@ with `approvalRequestId` set, and withdraws it silently when the request resolve
 dismiss or expiry declines: a dismissed approval must never leave the turn blocked. Clients hide these
 decisions on their own thread, where the native approval prompt already shows.
 
-## Two enforcement points
+## Three enforcement points
 
 Tool access is the runtime mode plus, for read only, a read-only sandbox. Both are enforced
 server-side so no client or agent can skip them:
@@ -40,11 +40,17 @@ server-side so no client or agent can skip them:
 2. `ThreadManagementService.dispatch` refuses commands that would defeat the assistant: raising the
    runtime mode above its access, archiving or deleting the current thread, unarchiving an old
    generation, and a `titleSeed` renaming the thread. It covers WebSocket and MCP callers alike.
+3. The same `dispatch` refuses a send from one assistant thread to another when the org chart forbids
+   it. `senderThreadId` rides on every agent send (MCP `t3_thread_send` sets it), so the guard needs
+   no new plumbing. An assistant with any org relation, or aimed at one, may only message its
+   descendants (`assistantMayMessage`). Reports answer through the run their leader waits on and
+   never send upward, so no cycle can form. Assistants with no relation at all stay free, which is
+   what card #5 shipped.
 
 `AssistantService` dispatches through the Orchestrator directly, not `ThreadManagementService`, so its
 own archive, delete and unarchive pass the guard. Keep it that way.
 
-Both read the directory with `Effect.serviceOption`, so layers that don't provide it behave as before.
+All read the directory with `Effect.serviceOption`, so layers that don't provide it behave as before.
 A runtime layer that forgets to provide it silently loses enforcement; `runtimeLayer.ts` must wire it.
 
 ## Instructions ride every turn
@@ -65,6 +71,11 @@ through the same turn path as any message. Three things keep it from feeding its
   before the send and given back if the send fails, so a replayed event wakes once.
 - Rule wakes also share a minimum interval per thread, and every wake counts against
   `maxWakesPerDay`. Watches are asked for, so only the daily cap limits them.
+
+A leader's standup is an ordinary scheduled task whose prompt starts with
+`ASSISTANT_STANDUP_PROMPT_HEAD`; `AutonomyService` matches that line on the finished run's task, so a
+renamed task still delivers, and sends the result through the same Activity and Telegram path as a
+wake, whether or not autonomy is on.
 
 Delivery to the user ends at the wake's run. Activity hides assistant threads, so it gets a decision
 whose request id starts with `autonomy:`; `DecisionService` settles such a notice without sending
