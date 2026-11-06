@@ -68,6 +68,34 @@ A runtime layer that forgets to provide it silently loses enforcement; `runtimeL
 would lose it at compaction, native resume or a provider switch, and an edit to the instructions
 would not reach a running conversation. Slash commands skip it so they stay at the start of the prompt.
 
+## Connectors (per-assistant MCP servers)
+
+An assistant row carries `mcp_servers_json`: names, transport, URL or command, and header or env
+_keys_ with a `hasValue` flag. The values live in the server secret store (`AssistantConnectors`
+names each file by a hash of assistant, server, kind and key) and are never sent to a client or
+the `t3_assistant` tool: a write that omits a value keeps the stored one, an empty one clears it, and
+deleting a server, a row or the assistant removes its secrets. A rename loses a server's values, so
+the editors lock the name once saved.
+
+Providers read connectors at session start through `McpProviderSessions.connectors(threadId)`, a
+late-bound source the runtime layer fills (provider-core sits below assistants). It resolves secrets
+then, answers from `AssistantDirectory.forThread`, and is empty for any non-assistant thread. One
+unreadable secret drops only that connector. Per provider:
+
+- Claude: merged into `mcpServers` next to `t3-code`, never into `allowedTools`, so a read-only
+  assistant still asks before calling a connector tool and the runtime mode governs the rest.
+- Codex: `mcp_servers.<name>` keys in the same thread config as T3's servers, so launch-argument
+  servers survive.
+- Cursor: the SDK's `mcpServers` agent option.
+- ACP agents (Grok, Kiro, Antigravity, registry agents): appended to whichever list `session/new`
+  uses. Command connectors go in every list; http ones only for flavors with `mcpOverHttp`
+  (Antigravity, registry agents) and only when the agent takes the http list, so Grok and Kiro run
+  command connectors only.
+- OpenCode, Pi and Muse: not supported; their adapters ignore connectors.
+
+Command connectors run as the server's user outside any sandbox; the user wrote them, but a
+read-only access level does not confine them.
+
 ## Autonomy and the loop guard
 
 `AutonomyService` turns domain events into wakes with no model. An assistant's wake is an ordinary

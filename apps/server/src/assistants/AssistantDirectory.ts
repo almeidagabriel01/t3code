@@ -1,6 +1,7 @@
 import {
   type Assistant,
   type AssistantId,
+  AssistantMcpServer,
   type AssistantToolAccess,
   assistantDescendantIds,
   assistantIdFromThreadId,
@@ -35,6 +36,7 @@ export interface AssistantRow {
   readonly reports_to: string | null;
   readonly ask_before_acting: number;
   readonly icon: string | null;
+  readonly mcp_servers_json: string | null;
   readonly created_at: string;
   readonly updated_at: string;
 }
@@ -49,6 +51,19 @@ const AutonomyJson = Schema.fromJsonString(AssistantAutonomy);
 // A row that no longer decodes falls back to "only answers", the safe default.
 const decodeAutonomyOption = Schema.decodeOption(AutonomyJson);
 export const encodeAutonomy = Schema.encodeSync(AutonomyJson);
+
+/** Keeps every connector that still decodes, so one bad entry never hides the others. */
+const decodeMcpServer = Schema.decodeUnknownOption(AssistantMcpServer);
+const decodeMcpList = Schema.decodeOption(Schema.fromJsonString(Schema.Array(Schema.Unknown)));
+export const decodeMcpServers = (json: string | null): ReadonlyArray<AssistantMcpServer> =>
+  json === null
+    ? []
+    : Option.getOrElse(decodeMcpList(json), () => []).flatMap((item) =>
+        Option.toArray(decodeMcpServer(item)),
+      );
+export const encodeMcpServers = Schema.encodeSync(
+  Schema.fromJsonString(Schema.Array(AssistantMcpServer)),
+);
 
 export const toAssistant = (row: AssistantRow): Assistant => ({
   id: row.assistant_id as AssistantId,
@@ -65,6 +80,7 @@ export const toAssistant = (row: AssistantRow): Assistant => ({
   reportsTo: row.reports_to as AssistantId | null,
   askBeforeActing: row.ask_before_acting === 1,
   icon: row.icon,
+  mcpServers: decodeMcpServers(row.mcp_servers_json),
   budget: row.budget_json === null ? null : decodeBudget(row.budget_json),
   autonomy:
     row.autonomy_json === null

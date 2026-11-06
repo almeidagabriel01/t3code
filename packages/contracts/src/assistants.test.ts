@@ -5,6 +5,8 @@ import {
   Assistant,
   assistantCommandNames,
   AssistantHandle,
+  assistantMcpServersProblem,
+  AssistantMcpServerInput,
   AssistantsUpdateInput,
   assistantHandleFromName,
   assistantIdFromThreadId,
@@ -14,6 +16,7 @@ import {
 
 const isAssistantHandle = Schema.is(AssistantHandle);
 const isUpdateInput = Schema.is(AssistantsUpdateInput);
+const decode = Schema.decodeUnknownSync(Assistant);
 
 describe("assistantHandleFromName", () => {
   it.each([
@@ -80,7 +83,6 @@ describe("assistant thread ids", () => {
 });
 
 describe("Assistant", () => {
-  const decode = Schema.decodeUnknownSync(Assistant);
   const row = {
     id: "jarvis",
     handle: "jarvis",
@@ -154,5 +156,98 @@ describe("Assistant icon", () => {
     expect(isUpdateInput({ assistantId: "a1", icon: "spark" })).toBe(true);
     expect(isUpdateInput({ assistantId: "a1", icon: null })).toBe(true);
     expect(isUpdateInput({ assistantId: "a1", icon: "laser" })).toBe(false);
+  });
+});
+
+describe("assistant connectors", () => {
+  const http = {
+    name: "docs",
+    transport: "http",
+    url: "https://x.test/mcp",
+    enabled: true,
+  } as const;
+  const stdio = { name: "files", transport: "stdio", command: "npx", enabled: true } as const;
+
+  it.each([
+    ["a valid http and stdio pair", [http, stdio], null],
+    ["an empty list", [], null],
+    [
+      "a reserved name",
+      [{ ...http, name: "t3-code" }],
+      '"t3-code" is reserved for T3\'s own tools.',
+    ],
+    [
+      "the direct reserved name",
+      [{ ...http, name: "t3-code-direct" }],
+      '"t3-code-direct" is reserved for T3\'s own tools.',
+    ],
+    ["a repeated name", [http, { ...stdio, name: "docs" }], 'Two connectors are named "docs".'],
+    [
+      "an http connector without a URL",
+      [{ ...http, url: undefined }],
+      '"docs" needs an http or https URL.',
+    ],
+    ["a non-http URL", [{ ...http, url: "ftp://x.test" }], '"docs" needs an http or https URL.'],
+    ["a garbage URL", [{ ...http, url: "not a url" }], '"docs" needs an http or https URL.'],
+    ["a blank command", [{ ...stdio, command: "  " }], '"files" needs a command.'],
+    [
+      "a repeated header",
+      [{ ...http, headers: [{ key: "A" }, { key: "A", value: "x" }] }],
+      '"docs" repeats a header or variable name.',
+    ],
+    [
+      "a repeated env name",
+      [{ ...stdio, env: [{ key: "A" }, { key: "A" }] }],
+      '"files" repeats a header or variable name.',
+    ],
+    [
+      "too many connectors",
+      Array.from({ length: 21 }, (_, i) => ({ ...http, name: `s${i}` })),
+      "At most 20 connectors.",
+    ],
+  ] as const)("%s", (_label, servers, problem) => {
+    expect(assistantMcpServersProblem(servers)).toBe(problem);
+  });
+
+  const isInput = Schema.is(AssistantMcpServerInput);
+  it.each([
+    ["docs_2", true],
+    ["Docs", false],
+    ["has space", false],
+    ["-lead", false],
+    ["", false],
+    ["a".repeat(33), false],
+  ])("name %j is valid: %s", (name, valid) => {
+    expect(isInput({ ...http, name })).toBe(valid);
+  });
+
+  it("decodes old rows with defaults and ignores unknown fields", () => {
+    const decoded = decode({
+      id: "a1",
+      handle: "a",
+      name: "A",
+      projectId: "p",
+      instructions: "",
+      toolAccess: "full",
+      isDefault: false,
+      threadId: null,
+      generation: 1,
+      archivedAt: null,
+      createdAt: "2026-10-01T00:00:00.000Z",
+      updatedAt: "2026-10-01T00:00:00.000Z",
+      mcpServers: [{ name: "docs", transport: "http", url: "https://x.test", future: 1 }],
+    });
+    expect(decoded.mcpServers).toEqual([
+      {
+        name: "docs",
+        transport: "http",
+        url: "https://x.test",
+        args: [],
+        headers: [],
+        env: [],
+        enabled: true,
+      },
+    ]);
+    expect(decode({ ...decoded, mcpServers: undefined }).mcpServers).toEqual([]);
   });
 });

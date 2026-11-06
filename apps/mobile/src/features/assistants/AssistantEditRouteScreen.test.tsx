@@ -292,6 +292,107 @@ describe("assistant icon", () => {
   });
 });
 
+describe("assistant connectors", () => {
+  const withConnectors = () =>
+    ({
+      ...assistant(),
+      mcpServers: [
+        {
+          name: "docs",
+          transport: "http",
+          url: "https://docs.example.test/mcp",
+          args: [],
+          headers: [{ key: "Authorization", hasValue: true }],
+          env: [],
+          enabled: true,
+        },
+        {
+          name: "files",
+          transport: "stdio",
+          command: "npx",
+          args: ["srv"],
+          headers: [],
+          env: [],
+          enabled: true,
+        },
+      ],
+    }) as unknown as Assistant;
+
+  it("adds an HTTP connector with a header and refuses a bad URL before saving", async () => {
+    render(assistant());
+    expect(container.textContent).toContain("Connectors work with Claude, Codex, Cursor");
+    pick("Add connector");
+    type("Connector name", "Docs");
+    expect(field("Connector name")?.value).toBe("docs");
+    type("URL", "nope");
+    pick("Add header");
+    type("Header 1", "Authorization");
+    type("Header 1 value", "Bearer abc");
+    pick("Add");
+    expect(container.textContent).toContain('"docs" needs an http or https URL.');
+    type("URL", "https://docs.example.test/mcp");
+    pick("Add");
+    expect(container.textContent).toContain("docs");
+    await act(async () => pick("Save"));
+    expect(mocks.update.mock.calls[0]?.[0].mcpServers).toEqual([
+      {
+        name: "docs",
+        transport: "http",
+        url: "https://docs.example.test/mcp",
+        headers: [{ key: "Authorization", value: "Bearer abc" }],
+        enabled: true,
+      },
+    ]);
+  });
+
+  it("edits a saved connector keeping its secret, toggles it and removes another", async () => {
+    render(withConnectors());
+    pick("Remove files");
+    toggle("docs enabled");
+    pick("Edit docs");
+    expect(field("Connector name")?.disabled ?? false).toBe(false);
+    type("URL", "https://docs.example.test/v2");
+    pick("Done");
+    await act(async () => pick("Save"));
+    expect(mocks.update.mock.calls[0]?.[0].mcpServers).toEqual([
+      {
+        name: "docs",
+        transport: "http",
+        url: "https://docs.example.test/v2",
+        headers: [{ key: "Authorization" }],
+        enabled: false,
+      },
+    ]);
+  });
+
+  it("a command connector takes arguments and variables, and cancel discards the form", async () => {
+    render(assistant());
+    pick("Add connector");
+    pick("Command (runs on the server)");
+    type("Connector name", "files");
+    type("Command", "npx");
+    type("Arguments", "-y");
+    pick("Add variable");
+    type("Variable 1", "TOKEN");
+    pick("Remove variable 1");
+    pick("Add");
+    pick("Add connector");
+    type("Connector name", "other");
+    pick("Cancel");
+    await act(async () => pick("Save"));
+    expect(mocks.update.mock.calls[0]?.[0].mcpServers).toEqual([
+      {
+        name: "files",
+        transport: "stdio",
+        command: "npx",
+        args: ["-y"],
+        env: [],
+        enabled: true,
+      },
+    ]);
+  });
+});
+
 describe("assistant ask before acting", () => {
   it("shows its help text and saves the switch only once it changed", async () => {
     render(assistant());

@@ -1807,17 +1807,39 @@ export const CLAUDE_T3_MCP_TOOL_TIMEOUT_MS = 65 * 60 * 1_000;
 // allowedTools pre-approves calls; tools controls availability. Pre-approve T3 tools for headless modes,
 // limited to annotated read-only tools in read-only sandboxes.
 
+/**
+ * An assistant's connectors join T3's own server. Claude gets them as plain `mcpServers`: they are
+ * never added to `allowedTools`, so a read-only assistant still asks before calling one and the
+ * runtime mode decides the rest, like any other non-allowlisted tool.
+ */
 export function claudeMcpQueryOverrides(input: {
   readonly mcpSession: McpProviderSession.McpProviderSessionConfig | undefined;
   readonly readOnlySandbox: boolean;
   readonly allowedTools?: ReadonlyArray<string>;
+  readonly connectors?: ReadonlyArray<McpProviderSession.ThreadConnector>;
 }): {
   readonly allowedTools?: ReadonlyArray<string>;
   readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
 } {
   const session = input.mcpSession;
+  const connectorServers: NonNullable<ClaudeQueryOptions["mcpServers"]> = Object.fromEntries(
+    (input.connectors ?? []).map((connector) => [
+      connector.name,
+      connector.transport === "http"
+        ? { type: "http" as const, url: connector.url ?? "", headers: { ...connector.headers } }
+        : {
+            type: "stdio" as const,
+            command: connector.command ?? "",
+            args: [...connector.args],
+            env: { ...connector.env },
+          },
+    ]),
+  );
   if (session === undefined) {
-    return input.allowedTools === undefined ? {} : { allowedTools: input.allowedTools };
+    return {
+      ...(input.allowedTools === undefined ? {} : { allowedTools: input.allowedTools }),
+      ...(Object.keys(connectorServers).length === 0 ? {} : { mcpServers: connectorServers }),
+    };
   }
   const mcpAllowedTools = input.readOnlySandbox
     ? CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS
@@ -1825,6 +1847,7 @@ export function claudeMcpQueryOverrides(input: {
   return {
     allowedTools: Array.from(new Set([...(input.allowedTools ?? []), ...mcpAllowedTools])),
     mcpServers: {
+      ...connectorServers,
       "t3-code": {
         type: "http",
         url: session.endpoint,
@@ -10438,6 +10461,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const mcpSession = yield* mcpSessions.read(turnInput.threadId);
           const mcpOverrides = claudeMcpQueryOverrides({
             mcpSession,
+            connectors: yield* mcpSessions.connectors(turnInput.threadId),
             readOnlySandbox:
               sandboxPolicyKindForClaudeRuntimePolicy(turnInput.runtimePolicy) === "readOnly",
             ...(queryPolicy.allowedTools === undefined

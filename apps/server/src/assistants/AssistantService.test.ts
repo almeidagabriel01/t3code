@@ -27,6 +27,9 @@ import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as AssistantConnectors from "./AssistantConnectors.ts";
+import * as AssistantDirectory from "./AssistantDirectory.ts";
 import * as Assistants from "./AssistantService.ts";
 
 const scratch = ProjectId.make("scratch");
@@ -148,8 +151,25 @@ const harness = () => {
     ServerSettings.layerTest(),
     SqlitePersistence.layerMemory,
   );
-  const layer = Assistants.layer.pipe(Layer.provideMerge(mocks.pipe(Layer.provideMerge(base))));
+  const secretValues = new Map<string, Uint8Array>();
+  const secretStore = Layer.succeed(
+    ServerSecretStore.ServerSecretStore,
+    ServerSecretStore.ServerSecretStore.of({
+      get: (name) => Effect.succeed(Option.fromNullishOr(secretValues.get(name))),
+      set: (name, value) => Effect.sync(() => void secretValues.set(name, value)),
+      create: (name, value) => Effect.sync(() => void secretValues.set(name, value)),
+      getOrCreateRandom: () => Effect.succeed(new Uint8Array()),
+      remove: (name) => Effect.sync(() => void secretValues.delete(name)),
+    }),
+  );
+  const connectorsLayer = AssistantConnectors.layer.pipe(
+    Layer.provide(Layer.merge(secretStore, AssistantDirectory.layer)),
+  );
+  const layer = Assistants.layer.pipe(
+    Layer.provideMerge(Layer.mergeAll(mocks, connectorsLayer).pipe(Layer.provideMerge(base))),
+  );
   return {
+    secretValues,
     layer,
     threads,
     launched,
@@ -615,6 +635,108 @@ it.effect(
       );
       assert.isNull((yield* assistants.update({ assistantId: iconic.id, icon: null })).icon);
     }).pipe(Effect.provide(layer), Effect.orDie);
+  },
+);
+
+it.effect(
+  "connector secrets are write-only: reads show keys, omitted keeps, empty clears, deletes clean up",
+  () => {
+    const { layer, secretValues } = harness();
+    return Effect.gen(function* () {
+      const assistants = yield* Assistants.AssistantService;
+      const connectors = yield* AssistantConnectors.AssistantConnectors;
+      const docs = (headers: Array<{ key: string; value?: string }>, enabled = true) => ({
+        name: "docs",
+        transport: "http" as const,
+        url: "https://docs.example.test/mcp",
+        headers,
+        enabled,
+      });
+      const made = yield* assistants.create(
+        create({
+          name: "Linked",
+          mcpServers: [
+            docs([{ key: "Authorization", value: "Bearer s3cret" }, { key: "X-Empty" }]),
+            {
+              name: "files",
+              transport: "stdio",
+              command: "npx",
+              args: ["srv"],
+              env: [{ key: "TOKEN", value: "tok" }],
+              enabled: false,
+            },
+          ],
+        }),
+      );
+      assert.deepEqual(
+        made.mcpServers.map((server) => [server.name, server.enabled]),
+        [
+          ["docs", true],
+          ["files", false],
+        ],
+      );
+      assert.deepEqual(made.mcpServers[0]!.headers, [
+        { key: "Authorization", hasValue: true },
+        { key: "X-Empty", hasValue: false },
+      ]);
+      assert.notInclude(JSON.stringify(yield* assistants.list), "s3cret");
+      assert.equal(secretValues.size, 2);
+
+      const thread = made.threadId!;
+      // Only enabled connectors reach the session, with values resolved.
+      assert.deepEqual(yield* connectors.forThread(thread), [
+        {
+          name: "docs",
+          transport: "http",
+          url: "https://docs.example.test/mcp",
+          args: [],
+          headers: { Authorization: "Bearer s3cret" },
+          env: {},
+        },
+      ]);
+      assert.deepEqual(yield* connectors.forThread(ThreadId.make("plain-thread")), []);
+
+      // An update that leaves the value out keeps it; an unrelated update leaves the list alone.
+      yield* assistants.update({ assistantId: made.id, role: "QA" });
+      const kept = yield* assistants.update({
+        assistantId: made.id,
+        mcpServers: [docs([{ key: "Authorization" }])],
+      });
+      assert.deepEqual(
+        kept.mcpServers.map((server) => server.name),
+        ["docs"],
+      );
+      assert.equal(secretValues.size, 1);
+      assert.deepEqual((yield* connectors.forThread(thread))[0]!.headers, {
+        Authorization: "Bearer s3cret",
+      });
+
+      // An explicit empty value clears it.
+      const cleared = yield* assistants.update({
+        assistantId: made.id,
+        mcpServers: [docs([{ key: "Authorization", value: "" }])],
+      });
+      assert.deepEqual(cleared.mcpServers[0]!.headers, [{ key: "Authorization", hasValue: false }]);
+      assert.equal(secretValues.size, 0);
+
+      // Unusable lists are refused before any write.
+      const bad = yield* Effect.flip(
+        assistants.update({
+          assistantId: made.id,
+          mcpServers: [docs([{ key: "A", value: "v" }]), docs([])],
+        }),
+      );
+      assert.equal(bad.reason, "invalid");
+      assert.equal(secretValues.size, 0);
+
+      yield* assistants.update({
+        assistantId: made.id,
+        mcpServers: [docs([{ key: "Authorization", value: "again" }])],
+      });
+      assert.equal(secretValues.size, 1);
+      yield* assistants.remove(made.id);
+      assert.equal(secretValues.size, 0);
+    }).pipe(Effect.provide(layer));
   },
 );
 

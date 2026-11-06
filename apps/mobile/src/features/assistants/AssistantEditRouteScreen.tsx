@@ -58,6 +58,7 @@ import {
 } from "./assistantDraft";
 import { AssistantIconPicker } from "./AssistantIconPicker";
 import { MenuField, SwitchRow, TextField } from "./AssistantFormFields";
+import { AssistantConnectorsSection } from "./AssistantConnectorsSection";
 import { AssistantNotificationsSection } from "./AssistantNotificationsSection";
 import { AssistantSchedulesSection } from "./AssistantSchedulesSection";
 import { AssistantWatchesSection } from "./AssistantWatchesSection";
@@ -578,6 +579,10 @@ function AssistantForm(props: { readonly editor: AssistantEditor }) {
             />
           </ListSection>
         </View>
+        <AssistantConnectorsSection
+          value={current.connectors}
+          onChange={(connectors) => updateAssistantDraft({ connectors })}
+        />
         <AssistantNotificationsSection
           value={current.autonomy}
           onChange={(autonomy) => updateAssistantDraft({ autonomy })}

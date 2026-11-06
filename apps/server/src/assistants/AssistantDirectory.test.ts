@@ -86,3 +86,24 @@ it.effect("the directory answers who may message whom, and who is on whose team"
     assert.strictEqual(yield* assistantNote(Option.none(), thread("ceo"), "hi"), "");
   }).pipe(Effect.provide(directoryLayer)),
 );
+
+it("a damaged connector list loses only the bad entries", () => {
+  const good = { name: "docs", transport: "http", url: "https://x.test", future: true };
+  assert.deepEqual(Directory.decodeMcpServers(null), []);
+  assert.deepEqual(Directory.decodeMcpServers("not json"), []);
+  assert.deepEqual(Directory.decodeMcpServers('{"a":1}'), []);
+  assert.deepEqual(
+    Directory.decodeMcpServers(JSON.stringify([good, { name: "Bad Name", transport: "http" }, 7])),
+    [
+      {
+        name: "docs",
+        transport: "http",
+        url: "https://x.test",
+        args: [],
+        headers: [],
+        env: [],
+        enabled: true,
+      },
+    ],
+  );
+});

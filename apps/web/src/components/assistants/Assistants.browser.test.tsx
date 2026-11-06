@@ -82,6 +82,7 @@ const assistant = (id: string, name: string, overrides: Partial<Assistant> = {})
   budget: null,
   askBeforeActing: false,
   icon: null,
+  mcpServers: [],
   autonomy: { mode: "reply-only", rules: null, projectIds: null, channels: null },
   archivedAt: null,
   createdAt: "2026-03-17T19:00:00.000Z",
@@ -473,6 +474,121 @@ it("picks an icon in the edit dialog and saves it", async () => {
   await expect.element(scout).toBeChecked();
   await userEvent.click(page.getByRole("button", { name: "Save" }));
   await eventually(() => expect(fakeAssistantEdits.updates).toMatchObject([{ icon: "scout" }]));
+});
+
+it("adds a connector with a header, then saves it without echoing secrets", async () => {
+  publishAssistants([assistant("jarvis", "Jarvis")]);
+  fakeAssistantEdits.updates = [];
+  await using _screen = await openEditDialog("Jarvis");
+  await expect
+    .element(page.getByText("Connectors work with Claude", { exact: false }))
+    .toBeVisible();
+  await userEvent.click(page.getByRole("button", { name: "Add connector" }));
+  await userEvent.fill(page.getByLabelText("Connector name"), "docs");
+  await userEvent.fill(page.getByLabelText("URL"), "nope");
+  await userEvent.click(page.getByRole("button", { name: "Add header" }));
+  await userEvent.fill(page.getByLabelText("Header 1", { exact: true }), "Authorization");
+  await userEvent.fill(page.getByLabelText("Header 1 value"), "Bearer abc");
+  await userEvent.click(page.getByRole("button", { name: "Add", exact: true }));
+  await expect.element(page.getByText('"docs" needs an http or https URL.')).toBeVisible();
+  await userEvent.fill(page.getByLabelText("URL"), "https://docs.example.test/mcp");
+  await userEvent.click(page.getByRole("button", { name: "Add", exact: true }));
+  await expect.element(page.getByText("docs", { exact: true })).toBeVisible();
+  await userEvent.click(page.getByRole("button", { name: "Save" }));
+  await eventually(() =>
+    expect(fakeAssistantEdits.updates).toMatchObject([
+      {
+        mcpServers: [
+          {
+            name: "docs",
+            transport: "http",
+            url: "https://docs.example.test/mcp",
+            headers: [{ key: "Authorization", value: "Bearer abc" }],
+            enabled: true,
+          },
+        ],
+      },
+    ]),
+  );
+});
+
+it("edits a saved connector keeping its secret, toggles it and removes another", async () => {
+  publishAssistants([
+    assistant("jarvis", "Jarvis", {
+      mcpServers: [
+        {
+          name: "docs",
+          transport: "http",
+          url: "https://docs.example.test/mcp",
+          args: [],
+          headers: [{ key: "Authorization", hasValue: true }],
+          env: [],
+          enabled: true,
+        },
+        {
+          name: "files",
+          transport: "stdio",
+          command: "npx",
+          args: ["srv"],
+          headers: [],
+          env: [],
+          enabled: true,
+        },
+      ],
+    }),
+  ]);
+  fakeAssistantEdits.updates = [];
+  await using _screen = await openEditDialog("Jarvis");
+  await userEvent.click(page.getByRole("button", { name: "Remove files" }));
+  await userEvent.click(page.getByRole("switch", { name: "docs enabled" }));
+  await userEvent.click(page.getByRole("button", { name: "Edit docs" }));
+  await expect
+    .element(page.getByLabelText("Header 1 value"))
+    .toHaveAttribute("placeholder", "Saved");
+  await userEvent.fill(page.getByLabelText("URL"), "https://docs.example.test/v2");
+  await userEvent.click(page.getByRole("button", { name: "Done" }));
+  await userEvent.click(page.getByRole("button", { name: "Save" }));
+  await eventually(() =>
+    expect(fakeAssistantEdits.updates).toMatchObject([
+      {
+        mcpServers: [
+          {
+            name: "docs",
+            url: "https://docs.example.test/v2",
+            headers: [{ key: "Authorization" }],
+            enabled: false,
+          },
+        ],
+      },
+    ]),
+  );
+  expect(JSON.stringify(fakeAssistantEdits.updates)).not.toContain('"value"');
+});
+
+it("a command connector takes arguments and variables", async () => {
+  publishAssistants([assistant("jarvis", "Jarvis")]);
+  fakeAssistantEdits.updates = [];
+  await using _screen = await openEditDialog("Jarvis");
+  await userEvent.click(page.getByRole("button", { name: "Add connector" }));
+  await userEvent.fill(page.getByLabelText("Connector name"), "files");
+  await userEvent.click(page.getByRole("radio", { name: "Command (runs on this machine)" }));
+  await userEvent.fill(page.getByLabelText("Command", { exact: true }), "npx");
+  await userEvent.fill(page.getByLabelText("Arguments"), "-y\nsrv");
+  await userEvent.click(page.getByRole("button", { name: "Add variable" }));
+  await userEvent.fill(page.getByLabelText("Variable 1", { exact: true }), "TOKEN");
+  await userEvent.fill(page.getByLabelText("Variable 1 value"), "t");
+  await userEvent.click(page.getByRole("button", { name: "Remove variable 1" }));
+  await userEvent.click(page.getByRole("button", { name: "Add", exact: true }));
+  await userEvent.click(page.getByRole("button", { name: "Save" }));
+  await eventually(() =>
+    expect(fakeAssistantEdits.updates).toMatchObject([
+      {
+        mcpServers: [
+          { name: "files", transport: "stdio", command: "npx", args: ["-y", "srv"], env: [] },
+        ],
+      },
+    ]),
+  );
 });
 
 it("clears an icon back to the initial", async () => {

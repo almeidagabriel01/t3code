@@ -16,13 +16,28 @@ const assistant = (id: string, extra: Partial<Assistant>) =>
     toolAccess: "full",
     role: "",
     reportsTo: null,
+    mcpServers: [],
     archivedAt: null,
     ...extra,
   }) as unknown as Assistant;
 
 const layer = Layer.mock(AssistantService.AssistantService)({
   list: Effect.succeed([
-    assistant("ceo", { role: "CEO", askBeforeActing: true, icon: "scout" }),
+    assistant("ceo", {
+      role: "CEO",
+      askBeforeActing: true,
+      icon: "scout",
+      mcpServers: [
+        {
+          name: "docs",
+          transport: "http",
+          enabled: true,
+          args: [],
+          env: [],
+          headers: [{ key: "A", hasValue: true }],
+        },
+      ],
+    }),
     assistant("eng", { role: "Engineer", reportsTo: "ceo" as never }),
   ]),
 });
@@ -35,10 +50,12 @@ it.effect("list and read give each assistant its role, leader and reports by han
       role: "CEO",
       askBeforeActing: true,
       icon: "scout",
+      connectors: [{ name: "docs", transport: "http", enabled: true }],
       reportsTo: null,
       reports: ["eng"],
     });
     const read = yield* run({ action: "read", handle: "@ENG" });
+    assert.notInclude(JSON.stringify(listed), "hasValue");
     assert.deepInclude(read, { role: "Engineer", reportsTo: "ceo", reports: [] });
     assert.strictEqual((yield* Effect.flip(run({ action: "read" }))).code, "invalid_request");
     assert.strictEqual(

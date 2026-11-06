@@ -7,7 +7,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 
-import type { McpProviderSessionConfig } from "./mcpSession.ts";
+import type { McpProviderSessionConfig, ThreadConnector } from "./mcpSession.ts";
 
 // Other providers may never consume these references.
 const MAX_KEPT_HTML_RENDERS = 64;
@@ -33,6 +33,12 @@ export class McpProviderSessions extends Context.Service<
     readonly set: (config: McpProviderSessionConfig) => Effect.Effect<void>;
     readonly read: (threadId: ThreadId) => Effect.Effect<McpProviderSessionConfig | undefined>;
     readonly clear: (threadId: ThreadId) => Effect.Effect<void>;
+    /** Extra MCP servers the thread's assistant carries; none until a source is installed. */
+    readonly connectors: (threadId: ThreadId) => Effect.Effect<ReadonlyArray<ThreadConnector>>;
+    /** Late-bound: assistants sit above provider-core, so the server fills the source at startup. */
+    readonly installConnectors: (
+      source: (threadId: ThreadId) => Effect.Effect<ReadonlyArray<ThreadConnector>>,
+    ) => Effect.Effect<void>;
     readonly recordHtmlRender: (
       threadId: ThreadId,
       input: { readonly html: string; readonly title: string; readonly height: number },
@@ -80,7 +86,16 @@ const matchingPageIndex = (
 const make = Effect.gen(function* () {
   const sessions = yield* Ref.make(new Map<ThreadId, McpProviderSessionConfig>());
   const htmlRenders = yield* Ref.make(new Map<ThreadId, ReadonlyArray<KeptHtmlRender>>());
+  const connectorSource = yield* Ref.make<
+    (threadId: ThreadId) => Effect.Effect<ReadonlyArray<ThreadConnector>>
+  >(() => Effect.succeed([]));
   return McpProviderSessions.of({
+    connectors: Effect.fn("McpProviderSessions.connectors")(function* (threadId) {
+      return yield* (yield* Ref.get(connectorSource))(threadId);
+    }),
+    installConnectors: Effect.fn("McpProviderSessions.installConnectors")(function* (source) {
+      yield* Ref.set(connectorSource, source);
+    }),
     set: Effect.fn("McpProviderSessions.set")(function* (config) {
       const current = yield* Ref.get(sessions);
       if (current.get(config.threadId)?.providerSessionId !== config.providerSessionId) {

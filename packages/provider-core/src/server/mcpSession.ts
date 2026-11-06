@@ -13,6 +13,17 @@ export interface McpProviderSessionConfig {
   readonly agentDeviceEnvironment?: Readonly<Record<string, string>>;
 }
 
+/** An extra MCP server for one thread's provider session, secrets already resolved. */
+export interface ThreadConnector {
+  readonly name: string;
+  readonly transport: "http" | "stdio";
+  readonly url?: string;
+  readonly command?: string;
+  readonly args: ReadonlyArray<string>;
+  readonly headers: Readonly<Record<string, string>>;
+  readonly env: Readonly<Record<string, string>>;
+}
+
 export function withAgentDeviceEnvironment(
   base: NodeJS.ProcessEnv,
   config: Pick<McpProviderSessionConfig, "agentDeviceEnvironment"> | undefined,

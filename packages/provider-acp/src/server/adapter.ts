@@ -806,17 +806,69 @@ interface AcpMcpContext {
   readonly authorization?: string;
 }
 
-function acpMcpContext(
+/**
+ * An assistant's connectors ride beside T3's server in whichever list the runtime picks. A stdio
+ * connector is valid in every list; an http one only where the flavor trusts agents with http
+ * servers, and it is dropped when the agent takes the acp list instead.
+ */
+function acpConnectorServers(
+  connectors: ReadonlyArray<McpProviderSession.ThreadConnector>,
+  mcpOverHttp: boolean | undefined,
+): {
+  readonly stdio: ReadonlyArray<EffectAcpSchema.McpServer>;
+  readonly http: ReadonlyArray<EffectAcpSchema.McpServer>;
+} {
+  const stdio = connectors.flatMap((connector) =>
+    connector.transport === "stdio"
+      ? [
+          {
+            name: connector.name,
+            command: connector.command ?? "",
+            args: [...connector.args],
+            env: Object.entries(connector.env).map(([name, value]) => ({ name, value })),
+          },
+        ]
+      : [],
+  );
+  const http =
+    mcpOverHttp === true
+      ? connectors.flatMap((connector) =>
+          connector.transport === "http"
+            ? [
+                {
+                  type: "http" as const,
+                  name: connector.name,
+                  url: connector.url ?? "",
+                  headers: Object.entries(connector.headers).map(([name, value]) => ({
+                    name,
+                    value,
+                  })),
+                },
+              ]
+            : [],
+        )
+      : [];
+  return { stdio, http };
+}
+
+export function acpMcpContext(
   session: McpProviderSession.McpProviderSessionConfig | undefined,
   self: SelfInvocation,
   mcpOverHttp: boolean | undefined,
+  connectors: ReadonlyArray<McpProviderSession.ThreadConnector> = [],
 ): AcpMcpContext {
+  const extra = acpConnectorServers(connectors, mcpOverHttp);
   if (session === undefined) {
-    return { servers: [], acpServers: [], httpServers: [] };
+    return {
+      servers: extra.stdio,
+      acpServers: extra.stdio,
+      httpServers: [...extra.stdio, ...extra.http],
+    };
   }
   // codex-acp 1.2.0 and pi-acp drop injected HTTP servers, so HTTP is opt-in per flavor.
   return {
     servers: [
+      ...extra.stdio,
       {
         name: "t3-code",
         command: self.command,
@@ -828,10 +880,12 @@ function acpMcpContext(
         ],
       },
     ],
-    acpServers: [{ type: "acp", name: "t3-code", serverId: "t3-code" }],
+    acpServers: [...extra.stdio, { type: "acp", name: "t3-code", serverId: "t3-code" }],
     httpServers:
       mcpOverHttp === true
         ? [
+            ...extra.stdio,
+            ...extra.http,
             {
               type: "http",
               name: "t3-code",
@@ -1667,9 +1721,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
   const readMcpContext = (threadId: ThreadId | null) =>
     threadId === null
       ? Effect.succeed(acpMcpContext(undefined, self, flavor.mcpOverHttp))
-      : mcpSessions
-          .read(threadId)
-          .pipe(Effect.map((session) => acpMcpContext(session, self, flavor.mcpOverHttp)));
+      : Effect.all([mcpSessions.read(threadId), mcpSessions.connectors(threadId)]).pipe(
+          Effect.map(([session, connectors]) =>
+            acpMcpContext(session, self, flavor.mcpOverHttp, connectors),
+          ),
+        );
   const driver = flavor.driver;
   const continuationRequests = options.continuationRequests;
   const postSettleContinuationEnabled =

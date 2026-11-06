@@ -143,6 +143,88 @@ export const ASSISTANT_ICON_IDS = [
 export const AssistantIconId = Schema.Literals(ASSISTANT_ICON_IDS);
 export type AssistantIconId = typeof AssistantIconId.Type;
 
+/** Servers T3 itself injects; a connector may not shadow them. */
+export const ASSISTANT_MCP_RESERVED_NAMES: ReadonlyArray<string> = ["t3-code", "t3-code-direct"];
+export const ASSISTANT_MCP_MAX_SERVERS = 20;
+
+export const AssistantMcpServerName = Schema.String.check(
+  Schema.isPattern(/^[a-z0-9][a-z0-9_-]{0,31}$/),
+);
+const McpTransport = Schema.Literals(["http", "stdio"]);
+const McpKey = Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(200));
+const McpValue = Schema.String.check(Schema.isMaxLength(8_000));
+const McpArgs = Schema.Array(Schema.String.check(Schema.isMaxLength(2_000))).check(
+  Schema.isMaxLength(50),
+);
+const McpUrl = Schema.String.check(Schema.isMaxLength(2_048));
+const McpCommand = Schema.String.check(Schema.isMaxLength(1_000));
+
+/**
+ * Header and env values are write-only: they live in the server secret store and reads only say
+ * whether one is saved. Unknown fields from a newer writer are ignored on decode.
+ */
+export const AssistantMcpServer = Schema.Struct({
+  name: AssistantMcpServerName,
+  transport: McpTransport,
+  url: Schema.optional(McpUrl),
+  command: Schema.optional(McpCommand),
+  args: McpArgs.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  headers: Schema.Array(Schema.Struct({ key: McpKey, hasValue: Schema.Boolean })).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  env: Schema.Array(Schema.Struct({ key: McpKey, hasValue: Schema.Boolean })).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+});
+export type AssistantMcpServer = typeof AssistantMcpServer.Type;
+
+/** A `value` left out keeps the saved one; an empty `value` clears it. */
+const McpKeyValueInput = Schema.Struct({ key: McpKey, value: Schema.optional(McpValue) });
+export const AssistantMcpServerInput = Schema.Struct({
+  name: AssistantMcpServerName,
+  transport: McpTransport,
+  url: Schema.optional(McpUrl),
+  command: Schema.optional(McpCommand),
+  args: Schema.optional(McpArgs),
+  headers: Schema.optional(Schema.Array(McpKeyValueInput)),
+  env: Schema.optional(Schema.Array(McpKeyValueInput)),
+  enabled: Schema.Boolean,
+});
+export type AssistantMcpServerInput = typeof AssistantMcpServerInput.Type;
+
+/** The first reason a connector list is unusable, or null. Clients and the server share it. */
+export function assistantMcpServersProblem(
+  servers: ReadonlyArray<AssistantMcpServerInput>,
+): string | null {
+  if (servers.length > ASSISTANT_MCP_MAX_SERVERS)
+    return `At most ${ASSISTANT_MCP_MAX_SERVERS} connectors.`;
+  const names = new Set<string>();
+  for (const server of servers) {
+    if (ASSISTANT_MCP_RESERVED_NAMES.includes(server.name))
+      return `"${server.name}" is reserved for T3's own tools.`;
+    if (names.has(server.name)) return `Two connectors are named "${server.name}".`;
+    names.add(server.name);
+    if (server.transport === "http") {
+      let ok = false;
+      try {
+        const protocol = new URL(server.url ?? "").protocol;
+        ok = protocol === "http:" || protocol === "https:";
+      } catch {
+        // not a URL
+      }
+      if (!ok) return `"${server.name}" needs an http or https URL.`;
+    } else if ((server.command ?? "").trim() === "") {
+      return `"${server.name}" needs a command.`;
+    }
+    for (const rows of [server.headers ?? [], server.env ?? []]) {
+      if (new Set(rows.map((row) => row.key)).size !== rows.length)
+        return `"${server.name}" repeats a header or variable name.`;
+    }
+  }
+  return null;
+}
+
 export const Assistant = Schema.Struct({
   id: AssistantId,
   handle: AssistantHandle,
@@ -169,6 +251,8 @@ export const Assistant = Schema.Struct({
   askBeforeActing: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** An `AssistantIconId`, kept a plain string so an id from a newer client still decodes. */
   icon: Schema.NullOr(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  /** Extra MCP servers injected only into this assistant's sessions, next to T3's own. */
+  mcpServers: Schema.Array(AssistantMcpServer).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   archivedAt: Schema.NullOr(IsoDateTime),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -199,6 +283,7 @@ export const AssistantsCreateInput = Schema.Struct({
   autonomy: Schema.optional(AssistantAutonomy),
   askBeforeActing: Schema.optional(Schema.Boolean),
   icon: Schema.optional(Schema.NullOr(AssistantIconId)),
+  mcpServers: Schema.optional(Schema.Array(AssistantMcpServerInput)),
   role: Schema.optional(AssistantRole),
   reportsTo: Schema.optional(Schema.NullOr(AssistantId)),
   /** Brings Jarvis back (recreated or unarchived) and ignores every other field. */
@@ -232,6 +317,8 @@ export const AssistantsUpdateInput = Schema.Struct({
   askBeforeActing: Schema.optional(Schema.Boolean),
   /** Null goes back to the initial. */
   icon: Schema.optional(Schema.NullOr(AssistantIconId)),
+  /** Replaces the whole list; leave out to keep it. */
+  mcpServers: Schema.optional(Schema.Array(AssistantMcpServerInput)),
   role: Schema.optional(AssistantRole),
   /** Null makes it top-level. */
   reportsTo: Schema.optional(Schema.NullOr(AssistantId)),

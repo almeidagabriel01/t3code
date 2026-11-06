@@ -1656,6 +1656,30 @@ describe("CodexAdapterV2 post-settle continuation", () => {
   it.effect("adds the session MCP server without replacing launch-argument servers", () =>
     Effect.gen(function* () {
       const scenario = "launch-mcp-servers";
+      yield* (yield* McpProviderSessions.McpProviderSessions).installConnectors((threadId) =>
+        Effect.succeed(
+          threadId === `thread-${scenario}`
+            ? [
+                {
+                  name: "docs",
+                  transport: "http",
+                  url: "https://docs.example.test/mcp",
+                  args: [],
+                  headers: { "X-Key": "k" },
+                  env: {},
+                },
+                {
+                  name: "files",
+                  transport: "stdio",
+                  command: "npx",
+                  args: ["srv"],
+                  headers: {},
+                  env: { TOKEN: "t" },
+                },
+              ]
+            : [],
+        ),
+      );
       yield* (yield* McpProviderSessions.McpProviderSessions).set({
         environmentId: EnvironmentId.make("environment-codex-mcp"),
         threadId: ThreadId.make(`thread-${scenario}`),
@@ -1689,6 +1713,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             "tools.update_plan.enabled": true,
             mcp_optional_startup_grace_ms: 10_000,
             "shell_environment_policy.set.T3CODE_THREAD_ID": `thread-${scenario}`,
+            "mcp_servers.docs": {
+              url: "https://docs.example.test/mcp",
+              http_headers: { "X-Key": "k" },
+            },
+            "mcp_servers.files": { command: "npx", args: ["srv"], env: { TOKEN: "t" } },
             "mcp_servers.t3-code": {
               url: "http://127.0.0.1:43123/mcp",
               tool_timeout_sec: 3_900,

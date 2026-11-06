@@ -1,7 +1,10 @@
 import * as GuestShareService from "../guest/GuestShareService.ts";
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
+import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as OrchestrationCommandReceipts from "../persistence/OrchestrationCommandReceipts.ts";
 import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
@@ -61,6 +64,7 @@ import * as DecisionService from "../decisions/DecisionService.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as AskBeforeActing from "../assistants/AskBeforeActing.ts";
 import * as AskBeforeActingGate from "../assistants/AskBeforeActingGate.ts";
+import * as AssistantConnectors from "../assistants/AssistantConnectors.ts";
 import * as AssistantDirectory from "../assistants/AssistantDirectory.ts";
 import * as AssistantRuntimePolicy from "../assistants/AssistantRuntimePolicy.ts";
 import * as AssistantService from "../assistants/AssistantService.ts";
@@ -394,6 +398,10 @@ const layerDecisionsProvided = DecisionService.layer.pipe(
   Layer.provide(layerThreadManagementProvided),
 );
 
+const layerAssistantConnectorsProvided = AssistantConnectors.layer.pipe(
+  Layer.provide(Layer.merge(ServerSecretStore.layer, AssistantDirectory.layer)),
+);
+
 export const layerProduction = Layer.mergeAll(
   layer.pipe(Layer.provide(layerProjectService)),
   layerProjectService,
@@ -416,9 +424,18 @@ export const layerProduction = Layer.mergeAll(
     ),
   ),
   ComputerUse.layer.pipe(Layer.provide(layerDecisionsProvided), Layer.provide(ProcessRunner.layer)),
+  // Providers read a thread's connectors through this late-bound source.
+  Layer.effectDiscard(
+    Effect.gen(function* () {
+      const sessions = yield* McpProviderSessions.McpProviderSessions;
+      const assistantConnectors = yield* AssistantConnectors.AssistantConnectors;
+      yield* sessions.installConnectors(assistantConnectors.forThread);
+    }),
+  ).pipe(Layer.provide(layerAssistantConnectorsProvided)),
   AssistantService.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        layerAssistantConnectorsProvided,
         layerThreadManagementProvided,
         layerThreadLaunchProvided,
         layerManagedProjectFoldersProvided,

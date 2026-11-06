@@ -17,6 +17,7 @@ const assistant = (id: string, overrides: Partial<Assistant> = {}): Assistant =>
   toolAccess: "full",
   askBeforeActing: false,
   icon: null,
+  mcpServers: [],
   isDefault: false,
   threadId: `assistant:${id}:1` as ThreadId,
   generation: 1,

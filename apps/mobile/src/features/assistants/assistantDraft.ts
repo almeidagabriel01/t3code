@@ -1,3 +1,9 @@
+import {
+  connectorDraftsFrom,
+  connectorInputsFrom,
+  connectorsEqual,
+  type ConnectorDraft,
+} from "@t3tools/client-runtime/assistantConnectors";
 import { assistantIconFor } from "@t3tools/client-runtime/assistantIcons";
 import { sameAssistantAutonomy } from "@t3tools/client-runtime/autonomy";
 import {
@@ -34,6 +40,7 @@ export interface AssistantDraft {
   readonly toolAccess: AssistantToolAccess;
   readonly askBeforeActing: boolean;
   readonly icon: AssistantIconId | null;
+  readonly connectors: ReadonlyArray<ConnectorDraft>;
   readonly role: string;
   readonly reportsTo: AssistantId | null;
   readonly budget: BudgetDraft;
@@ -131,6 +138,7 @@ export function assistantDraftFor(assistant: Assistant | null): AssistantDraft {
     toolAccess: assistant?.toolAccess ?? "full",
     askBeforeActing: assistant?.askBeforeActing ?? false,
     icon: assistantIconFor(assistant?.icon)?.id ?? null,
+    connectors: connectorDraftsFrom(assistant?.mcpServers ?? []),
     role: assistant?.role ?? "",
     reportsTo: assistant?.reportsTo ?? null,
     budget: budgetDraftFor(assistant?.budget),
@@ -206,6 +214,9 @@ export function assistantCreateInput(
     toolAccess: current.toolAccess,
     ...(current.askBeforeActing ? { askBeforeActing: true } : {}),
     ...(current.icon === null ? {} : { icon: current.icon }),
+    ...(current.connectors.length === 0
+      ? {}
+      : { mcpServers: connectorInputsFrom(current.connectors) }),
     ...(current.role.trim() === "" ? {} : { role: current.role.trim() }),
     ...(current.reportsTo === null ? {} : { reportsTo: current.reportsTo }),
     ...(current.budget.enabled ? { budget: budgetFromDraft(current.budget) } : {}),
@@ -241,6 +252,9 @@ export function assistantUpdateInput(
     ...(current.icon !== (assistantIconFor(assistant.icon)?.id ?? null)
       ? { icon: current.icon }
       : {}),
+    ...(connectorsEqual(editor.initial.connectors, current.connectors)
+      ? {}
+      : { mcpServers: connectorInputsFrom(current.connectors) }),
     ...(current.role.trim() !== assistant.role ? { role: current.role.trim() } : {}),
     ...(current.reportsTo !== assistant.reportsTo ? { reportsTo: current.reportsTo } : {}),
     ...(budgetDraftChanged(editor.initial.budget, current.budget)

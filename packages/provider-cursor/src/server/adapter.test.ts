@@ -1770,6 +1770,44 @@ describe("CursorAdapterV2", () => {
     });
     assert.deepEqual(options.mcpServers, cursorMcpServers(mcpSession));
 
+    const withConnectors = makeCursorAgentOptions({
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("cursor"),
+        model: "composer-2.5",
+      },
+      runtimePolicy: {
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: "/workspace",
+      },
+      threadId,
+      mcpSession,
+      connectors: [
+        {
+          name: "docs",
+          transport: "http",
+          url: "https://docs.example.test/mcp",
+          args: [],
+          headers: { "X-Key": "k" },
+          env: {},
+        },
+        {
+          name: "files",
+          transport: "stdio",
+          command: "npx",
+          args: ["srv"],
+          headers: {},
+          env: { T: "1" },
+        },
+      ],
+      platform: "linux",
+    });
+    assert.deepEqual(withConnectors.mcpServers, {
+      docs: { type: "http", url: "https://docs.example.test/mcp", headers: { "X-Key": "k" } },
+      files: { command: "npx", args: ["srv"], env: { T: "1" } },
+      ...cursorMcpServers(mcpSession),
+    });
+
     const logged = JSON.stringify(CursorAgentSdk.loggedCursorAgentOptions(options));
     assert.notInclude(logged, "secret-cursor-api-key");
     assert.notInclude(logged, "secret-cursor-mcp-token");

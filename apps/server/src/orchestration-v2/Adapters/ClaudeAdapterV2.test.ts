@@ -570,6 +570,55 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
     assert.isFalse(overrides.allowedTools?.includes(ClaudeAdapterV2.CLAUDE_T3_MCP_TOOL_WILDCARD));
   });
 
+  it("adds an assistant's connectors beside t3-code without widening allowed tools", () => {
+    const mcpSession = mcpSessionFor(ThreadId.make("thread-claude-connectors"));
+    const connectors = [
+      {
+        name: "docs",
+        transport: "http" as const,
+        url: "https://docs.example.test/mcp",
+        args: [],
+        headers: { "X-Key": "k" },
+        env: {},
+      },
+      {
+        name: "files",
+        transport: "stdio" as const,
+        command: "npx",
+        args: ["srv"],
+        headers: {},
+        env: { TOKEN: "t" },
+      },
+    ];
+    const withConnectors = ClaudeAdapterV2.claudeMcpQueryOverrides({
+      mcpSession,
+      readOnlySandbox: true,
+      connectors,
+    });
+    assert.deepEqual(withConnectors.mcpServers, {
+      docs: { type: "http", url: "https://docs.example.test/mcp", headers: { "X-Key": "k" } },
+      files: { type: "stdio", command: "npx", args: ["srv"], env: { TOKEN: "t" } },
+      ...T3_MCP_SERVERS,
+    });
+    assert.deepEqual(
+      withConnectors.allowedTools,
+      ClaudeAdapterV2.claudeMcpQueryOverrides({ mcpSession, readOnlySandbox: true }).allowedTools,
+    );
+    assert.deepEqual(
+      ClaudeAdapterV2.claudeMcpQueryOverrides({ mcpSession, readOnlySandbox: false }).mcpServers,
+      T3_MCP_SERVERS,
+    );
+    // Without a T3 session the connectors still reach the thread, with no pre-approved tools.
+    assert.deepEqual(
+      ClaudeAdapterV2.claudeMcpQueryOverrides({
+        mcpSession: undefined,
+        readOnlySandbox: false,
+        connectors: connectors.slice(0, 1),
+      }),
+      { mcpServers: { docs: withConnectors.mcpServers!.docs! } },
+    );
+  });
+
   it("invalidates live-query reuse when MCP credentials rotate", () => {
     const threadId = ThreadId.make("thread-claude-mcp-credential-rotation");
     const mcpSession = mcpSessionFor(threadId);

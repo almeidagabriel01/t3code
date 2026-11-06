@@ -200,6 +200,24 @@ export function cursorRuntimeAgentPolicy(
   };
 }
 
+/** An assistant's connectors, as the SDK's own server configs. */
+function cursorConnectorServers(
+  connectors: ReadonlyArray<McpProviderSession.ThreadConnector>,
+): Record<string, McpServerConfig> {
+  return Object.fromEntries(
+    connectors.map((connector) => [
+      connector.name,
+      connector.transport === "http"
+        ? { type: "http" as const, url: connector.url ?? "", headers: { ...connector.headers } }
+        : {
+            command: connector.command ?? "",
+            args: [...connector.args],
+            env: { ...connector.env },
+          },
+    ]),
+  );
+}
+
 export function cursorMcpServers(
   session: McpProviderSession.McpProviderSessionConfig | undefined,
 ): Record<string, McpServerConfig> | undefined {
@@ -300,10 +318,16 @@ export function makeCursorAgentOptions(input: {
   readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
   readonly threadId: ThreadId;
   readonly mcpSession: McpProviderSession.McpProviderSessionConfig | undefined;
+  readonly connectors?: ReadonlyArray<McpProviderSession.ThreadConnector>;
   readonly platform: NodeJS.Platform;
 }): AgentOptions {
   const policy = cursorRuntimeAgentPolicy(input.runtimePolicy, input.platform);
-  const mcpServers = cursorMcpServers(input.mcpSession);
+  const t3Servers = cursorMcpServers(input.mcpSession);
+  const connectorServers = cursorConnectorServers(input.connectors ?? []);
+  const mcpServers =
+    t3Servers === undefined && Object.keys(connectorServers).length === 0
+      ? undefined
+      : { ...connectorServers, ...t3Servers };
   return {
     model: cursorSdkModelSelection(input.modelSelection),
     name: `T3 Code ${input.threadId}`,
@@ -2239,6 +2263,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             platform,
             threadId: openInput.threadId,
             mcpSession: yield* mcpSessions.read(openInput.threadId),
+            connectors: yield* mcpSessions.connectors(openInput.threadId),
           });
           if (
             platform === "win32" &&

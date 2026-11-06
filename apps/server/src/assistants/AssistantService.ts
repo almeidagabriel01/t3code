@@ -44,10 +44,13 @@ import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
+import * as AssistantConnectors from "./AssistantConnectors.ts";
 import {
   type AssistantRow,
+  decodeMcpServers,
   encodeAutonomy,
   encodeBudget,
+  encodeMcpServers,
   toAssistant,
 } from "./AssistantDirectory.ts";
 
@@ -113,6 +116,7 @@ const make = Effect.gen(function* () {
   const projects = yield* ProjectService.ProjectService;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const scheduledTasks = yield* ScheduledTaskService.ScheduledTaskService;
+  const connectors = yield* AssistantConnectors.AssistantConnectors;
   const providerRegistry = yield* Effect.serviceOption(ProviderRegistry.ProviderRegistry);
   const lock = yield* Semaphore.make(1);
   const events = yield* PubSub.unbounded<AssistantsEvent>();
@@ -469,23 +473,33 @@ const make = Effect.gen(function* () {
         Effect.gen(function* () {
           yield* handleTaken(handle);
           if (input.reportsTo != null) yield* checkReportsTo(undefined, input.reportsTo);
+          const saved =
+            input.mcpServers === undefined
+              ? undefined
+              : yield* connectors.save(id, [], input.mcpServers);
           const now = yield* nowIso;
           yield* sql`
             INSERT INTO assistants (
               assistant_id, handle, name, project_id, instructions, tool_access, is_default,
               generation, budget_json, autonomy_json, role, reports_to, ask_before_acting,
-              icon, created_at, updated_at
+              icon, mcp_servers_json, created_at, updated_at
             ) VALUES (
               ${id}, ${handle}, ${input.name}, ${input.projectId}, ${input.instructions},
               ${input.toolAccess}, 0, 1, ${input.budget ? encodeBudget(input.budget) : null},
               ${input.autonomy ? encodeAutonomy(input.autonomy) : null}, ${input.role?.trim() ?? ""},
-              ${input.reportsTo ?? null}, ${input.askBeforeActing === true ? 1 : 0}, ${input.icon ?? null}, ${now}, ${now}
+              ${input.reportsTo ?? null}, ${input.askBeforeActing === true ? 1 : 0}, ${input.icon ?? null},
+              ${saved === undefined ? null : encodeMcpServers(saved.servers)}, ${now}, ${now}
             )`;
           const row = yield* findRow(id);
           const threadId = yield* launchGeneration(row, 1, input.modelSelection).pipe(
             // No conversation means nothing to show: take the row back so the handle is free again.
             Effect.tapError(() =>
-              sql`DELETE FROM assistants WHERE assistant_id = ${id}`.pipe(Effect.ignore),
+              sql`DELETE FROM assistants WHERE assistant_id = ${id}`.pipe(
+                Effect.andThen(
+                  saved === undefined ? Effect.void : connectors.purge(id, saved.servers),
+                ),
+                Effect.ignore,
+              ),
             ),
           );
           yield* sql`UPDATE assistants SET thread_id = ${threadId} WHERE assistant_id = ${id}`;
@@ -548,6 +562,16 @@ const make = Effect.gen(function* () {
                   : 0,
             icon: input.icon === undefined ? row.icon : input.icon,
           };
+          const saved =
+            input.mcpServers === undefined
+              ? undefined
+              : yield* connectors.save(
+                  row.assistant_id,
+                  decodeMcpServers(row.mcp_servers_json),
+                  input.mcpServers,
+                );
+          const mcpServersJson =
+            saved === undefined ? row.mcp_servers_json : encodeMcpServers(saved.servers);
           const now = yield* nowIso;
           if (projectChanged) {
             // A thread can't change projects: the new project gets the next generation.
@@ -568,7 +592,7 @@ const make = Effect.gen(function* () {
                 project_id = ${next.projectId}, thread_id = ${threadId}, generation = ${generation},
                 budget_json = ${next.budgetJson}, autonomy_json = ${next.autonomyJson},
                 role = ${next.role}, reports_to = ${next.reportsTo},
-                ask_before_acting = ${next.askBeforeActing}, icon = ${next.icon}, archived_at = ${archivedAt}, updated_at = ${now}
+                ask_before_acting = ${next.askBeforeActing}, icon = ${next.icon}, mcp_servers_json = ${mcpServersJson}, archived_at = ${archivedAt}, updated_at = ${now}
               WHERE assistant_id = ${row.assistant_id}`;
             yield* followSchedules({ ...row, generation }, threadId, next.projectId);
             yield* retire(previousThreadId);
@@ -580,7 +604,7 @@ const make = Effect.gen(function* () {
                 instructions = ${next.instructions}, tool_access = ${next.toolAccess},
                 budget_json = ${next.budgetJson}, autonomy_json = ${next.autonomyJson},
                 role = ${next.role}, reports_to = ${next.reportsTo},
-                ask_before_acting = ${next.askBeforeActing}, icon = ${next.icon}, archived_at = ${archivedAt}, updated_at = ${now}
+                ask_before_acting = ${next.askBeforeActing}, icon = ${next.icon}, mcp_servers_json = ${mcpServersJson}, archived_at = ${archivedAt}, updated_at = ${now}
               WHERE assistant_id = ${row.assistant_id}`;
             if (
               previousThreadId !== null &&
@@ -619,6 +643,7 @@ const make = Effect.gen(function* () {
               }
             }
           }
+          if (saved !== undefined) yield* saved.removeStale;
           yield* publish(row.assistant_id);
           if (archivedAt !== null && row.archived_at === null) {
             yield* releaseReports(row.assistant_id);
@@ -650,6 +675,13 @@ const make = Effect.gen(function* () {
           // The row goes first: the thread guards only protect a live assistant's conversation.
           yield* sql`DELETE FROM assistants WHERE assistant_id = ${assistantId}`;
           yield* releaseReports(assistantId);
+          yield* connectors
+            .purge(assistantId, decodeMcpServers(row.mcp_servers_json))
+            .pipe(
+              Effect.catch((cause) =>
+                Effect.logWarning("connector secrets were not deleted", { cause }),
+              ),
+            );
           yield* PubSub.publish(events, {
             type: "removed",
             assistantId: row.assistant_id as AssistantId,

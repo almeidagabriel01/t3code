@@ -22,6 +22,13 @@ import {
   leaderChoices,
   NO_LEADER_LABEL,
 } from "@t3tools/client-runtime/assistantTeam";
+import {
+  connectorDraftsFrom,
+  connectorDraftsProblem,
+  connectorInputsFrom,
+  connectorsEqual,
+  type ConnectorDraft,
+} from "@t3tools/client-runtime/assistantConnectors";
 import { sameAssistantAutonomy } from "@t3tools/client-runtime/autonomy";
 import { createModelSelection } from "@t3tools/shared/model";
 import { Link, useRouter } from "@tanstack/react-router";
@@ -77,6 +84,7 @@ import { Radio, RadioGroup } from "../ui/radio-group";
 import { Switch } from "../ui/switch";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Textarea } from "../ui/textarea";
+import { AssistantConnectorsField } from "./AssistantConnectorsField";
 import { AssistantNotifications } from "./AssistantNotifications";
 import { AssistantSchedules } from "./AssistantSchedules";
 import { AssistantWatches } from "./AssistantWatches";
@@ -297,6 +305,9 @@ function AssistantDialog(props: {
   const [icon, setIcon] = useState<AssistantIconId | null>(
     assistantIconFor(assistant?.icon)?.id ?? null,
   );
+  const [connectors, setConnectors] = useState<ReadonlyArray<ConnectorDraft>>(() =>
+    connectorDraftsFrom(assistant?.mcpServers ?? []),
+  );
   const [projectId, setProjectId] = useState<ProjectId | null>(assistant?.projectId ?? null);
   const [pickedModel, setPickedModel] = useState<ModelSelection | null>(null);
   const [role, setRole] = useState(assistant?.role ?? "");
@@ -392,6 +403,12 @@ function AssistantDialog(props: {
     if (!canSave || effectiveProjectId === null) return;
     const budget = budgetFromDraft(budgetDraft, Intl.DateTimeFormat().resolvedOptions().timeZone);
     if (!budget.ok) return setError(budget.message);
+    const connectorsChanged = !connectorsEqual(
+      connectors,
+      connectorDraftsFrom(assistant?.mcpServers ?? []),
+    );
+    const connectorProblem = connectorsChanged ? connectorDraftsProblem(connectors) : null;
+    if (connectorProblem !== null) return setError(connectorProblem);
     setSaving(true);
     setError(null);
     const trimmedName = name.trim();
@@ -406,6 +423,7 @@ function AssistantDialog(props: {
           ...(toolAccess !== assistant.toolAccess ? { toolAccess } : {}),
           ...(askBeforeActing !== assistant.askBeforeActing ? { askBeforeActing } : {}),
           ...(icon !== (assistantIconFor(assistant.icon)?.id ?? null) ? { icon } : {}),
+          ...(connectorsChanged ? { mcpServers: connectorInputsFrom(connectors) } : {}),
           ...(role.trim() !== assistant.role ? { role: role.trim() } : {}),
           ...(reportsTo !== assistant.reportsTo ? { reportsTo } : {}),
           budget: budget.budget,
@@ -420,6 +438,7 @@ function AssistantDialog(props: {
           toolAccess,
           ...(askBeforeActing ? { askBeforeActing } : {}),
           ...(icon === null ? {} : { icon }),
+          ...(connectors.length === 0 ? {} : { mcpServers: connectorInputsFrom(connectors) }),
           ...(role.trim() === "" ? {} : { role: role.trim() }),
           ...(reportsTo === null ? {} : { reportsTo }),
           ...(budget.budget ? { budget: budget.budget } : {}),
@@ -727,6 +746,7 @@ function AssistantDialog(props: {
                 />
               ) : null}
             </fieldset>
+            <AssistantConnectorsField value={connectors} onChange={setConnectors} />
             <BudgetFields
               draft={budgetDraft}
               onChange={(patch) => setBudgetDraft((current) => ({ ...current, ...patch }))}
