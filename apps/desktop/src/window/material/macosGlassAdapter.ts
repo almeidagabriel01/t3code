@@ -27,43 +27,35 @@ function nonzero(pointer: bigint): bigint {
   return pointer;
 }
 
-export const KEY_STABLE_GLASS_CLASS = "T3KeyStableGlassEffectView";
-export const APPLY_KEY_STATE = "t3_applyWindowKeyState";
-const KEY_STATE_ENCODING = "v16@0:8";
+const BOOL_GETTER = "B16@0:8";
 
-// AppKit drops the glass refraction and desaturates it whenever the window loses key status, so
-// the app turns pale behind other windows. This subclass ignores that change and exposes the
-// original handler as APPLY_KEY_STATE for the focus listener. Null keeps plain glass.
-function keyStableGlassClass(runtime: ObjcRuntime, glass: bigint): bigint | null {
-  const existing = runtime.classNamed(KEY_STABLE_GLASS_CLASS);
-  if (existing !== 0n) return existing;
+// AppKit draws glass in its inactive look (no refraction, desaturated) while its window is not key,
+// so the app turned pale behind other windows. Electron's window class reports an active appearance
+// instead; NSWindow itself is never patched. The YES comes from -[NSArray isNSArray__], a constant
+// BOOL getter. Any mismatch keeps the stock behavior.
+function keepActiveAppearance(runtime: ObjcRuntime, content: bigint) {
   try {
-    const implementation = (cls: bigint, method: string, encoding: string) => {
-      const sel = nonzero(runtime.selector(method));
-      if (runtime.encoding(cls, sel, "instance") !== encoding)
-        throw new Error("Unsupported AppKit key-state method.");
-      const found = nonzero(runtime.function("class_getInstanceMethod", [cls, sel]));
-      return nonzero(runtime.function("method_getImplementation", [found]));
+    const getter = (name: string) => nonzero(runtime.selector(name));
+    const implementation = (cls: bigint, sel: bigint) => {
+      const method = runtime.function("class_getInstanceMethod", [cls, sel]);
+      return method === 0n ? 0n : runtime.function("method_getImplementation", [method]);
     };
-    const original = implementation(glass, "_windowChangedKeyState", KEY_STATE_ENCODING);
-    const noop = implementation(nonzero(runtime.classNamed("NSObject")), "self", "@16@0:8");
-    const subclass = nonzero(
-      runtime.function("objc_allocateClassPair", [glass, KEY_STABLE_GLASS_CLASS, 0n]),
-    );
-    for (const [method, imp] of [
-      ["_windowChangedKeyState", noop],
-      [APPLY_KEY_STATE, original],
-    ] as const)
-      runtime.function("class_addMethod", [
-        subclass,
-        runtime.selector(method),
-        imp,
-        KEY_STATE_ENCODING,
-      ]);
-    runtime.function("objc_registerClassPair", [subclass]);
-    return subclass;
+    const view = nonzero(runtime.classNamed("NSView"));
+    if (runtime.encoding(view, getter("window"), "instance") !== "@16@0:8") return;
+    const window = nonzero(runtime.pointer(content, getter("window")));
+    const windowClass = nonzero(runtime.function("object_getClass", [window]));
+    if (windowClass === runtime.classNamed("NSWindow")) return;
+    const active = getter("_hasActiveAppearance");
+    if (runtime.encoding(windowClass, active, "instance") !== BOOL_GETTER) return;
+    const yes = getter("isNSArray__");
+    const array = nonzero(runtime.classNamed("NSArray"));
+    if (runtime.encoding(array, yes, "instance") !== BOOL_GETTER) return;
+    const alwaysYes = nonzero(implementation(array, yes));
+    if (alwaysYes === implementation(nonzero(runtime.classNamed("NSObject")), yes)) return;
+    // NO when an earlier window already added it, which leaves the same override in place.
+    runtime.function("class_addMethod", [windowClass, active, alwaysYes, BOOL_GETTER]);
   } catch {
-    return null;
+    // Stock behavior: inactive windows show the inactive glass.
   }
 }
 
@@ -85,8 +77,6 @@ export function probeMacosGlass(runtime: ObjcRuntime): MaterialAdapter {
       throw new Error("AppKit requires the main thread.");
   };
   mainThread();
-  const keyStable = keyStableGlassClass(runtime, cls("NSGlassEffectView"));
-  const applyKeyState = keyStable === null ? 0n : nonzero(runtime.selector(APPLY_KEY_STATE));
   return {
     kind: "macos-glass",
     prepare: () => Effect.void,
@@ -96,7 +86,7 @@ export function probeMacosGlass(runtime: ObjcRuntime): MaterialAdapter {
       const handle = window.getNativeWindowHandle();
       if (handle.length !== 8) throw new Error("Unsupported AppKit handle width.");
       const content = nonzero(handle.readBigUInt64LE());
-      let glass = nonzero(runtime.pointer(keyStable ?? cls("NSGlassEffectView"), sel("alloc")));
+      let glass = nonzero(runtime.pointer(cls("NSGlassEffectView"), sel("alloc")));
       let owned = true;
       let inserted = false;
       let released = false;
@@ -112,13 +102,7 @@ export function probeMacosGlass(runtime: ObjcRuntime): MaterialAdapter {
         );
         runtime.void(glass, sel("setTintColor:"), [color]);
       };
-      const onFocus = () => {
-        if (released) return;
-        mainThread();
-        runtime.void(glass, applyKeyState);
-      };
       const dispose = () => {
-        if (keyStable !== null) window.off("focus", onFocus);
         for (const constraint of constraints.splice(0))
           runtime.setBool(constraint, sel("setActive:"), false);
         if (inserted) runtime.void(glass, sel("removeFromSuperview"));
@@ -144,8 +128,7 @@ export function probeMacosGlass(runtime: ObjcRuntime): MaterialAdapter {
         tint(context);
         runtime.void(glass, sel("release"));
         owned = false;
-        // Glass attached to a window that is not key starts pale; the first focus fixes it.
-        if (keyStable !== null) window.on("focus", onFocus);
+        keepActiveAppearance(runtime, content);
       } catch (cause) {
         dispose();
         throw cause;

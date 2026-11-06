@@ -4,14 +4,10 @@ import { probeMacosGlass } from "./macosGlassAdapter.ts";
 import { fakeObjcRuntime } from "./macosGlassTestFixture.ts";
 
 function windowHandle(handle = Buffer.from([1, 0, 0, 0, 0, 0, 0, 0])) {
-  const focus = new Set<() => void>();
-  const window = {
+  return {
     isDestroyed: () => false,
     getNativeWindowHandle: () => handle,
-    on: (_event: string, listener: () => void) => focus.add(listener),
-    off: (_event: string, listener: () => void) => focus.delete(listener),
   } as unknown as BrowserWindow;
-  return Object.assign(window, { focus: () => focus.forEach((listener) => listener()) });
 }
 
 it.each([
@@ -62,34 +58,23 @@ it("release is idempotent and later updates never message released native object
   assert.equal(state.activeConstraints.size, 0);
 });
 
-it("glass ignores window key changes and takes the key look when its window gains focus", () => {
+it("Electron's window class keeps the active glass look while another app has focus", () => {
   const { runtime, state } = fakeObjcRuntime();
-  const window = windowHandle();
-  const attachment = probeMacosGlass(runtime).attachSync(window, { dark: true, glassOpacity: 80 });
-  assert.deepEqual(state.allocatedFrom, ["T3KeyStableGlassEffectView"]);
-  assert.deepEqual(Object.fromEntries(state.methods), {
-    _windowChangedKeyState: "imp:method:NSObject.self",
-    t3_applyWindowKeyState: "imp:method:NSGlassEffectView._windowChangedKeyState",
-  });
-  window.focus();
-  assert.equal(state.keyStateApplied, 1);
-  attachment.releaseSync();
-  window.focus();
-  assert.equal(state.keyStateApplied, 1);
-  // A second probe in the same process reuses the registered class.
-  probeMacosGlass(runtime).attachSync(windowHandle(), { dark: true, glassOpacity: 80 });
-  assert.deepEqual(state.allocatedFrom, [
-    "T3KeyStableGlassEffectView",
-    "T3KeyStableGlassEffectView",
+  const adapter = probeMacosGlass(runtime);
+  adapter.attachSync(windowHandle(), { dark: true, glassOpacity: 80 });
+  assert.deepEqual(state.added, [
+    "ElectronNSWindow._hasActiveAppearance=imp:method:NSArray.isNSArray__",
   ]);
 });
 
-it("an unknown key-state method keeps plain glass without a focus hook", () => {
-  const { runtime, state } = fakeObjcRuntime({ keyStateEncoding: "v24@0:8@16" });
-  const window = windowHandle();
-  probeMacosGlass(runtime).attachSync(window, { dark: true, glassOpacity: 80 });
-  assert.deepEqual(state.allocatedFrom, ["NSGlassEffectView"]);
-  assert.equal(state.registered, false);
-  window.focus();
-  assert.equal(state.keyStateApplied, 0);
+it.each([
+  ["AppKit's own NSWindow", { windowClass: "NSWindow" }],
+  ["an unknown active-appearance signature", { activeAppearanceEncoding: "v16@0:8" }],
+  ["a constant-YES getter that is only inherited", { arrayYesIsInherited: true }],
+  ["a missing window getter", { missingMethod: "window" }],
+] as const)("%s keeps stock glass and still attaches", (_label, options) => {
+  const { runtime, state } = fakeObjcRuntime(options);
+  probeMacosGlass(runtime).attachSync(windowHandle(), { dark: true, glassOpacity: 80 });
+  assert.deepEqual(state.added, []);
+  assert.equal(state.liveViews.size, 1);
 });
