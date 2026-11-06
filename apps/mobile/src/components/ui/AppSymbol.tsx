@@ -21,6 +21,7 @@ import IconZoomOut from "@tabler/icons-react-native/IconZoomOut";
 import IconZoomReset from "@tabler/icons-react-native/IconZoomReset";
 import IconPaperclip from "@tabler/icons-react-native/IconPaperclip";
 import IconArrowBackUp from "@tabler/icons-react-native/IconArrowBackUp";
+import IconArrowBarToDown from "@tabler/icons-react-native/IconArrowBarToDown";
 import IconArrowDown from "@tabler/icons-react-native/IconArrowDown";
 import IconArrowForwardUp from "@tabler/icons-react-native/IconArrowForwardUp";
 import IconArrowLeft from "@tabler/icons-react-native/IconArrowLeft";
@@ -167,6 +168,7 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   "arrow.clockwise": IconRefresh,
   "arrow.counterclockwise": IconRotate,
   "arrow.down": IconArrowDown,
+  "arrow.down.to.line": IconArrowBarToDown,
   "arrow.down.circle": IconArrowDownCircle,
   "arrow.right.circle": IconArrowRightCircle,
   "arrow.triangle.branch": IconGitBranch,

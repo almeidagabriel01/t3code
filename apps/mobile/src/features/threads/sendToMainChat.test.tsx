@@ -26,7 +26,8 @@ vi.mock("../../state/use-composer-drafts", () => ({
 }));
 vi.mock("./useOpenLinkedThread", () => ({ useOpenLinkedThread: () => mocks.open }));
 
-import { SendToMainChatButton, useSendToMainChat } from "./sendToMainChat";
+import { SendToMainChatButton } from "./SendToMainChatButton";
+import { useSendToMainChat } from "./sendToMainChat";
 
 const environmentId = "env" as EnvironmentId;
 const parentThreadId = "parent" as ThreadId;

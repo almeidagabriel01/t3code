@@ -126,6 +126,7 @@ vi.mock("expo", () => ({
     return player;
   },
 }));
+vi.mock("../features/assistants/AssistantPresence", () => ({ AssistantFeedMessage: () => null }));
 vi.mock("expo-video", () => ({
   useVideoPlayer: () => audio.video,
   VideoView: () => null,
