@@ -303,6 +303,9 @@ export const McpToolUseCase = Schema.Struct({
         role: Schema.String,
         toolAccess: AssistantToolAccess,
         askBeforeActing: Schema.optional(Schema.Boolean),
+        /** "sandbox" puts the sandbox line in its note, with `sandboxEnvironmentId`. */
+        workspace: Schema.optional(Schema.Literals(["host", "sandbox"])),
+        sandboxEnvironmentId: Schema.optional(Schema.NullOr(Schema.String)),
         instructions: Schema.String,
         leader: Schema.NullOr(
           Schema.Struct({ name: Schema.String, handle: Schema.String, threadId: Schema.String }),
@@ -1086,6 +1089,7 @@ export const buildMessages = (sample: Sample) => {
               threadId: ThreadId.make(mate.threadId),
             })),
           })),
+          assistant.sandboxEnvironmentId ?? null,
         );
   const notedText = note === "" ? userText : `${note}\n\n${userText}`;
   const prompt =
