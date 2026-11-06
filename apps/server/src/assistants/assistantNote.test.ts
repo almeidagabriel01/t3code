@@ -74,6 +74,7 @@ it("tells a sandboxed assistant where its work runs, or that the sandbox is not 
   const linked = assistantNoteFor(boxed, "hi", undefined, [], "environment-sandbox");
   assert.ok(linked.includes("environmentId environment-sandbox"));
   assert.ok(linked.includes("On this Mac you only read"));
+  assert.ok(linked.includes(`access="read-only" sandbox_access="${assistant.toolAccess}"`));
   assert.ok(assistantNoteFor(boxed, "hi").includes("not linked yet"));
   assert.ok(
     !assistantNoteFor(assistant, "hi", undefined, [], "environment-sandbox").includes("sandbox"),

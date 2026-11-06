@@ -75,7 +75,12 @@ export function assistantNoteFor(
   // Provider-native slash commands must stay at the start of the prompt.
   if (userText.trimStart().startsWith("/")) return "";
   const role = assistant.role === "" ? "" : ` role="${escapeAttribute(assistant.role)}"`;
-  const open = `<t3_assistant name="${escapeAttribute(assistant.name)}" handle="${assistant.handle}"${role} access="${assistant.toolAccess}">`;
+  // A sandboxed assistant only reads here; its access applies to the work it starts in the sandbox.
+  const access =
+    assistant.workspace === "sandbox"
+      ? `access="read-only" sandbox_access="${assistant.toolAccess}"`
+      : `access="${assistant.toolAccess}"`;
+  const open = `<t3_assistant name="${escapeAttribute(assistant.name)}" handle="${assistant.handle}"${role} ${access}>`;
   const body = [
     teamLine(team.leader, team.reports),
     teamsLines(assistant, teams),

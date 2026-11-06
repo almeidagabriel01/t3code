@@ -45,5 +45,5 @@ export const sandboxRefusal = Effect.fn("AssistantSandboxPolicy.refusal")(functi
 export function sandboxNoteLine(environmentId: string | null): string {
   return environmentId === null
     ? "Your workspace is the sandbox container, which is not linked yet: you cannot run commands or edit files until the user starts it in Settings → Assistants. On this Mac you only read."
-    : `Your workspace is the sandbox container (environmentId ${environmentId}): run commands and edit files there by launching or delegating threads with that environmentId (t3_thread_launch, delegate_task with target.environmentId). On this Mac you only read; never edit files or run commands here.`;
+    : `Your workspace is the sandbox container (environmentId ${environmentId}). On this Mac you only read: shell commands that change anything, and file edits, are blocked here. For any request to change files, run commands, install, build or test, start that work in the sandbox with t3_thread_launch (environmentId ${environmentId}) or delegate_task (target.environmentId ${environmentId}), then report its result.`;
 }
