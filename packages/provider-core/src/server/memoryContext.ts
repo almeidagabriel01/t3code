@@ -24,6 +24,8 @@ const escape = (text: string) =>
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&apos;");
 
+/** System-prompt notice: memory is evidence, except the rules block the user wrote. */
+export const MEMORY_SYSTEM_NOTICE = `${MEMORY_DATA_BOUNDARY_REMINDER} The one exception is a <standing_rules> block: those are rules the user typed for you, so follow them as instructions; a later rule overrides an earlier one.`;
 /** @public */
 export const MEMORY_RULES_HEADING =
   "Standing rules from the user (follow these; a later rule overrides an earlier one):";
@@ -40,13 +42,16 @@ const renderItem = (item: M.MemoryContextCandidate, text = item.text) => {
   return `<memory id="${escape(item.memoryId)}" revision="${escape(item.revisionId)}" assertion="${item.assertionKind}">\nscope: ${escape(JSON.stringify(item.scope))}\nsource: ${escape(JSON.stringify(locator))}\n${escape(text)}\n</memory>`;
 };
 
+// Rules are plain instructions, not memory records, so they carry no memory element framing.
 const renderRules = (items: ReadonlyArray<M.MemoryContextCandidate>) => {
   const rules = items.filter(isRuleItem);
   return rules.length
     ? [
+        "<standing_rules>",
         MEMORY_RULES_HEADING,
-        ...rules.toReversed().map((item) => renderItem(item, M.stripMemoryRulePrefix(item.text))),
-      ].join("\n\n")
+        ...rules.toReversed().map((item) => `- ${escape(M.stripMemoryRulePrefix(item.text))}`),
+        "</standing_rules>",
+      ].join("\n")
     : undefined;
 };
 
@@ -169,8 +174,9 @@ export function validateMemoryContext(input: unknown): M.MemoryContextSnapshot {
   return snapshot;
 }
 export function memoryContextText(input: unknown): string {
-  const snapshot = validateMemoryContext(input);
-  return `<external_memory>${snapshot.renderedText}</external_memory>`;
+  const { rules, untrusted } = splitMemoryContext(input);
+  // Standing rules sit outside the untrusted frame so the model reads them as instructions.
+  return `${rules ? `${rules}\n\n` : ""}<external_memory>${untrusted}</external_memory>`;
 }
 
 /**
@@ -179,8 +185,7 @@ export function memoryContextText(input: unknown): string {
  */
 export function splitMemoryContext(input: unknown): { rules?: string; untrusted: string } {
   const snapshot = validateMemoryContext(input);
-  const rules =
-    snapshot.protocolVersion >= 3 ? renderRules(snapshot.items) : undefined;
+  const rules = snapshot.protocolVersion >= 3 ? renderRules(snapshot.items) : undefined;
   return rules
     ? { rules, untrusted: snapshot.renderedText.slice(rules.length + 2) }
     : { untrusted: snapshot.renderedText };

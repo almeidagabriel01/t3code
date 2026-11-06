@@ -1678,7 +1678,7 @@ export function makeClaudeQueryOptions(input: {
       append: [
         buildRuntimeInstructions({ harness: "Claude Code" }) +
           "\n\n" +
-          MemoryContext.MEMORY_DATA_BOUNDARY_REMINDER +
+          MemoryContext.MEMORY_SYSTEM_NOTICE +
           (input.mcpServers === undefined
             ? ""
             : T3_CODE_ORCHESTRATION_INSTRUCTIONS +

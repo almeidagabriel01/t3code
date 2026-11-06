@@ -3013,7 +3013,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 ? payload
                 : {
                     ...payload,
-                    system: [payload.system, MemoryContext.MEMORY_DATA_BOUNDARY_REMINDER, memory]
+                    system: [payload.system, MemoryContext.MEMORY_SYSTEM_NOTICE, memory]
                       .filter((part) => part !== undefined)
                       .join("\n\n"),
                   };

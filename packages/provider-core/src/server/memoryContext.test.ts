@@ -193,7 +193,7 @@ source: {&quot;environmentId&quot;:&quot;env&lt;&amp;\&quot;&apos;&quot;,&quot;s
     const withRules = packMemoryContext(input([rule, fact, olderRule]))!;
     const text = withRules.renderedText;
     expect(withRules.protocolVersion).toBe(3);
-    expect(text.startsWith(MEMORY_RULES_HEADING)).toBe(true);
+    expect(text.startsWith(`<standing_rules>\n${MEMORY_RULES_HEADING}\n- `)).toBe(true);
     expect(text).toContain("never touch &lt;prod&gt;");
     expect(text).not.toContain("Rule: ");
     // Oldest first so a later rule overrides an earlier one; reminder precedes the memories.
@@ -204,6 +204,13 @@ source: {&quot;environmentId&quot;:&quot;env&lt;&amp;\&quot;&apos;&quot;,&quot;s
     const split = splitMemoryContext(withRules);
     expect(split.rules).toBe(text.slice(0, text.indexOf(MEMORY_DATA_BOUNDARY_REMINDER)).trimEnd());
     expect(split.untrusted.startsWith(MEMORY_DATA_BOUNDARY_REMINDER)).toBe(true);
+    // Rules sit outside the untrusted frame; everything else stays inside it.
+    const agentText = memoryContextText(withRules);
+    expect(agentText.startsWith("<standing_rules>")).toBe(true);
+    expect(agentText.indexOf("</standing_rules>")).toBeLessThan(
+      agentText.indexOf("<external_memory>"),
+    );
+    expect(agentText.slice(agentText.indexOf("<external_memory>"))).not.toContain("never touch");
     expect(splitMemoryContext(packMemoryContext(input([fact]))!)).toEqual({
       untrusted: renderMemoryContext([fact]),
     });
