@@ -582,6 +582,8 @@ export const fakeAssistantEdits = {
   spend: null as AssistantSpend | null,
   updates: [] as unknown[],
   creates: [] as unknown[],
+  /** What a create returns; null leaves it pending, which holds back every later assistant edit. */
+  created: null as Assistant | null,
 };
 handlers[WS_METHODS.assistantsSpend] = () =>
   fakeAssistantEdits.spend ? Effect.succeed(fakeAssistantEdits.spend) : Effect.never;
@@ -600,7 +602,7 @@ handlers[WS_METHODS.serverUpdateSettings] = (input: { readonly patch: object }) 
 
 handlers[WS_METHODS.assistantsCreate] = (input: object) => {
   fakeAssistantEdits.creates.push(input);
-  return Effect.never;
+  return fakeAssistantEdits.created ? Effect.succeed(fakeAssistantEdits.created) : Effect.never;
 };
 
 /** Autonomy watches the fake server holds, and the calls it received. */
