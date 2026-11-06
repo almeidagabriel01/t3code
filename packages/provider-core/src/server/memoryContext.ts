@@ -40,6 +40,16 @@ const renderItem = (item: M.MemoryContextCandidate, text = item.text) => {
   return `<memory id="${escape(item.memoryId)}" revision="${escape(item.revisionId)}" assertion="${item.assertionKind}">\nscope: ${escape(JSON.stringify(item.scope))}\nsource: ${escape(JSON.stringify(locator))}\n${escape(text)}\n</memory>`;
 };
 
+const renderRules = (items: ReadonlyArray<M.MemoryContextCandidate>) => {
+  const rules = items.filter(isRuleItem);
+  return rules.length
+    ? [
+        MEMORY_RULES_HEADING,
+        ...rules.toReversed().map((item) => renderItem(item, M.stripMemoryRulePrefix(item.text))),
+      ].join("\n\n")
+    : undefined;
+};
+
 /**
  * Render public locators only; import-source machine paths never enter the frame. From version 3
  * the standing rules lead, as instructions, and everything else stays untrusted reference data.
@@ -50,15 +60,10 @@ export function renderMemoryContext(
   hasMore = false,
   protocolVersion: SnapshotVersion = currentVersion,
 ): string {
-  const rules = protocolVersion >= 3 ? items.filter(isRuleItem) : [];
-  const rest = rules.length ? items.filter((item) => !isRuleItem(item)) : items;
+  const rules = protocolVersion >= 3 ? renderRules(items) : undefined;
+  const rest = rules ? items.filter((item) => !isRuleItem(item)) : items;
   return [
-    ...(rules.length
-      ? [
-          MEMORY_RULES_HEADING,
-          ...rules.toReversed().map((item) => renderItem(item, M.stripMemoryRulePrefix(item.text))),
-        ]
-      : []),
+    ...(rules ? [rules] : []),
     MEMORY_DATA_BOUNDARY_REMINDER,
     ...rest.map((item) => renderItem(item)),
     ...(hasMore ? [moreMemoryNotice[protocolVersion]] : []),
@@ -166,4 +171,17 @@ export function validateMemoryContext(input: unknown): M.MemoryContextSnapshot {
 export function memoryContextText(input: unknown): string {
   const snapshot = validateMemoryContext(input);
   return `<external_memory>${snapshot.renderedText}</external_memory>`;
+}
+
+/**
+ * A provider with a channel for instructions sends the rules there and the rest as untrusted data.
+ * `untrusted` is the whole text when the snapshot has no rules, or is an older version.
+ */
+export function splitMemoryContext(input: unknown): { rules?: string; untrusted: string } {
+  const snapshot = validateMemoryContext(input);
+  const rules =
+    snapshot.protocolVersion >= 3 ? renderRules(snapshot.items) : undefined;
+  return rules
+    ? { rules, untrusted: snapshot.renderedText.slice(rules.length + 2) }
+    : { untrusted: snapshot.renderedText };
 }

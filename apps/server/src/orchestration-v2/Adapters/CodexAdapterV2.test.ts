@@ -287,6 +287,23 @@ describe("CodexAdapterV2 runtime policy", () => {
         kind: "untrusted",
         value: memoryContext.renderedText,
       });
+      assert.deepEqual(delivered.additionalContext?.["memory_rules"], {
+        kind: "application",
+        value: "",
+      });
+      const ruled = packMemoryContext({
+        memorySpaceId: memoryContext.memorySpaceId,
+        projectionWatermark: 1,
+        items: memoryContext.items.map((item) => ({ ...item, text: "Rule: never deploy" })),
+      })!;
+      const withRules = yield* CodexAdapterV2.buildCodexTurnStartParams({
+        ...base,
+        memoryContext: ruled,
+      });
+      const sent = withRules.additionalContext;
+      assert.include(String(sent?.["memory_rules"]?.value), "never deploy");
+      assert.strictEqual(sent?.["memory_rules"]?.kind, "application");
+      assert.notInclude(String(sent?.["memory"]?.value), "never deploy");
       const cleared = yield* CodexAdapterV2.buildCodexTurnStartParams({
         ...base,
         clearMemoryContext: true,

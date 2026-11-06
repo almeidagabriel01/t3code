@@ -8,6 +8,7 @@ import {
   memoryContextText,
   packMemoryContext,
   renderMemoryContext,
+  splitMemoryContext,
   validateMemoryContext,
 } from "./memoryContext.ts";
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
@@ -200,6 +201,12 @@ source: {&quot;environmentId&quot;:&quot;env&lt;&amp;\&quot;&apos;&quot;,&quot;s
     expect(text.indexOf("never touch")).toBeLessThan(text.indexOf(MEMORY_DATA_BOUNDARY_REMINDER));
     expect(text.indexOf(MEMORY_DATA_BOUNDARY_REMINDER)).toBeLessThan(text.indexOf("ordinary fact"));
     expect(validateMemoryContext(withRules)).toEqual(withRules);
+    const split = splitMemoryContext(withRules);
+    expect(split.rules).toBe(text.slice(0, text.indexOf(MEMORY_DATA_BOUNDARY_REMINDER)).trimEnd());
+    expect(split.untrusted.startsWith(MEMORY_DATA_BOUNDARY_REMINDER)).toBe(true);
+    expect(splitMemoryContext(packMemoryContext(input([fact]))!)).toEqual({
+      untrusted: renderMemoryContext([fact]),
+    });
     // Versions 1 and 2 keep the old bytes, rule text included.
     expect(renderMemoryContext([rule, fact], false, 2)).not.toContain(MEMORY_RULES_HEADING);
     expect(renderMemoryContext([rule, fact], false, 2)).toContain("Rule: never touch");

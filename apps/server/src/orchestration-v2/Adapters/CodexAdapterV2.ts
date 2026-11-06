@@ -758,6 +758,14 @@ function codexRuntimeModeTurnDefaults(runtimeMode: RuntimeMode): {
   }
 }
 
+/**
+ * The rules go in the application channel; everything else stays untrusted reference data. An
+ * empty rules entry clears rules a previous turn sent.
+ */
+const codexMemoryContext = (parts: { readonly rules?: string; readonly untrusted: string }) => ({
+  memory: { kind: "untrusted" as const, value: parts.untrusted },
+  memory_rules: { kind: "application" as const, value: parts.rules ?? "" },
+});
 export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTurnStartParams")(
   function* (input: {
     readonly nativeThreadId: string;
@@ -811,16 +819,14 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
     const memoryContext =
       input.memoryContext === undefined
         ? input.clearMemoryContext
-          ? { memory: { kind: "untrusted" as const, value: "" } }
+          ? {
+              memory: { kind: "untrusted" as const, value: "" },
+              memory_rules: { kind: "application" as const, value: "" },
+            }
           : {}
-        : {
-            memory: {
-              kind: "untrusted" as const,
-              value: (yield* Effect.try(() =>
-                MemoryContext.validateMemoryContext(input.memoryContext),
-              )).renderedText,
-            },
-          };
+        : codexMemoryContext(
+            yield* Effect.try(() => MemoryContext.splitMemoryContext(input.memoryContext)),
+          );
     const additionalContext =
       t3Context === undefined &&
       Object.keys(appContext).length === 0 &&
@@ -7208,13 +7214,13 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               const validated =
                 fresh === undefined
                   ? undefined
-                  : yield* Effect.try(() => MemoryContext.validateMemoryContext(fresh));
+                  : yield* Effect.try(() => MemoryContext.splitMemoryContext(fresh));
               // Compaction drops what was sent; restore replays this thread's context, so keep it fresh.
               yield* Ref.update(additionalContextByThread, (current) => {
                 const context = { ...current.get(threadId) };
                 delete context.memory;
-                if (validated)
-                  context.memory = { kind: "untrusted", value: validated.renderedText };
+                delete context.memory_rules;
+                if (validated) Object.assign(context, codexMemoryContext(validated));
                 return new Map(current).set(threadId, context);
               });
               yield* Ref.update(pendingRootTurns, (current) =>
