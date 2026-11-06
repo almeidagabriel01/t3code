@@ -31,7 +31,11 @@ export const ASSISTANT_ICONS: ReadonlyArray<AssistantIconDefinition> = [
   {
     id: "visor",
     label: "Visor bot",
-    paths: [head(3, 7, 18, 12), "M7 12h10", "M10 16h4", "M9 7V4h6v3"],
+    paths: [
+      "M5 13a7 7 0 0 1 14 0v4a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2z",
+      "M8 11.5h8a1.5 1.5 0 0 1 0 3H8a1.5 1.5 0 0 1 0-3z",
+      "M12 6V3",
+    ],
   },
   {
     id: "helper",
