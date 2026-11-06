@@ -32,7 +32,7 @@ const need = <T>(value: T | undefined, name: string, action: string) =>
 const done = (action: string): Out => ({
   ok: true,
   action,
-  next: "Take computer_screenshot to check the result before the next action.",
+  next: "Take a snapshot (or computer_screenshot after a coordinate click) to check the result before the next action.",
 });
 
 const run = Effect.fn("mcp.computer.run")(
@@ -48,13 +48,24 @@ const run = Effect.fn("mcp.computer.run")(
       threadTitle: context.caller!.title,
     };
     const clientRequestId = input.clientRequestId;
+    if (input.action === "snapshot") {
+      const result = yield* computer.snapshot(caller, { app: input.app, root: input.root });
+      return {
+        ...result,
+        nodes: result.nodes.map((node) => ({ ...node })),
+        ...(result.truncated
+          ? { note: "Only the first elements are listed: pass `root` with a ref to drill in." }
+          : {}),
+      } satisfies Out;
+    }
     const target = yield* need(input.target, "target", input.action);
     switch (input.action) {
       case "click":
         yield* computer.click(caller, {
           target,
-          x: yield* need(input.x, "x", "click"),
-          y: yield* need(input.y, "y", "click"),
+          ref: input.ref,
+          x: input.x,
+          y: input.y,
           button: input.button,
           double: input.double,
           clientRequestId,
@@ -63,6 +74,7 @@ const run = Effect.fn("mcp.computer.run")(
       case "type":
         yield* computer.type(caller, {
           target,
+          ref: input.ref,
           text: yield* need(input.text, "text", "type"),
           clientRequestId,
         });
@@ -82,7 +94,7 @@ const run = Effect.fn("mcp.computer.run")(
 
 const handlers = {
   t3_computer: McpToolAccess.either(
-    (input: ComputerParameters) => input.action === "permissions",
+    (input: ComputerParameters) => input.action === "permissions" || input.action === "snapshot",
     McpToolAccess.readsAsCaller(run),
     McpToolAccess.actsAsCaller(run),
   ),

@@ -176,7 +176,7 @@ const McpToolUseExpect = Schema.Struct({
   /** No call may match any entry. */
   callsMustNot: Schema.optional(Schema.Array(McpToolUseCall)),
   notCalls: Schema.optional(Schema.Array(Schema.String)),
-  /** First calls of these tools happen in this order. */
+  /** First calls of these tools happen in this order. `a|b` takes either; `tool:action` needs that `action` input. */
   order: Schema.optional(Schema.Array(Schema.String)),
   minCalls: Schema.optional(Schema.Record(Schema.String, Schema.Number)),
   maxCalls: Schema.optional(Schema.Record(Schema.String, Schema.Number)),
@@ -1661,7 +1661,15 @@ export const gradeSample = (expect: McpToolUseCase["expect"], run: SampleRun) =>
   for (const call of expect.callsMustNot ?? []) add(`callsMustNot ${label(call)}`, !found(call));
   for (const tool of expect.notCalls ?? []) add(`notCalls ${tool}`, count(tool) === 0);
   if (expect.order !== undefined) {
-    const firsts = expect.order.map((tool) => calls.findIndex((call) => call.tool === tool));
+    const isStep = (step: string, call: (typeof calls)[number]) =>
+      step.split("|").some((alt) => {
+        const [tool, action] = alt.split(":");
+        return (
+          call.tool === tool &&
+          (action === undefined || (isRecord(call.input) && call.input.action === action))
+        );
+      });
+    const firsts = expect.order.map((step) => calls.findIndex((call) => isStep(step, call)));
     const inOrder = firsts.every((at, i) => at > (firsts[i - 1] ?? -1));
     add(`order ${expect.order.join(" > ")}`, inOrder);
   }

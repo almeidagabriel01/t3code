@@ -10,11 +10,27 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 const Coordinate = Schema.Union([Schema.Number, Schema.NumberFromString]);
 
 export const ComputerParameters = Schema.Struct({
-  action: Schema.Literals(["permissions", "click", "type", "key"]),
+  action: Schema.Literals(["permissions", "snapshot", "click", "type", "key"]),
   target: Schema.optional(
     Schema.String.annotate({
       description:
         "Required for click, type and key: what you are acting on, shown to the user in the approval, e.g. 'the blue Save button in System Settings > Privacy'.",
+    }),
+  ),
+  app: Schema.optional(
+    Schema.String.annotate({
+      description: "snapshot: the app's name, e.g. 'Safari'. Omit for the app in front.",
+    }),
+  ),
+  ref: Schema.optional(
+    Schema.String.annotate({
+      description:
+        "click and type: an element ref from snapshot, like '@s26u7pv9qta5g4:e6'. Use it instead of x and y.",
+    }),
+  ),
+  root: Schema.optional(
+    Schema.String.annotate({
+      description: "snapshot: a ref whose subtree to list, to drill into a dense app.",
     }),
   ),
   x: Schema.optional(Coordinate),
@@ -43,7 +59,7 @@ const dependencies = [
 
 const ComputerTool = Tool.make("t3_computer", {
   description:
-    'Operate the user\'s Mac (macOS hosts only). `permissions` reports which macOS permissions T3 Code has: screenRecording, accessibility, automation. `click` (x, y in the pixels of your latest computer_screenshot; button left|right; double), `type` (text) and `key` (key = one character or return, tab, space, escape, delete, left, right, up, down, home, end, pageup, pagedown, f1-f12; modifiers command, shift, option, control) each need `target`, a short plain description of what you are acting on ("the blue Save button in System Settings > Privacy"), and each ask the user to approve that exact action: the user sees target, coordinates or text, and the app in front, so be specific and honest. They wait for the answer and act only on Approve, once. Never click or type blind: take computer_screenshot first and again after each action to check the result. `approval_pending` means the user has not answered yet: call again with the same arguments to keep waiting. A denied or expired action is final: do not retry it or reach the same effect another way. A missing permission is reported, not fixable by you: tell the user to grant it in Settings > Mac permissions and stop. Repeating the same call reuses the same approval; pass a new clientRequestId only to deliberately repeat an action that already ran. Use files and the terminal for work they can do.',
+    "Operate the user's Mac (macOS hosts only). `permissions` reports which macOS permissions T3 Code has: screenRecording, accessibility, automation. Prefer `snapshot` for any app's UI: it is read-only, needs no approval, and lists the app's interactive elements (role, name, ref); `app` names the app, `root` is a ref to drill into. Then `click` and `type` take that `ref` instead of x, y, which is exact and works without moving the mouse. A ref goes stale when the app changes: snapshot again. Only when snapshot finds no usable element (apps without an accessibility tree, canvases) fall back to computer_screenshot and `click` with x, y in its pixels (button left|right; double). `type` (text; with `ref` it types into that element, without it into whatever is focused) and `key` (key = one character or return, tab, space, escape, delete, left, right, up, down, home, end, pageup, pagedown, f1-f12; modifiers command, shift, option, control) complete the set. click, type and key each need `target`, a short plain description of what you are acting on (\"the blue Save button in System Settings > Privacy\"), and each ask the user to approve that exact action: the user sees target, the element or coordinates or text, and the app in front, so be specific and honest. They wait for the answer and act only on Approve, once. Check the result after each action with snapshot (or computer_screenshot for coordinate clicks). `approval_pending` means the user has not answered yet: call again with the same arguments to keep waiting. A denied or expired action is final: do not retry it or reach the same effect another way. A missing permission is reported, not fixable by you: tell the user to grant it in Settings > Mac permissions and stop. Repeating the same call reuses the same approval; pass a new clientRequestId only to deliberately repeat an action that already ran. Use files and the terminal for work they can do.",
   parameters: ComputerParameters,
   success: Schema.Record(Schema.String, Schema.Json),
   failure: OrchestratorMcpFailure,

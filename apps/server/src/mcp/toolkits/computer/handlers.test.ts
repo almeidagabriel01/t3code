@@ -19,6 +19,14 @@ import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as ComputerHandlers from "./handlers.ts";
 import { ComputerParameters, ComputerScreenshotToolkit, ComputerStandardToolkit } from "./tools.ts";
 
+it("a ref is an alternative to coordinates and snapshot is a known action", () => {
+  const decode = Schema.decodeUnknownSync(ComputerParameters);
+  expect(decode({ action: "click", ref: "@s1:e2" })).toMatchObject({ ref: "@s1:e2" });
+  expect(decode({ action: "snapshot", app: "Notes", root: "@s1:e1" })).toMatchObject({
+    app: "Notes",
+  });
+});
+
 it("accepts coordinates as numbers or quoted numbers", () => {
   const decode = Schema.decodeUnknownSync(ComputerParameters);
   expect(decode({ action: "click", x: 12, y: "3" })).toMatchObject({ x: 12, y: 3 });
@@ -50,10 +58,24 @@ const harness = (client?: "read-only") => {
         automation: "unknown",
       }),
     screenshot: Effect.succeed({ png, width: 640, height: 360 }),
+    snapshot: (caller, input) =>
+      Effect.sync(() => {
+        seen.push(["snapshot", caller, input]);
+        return {
+          app: "Notes",
+          window: null,
+          complete: true,
+          refCount: 1,
+          truncated: true,
+          nodes: [{ ref: "@s1:e2", role: "button", name: "New", actions: ["click"] }],
+        };
+      }),
     click: (caller, input) =>
       input.x === 99
         ? refuse("not_approved")
-        : Effect.sync(() => void seen.push(["click", caller, input])),
+        : input.ref === undefined && (input.x === undefined || input.y === undefined)
+          ? refuse("invalid")
+          : Effect.sync(() => void seen.push(["click", caller, input])),
     type: (caller, input) => Effect.sync(() => void seen.push(["type", caller, input])),
     key: (caller, input) => Effect.sync(() => void seen.push(["key", caller, input])),
   });
@@ -183,10 +205,28 @@ it.effect("reports a missing argument or a refused action as a failure the agent
   }).pipe(Effect.scoped),
 );
 
-it.effect("a read-only client can read permissions but not act", () =>
+it.effect("snapshot returns the elements and a drill-in note; click and type pass the ref", () =>
+  Effect.gen(function* () {
+    const { call, seen } = yield* harness();
+    const shot = yield* call({ action: "snapshot", app: "Notes" });
+    expect(shot).toMatchObject({ app: "Notes", nodes: [{ ref: "@s1:e2" }] });
+    expect(shot.note).toContain("root");
+    yield* call({ action: "click", target: "New", ref: "@s1:e2" });
+    yield* call({ action: "type", target: "Search", ref: "@s1:e3", text: "hi" });
+    expect(seen).toMatchObject([
+      ["snapshot", {}, { app: "Notes" }],
+      ["click", {}, { ref: "@s1:e2" }],
+      ["type", {}, { ref: "@s1:e3", text: "hi" }],
+    ]);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("a read-only client can snapshot and read permissions but not act", () =>
   Effect.gen(function* () {
     const { call, seen } = yield* harness("read-only");
     expect(yield* call({ action: "permissions" })).toMatchObject({ supported: true });
+    expect(yield* call({ action: "snapshot" })).toMatchObject({ app: "Notes" });
+    seen.length = 0;
     expect(yield* call({ action: "click", target: "t", x: 1, y: 1 })).toMatchObject({
       code: expect.any(String),
     });

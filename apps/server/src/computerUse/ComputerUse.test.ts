@@ -12,6 +12,7 @@ import * as Stream from "effect/Stream";
 import type * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 
+import * as ServerConfig from "../config.ts";
 import * as DecisionService from "../decisions/DecisionService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -31,7 +32,25 @@ const GRANTED = permissionsJson("granted", "granted", "granted");
 interface Call {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
+  readonly stdin?: string | undefined;
+  readonly env?: NodeJS.ProcessEnv | undefined;
 }
+
+const envelope = (command: string, data: unknown) =>
+  JSON.stringify({ version: "2.6", ok: true, command, data });
+const failure = (command: string, code: string, retry: string, suggestion = "Try again.") =>
+  JSON.stringify({
+    ok: false,
+    command,
+    error: { code, message: `${code} happened.`, suggestion, disposition: { retry } },
+  });
+const node = (ref: string, role: string, name: string, children: unknown[] = []) => ({
+  ref_id: ref,
+  role,
+  name,
+  available_actions: ["click"],
+  children,
+});
 
 const harness = (options: {
   readonly platform?: NodeJS.Platform;
@@ -39,10 +58,15 @@ const harness = (options: {
   readonly png?: Uint8Array;
   /** A database shared by several instances, as a restarted server finds it. */
   readonly database?: Layer.Layer<SqlClient.SqlClient>;
+  /** What agent-desktop prints for one call; defaults to an ok envelope. */
+  readonly desktop?: (args: ReadonlyArray<string>) => string;
+  /** Whether the managed `npm install` of agent-desktop works. */
+  readonly installFails?: boolean;
 }) => {
   const calls: Call[] = [];
   /** The mock runner is the only way anything could touch the Mac. */
   const scripted = (marker: string) => calls.filter((call) => call.args[3]?.includes(marker));
+  const desktopCalls = () => calls.filter((call) => call.command.endsWith("/agent-desktop"));
   const runner = Layer.effect(
     ProcessRunner.ProcessRunner,
     Effect.gen(function* () {
@@ -50,10 +74,26 @@ const harness = (options: {
       return ProcessRunner.ProcessRunner.of({
         run: (input) =>
           Effect.gen(function* () {
-            calls.push({ command: input.command, args: input.args });
+            calls.push({
+              command: input.command,
+              args: input.args,
+              stdin: input.stdin,
+              env: input.env,
+            });
             const script = input.args[3] ?? "";
             let stdout = "";
-            if (script.includes("CGPreflight")) stdout = options.permissions ?? GRANTED;
+            let code = 0;
+            if (input.command === "npm") {
+              code = options.installFails === true ? 1 : 0;
+              if (code === 0) {
+                const prefix = input.args[input.args.indexOf("--prefix") + 1]!;
+                const bin = `${prefix}/node_modules/agent-desktop/bin`;
+                yield* fs.makeDirectory(bin, { recursive: true });
+                yield* fs.writeFileString(`${bin}/agent-desktop`, "");
+              }
+            } else if (input.command.endsWith("/agent-desktop")) {
+              stdout = (options.desktop ?? ((args) => envelope(args[0]!, {})))(input.args);
+            } else if (script.includes("CGPreflight")) stdout = options.permissions ?? GRANTED;
             else if (script.includes("NSScreen")) stdout = "100 50\n";
             else if (script.includes("frontmost")) stdout = "System Settings\n";
             else if (input.command.endsWith("screencapture")) {
@@ -62,7 +102,7 @@ const harness = (options: {
             return {
               stdout,
               stderr: "",
-              code: 0,
+              code,
               timedOut: false,
               stdoutTruncated: false,
               stderrTruncated: false,
@@ -86,11 +126,18 @@ const harness = (options: {
   );
   const layer = ComputerUse.layer.pipe(
     Layer.provideMerge(
-      Layer.mergeAll(runner, decisions, Layer.mergeAll(NodeServices.layer, CryptoLayer.layer)),
+      Layer.mergeAll(
+        runner,
+        decisions,
+        ServerConfig.layerTest("/tmp", { prefix: "t3-computer-" }).pipe(
+          Layer.provide(NodeServices.layer),
+        ),
+        Layer.mergeAll(NodeServices.layer, CryptoLayer.layer),
+      ),
     ),
     Layer.provide(Layer.succeed(HostProcess.Platform, options.platform ?? "darwin")),
   );
-  return { calls, scripted, layer };
+  return { calls, scripted, desktopCalls, layer };
 };
 
 /** Resolves once an open decision exists; the stream ends the moment it does, so nothing sleeps. */
@@ -472,5 +519,258 @@ describe("ComputerUse", () => {
       yield* Effect.flip(Fiber.join(c));
       assert.equal((yield* decisions.list({})).length, 2);
     }).pipe(Effect.provide(layer));
+  });
+  describe("by accessibility ref", () => {
+    const tree = {
+      app: "Notes",
+      complete: true,
+      window: { id: "w1", title: "All Notes" },
+      tree: node("@s1:e1", "window", "", [
+        node("@s1:e2", "button", "New Note"),
+        { role: "group", name: "no ref", children: [node("@s1:e3", "textfield", "Search\nbox")] },
+      ]),
+    };
+    const snapshotOnly = () => envelope("snapshot", tree);
+    const approve = Effect.gen(function* () {
+      const decisions = yield* DecisionService.DecisionService;
+      const pending = yield* openDecision;
+      yield* decisions.answer({ decisionId: pending.id, optionId: "accept" });
+      return pending;
+    });
+
+    it.effect("a snapshot lists the elements with refs, installs once and asks nobody", () => {
+      const { desktopCalls, calls, layer } = harness({ desktop: snapshotOnly });
+      return Effect.gen(function* () {
+        const computer = yield* ComputerUse.ComputerUse;
+        const decisions = yield* DecisionService.DecisionService;
+        const shot = yield* computer.snapshot(caller, { app: "Notes" });
+        assert.deepEqual(
+          [shot.app, shot.window, shot.complete, shot.refCount, shot.truncated],
+          ["Notes", "All Notes", true, 3, false],
+        );
+        assert.deepEqual(
+          shot.nodes.map((n) => [n.ref, n.role, n.name]),
+          [
+            ["@s1:e1", "window", ""],
+            ["@s1:e2", "button", "New Note"],
+            ["@s1:e3", "textfield", "Search box"],
+          ],
+        );
+        yield* computer.snapshot(caller, { root: "@s1:e1" });
+        assert.equal(calls.filter((call) => call.command === "npm").length, 1);
+        const [first, second] = desktopCalls();
+        assert.deepEqual(first!.args, [
+          "snapshot",
+          "-i",
+          "--compact",
+          "--app",
+          "Notes",
+          "--session",
+          "t3-thread-1",
+        ]);
+        assert.deepEqual(second!.args.slice(3, 5), ["--root", "@s1:e1"]);
+        assert.match(first!.env!.AGENT_DESKTOP_HOME!, /tools\/agent-desktop\/state$/);
+        assert.equal((yield* decisions.list({})).length, 0);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("a big snapshot is cut and says so", () => {
+      const many = {
+        ...tree,
+        tree: node(
+          "@s1:e0",
+          "window",
+          "",
+          Array.from({ length: 400 }, (_, i) => node(`@s1:e${i + 1}`, "button", "b".repeat(200))),
+        ),
+      };
+      const { layer } = harness({ desktop: () => envelope("snapshot", many) });
+      return Effect.gen(function* () {
+        const shot = yield* ComputerUse.ComputerUse.use((c) => c.snapshot(caller, {}));
+        assert.equal(shot.nodes.length, 300);
+        assert.equal(shot.refCount, 401);
+        assert.equal(shot.truncated, true);
+        assert.equal(shot.nodes[1]!.name.length, 80);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("snapshot refuses flag-like input before running anything", () => {
+      const { desktopCalls, layer } = harness({ desktop: snapshotOnly });
+      return Effect.gen(function* () {
+        const computer = yield* ComputerUse.ComputerUse;
+        for (const input of [{ app: "--force" }, { app: " " }, { root: "e2" }, { root: "--x" }]) {
+          assert.equal((yield* Effect.flip(computer.snapshot(caller, input))).reason, "invalid");
+        }
+        assert.equal(desktopCalls().length, 0);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("snapshot without Accessibility says so and runs nothing", () => {
+      const { desktopCalls, layer } = harness({
+        permissions: permissionsJson("granted", "denied", "granted"),
+      });
+      return Effect.gen(function* () {
+        const error = yield* Effect.flip(
+          ComputerUse.ComputerUse.use((c) => c.snapshot(caller, {})),
+        );
+        assert.equal(error.reason, "accessibility_missing");
+        assert.equal(desktopCalls().length, 0);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("a click by ref names the element and runs one headless click", () => {
+      const { desktopCalls, layer } = harness({
+        desktop: (args) => (args[0] === "snapshot" ? snapshotOnly() : envelope(args[0]!, {})),
+      });
+      return Effect.gen(function* () {
+        const computer = yield* ComputerUse.ComputerUse;
+        yield* computer.snapshot(caller, {});
+        const fiber = yield* Effect.forkChild(
+          computer.click(caller, { target: "the New Note button", ref: "@s1:e2" }),
+        );
+        const pending = yield* approve;
+        assert.equal(pending.title, 'the New Note button: click button "New Note" (@s1:e2)');
+        assert.include(pending.context, 'button "New Note" (@s1:e2)');
+        yield* Fiber.join(fiber);
+        assert.deepEqual(desktopCalls().at(-1)!.args, [
+          "click",
+          "@s1:e2",
+          "--session",
+          "t3-thread-1",
+        ]);
+        // Same ref again: same decision, already used.
+        const again = yield* Effect.flip(
+          computer.click(caller, { target: "the New Note button", ref: "@s1:e2" }),
+        );
+        assert.equal(again.reason, "already_executed");
+        assert.equal(desktopCalls().filter((c) => c.args[0] === "click").length, 1);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("a right click by ref uses right-click; the ref names itself when unseen", () => {
+      const { desktopCalls, layer } = harness({});
+      return Effect.gen(function* () {
+        const computer = yield* ComputerUse.ComputerUse;
+        const fiber = yield* Effect.forkChild(
+          computer.click(caller, { target: "a row", ref: "@s9:e4", button: "right" }),
+        );
+        const pending = yield* approve;
+        assert.equal(pending.title, "a row: right-click @s9:e4");
+        yield* Fiber.join(fiber);
+        assert.equal(desktopCalls().at(-1)!.args[0], "right-click");
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("typing into a ref sends the text on stdin, never in argv", () => {
+      const { desktopCalls, scripted, layer } = harness({});
+      return Effect.gen(function* () {
+        const computer = yield* ComputerUse.ComputerUse;
+        const fiber = yield* Effect.forkChild(
+          computer.type(caller, {
+            target: "the search field",
+            ref: "@s1:e3",
+            text: "secret words",
+          }),
+        );
+        yield* approve;
+        yield* Fiber.join(fiber);
+        const call = desktopCalls().at(-1)!;
+        assert.deepEqual(call.args, ["type", "@s1:e3", "--stdin", "--session", "t3-thread-1"]);
+        assert.equal(call.stdin, "secret words");
+        assert.equal(scripted("keystroke").length, 0);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("a ref and coordinates together, or a bad ref, are refused before asking", () => {
+      const { desktopCalls, layer } = harness({});
+      return Effect.gen(function* () {
+        const computer = yield* ComputerUse.ComputerUse;
+        const decisions = yield* DecisionService.DecisionService;
+        const refused = [
+          computer.click(caller, { target: "t", ref: "@s1:e2", x: 1, y: 2 }),
+          computer.click(caller, { target: "t", ref: "@s1:e2", double: true }),
+          computer.click(caller, { target: "t", ref: "--force" }),
+          computer.click(caller, { target: "t" }),
+          computer.type(caller, { target: "t", ref: "e2", text: "a" }),
+        ];
+        for (const attempt of refused)
+          assert.equal((yield* Effect.flip(attempt)).reason, "invalid");
+        assert.equal((yield* decisions.list({})).length, 0);
+        assert.equal(desktopCalls().length, 0);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("errors map to what the agent should do next", () => {
+      const cases = [
+        ["STALE_REF", "safe", "invalid", "snapshot"],
+        ["ELEMENT_NOT_FOUND", "unknown", "invalid", "ELEMENT_NOT_FOUND happened."],
+        ["PERM_DENIED", "safe", "accessibility_missing", "Accessibility"],
+        ["ACTION_FAILED", "safe", "failed", "Try again."],
+      ] as const;
+      return Effect.forEach(cases, ([code, retry, reason, text]) => {
+        const { layer } = harness({ desktop: (args) => failure(args[0]!, code, retry) });
+        return Effect.gen(function* () {
+          const computer = yield* ComputerUse.ComputerUse;
+          const fiber = yield* Effect.forkChild(
+            computer.click(caller, { target: "a button", ref: "@s1:e2" }),
+          );
+          yield* approve;
+          const error = yield* Effect.flip(Fiber.join(fiber));
+          assert.equal(error.reason, reason);
+          assert.include(error.message, text);
+        }).pipe(Effect.provide(layer));
+      });
+    });
+
+    it.effect("an action that may have acted is not repeated, a safe failure can be", () => {
+      const unsafe = harness({ desktop: (args) => failure(args[0]!, "ACTION_FAILED", "unsafe") });
+      const safe = harness({ desktop: (args) => failure(args[0]!, "ACTION_FAILED", "safe") });
+      const attempt = Effect.gen(function* () {
+        const computer = yield* ComputerUse.ComputerUse;
+        const fiber = yield* Effect.forkChild(
+          computer.click(caller, { target: "a button", ref: "@s1:e2" }),
+        );
+        yield* approve;
+        yield* Effect.flip(Fiber.join(fiber));
+        return yield* Effect.flip(computer.click(caller, { target: "a button", ref: "@s1:e2" }));
+      });
+      return Effect.gen(function* () {
+        const afterUnsafe = yield* attempt.pipe(Effect.provide(unsafe.layer));
+        assert.equal(afterUnsafe.reason, "already_executed");
+        assert.equal(unsafe.desktopCalls().length, 1);
+        const afterSafe = yield* attempt.pipe(Effect.provide(safe.layer));
+        // Released, so the retry runs the click again.
+        assert.equal(afterSafe.reason, "failed");
+        assert.equal(safe.desktopCalls().length, 2);
+      });
+    });
+
+    it.effect("unreadable output and timeouts are failures that ask for a snapshot", () => {
+      const { layer } = harness({ desktop: () => "not json" });
+      return Effect.gen(function* () {
+        const error = yield* ComputerUse.ComputerUse.use((c) => c.snapshot(caller, {})).pipe(
+          Effect.flip,
+        );
+        assert.equal(error.reason, "failed");
+        assert.include(error.message, "no usable answer");
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("without npm or network, snapshot says so and coordinates still work", () => {
+      const { scripted, layer } = harness({ installFails: true });
+      return Effect.gen(function* () {
+        const computer = yield* ComputerUse.ComputerUse;
+        const error = yield* Effect.flip(computer.snapshot(caller, {}));
+        assert.equal(error.reason, "failed");
+        assert.include(error.message, "could not be installed");
+        assert.include(error.message, "computer_screenshot");
+        const fiber = yield* Effect.forkChild(
+          computer.click(caller, { target: "the Save button", x: 10, y: 20 }),
+        );
+        yield* approve;
+        yield* Fiber.join(fiber);
+        assert.equal(scripted("CGEventPost").length, 1);
+      }).pipe(Effect.provide(layer));
+    });
   });
 });

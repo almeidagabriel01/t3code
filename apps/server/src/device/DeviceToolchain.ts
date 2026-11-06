@@ -16,6 +16,8 @@ const DEVICE_HUB_PACKAGE = "expo-device-hub";
 export const DEVICE_HUB_VERSION = DEVICE_TOOL_VERSIONS[DEVICE_HUB_PACKAGE];
 const AGENT_DEVICE_PACKAGE = "agent-device";
 export const AGENT_DEVICE_VERSION = DEVICE_TOOL_VERSIONS[AGENT_DEVICE_PACKAGE];
+const AGENT_DESKTOP_PACKAGE = "agent-desktop";
+const AGENT_DESKTOP_VERSION = DEVICE_TOOL_VERSIONS[AGENT_DESKTOP_PACKAGE];
 
 const INSTALL_TIMEOUT = Duration.minutes(10);
 const installLock = Semaphore.makeUnsafe(1);
@@ -62,6 +64,13 @@ const AGENT_DEVICE_SPEC: ToolSpec = {
   name: AGENT_DEVICE_PACKAGE,
   version: AGENT_DEVICE_VERSION,
   entry: ["bin", "agent-device.mjs"],
+};
+
+/** The Mac accessibility CLI behind t3_computer; its entry is the native binary. */
+const AGENT_DESKTOP_SPEC: ToolSpec = {
+  name: AGENT_DESKTOP_PACKAGE,
+  version: AGENT_DESKTOP_VERSION,
+  entry: ["bin", "agent-desktop"],
 };
 
 const toolPaths = (path: Path.Path, baseDir: string, spec: ToolSpec): DeviceToolPaths => {
@@ -191,6 +200,15 @@ export const ensureDeviceHub = (baseDir: string) =>
 
 export const ensureAgentDevice = (baseDir: string) =>
   ensureTool(baseDir, AGENT_DEVICE_SPEC, (paths) => paths.agentDevice);
+
+export const ensureAgentDesktop = Effect.fn("DeviceToolchain.ensureAgentDesktop")(function* (
+  baseDir: string,
+) {
+  const path = yield* Path.Path;
+  return yield* installLock.withPermit(
+    installTool(AGENT_DESKTOP_SPEC, toolPaths(path, baseDir, AGENT_DESKTOP_SPEC)),
+  );
+});
 
 const isToolInstalled = Effect.fn("DeviceToolchain.isToolInstalled")(function* (
   baseDir: string,

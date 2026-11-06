@@ -14,9 +14,13 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import * as ServerConfig from "../config.ts";
 import * as DecisionService from "../decisions/DecisionService.ts";
+import { ensureAgentDesktop } from "../device/DeviceToolchain.ts";
 import * as ProcessRunner from "../processRunner.ts";
 
 /** One call waits this long for the user; the decision itself lives longer, so a repeat rejoins it. */
@@ -27,6 +31,22 @@ const MAX_TYPED_CHARS = 2_000;
 const MAX_TARGET_CHARS = 200;
 const MAX_COORDINATE = 20_000;
 const MIN_PNG_BYTES = 1_024;
+const DESKTOP_TIMEOUT = "30 seconds";
+const MAX_SNAPSHOT_NODES = 300;
+const MAX_NODE_NAME_CHARS = 80;
+/** Refs look like `@s26u7pv9qta5g4:e6`; anything else could pass for a flag. */
+const REF_PATTERN = /^@[A-Za-z0-9_.:-]{1,80}$/;
+/** Errors where agent-desktop never touched the app, so repeating is safe whatever it says. */
+const NOTHING_RAN = new Set([
+  "STALE_REF",
+  "ELEMENT_NOT_FOUND",
+  "APP_NOT_FOUND",
+  "WINDOW_NOT_FOUND",
+  "AMBIGUOUS_TARGET",
+  "PERM_DENIED",
+]);
+/** Marks a failure that may have acted: its approval stays used, so nothing repeats it. */
+const NOT_RETRYABLE = Object.freeze({ retry: "unsafe" });
 
 const PANE_URLS = {
   "screen-recording":
@@ -124,14 +144,18 @@ export interface ComputerUseCaller {
 export interface ClickInput {
   /** What the user is shown beside the coordinates, so they never approve blind. */
   readonly target: string;
-  readonly x: number;
-  readonly y: number;
+  /** An element ref from `snapshot`, or else x and y. */
+  readonly ref?: string | undefined;
+  readonly x?: number | undefined;
+  readonly y?: number | undefined;
   readonly button?: "left" | "right" | undefined;
   readonly double?: boolean | undefined;
   readonly clientRequestId?: string | undefined;
 }
 export interface TypeInput {
   readonly target: string;
+  /** An element ref from `snapshot`: its field is focused and typed into. */
+  readonly ref?: string | undefined;
   readonly text: string;
   readonly clientRequestId?: string | undefined;
 }
@@ -140,6 +164,25 @@ export interface KeyInput {
   readonly key: string;
   readonly modifiers?: ReadonlyArray<string> | undefined;
   readonly clientRequestId?: string | undefined;
+}
+
+export interface SnapshotInput {
+  readonly app?: string | undefined;
+  /** Drill into one element's subtree instead of the whole window. */
+  readonly root?: string | undefined;
+}
+export interface SnapshotResult {
+  readonly app: string | null;
+  readonly window: string | null;
+  readonly complete: boolean;
+  readonly refCount: number;
+  readonly truncated: boolean;
+  readonly nodes: ReadonlyArray<{
+    readonly ref: string;
+    readonly role: string;
+    readonly name: string;
+    readonly actions: ReadonlyArray<string>;
+  }>;
 }
 
 export interface ScreenshotResult {
@@ -164,6 +207,11 @@ export class ComputerUse extends Context.Service<
     ) => Effect.Effect<void, ComputerUseError>;
     /** Read-only, needs no approval. */
     readonly screenshot: Effect.Effect<ScreenshotResult, ComputerUseError>;
+    /** Read-only, needs no approval: the interactive elements of an app, each with a ref. */
+    readonly snapshot: (
+      caller: ComputerUseCaller,
+      input: SnapshotInput,
+    ) => Effect.Effect<SnapshotResult, ComputerUseError>;
     /** Click, type and key ask the user first and act at most once per approved decision. */
     readonly click: (
       caller: ComputerUseCaller,
@@ -204,6 +252,38 @@ export const parsePermissions = (stdout: string): MacPermissions => {
   };
 };
 
+const decodeJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
+const asRecord = (value: unknown): Record<string, unknown> =>
+  typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+const asString = (value: unknown) => (typeof value === "string" ? value : undefined);
+
+interface DesktopNode {
+  readonly ref: string;
+  readonly role: string;
+  readonly name: string;
+  readonly actions: ReadonlyArray<string>;
+}
+
+/** The elements that carry a ref, in tree order; containers without one are skipped. */
+const flattenTree = (node: unknown, out: DesktopNode[] = []): DesktopNode[] => {
+  const record = asRecord(node);
+  const ref = asString(record.ref_id);
+  if (ref !== undefined) {
+    out.push({
+      ref,
+      role: asString(record.role) ?? "element",
+      name: asString(record.name) ?? "",
+      actions: Array.isArray(record.available_actions)
+        ? record.available_actions.filter((action) => typeof action === "string")
+        : [],
+    });
+  }
+  if (Array.isArray(record.children)) for (const child of record.children) flattenTree(child, out);
+  return out;
+};
+
+const sessionFor = (threadId: string) => `t3-${threadId.replaceAll(/[^A-Za-z0-9_-]/g, "_")}`;
+
 const clip = (text: string, max: number) =>
   text.length > max ? `${text.slice(0, max - 1)}…` : text;
 
@@ -211,6 +291,8 @@ const make = Effect.gen(function* () {
   const platform = yield* HostProcess.Platform;
   const runner = yield* ProcessRunner.ProcessRunner;
   const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const config = yield* ServerConfig.ServerConfig;
   const crypto = yield* Digest.Digest;
   const decisions = yield* DecisionService.DecisionService;
 
@@ -293,6 +375,74 @@ const make = Effect.gen(function* () {
     );
   }).pipe(Effect.withSpan("ComputerUse.screenshot"));
 
+  /** What the agent last saw per thread, so an approval can name the element behind a ref. */
+  const labels = new Map<string, Map<string, string>>();
+  const labelFor = (threadId: string, ref: string) => {
+    const found = labels.get(threadId)?.get(ref);
+    return found === undefined ? ref : `${found} (${ref})`;
+  };
+
+  /**
+   * One agent-desktop process per call; refs live in a per-thread session. Failures carry the
+   * CLI's own advice, and an action it cannot prove did nothing is never repeated.
+   */
+  const desktop = Effect.fn("ComputerUse.desktop")(function* (
+    threadId: string,
+    args: ReadonlyArray<string>,
+    options: { readonly stdin?: string; readonly acts: boolean },
+  ) {
+    const tool = yield* ensureAgentDesktop(config.baseDir).pipe(
+      Effect.provideService(ProcessRunner.ProcessRunner, runner),
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provideService(Path.Path, path),
+      Effect.mapError(() =>
+        fail(
+          "failed",
+          "The accessibility tool (agent-desktop) could not be installed, which needs npm and network access. Use computer_screenshot with x and y instead.",
+        ),
+      ),
+    );
+    const home = path.join(config.baseDir, "tools", "agent-desktop", "state");
+    yield* fs.makeDirectory(home, { recursive: true }).pipe(Effect.mapError(failed));
+    const output = yield* runner
+      .run({
+        command: tool.entryPath,
+        args: [...args, "--session", sessionFor(threadId)],
+        env: { AGENT_DESKTOP_HOME: home },
+        timeout: DESKTOP_TIMEOUT,
+        ...(options.stdin === undefined ? {} : { stdin: options.stdin }),
+      })
+      .pipe(Effect.mapError(failed));
+    const envelope = asRecord(Option.getOrUndefined(decodeJson(output.stdout.trim())));
+    if (envelope.ok === true) return asRecord(envelope.data);
+    if (envelope.ok !== false || output.timedOut) {
+      return yield* new ComputerUseError({
+        reason: "failed",
+        detail: `The accessibility tool ${output.timedOut ? "timed out" : "gave no usable answer"}. Take a snapshot to check the result before trying again.`,
+        ...(options.acts ? { cause: NOT_RETRYABLE } : {}),
+      });
+    }
+    const error = asRecord(envelope.error);
+    const code = asString(error.code) ?? "";
+    const advice = [asString(error.message), asString(error.suggestion)].filter(Boolean).join(" ");
+    const retry = asString(asRecord(error.disposition).retry);
+    const mayHaveActed = options.acts && retry !== "safe" && !NOTHING_RAN.has(code);
+    if (code === "PERM_DENIED") return yield* fail("accessibility_missing");
+    if (code === "STALE_REF") {
+      return yield* fail(
+        "invalid",
+        "That ref is stale: the app changed since the snapshot. Take a new snapshot and use a fresh ref.",
+      );
+    }
+    return yield* new ComputerUseError({
+      reason: NOTHING_RAN.has(code) ? "invalid" : "failed",
+      detail: mayHaveActed
+        ? `${advice} It may have taken effect: take a snapshot to check before trying again.`
+        : advice || "The accessibility action failed.",
+      ...(mayHaveActed ? { cause: NOT_RETRYABLE } : {}),
+    });
+  });
+
   /** The settled decision, or undefined when the user has not answered within the wait. */
   const waitForAnswer = Effect.fn("ComputerUse.waitForAnswer")(function* (decisionId: DecisionId) {
     const current = yield* decisions.get(decisionId);
@@ -356,9 +506,14 @@ const make = Effect.gen(function* () {
         "This approved action already ran once. Pass a new clientRequestId to do it again, which asks the user again.",
       );
     }
-    // A failed action releases the approval so the same decision can be retried.
+    // A failed action releases the approval so the same decision can be retried, unless it may
+    // have already acted.
     return yield* act.pipe(
-      Effect.tapError(() => Effect.ignore(decisions.releaseExecution(decision.id))),
+      Effect.tapError((error) =>
+        error.cause === NOT_RETRYABLE
+          ? Effect.void
+          : Effect.ignore(decisions.releaseExecution(decision.id)),
+      ),
     );
   });
 
@@ -418,11 +573,91 @@ const make = Effect.gen(function* () {
       : Effect.succeed(target);
   };
 
+  const checkRef = (ref: string) =>
+    REF_PATTERN.test(ref)
+      ? Effect.succeed(ref)
+      : Effect.fail(fail("invalid", "ref must be one of the refs from `snapshot`, like @s1:e6."));
+
+  const snapshot: ComputerUse["Service"]["snapshot"] = Effect.fn("ComputerUse.snapshot")(
+    function* (caller, input) {
+      yield* requireMac;
+      const app = input.app?.trim();
+      if (app !== undefined && (app === "" || app.startsWith("-") || app.length > 200)) {
+        return yield* fail("invalid", "app must be an application name such as Safari.");
+      }
+      const root = input.root === undefined ? undefined : yield* checkRef(input.root);
+      if ((yield* permissions({ automation: false })).accessibility === "denied") {
+        return yield* fail("accessibility_missing");
+      }
+      const data = yield* desktop(
+        caller.threadId,
+        [
+          "snapshot",
+          "-i",
+          "--compact",
+          ...(app === undefined ? [] : ["--app", app]),
+          ...(root === undefined ? [] : ["--root", root]),
+        ],
+        { acts: false },
+      );
+      const all = flattenTree(data.tree);
+      const nodes = all.slice(0, MAX_SNAPSHOT_NODES).map((node) => ({
+        ...node,
+        name: clip(node.name.replaceAll("\n", " "), MAX_NODE_NAME_CHARS),
+      }));
+      labels.set(
+        caller.threadId,
+        new Map(nodes.map((node) => [node.ref, `${node.role} "${node.name}"`])),
+      );
+      return {
+        app: asString(data.app) ?? null,
+        window: asString(asRecord(data.window).title) ?? null,
+        complete: data.complete !== false,
+        refCount: all.length,
+        truncated: all.length > nodes.length,
+        nodes,
+      };
+    },
+  );
+
   const click: ComputerUse["Service"]["click"] = Effect.fn("ComputerUse.click")(
     function* (caller, input) {
       const target = yield* checkTarget(input);
       const { x, y } = input;
+      const button = input.button ?? "left";
+      if (input.ref !== undefined) {
+        if (x !== undefined || y !== undefined) {
+          return yield* fail("invalid", "Pass either ref or x and y, not both.");
+        }
+        const ref = yield* checkRef(input.ref);
+        if (input.double === true) {
+          return yield* fail(
+            "invalid",
+            "double is only for x and y clicks: click the ref twice instead.",
+          );
+        }
+        const current = yield* ready(false);
+        const label = labelFor(caller.threadId, ref);
+        return yield* approved(
+          caller,
+          {
+            clientRequestId:
+              input.clientRequestId?.trim() || (yield* idFor("click", [ref, button])),
+            ...(yield* describe(
+              current,
+              target,
+              `${button === "right" ? "right-click" : "click"} ${label}`,
+              `${button}-click the element **${label}**.`,
+            )),
+          },
+          desktop(caller.threadId, [button === "right" ? "right-click" : "click", ref], {
+            acts: true,
+          }).pipe(Effect.asVoid),
+        );
+      }
       if (
+        x === undefined ||
+        y === undefined ||
         !Number.isFinite(x) ||
         !Number.isFinite(y) ||
         x < 0 ||
@@ -436,7 +671,6 @@ const make = Effect.gen(function* () {
         );
       }
       const point = { x: Math.round(x), y: Math.round(y) };
-      const button = input.button ?? "left";
       const count = input.double === true ? 2 : 1;
       const current = yield* ready(false);
       const verb = count === 2 ? "double-click" : "click";
@@ -467,20 +701,29 @@ const make = Effect.gen(function* () {
       if (input.text === "" || input.text.length > MAX_TYPED_CHARS) {
         return yield* fail("invalid", `text must be 1-${MAX_TYPED_CHARS} characters.`);
       }
-      const current = yield* ready(true);
+      const ref = input.ref === undefined ? undefined : yield* checkRef(input.ref);
+      const current = yield* ready(ref === undefined);
+      const label = ref === undefined ? undefined : labelFor(caller.threadId, ref);
       return yield* approved(
         caller,
         {
-          clientRequestId: input.clientRequestId?.trim() || (yield* idFor("type", [input.text])),
+          clientRequestId:
+            input.clientRequestId?.trim() ||
+            (yield* idFor("type", ref === undefined ? [input.text] : [input.text, ref])),
           ...(yield* describe(
             current,
             target,
             `type "${clip(input.text.replaceAll("\n", " "), 30)}" (${input.text.length} chars)`,
-            `type ${input.text.length} characters into whatever is focused:`,
+            `type ${input.text.length} characters into ${label === undefined ? "whatever is focused" : `the element **${label}**`}:`,
             `\`\`\`\n${input.text.replaceAll("```", "'''")}\n\`\`\``,
           )),
         },
-        jxa(KEY_SCRIPT, ["text", input.text]).pipe(Effect.asVoid),
+        ref === undefined
+          ? jxa(KEY_SCRIPT, ["text", input.text]).pipe(Effect.asVoid)
+          : desktop(caller.threadId, ["type", ref, "--stdin"], {
+              stdin: input.text,
+              acts: true,
+            }).pipe(Effect.asVoid),
       );
     },
   );
@@ -521,7 +764,7 @@ const make = Effect.gen(function* () {
     },
   );
 
-  return ComputerUse.of({ permissions, openSettings, screenshot, click, type, key });
+  return ComputerUse.of({ permissions, openSettings, screenshot, snapshot, click, type, key });
 });
 
 export const layer = Layer.effect(ComputerUse, make);

@@ -159,6 +159,21 @@ const failed = (expect: Parameters<typeof gradeSample>[0], run: SampleRun) =>
     .filter((check) => !check.pass)
     .map((check) => check.check);
 
+it("orders by alternatives and by action", () => {
+  const expect = { order: ["computer_screenshot|t3_computer:snapshot", "t3_computer:click"] };
+  const call = (step: number, tool: string, action?: string) => ({
+    step,
+    tool,
+    input: action === undefined ? {} : { action },
+  });
+  const lookThenClick = [call(0, "t3_computer", "snapshot"), call(1, "t3_computer", "click")];
+  const clickFirst = [call(0, "t3_computer", "click"), call(1, "computer_screenshot")];
+  assert.deepEqual(failed(expect, { calls: lookThenClick, text: "", stopReason: "end_turn" }), []);
+  assert.deepEqual(failed(expect, { calls: clickFirst, text: "", stopReason: "end_turn" }), [
+    "order computer_screenshot|t3_computer:snapshot > t3_computer:click",
+  ]);
+});
+
 it("passes a good run and names every rule a bad run breaks", () => {
   const expect = {
     calls: [{ tool: "delegate_task", args: { task: "~FINDING", "target.options": "~max" } }],
