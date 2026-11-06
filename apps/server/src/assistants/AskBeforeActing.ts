@@ -53,16 +53,18 @@ export const installLayer = Layer.effectDiscard(
         if (decision.status === "open") {
           return { allowed: false, message: WAITING_FOR_APPROVAL } satisfies SendApproval;
         }
-        if (decision.status !== "answered") continue;
-        // Answered decisions are used up by the first send that sees them, approved or not.
-        const claimed = yield* decisions.claimExecution(decision.id);
-        if (!claimed) continue;
-        return decision.answer?.optionId === "accept"
-          ? ({
-              allowed: true,
-              release: decisions.releaseExecution(decision.id).pipe(Effect.ignore),
-            } satisfies SendApproval)
-          : ({ allowed: false, message: SEND_DECLINED } satisfies SendApproval);
+        // An unanswered ask that timed out is stale, not a refusal: ask again.
+        if (decision.status === "expired") continue;
+        // A denial or a dismissal stays refused for this exact text; the user said no.
+        if (decision.status !== "answered" || decision.answer?.optionId !== "accept") {
+          return { allowed: false, message: SEND_DECLINED } satisfies SendApproval;
+        }
+        // One send per approval: the first send to claim it uses it, later ones ask again.
+        if (!(yield* decisions.claimExecution(decision.id))) continue;
+        return {
+          allowed: true,
+          release: decisions.releaseExecution(decision.id).pipe(Effect.ignore),
+        } satisfies SendApproval;
       }
     });
     yield* gate.install((input) =>

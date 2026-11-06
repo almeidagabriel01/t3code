@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   accentWash,
+  presenceBadgeLabel,
   presenceMessageCount,
   presenceStatusLabel,
   splitPresenceStack,
@@ -25,5 +26,11 @@ describe("assistant presence presentation", () => {
     expect(presenceStatusLabel(false)).toBe("Idle");
     expect(presenceMessageCount({ count: 1 })).toBe("1 message here");
     expect(presenceMessageCount({ count: 2 })).toBe("2 messages here");
+  });
+
+  it("names access and that it asks first only when each applies", () => {
+    expect(presenceBadgeLabel(null, false)).toBe("assistant");
+    expect(presenceBadgeLabel("Edits", false)).toBe("assistant · Edits");
+    expect(presenceBadgeLabel("Edits", true)).toBe("assistant · Edits · asks first");
   });
 });

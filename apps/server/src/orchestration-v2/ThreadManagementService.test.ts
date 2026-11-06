@@ -1021,6 +1021,28 @@ it.effect("ask before acting: assistant targets and other senders skip the gate"
   }).pipe(Effect.provide(layerAssistantGuardTest(dispatched)));
 });
 
+it.effect("ask before acting: a replayed command already under an approval skips the gate", () => {
+  const dispatched: Array<unknown> = [];
+  return Effect.gen(function* () {
+    const gate = yield* AskGate.AskBeforeActingGate;
+    yield* gate.install(() => Effect.die("the gate must not be asked"));
+    const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
+    const command = asked(guardThreads.plain);
+    yield* receipts.insertIfAbsent({
+      commandId: command.commandId,
+      threadId: guardThreads.plain,
+      commandType: "message.dispatch",
+      acceptedAt: yield* DateTime.now,
+      resultSequence: 1,
+      status: "accepted",
+      error: null,
+    });
+    const threads = yield* ThreadManagementService.ThreadManagementService;
+    yield* threads.dispatch(command);
+    expect(dispatched).toHaveLength(1);
+  }).pipe(Effect.provide(layerAssistantGuardTest(dispatched)));
+});
+
 it.effect("ask before acting: an approval is given back when the send itself fails", () => {
   let released = 0;
   return Effect.gen(function* () {

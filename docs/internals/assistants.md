@@ -49,9 +49,10 @@ server-side so no client or agent can skip them:
 
 4. "Ask before acting": the same `dispatch` holds a `message.dispatch` from an assistant with the flag
    into any non-assistant thread until the user approves that exact send. The approval is a decision
-   in the assistant's own conversation keyed by (assistant, target, text hash, attempt), and the first
-   send that sees it answered consumes it through `claimExecution`, approved or denied; a failed
-   send gives it back. `DecisionService` depends on `ThreadManagementService`, so the guard reads a
+   in the assistant's own conversation keyed by (assistant, target, text hash, attempt). An approval
+   is consumed by the first send that claims it (`claimExecution`) and a failed send gives it back;
+   a denial or dismissal keeps refusing that exact text, and an expired ask is asked again.
+   `DecisionService` depends on `ThreadManagementService`, so the guard reads a
    late-bound `AskBeforeActingGate` that `AskBeforeActing.installLayer` fills; with none installed a
    flagged assistant cannot send at all.
 

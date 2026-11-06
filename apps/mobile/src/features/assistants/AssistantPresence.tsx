@@ -19,6 +19,7 @@ import * as Dialog from "../../components/ui/Dialog";
 import {
   accentWash,
   presenceMessageCount,
+  presenceBadgeLabel,
   presenceStatusLabel,
   splitPresenceStack,
 } from "./assistantPresenceLabels";
@@ -91,7 +92,7 @@ export function AssistantFeedMessage(props: {
             </Text>
             <View className="rounded-md border border-border px-1.5 py-px">
               <Text className="text-2xs text-foreground-muted">
-                {access ? `assistant · ${access}` : "assistant"}
+                {presenceBadgeLabel(access, assistant?.askBeforeActing === true)}
               </Text>
             </View>
           </View>

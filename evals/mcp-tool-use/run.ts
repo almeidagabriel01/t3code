@@ -1551,6 +1551,9 @@ const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(function* 
     const result = yield* sample.devices.call(name, input, failure);
     return result.isError ? failed(result.text) : toolResult(call.id, result.text);
   }
+  // A mock `{ isError: true, text }` is a tool error, as T3 returns for a refused call.
+  if (isRecord(mock) && mock.isError === true && typeof mock.text === "string")
+    return failed(mock.text);
   if (mock !== undefined && mock !== "default")
     return toolResult(
       call.id,

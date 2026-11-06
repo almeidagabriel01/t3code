@@ -573,6 +573,7 @@ it("creates an assistant with its notification choice", async () => {
   await userEvent.click(page.getByRole("combobox", { name: "Reports to" }));
   await userEvent.click(page.getByRole("option", { name: "Jarvis" }));
   await userEvent.click(page.getByRole("radio", { name: "Reply and notify me" }));
+  await userEvent.click(page.getByRole("switch", { name: "Ask before acting" }));
   await userEvent.click(page.getByRole("button", { name: "Create assistant" }));
   await eventually(() =>
     expect(fakeAssistantEdits.creates).toMatchObject([
@@ -580,6 +581,7 @@ it("creates an assistant with its notification choice", async () => {
         name: "Scout",
         role: "Researcher",
         reportsTo: "jarvis",
+        askBeforeActing: true,
         autonomy: { mode: "reply-and-notify" },
       },
     ]),

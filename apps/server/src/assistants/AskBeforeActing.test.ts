@@ -3,6 +3,7 @@ import { expect, it } from "@effect/vitest";
 import { type DecisionError, ProjectId, ThreadId, type Assistant } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as TestClock from "effect/testing/TestClock";
 
 import { DecisionService, layer as decisionsLayer } from "../decisions/DecisionService.ts";
 import { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
@@ -97,7 +98,7 @@ it.effect("a failed send gives the approval back", () =>
 );
 
 it.effect.each(["deny", "dismiss"] as const)(
-  "a %s never sends, and the next attempt asks again",
+  "a %s is refused as declined every time, without asking again",
   (how) =>
     run((ask, decisions) =>
       Effect.gen(function* () {
@@ -105,14 +106,33 @@ it.effect.each(["deny", "dismiss"] as const)(
         const [first] = yield* open(decisions);
         if (how === "deny") {
           yield* decisions.answer({ decisionId: first!.id, optionId: "deny" });
-          expect(yield* ask("deploy it")).toEqual({ allowed: false, message: SEND_DECLINED });
         } else {
           yield* decisions.dismiss(first!.id);
         }
-        expect(yield* ask("deploy it")).toMatchObject({ allowed: false });
+        for (const _ of [1, 2]) {
+          expect(yield* ask("deploy it")).toEqual({ allowed: false, message: SEND_DECLINED });
+        }
+        expect(yield* open(decisions)).toHaveLength(0);
+        // Other text is a different send and asks.
+        yield* ask("deploy it, please");
         expect(yield* open(decisions)).toHaveLength(1);
       }),
     ),
+);
+
+it.effect("an ask that expired unanswered is asked again, not reported as declined", () =>
+  run((ask, decisions) =>
+    Effect.gen(function* () {
+      yield* ask("deploy it");
+      yield* TestClock.adjust("25 hours");
+      yield* decisions.expireDue;
+      expect(yield* ask("deploy it")).toMatchObject({
+        allowed: false,
+        message: expect.stringContaining("Waiting for the user's approval"),
+      });
+      expect(yield* open(decisions)).toHaveLength(1);
+    }),
+  ),
 );
 
 it.effect("fails closed while no approval path is installed", () =>

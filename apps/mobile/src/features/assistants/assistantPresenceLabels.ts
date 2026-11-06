@@ -24,3 +24,10 @@ export function presenceStatusLabel(working: boolean) {
 export function presenceMessageCount(sender: Pick<AssistantSender, "count">) {
   return `${sender.count} message${sender.count === 1 ? "" : "s"} here`;
 }
+
+/** The small chip beside an assistant's name: its role here, access level and whether it asks first. */
+export function presenceBadgeLabel(access: string | null, asksFirst: boolean) {
+  return ["assistant", ...(access ? [access] : []), ...(asksFirst ? ["asks first"] : [])].join(
+    " · ",
+  );
+}
