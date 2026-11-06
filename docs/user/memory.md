@@ -25,6 +25,14 @@ other devices drop it when they sync; it is never imported again.
 If search coverage is incomplete, an empty result does not prove a memory is missing. Clear the
 search to browse instead.
 
+## Rules
+
+When you tell an agent what it must always or never do ("never rebase in this project"), it is saved
+as a rule and every agent follows it from then on. Only what you type becomes a rule; text from
+agents, files and imports never does. A banner above the composer shows a rule learned in that
+conversation, with **Undo** and **Edit**. All rules are under **Settings → Memory → Rules**, where
+you can add, edit or forget one for a project or for all projects.
+
 ## Import from Claude or Codex
 
 Under **Import memories**, choose Claude or Codex, find the profiles on the selected environment,
