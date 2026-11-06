@@ -66,6 +66,7 @@ const assistant = (id: string, name: string): Assistant => ({
   reportsTo: null,
   budget: null,
   askBeforeActing: false,
+  workspace: "host",
   icon: null,
   mcpServers: [],
   autonomy: { mode: "reply-only", rules: null, projectIds: null, channels: null },

@@ -26,6 +26,8 @@ import { assistantDialogAtom } from "./assistantDialogState";
 import {
   fakeAssistantEdits,
   fakeAssistants,
+  fakeSandbox,
+  publishSandbox,
   fakeSettings,
   resetFakeTelegram,
   fakeWatches,
@@ -81,6 +83,7 @@ const assistant = (id: string, name: string, overrides: Partial<Assistant> = {})
   reportsTo: null,
   budget: null,
   askBeforeActing: false,
+  workspace: "host",
   icon: null,
   mcpServers: [],
   autonomy: { mode: "reply-only", rules: null, projectIds: null, channels: null },
@@ -462,6 +465,122 @@ it("saves Ask before acting only when it changed", async () => {
   await userEvent.click(page.getByRole("button", { name: "Save" }));
   await eventually(() =>
     expect(fakeAssistantEdits.updates).toMatchObject([{ askBeforeActing: true }]),
+  );
+});
+
+it("saves the workspace the user picks", async () => {
+  publishAssistants([assistant("jarvis", "Jarvis")]);
+  fakeAssistantEdits.updates = [];
+  publishSandbox({ ...fakeSandbox.status, state: "running" });
+  await using _screen = await openEditDialog("Jarvis");
+  await expect.element(page.getByRole("radio", { name: /^This Mac/ })).toBeChecked();
+  await userEvent.click(page.getByRole("radio", { name: /Sandbox container/ }));
+  await userEvent.click(page.getByRole("button", { name: "Save" }));
+  await eventually(() =>
+    expect(fakeAssistantEdits.updates).toMatchObject([
+      { assistantId: "jarvis", workspace: "sandbox" },
+    ]),
+  );
+});
+
+it("creates an assistant that works in the sandbox", async () => {
+  publishAssistants([assistant("jarvis", "Jarvis")]);
+  fakeAssistantEdits.creates = [];
+  publishSandbox({ ...fakeSandbox.status, state: "running" });
+  appAtomRegistry.set(assistantDialogAtom, null);
+  await using _screen = await openApp("/settings/assistants");
+  await userEvent.click(page.getByRole("button", { name: "New assistant" }));
+  await userEvent.fill(page.getByLabelText("Name"), "Boxed");
+  await userEvent.click(page.getByRole("radio", { name: /Sandbox container/ }));
+  await userEvent.click(page.getByRole("button", { name: "Create assistant" }));
+  await eventually(() =>
+    expect(fakeAssistantEdits.creates).toMatchObject([{ name: "Boxed", workspace: "sandbox" }]),
+  );
+  appAtomRegistry.set(assistantDialogAtom, null);
+});
+
+it("turns the sandbox choice off with the reason when Docker is not available", async () => {
+  publishAssistants([assistant("jarvis", "Jarvis")]);
+  publishSandbox({ ...fakeSandbox.status, state: "docker_unavailable" });
+  await using _screen = await openEditDialog("Jarvis");
+  await expect.element(page.getByRole("radio", { name: /Sandbox container/ })).toBeDisabled();
+  await expect.element(page.getByText("Docker is not running on that machine.")).toBeVisible();
+});
+
+it("shows the sandbox state in Settings and starts it", async () => {
+  publishAssistants([assistant("jarvis", "Jarvis")]);
+  fakeSandbox.calls = [];
+  publishSandbox({ ...fakeSandbox.status, state: "not_created", environmentId: null });
+  appAtomRegistry.set(assistantDialogAtom, null);
+  await using _screen = await openApp("/settings/assistants");
+  await expect.element(page.getByText("Not created")).toBeVisible();
+  await expect.element(page.getByRole("button", { name: "Stop" })).toBeDisabled();
+  await expect.element(page.getByRole("button", { name: "Remove" })).toBeDisabled();
+  expect(page.getByRole("button", { name: "Sign in" }).query()).toBeNull();
+  await userEvent.click(page.getByRole("button", { name: "Start" }));
+  await eventually(() =>
+    expect(fakeSandbox.calls).toMatchObject([{ tag: "assistantSandbox.start" }]),
+  );
+});
+
+it("stops a running sandbox, offers the provider sign-in, and removes it keeping or deleting its files", async () => {
+  publishAssistants([assistant("jarvis", "Jarvis")]);
+  fakeSandbox.calls = [];
+  publishSandbox({
+    ...fakeSandbox.status,
+    state: "running",
+    environmentId: "environment-box" as never,
+    url: "http://127.0.0.1:49152",
+    linkedEnvironmentsEnabled: true,
+  });
+  appAtomRegistry.set(assistantDialogAtom, null);
+  await using _screen = await openApp("/settings/assistants");
+  await expect.element(page.getByText("Running")).toBeVisible();
+  await expect.element(page.getByText("Sign in to providers in the sandbox")).toBeVisible();
+  await userEvent.click(page.getByRole("button", { name: "Stop" }));
+  await eventually(() =>
+    expect(fakeSandbox.calls).toMatchObject([{ tag: "assistantSandbox.stop" }]),
+  );
+  const confirmStep = async () => {
+    await userEvent.click(page.getByRole("button", { name: "Confirm" }));
+  };
+  const cancelStep = async () => {
+    await userEvent.click(page.getByRole("button", { name: "Cancel" }));
+  };
+  await userEvent.click(page.getByRole("button", { name: "Remove" }));
+  await confirmStep();
+  await expect.element(page.getByText("Also delete its files?")).toBeVisible();
+  await cancelStep();
+  await eventually(() =>
+    expect(fakeSandbox.calls.at(-1)).toMatchObject({
+      tag: "assistantSandbox.remove",
+      input: { deleteVolumes: false },
+    }),
+  );
+  await userEvent.click(page.getByRole("button", { name: "Remove" }));
+  await confirmStep();
+  await expect.element(page.getByText("Also delete its files?")).toBeVisible();
+  await confirmStep();
+  await eventually(() =>
+    expect(fakeSandbox.calls.at(-1)).toMatchObject({ input: { deleteVolumes: true } }),
+  );
+});
+
+it("signing in to the sandbox's providers asks the server for a one-time pairing link", async () => {
+  publishAssistants([assistant("jarvis", "Jarvis")]);
+  fakeSandbox.calls = [];
+  publishSandbox({
+    ...fakeSandbox.status,
+    state: "running",
+    environmentId: "environment-box" as never,
+    url: "http://127.0.0.1:1",
+    linkedEnvironmentsEnabled: true,
+  });
+  appAtomRegistry.set(assistantDialogAtom, null);
+  await using _screen = await openApp("/settings/assistants");
+  await userEvent.click(page.getByRole("button", { name: "Sign in" }));
+  await eventually(() =>
+    expect(fakeSandbox.calls).toMatchObject([{ tag: "assistantSandbox.pairing" }]),
   );
 });
 

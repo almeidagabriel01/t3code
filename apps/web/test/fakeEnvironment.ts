@@ -25,6 +25,7 @@ import {
   type AutonomySettings,
   type AutonomyWatch,
   type AutonomyWatchUpsertInput,
+  type AssistantSandboxStatus,
   type AssistantSpend,
   type ForkUpdateStatus,
   type MacPermissions,
@@ -614,6 +615,46 @@ handlers[WS_METHODS.assistantTeamsDelete] = (input: { readonly teamId: string })
 };
 handlers[WS_METHODS.assistantTeamsActivity] = () =>
   Effect.succeed({ messages: fakeTeamEdits.messages });
+
+/** The sandbox status the fake serves, and the sandbox calls it received. */
+export const fakeSandbox = {
+  status: {
+    state: "not_created",
+    step: null,
+    error: null,
+    environmentId: null,
+    url: null,
+    linkedEnvironmentsEnabled: false,
+  } as AssistantSandboxStatus,
+  calls: [] as Array<{ readonly tag: string; readonly input: unknown }>,
+};
+const sandboxSubscribers = new Set<Queue.Queue<AssistantSandboxStatus>>();
+handlers[WS_METHODS.assistantSandboxSubscribe] = () =>
+  subscribe<AssistantSandboxStatus>([fakeSandbox.status], (queue) => {
+    sandboxSubscribers.add(queue);
+    return () => sandboxSubscribers.delete(queue);
+  });
+/** Replaces the sandbox status, including for a subscription an earlier screen left open. */
+export function publishSandbox(status: AssistantSandboxStatus): void {
+  fakeSandbox.status = status;
+  for (const queue of sandboxSubscribers) Effect.runSync(Queue.offer(queue, status));
+}
+for (const tag of [
+  WS_METHODS.assistantSandboxStart,
+  WS_METHODS.assistantSandboxStop,
+  WS_METHODS.assistantSandboxRemove,
+]) {
+  handlers[tag] = (input: unknown) =>
+    Effect.sync(() => {
+      fakeSandbox.calls.push({ tag, input });
+      return fakeSandbox.status;
+    });
+}
+handlers[WS_METHODS.assistantSandboxPairing] = (input: unknown) =>
+  Effect.sync(() => {
+    fakeSandbox.calls.push({ tag: WS_METHODS.assistantSandboxPairing, input });
+    return { pairingUrl: "http://127.0.0.1:1/pair#token=fake" };
+  });
 
 /** Spend the fake serves for any assistant, and the update calls it received. */
 export const fakeAssistantEdits = {

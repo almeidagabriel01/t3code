@@ -36,6 +36,7 @@ import { getDisplayModelName } from "../chat/providerIconUtils";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { AssistantSandboxSection } from "./AssistantSandboxSection";
 import { AutonomySection } from "./AutonomySettings";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
@@ -379,6 +380,10 @@ export function AssistantsSettingsPanel() {
                   ))
                 )}
               </SettingsSection>
+              <AssistantSandboxSection
+                environmentId={environmentId}
+                suffix={multipleEnvironments ? ` · ${labelOf(environmentId)}` : ""}
+              />
               <AutonomySection
                 environmentId={environmentId}
                 suffix={multipleEnvironments ? ` · ${labelOf(environmentId)}` : ""}

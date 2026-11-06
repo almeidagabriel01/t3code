@@ -11,6 +11,7 @@ import {
   type AssistantIconId,
   type AssistantId,
   type AssistantToolAccess,
+  type AssistantWorkspace,
   type EnvironmentId,
   type ModelSelection,
   type ProjectId,
@@ -86,6 +87,7 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { Textarea } from "../ui/textarea";
 import { AssistantConnectorsField } from "./AssistantConnectorsField";
 import { AssistantNotifications } from "./AssistantNotifications";
+import { AssistantWorkspaceField } from "./AssistantWorkspaceField";
 import { AssistantSchedules } from "./AssistantSchedules";
 import { AssistantWatches } from "./AssistantWatches";
 import { budgetFromDraft, budgetToDraft, spendLine, type BudgetDraft } from "./assistantBudget";
@@ -302,6 +304,7 @@ function AssistantDialog(props: {
     assistant?.toolAccess ?? "full",
   );
   const [askBeforeActing, setAskBeforeActing] = useState(assistant?.askBeforeActing ?? false);
+  const [workspace, setWorkspace] = useState<AssistantWorkspace>(assistant?.workspace ?? "host");
   const [icon, setIcon] = useState<AssistantIconId | null>(
     assistantIconFor(assistant?.icon)?.id ?? null,
   );
@@ -422,6 +425,7 @@ function AssistantDialog(props: {
           ...(instructions !== assistant.instructions ? { instructions } : {}),
           ...(toolAccess !== assistant.toolAccess ? { toolAccess } : {}),
           ...(askBeforeActing !== assistant.askBeforeActing ? { askBeforeActing } : {}),
+          ...(workspace !== assistant.workspace ? { workspace } : {}),
           ...(icon !== (assistantIconFor(assistant.icon)?.id ?? null) ? { icon } : {}),
           ...(connectorsChanged ? { mcpServers: connectorInputsFrom(connectors) } : {}),
           ...(role.trim() !== assistant.role ? { role: role.trim() } : {}),
@@ -437,6 +441,7 @@ function AssistantDialog(props: {
           instructions,
           toolAccess,
           ...(askBeforeActing ? { askBeforeActing } : {}),
+          ...(workspace === "host" ? {} : { workspace }),
           ...(icon === null ? {} : { icon }),
           ...(connectors.length === 0 ? {} : { mcpServers: connectorInputsFrom(connectors) }),
           ...(role.trim() === "" ? {} : { role: role.trim() }),
@@ -686,6 +691,11 @@ function AssistantDialog(props: {
                 ))}
               </RadioGroup>
             </fieldset>
+            <AssistantWorkspaceField
+              environmentId={environmentId}
+              value={workspace}
+              onChange={setWorkspace}
+            />
             <AskBeforeActingField checked={askBeforeActing} onChange={setAskBeforeActing} />
             <fieldset className="flex flex-col gap-3">
               <legend className="text-sm font-medium">Team</legend>
