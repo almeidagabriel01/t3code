@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // @effect-diagnostics nodeBuiltinImport:off
-import * as NodeChild from "node:child_process";
-import * as NodeFs from "node:fs";
-import * as NodeOs from "node:os";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
 import * as M from "@t3tools/contracts";
@@ -31,11 +31,11 @@ const MemoryContext: typeof import("../../packages/provider-core/src/server/memo
   values.text === "old"
     ? await (async () => {
         const dir = NodePath.join(import.meta.dirname, "..", "runs", ".old-memory-context");
-        NodeFs.mkdirSync(dir, { recursive: true });
+        NodeFS.mkdirSync(dir, { recursive: true });
         const file = NodePath.join(dir, "memoryContext.ts");
-        NodeFs.writeFileSync(
+        NodeFS.writeFileSync(
           file,
-          NodeChild.execFileSync("git", ["show", `${OLD_REF}:${memoryContextPath}`], {
+          NodeChildProcess.execFileSync("git", ["show", `${OLD_REF}:${memoryContextPath}`], {
             encoding: "utf8",
           }),
         );
@@ -49,7 +49,7 @@ const systemNotice =
 
 const log = (text: string) => process.stdout.write(`${text}\n`);
 const uuid = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
-const cwd = NodeFs.mkdtempSync(NodePath.join(NodeOs.tmpdir(), "t3-memory-obedience-"));
+const cwd = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-memory-obedience-"));
 const rows: Array<{ id: string; sample: number; pass: boolean; reason: string; answer: string }> =
   [];
 for (const entry of selected) {
@@ -68,7 +68,7 @@ for (const entry of selected) {
   if (!snapshot) throw new Error(`Case ${entry.id} packed no memory.`);
   const prompt = `${entry.question}\n\n${MemoryContext.memoryContextText(snapshot)}`;
   for (let sample = 1; sample <= samples; sample++) {
-    const run = NodeChild.spawnSync(
+    const run = NodeChildProcess.spawnSync(
       "claude",
       [
         "-p",
@@ -103,9 +103,9 @@ for (const entry of selected) {
     `| ${entry.id} | ${casePasses(own) ? "pass" : "FAIL"} | ${own.filter((r) => r.pass).length}/${own.length} |`,
   );
 }
-NodeFs.mkdirSync(values.out, { recursive: true });
-NodeFs.writeFileSync(NodePath.join(values.out, "results.json"), JSON.stringify(rows, null, 2));
-NodeFs.writeFileSync(
+NodeFS.mkdirSync(values.out, { recursive: true });
+NodeFS.writeFileSync(NodePath.join(values.out, "results.json"), JSON.stringify(rows, null, 2));
+NodeFS.writeFileSync(
   NodePath.join(values.out, "summary.md"),
   `# Memory obedience (${values.text} text)\n\nModel: ${values.model}.\n\n${lines.join("\n")}\n`,
 );

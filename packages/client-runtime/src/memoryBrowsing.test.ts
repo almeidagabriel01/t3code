@@ -149,7 +149,11 @@ describe("memory rules", () => {
     }) as unknown as MemoryItem;
   const items = [
     item("old", "Rule: never rebase", { at: "2026-01-01T00:00:00.000Z", from: thread }),
-    item("new", "Rule: use pnpm", { scope: "project", at: "2026-02-01T00:00:00.000Z", from: other }),
+    item("new", "Rule: use pnpm", {
+      scope: "project",
+      at: "2026-02-01T00:00:00.000Z",
+      from: other,
+    }),
     item("plain", "Prefers tabs"),
     item("gone", "Rule: forgotten", { status: "forgotten" }),
     item("thread-scope", "Rule: wrong scope", { scope: "thread" }),

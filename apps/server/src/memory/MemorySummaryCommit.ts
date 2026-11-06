@@ -216,11 +216,10 @@ export const makeCommitSummary = (deps: {
     }
   });
   /**
-   * Writes the user's standing rules beside the summary, in its transaction. A rule is a project
-   * or user memory whose text carries the rule prefix; its id derives from scope and text, so a
-   * retry or a restatement lands on the same memory, and a rule the user forgot is not recreated.
-   * A rule that supersedes an active rule of the same scope forgets it in the same savepoint. One
-   * that cannot be admitted (capacity, a concurrent edit) is skipped without failing the summary.
+   * Writes the user's standing rules beside the summary, in its transaction. A rule's id derives
+   * from scope and text, so a retry lands on the same memory and a forgotten rule stays forgotten.
+   * One that supersedes an active rule of the same scope forgets it in the same savepoint; one that
+   * cannot be admitted is skipped without failing the summary.
    */
   const commitRules = Effect.fnUntraced(function* (commit: SummaryCommit) {
     const rules = commit.rules;
