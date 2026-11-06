@@ -2176,7 +2176,9 @@ export const layerWithOptions = (
             Effect.gen(function* () {
               const sandbox = input.runtimePolicy.sandboxPolicy;
               memoryAdmissions.set(input.threadId, {
-                memoryGrantCeiling: input.memoryGrantCeiling ?? "none",
+                // Null is an ordinary user start (current policy decides); only absent denies.
+                memoryGrantCeiling:
+                  input.memoryGrantCeiling === undefined ? "none" : input.memoryGrantCeiling,
                 readOnly:
                   sandbox === "read-only" ||
                   (typeof sandbox === "object" &&

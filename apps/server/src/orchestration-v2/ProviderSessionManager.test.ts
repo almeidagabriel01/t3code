@@ -1981,6 +1981,61 @@ it.effect(
     }),
 );
 
+it.effect("ProviderSessionManagerV2 gives an ordinary user start memory access", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const mcpConfigs = yield* Ref.make<
+      ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+    >([]);
+    const effect = Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const now = yield* DateTime.now;
+      const grantFor = Effect.fnUntraced(function* (
+        name: string,
+        memoryGrantCeiling: "read" | null | undefined,
+      ) {
+        const threadId = ThreadId.make(name);
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+          ...(memoryGrantCeiling === undefined ? {} : { memoryGrantCeiling }),
+        });
+        const policy = yield* manager.currentMemoryPolicy!(threadId);
+        yield* manager.close(providerSessionId);
+        return policy.grant;
+      });
+      // Null is a person typing in a client: current policy decides. Undefined is legacy and denies.
+      assert.equal(yield* grantFor("thread-memory-ordinary", null), "read_write");
+      assert.equal(yield* grantFor("thread-memory-task", "read"), "read");
+      assert.equal(yield* grantFor("thread-memory-legacy", undefined), "none");
+    });
+
+    yield* effect.pipe(
+      Effect.provide(
+        layerTest({
+          state,
+          idleTimeoutMs: 1_000,
+          mcpConfigs,
+          serverSettingsLayer: ServerSettings.layerTest({ enableAgentMemoryAccess: true }).pipe(
+            Layer.orDie,
+          ),
+        }),
+      ),
+    );
+  }),
+);
+
 it.effect("ProviderSessionManagerV2 honors a project browser-access opt-out", () =>
   Effect.gen(function* () {
     const captured = yield* runBrowserAccessScenario({
