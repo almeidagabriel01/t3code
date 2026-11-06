@@ -149,6 +149,8 @@ export const Assistant = Schema.Struct({
   autonomy: AssistantAutonomy.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_ASSISTANT_AUTONOMY)),
   ),
+  /** It may not send into an agent conversation until the user approves that exact send. */
+  askBeforeActing: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   archivedAt: Schema.NullOr(IsoDateTime),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -177,6 +179,7 @@ export const AssistantsCreateInput = Schema.Struct({
   toolAccess: AssistantToolAccess,
   budget: Schema.optional(Schema.NullOr(ProviderBudget)),
   autonomy: Schema.optional(AssistantAutonomy),
+  askBeforeActing: Schema.optional(Schema.Boolean),
   role: Schema.optional(AssistantRole),
   reportsTo: Schema.optional(Schema.NullOr(AssistantId)),
   /** Brings Jarvis back (recreated or unarchived) and ignores every other field. */
@@ -207,6 +210,7 @@ export const AssistantsUpdateInput = Schema.Struct({
   /** Null removes the cap. */
   budget: Schema.optional(Schema.NullOr(ProviderBudget)),
   autonomy: Schema.optional(AssistantAutonomy),
+  askBeforeActing: Schema.optional(Schema.Boolean),
   role: Schema.optional(AssistantRole),
   /** Null makes it top-level. */
   reportsTo: Schema.optional(Schema.NullOr(AssistantId)),

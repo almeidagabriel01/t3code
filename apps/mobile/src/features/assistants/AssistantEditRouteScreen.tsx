@@ -390,6 +390,25 @@ function AssistantForm(props: { readonly editor: AssistantEditor }) {
             ))}
           </ListSection>
         </View>
+        <View className="gap-2">
+          <View className="gap-0.5 px-2">
+            <Text textRole="footnote" className="font-t3-medium text-foreground">
+              Ask before acting
+            </Text>
+            <Text textRole="footnote" className="text-foreground-muted">
+              Before this assistant sends anything into another conversation, it asks you here and
+              waits for your approval.
+            </Text>
+          </View>
+          <ListSection>
+            <SwitchRow
+              icon="checkmark.circle"
+              label="Ask before acting"
+              value={current.askBeforeActing}
+              onChange={(askBeforeActing) => updateAssistantDraft({ askBeforeActing })}
+            />
+          </ListSection>
+        </View>
         <TextField
           label="Role"
           description="What it is to the others, such as CEO or Engineer. Agents see it."

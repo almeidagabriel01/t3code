@@ -36,7 +36,14 @@ const ENVIRONMENT_ID = EnvironmentId.make("environment");
 const THREAD_ID = ThreadId.make("thread");
 
 function assistant(id: string, name: string, toolAccess: Assistant["toolAccess"]) {
-  return { id, name, handle: id, toolAccess, threadId: ThreadId.make(`assistant:${id}:1`) };
+  return {
+    id,
+    name,
+    handle: id,
+    toolAccess,
+    askBeforeActing: id === "owl",
+    threadId: ThreadId.make(`assistant:${id}:1`),
+  };
 }
 
 function setup(running: boolean) {
@@ -68,7 +75,9 @@ it("lists the assistants that wrote here, saves their access and jumps to their 
 
   await trigger.click();
   await expect.element(page.getByText("Working · 2 messages here")).toBeVisible();
-  await expect.element(page.getByText("Working · 1 message here")).toBeVisible();
+  await expect
+    .element(page.getByText("Working · 1 message here · Asks before acting"))
+    .toBeVisible();
 
   await page.getByRole("combobox", { name: "Access for Owl" }).click();
   await page.getByRole("option", { name: "Full access" }).click();

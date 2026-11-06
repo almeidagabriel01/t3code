@@ -33,6 +33,7 @@ export interface AssistantRow {
   readonly autonomy_json: string | null;
   readonly role: string;
   readonly reports_to: string | null;
+  readonly ask_before_acting: number;
   readonly created_at: string;
   readonly updated_at: string;
 }
@@ -61,6 +62,7 @@ export const toAssistant = (row: AssistantRow): Assistant => ({
   archivedAt: row.archived_at,
   role: row.role,
   reportsTo: row.reports_to as AssistantId | null,
+  askBeforeActing: row.ask_before_acting === 1,
   budget: row.budget_json === null ? null : decodeBudget(row.budget_json),
   autonomy:
     row.autonomy_json === null

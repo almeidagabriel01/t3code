@@ -15,6 +15,7 @@ const assistant = (id: string, overrides: Partial<Assistant> = {}): Assistant =>
   projectId: "p" as ProjectId,
   instructions: "",
   toolAccess: "full",
+  askBeforeActing: false,
   isDefault: false,
   threadId: `assistant:${id}:1` as ThreadId,
   generation: 1,

@@ -26,8 +26,13 @@ function teamLine(leader: Colleague | null, reports: ReadonlyArray<Colleague>): 
   return escapeBody(parts.join(" "));
 }
 
+const ASK_BEFORE_ACTING_LINE =
+  "Ask before acting is on: a message you send into another agent conversation is held until the user approves it in this conversation. If a send says it is waiting for approval, tell the user it is waiting and stop; send the same message again only after they approve, and never send it another way if they decline.";
+
 export function assistantNoteFor(
-  assistant: Pick<Assistant, "name" | "handle" | "toolAccess" | "instructions" | "role">,
+  assistant: Pick<Assistant, "name" | "handle" | "toolAccess" | "instructions" | "role"> & {
+    readonly askBeforeActing?: boolean | undefined;
+  },
   userText: string,
   team: { readonly leader: Colleague | null; readonly reports: ReadonlyArray<Colleague> } = {
     leader: null,
@@ -38,7 +43,11 @@ export function assistantNoteFor(
   if (userText.trimStart().startsWith("/")) return "";
   const role = assistant.role === "" ? "" : ` role="${escapeAttribute(assistant.role)}"`;
   const open = `<t3_assistant name="${escapeAttribute(assistant.name)}" handle="${assistant.handle}"${role} access="${assistant.toolAccess}">`;
-  const body = [teamLine(team.leader, team.reports), escapeBody(assistant.instructions.trim())]
+  const body = [
+    teamLine(team.leader, team.reports),
+    assistant.askBeforeActing === true ? ASK_BEFORE_ACTING_LINE : "",
+    escapeBody(assistant.instructions.trim()),
+  ]
     .filter((part) => part !== "")
     .join("\n");
   return body === "" ? `${open}\n</t3_assistant>` : `${open}\n${body}\n</t3_assistant>`;

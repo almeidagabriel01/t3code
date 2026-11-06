@@ -302,6 +302,7 @@ export const McpToolUseCase = Schema.Struct({
         handle: Schema.String,
         role: Schema.String,
         toolAccess: AssistantToolAccess,
+        askBeforeActing: Schema.optional(Schema.Boolean),
         instructions: Schema.String,
         leader: Schema.NullOr(
           Schema.Struct({ name: Schema.String, handle: Schema.String, threadId: Schema.String }),

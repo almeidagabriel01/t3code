@@ -2,8 +2,14 @@ import type {
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
 } from "@t3tools/contracts";
-import { isSideChatThread, runtimeModeForToolAccess, type RuntimeMode } from "@t3tools/contracts";
+import {
+  isAssistantThreadId,
+  isSideChatThread,
+  runtimeModeForToolAccess,
+  type RuntimeMode,
+} from "@t3tools/contracts";
 import { AssistantDirectory } from "../assistants/AssistantDirectory.ts";
+import { APPROVAL_UNAVAILABLE, AskBeforeActingGate } from "../assistants/AskBeforeActingGate.ts";
 import type {
   ProjectionRecordField,
   ProjectionRecordFilter,
@@ -584,6 +590,7 @@ const ASSISTANT_REFUSALS = {
     "This is an assistant's conversation. Reset it, or archive or delete the assistant, instead.",
   old_generation:
     "Restore an earlier assistant conversation with the assistant's reset and restore.",
+  ask_unavailable: APPROVAL_UNAVAILABLE,
   not_your_report:
     "This assistant has a place in the team: it can only message assistants below it. Answer upward through your run result.",
 } as const;
@@ -605,6 +612,7 @@ const make = Effect.gen(function* () {
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
   const assistantDirectory = yield* Effect.serviceOption(AssistantDirectory);
+  const askGate = yield* Effect.serviceOption(AskBeforeActingGate);
 
   const assertProviderInstanceEnabled: ThreadManagementServiceShape["assertProviderInstanceEnabled"] =
     (input) =>
@@ -852,36 +860,61 @@ const make = Effect.gen(function* () {
     );
   };
 
-  /** A send between assistants of a team only goes down the chain; see `assistantMayMessage`. */
-  const guardAssistantSend = (
+  const reject = (command: OrchestrationV2ServerCommand, message: string) =>
+    new Orchestrator.OrchestratorCommandRejectedError({
+      commandId: command.commandId,
+      commandType: command.type,
+      cause: new Error(message),
+    });
+
+  /**
+   * A send between assistants of a team only goes down the chain; see `assistantMayMessage`.
+   * An assistant that must ask may not send into an agent conversation until the user approves
+   * that exact send. `release` gives that approval back when the send then fails.
+   */
+  const guardAssistantSend = Effect.fn("ThreadManagement.guardAssistantSend")(function* (
     command: OrchestrationV2ServerCommand,
-  ): Effect.Effect<OrchestrationV2ServerCommand, Orchestrator.OrchestratorCommandRejectedError> => {
+  ) {
     const sender = "senderThreadId" in command ? command.senderThreadId : undefined;
     if (Option.isNone(assistantDirectory) || sender === undefined || !("threadId" in command)) {
-      return Effect.succeed(command);
+      return Effect.void;
     }
-    return assistantDirectory.value.mayMessage(sender, command.threadId).pipe(
-      Effect.flatMap((allowed) =>
-        allowed
-          ? Effect.succeed(command)
-          : Effect.fail(
-              new Orchestrator.OrchestratorCommandRejectedError({
-                commandId: command.commandId,
-                commandType: command.type,
-                cause: new Error(ASSISTANT_REFUSALS.not_your_report),
-              }),
-            ),
-      ),
-    );
-  };
+    const directory = assistantDirectory.value;
+    if (!(yield* directory.mayMessage(sender, command.threadId))) {
+      return yield* reject(command, ASSISTANT_REFUSALS.not_your_report);
+    }
+    if (command.type !== "message.dispatch" || isAssistantThreadId(command.threadId)) {
+      return Effect.void;
+    }
+    const found = yield* directory.forThread(sender);
+    if (Option.isNone(found) || !found.value.assistant.askBeforeActing) return Effect.void;
+    // A replayed command already ran under its approval; the receipt makes it a no-op.
+    const receipt = yield* receipts
+      .getByCommandId(command.commandId)
+      .pipe(Effect.orElseSucceed(() => Option.none()));
+    if (Option.isSome(receipt)) return Effect.void;
+    if (Option.isNone(askGate)) return yield* reject(command, ASSISTANT_REFUSALS.ask_unavailable);
+    const approval = yield* askGate.value.check({
+      assistant: found.value.assistant,
+      senderThreadId: sender,
+      targetThreadId: command.threadId,
+      text: command.text,
+    });
+    return approval.allowed ? approval.release : yield* reject(command, approval.message);
+  });
 
   const dispatch: ThreadManagementServiceShape["dispatch"] = (command) =>
     guardAssistantSend(command).pipe(
-      Effect.flatMap(guardAssistantThread),
-      Effect.flatMap((guarded) =>
-        ensureCommandTranscripts(guarded).pipe(
-          Effect.andThen(assertDispatchTargetEnabled(guarded)),
-          Effect.andThen(orchestrator.dispatch(guarded)),
+      Effect.flatMap((release) =>
+        guardAssistantThread(command).pipe(
+          Effect.flatMap((guarded) =>
+            ensureCommandTranscripts(guarded).pipe(
+              Effect.andThen(assertDispatchTargetEnabled(guarded)),
+              Effect.andThen(orchestrator.dispatch(guarded)),
+            ),
+          ),
+          // The approval covers one send; a send that did not happen gives it back.
+          Effect.tapError(() => release),
         ),
       ),
     );

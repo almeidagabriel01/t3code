@@ -30,7 +30,7 @@ with `approvalRequestId` set, and withdraws it silently when the request resolve
 dismiss or expiry declines: a dismissed approval must never leave the turn blocked. Clients hide these
 decisions on their own thread, where the native approval prompt already shows.
 
-## Three enforcement points
+## Four enforcement points
 
 Tool access is the runtime mode plus, for read only, a read-only sandbox. Both are enforced
 server-side so no client or agent can skip them:
@@ -46,6 +46,14 @@ server-side so no client or agent can skip them:
    descendants (`assistantMayMessage`). Reports answer through the run their leader waits on and
    never send upward, so no cycle can form. Assistants with no relation at all stay free, which is
    what card #5 shipped.
+
+4. "Ask before acting": the same `dispatch` holds a `message.dispatch` from an assistant with the flag
+   into any non-assistant thread until the user approves that exact send. The approval is a decision
+   in the assistant's own conversation keyed by (assistant, target, text hash, attempt), and the first
+   send that sees it answered consumes it through `claimExecution`, approved or denied; a failed
+   send gives it back. `DecisionService` depends on `ThreadManagementService`, so the guard reads a
+   late-bound `AskBeforeActingGate` that `AskBeforeActing.installLayer` fills; with none installed a
+   flagged assistant cannot send at all.
 
 `AssistantService` dispatches through the Orchestrator directly, not `ThreadManagementService`, so its
 own archive, delete and unarchive pass the guard. Keep it that way.

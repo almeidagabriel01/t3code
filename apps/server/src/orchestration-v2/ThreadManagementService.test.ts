@@ -32,6 +32,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 
 import { AssistantDirectory } from "../assistants/AssistantDirectory.ts";
+import * as AskGate from "../assistants/AskBeforeActingGate.ts";
 
 import * as ServerSettings from "../serverSettings.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -791,6 +792,7 @@ it.effect("Force stop refuses once a newer run has started, before killing anyth
 const guardThreads = {
   current: assistantThreadIdFor("helper", 2),
   old: assistantThreadIdFor("helper", 1),
+  asker: assistantThreadIdFor("asker", 1),
   plain: ThreadId.make("thread:guard:plain"),
 };
 
@@ -826,7 +828,11 @@ const layerAssistantGuardTest = (dispatched: Array<unknown>) =>
             threadId === guardThreads.plain
               ? Option.none()
               : Option.some({
-                  assistant: { toolAccess: "workspace-write", archivedAt: null } as Assistant,
+                  assistant: {
+                    toolAccess: "workspace-write",
+                    archivedAt: null,
+                    askBeforeActing: threadId === guardThreads.asker,
+                  } as Assistant,
                   current: threadId === guardThreads.current,
                 }),
           ),
@@ -834,6 +840,7 @@ const layerAssistantGuardTest = (dispatched: Array<unknown>) =>
     ),
     Layer.provide(ServerSettings.layerTest()),
     Layer.provideMerge(layerReceiptsTest),
+    Layer.provideMerge(AskGate.gateLayer),
   );
 
 it.effect.each([
@@ -945,4 +952,114 @@ it.effect.each([
       expect(dispatched).toEqual([]);
     }
   }).pipe(Effect.provide(layerAssistantGuardTest(dispatched)));
+});
+
+const asked = (threadId: ThreadId) => ({
+  type: "message.dispatch" as const,
+  commandId: CommandId.make("command:guard:ask"),
+  threadId,
+  messageId: MessageId.make("message:guard:ask"),
+  text: "deploy it",
+  attachments: [],
+  dispatchMode: { type: "queue_after_active" as const },
+  senderThreadId: guardThreads.asker,
+  createdBy: "agent" as const,
+  creationSource: "mcp" as const,
+});
+
+it.effect.each([
+  [
+    "waiting for approval",
+    { allowed: false, message: "Waiting for the user" },
+    "Waiting for the user",
+  ],
+  ["declined", { allowed: false, message: AskGate.SEND_DECLINED }, "declined"],
+  ["approved", { allowed: true, release: Effect.void }, null],
+  ["no approval path installed", undefined, "asking is unavailable"],
+] as const)("ask before acting: a send to an agent thread is %s", ([, approval, refusal]) => {
+  const dispatched: Array<unknown> = [];
+  const seen: Array<unknown> = [];
+  return Effect.gen(function* () {
+    const gate = yield* AskGate.AskBeforeActingGate;
+    if (approval !== undefined) {
+      yield* gate.install((input) =>
+        Effect.sync(() => {
+          seen.push({ target: input.targetThreadId, text: input.text });
+          return approval;
+        }),
+      );
+    }
+    const threads = yield* ThreadManagementService.ThreadManagementService;
+    const result = yield* Effect.flip(threads.dispatch(asked(guardThreads.plain))).pipe(
+      Effect.asSome,
+      Effect.orElseSucceed(() => Option.none()),
+    );
+    if (refusal === null) {
+      expect(Option.isNone(result)).toBe(true);
+      expect(dispatched).toHaveLength(1);
+    } else {
+      expect(Option.getOrThrow(result)).toMatchObject({
+        cause: { message: expect.stringContaining(refusal) },
+      });
+      expect(dispatched).toEqual([]);
+    }
+    if (approval !== undefined) {
+      expect(seen).toEqual([{ target: guardThreads.plain, text: "deploy it" }]);
+    }
+  }).pipe(Effect.provide(layerAssistantGuardTest(dispatched)));
+});
+
+it.effect("ask before acting: assistant targets and other senders skip the gate", () => {
+  const dispatched: Array<unknown> = [];
+  return Effect.gen(function* () {
+    const gate = yield* AskGate.AskBeforeActingGate;
+    yield* gate.install(() => Effect.die("the gate must not be asked"));
+    const threads = yield* ThreadManagementService.ThreadManagementService;
+    yield* threads.dispatch(asked(guardThreads.current));
+    yield* threads.dispatch({ ...asked(guardThreads.plain), senderThreadId: guardThreads.current });
+    expect(dispatched).toHaveLength(2);
+  }).pipe(Effect.provide(layerAssistantGuardTest(dispatched)));
+});
+
+it.effect("ask before acting: an approval is given back when the send itself fails", () => {
+  let released = 0;
+  return Effect.gen(function* () {
+    const gate = yield* AskGate.AskBeforeActingGate;
+    yield* gate.install(() =>
+      Effect.succeed({ allowed: true, release: Effect.sync(() => void (released += 1)) }),
+    );
+    const threads = yield* ThreadManagementService.ThreadManagementService;
+    yield* Effect.flip(threads.dispatch(asked(guardThreads.plain)));
+    expect(released).toBe(1);
+  }).pipe(
+    Effect.provide(
+      ThreadManagementService.layer.pipe(
+        Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+        Layer.provide(
+          Layer.mock(Orchestrator.OrchestratorV2)({
+            getThreadRecords: () => Effect.fail(new Error("gone") as never),
+            dispatch: () => Effect.fail(new Error("send failed") as never),
+          }),
+        ),
+        Layer.provide(
+          Layer.succeed(AssistantDirectory, {
+            mayMessage: () => Effect.succeed(true),
+            teamOf: () => Effect.succeed({ leader: null, reports: [] }),
+            forThread: () =>
+              Effect.succeedSome({
+                assistant: {
+                  toolAccess: "full",
+                  archivedAt: null,
+                  askBeforeActing: true,
+                } as Assistant,
+                current: true,
+              }),
+          }),
+        ),
+        Layer.provide(ServerSettings.layerTest()),
+        Layer.provideMerge(layerReceiptsTest),
+        Layer.provideMerge(AskGate.gateLayer),
+      ),
+    ),
+  );
 });

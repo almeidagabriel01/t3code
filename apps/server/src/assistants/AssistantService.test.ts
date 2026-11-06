@@ -595,6 +595,26 @@ it.each([
   );
 });
 
+it.effect("ask before acting defaults off, is set on create and survives other updates", () => {
+  const { layer } = harness();
+  return Effect.gen(function* () {
+    const assistants = yield* Assistants.AssistantService;
+    const plain = yield* assistants.create(create({ name: "Plain" }));
+    assert.isFalse(plain.askBeforeActing);
+    const asker = yield* assistants.create(create({ name: "Asker", askBeforeActing: true }));
+    assert.isTrue(asker.askBeforeActing);
+    assert.isTrue(
+      (yield* assistants.update({ assistantId: asker.id, role: "QA" })).askBeforeActing,
+    );
+    assert.isFalse(
+      (yield* assistants.update({ assistantId: asker.id, askBeforeActing: false })).askBeforeActing,
+    );
+    assert.isTrue(
+      (yield* assistants.update({ assistantId: plain.id, askBeforeActing: true })).askBeforeActing,
+    );
+  }).pipe(Effect.provide(layer));
+});
+
 it.effect(
   "reports-to is validated, loops are refused, and a leader that leaves frees its reports",
   () => {

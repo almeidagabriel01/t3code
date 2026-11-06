@@ -36,3 +36,10 @@ it("names the role, the leader and the reports with their thread ids", () => {
   assert.ok(note.includes("Your direct reports: Eng (@eng, threadId none yet)."));
   assert.ok(!assistantNoteFor(assistant, "hi").includes("report"));
 });
+
+it("tells an assistant that must ask before acting to wait and not route around it", () => {
+  const note = assistantNoteFor({ ...assistant, askBeforeActing: true }, "hi");
+  assert.ok(note.includes("held until the user approves it"));
+  assert.ok(note.includes("tell the user it is waiting and stop"));
+  assert.ok(!assistantNoteFor(assistant, "hi").includes("Ask before acting"));
+});

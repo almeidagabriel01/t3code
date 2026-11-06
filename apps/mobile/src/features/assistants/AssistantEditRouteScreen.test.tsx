@@ -174,6 +174,7 @@ const assistant = (budget: unknown = null) =>
     threadId: "thread-1",
     instructions: "",
     toolAccess: "full",
+    askBeforeActing: false,
     role: "",
     reportsTo: null,
     autonomy: DEFAULT_ASSISTANT_AUTONOMY,
@@ -271,6 +272,19 @@ describe("assistant spending limit", () => {
     expect(field("Amount (USD)")).toBeNull();
     await act(async () => pick("Save"));
     expect(mocks.update.mock.calls[0]?.[0].budget).toBeNull();
+  });
+});
+
+describe("assistant ask before acting", () => {
+  it("shows its help text and saves the switch only once it changed", async () => {
+    render(assistant());
+    expect(container.textContent).toContain(
+      "Before this assistant sends anything into another conversation, it asks you here and waits for your approval.",
+    );
+    expect(field("Ask before acting")?.checked).toBe(false);
+    toggle("Ask before acting");
+    await act(async () => pick("Save"));
+    expect(mocks.update.mock.calls[0]?.[0].askBeforeActing).toBe(true);
   });
 });
 

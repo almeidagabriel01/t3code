@@ -22,7 +22,7 @@ const assistant = (id: string, extra: Partial<Assistant>) =>
 
 const layer = Layer.mock(AssistantService.AssistantService)({
   list: Effect.succeed([
-    assistant("ceo", { role: "CEO" }),
+    assistant("ceo", { role: "CEO", askBeforeActing: true }),
     assistant("eng", { role: "Engineer", reportsTo: "ceo" as never }),
   ]),
 });
@@ -33,6 +33,7 @@ it.effect("list and read give each assistant its role, leader and reports by han
     assert.deepInclude((listed.assistants as Array<object>)[0], {
       handle: "ceo",
       role: "CEO",
+      askBeforeActing: true,
       reportsTo: null,
       reports: ["eng"],
     });

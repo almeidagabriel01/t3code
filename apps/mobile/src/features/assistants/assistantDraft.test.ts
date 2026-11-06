@@ -34,6 +34,7 @@ const assistant = {
   role: "",
   reportsTo: null,
   budget: null,
+  askBeforeActing: false,
   autonomy: DEFAULT_ASSISTANT_AUTONOMY,
   archivedAt: null,
   createdAt: "2026-01-01T00:00:00.000Z",
@@ -83,6 +84,9 @@ describe("assistant draft", () => {
       modelSelection: model,
       toolAccess: "full",
     });
+    expect(
+      assistantUpdateInput(editorFor(assistant, { askBeforeActing: true }), "p1" as ProjectId),
+    ).toEqual({ assistantId: "a1", askBeforeActing: true });
   });
 
   it("sends the whole form when creating, with the derived handle", () => {
@@ -93,6 +97,13 @@ describe("assistant draft", () => {
       instructions: "",
       toolAccess: "full",
     });
+  });
+
+  it("sends ask before acting on create only when it is on", () => {
+    const create = (askBeforeActing: boolean) =>
+      assistantCreateInput(editorFor(null, { name: "S", askBeforeActing }), "p1" as ProjectId);
+    expect(create(true)).toMatchObject({ askBeforeActing: true });
+    expect(create(false)).not.toHaveProperty("askBeforeActing");
   });
 
   it("turns the spending limit draft into a budget, or null when off", () => {

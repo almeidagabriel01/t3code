@@ -151,6 +151,29 @@ function FieldLabel(props: {
   );
 }
 
+function AskBeforeActingField(props: {
+  readonly checked: boolean;
+  readonly onChange: (checked: boolean) => void;
+}) {
+  return (
+    <div className="flex items-start justify-between gap-3">
+      <div className="flex flex-col gap-0.5">
+        <Label htmlFor="assistant-ask-before-acting">Ask before acting</Label>
+        <p className="text-xs text-muted-foreground">
+          Before this assistant sends anything into another conversation, it asks you here and waits
+          for your approval.
+        </p>
+      </div>
+      <Switch
+        id="assistant-ask-before-acting"
+        checked={props.checked}
+        onCheckedChange={(checked) => props.onChange(Boolean(checked))}
+        aria-label="Ask before acting"
+      />
+    </div>
+  );
+}
+
 function BudgetFields(props: {
   readonly draft: BudgetDraft;
   readonly onChange: (patch: Partial<BudgetDraft>) => void;
@@ -266,6 +289,7 @@ function AssistantDialog(props: {
   const [toolAccess, setToolAccess] = useState<AssistantToolAccess>(
     assistant?.toolAccess ?? "full",
   );
+  const [askBeforeActing, setAskBeforeActing] = useState(assistant?.askBeforeActing ?? false);
   const [projectId, setProjectId] = useState<ProjectId | null>(assistant?.projectId ?? null);
   const [pickedModel, setPickedModel] = useState<ModelSelection | null>(null);
   const [role, setRole] = useState(assistant?.role ?? "");
@@ -373,6 +397,7 @@ function AssistantDialog(props: {
           ...(pickedModel ? { modelSelection: pickedModel } : {}),
           ...(instructions !== assistant.instructions ? { instructions } : {}),
           ...(toolAccess !== assistant.toolAccess ? { toolAccess } : {}),
+          ...(askBeforeActing !== assistant.askBeforeActing ? { askBeforeActing } : {}),
           ...(role.trim() !== assistant.role ? { role: role.trim() } : {}),
           ...(reportsTo !== assistant.reportsTo ? { reportsTo } : {}),
           budget: budget.budget,
@@ -385,6 +410,7 @@ function AssistantDialog(props: {
           ...(pickedModel ? { modelSelection: pickedModel } : {}),
           instructions,
           toolAccess,
+          ...(askBeforeActing ? { askBeforeActing } : {}),
           ...(role.trim() === "" ? {} : { role: role.trim() }),
           ...(reportsTo === null ? {} : { reportsTo }),
           ...(budget.budget ? { budget: budget.budget } : {}),
@@ -631,6 +657,7 @@ function AssistantDialog(props: {
                 ))}
               </RadioGroup>
             </fieldset>
+            <AskBeforeActingField checked={askBeforeActing} onChange={setAskBeforeActing} />
             <fieldset className="flex flex-col gap-3">
               <legend className="text-sm font-medium">Team</legend>
               <p className="text-xs text-muted-foreground">

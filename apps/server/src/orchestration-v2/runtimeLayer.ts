@@ -59,6 +59,8 @@ import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts
 import * as ComputerUse from "../computerUse/ComputerUse.ts";
 import * as DecisionService from "../decisions/DecisionService.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import * as AskBeforeActing from "../assistants/AskBeforeActing.ts";
+import * as AskBeforeActingGate from "../assistants/AskBeforeActingGate.ts";
 import * as AssistantDirectory from "../assistants/AssistantDirectory.ts";
 import * as AssistantRuntimePolicy from "../assistants/AssistantRuntimePolicy.ts";
 import * as AssistantService from "../assistants/AssistantService.ts";
@@ -266,8 +268,9 @@ const layerThreadManagementProvided = ThreadManagementService.layerWithLegacyImp
       layerLegacyV1ThreadImporterProvided,
       layerCommandReceiptStoreProvided,
       layerProviderSessionManagerProvided,
-      // The thread guard reads it as an optional service.
+      // The thread guard reads both as optional services.
       AssistantDirectory.layer,
+      AskBeforeActingGate.gateLayer,
     ),
   ),
 );
@@ -402,6 +405,16 @@ export const layerProduction = Layer.mergeAll(
   layerScratchThreadPromotionProvided,
   layerSecretRequestsProvided,
   layerDecisionsProvided,
+  // Fills the gate the thread guard reads; without it a flagged assistant cannot send at all.
+  AskBeforeActing.installLayer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        layerDecisionsProvided,
+        layerThreadManagementProvided,
+        AskBeforeActingGate.gateLayer,
+      ),
+    ),
+  ),
   ComputerUse.layer.pipe(Layer.provide(layerDecisionsProvided), Layer.provide(ProcessRunner.layer)),
   AssistantService.layer.pipe(
     Layer.provide(

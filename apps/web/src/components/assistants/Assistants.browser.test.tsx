@@ -80,6 +80,7 @@ const assistant = (id: string, name: string, overrides: Partial<Assistant> = {})
   role: "",
   reportsTo: null,
   budget: null,
+  askBeforeActing: false,
   autonomy: { mode: "reply-only", rules: null, projectIds: null, channels: null },
   archivedAt: null,
   createdAt: "2026-03-17T19:00:00.000Z",
@@ -448,6 +449,17 @@ it("saves the assistant's notification choices, inherited or custom", async () =
         },
       },
     ]),
+  );
+});
+
+it("saves Ask before acting only when it changed", async () => {
+  publishAssistants([assistant("jarvis", "Jarvis")]);
+  fakeAssistantEdits.updates = [];
+  await using _screen = await openEditDialog("Jarvis");
+  await userEvent.click(page.getByRole("switch", { name: "Ask before acting" }));
+  await userEvent.click(page.getByRole("button", { name: "Save" }));
+  await eventually(() =>
+    expect(fakeAssistantEdits.updates).toMatchObject([{ askBeforeActing: true }]),
   );
 });
 

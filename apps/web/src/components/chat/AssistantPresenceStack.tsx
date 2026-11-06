@@ -98,6 +98,7 @@ function AssistantPresenceRow(props: {
         <p className="text-xs text-muted-foreground">
           {working ? "Working" : "Idle"} · {props.count}{" "}
           {props.count === 1 ? "message" : "messages"} here
+          {assistant?.askBeforeActing ? " · Asks before acting" : ""}
         </p>
       </div>
       {assistant ? (
