@@ -98,7 +98,7 @@ it("offers a rule learned in this thread and forgets it on Undo", async () => {
   window.localStorage.clear();
   // router: false -- the banner stack renders no links.
   await using screen = await render(<Probe />, { router: false });
-  await expect.element(page.getByText("Learned a rule: never rebase")).toBeVisible();
+  await expect.element(page.getByText("never rebase")).toBeVisible();
   expect(screen.container.textContent).not.toContain("learned elsewhere");
 
   await page.getByRole("button", { name: "Undo" }).click();
@@ -107,5 +107,5 @@ it("offers a rule learned in this thread and forgets it on Undo", async () => {
     environmentId,
     input: expect.objectContaining({ memoryId: id(2) }),
   });
-  await expect.element(page.getByText("Learned a rule: never rebase")).not.toBeInTheDocument();
+  await expect.element(page.getByText("never rebase")).not.toBeInTheDocument();
 });

@@ -143,7 +143,8 @@ export function useLearnedRuleBanner(input: {
     id: `learned-rule:${rule.memoryId}`,
     variant: "info",
     icon: <BookmarkCheckIcon />,
-    title: `Learned a rule: ${memoryPreview(memoryRuleText(rule))}`,
+    title: "Learned a rule",
+    description: memoryPreview(memoryRuleText(rule)),
     dismissLabel: "Dismiss",
     onDismiss: acknowledge,
     actions: (
