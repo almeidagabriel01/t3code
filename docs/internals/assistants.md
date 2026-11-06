@@ -174,3 +174,26 @@ The Telegram transport long-polls the Bot API (`getUpdates`), so it needs no pub
 - Replies are plain text with no `parse_mode`, cut at 3900 characters per message to leave room for
   the speaker's name under Telegram's 4096 limit. `ChannelReplyAddress` is a union by `kind`; the
   bridge finds an open card by kind and chat, so ids of two channels never collide.
+
+## Sandbox container (in progress)
+
+[`AssistantSandbox`](../../apps/server/src/assistants/AssistantSandbox.ts) runs one Linux container
+with a T3 server inside, named from this environment's id so two Macs never share a name. One
+container serves every sandboxed assistant: it is lighter than one each, and an assistant's own
+folder inside it is what separates them. Not yet wired to assistants or any client: how an assistant
+moves there is an open decision.
+
+- **The image carries this build, not a release.** The fork publishes no Linux CLI archive and
+  `npm i t3` is the wrong version, so the service copies this server's `dist` into
+  `node:26-bookworm-slim` and runs `npm install` for the runtime-external packages at the versions
+  installed beside it. Native modules therefore resolve for Linux. Patches the repo applies to
+  `node-pty` and `@ff-labs/fff-node` are not applied in the image. The tag hashes the Dockerfile and
+  those versions, so a changed build never reuses a stale image.
+- **Loopback only.** The port is published on `127.0.0.1` with a Docker-chosen host port, read back
+  from `docker port`. Phones and other machines cannot reach it; they can only through this server.
+- **Seeded once.** The container's first start writes `linkedEnvironmentsEnabled` into its settings
+  file if none exists, because both ends of a peer link need the beta. Later edits are kept.
+- **Credentials never travel in arguments or logs.** A pairing credential is minted with
+  `docker exec … auth pairing create` and returned as `Redacted`.
+- **Not built: a macOS VM** for an assistant that needs visual apps. A container cannot run macOS
+  apps; this needs a separate VM runtime and its own environment type.
