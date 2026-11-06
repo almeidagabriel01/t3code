@@ -112,6 +112,12 @@ export const loadCaller = Effect.fn("mcp.loadCaller")(function* () {
   } satisfies Caller;
 });
 
+/** A side chat passing the user's words to its own main chat escalates nothing; that chat keeps its modes. */
+export const isSideChatToItsMainChat = (
+  caller: Pick<OrchestrationV2ThreadShell, "lineage"> | undefined,
+  targetThreadId: ThreadId,
+) => caller?.lineage.sideChat === true && caller.lineage.parentThreadId === targetThreadId;
+
 export const assertTargetWithinLimits = (
   limits: CallerLimits,
   target: { readonly runtimeMode: RuntimeMode; readonly interactionMode: ProviderInteractionMode },

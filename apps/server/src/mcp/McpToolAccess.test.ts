@@ -21,6 +21,7 @@ import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.t
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
+import { DispatchModeLimit } from "../orchestration-v2/DispatchModeLimit.ts";
 import { liveThreadShell } from "./McpToolAccess.testkit.ts";
 
 const supervisedThreadId = ThreadId.make("thread:supervised");
@@ -31,6 +32,8 @@ const backgroundThreadId = ThreadId.make("thread:background");
 const oldProviderThreadId = ThreadId.make("thread:old-provider-background");
 const archivedThreadId = ThreadId.make("thread:archived-background");
 const unknownOwnerThreadId = ThreadId.make("thread:unknown-background-owner");
+const sideChatThreadId = ThreadId.make("thread:side-chat");
+const otherFullAccessThreadId = ThreadId.make("thread:other-full-access");
 
 const backgroundShell = (threadId: ThreadId, providerInstanceId: ProviderInstanceId) => ({
   ...liveThreadShell(threadId, { activeRunId: null }),
@@ -46,6 +49,19 @@ const shells = new Map([
     liveThreadShell(planThreadId, { runtimeMode: "approval-required", interactionMode: "plan" }),
   ],
   [fullAccessThreadId, liveThreadShell(fullAccessThreadId)],
+  [otherFullAccessThreadId, liveThreadShell(otherFullAccessThreadId)],
+  [
+    sideChatThreadId,
+    {
+      ...liveThreadShell(sideChatThreadId, { runtimeMode: "approval-required" }),
+      lineage: {
+        rootThreadId: fullAccessThreadId,
+        parentThreadId: fullAccessThreadId,
+        relationshipToParent: null,
+        sideChat: true,
+      },
+    },
+  ],
   [endedThreadId, liveThreadShell(endedThreadId, { activeRunId: null })],
   [backgroundThreadId, backgroundShell(backgroundThreadId, ProviderInstanceId.make("codex"))],
   [oldProviderThreadId, backgroundShell(oldProviderThreadId, ProviderInstanceId.make("claude"))],
@@ -121,6 +137,10 @@ const ProbeToolkit = Toolkit.make(
     ...probe,
     parameters: Schema.Struct({ threadId: Schema.optional(ThreadId) }),
   }),
+  Tool.make("sends_to_main_chat", {
+    ...probe,
+    parameters: Schema.Struct({ threadId: Schema.optional(ThreadId) }),
+  }),
   Tool.make("starts_threads", {
     ...probe,
     parameters: Schema.Struct({
@@ -137,6 +157,15 @@ const probeHandlers: McpToolAccess.Handlers<typeof ProbeToolkit.tools> = {
   acts_as_caller: McpToolAccess.actsAsCaller(() => ran),
   writes: McpToolAccess.writes(() => ran),
   writes_with_capability: McpToolAccess.writesWithCapability(() => ran),
+  sends_to_main_chat: McpToolAccess.writesThreads(
+    (input) => [input.threadId],
+    () =>
+      Effect.gen(function* () {
+        const limit = yield* DispatchModeLimit;
+        return { ran: limit === undefined ? "ran unlimited" : "ran limited" };
+      }),
+    { sideChatToMainChat: "allowed" },
+  ),
   writes_threads: McpToolAccess.writesThreads(
     (input) => [input.threadId],
     () => ran,
@@ -221,6 +250,7 @@ const supervised = threadCaller(supervisedThreadId);
 const plan = threadCaller(planThreadId);
 const fullAccess = threadCaller(fullAccessThreadId);
 const ended = threadCaller(endedThreadId);
+const sideChat = threadCaller(sideChatThreadId);
 const background = threadCaller(backgroundThreadId);
 const oldProviderBackground = threadCaller(oldProviderThreadId);
 const archivedBackground = threadCaller(archivedThreadId);
@@ -299,6 +329,15 @@ it.effect.each([
     "runtime_mode_escalation_denied",
   ],
   ["writes_threads", supervised, { threadId: "thread:missing" }, "ran"],
+  ["writes_threads", sideChat, { threadId: fullAccessThreadId }, "runtime_mode_escalation_denied"],
+  ["sends_to_main_chat", sideChat, { threadId: fullAccessThreadId }, "ran unlimited"],
+  [
+    "sends_to_main_chat",
+    sideChat,
+    { threadId: otherFullAccessThreadId },
+    "runtime_mode_escalation_denied",
+  ],
+  ["sends_to_main_chat", supervised, { threadId: planThreadId }, "ran limited"],
 
   ["starts_threads", supervised, {}, "approval-required/default"],
   ["starts_threads", supervised, { runtimeMode: "full-access" }, "runtime_mode_escalation_denied"],

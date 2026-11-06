@@ -123,7 +123,12 @@ import {
   runtimeModeRank,
   taskPrompt,
 } from "./delegatedTaskModes.ts";
-import { captureCallerMemoryCeiling, isLiveCallerShell, threadNotFound } from "./threadAccess.ts";
+import {
+  captureCallerMemoryCeiling,
+  isLiveCallerShell,
+  isSideChatToItsMainChat,
+  threadNotFound,
+} from "./threadAccess.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
@@ -3112,11 +3117,7 @@ const make = Effect.gen(function* () {
     sendToThread: Effect.fn("OrchestratorMcpService.sendToThread")(function* (scope, input) {
       const { parent, limits, target } = yield* loadScopedThread(scope, input.threadId);
       yield* assertLiveCallerForOtherThread(scope, parent, target);
-      // A side chat passing the user's own words to its main chat escalates nothing: that chat keeps its modes.
-      const toMainChat =
-        parent?.thread.lineage.sideChat === true &&
-        parent.thread.lineage.parentThreadId === target.thread.id;
-      if (!toMainChat) {
+      if (!isSideChatToItsMainChat(parent?.thread, target.thread.id)) {
         yield* resolveRuntimeMode(limits.runtimeMode, target.thread.runtimeMode);
         yield* resolveInteractionMode(limits.interactionMode, target.thread.interactionMode);
       }

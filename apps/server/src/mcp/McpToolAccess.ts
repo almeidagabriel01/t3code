@@ -28,6 +28,7 @@ import {
   assertFullAccess,
   assertLiveCaller,
   assertTargetWithinLimits,
+  isSideChatToItsMainChat,
   type Caller,
   loadCaller,
   readCaller,
@@ -176,25 +177,36 @@ export const writesWithCapability = <P, A, E, R>(handle: (params: P) => Effect.E
 export const writesThreads = <P, A, E, R>(
   threads: (params: P) => ReadonlyArray<ThreadId | undefined>,
   handle: (params: P) => Effect.Effect<A, E, R>,
+  options?: { readonly sideChatToMainChat?: "allowed" },
 ) =>
   declare(
     (params: P) =>
       Effect.gen(function* () {
         const caller = yield* writingCaller;
-        for (const threadId of threads(params)) {
-          if (threadId === undefined || threadId === caller.scope.thread?.threadId) continue;
+        const others = threads(params).filter(
+          (threadId): threadId is ThreadId =>
+            threadId !== undefined && threadId !== caller.scope.thread?.threadId,
+        );
+        const toMainChatOnly =
+          options?.sideChatToMainChat === "allowed" &&
+          others.length > 0 &&
+          others.every((threadId) => isSideChatToItsMainChat(caller.caller, threadId));
+        for (const threadId of others) {
           const target = yield* caller.threads
             .getThreadShell(threadId)
             .pipe(Effect.mapError(unavailable));
           if (target !== null && target.deletedAt === null) {
-            yield* assertTargetWithinLimits(caller.limits, target);
+            if (!toMainChatOnly) yield* assertTargetWithinLimits(caller.limits, target);
             yield* assertSameLink(caller, target);
           }
         }
         // Modes can rise after this check; the orchestrator rechecks under lock and records refusal before handlers wrap errors.
         const refused = yield* Ref.make<DispatchModeRefusal | undefined>(undefined);
         return yield* handle(params).pipe(
-          Effect.provideService(DispatchModeLimit, { ...caller.limits, refused }),
+          Effect.provideService(
+            DispatchModeLimit,
+            toMainChatOnly ? undefined : { ...caller.limits, refused },
+          ),
           Effect.catch((error) =>
             Effect.flatMap(Ref.get(refused), (refusal) =>
               Effect.fail<E | OrchestratorMcpFailure>(
