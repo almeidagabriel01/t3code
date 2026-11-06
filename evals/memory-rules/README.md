@@ -21,3 +21,14 @@ Add an entry to `cases.ts` with an `id`, a `source`, the `messages` (`user` ones
 ## Cost
 
 One Haiku call per sample, a few cents for a full run. The generation interface does not report cost, so the summary does not either.
+
+## Obedience
+
+Checks the other half: that an agent obeys a standing rule and still treats ordinary memory as data. It builds a snapshot with `packMemoryContext`, renders it with `memoryContextText`, puts the system notice in `--append-system-prompt` and the memory text after the question, and runs `claude -p` with no tools.
+
+```sh
+pnpm memory-rules:obedience --out runs/obey-new --samples 3
+pnpm memory-rules:obedience --out runs/obey-old --samples 3 --text old
+```
+
+`--text old` loads `memoryContext.ts` from `80fb9ca86e^` through `git show`, so you can compare against the text before rules became instructions. Cases are in `obedienceCases.ts`: `rule-obeyed`, `rule-acknowledged` (asks whether the rule binds), and the control `memory-not-obeyed`. Only `rule-acknowledged` fails on the old text.

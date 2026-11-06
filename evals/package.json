@@ -8,6 +8,7 @@
     "thread-titles": "node --env-file-if-exists=../.env thread-titles/run.ts",
     "test-signal": "node --env-file-if-exists=../.env test-signal/run.ts",
     "memory-rules": "node --env-file-if-exists=../.env memory-rules/run.ts",
+    "memory-rules:obedience": "node --env-file-if-exists=../.env memory-rules/obedience.ts",
     "typecheck": "tsc --noEmit",
     "test": "vp test run --config ../vite.config.ts --dir ."
   },

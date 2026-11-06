@@ -37,3 +37,13 @@ export function grade(expect: Expectation, rules: ReadonlyArray<Rule>) {
 export function casePasses(samples: ReadonlyArray<{ readonly pass: boolean }>) {
   return samples.length > 0 && samples.filter((sample) => !sample.pass).length * 2 < samples.length;
 }
+
+export type Obedience = { readonly endsWith: string } | { readonly absent: string };
+
+export function gradeObedience(expect: Obedience, answer: string) {
+  const pass =
+    "endsWith" in expect
+      ? answer.trim().endsWith(expect.endsWith)
+      : !answer.includes(expect.absent);
+  return { pass, reason: pass ? "ok" : `answer: ${answer.trim().slice(-200)}` };
+}
