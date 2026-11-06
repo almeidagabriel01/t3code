@@ -920,6 +920,8 @@ const layerMakeRoutes = Layer.mergeAll(
     Layer.provide(CommandReceiptStore.layer),
     Layer.provide(ProviderAdapterRegistry.layerFromProviderInstanceRegistry),
     Layer.provide(McpOAuth.layerMcpClientAuthenticator),
+    // Tools read it with serviceOption to hold a sandboxed assistant's launches; without it they never refuse.
+    Layer.provide(AssistantDirectory.layer),
   ),
   // Follows delegated tasks running in linked environments, including after a restart.
   Layer.effectDiscard(
