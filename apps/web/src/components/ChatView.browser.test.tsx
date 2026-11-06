@@ -4,7 +4,7 @@ import { ThreadId } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import type * as Context from "effect/Context";
 import { expect, it, vi } from "vite-plus/test";
-import { page } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import { AppRoot } from "~/AppRoot";
 // The route loads ChatView lazily, and its first transform (React Compiler over ~4k lines)
@@ -45,7 +45,7 @@ vi.mock(import("~/rpc/requestLatencyState"), async (original) => ({
   trackRpcRequestSent: () => {},
 }));
 
-it("Toggle side chat starts a side chat and shows its pane, and toggles it closed", async () => {
+it("a /side draft sends to a side chat; Toggle side chat opens its pane and closes it", async () => {
   await page.viewport(1400, 900);
   const parent = threadWithHistory("thread-parent", 1);
   using _environment = installFakeEnvironment([parent], { sideChats: true });
@@ -60,6 +60,9 @@ it("Toggle side chat starts a side chat and shows its pane, and toggles it close
   await using _app = await render(<AppRoot router={router} />, { router: false });
   await expect.element(page.getByText("thread-parent: question 0")).toBeVisible();
   await expect.element(page.getByRole("button", { name: "Toggle side chat" })).toBeVisible();
+  await userEvent.type(page.getByTestId("composer-editor"), "/side why ");
+  await expect.element(page.getByRole("button", { name: "Send to side chat" })).toBeVisible();
+  await userEvent.clear(page.getByTestId("composer-editor"));
   await page.getByRole("button", { name: "Toggle side chat" }).click();
   await expect.element(page.getByRole("button", { name: "Close side chat" })).toBeVisible();
   await expect.element(page.getByRole("button", { name: "Turn into thread" })).toBeVisible();

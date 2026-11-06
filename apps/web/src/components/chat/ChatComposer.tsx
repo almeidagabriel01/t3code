@@ -78,6 +78,7 @@ import {
   formatAssistantCitationForComposer,
   isPathSuggestionCurrent,
   extendReplacementRangeForTrailingSpace,
+  parseSideChatCommand,
   replaceTextRange,
 } from "../../composer-logic";
 import { DEFAULT_COMPOSER_PLACEHOLDER } from "../../composerPlaceholder";
@@ -691,6 +692,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   });
   const questionPreparations = useQuestionAttachmentPreparation((state) => state.counts);
   const prompt = composerDraft.prompt;
+  const sendsToSideChat =
+    props.sideChatAvailable === true &&
+    !props.sideChatDisabledReason &&
+    !isEditingQueuedMessage &&
+    parseSideChatCommand(prompt) !== null;
   const composerImages = attachmentDraft.images;
   const composerFiles = attachmentDraft.files;
   const inlineFileIdSet = (() => {
@@ -3566,6 +3572,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     canResume={showResumeAction}
                     preserveComposerFocusOnPointerDown={isMobileViewport}
                     isEditingQueuedMessage={isEditingQueuedMessage}
+                    sendsToSideChat={sendsToSideChat}
                     onSubmitMessage={handleSubmitMessageStable}
                     onResume={onResume}
                     onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
