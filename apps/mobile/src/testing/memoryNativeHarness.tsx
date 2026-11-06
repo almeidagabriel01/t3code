@@ -282,6 +282,15 @@ vi.mock("../components/ui/Button", () => ({
     </button>
   ),
 }));
+vi.mock("../components/ui/IconButton", () => ({
+  IconButton: (props: { accessibilityLabel: string; disabled?: boolean; onPress?: () => void }) => (
+    <button
+      aria-label={props.accessibilityLabel}
+      disabled={props.disabled}
+      onClick={props.onPress}
+    />
+  ),
+}));
 vi.mock("../features/settings/components/SettingsSwitchRow", () => ({
   SettingsSwitchRow: (props: {
     label: string;
@@ -519,8 +528,9 @@ export function createNativeMemoryHarness() {
         },
       },
     },
+    providers: [],
     settings: { enableAgentMemoryAccess: true },
-  } as ServerConfig;
+  } as unknown as ServerConfig;
   const responses = new Map<string, (input: unknown) => unknown>([
     [
       WS_METHODS.memoryHubSettingsGet,

@@ -65,6 +65,7 @@ import {
 } from "react-native";
 import * as Crypto from "expo-crypto";
 import { AppText as Text } from "../../components/ui/AppText";
+import { IconButton } from "../../components/ui/IconButton";
 import { Menu } from "../../components/ui/Menu";
 import { ScreenScrollView } from "../../components/ui/ScreenScrollView";
 import { memoryEnvironment as memory } from "../../state/memory";
@@ -83,6 +84,7 @@ import { MemoryProjectSettings } from "./MemoryProjectSettings";
 import { MemoryProjectPicker } from "./MemoryProjectPicker";
 import { MemoryAdministration } from "./MemorySharingSettings";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
+import { buildModelOptions } from "../../lib/modelOptions";
 import { settled } from "../../lib/settled";
 import {
   memoryExpectedHeads,
@@ -989,21 +991,28 @@ function ScopedMemoryBrowser({
               <Copy>{rulesLoaded ? "No rules yet." : "Loading rules"}</Copy>
             ) : (
               rules.map((rule) => (
-                <View key={rule.memoryId} className="border-b border-border-subtle">
-                  <Copy>{memoryRuleText(rule)}</Copy>
-                  <Text textRole="footnote" className="px-3 text-foreground-muted">
-                    {memoryRuleScopeLabel(rule.scope)}
-                  </Text>
-                  <Action
+                <View
+                  key={rule.memoryId}
+                  className="flex-row items-center gap-1 border-b border-border-subtle py-2 pl-4 pr-2"
+                >
+                  <View className="min-w-0 flex-1 gap-1">
+                    <Text selectable textRole="body" className="text-foreground">
+                      {memoryRuleText(rule)}
+                    </Text>
+                    <Text textRole="footnote" className="text-foreground-muted">
+                      {memoryRuleScopeLabel(rule.scope)}
+                    </Text>
+                  </View>
+                  <IconButton
                     icon="pencil"
-                    label={`Edit rule: ${memoryPreview(memoryRuleText(rule))}`}
+                    accessibilityLabel={`Edit rule: ${memoryPreview(memoryRuleText(rule))}`}
                     disabled={!canWrite || !memoryEnabled}
                     onPress={() => setRuleEditor({ scope: rule.scope, rule })}
                   />
-                  <Action
+                  <IconButton
                     icon="trash"
-                    tone="danger"
-                    label={`Forget rule: ${memoryPreview(memoryRuleText(rule))}`}
+                    tintColorClassName="accent-danger-foreground"
+                    accessibilityLabel={`Forget rule: ${memoryPreview(memoryRuleText(rule))}`}
                     disabled={!canForget}
                     onPress={() => setForgettingRule(rule)}
                   />
@@ -1923,6 +1932,14 @@ function MemoryGeneration({ environmentId }: { environmentId: EnvironmentId }) {
   const resolvedModel = config
     ? resolveMemoryModelSelection(config.settings, config.providers)
     : null;
+  const modelName =
+    (resolvedModel &&
+      buildModelOptions(config, resolvedModel, undefined, null).find(
+        (option) =>
+          option.selection.instanceId === resolvedModel.instanceId &&
+          option.selection.model === resolvedModel.model,
+      )?.label) ??
+    resolvedModel?.model;
   return (
     <SettingsSection title="Memory">
       <Copy>
@@ -1956,9 +1973,7 @@ function MemoryGeneration({ environmentId }: { environmentId: EnvironmentId }) {
       />
       <SettingsSwitchRow
         label="Use a separate memory model"
-        subtitle={
-          separate ? undefined : `Follows the text generation model · ${resolvedModel?.model ?? ""}`
-        }
+        subtitle={separate ? undefined : `Follows the text generation model · ${modelName ?? ""}`}
         value={separate}
         disabled={!allowed || !config || busy || !resolvedModel}
         onValueChange={(value) => {
@@ -1987,7 +2002,7 @@ function MemoryGeneration({ environmentId }: { environmentId: EnvironmentId }) {
         <SettingsRow
           icon="sparkles"
           label="Memory model"
-          value={resolvedModel?.model}
+          value={modelName}
           disabled={!allowed || busy}
           onPress={() => navigation.navigate("SettingsMemoryModel", { environmentId })}
         />

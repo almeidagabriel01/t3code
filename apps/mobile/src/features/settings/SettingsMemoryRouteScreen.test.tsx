@@ -394,6 +394,18 @@ describe("native Memory with shared factory", () => {
     expect(view.container.textContent).not.toContain("Rule: never rebase");
     expect(view.container.textContent).toContain("All projects");
     expect(view.container.textContent).not.toContain("Open memory: never rebase");
+    // The rule text is the primary label once; Edit and Forget are icon buttons named by it.
+    expect(view.container.textContent?.split("never rebase")).toHaveLength(2);
+    const edit = view.container.querySelector('[aria-label="Edit rule: never rebase"]');
+    const forget = view.container.querySelector('[aria-label="Forget rule: never rebase"]');
+    expect(edit?.textContent).toBe("");
+    expect(forget?.textContent).toBe("");
+    await view.click("Edit rule: never rebase");
+    expect(view.container.querySelector('input[aria-label="Rule text"]')).not.toBeNull();
+    await view.click("Close editor");
+    await view.click("Forget rule: never rebase");
+    expect(view.container.textContent).toContain("Forget this rule?");
+    await view.click("Cancel");
     h.responses.set(WS_METHODS.memoryUpsert, (input) => ({
       memoryId: (input as MemoryUpsertInput).memoryId,
       operationId: (input as MemoryUpsertInput).operationId,
@@ -789,6 +801,32 @@ describe("native sharing workflow", () => {
     });
     await h.waitForCall(WS_METHODS.memorySyncStatus, first + 2);
     expect(reads()).toBe(first + 2);
+  });
+  it("shows the memory model by its display name", async () => {
+    await start();
+    const config = h.registry.get(h.configs(nativeEnv))!;
+    await act(async () => {
+      h.registry.set(h.configs(nativeEnv), {
+        ...config,
+        providers: [
+          {
+            instanceId: "codex",
+            driver: "codex",
+            enabled: true,
+            installed: true,
+            auth: { status: "authenticated" },
+            models: [{ slug: "claude-haiku-5-5", name: "Claude Haiku 5.5", isCustom: false }],
+          },
+        ] as never,
+        settings: {
+          ...config.settings,
+          providerInstances: {},
+          memoryModelSelection: { instanceId: "codex", model: "claude-haiku-5-5" } as never,
+        },
+      });
+    });
+    expect(view.container.textContent).toContain("Memory model: Claude Haiku 5.5");
+    expect(view.container.textContent).not.toContain("claude-haiku-5-5");
   });
   it("ignores a late settings and sync read after a newer active refresh", async () => {
     await start();
