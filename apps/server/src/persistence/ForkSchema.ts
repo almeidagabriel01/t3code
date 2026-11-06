@@ -215,6 +215,18 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
     )
   `;
   yield* sql`CREATE UNIQUE INDEX IF NOT EXISTS assistants_default_idx ON assistants(is_default) WHERE is_default = 1`;
+  // Members are a JSON array of assistant ids. A leader is one of them; its title is free text.
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS assistant_teams (
+      team_id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      member_ids_json TEXT NOT NULL,
+      leader_id TEXT,
+      leader_title TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `;
   // Jarvis is created on first use only; this marker keeps a deleted one from coming back.
   yield* sql`
     CREATE TABLE IF NOT EXISTS assistant_seeds (

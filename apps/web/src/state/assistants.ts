@@ -5,6 +5,7 @@ import {
   createAssistantsEnvironmentAtoms,
   selectActiveAssistants,
   selectArchivedAssistants,
+  selectTeams,
   type AssistantsState,
 } from "@t3tools/client-runtime/state/assistants";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
@@ -14,6 +15,10 @@ import {
   type AssistantsCreateInput,
   type AssistantsResetInput,
   type AssistantsUpdateInput,
+  type AssistantTeam,
+  type AssistantTeamId,
+  type AssistantTeamsCreateInput,
+  type AssistantTeamsUpdateInput,
   type EnvironmentId,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -70,20 +75,27 @@ export interface AssistantEntry {
   readonly assistant: Assistant;
 }
 
+export interface AssistantTeamEntry {
+  readonly environmentId: EnvironmentId;
+  readonly team: AssistantTeam;
+}
+
 const assistantEntriesAtom = Atom.family((key: string) =>
   Atom.make((get) => {
     const active: AssistantEntry[] = [];
     const archived: AssistantEntry[] = [];
+    const teams: AssistantTeamEntry[] = [];
     const environmentIds: EnvironmentId[] = [];
     for (const [environmentId, state] of get(assistantStatesAtom(key))) {
       environmentIds.push(environmentId);
+      for (const team of selectTeams(state)) teams.push({ environmentId, team });
       for (const assistant of selectActiveAssistants(state))
         active.push({ environmentId, assistant });
       for (const assistant of selectArchivedAssistants(state)) {
         archived.push({ environmentId, assistant });
       }
     }
-    return { active, archived, environmentIds };
+    return { active, archived, teams, environmentIds };
   }).pipe(Atom.withLabel(`web-assistant-entries:${key}`)),
 );
 
@@ -152,4 +164,36 @@ export function useAssistantSpend(
       ? null
       : assistantsEnvironment.spend({ environmentId, input: { assistantId } }),
   ).data;
+}
+
+/** Each change settles into a reply; the dialog shows a refusal where it happened. */
+export function useAssistantTeamActions(environmentId: EnvironmentId) {
+  const canAct = useAtomValue(assistantsEnvironment.createTeam.permissionAtom(environmentId));
+  const create = useAtomCommand(assistantsEnvironment.createTeam, { reportFailure: false });
+  const update = useAtomCommand(assistantsEnvironment.updateTeam, { reportFailure: false });
+  const remove = useAtomCommand(assistantsEnvironment.deleteTeam, { reportFailure: false });
+  const reply = <A>(
+    result:
+      | { readonly _tag: "Success"; readonly value: A }
+      | { readonly _tag: "Failure"; readonly cause: Cause.Cause<unknown> },
+  ): AssistantReply<A> =>
+    result._tag === "Success"
+      ? { ok: true, value: result.value }
+      : { ok: false, message: assistantErrorMessage(squashAtomCommandFailure(result)) };
+  return {
+    canAct,
+    create: async (input: AssistantTeamsCreateInput) =>
+      reply(await create({ environmentId, input })),
+    update: async (input: AssistantTeamsUpdateInput) =>
+      reply(await update({ environmentId, input })),
+    remove: async (teamId: AssistantTeamId) =>
+      reply(await remove({ environmentId, input: { teamId } })),
+  };
+}
+
+/** The messages members sent each other; refreshed when the team or its members change. */
+export function useAssistantTeamActivity(environmentId: EnvironmentId, team: AssistantTeam) {
+  return useEnvironmentQuery(
+    assistantsEnvironment.teamActivity({ environmentId, input: { teamId: team.id } }),
+  );
 }

@@ -40,6 +40,15 @@ const layer = Layer.mock(AssistantService.AssistantService)({
     }),
     assistant("eng", { role: "Engineer", reportsTo: "ceo" as never }),
   ]),
+  teams: Effect.succeed([
+    {
+      id: "t1",
+      name: "Core",
+      memberIds: ["ceo", "eng"],
+      leaderId: "ceo",
+      leaderTitle: "CEO",
+    },
+  ] as never),
 });
 
 it.effect("list and read give each assistant its role, leader and reports by handle", () =>
@@ -53,6 +62,7 @@ it.effect("list and read give each assistant its role, leader and reports by han
       connectors: [{ name: "docs", transport: "http", enabled: true }],
       reportsTo: null,
       reports: ["eng"],
+      teams: [{ name: "Core", members: ["ceo", "eng"], leader: "ceo", leaderTitle: "CEO" }],
     });
     const read = yield* run({ action: "read", handle: "@ENG" });
     assert.notInclude(JSON.stringify(listed), "hasValue");

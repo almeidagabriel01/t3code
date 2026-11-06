@@ -46,3 +46,34 @@ export function hasStandupTask(
     )
   );
 }
+
+type TeamLike = {
+  readonly memberIds: ReadonlyArray<string>;
+  readonly leaderId: string | null;
+  readonly leaderTitle: string | null;
+};
+
+/** The badge next to the leader's name: its title, or "Leader" when the title was left empty. */
+export function teamLeaderBadge(team: TeamLike): string {
+  return team.leaderTitle !== null && team.leaderTitle !== "" ? team.leaderTitle : "Leader";
+}
+
+/** "3 members · Ana (CEO)", or just the count when the team has no leader. */
+export function teamSummary(
+  team: TeamLike,
+  assistants: ReadonlyArray<Pick<Assistant, "id" | "name">>,
+): string {
+  const count = `${team.memberIds.length} members`;
+  const leader = assistants.find((entry) => entry.id === team.leaderId);
+  return leader === undefined ? count : `${count} · ${leader.name} (${teamLeaderBadge(team)})`;
+}
+
+/** Who can join a team: live assistants, plus members that were archived after joining. */
+export function teamMemberChoices<A extends Pick<Assistant, "id" | "archivedAt">>(
+  assistants: ReadonlyArray<A>,
+  team: Pick<TeamLike, "memberIds"> | null,
+): ReadonlyArray<A> {
+  return assistants.filter(
+    (entry) => entry.archivedAt === null || (team?.memberIds.includes(entry.id) ?? false),
+  );
+}

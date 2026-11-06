@@ -593,6 +593,8 @@ const ASSISTANT_REFUSALS = {
   ask_unavailable: APPROVAL_UNAVAILABLE,
   not_your_report:
     "This assistant has a place in the team: it can only message assistants below it. Answer upward through your run result.",
+  team_limit:
+    "You have messaged your teammates a lot in the last hour. Stop messaging them: report to the user what you have and what is still open.",
 } as const;
 
 const RUNTIME_MODE_RANK: Record<RuntimeMode, number> = {
@@ -868,7 +870,8 @@ const make = Effect.gen(function* () {
     });
 
   /**
-   * A send between assistants of a team only goes down the chain; see `assistantMayMessage`.
+   * A send between assistants follows the org chart (`assistantMayMessage`) or a shared team,
+   * where it is capped per hour (`teamSendLimited`).
    * An assistant that must ask may not send into an agent conversation until the user approves
    * that exact send. `release` gives that approval back when the send then fails.
    */
@@ -882,6 +885,16 @@ const make = Effect.gen(function* () {
     const directory = assistantDirectory.value;
     if (!(yield* directory.mayMessage(sender, command.threadId))) {
       return yield* reject(command, ASSISTANT_REFUSALS.not_your_report);
+    }
+    if (
+      command.type === "message.dispatch" &&
+      (yield* directory.teamSendLimited(sender, command.threadId))
+    ) {
+      // A replay already ran and its receipt makes it a no-op, so only a new send is capped.
+      const replay = yield* receipts
+        .getByCommandId(command.commandId)
+        .pipe(Effect.orElseSucceed(() => Option.none()));
+      if (Option.isNone(replay)) return yield* reject(command, ASSISTANT_REFUSALS.team_limit);
     }
     if (command.type !== "message.dispatch" || isAssistantThreadId(command.threadId)) {
       return Effect.void;

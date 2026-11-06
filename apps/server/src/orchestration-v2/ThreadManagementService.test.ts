@@ -793,6 +793,7 @@ const guardThreads = {
   current: assistantThreadIdFor("helper", 2),
   old: assistantThreadIdFor("helper", 1),
   asker: assistantThreadIdFor("asker", 1),
+  chatty: assistantThreadIdFor("chatty", 1),
   plain: ThreadId.make("thread:guard:plain"),
 };
 
@@ -823,6 +824,8 @@ const layerAssistantGuardTest = (dispatched: Array<unknown>) =>
         mayMessage: (sender, target) =>
           Effect.succeed(!(sender === guardThreads.old && target === guardThreads.current)),
         teamOf: () => Effect.succeed({ leader: null, reports: [] }),
+        teamsOf: () => Effect.succeed([]),
+        teamSendLimited: (sender) => Effect.succeed(sender === guardThreads.chatty),
         forThread: (threadId) =>
           Effect.succeed(
             threadId === guardThreads.plain
@@ -921,6 +924,7 @@ it.effect.each([
   ["a report messaging its leader", guardThreads.old, guardThreads.current, "Answer upward"],
   ["a leader messaging its report", guardThreads.current, guardThreads.old, null],
   ["a plain thread messaging an assistant", undefined, guardThreads.current, null],
+  ["a teammate past its hourly cap", guardThreads.chatty, guardThreads.current, "last hour"],
 ] as const)("assistant guard: %s", ([, sender, target, refusal]) => {
   const dispatched: Array<unknown> = [];
   return Effect.gen(function* () {
@@ -1067,6 +1071,8 @@ it.effect("ask before acting: an approval is given back when the send itself fai
           Layer.succeed(AssistantDirectory, {
             mayMessage: () => Effect.succeed(true),
             teamOf: () => Effect.succeed({ leader: null, reports: [] }),
+            teamsOf: () => Effect.succeed([]),
+            teamSendLimited: () => Effect.succeed(false),
             forThread: () =>
               Effect.succeedSome({
                 assistant: {

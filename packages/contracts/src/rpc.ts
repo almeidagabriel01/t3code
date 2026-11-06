@@ -443,6 +443,13 @@ import {
   Assistant,
   AssistantError,
   AssistantsCreateInput,
+  AssistantTeam,
+  AssistantTeamActivity,
+  AssistantTeamsActivityInput,
+  AssistantTeamsCreateInput,
+  AssistantTeamsDeleteInput,
+  AssistantTeamsDeleteResult,
+  AssistantTeamsUpdateInput,
   AssistantsDeleteInput,
   AssistantsDeleteResult,
   AssistantsEvent,
@@ -729,6 +736,10 @@ export const WS_METHODS = {
   assistantsDelete: "assistants.delete",
   assistantsReset: "assistants.reset",
   assistantsSpend: "assistants.spend",
+  assistantTeamsCreate: "assistantTeams.create",
+  assistantTeamsUpdate: "assistantTeams.update",
+  assistantTeamsDelete: "assistantTeams.delete",
+  assistantTeamsActivity: "assistantTeams.activity",
   autonomyWatchesList: "autonomy.watches.list",
   autonomyWatchUpsert: "autonomy.watches.upsert",
   autonomyWatchSetEnabled: "autonomy.watches.setEnabled",
@@ -2247,6 +2258,26 @@ const WsAssistantsSpendRpc = Rpc.make(WS_METHODS.assistantsSpend, {
   success: AssistantSpend,
   error: AssistantRpcErrors,
 });
+const WsAssistantTeamsCreateRpc = Rpc.make(WS_METHODS.assistantTeamsCreate, {
+  payload: AssistantTeamsCreateInput,
+  success: AssistantTeam,
+  error: AssistantRpcErrors,
+});
+const WsAssistantTeamsUpdateRpc = Rpc.make(WS_METHODS.assistantTeamsUpdate, {
+  payload: AssistantTeamsUpdateInput,
+  success: AssistantTeam,
+  error: AssistantRpcErrors,
+});
+const WsAssistantTeamsDeleteRpc = Rpc.make(WS_METHODS.assistantTeamsDelete, {
+  payload: AssistantTeamsDeleteInput,
+  success: AssistantTeamsDeleteResult,
+  error: AssistantRpcErrors,
+});
+const WsAssistantTeamsActivityRpc = Rpc.make(WS_METHODS.assistantTeamsActivity, {
+  payload: AssistantTeamsActivityInput,
+  success: AssistantTeamActivity,
+  error: AssistantRpcErrors,
+});
 
 const AutonomyRpcErrors = Schema.Union([AutonomyError, EnvironmentAuthorizationError]);
 const WsAutonomyWatchesListRpc = Rpc.make(WS_METHODS.autonomyWatchesList, {
@@ -2676,6 +2707,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsAssistantsDeleteRpc,
   WsAssistantsResetRpc,
   WsAssistantsSpendRpc,
+  WsAssistantTeamsCreateRpc,
+  WsAssistantTeamsUpdateRpc,
+  WsAssistantTeamsDeleteRpc,
+  WsAssistantTeamsActivityRpc,
   WsAutonomyWatchesListRpc,
   WsAutonomyWatchUpsertRpc,
   WsAutonomyWatchSetEnabledRpc,

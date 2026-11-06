@@ -6,6 +6,8 @@ import {
   assistantCommandNames,
   AssistantHandle,
   assistantMcpServersProblem,
+  assistantTeamProblem,
+  AssistantsEvent,
   AssistantMcpServerInput,
   AssistantsUpdateInput,
   assistantHandleFromName,
@@ -17,6 +19,7 @@ import {
 const isAssistantHandle = Schema.is(AssistantHandle);
 const isUpdateInput = Schema.is(AssistantsUpdateInput);
 const decode = Schema.decodeUnknownSync(Assistant);
+const decodeEvent = Schema.decodeSync(AssistantsEvent);
 
 describe("assistantHandleFromName", () => {
   it.each([
@@ -249,5 +252,26 @@ describe("assistant connectors", () => {
       },
     ]);
     expect(decode({ ...decoded, mcpServers: undefined }).mcpServers).toEqual([]);
+  });
+});
+
+describe("assistantTeamProblem", () => {
+  it.each([
+    ["two members, no leader", { memberIds: ["a", "b"] }, null],
+    ["a leader with a title", { memberIds: ["a", "b"], leaderId: "a", leaderTitle: "CEO" }, null],
+    ["one member", { memberIds: ["a"] }, "at least 2"],
+    ["a repeated member", { memberIds: ["a", "a"] }, "twice"],
+    ["a leader outside the team", { memberIds: ["a", "b"], leaderId: "c" }, "must be a member"],
+    ["a title without a leader", { memberIds: ["a", "b"], leaderTitle: "CEO" }, "needs a leader"],
+    ["a blank title without a leader", { memberIds: ["a", "b"], leaderTitle: " " }, null],
+  ])("%s", (_name, team, problem) => {
+    const found = assistantTeamProblem(team);
+    if (problem === null) expect(found).toBeNull();
+    else expect(found).toContain(problem);
+  });
+
+  it("an old snapshot without teams still decodes, with none", () => {
+    const decoded = decodeEvent({ type: "snapshot", assistants: [] });
+    expect(decoded).toMatchObject({ type: "snapshot", teams: [] });
   });
 });

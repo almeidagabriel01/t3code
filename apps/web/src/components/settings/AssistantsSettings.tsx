@@ -1,11 +1,12 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { Fragment } from "react";
-import { teamSubtitle } from "@t3tools/client-runtime/assistantTeam";
+import { teamSubtitle, teamSummary } from "@t3tools/client-runtime/assistantTeam";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   ArchiveIcon,
   ArchiveRestoreIcon,
   UserRoundIcon,
+  UsersIcon,
   EllipsisIcon,
   MessageSquareIcon,
   PencilIcon,
@@ -19,7 +20,13 @@ import {
   useAssistantEntries,
   useAssistantSpend,
   type AssistantEntry,
+  type AssistantTeamEntry,
 } from "../../state/assistants";
+import { AssistantAvatar as TeamAvatar } from "../assistants/assistantPresentation";
+import {
+  openAssistantTeamActivity,
+  openAssistantTeamDialog,
+} from "../assistants/assistantTeamState";
 import { useProjects, useThreadShell } from "../../state/entities";
 import { useEnvironmentProviders, useEnvironments } from "../../state/environments";
 import { AssistantAvatar, toolAccessLabel } from "../assistants/assistantPresentation";
@@ -196,6 +203,52 @@ function AssistantRow(props: {
   );
 }
 
+function TeamRow(props: {
+  readonly entry: AssistantTeamEntry;
+  readonly assistants: ReadonlyArray<AssistantEntry["assistant"]>;
+}) {
+  const { team, environmentId } = props.entry;
+  const members = team.memberIds.flatMap((id) => props.assistants.find((a) => a.id === id) ?? []);
+  return (
+    <SettingsRow
+      title={
+        <span className="inline-flex items-center gap-2">
+          <UsersIcon className="size-4 text-muted-foreground" />
+          {team.name}
+        </span>
+      }
+      description={
+        <span className="inline-flex items-center gap-2">
+          <span className="inline-flex -space-x-1">
+            {members.slice(0, 5).map((member) => (
+              <TeamAvatar key={member.id} assistant={member} />
+            ))}
+          </span>
+          {teamSummary(team, props.assistants)}
+        </span>
+      }
+      control={
+        <span className="flex items-center gap-1">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => openAssistantTeamActivity(environmentId, team.id)}
+          >
+            <MessageSquareIcon />
+            Activity
+          </Button>
+          <IconAction
+            label={`Edit ${team.name}`}
+            onClick={() => openAssistantTeamDialog({ environmentId, teamId: team.id })}
+          >
+            <PencilIcon />
+          </IconAction>
+        </span>
+      }
+    />
+  );
+}
+
 function entryKey(entry: AssistantEntry): string {
   return `${entry.environmentId}:${entry.assistant.id}`;
 }
@@ -227,14 +280,18 @@ function RestoreJarvisRow(props: { readonly environmentId: EnvironmentId }) {
 }
 
 export function AssistantsSettingsPanel() {
-  const { active, archived, environmentIds } = useAssistantEntries();
+  const { active, archived, teams, environmentIds } = useAssistantEntries();
   const { environments } = useEnvironments();
   const multipleEnvironments = environmentIds.length > 1;
   const labelOf = (environmentId: EnvironmentId) =>
     environments.find((environment) => environment.environmentId === environmentId)?.label ??
     environmentId;
-  const inEnvironment = (entries: ReadonlyArray<AssistantEntry>, environmentId: EnvironmentId) =>
-    entries.filter((entry) => entry.environmentId === environmentId);
+  function inEnvironment<E extends { readonly environmentId: EnvironmentId }>(
+    entries: ReadonlyArray<E>,
+    environmentId: EnvironmentId,
+  ) {
+    return entries.filter((entry) => entry.environmentId === environmentId);
+  }
   const teamOf = (entry: AssistantEntry) =>
     teamSubtitle(
       entry.assistant,
@@ -289,6 +346,38 @@ export function AssistantsSettingsPanel() {
                   />
                 ))}
                 {hasDefault ? null : <RestoreJarvisRow environmentId={environmentId} />}
+              </SettingsSection>
+              <SettingsSection
+                title={multipleEnvironments ? `Teams · ${labelOf(environmentId)}` : "Teams"}
+                icon={<UsersIcon className="size-4 text-muted-foreground" />}
+                headerAction={
+                  <Button
+                    size="xs"
+                    variant="ghost-muted"
+                    disabled={entries.length < 2}
+                    onClick={() => openAssistantTeamDialog({ environmentId })}
+                  >
+                    <PlusIcon />
+                    New team
+                  </Button>
+                }
+              >
+                {inEnvironment(teams, environmentId).length === 0 ? (
+                  <SettingsRow
+                    title="No teams yet"
+                    description="A team lets its assistants message each other while you watch. Add a leader if you want one."
+                  />
+                ) : (
+                  inEnvironment(teams, environmentId).map((entry) => (
+                    <TeamRow
+                      key={entry.team.id}
+                      entry={entry}
+                      assistants={[...entries, ...inEnvironment(archived, environmentId)].map(
+                        (candidate) => candidate.assistant,
+                      )}
+                    />
+                  ))
+                )}
               </SettingsSection>
               <AutonomySection
                 environmentId={environmentId}

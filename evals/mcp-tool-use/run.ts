@@ -310,6 +310,32 @@ export const McpToolUseCase = Schema.Struct({
         reports: Schema.Array(
           Schema.Struct({ name: Schema.String, handle: Schema.String, threadId: Schema.String }),
         ),
+        /** The teams it is in, as `AssistantDirectory.teamsOf` gives them to the note. */
+        teams: Schema.optional(
+          Schema.Array(
+            Schema.Struct({
+              team: Schema.Struct({
+                name: Schema.String,
+                leaderTitle: Schema.NullOr(Schema.String),
+              }),
+              leader: Schema.NullOr(
+                Schema.Struct({
+                  name: Schema.String,
+                  handle: Schema.String,
+                  threadId: Schema.String,
+                }),
+              ),
+              teammates: Schema.Array(
+                Schema.Struct({
+                  name: Schema.String,
+                  handle: Schema.String,
+                  threadId: Schema.String,
+                  role: Schema.optional(Schema.String),
+                }),
+              ),
+            }),
+          ),
+        ),
       }),
     ),
     sideChat: Schema.optional(
@@ -1036,16 +1062,31 @@ export const buildMessages = (sample: Sample) => {
   const note =
     assistant === undefined
       ? ""
-      : assistantNoteFor(assistant, userText, {
-          leader:
-            assistant.leader === null
-              ? null
-              : { ...assistant.leader, threadId: ThreadId.make(assistant.leader.threadId) },
-          reports: assistant.reports.map((report) => ({
-            ...report,
-            threadId: ThreadId.make(report.threadId),
+      : assistantNoteFor(
+          assistant,
+          userText,
+          {
+            leader:
+              assistant.leader === null
+                ? null
+                : { ...assistant.leader, threadId: ThreadId.make(assistant.leader.threadId) },
+            reports: assistant.reports.map((report) => ({
+              ...report,
+              threadId: ThreadId.make(report.threadId),
+            })),
+          },
+          (assistant.teams ?? []).map((entry) => ({
+            ...entry,
+            leader:
+              entry.leader === null
+                ? null
+                : { ...entry.leader, threadId: ThreadId.make(entry.leader.threadId) },
+            teammates: entry.teammates.map((mate) => ({
+              ...mate,
+              threadId: ThreadId.make(mate.threadId),
+            })),
           })),
-        });
+        );
   const notedText = note === "" ? userText : `${note}\n\n${userText}`;
   const prompt =
     sideChatContext === undefined ? notedText : withInlineContext(sideChatContext, notedText);

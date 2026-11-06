@@ -40,12 +40,19 @@ server-side so no client or agent can skip them:
 2. `ThreadManagementService.dispatch` refuses commands that would defeat the assistant: raising the
    runtime mode above its access, archiving or deleting the current thread, unarchiving an old
    generation, and a `titleSeed` renaming the thread. It covers WebSocket and MCP callers alike.
-3. The same `dispatch` refuses a send from one assistant thread to another when the org chart forbids
-   it. `senderThreadId` rides on every agent send (MCP `t3_thread_send` sets it), so the guard needs
-   no new plumbing. An assistant with any org relation, or aimed at one, may only message its
-   descendants (`assistantMayMessage`). Reports answer through the run their leader waits on and
-   never send upward, so no cycle can form. Assistants with no relation at all stay free, which is
-   what card #5 shipped.
+3. The same `dispatch` refuses a send from one assistant thread to another when neither the org
+   chart nor a shared team allows it. `senderThreadId` rides on every agent send (MCP
+   `t3_thread_send` sets it), so the guard needs no new plumbing. Org rule
+   (`assistantMayMessage`): an assistant with any org relation, or aimed at one, may only message
+   its descendants; reports answer through the run their leader waits on. Assistants with no
+   relation at all stay free, which is what card #5 shipped. Team rule: two assistants in a common
+   team may message each other in any direction, which removes the "never upward, so no cycle"
+   argument. The replacement is a cap: `teamSendLimited` refuses a `message.dispatch` once the
+   sender sent `TEAM_SENDS_PER_HOUR` (20) messages to its teammates in the last rolling hour, and
+   the refusal tells it to report to the user. The count is read from `orchestration_events`
+   (messages with an assistant `senderThreadId` into a teammate's conversations, one per message
+   id), so nothing is stored twice and it survives restarts. A replay of a send that already ran is
+   not capped again.
 
 4. "Ask before acting": the same `dispatch` holds a `message.dispatch` from an assistant with the flag
    into any non-assistant thread until the user approves that exact send. The approval is a decision
@@ -61,6 +68,20 @@ own archive, delete and unarchive pass the guard. Keep it that way.
 
 All read the directory with `Effect.serviceOption`, so layers that don't provide it behave as before.
 A runtime layer that forgets to provide it silently loses enforcement; `runtimeLayer.ts` must wire it.
+
+## Teams
+
+An `assistant_teams` row holds members (a JSON array of assistant ids), an optional leader and its
+free-text title. A leader and a title are hints in each member's note and badges in the clients;
+they never change `mayMessage`. `AssistantService` owns team CRUD and publishes `teamUpserted` and
+`teamRemoved` on the assistants stream (the snapshot carries `teams`), so one subscription feeds
+every client. Deleting an assistant prunes it from its teams in the same lock and dissolves a team
+left below two members; archiving leaves membership alone.
+
+The team view has no storage of its own: `readTeamActivity` reads the member-to-member messages
+back from `orchestration_events` (latest event per message id wins, because a message is
+re-published while it streams), so the view is exactly what the conversations hold. Text is cut at
+4000 characters per row and the view keeps the latest 200 messages.
 
 ## Instructions ride every turn
 

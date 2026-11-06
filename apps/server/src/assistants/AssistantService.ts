@@ -3,6 +3,12 @@ import {
   AssistantError,
   type AssistantId,
   type AssistantsCreateInput,
+  type AssistantTeam,
+  type AssistantTeamActivity,
+  type AssistantTeamId,
+  type AssistantTeamsCreateInput,
+  type AssistantTeamsUpdateInput,
+  assistantTeamProblem,
   type AssistantsEvent,
   type AssistantsResetInput,
   type AssistantsUpdateInput,
@@ -46,6 +52,13 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as AssistantConnectors from "./AssistantConnectors.ts";
 import {
+  type AssistantTeamRow,
+  allTeams,
+  encodeMemberIds,
+  readTeamActivity,
+  toAssistantTeam,
+} from "./AssistantTeams.ts";
+import {
   type AssistantRow,
   decodeMcpServers,
   encodeAutonomy,
@@ -85,6 +98,18 @@ export class AssistantService extends Context.Service<
     readonly update: (input: AssistantsUpdateInput) => Effect.Effect<Assistant, AssistantError>;
     readonly remove: (assistantId: AssistantId) => Effect.Effect<void, AssistantError>;
     readonly reset: (input: AssistantsResetInput) => Effect.Effect<Assistant, AssistantError>;
+    readonly teams: Effect.Effect<ReadonlyArray<AssistantTeam>, AssistantError>;
+    readonly createTeam: (
+      input: AssistantTeamsCreateInput,
+    ) => Effect.Effect<AssistantTeam, AssistantError>;
+    readonly updateTeam: (
+      input: AssistantTeamsUpdateInput,
+    ) => Effect.Effect<AssistantTeam, AssistantError>;
+    readonly removeTeam: (teamId: AssistantTeamId) => Effect.Effect<void, AssistantError>;
+    /** The messages members sent each other, read from their conversations. */
+    readonly teamActivity: (
+      teamId: AssistantTeamId,
+    ) => Effect.Effect<AssistantTeamActivity, AssistantError>;
   }
 >()("t3/assistants/AssistantService") {}
 
@@ -359,8 +384,9 @@ const make = Effect.gen(function* () {
           yield* ensureQuietly;
           const subscription = yield* PubSub.subscribe(events);
           const assistants = (yield* allRows).map(toAssistant);
+          const teams = yield* allTeams(sql);
           return Stream.concat(
-            Stream.succeed<AssistantsEvent>({ type: "snapshot", assistants }),
+            Stream.succeed<AssistantsEvent>({ type: "snapshot", assistants, teams }),
             Stream.fromSubscription(subscription),
           );
         }),
@@ -671,6 +697,134 @@ const make = Effect.gen(function* () {
     storage,
   );
 
+  const findTeamRow = Effect.fn("AssistantService.findTeamRow")(function* (teamId: string) {
+    const rows =
+      yield* sql<AssistantTeamRow>`SELECT * FROM assistant_teams WHERE team_id = ${teamId}`;
+    return rows[0] ?? (yield* assistantError("not_found", "Team not found."));
+  });
+
+  /** Every member must exist; one archived assistant may stay in a team but not join it. */
+  const checkTeam = Effect.fn("AssistantService.checkTeam")(function* (
+    team: {
+      readonly memberIds: ReadonlyArray<string>;
+      readonly leaderId: string | null;
+      readonly leaderTitle: string | null;
+    },
+    kept: ReadonlyArray<string>,
+  ) {
+    const problem = assistantTeamProblem(team);
+    if (problem !== null) return yield* invalid(problem);
+    const all = yield* allRows;
+    for (const memberId of team.memberIds) {
+      const member = all.find((row) => row.assistant_id === memberId);
+      if (member === undefined) return yield* invalid("A member of the team does not exist.");
+      if (member.archived_at !== null && !kept.includes(memberId)) {
+        return yield* invalid(`${member.name} is archived.`);
+      }
+    }
+  });
+
+  const leaderTitleOf = (leaderId: string | null, title: string | null | undefined) =>
+    leaderId === null || title == null || title.trim() === "" ? null : title.trim();
+
+  const createTeam: AssistantService["Service"]["createTeam"] = Effect.fn(
+    "AssistantService.createTeam",
+  )(function* (input) {
+    const id = yield* random.uuidV4().pipe(Effect.orDie);
+    const leaderId = input.leaderId ?? null;
+    const leaderTitle = leaderTitleOf(leaderId, input.leaderTitle);
+    if (leaderId === null && (input.leaderTitle ?? "").trim() !== "")
+      return yield* invalid("A leader title needs a leader.");
+    return yield* lock.withPermits(1)(
+      Effect.gen(function* () {
+        yield* checkTeam({ memberIds: input.memberIds, leaderId, leaderTitle }, []);
+        const now = yield* nowIso;
+        yield* sql`
+          INSERT INTO assistant_teams (
+            team_id, name, member_ids_json, leader_id, leader_title, created_at, updated_at
+          ) VALUES (
+            ${id}, ${input.name}, ${encodeMemberIds(input.memberIds)}, ${leaderId},
+            ${leaderTitle}, ${now}, ${now}
+          )`;
+        const team = toAssistantTeam(yield* findTeamRow(id));
+        yield* PubSub.publish(events, { type: "teamUpserted", team });
+        return team;
+      }),
+    );
+  }, storage);
+
+  const updateTeam: AssistantService["Service"]["updateTeam"] = Effect.fn(
+    "AssistantService.updateTeam",
+  )(function* (input) {
+    return yield* lock.withPermits(1)(
+      Effect.gen(function* () {
+        const row = yield* findTeamRow(input.teamId);
+        const current = toAssistantTeam(row);
+        const memberIds = input.memberIds ?? current.memberIds;
+        const leaderId = input.leaderId === undefined ? current.leaderId : input.leaderId;
+        // Dropping the leader drops its title; a title sent without a leader is refused.
+        const sentTitle = input.leaderTitle === undefined ? current.leaderTitle : input.leaderTitle;
+        const title = input.leaderId === null && input.leaderTitle === undefined ? null : sentTitle;
+        const leaderTitle = leaderTitleOf(leaderId, title);
+        if (leaderId === null && (title ?? "").trim() !== "")
+          return yield* invalid("A leader title needs a leader.");
+        yield* checkTeam({ memberIds, leaderId, leaderTitle }, current.memberIds);
+        yield* sql`
+          UPDATE assistant_teams SET name = ${input.name ?? current.name},
+            member_ids_json = ${encodeMemberIds(memberIds)}, leader_id = ${leaderId},
+            leader_title = ${leaderTitle}, updated_at = ${yield* nowIso}
+          WHERE team_id = ${input.teamId}`;
+        const team = toAssistantTeam(yield* findTeamRow(input.teamId));
+        yield* PubSub.publish(events, { type: "teamUpserted", team });
+        return team;
+      }),
+    );
+  }, storage);
+
+  const removeTeam: AssistantService["Service"]["removeTeam"] = Effect.fn(
+    "AssistantService.removeTeam",
+  )(function* (teamId) {
+    yield* lock.withPermits(1)(
+      Effect.gen(function* () {
+        yield* findTeamRow(teamId);
+        yield* sql`DELETE FROM assistant_teams WHERE team_id = ${teamId}`;
+        yield* PubSub.publish(events, { type: "teamRemoved", teamId });
+      }),
+    );
+  }, storage);
+
+  const teams: AssistantService["Service"]["teams"] = allTeams(sql).pipe(storage);
+
+  const teamActivity: AssistantService["Service"]["teamActivity"] = Effect.fn(
+    "AssistantService.teamActivity",
+  )(function* (teamId) {
+    const team = toAssistantTeam(yield* findTeamRow(teamId));
+    return { messages: yield* readTeamActivity(sql, team) };
+  }, storage);
+
+  /** A deleted assistant leaves its teams; one left with fewer than two members is dissolved. */
+  const leaveTeams = Effect.fn("AssistantService.leaveTeams")(function* (assistantId: string) {
+    for (const team of yield* allTeams(sql)) {
+      if (!team.memberIds.includes(assistantId as never)) continue;
+      const memberIds = team.memberIds.filter((id) => id !== assistantId);
+      if (memberIds.length < 2) {
+        yield* sql`DELETE FROM assistant_teams WHERE team_id = ${team.id}`;
+        yield* PubSub.publish(events, { type: "teamRemoved", teamId: team.id });
+        continue;
+      }
+      const leaderId = team.leaderId === assistantId ? null : team.leaderId;
+      yield* sql`
+        UPDATE assistant_teams SET member_ids_json = ${encodeMemberIds(memberIds)},
+          leader_id = ${leaderId}, leader_title = ${leaderId === null ? null : team.leaderTitle},
+          updated_at = ${yield* nowIso}
+        WHERE team_id = ${team.id}`;
+      yield* PubSub.publish(events, {
+        type: "teamUpserted",
+        team: toAssistantTeam(yield* findTeamRow(team.id)),
+      });
+    }
+  });
+
   const threadIdsOf = (assistantId: string, generation: number) =>
     Array.from({ length: generation }, (_, index) => assistantThreadIdFor(assistantId, index + 1));
 
@@ -682,6 +836,7 @@ const make = Effect.gen(function* () {
           // The row goes first: the thread guards only protect a live assistant's conversation.
           yield* sql`DELETE FROM assistants WHERE assistant_id = ${assistantId}`;
           yield* releaseReports(assistantId);
+          yield* leaveTeams(assistantId);
           yield* connectors
             .purge(assistantId, decodeMcpServers(row.mcp_servers_json))
             .pipe(
@@ -777,7 +932,20 @@ const make = Effect.gen(function* () {
     storage,
   );
 
-  return AssistantService.of({ list, subscribe, ensureDefault, create, update, remove, reset });
+  return AssistantService.of({
+    list,
+    subscribe,
+    ensureDefault,
+    create,
+    update,
+    remove,
+    reset,
+    teams,
+    createTeam,
+    updateTeam,
+    removeTeam,
+    teamActivity,
+  });
 });
 
 export const layer = Layer.effect(AssistantService, make);

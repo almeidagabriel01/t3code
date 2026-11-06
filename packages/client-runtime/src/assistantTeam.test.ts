@@ -1,7 +1,15 @@
 import { ASSISTANT_STANDUP_PROMPT_HEAD, type AssistantId } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 
-import { directReports, hasStandupTask, leaderChoices, teamSubtitle } from "./assistantTeam.ts";
+import {
+  directReports,
+  hasStandupTask,
+  leaderChoices,
+  teamLeaderBadge,
+  teamMemberChoices,
+  teamSubtitle,
+  teamSummary,
+} from "./assistantTeam.ts";
 
 const member = (
   id: string,
@@ -56,4 +64,20 @@ it("finds a standup by its opening line on the assistant's own conversation only
   assert.isFalse(hasStandupTask([standup], "assistant:b:1"));
   assert.isFalse(hasStandupTask([{ ...standup, prompt: "Check in" }], "assistant:a:1"));
   assert.isFalse(hasStandupTask([standup], null));
+});
+
+it("a team shows its leader's title, falls back to Leader, and keeps archived members", () => {
+  const team = { memberIds: ["a", "b", "e"], leaderId: "a", leaderTitle: "CEO" };
+  assert.strictEqual(teamSummary(team, all), "3 members · A (CEO)");
+  assert.strictEqual(teamLeaderBadge({ ...team, leaderTitle: null }), "Leader");
+  assert.strictEqual(teamLeaderBadge({ ...team, leaderTitle: "" }), "Leader");
+  assert.strictEqual(teamSummary({ ...team, leaderId: null, leaderTitle: null }, all), "3 members");
+  assert.deepEqual(
+    teamMemberChoices(all, team).map((entry) => entry.id),
+    ["a", "b", "c", "d", "e"],
+  );
+  assert.deepEqual(
+    teamMemberChoices(all, null).map((entry) => entry.id),
+    ["a", "b", "c", "d"],
+  );
 });

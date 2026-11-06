@@ -1,11 +1,19 @@
 import { assert, describe, it } from "@effect/vitest";
-import type { Assistant, AssistantId, ProjectId, ThreadId } from "@t3tools/contracts";
+import type {
+  Assistant,
+  AssistantId,
+  AssistantTeam,
+  AssistantTeamId,
+  ProjectId,
+  ThreadId,
+} from "@t3tools/contracts";
 
 import {
   applyAssistantsEvent,
   assistantForThread,
   selectActiveAssistants,
   selectArchivedAssistants,
+  selectTeams,
 } from "./assistants.ts";
 
 const assistant = (id: string, overrides: Partial<Assistant> = {}): Assistant => ({
@@ -37,6 +45,7 @@ describe("assistants state", () => {
     const state = applyAssistantsEvent(null, {
       type: "snapshot",
       assistants: [assistant("jarvis", { isDefault: true }), assistant("bb"), assistant("c")],
+      teams: [],
     })!;
     const archived = applyAssistantsEvent(state, {
       type: "upserted",
@@ -60,5 +69,42 @@ describe("assistants state", () => {
     );
     assert.strictEqual(assistantForThread(removed, "assistant:jarvis:1" as ThreadId)?.id, "jarvis");
     assert.isUndefined(assistantForThread(removed, "assistant:jarvis:0" as ThreadId));
+  });
+
+  it("folds team events next to assistant ones, oldest team first", () => {
+    const team = (id: string, createdAt: string): AssistantTeam => ({
+      id: id as AssistantTeamId,
+      name: id,
+      memberIds: ["a", "b"] as AssistantId[],
+      leaderId: null,
+      leaderTitle: null,
+      createdAt,
+      updatedAt: createdAt,
+    });
+    const state = applyAssistantsEvent(null, {
+      type: "snapshot",
+      assistants: [assistant("a")],
+      teams: [team("t2", "2026-10-02T00:00:00.000Z")],
+    })!;
+    const added = applyAssistantsEvent(state, {
+      type: "teamUpserted",
+      team: team("t1", "2026-10-01T00:00:00.000Z"),
+    })!;
+    assert.deepStrictEqual(
+      selectTeams(added).map((entry) => entry.id),
+      ["t1", "t2"],
+    );
+    assert.strictEqual(added.assistants.size, 1);
+    const removed = applyAssistantsEvent(added, {
+      type: "teamRemoved",
+      teamId: "t1" as AssistantTeamId,
+    })!;
+    assert.deepStrictEqual(
+      selectTeams(removed).map((entry) => entry.id),
+      ["t2"],
+    );
+    assert.isNull(
+      applyAssistantsEvent(null, { type: "teamRemoved", teamId: "t1" as AssistantTeamId }),
+    );
   });
 });

@@ -8,6 +8,11 @@ const { mocks, Children } = vi.hoisted(() => ({
     open: vi.fn(),
     editor: vi.fn(),
     toggle: vi.fn(),
+    openTeam: vi.fn(),
+    teams: [] as Array<{
+      environmentId: string;
+      team: { id: string; name: string; memberIds: string[] };
+    }>,
     collapsed: false,
     status: "idle" as "idle" | "working" | "attention",
     active: [] as Array<{
@@ -45,7 +50,7 @@ vi.mock("../../components/ui/AppSymbol", () => ({
 vi.mock("../../components/ui/Menu", () => ({ Menu: Children }));
 vi.mock("../../state/entities", () => ({ useQuietThreadShell: () => ({ lastVisitedAt: "x" }) }));
 vi.mock("../../state/assistants", () => ({
-  useAssistantEntries: () => ({ active: mocks.active }),
+  useAssistantEntries: () => ({ active: mocks.active, teams: mocks.teams }),
 }));
 vi.mock("../threads/SubagentStatusDot", () => ({
   SubagentStatusDot: (props: { tone: string }) => <u>{`dot:${props.tone}`}</u>,
@@ -57,6 +62,9 @@ vi.mock("./assistantPresentation", () => ({
 }));
 vi.mock("./useAssistantFlows", () => ({
   useAssistantFlows: () => ({ canAct: true, openConversation: mocks.open }),
+}));
+vi.mock("./assistantTeamTarget", () => ({
+  useOpenAssistantTeam: () => ({ activity: mocks.openTeam }),
 }));
 vi.mock("./openAssistantEditor", () => ({ useOpenAssistantEditor: () => mocks.editor }));
 vi.mock("../home/useHomeSectionPreferences", () => ({
@@ -91,6 +99,8 @@ beforeEach(() => {
   mocks.open.mockReset();
   mocks.toggle.mockReset();
   mocks.editor.mockReset();
+  mocks.openTeam.mockReset();
+  mocks.teams = [];
 });
 afterEach(() => act(() => root.unmount()));
 
@@ -144,5 +154,17 @@ describe("HomeAssistantsSection", () => {
     mocks.status = "attention";
     render();
     expect(container.textContent).toContain("dot:completed");
+  });
+
+  it("lists teams under the assistants, hides them when collapsed, and opens the activity", async () => {
+    mocks.teams = [
+      { environmentId: "hub", team: { id: "t1", name: "Growth", memberIds: ["a0", "a1"] } },
+    ];
+    render();
+    await act(async () => byLabel("Growth team, 2 members")?.click());
+    expect(mocks.openTeam).toHaveBeenCalledWith("hub", "t1");
+    mocks.collapsed = true;
+    render();
+    expect(byLabel("Growth team, 2 members")).toBeNull();
   });
 });

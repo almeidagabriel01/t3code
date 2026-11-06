@@ -259,14 +259,67 @@ export const Assistant = Schema.Struct({
 });
 export type Assistant = typeof Assistant.Type;
 
+export const ASSISTANT_TEAM_NAME_MAX_LENGTH = 60;
+export const ASSISTANT_TEAM_TITLE_MAX_LENGTH = 60;
+export const ASSISTANT_TEAM_MIN_MEMBERS = 2;
+
+export const AssistantTeamId = TrimmedNonEmptyString.pipe(Schema.brand("AssistantTeamId"));
+export type AssistantTeamId = typeof AssistantTeamId.Type;
+
+const AssistantTeamName = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(ASSISTANT_TEAM_NAME_MAX_LENGTH),
+);
+const AssistantTeamLeaderTitle = TrimmedString.check(
+  Schema.isMaxLength(ASSISTANT_TEAM_TITLE_MAX_LENGTH),
+);
+
+/**
+ * A group of assistants that may message each other in any direction. The leader is optional and
+ * only a title and a hint in each member's note: it does not change who may message whom.
+ */
+export const AssistantTeam = Schema.Struct({
+  id: AssistantTeamId,
+  name: AssistantTeamName,
+  memberIds: Schema.Array(AssistantId),
+  leaderId: Schema.NullOr(AssistantId),
+  /** Free text such as "CEO" or "Head of Research"; null unless there is a leader. */
+  leaderTitle: Schema.NullOr(Schema.String),
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+export type AssistantTeam = typeof AssistantTeam.Type;
+
+/** The first reason a team is unusable, or null. Clients and the server share it. */
+export function assistantTeamProblem(team: {
+  readonly memberIds: ReadonlyArray<string>;
+  readonly leaderId?: string | null | undefined;
+  readonly leaderTitle?: string | null | undefined;
+}): string | null {
+  if (new Set(team.memberIds).size !== team.memberIds.length) return "A member is listed twice.";
+  if (team.memberIds.length < ASSISTANT_TEAM_MIN_MEMBERS)
+    return `A team needs at least ${ASSISTANT_TEAM_MIN_MEMBERS} members.`;
+  const leaderId = team.leaderId ?? null;
+  if (leaderId !== null && !team.memberIds.includes(leaderId))
+    return "The leader must be a member of the team.";
+  if (leaderId === null && (team.leaderTitle ?? "").trim() !== "")
+    return "A leader title needs a leader.";
+  return null;
+}
+
 export const AssistantsSubscribeInput = Schema.Struct({});
 export type AssistantsSubscribeInput = typeof AssistantsSubscribeInput.Type;
 
 /** The first event is a snapshot of every assistant, archived ones included. */
 export const AssistantsEvent = Schema.Union([
-  Schema.Struct({ type: Schema.Literal("snapshot"), assistants: Schema.Array(Assistant) }),
+  Schema.Struct({
+    type: Schema.Literal("snapshot"),
+    assistants: Schema.Array(Assistant),
+    teams: Schema.Array(AssistantTeam).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  }),
   Schema.Struct({ type: Schema.Literal("upserted"), assistant: Assistant }),
   Schema.Struct({ type: Schema.Literal("removed"), assistantId: AssistantId }),
+  Schema.Struct({ type: Schema.Literal("teamUpserted"), team: AssistantTeam }),
+  Schema.Struct({ type: Schema.Literal("teamRemoved"), teamId: AssistantTeamId }),
 ]);
 export type AssistantsEvent = typeof AssistantsEvent.Type;
 
@@ -351,6 +404,53 @@ export const AssistantSpend = Schema.Struct({
   budget: Schema.optionalKey(InstanceBudgetStatus),
 });
 export type AssistantSpend = typeof AssistantSpend.Type;
+
+export const AssistantTeamsCreateInput = Schema.Struct({
+  name: AssistantTeamName,
+  memberIds: Schema.Array(AssistantId),
+  leaderId: Schema.optional(Schema.NullOr(AssistantId)),
+  leaderTitle: Schema.optional(Schema.NullOr(AssistantTeamLeaderTitle)),
+});
+export type AssistantTeamsCreateInput = typeof AssistantTeamsCreateInput.Type;
+
+/** A field left out is kept; `leaderId: null` removes the leader and its title. */
+export const AssistantTeamsUpdateInput = Schema.Struct({
+  teamId: AssistantTeamId,
+  name: Schema.optional(AssistantTeamName),
+  memberIds: Schema.optional(Schema.Array(AssistantId)),
+  leaderId: Schema.optional(Schema.NullOr(AssistantId)),
+  leaderTitle: Schema.optional(Schema.NullOr(AssistantTeamLeaderTitle)),
+});
+export type AssistantTeamsUpdateInput = typeof AssistantTeamsUpdateInput.Type;
+
+export const AssistantTeamsDeleteInput = Schema.Struct({ teamId: AssistantTeamId });
+export type AssistantTeamsDeleteInput = typeof AssistantTeamsDeleteInput.Type;
+export const AssistantTeamsDeleteResult = Schema.Struct({ teamId: AssistantTeamId });
+export type AssistantTeamsDeleteResult = typeof AssistantTeamsDeleteResult.Type;
+
+export const AssistantTeamsActivityInput = Schema.Struct({ teamId: AssistantTeamId });
+export type AssistantTeamsActivityInput = typeof AssistantTeamsActivityInput.Type;
+
+/** One message from a member's conversation into another member's, newest last. */
+export const AssistantTeamMessage = Schema.Struct({
+  messageId: Schema.String,
+  at: IsoDateTime,
+  fromAssistantId: AssistantId,
+  toAssistantId: AssistantId,
+  fromThreadId: ThreadId,
+  toThreadId: ThreadId,
+  text: Schema.String,
+  /** The text was cut at `ASSISTANT_TEAM_MESSAGE_MAX_CHARS`; open the thread for the rest. */
+  truncated: Schema.Boolean,
+});
+export type AssistantTeamMessage = typeof AssistantTeamMessage.Type;
+export const ASSISTANT_TEAM_MESSAGE_MAX_CHARS = 4_000;
+export const ASSISTANT_TEAM_ACTIVITY_LIMIT = 200;
+
+export const AssistantTeamActivity = Schema.Struct({
+  messages: Schema.Array(AssistantTeamMessage),
+});
+export type AssistantTeamActivity = typeof AssistantTeamActivity.Type;
 
 export const AssistantsDeleteResult = Schema.Struct({ assistantId: AssistantId });
 export type AssistantsDeleteResult = typeof AssistantsDeleteResult.Type;

@@ -38,6 +38,9 @@ import {
   type TelegramChannelStatusEvent,
   type ScheduledTask,
   type AssistantsEvent,
+  type AssistantTeam,
+  type AssistantTeamMessage,
+  type AssistantTeamsCreateInput,
   type Decision,
   type DecisionsEvent,
   type VcsStatusStreamEvent,
@@ -562,20 +565,55 @@ handlers[WS_METHODS.decisionsDismiss] = (input: { readonly decisionId: string })
   settle(WS_METHODS.decisionsDismiss, input, "withdrawn");
 
 /** Assistants the fake server holds; it only serves the snapshot, mutations stay pending. */
-export const fakeAssistants = { items: [] as Assistant[] };
+export const fakeAssistants = { items: [] as Assistant[], teams: [] as AssistantTeam[] };
 const assistantSubscribers = new Set<Queue.Queue<AssistantsEvent>>();
 handlers[WS_METHODS.assistantsSubscribe] = () =>
-  subscribe<AssistantsEvent>([{ type: "snapshot", assistants: fakeAssistants.items }], (queue) => {
-    assistantSubscribers.add(queue);
-    return () => assistantSubscribers.delete(queue);
-  });
+  subscribe<AssistantsEvent>(
+    [{ type: "snapshot", assistants: fakeAssistants.items, teams: fakeAssistants.teams }],
+    (queue) => {
+      assistantSubscribers.add(queue);
+      return () => assistantSubscribers.delete(queue);
+    },
+  );
 /** Replaces the assistants, including for a subscription an earlier screen left open. */
-export function publishAssistants(items: Assistant[]): void {
+export function publishAssistants(items: Assistant[], teams: AssistantTeam[] = []): void {
   fakeAssistants.items = items;
+  fakeAssistants.teams = teams;
   for (const queue of assistantSubscribers) {
-    Effect.runSync(Queue.offer(queue, { type: "snapshot", assistants: items }));
+    Effect.runSync(Queue.offer(queue, { type: "snapshot", assistants: items, teams }));
   }
 }
+
+/** Team calls the fake server received, and the activity it serves. */
+export const fakeTeamEdits = {
+  creates: [] as unknown[],
+  updates: [] as unknown[],
+  deletes: [] as unknown[],
+  messages: [] as AssistantTeamMessage[],
+};
+handlers[WS_METHODS.assistantTeamsCreate] = (input: AssistantTeamsCreateInput) => {
+  fakeTeamEdits.creates.push(input);
+  return Effect.succeed({
+    id: "team-new",
+    name: input.name,
+    memberIds: input.memberIds,
+    leaderId: input.leaderId ?? null,
+    leaderTitle: input.leaderTitle ?? null,
+    createdAt: "2026-03-17T19:00:00.000Z",
+    updatedAt: "2026-03-17T19:00:00.000Z",
+  });
+};
+handlers[WS_METHODS.assistantTeamsUpdate] = (input: { readonly teamId: string }) => {
+  fakeTeamEdits.updates.push(input);
+  const found = fakeAssistants.teams.find((team) => team.id === input.teamId);
+  return found ? Effect.succeed(found) : Effect.never;
+};
+handlers[WS_METHODS.assistantTeamsDelete] = (input: { readonly teamId: string }) => {
+  fakeTeamEdits.deletes.push(input);
+  return Effect.succeed({ teamId: input.teamId });
+};
+handlers[WS_METHODS.assistantTeamsActivity] = () =>
+  Effect.succeed({ messages: fakeTeamEdits.messages });
 
 /** Spend the fake serves for any assistant, and the update calls it received. */
 export const fakeAssistantEdits = {

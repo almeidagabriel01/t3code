@@ -532,7 +532,9 @@ it.effect("subscribers get a snapshot, then every change", () => {
             ? `snapshot:${event.assistants.map((assistant) => assistant.id).join(",")}`
             : event.type === "upserted"
               ? `upserted:${event.assistant.handle}`
-              : `removed:${event.assistantId}`,
+              : event.type === "removed"
+                ? `removed:${event.assistantId}`
+                : event.type,
         ),
       ),
       Effect.forkScoped,
@@ -841,5 +843,164 @@ it.effect("addStandup creates one weekday 09:00 task bound to the leader, only f
       schedule: { type: "fixed_time", timeOfDay: "09:00", weekdays: [1, 2, 3, 4, 5] },
       modelSelection: model("m1"),
     });
+  }).pipe(Effect.provide(layer));
+});
+
+const sentEvent = (
+  sequence: number,
+  stream: string,
+  sender: string,
+  text: string,
+  id = `m${sequence}`,
+) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`
+      INSERT INTO orchestration_events (
+        sequence, event_id, aggregate_kind, stream_id, stream_version, event_type, occurred_at,
+        actor_kind, payload_json, metadata_json, application_event_version
+      ) VALUES (
+        ${sequence}, ${`event-${sequence}`}, 'thread', ${stream}, ${sequence}, 'message.updated',
+        ${`2026-11-06T10:00:0${sequence % 10}.000Z`}, 'agent',
+        ${JSON.stringify({ id, text, senderThreadId: sender })}, '{}', 2
+      )`;
+  });
+
+it.effect("teams: validation, leader rules, deletion cleanup and member-to-member activity", () => {
+  const { layer } = harness();
+  return Effect.gen(function* () {
+    const assistants = yield* Assistants.AssistantService;
+    const make = (name: string) => assistants.create(create({ name }));
+    const [ana, bob, cy, dee] = [
+      yield* make("Ana"),
+      yield* make("Bob"),
+      yield* make("Cy"),
+      yield* make("Dee"),
+    ];
+    const refused = <A>(effect: Effect.Effect<A, AssistantError>) =>
+      effect.pipe(
+        Effect.flip,
+        Effect.map((error) => error.message),
+      );
+
+    assert.include(
+      yield* refused(assistants.createTeam({ name: "Solo", memberIds: [ana.id] })),
+      "at least 2",
+    );
+    assert.include(
+      yield* refused(
+        assistants.createTeam({ name: "T", memberIds: [ana.id, bob.id], leaderId: cy.id }),
+      ),
+      "member",
+    );
+    assert.include(
+      yield* refused(
+        assistants.createTeam({ name: "T", memberIds: [ana.id, bob.id], leaderTitle: "CEO" }),
+      ),
+      "needs a leader",
+    );
+    assert.include(
+      yield* refused(assistants.createTeam({ name: "T", memberIds: [ana.id, "ghost" as never] })),
+      "does not exist",
+    );
+
+    const team = yield* assistants.createTeam({
+      name: "Growth",
+      memberIds: [ana.id, bob.id, cy.id],
+      leaderId: ana.id,
+      leaderTitle: "  CEO ",
+    });
+    assert.equal(team.leaderTitle, "CEO");
+    assert.deepEqual(yield* assistants.teams, [team]);
+    const [snapshot] = yield* assistants.subscribe.pipe(Stream.take(1), Stream.runCollect);
+    assert.deepEqual(snapshot?.type === "snapshot" ? snapshot.teams : [], [team]);
+
+    // Dropping the leader drops its title; a blank title is no title.
+    const headless = yield* assistants.updateTeam({ teamId: team.id, leaderId: null });
+    assert.deepEqual([headless.leaderId, headless.leaderTitle], [null, null]);
+    const titled = yield* assistants.updateTeam({
+      teamId: team.id,
+      leaderId: bob.id,
+      leaderTitle: "CFO",
+      name: "Money",
+    });
+    assert.deepEqual([titled.name, titled.leaderId, titled.leaderTitle], ["Money", bob.id, "CFO"]);
+    assert.include(
+      yield* refused(assistants.updateTeam({ teamId: team.id, memberIds: [ana.id, cy.id] })),
+      "member",
+    );
+    assert.equal(
+      (yield* assistants.updateTeam({ teamId: team.id, leaderTitle: "  " })).leaderTitle,
+      null,
+    );
+    assert.equal(
+      (yield* assistants.updateTeam({ teamId: team.id, leaderTitle: "Head" })).leaderTitle,
+      "Head",
+    );
+    assert.equal(
+      (yield* assistants.updateTeam({
+        teamId: team.id,
+        memberIds: [ana.id, bob.id, cy.id, dee.id],
+      })).memberIds.length,
+      4,
+    );
+    yield* assistants.update({ assistantId: dee.id, archived: true });
+    assert.include(
+      yield* refused(
+        assistants
+          .updateTeam({ teamId: team.id, memberIds: [ana.id, bob.id, cy.id] })
+          .pipe(
+            Effect.andThen(assistants.createTeam({ name: "Late", memberIds: [ana.id, dee.id] })),
+          ),
+      ),
+      "archived",
+    );
+    assert.equal(
+      yield* refused(assistants.updateTeam({ teamId: "nope" as never })),
+      "Team not found.",
+    );
+
+    // Only messages from a member into another member's conversation count; streamed
+    // re-publishes of one message collapse; an outsider and a plain thread are ignored.
+    yield* sentEvent(1, `assistant:${bob.id}:1`, `assistant:${ana.id}:1`, "a to b", "x");
+    yield* sentEvent(2, `assistant:${bob.id}:1`, `assistant:${ana.id}:1`, "a to b v2", "x");
+    yield* sentEvent(3, `assistant:${ana.id}:1`, `assistant:${bob.id}:1`, "b to a");
+    yield* sentEvent(4, `assistant:${cy.id}:1`, `assistant:${dee.id}:1`, "outsider to cy");
+    yield* sentEvent(5, `assistant:${ana.id}:1`, "thread:plain", "from a plain thread");
+    yield* sentEvent(6, "thread:plain", `assistant:${ana.id}:1`, "to a plain thread");
+    const activity = yield* assistants.teamActivity(team.id);
+    assert.deepEqual(
+      activity.messages.map((message) => [
+        message.text,
+        message.fromAssistantId,
+        message.toAssistantId,
+      ]),
+      [
+        ["a to b v2", ana.id, bob.id],
+        ["b to a", bob.id, ana.id],
+      ],
+    );
+    assert.isFalse(activity.messages[0]!.truncated);
+    yield* sentEvent(7, `assistant:${bob.id}:1`, `assistant:${ana.id}:1`, "x".repeat(5000));
+    const long = (yield* assistants.teamActivity(team.id)).messages.at(-1)!;
+    assert.deepEqual([long.text.length, long.truncated], [4000, true]);
+
+    // Deleting a member removes it; the leader slot empties; below two members the team ends.
+    yield* assistants.update({ assistantId: dee.id, archived: false });
+    yield* assistants.remove(bob.id);
+    const left = (yield* assistants.teams)[0]!;
+    assert.deepEqual(
+      [left.memberIds, left.leaderId, left.leaderTitle],
+      [[ana.id, cy.id], null, null],
+    );
+    yield* assistants.remove(cy.id);
+    assert.deepEqual(yield* assistants.teams, []);
+    assert.equal((yield* assistants.removeTeam(team.id).pipe(Effect.flip)).reason, "not_found");
+    const another = yield* assistants.createTeam({
+      name: "Two",
+      memberIds: [ana.id, (yield* make("Eve")).id],
+    });
+    yield* assistants.removeTeam(another.id);
+    assert.deepEqual(yield* assistants.teams, []);
   }).pipe(Effect.provide(layer));
 });

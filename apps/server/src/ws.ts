@@ -2539,6 +2539,11 @@ export const layerWsRpc = (
           assistants.remove(input.assistantId).pipe(Effect.as({ assistantId: input.assistantId })),
         [WS_METHODS.assistantsReset]: (input) => assistants.reset(input),
         [WS_METHODS.assistantsSpend]: (input) => assistantSpend.read(input.assistantId),
+        [WS_METHODS.assistantTeamsCreate]: (input) => assistants.createTeam(input),
+        [WS_METHODS.assistantTeamsUpdate]: (input) => assistants.updateTeam(input),
+        [WS_METHODS.assistantTeamsDelete]: (input) =>
+          assistants.removeTeam(input.teamId).pipe(Effect.as({ teamId: input.teamId })),
+        [WS_METHODS.assistantTeamsActivity]: (input) => assistants.teamActivity(input.teamId),
         [WS_METHODS.autonomyWatchesList]: () =>
           autonomy.listWatches.pipe(Effect.map((watches) => ({ watches }))),
         [WS_METHODS.autonomyWatchUpsert]: (input) => autonomy.upsertWatch(input),

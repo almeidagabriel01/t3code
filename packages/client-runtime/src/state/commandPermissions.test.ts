@@ -191,6 +191,9 @@ describe("command permissions", () => {
     WS_METHODS.assistantsUpdate,
     WS_METHODS.assistantsDelete,
     WS_METHODS.assistantsReset,
+    WS_METHODS.assistantTeamsCreate,
+    WS_METHODS.assistantTeamsUpdate,
+    WS_METHODS.assistantTeamsDelete,
   ])("uses the target grant for both availability and execution of %s", (method) =>
     Effect.scoped(
       Effect.gen(function* () {

@@ -3,6 +3,8 @@ import {
   type Assistant,
   type AssistantId,
   type AssistantsEvent,
+  type AssistantTeam,
+  type AssistantTeamId,
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Stream from "effect/Stream";
@@ -19,6 +21,7 @@ import {
 
 export interface AssistantsState {
   readonly assistants: ReadonlyMap<AssistantId, Assistant>;
+  readonly teams: ReadonlyMap<AssistantTeamId, AssistantTeam>;
 }
 
 /** Folds one event; the first is always a snapshot, so state starts from it. */
@@ -27,13 +30,30 @@ export function applyAssistantsEvent(
   event: AssistantsEvent,
 ): AssistantsState | null {
   if (event.type === "snapshot") {
-    return { assistants: new Map(event.assistants.map((assistant) => [assistant.id, assistant])) };
+    return {
+      assistants: new Map(event.assistants.map((assistant) => [assistant.id, assistant])),
+      teams: new Map(event.teams.map((team) => [team.id, team])),
+    };
   }
   if (state === null) return null;
+  if (event.type === "teamUpserted" || event.type === "teamRemoved") {
+    const teams = new Map(state.teams);
+    if (event.type === "teamRemoved") teams.delete(event.teamId);
+    else teams.set(event.team.id, event.team);
+    return { ...state, teams };
+  }
   const next = new Map(state.assistants);
   if (event.type === "removed") next.delete(event.assistantId);
   else next.set(event.assistant.id, event.assistant);
-  return { assistants: next };
+  return { ...state, assistants: next };
+}
+
+/** Oldest first, so the list does not reorder when a team is edited. */
+export function selectTeams(state: AssistantsState): ReadonlyArray<AssistantTeam> {
+  return [...state.teams.values()].sort(
+    (left, right) =>
+      left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
+  );
 }
 
 /** Jarvis first, then by creation. */
@@ -104,7 +124,10 @@ export function createAssistantsEnvironmentAtoms<R, E>(
       | typeof WS_METHODS.assistantsCreate
       | typeof WS_METHODS.assistantsUpdate
       | typeof WS_METHODS.assistantsDelete
-      | typeof WS_METHODS.assistantsReset,
+      | typeof WS_METHODS.assistantsReset
+      | typeof WS_METHODS.assistantTeamsCreate
+      | typeof WS_METHODS.assistantTeamsUpdate
+      | typeof WS_METHODS.assistantTeamsDelete,
   >(
     tag: TTag,
     name: string,
@@ -125,6 +148,14 @@ export function createAssistantsEnvironmentAtoms<R, E>(
     update: command(WS_METHODS.assistantsUpdate, "update"),
     delete: command(WS_METHODS.assistantsDelete, "delete"),
     reset: command(WS_METHODS.assistantsReset, "reset"),
+    createTeam: command(WS_METHODS.assistantTeamsCreate, "createTeam"),
+    updateTeam: command(WS_METHODS.assistantTeamsUpdate, "updateTeam"),
+    deleteTeam: command(WS_METHODS.assistantTeamsDelete, "deleteTeam"),
+    teamActivity: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:assistants:teamActivity",
+      tag: WS_METHODS.assistantTeamsActivity,
+      staleTimeMs: 10_000,
+    }),
     spend: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:assistants:spend",
       tag: WS_METHODS.assistantsSpend,

@@ -10,7 +10,12 @@ const state = vi.hoisted(() => ({
   enabled: true,
   collapsed: false,
   working: new Set<string>(),
+  teams: [] as Array<{
+    environmentId: string;
+    team: { id: string; name: string; memberIds: string[] };
+  }>,
   update: vi.fn(),
+  openTeam: vi.fn(),
 }));
 
 vi.mock("../../state/assistants", () => ({
@@ -26,8 +31,10 @@ vi.mock("../../state/assistants", () => ({
       },
     })),
     archived: [],
+    teams: state.teams,
   }),
 }));
+vi.mock("./assistantTeamState", () => ({ openAssistantTeamActivity: state.openTeam }));
 vi.mock("../../state/entities", () => ({
   useThreadShell: (ref: { threadId: string } | null) =>
     ref === null
@@ -60,6 +67,8 @@ function setup(
   state.collapsed = options.collapsed ?? false;
   state.working = new Set(options.working ?? []);
   state.update.mockClear();
+  state.teams = [];
+  state.openTeam.mockClear();
 }
 
 const element = (onOpenThread = vi.fn(), routeThreadKey: string | null = null) => (
@@ -123,5 +132,21 @@ describe("AssistantSidebarSection", () => {
     expect(state.update).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole("button", { name: "Show all 6 assistants" }));
     expect(state.update).toHaveBeenCalledWith({ sidebarAssistantsCollapsed: false });
+  });
+
+  it("lists teams under the assistants, opens one, and hides them when collapsed", async () => {
+    setup(["Jarvis", "Revisor"]);
+    state.teams = [
+      { environmentId: "env", team: { id: "t1", name: "Growth", memberIds: ["a", "b"] } },
+    ];
+    await using screen = await render(element());
+    await userEvent.click(screen.getByRole("button", { name: "Growth team, 2 members" }));
+    expect(state.openTeam).toHaveBeenCalledWith("env", "t1");
+    setup(["Jarvis", "Revisor"], { collapsed: true });
+    state.teams = [
+      { environmentId: "env", team: { id: "t1", name: "Growth", memberIds: ["a", "b"] } },
+    ];
+    await screen.rerender(element());
+    expect(screen.container.querySelector('[data-testid="sidebar-team-row"]')).toBeNull();
   });
 });

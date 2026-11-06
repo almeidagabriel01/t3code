@@ -4,6 +4,7 @@ import {
   ArchiveIcon,
   ChevronRightIcon,
   UserRoundIcon,
+  UsersIcon,
   EllipsisIcon,
   PlusIcon,
   RefreshCwIcon,
@@ -26,6 +27,7 @@ import { Spinner } from "../ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { AssistantAvatar } from "./assistantPresentation";
 import { openAssistantDialog } from "./assistantDialogState";
+import { openAssistantTeamActivity } from "./assistantTeamState";
 import { useAssistantFlows } from "./useAssistantFlows";
 
 /** What a row and a collapsed avatar both show: working, the attention dot, and how to open. */
@@ -199,7 +201,7 @@ export const AssistantSidebarSection = memo(function AssistantSidebarSection(pro
   readonly environmentLabelById: ReadonlyMap<string, string>;
   readonly onOpenThread: (threadRef: ScopedThreadRef) => void;
 }) {
-  const { active } = useAssistantEntries();
+  const { active, teams } = useAssistantEntries();
   const enabled = useClientSettings((settings) => settings.sidebarShowAssistantsSection);
   const collapsed = useClientSettings((settings) => settings.sidebarAssistantsCollapsed);
   if (!enabled || active.length === 0) return null;
@@ -309,6 +311,25 @@ export const AssistantSidebarSection = memo(function AssistantSidebarSection(pro
               />
             );
           })}
+      {collapsed
+        ? null
+        : teams.map(({ environmentId, team }) => (
+            <li key={`${environmentId}:${team.id}`} className="list-none py-0.5">
+              <button
+                type="button"
+                data-testid="sidebar-team-row"
+                aria-label={`${team.name} team, ${team.memberIds.length} members`}
+                onClick={() => openAssistantTeamActivity(environmentId, team.id)}
+                className="flex h-8 w-full cursor-pointer items-center gap-2 rounded-md px-(--sidebar-row-content-inset) text-left text-sm font-medium text-sidebar-foreground outline-none select-none hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+              >
+                <UsersIcon aria-hidden className="size-4 shrink-0 text-(--sidebar-icon-color)" />
+                <span className="min-w-0 flex-1 truncate">{team.name}</span>
+                <span className="text-2xs text-muted-foreground tabular-nums">
+                  {team.memberIds.length}
+                </span>
+              </button>
+            </li>
+          ))}
       <li
         aria-hidden
         data-testid="sidebar-assistants-divider"

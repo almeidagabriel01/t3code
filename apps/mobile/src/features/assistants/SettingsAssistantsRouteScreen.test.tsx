@@ -11,6 +11,7 @@ const { mocks, Children } = vi.hoisted(() => ({
     openEditor: vi.fn(),
     restoreDefault: vi.fn(),
     hasDefault: true,
+    openTeam: { edit: vi.fn(), activity: vi.fn() },
   },
 }));
 vi.mock("../../components/ui/ListActionRow", () => ({
@@ -21,7 +22,12 @@ vi.mock("../../components/ui/ListActionRow", () => ({
 vi.mock("./useAssistantFlows", () => ({
   useAssistantFlows: () => ({ canAct: true, restoreDefault: mocks.restoreDefault }),
 }));
-vi.mock("react-native", () => ({ View: Children }));
+vi.mock("react-native", () => ({
+  View: Children,
+  Pressable: (props: { accessibilityLabel?: string; onPress?: () => void }) => (
+    <button aria-label={props.accessibilityLabel} onClick={props.onPress} />
+  ),
+}));
 vi.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ bottom: 0 }) }));
 vi.mock("../../components/ui/AppText", () => ({ AppText: Children }));
 vi.mock("../../components/ui/EmptyState", () => ({ EmptyState: () => null }));
@@ -48,6 +54,8 @@ vi.mock("./AutonomySettingsSection", () => ({
     <p data-autonomy>{`Autonomy:${props.environmentId}${props.suffix}`}</p>
   ),
 }));
+vi.mock("./assistantTeamTarget", () => ({ useOpenAssistantTeam: () => mocks.openTeam }));
+vi.mock("../../components/ui/AppSymbol", () => ({ SymbolView: () => null }));
 vi.mock("./openAssistantEditor", () => ({ useOpenAssistantEditor: () => mocks.openEditor }));
 vi.mock("../../state/entities", () => ({ useProjects: () => [] }));
 vi.mock("../../state/use-remote-environment-registry", () => ({
@@ -84,6 +92,18 @@ vi.mock("../../state/assistants", () => ({
       },
     ],
     archived: [],
+    teams: [
+      {
+        environmentId: "hub",
+        team: {
+          id: "t1",
+          name: "Growth",
+          memberIds: ["a1", "a2"],
+          leaderId: "a1",
+          leaderTitle: "CEO",
+        },
+      },
+    ],
   }),
   useAssistantsEnvironmentIds: () => mocks.environmentIds,
   useAssistantSpend: (environmentId: string, assistantId: string | null) => {
@@ -110,6 +130,8 @@ beforeEach(() => {
   mocks.environmentIds = ["hub"];
   mocks.hasDefault = true;
   mocks.restoreDefault.mockReset();
+  mocks.openTeam.edit.mockReset();
+  mocks.openTeam.activity.mockReset();
 });
 afterEach(() => act(() => root.unmount()));
 
@@ -152,5 +174,21 @@ describe("restoring Jarvis", () => {
     const button = container.querySelector<HTMLButtonElement>('[aria-label="Restore Jarvis"]')!;
     act(() => button.click());
     expect(mocks.restoreDefault).toHaveBeenCalledOnce();
+  });
+});
+
+describe("teams section", () => {
+  it("lists teams with their leader title, opens the activity or the form, and offers a new team", async () => {
+    await act(async () => root.render(<SettingsAssistantsRouteScreen />));
+    const click = (label: string) =>
+      act(async () =>
+        container.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`)?.click(),
+      );
+    await click("Growth, 2 members · Jarvis (CEO)");
+    expect(mocks.openTeam.activity).toHaveBeenCalledWith("hub", "t1");
+    await click("Edit Growth");
+    expect(mocks.openTeam.edit).toHaveBeenCalledWith("hub", "t1");
+    await click("New team");
+    expect(mocks.openTeam.edit).toHaveBeenLastCalledWith("hub", null);
   });
 });

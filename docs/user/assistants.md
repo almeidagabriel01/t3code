@@ -16,7 +16,7 @@ Open **Settings → Assistants**, or use **+** next to Assistants in the sidebar
 - **Instructions**. Sent with every message, so they keep applying after a long conversation is
   compacted, resumed or moved to another provider. An edit applies from the next message.
 - **Tool access**, described below.
-- **Role** and **Reports to**, which put it in a team (see [Teams](#teams)).
+- **Role** and **Reports to**, which place it in a reporting line (see [Reporting lines](#reporting-lines)).
 
 ## Tool access
 
@@ -70,7 +70,7 @@ researcher assistant for the three most cited papers and summarize them". It fin
 with the `t3_assistant` tool, messages its conversation, and waits for the reply. Any agent can do
 this, not only assistants.
 
-## Teams
+## Reporting lines
 
 Give assistants a **Role** (such as CEO or Engineer) and choose who each **Reports to** in its
 settings. A leader sees its reports, with their handles, in its instructions, and the assistant list
@@ -78,8 +78,8 @@ shows each one's role and leader.
 
 - A leader can ask its reports, and their reports, for work. The report answers through the reply
   the leader is waiting on. A report can't message its leader or anyone outside its branch, so
-  assistants never end up messaging each other in a loop. T3 Code refuses such a message and says so.
-- Assistants that are in no team keep talking to each other freely.
+  assistants never end up messaging each other in a loop. T3 Code refuses such a message and says so. A team (below) is how you let assistants talk in any direction.
+- Assistants with no reporting line and no team keep talking to each other freely.
 - Archiving or deleting a leader makes its reports top-level again. A leader can't report to its own
   report.
 
@@ -89,6 +89,25 @@ you like an autonomy notice, in **Activity** and on **Telegram**, following the 
 channels, even if that assistant only replies when you message it. Pausing **Assistants can notify
 you** silences it too. Edit the time or delete the schedule under **Schedules**. The
 standup is recognised by the first line of its prompt, so keep that line when you edit it.
+
+## Teams
+
+A team is a group of assistants that talk to each other while you watch. Under **Settings >
+Assistants > Teams**, choose **New team**, name it and pick at least two members. An assistant can be
+in several teams. The sidebar and Home list your teams under the assistants.
+
+- Members may message each other in any direction, and each member's instructions list its
+  teammates. Ask one to "check with the team" and it asks a teammate.
+- Open a team (**Activity**, or its row in the sidebar or Home) to read every message the members
+  sent each other, oldest first, and jump to the conversation it landed in.
+- A leader is optional. Choose one among the members and give it a title such as CEO, CFO or Head
+  of Research. Teammates are told to report their results to it, and the title shows next to its
+  name. The leader does not change who may message whom.
+- To keep two assistants from answering each other forever, one assistant may send at most 20
+  messages an hour to its teammates. Past that, T3 Code refuses the send and the assistant reports
+  to you instead.
+- Deleting an assistant removes it from its teams. A team left with fewer than two members is
+  deleted. Archived members stay in the team and come back when unarchived.
 
 ## Schedules
 

@@ -2,6 +2,7 @@ import {
   type Assistant,
   type AssistantId,
   AssistantMcpServer,
+  type AssistantTeam,
   type AssistantToolAccess,
   assistantDescendantIds,
   assistantIdFromThreadId,
@@ -13,11 +14,19 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
+
+import {
+  allTeams,
+  countRecentTeamSends,
+  sharedTeams,
+  TEAM_SENDS_PER_HOUR,
+} from "./AssistantTeams.ts";
 
 export interface AssistantRow {
   readonly assistant_id: string;
@@ -92,8 +101,9 @@ export const toAssistant = (row: AssistantRow): Assistant => ({
 
 /**
  * An assistant with any org relation may only message its descendants; one with none is free.
- * Reports answer through the run their leader waits on, so a message upward never exists and
- * a loop of assistants messaging each other cannot form.
+ * Reports answer through the run their leader waits on, so a message upward never exists.
+ * Teammates are the exception: `AssistantDirectory.mayMessage` lets them message each other in
+ * any direction and `teamSendLimited` caps how often, which is what stops a loop there.
  */
 export function assistantMayMessage(
   edges: ReadonlyArray<{ readonly id: string; readonly reportsTo: string | null }>,
@@ -110,8 +120,18 @@ export function assistantMayMessage(
 }
 
 export interface AssistantDirectoryShape {
-  /** True unless both are assistant threads and the org chart forbids the send. */
+  /** True unless both are assistant threads and neither the org chart nor a shared team allows it. */
   readonly mayMessage: (sender: ThreadId, target: ThreadId) => Effect.Effect<boolean>;
+  /** True when the pair share a team and the sender used up its hourly sends to teammates. */
+  readonly teamSendLimited: (sender: ThreadId, target: ThreadId) => Effect.Effect<boolean>;
+  /** The teams the assistant is in, with its active teammates; archived ones left out. */
+  readonly teamsOf: (assistant: Assistant) => Effect.Effect<
+    ReadonlyArray<{
+      readonly team: AssistantTeam;
+      readonly leader: Assistant | null;
+      readonly teammates: ReadonlyArray<Assistant>;
+    }>
+  >;
   /** Who the assistant reports to and who reports to it, archived ones left out. */
   readonly teamOf: (assistant: Assistant) => Effect.Effect<{
     readonly leader: Assistant | null;
@@ -145,12 +165,47 @@ const make = Effect.gen(function* () {
         readonly reports_to: string | null;
       }>`
         SELECT assistant_id, reports_to FROM assistants`.pipe(Effect.orDie);
-      return assistantMayMessage(
-        rows.map((row) => ({ id: row.assistant_id, reportsTo: row.reports_to })),
-        sender.value.assistant.id,
-        target.value.assistant.id,
+      const teams = yield* allTeams(sql).pipe(Effect.orDie);
+      return (
+        sharedTeams(teams, sender.value.assistant.id, target.value.assistant.id).length > 0 ||
+        assistantMayMessage(
+          rows.map((row) => ({ id: row.assistant_id, reportsTo: row.reports_to })),
+          sender.value.assistant.id,
+          target.value.assistant.id,
+        )
       );
     }),
+    teamSendLimited: Effect.fn("AssistantDirectory.teamSendLimited")(function* (
+      senderThread,
+      targetThread,
+    ) {
+      const sender = yield* directory.forThread(senderThread);
+      const target = yield* directory.forThread(targetThread);
+      if (Option.isNone(sender) || Option.isNone(target)) return false;
+      const senderId = sender.value.assistant.id;
+      const teams = (yield* allTeams(sql)).filter((team) => team.memberIds.includes(senderId));
+      if (sharedTeams(teams, senderId, target.value.assistant.id).length === 0) return false;
+      const peers = [...new Set(teams.flatMap((team) => team.memberIds))].filter(
+        (id) => id !== senderId,
+      );
+      const now = yield* DateTime.now;
+      return (
+        (yield* countRecentTeamSends(sql, senderId, peers, DateTime.toEpochMillis(now))) >=
+        TEAM_SENDS_PER_HOUR
+      );
+    }, Effect.orDie),
+    teamsOf: Effect.fn("AssistantDirectory.teamsOf")(function* (assistant) {
+      const all = (yield* live).map(toAssistant);
+      return (yield* allTeams(sql))
+        .filter((team) => team.memberIds.includes(assistant.id))
+        .map((team) => ({
+          team,
+          leader: all.find((other) => other.id === team.leaderId) ?? null,
+          teammates: all.filter(
+            (other) => other.id !== assistant.id && team.memberIds.includes(other.id),
+          ),
+        }));
+    }, Effect.orDie),
     teamOf: Effect.fn("AssistantDirectory.teamOf")(function* (assistant) {
       const all = (yield* live).map(toAssistant);
       return {

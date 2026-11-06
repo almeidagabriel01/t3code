@@ -1,9 +1,10 @@
-import { teamSubtitle } from "@t3tools/client-runtime/assistantTeam";
+import { teamSubtitle, teamSummary } from "@t3tools/client-runtime/assistantTeam";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { View } from "react-native";
+import { Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/ui/AppText";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { ListActionRow } from "../../components/ui/ListActionRow";
 import { ListSection } from "../../components/ui/ListSection";
@@ -14,6 +15,7 @@ import {
   useAssistantSpend,
   useAssistantsEnvironmentIds,
   type AssistantEntry,
+  type AssistantTeamEntry,
 } from "../../state/assistants";
 import { useProjects } from "../../state/entities";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
@@ -21,6 +23,7 @@ import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { AutonomySettingsSection } from "./AutonomySettingsSection";
 import { AssistantAvatar, toolAccessLabel } from "./assistantPresentation";
 import { useOpenAssistantEditor } from "./openAssistantEditor";
+import { useOpenAssistantTeam } from "./assistantTeamTarget";
 import { useAssistantFlows } from "./useAssistantFlows";
 
 function AssistantListRow(props: { readonly entry: AssistantEntry; readonly detail: string[] }) {
@@ -62,6 +65,48 @@ function AssistantListRow(props: { readonly entry: AssistantEntry; readonly deta
   );
 }
 
+function TeamListRow(props: {
+  readonly entry: AssistantTeamEntry;
+  readonly assistants: ReadonlyArray<AssistantEntry["assistant"]>;
+}) {
+  const openTeam = useOpenAssistantTeam();
+  const { team, environmentId } = props.entry;
+  const summary = teamSummary(team, props.assistants);
+  return (
+    <RowPressable
+      accessibilityRole="button"
+      accessibilityLabel={`${team.name}, ${summary}`}
+      onPress={() => openTeam.activity(environmentId, team.id)}
+      className="bg-grouped-card"
+    >
+      <View className="min-h-16 flex-row items-center gap-3 px-4 py-3">
+        <View className="min-w-0 flex-1 gap-0.5">
+          <Text textRole="body" className="text-foreground" numberOfLines={1}>
+            {team.name}
+          </Text>
+          <Text textRole="footnote" className="text-foreground-muted" numberOfLines={1}>
+            {summary}
+          </Text>
+        </View>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Edit ${team.name}`}
+          hitSlop={8}
+          onPress={() => openTeam.edit(environmentId, team.id)}
+          className="active:opacity-70"
+        >
+          <SymbolView
+            name="pencil"
+            size={16}
+            tintColorClassName="accent-icon-subtle"
+            type="monochrome"
+          />
+        </Pressable>
+      </View>
+    </RowPressable>
+  );
+}
+
 function RestoreJarvisRow(props: { readonly environmentId: EnvironmentId }) {
   const flows = useAssistantFlows(props.environmentId);
   return (
@@ -76,7 +121,8 @@ function RestoreJarvisRow(props: { readonly environmentId: EnvironmentId }) {
 }
 
 export function SettingsAssistantsRouteScreen() {
-  const { active, archived, environmentIds: loadedEnvironmentIds } = useAssistantEntries();
+  const { active, archived, teams, environmentIds: loadedEnvironmentIds } = useAssistantEntries();
+  const openTeam = useOpenAssistantTeam();
   const insets = useSafeAreaInsets();
   const openEditor = useOpenAssistantEditor();
   const { savedConnectionsById } = useSavedRemoteConnections();
@@ -147,6 +193,28 @@ export function SettingsAssistantsRouteScreen() {
                 .map((environmentId) => (
                   <RestoreJarvisRow key={environmentId} environmentId={environmentId} />
                 ))}
+            </ListSection>
+            <ListSection
+              title="Teams"
+              footer="Members of a team message each other and you can read what they say. Tap a team for its activity."
+            >
+              {teams.map((entry) => (
+                <TeamListRow
+                  key={`${entry.environmentId}:${entry.team.id}`}
+                  entry={entry}
+                  assistants={[...active, ...archived]
+                    .filter((other) => other.environmentId === entry.environmentId)
+                    .map((other) => other.assistant)}
+                />
+              ))}
+              {active.length >= 2 ? (
+                <ListActionRow
+                  icon="person.2"
+                  label="New team"
+                  description="Group assistants so they can talk to each other."
+                  onPress={() => openTeam.edit(firstEnvironmentId!, null)}
+                />
+              ) : null}
             </ListSection>
             {archived.length > 0 ? (
               <ListSection title="Archived">

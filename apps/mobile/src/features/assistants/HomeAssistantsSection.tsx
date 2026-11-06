@@ -12,11 +12,16 @@ import { SymbolView } from "../../components/ui/AppSymbol";
 import { Menu } from "../../components/ui/Menu";
 import { cn } from "../../lib/cn";
 import { useQuietThreadShell } from "../../state/entities";
-import { useAssistantEntries, type AssistantEntry } from "../../state/assistants";
+import {
+  useAssistantEntries,
+  type AssistantEntry,
+  type AssistantTeamEntry,
+} from "../../state/assistants";
 import { SubagentStatusDot } from "../threads/SubagentStatusDot";
 import { AssistantAvatar } from "./assistantPresentation";
 import { useAssistantFlows } from "./useAssistantFlows";
 import { useOpenAssistantEditor } from "./openAssistantEditor";
+import { useOpenAssistantTeam } from "./assistantTeamTarget";
 import { useHomeSectionPreferences } from "../home/useHomeSectionPreferences";
 
 const COLLAPSED_AVATAR_LIMIT = 5;
@@ -134,13 +139,50 @@ function AssistantRow(props: {
   );
 }
 
+function TeamRow(props: { readonly entry: AssistantTeamEntry; readonly sidebar: boolean }) {
+  const openTeam = useOpenAssistantTeam();
+  const { team, environmentId } = props.entry;
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`${team.name} team, ${team.memberIds.length} members`}
+      onPress={() => openTeam.activity(environmentId, team.id)}
+      className="min-h-12 flex-row items-center gap-3 rounded-2xl px-2 active:opacity-70"
+    >
+      <SymbolView
+        name="person.2"
+        size={18}
+        tintColorClassName={props.sidebar ? "accent-drawer-foreground-muted" : "accent-icon-subtle"}
+        type="monochrome"
+      />
+      <Text
+        className={cn(
+          "min-w-0 flex-1 text-base font-t3-medium",
+          props.sidebar ? "text-drawer-foreground" : "text-foreground",
+        )}
+        numberOfLines={1}
+      >
+        {team.name}
+      </Text>
+      <Text
+        className={cn(
+          "text-xs",
+          props.sidebar ? "text-drawer-foreground-muted" : "text-foreground-tertiary",
+        )}
+      >
+        {team.memberIds.length}
+      </Text>
+    </Pressable>
+  );
+}
+
 /** Pinned above the thread list: one row per active assistant, and a way to add another. */
 export function HomeAssistantsSection(props: {
   readonly gutter: number;
   readonly sidebar?: boolean;
   readonly environmentLabelById: ReadonlyMap<string, string>;
 }) {
-  const { active } = useAssistantEntries();
+  const { active, teams } = useAssistantEntries();
   const openEditor = useOpenAssistantEditor();
   const { assistantsCollapsed, toggleAssistants } = useHomeSectionPreferences();
   const sidebar = props.sidebar === true;
@@ -231,6 +273,15 @@ export function HomeAssistantsSection(props: {
                   ? (props.environmentLabelById.get(entry.environmentId) ?? null)
                   : null
               }
+            />
+          ))}
+      {assistantsCollapsed
+        ? null
+        : teams.map((entry) => (
+            <TeamRow
+              key={`${entry.environmentId}:${entry.team.id}`}
+              entry={entry}
+              sidebar={sidebar}
             />
           ))}
     </View>

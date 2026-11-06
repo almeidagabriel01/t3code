@@ -43,3 +43,28 @@ it("tells an assistant that must ask before acting to wait and not route around 
   assert.ok(note.includes("tell the user it is waiting and stop"));
   assert.ok(!assistantNoteFor(assistant, "hi").includes("Ask before acting"));
 });
+
+it("lists each team with its teammates and tells the leader and the members what to do", () => {
+  const ray = { name: "Ray", handle: "ray", threadId: "assistant:ray:1" as never };
+  const lee = { name: "Lee", handle: "lee", threadId: "assistant:lee:1" as never, role: "Dev" };
+  const team = { name: 'Core "A"', leaderTitle: "Head of Research" };
+  const asMember = assistantNoteFor(assistant, "hi", undefined, [
+    { team, leader: ray, teammates: [ray, lee] },
+  ]);
+  assert.ok(
+    asMember.includes(
+      'Team "Core "A"": Ray (@ray, threadId assistant:ray:1); Lee (@lee, threadId assistant:lee:1), Dev.',
+    ),
+  );
+  assert.ok(asMember.includes("Ray is the team's Head of Research: report your results to them"));
+  assert.ok(asMember.includes("never reply just to acknowledge"));
+  const asLeader = assistantNoteFor(assistant, "hi", undefined, [
+    { team: { name: "T", leaderTitle: null }, leader: { ...ray, handle: "sam" }, teammates: [lee] },
+  ]);
+  assert.ok(asLeader.includes("You are the team's leader: coordinate"));
+  const noLeader = assistantNoteFor({ ...assistant, handle: "sam" }, "hi", undefined, [
+    { team: { name: "T", leaderTitle: null }, leader: null, teammates: [lee] },
+  ]);
+  assert.ok(!noLeader.includes("team's"));
+  assert.ok(!assistantNoteFor(assistant, "hi").includes("Team "));
+});

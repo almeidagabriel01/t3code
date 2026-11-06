@@ -1,4 +1,4 @@
-import type { Assistant, ThreadId } from "@t3tools/contracts";
+import type { Assistant, AssistantTeam, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
@@ -26,6 +26,34 @@ function teamLine(leader: Colleague | null, reports: ReadonlyArray<Colleague>): 
   return escapeBody(parts.join(" "));
 }
 
+export interface TeamMembership {
+  readonly team: Pick<AssistantTeam, "name" | "leaderTitle">;
+  readonly leader: Colleague | null;
+  readonly teammates: ReadonlyArray<Colleague & { readonly role?: string | undefined }>;
+}
+
+const TEAM_GUIDANCE =
+  "Talk to a teammate with t3_thread_send to its threadId only when the work needs them, then t3_thread_wait on the run it returns. Keep exchanges short and purposeful, never reply just to acknowledge, and do not message assistants outside your teams. If a send is refused because you messaged teammates too much, stop and report to the user instead. Summarize for the user what the team did.";
+
+/** One block per team the assistant is in; empty when it is in none. */
+function teamsLines(self: Pick<Colleague, "handle">, teams: ReadonlyArray<TeamMembership>): string {
+  if (teams.length === 0) return "";
+  const lines = teams.map(({ team, leader, teammates }) => {
+    const title = team.leaderTitle ?? "leader";
+    const members = teammates
+      .map((mate) => (mate.role ? `${colleague(mate)}, ${mate.role}` : colleague(mate)))
+      .join("; ");
+    const leaderLine =
+      leader === null
+        ? ""
+        : leader.handle === self.handle
+          ? ` You are the team's ${title}: coordinate the work and collect your teammates' results.`
+          : ` ${leader.name} is the team's ${title}: report your results to them with t3_thread_send.`;
+    return `Team "${team.name}": ${members}.${leaderLine}`;
+  });
+  return escapeBody([...lines, TEAM_GUIDANCE].join("\n"));
+}
+
 const ASK_BEFORE_ACTING_LINE =
   "Ask before acting is on: a message you send into another agent conversation is held until the user approves it in this conversation. If a send says it is waiting for approval, tell the user it is waiting and stop; send the same message again only after they approve, and never send it another way if they decline.";
 
@@ -38,6 +66,7 @@ export function assistantNoteFor(
     leader: null,
     reports: [],
   },
+  teams: ReadonlyArray<TeamMembership> = [],
 ): string {
   // Provider-native slash commands must stay at the start of the prompt.
   if (userText.trimStart().startsWith("/")) return "";
@@ -45,6 +74,7 @@ export function assistantNoteFor(
   const open = `<t3_assistant name="${escapeAttribute(assistant.name)}" handle="${assistant.handle}"${role} access="${assistant.toolAccess}">`;
   const body = [
     teamLine(team.leader, team.reports),
+    teamsLines(assistant, teams),
     assistant.askBeforeActing === true ? ASK_BEFORE_ACTING_LINE : "",
     escapeBody(assistant.instructions.trim()),
   ]
@@ -69,5 +99,6 @@ export const assistantNote = Effect.fn("AssistantNote.forTurn")(function* (
   const team = userText.trimStart().startsWith("/")
     ? undefined
     : yield* directory.value.teamOf(assistant);
-  return assistantNoteFor(assistant, userText, team);
+  const teams = team === undefined ? [] : yield* directory.value.teamsOf(assistant);
+  return assistantNoteFor(assistant, userText, team, teams);
 });

@@ -85,9 +85,16 @@ describe("assistant client guards", () => {
       WS_METHODS.assistantsUpdate,
       WS_METHODS.assistantsDelete,
       WS_METHODS.assistantsReset,
+      WS_METHODS.assistantTeamsCreate,
+      WS_METHODS.assistantTeamsUpdate,
+      WS_METHODS.assistantTeamsDelete,
     ])
       expect(clientRpcRequiredScopes(method, {})).toEqual(["orchestration:operate"]);
-    for (const method of [WS_METHODS.assistantsSubscribe, WS_METHODS.assistantsSpend])
+    for (const method of [
+      WS_METHODS.assistantsSubscribe,
+      WS_METHODS.assistantsSpend,
+      WS_METHODS.assistantTeamsActivity,
+    ])
       expect(Object.hasOwn(CLIENT_GUARDED_RPC_SCOPES, method)).toBe(false);
   });
 });
