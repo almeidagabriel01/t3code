@@ -2,7 +2,9 @@ import type { DeviceHostSummary } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { describe, expect, it } from "@effect/vitest";
 
-import { agentDeviceQuickStart, pngDimensions, resolveHostId } from "./handlers.ts";
+import { HeavyQueueError } from "@t3tools/contracts";
+import type * as HeavyQueue from "../../../heavyQueue/HeavyQueue.ts";
+import { agentDeviceQuickStart, gateHeavyOpen, pngDimensions, resolveHostId } from "./handlers.ts";
 
 const device = {
   hostId: "local",
@@ -101,5 +103,63 @@ describe("device tool helpers", () => {
     new DataView(png.buffer).setUint32(20, 2556);
     expect(pngDimensions(png)).toEqual({ width: 1179, height: 2556 });
     expect(pngDimensions(new Uint8Array([1, 2, 3]))).toEqual({ width: 0, height: 0 });
+  });
+
+  describe("gateHeavyOpen", () => {
+    const run = (options: {
+      readonly entries: number;
+      readonly local?: boolean;
+      readonly skip?: boolean;
+      readonly slotError?: HeavyQueueError;
+    }) => {
+      const slots: string[] = [];
+      const queue = {
+        state: Effect.succeed({
+          entries: Array.from({ length: options.entries }, () => ({}) as never),
+        }),
+        withSlot: (label: string, _threadId: string | null, effect: Effect.Effect<string>) =>
+          options.slotError
+            ? Effect.fail(options.slotError)
+            : Effect.sync(() => slots.push(label)).pipe(Effect.andThen(effect)),
+      } as unknown as HeavyQueue.HeavyQueue["Service"];
+      const result = gateHeavyOpen({
+        queue,
+        local: options.local ?? true,
+        skip: options.skip,
+        label: "Open iPhone",
+        threadId: "t",
+      })(Effect.succeed("opened"));
+      return { slots, result };
+    };
+
+    it.effect.each([
+      { name: "waits its turn when others are queued", options: { entries: 1 }, slots: 1 },
+      { name: "opens at once when the queue is empty", options: { entries: 0 }, slots: 0 },
+      {
+        name: "opens at once when the user chose run now",
+        options: { entries: 2, skip: true },
+        slots: 0,
+      },
+      { name: "opens at once on a remote host", options: { entries: 2, local: false }, slots: 0 },
+    ])("$name", ({ options, slots }) =>
+      Effect.gen(function* () {
+        const gated = run(options);
+        expect(yield* gated.result).toBe("opened");
+        expect(gated.slots).toHaveLength(slots);
+      }),
+    );
+
+    it.effect("reports a removed queue entry as a device tool failure", () =>
+      Effect.gen(function* () {
+        const gated = run({
+          entries: 1,
+          slotError: new HeavyQueueError({ reason: "not-found", message: "removed by the user" }),
+        });
+        expect(yield* Effect.flip(gated.result)).toMatchObject({
+          _tag: "DeviceToolUnavailableError",
+          reason: "removed by the user",
+        });
+      }),
+    );
   });
 });

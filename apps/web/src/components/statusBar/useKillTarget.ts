@@ -13,6 +13,7 @@ import {
 
 import { ensureLocalApi } from "../../localApi";
 import { deviceEnvironment } from "../../state/device";
+import { heavyQueueEnvironment } from "../../state/heavyQueue";
 import { serverEnvironment } from "../../state/server";
 import { useEnvironmentScope } from "../../state/session";
 import { terminalEnvironment } from "../../state/terminal";
@@ -78,4 +79,26 @@ export function useShutDownDevice(environmentId: EnvironmentId) {
     }
   };
   return { canShutDown, shutDown };
+}
+
+export function useHeavyQueueActions(environmentId: EnvironmentId) {
+  const canPromote = useAtomValue(heavyQueueEnvironment.promote.permissionAtom(environmentId));
+  const canCancel = useAtomValue(heavyQueueEnvironment.cancel.permissionAtom(environmentId));
+  const promoteCommand = useAtomCommand(heavyQueueEnvironment.promote, { reportFailure: false });
+  const cancelCommand = useAtomCommand(heavyQueueEnvironment.cancel, { reportFailure: false });
+  const run = async (command: typeof promoteCommand, id: string, failureTitle: string) => {
+    const result = await command({ environmentId, input: { id } });
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      reportFailure(failureTitle, squashAtomCommandFailure(result));
+    }
+  };
+  const promote = (id: string) => run(promoteCommand, id, "Could not run it next");
+  const cancel = async (id: string) => {
+    if (
+      !(await confirmKill("Remove from the queue? The agent's command will stop waiting and fail."))
+    )
+      return;
+    await run(cancelCommand, id, "Could not remove from the queue");
+  };
+  return { canPromote, canCancel, promote, cancel };
 }

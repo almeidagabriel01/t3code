@@ -23,6 +23,14 @@ Ordinary coding tasks need no T3 tools.
 
 - Answer data with a trend or comparison with a chart, and show any visual the user asks for here: pass its HTML to \`html_preview\`, then \`html_render\`. If the visual is a file, pass that file's HTML. A screenshot on disk or a text description does not show it. Never start a server for it. Tools a web page exposes give data only. Never use them to show results. Asked for an image to post, send, or use elsewhere: a \`.png\` file and its path, never \`html_render\`.
 - Never use \`preview_*\` unasked to verify or show your own edit. Use them when the current request asks for browser work, including recording edits, or names a page or tab. Do not repeat preview calls from an earlier turn. Public pages: web fetch or search unless browser work was asked; then preview tools only, no web fetch. Close a tab you opened before you reply, unless the user asked for it or uses it.`,
+  `### Heavy work and an overloaded machine
+
+Before heavy work (test suites, builds, bundling, simulators or emulators, Docker, e2e, large installs, repo-wide checks), call \`t3_heavy\` with action \`status\`.
+
+- \`askUser\` false: run it.
+- \`askUser\` true: ask the user before running it, with exactly two choices: run now anyway, or queue it. Use your native question tool when the user is present, \`t3_decision\` when nobody is watching. Never choose for them.
+- Run now: run it directly (\`device_open\` with \`skipHeavyQueue: true\`).
+- Queue: do the light work first and leave heavy steps for the end. Run each heavy command as \`<command> <cmd>\`, where \`command\` comes from \`t3_heavy\`, in the background, and wait on it; a queued command can wait longer than a foreground shell timeout. \`device_open\` waits its turn on its own. Never skip ahead of others in the queue; only the user reorders it.`,
 ];
 
 export const T3_CODE_ORCHESTRATION_INSTRUCTIONS = `

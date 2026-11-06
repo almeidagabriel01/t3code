@@ -13,15 +13,20 @@ import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 import {
   AppWindowIcon,
+  ArrowUpToLineIcon,
   BotIcon,
   ChevronDownIcon,
   ChevronRightIcon,
   CpuIcon,
+  HourglassIcon,
+  ListOrderedIcon,
   MemoryStickIcon,
   MonitorIcon,
+  PlayIcon,
   ServerIcon,
   SmartphoneIcon,
   TerminalIcon,
+  Trash2Icon,
   WrenchIcon,
   XIcon,
 } from "lucide-react";
@@ -30,6 +35,7 @@ import { createContext, use, useEffect, useState } from "react";
 import { useClientSettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { useDeviceState } from "../../state/device";
+import { useHeavyQueue } from "../../state/heavyQueue";
 import { useProjects, useThreadShells } from "../../state/entities";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useEnvironmentQuery, useEnvironmentQuerySelector } from "../../state/query";
@@ -40,6 +46,7 @@ import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { buildHeavyQueueRows, formatElapsed, ordinal } from "./heavyQueue.logic";
 import { processLabel } from "./processLabel.logic";
 import {
   addUsage,
@@ -54,7 +61,7 @@ import {
 } from "./resourceUsage.logic";
 import { formatMemory, sparklinePoints } from "./statusBar.logic";
 import { isStatusBarItemShown, STATUS_BAR_RESOURCE_ITEM } from "./statusBarItems.logic";
-import { useCloseTerminal, useShutDownDevice } from "./useKillTarget";
+import { useCloseTerminal, useHeavyQueueActions, useShutDownDevice } from "./useKillTarget";
 import {
   useEnvironmentResources,
   useEnvironmentSnapshots,
@@ -422,6 +429,109 @@ function DeviceGroup({
   );
 }
 
+const ELAPSED_REFRESH_MS = 5_000;
+
+function RunningElapsed({ startedAt }: { readonly startedAt: string }) {
+  const [now, setNow] = useState(() => Date.now());
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- coarse timer so the elapsed time does not repaint continuously
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), ELAPSED_REFRESH_MS);
+    return () => clearInterval(timer);
+  }, []);
+  return <>Running · {formatElapsed(startedAt, now)}</>;
+}
+
+/** Renders nothing while the machine-wide heavy-work queue is empty. */
+export function HeavyQueueGroup({
+  environmentId,
+  threadTitle,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly threadTitle: (threadId: string) => string | undefined;
+}) {
+  const { entries } = useHeavyQueue(environmentId);
+  const { canPromote, canCancel, promote, cancel } = useHeavyQueueActions(environmentId);
+  if (entries.length === 0) return null;
+  const rows = buildHeavyQueueRows(entries, threadTitle);
+  return (
+    <ProjectGroup title="Heavy work queue" count={rows.length} usage={null}>
+      {rows.map((row) => {
+        const Icon = row.running ? PlayIcon : HourglassIcon;
+        return (
+          <div
+            key={row.id}
+            className="flex items-center gap-2 py-1.5 pl-10 pr-3 hover:bg-foreground/8"
+          >
+            <span className="shrink-0 text-muted-foreground [&>svg]:size-3">
+              <Icon aria-hidden />
+            </span>
+            <div className="min-w-0 flex-1">
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <div className="cursor-default truncate font-mono text-2xs text-foreground/90" />
+                  }
+                >
+                  {row.label}
+                </TooltipTrigger>
+                <TooltipPopup side="top" className="max-w-sm break-all">
+                  {row.label}
+                </TooltipPopup>
+              </Tooltip>
+              <div className="truncate text-3xs text-muted-foreground">{row.subtitle}</div>
+            </div>
+            <span className="shrink-0 text-2xs tabular-nums text-muted-foreground">
+              {row.startedAt === null ? (
+                ordinal(row.position ?? 0)
+              ) : (
+                <RunningElapsed startedAt={row.startedAt} />
+              )}
+            </span>
+            {row.running ? null : (
+              <span className="flex shrink-0 items-center gap-0.5">
+                {row.canPromote ? (
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <Button
+                          variant="ghost-muted"
+                          size="icon-micro"
+                          aria-label={`Run next ${row.label}`}
+                          disabled={!canPromote}
+                          onClick={() => void promote(row.id)}
+                        />
+                      }
+                    >
+                      <ArrowUpToLineIcon aria-hidden />
+                    </TooltipTrigger>
+                    <TooltipPopup side="top">Run next</TooltipPopup>
+                  </Tooltip>
+                ) : null}
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        variant="ghost-destructive"
+                        size="icon-micro"
+                        aria-label={`Remove ${row.label}`}
+                        disabled={!canCancel}
+                        onClick={() => void cancel(row.id)}
+                      />
+                    }
+                  >
+                    <Trash2Icon aria-hidden />
+                  </TooltipTrigger>
+                  <TooltipPopup side="top">Remove from the queue</TooltipPopup>
+                </Tooltip>
+              </span>
+            )}
+          </div>
+        );
+      })}
+    </ProjectGroup>
+  );
+}
+
 export function EnvironmentSection({
   resources,
   snapshot,
@@ -488,6 +598,10 @@ export function EnvironmentSection({
         )}
         <HostTotals environmentId={environmentId} />
         <ResourceHistory environmentId={environmentId} />
+        <HeavyQueueGroup
+          environmentId={environmentId}
+          threadTitle={(threadId) => infoOf(threadId)?.title}
+        />
         {tree.projects.length === 0 && tree.devices.length === 0 ? (
           <div className="px-3 py-4 text-center text-xs text-muted-foreground">
             Nothing running right now
@@ -716,7 +830,21 @@ function PrimaryMemory() {
   );
 }
 
+function QueueCount({ environmentId }: { readonly environmentId: EnvironmentId | null }) {
+  const count = useHeavyQueue(environmentId).entries.length;
+  return count === 0 ? null : (
+    <>
+      <span className="text-muted-foreground/50">·</span>
+      <ListOrderedIcon aria-hidden />
+      <span className="tabular-nums" aria-label={`${count} in heavy work queue`}>
+        {count}
+      </span>
+    </>
+  );
+}
+
 function ResourceSegmentBody() {
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
   const [open, setOpen] = useState(false);
   const resources = useEnvironmentResources();
   const terminalCount = resources.reduce(
@@ -734,6 +862,7 @@ function ResourceSegmentBody() {
         <PrimaryMemory />
         <TerminalIcon aria-hidden />
         <span className="tabular-nums">{terminalCount}</span>
+        <QueueCount environmentId={primaryEnvironmentId} />
       </PopoverTrigger>
       <PopoverPopup
         side="top"

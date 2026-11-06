@@ -40,6 +40,7 @@ import {
 } from "../../apps/server/src/device/AgentDeviceTarget.ts";
 import type * as DeviceHost from "../../apps/server/src/device/DeviceHost.ts";
 import * as DeviceService from "../../apps/server/src/device/DeviceService.ts";
+import * as HeavyQueue from "../../apps/server/src/heavyQueue/HeavyQueue.ts";
 import * as McpHttpServer from "../../apps/server/src/mcp/McpHttpServer.ts";
 import * as McpInvocationContext from "../../apps/server/src/mcp/McpInvocationContext.ts";
 import { liveThreadsLayer } from "../../apps/server/src/mcp/McpToolAccess.testkit.ts";
@@ -781,6 +782,7 @@ export const makeDeviceTools = Effect.fn("evaluateMcpToolUse.makeDeviceTools")(f
         Layer.mergeAll(
           liveThreadsLayer,
           Layer.mock(ProjectService.ProjectService)({ getById: () => Effect.succeedNone }),
+          Layer.mock(HeavyQueue.HeavyQueue)({ state: Effect.succeed({ entries: [] }) }),
           ServerSettingsService.layerTest({
             enableDeviceSupport: true,
             enableAgentDeviceAccess: world.deviceAgentAccess !== false,

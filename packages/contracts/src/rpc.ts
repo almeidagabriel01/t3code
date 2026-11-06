@@ -481,6 +481,7 @@ import {
   TelegramChannelSubscribeStatusInput,
 } from "./telegramChannel.ts";
 import { KeepAwakeStatus, KeepAwakeSubscribeStatusInput } from "./keepAwake.ts";
+import { HeavyQueueEntryInput, HeavyQueueError, HeavyQueueState } from "./heavyQueue.ts";
 import {
   NoteConflictError,
   NoteDocument,
@@ -737,6 +738,9 @@ export const WS_METHODS = {
   imessageChannelSubscribeStatus: "imessageChannel.subscribeStatus",
   imessageChannelCheckAccess: "imessageChannel.checkAccess",
   keepAwakeSubscribeStatus: "keepAwake.subscribeStatus",
+  heavyQueueSubscribe: "heavyQueue.subscribe",
+  heavyQueuePromote: "heavyQueue.promote",
+  heavyQueueCancel: "heavyQueue.cancel",
   telegramChannelGetSettings: "telegramChannel.getSettings",
   telegramChannelConfigure: "telegramChannel.configure",
   telegramChannelSubscribeStatus: "telegramChannel.subscribeStatus",
@@ -2292,6 +2296,23 @@ const WsImessageChannelCheckAccessRpc = Rpc.make(WS_METHODS.imessageChannelCheck
   error: ImessageChannelRpcErrors,
 });
 
+const WsHeavyQueueSubscribeRpc = Rpc.make(WS_METHODS.heavyQueueSubscribe, {
+  payload: Schema.Struct({}),
+  success: HeavyQueueState,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
+const WsHeavyQueuePromoteRpc = Rpc.make(WS_METHODS.heavyQueuePromote, {
+  payload: HeavyQueueEntryInput,
+  error: Schema.Union([HeavyQueueError, EnvironmentAuthorizationError]),
+});
+
+const WsHeavyQueueCancelRpc = Rpc.make(WS_METHODS.heavyQueueCancel, {
+  payload: HeavyQueueEntryInput,
+  error: Schema.Union([HeavyQueueError, EnvironmentAuthorizationError]),
+});
+
 const WsKeepAwakeSubscribeStatusRpc = Rpc.make(WS_METHODS.keepAwakeSubscribeStatus, {
   payload: KeepAwakeSubscribeStatusInput,
   success: KeepAwakeStatus,
@@ -2664,6 +2685,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsImessageChannelSubscribeStatusRpc,
   WsImessageChannelCheckAccessRpc,
   WsKeepAwakeSubscribeStatusRpc,
+  WsHeavyQueueSubscribeRpc,
+  WsHeavyQueuePromoteRpc,
+  WsHeavyQueueCancelRpc,
   WsTelegramChannelGetSettingsRpc,
   WsTelegramChannelConfigureRpc,
   WsTelegramChannelSubscribeStatusRpc,

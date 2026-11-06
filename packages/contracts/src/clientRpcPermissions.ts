@@ -26,6 +26,9 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.previewStopLocalServer]: AuthTerminalOperateScope,
   // Killing a listener signals a host process, as closing a terminal does.
   [WS_METHODS.serverKillListeningPort]: AuthTerminalOperateScope,
+  // Reordering or removing queued heavy work changes when other agents' processes run.
+  [WS_METHODS.heavyQueuePromote]: AuthTerminalOperateScope,
+  [WS_METHODS.heavyQueueCancel]: AuthTerminalOperateScope,
   [WS_METHODS.serverRunStorageCleanup]: AuthSettingsWriteScope,
   [WS_METHODS.serverCheckOtlpEndpoint]: AuthSettingsWriteScope,
   [WS_METHODS.serverRefreshProviders]: AuthOrchestrationReadScope,

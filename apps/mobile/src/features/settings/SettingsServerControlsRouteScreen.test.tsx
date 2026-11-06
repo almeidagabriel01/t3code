@@ -127,6 +127,11 @@ vi.mock("./components/KeepAwakeSection", () => ({
     />
   ),
 }));
+vi.mock("./components/HeavyQueueSection", () => ({
+  HeavyQueueSection: (props: { environmentId: string }) => (
+    <i aria-label="heavy queue" data-env={props.environmentId} />
+  ),
+}));
 vi.mock("./components/FolderModelsSection", () => ({ FolderModelsSection: () => null }));
 vi.mock("./components/BranchNamingSettings", () => ({
   BranchNamingSettings: (props: { onChange: (patch: ServerSettingsPatch) => void }) => {
@@ -230,6 +235,13 @@ describe("SettingsServerControlsRouteScreen", () => {
     // Both rewrite the whole project override, so a second write planned now would drop the first.
     expect(mocks.updateSettings).toHaveBeenCalledOnce();
     await act(async () => pending.resolve(AsyncResult.success(undefined)));
+  });
+
+  it("shows the heavy-work queue of the selected environment on the Maintenance page", () => {
+    act(() => root.render(<SettingsEnvironmentMaintenanceRouteScreen />));
+    expect(container.querySelector<HTMLElement>('[aria-label="heavy queue"]')?.dataset.env).toBe(
+      "local",
+    );
   });
 
   it("saves the keep-awake mode picked on the Maintenance page", () => {

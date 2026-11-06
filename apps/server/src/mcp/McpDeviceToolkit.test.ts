@@ -14,6 +14,7 @@ import { McpSchema, McpServer } from "effect/ai";
 
 import * as ServerConfig from "../config.ts";
 import * as DeviceService from "../device/DeviceService.ts";
+import * as HeavyQueue from "../heavyQueue/HeavyQueue.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
@@ -105,6 +106,10 @@ const layerProjectsMock = Layer.mock(ProjectService.ProjectService)({
   getById: () => Effect.succeedNone,
 });
 
+const layerHeavyQueueMock = Layer.mock(HeavyQueue.HeavyQueue)({
+  state: Effect.succeed({ entries: [] }),
+});
+
 const openSession = {
   threadId,
   hostId: "local",
@@ -151,6 +156,7 @@ const layerTest = McpHttpServer.layerDeviceToolkit.pipe(
   Layer.provideMerge(McpToolAccessTestkit.liveThreadsLayer),
   Layer.provideMerge(layerDeviceServiceMock),
   Layer.provide(layerProjectsMock),
+  Layer.provide(layerHeavyQueueMock),
   Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-device-toolkit-test-" })),
   Layer.provide(NodeServices.layer),
 );
@@ -276,6 +282,7 @@ it.effect("rejects unavailable agent access before booting or opening a device",
         Layer.provideMerge(McpToolAccessTestkit.liveThreadsLayer),
         Layer.provide(layerUnavailable),
         Layer.provide(layerProjectsMock),
+        Layer.provide(layerHeavyQueueMock),
         Layer.provide(
           ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-device-toolkit-test-" }),
         ),
@@ -416,6 +423,7 @@ describe("device targeting across hosts", () => {
           Layer.provideMerge(McpToolAccessTestkit.liveThreadsLayer),
           Layer.provide(layerDevices),
           Layer.provide(layerProjectsMock),
+          Layer.provide(layerHeavyQueueMock),
           Layer.provide(
             ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-device-toolkit-test-" }),
           ),

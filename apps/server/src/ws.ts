@@ -267,6 +267,7 @@ import * as UsageService from "./usage/UsageService.ts";
 import * as AutonomyService from "./autonomy/AutonomyService.ts";
 import * as AssistantSpend from "./assistants/AssistantSpend.ts";
 import * as ImessageChannelSettings from "./channels/imessage/ImessageChannelSettings.ts";
+import * as HeavyQueue from "./heavyQueue/HeavyQueue.ts";
 import * as KeepAwake from "./keepAwake/KeepAwake.ts";
 import * as TelegramChannelSettings from "./channels/telegram/TelegramChannelSettings.ts";
 import * as InstanceSpend from "./usage/InstanceSpend.ts";
@@ -1461,6 +1462,7 @@ export const layerWsRpc = (
       const autonomy = yield* AutonomyService.AutonomyService;
       const imessageChannelSettings = yield* ImessageChannelSettings.ImessageChannelSettings;
       const keepAwake = yield* KeepAwake.KeepAwake;
+      const heavyQueue = yield* HeavyQueue.HeavyQueue;
       const telegramChannelSettings = yield* TelegramChannelSettings.TelegramChannelSettings;
       const noteWork = yield* NoteWork.NoteWorkService;
       const secretRequests = yield* SecretRequests.SecretRequests;
@@ -2547,6 +2549,9 @@ export const layerWsRpc = (
         [WS_METHODS.imessageChannelSubscribeStatus]: () => imessageChannelSettings.streamStatus,
         [WS_METHODS.imessageChannelCheckAccess]: () => imessageChannelSettings.checkAccess,
         [WS_METHODS.keepAwakeSubscribeStatus]: () => keepAwake.streamStatus,
+        [WS_METHODS.heavyQueueSubscribe]: () => heavyQueue.stream,
+        [WS_METHODS.heavyQueuePromote]: ({ id }) => heavyQueue.promote(id),
+        [WS_METHODS.heavyQueueCancel]: ({ id }) => heavyQueue.cancel(id),
         [WS_METHODS.telegramChannelGetSettings]: () => telegramChannelSettings.get,
         [WS_METHODS.telegramChannelConfigure]: (input) => telegramChannelSettings.configure(input),
         [WS_METHODS.telegramChannelSubscribeStatus]: () => telegramChannelSettings.streamStatus,

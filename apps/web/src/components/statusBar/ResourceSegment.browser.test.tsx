@@ -13,7 +13,15 @@ const closeTerminal = vi.hoisted(() => vi.fn());
 
 vi.mock("./useKillTarget", () => ({
   useCloseTerminal: () => ({ canClose: true, close: closeTerminal }),
+  useShutDownDevice: () => ({ canShutDown: false, shutDown: vi.fn() }),
+  useHeavyQueueActions: () => ({
+    canPromote: false,
+    canCancel: false,
+    promote: vi.fn(),
+    cancel: vi.fn(),
+  }),
 }));
+vi.mock("../../state/heavyQueue", () => ({ useHeavyQueue: () => ({ entries: [] }) }));
 vi.mock("../../state/session", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../state/session")>()),
   useEnvironmentScope: () => false,

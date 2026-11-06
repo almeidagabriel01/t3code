@@ -76,6 +76,7 @@ export * from "./autonomy.ts";
 export * from "./channels.ts";
 export * from "./imessageChannel.ts";
 export * from "./keepAwake.ts";
+export * from "./heavyQueue.ts";
 export * from "./telegramChannel.ts";
 export * from "./notes.ts";
 export * from "./worktreeMcp.ts";

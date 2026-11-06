@@ -15,6 +15,7 @@ import * as ServerConfig from "../../../config.ts";
 import { Tool, Toolkit } from "effect/ai";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import * as HeavyQueue from "../../../heavyQueue/HeavyQueue.ts";
 import * as DeviceService from "../../../device/DeviceService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
@@ -50,7 +51,15 @@ const DeviceListTool = Tool.make("device_list", {
 const DeviceOpenTool = Tool.make("device_open", {
   description:
     "Open a simulator or emulator for this thread. Pass `deviceId` and `hostId` from `device_list`. Boots it if needed and shows it in the user's Device panel. Returns the `agent-device` CLI call pinned to that device. Drive the device with that CLI.",
-  parameters: DeviceToolOpenInput,
+  parameters: Schema.Struct({
+    ...DeviceToolOpenInput.fields,
+    skipHeavyQueue: Schema.optional(
+      Schema.Boolean.annotate({
+        description:
+          "Set only when the user chose to run now despite an overloaded machine or a heavy-work queue. Default: wait for the queue's turn when others are queued.",
+      }),
+    ),
+  }),
   success: DeviceToolOpenResult,
   failure: DeviceToolFailure,
   dependencies: [
@@ -60,6 +69,7 @@ const DeviceOpenTool = Tool.make("device_open", {
     ServerConfig.ServerConfig,
     // The thread's project can name the EAS project a cloud device runs under.
     ProjectService.ProjectService,
+    HeavyQueue.HeavyQueue,
   ],
 })
   .annotate(Tool.Title, "Open device")

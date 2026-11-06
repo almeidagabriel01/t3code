@@ -61,6 +61,8 @@ import { MemoryToolkit } from "./toolkits/memory/tools.ts";
 import { NoteToolkit } from "./toolkits/note/tools.ts";
 import * as HostHandlers from "./toolkits/host/handlers.ts";
 import { HostToolkit } from "./toolkits/host/tools.ts";
+import * as HeavyHandlers from "./toolkits/heavy/handlers.ts";
+import { HeavyToolkit } from "./toolkits/heavy/tools.ts";
 import * as DocsHandlers from "./toolkits/docs/handlers.ts";
 import { DocsToolkit } from "./toolkits/docs/tools.ts";
 import * as UserDocs from "../userDocs/UserDocs.ts";
@@ -1211,6 +1213,8 @@ const layerAssistantToolkit = toolkitRegistration(AssistantToolkit, AssistantHan
 
 const layerHostToolkit = toolkitRegistration(HostToolkit, HostHandlers.layer);
 
+const layerHeavyToolkit = toolkitRegistration(HeavyToolkit, HeavyHandlers.layer);
+
 const layerDocsToolkit = toolkitRegistration(DocsToolkit, DocsHandlers.layer).pipe(
   Layer.provide(UserDocs.layer),
 );
@@ -1317,6 +1321,7 @@ export const layerTools = Layer.mergeAll(
   layerWatchToolkit,
   layerDocsToolkit,
   layerHostToolkit,
+  layerHeavyToolkit,
   layerMemoryToolkit,
   layerEnvironmentToolkit,
   layerPreviewControlsRegistration,

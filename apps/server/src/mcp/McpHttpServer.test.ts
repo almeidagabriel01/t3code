@@ -42,6 +42,7 @@ import * as Sqlite from "../persistence/Sqlite.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 
 import * as DeviceService from "../device/DeviceService.ts";
+import * as HeavyQueue from "../heavyQueue/HeavyQueue.ts";
 import * as PullRequestReviewGuideService from "../pullRequest/PullRequestReviewGuideService.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -206,6 +207,7 @@ it.effect.each([
         McpHttpServer.layerDeviceToolkit.pipe(
           Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
           Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
+          Layer.provide(Layer.mock(HeavyQueue.HeavyQueue)({})),
           Layer.provide(
             Layer.mock(DeviceService.DeviceService)({
               locateSession: () => Effect.succeedNone,

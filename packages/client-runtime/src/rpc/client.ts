@@ -72,6 +72,7 @@ export type EnvironmentSubscriptionRpcTag =
   | typeof WS_METHODS.assistantsSubscribe
   | typeof WS_METHODS.imessageChannelSubscribeStatus
   | typeof WS_METHODS.keepAwakeSubscribeStatus
+  | typeof WS_METHODS.heavyQueueSubscribe
   | typeof WS_METHODS.telegramChannelSubscribeStatus
   | typeof WS_METHODS.memoryChanges
   | typeof WS_METHODS.serverGetStorageCleanupReport

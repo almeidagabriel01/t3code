@@ -65,6 +65,8 @@ describe("RPC authorization scopes", () => {
       WS_METHODS.terminalClear,
       WS_METHODS.terminalClose,
       WS_METHODS.previewStopLocalServer,
+      WS_METHODS.heavyQueuePromote,
+      WS_METHODS.heavyQueueCancel,
     ]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthTerminalOperateScope);
     }

@@ -59,6 +59,7 @@ import { WatchToolkit } from "../../apps/server/src/mcp/toolkits/autonomy/tools.
 import { DecisionToolkit } from "../../apps/server/src/mcp/toolkits/decision/tools.ts";
 import { DeviceToolkit } from "../../apps/server/src/mcp/toolkits/device/tools.ts";
 import { DocsToolkit } from "../../apps/server/src/mcp/toolkits/docs/tools.ts";
+import { HeavyToolkit } from "../../apps/server/src/mcp/toolkits/heavy/tools.ts";
 import { HostToolkit } from "../../apps/server/src/mcp/toolkits/host/tools.ts";
 import { EnvironmentToolkit } from "../../apps/server/src/mcp/toolkits/environment/tools.ts";
 import { HtmlToolkit } from "../../apps/server/src/mcp/toolkits/html/tools.ts";
@@ -446,6 +447,7 @@ const t3SourceTools: ReadonlyArray<Tool.Any> = [
   NoteToolkit,
   DocsToolkit,
   HostToolkit,
+  HeavyToolkit,
   MemoryToolkit,
   EnvironmentToolkit,
   PreviewControlsToolkit,

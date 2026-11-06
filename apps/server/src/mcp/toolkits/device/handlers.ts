@@ -6,11 +6,14 @@ import {
   type DevicePlatform,
   type DeviceSummary,
   DeviceToolUnavailableError,
+  HeavyQueueError,
   LOCAL_DEVICE_HOST_ID,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as DeviceService from "../../../device/DeviceService.ts";
+import * as HeavyQueue from "../../../heavyQueue/HeavyQueue.ts";
 import { threadWorkspaceRoot } from "../../../project/threadWorkspaceRoot.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
@@ -186,6 +189,33 @@ const pickDevice = Effect.fn("handlers.pickDevice")(function* (
   return candidates.find((device) => device.booted) ?? candidates[0]!;
 });
 
+const isHeavyQueueError = Schema.is(HeavyQueueError);
+
+/** Booting a local device is heavy: when others are queued it waits its turn, unless the user chose to run now. */
+export const gateHeavyOpen =
+  (input: {
+    readonly queue: HeavyQueue.HeavyQueue["Service"];
+    readonly local: boolean;
+    readonly skip: boolean | undefined;
+    readonly label: string;
+    readonly threadId: string;
+  }) =>
+  <A, E, R>(open: Effect.Effect<A, E, R>) =>
+    Effect.gen(function* () {
+      if (!input.local || input.skip === true || (yield* input.queue.state).entries.length === 0) {
+        return yield* open;
+      }
+      return yield* input.queue
+        .withSlot(input.label, input.threadId, open)
+        .pipe(
+          Effect.mapError((error) =>
+            isHeavyQueueError(error)
+              ? new DeviceToolUnavailableError({ reason: error.message })
+              : error,
+          ),
+        );
+    });
+
 const toolError = (error: DeviceError | DeviceToolUnavailableError) => error;
 
 const handlers = {
@@ -236,14 +266,23 @@ const handlers = {
             "Agent device access requires enabled device support, agent access, and an available simulator platform on this host.",
         });
       }
-      const session = yield* devices.open(
-        {
-          threadId: scope.thread.threadId,
-          hostId: target.hostId,
-          deviceId: target.id,
-          platform: target.platform,
-        },
-        { workspaceRoot: yield* threadWorkspaceRoot(scope.thread.threadId) },
+      const workspaceRoot = yield* threadWorkspaceRoot(scope.thread.threadId);
+      const session = yield* gateHeavyOpen({
+        queue: yield* HeavyQueue.HeavyQueue,
+        local: state.hosts.find((host) => host.id === target.hostId)?.kind === "local",
+        skip: input.skipHeavyQueue,
+        label: `Open ${target.name}`,
+        threadId: scope.thread.threadId,
+      })(
+        devices.open(
+          {
+            threadId: scope.thread.threadId,
+            hostId: target.hostId,
+            deviceId: target.id,
+            platform: target.platform,
+          },
+          { workspaceRoot },
+        ),
       );
       const after = yield* devices.state;
       const device =
