@@ -196,10 +196,12 @@ folder inside it is what separates them.
      paths read the directory with `Effect.serviceOption`; `McpHttpServer` must be built with
      `AssistantDirectory` in context or the routing silently disappears.
   3. The assistant note says where its workspace is, with the environment id.
-     `schedule_task` is refused unless the task is bound to the assistant's own conversation, which
-     runs under the read-only policy. Known gap: thread forks and handoffs (`t3_thread_transfer`)
-     can still create a thread on this machine with its own runtime mode, because only the
-     assistant's own thread is capped.
+
+  `schedule_task` is refused unless the task is bound to the assistant's own conversation, which
+  runs under the read-only policy. Known gap: thread forks and handoffs (`t3_thread_transfer`) can
+  still create a thread on this machine with its own runtime mode, because only the assistant's own
+  thread is capped.
+
 - **The link is the existing peer link.** [`AssistantSandboxControl`](../../apps/server/src/assistants/AssistantSandboxControl.ts)
   builds and starts the container in the background, mints a pairing credential inside it and calls
   `PeerLinks.link` with full access (the per-call limits narrow it). A live link at the container's
