@@ -625,6 +625,46 @@ it.effect("selects the project discovered through repository identity", () => {
     );
   }).pipe(Effect.provide(f.live));
 });
+it.effect("still selects project and user rules when ordinary memories fill every page", () => {
+  const repository: M.RepositoryIdentity = {
+    canonicalKey: "example.invalid/synthetic/rules",
+    locator: {
+      source: "git-remote",
+      remoteName: "origin",
+      remoteUrl: "https://example.invalid/synthetic/rules.git",
+    },
+  };
+  const f = fixture({ repository });
+  return Effect.gen(function* () {
+    const snapshots = yield* Snapshot.MemorySnapshot;
+    const service = yield* Service.MemoryService;
+    const sql = yield* SqlClient.SqlClient;
+    yield* project;
+    const projectScope: M.MemoryScope = {
+      kind: "project",
+      projectKey: { kind: "repository", groupingKey: M.repositoryGroupingKeyOf(repository) },
+    };
+    const rule = (n: number, scope: M.MemoryScope) => {
+      const base = input(n, scope);
+      return { ...base, payload: { ...base.payload, text: `${M.MEMORY_RULE_PREFIX}never ${n}` } };
+    };
+    yield* service.upsert(rule(3000, projectScope), Effect.void);
+    yield* service.upsert(rule(3001, { kind: "user" }), Effect.void);
+    yield* sql`WITH RECURSIVE ids(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM ids WHERE n<1001)
+      INSERT INTO memory_items(space,memory_id,scope_json,scope_key,heads_json,status,projection_watermark,item_json,availability_json)
+      SELECT ${space},printf('00000000-0000-4000-8000-%012d',n),'{"kind":"user"}','user','[]','blocked',0,
+      json_object('memorySpaceId',${space},'memoryId',printf('00000000-0000-4000-8000-%012d',n),'status','blocked','scope',json('{"kind":"user"}'),'failureCode','scanner_pending','pendingSync',json('false'),'localAvailability',json('{"exposure":"held","reasons":[],"deferred":[],"cleanupPending":false}')),
+      '{"exposure":"held","reasons":[],"deferred":[],"cleanupPending":false}' FROM ids`;
+    // Initial discovery commits a new binding/watermark: discard that mixed view once.
+    assert.isUndefined(yield* snapshots.forThread(threadId, f.policy(), f.currentPolicy));
+    const selected = yield* snapshots.forThread(threadId, f.policy(), f.currentPolicy);
+    assert.sameMembers(
+      selected!.items.map((i) => i.memoryId),
+      [id(3000), id(3001)],
+    );
+    assert.isTrue(selected!.renderedText.startsWith(Renderer.MEMORY_RULES_HEADING));
+  }).pipe(Effect.provide(f.live));
+});
 const survivorCases = [
   { status: "quarantined", failureCode: "scanner_pending" },
   { status: "blocked", failureCode: "forget_pending" },

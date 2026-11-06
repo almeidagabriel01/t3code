@@ -674,9 +674,10 @@ const make = Effect.gen(function* () {
       // A run with nothing new to summarize can still promote from the standing hub summary.
       const commitInput = summary
         ? summary.input
-        : !work.space.startsWith("_local:") && current?.heads.length === 1
-          ? (generated.promotions?.input ?? generated.rules.at(-1)?.input)
-          : undefined;
+        : work.space.startsWith("_local:")
+          ? undefined
+          : (generated.rules.at(-1)?.input ??
+            (current?.heads.length === 1 ? generated.promotions?.input : undefined));
       if (!commitInput) {
         yield* store.transact(
           Effect.gen(function* () {

@@ -222,11 +222,7 @@ export const makeCommitSummary = (deps: {
    * A rule that supersedes an active rule of the same scope forgets it in the same savepoint. One
    * that cannot be admitted (capacity, a concurrent edit) is skipped without failing the summary.
    */
-  const commitRules = Effect.fnUntraced(function* (
-    commit: SummaryCommit,
-    summaryRevision: M.MemoryRevisionId,
-    summaryDependencies: ReadonlyArray<M.MemoryRevisionId>,
-  ) {
+  const commitRules = Effect.fnUntraced(function* (commit: SummaryCommit) {
     const rules = commit.rules;
     const meta = commit.work.metadata;
     if (!rules || meta.kind !== "summary") return;
@@ -289,9 +285,8 @@ export const makeCommitSummary = (deps: {
                 {
                   text: M.MEMORY_RULE_PREFIX + body,
                   evidence,
-                  derivedFromMemoryRevisions: [
-                    ...new Set([summaryRevision, ...summaryDependencies]),
-                  ],
+                  // Independent of the thread's summary: forgetting that must not forget a rule.
+                  derivedFromMemoryRevisions: [],
                 },
                 strict,
               ),
@@ -427,8 +422,8 @@ export const makeCommitSummary = (deps: {
               ...new Set([...head.payload.derivedFromMemoryRevisions, ...lineage.revisions]),
             ];
             yield* promote(input, head.revision.revisionId, dependencies);
-            yield* commitRules(input, head.revision.revisionId, dependencies);
           }
+          yield* commitRules(input);
           if (!(yield* store.completeSummaryWork(work)))
             return yield* new Store.MemoryStoreConflict({ code: "attempt_expired" });
           return undefined;
@@ -487,7 +482,7 @@ export const makeCommitSummary = (deps: {
           Effect.void,
         );
         yield* promote(input, meta.revisionId, payload.derivedFromMemoryRevisions);
-        yield* commitRules(input, meta.revisionId, payload.derivedFromMemoryRevisions);
+        yield* commitRules(input);
         if (!(yield* store.completeSummaryWork(work)))
           return yield* new Store.MemoryStoreConflict({ code: "attempt_expired" });
         return receipt;

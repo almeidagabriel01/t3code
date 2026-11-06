@@ -453,4 +453,52 @@ describe("MemoryWorker summary quality", () => {
         ),
       ),
   );
+  const neverX = () => [
+    {
+      scope: "user" as const,
+      text: "Never X",
+      messageIds: [M.MessageId.make("message")],
+      supersedes: null,
+    },
+  ];
+  const neverXId = M.MemoryId.make(Service.memoryStableUuid("rule:user:never x"));
+  it.effect("commits a stated rule even when the run produced no summary", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(now));
+      yield* seed;
+      yield* (yield* Worker.MemoryWorker).sweepDue();
+      const summaryId = M.MemoryId.make(
+        Service.memoryStableUuid(`${environmentId}:${threadId}:summary`),
+      );
+      const store = yield* Store.MemoryStore;
+      assert.deepStrictEqual((yield* store.loadAggregate(space, summaryId)).heads, []);
+      assert.strictEqual(yield* headText(neverXId), "Rule: Never X");
+    }).pipe(Effect.provide(live(false, undefined, false, 0, false, () => true, undefined, neverX))),
+  );
+  it.effect("forgetting the thread summary leaves its rule active", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(now));
+      yield* seed;
+      yield* (yield* Worker.MemoryWorker).sweepDue();
+      const store = yield* Store.MemoryStore;
+      const summaryId = M.MemoryId.make(
+        Service.memoryStableUuid(`${environmentId}:${threadId}:summary`),
+      );
+      const summary = yield* store.loadAggregate(space, summaryId);
+      assert.lengthOf(summary.heads, 1);
+      yield* (yield* Service.MemoryService).forget(
+        {
+          memorySpaceId: space,
+          memoryId: summaryId,
+          operationId: M.MemoryOperationId.make(id(9810)),
+          expectedHeads: summary.heads,
+        },
+        Effect.void,
+      );
+      assert.isDefined((yield* store.loadAggregate(space, summaryId)).tombstone);
+      const rule = yield* store.loadAggregate(space, neverXId);
+      assert.isUndefined(rule.tombstone);
+      assert.strictEqual(yield* headText(neverXId), "Rule: Never X");
+    }).pipe(Effect.provide(live(false, undefined, false, 0, false, undefined, undefined, neverX))),
+  );
 });

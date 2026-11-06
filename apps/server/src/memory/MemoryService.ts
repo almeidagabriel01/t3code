@@ -1937,6 +1937,7 @@ const make = Effect.fnUntraced(function* (
   ) {
     const base = { memorySpaceId: space, scope, limit: 100 };
     const scan = Effect.fnUntraced(function* (
+      maxPages: number,
       read: (cursor: string | undefined) => Effect.Effect<
         {
           readonly items: ReadonlyArray<M.MemoryItem>;
@@ -1951,7 +1952,7 @@ const make = Effect.fnUntraced(function* (
       let cursor: string | undefined;
       let projectionWatermark = 0;
       let covered = true;
-      for (let pages = 0; pages < 5; pages++) {
+      for (let pages = 0; pages < maxPages; pages++) {
         const result = yield* read(cursor);
         projectionWatermark = result.projectionWatermark;
         covered &&= (result.indexCoverage?.status ?? "available") === "available";
@@ -1962,12 +1963,13 @@ const make = Effect.fnUntraced(function* (
       return { found, projectionWatermark, covered };
     });
     // The prefix is searchable; an index that is not fully built falls back to a bounded scan.
-    const searched = yield* scan((cursor) =>
+    const searched = yield* scan(5, (cursor) =>
       search({ ...base, query: "Rule", mode: "fts", ...(cursor ? { cursor } : {}) }, permit),
     );
     const { found, projectionWatermark } = searched.covered
       ? searched
-      : yield* scan((cursor) =>
+      : // A scope holds at most 2000 items, so twenty-one pages reach every one of them.
+        yield* scan(21, (cursor) =>
           list({ ...base, includeQuarantined: false, ...(cursor ? { cursor } : {}) }, permit),
         );
     return {
