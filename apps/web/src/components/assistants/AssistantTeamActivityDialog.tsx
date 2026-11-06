@@ -26,6 +26,7 @@ import {
 } from "../ui/dialog";
 import { AssistantAvatar } from "./assistantPresentation";
 import { assistantTeamActivityAtom } from "./assistantTeamState";
+import ChatMarkdown from "../ChatMarkdown";
 
 const REFRESH_MS = 5_000;
 const COLLAPSED_CHARS = 280;
@@ -91,7 +92,7 @@ function MessageRow(props: {
           {new Date(message.at).toLocaleString()}
         </time>
       </div>
-      <p className="text-sm break-words whitespace-pre-wrap">{shown}</p>
+      <ChatMarkdown text={shown} cwd={undefined} className="text-sm" />
       <div
         data-testid="team-reply"
         className="ms-4 flex flex-col gap-1 border-s-2 border-foreground/12 ps-3"
@@ -113,11 +114,15 @@ function MessageRow(props: {
                 {new Date(reply.at).toLocaleString()}
               </time>
             </div>
-            <p className="text-sm break-words whitespace-pre-wrap">
-              {replyLong && !replyExpanded
-                ? `${reply.text.slice(0, COLLAPSED_CHARS)}…`
-                : reply.text}
-            </p>
+            <ChatMarkdown
+              text={
+                replyLong && !replyExpanded
+                  ? `${reply.text.slice(0, COLLAPSED_CHARS)}…`
+                  : reply.text
+              }
+              cwd={undefined}
+              className="text-sm"
+            />
             {replyLong ? (
               <Button
                 size="xs"
@@ -125,7 +130,7 @@ function MessageRow(props: {
                 className="self-start"
                 onClick={() => setReplyExpanded(!replyExpanded)}
               >
-                {replyExpanded ? "Show less reply" : "Show more reply"}
+                {replyExpanded ? "Show less" : "Show more"}
               </Button>
             ) : null}
           </>

@@ -48,6 +48,12 @@ vi.mock("react-native", () => ({
 vi.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ bottom: 0 }) }));
 vi.mock("@react-navigation/native", () => ({ useNavigation: () => ({ goBack: mocks.goBack }) }));
 vi.mock("../../components/ui/AppText", () => ({ AppText: Children }));
+vi.mock("../../native/SelectableMarkdownText", () => ({
+  SelectableMarkdownText: (props: { markdown: string }) => props.markdown,
+}));
+vi.mock("../files/FileMarkdownPreview", () => ({
+  useMarkdownPreviewStyles: () => ({ nativeTextStyle: {} }),
+}));
 vi.mock("../../components/ui/Button", () => ({
   Button: (props: { label: string; disabled?: boolean; onPress: () => void }) => (
     <button disabled={props.disabled} onClick={props.onPress}>

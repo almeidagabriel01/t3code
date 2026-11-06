@@ -15,11 +15,45 @@ import { EmptyState } from "../../components/ui/EmptyState";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { useAssistantEntries, useAssistantTeamActivity } from "../../state/assistants";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
+import { SelectableMarkdownText } from "../../native/SelectableMarkdownText";
+import { useMarkdownPreviewStyles } from "../files/FileMarkdownPreview";
 import { AssistantAvatar } from "./assistantPresentation";
 import { assistantTeamTargetAtom } from "./assistantTeamTarget";
 import { useAssistantFlows } from "./useAssistantFlows";
 
-const COLLAPSED_LINES = 4;
+const FOLD_LENGTH = 280;
+const FOLDED_HEIGHT = 96;
+
+/** Markdown that folds behind "Show more" when long, like decision context. */
+function FoldedMarkdown(props: { readonly markdown: string; readonly label: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const styles = useMarkdownPreviewStyles();
+  const foldable = props.markdown.length > FOLD_LENGTH || props.markdown.split("\n").length > 5;
+  return (
+    <View className="items-start gap-1">
+      <View
+        className="w-full overflow-hidden"
+        style={foldable && !expanded ? { maxHeight: FOLDED_HEIGHT } : undefined}
+      >
+        <SelectableMarkdownText markdown={props.markdown} textStyle={styles.nativeTextStyle} />
+      </View>
+      {foldable ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`${expanded ? "Show less" : "Show more"} of the ${props.label}`}
+          accessibilityState={{ expanded }}
+          hitSlop={8}
+          onPress={() => setExpanded((value) => !value)}
+          className="active:opacity-70"
+        >
+          <Text className="font-t3-medium text-xs text-foreground-secondary">
+            {expanded ? "Show less" : "Show more"}
+          </Text>
+        </Pressable>
+      ) : null}
+    </View>
+  );
+}
 
 export function AssistantTeamActivityRouteScreen() {
   const target = useAtomValue(assistantTeamTargetAtom);
@@ -49,8 +83,6 @@ function MessageRow(props: {
 }) {
   const { message, team } = props;
   const flows = useAssistantFlows(props.environmentId);
-  const [expanded, setExpanded] = useState(false);
-  const [replyExpanded, setReplyExpanded] = useState(false);
   const reply = message.reply;
   const from = props.assistants.get(message.fromAssistantId);
   const to = props.assistants.get(message.toAssistantId);
@@ -67,19 +99,7 @@ function MessageRow(props: {
           {new Date(message.at).toLocaleString()}
         </Text>
       </View>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={expanded ? "Show less" : "Show more"}
-        onPress={() => setExpanded(!expanded)}
-      >
-        <Text
-          textRole="body"
-          className="text-foreground"
-          numberOfLines={expanded ? undefined : COLLAPSED_LINES}
-        >
-          {message.text}
-        </Text>
-      </Pressable>
+      <FoldedMarkdown markdown={message.text} label="message" />
       <View className="ml-3 gap-1 border-l-2 border-foreground/12 pl-3">
         {reply === null ? (
           <Text textRole="footnote" className="text-foreground-muted">
@@ -96,19 +116,7 @@ function MessageRow(props: {
                 {new Date(reply.at).toLocaleString()}
               </Text>
             </View>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={replyExpanded ? "Show less reply" : "Show more reply"}
-              onPress={() => setReplyExpanded(!replyExpanded)}
-            >
-              <Text
-                textRole="body"
-                className="text-foreground"
-                numberOfLines={replyExpanded ? undefined : COLLAPSED_LINES}
-              >
-                {reply.text}
-              </Text>
-            </Pressable>
+            <FoldedMarkdown markdown={reply.text} label="reply" />
           </>
         )}
       </View>
