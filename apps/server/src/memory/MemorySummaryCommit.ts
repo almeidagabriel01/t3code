@@ -7,6 +7,7 @@ import type * as SqlClient from "effect/sql/SqlClient";
 import * as Store from "./MemoryStore.ts";
 import { scanMemoryValue } from "./MemorySecretScanner.ts";
 import type { MemoryServiceError } from "./MemoryService.ts";
+import type { SummaryRules } from "./memorySummaryChunks.ts";
 
 export type SummaryPromotionCommit = {
   /** The final chunk's input, which the candidates cite. */
@@ -19,6 +20,10 @@ export type SummaryPromotionCommit = {
     readonly projectKey: M.MemoryProjectKey;
   } | null;
 };
+export type SummaryRulesCommit = {
+  readonly batches: ReadonlyArray<SummaryRules>;
+  readonly project: SummaryPromotionCommit["project"];
+};
 export type SummaryCommit = {
   readonly work: Store.MemoryWork;
   /** Null when the run found nothing durable: only its promotions, if any, are written. */
@@ -28,11 +33,13 @@ export type SummaryCommit = {
   /** Re-read committed source/exclusions inside the commit transaction. */
   readonly recheckSource: Effect.Effect<void, MemoryServiceError>;
   readonly promotions?: SummaryPromotionCommit | undefined;
+  readonly rules?: SummaryRulesCommit | undefined;
 };
 
 const strict = { onExcessProperty: "error" } as const;
 const encodeSelection = Schema.encodeSync(Schema.fromJsonString(M.MemoryModelSelection));
 const encodeHeads = Schema.encodeSync(Schema.fromJsonString(Schema.Array(M.MemoryRevisionId)));
+const encodeScope = Schema.encodeSync(Schema.fromJsonString(M.MemoryScope));
 const encodeProjectKey = Schema.encodeSync(Schema.fromJsonString(M.MemoryProjectKey));
 const decodeSummary = Schema.decodeUnknownEffect(M.GenerateMemorySummaryExecutionResult);
 const decodeSummaryPayload = Schema.decodeEffect(M.MemoryPayload);
@@ -81,6 +88,7 @@ export const makeCommitSummary = (deps: {
     space: M.MemorySpaceId,
     payload: M.MemoryPayload,
   ) => Effect.Effect<void, MemoryServiceError>;
+  readonly forget: (input: M.MemoryForgetInput) => Effect.Effect<unknown, MemoryServiceError>;
   readonly stableUuid: (text: string) => string;
 }) => {
   const { store, environmentId, apply } = deps;
@@ -153,7 +161,7 @@ export const makeCommitSummary = (deps: {
         const payload = yield* decode(
           decodeSummaryPayload(
             {
-              text: candidate.text,
+              text: M.stripMemoryRulePrefix(candidate.text),
               evidence: candidate.evidence,
               derivedFromMemoryRevisions: [...new Set([summaryRevision, ...summaryDependencies])],
             },
@@ -205,6 +213,161 @@ export const makeCommitSummary = (deps: {
           MemoryStoreConflict: () => Effect.void,
         }),
       );
+    }
+  });
+  /**
+   * Writes the user's standing rules beside the summary, in its transaction. A rule is a project
+   * or user memory whose text carries the rule prefix; its id derives from scope and text, so a
+   * retry or a restatement lands on the same memory, and a rule the user forgot is not recreated.
+   * A rule that supersedes an active rule of the same scope forgets it in the same savepoint. One
+   * that cannot be admitted (capacity, a concurrent edit) is skipped without failing the summary.
+   */
+  const commitRules = Effect.fnUntraced(function* (
+    commit: SummaryCommit,
+    summaryRevision: M.MemoryRevisionId,
+    summaryDependencies: ReadonlyArray<M.MemoryRevisionId>,
+  ) {
+    const rules = commit.rules;
+    const meta = commit.work.metadata;
+    if (!rules || meta.kind !== "summary") return;
+    const space = M.MemorySpaceId.make(commit.work.space);
+    const thread = meta.sourceThread;
+    for (const batch of rules.batches) {
+      const execution = batch.execution;
+      if (
+        execution.environmentId !== environmentId ||
+        execution.providerInstanceId !== meta.modelSelection.instanceId ||
+        encodeSelection(execution.requestedModelSelection) !== encodeSelection(meta.modelSelection)
+      )
+        continue;
+      for (const rule of batch.rules) {
+        const body = M.stripMemoryRulePrefix(rule.text.trim()).trim();
+        const evidence = [
+          {
+            origin: "thread" as const,
+            sourceThread: batch.input.sourceThread,
+            watermark: batch.input.sourceWatermark,
+            messageIds: rule.messageIds,
+          },
+        ];
+        const typed = new Set<string>(batch.input.rules?.userTypedMessageIds);
+        if (
+          !body ||
+          !rule.messageIds.length ||
+          !rule.messageIds.every((id) => typed.has(id)) ||
+          !M.validateMemoryGenerationResult(batch.input, {
+            text: body,
+            assertionKind: "fact",
+            evidence,
+          }) ||
+          scanMemoryValue({ text: body }).kind !== "allowed"
+        )
+          continue;
+        let scope: M.MemoryScope = { kind: "user" };
+        let key = "user";
+        if (rule.scope === "project") {
+          if (!rules.project) continue;
+          const binding = yield* store.getProjectBinding(space, rules.project.project);
+          const projectKey = rules.project.projectKey;
+          if (
+            !binding?.projectKey ||
+            encodeProjectKey(binding.projectKey) !== encodeProjectKey(projectKey)
+          )
+            continue;
+          scope = { kind: "project", projectKey };
+          key = `project:${encodeProjectKey(projectKey)}`;
+        }
+        const normalized = body.normalize("NFC").replace(/\s+/g, " ").toLowerCase();
+        const memoryId = M.MemoryId.make(deps.stableUuid(`rule:${key}:${normalized}`));
+        const stamp = `${commit.work.id}:rule:${memoryId}`;
+        const written = Effect.gen(function* () {
+          const current = yield* store.loadAggregate(space, memoryId, { heads: true }, {});
+          if (current.tombstone || current.pendingForget || current.heads.length > 1) return;
+          if (!current.heads.length) {
+            const payload = yield* decode(
+              decodeSummaryPayload(
+                {
+                  text: M.MEMORY_RULE_PREFIX + body,
+                  evidence,
+                  derivedFromMemoryRevisions: [
+                    ...new Set([summaryRevision, ...summaryDependencies]),
+                  ],
+                },
+                strict,
+              ),
+            );
+            yield* deps.validateDependencies(space, payload);
+            const operationId = M.MemoryOperationId.make(deps.stableUuid(`${stamp}:operation`));
+            const revisionId = M.MemoryRevisionId.make(deps.stableUuid(`${stamp}:revision`));
+            yield* apply(
+              {
+                protocolVersion: 1,
+                kind: "upsert",
+                memorySpaceId: space,
+                memoryId,
+                operationId,
+                originEnvironmentId: environmentId,
+                expectedHeads: [],
+                payload,
+                revision: {
+                  memorySpaceId: space,
+                  memoryId,
+                  revisionId,
+                  operationId,
+                  parents: [],
+                  scope,
+                  payloadRef: revisionId,
+                  assertionKind: "fact",
+                  createdAtUtc: yield* now,
+                  provenance: {
+                    environmentId,
+                    providerInstanceId: execution.providerInstanceId,
+                    provider: execution.effectiveProvider,
+                    requestedModelSelection: execution.requestedModelSelection,
+                    effectiveModel: execution.effectiveModel,
+                    sourceThread: thread,
+                    sourceWatermark: batch.input.sourceWatermark,
+                  },
+                },
+              },
+              Store.localIntent,
+              Effect.void,
+            );
+          }
+          const old = rule.supersedes;
+          if (!old || old === memoryId) return;
+          const previous = yield* store.loadAggregate(space, old);
+          const head = previous.revisions.find((p) => p.revision.revisionId === previous.heads[0]);
+          if (
+            previous.tombstone ||
+            previous.pendingForget ||
+            previous.heads.length !== 1 ||
+            !head?.payload ||
+            !M.isMemoryRule(head.payload.text) ||
+            !previous.identity ||
+            encodeScope(previous.identity.scope) !== encodeScope(scope)
+          )
+            return;
+          yield* deps.forget({
+            memorySpaceId: space,
+            operationId: M.MemoryOperationId.make(
+              deps.stableUuid(`${commit.work.id}:rule-forget:${old}`),
+            ),
+            memoryId: old,
+            expectedHeads: previous.heads,
+          });
+        });
+        // A refused rule rolls back alone, with the forget that would have replaced one.
+        yield* deps.sql.withTransaction(written).pipe(
+          Effect.catchTags({
+            SqlError: (cause) =>
+              Effect.fail(new Store.MemoryStorageError({ stage: "summary-rule", cause })),
+            MemoryCapacityError: () => Effect.void,
+            MemoryStoreConflict: () => Effect.void,
+            MemoryAccessError: () => Effect.void,
+          }),
+        );
+      }
     }
   });
   return Effect.fn("MemoryService.commitSummary")(function* (input: SummaryCommit) {
@@ -259,10 +422,13 @@ export const makeCommitSummary = (deps: {
           // Nothing new to summarize, but promotions still hang off the standing summary.
           // Memories injected since it was written are in the thread's lineage, not in its payload.
           const head = current.revisions.find((p) => p.revision.revisionId === current.heads[0]);
-          if (current.heads.length === 1 && head?.payload)
-            yield* promote(input, head.revision.revisionId, [
+          if (current.heads.length === 1 && head?.payload) {
+            const dependencies = [
               ...new Set([...head.payload.derivedFromMemoryRevisions, ...lineage.revisions]),
-            ]);
+            ];
+            yield* promote(input, head.revision.revisionId, dependencies);
+            yield* commitRules(input, head.revision.revisionId, dependencies);
+          }
           if (!(yield* store.completeSummaryWork(work)))
             return yield* new Store.MemoryStoreConflict({ code: "attempt_expired" });
           return undefined;
@@ -272,7 +438,7 @@ export const makeCommitSummary = (deps: {
         const payload = yield* decode(
           decodeSummaryPayload(
             {
-              text: generated.result.text,
+              text: M.stripMemoryRulePrefix(generated.result.text),
               evidence: generated.result.evidence,
               derivedFromMemoryRevisions: [
                 ...new Set([
@@ -321,6 +487,7 @@ export const makeCommitSummary = (deps: {
           Effect.void,
         );
         yield* promote(input, meta.revisionId, payload.derivedFromMemoryRevisions);
+        yield* commitRules(input, meta.revisionId, payload.derivedFromMemoryRevisions);
         if (!(yield* store.completeSummaryWork(work)))
           return yield* new Store.MemoryStoreConflict({ code: "attempt_expired" });
         return receipt;

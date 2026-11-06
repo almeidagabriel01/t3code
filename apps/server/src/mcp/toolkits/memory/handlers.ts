@@ -219,9 +219,14 @@ const handlers = {
     Effect.gen(function* () {
       const service = yield* MemoryService.MemoryService;
       const caller = yield* McpInvocationContext.McpInvocationContext;
+      const upsert = yield* decodeUpsert(input);
       return yield* service
         .upsert(
-          yield* decodeUpsert(input),
+          // Only the user's own words and the rule extractor may write the rule marker.
+          {
+            ...upsert,
+            payload: { ...upsert.payload, text: M.stripMemoryRulePrefix(upsert.payload.text) },
+          },
           yield* invocationPermit("write"),
           caller.thread
             ? { environmentId: caller.environmentId, threadId: caller.thread.threadId }

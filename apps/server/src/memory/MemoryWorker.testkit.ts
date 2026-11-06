@@ -65,6 +65,10 @@ export const live = (
   promotions?: (
     input: M.GenerateMemorySummaryInput,
   ) => NonNullable<M.GenerateMemorySummaryOutcome["promotions"]>,
+  // Rules answered for a request that asks for them.
+  rules?: (
+    input: M.GenerateMemorySummaryInput,
+  ) => NonNullable<M.GenerateMemorySummaryOutcome["rules"]>,
 ) =>
   Worker.layer.pipe(
     Layer.provideMerge(service),
@@ -130,6 +134,7 @@ export const live = (
                     environmentId,
                   },
                   ...(input.promote && promotions ? { promotions: promotions(input) } : {}),
+                  ...(input.rules && rules ? { rules: rules(input) } : {}),
                 });
           return elapsedPerCallMs
             ? TestClock.adjust(elapsedPerCallMs).pipe(Effect.andThen(result))

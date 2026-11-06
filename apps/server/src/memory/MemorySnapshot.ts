@@ -222,6 +222,22 @@ const make = Effect.gen(function* () {
       let pages = 0;
       let hasMore = false;
       const candidates: M.MemoryContextCandidate[] = [];
+      // Standing rules are read on their own, so ordinary memories can never crowd them out of
+      // the pages below. They stay newest first across scopes.
+      const rules: Array<M.MemoryContextCandidate & { createdAtUtc: string }> = [];
+      for (const scope of scopes) {
+        if (scope.kind === "thread") continue;
+        if (!permits(yield* currentPolicy, policy) || !sameView(view, yield* capture(threadId)))
+          return undefined;
+        const found = yield* service.readRules(view.space, scope, Effect.void);
+        if (found.projectionWatermark !== view.watermark) return undefined;
+        rules.push(...found.items);
+      }
+      candidates.push(
+        ...rules
+          .sort((a, b) => b.createdAtUtc.localeCompare(a.createdAtUtc))
+          .map(({ createdAtUtc: _createdAtUtc, ...rule }) => rule),
+      );
       for (const [index, scope] of scopes.entries()) {
         // Guarantee each remaining scope a share; unused pages flow to the next scope.
         const pageBudget = Math.floor((10 - pages) / (scopes.length - index));
@@ -244,7 +260,7 @@ const make = Effect.gen(function* () {
             Effect.void,
           );
           if (page.projectionWatermark !== view.watermark) return undefined;
-          candidates.push(...page.items);
+          candidates.push(...page.items.filter((item) => !Renderer.isRuleItem(item)));
           cursor = page.nextCursor ?? undefined;
         } while (cursor && scopePages < pageBudget);
         hasMore ||= !!cursor;

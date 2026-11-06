@@ -232,6 +232,18 @@ export class MemoryService extends Context.Service<
       input: M.MemoryListInput,
       permit: Permit,
     ) => Effect.Effect<M.MemoryContextCandidates, MemoryServiceError>;
+    /** Active standing rules of a project or user scope, newest first. */
+    readonly readRules: (
+      space: M.MemorySpaceId,
+      scope: Exclude<M.MemoryScope, { readonly kind: "thread" }>,
+      permit: Permit,
+    ) => Effect.Effect<
+      {
+        readonly projectionWatermark: number;
+        readonly items: ReadonlyArray<M.MemoryContextCandidate & { readonly createdAtUtc: string }>;
+      },
+      MemoryServiceError
+    >;
     readonly readContextRevisions: (
       space: M.MemorySpaceId,
       ids: ReadonlyArray<M.MemoryId>,
@@ -1881,6 +1893,7 @@ const make = Effect.fnUntraced(function* (
       validateSummaryDependencies(space, payload).pipe(
         Effect.provideService(SqlClient.SqlClient, sql),
       ),
+    forget: (input) => forget(input, Effect.void),
     stableUuid: memoryStableUuid,
   });
   const queueSummary = Effect.fn("MemoryService.queueSummary")(function* (work: Store.MemoryWork) {
@@ -1915,6 +1928,73 @@ const make = Effect.fnUntraced(function* (
             ]
           : [],
       ),
+    };
+  });
+  const readRules = Effect.fn("MemoryService.readRules")(function* (
+    space: M.MemorySpaceId,
+    scope: Exclude<M.MemoryScope, { readonly kind: "thread" }>,
+    permit: Permit,
+  ) {
+    const base = { memorySpaceId: space, scope, limit: 100 };
+    const scan = Effect.fnUntraced(function* (
+      read: (cursor: string | undefined) => Effect.Effect<
+        {
+          readonly items: ReadonlyArray<M.MemoryItem>;
+          readonly projectionWatermark: number;
+          readonly nextCursor: string | null;
+          readonly indexCoverage?: { readonly status: string };
+        },
+        MemoryServiceError
+      >,
+    ) {
+      const found: M.MemoryItem[] = [];
+      let cursor: string | undefined;
+      let projectionWatermark = 0;
+      let covered = true;
+      for (let pages = 0; pages < 5; pages++) {
+        const result = yield* read(cursor);
+        projectionWatermark = result.projectionWatermark;
+        covered &&= (result.indexCoverage?.status ?? "available") === "available";
+        found.push(...result.items);
+        if (!result.nextCursor) break;
+        cursor = result.nextCursor;
+      }
+      return { found, projectionWatermark, covered };
+    });
+    // The prefix is searchable; an index that is not fully built falls back to a bounded scan.
+    const searched = yield* scan((cursor) =>
+      search({ ...base, query: "Rule", mode: "fts", ...(cursor ? { cursor } : {}) }, permit),
+    );
+    const { found, projectionWatermark } = searched.covered
+      ? searched
+      : yield* scan((cursor) =>
+          list({ ...base, includeQuarantined: false, ...(cursor ? { cursor } : {}) }, permit),
+        );
+    return {
+      projectionWatermark,
+      items: found
+        .flatMap((i) =>
+          i.status === "active" &&
+          i.localAvailability.exposure === "visible" &&
+          i.scope.kind !== "thread" &&
+          M.isMemoryRule(i.payload.text)
+            ? [
+                {
+                  memoryId: i.memoryId,
+                  revisionId: i.revision.revisionId,
+                  scope: i.scope,
+                  provenance: i.revision.provenance,
+                  assertionKind: i.revision.assertionKind,
+                  text: i.payload.text,
+                  createdAtUtc: i.revision.createdAtUtc as string,
+                },
+              ]
+            : [],
+        )
+        .sort(
+          (a, b) =>
+            b.createdAtUtc.localeCompare(a.createdAtUtc) || a.memoryId.localeCompare(b.memoryId),
+        ),
     };
   });
   const readContextRevisions = Effect.fn("MemoryService.readContextRevisions")(function* (
@@ -2641,6 +2721,7 @@ const make = Effect.fnUntraced(function* (
     queueResolution: store.persistResolutionTicket,
     recoverWork: store.dueWork,
     readContextCandidates,
+    readRules,
     readContextRevisions,
   });
 });

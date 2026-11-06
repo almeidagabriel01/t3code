@@ -78,8 +78,11 @@ const validPayload = Schema.is(M.MemoryPayload);
  * still matched.
  */
 const attachImportEvidence = (candidate: ImportCandidate, sourceId: M.MemoryImportSourceId) => {
+  const redacted = redactMemoryText(candidate.payload);
   const payload: M.MemoryPayload = {
-    ...redactMemoryText(candidate.payload),
+    ...redacted,
+    // An imported file never carries the rule marker; only the user's own words do.
+    text: M.stripMemoryRulePrefix(redacted.text),
     evidence: [{ origin: "import", importSourceId: sourceId, messageIds: [] }],
   };
   return {

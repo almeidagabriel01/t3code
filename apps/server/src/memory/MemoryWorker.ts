@@ -179,6 +179,35 @@ const make = Effect.gen(function* () {
           ),
         ).pipe(Effect.map((project) => ({ ...promotions, project })))
       : Effect.undefined;
+  /** The rules in force for this thread's project and the user, newest first, for the model to supersede. */
+  const readExistingRules = Effect.fn("MemoryWorker.readExistingRules")(function* (
+    space: M.MemorySpaceId,
+    project: { readonly projectKey: M.MemoryProjectKey } | null,
+  ) {
+    const scopes: ReadonlyArray<M.MemoryScope & { readonly kind: "project" | "user" }> = [
+      ...(project ? [{ kind: "project" as const, projectKey: project.projectKey }] : []),
+      { kind: "user" },
+    ];
+    const found = yield* Effect.forEach(scopes, (scope) =>
+      query(service.readRules(space, scope, Effect.void)),
+    );
+    return found
+      .flatMap((page) => page.items)
+      .sort((a, b) => b.createdAtUtc.localeCompare(a.createdAtUtc))
+      .slice(0, 50)
+      .flatMap((rule) =>
+        rule.scope.kind === "thread"
+          ? []
+          : [
+              {
+                memoryId: rule.memoryId,
+                scope: rule.scope.kind,
+                // Bounded so fifty rules never push the input past its size limit.
+                text: Array.from(M.stripMemoryRulePrefix(rule.text)).slice(0, 240).join(""),
+              },
+            ],
+      );
+  });
   const summaryEvidenceValid = Effect.fn("MemoryWorker.summaryEvidenceValid")(function* (
     work: Store.MemoryWork,
     payload: M.MemoryPayload,
@@ -552,6 +581,22 @@ const make = Effect.gen(function* () {
         return deps;
       });
       const dependencies = yield* readDependencies;
+      // Standing rules need a hub space, like promotions. Rules are best effort: a project that
+      // cannot be resolved, or rules that cannot be read, only narrow what the model is asked for.
+      const rulesProject = work.space.startsWith("_local:")
+        ? null
+        : yield* query(
+            resolveThreadProject(
+              { sql, environmentId, resolveProjectKey: service.resolveProjectKey },
+              meta.sourceThread,
+              M.MemorySpaceId.make(work.space),
+            ),
+          ).pipe(Effect.orElseSucceed(() => null));
+      const existingRules = work.space.startsWith("_local:")
+        ? undefined
+        : yield* readExistingRules(M.MemorySpaceId.make(work.space), rulesProject).pipe(
+            Effect.orElseSucceed(() => []),
+          );
       const recheckSource = Effect.gen(function* () {
         yield* readSource(work);
         const latest = yield* readDependencies;
@@ -590,6 +635,14 @@ const make = Effect.gen(function* () {
                     ...(previous ? { previousSummary: previous } : {}),
                     modelSelection: meta.modelSelection,
                     ...(promote ? { promote } : {}),
+                    ...(existingRules && chunk.userTypedMessageIds?.length
+                      ? {
+                          rules: {
+                            userTypedMessageIds: chunk.userTypedMessageIds,
+                            existing: existingRules,
+                          },
+                        }
+                      : {}),
                   },
                   strict,
                 ),
@@ -622,7 +675,7 @@ const make = Effect.gen(function* () {
       const commitInput = summary
         ? summary.input
         : !work.space.startsWith("_local:") && current?.heads.length === 1
-          ? generated.promotions?.input
+          ? (generated.promotions?.input ?? generated.rules.at(-1)?.input)
           : undefined;
       if (!commitInput) {
         yield* store.transact(
@@ -692,6 +745,9 @@ const make = Effect.gen(function* () {
             meta.sourceThread,
             M.MemorySpaceId.make(work.space),
           ),
+          ...(generated.rules.length
+            ? { rules: { batches: generated.rules, project: rulesProject } }
+            : {}),
           recheckSource: recheckSource.pipe(
             Effect.asVoid,
             Effect.mapError((cause) => new Store.MemoryStoreConflict({ code: safeCode(cause) })),

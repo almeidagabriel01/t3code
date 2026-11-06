@@ -31,6 +31,8 @@ export interface SourceMessageRow {
   readonly role: string | null;
   /** Settled, non-blank, and from the user or assistant. */
   readonly usable: boolean;
+  /** Typed by the person in a client: the only messages a standing rule may be drawn from. */
+  readonly userTyped: boolean;
 }
 
 export interface SourceScan {
@@ -57,6 +59,10 @@ export const scanSourceStream = Effect.fn("MemoryWorker.scanSourceStream")(funct
   },
 ) {
   const messages: SourceMessageRow[] = [];
+  // A native-imported history carries earlier transcripts, not what this person typed here.
+  const imported =
+    (yield* sql`SELECT 1 FROM orchestration_events WHERE application_event_version=2 AND aggregate_kind='thread' AND stream_id=${input.threadId} AND event_type='thread.created' AND json_extract(payload_json,'$.historyOrigin')='v1_import' LIMIT 1`)
+      .length > 0;
   const latest = new Map<string, number>();
   const runStatus = new Map<string, string | null>();
   const observed = input.observedSequence ?? Number.MAX_SAFE_INTEGER;
@@ -77,11 +83,17 @@ export const scanSourceStream = Effect.fn("MemoryWorker.scanSourceStream")(funct
       role: string | null;
       usable: number | null;
       status: string | null;
+      created_by: string | null;
+      creation_source: string | null;
+      automated: number | null;
     }>`SELECT sequence,event_id,event_type,json_extract(payload_json,'$.id') AS id,
       CASE WHEN event_type='message.updated' THEN json_extract(payload_json,'$.runId') END AS run_id,
       CASE WHEN event_type='message.updated' THEN json_extract(payload_json,'$.role') END AS role,
       CASE WHEN event_type='message.updated' THEN coalesce(json_extract(payload_json,'$.streaming'),0)=0 AND trim(json_extract(payload_json,'$.text'))!='' AND json_extract(payload_json,'$.role') IN ('user','assistant') END AS usable,
-      CASE WHEN event_type!='message.updated' THEN json_extract(payload_json,'$.status') END AS status
+      CASE WHEN event_type!='message.updated' THEN json_extract(payload_json,'$.status') END AS status,
+      CASE WHEN event_type='message.updated' THEN json_extract(payload_json,'$.createdBy') END AS created_by,
+      CASE WHEN event_type='message.updated' THEN json_extract(payload_json,'$.creationSource') END AS creation_source,
+      CASE WHEN event_type='message.updated' THEN json_extract(payload_json,'$.senderThreadId') IS NOT NULL OR json_extract(payload_json,'$.scheduledTaskId') IS NOT NULL OR json_extract(payload_json,'$.notification') IS NOT NULL OR json_extract(payload_json,'$.idleCompaction') IS NOT NULL END AS automated
       FROM orchestration_events
       WHERE application_event_version=2 AND aggregate_kind='thread' AND stream_id=${input.threadId} AND sequence>${cursor} AND sequence<=${end}
       AND ((event_type IN ('run.created','run.updated') AND sequence<=${observed}) OR (event_type='message.updated' AND sequence>${input.afterSequence}))
@@ -100,6 +112,13 @@ export const scanSourceStream = Effect.fn("MemoryWorker.scanSourceStream")(funct
           runId: row.run_id,
           role: row.role,
           usable: row.usable === 1,
+          userTyped:
+            !imported &&
+            row.usable === 1 &&
+            row.role === "user" &&
+            row.created_by === "user" &&
+            (row.creation_source === "web" || row.creation_source === "mobile") &&
+            row.automated !== 1,
         });
     }
     if (!bound.length) break;
@@ -150,11 +169,13 @@ export const readEligibleSourceRows = Effect.fn("MemoryWorker.readEligibleSource
   const picked = eligibleSourceMessages(scan, { excluded: new Set(input.excluded) });
   if (!picked.length) return [];
   const sequences = encodeSequences(picked.slice(0, input.limit).map((row) => row.sequence));
-  return yield* sql<{
+  const typed = new Set(picked.filter((row) => row.userTyped).map((row) => row.sequence));
+  const read = yield* sql<{
     payload_json: string;
     sequence: number;
     event_id: string;
   }>`SELECT payload_json,sequence,event_id FROM orchestration_events WHERE sequence IN (SELECT value FROM json_each(${sequences})) ORDER BY sequence`;
+  return read.map((row) => ({ ...row, userTyped: typed.has(row.sequence) }));
 });
 
 const decodeMessage = Schema.decodeUnknownEffect(
@@ -175,10 +196,12 @@ export const boundSourcePage = Effect.fn("MemoryWorker.boundSourcePage")(functio
     readonly payload_json: string;
     readonly sequence: number;
     readonly event_id: string;
+    readonly userTyped?: boolean;
   }>,
   sourceWatermark: M.MemorySourceWatermark,
 ) {
   const messages: M.GenerateMemorySummaryInput["messages"][number][] = [];
+  const userTypedMessageIds: M.MessageId[] = [];
   let bytes = 0;
   let last = rows[0];
   let hasMore = false;
@@ -202,6 +225,7 @@ export const boundSourcePage = Effect.fn("MemoryWorker.boundSourcePage")(functio
       break;
     }
     messages.push(input);
+    if (row.userTyped) userTypedMessageIds.push(message.id);
     bytes += size;
     last = row;
   }
@@ -209,6 +233,7 @@ export const boundSourcePage = Effect.fn("MemoryWorker.boundSourcePage")(functio
     return yield* new MemoryWorkerError({ code: "secret_detected" });
   return {
     messages,
+    userTypedMessageIds,
     watermark:
       (hasMore || rows.length > 101) && last
         ? {

@@ -6,6 +6,8 @@ import { scanMemoryValue } from "./MemorySecretScanner.ts";
 export interface SummarySource {
   readonly messages: M.GenerateMemorySummaryInput["messages"];
   readonly watermark: M.MemorySourceWatermark;
+  /** The messages the user typed themselves, which a standing rule may cite. */
+  readonly userTypedMessageIds?: ReadonlyArray<M.MessageId>;
 }
 
 export interface GeneratedSummary {
@@ -17,6 +19,13 @@ export interface SummaryPromotions {
   /** The final chunk's input, which the candidates cite. */
   readonly input: M.GenerateMemorySummaryInput;
   readonly candidates: NonNullable<M.GenerateMemorySummaryOutcome["promotions"]>;
+  readonly execution: M.MemoryGenerationExecution;
+}
+
+/** The rules one chunk's model call returned, with the input they cite. */
+export interface SummaryRules {
+  readonly input: M.GenerateMemorySummaryInput;
+  readonly rules: NonNullable<M.GenerateMemorySummaryOutcome["rules"]>;
   readonly execution: M.MemoryGenerationExecution;
 }
 
@@ -52,6 +61,7 @@ export const generateSummaryChunks = Effect.fn("MemoryWorker.generateSummaryChun
   let previousSummary = options.previousSummary;
   let summary: GeneratedSummary | undefined;
   let promotions: SummaryPromotions | undefined;
+  const rules: SummaryRules[] = [];
   while (true) {
     const final = source.watermark.throughSequence >= options.throughSequence;
     // Empty filtered pages still consume their bounded source range. A trailing
@@ -77,8 +87,10 @@ export const generateSummaryChunks = Effect.fn("MemoryWorker.generateSummaryChun
       }
       if (output.promotions && scanMemoryValue(output.promotions).kind === "allowed")
         promotions = { input, candidates: output.promotions, execution: output.execution };
+      if (output.rules?.length && scanMemoryValue(output.rules).kind === "allowed")
+        rules.push({ input, rules: output.rules, execution: output.execution });
     }
-    if (final) return { summary, promotions };
+    if (final) return { summary, promotions, rules };
     if (!source.messages.length) yield* options.renewClaim;
     source = yield* options.readFrom(source.watermark.throughSequence);
   }

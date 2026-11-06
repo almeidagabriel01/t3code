@@ -60,6 +60,8 @@ const headText = (memoryId: M.MemoryId) =>
       ?.payload?.text;
   });
 
+const old = M.MemoryId.make(id(9800));
+const inputs: M.GenerateMemorySummaryInput[] = [];
 describe("MemoryWorker summary quality", () => {
   it.effect(
     "a promotion from an empty consolidation follows memories injected after its summary",
@@ -370,5 +372,85 @@ describe("MemoryWorker summary quality", () => {
         ),
       ),
     ),
+  );
+  it.effect(
+    "commits a stated rule with its prefix and evidence, and a supersede forgets the old one",
+    () =>
+      Effect.gen(function* () {
+        const service = yield* Service.MemoryService;
+        const store = yield* Store.MemoryStore;
+        yield* service.upsert(
+          {
+            memorySpaceId: space,
+            memoryId: old,
+            operationId: M.MemoryOperationId.make(id(9801)),
+            expectedHeads: [],
+            scope: { kind: "user" },
+            assertionKind: "inference",
+            payload: {
+              text: `${M.MEMORY_RULE_PREFIX}Answer briefly`,
+              evidence: [],
+              derivedFromMemoryRevisions: [],
+            },
+            baseBoundary: null,
+          },
+          Effect.void,
+        );
+        yield* TestClock.setTime(Date.parse(now));
+        yield* seed;
+        yield* (yield* Worker.MemoryWorker).sweepDue();
+        assert.deepStrictEqual(inputs[0]?.rules, {
+          userTypedMessageIds: [M.MessageId.make("message")],
+          existing: [{ memoryId: old, scope: "user", text: "Answer briefly" }],
+        });
+        const created = M.MemoryId.make(Service.memoryStableUuid("rule:user:answer in detail"));
+        const aggregate = yield* store.loadAggregate(space, created);
+        const head = aggregate.revisions.find(
+          (pair) => pair.revision.revisionId === aggregate.heads[0],
+        );
+        assert.strictEqual(head?.payload?.text, "Rule: Answer in detail");
+        assert.deepStrictEqual(
+          head?.payload?.evidence.map((e) => ({ origin: e.origin, ids: [...e.messageIds] })),
+          [{ origin: "thread", ids: ["message"] }],
+        );
+        assert.isDefined((yield* store.loadAggregate(space, old)).tombstone);
+        // A forgotten rule is never recreated by a later restatement.
+        yield* service.forget(
+          {
+            memorySpaceId: space,
+            memoryId: created,
+            operationId: M.MemoryOperationId.make(id(9802)),
+            expectedHeads: aggregate.heads,
+          },
+          Effect.void,
+        );
+        assert.isDefined((yield* store.loadAggregate(space, created)).tombstone);
+      }).pipe(
+        Effect.provide(
+          live(
+            false,
+            (input) => inputs.push(input),
+            false,
+            0,
+            false,
+            undefined,
+            undefined,
+            () => [
+              {
+                scope: "user",
+                text: "Answer in detail",
+                messageIds: [M.MessageId.make("message")],
+                supersedes: old,
+              },
+              {
+                scope: "project",
+                text: "No project here",
+                messageIds: [M.MessageId.make("message")],
+                supersedes: null,
+              },
+            ],
+          ),
+        ),
+      ),
   );
 });

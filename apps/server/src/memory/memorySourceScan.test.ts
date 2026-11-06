@@ -185,17 +185,80 @@ describe("memory source scan", () => {
           yield* scanned({ after: 0, through: last, observed: last }).pipe(
             Effect.provideService(Statement.CurrentTransformer, observe),
           );
-          // Each page is one index-only boundary read plus one read of at most a page of events.
+          // One read of the thread's origin, then per page an index-only boundary read plus one
+          // read of at most a page of events.
           const events = (yield* (yield* SqlClient.SqlClient)<{
             count: number;
           }>`SELECT count(*) AS count FROM orchestration_events WHERE stream_id=${thread}`)[0]!
             .count;
-          assert.strictEqual(count, 2 * (Math.floor(events / MEMORY_SOURCE_SCAN_PAGE_EVENTS) + 1));
+          assert.strictEqual(
+            count,
+            1 + 2 * (Math.floor(events / MEMORY_SOURCE_SCAN_PAGE_EVENTS) + 1),
+          );
           return count;
         }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" })));
         counts.push(statements);
       }
       assert.isAtMost(counts[1]!, 4 * counts[0]!);
     }),
+  );
+
+  it.effect.each([
+    { name: "web user", message: { createdBy: "user", creationSource: "web" }, typed: true },
+    { name: "mobile user", message: { createdBy: "user", creationSource: "mobile" }, typed: true },
+    {
+      name: "agent over mcp",
+      message: { createdBy: "user", creationSource: "mcp", senderThreadId: "other" },
+      typed: false,
+    },
+    {
+      name: "assistant sender",
+      message: { createdBy: "user", creationSource: "web", senderThreadId: "assistant:main" },
+      typed: false,
+    },
+    { name: "server", message: { createdBy: "system", creationSource: "server" }, typed: false },
+    { name: "provider", message: { createdBy: "user", creationSource: "provider" }, typed: false },
+    {
+      name: "scheduled",
+      message: { createdBy: "user", creationSource: "web", scheduledTaskId: "task" },
+      typed: false,
+    },
+    {
+      name: "notification",
+      message: { createdBy: "user", creationSource: "web", notification: { kind: "x" } },
+      typed: false,
+    },
+    {
+      name: "idle compaction",
+      message: { createdBy: "user", creationSource: "web", idleCompaction: "beforeCacheExpires" },
+      typed: false,
+    },
+    {
+      name: "assistant role",
+      message: { createdBy: "agent", creationSource: "web" },
+      typed: false,
+    },
+  ])("flags $name messages as user-typed: $typed", ({ message, typed }) =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`CREATE TABLE orchestration_events (sequence INTEGER PRIMARY KEY,event_id TEXT,stream_id TEXT,event_type TEXT,payload_json TEXT,occurred_at TEXT,application_event_version INTEGER,aggregate_kind TEXT)`;
+      yield* sql`INSERT INTO orchestration_events VALUES (1,'e1',${thread},'message.updated',${JSON.stringify({ id: "m", role: "user", text: "hi", streaming: false, ...message })},'t',2,'thread')`;
+      const scan = yield* scanSourceStream(sql, {
+        threadId: thread,
+        afterSequence: 0,
+        throughSequence: 10,
+        observedSequence: null,
+      });
+      assert.strictEqual(scan.messages[0]?.userTyped, typed);
+      // The same message in a v1-imported history is never user-typed.
+      yield* sql`INSERT INTO orchestration_events VALUES (2,'e0',${thread},'thread.created',${JSON.stringify({ historyOrigin: "v1_import" })},'t',2,'thread')`;
+      const imported = yield* scanSourceStream(sql, {
+        threadId: thread,
+        afterSequence: 0,
+        throughSequence: 10,
+        observedSequence: null,
+      });
+      assert.strictEqual(imported.messages[0]?.userTyped, false);
+    }).pipe(Effect.provide(database)),
   );
 });

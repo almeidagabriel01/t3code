@@ -779,7 +779,7 @@ const make = Effect.gen(function* () {
               createdAtUtc: iso(now),
             },
             payload: {
-              text: trusted.result.text,
+              text: M.stripMemoryRulePrefix(trusted.result.text),
               evidence: trusted.result.evidence,
               derivedFromMemoryRevisions: dependencies,
             },
