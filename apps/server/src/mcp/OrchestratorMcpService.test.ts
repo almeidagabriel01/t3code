@@ -1881,7 +1881,7 @@ describe("OrchestratorMcpService provider resolution", () => {
       );
       yield* Effect.gen(function* () {
         const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-        const refused = yield* run(service).pipe(Effect.flip);
+        const refused = yield* run(service).pipe(Effect.asVoid, Effect.flip);
         assert.equal(refused.code, "invalid_request");
         assert.include(refused.message, "environmentId=environment-sandbox");
       }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
