@@ -3,7 +3,10 @@ import { useNavigation, useFocusEffect, type StaticScreenProps } from "@react-na
 import {
   AuthMemoryReadScope,
   AuthOrchestrationReadScope,
+  isMemoryRule,
+  MEMORY_PAGE_MAX_ITEMS,
   MemoryId,
+  stripMemoryRulePrefix,
   ProjectId,
   MemoryOperationId,
   supportsMemoryProtocol,
@@ -38,8 +41,14 @@ import {
   memorySearchInput,
   memoryProjectScope,
   memoryPreview,
+  memoryRuleBody,
+  memoryRuleScopeLabel,
+  memoryRuleText,
+  memoryRules,
   memoryScopeLabel,
   presentMemoryPage,
+  withoutMemoryRules,
+  type MemoryRuleItem,
 } from "@t3tools/client-runtime/memory-browsing";
 import { AsyncResult } from "effect/reactivity";
 import * as Option from "effect/Option";
@@ -672,6 +681,7 @@ function ScopedMemoryBrowser({
 }) {
   const registry = useContext(RegistryContext);
   const canWrite = useAtomValue(memory.upsert.permissionAtom(params.environmentId));
+  const canForget = useAtomValue(memory.forget.permissionAtom(params.environmentId));
   const [query, setQuery] = useState("");
   const [search, setSearch] = useState("");
   const [cursor, setCursor] = useState<string | undefined>();
@@ -768,6 +778,41 @@ function ScopedMemoryBrowser({
   const page = AsyncResult.isSuccess(result) ? Option.getOrNull(result.value) : null;
   const loaded = page !== null;
   const failed = AsyncResult.isFailure(result);
+  const ordinaryItems = useMemo(() => withoutMemoryRules(page?.items ?? []), [page]);
+  const ruleAtom = (target: MemoryScope) =>
+    memory.list({
+      environmentId: params.environmentId,
+      input: {
+        ...memoryBrowseInput({ memorySpaceId, limit: MEMORY_PAGE_MAX_ITEMS, scope: target }),
+        includeQuarantined: false,
+      },
+    });
+  const userRuleAtom = ruleAtom({ kind: "user" });
+  const projectRuleAtom = scope.kind === "project" ? ruleAtom(scope) : null;
+  const userRulePage = useAtomValue(userRuleAtom);
+  const projectRulePage = useAtomValue(projectRuleAtom ?? userRuleAtom);
+  const rulePageItems = (value: typeof userRulePage) =>
+    AsyncResult.isSuccess(value) ? (Option.getOrNull(value.value)?.items ?? []) : [];
+  const rules = useMemo(
+    () =>
+      memoryRules([
+        ...(projectRuleAtom ? rulePageItems(projectRulePage) : []),
+        ...rulePageItems(userRulePage),
+      ]),
+    [projectRuleAtom, projectRulePage, userRulePage],
+  );
+  const rulesLoaded =
+    AsyncResult.isSuccess(userRulePage) &&
+    (!projectRuleAtom || AsyncResult.isSuccess(projectRulePage));
+  const refreshRules = () => {
+    registry.refresh(userRuleAtom);
+    if (projectRuleAtom) registry.refresh(projectRuleAtom);
+  };
+  const [ruleEditor, setRuleEditor] = useState<{
+    readonly scope: MemoryScope;
+    readonly rule?: MemoryRuleItem;
+  } | null>(null);
+  const [forgettingRule, setForgettingRule] = useState<MemoryRuleItem | null>(null);
   // Bodies expire after a minute and a page can miss its request while the stream is not ready.
   // A visible list asks again once it has been empty for a moment, instead of waiting for a tap.
   useFocusEffect(
@@ -789,6 +834,22 @@ function ScopedMemoryBrowser({
         onForget={forgetMemory}
       />
     );
+  if (ruleEditor && memoryEnabled && canWrite)
+    return (
+      <MemoryEditor
+        key={ruleEditor.rule?.memoryId ?? "new-rule"}
+        rule
+        params={params}
+        memorySpaceId={memorySpaceId}
+        scope={ruleEditor.scope}
+        scopeLabel={memoryRuleScopeLabel(ruleEditor.scope)}
+        {...(ruleEditor.rule ? { item: ruleEditor.rule } : {})}
+        onClose={() => {
+          setRuleEditor(null);
+          refreshRules();
+        }}
+      />
+    );
   if (creating && memoryEnabled)
     return (
       <MemoryEditor
@@ -807,7 +868,7 @@ function ScopedMemoryBrowser({
     );
   return (
     <FlatList
-      data={page?.items ?? []}
+      data={ordinaryItems}
       keyExtractor={(item) => item.memoryId}
       contentInsetAdjustmentBehavior="automatic"
       contentContainerClassName="px-5 pt-4 pb-10"
@@ -918,6 +979,71 @@ function ScopedMemoryBrowser({
               retireRef={retireImport}
             />
           ) : null}
+          <SettingsSection
+            title="Rules"
+            footer="Learned when you say what agents must always or never do. Only what you type becomes a rule."
+          >
+            {rules.length === 0 ? (
+              <Copy>{rulesLoaded ? "No rules yet." : "Loading rules"}</Copy>
+            ) : (
+              rules.map((rule) => (
+                <View key={rule.memoryId} className="border-b border-border-subtle">
+                  <Copy>{memoryRuleText(rule)}</Copy>
+                  <Text textRole="footnote" className="px-3 text-foreground-muted">
+                    {memoryRuleScopeLabel(rule.scope)}
+                  </Text>
+                  <Action
+                    icon="pencil"
+                    label={`Edit rule: ${memoryPreview(memoryRuleText(rule))}`}
+                    disabled={!canWrite || !memoryEnabled}
+                    onPress={() => setRuleEditor({ scope: rule.scope, rule })}
+                  />
+                  <Action
+                    icon="trash"
+                    tone="danger"
+                    label={`Forget rule: ${memoryPreview(memoryRuleText(rule))}`}
+                    disabled={!canForget}
+                    onPress={() => setForgettingRule(rule)}
+                  />
+                </View>
+              ))
+            )}
+            <Action
+              icon="plus"
+              label={scope.kind === "project" ? "New rule for all projects" : "New rule"}
+              onPress={() => setRuleEditor({ scope: { kind: "user" } })}
+              disabled={!canWrite || !memoryEnabled}
+            />
+            {scope.kind === "project" ? (
+              <Action
+                icon="folder.badge.plus"
+                label="New rule for this project"
+                onPress={() => setRuleEditor({ scope })}
+                disabled={!canWrite || !memoryEnabled}
+              />
+            ) : null}
+          </SettingsSection>
+          {forgettingRule ? (
+            <MemoryConfirmation
+              title="Forget this rule?"
+              message="Agents stop following it. This cannot be undone."
+              label="Confirm forget"
+              onClose={() => setForgettingRule(null)}
+              onConfirm={() => {
+                const rule = forgettingRule;
+                setForgettingRule(null);
+                void forgetMemory(
+                  {
+                    memorySpaceId,
+                    memoryId: rule.memoryId,
+                    operationId: operationId(),
+                    expectedHeads: memoryExpectedHeads(rule),
+                  },
+                  false,
+                ).then(refreshRules);
+              }}
+            />
+          ) : null}
           <SettingsSection title="Memories">
             {!memoryEnabled ? (
               <Copy>Saved memories stay. Turn on memory to save new memories.</Copy>
@@ -958,9 +1084,11 @@ function ScopedMemoryBrowser({
               disabled={!canWrite || !memoryEnabled || !scope}
             />
           </SettingsSection>
-          {page && page.items.length > 0 && presentMemoryPage(page, Boolean(search)) ? (
+          {page &&
+          ordinaryItems.length > 0 &&
+          presentMemoryPage({ ...page, items: ordinaryItems }, Boolean(search)) ? (
             <Text textRole="footnote" className="px-2 text-foreground-muted">
-              {presentMemoryPage(page, Boolean(search))}
+              {presentMemoryPage({ ...page, items: ordinaryItems }, Boolean(search))}
             </Text>
           ) : null}
         </View>
@@ -1001,7 +1129,7 @@ function ScopedMemoryBrowser({
           {AsyncResult.isFailure(result)
             ? "Could not load memory. Refresh to try again."
             : page
-              ? presentMemoryPage(page, Boolean(search))
+              ? presentMemoryPage({ ...page, items: ordinaryItems }, Boolean(search))
               : "No memories to show yet. Pull down to refresh."}
         </Copy>
       }
@@ -1623,6 +1751,7 @@ function MemoryEditor({
   scope,
   scopeLabel,
   item,
+  rule,
   onClose,
 }: {
   readonly params: MemoryScreenParams & { environmentId: EnvironmentId };
@@ -1630,8 +1759,10 @@ function MemoryEditor({
   readonly scope: MemoryScope;
   readonly scopeLabel?: string;
   readonly item?: Extract<MemoryItem, { status: "active" }>;
+  readonly rule?: boolean;
   readonly onClose: () => void;
 }) {
+  const isRule = rule ?? (item !== undefined && isMemoryRule(item.payload.text));
   const registry = useContext(RegistryContext);
   const [id] = useState(() => item?.memoryId ?? MemoryId.make(Crypto.randomUUID()));
   const draftAtom = useMemo(
@@ -1655,12 +1786,16 @@ function MemoryEditor({
   const mounted = useRef(true);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- owns the registry draft entry until unmount
   useEffect(() => {
-    registry.set(draftAtom, { text: item?.payload.text ?? "", memoryIds: item ? [id] : [] });
+    const seed = item?.payload.text ?? "";
+    registry.set(draftAtom, {
+      text: isRule ? stripMemoryRulePrefix(seed) : seed,
+      memoryIds: item ? [id] : [],
+    });
     return () => {
       mounted.current = false;
       registry.set(draftAtom, null);
     };
-  }, [registry, draftAtom, item, id]);
+  }, [registry, draftAtom, item, id, isRule]);
   async function save() {
     const current = registry.get(draftAtom);
     if (
@@ -1686,7 +1821,7 @@ function MemoryEditor({
             scope,
             assertionKind: item?.revision.assertionKind ?? "fact",
             payload: {
-              text: current,
+              text: isRule ? memoryRuleBody(current) : current,
               evidence: item?.payload.evidence ?? [{ origin: "user", messageIds: [] }],
               derivedFromMemoryRevisions: item?.payload.derivedFromMemoryRevisions ?? [],
             },
@@ -1728,14 +1863,14 @@ function MemoryEditor({
       ) : (
         <>
           <Field
-            label="Memory text"
+            label={isRule ? "Rule text" : "Memory text"}
             value={text}
             onChange={(value) => setDraft({ text: value, memoryIds: item ? [id] : [] })}
             disabled={pending || retry || !allowed}
             multiline
           />
           <Action
-            label={retry ? "Retry save request" : "Save memory"}
+            label={retry ? "Retry save request" : isRule ? "Save rule" : "Save memory"}
             onPress={() => void save()}
             disabled={!allowed || pending || !text.trim()}
           />

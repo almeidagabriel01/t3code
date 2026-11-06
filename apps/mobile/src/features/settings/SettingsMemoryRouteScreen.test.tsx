@@ -360,6 +360,41 @@ describe("native Memory with shared factory", () => {
     expect(view.container.textContent).not.toContain("Synthetic new fact");
     expect(view.container.textContent).toContain("does not have permission");
   });
+  it("lists a rule apart from memories and saves a new rule with the prefix", async () => {
+    await mount();
+    const rule = Schema.decodeUnknownSync(MemoryItem)({
+      ...Schema.encodeSync(MemoryItem)(nativeItem),
+      payload: {
+        text: "Rule: never rebase",
+        evidence: [{ origin: "user", messageIds: [] }],
+        derivedFromMemoryRevisions: [],
+      },
+    });
+    h.responses.set(WS_METHODS.memoryList, () => ({
+      items: [rule],
+      nextCursor: null,
+      projectionWatermark: 1,
+    }));
+    await act(async () =>
+      h.signal({ kind: "reset", memorySpaceId: nativeSpace, projectionWatermark: 2 }),
+    );
+    expect(view.container.textContent).toContain("never rebase");
+    expect(view.container.textContent).not.toContain("Rule: never rebase");
+    expect(view.container.textContent).toContain("All projects");
+    expect(view.container.textContent).not.toContain("Open memory: never rebase");
+    h.responses.set(WS_METHODS.memoryUpsert, (input) => ({
+      memoryId: (input as MemoryUpsertInput).memoryId,
+      operationId: (input as MemoryUpsertInput).operationId,
+      outcome: "accepted",
+      pendingSync: true,
+    }));
+    await view.click("New rule");
+    await view.type("Rule text", "always run tests");
+    await view.click("Save rule");
+    expect(h.calls.find((call) => call.method === WS_METHODS.memoryUpsert)).toMatchObject({
+      input: { scope: { kind: "user" }, payload: { text: "Rule: always run tests" } },
+    });
+  });
   it("forgets the exact memory after confirmation and drops invalidated bodies", async () => {
     await mount();
     await view.click("Open memory: Synthetic memory body");

@@ -11,9 +11,12 @@ import {
   AuthMemoryReadScope,
   AuthOrchestrationReadScope,
   EnvironmentId,
+  isMemoryRule,
+  MEMORY_PAGE_MAX_ITEMS,
   MemoryOperationId,
   MemorySpaceId,
   MemoryId,
+  stripMemoryRulePrefix,
   type MemoryHistoryPage,
   type MemoryRevisionId,
   type MemoryRevertResolutionInput,
@@ -29,8 +32,14 @@ import {
   memorySearchInput,
   memoryProjectScope,
   memoryPreview,
+  memoryRuleBody,
+  memoryRuleScopeLabel,
+  memoryRuleText,
+  memoryRules,
   memoryScopeLabel,
   presentMemoryPage,
+  withoutMemoryRules,
+  type MemoryRuleItem,
 } from "@t3tools/client-runtime/memory-browsing";
 import {
   presentMemoryItem,
@@ -47,7 +56,7 @@ import {
 } from "@t3tools/client-runtime/memory-presentation";
 import { useNavigate } from "@tanstack/react-router";
 import * as Option from "effect/Option";
-import { useContext, useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { useEnvironmentSettings } from "../../hooks/useSettings";
 import { useEnvironment, useEnvironments } from "../../state/environments";
 import { resolveMemoryModelSelection } from "@t3tools/shared/serverSettings";
@@ -66,6 +75,7 @@ import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Textarea } from "../ui/textarea";
 import { Switch } from "../ui/switch";
+import { Radio, RadioGroup } from "../ui/radio-group";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Collapsible, CollapsibleTrigger, CollapsiblePanel } from "../ui/collapsible";
 import { formatTimestamp } from "../../timestampFormat";
@@ -499,6 +509,7 @@ function ScopedMemoryRecords({
   const [notice, setNotice] = useState<string | null>(null);
   const writePermission = useAtomValue(memoryEnvironment.upsert.permissionAtom(environmentId));
   const canWrite = writePermission && memoryEnabled;
+  const ruleQueries = useMemoryRuleQueries(environmentId, memorySpaceId, scope);
   const [quarantine, setQuarantine] = useState(false);
   const navigate = useNavigate();
   if (!canWrite && adding) setAdding(false);
@@ -517,7 +528,7 @@ function ScopedMemoryRecords({
         }),
   );
   const value = page.data ? Option.getOrNull(page.data) : null;
-  const items = value?.items ?? [];
+  const items = useMemo(() => withoutMemoryRules(value?.items ?? []), [value]);
   const coverage = value?.indexCoverage
     ? presentMemoryCoverage(value.indexCoverage, items.length)
     : null;
@@ -539,6 +550,14 @@ function ScopedMemoryRecords({
   }
   return (
     <>
+      <MemoryRules
+        environmentId={environmentId}
+        memorySpaceId={memorySpaceId}
+        scope={scope}
+        scopeLabel={scopeLabel ?? memoryScopeLabel(scope)}
+        canWrite={canWrite}
+        {...ruleQueries}
+      />
       <SettingsSection title="Memories" id="memory-records">
         <SettingsRow
           title="Save a memory"
@@ -645,7 +664,7 @@ function ScopedMemoryRecords({
           />
         ) : !value ? null : items.length === 0 ? (
           <SettingsRow
-            title={presentMemoryPage(value, Boolean(query))}
+            title={presentMemoryPage({ ...value, items }, Boolean(query))}
             description={
               coverage?.status === "unavailable"
                 ? coverage.label
@@ -745,6 +764,175 @@ function ScopedMemoryRecords({
         />
       ) : null}
     </>
+  );
+}
+
+const NO_RULE_ITEMS: readonly MemoryItem[] = [];
+
+function useMemoryRuleQueries(
+  environmentId: EnvironmentId,
+  memorySpaceId: MemorySpaceId,
+  scope: MemoryScope,
+) {
+  const listRules = (target: MemoryScope) =>
+    memoryEnvironment.list({
+      environmentId,
+      input: {
+        ...memoryBrowseInput({ memorySpaceId, scope: target, limit: MEMORY_PAGE_MAX_ITEMS }),
+        includeQuarantined: false,
+      },
+    });
+  const userPage = useEnvironmentQuery(listRules({ kind: "user" }));
+  const projectPage = useEnvironmentQuery(scope.kind === "project" ? listRules(scope) : null);
+  const pageItems = (page: typeof userPage) =>
+    (page.data ? Option.getOrNull(page.data)?.items : null) ?? NO_RULE_ITEMS;
+  const projectItems = pageItems(projectPage);
+  const userItems = pageItems(userPage);
+  const rules = useMemo(
+    () => memoryRules([...projectItems, ...userItems]),
+    [projectItems, userItems],
+  );
+  const loaded = userPage.data !== null && (scope.kind !== "project" || projectPage.data !== null);
+  return {
+    rules,
+    loaded,
+    refresh: () => {
+      userPage.refresh();
+      projectPage.refresh();
+    },
+  };
+}
+
+function MemoryRules({
+  environmentId,
+  memorySpaceId,
+  scope,
+  scopeLabel,
+  canWrite,
+  rules,
+  loaded,
+  refresh,
+}: {
+  environmentId: EnvironmentId;
+  memorySpaceId: MemorySpaceId;
+  scope: MemoryScope;
+  scopeLabel: string;
+  canWrite: boolean;
+  rules: readonly MemoryRuleItem[];
+  loaded: boolean;
+  refresh: () => void;
+}) {
+  const [editing, setEditing] = useState<MemoryId | "new" | null>(null);
+  const [newScope, setNewScope] = useState<"project" | "user">(
+    scope.kind === "project" ? "project" : "user",
+  );
+  const [notice, setNotice] = useState<string | null>(null);
+  const radioId = useId();
+  const canEdit = canWrite && editing !== null;
+  const ruleLabel = (rule: MemoryRuleItem) =>
+    rule.scope.kind === "project" ? scopeLabel : memoryRuleScopeLabel(rule.scope);
+  return (
+    <SettingsSection title="Rules" id="memory-rules">
+      <SettingsRow
+        title="Rules agents follow"
+        description="Learned when you say what agents must always or never do. Only what you type becomes a rule."
+        control={
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!canWrite}
+            onClick={() => setEditing("new")}
+          >
+            New rule
+          </Button>
+        }
+      />
+      {editing === "new" && canEdit ? (
+        <SettingsRow title="New rule">
+          <div className="space-y-3">
+            {scope.kind === "project" ? (
+              <RadioGroup
+                aria-label="Rule scope"
+                value={newScope}
+                onValueChange={(value) => setNewScope(value === "project" ? "project" : "user")}
+              >
+                {(["project", "user"] as const).map((kind) => (
+                  <Label key={kind} className="cursor-pointer gap-2">
+                    <Radio value={kind} id={`${radioId}-${kind}`} />
+                    {kind === "project" ? "This project" : "All projects"}
+                  </Label>
+                ))}
+              </RadioGroup>
+            ) : null}
+            <MemoryEditor
+              key={newScope}
+              rule
+              scope={newScope === "project" && scope.kind === "project" ? scope : { kind: "user" }}
+              scopeLabel={
+                newScope === "project" && scope.kind === "project" ? "This project" : "All projects"
+              }
+              environmentId={environmentId}
+              memorySpaceId={memorySpaceId}
+              onClose={() => {
+                setEditing(null);
+                refresh();
+              }}
+            />
+          </div>
+        </SettingsRow>
+      ) : null}
+      {notice ? <SettingsRow title={<span role="status">{notice}</span>} /> : null}
+      {rules.length === 0 ? (
+        <SettingsRow
+          title={loaded ? "No rules yet" : "Loading rules"}
+          description={
+            loaded ? "Say what agents must always or never do and it is learned here." : undefined
+          }
+        />
+      ) : (
+        rules.map((rule) => (
+          <SettingsRow
+            key={rule.memoryId}
+            title={memoryRuleText(rule)}
+            description={ruleLabel(rule)}
+            control={
+              <div className="flex items-start gap-1">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={!canWrite}
+                  onClick={() => setEditing(rule.memoryId)}
+                >
+                  Edit
+                </Button>
+                <MemoryForgetControl
+                  label="Forget"
+                  environmentId={environmentId}
+                  item={rule}
+                  onForgotten={(message) => {
+                    setNotice(message);
+                    refresh();
+                  }}
+                />
+              </div>
+            }
+          >
+            {editing === rule.memoryId && canEdit ? (
+              <MemoryEditor
+                item={rule}
+                scopeLabel={ruleLabel(rule)}
+                environmentId={environmentId}
+                memorySpaceId={memorySpaceId}
+                onClose={() => {
+                  setEditing(null);
+                  refresh();
+                }}
+              />
+            ) : null}
+          </SettingsRow>
+        ))
+      )}
+    </SettingsSection>
   );
 }
 
@@ -1388,6 +1576,7 @@ function MemoryEditor({
   item,
   scope = DEFAULT_MEMORY_SCOPE,
   scopeLabel,
+  rule,
   onClose,
 }: {
   environmentId: EnvironmentId;
@@ -1395,8 +1584,10 @@ function MemoryEditor({
   item?: Extract<MemoryItem, { status: "active" }>;
   scope?: MemoryScope;
   scopeLabel?: string;
+  rule?: boolean;
   onClose: () => void;
 }) {
+  const isRule = rule ?? (item !== undefined && isMemoryRule(item.payload.text));
   const [id] = useState(() => item?.memoryId ?? MemoryId.make(randomUUID()));
   const [operationId, setOperationId] = useState<MemoryOperationId | null>(null);
   const [busy, setBusy] = useState(false);
@@ -1416,14 +1607,14 @@ function MemoryEditor({
     mounted.current = true;
     if (item)
       registry.set(draft, {
-        text: item.payload.text,
+        text: isRule ? stripMemoryRulePrefix(item.payload.text) : item.payload.text,
         memoryIds: [id],
       });
     return () => {
       mounted.current = false;
       registry.set(draft, null);
     };
-  }, [draft, id, item, registry]);
+  }, [draft, id, isRule, item, registry]);
   const textId = useId();
   if (!canWrite || (item && text === null))
     return (
@@ -1458,7 +1649,7 @@ function MemoryEditor({
             scope: item?.scope ?? scope,
             assertionKind: item?.revision.assertionKind ?? "fact",
             payload: {
-              text,
+              text: isRule ? memoryRuleBody(text) : text,
               evidence: item?.payload.evidence ?? [{ origin: "user", messageIds: [] }],
               derivedFromMemoryRevisions: item?.payload.derivedFromMemoryRevisions ?? [],
             },
@@ -1478,10 +1669,10 @@ function MemoryEditor({
     >
       <p>Save to: {scopeLabel ?? memoryScopeLabel(item?.scope ?? scope)}</p>
       <div className="grid gap-1.5">
-        <Label htmlFor={textId}>Memory text</Label>
+        <Label htmlFor={textId}>{isRule ? "Rule text" : "Memory text"}</Label>
         <Textarea
           id={textId}
-          aria-label="Memory text"
+          aria-label={isRule ? "Rule text" : "Memory text"}
           value={text ?? ""}
           disabled={busy || operationId !== null}
           onChange={(event) =>
@@ -1494,7 +1685,7 @@ function MemoryEditor({
       </div>
       {error ? <p role="alert">{error}</p> : null}
       <Button type="submit" size="sm" disabled={busy || !text?.trim()}>
-        {operationId ? "Retry memory request" : "Save memory"}
+        {operationId ? "Retry memory request" : isRule ? "Save rule" : "Save memory"}
       </Button>
       <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={onClose}>
         Cancel

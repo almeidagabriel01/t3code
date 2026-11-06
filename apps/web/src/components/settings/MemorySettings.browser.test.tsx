@@ -206,13 +206,15 @@ vi.mock("../../state/server", () => ({
   },
 }));
 vi.mock("../../state/query", () => ({
-  useEnvironmentQuery: ({ label }: { label: string }) => {
+  useEnvironmentQuery: (atom: { label: string } | null) => {
     useFixtureVersion();
+    const label = atom?.label ?? "";
     return {
-      data:
-        state.queries.get(label) ??
-        (label === "resolutionInputs" ? state.queries.get("history") : undefined) ??
-        Option.none(),
+      data: !atom
+        ? null
+        : (state.queries.get(label) ??
+          (label === "resolutionInputs" ? state.queries.get("history") : undefined) ??
+          Option.none()),
       error: null,
       refresh: state.refresh,
     };
@@ -2331,6 +2333,55 @@ it("shows the original empty list without inventing unknown coverage", async () 
   expect(records.textContent).toContain("Memories saved on this device will appear here.");
   expect(records.textContent).not.toContain("Results are incomplete");
   expect(records.textContent).not.toContain("Memory coverage unknown");
+});
+it("lists rules apart from memories, forgets one after confirmation and saves a new one with the prefix", async () => {
+  await using _setup = await setup();
+  const rule = Schema.decodeSync(MemoryItem)({
+    ...Schema.encodeSync(MemoryItem)(activeItem),
+    payload: {
+      text: "Rule: never rebase",
+      evidence: [{ origin: "user", messageIds: [] }],
+      derivedFromMemoryRevisions: [],
+    },
+  });
+  state.queries.set(
+    "list",
+    Option.some({ items: [rule], nextCursor: null, projectionWatermark: 1 }),
+  );
+  state.responses.set("upsert", success({ outcome: "accepted" }));
+  await supportedScreen(false);
+  const rules = container.querySelector("#memory-rules")!;
+  expect(rules.textContent).toContain("never rebase");
+  expect(rules.textContent).not.toContain("Rule: never rebase");
+  expect(rules.textContent).toContain("All projects");
+  expect(container.querySelector("#memory-records")!.textContent).not.toContain("never rebase");
+
+  await click("Forget");
+  expect(state.calls).not.toHaveBeenCalledWith(
+    expect.objectContaining({ input: { memoryId: rule.memoryId } }),
+  );
+  await click("Confirm forget");
+  expect(state.calls.mock.calls.at(-1)![0]).toMatchObject({
+    input: { memoryId: rule.memoryId },
+  });
+
+  await click("New rule");
+  const textarea = container.querySelector<HTMLTextAreaElement>('[aria-label="Rule text"]')!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(
+      textarea,
+      "always run tests",
+    );
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await act(async () =>
+    textarea
+      .closest("form")!
+      .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })),
+  );
+  expect(
+    encodeUpsert(MemoryUpsertInput.make(state.calls.mock.calls.at(-1)![0].input)),
+  ).toMatchObject({ scope: { kind: "user" }, payload: { text: "Rule: always run tests" } });
 });
 it.each([undefined, "unknown", "partial", "available", "unavailable"] as const)(
   "shows one empty search message for %s coverage",
