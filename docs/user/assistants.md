@@ -99,7 +99,7 @@ in several teams. The sidebar and Home list your teams under the assistants.
 - Members may message each other in any direction, and each member's instructions list its
   teammates. Ask one to "check with the team" and it asks a teammate.
 - Open a team (**Activity**, or its row in the sidebar or Home) to read every message the members
-  sent each other, oldest first, and jump to the conversation it landed in.
+  sent each other and the replies they got, oldest first, and jump to the conversation it landed in.
 - A leader is optional. Choose one among the members and give it a title such as CEO, CFO or Head
   of Research. Teammates are told to report their results to it, and the title shows next to its
   name. The leader does not change who may message whom.

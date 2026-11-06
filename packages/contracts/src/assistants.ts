@@ -442,6 +442,12 @@ export const AssistantTeamMessage = Schema.Struct({
   text: Schema.String,
   /** The text was cut at `ASSISTANT_TEAM_MESSAGE_MAX_CHARS`; open the thread for the rest. */
   truncated: Schema.Boolean,
+  /** What the recipient answered in the run this message started; null until there is text. */
+  reply: Schema.NullOr(
+    Schema.Struct({ text: Schema.String, at: IsoDateTime, truncated: Schema.Boolean }),
+  ),
+  /** The recipient's run has not ended, so a reply may still come. */
+  waiting: Schema.Boolean,
 });
 export type AssistantTeamMessage = typeof AssistantTeamMessage.Type;
 export const ASSISTANT_TEAM_MESSAGE_MAX_CHARS = 4_000;

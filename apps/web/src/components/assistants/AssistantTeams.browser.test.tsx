@@ -93,6 +93,8 @@ const message = (n: number, from: string, to: string, text: string): AssistantTe
   toThreadId: `assistant:${to}:1` as ThreadId,
   text,
   truncated: false,
+  reply: null,
+  waiting: false,
 });
 
 const eventually = (check: () => void) => vi.waitFor(check, { timeout: 10_000 });
@@ -131,8 +133,12 @@ it("creates a team with members, a leader and its title", async () => {
 
 it("the team view lists only the member-to-member messages, with the leader's title", async () => {
   fakeTeamEdits.messages = [
-    message(1, "ana", "bob", "Are the Q3 numbers final?"),
-    message(2, "bob", "ana", "Yes, signed off."),
+    {
+      ...message(1, "ana", "bob", "Are the Q3 numbers final?"),
+      reply: { text: "Final, signed off.", at: "2026-03-17T19:00:05.000Z", truncated: false },
+    },
+    { ...message(2, "bob", "ana", "Yes, signed off."), waiting: true },
+    message(3, "ana", "bob", "Thanks"),
   ];
   publishAssistants([assistant("ana", "Ana"), assistant("bob", "Bob")], [team]);
   await using _screen = await openApp("/settings/assistants");
@@ -142,7 +148,11 @@ it("the team view lists only the member-to-member messages, with the leader's ti
   await expect.element(page.getByText("Are the Q3 numbers final?")).toBeVisible();
   await expect.element(page.getByText("Yes, signed off.")).toBeVisible();
   await expect.element(page.getByText("CFO", { exact: true }).first()).toBeVisible();
-  expect(page.getByTestId("team-message").elements()).toHaveLength(2);
+  await expect.element(page.getByText("Final, signed off.")).toBeVisible();
+  await expect.element(page.getByText("replied")).toBeVisible();
+  await expect.element(page.getByText("Waiting for a reply…")).toBeVisible();
+  await expect.element(page.getByText("No reply")).toBeVisible();
+  expect(page.getByTestId("team-message").elements()).toHaveLength(3);
 });
 
 it("the sidebar lists teams and opens the same view", async () => {

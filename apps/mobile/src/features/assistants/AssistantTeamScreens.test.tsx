@@ -226,12 +226,25 @@ describe("team activity", () => {
     toThreadId: `assistant:${to}:1`,
     text: body,
     truncated: false,
+    reply: null as { text: string; at: string; truncated: boolean } | null,
+    waiting: false,
   });
 
   it("lists member messages with the leader's title and opens the recipient's thread", async () => {
     mocks.target = { environmentId: "hub", teamId: "t1" };
-    mocks.messages = [message("m1", "ana", "bob", "Are the numbers final?")];
+    mocks.messages = [
+      {
+        ...message("m1", "ana", "bob", "Are the numbers final?"),
+        reply: { text: "Final.", at: "2026-11-06T10:05:00.000Z", truncated: false },
+      },
+      { ...message("m2", "bob", "ana", "Ping"), waiting: true },
+      message("m3", "ana", "bob", "Ping again"),
+    ];
     await act(async () => root.render(<AssistantTeamActivityRouteScreen />));
+    expect(container.textContent).toContain("BOB (CFO) replied");
+    expect(container.textContent).toContain("Final.");
+    expect(container.textContent).toContain("Waiting for a reply…");
+    expect(container.textContent).toContain("No reply");
     expect(container.textContent).toContain("ANA to BOB (CFO)");
     expect(container.textContent).toContain("Are the numbers final?");
     expect(container.textContent).toContain("2 members · BOB (CFO)");

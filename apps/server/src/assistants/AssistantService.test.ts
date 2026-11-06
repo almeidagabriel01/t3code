@@ -866,6 +866,81 @@ const sentEvent = (
       )`;
   });
 
+const threadEvent = (sequence: number, stream: string, type: string, payload: object) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`
+      INSERT INTO orchestration_events (
+        sequence, event_id, aggregate_kind, stream_id, stream_version, event_type, occurred_at,
+        actor_kind, payload_json, metadata_json, application_event_version
+      ) VALUES (
+        ${sequence}, ${`event-${sequence}`}, 'thread', ${stream}, ${sequence}, ${type},
+        ${`2026-11-06T11:00:${String(sequence % 60).padStart(2, "0")}.000Z`}, 'agent',
+        ${JSON.stringify(payload)}, '{}', 2
+      )`;
+  });
+
+it.effect("teams: activity carries the recipient's reply for the run each message started", () => {
+  const { layer } = harness();
+  return Effect.gen(function* () {
+    const assistants = yield* Assistants.AssistantService;
+    const ana = yield* assistants.create(create({ name: "Ana" }));
+    const bob = yield* assistants.create(create({ name: "Bob" }));
+    const team = yield* assistants.createTeam({ name: "Duo", memberIds: [ana.id, bob.id] });
+    const [from, to] = [`assistant:${ana.id}:1`, `assistant:${bob.id}:1`];
+    const ask = (sequence: number, id: string, runId: string) =>
+      threadEvent(sequence, to, "message.updated", {
+        id,
+        runId,
+        role: "user",
+        text: id,
+        senderThreadId: from,
+      });
+    const run = (sequence: number, id: string, status: string) =>
+      threadEvent(sequence, to, "run.updated", { id, status });
+    const say = (sequence: number, id: string, runId: string, text: string) =>
+      threadEvent(sequence, to, "message.updated", { id, runId, role: "assistant", text });
+    const replies = () =>
+      assistants
+        .teamActivity(team.id)
+        .pipe(Effect.map((a) => a.messages.map((m) => [m.reply?.text ?? null, m.waiting])));
+
+    yield* ask(1, "q1", "r1");
+    yield* run(2, "r1", "running");
+    yield* say(3, "a1", "r1", "draft");
+    assert.deepEqual(yield* replies(), [[null, true]]);
+
+    yield* say(4, "a1", "r1", "final answer");
+    yield* run(5, "r1", "completed");
+    yield* ask(6, "q2", "r2");
+    yield* run(7, "r2", "running");
+    // A later unrelated message in the thread belongs to the newer run, not to q1.
+    yield* say(8, "a2", "r2", "other run");
+    yield* run(9, "r2", "completed");
+    yield* run(10, "r3", "completed");
+    assert.deepEqual(yield* replies(), [
+      ["final answer", false],
+      ["other run", false],
+    ]);
+
+    yield* ask(11, "q3", "r4");
+    yield* run(12, "r4", "failed");
+    assert.deepEqual((yield* replies()).at(-1), [null, false]);
+
+    // Without a run link, the first assistant text before the next user message answers it.
+    yield* threadEvent(13, to, "message.updated", {
+      id: "q4",
+      role: "user",
+      text: "q4",
+      senderThreadId: from,
+    });
+    yield* threadEvent(14, to, "message.updated", { id: "a4", role: "assistant", text: "linked" });
+    yield* threadEvent(15, to, "message.updated", { id: "u5", role: "user", text: "next" });
+    yield* threadEvent(16, to, "message.updated", { id: "a5", role: "assistant", text: "later" });
+    assert.deepEqual((yield* replies()).at(-1), ["linked", false]);
+  }).pipe(Effect.provide(layer));
+});
+
 it.effect("teams: validation, leader rules, deletion cleanup and member-to-member activity", () => {
   const { layer } = harness();
   return Effect.gen(function* () {

@@ -59,8 +59,11 @@ function MessageRow(props: {
   const [expanded, setExpanded] = useState(false);
   const from = props.assistants.get(message.fromAssistantId);
   const to = props.assistants.get(message.toAssistantId);
+  const [replyExpanded, setReplyExpanded] = useState(false);
   const long = message.text.length > COLLAPSED_CHARS;
   const shown = long && !expanded ? `${message.text.slice(0, COLLAPSED_CHARS)}…` : message.text;
+  const reply = message.reply;
+  const replyLong = (reply?.text.length ?? 0) > COLLAPSED_CHARS;
   const who = (assistant: Assistant | undefined, id: string) => (
     <span className="inline-flex min-w-0 items-center gap-1.5">
       {assistant ? <AssistantAvatar assistant={assistant} /> : null}
@@ -89,6 +92,45 @@ function MessageRow(props: {
         </time>
       </div>
       <p className="text-sm break-words whitespace-pre-wrap">{shown}</p>
+      <div
+        data-testid="team-reply"
+        className="ms-4 flex flex-col gap-1 border-s-2 border-foreground/12 ps-3"
+      >
+        {reply === null ? (
+          <p className="text-sm text-muted-foreground">
+            {message.waiting ? "Waiting for a reply…" : "No reply"}
+          </p>
+        ) : (
+          <>
+            <div className="flex items-center gap-1.5 text-sm">
+              {to ? <AssistantAvatar assistant={to} /> : null}
+              <span className="truncate font-medium">{to?.name ?? message.toAssistantId}</span>
+              <span className="text-muted-foreground">replied</span>
+              <time
+                dateTime={reply.at}
+                className="ms-auto shrink-0 text-xs text-muted-foreground tabular-nums"
+              >
+                {new Date(reply.at).toLocaleString()}
+              </time>
+            </div>
+            <p className="text-sm break-words whitespace-pre-wrap">
+              {replyLong && !replyExpanded
+                ? `${reply.text.slice(0, COLLAPSED_CHARS)}…`
+                : reply.text}
+            </p>
+            {replyLong ? (
+              <Button
+                size="xs"
+                variant="ghost-muted"
+                className="self-start"
+                onClick={() => setReplyExpanded(!replyExpanded)}
+              >
+                {replyExpanded ? "Show less reply" : "Show more reply"}
+              </Button>
+            ) : null}
+          </>
+        )}
+      </div>
       <div className="flex items-center gap-2">
         {long ? (
           <Button size="xs" variant="ghost-muted" onClick={() => setExpanded(!expanded)}>
@@ -145,8 +187,8 @@ function AssistantTeamActivityDialog(props: {
         <DialogHeader>
           <DialogTitle>{props.team.name}</DialogTitle>
           <DialogDescription>
-            {teamSummary(props.team, [...assistants.values()])}. Messages members sent each other,
-            oldest first.
+            {teamSummary(props.team, [...assistants.values()])}. Messages members sent each other
+            and their replies, oldest first.
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>

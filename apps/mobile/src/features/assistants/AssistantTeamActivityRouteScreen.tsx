@@ -50,6 +50,8 @@ function MessageRow(props: {
   const { message, team } = props;
   const flows = useAssistantFlows(props.environmentId);
   const [expanded, setExpanded] = useState(false);
+  const [replyExpanded, setReplyExpanded] = useState(false);
+  const reply = message.reply;
   const from = props.assistants.get(message.fromAssistantId);
   const to = props.assistants.get(message.toAssistantId);
   const name = (assistant: Assistant | undefined, id: string) =>
@@ -78,6 +80,38 @@ function MessageRow(props: {
           {message.text}
         </Text>
       </Pressable>
+      <View className="ml-3 gap-1 border-l-2 border-foreground/12 pl-3">
+        {reply === null ? (
+          <Text textRole="footnote" className="text-foreground-muted">
+            {message.waiting ? "Waiting for a reply…" : "No reply"}
+          </Text>
+        ) : (
+          <>
+            <View className="flex-row items-center gap-2">
+              {to ? <AssistantAvatar assistant={to} size={20} /> : null}
+              <Text textRole="footnote" className="min-w-0 flex-1 font-t3-medium text-foreground">
+                {name(to, message.toAssistantId)} replied
+              </Text>
+              <Text textRole="footnote" className="text-foreground-muted">
+                {new Date(reply.at).toLocaleString()}
+              </Text>
+            </View>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={replyExpanded ? "Show less reply" : "Show more reply"}
+              onPress={() => setReplyExpanded(!replyExpanded)}
+            >
+              <Text
+                textRole="body"
+                className="text-foreground"
+                numberOfLines={replyExpanded ? undefined : COLLAPSED_LINES}
+              >
+                {reply.text}
+              </Text>
+            </Pressable>
+          </>
+        )}
+      </View>
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={`Open ${to?.name ?? "thread"}`}
@@ -118,8 +152,8 @@ function Activity(props: { readonly environmentId: EnvironmentId; readonly team:
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
         <Text textRole="footnote" className="px-2 text-foreground-muted">
-          {teamSummary(props.team, [...assistants.values()])}. Messages members sent each other,
-          oldest first.
+          {teamSummary(props.team, [...assistants.values()])}. Messages members sent each other and
+          their replies, oldest first.
         </Text>
         {query.data !== null && messages.length === 0 ? (
           <EmptyState

@@ -77,6 +77,7 @@ interface SentRow {
   readonly stream_id: string;
   readonly sender: string | null;
   readonly body: string | null;
+  readonly run_id: string | null;
   readonly sequence: number;
   readonly occurred_at: string;
 }
@@ -98,7 +99,8 @@ const sentInto = (
   return sql<SentRow>`
     SELECT json_extract(payload_json, '$.id') AS message_id, stream_id,
       json_extract(payload_json, '$.senderThreadId') AS sender,
-      json_extract(payload_json, '$.text') AS body, sequence, occurred_at
+      json_extract(payload_json, '$.text') AS body, json_extract(payload_json, '$.runId') AS run_id,
+      sequence, occurred_at
     FROM orchestration_events e
     WHERE application_event_version = 2 AND aggregate_kind = 'thread'
       AND event_type = 'message.updated' AND stream_id >= ${to.from} AND stream_id < ${to.to}
@@ -130,13 +132,68 @@ export const countRecentTeamSends = Effect.fn("AssistantTeams.countRecentTeamSen
   return total;
 });
 
+const TERMINAL_RUN = ["completed", "failed", "interrupted", "cancelled", "rolled_back"];
+
+/**
+ * What the recipient answered to the message at `sequence`: the last assistant text of the run the
+ * message started, or, when the message has no run, the first assistant text before the next user
+ * message. `waiting` while that run has not ended.
+ */
+const replyTo = Effect.fn("AssistantTeams.replyTo")(function* (
+  sql: SqlClient.SqlClient,
+  row: SentRow,
+) {
+  const hasRun = row.run_id !== null;
+  if (hasRun) {
+    const status = yield* sql<{ readonly status: string | null }>`
+      SELECT json_extract(payload_json, '$.status') AS status FROM orchestration_events
+      WHERE application_event_version = 2 AND aggregate_kind = 'thread' AND stream_id = ${row.stream_id}
+        AND event_type IN ('run.created', 'run.updated') AND json_extract(payload_json, '$.id') = ${row.run_id}
+      ORDER BY sequence DESC LIMIT 1`;
+    if (status[0] === undefined || !TERMINAL_RUN.includes(status[0].status ?? "")) {
+      return { waiting: true, reply: null };
+    }
+  }
+  const [found] = yield* sql<{ readonly body: string | null; readonly occurred_at: string }>`
+    SELECT json_extract(payload_json, '$.text') AS body, occurred_at FROM orchestration_events
+    WHERE application_event_version = 2 AND aggregate_kind = 'thread' AND stream_id = ${row.stream_id}
+      AND event_type = 'message.updated' AND json_extract(payload_json, '$.role') = 'assistant'
+      AND trim(coalesce(json_extract(payload_json, '$.text'), '')) != ''
+      AND ${
+        hasRun
+          ? sql`json_extract(payload_json, '$.runId') = ${row.run_id}`
+          : sql`sequence > ${row.sequence} AND sequence < coalesce((
+              SELECT min(sequence) FROM orchestration_events n
+              WHERE n.application_event_version = 2 AND n.aggregate_kind = 'thread'
+                AND n.stream_id = ${row.stream_id} AND n.event_type = 'message.updated'
+                AND json_extract(n.payload_json, '$.role') = 'user' AND n.sequence > ${row.sequence}),
+              9223372036854775807)`
+      }
+    ORDER BY sequence ${hasRun ? sql`DESC` : sql`ASC`} LIMIT 1`;
+  if (found === undefined) return { waiting: false, reply: null };
+  const text = found.body ?? "";
+  return {
+    waiting: false,
+    reply: {
+      text: text.slice(0, ASSISTANT_TEAM_MESSAGE_MAX_CHARS),
+      at: found.occurred_at,
+      truncated: text.length > ASSISTANT_TEAM_MESSAGE_MAX_CHARS,
+    },
+  };
+});
+
 /** Messages between members of the team, oldest first, read from the conversations themselves. */
 export const readTeamActivity = Effect.fn("AssistantTeams.readActivity")(function* (
   sql: SqlClient.SqlClient,
   team: AssistantTeam,
 ) {
   const members = new Set<string>(team.memberIds);
-  const found: Array<AssistantTeamMessage & { readonly sequence: number }> = [];
+  const found: Array<
+    Omit<AssistantTeamMessage, "reply" | "waiting"> & {
+      readonly sequence: number;
+      readonly row: SentRow;
+    }
+  > = [];
   for (const memberId of team.memberIds) {
     for (const fromId of team.memberIds) {
       if (fromId === memberId) continue;
@@ -155,12 +212,15 @@ export const readTeamActivity = Effect.fn("AssistantTeams.readActivity")(functio
           text: text.slice(0, ASSISTANT_TEAM_MESSAGE_MAX_CHARS),
           truncated: text.length > ASSISTANT_TEAM_MESSAGE_MAX_CHARS,
           sequence: row.sequence,
+          row,
         });
       }
     }
   }
-  return found
-    .sort((a, b) => a.sequence - b.sequence)
-    .slice(-ASSISTANT_TEAM_ACTIVITY_LIMIT)
-    .map(({ sequence: _sequence, ...message }) => message);
+  const kept = found.sort((a, b) => a.sequence - b.sequence).slice(-ASSISTANT_TEAM_ACTIVITY_LIMIT);
+  const messages: AssistantTeamMessage[] = [];
+  for (const { row, ...message } of kept) {
+    messages.push({ ...message, ...(yield* replyTo(sql, row)) });
+  }
+  return messages;
 });
