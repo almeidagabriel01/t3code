@@ -35,6 +35,7 @@ const assistant = {
   reportsTo: null,
   budget: null,
   askBeforeActing: false,
+  workspace: "host",
   icon: null,
   autonomy: DEFAULT_ASSISTANT_AUTONOMY,
   archivedAt: null,
@@ -127,6 +128,19 @@ describe("assistant draft", () => {
       assistantCreateInput(editorFor(null, { name: "S", askBeforeActing }), "p1" as ProjectId);
     expect(create(true)).toMatchObject({ askBeforeActing: true });
     expect(create(false)).not.toHaveProperty("askBeforeActing");
+  });
+
+  it("sends the workspace on create only when it is the sandbox, and on update only when it changed", () => {
+    const create = (workspace: "host" | "sandbox") =>
+      assistantCreateInput(editorFor(null, { name: "S", workspace }), "p1" as ProjectId);
+    expect(create("sandbox")).toMatchObject({ workspace: "sandbox" });
+    expect(create("host")).not.toHaveProperty("workspace");
+    expect(
+      assistantUpdateInput(editorFor(assistant, { workspace: "sandbox" }), "p1" as ProjectId),
+    ).toEqual({ assistantId: "a1", workspace: "sandbox" });
+    expect(assistantUpdateInput(editorFor(assistant, {}), "p1" as ProjectId)).toEqual({
+      assistantId: "a1",
+    });
   });
 
   it("turns the spending limit draft into a budget, or null when off", () => {

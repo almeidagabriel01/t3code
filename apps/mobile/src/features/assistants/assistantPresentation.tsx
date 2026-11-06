@@ -2,6 +2,7 @@ import type {
   Assistant,
   AssistantSpend,
   AssistantToolAccess,
+  AssistantWorkspace,
   BudgetPeriod,
 } from "@t3tools/contracts";
 import {
@@ -16,6 +17,26 @@ import { withUniwind } from "uniwind";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import type { AppSymbolName } from "../../components/ui/AppSymbol";
+
+export const WORKSPACE_OPTIONS: ReadonlyArray<{
+  readonly value: AssistantWorkspace;
+  readonly label: string;
+  readonly description: string;
+  readonly icon: AppSymbolName;
+}> = [
+  {
+    value: "host",
+    label: "This Mac",
+    description: "Commands and file edits run here, in the project.",
+    icon: "laptopcomputer",
+  },
+  {
+    value: "sandbox",
+    label: "Sandbox container (Linux, Docker)",
+    description: "Commands and file edits run in an isolated container; on this Mac it only reads.",
+    icon: "cube",
+  },
+];
 
 export const TOOL_ACCESS_OPTIONS: ReadonlyArray<{
   readonly value: AssistantToolAccess;

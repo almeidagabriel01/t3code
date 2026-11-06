@@ -17,6 +17,7 @@ import {
   type AssistantsCreateInput,
   type AssistantsUpdateInput,
   type AssistantToolAccess,
+  type AssistantWorkspace,
   type BudgetPeriod,
   type EnvironmentId,
   type ModelSelection,
@@ -39,6 +40,7 @@ export interface AssistantDraft {
   readonly instructions: string;
   readonly toolAccess: AssistantToolAccess;
   readonly askBeforeActing: boolean;
+  readonly workspace: AssistantWorkspace;
   readonly icon: AssistantIconId | null;
   readonly connectors: ReadonlyArray<ConnectorDraft>;
   readonly role: string;
@@ -137,6 +139,7 @@ export function assistantDraftFor(assistant: Assistant | null): AssistantDraft {
     instructions: assistant?.instructions ?? "",
     toolAccess: assistant?.toolAccess ?? "full",
     askBeforeActing: assistant?.askBeforeActing ?? false,
+    workspace: assistant?.workspace ?? "host",
     icon: assistantIconFor(assistant?.icon)?.id ?? null,
     connectors: connectorDraftsFrom(assistant?.mcpServers ?? []),
     role: assistant?.role ?? "",
@@ -213,6 +216,7 @@ export function assistantCreateInput(
     instructions: current.instructions,
     toolAccess: current.toolAccess,
     ...(current.askBeforeActing ? { askBeforeActing: true } : {}),
+    ...(current.workspace === "host" ? {} : { workspace: current.workspace }),
     ...(current.icon === null ? {} : { icon: current.icon }),
     ...(current.connectors.length === 0
       ? {}
@@ -249,6 +253,7 @@ export function assistantUpdateInput(
     ...(current.askBeforeActing !== assistant.askBeforeActing
       ? { askBeforeActing: current.askBeforeActing }
       : {}),
+    ...(current.workspace !== assistant.workspace ? { workspace: current.workspace } : {}),
     ...(current.icon !== (assistantIconFor(assistant.icon)?.id ?? null)
       ? { icon: current.icon }
       : {}),

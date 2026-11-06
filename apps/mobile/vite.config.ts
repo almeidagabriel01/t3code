@@ -87,6 +87,7 @@ const reactTests = [
   "src/features/decisions/DecisionAttachments.test.tsx",
   "src/features/assistants/AssistantSchedulesSection.test.tsx",
   "src/features/assistants/AssistantEditRouteScreen.test.tsx",
+  "src/features/assistants/AssistantSandboxSection.test.tsx",
   "src/features/assistants/AssistantTeamScreens.test.tsx",
   "src/features/assistants/assistantAvatar.test.tsx",
   "src/features/assistants/SettingsAssistantsRouteScreen.test.tsx",

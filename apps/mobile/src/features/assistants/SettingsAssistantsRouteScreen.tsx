@@ -20,6 +20,7 @@ import {
 import { useProjects } from "../../state/entities";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
+import { AssistantSandboxSection } from "./AssistantSandboxSection";
 import { AutonomySettingsSection } from "./AutonomySettingsSection";
 import { AssistantAvatar, toolAccessLabel } from "./assistantPresentation";
 import { useOpenAssistantEditor } from "./openAssistantEditor";
@@ -227,6 +228,17 @@ export function SettingsAssistantsRouteScreen() {
                 ))}
               </ListSection>
             ) : null}
+            {environmentIds.map((environmentId) => (
+              <AssistantSandboxSection
+                key={`sandbox:${environmentId}`}
+                environmentId={environmentId}
+                suffix={
+                  environmentIds.length > 1
+                    ? ` · ${savedConnectionsById[environmentId]?.environmentLabel ?? environmentId}`
+                    : ""
+                }
+              />
+            ))}
             {environmentIds.map((environmentId) => (
               <AutonomySettingsSection
                 key={environmentId}

@@ -16,6 +16,7 @@ import {
   leaderChoices,
   NO_LEADER_LABEL,
 } from "@t3tools/client-runtime/assistantTeam";
+import { assistantSandboxView } from "@t3tools/client-runtime/state/assistants";
 import type { MenuAction } from "@react-native-menu/menu";
 import { useRef, useState } from "react";
 import { Platform, View } from "react-native";
@@ -36,6 +37,7 @@ import {
   useAssistantActions,
   useAssistantEntries,
   useAssistantSpend,
+  useAssistantSandbox,
   useAssistantsEnvironmentIds,
 } from "../../state/assistants";
 import { useEnvironmentQuery } from "../../state/query";
@@ -66,6 +68,7 @@ import {
   BUDGET_PERIOD_OPTIONS,
   budgetSpendLine,
   TOOL_ACCESS_OPTIONS,
+  WORKSPACE_OPTIONS,
 } from "./assistantPresentation";
 import { assistantProjectName, useAssistantEditor } from "./useAssistantEditor";
 import { useAssistantFlows } from "./useAssistantFlows";
@@ -130,6 +133,7 @@ function AssistantForm(props: { readonly editor: AssistantEditor }) {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const actions = useAssistantActions(environmentId);
+  const sandboxView = assistantSandboxView(useAssistantSandbox(environmentId));
   const flows = useAssistantFlows(environmentId);
   const entries = useAssistantEntries();
   // The form edits the assistant as it was opened; Manage acts on it as it is now.
@@ -395,6 +399,54 @@ function AssistantForm(props: { readonly editor: AssistantEditor }) {
                 />
               </RowPressable>
             ))}
+          </ListSection>
+        </View>
+        <View className="gap-2">
+          <View className="gap-0.5 px-2">
+            <Text textRole="footnote" className="font-t3-medium text-foreground">
+              Workspace
+            </Text>
+            <Text textRole="footnote" className="text-foreground-muted">
+              Where it runs commands and edits files. Its tool access applies there.
+            </Text>
+          </View>
+          <ListSection>
+            {WORKSPACE_OPTIONS.map((option) => {
+              const unavailable = option.value === "sandbox" ? sandboxView.unavailableReason : null;
+              return (
+                <RowPressable
+                  key={option.value}
+                  accessibilityRole="radio"
+                  accessibilityLabel={option.label}
+                  accessibilityHint={unavailable ?? option.description}
+                  accessibilityState={{
+                    selected: current.workspace === option.value,
+                    disabled: unavailable !== null,
+                  }}
+                  disabled={unavailable !== null}
+                  onPress={() => updateAssistantDraft({ workspace: option.value })}
+                  className="bg-grouped-card"
+                >
+                  <ListRowLayout
+                    icon={option.icon}
+                    label={option.label}
+                    description={unavailable ?? option.description}
+                    disabled={unavailable !== null}
+                    accessory={
+                      current.workspace === option.value ? (
+                        <SymbolView
+                          name="checkmark"
+                          size={16}
+                          tintColorClassName="accent-icon"
+                          type="monochrome"
+                          weight="semibold"
+                        />
+                      ) : undefined
+                    }
+                  />
+                </RowPressable>
+              );
+            })}
           </ListSection>
         </View>
         <View className="gap-2">

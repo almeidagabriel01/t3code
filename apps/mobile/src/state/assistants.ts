@@ -12,6 +12,7 @@ import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtim
 import {
   AuthOrchestrationReadScope,
   type Assistant,
+  type AssistantSandboxStatus,
   type AssistantsCreateInput,
   type AssistantsResetInput,
   type AssistantsUpdateInput,
@@ -202,4 +203,40 @@ export function useAssistantTeamActivity(environmentId: EnvironmentId, teamId: A
   return useEnvironmentQuery(
     assistantsEnvironment.teamActivity({ environmentId, input: { teamId } }),
   );
+}
+
+const sandboxStatusAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make((get): AssistantSandboxStatus | null =>
+    Option.getOrNull(
+      AsyncResult.value(get(assistantsEnvironment.sandbox({ environmentId, input: null }))),
+    ),
+  ).pipe(Atom.withLabel(`mobile-assistant-sandbox:${environmentId}`)),
+);
+
+/** The sandbox container of an environment, live; null before its first report. */
+export function useAssistantSandbox(environmentId: EnvironmentId): AssistantSandboxStatus | null {
+  return useAtomValue(sandboxStatusAtom(environmentId));
+}
+
+/** Each action settles into a reply; the status itself arrives through `useAssistantSandbox`. */
+export function useAssistantSandboxActions(environmentId: EnvironmentId) {
+  const canAct = useAtomValue(assistantsEnvironment.startSandbox.permissionAtom(environmentId));
+  const start = useAtomCommand(assistantsEnvironment.startSandbox, { reportFailure: false });
+  const stop = useAtomCommand(assistantsEnvironment.stopSandbox, { reportFailure: false });
+  const remove = useAtomCommand(assistantsEnvironment.removeSandbox, { reportFailure: false });
+  const reply = <A>(
+    result:
+      | { readonly _tag: "Success"; readonly value: A }
+      | { readonly _tag: "Failure"; readonly cause: Cause.Cause<unknown> },
+  ): AssistantReply<A> =>
+    result._tag === "Success"
+      ? { ok: true, value: result.value }
+      : { ok: false, message: assistantErrorMessage(squashAtomCommandFailure(result)) };
+  return {
+    canAct,
+    start: async () => reply(await start({ environmentId, input: {} })),
+    stop: async () => reply(await stop({ environmentId, input: {} })),
+    remove: async (deleteVolumes: boolean) =>
+      reply(await remove({ environmentId, input: { deleteVolumes } })),
+  };
 }

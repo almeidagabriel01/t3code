@@ -54,6 +54,11 @@ vi.mock("./AutonomySettingsSection", () => ({
     <p data-autonomy>{`Autonomy:${props.environmentId}${props.suffix}`}</p>
   ),
 }));
+vi.mock("./AssistantSandboxSection", () => ({
+  AssistantSandboxSection: (props: { environmentId: string; suffix: string }) => (
+    <p data-sandbox>{`Sandbox:${props.environmentId}${props.suffix}`}</p>
+  ),
+}));
 vi.mock("./assistantTeamTarget", () => ({ useOpenAssistantTeam: () => mocks.openTeam }));
 vi.mock("../../components/ui/AppSymbol", () => ({ SymbolView: () => null }));
 vi.mock("./openAssistantEditor", () => ({ useOpenAssistantEditor: () => mocks.openEditor }));
@@ -157,11 +162,17 @@ describe("assistant list autonomy", () => {
     expect(
       Array.from(container.querySelectorAll("[data-autonomy]")).map((n) => n.textContent),
     ).toEqual(["Autonomy:hub"]);
+    expect(
+      Array.from(container.querySelectorAll("[data-sandbox]")).map((n) => n.textContent),
+    ).toEqual(["Sandbox:hub"]);
     mocks.environmentIds = ["hub", "lab"];
     act(() => root.render(<SettingsAssistantsRouteScreen key="two" />));
     expect(
       Array.from(container.querySelectorAll("[data-autonomy]")).map((n) => n.textContent),
     ).toEqual(["Autonomy:hub · hub", "Autonomy:lab · Lab"]);
+    expect(
+      Array.from(container.querySelectorAll("[data-sandbox]")).map((n) => n.textContent),
+    ).toEqual(["Sandbox:hub · hub", "Sandbox:lab · Lab"]);
   });
 });
 

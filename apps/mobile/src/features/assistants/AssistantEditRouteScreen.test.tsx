@@ -15,6 +15,7 @@ const { mocks, Children } = vi.hoisted(() => ({
     update: vi.fn(),
     entries: [] as unknown[],
     tasks: [] as Array<{ threadId: string | null; prompt: string }>,
+    sandbox: null as unknown,
   },
 }));
 vi.mock("../../state/query", () => ({
@@ -65,9 +66,10 @@ vi.mock("../../components/ui/ListActionRow", () => ({
 }));
 vi.mock("../../components/ui/ListRow", () => ({ ListRow: () => null }));
 vi.mock("../../components/ui/ListRowLayout", () => ({
-  ListRowLayout: (props: { label: string; accessory?: ReactNode }) => (
+  ListRowLayout: (props: { label: string; description?: string; accessory?: ReactNode }) => (
     <>
       {props.label}
+      {props.description}
       {props.accessory}
     </>
   ),
@@ -95,12 +97,14 @@ vi.mock("../../components/ui/RowPressable", () => ({
   RowPressable: (props: {
     accessibilityLabel: string;
     accessibilityState?: { selected?: boolean };
+    disabled?: boolean;
     onPress: () => void;
     children?: ReactNode;
   }) => (
     <button
       aria-label={props.accessibilityLabel}
       aria-checked={props.accessibilityState?.selected}
+      disabled={props.disabled}
       onClick={props.onPress}
     >
       {props.children}
@@ -129,6 +133,7 @@ vi.mock("../../state/assistants", () => ({
   useAssistantActions: () => ({ canAct: true, update: mocks.update, create: vi.fn() }),
   useAssistantEntries: () => ({ active: mocks.entries, archived: [] }),
   useAssistantSpend: () => ({ data: mocks.spend }),
+  useAssistantSandbox: () => mocks.sandbox,
   useAssistantsEnvironmentIds: () => ["hub"],
 }));
 vi.mock("../../state/use-remote-environment-registry", () => ({
@@ -177,6 +182,7 @@ const assistant = (budget: unknown = null) =>
     instructions: "",
     toolAccess: "full",
     askBeforeActing: false,
+    workspace: "host",
     icon: null,
     role: "",
     reportsTo: null,
@@ -217,9 +223,38 @@ beforeEach(() => {
   mocks.spend = undefined;
   mocks.entries = [];
   mocks.tasks = [];
+  mocks.sandbox = null;
   mocks.update.mockReset().mockResolvedValue({ ok: true });
 });
 afterEach(() => act(() => root.unmount()));
+
+describe("assistant workspace", () => {
+  it("saves the sandbox when it is chosen, and host when switching back", async () => {
+    mocks.sandbox = { state: "running" };
+    render(assistant());
+    expect(
+      container.querySelector('button[aria-label="This Mac"]')?.getAttribute("aria-checked"),
+    ).toBe("true");
+    pick("Sandbox container (Linux, Docker)");
+    await act(async () => pick("Save"));
+    expect(mocks.update.mock.calls[0]?.[0]).toMatchObject({ workspace: "sandbox" });
+
+    render({ ...assistant(), workspace: "sandbox" } as Assistant);
+    pick("This Mac");
+    await act(async () => pick("Save"));
+    expect(mocks.update.mock.calls[1]?.[0]).toMatchObject({ workspace: "host" });
+  });
+
+  it("turns the sandbox off with its reason while Docker is missing", () => {
+    mocks.sandbox = { state: "docker_unavailable" };
+    render(assistant());
+    const option = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Sandbox container (Linux, Docker)"]',
+    );
+    expect(option?.disabled).toBe(true);
+    expect(container.textContent).toContain("Docker is not running on that machine.");
+  });
+});
 
 describe("assistant spending limit", () => {
   it("hides the limit fields until it is switched on, then saves what was entered", async () => {
