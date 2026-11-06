@@ -82,19 +82,29 @@ interface SentRow {
 }
 
 /**
- * Agent-sent messages into one assistant's conversations, from other assistants, newest first.
- * A message is re-published while it streams, so each id keeps only its latest event.
+ * Messages from one assistant into another's conversations, newest first, filtered in SQL so
+ * traffic from other senders can never push these out of the window. A message is re-published
+ * while it streams, so each id keeps only its latest event.
  */
-const sentInto = (sql: SqlClient.SqlClient, toAssistantId: string, limit: number) => {
-  const { from, to } = streamRange(toAssistantId);
+const sentInto = (
+  sql: SqlClient.SqlClient,
+  toAssistantId: string,
+  fromAssistantId: string,
+  since: string,
+  limit: number,
+) => {
+  const to = streamRange(toAssistantId);
+  const from = streamRange(fromAssistantId);
   return sql<SentRow>`
     SELECT json_extract(payload_json, '$.id') AS message_id, stream_id,
       json_extract(payload_json, '$.senderThreadId') AS sender,
       json_extract(payload_json, '$.text') AS body, sequence, occurred_at
     FROM orchestration_events e
     WHERE application_event_version = 2 AND aggregate_kind = 'thread'
-      AND event_type = 'message.updated' AND stream_id >= ${from} AND stream_id < ${to}
-      AND json_extract(payload_json, '$.senderThreadId') LIKE 'assistant:%'
+      AND event_type = 'message.updated' AND stream_id >= ${to.from} AND stream_id < ${to.to}
+      AND json_extract(payload_json, '$.senderThreadId') >= ${from.from}
+      AND json_extract(payload_json, '$.senderThreadId') < ${from.to}
+      AND occurred_at > ${since}
       AND NOT EXISTS (
         SELECT 1 FROM orchestration_events n
         WHERE n.application_event_version = 2 AND n.aggregate_kind = 'thread'
@@ -114,10 +124,8 @@ export const countRecentTeamSends = Effect.fn("AssistantTeams.countRecentTeamSen
   const since = DateTime.formatIso(DateTime.makeUnsafe(nowMs - HOUR_MS));
   let total = 0;
   for (const peerId of peerIds) {
-    const rows = yield* sentInto(sql, peerId, TEAM_SENDS_PER_HOUR * 2);
-    total += rows.filter(
-      (row) => row.occurred_at > since && assistantIdFromThreadId(row.sender ?? "") === senderId,
-    ).length;
+    // Enough rows to pass the cap; counting further adds nothing.
+    total += (yield* sentInto(sql, peerId, senderId, since, TEAM_SENDS_PER_HOUR)).length;
   }
   return total;
 });
@@ -130,22 +138,25 @@ export const readTeamActivity = Effect.fn("AssistantTeams.readActivity")(functio
   const members = new Set<string>(team.memberIds);
   const found: Array<AssistantTeamMessage & { readonly sequence: number }> = [];
   for (const memberId of team.memberIds) {
-    const rows = yield* sentInto(sql, memberId, ASSISTANT_TEAM_ACTIVITY_LIMIT);
-    for (const row of rows) {
-      const from = assistantIdFromThreadId(row.sender ?? "");
-      if (from === null || from === memberId || !members.has(from)) continue;
-      const text = row.body ?? "";
-      found.push({
-        messageId: row.message_id ?? `${row.stream_id}:${row.sequence}`,
-        at: row.occurred_at,
-        fromAssistantId: from as AssistantId,
-        toAssistantId: memberId as AssistantId,
-        fromThreadId: row.sender as ThreadId,
-        toThreadId: row.stream_id as ThreadId,
-        text: text.slice(0, ASSISTANT_TEAM_MESSAGE_MAX_CHARS),
-        truncated: text.length > ASSISTANT_TEAM_MESSAGE_MAX_CHARS,
-        sequence: row.sequence,
-      });
+    for (const fromId of team.memberIds) {
+      if (fromId === memberId) continue;
+      const rows = yield* sentInto(sql, memberId, fromId, "", ASSISTANT_TEAM_ACTIVITY_LIMIT);
+      for (const row of rows) {
+        const from = assistantIdFromThreadId(row.sender ?? "");
+        if (from === null || !members.has(from)) continue;
+        const text = row.body ?? "";
+        found.push({
+          messageId: row.message_id ?? `${row.stream_id}:${row.sequence}`,
+          at: row.occurred_at,
+          fromAssistantId: from as AssistantId,
+          toAssistantId: memberId as AssistantId,
+          fromThreadId: row.sender as ThreadId,
+          toThreadId: row.stream_id as ThreadId,
+          text: text.slice(0, ASSISTANT_TEAM_MESSAGE_MAX_CHARS),
+          truncated: text.length > ASSISTANT_TEAM_MESSAGE_MAX_CHARS,
+          sequence: row.sequence,
+        });
+      }
     }
   }
   return found

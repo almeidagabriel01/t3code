@@ -166,6 +166,9 @@ it.effect("teammates may message each other both ways, up to an hourly cap", () 
     assert.isFalse(yield* limited);
     yield* sendEvent(20, "ann", "bo");
     assert.isTrue(yield* limited);
+    // Newer traffic from other senders into the same peer must not push ann's sends out of the count.
+    for (let n = 21; n <= 60; n += 1) yield* sendEvent(n, "boss", "bo");
+    assert.isTrue(yield* limited);
     // The other direction has its own count, a non-teammate is never "limited", and the hour rolls.
     assert.isFalse(yield* directory.teamSendLimited(thread("bo"), thread("ann")));
     assert.isFalse(yield* directory.teamSendLimited(thread("ann"), thread("out")));
