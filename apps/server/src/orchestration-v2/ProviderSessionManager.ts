@@ -28,6 +28,7 @@ import * as FiberSet from "effect/FiberSet";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
@@ -35,7 +36,6 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
-import * as NodePath from "node:path";
 
 import * as ServerConfig from "../config.ts";
 import { normalizeModelMetricLabel } from "../observability/Attributes.ts";
@@ -337,6 +337,7 @@ export const layerWithOptions = (
   | EventSink.EventSinkV2
   | FileSystem.FileSystem
   | IdAllocator.IdAllocatorV2
+  | Path.Path
   | McpProviderSessions.McpProviderSessions
   | McpSessionRegistry.McpSessionRegistry
   | ProjectionStore.ProjectionStoreV2
@@ -354,13 +355,14 @@ export const layerWithOptions = (
       const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
       const projectService = yield* Effect.serviceOption(ProjectService.ProjectService);
       const serverConfig = yield* Effect.serviceOption(ServerConfig.ServerConfig);
+      const path = yield* Path.Path;
       // T3 makes scratch and assistant folders on demand, so a deleted one is recreated, not fatal.
       const isManagedWorkspace = (cwd: string) =>
         Option.exists(serverConfig, ({ baseDir }) => {
-          const resolved = NodePath.resolve(cwd);
+          const resolved = path.resolve(cwd);
           return (
-            NodePath.dirname(resolved) === NodePath.resolve(baseDir, "scratch") ||
-            resolved === NodePath.resolve(baseDir, "assistants")
+            path.dirname(resolved) === path.resolve(baseDir, "scratch") ||
+            resolved === path.resolve(baseDir, "assistants")
           );
         });
       const eventSink = yield* EventSink.EventSinkV2;
