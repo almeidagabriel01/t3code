@@ -1,10 +1,15 @@
-import type { ResourceTelemetryProcess, ResourceTelemetrySnapshot } from "@t3tools/contracts";
+import type {
+  DeviceSummary,
+  ResourceTelemetryProcess,
+  ResourceTelemetrySnapshot,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   appBreakdown,
   attributeTerminalUsage,
   buildResourceTree,
+  deviceShutdownTargets,
   toMachineShare,
 } from "./resourceUsage.logic";
 
@@ -59,13 +64,58 @@ describe("attributeTerminalUsage", () => {
 });
 
 describe("appBreakdown", () => {
-  it("leaves out claimed processes", () => {
+  it("leaves out claimed processes and lists each group's own, in a fixed group order", () => {
     const { claimed } = attributeTerminalUsage(processes, [{ key: "a", projectKey: "p", pid: 10 }]);
     const groups = appBreakdown(processes, claimed);
-    expect(groups.get("main")?.rssBytes).toBe(100);
-    expect(groups.get("renderer")?.rssBytes).toBe(50);
-    expect(groups.get("server")?.rssBytes).toBe(10);
-    expect(groups.get("other")).toEqual({ rssBytes: 7, cpuPercent: 3, processCount: 1 });
+    expect(
+      groups.map((row) => [
+        row.group,
+        row.usage.rssBytes,
+        row.processes.map((process) => process.identity.pid),
+      ]),
+    ).toEqual([
+      ["main", 100, [1]],
+      ["renderer", 50, [2]],
+      ["server", 10, [3]],
+      ["other", 7, [20]],
+    ]);
+    expect(groups[3]!.usage).toEqual({ rssBytes: 7, cpuPercent: 3, processCount: 1 });
+  });
+});
+
+describe("deviceShutdownTargets", () => {
+  const device = (overrides: Partial<DeviceSummary>) =>
+    ({
+      hostId: "local",
+      id: "x",
+      platform: "android",
+      name: "Pixel_8",
+      version: "",
+      booted: true,
+      physical: false,
+      ...overrides,
+    }) as DeviceSummary;
+  const devices = [
+    device({ id: "emulator-5554", name: "Pixel_8" }),
+    device({ id: "emulator-5556", name: "Tablet" }),
+    device({ id: "Pixel_8", name: "Pixel_8", booted: false }),
+    device({ id: "remote-emu", name: "Pixel_8", hostId: "mac-mini" }),
+    device({ id: "phone", name: "Pixel_8", physical: true }),
+    device({ id: "sim-a", platform: "ios", name: "iPhone 17" }),
+    device({ id: "sim-b", platform: "ios", name: "iPad" }),
+    device({ id: "sim-off", platform: "ios", name: "iPhone SE", booted: false }),
+  ];
+  const local = new Set(["local"]);
+
+  it.each([
+    ["the booted emulator running the row's AVD", "android", "Pixel_8", ["emulator-5554"]],
+    ["every booted simulator for the Simulator app", "ios", null, ["sim-a", "sim-b"]],
+    ["nothing for the device tools", "tools", null, []],
+    ["nothing when the AVD is not booted here", "android", "Nexus", []],
+  ] as const)("shuts down %s", (_, platform, avd, expected) => {
+    expect(
+      deviceShutdownTargets({ platform, avd }, devices, local).map((target) => target.deviceId),
+    ).toEqual(expected);
   });
 });
 
@@ -126,7 +176,11 @@ describe("buildResourceTree", () => {
       ["agent", "Fix build", 210],
     ]);
     expect(projectA.usage.rssBytes).toBe(610);
-    expect(tree.app.get("other")).toEqual({ rssBytes: 8 + 5, cpuPercent: 0, processCount: 2 });
+    expect(tree.app.find((row) => row.group === "other")?.usage).toEqual({
+      rssBytes: 8 + 5,
+      cpuPercent: 0,
+      processCount: 2,
+    });
   });
 
   it("puts agents of unknown threads under Unattributed and hides dead agents", () => {

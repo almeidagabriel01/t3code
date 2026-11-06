@@ -5,12 +5,14 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import {
   AuthTerminalOperateScope,
+  type DeviceShutdownInput,
   type EnvironmentId,
   type ListeningPort,
   type TerminalCloseInput,
 } from "@t3tools/contracts";
 
 import { ensureLocalApi } from "../../localApi";
+import { deviceEnvironment } from "../../state/device";
 import { serverEnvironment } from "../../state/server";
 import { useEnvironmentScope } from "../../state/session";
 import { terminalEnvironment } from "../../state/terminal";
@@ -58,4 +60,22 @@ export function useCloseTerminal(environmentId: EnvironmentId) {
     }
   };
   return { canClose, close };
+}
+
+export function useShutDownDevice(environmentId: EnvironmentId) {
+  const canShutDown = useAtomValue(deviceEnvironment.shutdown.permissionAtom(environmentId));
+  const command = useAtomCommand(deviceEnvironment.shutdown, { reportFailure: false });
+  const shutDown = async (targets: ReadonlyArray<DeviceShutdownInput>, label: string) => {
+    if (!(await confirmKill(`Shut down ${label}? Apps running on it stop.`))) return;
+    for (const input of targets) {
+      const result = await command({ environmentId, input });
+      if (result._tag === "Failure") {
+        if (!isAtomCommandInterrupted(result)) {
+          reportFailure("Could not shut down device", squashAtomCommandFailure(result));
+        }
+        return;
+      }
+    }
+  };
+  return { canShutDown, shutDown };
 }

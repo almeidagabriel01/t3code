@@ -1,4 +1,6 @@
 import type {
+  DeviceShutdownInput,
+  DeviceSummary,
   ResourceTelemetryAggregate,
   ResourceTelemetryProcess,
   ResourceTelemetrySnapshot,
@@ -101,25 +103,53 @@ const APP_GROUP_BY_CATEGORY: Partial<
   server: "server",
 };
 
+const compareProcesses =
+  (sort: ResourceSort) => (left: ResourceTelemetryProcess, right: ResourceTelemetryProcess) =>
+    sort === "name"
+      ? processLabel(left).localeCompare(processLabel(right))
+      : sort === "cpu"
+        ? right.cpuPercent - left.cpuPercent
+        : right.residentBytes - left.residentBytes;
+
+export interface AppGroupRow {
+  readonly group: AppProcessGroup;
+  readonly usage: ResourceUsage;
+  readonly processes: ReadonlyArray<ResourceTelemetryProcess>;
+}
+
+const APP_GROUP_ORDER: ReadonlyArray<AppProcessGroup> = ["main", "renderer", "server", "other"];
+
 /** Processes no terminal claims, grouped as the desktop app, its renderers, the server, and the rest. */
 export function appBreakdown(
   processes: ReadonlyArray<ResourceTelemetryProcess>,
   claimed: ReadonlySet<number>,
-): ReadonlyMap<AppProcessGroup, ResourceUsage> {
-  const groups = new Map<AppProcessGroup, ResourceUsage>();
+  sort: ResourceSort = "memory",
+): ReadonlyArray<AppGroupRow> {
+  const groups = new Map<AppProcessGroup, ResourceTelemetryProcess[]>();
   for (const process of processes) {
     if (claimed.has(process.identity.pid)) continue;
     const group = APP_GROUP_BY_CATEGORY[process.category] ?? "other";
-    groups.set(
-      group,
-      addUsage(groups.get(group) ?? EMPTY_USAGE, {
-        rssBytes: process.residentBytes,
-        cpuPercent: process.cpuPercent,
-        processCount: 1,
-      }),
-    );
+    groups.set(group, [...(groups.get(group) ?? []), process]);
   }
-  return groups;
+  return APP_GROUP_ORDER.flatMap((group) => {
+    const members = groups.get(group);
+    if (members === undefined) return [];
+    return [
+      {
+        group,
+        usage: members.reduce(
+          (sum, process) =>
+            addUsage(sum, {
+              rssBytes: process.residentBytes,
+              cpuPercent: process.cpuPercent,
+              processCount: 1,
+            }),
+          EMPTY_USAGE,
+        ),
+        processes: members.toSorted(compareProcesses(sort)),
+      },
+    ];
+  });
 }
 
 export type ResourceSort = "name" | "cpu" | "memory";
@@ -168,6 +198,8 @@ export interface DeviceRow {
   readonly key: string;
   readonly label: string;
   readonly platform: DevicePlatform;
+  /** The AVD an Android row runs; the device list names booted emulators by it. */
+  readonly avd: string | null;
   readonly usage: ResourceUsage;
   readonly processes: ReadonlyArray<ResourceTelemetryProcess>;
 }
@@ -175,7 +207,7 @@ export interface DeviceRow {
 export interface ResourceTree {
   readonly projects: ReadonlyArray<ProjectNode>;
   readonly devices: ReadonlyArray<DeviceRow>;
-  readonly app: ReadonlyMap<AppProcessGroup, ResourceUsage>;
+  readonly app: ReadonlyArray<AppGroupRow>;
 }
 
 const EMULATOR_AVD = /(?:^|\s)-avd[ =](\S+)/;
@@ -192,6 +224,7 @@ function deviceRoots(
   readonly key: string;
   readonly label: string;
   readonly platform: DevicePlatform;
+  readonly avd: string | null;
   readonly pid: number;
 }> {
   const byPid = new Map(processes.map((process) => [process.identity.pid, process]));
@@ -199,6 +232,7 @@ function deviceRoots(
     key: string;
     label: string;
     platform: DevicePlatform;
+    avd: string | null;
     pid: number;
   }> = [];
   const seen = new Set<number>();
@@ -212,11 +246,17 @@ function deviceRoots(
       const avd = isEmulatorProcess(process) ? EMULATOR_AVD.exec(process.command)?.[1] : undefined;
       if (avd !== undefined) {
         // The launcher forwards to qemu: the topmost match owns the pair.
-        roots.push({ key: `android:${avd}`, label: humanizeAvd(avd), platform: "android", pid });
+        roots.push({
+          key: `android:${avd}`,
+          label: humanizeAvd(avd),
+          platform: "android",
+          avd,
+          pid,
+        });
         continue;
       }
       if (process.name === "Simulator") {
-        roots.push({ key: `ios:${pid}`, label: "iOS Simulator", platform: "ios", pid });
+        roots.push({ key: `ios:${pid}`, label: "iOS Simulator", platform: "ios", avd: null, pid });
         continue;
       }
       pending.push(...process.childPids);
@@ -228,18 +268,11 @@ function deviceRoots(
       key: `tools:${pid}`,
       label: "Device tools",
       platform: "tools" as const,
+      avd: null,
       pid,
     })),
   ];
 }
-
-const compareProcesses =
-  (sort: ResourceSort) => (left: ResourceTelemetryProcess, right: ResourceTelemetryProcess) =>
-    sort === "name"
-      ? processLabel(left).localeCompare(processLabel(right))
-      : sort === "cpu"
-        ? right.cpuPercent - left.cpuPercent
-        : right.residentBytes - left.residentBytes;
 
 const compareUsage =
   (sort: ResourceSort) =>
@@ -321,13 +354,35 @@ export function buildResourceTree(input: {
       key: device.key,
       label: device.label,
       platform: device.platform,
+      avd: device.avd,
       usage: deviceClaim.usage.get(device.key) ?? EMPTY_USAGE,
       processes: sortedProcesses(deviceClaim, device.key),
     }))
     .filter((device) => device.usage.processCount > 0)
     .toSorted((a, b) => compare(a.usage, b.usage, a.label, b.label));
 
-  return { projects, devices, app: appBreakdown(processes, claimed) };
+  return { projects, devices, app: appBreakdown(processes, claimed, sort) };
+}
+
+/**
+ * The booted devices a row's processes run, on hosts of this machine: an emulator by its AVD, and
+ * every booted simulator for the one Simulator app that hosts them all. Tools rows shut nothing.
+ */
+export function deviceShutdownTargets(
+  row: Pick<DeviceRow, "platform" | "avd">,
+  devices: ReadonlyArray<DeviceSummary>,
+  localHostIds: ReadonlySet<string>,
+): ReadonlyArray<DeviceShutdownInput> {
+  return devices
+    .filter(
+      (device) =>
+        device.booted &&
+        !device.physical &&
+        localHostIds.has(device.hostId) &&
+        device.platform === row.platform &&
+        (row.platform === "ios" || (row.platform === "android" && device.name === row.avd)),
+    )
+    .map((device) => ({ hostId: device.hostId, deviceId: device.id, platform: device.platform }));
 }
 
 const machineShares = new WeakMap<ResourceTelemetrySnapshot, ResourceTelemetrySnapshot>();

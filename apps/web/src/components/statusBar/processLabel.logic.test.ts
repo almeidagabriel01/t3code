@@ -23,6 +23,24 @@ describe("processLabel", () => {
     ["vp", "vp run dev", "dev"],
     ["pnpm", "pnpm", "pnpm"],
     ["", "/opt/tool/runner --x", "runner"],
+    [
+      "Electron Helper",
+      "/a/Electron Helper --type=gpu-process --seatbelt-client=35",
+      "GPU process",
+    ],
+    [
+      "T3 Code Helper",
+      "/a/T3 Code Helper --type=utility --utility-sub-type=network.mojom.NetworkService",
+      "Network service",
+    ],
+    [
+      "Electron Helper",
+      "/a/Electron Helper --type=utility --utility-sub-type=video_capture.mojom.VideoCaptureService",
+      "Video capture service",
+    ],
+    ["Electron Helper", "/a/Electron Helper --type=utility", "Utility process"],
+    ["Electron Helper (Renderer)", "/a/Electron Helper (Renderer) --type=renderer", "Renderer"],
+    ["node", "node build.js --type=gpu-process", "build.js"],
     ["", "", ""],
     ["C:\\bin\\node.exe", "x", "node.exe"],
   ])("labels %s %s as %s", (name, command, expected) => {

@@ -16,6 +16,31 @@ function scriptLabel(arg: string): string {
   return pkg?.[1] ?? basename(arg);
 }
 
+const CHROMIUM_PROCESS_TYPES: Record<string, string> = {
+  "gpu-process": "GPU process",
+  renderer: "Renderer",
+  zygote: "Zygote",
+  "crashpad-handler": "Crash reporter",
+};
+
+const flagValue = (args: ReadonlyArray<string>, flag: string) =>
+  args.find((arg) => arg.startsWith(`${flag}=`))?.slice(flag.length + 1);
+
+/** Electron and Chromium helpers share one executable name; `--type` says what each one does. */
+function chromiumHelperLabel(args: ReadonlyArray<string>): string | undefined {
+  const type = flagValue(args, "--type");
+  if (type === undefined) return undefined;
+  if (type !== "utility") return CHROMIUM_PROCESS_TYPES[type] ?? `${type} process`;
+  // `network.mojom.NetworkService` is "Network service".
+  const service = flagValue(args, "--utility-sub-type")
+    ?.split(".")
+    .at(-1)
+    ?.replace(/Service$/, "");
+  if (!service) return "Utility process";
+  const words = service.replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase();
+  return `${words[0]!.toUpperCase()}${words.slice(1)} service`;
+}
+
 /** What the process is for a human: the script or package an interpreter runs, else the executable. Never throws. */
 export function processLabel(process: { readonly name: string; readonly command: string }): string {
   const tokens = tokenize(process.command);
@@ -27,6 +52,10 @@ export function processLabel(process: { readonly name: string; readonly command:
     .toLowerCase()
     .replace(/\.exe$/, "")
     .replace(/^python[\d.]*$/, "python");
+  if (/helper|electron|chrom/i.test(exe)) {
+    const helper = chromiumHelperLabel(args);
+    if (helper !== undefined) return helper;
+  }
   if (SHELLS.has(kind)) {
     const flag = args.indexOf("-c");
     return (flag >= 0 ? args[flag + 1] : undefined) || fallback;

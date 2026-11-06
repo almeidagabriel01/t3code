@@ -12,10 +12,14 @@ import { useNavigate } from "@tanstack/react-router";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 import {
+  AppWindowIcon,
   BotIcon,
   ChevronDownIcon,
   ChevronRightIcon,
+  CpuIcon,
   MemoryStickIcon,
+  MonitorIcon,
+  ServerIcon,
   SmartphoneIcon,
   TerminalIcon,
   WrenchIcon,
@@ -25,6 +29,7 @@ import { createContext, use, useEffect, useState } from "react";
 
 import { useClientSettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
+import { useDeviceState } from "../../state/device";
 import { useProjects, useThreadShells } from "../../state/entities";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useEnvironmentQuery, useEnvironmentQuerySelector } from "../../state/query";
@@ -39,15 +44,17 @@ import { processLabel } from "./processLabel.logic";
 import {
   addUsage,
   buildResourceTree,
+  deviceShutdownTargets,
   EMPTY_USAGE,
   type AppProcessGroup,
   type DevicePlatform,
+  type DeviceRow,
   type ResourceSort,
   type ResourceUsage,
 } from "./resourceUsage.logic";
 import { formatMemory, sparklinePoints } from "./statusBar.logic";
 import { isStatusBarItemShown, STATUS_BAR_RESOURCE_ITEM } from "./statusBarItems.logic";
-import { useCloseTerminal } from "./useKillTarget";
+import { useCloseTerminal, useShutDownDevice } from "./useKillTarget";
 import {
   useEnvironmentResources,
   useEnvironmentSnapshots,
@@ -61,6 +68,12 @@ const APP_GROUP_LABEL: Record<AppProcessGroup, string> = {
   renderer: "Renderers",
   server: "Server",
   other: "Other processes",
+};
+const APP_GROUP_ICON: Record<AppProcessGroup, typeof AppWindowIcon> = {
+  main: AppWindowIcon,
+  renderer: MonitorIcon,
+  server: ServerIcon,
+  other: CpuIcon,
 };
 const UNATTRIBUTED = "Unattributed";
 
@@ -370,6 +383,45 @@ interface ThreadInfo {
   readonly title: string;
 }
 
+/** Rendered only while devices run, so the device state subscription stays closed otherwise. */
+function DeviceGroup({
+  environmentId,
+  devices,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly devices: ReadonlyArray<DeviceRow>;
+}) {
+  const { state } = useDeviceState(environmentId);
+  const { canShutDown, shutDown } = useShutDownDevice(environmentId);
+  const localHostIds = new Set<string>(
+    state.hosts.flatMap((host) => (host.kind === "local" ? [host.id] : [])),
+  );
+  const total = devices.reduce((sum, device) => addUsage(sum, device.usage), EMPTY_USAGE);
+  return (
+    <ProjectGroup title="Devices" count={devices.length} usage={total}>
+      {devices.map((device) => {
+        const Icon = DEVICE_ICON[device.platform];
+        const targets = deviceShutdownTargets(device, state.devices, localHostIds);
+        return (
+          <UsageRow
+            key={device.key}
+            icon={<Icon aria-hidden />}
+            label={device.label}
+            detail={device.label}
+            usage={device.usage}
+            processes={device.processes}
+            onOpen={null}
+            closeLabel="Shut down"
+            onClose={
+              canShutDown && targets.length > 0 ? () => void shutDown(targets, device.label) : null
+            }
+          />
+        );
+      })}
+    </ProjectGroup>
+  );
+}
+
 export function EnvironmentSection({
   resources,
   snapshot,
@@ -423,11 +475,8 @@ export function EnvironmentSection({
     threadTitle: (threadId) => infoOf(threadId)?.title || "Agent",
   });
   const app = snapshot === null ? null : tree.app;
-  const appTotal = app === null ? null : [...app.values()].reduce(addUsage, EMPTY_USAGE);
-  const deviceTotal = tree.devices.reduce(
-    (sum, device) => addUsage(sum, device.usage),
-    EMPTY_USAGE,
-  );
+  const appTotal =
+    app === null ? null : app.reduce((sum, row) => addUsage(sum, row.usage), EMPTY_USAGE);
 
   return (
     <HostCoresContext value={snapshot?.cpuCount ?? 1}>
@@ -496,22 +545,7 @@ export function EnvironmentSection({
           </ProjectGroup>
         ))}
         {tree.devices.length === 0 ? null : (
-          <ProjectGroup title="Devices" count={tree.devices.length} usage={deviceTotal}>
-            {tree.devices.map((device) => {
-              const Icon = DEVICE_ICON[device.platform];
-              return (
-                <UsageRow
-                  key={device.key}
-                  icon={<Icon aria-hidden />}
-                  label={device.label}
-                  detail={device.label}
-                  usage={device.usage}
-                  processes={device.processes}
-                  onOpen={null}
-                />
-              );
-            })}
-          </ProjectGroup>
+          <DeviceGroup environmentId={environmentId} devices={tree.devices} />
         )}
         {app === null || appTotal === null ? null : (
           <div className="border-t border-border/50">
@@ -528,15 +562,20 @@ export function EnvironmentSection({
               </CollapsibleTrigger>
               <CollapsiblePanel animate={false}>
                 <div className="border-t border-border/30">
-                  {[...app].map(([group, usage]) => (
-                    <div key={group} className="flex items-center gap-2 py-1.5 pl-10 pr-3">
-                      <span className="min-w-0 flex-1 truncate text-2xs text-muted-foreground">
-                        {APP_GROUP_LABEL[group]} ({usage.processCount})
-                      </span>
-                      <Metrics usage={usage} />
-                      <span className={GUTTER} aria-hidden />
-                    </div>
-                  ))}
+                  {app.map((row) => {
+                    const AppGroupIcon = APP_GROUP_ICON[row.group];
+                    return (
+                      <UsageRow
+                        key={row.group}
+                        icon={<AppGroupIcon aria-hidden />}
+                        label={`${APP_GROUP_LABEL[row.group]} (${row.usage.processCount})`}
+                        detail={APP_GROUP_LABEL[row.group]}
+                        usage={row.usage}
+                        processes={row.processes}
+                        onOpen={null}
+                      />
+                    );
+                  })}
                 </div>
               </CollapsiblePanel>
             </Collapsible>
