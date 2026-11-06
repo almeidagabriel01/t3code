@@ -1,5 +1,5 @@
 import { createMemoryHistory } from "@tanstack/react-router";
-import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { ThreadId } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import type * as Context from "effect/Context";
@@ -12,6 +12,7 @@ import { AppRoot } from "~/AppRoot";
 import "~/components/ChatView";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { __setClientSettingsForTests } from "~/hooks/useSettings";
+import { useRightPanelStore } from "~/rightPanelStore";
 import { getRouter } from "~/router";
 import {
   ENVIRONMENT_ID,
@@ -147,4 +148,32 @@ it("a new draft does not load its reserved thread before the server lists it", a
     .filter((url) => url.includes(`/api/orchestration/threads/${threadId}/`));
   // A 404 here marks the thread deleted, and the view never loads it once the send creates it.
   expect(threadRequests).toEqual([]);
+});
+
+it("keeps an open file tab mounted behind the chat, so it returns where it was", async () => {
+  await page.viewport(1400, 900);
+  const thread = threadWithHistory("thread-files", 1);
+  using _environment = installFakeEnvironment([thread]);
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+  );
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, { router: false });
+  await expect.element(page.getByText("thread-files: question 0")).toBeVisible();
+  const ref = scopeThreadRef(ENVIRONMENT_ID, thread.id);
+  useRightPanelStore.getState().openFile(ref, "docs/plan.html");
+  const tab = page.getByRole("tab", { name: /plan\.html/ });
+  await expect.element(tab).toBeVisible();
+  const panel = document.querySelector('[data-main-file-surface="file:docs/plan.html"]');
+  expect(panel).not.toBeNull();
+
+  useRightPanelStore.getState().showChat(ref);
+  await vi.waitFor(() => expect(panel?.getAttribute("aria-hidden")).toBe("true"));
+  expect(panel?.isConnected).toBe(true);
+  await page.getByRole("button", { name: "plan.html", exact: true }).click();
+  await vi.waitFor(() => expect(panel?.hasAttribute("aria-hidden")).toBe(false));
 });

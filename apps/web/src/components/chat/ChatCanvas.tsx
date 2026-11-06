@@ -98,7 +98,8 @@ export function ChatCanvas({
         ref={elementRef}
         data-chat-canvas
         data-preview-overlaps-chat={layout.overlapsChat || undefined}
-        className="relative flex min-h-0 min-w-0 flex-1 flex-col"
+        // Isolated so the chat's floating chrome (scroll-to-end, composer) never paints over a file tab.
+        className="relative isolate flex min-h-0 min-w-0 flex-1 flex-col"
         style={
           {
             "--chat-timeline-gutter": `${measurements.timelineGutter}px`,
