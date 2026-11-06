@@ -357,7 +357,8 @@ describe("CodexAdapterV2 native protocol logging", () => {
           method: "thread/event",
           params: {
             id: "evt-1",
-            http_headers: { Authorization: "Bearer secret-codex-token" },
+            http_headers: { "X-Custom": "Bearer secret-codex-token" },
+            env: { ANYTHING: "secret-env" },
             usage: { inputTokens: 12, outputTokens: 8, totalTokens: 20 },
           },
         },
@@ -383,7 +384,8 @@ describe("CodexAdapterV2 native protocol logging", () => {
             method: "thread/event",
             params: {
               id: "evt-1",
-              http_headers: { Authorization: "[REDACTED]" },
+              http_headers: "[REDACTED]",
+              env: "[REDACTED]",
               usage: { inputTokens: 12, outputTokens: 8, totalTokens: 20 },
             },
           },

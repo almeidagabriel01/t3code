@@ -1590,6 +1590,9 @@ function redactCodexProtocolValue(value: unknown): unknown {
 function isSensitiveCodexProtocolKey(key: string): boolean {
   const normalized = key.replace(/[^a-z0-9]/gi, "").toLowerCase();
   return (
+    // Connector headers and env hold arbitrary secrets under arbitrary names.
+    normalized === "httpheaders" ||
+    normalized === "env" ||
     normalized.endsWith("authorization") ||
     normalized.endsWith("apikey") ||
     normalized.endsWith("token") ||

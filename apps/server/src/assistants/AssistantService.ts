@@ -643,7 +643,14 @@ const make = Effect.gen(function* () {
               }
             }
           }
-          if (saved !== undefined) yield* saved.removeStale;
+          // Orphaned secret files are harmless; a failure here must not report the saved change as failed.
+          if (saved !== undefined) {
+            yield* saved.removeStale.pipe(
+              Effect.catch((cause) =>
+                Effect.logWarning("stale connector secrets were not deleted", { cause }),
+              ),
+            );
+          }
           yield* publish(row.assistant_id);
           if (archivedAt !== null && row.archived_at === null) {
             yield* releaseReports(row.assistant_id);
