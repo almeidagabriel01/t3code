@@ -88,6 +88,24 @@ async function openSideChat() {
   return { parent, router };
 }
 
+it("Send to main chat puts a side chat answer into the parent composer", async () => {
+  const { parent, router } = await openSideChat();
+  const side = { ...threadWithHistory("thread-side", 1), sideChatOf: parent.id };
+  using _environment = installFakeEnvironment([parent, side], { sideChats: true });
+  const parentRef = scopeThreadRef(ENVIRONMENT_ID, parent.id);
+  useRightPanelStore.getState().openSideChat(parentRef, side.id);
+  using _panel = {
+    [Symbol.dispose]: () => useRightPanelStore.getState().closeAllSurfaces(parentRef),
+  };
+  await using _app = await render(<AppRoot router={router} />, { router: false });
+  await page.getByRole("button", { name: "Send to main chat" }).click();
+  await vi.waitFor(() =>
+    expect(page.getByTestId("composer-editor").first().element().textContent).toContain(
+      "MIN_WIDTH",
+    ),
+  );
+});
+
 it("Turn into thread detaches the side chat, closes its pane and opens the thread", async () => {
   const { parent, router } = await openSideChat();
   using _environment = installFakeEnvironment([parent], { sideChats: true });

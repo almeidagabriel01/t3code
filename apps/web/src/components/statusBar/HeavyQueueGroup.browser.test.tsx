@@ -15,6 +15,10 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../../state/heavyQueue", () => ({
   useHeavyQueue: () => ({ entries: mocks.entries }),
 }));
+vi.mock("../../state/environments", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../state/environments")>()),
+  usePrimaryEnvironmentId: () => "env",
+}));
 vi.mock("./useKillTarget", () => ({
   useCloseTerminal: () => ({ canClose: false, close: vi.fn() }),
   useShutDownDevice: () => ({ canShutDown: false, shutDown: vi.fn() }),
@@ -28,7 +32,7 @@ vi.mock("./useKillTarget", () => ({
   }),
 }));
 
-import { HeavyQueueGroup } from "./ResourceSegment";
+import { HeavyQueueGroup, ResourceSegment } from "./ResourceSegment";
 
 const environmentId = "env" as EnvironmentId;
 const entry = (id: string, over: Partial<HeavyQueueEntry> = {}): HeavyQueueEntry => ({
@@ -90,5 +94,13 @@ describe("HeavyQueueGroup", () => {
       <HeavyQueueGroup environmentId={environmentId} threadTitle={title} />,
     );
     expect(screen.container.textContent).toBe("");
+  });
+});
+
+describe("ResourceSegment", () => {
+  it("shows how many commands wait in the heavy queue", async () => {
+    setup([entry("a", { startedAt: "2026-01-01T00:00:00.000Z" }), entry("b")]);
+    await using screen = await render(<ResourceSegment />);
+    await expect.element(screen.getByLabelText("2 in heavy work queue")).toBeVisible();
   });
 });
