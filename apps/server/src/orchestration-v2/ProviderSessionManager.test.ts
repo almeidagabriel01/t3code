@@ -3993,8 +3993,11 @@ it.effect.each(["scratch/2026-11-03-jarvis-t1", "assistants"])(
         assert.equal((yield* fileSystem.stat(cwd)).type, "Directory");
         assert.equal((yield* Ref.get(state)).openCount, 1);
       }).pipe(
-        Effect.provide(layerTest({ state, idleTimeoutMs: 60_000 })),
-        Effect.provide(ServerConfig.layerTest(root, root)),
+        Effect.provide(
+          layerTest({ state, idleTimeoutMs: 60_000 }).pipe(
+            Layer.provide(ServerConfig.layerTest(root, root)),
+          ),
+        ),
       );
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
