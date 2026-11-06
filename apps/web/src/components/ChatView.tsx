@@ -3459,7 +3459,11 @@ export default function ChatView(props: ChatViewProps) {
           />
         ) : null}
         <div className="relative flex min-h-0 min-w-0 flex-1">
-          <div className="contents" inert={activeMainFileSurface !== null}>
+          {/* Hidden, not only covered: the chat's own overlays stack above the file tab's z-20. */}
+          <div
+            className={cn("contents", activeMainFileSurface !== null && "invisible")}
+            inert={activeMainFileSurface !== null}
+          >
             <ThreadFindCanvas
               findOptions={{
                 skills: timelineSkills,
