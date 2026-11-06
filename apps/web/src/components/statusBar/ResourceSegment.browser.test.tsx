@@ -10,6 +10,8 @@ import { userEvent } from "vite-plus/test/browser";
 import { render } from "../../../test/render";
 
 const closeTerminal = vi.hoisted(() => vi.fn());
+const HOST_QUERY = "host-query";
+const hostResources = vi.hoisted(() => ({ current: null as unknown }));
 
 vi.mock("./useKillTarget", () => ({
   useCloseTerminal: () => ({ canClose: true, close: closeTerminal }),
@@ -24,11 +26,21 @@ vi.mock("./useKillTarget", () => ({
 vi.mock("../../state/heavyQueue", () => ({ useHeavyQueue: () => ({ entries: [] }) }));
 vi.mock("../../state/session", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../state/session")>()),
-  useEnvironmentScope: () => false,
+  useEnvironmentScope: () => true,
 }));
+vi.mock("../../state/server", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../../state/server")>();
+  return {
+    ...original,
+    serverEnvironment: { ...original.serverEnvironment, hostResources: () => HOST_QUERY },
+  };
+});
 vi.mock("../../state/query", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../state/query")>()),
-  useEnvironmentQuery: () => ({ data: null, refresh: () => undefined }),
+  useEnvironmentQuery: (query: unknown) => ({
+    data: query === HOST_QUERY ? hostResources.current : null,
+    refresh: () => undefined,
+  }),
 }));
 
 import { EnvironmentSection } from "./ResourceSegment";
@@ -78,6 +90,7 @@ const terminal = {
 
 function setup() {
   closeTerminal.mockReset();
+  hostResources.current = null;
   return {
     resources: { environmentId, label: "Local", terminals: [terminal] },
     threadInfo: new Map([[`${environmentId}:t1`, { projectId, title: "Fix build" }]]),
@@ -155,5 +168,31 @@ describe("EnvironmentSection", () => {
       { router: "/" },
     );
     await expect.element(screen.getByText("Nothing running right now")).toBeVisible();
+  });
+
+  it("labels the whole Mac and T3 separately, with T3 never above the Mac and no Host row", async () => {
+    const props = setup();
+    hostResources.current = {
+      cpuUtilization: 0.4,
+      cpuCount: 8,
+      availableMemoryBytes: 4 * 1024 ** 3,
+      totalMemoryBytes: 16 * 1024 ** 3,
+    };
+    const busy = {
+      ...snapshot,
+      groups: { allT3: { currentCpuPercent: 50, currentRssBytes: 5 * 1024 ** 3, processCount: 5 } },
+    } as unknown as ResourceTelemetrySnapshot;
+    await using screen = await render(
+      <EnvironmentSection {...props} snapshot={busy} sort="memory" label={null} />,
+      { router: "/" },
+    );
+    await expect.element(screen.getByText("Mac", { exact: true })).toBeVisible();
+    await expect.element(screen.getByText("T3", { exact: true })).toBeVisible();
+    const text = screen.container.textContent ?? "";
+    expect(text).toContain("40% CPU");
+    expect(text).toContain("12.0 GB / 16.0 GB");
+    expect(text).not.toContain("50% CPU");
+    expect(text).not.toContain("Host");
+    expect(text).not.toContain("free of");
   });
 });

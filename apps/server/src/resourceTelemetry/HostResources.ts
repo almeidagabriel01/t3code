@@ -14,7 +14,41 @@ export class HostResources extends Context.Service<
   { readonly read: Effect.Effect<HostResourcesSnapshot> }
 >()("t3/resourceTelemetry/HostResources") {}
 
-function readCpu() {
+export interface CpuReading {
+  readonly idle: number;
+  readonly total: number;
+  readonly count: number;
+  readonly at: number;
+}
+
+// Utilization is measured over at least this long, like Activity Monitor, so one busy instant does not read as 100%.
+const CPU_MIN_WINDOW_MS = 2_000;
+// A baseline older than this is a stale average, not "current load".
+export const CPU_MAX_WINDOW_MS = 15_000;
+
+/** Utilization since `baseline`; `next` is the baseline to keep, held back until the window reaches the minimum. */
+export function advanceCpuWindow(baseline: CpuReading | null, current: CpuReading) {
+  const elapsed = baseline === null ? 0 : current.at - baseline.at;
+  if (
+    baseline === null ||
+    baseline.count !== current.count ||
+    elapsed < 0 ||
+    elapsed > CPU_MAX_WINDOW_MS
+  ) {
+    return { utilization: null, next: current };
+  }
+  const totalDelta = current.total - baseline.total;
+  const idleDelta = current.idle - baseline.idle;
+  return {
+    utilization:
+      totalDelta > 0 && idleDelta >= 0
+        ? Math.min(1, Math.max(0, 1 - idleDelta / totalDelta))
+        : null,
+    next: elapsed >= CPU_MIN_WINDOW_MS ? current : baseline,
+  };
+}
+
+function readCpu(at: number): CpuReading {
   const cpus = NodeOS.cpus();
   const cpu = cpus.reduce(
     (sum, { times }) => ({
@@ -23,7 +57,7 @@ function readCpu() {
     }),
     { idle: 0, total: 0 },
   );
-  return { ...cpu, count: cpus.length };
+  return { ...cpu, count: cpus.length, at };
 }
 
 function darwinAvailableMemory(output: string): number | null {
@@ -42,16 +76,19 @@ const make = Effect.fn("makeHostResources")(function* () {
   const platform = yield* HostProcess.Platform;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
+  let cpuBaseline: CpuReading | null = null;
   const sample = Effect.fn("HostResources.sample")(function* () {
-    const previousCpu = readCpu();
-    yield* Effect.sleep("200 millis");
-    const cpu = readCpu();
-    const totalDelta = cpu.total - previousCpu.total;
-    const idleDelta = cpu.idle - previousCpu.idle;
-    const cpuUtilization =
-      previousCpu.count === cpu.count && totalDelta > 0 && idleDelta >= 0
-        ? Math.min(1, Math.max(0, 1 - idleDelta / totalDelta))
-        : null;
+    const now = DateTime.toEpochMillis(yield* DateTime.now);
+    let cpu = readCpu(now);
+    let window = advanceCpuWindow(cpuBaseline, cpu);
+    if (window.utilization === null) {
+      // First read after start or a long gap: measure briefly now; later reads reuse the kept baseline.
+      yield* Effect.sleep("1 second");
+      cpu = readCpu(DateTime.toEpochMillis(yield* DateTime.now));
+      window = advanceCpuWindow(window.next, cpu);
+    }
+    cpuBaseline = window.next;
+    const cpuUtilization = window.utilization;
     const totalMemoryBytes = NodeOS.totalmem();
     // On Windows libuv returns GlobalMemoryStatusEx.ullAvailPhys, including standby memory.
     let availableMemoryBytes = NodeOS.freemem();

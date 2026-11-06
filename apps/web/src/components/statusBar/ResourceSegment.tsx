@@ -108,19 +108,74 @@ function Metrics({ usage }: { readonly usage: ResourceUsage | null }) {
   );
 }
 
-function HostTotals({ environmentId }: { readonly environmentId: EnvironmentId }) {
+const SCOPE_HINT: Record<"mac" | "t3", string> = {
+  mac: "Every app on this computer.",
+  t3: "T3 Code and the agents and commands it runs.",
+};
+
+function FigureRow({
+  scope,
+  label,
+  cpuPercent,
+  memory,
+}: {
+  readonly scope: "mac" | "t3";
+  readonly label: string;
+  readonly cpuPercent: number | null;
+  readonly memory: string;
+}) {
+  return (
+    <div className="flex items-baseline gap-3 px-3 py-0.5 text-xs tabular-nums">
+      <Tooltip>
+        <TooltipTrigger
+          render={<span className="w-8 shrink-0 cursor-default font-medium text-foreground" />}
+        >
+          {label}
+        </TooltipTrigger>
+        <TooltipPopup side="bottom" className="max-w-xs">
+          {SCOPE_HINT[scope]} {CPU_SCALE_HINT}
+        </TooltipPopup>
+      </Tooltip>
+      <span className="w-20 text-foreground">
+        {cpuPercent === null ? "--" : formatCpu(cpuPercent)}{" "}
+        <span className="text-muted-foreground">CPU</span>
+      </span>
+      <span className="text-foreground">{memory}</span>
+    </div>
+  );
+}
+
+/** Whole machine and T3 side by side; T3 is a subset, so it never reads above the machine. */
+function ResourceFigures({
+  environmentId,
+  t3,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly t3: ResourceUsage | null;
+}) {
   const canRead = useEnvironmentScope(environmentId, AuthOrchestrationReadScope);
   const host = useEnvironmentQuery(
     canRead ? serverEnvironment.hostResources({ environmentId, input: {} }) : null,
   ).data;
-  if (host === null) return null;
+  const macCpu = host?.cpuUtilization == null ? null : host.cpuUtilization * 100;
   return (
-    <div className="flex justify-between px-3 py-1 text-2xs tabular-nums text-muted-foreground">
-      <span>Host</span>
-      <span>
-        {host.cpuUtilization === null ? "" : `${Math.round(host.cpuUtilization * 100)}% CPU · `}
-        {formatMemory(host.availableMemoryBytes)} free of {formatMemory(host.totalMemoryBytes)}
-      </span>
+    <div className="border-b border-border py-1.5">
+      {host === null || host === undefined ? null : (
+        <FigureRow
+          scope="mac"
+          label="Mac"
+          cpuPercent={macCpu}
+          memory={`${formatMemory(host.totalMemoryBytes - host.availableMemoryBytes)} / ${formatMemory(host.totalMemoryBytes)}`}
+        />
+      )}
+      {t3 === null ? null : (
+        <FigureRow
+          scope="t3"
+          label="T3"
+          cpuPercent={macCpu === null ? t3.cpuPercent : Math.min(t3.cpuPercent, macCpu)}
+          memory={formatMemory(t3.rssBytes)}
+        />
+      )}
     </div>
   );
 }
@@ -174,7 +229,7 @@ function ResourceHistory({ environmentId }: { readonly environmentId: Environmen
   if (buckets.length < 2) return null;
   return (
     <div className="flex items-center justify-between px-3 py-1 text-2xs text-muted-foreground">
-      <span>Last 5 min</span>
+      <span>T3 · last 5 min</span>
       <Sparkline label="Memory history" values={buckets.map((bucket) => bucket.maxRssBytes)} />
       <Sparkline label="CPU history" values={buckets.map((bucket) => bucket.avgCpuPercent)} />
     </div>
@@ -597,7 +652,18 @@ export function EnvironmentSection({
             {label}
           </div>
         )}
-        <HostTotals environmentId={environmentId} />
+        <ResourceFigures
+          environmentId={environmentId}
+          t3={
+            snapshot === null
+              ? null
+              : {
+                  cpuPercent: snapshot.groups.allT3.currentCpuPercent,
+                  rssBytes: snapshot.groups.allT3.currentRssBytes,
+                  processCount: snapshot.groups.allT3.processCount,
+                }
+          }
+        />
         <ResourceHistory environmentId={environmentId} />
         {tree.projects.length === 0 && tree.devices.length === 0 ? (
           <div className="px-3 py-4 text-center text-xs text-muted-foreground">
@@ -755,41 +821,12 @@ function ResourceManager({
       { projectId: thread.projectId, title: thread.title },
     ]),
   );
-  const totals = [...snapshots.values()].reduce<ResourceUsage>(
-    (sum, { groups }) =>
-      addUsage(sum, {
-        rssBytes: groups.allT3.currentRssBytes,
-        cpuPercent: groups.allT3.currentCpuPercent,
-        processCount: groups.allT3.processCount,
-      }),
-    EMPTY_USAGE,
-  );
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col">
       <div className="flex items-center gap-1.5 border-b border-border px-3 py-1.5 text-2xs font-medium text-foreground">
         <MemoryStickIcon aria-hidden className="size-3 shrink-0 text-muted-foreground" />
         <span className="truncate">Resource Manager</span>
       </div>
-      {snapshots.size === 0 ? null : (
-        <div className="flex items-baseline gap-3 border-b border-border px-3 py-2 text-xs tabular-nums">
-          <Tooltip>
-            <TooltipTrigger
-              render={<span className="cursor-default font-medium text-foreground" />}
-            >
-              {formatCpu(totals.cpuPercent)}{" "}
-              <span className="font-normal text-muted-foreground">CPU</span>
-            </TooltipTrigger>
-            <TooltipPopup side="bottom" className="max-w-xs">
-              {CPU_SCALE_HINT}
-            </TooltipPopup>
-          </Tooltip>
-          <span className="text-muted-foreground/50">·</span>
-          <span className="font-medium text-foreground">
-            {formatMemory(totals.rssBytes)}{" "}
-            <span className="font-normal text-muted-foreground">memory</span>
-          </span>
-        </div>
-      )}
       <SortHeader sort={sort} onSort={setSort} />
       <div className="min-h-0 flex-1 overflow-y-auto">
         {resources.map((environment) => (
