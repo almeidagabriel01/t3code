@@ -432,6 +432,12 @@ export const AssistantSandboxRemoveInput = Schema.Struct({
 });
 export type AssistantSandboxRemoveInput = typeof AssistantSandboxRemoveInput.Type;
 
+export const AssistantSandboxPairingInput = Schema.Struct({});
+export type AssistantSandboxPairingInput = typeof AssistantSandboxPairingInput.Type;
+/** A one-time link that connects a client on this machine to the sandbox, to sign in to its providers. */
+export const AssistantSandboxPairing = Schema.Struct({ pairingUrl: Schema.String });
+export type AssistantSandboxPairing = typeof AssistantSandboxPairing.Type;
+
 export const AssistantsDeleteInput = Schema.Struct({ assistantId: AssistantId });
 export type AssistantsDeleteInput = typeof AssistantsDeleteInput.Type;
 

@@ -1,5 +1,10 @@
 import { assert, it } from "@effect/vitest";
-import { EnvironmentId, PeerLinkError, type PeerLink } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  PeerLinkError,
+  type PeerLink,
+  type PeerLinkCreateInput,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -87,10 +92,10 @@ const harness = (
           Effect.map((value) => value.linkedEnvironmentsEnabled),
           Effect.orDie,
         ),
-        describe: () => Effect.succeed(Option.some({ environmentId: sandboxId, label: "box" })),
-        get: (environmentId) =>
+        describe: () => Effect.succeedSome({ environmentId: sandboxId, label: "box" }),
+        get: (environmentId: EnvironmentId) =>
           Effect.succeed(Option.fromNullishOr(world.links.get(environmentId))),
-        link: (input) =>
+        link: (input: PeerLinkCreateInput) =>
           Effect.gen(function* () {
             if (world.linkError !== null) {
               return yield* new PeerLinkError({
@@ -117,7 +122,7 @@ const harness = (
             world.links.set(sandboxId, link);
             return link;
           }),
-        unlink: (environmentId) =>
+        unlink: (environmentId: EnvironmentId) =>
           Effect.sync(() => {
             world.unlinked.push(environmentId);
             return world.links.delete(environmentId);
@@ -250,5 +255,17 @@ it.effect("stop keeps the link; remove with files forgets it, without files keep
     assert.deepStrictEqual(world.unlinked, [sandboxId]);
     assert.deepStrictEqual(world.removed, [false, true]);
     assert.isTrue(Option.isNone(yield* directory.sandboxEnvironmentId));
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("pairingUrl needs a running sandbox and points a client at its loopback address", () => {
+  const { layer } = harness();
+  return Effect.gen(function* () {
+    const control = yield* Control.AssistantSandboxControl;
+    assert.include((yield* Effect.flip(control.pairingUrl)).message, "not running");
+    yield* started;
+    assert.deepStrictEqual(yield* control.pairingUrl, {
+      pairingUrl: `${url}/pair#token=PAIRCODE`,
+    });
   }).pipe(Effect.provide(layer));
 });

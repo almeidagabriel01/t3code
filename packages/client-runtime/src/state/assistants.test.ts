@@ -4,6 +4,7 @@ import type {
   AssistantId,
   AssistantTeam,
   AssistantTeamId,
+  AssistantSandboxStatus,
   ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -14,6 +15,7 @@ import {
   selectActiveAssistants,
   selectArchivedAssistants,
   selectTeams,
+  assistantSandboxView,
 } from "./assistants.ts";
 
 const assistant = (id: string, overrides: Partial<Assistant> = {}): Assistant => ({
@@ -24,6 +26,7 @@ const assistant = (id: string, overrides: Partial<Assistant> = {}): Assistant =>
   instructions: "",
   toolAccess: "full",
   askBeforeActing: false,
+  workspace: "host",
   icon: null,
   mcpServers: [],
   isDefault: false,
@@ -106,5 +109,54 @@ describe("assistants state", () => {
     assert.isNull(
       applyAssistantsEvent(null, { type: "teamRemoved", teamId: "t1" as AssistantTeamId }),
     );
+  });
+});
+
+describe("assistantSandboxView", () => {
+  const status = (overrides: Partial<AssistantSandboxStatus>): AssistantSandboxStatus => ({
+    state: "running",
+    step: null,
+    error: null,
+    environmentId: "environment-box" as AssistantSandboxStatus["environmentId"],
+    url: "http://127.0.0.1:49152",
+    linkedEnvironmentsEnabled: true,
+    ...overrides,
+  });
+
+  it.each([
+    [null, "Checking", false, false, false, false],
+    [
+      status({ state: "not_created", environmentId: null }),
+      "Not created",
+      true,
+      false,
+      false,
+      false,
+    ],
+    [status({ state: "starting", step: "Linking" }), "Starting", false, false, false, false],
+    [status({}), "Running", false, true, true, true],
+    [status({ state: "stopped" }), "Stopped", true, false, true, false],
+    [status({ state: "failed", error: "Refused" }), "Failed", true, false, true, false],
+    [status({ state: "docker_unavailable" }), "Docker not available", false, false, false, false],
+  ] as const)("reads %j", (input, label, canStart, canStop, canRemove, canSignIn) => {
+    const view = assistantSandboxView(input);
+    assert.deepInclude(view, { label, canStart, canStop, canRemove, canSignIn });
+  });
+
+  it("explains a step, a failure and a missing Docker", () => {
+    assert.strictEqual(
+      assistantSandboxView(status({ state: "starting", step: "Linking" })).detail,
+      "Linking",
+    );
+    assert.strictEqual(
+      assistantSandboxView(status({ state: "failed", error: "Refused" })).detail,
+      "Refused",
+    );
+    assert.include(
+      assistantSandboxView(status({ state: "docker_unavailable" })).unavailableReason ?? "",
+      "Docker",
+    );
+    assert.isNull(assistantSandboxView(status({})).unavailableReason);
+    assert.isFalse(assistantSandboxView(status({ environmentId: null })).canSignIn);
   });
 });

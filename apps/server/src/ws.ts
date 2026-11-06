@@ -2559,6 +2559,7 @@ export const layerWsRpc = (
         [WS_METHODS.assistantSandboxSubscribe]: (_input) => sandboxControl.streamStatus,
         [WS_METHODS.assistantSandboxStart]: (_input) => sandboxControl.start,
         [WS_METHODS.assistantSandboxStop]: (_input) => sandboxControl.stop,
+        [WS_METHODS.assistantSandboxPairing]: (_input) => sandboxControl.pairingUrl,
         [WS_METHODS.assistantSandboxRemove]: (input) => sandboxControl.remove(input),
         [WS_METHODS.assistantTeamsCreate]: (input) => assistants.createTeam(input),
         [WS_METHODS.assistantTeamsUpdate]: (input) => assistants.updateTeam(input),

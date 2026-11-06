@@ -4,6 +4,7 @@ import {
   type AssistantId,
   type AssistantsEvent,
   type AssistantTeam,
+  type AssistantSandboxStatus,
   type AssistantTeamId,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -90,6 +91,54 @@ export function assistantForThread(
   return undefined;
 }
 
+export interface AssistantSandboxView {
+  readonly label: string;
+  /** What the status adds to its label: the step in progress, or the reason it failed. */
+  readonly detail: string | null;
+  readonly canStart: boolean;
+  readonly canStop: boolean;
+  /** There is a container or files to remove. */
+  readonly canRemove: boolean;
+  /** Choosing the sandbox for an assistant needs Docker; this says why it cannot be chosen. */
+  readonly unavailableReason: string | null;
+  /** The provider sign-in link makes sense once the sandbox runs and is linked. */
+  readonly canSignIn: boolean;
+}
+
+const SANDBOX_STATE_LABEL = {
+  not_created: "Not created",
+  starting: "Starting",
+  running: "Running",
+  stopped: "Stopped",
+  docker_unavailable: "Docker not available",
+  failed: "Failed",
+} as const;
+
+/** One reading of the status for every client, so web and mobile say the same thing. */
+export function assistantSandboxView(status: AssistantSandboxStatus | null): AssistantSandboxView {
+  if (status === null) {
+    return {
+      label: "Checking",
+      detail: null,
+      canStart: false,
+      canStop: false,
+      canRemove: false,
+      unavailableReason: null,
+      canSignIn: false,
+    };
+  }
+  const dockerMissing = status.state === "docker_unavailable";
+  return {
+    label: SANDBOX_STATE_LABEL[status.state],
+    detail: status.state === "starting" ? status.step : status.error,
+    canStart: status.state !== "starting" && !dockerMissing && status.state !== "running",
+    canStop: status.state === "running",
+    canRemove: status.state !== "not_created" && status.state !== "starting" && !dockerMissing,
+    unavailableReason: dockerMissing ? "Docker is not running on that machine." : null,
+    canSignIn: status.state === "running" && status.environmentId !== null,
+  };
+}
+
 function assistantsStateStream<E, R>(
   events: Stream.Stream<AssistantsEvent, E, R>,
 ): Stream.Stream<AssistantsState, E, R> {
@@ -127,7 +176,11 @@ export function createAssistantsEnvironmentAtoms<R, E>(
       | typeof WS_METHODS.assistantsReset
       | typeof WS_METHODS.assistantTeamsCreate
       | typeof WS_METHODS.assistantTeamsUpdate
-      | typeof WS_METHODS.assistantTeamsDelete,
+      | typeof WS_METHODS.assistantTeamsDelete
+      | typeof WS_METHODS.assistantSandboxStart
+      | typeof WS_METHODS.assistantSandboxStop
+      | typeof WS_METHODS.assistantSandboxRemove
+      | typeof WS_METHODS.assistantSandboxPairing,
   >(
     tag: TTag,
     name: string,
@@ -151,6 +204,14 @@ export function createAssistantsEnvironmentAtoms<R, E>(
     createTeam: command(WS_METHODS.assistantTeamsCreate, "createTeam"),
     updateTeam: command(WS_METHODS.assistantTeamsUpdate, "updateTeam"),
     deleteTeam: command(WS_METHODS.assistantTeamsDelete, "deleteTeam"),
+    sandbox: createEnvironmentSubscriptionAtomFamily(runtime, {
+      label: "environment-data:assistants:sandbox",
+      subscribe: (_input: null) => subscribe(WS_METHODS.assistantSandboxSubscribe, {}),
+    }),
+    startSandbox: command(WS_METHODS.assistantSandboxStart, "startSandbox"),
+    stopSandbox: command(WS_METHODS.assistantSandboxStop, "stopSandbox"),
+    removeSandbox: command(WS_METHODS.assistantSandboxRemove, "removeSandbox"),
+    sandboxPairing: command(WS_METHODS.assistantSandboxPairing, "sandboxPairing"),
     teamActivity: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:assistants:teamActivity",
       tag: WS_METHODS.assistantTeamsActivity,

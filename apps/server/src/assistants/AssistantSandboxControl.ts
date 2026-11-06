@@ -1,5 +1,6 @@
 import {
   AssistantError,
+  type AssistantSandboxPairing,
   type AssistantSandboxRemoveInput,
   type AssistantSandboxStatus,
   EnvironmentId,
@@ -38,6 +39,11 @@ export class AssistantSandboxControl extends Context.Service<
      */
     readonly start: Effect.Effect<AssistantSandboxStatus>;
     readonly stop: Effect.Effect<AssistantSandboxStatus, AssistantError>;
+    /**
+     * A one-time link that connects a client on this machine to the running sandbox. Its address is
+     * loopback, so only a client on this machine can use it.
+     */
+    readonly pairingUrl: Effect.Effect<AssistantSandboxPairing, AssistantError>;
     /** Removing with `deleteVolumes` also forgets the link, since its sign-in lived in those files. */
     readonly remove: (
       input: AssistantSandboxRemoveInput,
@@ -251,6 +257,18 @@ const make = Effect.gen(function* () {
     return yield* status;
   }, Effect.mapError(asAssistantError));
 
+  const pairingUrl = Effect.gen(function* () {
+    const current = yield* sandbox.status;
+    if (current.state !== "running" || current.url === null) {
+      return yield* new AssistantSandbox.AssistantSandboxError({
+        reason: "invalid",
+        message: "The sandbox is not running.",
+      });
+    }
+    const credential = yield* sandbox.pairingCredential;
+    return { pairingUrl: `${current.url}/pair#token=${Redacted.value(credential)}` };
+  }).pipe(Effect.mapError(asAssistantError));
+
   const streamStatus = Stream.merge(
     SubscriptionRef.changes(progress),
     Stream.tick(WATCH_INTERVAL),
@@ -259,7 +277,7 @@ const make = Effect.gen(function* () {
     Stream.changesWith(sameStatus),
   );
 
-  return AssistantSandboxControl.of({ status, streamStatus, start, stop, remove });
+  return AssistantSandboxControl.of({ status, streamStatus, start, stop, pairingUrl, remove });
 });
 
 export const layer = Layer.effect(AssistantSandboxControl, make);
