@@ -22,7 +22,7 @@ const assistant = (id: string, extra: Partial<Assistant>) =>
 
 const layer = Layer.mock(AssistantService.AssistantService)({
   list: Effect.succeed([
-    assistant("ceo", { role: "CEO", askBeforeActing: true }),
+    assistant("ceo", { role: "CEO", askBeforeActing: true, icon: "scout" }),
     assistant("eng", { role: "Engineer", reportsTo: "ceo" as never }),
   ]),
 });
@@ -34,6 +34,7 @@ it.effect("list and read give each assistant its role, leader and reports by han
       handle: "ceo",
       role: "CEO",
       askBeforeActing: true,
+      icon: "scout",
       reportsTo: null,
       reports: ["eng"],
     });

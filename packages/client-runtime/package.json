@@ -267,6 +267,10 @@
       "types": "./src/state/telegramChannel.ts",
       "default": "./src/state/telegramChannel.ts"
     },
+    "./assistantIcons": {
+      "types": "./src/assistantIcons.ts",
+      "default": "./src/assistantIcons.ts"
+    },
     "./assistantPresence": {
       "types": "./src/assistantPresence.ts",
       "default": "./src/assistantPresence.ts"

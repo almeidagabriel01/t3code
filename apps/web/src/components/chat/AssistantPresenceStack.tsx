@@ -48,6 +48,7 @@ function AssistantAvatarWithStatus(props: {
       <AssistantAccentAvatar
         assistantId={props.assistantId}
         name={props.assistant?.name ?? "Assistant"}
+        icon={props.assistant?.icon}
         className={cn("size-5.5 text-2xs", props.className)}
       />
       <i

@@ -4,7 +4,15 @@ import type {
   AssistantToolAccess,
   BudgetPeriod,
 } from "@t3tools/contracts";
+import {
+  ASSISTANT_ICON_STROKE_WIDTH,
+  ASSISTANT_ICON_VIEWBOX,
+  assistantIconFor,
+} from "@t3tools/client-runtime/assistantIcons";
+import { assistantInitial } from "@t3tools/client-runtime/assistantPresence";
 import { View } from "react-native";
+import Svg, { Path } from "react-native-svg";
+import { withUniwind } from "uniwind";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import type { AppSymbolName } from "../../components/ui/AppSymbol";
@@ -39,6 +47,37 @@ export function toolAccessLabel(access: AssistantToolAccess): string {
   return TOOL_ACCESS_OPTIONS.find((option) => option.value === access)?.label ?? access;
 }
 
+const ThemedSvg = withUniwind(Svg);
+
+/** An assistant's icon stroked in `color` (or the themed `colorClassName`); null for none or an unknown id. */
+export function AssistantIconGlyph(props: {
+  readonly icon: string | null | undefined;
+  readonly size: number;
+  readonly color?: string;
+  readonly colorClassName?: string;
+}) {
+  const definition = assistantIconFor(props.icon);
+  if (definition === null) return null;
+  return (
+    <ThemedSvg
+      width={props.size}
+      height={props.size}
+      viewBox={`0 0 ${ASSISTANT_ICON_VIEWBOX} ${ASSISTANT_ICON_VIEWBOX}`}
+      color={props.color}
+      colorClassName={props.colorClassName}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={ASSISTANT_ICON_STROKE_WIDTH}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      {definition.paths.map((d) => (
+        <Path key={d} d={d} />
+      ))}
+    </ThemedSvg>
+  );
+}
+
 function hueOf(handle: string): number {
   let hash = 0;
   for (const char of handle) hash = (hash * 31 + char.codePointAt(0)!) % 360;
@@ -47,7 +86,7 @@ function hueOf(handle: string): number {
 
 /** The assistant's initial on a tint taken from its handle, so each reads as itself. */
 export function AssistantAvatar(props: {
-  readonly assistant: Pick<Assistant, "name" | "handle">;
+  readonly assistant: Pick<Assistant, "name" | "handle" | "icon">;
   readonly size?: number;
 }) {
   const size = props.size ?? 28;
@@ -63,12 +102,20 @@ export function AssistantAvatar(props: {
         backgroundColor: `hsla(${hue}, 70%, 55%, 0.22)`,
       }}
     >
-      <Text
-        className="font-t3-bold"
-        style={{ fontSize: size * 0.46, color: `hsl(${hue}, 60%, 45%)` }}
-      >
-        {props.assistant.name.trim().slice(0, 1).toUpperCase()}
-      </Text>
+      {assistantIconFor(props.assistant.icon) ? (
+        <AssistantIconGlyph
+          icon={props.assistant.icon}
+          size={size * 0.62}
+          color={`hsl(${hue}, 60%, 45%)`}
+        />
+      ) : (
+        <Text
+          className="font-t3-bold"
+          style={{ fontSize: size * 0.46, color: `hsl(${hue}, 60%, 45%)` }}
+        >
+          {assistantInitial(props.assistant.name)}
+        </Text>
+      )}
     </View>
   );
 }

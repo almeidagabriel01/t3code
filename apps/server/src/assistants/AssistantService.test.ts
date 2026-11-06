@@ -595,6 +595,29 @@ it.each([
   );
 });
 
+it.effect(
+  "icon defaults to none, is set on create, survives other updates and can be cleared",
+  () => {
+    const { layer } = harness();
+    return Effect.gen(function* () {
+      const assistants = yield* Assistants.AssistantService;
+      const plain = yield* assistants.create(create({ name: "Plain" }));
+      assert.isNull(plain.icon);
+      const iconic = yield* assistants.create(create({ name: "Iconic", icon: "scout" }));
+      assert.strictEqual(iconic.icon, "scout");
+      assert.strictEqual(
+        (yield* assistants.update({ assistantId: iconic.id, role: "QA" })).icon,
+        "scout",
+      );
+      assert.strictEqual(
+        (yield* assistants.update({ assistantId: iconic.id, icon: "spark" })).icon,
+        "spark",
+      );
+      assert.isNull((yield* assistants.update({ assistantId: iconic.id, icon: null })).icon);
+    }).pipe(Effect.provide(layer), Effect.orDie);
+  },
+);
+
 it.effect("ask before acting defaults off, is set on create and survives other updates", () => {
   const { layer } = harness();
   return Effect.gen(function* () {

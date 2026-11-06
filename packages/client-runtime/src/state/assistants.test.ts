@@ -16,6 +16,7 @@ const assistant = (id: string, overrides: Partial<Assistant> = {}): Assistant =>
   instructions: "",
   toolAccess: "full",
   askBeforeActing: false,
+  icon: null,
   isDefault: false,
   threadId: `assistant:${id}:1` as ThreadId,
   generation: 1,

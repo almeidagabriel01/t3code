@@ -17,6 +17,7 @@ const brief = (assistant: Assistant, all: ReadonlyArray<Assistant>): Out => ({
   threadId: assistant.threadId,
   toolAccess: assistant.toolAccess,
   askBeforeActing: assistant.askBeforeActing,
+  icon: assistant.icon,
   role: assistant.role,
   reportsTo: all.find((other) => other.id === assistant.reportsTo)?.handle ?? null,
   reports: all.filter((other) => other.reportsTo === assistant.id).map((other) => other.handle),

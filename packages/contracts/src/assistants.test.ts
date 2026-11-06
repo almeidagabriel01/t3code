@@ -5,6 +5,7 @@ import {
   Assistant,
   assistantCommandNames,
   AssistantHandle,
+  AssistantsUpdateInput,
   assistantHandleFromName,
   assistantIdFromThreadId,
   assistantThreadIdFor,
@@ -12,6 +13,7 @@ import {
 } from "./assistants.ts";
 
 const isAssistantHandle = Schema.is(AssistantHandle);
+const isUpdateInput = Schema.is(AssistantsUpdateInput);
 
 describe("assistantHandleFromName", () => {
   it.each([
@@ -119,5 +121,38 @@ describe("Assistant", () => {
       blockWhenExceeded: false,
       timeZone: "America/Sao_Paulo",
     });
+  });
+});
+
+describe("Assistant icon", () => {
+  const stored = {
+    id: "a1",
+    handle: "a",
+    name: "A",
+    projectId: "p",
+    instructions: "",
+    toolAccess: "full",
+    isDefault: false,
+    threadId: null,
+    generation: 1,
+    archivedAt: null,
+    createdAt: "2026-10-01T00:00:00.000Z",
+    updatedAt: "2026-10-01T00:00:00.000Z",
+  };
+  const decode = Schema.decodeUnknownSync(Assistant);
+
+  it.each([
+    [undefined, null],
+    [null, null],
+    ["spark", "spark"],
+    ["from-a-newer-client", "from-a-newer-client"],
+  ])("decodes %j as %j", (icon, expected) => {
+    expect(decode({ ...stored, ...(icon === undefined ? {} : { icon }) }).icon).toBe(expected);
+  });
+
+  it("accepts only known ids on write", () => {
+    expect(isUpdateInput({ assistantId: "a1", icon: "spark" })).toBe(true);
+    expect(isUpdateInput({ assistantId: "a1", icon: null })).toBe(true);
+    expect(isUpdateInput({ assistantId: "a1", icon: "laser" })).toBe(false);
   });
 });

@@ -2,6 +2,8 @@ import type { AssistantSpend } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 vi.mock("react-native", () => ({ View: () => null }));
+vi.mock("react-native-svg", () => ({ default: () => null, Path: () => null }));
+vi.mock("uniwind", () => ({ withUniwind: (component: unknown) => component }));
 vi.mock("../../components/ui/AppText", () => ({ AppText: () => null }));
 
 import { budgetSpendLine } from "./assistantPresentation";

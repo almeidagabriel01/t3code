@@ -39,6 +39,8 @@ vi.mock("react-native", () => ({
     />
   ),
 }));
+vi.mock("react-native-svg", () => ({ default: Children, Path: () => null }));
+vi.mock("uniwind", () => ({ withUniwind: (component: unknown) => component }));
 vi.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ bottom: 0 }) }));
 vi.mock("@react-navigation/native", () => ({
   useNavigation: () => ({ goBack: vi.fn(), dispatch: vi.fn(), navigate: vi.fn() }),
@@ -175,6 +177,7 @@ const assistant = (budget: unknown = null) =>
     instructions: "",
     toolAccess: "full",
     askBeforeActing: false,
+    icon: null,
     role: "",
     reportsTo: null,
     autonomy: DEFAULT_ASSISTANT_AUTONOMY,
@@ -272,6 +275,20 @@ describe("assistant spending limit", () => {
     expect(field("Amount (USD)")).toBeNull();
     await act(async () => pick("Save"));
     expect(mocks.update.mock.calls[0]?.[0].budget).toBeNull();
+  });
+});
+
+describe("assistant icon", () => {
+  it("selects one icon at a time and saves it", async () => {
+    render(assistant());
+    expect(container.textContent).toContain("Shown instead of its initial.");
+    const state = (label: string) =>
+      container.querySelector(`button[aria-label="${label}"]`)?.getAttribute("aria-checked");
+    expect(state("Initial")).toBe("true");
+    pick("Scout");
+    expect([state("Scout"), state("Initial")]).toEqual(["true", "false"]);
+    await act(async () => pick("Save"));
+    expect(mocks.update.mock.calls[0]?.[0].icon).toBe("scout");
   });
 });
 

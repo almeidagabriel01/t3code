@@ -35,6 +35,7 @@ const assistant = {
   reportsTo: null,
   budget: null,
   askBeforeActing: false,
+  icon: null,
   autonomy: DEFAULT_ASSISTANT_AUTONOMY,
   archivedAt: null,
   createdAt: "2026-01-01T00:00:00.000Z",
@@ -97,6 +98,28 @@ describe("assistant draft", () => {
       instructions: "",
       toolAccess: "full",
     });
+  });
+
+  it("sends the icon on update when it changed, and on create only when one is chosen", () => {
+    expect(
+      assistantUpdateInput(editorFor(assistant, { icon: "spark" }), "p1" as ProjectId),
+    ).toEqual({ assistantId: "a1", icon: "spark" });
+    const iconic = { ...assistant, icon: "spark" };
+    expect(assistantUpdateInput(editorFor(iconic, { icon: null }), "p1" as ProjectId)).toEqual({
+      assistantId: "a1",
+      icon: null,
+    });
+    // An id this client does not know is treated as none, so saving does not clear it.
+    const unknown = { ...assistant, icon: "laser" };
+    expect(assistantUpdateInput(editorFor(unknown, {}), "p1" as ProjectId)).toEqual({
+      assistantId: "a1",
+    });
+    expect(
+      assistantCreateInput(editorFor(null, { name: "S", icon: "scout" }), "p1" as ProjectId),
+    ).toMatchObject({ icon: "scout" });
+    expect(
+      assistantCreateInput(editorFor(null, { name: "S" }), "p1" as ProjectId),
+    ).not.toHaveProperty("icon");
   });
 
   it("sends ask before acting on create only when it is on", () => {

@@ -1,9 +1,11 @@
+import { assistantIconFor } from "@t3tools/client-runtime/assistantIcons";
 import { sameAssistantAutonomy } from "@t3tools/client-runtime/autonomy";
 import {
   assistantHandleFromName,
   AssistantHandle,
   DEFAULT_ASSISTANT_AUTONOMY,
   type Assistant,
+  type AssistantIconId,
   type AssistantId,
   type AssistantAutonomy,
   type AssistantsCreateInput,
@@ -31,6 +33,7 @@ export interface AssistantDraft {
   readonly instructions: string;
   readonly toolAccess: AssistantToolAccess;
   readonly askBeforeActing: boolean;
+  readonly icon: AssistantIconId | null;
   readonly role: string;
   readonly reportsTo: AssistantId | null;
   readonly budget: BudgetDraft;
@@ -127,6 +130,7 @@ export function assistantDraftFor(assistant: Assistant | null): AssistantDraft {
     instructions: assistant?.instructions ?? "",
     toolAccess: assistant?.toolAccess ?? "full",
     askBeforeActing: assistant?.askBeforeActing ?? false,
+    icon: assistantIconFor(assistant?.icon)?.id ?? null,
     role: assistant?.role ?? "",
     reportsTo: assistant?.reportsTo ?? null,
     budget: budgetDraftFor(assistant?.budget),
@@ -201,6 +205,7 @@ export function assistantCreateInput(
     instructions: current.instructions,
     toolAccess: current.toolAccess,
     ...(current.askBeforeActing ? { askBeforeActing: true } : {}),
+    ...(current.icon === null ? {} : { icon: current.icon }),
     ...(current.role.trim() === "" ? {} : { role: current.role.trim() }),
     ...(current.reportsTo === null ? {} : { reportsTo: current.reportsTo }),
     ...(current.budget.enabled ? { budget: budgetFromDraft(current.budget) } : {}),
@@ -232,6 +237,9 @@ export function assistantUpdateInput(
     ...(current.toolAccess !== assistant.toolAccess ? { toolAccess: current.toolAccess } : {}),
     ...(current.askBeforeActing !== assistant.askBeforeActing
       ? { askBeforeActing: current.askBeforeActing }
+      : {}),
+    ...(current.icon !== (assistantIconFor(assistant.icon)?.id ?? null)
+      ? { icon: current.icon }
       : {}),
     ...(current.role.trim() !== assistant.role ? { role: current.role.trim() } : {}),
     ...(current.reportsTo !== assistant.reportsTo ? { reportsTo: current.reportsTo } : {}),

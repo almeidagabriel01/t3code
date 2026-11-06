@@ -56,6 +56,7 @@ import {
   updateAssistantDraft,
   type AssistantEditor,
 } from "./assistantDraft";
+import { AssistantIconPicker } from "./AssistantIconPicker";
 import { MenuField, SwitchRow, TextField } from "./AssistantFormFields";
 import { AssistantNotificationsSection } from "./AssistantNotificationsSection";
 import { AssistantSchedulesSection } from "./AssistantSchedulesSection";
@@ -347,6 +348,11 @@ function AssistantForm(props: { readonly editor: AssistantEditor }) {
               {ASSISTANT_INSTRUCTIONS_MAX_CHARS.toLocaleString()}
             </Text>
           }
+        />
+        <AssistantIconPicker
+          value={current.icon}
+          name={current.name}
+          onChange={(icon) => updateAssistantDraft({ icon })}
         />
         <View className="gap-2">
           <View className="gap-0.5 px-2">

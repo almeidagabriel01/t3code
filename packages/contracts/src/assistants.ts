@@ -127,6 +127,22 @@ export function assistantIdFromThreadId(threadId: string): string | null {
   return cut <= 0 ? null : rest.slice(0, cut);
 }
 
+/** The original bot icons an assistant can wear instead of its initial; paths live in client-runtime. */
+export const ASSISTANT_ICON_IDS = [
+  "bot",
+  "visor",
+  "helper",
+  "analyst",
+  "builder",
+  "guardian",
+  "scout",
+  "scribe",
+  "finance",
+  "spark",
+] as const;
+export const AssistantIconId = Schema.Literals(ASSISTANT_ICON_IDS);
+export type AssistantIconId = typeof AssistantIconId.Type;
+
 export const Assistant = Schema.Struct({
   id: AssistantId,
   handle: AssistantHandle,
@@ -151,6 +167,8 @@ export const Assistant = Schema.Struct({
   ),
   /** It may not send into an agent conversation until the user approves that exact send. */
   askBeforeActing: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** An `AssistantIconId`, kept a plain string so an id from a newer client still decodes. */
+  icon: Schema.NullOr(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   archivedAt: Schema.NullOr(IsoDateTime),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -180,6 +198,7 @@ export const AssistantsCreateInput = Schema.Struct({
   budget: Schema.optional(Schema.NullOr(ProviderBudget)),
   autonomy: Schema.optional(AssistantAutonomy),
   askBeforeActing: Schema.optional(Schema.Boolean),
+  icon: Schema.optional(Schema.NullOr(AssistantIconId)),
   role: Schema.optional(AssistantRole),
   reportsTo: Schema.optional(Schema.NullOr(AssistantId)),
   /** Brings Jarvis back (recreated or unarchived) and ignores every other field. */
@@ -211,6 +230,8 @@ export const AssistantsUpdateInput = Schema.Struct({
   budget: Schema.optional(Schema.NullOr(ProviderBudget)),
   autonomy: Schema.optional(AssistantAutonomy),
   askBeforeActing: Schema.optional(Schema.Boolean),
+  /** Null goes back to the initial. */
+  icon: Schema.optional(Schema.NullOr(AssistantIconId)),
   role: Schema.optional(AssistantRole),
   /** Null makes it top-level. */
   reportsTo: Schema.optional(Schema.NullOr(AssistantId)),

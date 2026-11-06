@@ -81,6 +81,7 @@ const assistant = (id: string, name: string, overrides: Partial<Assistant> = {})
   reportsTo: null,
   budget: null,
   askBeforeActing: false,
+  icon: null,
   autonomy: { mode: "reply-only", rules: null, projectIds: null, channels: null },
   archivedAt: null,
   createdAt: "2026-03-17T19:00:00.000Z",
@@ -461,6 +462,27 @@ it("saves Ask before acting only when it changed", async () => {
   await eventually(() =>
     expect(fakeAssistantEdits.updates).toMatchObject([{ askBeforeActing: true }]),
   );
+});
+
+it("picks an icon in the edit dialog and saves it", async () => {
+  publishAssistants([assistant("jarvis", "Jarvis")]);
+  fakeAssistantEdits.updates = [];
+  await using _screen = await openEditDialog("Jarvis");
+  const scout = page.getByRole("radio", { name: "Scout" });
+  await userEvent.click(scout);
+  await expect.element(scout).toBeChecked();
+  await userEvent.click(page.getByRole("button", { name: "Save" }));
+  await eventually(() => expect(fakeAssistantEdits.updates).toMatchObject([{ icon: "scout" }]));
+});
+
+it("clears an icon back to the initial", async () => {
+  publishAssistants([assistant("jarvis", "Jarvis", { icon: "scout" })]);
+  fakeAssistantEdits.updates = [];
+  await using _screen = await openEditDialog("Jarvis");
+  await expect.element(page.getByRole("radio", { name: "Scout" })).toBeChecked();
+  await userEvent.click(page.getByRole("radio", { name: "Initial" }));
+  await userEvent.click(page.getByRole("button", { name: "Save" }));
+  await eventually(() => expect(fakeAssistantEdits.updates).toMatchObject([{ icon: null }]));
 });
 
 it("keeps an unchanged assistant's autonomy out of the update", async () => {

@@ -311,6 +311,7 @@ function AssistantSentMessageRow({
           <AssistantAccentAvatar
             assistantId={assistantId}
             name={name}
+            icon={assistant?.icon}
             className="size-4 text-3xs"
           />
           <span className="tabular-nums">
@@ -319,7 +320,12 @@ function AssistantSentMessageRow({
         </div>
       ) : null}
       <div className="flex items-start gap-2.5">
-        <AssistantAccentAvatar assistantId={assistantId} name={name} className="mt-0.5" />
+        <AssistantAccentAvatar
+          assistantId={assistantId}
+          name={name}
+          icon={assistant?.icon}
+          className="mt-0.5"
+        />
         <div className="flex min-w-0 max-w-[80%] flex-col gap-1">
           <MessageAuthorHeading>{name}</MessageAuthorHeading>
           <div className="flex items-center gap-1.5 text-xs" aria-hidden>

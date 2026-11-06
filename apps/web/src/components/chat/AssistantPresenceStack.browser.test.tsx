@@ -42,6 +42,7 @@ function assistant(id: string, name: string, toolAccess: Assistant["toolAccess"]
     handle: id,
     toolAccess,
     askBeforeActing: id === "owl",
+    icon: id === "owl" ? "scout" : null,
     threadId: ThreadId.make(`assistant:${id}:1`),
   };
 }
@@ -72,6 +73,7 @@ it("lists the assistants that wrote here, saves their access and jumps to their 
   const trigger = screen.getByRole("button", { name: "Assistants in this thread: 2" });
   await expect.element(trigger).toBeVisible();
   expect(screen.container.querySelector('[data-assistant-status="working"]')).not.toBeNull();
+  expect(screen.container.querySelector('[data-assistant-icon="scout"]')).not.toBeNull();
 
   await trigger.click();
   await expect.element(page.getByText("Working · 2 messages here")).toBeVisible();

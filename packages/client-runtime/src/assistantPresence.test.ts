@@ -1,6 +1,7 @@
-import type { Assistant } from "@t3tools/contracts";
+import { ASSISTANT_ICON_IDS, type Assistant } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
+import { ASSISTANT_ICONS, assistantIconFor } from "./assistantIcons.ts";
 import {
   ASSISTANT_ACCENTS,
   assistantAccent,
@@ -47,6 +48,22 @@ describe("assistantSenders", () => {
     [{ senderThreadId: "assistant:jarvis:1" }, "jarvis"],
   ])("reads the sender of %o", (message, expected) => {
     expect(messageAssistantId(message)).toBe(expected);
+  });
+});
+
+describe("assistant icons", () => {
+  it("has one drawable definition per contract id and ignores unknown ids", () => {
+    expect(ASSISTANT_ICONS.map((icon) => icon.id)).toEqual([...ASSISTANT_ICON_IDS]);
+    for (const icon of ASSISTANT_ICONS) {
+      expect(icon.label).not.toBe("");
+      expect(icon.paths.length).toBeGreaterThan(0);
+      expect(assistantIconFor(icon.id)).toBe(icon);
+    }
+    expect([
+      assistantIconFor(null),
+      assistantIconFor(undefined),
+      assistantIconFor("laser"),
+    ]).toEqual([null, null, null]);
   });
 });
 

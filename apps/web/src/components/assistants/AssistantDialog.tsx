@@ -8,6 +8,7 @@ import {
   BudgetPeriod,
   DEFAULT_ASSISTANT_AUTONOMY,
   type AssistantAutonomy,
+  type AssistantIconId,
   type AssistantId,
   type AssistantToolAccess,
   type EnvironmentId,
@@ -28,6 +29,9 @@ import * as Schema from "effect/Schema";
 import { BrainIcon, CalendarPlusIcon } from "lucide-react";
 import { useState } from "react";
 
+import { assistantInitial } from "@t3tools/client-runtime/assistantPresence";
+import { assistantIconFor } from "@t3tools/client-runtime/assistantIcons";
+import { AssistantIconPicker } from "./AssistantIconPicker";
 import { useEnvironmentSettings } from "../../hooks/useSettings";
 import { useSidebarProjectGroups } from "../../hooks/useSidebarProjectGroups";
 import {
@@ -290,6 +294,9 @@ function AssistantDialog(props: {
     assistant?.toolAccess ?? "full",
   );
   const [askBeforeActing, setAskBeforeActing] = useState(assistant?.askBeforeActing ?? false);
+  const [icon, setIcon] = useState<AssistantIconId | null>(
+    assistantIconFor(assistant?.icon)?.id ?? null,
+  );
   const [projectId, setProjectId] = useState<ProjectId | null>(assistant?.projectId ?? null);
   const [pickedModel, setPickedModel] = useState<ModelSelection | null>(null);
   const [role, setRole] = useState(assistant?.role ?? "");
@@ -398,6 +405,7 @@ function AssistantDialog(props: {
           ...(instructions !== assistant.instructions ? { instructions } : {}),
           ...(toolAccess !== assistant.toolAccess ? { toolAccess } : {}),
           ...(askBeforeActing !== assistant.askBeforeActing ? { askBeforeActing } : {}),
+          ...(icon !== (assistantIconFor(assistant.icon)?.id ?? null) ? { icon } : {}),
           ...(role.trim() !== assistant.role ? { role: role.trim() } : {}),
           ...(reportsTo !== assistant.reportsTo ? { reportsTo } : {}),
           budget: budget.budget,
@@ -411,6 +419,7 @@ function AssistantDialog(props: {
           instructions,
           toolAccess,
           ...(askBeforeActing ? { askBeforeActing } : {}),
+          ...(icon === null ? {} : { icon }),
           ...(role.trim() === "" ? {} : { role: role.trim() }),
           ...(reportsTo === null ? {} : { reportsTo }),
           ...(budget.budget ? { budget: budget.budget } : {}),
@@ -627,6 +636,7 @@ function AssistantDialog(props: {
                 {ASSISTANT_INSTRUCTIONS_MAX_CHARS.toLocaleString()}
               </p>
             </div>
+            <AssistantIconPicker value={icon} initial={assistantInitial(name)} onChange={setIcon} />
             <fieldset className="flex flex-col gap-1.5">
               <legend className="text-sm font-medium">Tool access</legend>
               <p className="text-xs text-muted-foreground">

@@ -360,6 +360,9 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
   if (!assistantColumns.some((column) => column.name === "ask_before_acting")) {
     yield* sql`ALTER TABLE assistants ADD COLUMN ask_before_acting INTEGER NOT NULL DEFAULT 0`;
   }
+  if (!assistantColumns.some((column) => column.name === "icon")) {
+    yield* sql`ALTER TABLE assistants ADD COLUMN icon TEXT`;
+  }
   yield* sql`
     CREATE TABLE IF NOT EXISTS autonomy_watches (
       watch_id TEXT PRIMARY KEY,

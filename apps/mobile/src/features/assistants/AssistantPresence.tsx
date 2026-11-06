@@ -23,9 +23,14 @@ import {
   presenceStatusLabel,
   splitPresenceStack,
 } from "./assistantPresenceLabels";
-import { TOOL_ACCESS_OPTIONS, toolAccessLabel } from "./assistantPresentation";
+import { AssistantIconGlyph, TOOL_ACCESS_OPTIONS, toolAccessLabel } from "./assistantPresentation";
+import { assistantIconFor } from "@t3tools/client-runtime/assistantIcons";
 
-type Who = { readonly name: string; readonly accent: string };
+type Who = {
+  readonly name: string;
+  readonly accent: string;
+  readonly icon?: string | null | undefined;
+};
 
 function PresenceAvatar(props: {
   readonly who: Who;
@@ -43,9 +48,13 @@ function PresenceAvatar(props: {
         backgroundColor: props.who.accent,
       }}
     >
-      <Text className="font-t3-bold" style={{ fontSize: props.size * 0.5, color: "#ffffff" }}>
-        {assistantInitial(props.who.name)}
-      </Text>
+      {assistantIconFor(props.who.icon) ? (
+        <AssistantIconGlyph icon={props.who.icon} size={props.size * 0.62} color="#ffffff" />
+      ) : (
+        <Text className="font-t3-bold" style={{ fontSize: props.size * 0.5, color: "#ffffff" }}>
+          {assistantInitial(props.who.name)}
+        </Text>
+      )}
     </View>
   );
 }
@@ -76,7 +85,7 @@ export function AssistantFeedMessage(props: {
           className="flex-row items-center gap-2"
         >
           <View className="h-px flex-1 bg-border" />
-          <PresenceAvatar who={{ name, accent }} size={16} />
+          <PresenceAvatar who={{ name, accent, icon: assistant?.icon }} size={16} />
           <Text className="text-xs text-foreground-muted">
             {name} joined the conversation · {props.joinedAtLabel}
           </Text>
@@ -84,7 +93,7 @@ export function AssistantFeedMessage(props: {
         </View>
       ) : null}
       <View className="flex-row items-start gap-2.5">
-        <PresenceAvatar who={{ name, accent }} size={28} />
+        <PresenceAvatar who={{ name, accent, icon: assistant?.icon }} size={28} />
         <View className="min-w-0 shrink gap-1">
           <View className="flex-row items-center gap-1.5">
             <Text className="font-t3-bold text-xs text-foreground" numberOfLines={1}>
@@ -160,6 +169,7 @@ function StackAvatar(props: {
       <PresenceAvatar
         who={{
           name: sender.assistant?.name ?? "Assistant",
+          icon: sender.assistant?.icon,
           accent: assistantAccent(sender.assistantId),
         }}
         size={22}
