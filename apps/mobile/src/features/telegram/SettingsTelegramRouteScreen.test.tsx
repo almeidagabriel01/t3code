@@ -77,6 +77,11 @@ vi.mock("../settings/components/SettingsActionRow", () => ({
     </button>
   ),
 }));
+vi.mock("../settings/components/ChannelLanguageSection", () => ({
+  ChannelLanguageSection: (props: { environmentId: string; disabled: boolean }) => (
+    <button aria-label={`Language ${props.environmentId}`} disabled={props.disabled} />
+  ),
+}));
 vi.mock("../settings/components/SettingsSwitchRow", () => ({
   SettingsSwitchRow: (props: {
     label: string;
@@ -277,6 +282,12 @@ describe("Telegram settings", () => {
     expect(button("Remove token")!.disabled).toBe(true);
     expect(input("Telegram user id")!.disabled).toBe(true);
     expect(button("Remove 111")!.disabled).toBe(true);
+    expect(button("Language hub")!.disabled).toBe(true);
+  });
+
+  it("shows the language choice, editable with permission", () => {
+    render();
+    expect(button("Language hub")!.disabled).toBe(false);
   });
 
   it("names the environment only when there are several", () => {

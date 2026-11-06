@@ -78,6 +78,11 @@ vi.mock("../settings/components/SettingsActionRow", () => ({
     </button>
   ),
 }));
+vi.mock("../settings/components/ChannelLanguageSection", () => ({
+  ChannelLanguageSection: (props: { environmentId: string; disabled: boolean }) => (
+    <button aria-label={`Language ${props.environmentId}`} disabled={props.disabled} />
+  ),
+}));
 vi.mock("../settings/components/SettingsSwitchRow", () => ({
   SettingsSwitchRow: (props: {
     label: string;
@@ -258,6 +263,12 @@ describe("iMessage settings", () => {
     expect(button("Add account")!.disabled).toBe(true);
     expect(button("Remove a@b.com")!.disabled).toBe(true);
     expect(input("Allowed number or email")!.disabled).toBe(true);
+    expect(button("Language hub")!.disabled).toBe(true);
+  });
+
+  it("shows the language choice once per environment, editable with permission", () => {
+    render();
+    expect(button("Language hub")!.disabled).toBe(false);
   });
 
   it("names the environment only when there are several", () => {

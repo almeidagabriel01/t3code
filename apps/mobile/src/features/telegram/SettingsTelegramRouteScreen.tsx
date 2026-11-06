@@ -20,6 +20,7 @@ import { useSavedRemoteConnections } from "../../state/use-remote-environment-re
 import { useTelegramChannel, useTelegramEnvironmentIds } from "../../state/telegramChannel";
 import { SettingsActionRow } from "../settings/components/SettingsActionRow";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
+import { ChannelLanguageSection } from "../settings/components/ChannelLanguageSection";
 import { SettingsSwitchRow } from "../settings/components/SettingsSwitchRow";
 
 function Hint(props: { readonly children: string; readonly tone?: "danger" }) {
@@ -199,6 +200,7 @@ function TelegramEnvironment(props: {
           onValueChange={(enabled) => void change({ enabled })}
         />
       </ListSection>
+      <ChannelLanguageSection environmentId={props.environmentId} disabled={disabled} />
       <ListSection
         title={`Bot token${suffix}`}
         footer={

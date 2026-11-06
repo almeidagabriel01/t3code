@@ -98,6 +98,8 @@ const reactTests = [
   "src/features/imessage/SettingsImessageRouteScreen.test.tsx",
   "src/state/imessageChannel.test.tsx",
   "src/features/telegram/SettingsTelegramRouteScreen.test.tsx",
+  "src/features/settings/components/ChannelLanguageSection.test.tsx",
+  "src/state/channelLanguage.test.tsx",
   "src/state/telegramChannel.test.tsx",
   "src/features/threads/SubagentRow.memory.test.tsx",
 ];

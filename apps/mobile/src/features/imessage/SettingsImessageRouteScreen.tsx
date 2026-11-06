@@ -18,6 +18,7 @@ import { useImessageChannel, useImessageEnvironmentIds } from "../../state/imess
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { SettingsActionRow } from "../settings/components/SettingsActionRow";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
+import { ChannelLanguageSection } from "../settings/components/ChannelLanguageSection";
 import { SettingsSwitchRow } from "../settings/components/SettingsSwitchRow";
 import {
   imessageAccessRow,
@@ -220,6 +221,10 @@ function ImessageEnvironment(props: {
           onValueChange={(enabled) => void change({ enabled })}
         />
       </ListSection>
+      <ChannelLanguageSection
+        environmentId={props.environmentId}
+        disabled={!imessage.canConfigure}
+      />
       <HandleSection
         title="Chat with yourself"
         footer="Your own numbers and emails. The assistant answers in the same chat, and each reply starts with its name."
