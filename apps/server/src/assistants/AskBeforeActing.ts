@@ -5,6 +5,7 @@ import { DECISION_CONTEXT_MAX_LENGTH } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
+import { DECISION_PHRASES } from "../channels/channelStrings.ts";
 import { DecisionService } from "../decisions/DecisionService.ts";
 import {
   APPROVAL_UNAVAILABLE,
@@ -41,12 +42,22 @@ export const installLayer = Layer.effectDiscard(
           projectId: input.assistant.projectId,
           threadTitle: input.assistant.name,
           clientRequestId: requestKey(input, attempt),
-          title: clip(`${input.assistant.name} wants to send a message to ${targetTitle}`, 120),
+          title: clip(
+            `${input.assistant.name} ${DECISION_PHRASES.wantsToSend} ${targetTitle}`,
+            120,
+          ),
           // The card clips the title, so the body names where the message goes.
-          context: clip(`To: ${targetTitle}\n\n${input.text}`, DECISION_CONTEXT_MAX_LENGTH),
+          context: clip(
+            `${DECISION_PHRASES.to} ${targetTitle}\n\n${input.text}`,
+            DECISION_CONTEXT_MAX_LENGTH,
+          ),
           options: [
-            { id: "accept", label: "Approve", consequence: "The message is sent once" },
-            { id: "deny", label: "Deny", consequence: "Nothing is sent" },
+            {
+              id: "accept",
+              label: DECISION_PHRASES.approve,
+              consequence: "The message is sent once",
+            },
+            { id: "deny", label: DECISION_PHRASES.deny, consequence: "Nothing is sent" },
           ],
           recommended: "deny",
           expiresInMinutes: 60 * 24,

@@ -205,6 +205,7 @@ import * as UsageService from "./usage/UsageService.ts";
 import * as AssistantApprovalReactor from "./assistants/AssistantApprovalReactor.ts";
 import * as AssistantDirectory from "./assistants/AssistantDirectory.ts";
 import * as AutonomyService from "./autonomy/AutonomyService.ts";
+import * as ChannelLanguage from "./channels/ChannelLanguage.ts";
 import * as AssistantSandbox from "./assistants/AssistantSandbox.ts";
 import * as AssistantSandboxControl from "./assistants/AssistantSandboxControl.ts";
 import * as AssistantSpend from "./assistants/AssistantSpend.ts";
@@ -697,6 +698,7 @@ const layerChannels = AutonomyService.layer.pipe(
   Layer.provideMerge(Layer.mergeAll(ChannelBridge.layer, ChannelReplyReactor.layer)),
   Layer.provideMerge(ChannelOutbox.layer),
   Layer.provideMerge(ChannelTransport.layer),
+  Layer.provideMerge(ChannelLanguage.layer),
 );
 
 const layerRuntimeCoreDependenciesBase = Layer.mergeAll(

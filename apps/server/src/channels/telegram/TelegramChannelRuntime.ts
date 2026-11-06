@@ -27,6 +27,8 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import * as AssistantService from "../../assistants/AssistantService.ts";
 import * as ChannelGateway from "../ChannelGateway.ts";
+import { ChannelLanguage } from "../ChannelLanguage.ts";
+import { channelStrings } from "../channelStrings.ts";
 import * as ChannelTransport from "../ChannelTransport.ts";
 import { admitTelegramUpdate } from "./telegramAdmission.ts";
 import {
@@ -47,8 +49,6 @@ const STORAGE_RETRY_SECONDS = 5;
 const MAX_PENDING_SENDERS = 5;
 /** Bounds the memory of who was already answered; a forgotten sender is answered once more. */
 const MAX_REPLIED = 500;
-const APPROVAL_NOTICE =
-  "Your message is waiting for the owner's approval in T3 Code. You can chat here once they allow you.";
 
 export interface TelegramConfig {
   readonly token: Redacted.Redacted<string>;
@@ -92,6 +92,7 @@ export const make = Effect.fn("TelegramChannelRuntime.make")(function* (
   const gateway = yield* ChannelGateway.ChannelGateway;
   const registry = yield* ChannelTransport.ChannelTransportRegistry;
   const assistants = yield* AssistantService.AssistantService;
+  const channelLanguage = yield* ChannelLanguage;
   const layerScope = yield* Effect.scope;
   const lock = yield* Semaphore.make(1);
   const config = yield* Ref.make<TelegramConfig | null>(null);
@@ -164,9 +165,8 @@ export const make = Effect.fn("TelegramChannelRuntime.make")(function* (
     const known = yield* Ref.get(replied);
     if (known.has(sender.userId)) return;
     yield* Ref.set(replied, new Set([...known, sender.userId].slice(-MAX_REPLIED)));
-    yield* client
-      .sendMessage({ chatId: admission.chatId, text: APPROVAL_NOTICE })
-      .pipe(Effect.ignore);
+    const text = channelStrings(yield* channelLanguage.current).approvalNotice;
+    yield* client.sendMessage({ chatId: admission.chatId, text }).pipe(Effect.ignore);
   });
 
   const setPollError = (code: TelegramChannelErrorCode | undefined) =>

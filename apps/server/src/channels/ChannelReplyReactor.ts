@@ -19,25 +19,33 @@ import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import { forkParked } from "../serverActivation.ts";
 import { decodeReplyAddress } from "./ChannelBridge.ts";
+import { ChannelLanguage } from "./ChannelLanguage.ts";
 import * as ChannelOutbox from "./ChannelOutbox.ts";
+import {
+  channelStrings,
+  localizeDecision,
+  type ResolvedChannelLanguage,
+} from "./channelStrings.ts";
 
 const TERMINAL = new Set(["completed", "failed", "cancelled", "interrupted"]);
 const decodeStoredMessage = Schema.decodeSync(Schema.fromJsonString(ChannelOutboundMessage));
 
 /** What the card says once nobody can press it any more. */
-export function settledLine(decision: Decision): string {
+export function settledLine(decision: Decision, language: ResolvedChannelLanguage = "en"): string {
+  const t = channelStrings(language);
   switch (decision.status) {
     case "withdrawn":
-      return "Withdrawn";
+      return t.withdrawn;
     case "expired":
-      return "Expired";
+      return t.expired;
     default: {
       const optionId = decision.answer?.optionId;
-      if (decision.approvalRequestId !== undefined && optionId === "accept") return "Approved";
-      if (decision.approvalRequestId !== undefined && optionId === "decline") return "Denied";
+      if (decision.approvalRequestId !== undefined && optionId === "accept") return t.approved;
+      if (decision.approvalRequestId !== undefined && optionId === "decline") return t.denied;
       const chosen =
-        decision.options.find((option) => option.id === optionId)?.label ?? decision.answer?.text;
-      return chosen === undefined ? "Dismissed" : `Answered: ${chosen}`;
+        localizeDecision(decision, language).options.find((option) => option.id === optionId)
+          ?.label ?? decision.answer?.text;
+      return chosen === undefined ? t.dismissed : t.answered(chosen);
     }
   }
 }
@@ -57,6 +65,7 @@ const make = Effect.gen(function* () {
   const threads = yield* ThreadManagement.ThreadManagementService;
   const decisions = yield* DecisionService.DecisionService;
   const outbox = yield* ChannelOutbox.ChannelOutbox;
+  const channelLanguage = yield* ChannelLanguage;
   const sql = yield* SqlClient.SqlClient;
 
   const targetFor = Effect.fn("ChannelReplyReactor.targetFor")(function* (threadId: string) {
@@ -89,17 +98,21 @@ const make = Effect.gen(function* () {
     });
     const answer = records.messages.findLast((message) => message.text.trim() !== "")?.text;
     const failure = records.turnItems.findLast((item) => item.type === "error");
+    const language = yield* channelLanguage.current;
     const text =
       answer ??
       (run.status !== "failed"
         ? undefined
-        : `I could not finish that${failure?.type === "error" ? `: ${failure.failure.message}` : "."}`);
+        : channelStrings(language).couldNotFinish(
+            failure?.type === "error" ? failure.failure.message : undefined,
+          ));
     if (text === undefined) return;
     yield* outbox.enqueue({
       deliveryId,
       destination: target.address,
       senderName: target.assistantName,
       text,
+      language,
     });
   });
 
@@ -136,15 +149,18 @@ const make = Effect.gen(function* () {
         if (target === undefined) return;
         const card = yield* sql`SELECT 1 FROM channel_cards WHERE decision_id = ${decision.id}`;
         if (card.length > 0) return;
+        const language = yield* channelLanguage.current;
+        const shown = localizeDecision(decision, language);
         yield* outbox.enqueue({
           deliveryId,
           destination: target.address,
           senderName: target.assistantName,
-          text: [decision.title, decision.context].filter((part) => part !== "").join("\n\n"),
-          choices: decision.options.map((option) => ({
+          text: [shown.title, shown.context].filter((part) => part !== "").join("\n\n"),
+          choices: shown.options.map((option) => ({
             label: option.label,
             value: option.id,
           })),
+          language,
         });
         yield* sql`INSERT OR IGNORE INTO channel_cards (decision_id, delivery_id) VALUES (${decision.id}, ${deliveryId})`;
         return;
@@ -155,13 +171,15 @@ const make = Effect.gen(function* () {
       const original = Option.getOrUndefined(yield* outbox.find(card[0].delivery_id));
       if (original === undefined) return;
       const { destination, senderName } = decodeStoredMessage(original.message_json);
+      const language = yield* channelLanguage.current;
       yield* outbox.enqueue({
         deliveryId: `channel-decision-settled:${decision.id}`,
         destination,
         senderName,
         // The settled line reads "<title> — <outcome>"; chat has no other place to put the title.
         // oxlint-disable-next-line t3code/no-em-dash-copy -- fixed product format
-        text: `${decision.title} — ${settledLine(decision)}`,
+        text: `${localizeDecision(decision, language).title} — ${settledLine(decision, language)}`,
+        language,
       });
     },
     (effect, decision) =>

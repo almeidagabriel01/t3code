@@ -21,6 +21,8 @@ import * as DecisionService from "../decisions/DecisionService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import { forkParked } from "../serverActivation.ts";
 import { ChannelGateway } from "./ChannelGateway.ts";
+import { channelStrings } from "./channelStrings.ts";
+import { ChannelLanguage } from "./ChannelLanguage.ts";
 import * as ChannelOutbox from "./ChannelOutbox.ts";
 
 const AddressJson = Schema.fromJsonString(ChannelReplyAddress);
@@ -37,6 +39,8 @@ export function parseNumberReply(text: string): number | undefined {
 }
 
 const SYSTEM_SENDER = "T3 Code";
+/** Stands in for the failure text when the assistant has no conversation yet; worded per language at send. */
+const NOT_STARTED = Symbol("not started");
 /** Guards against reply loops and floods; counted from each message's own receive time. */
 export const INBOUND_PER_MINUTE = 10;
 
@@ -97,19 +101,24 @@ const make = Effect.gen(function* () {
   const assistants = yield* AssistantService.AssistantService;
   const decisions = yield* DecisionService.DecisionService;
   const threads = yield* ThreadManagement.ThreadManagementService;
+  const channelLanguage = yield* ChannelLanguage;
 
-  const reply = (
+  /** Sends one of T3's own phrases, written in the language set when it goes out. */
+  const reply = Effect.fn("ChannelBridge.reply")(function* (
     message: Pick<ChannelInboundMessage, "connectionId" | "idempotencyKey" | "replyAddress">,
     suffix: string,
-    text: string,
+    phrase: (strings: ReturnType<typeof channelStrings>) => string,
     senderName = SYSTEM_SENDER,
-  ) =>
-    outbox.enqueue({
+  ) {
+    const language = yield* channelLanguage.current;
+    yield* outbox.enqueue({
       deliveryId: `channel-reply:${message.connectionId}:${message.idempotencyKey}:${suffix}`,
       destination: message.replyAddress,
-      text,
+      text: phrase(channelStrings(language)),
       senderName,
+      language,
     });
+  });
 
   const markSent = (message: ChannelInboundMessage) =>
     sql`
@@ -158,43 +167,37 @@ const make = Effect.gen(function* () {
     }
     const picked = yield* Effect.result(pickAssistant(message));
     if (picked._tag === "Failure") {
-      yield* reply(
-        message,
-        "failed",
-        "I could not reach your assistants right now. Please try again.",
-      );
+      yield* reply(message, "failed", (t) => t.couldNotReach);
       yield* markSent(message);
       return;
     }
     if ("none" in picked.success) {
-      yield* reply(
-        message,
-        "none",
-        "No assistants are set up. Create one in Settings → Assistants.",
-      );
+      yield* reply(message, "none", (t) => t.noAssistants);
       yield* markSent(message);
       return;
     }
     if ("roster" in picked.success) {
-      const [first] = picked.success.roster;
-      yield* reply(
-        message,
-        "roster",
-        `Your assistants: ${picked.success.roster.map((entry) => entry.name).join(", ")}. Start a message with @Name to talk to one${first?.isDefault ? `; ${first.name} answers otherwise` : ""}.`,
+      const { roster } = picked.success;
+      const [first] = roster;
+      yield* reply(message, "roster", (t) =>
+        t.roster(
+          roster.map((entry) => entry.name),
+          first?.isDefault ? first.name : undefined,
+        ),
       );
       yield* markSent(message);
       return;
     }
     const { assistant, text } = picked.success;
     if (text === "") {
-      yield* reply(message, "switched", `You are now talking to ${assistant.name}.`);
+      yield* reply(message, "switched", (t) => t.switched(assistant.name));
       yield* markSent(message);
       return;
     }
     const id = `channel:${message.connectionId}:${message.idempotencyKey}`;
     const sent =
       assistant.threadId === null
-        ? "its conversation has not started yet"
+        ? NOT_STARTED
         : yield* threads
             .sendToThread({
               projectId: assistant.projectId,
@@ -216,7 +219,12 @@ const make = Effect.gen(function* () {
               ),
             );
     if (sent !== undefined) {
-      yield* reply(message, "failed", `I could not pass that on: ${sent}`, assistant.name);
+      yield* reply(
+        message,
+        "failed",
+        (t) => t.couldNotPassOn(sent === NOT_STARTED ? t.conversationNotStarted : sent),
+        assistant.name,
+      );
       yield* markSent(message);
       return;
     }
@@ -256,19 +264,17 @@ const make = Effect.gen(function* () {
     if (card === undefined) return false;
     const option = card.options[number - 1];
     if (option === undefined) {
-      yield* reply(message, "choice", `Reply with a number from 1 to ${card.options.length}.`);
+      yield* reply(message, "choice", (t) => t.choiceRange(card.options.length));
       return true;
     }
     const result = yield* decisions
       .answer({ decisionId: card.id, optionId: option.id })
       .pipe(Effect.result);
     if (result._tag === "Failure") {
-      yield* reply(
-        message,
-        "choice",
+      yield* reply(message, "choice", (t) =>
         result.failure.reason === "storage" || result.failure.reason === "invalid"
-          ? "I could not record that answer. Please try again."
-          : "That decision was already answered.",
+          ? t.couldNotRecord
+          : t.alreadyAnswered,
       );
     }
     return true;
@@ -305,11 +311,9 @@ const make = Effect.gen(function* () {
           WHERE connection_id = ${message.connectionId}
             AND idempotency_key = ${message.idempotencyKey}`.pipe(Effect.catch(persistenceFailed));
         if (recent?.count === INBOUND_PER_MINUTE + 1) {
-          yield* reply(
-            message,
-            "limited",
-            "You're sending messages too fast. I'll read new ones again in a minute.",
-          ).pipe(isolate("sending the rate limit notice failed"));
+          yield* reply(message, "limited", (t) => t.rateLimited).pipe(
+            isolate("sending the rate limit notice failed"),
+          );
         }
         return;
       }

@@ -12,6 +12,7 @@ import * as DecisionService from "../decisions/DecisionService.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import { ChannelLanguage } from "./ChannelLanguage.ts";
 import * as ChannelOutbox from "./ChannelOutbox.ts";
 import * as Reactor from "./ChannelReplyReactor.ts";
 import * as ChannelTransport from "./ChannelTransport.ts";
@@ -30,7 +31,7 @@ interface Records {
   turnItems: Array<{ type: string; failure?: { message: string } }>;
 }
 
-const harness = () => {
+const harness = (language: "en" | "pt-BR" = "en") => {
   const records = new Map<string, Records>();
   const reads: string[] = [];
   const layer = Reactor.layer.pipe(
@@ -39,6 +40,7 @@ const harness = () => {
     Layer.provideMerge(
       Layer.mergeAll(
         ChannelTransport.layer,
+        ChannelLanguage.layerFixed(language),
         SqlitePersistence.layerMemory,
         NodeCrypto.layer,
         Layer.mock(Orchestrator.OrchestratorV2)({ streamDomainEvents: Stream.empty }),
@@ -112,6 +114,7 @@ it.effect("a finished run posts its last assistant message once, however often i
       destination: dmAddress,
       text: "Here you go.",
       senderName: "Jarvis",
+      language: "en",
     });
     assert.lengthOf(reads, 1);
   }).pipe(Effect.provide(layer));
@@ -288,6 +291,7 @@ it.effect("an open decision becomes a card with its options, posted once", () =>
         { label: "Yes", value: "yes" },
         { label: "No", value: "no" },
       ],
+      language: "en",
     });
   }).pipe(Effect.provide(layer));
 });
@@ -361,6 +365,7 @@ it.effect.each(settlements)(
         destination: otherChatAddress,
         senderName: "Jarvis",
         text: `Deploy? — ${settlement.line}`,
+        language: "en",
       });
     }).pipe(Effect.provide(layer));
   },
@@ -447,3 +452,52 @@ it.effect("a failing read is logged and never stops the event stream", () => {
     assert.lengthOf(yield* outboxRows, 0);
   }).pipe(Effect.provide(layer));
 });
+
+it.effect(
+  "in Portuguese a failure, an approval card and its outcome use the translated phrases",
+  () => {
+    const { layer, records } = harness("pt-BR");
+    return Effect.gen(function* () {
+      const reactor = yield* Reactor.ChannelReplyReactor;
+      const decisions = yield* DecisionService.DecisionService;
+      yield* speak();
+      records.set("run-1", {
+        messages: [],
+        turnItems: [{ type: "error", failure: { message: "sem rede" } }],
+      });
+      records.set("run-2", { messages: [{ text: "Done. Approve it." }], turnItems: [] });
+      yield* reactor.handle(runEvent("failed", "run-1"));
+      yield* reactor.handle(runEvent("completed", "run-2"));
+      const decision = yield* decisions.request({
+        fromThreadId: thread as never,
+        projectId: "scratch" as never,
+        threadTitle: "Jarvis",
+        clientRequestId: "approval:1",
+        title: "Jarvis wants to run a command",
+        context: "```sh\nls\n```\n\nReason: Deny nothing",
+        options: [
+          { id: "accept", label: "Approve" },
+          { id: "decline", label: "Deny" },
+        ],
+        approvalRequestId: "req-1" as never,
+      });
+      yield* reactor.handleDecision(decision);
+      yield* decisions.answer({ decisionId: decision.id, optionId: "accept" });
+      yield* reactor.handleDecision(yield* decisions.get(decision.id));
+      const rows = (yield* outboxRows).map((row) => row.message);
+      assert.deepEqual(
+        rows.map((row) => [row.text, row.language]),
+        [
+          ["Não consegui terminar isso: sem rede", "pt-BR"],
+          ["Done. Approve it.", "pt-BR"],
+          ["Jarvis quer rodar um comando\n\n```sh\nls\n```\n\nMotivo: Deny nothing", "pt-BR"],
+          ["Jarvis quer rodar um comando — Aprovado", "pt-BR"],
+        ],
+      );
+      assert.deepEqual(rows[2]!.choices, [
+        { label: "Aprovar", value: "accept" },
+        { label: "Negar", value: "decline" },
+      ]);
+    }).pipe(Effect.provide(layer));
+  },
+);

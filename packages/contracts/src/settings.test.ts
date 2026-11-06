@@ -56,6 +56,23 @@ describe("autonomy settings", () => {
   });
 });
 
+describe("channel language setting", () => {
+  it.each([
+    [undefined, "auto"],
+    ["pt-BR", "pt-BR"],
+    ["en", "en"],
+    ["fr", "auto"],
+    [7, "auto"],
+  ])("decodes %s as %s", (value, expected) => {
+    const input = value === undefined ? {} : { channelLanguage: value };
+    expect(decodeServerSettings(input).channelLanguage).toBe(expected);
+  });
+
+  it("is patchable", () => {
+    expect(decodeServerSettingsPatch({ channelLanguage: "pt-BR" }).channelLanguage).toBe("pt-BR");
+  });
+});
+
 describe("storage cleanup settings", () => {
   it("keeps cleanup disabled for existing installations", () => {
     expect(decodeServerSettings({}).worktreeCleanup).toBeNull();

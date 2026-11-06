@@ -13,6 +13,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as AssistantService from "../../assistants/AssistantService.ts";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import { ChannelGateway } from "../ChannelGateway.ts";
+import { ChannelLanguage } from "../ChannelLanguage.ts";
 import * as ChannelTransport from "../ChannelTransport.ts";
 import * as Runtime from "./TelegramChannelRuntime.ts";
 
@@ -33,7 +34,7 @@ const privateMessage = (updateId: number, from = 111, text = `message ${updateId
   },
 });
 
-const harness = () => {
+const harness = (language: "en" | "pt-BR" = "en") => {
   const backlog: unknown[] = [];
   const state = {
     failure: undefined as Response | undefined,
@@ -103,6 +104,7 @@ const harness = () => {
     gateway,
     assistantService,
     ChannelTransport.layer,
+    ChannelLanguage.layerFixed(language),
     FetchHttpClient.layer,
   ).pipe(Layer.provideMerge(SqlitePersistence.layerMemory));
   const withFetch = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
@@ -308,6 +310,21 @@ it.effect("stops the request in flight the moment it is turned off", () => {
 
 const replies = (calls: ReadonlyArray<{ method: string; body: Record<string, unknown> }>) =>
   calls.filter((call) => call.method === "sendMessage").map((call) => call.body.chat_id);
+
+it.effect("tells an unknown sender their message waits, in the configured language", () => {
+  const { backlog, state, layer, withFetch } = harness("pt-BR");
+  return withFetch(
+    Effect.gen(function* () {
+      const runtime = yield* Runtime.make({ autoPoll: false });
+      yield* runtime.apply({ ...config, allowedUserIds: [] });
+      yield* runtime.pollOnce;
+      backlog.push(privateMessage(1, 222));
+      yield* runtime.pollOnce;
+      const notice = state.calls.findLast((call) => call.method === "sendMessage");
+      assert.include(String(notice?.body.text), "aguardando a aprovação do dono");
+    }),
+  ).pipe(Effect.provide(layer));
+});
 
 it.effect(
   "remembers unknown senders without routing them, answers each once, and drops them once allowed",

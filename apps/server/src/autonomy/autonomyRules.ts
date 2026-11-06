@@ -6,6 +6,8 @@ import type {
   AutonomyWatch,
 } from "@t3tools/contracts";
 
+import { DECISION_PHRASES } from "../channels/channelStrings.ts";
+
 /** What the server saw. Pure data, so rules and watches are tested without a running server. */
 export interface AutonomySignal {
   readonly event:
@@ -110,15 +112,15 @@ export function candidatesFor(input: {
 }
 
 const RULE_LABELS: Record<AutonomyRule, string> = {
-  runFailed: "Run failed or was interrupted",
-  waitingTooLong: "Waiting for you too long",
-  stuck: "Run looks stuck",
-  ciFailed: "PR checks failed",
-  reviewIncomplete: "Card in Review with open items",
+  runFailed: DECISION_PHRASES.runFailed,
+  waitingTooLong: DECISION_PHRASES.waitingTooLong,
+  stuck: DECISION_PHRASES.stuck,
+  ciFailed: DECISION_PHRASES.ciFailed,
+  reviewIncomplete: DECISION_PHRASES.reviewIncomplete,
 };
 
 export const sourceLabel = (source: AutonomyCandidate["source"]): string =>
-  "rule" in source ? RULE_LABELS[source.rule] : `Watch: ${source.watch.title}`;
+  "rule" in source ? RULE_LABELS[source.rule] : `${DECISION_PHRASES.watch} ${source.watch.title}`;
 
 export const WAKE_MESSAGE_PREFIX = "autonomy-wake:";
 

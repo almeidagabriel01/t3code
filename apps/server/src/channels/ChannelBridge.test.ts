@@ -12,6 +12,7 @@ import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.t
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ChannelBridge from "./ChannelBridge.ts";
 import { ChannelGateway } from "./ChannelGateway.ts";
+import { ChannelLanguage } from "./ChannelLanguage.ts";
 import * as ChannelOutbox from "./ChannelOutbox.ts";
 import * as ChannelTransport from "./ChannelTransport.ts";
 import { dmAddress, inbound, otherChatAddress, outboxRows } from "./channelBridgeTestSupport.ts";
@@ -27,7 +28,7 @@ const assistant = (id: string, name: string, extra: Record<string, unknown> = {}
   ...extra,
 });
 
-const harness = () => {
+const harness = (language: "en" | "pt-BR" = "en") => {
   const state = {
     assistants: [
       assistant("jarvis", "Jarvis", { isDefault: true }),
@@ -47,6 +48,7 @@ const harness = () => {
     Layer.provideMerge(
       Layer.mergeAll(
         ChannelTransport.layer,
+        ChannelLanguage.layerFixed(language),
         SqlitePersistence.layerMemory,
         NodeCrypto.layer,
         Layer.mock(AssistantService.AssistantService)({
@@ -238,6 +240,29 @@ it.effect("with no active assistant a message and a roster ask say none is set u
     const none = "No assistants are set up. Create one in Settings \u2192 Assistants.";
     assert.deepEqual(yield* texts, [none, none]);
     assert.equal(channelSends().length, 0);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("in Portuguese its own replies are Portuguese, flagged for the transport", () => {
+  const { layer, state, sends } = harness("pt-BR");
+  return Effect.gen(function* () {
+    const gateway = yield* ChannelGateway;
+    yield* gateway.ingest(inbound({ text: "@" }));
+    yield* gateway.ingest(inbound({ text: "@research" }));
+    yield* gateway.ingest(inbound({ text: "@fresh hi" }));
+    state.assistants = [];
+    yield* gateway.ingest(inbound({ text: "hello" }));
+    assert.deepEqual(yield* texts, [
+      "Seus assistentes: Jarvis, Research Bot, Research, Fresh. Comece a mensagem com @Nome para falar com um; senão, o Jarvis responde.",
+      "Agora você está falando com Research.",
+      "Não consegui repassar isso: a conversa dele ainda não começou",
+      "Nenhum assistente configurado. Crie um em Configurações → Assistentes.",
+    ]);
+    assert.deepEqual(
+      (yield* outboxRows).map((row) => row.message.language),
+      ["pt-BR", "pt-BR", "pt-BR", "pt-BR"],
+    );
+    assert.lengthOf(sends, 0);
   }).pipe(Effect.provide(layer));
 });
 

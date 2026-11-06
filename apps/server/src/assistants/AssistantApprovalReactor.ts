@@ -16,13 +16,14 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as DecisionService from "../decisions/DecisionService.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
+import { DECISION_PHRASES } from "../channels/channelStrings.ts";
 import { forkParked } from "../serverActivation.ts";
 import { AssistantDirectory } from "./AssistantDirectory.ts";
 
 const WANTS: Readonly<Record<string, string>> = {
-  command: "wants to run a command",
-  "file-change": "wants to change files",
-  "file-read": "wants to read files",
+  command: DECISION_PHRASES.wantsCommand,
+  "file-change": DECISION_PHRASES.wantsFileChange,
+  "file-read": DECISION_PHRASES.wantsFileRead,
 };
 
 export class AssistantApprovalReactor extends Context.Service<
@@ -68,7 +69,7 @@ const make = Effect.gen(function* () {
       ...(prompt === undefined || prompt === ""
         ? []
         : [request.kind === "command" ? `\`\`\`sh\n${prompt}\n\`\`\`` : prompt]),
-      ...(detail?.reason?.trim() ? [`Reason: ${detail.reason.trim()}`] : []),
+      ...(detail?.reason?.trim() ? [`${DECISION_PHRASES.reason} ${detail.reason.trim()}`] : []),
     ]
       .join("\n\n")
       .slice(0, DECISION_CONTEXT_MAX_LENGTH);
@@ -77,11 +78,11 @@ const make = Effect.gen(function* () {
       projectId: assistant.projectId,
       threadTitle: assistant.name,
       clientRequestId: `approval:${requestId}`,
-      title: `${assistant.name} ${WANTS[request.kind] ?? "needs your approval"}`,
+      title: `${assistant.name} ${WANTS[request.kind] ?? DECISION_PHRASES.needsApproval}`,
       context,
       options: [
-        { id: "accept", label: "Approve" },
-        { id: "decline", label: "Deny" },
+        { id: "accept", label: DECISION_PHRASES.approve },
+        { id: "decline", label: DECISION_PHRASES.deny },
       ],
       approvalRequestId: requestId,
     });

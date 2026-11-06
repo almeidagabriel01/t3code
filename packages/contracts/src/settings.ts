@@ -72,6 +72,21 @@ export const TimestampFormat = Schema.Literals(["locale", "12-hour", "24-hour"])
 export type TimestampFormat = typeof TimestampFormat.Type;
 const DEFAULT_TIMESTAMP_FORMAT: TimestampFormat = "locale";
 
+/** Language of T3's own fixed messages in iMessage and Telegram; "auto" follows the host's language. */
+export const ChannelLanguage = Schema.Literals(["auto", "en", "pt-BR"]);
+export type ChannelLanguage = typeof ChannelLanguage.Type;
+/** Shown by the language row in the iMessage and Telegram settings, on web and mobile. */
+export const CHANNEL_LANGUAGE_OPTIONS: ReadonlyArray<{
+  readonly value: ChannelLanguage;
+  readonly label: string;
+}> = [
+  { value: "auto", label: "Automatic (Mac language)" },
+  { value: "en", label: "English" },
+  { value: "pt-BR", label: "Português (Brasil)" },
+];
+export const CHANNEL_LANGUAGE_DESCRIPTION =
+  "Language of T3's own messages in iMessage and Telegram. Assistants reply in the language you write in.";
+
 export const DiffLayout = Schema.Literals(["stacked", "split"]);
 export type DiffLayout = typeof DiffLayout.Type;
 const DEFAULT_DIFF_LAYOUT: DiffLayout = "stacked";
@@ -1316,6 +1331,10 @@ export const KeepAwakeMode = Schema.Literals(KEEP_AWAKE_MODES);
 export type KeepAwakeMode = typeof KeepAwakeMode.Type;
 
 export const ServerSettings = Schema.Struct({
+  channelLanguage: ChannelLanguage.pipe(
+    Schema.catchDecoding(() => Effect.succeedSome("auto" as const)),
+    Schema.withDecodingDefault(Effect.succeed("auto" as const)),
+  ),
   /** Global switches for assistants that wake on their own. Off by default. */
   autonomy: AutonomySettings.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_AUTONOMY_SETTINGS)),
@@ -1922,6 +1941,7 @@ const ServerSettingsPatchFields = Schema.Struct({
     Schema.Record(TrimmedNonEmptyString, Schema.NullOr(TrimmedNonEmptyString)),
   ),
   keepAwake: Schema.optionalKey(KeepAwakeMode),
+  channelLanguage: Schema.optionalKey(ChannelLanguage),
   autonomy: Schema.optionalKey(AutonomySettings),
   enableAgentMemoryAccess: Schema.optionalKey(Schema.Boolean),
   memoryEnabled: Schema.optionalKey(Schema.Boolean),

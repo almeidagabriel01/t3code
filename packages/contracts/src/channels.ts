@@ -75,6 +75,8 @@ export const ChannelOutboundMessage = Schema.Struct({
   senderName: TrimmedNonEmptyString,
   /** Transports without buttons list the choices as a numbered list in the text. */
   choices: Schema.optional(Schema.Array(ChannelChoice)),
+  /** The language of T3's own phrases the transport adds, such as the numbered-choices hint. */
+  language: Schema.optional(Schema.Literals(["en", "pt-BR"])),
 });
 export type ChannelOutboundMessage = typeof ChannelOutboundMessage.Type;
 

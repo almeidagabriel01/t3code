@@ -1,10 +1,11 @@
 import type { ChannelChoice } from "@t3tools/contracts";
 
+import { channelStrings, type ResolvedChannelLanguage } from "../channelStrings.ts";
+
 /** Characters per message; longer replies are split at paragraph boundaries. */
 export const IMESSAGE_CHUNK_LIMIT = 1500;
 /** A reply longer than this many messages ends with a note instead of flooding the chat. */
 export const IMESSAGE_MAX_MESSAGES = 6;
-export const IMESSAGE_TRUNCATED_NOTE = "… The rest of this reply was too long to send.";
 
 /**
  * iMessage has no rich text: emphasis markers and headings go, links keep their address, code
@@ -61,11 +62,8 @@ export function chunkParagraphs(text: string, limit = IMESSAGE_CHUNK_LIMIT): Arr
   return chunks;
 }
 
-const numberedChoices = (choices: ReadonlyArray<ChannelChoice>) =>
-  [
-    ...choices.map((choice, index) => `${index + 1}. ${choice.label}`),
-    "Reply with the number.",
-  ].join("\n");
+const numberedChoices = (choices: ReadonlyArray<ChannelChoice>, hint: string) =>
+  [...choices.map((choice, index) => `${index + 1}. ${choice.label}`), hint].join("\n");
 
 export interface ChannelTextLimits {
   readonly chunkLimit: number;
@@ -81,16 +79,19 @@ export function formatChannelMessages(
     readonly senderName: string;
     readonly text: string;
     readonly choices?: ReadonlyArray<ChannelChoice> | undefined;
+    /** The language of the phrases added here; English when absent. */
+    readonly language?: ResolvedChannelLanguage | undefined;
   },
   { chunkLimit, maxMessages }: ChannelTextLimits,
 ): Array<string> {
+  const strings = channelStrings(input.language ?? "en");
   const choices =
     input.choices !== undefined && input.choices.length > 0 ? input.choices : undefined;
   const room = maxMessages - (choices === undefined ? 0 : 1);
   const body = chunkParagraphs(toPlainText(input.text), chunkLimit);
-  const kept = body.length <= room ? body : [...body.slice(0, room - 1), IMESSAGE_TRUNCATED_NOTE];
+  const kept = body.length <= room ? body : [...body.slice(0, room - 1), strings.truncatedNote];
   if (choices !== undefined) {
-    const block = numberedChoices(choices);
+    const block = numberedChoices(choices, strings.replyWithNumber);
     const last = kept.at(-1);
     if (last !== undefined && last.length + block.length + 2 <= chunkLimit) {
       kept[kept.length - 1] = `${last}\n\n${block}`;

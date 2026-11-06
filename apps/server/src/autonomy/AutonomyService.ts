@@ -41,7 +41,13 @@ import type { SqlError } from "effect/sql/SqlError";
 import { AssistantSpend } from "../assistants/AssistantSpend.ts";
 import { type AssistantRow, toAssistant } from "../assistants/AssistantDirectory.ts";
 import { decodeReplyAddress } from "../channels/ChannelBridge.ts";
+import { ChannelLanguage } from "../channels/ChannelLanguage.ts";
 import * as ChannelOutbox from "../channels/ChannelOutbox.ts";
+import {
+  channelStrings,
+  localizeNoticeLabel,
+  type ResolvedChannelLanguage,
+} from "../channels/channelStrings.ts";
 import { TELEGRAM_CONNECTION_ID } from "../channels/telegram/TelegramChannelRuntime.ts";
 import * as TelegramChannelSettings from "../channels/telegram/TelegramChannelSettings.ts";
 import * as DecisionService from "../decisions/DecisionService.ts";
@@ -135,6 +141,7 @@ const make = Effect.gen(function* () {
   const spend = yield* AssistantSpend;
   const decisions = yield* DecisionService.DecisionService;
   const outbox = yield* ChannelOutbox.ChannelOutbox;
+  const channelLanguage = yield* ChannelLanguage;
   const telegram = yield* TelegramChannelSettings.TelegramChannelSettings;
   const kanban = yield* KanbanService.KanbanService;
   const projects = yield* ProjectService.ProjectService;
@@ -385,12 +392,14 @@ const make = Effect.gen(function* () {
     });
     const answer = records.messages.findLast((message) => message.text.trim() !== "")?.text;
     const failure = records.turnItems.findLast((item) => item.type === "error");
-    return (
+    // The assistant's own answer is never translated; only the failure sentence T3 writes is.
+    return (language: ResolvedChannelLanguage) =>
       answer ??
       (run.status === "failed"
-        ? `I could not finish that${failure?.type === "error" ? `: ${failure.failure.message}` : "."}`
-        : undefined)
-    );
+        ? channelStrings(language).couldNotFinish(
+            failure?.type === "error" ? failure.failure.message : undefined,
+          )
+        : undefined);
   });
 
   type FinishedRun = {
@@ -409,7 +418,8 @@ const make = Effect.gen(function* () {
       SELECT * FROM assistants WHERE thread_id = ${run.threadId}`;
     if (assistantRows[0] === undefined) return;
     const assistant = toAssistant(assistantRows[0]);
-    const text = yield* answerOf(run);
+    const render = yield* answerOf(run);
+    const text = render("en");
     if (text === undefined) return;
     const channels = resolveChannels(assistant.autonomy, config);
 
@@ -428,6 +438,7 @@ const make = Effect.gen(function* () {
         ownerChat !== undefined &&
         !alreadyThere
       ) {
+        const language = yield* channelLanguage.current;
         yield* outbox.enqueue({
           deliveryId: `autonomy-run:${run.id}`,
           destination: {
@@ -436,7 +447,8 @@ const make = Effect.gen(function* () {
             chatId: ownerChat,
           },
           senderName: assistant.name,
-          text: `${label}\n\n${text}`,
+          text: `${localizeNoticeLabel(label, language)}\n\n${render(language) ?? text}`,
+          language,
         });
       }
     }

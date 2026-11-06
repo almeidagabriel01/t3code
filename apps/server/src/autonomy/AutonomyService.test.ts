@@ -17,6 +17,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 
 import { AssistantSpend } from "../assistants/AssistantSpend.ts";
+import { ChannelLanguage } from "../channels/ChannelLanguage.ts";
 import * as ChannelOutbox from "../channels/ChannelOutbox.ts";
 import { outboxRows } from "../channels/channelBridgeTestSupport.ts";
 import * as ChannelTransport from "../channels/ChannelTransport.ts";
@@ -52,7 +53,7 @@ const plain: Shell = {
   lineage: { relationshipToParent: null },
 };
 
-const harness = () => {
+const harness = (language: "en" | "pt-BR" = "en") => {
   const settings = Ref.makeUnsafe<AutonomySettings>(ON);
   const shells = new Map<string, Shell | null>();
   const sent: Array<{ threadId: string; text: string; messageId: string }> = [];
@@ -70,6 +71,7 @@ const harness = () => {
     Layer.provideMerge(
       Layer.mergeAll(
         ChannelTransport.layer,
+        ChannelLanguage.layerFixed(language),
         SqlitePersistence.layerMemory,
         NodeCrypto.layer,
         Layer.mock(Orchestrator.OrchestratorV2)({
@@ -586,6 +588,24 @@ it.effect(
       yield* decisions.dismiss(notice!.id);
       assert.lengthOf(h.sent, before);
       assert.isDefined((yield* decisions.get(notice!.id)).deliveredAt);
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+it.effect(
+  "in Portuguese the Telegram wake notice names the rule in Portuguese; the Activity notice stays English",
+  () => {
+    const h = harness("pt-BR");
+    return Effect.gen(function* () {
+      yield* wakeThenFinish(h);
+      const [row] = yield* outboxRows;
+      assert.equal(
+        row!.message.text,
+        "A execução falhou ou foi interrompida\n\nIt failed on a missing env var.",
+      );
+      assert.equal(row!.message.language, "pt-BR");
+      const [notice] = yield* (yield* DecisionService.DecisionService).list({});
+      assert.include(notice!.title, "Run failed or was interrupted");
     }).pipe(Effect.provide(h.layer));
   },
 );

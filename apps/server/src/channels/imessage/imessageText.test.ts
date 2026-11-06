@@ -1,13 +1,15 @@
 import { describe, expect, it } from "vite-plus/test";
 
+import { channelStrings } from "../channelStrings.ts";
 import {
   chunkParagraphs,
   formatImessageMessages,
   IMESSAGE_CHUNK_LIMIT,
   IMESSAGE_MAX_MESSAGES,
-  IMESSAGE_TRUNCATED_NOTE,
   toPlainText,
 } from "./imessageText.ts";
+
+const TRUNCATED_NOTE = channelStrings("en").truncatedNote;
 
 const plain: ReadonlyArray<readonly [string, string, string]> = [
   ["bold", "this is **bold** and __also__", "this is bold and also"],
@@ -80,7 +82,7 @@ describe("formatImessageMessages", () => {
     );
     const messages = formatImessageMessages({ senderName: "Jarvis", text });
     expect(messages).toHaveLength(IMESSAGE_MAX_MESSAGES);
-    expect(messages.at(-1)).toBe(`Jarvis: ${IMESSAGE_TRUNCATED_NOTE}`);
+    expect(messages.at(-1)).toBe(`Jarvis: ${TRUNCATED_NOTE}`);
   });
 
   it("ends a card with its options as a numbered list, whatever the length", () => {
@@ -97,7 +99,7 @@ describe("formatImessageMessages", () => {
     const messages = formatImessageMessages({ senderName: "Jarvis", text: long, choices });
     expect(messages).toHaveLength(IMESSAGE_MAX_MESSAGES - 1);
     expect(messages.at(-1)).toBe(
-      `Jarvis: ${IMESSAGE_TRUNCATED_NOTE}\n\n1. Approve\n2. Deny\nReply with the number.`,
+      `Jarvis: ${TRUNCATED_NOTE}\n\n1. Approve\n2. Deny\nReply with the number.`,
     );
     const full = formatImessageMessages({
       senderName: "Jarvis",
@@ -106,5 +108,26 @@ describe("formatImessageMessages", () => {
     });
     expect(full).toHaveLength(2);
     expect(full[1]).toBe("Jarvis: 1. Approve\n2. Deny\nReply with the number.");
+  });
+
+  it("words the hint and the truncation note in the message's language", () => {
+    const choices = [{ label: "Aprovar", value: "a" }];
+    expect(
+      formatImessageMessages({
+        senderName: "Jarvis",
+        text: "Publicar?",
+        choices,
+        language: "pt-BR",
+      }),
+    ).toEqual(["Jarvis: Publicar?\n\n1. Aprovar\nResponda com o número."]);
+    const long = Array.from({ length: 20 }, () => "z".repeat(IMESSAGE_CHUNK_LIMIT - 10)).join(
+      "\n\n",
+    );
+    const messages = formatImessageMessages({
+      senderName: "Jarvis",
+      text: long,
+      language: "pt-BR",
+    });
+    expect(messages.at(-1)).toBe(`Jarvis: ${channelStrings("pt-BR").truncatedNote}`);
   });
 });
