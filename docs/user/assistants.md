@@ -16,6 +16,8 @@ Open **Settings → Assistants**, or use **+** next to Assistants in the sidebar
 - **Instructions**. Sent with every message, so they keep applying after a long conversation is
   compacted, resumed or moved to another provider. An edit applies from the next message.
 - **Tool access**, described below.
+- **Workspace**: **This Mac** or a **Sandbox container**, described in
+  [Work in a sandbox](#work-in-a-sandbox).
 - **Role** and **Reports to**, which place it in a reporting line (see [Reporting lines](#reporting-lines)).
 
 ## Tool access
@@ -32,6 +34,39 @@ Read only is checked by the provider, so providers differ (see
 [Permission modes](./permission-modes.md)). Grok can't enforce it strictly: T3 Code denies the edit
 and command requests Grok sends, but Grok may still run some actions without asking. Use a different
 provider for an assistant that must not change anything.
+
+## Work in a sandbox
+
+An assistant can do its work in a Linux container instead of on your Mac. The assistant itself stays
+where it is, with its conversation, mobile access, connectors and secrets. What changes is where its
+commands and file edits happen: they run inside the sandbox, and on your Mac the assistant can only
+read. Its tool access then applies to the work in the sandbox.
+
+1. Install and start Docker on the Mac that runs T3 Code.
+2. In the assistant's settings, set **Workspace** to **Sandbox container (Linux, Docker)**. The
+   choice is off, with a reason, while Docker isn't running.
+3. T3 Code starts the sandbox in the background. The first start builds its image from this build
+   of T3 Code and takes a few minutes. It also turns on **Linked environments** (Settings → Labs),
+   because the sandbox is linked to your Mac like another machine. Nothing else in your settings
+   changes.
+4. Sign each provider in to the sandbox once: **Settings → Assistants → Sandbox → Sign in**. The
+   sandbox has its own sign-ins and does not use the ones on your Mac. This opens the sandbox's
+   Providers settings, and works from the Mac that runs the sandbox. From a phone or another
+   machine, do it from the Mac.
+
+**Settings → Assistants → Sandbox** shows its status (Not created, Starting, Running, Stopped,
+Docker not available, or Failed with the reason) and has **Start**, **Stop** and **Remove**. Remove
+asks whether to also delete the sandbox's files, which include the provider sign-ins and everything
+assistants wrote there. Switching an assistant back to **This Mac** keeps the sandbox.
+
+Limits:
+
+- It is Linux only. There are no GUI apps and no Mac apps, so work that needs them still runs on the
+  Mac.
+- The sandbox listens on this Mac only. Phones and other machines reach it through T3 Code.
+- A sandboxed assistant that tries to launch work on the Mac, or message a conversation there, is
+  refused and told to use the sandbox.
+- A macOS virtual machine for visual apps is not built.
 
 ## Approvals
 

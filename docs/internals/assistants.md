@@ -175,22 +175,48 @@ The Telegram transport long-polls the Bot API (`getUpdates`), so it needs no pub
   the speaker's name under Telegram's 4096 limit. `ChannelReplyAddress` is a union by `kind`; the
   bridge finds an open card by kind and chat, so ids of two channels never collide.
 
-## Sandbox container (in progress)
+## Sandbox container
 
 [`AssistantSandbox`](../../apps/server/src/assistants/AssistantSandbox.ts) runs one Linux container
 with a T3 server inside, named from this environment's id so two Macs never share a name. One
 container serves every sandboxed assistant: it is lighter than one each, and an assistant's own
-folder inside it is what separates them. Not yet wired to assistants or any client: how an assistant
-moves there is an open decision.
+folder inside it is what separates them.
 
+- **The assistant stays here; its work runs there.** `workspace: "sandbox"` changes three things,
+  each read from the row at call time, so switching back to `"host"` lifts all of them and keeps the
+  container and link.
+  1. `AssistantRuntimePolicy` pins the provider policy to the read-only sandbox, whatever the
+     access. It leaves the thread's runtime mode alone on purpose: forwarded launches inherit their
+     limits from that mode, so the assistant's tool access still decides what the work in the
+     sandbox may do.
+  2. Launches are refused unless they name the sandbox ([`sandboxRefusal`](../../apps/server/src/assistants/AssistantSandboxPolicy.ts)):
+     `t3_thread_launch` in `McpToolAccess.routed`, `delegate_task` and `create_threads` in
+     `OrchestratorMcpService`, and a send into a conversation on this machine in
+     `ThreadManagementService.dispatch`. The refusal carries the environment id to use. These
+     paths read the directory with `Effect.serviceOption`; `McpHttpServer` must be built with
+     `AssistantDirectory` in context or the routing silently disappears.
+  3. The assistant note says where its workspace is, with the environment id.
+     Other tools that start work (forks, scheduled tasks) are not routed; the read-only provider
+     policy is what keeps their work off this machine.
+- **The link is the existing peer link.** [`AssistantSandboxControl`](../../apps/server/src/assistants/AssistantSandboxControl.ts)
+  builds and starts the container in the background, mints a pairing credential inside it and calls
+  `PeerLinks.link` with full access (the per-call limits narrow it). A live link at the container's
+  current address is reused, so a second start links nothing; Docker picks a new host port on every
+  restart, so a moved address links again. The sandbox's environment id lives in the single-row
+  `assistant_sandbox` table, which `AssistantDirectory` reads for the refusals and the note.
+  Starting turns on `linkedEnvironmentsEnabled` here if it is off, because `PeerLinks.link` and
+  `/mcp` routing refuse without it; the status says whether it is on.
 - **The image carries this build, not a release.** The fork publishes no Linux CLI archive and
   `npm i t3` is the wrong version, so the service copies this server's `dist` into
   `node:26-bookworm-slim` and runs `npm install` for the runtime-external packages at the versions
   installed beside it. Native modules therefore resolve for Linux. Patches the repo applies to
   `node-pty` and `@ff-labs/fff-node` are not applied in the image. The tag hashes the Dockerfile and
-  those versions, so a changed build never reuses a stale image.
+  those versions and the server version, not the contents of `dist`: a rebuilt `dist` at the same
+  version reuses the image until it is removed.
 - **Loopback only.** The port is published on `127.0.0.1` with a Docker-chosen host port, read back
   from `docker port`. Phones and other machines cannot reach it; they can only through this server.
+  That is also why the provider sign-in is a client on the same machine: `assistantSandbox.pairing`
+  returns a one-time loopback `/pair` link, which only a client on that machine can open.
 - **Seeded once.** The container's first start writes `linkedEnvironmentsEnabled` into its settings
   file if none exists, because both ends of a peer link need the beta. Later edits are kept.
 - **Credentials never travel in arguments or logs.** A pairing credential is minted with
