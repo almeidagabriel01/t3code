@@ -34,6 +34,7 @@ import { TestClock } from "effect/testing";
 import { HttpServer } from "effect/http";
 
 import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
+import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
@@ -3958,6 +3959,43 @@ it.effect.each(["missing", "file"] as const)(
           [],
         );
       }).pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60_000 })));
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
+it.effect.each(["scratch/2026-11-03-jarvis-t1", "assistants"])(
+  "recreates a deleted T3-managed %s folder instead of failing the session",
+  (folder) =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const root = yield* fileSystem.makeTempDirectoryScoped();
+      const cwd = `${root}/${folder}`;
+      const state = yield* Ref.make(emptyState);
+      yield* Effect.gen(function* () {
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const threadId = ThreadId.make("thread-managed-workspace");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId, now: yield* DateTime.now }),
+          ],
+        });
+        yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy: { ...runtimePolicy, cwd },
+        });
+        assert.equal((yield* fileSystem.stat(cwd)).type, "Directory");
+        assert.equal((yield* Ref.get(state)).openCount, 1);
+      }).pipe(
+        Effect.provide(layerTest({ state, idleTimeoutMs: 60_000 })),
+        Effect.provide(ServerConfig.layerTest(root, root)),
+      );
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 

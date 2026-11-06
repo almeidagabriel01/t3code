@@ -35,7 +35,9 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
+import * as NodePath from "node:path";
 
+import * as ServerConfig from "../config.ts";
 import { normalizeModelMetricLabel } from "../observability/Attributes.ts";
 import {
   providerSessionsTotal,
@@ -351,6 +353,16 @@ export const layerWithOptions = (
       /** Unreadable settings must preserve explicit browser-access opt-outs. */
       const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
       const projectService = yield* Effect.serviceOption(ProjectService.ProjectService);
+      const serverConfig = yield* Effect.serviceOption(ServerConfig.ServerConfig);
+      // T3 makes scratch and assistant folders on demand, so a deleted one is recreated, not fatal.
+      const isManagedWorkspace = (cwd: string) =>
+        Option.exists(serverConfig, ({ baseDir }) => {
+          const resolved = NodePath.resolve(cwd);
+          return (
+            NodePath.dirname(resolved) === NodePath.resolve(baseDir, "scratch") ||
+            resolved === NodePath.resolve(baseDir, "assistants")
+          );
+        });
       const eventSink = yield* EventSink.EventSinkV2;
       const commandOutput = yield* CommandOutputHub.CommandOutputHub;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -2190,7 +2202,16 @@ export const layerWithOptions = (
               if (cwd !== null) {
                 const workspaceIsDirectory = yield* fileSystem.stat(cwd).pipe(
                   Effect.map((stat) => stat.type === "Directory"),
-                  Effect.catch((error) => Effect.succeed(error.reason._tag !== "NotFound")),
+                  Effect.catch((error) =>
+                    error.reason._tag !== "NotFound"
+                      ? Effect.succeed(true)
+                      : isManagedWorkspace(cwd)
+                        ? fileSystem.makeDirectory(cwd, { recursive: true }).pipe(
+                            Effect.as(true),
+                            Effect.orElseSucceed(() => false),
+                          )
+                        : Effect.succeed(false),
+                  ),
                 );
                 if (!workspaceIsDirectory) {
                   return yield* new ProviderWorkspaceMissingError({
