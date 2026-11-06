@@ -216,6 +216,11 @@ While a conversation is in Messages, the T3 Code mobile app does not also push i
 the assistant a message from the app and its notifications come back. More than 10 messages a
 minute from one person are held back, with one notice.
 
+T3's own messages in chats (approval buttons, "Reply with the number", notices) follow **Language**
+in **Settings → iMessage** and **Settings → Telegram**, one setting for both: Automatic uses your
+Mac's language, or pick English or Português (Brasil). Assistants answer in the language you write
+in.
+
 ## Talk to them over Telegram
 
 **Settings → Telegram** lets you message your assistants from the Telegram app, on any computer
