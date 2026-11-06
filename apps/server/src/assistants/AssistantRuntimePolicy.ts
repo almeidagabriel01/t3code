@@ -1,4 +1,4 @@
-import type { AssistantToolAccess } from "@t3tools/contracts";
+import type { AssistantToolAccess, AssistantWorkspace } from "@t3tools/contracts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -8,12 +8,15 @@ import { RuntimePolicyV2, type RuntimePolicyV2Shape } from "../orchestration-v2/
 import { AssistantDirectory } from "./AssistantDirectory.ts";
 
 /**
- * Read-only is the only access the runtime mode can't express: it also needs a read-only
- * sandbox with global reads, which every adapter decodes the same way. The other levels
- * are fully described by the thread's runtime mode.
+ * Read-only is the one access the runtime mode can't express: it also needs a read-only sandbox
+ * with global reads. A sandboxed assistant gets it whatever its access; the cap is on the provider
+ * policy only, so the thread's runtime mode still limits the work it starts in the sandbox.
  */
-export function assistantRuntimeOverride(toolAccess: AssistantToolAccess) {
-  return toolAccess === "read-only"
+export function assistantRuntimeOverride(
+  toolAccess: AssistantToolAccess,
+  workspace: AssistantWorkspace = "host",
+) {
+  return toolAccess === "read-only" || workspace === "sandbox"
     ? ({
         sandboxPolicy: { type: "readOnly", access: { type: "fullAccess" } },
         approvalPolicy: "never",
@@ -34,7 +37,10 @@ export const layer: Layer.Layer<RuntimePolicyV2, never, RuntimePolicyV2 | Assist
           const found = yield* directory.forThread(input.thread.id);
           const override = Option.isNone(found)
             ? undefined
-            : assistantRuntimeOverride(found.value.assistant.toolAccess);
+            : assistantRuntimeOverride(
+                found.value.assistant.toolAccess,
+                found.value.assistant.workspace,
+              );
           return override === undefined
             ? policy
             : ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({ ...policy, ...override });

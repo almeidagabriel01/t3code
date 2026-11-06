@@ -2,6 +2,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import {
+  EnvironmentId,
   IsoDateTime,
   ProjectId,
   ThreadId,
@@ -97,6 +98,13 @@ export function assistantCommandNames<A extends { readonly handle: string }>(
 /** Enforced through the thread's runtime mode and, for read-only, a read-only sandbox. */
 export const AssistantToolAccess = Schema.Literals(["read-only", "workspace-write", "full"]);
 export type AssistantToolAccess = typeof AssistantToolAccess.Type;
+
+/**
+ * Where its commands and file edits run. "sandbox" keeps the conversation here but runs the work
+ * in the sandbox container; its own session on this machine can then only read.
+ */
+export const AssistantWorkspace = Schema.Literals(["host", "sandbox"]);
+export type AssistantWorkspace = typeof AssistantWorkspace.Type;
 
 export function runtimeModeForToolAccess(access: AssistantToolAccess): RuntimeMode {
   switch (access) {
@@ -249,6 +257,7 @@ export const Assistant = Schema.Struct({
   ),
   /** It may not send into an agent conversation until the user approves that exact send. */
   askBeforeActing: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  workspace: AssistantWorkspace.pipe(Schema.withDecodingDefault(Effect.succeed("host" as const))),
   /** An `AssistantIconId`, kept a plain string so an id from a newer client still decodes. */
   icon: Schema.NullOr(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   /** Extra MCP servers injected only into this assistant's sessions, next to T3's own. */
@@ -335,6 +344,7 @@ export const AssistantsCreateInput = Schema.Struct({
   budget: Schema.optional(Schema.NullOr(ProviderBudget)),
   autonomy: Schema.optional(AssistantAutonomy),
   askBeforeActing: Schema.optional(Schema.Boolean),
+  workspace: Schema.optional(AssistantWorkspace),
   icon: Schema.optional(Schema.NullOr(AssistantIconId)),
   mcpServers: Schema.optional(Schema.Array(AssistantMcpServerInput)),
   role: Schema.optional(AssistantRole),
@@ -368,6 +378,7 @@ export const AssistantsUpdateInput = Schema.Struct({
   budget: Schema.optional(Schema.NullOr(ProviderBudget)),
   autonomy: Schema.optional(AssistantAutonomy),
   askBeforeActing: Schema.optional(Schema.Boolean),
+  workspace: Schema.optional(AssistantWorkspace),
   /** Null goes back to the initial. */
   icon: Schema.optional(Schema.NullOr(AssistantIconId)),
   /** Replaces the whole list; leave out to keep it. */
@@ -380,6 +391,46 @@ export const AssistantsUpdateInput = Schema.Struct({
   archived: Schema.optional(Schema.Boolean),
 });
 export type AssistantsUpdateInput = typeof AssistantsUpdateInput.Type;
+
+/**
+ * The sandbox container assistants may work in. "failed" covers a build, start or link that did
+ * not finish; `error` says why and Start tries again.
+ */
+export const AssistantSandboxState = Schema.Literals([
+  "not_created",
+  "starting",
+  "running",
+  "stopped",
+  "docker_unavailable",
+  "failed",
+]);
+export type AssistantSandboxState = typeof AssistantSandboxState.Type;
+
+export const AssistantSandboxStatus = Schema.Struct({
+  state: AssistantSandboxState,
+  /** What a start is doing now; null when nothing is in progress. */
+  step: Schema.NullOr(Schema.String),
+  error: Schema.NullOr(Schema.String),
+  /** The sandbox as a linked environment here; null until it is linked. */
+  environmentId: Schema.NullOr(EnvironmentId),
+  /** Where its T3 server answers on this machine, for signing in to its providers; null unless running. */
+  url: Schema.NullOr(Schema.String),
+  /** Linked environments (Settings → Labs) must be on here for the sandbox link; Start turns it on. */
+  linkedEnvironmentsEnabled: Schema.Boolean,
+});
+export type AssistantSandboxStatus = typeof AssistantSandboxStatus.Type;
+
+export const AssistantSandboxSubscribeInput = Schema.Struct({});
+export type AssistantSandboxSubscribeInput = typeof AssistantSandboxSubscribeInput.Type;
+export const AssistantSandboxStartInput = Schema.Struct({});
+export type AssistantSandboxStartInput = typeof AssistantSandboxStartInput.Type;
+export const AssistantSandboxStopInput = Schema.Struct({});
+export type AssistantSandboxStopInput = typeof AssistantSandboxStopInput.Type;
+export const AssistantSandboxRemoveInput = Schema.Struct({
+  /** Also deletes the sandbox's own home and workspace files, including provider sign-ins. */
+  deleteVolumes: Schema.Boolean,
+});
+export type AssistantSandboxRemoveInput = typeof AssistantSandboxRemoveInput.Type;
 
 export const AssistantsDeleteInput = Schema.Struct({ assistantId: AssistantId });
 export type AssistantsDeleteInput = typeof AssistantsDeleteInput.Type;

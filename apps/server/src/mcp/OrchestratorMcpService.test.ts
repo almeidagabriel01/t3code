@@ -63,6 +63,8 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
+import { type OrchestratorMcpFailure } from "@t3tools/contracts";
+import { AssistantDirectory } from "../assistants/AssistantDirectory.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
 import { idleThreadProjection, liveThreadShell } from "./McpToolAccess.testkit.ts";
@@ -1834,6 +1836,54 @@ describe("OrchestratorMcpService provider resolution", () => {
         assert.isTrue(
           byDriver.message.includes("No V2 provider adapter is registered for driver forkOnly."),
         );
+      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
+    }),
+  );
+
+  type Service = OrchestratorMcpService.OrchestratorMcpService["Service"];
+  type Refusable = (service: Service) => Effect.Effect<unknown, OrchestratorMcpFailure>;
+  it.effect.each<readonly [string, Refusable]>([
+    [
+      "delegate_task on this Mac",
+      (service) => service.delegateTask(scope, { task: "Edit it.", mode: "async" }),
+    ],
+    [
+      "delegate_task in another environment",
+      (service) =>
+        service.delegateTask(scope, {
+          task: "Edit it.",
+          mode: "async",
+          target: { environmentId: EnvironmentId.make("environment-other") },
+        }),
+    ],
+    [
+      "create_threads",
+      (service) => service.createThreads(scope, { threads: [{ prompt: "Edit it." }] } as never),
+    ],
+  ])("a sandboxed assistant is refused %s and told its sandbox", ([, run]) =>
+    Effect.gen(function* () {
+      const layerDependencies = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+        ServerSettings.layerTest(),
+        providerRegistryLayer([]),
+        adapterRegistryLayer([]),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        Layer.mock(AssistantDirectory)({
+          forThread: () =>
+            Effect.succeedSome({ assistant: { workspace: "sandbox" } as never, current: true }),
+          sandboxEnvironmentId: Effect.succeedSome(EnvironmentId.make("environment-sandbox")),
+        }),
+      );
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const refused = yield* run(service).pipe(Effect.flip);
+        assert.equal(refused.code, "invalid_request");
+        assert.include(refused.message, "environmentId=environment-sandbox");
       }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
     }),
   );

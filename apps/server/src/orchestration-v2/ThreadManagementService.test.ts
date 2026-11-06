@@ -794,6 +794,7 @@ const guardThreads = {
   old: assistantThreadIdFor("helper", 1),
   asker: assistantThreadIdFor("asker", 1),
   chatty: assistantThreadIdFor("chatty", 1),
+  boxed: assistantThreadIdFor("boxed", 1),
   plain: ThreadId.make("thread:guard:plain"),
 };
 
@@ -826,6 +827,7 @@ const layerAssistantGuardTest = (dispatched: Array<unknown>) =>
         teamOf: () => Effect.succeed({ leader: null, reports: [] }),
         teamsOf: () => Effect.succeed([]),
         teamSendLimited: (sender) => Effect.succeed(sender === guardThreads.chatty),
+        sandboxEnvironmentId: Effect.succeedSome(EnvironmentId.make("environment-sandbox")),
         forThread: (threadId) =>
           Effect.succeed(
             threadId === guardThreads.plain
@@ -835,6 +837,7 @@ const layerAssistantGuardTest = (dispatched: Array<unknown>) =>
                     toolAccess: "workspace-write",
                     archivedAt: null,
                     askBeforeActing: threadId === guardThreads.asker,
+                    workspace: threadId === guardThreads.boxed ? "sandbox" : "host",
                   } as Assistant,
                   current: threadId === guardThreads.current,
                 }),
@@ -1025,6 +1028,40 @@ it.effect("ask before acting: assistant targets and other senders skip the gate"
   }).pipe(Effect.provide(layerAssistantGuardTest(dispatched)));
 });
 
+it.effect.each([
+  [
+    "a sandboxed assistant sending into a thread on this Mac",
+    "boxed",
+    "plain",
+    "environment-sandbox",
+  ],
+  ["a sandboxed assistant messaging another assistant", "boxed", "current", null],
+  ["a host assistant sending into a thread on this Mac", "current", "plain", null],
+] as const)("sandbox: %s", ([, sender, target, refusal]) => {
+  const dispatched: Array<unknown> = [];
+  return Effect.gen(function* () {
+    const threads = yield* ThreadManagementService.ThreadManagementService;
+    const result = yield* Effect.flip(
+      threads.dispatch({
+        ...asked(guardThreads[target]),
+        senderThreadId: guardThreads[sender],
+      }),
+    ).pipe(
+      Effect.asSome,
+      Effect.orElseSucceed(() => Option.none()),
+    );
+    if (refusal === null) {
+      expect(Option.isNone(result)).toBe(true);
+      expect(dispatched).toHaveLength(1);
+    } else {
+      expect(Option.getOrThrow(result)).toMatchObject({
+        cause: { message: expect.stringContaining(`environmentId=${refusal}`) },
+      });
+      expect(dispatched).toEqual([]);
+    }
+  }).pipe(Effect.provide(layerAssistantGuardTest(dispatched)));
+});
+
 it.effect("ask before acting: a replayed command already under an approval skips the gate", () => {
   const dispatched: Array<unknown> = [];
   return Effect.gen(function* () {
@@ -1073,6 +1110,7 @@ it.effect("ask before acting: an approval is given back when the send itself fai
             teamOf: () => Effect.succeed({ leader: null, reports: [] }),
             teamsOf: () => Effect.succeed([]),
             teamSendLimited: () => Effect.succeed(false),
+            sandboxEnvironmentId: Effect.succeedNone,
             forThread: () =>
               Effect.succeedSome({
                 assistant: {

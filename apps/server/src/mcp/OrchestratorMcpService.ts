@@ -1,5 +1,6 @@
 import {
   CommandId,
+  type EnvironmentId,
   type RunId,
   isProviderAvailable,
   MessageId,
@@ -84,6 +85,8 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import { AssistantDirectory } from "../assistants/AssistantDirectory.ts";
+import { sandboxRefusal } from "../assistants/AssistantSandboxPolicy.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import {
   subagentResultForRun,
@@ -1027,6 +1030,22 @@ const make = Effect.gen(function* () {
   const gitDriver = yield* GitVcsDriver.GitVcsDriver;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const remoteDelegation = yield* RemoteDelegation.RemoteDelegation;
+  const assistantDirectory = yield* Effect.serviceOption(AssistantDirectory);
+
+  /** A sandboxed assistant starts work only in its sandbox: anything else is refused with the id to use. */
+  const refuseOutsideSandbox = (scope: McpInvocationScope, target: EnvironmentId | undefined) =>
+    sandboxRefusal(assistantDirectory, {
+      threadId: scope.thread?.threadId,
+      localEnvironmentId: scope.environmentId,
+      target,
+    }).pipe(
+      Effect.flatMap(
+        Option.match({
+          onNone: () => Effect.void,
+          onSome: (message) => Effect.fail(failure("invalid_request", message)),
+        }),
+      ),
+    );
 
   const requireProject = (projectId: ProjectId) =>
     projects.getById(projectId).pipe(
@@ -2361,6 +2380,7 @@ const make = Effect.gen(function* () {
         input.target === undefined
           ? undefined
           : PeerForwarding.remoteTarget(callerScope, input.target.environmentId);
+      yield* refuseOutsideSandbox(callerScope, environmentId);
       if (input.target !== undefined && environmentId !== undefined) {
         yield* requireCapability(callerScope);
         const scope = yield* requireThreadScope(callerScope, "delegate_task");
@@ -2781,6 +2801,7 @@ const make = Effect.gen(function* () {
     }),
     createThreads: Effect.fn("OrchestratorMcpService.createThreads")(
       function* (callerScope, input) {
+        yield* refuseOutsideSandbox(callerScope, undefined);
         const { scope, parent } = yield* loadThreadCaller(callerScope, "create_threads");
         const parentRun = ThreadManagementService.latestActiveRun(parent);
         if (

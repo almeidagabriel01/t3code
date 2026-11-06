@@ -21,6 +21,7 @@ const brief = (
   threadId: assistant.threadId,
   toolAccess: assistant.toolAccess,
   askBeforeActing: assistant.askBeforeActing,
+  workspace: assistant.workspace,
   icon: assistant.icon,
   connectors: assistant.mcpServers.map(({ name, transport, enabled }) => ({
     name,

@@ -265,6 +265,7 @@ import { commandFeatureUsage, featureUsage } from "./telemetry/FeatureUsage.ts";
 import type { TelemetryOwner } from "./telemetry/Identify.ts";
 import * as UsageService from "./usage/UsageService.ts";
 import * as AutonomyService from "./autonomy/AutonomyService.ts";
+import * as AssistantSandboxControl from "./assistants/AssistantSandboxControl.ts";
 import * as AssistantSpend from "./assistants/AssistantSpend.ts";
 import * as ImessageChannelSettings from "./channels/imessage/ImessageChannelSettings.ts";
 import * as HeavyQueue from "./heavyQueue/HeavyQueue.ts";
@@ -1459,6 +1460,7 @@ export const layerWsRpc = (
       const computerUse = yield* ComputerUse.ComputerUse;
       const assistants = yield* Assistants.AssistantService;
       const assistantSpend = yield* AssistantSpend.AssistantSpend;
+      const sandboxControl = yield* AssistantSandboxControl.AssistantSandboxControl;
       const autonomy = yield* AutonomyService.AutonomyService;
       const imessageChannelSettings = yield* ImessageChannelSettings.ImessageChannelSettings;
       const keepAwake = yield* KeepAwake.KeepAwake;
@@ -2533,12 +2535,31 @@ export const layerWsRpc = (
         [WS_METHODS.computerUseOpenSettings]: (input) =>
           computerUse.openSettings(input).pipe(Effect.as({})),
         [WS_METHODS.assistantsSubscribe]: (_input) => assistants.subscribe,
-        [WS_METHODS.assistantsCreate]: (input) => assistants.create(input),
-        [WS_METHODS.assistantsUpdate]: (input) => assistants.update(input),
+        // Choosing the sandbox starts it in the background; saving other fields leaves it alone.
+        [WS_METHODS.assistantsCreate]: (input) =>
+          assistants
+            .create(input)
+            .pipe(
+              Effect.tap(() =>
+                input.workspace === "sandbox" ? sandboxControl.start : Effect.void,
+              ),
+            ),
+        [WS_METHODS.assistantsUpdate]: (input) =>
+          assistants
+            .update(input)
+            .pipe(
+              Effect.tap(() =>
+                input.workspace === "sandbox" ? sandboxControl.start : Effect.void,
+              ),
+            ),
         [WS_METHODS.assistantsDelete]: (input) =>
           assistants.remove(input.assistantId).pipe(Effect.as({ assistantId: input.assistantId })),
         [WS_METHODS.assistantsReset]: (input) => assistants.reset(input),
         [WS_METHODS.assistantsSpend]: (input) => assistantSpend.read(input.assistantId),
+        [WS_METHODS.assistantSandboxSubscribe]: (_input) => sandboxControl.streamStatus,
+        [WS_METHODS.assistantSandboxStart]: (_input) => sandboxControl.start,
+        [WS_METHODS.assistantSandboxStop]: (_input) => sandboxControl.stop,
+        [WS_METHODS.assistantSandboxRemove]: (input) => sandboxControl.remove(input),
         [WS_METHODS.assistantTeamsCreate]: (input) => assistants.createTeam(input),
         [WS_METHODS.assistantTeamsUpdate]: (input) => assistants.updateTeam(input),
         [WS_METHODS.assistantTeamsDelete]: (input) =>

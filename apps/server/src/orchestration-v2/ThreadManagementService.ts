@@ -9,6 +9,7 @@ import {
   type RuntimeMode,
 } from "@t3tools/contracts";
 import { AssistantDirectory } from "../assistants/AssistantDirectory.ts";
+import { sandboxRefusal } from "../assistants/AssistantSandboxPolicy.ts";
 import { APPROVAL_UNAVAILABLE, AskBeforeActingGate } from "../assistants/AskBeforeActingGate.ts";
 import type {
   ProjectionRecordField,
@@ -899,6 +900,12 @@ const make = Effect.gen(function* () {
     if (command.type !== "message.dispatch" || isAssistantThreadId(command.threadId)) {
       return Effect.void;
     }
+    // A send into a conversation here is work on this machine, where a sandboxed assistant only reads.
+    const refusal = yield* sandboxRefusal(assistantDirectory, {
+      threadId: sender,
+      target: undefined,
+    });
+    if (Option.isSome(refusal)) return yield* reject(command, refusal.value);
     const found = yield* directory.forThread(sender);
     if (Option.isNone(found) || !found.value.assistant.askBeforeActing) return Effect.void;
     // A replayed command already ran under its approval; the receipt makes it a no-op.

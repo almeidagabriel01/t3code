@@ -20,6 +20,8 @@ import {
   DispatchModeLimit,
   type DispatchModeRefusal,
 } from "../orchestration-v2/DispatchModeLimit.ts";
+import { AssistantDirectory } from "../assistants/AssistantDirectory.ts";
+import { sandboxRefusal } from "../assistants/AssistantSandboxPolicy.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import { assertNotLinked, assertSameLink, callerLinkOrigin } from "./linkOrigin.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
@@ -376,6 +378,9 @@ const takesLinkedEnvironment = (tool: Tool.Any) => {
   );
 };
 
+/** Tools that start work in the environment they name, which a sandboxed assistant may only aim at its sandbox. */
+const SANDBOX_HELD_TOOLS: ReadonlySet<string> = new Set(["t3_thread_launch"]);
+
 const linksUnavailable = new OrchestratorMcpFailure({
   code: "orchestration_error",
   message: "This environment cannot reach linked environments.",
@@ -394,6 +399,7 @@ const routed = Effect.fn("McpToolAccess.routed")(function* <Tools extends Record
 ) {
   // Optional so toolkits that never leave this environment build without it.
   const forwarding = yield* Effect.serviceOption(PeerForwarding.PeerForwarding);
+  const assistantDirectory = yield* Effect.serviceOption(AssistantDirectory);
   const handlers: Record<string, unknown> = { ...checked };
   for (const [name, declaration] of Object.entries<Declaration<unknown>>(declarations)) {
     const tool = toolkit.tools[name];
@@ -410,6 +416,20 @@ const routed = Effect.fn("McpToolAccess.routed")(function* <Tools extends Record
       Effect.gen(function* () {
         const scope = yield* McpInvocationContext.McpInvocationContext;
         const target = PeerForwarding.remoteTarget(scope, environmentId);
+        // A sandboxed assistant starts work only in its sandbox, here or forwarded.
+        if (SANDBOX_HELD_TOOLS.has(name)) {
+          const refusal = yield* sandboxRefusal(assistantDirectory, {
+            threadId: scope.thread?.threadId,
+            localEnvironmentId: scope.environmentId,
+            target,
+          });
+          if (Option.isSome(refusal)) {
+            return yield* new OrchestratorMcpFailure({
+              code: "invalid_request",
+              message: refusal.value,
+            });
+          }
+        }
         if (target === undefined) return yield* here(params);
         if (scope.linkedEnvironments === false) return yield* PeerForwarding.linkedEnvironmentsOff;
         yield* (remote as RemoteCheck<typeof params>)(params);

@@ -4,6 +4,8 @@ import {
   AssistantMcpServer,
   type AssistantTeam,
   type AssistantToolAccess,
+  type AssistantWorkspace,
+  type EnvironmentId,
   assistantDescendantIds,
   assistantIdFromThreadId,
   isAssistantThreadId,
@@ -44,6 +46,7 @@ export interface AssistantRow {
   readonly role: string;
   readonly reports_to: string | null;
   readonly ask_before_acting: number;
+  readonly workspace: string;
   readonly icon: string | null;
   readonly mcp_servers_json: string | null;
   readonly created_at: string;
@@ -88,6 +91,7 @@ export const toAssistant = (row: AssistantRow): Assistant => ({
   role: row.role,
   reportsTo: row.reports_to as AssistantId | null,
   askBeforeActing: row.ask_before_acting === 1,
+  workspace: (row.workspace === "sandbox" ? "sandbox" : "host") satisfies AssistantWorkspace,
   icon: row.icon,
   mcpServers: decodeMcpServers(row.mcp_servers_json),
   budget: row.budget_json === null ? null : decodeBudget(row.budget_json),
@@ -137,6 +141,8 @@ export interface AssistantDirectoryShape {
     readonly leader: Assistant | null;
     readonly reports: ReadonlyArray<Assistant>;
   }>;
+  /** The linked environment of the sandbox container; none until it has been linked. */
+  readonly sandboxEnvironmentId: Effect.Effect<Option.Option<EnvironmentId>>;
   /** None without a query unless `threadId` is an assistant thread id. */
   readonly forThread: (
     threadId: ThreadId,
@@ -213,6 +219,12 @@ const make = Effect.gen(function* () {
         reports: all.filter((other) => other.reportsTo === assistant.id),
       };
     }),
+    sandboxEnvironmentId: sql<{ readonly environment_id: string }>`
+      SELECT environment_id FROM assistant_sandbox WHERE singleton = 1`.pipe(
+      Effect.map((rows) => Option.fromNullishOr(rows[0]?.environment_id as EnvironmentId)),
+      // A failed read must not look like "not linked": the refusal would then send the work nowhere.
+      Effect.orDie,
+    ),
     forThread: Effect.fn("AssistantDirectory.forThread")(function* (threadId) {
       if (!isAssistantThreadId(threadId)) return Option.none();
       const current =

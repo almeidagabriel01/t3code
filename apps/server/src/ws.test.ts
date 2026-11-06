@@ -115,6 +115,7 @@ import * as ThreadHandoffService from "./orchestration-v2/ThreadHandoffService.t
 import * as ThreadSearch from "./orchestration-v2/ThreadSearch.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 import * as UsageService from "./usage/UsageService.ts";
+import * as AssistantSandboxControl from "./assistants/AssistantSandboxControl.ts";
 import * as AssistantSpend from "./assistants/AssistantSpend.ts";
 import * as ImessageChannelSettings from "./channels/imessage/ImessageChannelSettings.ts";
 import * as HeavyQueue from "./heavyQueue/HeavyQueue.ts";
@@ -758,6 +759,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(UsageService.UsageService)({}),
   Layer.mock(InstanceSpend.InstanceSpend)({}),
   Layer.mock(AssistantSpend.AssistantSpend)({}),
+  Layer.mock(AssistantSandboxControl.AssistantSandboxControl)({}),
   Layer.mock(ImessageChannelSettings.ImessageChannelSettings)({}),
   Layer.mock(AutonomyService.AutonomyService)({}),
   Layer.mock(KeepAwake.KeepAwake)({}),

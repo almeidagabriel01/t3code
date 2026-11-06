@@ -18,7 +18,11 @@ import * as AssistantRuntimePolicy from "./AssistantRuntimePolicy.ts";
 const assistantThread = assistantThreadIdFor("helper", 1);
 const plainThread = ThreadId.make("thread-1");
 
-const resolveFor = (threadId: ThreadId, toolAccess: AssistantToolAccess) =>
+const resolveFor = (
+  threadId: ThreadId,
+  toolAccess: AssistantToolAccess,
+  workspace: "host" | "sandbox" = "host",
+) =>
   Effect.gen(function* () {
     const policy = yield* RuntimePolicyV2;
     return yield* policy.resolve({ thread: { id: threadId }, modelSelection: {} } as never);
@@ -40,7 +44,10 @@ const resolveFor = (threadId: ThreadId, toolAccess: AssistantToolAccess) =>
             forThread: (id) =>
               Effect.succeed(
                 id === assistantThread
-                  ? Option.some({ assistant: { toolAccess } as Assistant, current: true })
+                  ? Option.some({
+                      assistant: { toolAccess, workspace } as Assistant,
+                      current: true,
+                    })
                   : Option.none(),
               ),
           }),
@@ -63,6 +70,30 @@ it.effect("pins read-only assistants to a read-only sandbox and leaves the rest 
     }
     assert.strictEqual((yield* resolveFor(plainThread, "read-only")).sandboxPolicy, undefined);
   }),
+);
+
+it.effect(
+  "a sandboxed assistant is read-only on this machine whatever its access, and only then",
+  () =>
+    Effect.gen(function* () {
+      for (const access of ["read-only", "workspace-write", "full"] as const) {
+        const boxed = yield* resolveFor(assistantThread, access, "sandbox");
+        assert.deepStrictEqual(boxed.sandboxPolicy, {
+          type: "readOnly",
+          access: { type: "fullAccess" },
+        });
+        assert.strictEqual(boxed.approvalPolicy, "never");
+        // Switching back to this machine lifts the cap.
+        assert.strictEqual(
+          (yield* resolveFor(assistantThread, access, "host")).sandboxPolicy === undefined,
+          access !== "read-only",
+        );
+      }
+      assert.strictEqual(
+        (yield* resolveFor(plainThread, "full", "sandbox")).sandboxPolicy,
+        undefined,
+      );
+    }),
 );
 
 const decodeCodexSandbox = Schema.decodeSync(CodexSchema.V2TurnStartParams__SandboxPolicy);

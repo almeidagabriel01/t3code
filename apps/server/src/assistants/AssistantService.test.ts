@@ -762,6 +762,29 @@ it.effect("ask before acting defaults off, is set on create and survives other u
   }).pipe(Effect.provide(layer));
 });
 
+it.effect("workspace defaults to host, is set on create and survives other updates", () => {
+  const { layer } = harness();
+  return Effect.gen(function* () {
+    const assistants = yield* Assistants.AssistantService;
+    const plain = yield* assistants.create(create({ name: "Plain" }));
+    assert.strictEqual(plain.workspace, "host");
+    const boxed = yield* assistants.create(create({ name: "Boxed", workspace: "sandbox" }));
+    assert.strictEqual(boxed.workspace, "sandbox");
+    assert.strictEqual(
+      (yield* assistants.update({ assistantId: boxed.id, role: "QA" })).workspace,
+      "sandbox",
+    );
+    assert.strictEqual(
+      (yield* assistants.update({ assistantId: boxed.id, workspace: "host" })).workspace,
+      "host",
+    );
+    assert.strictEqual(
+      (yield* assistants.update({ assistantId: plain.id, workspace: "sandbox" })).workspace,
+      "sandbox",
+    );
+  }).pipe(Effect.provide(layer));
+});
+
 it.effect(
   "reports-to is validated, loops are refused, and a leader that leaves frees its reports",
   () => {

@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import type { AssistantDirectoryShape } from "./AssistantDirectory.ts";
+import { sandboxNoteLine } from "./AssistantSandboxPolicy.ts";
 
 const escapeAttribute = (value: string) =>
   value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
@@ -60,6 +61,7 @@ const ASK_BEFORE_ACTING_LINE =
 export function assistantNoteFor(
   assistant: Pick<Assistant, "name" | "handle" | "toolAccess" | "instructions" | "role"> & {
     readonly askBeforeActing?: boolean | undefined;
+    readonly workspace?: Assistant["workspace"] | undefined;
   },
   userText: string,
   team: { readonly leader: Colleague | null; readonly reports: ReadonlyArray<Colleague> } = {
@@ -67,6 +69,8 @@ export function assistantNoteFor(
     reports: [],
   },
   teams: ReadonlyArray<TeamMembership> = [],
+  /** The sandbox's environment id; null while it is not linked. Read only for a sandboxed assistant. */
+  sandboxEnvironmentId: string | null = null,
 ): string {
   // Provider-native slash commands must stay at the start of the prompt.
   if (userText.trimStart().startsWith("/")) return "";
@@ -75,6 +79,7 @@ export function assistantNoteFor(
   const body = [
     teamLine(team.leader, team.reports),
     teamsLines(assistant, teams),
+    assistant.workspace === "sandbox" ? sandboxNoteLine(sandboxEnvironmentId) : "",
     assistant.askBeforeActing === true ? ASK_BEFORE_ACTING_LINE : "",
     escapeBody(assistant.instructions.trim()),
   ]
@@ -100,5 +105,9 @@ export const assistantNote = Effect.fn("AssistantNote.forTurn")(function* (
     ? undefined
     : yield* directory.value.teamOf(assistant);
   const teams = team === undefined ? [] : yield* directory.value.teamsOf(assistant);
-  return assistantNoteFor(assistant, userText, team, teams);
+  const sandbox =
+    assistant.workspace === "sandbox"
+      ? Option.getOrNull(yield* directory.value.sandboxEnvironmentId)
+      : null;
+  return assistantNoteFor(assistant, userText, team, teams, sandbox);
 });

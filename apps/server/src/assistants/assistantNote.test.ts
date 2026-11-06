@@ -68,3 +68,14 @@ it("lists each team with its teammates and tells the leader and the members what
   assert.ok(!noLeader.includes("team's"));
   assert.ok(!assistantNoteFor(assistant, "hi").includes("Team "));
 });
+
+it("tells a sandboxed assistant where its work runs, or that the sandbox is not linked yet", () => {
+  const boxed = { ...assistant, workspace: "sandbox" } as const;
+  const linked = assistantNoteFor(boxed, "hi", undefined, [], "environment-sandbox");
+  assert.ok(linked.includes("environmentId environment-sandbox"));
+  assert.ok(linked.includes("On this Mac you only read"));
+  assert.ok(assistantNoteFor(boxed, "hi").includes("not linked yet"));
+  assert.ok(
+    !assistantNoteFor(assistant, "hi", undefined, [], "environment-sandbox").includes("sandbox"),
+  );
+});

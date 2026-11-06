@@ -26,6 +26,7 @@ const layer = Layer.mock(AssistantService.AssistantService)({
     assistant("ceo", {
       role: "CEO",
       askBeforeActing: true,
+      workspace: "sandbox",
       icon: "scout",
       mcpServers: [
         {
@@ -58,6 +59,7 @@ it.effect("list and read give each assistant its role, leader and reports by han
       handle: "ceo",
       role: "CEO",
       askBeforeActing: true,
+      workspace: "sandbox",
       icon: "scout",
       connectors: [{ name: "docs", transport: "http", enabled: true }],
       reportsTo: null,

@@ -372,6 +372,17 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
   if (!assistantColumns.some((column) => column.name === "ask_before_acting")) {
     yield* sql`ALTER TABLE assistants ADD COLUMN ask_before_acting INTEGER NOT NULL DEFAULT 0`;
   }
+  if (!assistantColumns.some((column) => column.name === "workspace")) {
+    yield* sql`ALTER TABLE assistants ADD COLUMN workspace TEXT NOT NULL DEFAULT 'host'`;
+  }
+  // One row at most: the sandbox container this environment linked to for assistants.
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS assistant_sandbox (
+      singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+      environment_id TEXT NOT NULL,
+      linked_at TEXT NOT NULL
+    )
+  `;
   if (!assistantColumns.some((column) => column.name === "icon")) {
     yield* sql`ALTER TABLE assistants ADD COLUMN icon TEXT`;
   }

@@ -70,6 +70,7 @@ export type EnvironmentSubscriptionRpcTag =
   | typeof WS_METHODS.notesSubscribe
   | typeof WS_METHODS.decisionsSubscribe
   | typeof WS_METHODS.assistantsSubscribe
+  | typeof WS_METHODS.assistantSandboxSubscribe
   | typeof WS_METHODS.imessageChannelSubscribeStatus
   | typeof WS_METHODS.keepAwakeSubscribeStatus
   | typeof WS_METHODS.heavyQueueSubscribe

@@ -9,7 +9,9 @@ import * as PullRequestWatchReactor from "./orchestration-v2/PullRequestWatchRea
 import * as DelegatedTaskQuestionReactor from "./orchestration-v2/DelegatedTaskQuestionReactor.ts";
 // Effect wraps this raw Node HTTP server after its startup and write-error guards attach.
 // @effect-diagnostics nodeBuiltinImport:off
+import * as NodeFS from "node:fs";
 import * as NodeHttp from "node:http";
+import * as NodePath from "node:path";
 
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -203,6 +205,8 @@ import * as UsageService from "./usage/UsageService.ts";
 import * as AssistantApprovalReactor from "./assistants/AssistantApprovalReactor.ts";
 import * as AssistantDirectory from "./assistants/AssistantDirectory.ts";
 import * as AutonomyService from "./autonomy/AutonomyService.ts";
+import * as AssistantSandbox from "./assistants/AssistantSandbox.ts";
+import * as AssistantSandboxControl from "./assistants/AssistantSandboxControl.ts";
 import * as AssistantSpend from "./assistants/AssistantSpend.ts";
 import * as ChannelBridge from "./channels/ChannelBridge.ts";
 import * as ChannelOutbox from "./channels/ChannelOutbox.ts";
@@ -846,9 +850,26 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
   ),
 );
 
+/** This server's own build: its entry file's folder once bundled, the package's `dist` when run from sources. */
+const sandboxDistDir = NodeFS.existsSync(NodePath.join(import.meta.dirname, "bin.mjs"))
+  ? import.meta.dirname
+  : NodePath.resolve(NodePath.join(import.meta.dirname, "..", "dist"));
+
 const layerRuntimeDependencies = layerRuntimeCoreDependencies.pipe(
   Layer.provideMerge(InstanceSpend.layer),
   Layer.provideMerge(AssistantSpend.layer),
+  // The sandbox container assistants may work in, linked to this environment like any peer.
+  Layer.provideMerge(
+    AssistantSandboxControl.layer.pipe(
+      Layer.provide(AssistantSandbox.layer),
+      Layer.provide(AssistantSandbox.bundleSourceLayer(sandboxDistDir)),
+      Layer.provide(ProcessRunner.layer),
+      Layer.provide(PeerLinks.layer),
+      // Layers memoize by reference, so these are the instances the rest of the server reads.
+      Layer.provide(layerServerEnvironment),
+      Layer.provide(ServerSecretStore.layer),
+    ),
+  ),
   Layer.provideMerge(layerUsage),
   Layer.provideMerge(layerBackground),
   Layer.provideMerge(layerResourceDiagnostics),

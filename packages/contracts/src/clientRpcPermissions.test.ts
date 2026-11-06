@@ -88,11 +88,15 @@ describe("assistant client guards", () => {
       WS_METHODS.assistantTeamsCreate,
       WS_METHODS.assistantTeamsUpdate,
       WS_METHODS.assistantTeamsDelete,
+      WS_METHODS.assistantSandboxStart,
+      WS_METHODS.assistantSandboxStop,
+      WS_METHODS.assistantSandboxRemove,
     ])
       expect(clientRpcRequiredScopes(method, {})).toEqual(["orchestration:operate"]);
     for (const method of [
       WS_METHODS.assistantsSubscribe,
       WS_METHODS.assistantsSpend,
+      WS_METHODS.assistantSandboxSubscribe,
       WS_METHODS.assistantTeamsActivity,
     ])
       expect(Object.hasOwn(CLIENT_GUARDED_RPC_SCOPES, method)).toBe(false);

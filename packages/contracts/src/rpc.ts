@@ -458,6 +458,11 @@ import {
   AssistantsSpendInput,
   AssistantsSubscribeInput,
   AssistantsUpdateInput,
+  AssistantSandboxRemoveInput,
+  AssistantSandboxStartInput,
+  AssistantSandboxStatus,
+  AssistantSandboxStopInput,
+  AssistantSandboxSubscribeInput,
 } from "./assistants.ts";
 import {
   AutonomyError,
@@ -736,6 +741,10 @@ export const WS_METHODS = {
   assistantsDelete: "assistants.delete",
   assistantsReset: "assistants.reset",
   assistantsSpend: "assistants.spend",
+  assistantSandboxSubscribe: "assistantSandbox.subscribe",
+  assistantSandboxStart: "assistantSandbox.start",
+  assistantSandboxStop: "assistantSandbox.stop",
+  assistantSandboxRemove: "assistantSandbox.remove",
   assistantTeamsCreate: "assistantTeams.create",
   assistantTeamsUpdate: "assistantTeams.update",
   assistantTeamsDelete: "assistantTeams.delete",
@@ -2258,6 +2267,27 @@ const WsAssistantsSpendRpc = Rpc.make(WS_METHODS.assistantsSpend, {
   success: AssistantSpend,
   error: AssistantRpcErrors,
 });
+const WsAssistantSandboxSubscribeRpc = Rpc.make(WS_METHODS.assistantSandboxSubscribe, {
+  payload: AssistantSandboxSubscribeInput,
+  success: AssistantSandboxStatus,
+  error: AssistantRpcErrors,
+  stream: true,
+});
+const WsAssistantSandboxStartRpc = Rpc.make(WS_METHODS.assistantSandboxStart, {
+  payload: AssistantSandboxStartInput,
+  success: AssistantSandboxStatus,
+  error: AssistantRpcErrors,
+});
+const WsAssistantSandboxStopRpc = Rpc.make(WS_METHODS.assistantSandboxStop, {
+  payload: AssistantSandboxStopInput,
+  success: AssistantSandboxStatus,
+  error: AssistantRpcErrors,
+});
+const WsAssistantSandboxRemoveRpc = Rpc.make(WS_METHODS.assistantSandboxRemove, {
+  payload: AssistantSandboxRemoveInput,
+  success: AssistantSandboxStatus,
+  error: AssistantRpcErrors,
+});
 const WsAssistantTeamsCreateRpc = Rpc.make(WS_METHODS.assistantTeamsCreate, {
   payload: AssistantTeamsCreateInput,
   success: AssistantTeam,
@@ -2707,6 +2737,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsAssistantsDeleteRpc,
   WsAssistantsResetRpc,
   WsAssistantsSpendRpc,
+  WsAssistantSandboxSubscribeRpc,
+  WsAssistantSandboxStartRpc,
+  WsAssistantSandboxStopRpc,
+  WsAssistantSandboxRemoveRpc,
   WsAssistantTeamsCreateRpc,
   WsAssistantTeamsUpdateRpc,
   WsAssistantTeamsDeleteRpc,

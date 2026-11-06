@@ -9,6 +9,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Option from "effect/Option";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
@@ -16,6 +17,7 @@ import * as Schema from "effect/Schema";
 import { McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
 
 import { OrchestratorProjectionError } from "../orchestration-v2/Orchestrator.ts";
+import { AssistantDirectory } from "../assistants/AssistantDirectory.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
@@ -399,6 +401,7 @@ it.effect("refuses a change when the calling thread cannot be read", () =>
 
 const box = EnvironmentId.make("environment-box");
 const here = EnvironmentId.make("environment");
+const other = EnvironmentId.make("environment-other");
 const linkedProbe = {
   ...probe,
   parameters: Schema.Struct({
@@ -504,4 +507,94 @@ it.effect("refuses a linked environment to a tool that acts as its calling threa
     ).pipe(Effect.scoped, Effect.exit);
     expect(Exit.isFailure(built) && Cause.hasDies(built.cause)).toBe(true);
   }),
+);
+
+const LaunchProbeToolkit = Toolkit.make(Tool.make("t3_thread_launch", linkedProbe));
+const launchServer = (sandbox: Option.Option<EnvironmentId>) =>
+  McpHttpServer.toolkitRegistration(
+    LaunchProbeToolkit,
+    McpToolAccess.toLayer(LaunchProbeToolkit, {
+      t3_thread_launch: McpToolAccess.startsThreads((input) => input, ranHere, "stamped"),
+    }),
+  ).pipe(
+    Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+    Layer.provideMerge(
+      Layer.mock(ThreadManagement.ThreadManagementService)({
+        getThreadShell: (threadId) => Effect.succeed(shells.get(threadId) ?? null),
+      }),
+    ),
+    Layer.provide(
+      Layer.mock(PeerForwarding.PeerForwarding)({
+        call: (_scope, tool, environmentId) =>
+          Effect.succeed({ ran: `${tool.name} in ${environmentId}` } as never),
+      }),
+    ),
+    Layer.provide(
+      Layer.mock(AssistantDirectory)({
+        // Only the full-access thread is a sandboxed assistant's; the supervised one is a host assistant.
+        forThread: (threadId) =>
+          Effect.succeed(
+            threadId === fullAccessThreadId || threadId === supervisedThreadId
+              ? Option.some({
+                  assistant: {
+                    workspace: threadId === fullAccessThreadId ? "sandbox" : "host",
+                  } as never,
+                  current: true,
+                })
+              : Option.none(),
+          ),
+        sandboxEnvironmentId: Effect.succeed(sandbox),
+      }),
+    ),
+  );
+
+it.effect.each([
+  [
+    "a sandboxed assistant launching on this Mac",
+    fullAccess,
+    {},
+    Option.some(box),
+    "invalid_request",
+  ],
+  [
+    "... naming this environment",
+    fullAccess,
+    { environmentId: here },
+    Option.some(box),
+    "invalid_request",
+  ],
+  [
+    "... naming another environment",
+    fullAccess,
+    { environmentId: other },
+    Option.some(box),
+    "invalid_request",
+  ],
+  [
+    "... naming its sandbox",
+    fullAccess,
+    { environmentId: box },
+    Option.some(box),
+    "t3_thread_launch in environment-box",
+  ],
+  [
+    "... with no sandbox linked yet",
+    fullAccess,
+    { environmentId: box },
+    Option.none(),
+    "invalid_request",
+  ],
+  ["a host assistant launching on this Mac", supervised, {}, Option.some(box), "here"],
+  [
+    "a host assistant launching elsewhere",
+    supervised,
+    { environmentId: other },
+    Option.some(box),
+    "t3_thread_launch in environment-other",
+  ],
+] as const)("sandbox: %s", ([, scope, args, sandbox, expected]) =>
+  call("t3_thread_launch", scope, args).pipe(
+    Effect.map((outcome) => expect(outcome).toBe(expected)),
+    Effect.provide(launchServer(sandbox)),
+  ),
 );
