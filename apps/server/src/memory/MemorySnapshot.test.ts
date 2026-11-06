@@ -662,7 +662,9 @@ it.effect("still selects project and user rules when ordinary memories fill ever
       selected!.items.map((i) => i.memoryId),
       [id(3000), id(3001)],
     );
-    assert.isTrue(selected!.renderedText.startsWith(Renderer.MEMORY_RULES_HEADING));
+    assert.isTrue(
+      selected!.renderedText.startsWith(`<standing_rules>\n${Renderer.MEMORY_RULES_HEADING}`),
+    );
   }).pipe(Effect.provide(f.live));
 });
 const survivorCases = [

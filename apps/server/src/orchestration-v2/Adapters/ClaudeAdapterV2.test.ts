@@ -94,6 +94,7 @@ import { WorktreeToolkit } from "../../mcp/toolkits/worktree/tools.ts";
 import { ThreadToolkit } from "../../mcp/toolkits/thread/tools.ts";
 import { OrchestratorToolkit } from "../../mcp/toolkits/orchestrator/tools.ts";
 import { DocsToolkit } from "../../mcp/toolkits/docs/tools.ts";
+import { HeavyToolkit } from "../../mcp/toolkits/heavy/tools.ts";
 import { HostToolkit } from "../../mcp/toolkits/host/tools.ts";
 import { ClaudeExecutableFileCheck } from "../../provider/Drivers/ClaudeExecutable.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
@@ -605,6 +606,7 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
       ...Object.values(HtmlToolkit.tools),
       ...Object.values(DocsToolkit.tools),
       ...Object.values(HostToolkit.tools),
+      ...Object.values(HeavyToolkit.tools),
     ]
       .filter((tool) => Context.get(tool.annotations, Tool.Readonly))
       .map((tool) => `mcp__t3-code__${tool.name}`)
