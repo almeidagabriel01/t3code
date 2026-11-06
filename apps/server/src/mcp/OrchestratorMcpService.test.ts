@@ -1888,6 +1888,70 @@ describe("OrchestratorMcpService provider resolution", () => {
     }),
   );
 
+  it.effect.each([
+    ["unbound from its conversation", { bindToCurrentThread: false }, true],
+    ["bound to its conversation", { bindToCurrentThread: true }, false],
+  ] as const)("a sandboxed assistant scheduling a task %s", ([, input, refused]) =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("assistant:boxed:1");
+      const shell = liveThreadShell(threadId);
+      const layerDependencies = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadShell: () => Effect.succeed(shell),
+          getThreadRecords: () => Effect.succeed(idleThreadProjection(shell)),
+        }),
+        ServerSettings.layerTest(),
+        providerRegistryLayer([]),
+        adapterRegistryLayer([]),
+        Layer.mock(ProjectService.ProjectService)({
+          getById: () =>
+            Effect.succeedSome({
+              id: shell.projectId,
+              workspaceRoot: "/work/app",
+              defaultModelSelection: null,
+            } as never),
+        }),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({
+          upsert: () => Effect.fail({ message: "stop here" } as never),
+        }),
+        Layer.mock(AssistantDirectory)({
+          forThread: () =>
+            Effect.succeedSome({ assistant: { workspace: "sandbox" } as never, current: true }),
+          sandboxEnvironmentId: Effect.succeedSome(EnvironmentId.make("environment-sandbox")),
+        }),
+      );
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const failure = yield* service
+          .scheduleTask(
+            {
+              environmentId: EnvironmentId.make("environment:scheduled"),
+              requestNamespace: "provider:boxed",
+              thread: {
+                threadId,
+                providerSessionId: "provider:boxed",
+                providerInstanceId: shell.providerInstanceId,
+              },
+              client: undefined,
+              capabilities: new Set(["orchestration"]),
+              issuedAt: 1,
+            },
+            {
+              prompt: "Check in later",
+              schedule: { type: "interval", everyMs: 3_600_000 },
+              ...input,
+            },
+          )
+          .pipe(Effect.flip);
+        assert.equal(failure.message.includes("environmentId=environment-sandbox"), refused);
+      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
+    }),
+  );
+
   it.effect("driver-only delegation skips an instance the project turned off", () =>
     Effect.gen(function* () {
       const altInstanceId = ProviderInstanceId.make("codex-alt");

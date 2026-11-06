@@ -20,7 +20,10 @@ import * as PeerLinks from "../peer/PeerLinks.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as AssistantSandbox from "./AssistantSandbox.ts";
 
-/** How often a client watching the status sees a container that was started or stopped outside T3. */
+/**
+ * How often a client watching the status sees a container that was started or stopped outside T3.
+ * ponytail: every subscriber polls Docker itself; share one polling fiber if several clients watch.
+ */
 const WATCH_INTERVAL = "3 seconds";
 const ANSWER_ATTEMPTS = 90;
 /** A link this close to expiring is made again, so work never starts on a token about to die. */
@@ -96,12 +99,19 @@ const make = Effect.gen(function* () {
     Effect.orElseSucceed(() => Option.none<EnvironmentId>()),
   );
 
-  /** The recorded sandbox when this environment still holds a link to it that is not about to expire. */
-  const liveLink = Effect.gen(function* () {
+  /**
+   * The recorded sandbox when this environment holds an unexpired link to it at the address it
+   * answers at now. Docker picks a new host port whenever the container restarts.
+   */
+  const liveLink = Effect.fn("AssistantSandboxControl.liveLink")(function* (
+    containerUrl: string | null,
+  ) {
     const recorded = yield* recordedEnvironment;
     if (Option.isNone(recorded)) return Option.none<EnvironmentId>();
     const link = yield* links.get(recorded.value).pipe(Effect.orElseSucceed(() => Option.none()));
-    return Option.isSome(link) && DateTime.isGreaterThan(link.value.expiresAt, yield* DateTime.now)
+    return Option.isSome(link) &&
+      DateTime.isGreaterThan(link.value.expiresAt, yield* DateTime.now) &&
+      (containerUrl === null || link.value.urls.includes(containerUrl))
       ? recorded
       : Option.none<EnvironmentId>();
   });
@@ -109,7 +119,7 @@ const make = Effect.gen(function* () {
   const status = Effect.gen(function* () {
     const current = yield* SubscriptionRef.get(progress);
     const container = yield* sandbox.status;
-    const linked = yield* liveLink;
+    const linked = yield* liveLink(container.url);
     const base = {
       step: current.step,
       error: current.error,
@@ -137,7 +147,7 @@ const make = Effect.gen(function* () {
               ...base,
               state: "failed",
               error:
-                "The sandbox is running but this Mac is not linked to it. Press Start to link it.",
+                "The sandbox is running but this Mac is not linked to it at its current address. Press Start to link it.",
             } satisfies AssistantSandboxStatus);
     }
   });

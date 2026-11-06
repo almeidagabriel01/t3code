@@ -196,13 +196,16 @@ folder inside it is what separates them.
      paths read the directory with `Effect.serviceOption`; `McpHttpServer` must be built with
      `AssistantDirectory` in context or the routing silently disappears.
   3. The assistant note says where its workspace is, with the environment id.
-     Other tools that start work (forks, scheduled tasks) are not routed; the read-only provider
-     policy is what keeps their work off this machine.
+     `schedule_task` is refused unless the task is bound to the assistant's own conversation, which
+     runs under the read-only policy. Known gap: thread forks and handoffs (`t3_thread_transfer`)
+     can still create a thread on this machine with its own runtime mode, because only the
+     assistant's own thread is capped.
 - **The link is the existing peer link.** [`AssistantSandboxControl`](../../apps/server/src/assistants/AssistantSandboxControl.ts)
   builds and starts the container in the background, mints a pairing credential inside it and calls
   `PeerLinks.link` with full access (the per-call limits narrow it). A live link at the container's
   current address is reused, so a second start links nothing; Docker picks a new host port on every
-  restart, so a moved address links again. The sandbox's environment id lives in the single-row
+  restart, so a moved address links again; until then the status is `failed`, not `running`,
+  because the old link points nowhere. Nothing relinks on server boot: the user presses Start. The sandbox's environment id lives in the single-row
   `assistant_sandbox` table, which `AssistantDirectory` reads for the refusals and the note.
   Starting turns on `linkedEnvironmentsEnabled` here if it is off, because `PeerLinks.link` and
   `/mcp` routing refuse without it; the status says whether it is on.

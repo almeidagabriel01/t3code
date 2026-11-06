@@ -241,6 +241,19 @@ it.effect("reports the container's own state, and a running one that is not link
   }).pipe(Effect.provide(layer));
 });
 
+it.effect("a container that came back at another address is not reported as linked", () => {
+  const { world, layer } = harness();
+  return Effect.gen(function* () {
+    const control = yield* Control.AssistantSandboxControl;
+    assert.strictEqual((yield* started).state, "running");
+    // Docker restarted the container on another port; nothing linked it again.
+    world.url = "http://127.0.0.1:50000";
+    const moved = yield* control.status;
+    assert.deepInclude(moved, { state: "failed", environmentId: null });
+    assert.include(moved.error ?? "", "current address");
+  }).pipe(Effect.provide(layer));
+});
+
 it.effect("stop keeps the link; remove with files forgets it, without files keeps it", () => {
   const { world, layer } = harness();
   return Effect.gen(function* () {

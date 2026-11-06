@@ -2025,6 +2025,8 @@ const make = Effect.gen(function* () {
             : "bindToCurrentThread binds to this thread, which belongs to a different project.",
         );
       }
+      // A task bound to this conversation runs in its read-only session; any other starts a thread here.
+      if (!bindToCurrentThread) yield* refuseOutsideSandbox(scope, undefined);
       const modelSelection =
         parent?.thread.modelSelection ?? (yield* projectDefaultModelSelection(project));
       const derivedTitle = input.prompt.split("\n")[0]?.trim() ?? "";
