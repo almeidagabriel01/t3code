@@ -17,6 +17,8 @@ import { usePullRequestDraftThread } from "./chat/usePullRequestDraftThread";
 import { useComposerSelection } from "./chat/useComposerSelection";
 import { useProjectCloneBanner } from "./chat/useProjectCloneBanner";
 import { useProviderSessionRestartBanner } from "./chat/useProviderSessionRestartBanner";
+import { useLearnedRuleBanner } from "./chat/useLearnedRuleBanner";
+import { isMemoryEnvironmentAvailable } from "./settings/MemorySettings.logic";
 import { useAttachmentPreviewHandoff } from "./chat/useAttachmentPreviewHandoff";
 import {
   applyOptimisticUserMessagesAction,
@@ -1251,6 +1253,14 @@ export default function ChatView(props: ChatViewProps) {
     sessions: serverProjection?.providerSessions,
     providers: providerStatuses,
     running: !latestRunSettled,
+  });
+  const learnedRuleBannerItem = useLearnedRuleBanner({
+    environmentId: activeThread?.environmentId,
+    threadId,
+    project: activeProject
+      ? { id: activeProject.id, repositoryIdentity: activeProject.repositoryIdentity }
+      : null,
+    memoryAvailable: isMemoryEnvironmentAvailable(serverConfig?.environment.capabilities),
   });
   const selectedProviderByThreadId = composerActiveProvider ?? null;
   const threadProvider =
@@ -2643,8 +2653,10 @@ export default function ChatView(props: ChatViewProps) {
     const limitRecoveryItems = limitRecoveryBanner === null ? [] : [limitRecoveryBanner];
     const usageLimitsItems = usageLimitsBanner === null ? [] : [usageLimitsBanner];
     const projectCloneItems = projectCloneBannerItem === null ? [] : [projectCloneBannerItem];
-    const providerSessionRestartItems =
-      providerSessionRestartBannerItem === null ? [] : [providerSessionRestartBannerItem];
+    const providerSessionRestartItems = [
+      ...(providerSessionRestartBannerItem === null ? [] : [providerSessionRestartBannerItem]),
+      ...(learnedRuleBannerItem === null ? [] : [learnedRuleBannerItem]),
+    ];
     if (!localCheckoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
       return [
         ...feedbackBannerItems,
@@ -3311,12 +3323,6 @@ export default function ChatView(props: ChatViewProps) {
     activeRightPanelSurface?.id ?? null,
     rightPanelOpen,
     false,
-  );
-  const mainFileContent = renderSurfaceContent(
-    activeMainFileSurface,
-    activeMainFileSurface?.id ?? null,
-    true,
-    true,
   );
   const panelToggleControlProps = {
     terminalAvailable: activeProject !== null,
@@ -4040,11 +4046,24 @@ export default function ChatView(props: ChatViewProps) {
               />
             </ThreadFindCanvas>
           </div>
-          {activeMainFileSurface ? (
-            <div className="absolute inset-0 z-20 flex min-h-0 min-w-0 flex-col bg-background">
-              {mainFileContent}
-            </div>
-          ) : null}
+          {/* Open file tabs stay mounted while hidden, so a page keeps its scroll and input. */}
+          {mainFileSurfaces.map((surface) => {
+            const active = surface.id === activeMainFileSurface?.id;
+            return (
+              <div
+                key={surface.id}
+                data-main-file-surface={surface.id}
+                inert={!active}
+                aria-hidden={!active || undefined}
+                className={cn(
+                  "absolute inset-0 z-20 flex min-h-0 min-w-0 flex-col bg-background",
+                  !active && "invisible",
+                )}
+              >
+                {renderSurfaceContent(surface, activeMainFileSurface?.id ?? null, active, true)}
+              </div>
+            );
+          })}
         </div>
 
         {embedded ? null : (

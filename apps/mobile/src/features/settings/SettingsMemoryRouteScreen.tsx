@@ -12,6 +12,7 @@ import {
   supportsMemoryProtocol,
   type EnvironmentId,
   type MemoryItem,
+  type MemoryPage,
   type MemoryScope,
   type MemorySpaceId,
   type MemorySyncStatus,
@@ -109,6 +110,9 @@ function formatMemoryTime(value: string | null) {
 function failureMessage(result: Parameters<typeof squashAtomCommandFailure>[0]) {
   const failure = squashAtomCommandFailure(result);
   return failure instanceof Error ? failure.message : "The request could not be completed.";
+}
+function rulePageItems(value: AsyncResult.AsyncResult<Option.Option<MemoryPage>, unknown>) {
+  return AsyncResult.isSuccess(value) ? (Option.getOrNull(value.value)?.items ?? []) : [];
 }
 const ItemSeparator = () => <View className="h-2" />;
 function Copy({ children }: { readonly children: React.ReactNode }) {
@@ -791,8 +795,6 @@ function ScopedMemoryBrowser({
   const projectRuleAtom = scope.kind === "project" ? ruleAtom(scope) : null;
   const userRulePage = useAtomValue(userRuleAtom);
   const projectRulePage = useAtomValue(projectRuleAtom ?? userRuleAtom);
-  const rulePageItems = (value: typeof userRulePage) =>
-    AsyncResult.isSuccess(value) ? (Option.getOrNull(value.value)?.items ?? []) : [];
   const rules = useMemo(
     () =>
       memoryRules([

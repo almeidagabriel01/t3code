@@ -16,6 +16,7 @@ import { useChildThreadInputs, useThreadReportedModelSelection } from "../../sta
 import { UsageLimitRecoveryCard } from "./UsageLimitRecoveryCard";
 import { ChatGptUsageLimitNotice } from "./ChatGptUsageLimitNotice";
 import { ProviderSessionRestartNotice } from "./ProviderSessionRestartNotice";
+import { LearnedRuleNotice } from "./LearnedRuleNotice";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import {
   effectiveSnoozed,
@@ -1648,6 +1649,10 @@ function ThreadDetailBody(
                       threadRef={props.selectedThreadDetailRef}
                       providers={props.serverConfig?.providers ?? []}
                       running={props.activeWorkStartedAt !== null}
+                    />
+                    <LearnedRuleNotice
+                      threadRef={props.selectedThreadDetailRef}
+                      projectId={props.selectedThread.projectId}
                     />
                     <ThreadGuestShareBar
                       threadRef={props.selectedThreadDetailRef}

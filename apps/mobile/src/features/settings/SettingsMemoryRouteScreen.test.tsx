@@ -27,8 +27,20 @@ import * as Effect from "effect/Effect";
 import { AsyncResult } from "effect/reactivity";
 import * as Schema from "effect/Schema";
 import { SettingsMemoryRouteScreen, MemoryEnvironmentEntry } from "./SettingsMemoryRouteScreen";
+import { LearnedRuleNotice } from "../threads/LearnedRuleNotice";
 
+vi.mock("../../state/preferences", async () => {
+  const { Atom, AsyncResult } = await import("effect/reactivity");
+  return {
+    mobilePreferencesAtom: Atom.make(AsyncResult.success({})),
+    updateMobilePreferencesAtom: Atom.writable(
+      () => null,
+      () => {},
+    ),
+  };
+});
 const encodeUpsert = Schema.encodeSync(MemoryUpsertInput);
+const encodeItem = Schema.encodeSync(MemoryItem);
 let h: NativeMemoryHarness;
 let view: ReturnType<typeof renderNative>;
 afterEach(async () => {
@@ -362,8 +374,8 @@ describe("native Memory with shared factory", () => {
   });
   it("lists a rule apart from memories and saves a new rule with the prefix", async () => {
     await mount();
-    const rule = Schema.decodeUnknownSync(MemoryItem)({
-      ...Schema.encodeSync(MemoryItem)(nativeItem),
+    const rule = decodeItem({
+      ...encodeItem(nativeItem),
       payload: {
         text: "Rule: never rebase",
         evidence: [{ origin: "user", messageIds: [] }],
@@ -393,6 +405,40 @@ describe("native Memory with shared factory", () => {
     await view.click("Save rule");
     expect(h.calls.find((call) => call.method === WS_METHODS.memoryUpsert)).toMatchObject({
       input: { scope: { kind: "user" }, payload: { text: "Rule: always run tests" } },
+    });
+  });
+  it("offers the rule learned in this thread and forgets it on Undo", async () => {
+    await mount();
+    const thread = { environmentId: nativeEnv, threadId: "thread-here" } as never;
+    const rule = (id: string, sourceThread: unknown) => {
+      if (nativeItem.status !== "active") throw new Error("Expected active fixture");
+      return decodeItem({
+        ...encodeItem(nativeItem),
+        memoryId: id,
+        revision: { ...nativeItem.revision, memoryId: id },
+        payload: {
+          text: "Rule: never rebase",
+          evidence: [{ origin: "user", sourceThread, messageIds: [] }],
+          derivedFromMemoryRevisions: [],
+        },
+      });
+    };
+    h.responses.set(WS_METHODS.memoryList, () => ({
+      items: [
+        rule(nativeId, thread),
+        rule("00000000-0000-4000-8000-000000000009", { ...(thread as object), threadId: "other" }),
+      ],
+      nextCursor: null,
+      projectionWatermark: 1,
+    }));
+    h.responses.set(WS_METHODS.memoryForget, (input) => receipt(input));
+    await view.unmount();
+    view = renderNative(h, <LearnedRuleNotice threadRef={thread} projectId={null} />);
+    await view.render();
+    expect(view.container.textContent).toContain("Learned a rule: never rebase");
+    await view.click("Undo");
+    expect(h.calls.find((call) => call.method === WS_METHODS.memoryForget)).toMatchObject({
+      input: { memorySpaceId: nativeSpace, memoryId: nativeId },
     });
   });
   it("forgets the exact memory after confirmation and drops invalidated bodies", async () => {

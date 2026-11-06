@@ -19,6 +19,8 @@ import {
 import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
 const encodeUpsert = Schema.encodeSync(MemoryUpsertInput);
+const decodeItem = Schema.decodeUnknownSync(MemoryItem);
+const encodeItem = Schema.encodeSync(MemoryItem);
 const decodeMemoryRpcError = Schema.decodeSync(MemoryRpcError);
 const state = vi.hoisted(() => ({
   requests: [] as { label: string; input: unknown }[],
@@ -2336,8 +2338,8 @@ it("shows the original empty list without inventing unknown coverage", async () 
 });
 it("lists rules apart from memories, forgets one after confirmation and saves a new one with the prefix", async () => {
   await using _setup = await setup();
-  const rule = Schema.decodeSync(MemoryItem)({
-    ...Schema.encodeSync(MemoryItem)(activeItem),
+  const rule = decodeItem({
+    ...encodeItem(activeItem),
     payload: {
       text: "Rule: never rebase",
       evidence: [{ origin: "user", messageIds: [] }],

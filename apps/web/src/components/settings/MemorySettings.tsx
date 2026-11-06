@@ -56,7 +56,7 @@ import {
 } from "@t3tools/client-runtime/memory-presentation";
 import { useNavigate } from "@tanstack/react-router";
 import * as Option from "effect/Option";
-import { useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { useContext, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { useEnvironmentSettings } from "../../hooks/useSettings";
 import { useEnvironment, useEnvironments } from "../../state/environments";
 import { resolveMemoryModelSelection } from "@t3tools/shared/serverSettings";
@@ -528,7 +528,7 @@ function ScopedMemoryRecords({
         }),
   );
   const value = page.data ? Option.getOrNull(page.data) : null;
-  const items = useMemo(() => withoutMemoryRules(value?.items ?? []), [value]);
+  const items = withoutMemoryRules(value?.items ?? []);
   const coverage = value?.indexCoverage
     ? presentMemoryCoverage(value.indexCoverage, items.length)
     : null;
@@ -788,10 +788,7 @@ function useMemoryRuleQueries(
     (page.data ? Option.getOrNull(page.data)?.items : null) ?? NO_RULE_ITEMS;
   const projectItems = pageItems(projectPage);
   const userItems = pageItems(userPage);
-  const rules = useMemo(
-    () => memoryRules([...projectItems, ...userItems]),
-    [projectItems, userItems],
-  );
+  const rules = memoryRules([...projectItems, ...userItems]);
   const loaded = userPage.data !== null && (scope.kind !== "project" || projectPage.data !== null);
   return {
     rules,
@@ -857,10 +854,12 @@ function MemoryRules({
                 onValueChange={(value) => setNewScope(value === "project" ? "project" : "user")}
               >
                 {(["project", "user"] as const).map((kind) => (
-                  <Label key={kind} className="cursor-pointer gap-2">
+                  <div key={kind} className="flex items-center gap-2">
                     <Radio value={kind} id={`${radioId}-${kind}`} />
-                    {kind === "project" ? "This project" : "All projects"}
-                  </Label>
+                    <Label htmlFor={`${radioId}-${kind}`}>
+                      {kind === "project" ? "This project" : "All projects"}
+                    </Label>
+                  </div>
                 ))}
               </RadioGroup>
             ) : null}
@@ -1570,7 +1569,7 @@ function MemoryForgetRequest({
 
 const DEFAULT_MEMORY_SCOPE = { kind: "user" } as const;
 
-function MemoryEditor({
+export function MemoryEditor({
   environmentId,
   memorySpaceId,
   item,

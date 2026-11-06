@@ -66,7 +66,7 @@ export function memoryScopeLabel(scope: MemoryScope) {
 export type MemoryRuleItem = Extract<MemoryItem, { status: "active" }>;
 
 /** An active user or project memory whose text carries the rule marker. */
-export function isMemoryRuleItem(item: MemoryItem): item is MemoryRuleItem {
+function isMemoryRuleItem(item: MemoryItem): item is MemoryRuleItem {
   return (
     item.status === "active" &&
     (item.scope.kind === "user" || item.scope.kind === "project") &&
@@ -78,7 +78,7 @@ export function isMemoryRuleItem(item: MemoryItem): item is MemoryRuleItem {
 export function memoryRules(items: readonly MemoryItem[]): MemoryRuleItem[] {
   return items
     .filter(isMemoryRuleItem)
-    .toSorted((a, b) => b.revision.createdAtUtc.localeCompare(a.revision.createdAtUtc));
+    .sort((a, b) => b.revision.createdAtUtc.localeCompare(a.revision.createdAtUtc));
 }
 
 export function withoutMemoryRules(items: readonly MemoryItem[]): MemoryItem[] {

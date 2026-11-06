@@ -109,6 +109,8 @@ export interface Preferences {
   readonly connectOnboardingOptOutAccounts?: ReadonlyArray<string>;
   readonly collapsedProjectGroups?: readonly string[];
   readonly dismissedDatabaseStorageNotices?: readonly string[];
+  /** Rules whose "learned" notice the user has handled, by memory id. */
+  readonly acknowledgedMemoryRules?: readonly string[];
   /** Hardware Return behavior is iOS-only. */
   readonly composerEnterBehavior?: ComposerEnterBehavior;
   readonly followUpBehavior?: FollowUpBehavior;
@@ -198,6 +200,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     connectOnboardingOptOutAccounts?: ReadonlyArray<string>;
     collapsedProjectGroups?: readonly string[];
     dismissedDatabaseStorageNotices?: readonly string[];
+    acknowledgedMemoryRules?: readonly string[];
     composerEnterBehavior?: ComposerEnterBehavior;
     followUpBehavior?: FollowUpBehavior;
     microphones?: ReadonlyArray<MicrophoneEntry>;
@@ -306,6 +309,11 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (Array.isArray(parsed.dismissedDatabaseStorageNotices)) {
     preferences.dismissedDatabaseStorageNotices = parsed.dismissedDatabaseStorageNotices.filter(
+      (value): value is string => typeof value === "string",
+    );
+  }
+  if (Array.isArray(parsed.acknowledgedMemoryRules)) {
+    preferences.acknowledgedMemoryRules = parsed.acknowledgedMemoryRules.filter(
       (value): value is string => typeof value === "string",
     );
   }
