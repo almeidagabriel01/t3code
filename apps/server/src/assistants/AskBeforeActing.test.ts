@@ -62,7 +62,7 @@ it.effect("asks in the assistant's own conversation, once, and refuses meanwhile
       expect(decision).toMatchObject({
         fromThreadId: sender,
         title: "Sam wants to send a message to Fix the build",
-        context: "deploy it",
+        context: "To: Fix the build\n\ndeploy it",
         recommended: "deny",
       });
     }),

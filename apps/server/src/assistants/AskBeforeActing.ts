@@ -42,7 +42,8 @@ export const installLayer = Layer.effectDiscard(
           threadTitle: input.assistant.name,
           clientRequestId: requestKey(input, attempt),
           title: clip(`${input.assistant.name} wants to send a message to ${targetTitle}`, 120),
-          context: clip(input.text, DECISION_CONTEXT_MAX_LENGTH),
+          // The card clips the title, so the body names where the message goes.
+          context: clip(`To: ${targetTitle}\n\n${input.text}`, DECISION_CONTEXT_MAX_LENGTH),
           options: [
             { id: "accept", label: "Approve", consequence: "The message is sent once" },
             { id: "deny", label: "Deny", consequence: "Nothing is sent" },
