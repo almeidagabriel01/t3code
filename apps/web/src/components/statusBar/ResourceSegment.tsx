@@ -359,7 +359,8 @@ function ProjectGroup({
 }: {
   readonly title: string;
   readonly count: number;
-  readonly usage: ResourceUsage | null;
+  /** Omitted for groups whose rows have no usage, so the header shows no empty metrics. */
+  readonly usage?: ResourceUsage | null;
   readonly children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(true);
@@ -374,7 +375,7 @@ function ProjectGroup({
             {title}
             <span className="font-normal normal-case"> ({count})</span>
           </span>
-          <Metrics usage={usage} />
+          {usage === undefined ? null : <Metrics usage={usage} />}
           <span className={GUTTER} aria-hidden />
         </CollapsibleTrigger>
         <CollapsiblePanel animate={false}>
@@ -454,7 +455,7 @@ export function HeavyQueueGroup({
   if (entries.length === 0) return null;
   const rows = buildHeavyQueueRows(entries, threadTitle);
   return (
-    <ProjectGroup title="Heavy work queue" count={rows.length} usage={null}>
+    <ProjectGroup title="Heavy work queue" count={rows.length}>
       {rows.map((row) => {
         const Icon = row.running ? PlayIcon : HourglassIcon;
         return (
@@ -480,13 +481,6 @@ export function HeavyQueueGroup({
               </Tooltip>
               <div className="truncate text-3xs text-muted-foreground">{row.subtitle}</div>
             </div>
-            <span className="shrink-0 text-2xs tabular-nums text-muted-foreground">
-              {row.startedAt === null ? (
-                ordinal(row.position ?? 0)
-              ) : (
-                <RunningElapsed startedAt={row.startedAt} />
-              )}
-            </span>
             {row.running ? null : (
               <span className="flex shrink-0 items-center gap-0.5">
                 {row.canPromote ? (
@@ -525,6 +519,13 @@ export function HeavyQueueGroup({
                 </Tooltip>
               </span>
             )}
+            <span className="shrink-0 text-2xs tabular-nums text-muted-foreground">
+              {row.startedAt === null ? (
+                ordinal(row.position ?? 0)
+              ) : (
+                <RunningElapsed startedAt={row.startedAt} />
+              )}
+            </span>
           </div>
         );
       })}
@@ -598,10 +599,6 @@ export function EnvironmentSection({
         )}
         <HostTotals environmentId={environmentId} />
         <ResourceHistory environmentId={environmentId} />
-        <HeavyQueueGroup
-          environmentId={environmentId}
-          threadTitle={(threadId) => infoOf(threadId)?.title}
-        />
         {tree.projects.length === 0 && tree.devices.length === 0 ? (
           <div className="px-3 py-4 text-center text-xs text-muted-foreground">
             Nothing running right now
@@ -661,6 +658,10 @@ export function EnvironmentSection({
         {tree.devices.length === 0 ? null : (
           <DeviceGroup environmentId={environmentId} devices={tree.devices} />
         )}
+        <HeavyQueueGroup
+          environmentId={environmentId}
+          threadTitle={(threadId) => infoOf(threadId)?.title}
+        />
         {app === null || appTotal === null ? null : (
           <div className="border-t border-border/50">
             <Collapsible open={appOpen} onOpenChange={setAppOpen}>
