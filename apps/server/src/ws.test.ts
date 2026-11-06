@@ -11,6 +11,13 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   WS_METHODS,
+  WsAssistantSandboxPairingRpc,
+  WsAssistantSandboxRemoveRpc,
+  WsAssistantSandboxStartRpc,
+  WsAssistantSandboxStopRpc,
+  WsAssistantSandboxSubscribeRpc,
+  WsAssistantsCreateRpc,
+  WsAssistantsUpdateRpc,
   WsServerRefreshProvidersRpc,
   WsSubscribeServerConfigRpc,
   type OrchestrationV2StoredEvent,
@@ -1378,4 +1385,131 @@ it.effect("thread resume at its own high-water below the pruned boundary skips t
     // A snapshot load dies with "snapshot", so success means the resume replayed nothing.
     assert.isTrue(Exit.isSuccess(exit));
   }).pipe(Effect.scoped, Effect.provide(ReplayTestLayer)),
+);
+
+it.effect("the sandbox RPCs reach the control service, and choosing the sandbox starts it", () =>
+  Effect.gen(function* () {
+    const responses = yield* Queue.unbounded<unknown>();
+    const calls: string[] = [];
+    const status = {
+      state: "running",
+      step: null,
+      error: null,
+      environmentId: null,
+      url: null,
+      linkedEnvironmentsEnabled: true,
+    } as const;
+    const assistant = { id: "a1" } as never;
+    const services = Layer.mergeAll(
+      layerUnusedConfigRpcServices,
+      Layer.mock(ExternalLauncher.ExternalLauncher)({}),
+      Layer.mock(ProviderRegistry.ProviderRegistry)({}),
+      Layer.mock(UsageLimitSources.UsageLimitSources)({}),
+      Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
+      Layer.mock(DirectEndpoints.DirectEndpoints)({}),
+      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: process.cwd() }),
+      Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
+      Layer.mock(ServerEnvironment.ServerEnvironment)({}),
+      Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
+      Layer.mock(AssistantSandboxControl.AssistantSandboxControl)({
+        streamStatus: Stream.make(status),
+        start: Effect.sync(() => (calls.push("start"), status)),
+        stop: Effect.sync(() => (calls.push("stop"), status)),
+        pairingUrl: Effect.succeed({ pairingUrl: "http://127.0.0.1:1/pair#token=x" }),
+        remove: (input) => Effect.sync(() => (calls.push(`remove:${input.deleteVolumes}`), status)),
+      }),
+      Layer.mock(Assistants.AssistantService)({
+        create: () => Effect.succeed(assistant),
+        update: () => Effect.succeed(assistant),
+      }),
+    );
+    const server = yield* RpcServer.makeNoSerialization(
+      RpcGroup.make(
+        WsAssistantSandboxSubscribeRpc,
+        WsAssistantSandboxStartRpc,
+        WsAssistantSandboxStopRpc,
+        WsAssistantSandboxRemoveRpc,
+        WsAssistantSandboxPairingRpc,
+        WsAssistantsCreateRpc,
+        WsAssistantsUpdateRpc,
+      ),
+      {
+        ...WS_RPC_SERVER_OPTIONS,
+        onFromServer: (response) =>
+          response._tag === "Chunk"
+            ? Effect.forEach(response.values, (value) => Queue.offer(responses, value), {
+                discard: true,
+              })
+            : response._tag === "Exit" && response.exit._tag === "Success"
+              ? Queue.offer(responses, response.exit.value)
+              : Effect.void,
+      },
+    ).pipe(
+      Effect.provide(
+        layerWsRpc(
+          {
+            sessionId: AuthSessionId.make("sandbox-test"),
+            subject: "sandbox-test",
+            method: "browser-session-cookie",
+            scopes: [],
+          },
+          {},
+          yield* ServerBrowser.ServerBrowser,
+          () => Effect.void,
+          { secretReferences: true },
+        ).pipe(Layer.provide(services)),
+      ),
+    );
+    const call = (
+      tag: (typeof WS_METHODS)[
+        | "assistantSandboxSubscribe"
+        | "assistantSandboxStart"
+        | "assistantSandboxStop"
+        | "assistantSandboxRemove"
+        | "assistantSandboxPairing"
+        | "assistantsCreate"
+        | "assistantsUpdate"],
+      payload: object,
+    ) =>
+      server.write(0, {
+        _tag: "Request",
+        id: RpcMessage.RequestId(`${tag}:${calls.length}`),
+        tag,
+        payload,
+        headers: Headers.empty,
+      });
+    yield* call(WS_METHODS.assistantSandboxSubscribe, {});
+    assert.deepInclude((yield* Queue.take(responses)) as object, { state: "running" });
+    yield* call(WS_METHODS.assistantSandboxStart, {});
+    yield* Queue.take(responses);
+    yield* call(WS_METHODS.assistantSandboxStop, {});
+    yield* Queue.take(responses);
+    yield* call(WS_METHODS.assistantSandboxRemove, { deleteVolumes: true });
+    yield* Queue.take(responses);
+    yield* call(WS_METHODS.assistantSandboxPairing, {});
+    assert.deepInclude((yield* Queue.take(responses)) as object, {
+      pairingUrl: "http://127.0.0.1:1/pair#token=x",
+    });
+    assert.deepStrictEqual(calls, ["start", "stop", "remove:true"]);
+    const base = { name: "Box", projectId: "p1", instructions: "", toolAccess: "full" };
+    yield* call(WS_METHODS.assistantsCreate, { ...base, workspace: "sandbox" });
+    yield* Queue.take(responses);
+    yield* call(WS_METHODS.assistantsUpdate, { assistantId: "a1", workspace: "sandbox" });
+    yield* Queue.take(responses);
+    assert.strictEqual(calls.filter((entry) => entry === "start").length, 3);
+    yield* call(WS_METHODS.assistantsCreate, { ...base, name: "Plain" });
+    yield* Queue.take(responses);
+    yield* call(WS_METHODS.assistantsUpdate, { assistantId: "a1", role: "QA" });
+    yield* Queue.take(responses);
+    assert.strictEqual(calls.filter((entry) => entry === "start").length, 3);
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.fresh(layerConfigSources),
+        Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
+        Layer.mock(ServerBrowser.ServerBrowser)({}),
+      ),
+    ),
+    Effect.scoped,
+  ),
 );

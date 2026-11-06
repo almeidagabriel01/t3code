@@ -2245,12 +2245,12 @@ const WsAssistantsSubscribeRpc = Rpc.make(WS_METHODS.assistantsSubscribe, {
   error: AssistantRpcErrors,
   stream: true,
 });
-const WsAssistantsCreateRpc = Rpc.make(WS_METHODS.assistantsCreate, {
+export const WsAssistantsCreateRpc = Rpc.make(WS_METHODS.assistantsCreate, {
   payload: AssistantsCreateInput,
   success: Assistant,
   error: AssistantRpcErrors,
 });
-const WsAssistantsUpdateRpc = Rpc.make(WS_METHODS.assistantsUpdate, {
+export const WsAssistantsUpdateRpc = Rpc.make(WS_METHODS.assistantsUpdate, {
   payload: AssistantsUpdateInput,
   success: Assistant,
   error: AssistantRpcErrors,
@@ -2270,28 +2270,28 @@ const WsAssistantsSpendRpc = Rpc.make(WS_METHODS.assistantsSpend, {
   success: AssistantSpend,
   error: AssistantRpcErrors,
 });
-const WsAssistantSandboxSubscribeRpc = Rpc.make(WS_METHODS.assistantSandboxSubscribe, {
+export const WsAssistantSandboxSubscribeRpc = Rpc.make(WS_METHODS.assistantSandboxSubscribe, {
   payload: AssistantSandboxSubscribeInput,
   success: AssistantSandboxStatus,
   error: AssistantRpcErrors,
   stream: true,
 });
-const WsAssistantSandboxStartRpc = Rpc.make(WS_METHODS.assistantSandboxStart, {
+export const WsAssistantSandboxStartRpc = Rpc.make(WS_METHODS.assistantSandboxStart, {
   payload: AssistantSandboxStartInput,
   success: AssistantSandboxStatus,
   error: AssistantRpcErrors,
 });
-const WsAssistantSandboxStopRpc = Rpc.make(WS_METHODS.assistantSandboxStop, {
+export const WsAssistantSandboxStopRpc = Rpc.make(WS_METHODS.assistantSandboxStop, {
   payload: AssistantSandboxStopInput,
   success: AssistantSandboxStatus,
   error: AssistantRpcErrors,
 });
-const WsAssistantSandboxRemoveRpc = Rpc.make(WS_METHODS.assistantSandboxRemove, {
+export const WsAssistantSandboxRemoveRpc = Rpc.make(WS_METHODS.assistantSandboxRemove, {
   payload: AssistantSandboxRemoveInput,
   success: AssistantSandboxStatus,
   error: AssistantRpcErrors,
 });
-const WsAssistantSandboxPairingRpc = Rpc.make(WS_METHODS.assistantSandboxPairing, {
+export const WsAssistantSandboxPairingRpc = Rpc.make(WS_METHODS.assistantSandboxPairing, {
   payload: AssistantSandboxPairingInput,
   success: AssistantSandboxPairing,
   error: AssistantRpcErrors,
