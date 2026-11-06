@@ -22,6 +22,7 @@ import {
   memoryEvidenceSources,
   memoryResultFromModelOutput,
   MemoryPromotingModelAnswer,
+  MemoryRulesModelAnswer,
   type MemorySummaryModelOutput,
 } from "./memoryGenerationPrompts.ts";
 import { unsupportedMemoryRunner, type MemoryRunner } from "./memoryGenerationRunner.ts";
@@ -66,6 +67,7 @@ const sameMemorySelection = (
 const decodeMemorySummaryExecution = Schema.decodeUnknownEffect(GenerateMemorySummaryOutcome);
 const decodePromotionCandidate = Schema.decodeUnknownOption(GenerateMemorySummaryResult);
 const decodePromotingAnswer = Schema.decodeUnknownOption(MemoryPromotingModelAnswer);
+const decodeRulesAnswer = Schema.decodeUnknownOption(MemoryRulesModelAnswer);
 const decodeMemoryConflictExecution = Schema.decodeUnknownEffect(
   ResolveMemoryConflictExecutionResult,
 );
@@ -190,10 +192,25 @@ export function fromRunner(
           : null;
       };
       const promoting = input.promote ? decodePromotingAnswer(answer) : Option.none();
+      // A rule must cite only messages the user typed, and never lands in a thread scope.
+      const typed = new Set<string>(input.rules?.userTypedMessageIds);
+      const rules = input.rules
+        ? Option.map(decodeRulesAnswer(answer), ({ rules }) =>
+            rules.flatMap(({ scope, ...rule }) =>
+              (scope === "project" || scope === "user") &&
+              rule.text.trim() !== "" &&
+              rule.messageIds.length > 0 &&
+              rule.messageIds.every((id) => typed.has(id))
+                ? [{ ...rule, scope }]
+                : [],
+            ),
+          )
+        : Option.none();
       const result = yield* decodeMemorySummaryExecution(
         {
           execution: generated.execution,
           result: candidate(answer.summary),
+          ...(Option.isSome(rules) ? { rules: rules.value } : {}),
           ...(Option.isSome(promoting)
             ? {
                 promotions: {

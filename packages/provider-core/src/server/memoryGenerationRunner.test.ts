@@ -25,7 +25,7 @@ const result = { text: "Synthetic result", assertionKind: "inference" as const, 
 
 import { withMemoryExecution, type MemorySelectedRunner } from "./memoryGenerationRunner.ts";
 import { buildMemorySummaryPrompt } from "./memoryGenerationPrompts.ts";
-import { outputDecodeOptions } from "./textGenerationOperations.ts";
+import { fromRunner, outputDecodeOptions } from "./textGenerationOperations.ts";
 describe("memory generation runner", () => {
   it.effect("binds requested instance environment and effective selection before returning", () =>
     Effect.gen(function* () {
@@ -162,6 +162,64 @@ describe("memory generation runner", () => {
       for (const extra of [{ attachments: [] }, { investigate: { timeoutMs: 10 } }])
         expect((yield* Effect.exit(runner({ ...request, ...extra })))._tag).toBe("Failure");
       expect(calls).toBe(0);
+    }),
+  );
+  it.effect("keeps only rules that cite user-typed messages in project or user scope", () =>
+    Effect.gen(function* () {
+      const rule = (scope: string, messageIds: string[], text = "Never push to main.") => ({
+        scope,
+        text,
+        messageIds,
+        supersedes: null,
+      });
+      const selected: MemorySelectedRunner = (request) =>
+        // oxlint-disable-next-line t3code/no-inline-schema-compile -- the schema is the request's own.
+        Schema.decodeEffect(request.outputSchema)(
+          {
+            summary: null,
+            rules: [
+              rule("project", ["m1"]),
+              rule("user", ["m1"], "Answer in Portuguese."),
+              rule("thread", ["m1"], "Only this thread."),
+              rule("project", ["m2"], "Cites an agent message."),
+              rule("user", [], "Cites nothing."),
+            ],
+          },
+          outputDecodeOptions(request.operation),
+        ).pipe(
+          Effect.map((result) => ({ result, effectiveModel: "effective" })),
+          Effect.mapError(
+            (cause) =>
+              new M.TextGenerationError({
+                operation: request.operation,
+                detail: "Fixture decode failed.",
+                cause,
+              }),
+          ),
+        );
+      const generation = fromRunner("fixture", () => Effect.die("unused"), {
+        memoryRunner: withMemoryExecution(
+          {
+            providerInstanceId: selection.instanceId,
+            environmentId: M.EnvironmentId.make("owner"),
+          },
+          M.ProviderDriverKind.make("codex"),
+          selected,
+        ),
+      });
+      const input = M.GenerateMemorySummaryInput.make({
+        ...summary,
+        messages: [
+          ...summary.messages,
+          { messageId: M.MessageId.make("m2"), text: "Agent", completed: true },
+        ],
+        rules: { userTypedMessageIds: [M.MessageId.make("m1")], existing: [] },
+      });
+      const outcome = yield* generation.generateMemorySummary!(input);
+      expect(outcome.rules?.map((r) => r.text)).toEqual([
+        "Never push to main.",
+        "Answer in Portuguese.",
+      ]);
     }),
   );
 });

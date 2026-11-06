@@ -88,6 +88,17 @@ export const MemoryUtcTimestamp = Schema.String.check(
   ),
 );
 export const MEMORY_PROTOCOL_VERSION = 1;
+/**
+ * A rule is a memory whose text starts with this prefix. The marker lives in the text, not in a
+ * synced schema, so older peers keep syncing; only trusted writers may produce it.
+ */
+export const MEMORY_RULE_PREFIX = "Rule: ";
+export const isMemoryRule = (text: string) => text.startsWith(MEMORY_RULE_PREFIX);
+export const stripMemoryRulePrefix = (text: string) => {
+  let rest = text;
+  while (isMemoryRule(rest)) rest = rest.slice(MEMORY_RULE_PREFIX.length);
+  return rest;
+};
 export const MEMORY_CONTEXT_MAX_CHARS = 6000;
 export const MEMORY_CONTEXT_MAX_UTF8_BYTES = 24 * 1024;
 export const MEMORY_CONTEXT_OUTER_FRAME = "<external_memory></external_memory>";
@@ -1224,7 +1235,7 @@ export const MemoryCausalBoundary = struct({
 export type MemoryCausalBoundary = typeof MemoryCausalBoundary.Type;
 
 export const MemoryContextSnapshot = struct({
-  protocolVersion: Schema.Literals([1, 2]),
+  protocolVersion: Schema.Literals([1, 2, 3]),
   memorySpaceId: MemorySpaceId,
   projectionWatermark: NonNegativeInt,
   items: array(
@@ -2135,6 +2146,17 @@ export const GenerateMemorySummaryInput = struct({
   modelSelection: MemoryModelSelection,
   /** Also ask for durable facts that hold beyond this thread (consolidation only). */
   promote: Schema.optionalKey(Schema.Boolean),
+  /** Also ask for the user's standing rules; present only for hub spaces. */
+  rules: Schema.optionalKey(
+    struct({
+      /** The messages the user typed themselves: the only ones a rule may cite. */
+      userTypedMessageIds: array(MessageId),
+      existing: array(
+        struct({ memoryId: MemoryId, scope: Schema.Literals(["project", "user"]), text }),
+        50,
+      ),
+    }),
+  ),
 }).check(
   Schema.makeFilter((v) => jsonBytes(v) <= 262144 && unique(v.messages.map((m) => m.messageId))),
 );

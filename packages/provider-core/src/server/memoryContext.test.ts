@@ -2,6 +2,8 @@ import { describe, expect, it } from "vite-plus/test";
 import * as M from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import {
+  MEMORY_DATA_BOUNDARY_REMINDER,
+  MEMORY_RULES_HEADING,
   memoryContextFits,
   memoryContextText,
   packMemoryContext,
@@ -182,5 +184,51 @@ source: {&quot;environmentId&quot;:&quot;env&lt;&amp;\&quot;&apos;&quot;,&quot;s
         ),
       }),
     ).toThrow();
+  });
+  it("renders standing rules first from version 3, leaves older versions and rule-free output alone", () => {
+    const rule = item(1, `${M.MEMORY_RULE_PREFIX}never touch <prod>`);
+    const olderRule = item(3, `${M.MEMORY_RULE_PREFIX}always run tests`);
+    const fact = item(2, "ordinary fact");
+    const withRules = packMemoryContext(input([rule, fact, olderRule]))!;
+    const text = withRules.renderedText;
+    expect(withRules.protocolVersion).toBe(3);
+    expect(text.startsWith(MEMORY_RULES_HEADING)).toBe(true);
+    expect(text).toContain("never touch &lt;prod&gt;");
+    expect(text).not.toContain("Rule: ");
+    // Oldest first so a later rule overrides an earlier one; reminder precedes the memories.
+    expect(text.indexOf("always run tests")).toBeLessThan(text.indexOf("never touch"));
+    expect(text.indexOf("never touch")).toBeLessThan(text.indexOf(MEMORY_DATA_BOUNDARY_REMINDER));
+    expect(text.indexOf(MEMORY_DATA_BOUNDARY_REMINDER)).toBeLessThan(text.indexOf("ordinary fact"));
+    expect(validateMemoryContext(withRules)).toEqual(withRules);
+    // Versions 1 and 2 keep the old bytes, rule text included.
+    expect(renderMemoryContext([rule, fact], false, 2)).not.toContain(MEMORY_RULES_HEADING);
+    expect(renderMemoryContext([rule, fact], false, 2)).toContain("Rule: never touch");
+    expect(renderMemoryContext([rule], false, 1)).toBe(renderMemoryContext([rule], false, 2));
+    const plain = [fact, item(4, "another")];
+    expect(renderMemoryContext(plain, true, 3)).toBe(renderMemoryContext(plain, true, 2));
+    // A thread-scoped item is never a rule, whatever its text says.
+    const threadScoped = {
+      ...rule,
+      scope: { kind: "thread" as const, thread: { environmentId: "fixture", threadId: "t" } },
+    } as unknown as M.MemoryContextCandidate;
+    expect(renderMemoryContext([threadScoped])).not.toContain(MEMORY_RULES_HEADING);
+  });
+  it("keeps rules over ordinary memories when the budget is short", () => {
+    const rules = Array.from({ length: 3 }, (_, n) =>
+      item(10 + n, `${M.MEMORY_RULE_PREFIX}${String(n).repeat(1500)}`),
+    );
+    const big = Array.from({ length: 4 }, (_, n) => item(20 + n, "f".repeat(1500)));
+    const snapshot = packMemoryContext(input([...big, ...rules]))!;
+    expect(snapshot.items.slice(0, 3).map((v) => v.memoryId)).toEqual(rules.map((v) => v.memoryId));
+    expect(snapshot.items.length).toBeLessThan(7);
+    // Rules alone over budget: newest (first) kept, the rest dropped, hasMore noticed.
+    const tooMany = Array.from({ length: 5 }, (_, n) =>
+      item(30 + n, `${M.MEMORY_RULE_PREFIX}${String(n).repeat(1500)}`),
+    );
+    const only = packMemoryContext(input(tooMany))!;
+    expect(only.items[0]!.memoryId).toBe(id(30));
+    expect(only.items.length).toBeLessThan(5);
+    expect(only.renderedText).toContain("More memories exist");
+    expect(validateMemoryContext(only)).toEqual(only);
   });
 });

@@ -10,6 +10,8 @@ const summaryGuidance =
   "Keep durable information: stable preferences, decisions, recurring constraints, and verified results. Omit one-off progress reports, repeated tool output, and no-change or closing remarks. Preserve useful information from the existing summary and correct facts contradicted by the supplied evidence. When the supplied messages add nothing durable, set summary to null instead of writing that nothing was found; any existing summary is kept unchanged.\n";
 const promotionGuidance =
   "Also return project and user. project holds only durable decisions, preferences, and constraints that apply to every thread of this project; user holds only the user's own durable preferences that apply in every project. Each is null unless the supplied evidence states it, and each cites that evidence the same way. Never promote one-off task instructions, review verdicts, or progress.\n";
+const ruleGuidance =
+  "Also return rules: the standing instructions the user gave in their own messages (rules.userTypedMessageIds lists them) that are meant to hold beyond this task, such as never, always, must, don't, or prefer statements. Each rule is one self-contained sentence with scope project when it names this project's code, files, tools, or workflow, or user when it describes how the person wants agents to work anywhere, and cites the user message ids it came from. Never return a one-off task instruction, a question, or something an agent or tool said. When a rule restates or replaces a rules.existing entry on the same subject, set supersedes to that memoryId; otherwise null. rules is empty when the user stated none.\n";
 const utf8 = (text: string) => new TextEncoder().encode(text).length;
 const encodeConflict = Schema.encodeEffect(Schema.fromJsonString(M.ResolveMemoryConflictInput));
 const encodeSummary = Schema.encodeEffect(Schema.fromJsonString(M.GenerateMemorySummaryInput));
@@ -62,6 +64,26 @@ const memoryPromotingModelAnswer = (origins: ReadonlyArray<MemoryOrigin>) =>
     project: Schema.NullOr(memorySummaryModelOutput(origins)),
     user: Schema.NullOr(memorySummaryModelOutput(origins)),
   });
+// Scope stays a string so one bad rule (a thread scope, say) is dropped alone, not the whole answer.
+const memoryRulesField = Schema.Array(
+  Schema.Struct({
+    scope: Schema.String,
+    text: Schema.String,
+    messageIds: Schema.Array(Schema.String),
+    supersedes: Schema.NullOr(Schema.String),
+  }),
+);
+/** Decodes the rules key of an answer; the summary and promotion decoders ignore it. */
+export const MemoryRulesModelAnswer = Schema.Struct({ rules: memoryRulesField });
+const memoryAnswer = (
+  origins: ReadonlyArray<MemoryOrigin>,
+  options: { readonly promote: boolean; readonly rules: boolean },
+) => {
+  const base = options.promote
+    ? memoryPromotingModelAnswer(origins)
+    : memorySummaryModelAnswer(origins);
+  return options.rules ? Schema.Struct({ ...base.fields, rules: memoryRulesField }) : base;
+};
 export const MemorySummaryModelAnswer = memorySummaryModelAnswer(MEMORY_ORIGINS);
 export type MemorySummaryModelAnswer = typeof MemorySummaryModelAnswer.Type;
 export const MemoryPromotingModelAnswer = memoryPromotingModelAnswer(MEMORY_ORIGINS);
@@ -226,13 +248,18 @@ export const buildMemorySummaryPrompt = Effect.fn("buildMemorySummaryPrompt")(fu
     Effect.mapError((cause) => invalidInput("generateMemorySummary", cause)),
   );
   const { promote, ...data } = checked;
+  const rules = checked.rules !== undefined;
   const json = yield* encodeSummary(data).pipe(
     Effect.mapError((cause) => invalidInput("generateMemorySummary", cause)),
   );
   const origins = allowedOrigins(memoryEvidenceSources(checked), ["model"]);
   return {
-    prompt: yield* render("generateMemorySummary", json, promote ? promotionGuidance : ""),
-    outputSchema: promote ? memoryPromotingModelAnswer(origins) : memorySummaryModelAnswer(origins),
+    prompt: yield* render(
+      "generateMemorySummary",
+      json,
+      (promote ? promotionGuidance : "") + (rules ? ruleGuidance : ""),
+    ),
+    outputSchema: memoryAnswer(origins, { promote: promote === true, rules }),
   };
 });
 
