@@ -102,7 +102,11 @@ function ForkUpdatesLink({
               to="/settings/fork-updates"
               aria-label={label}
               className={cn(
-                "relative inline-flex items-center justify-center bg-sidebar-control-surface text-sidebar-foreground outline-hidden ring-ring transition-colors focus-visible:ring-2 focus-visible:ring-inset",
+                "relative inline-flex cursor-pointer items-center justify-center outline-hidden ring-ring transition-colors focus-visible:ring-2 focus-visible:ring-inset",
+                // Like the update pill: the control fill only while a newer upstream tag waits.
+                tag === null
+                  ? "text-sidebar-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                  : "bg-sidebar-control-surface text-sidebar-foreground",
                 inRail
                   ? "size-10 rounded-lg hover:bg-accent"
                   : "size-8 rounded-full hover:bg-sidebar-row-hover",
