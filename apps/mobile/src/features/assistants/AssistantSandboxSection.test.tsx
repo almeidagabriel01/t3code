@@ -104,7 +104,7 @@ describe("AssistantSandboxSection", () => {
     expect(container.textContent).toContain("Linked environments · Off");
     mocks.status = null;
     render();
-    expect(container.textContent).toContain("Linked environments · Checking");
+    expect(container.textContent).toBe("");
   });
 
   it("enables only the actions the state allows and tells when one fails", async () => {

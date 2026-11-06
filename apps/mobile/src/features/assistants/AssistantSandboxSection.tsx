@@ -16,6 +16,8 @@ export function AssistantSandboxSection(props: {
   const actions = useAssistantSandboxActions(props.environmentId);
   const view = assistantSandboxView(status);
   const disabled = !actions.canAct;
+  // An environment that never answers (offline, older server) has no sandbox to show.
+  if (status === null) return null;
 
   const run = async (title: string, action: () => Promise<{ ok: boolean; message?: string }>) => {
     const reply = await action();
@@ -55,7 +57,7 @@ export function AssistantSandboxSection(props: {
       />
       <ListRowLayout
         icon="link"
-        label={`Linked environments · ${status === null ? "Checking" : status.linkedEnvironmentsEnabled ? "On" : "Off"}`}
+        label={`Linked environments · ${status.linkedEnvironmentsEnabled ? "On" : "Off"}`}
         description="The sandbox link needs it. Starting the sandbox turns it on."
       />
       <ListActionRow
