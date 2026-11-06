@@ -594,7 +594,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           const mac = config.mac as { identity?: string; sign?: string };
           // An unsigned mac build is signed ad hoc as a whole, never left with a broken signature.
           assert.strictEqual(mac.identity, signed ? undefined : "-");
-          assert.strictEqual(mac.sign !== undefined, signed);
+          // Both paths sign through the hook, which picks the fork's fixed certificate when set.
+          assert.isDefined(mac.sign);
         }
       }).pipe(
         Effect.provide(

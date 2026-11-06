@@ -2874,7 +2874,12 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       // only signature is Electron's linker one fails Gatekeeper as "damaged", with no way to open it.
       ...(signed
         ? { sign: path.join(repoRoot, "scripts/sign-macos.ts") }
-        : { identity: "-", hardenedRuntime: false }),
+        : {
+            identity: "-",
+            hardenedRuntime: false,
+            // Signs with T3CODE_MAC_FIXED_IDENTITY when set, and ad hoc otherwise.
+            sign: path.join(repoRoot, "scripts/sign-macos.ts"),
+          }),
       ...(macPasskeySigning
         ? {
             entitlements: macPasskeySigning.entitlementsPath,
