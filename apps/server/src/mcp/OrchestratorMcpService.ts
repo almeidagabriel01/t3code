@@ -3112,8 +3112,14 @@ const make = Effect.gen(function* () {
     sendToThread: Effect.fn("OrchestratorMcpService.sendToThread")(function* (scope, input) {
       const { parent, limits, target } = yield* loadScopedThread(scope, input.threadId);
       yield* assertLiveCallerForOtherThread(scope, parent, target);
-      yield* resolveRuntimeMode(limits.runtimeMode, target.thread.runtimeMode);
-      yield* resolveInteractionMode(limits.interactionMode, target.thread.interactionMode);
+      // A side chat passing the user's own words to its main chat escalates nothing: that chat keeps its modes.
+      const toMainChat =
+        parent?.thread.lineage.sideChat === true &&
+        parent.thread.lineage.parentThreadId === target.thread.id;
+      if (!toMainChat) {
+        yield* resolveRuntimeMode(limits.runtimeMode, target.thread.runtimeMode);
+        yield* resolveInteractionMode(limits.interactionMode, target.thread.interactionMode);
+      }
 
       const mode = input.mode ?? "auto";
       const key = yield* requestKey(input.clientRequestId);

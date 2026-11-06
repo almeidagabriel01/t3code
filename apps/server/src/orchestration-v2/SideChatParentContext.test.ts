@@ -3,7 +3,13 @@ import { NodeId, PlanId, RuntimeRequestId, ThreadId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
-import { type SideChatParentSnapshot, sideChatParentContext } from "./SideChatParentContext.ts";
+import {
+  type SideChatParentSnapshot,
+  sideChatParentContext as buildParentContext,
+} from "./SideChatParentContext.ts";
+
+const sideChatParentContext = (snapshot: SideChatParentSnapshot | null) =>
+  buildParentContext(snapshot, ThreadId.make("thread:parent"));
 
 const at = (iso: string) => DateTime.makeUnsafe(iso);
 const shell = (
@@ -50,6 +56,7 @@ describe("sideChatParentContext", () => {
       ],
       plans: [todo("superseded"), todo("active")],
     });
+    expect(context).toContain("Parent thread id: thread:parent");
     expect(context).toContain("Title: Nightly: #1111 tarball");
     expect(context).toContain("Status: running a turn right now");
     expect(context).toContain(
@@ -139,5 +146,6 @@ describe("sideChatParentContext", () => {
 
   it("says the parent could not be read instead of leaving the agent to guess", () => {
     expect(sideChatParentContext(null)).toContain("could not be read");
+    expect(sideChatParentContext(null)).toContain("Parent thread id: thread:parent");
   });
 });

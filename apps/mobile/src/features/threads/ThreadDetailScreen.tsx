@@ -213,6 +213,7 @@ import { ThreadGuestShareBar } from "./ThreadGuestShareBar";
 import { ThreadComposerKanbanCardChip } from "../kanban/ThreadComposerKanbanCardChip";
 import { ThreadKanbanCardChip } from "../kanban/ThreadKanbanCardChip";
 import { ThreadSideChatBar } from "./ThreadSideChatBar";
+import { useSendToMainChat } from "./sendToMainChat";
 import { ThreadSideChatsRow } from "./ThreadSideChatsRow";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
 import { resolveThreadFeedSubmissionAnchor } from "./thread-feed-live-follow";
@@ -397,6 +398,12 @@ function ThreadDetailBody(
     >;
   },
 ) {
+  const sendToMainChat = useSendToMainChat(
+    props.environmentId,
+    props.selectedThread.lineage.sideChat === true
+      ? (props.selectedThread.lineage.parentThreadId ?? null)
+      : null,
+  );
   const hasOpenDecision =
     useThreadOpenDecisions(props.environmentId, props.selectedThread.id).length > 0;
   const usesNativeWorkspaceColumns = useNativeWorkspaceColumnsSupported();
@@ -1476,6 +1483,7 @@ function ThreadDetailBody(
                 }
                 contentPresentation={props.contentPresentation}
                 threadTitle={props.selectedThread.title}
+                onSendToMainChat={sendToMainChat}
                 latestRun={props.activityRun}
                 activeWorkStartedAt={props.activeWorkStartedAt}
                 runlessWorkActive={props.runlessWorkActive ?? false}

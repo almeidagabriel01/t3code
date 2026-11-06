@@ -30,6 +30,12 @@ describe("sideChatNoteFor", () => {
     );
   });
 
+  it("lets the side agent send to the main thread only on the user's explicit ask", () => {
+    expect(SIDE_CHAT_NOTE).toContain("Do not launch threads, delegate tasks, or schedule work");
+    expect(SIDE_CHAT_NOTE).toContain("explicitly asks to send or forward something to the main");
+    expect(SIDE_CHAT_NOTE).toContain("t3_thread_send");
+  });
+
   it("leaves ordinary threads alone", () => {
     expect(sideChatNoteFor(ordinary, "continue", parentContext)).toBe("");
     expect(

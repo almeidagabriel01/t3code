@@ -978,6 +978,7 @@ export const buildMessages = (sample: Sample) => {
                     })),
                     plans: [],
                   },
+              ThreadId.make(sideChat.parentThreadId),
             ),
           ].join("\n\n")
         : `${makeSideChatContext({

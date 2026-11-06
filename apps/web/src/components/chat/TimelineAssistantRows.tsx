@@ -4,7 +4,7 @@ import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thr
 import { memo, use, useState } from "react";
 import { type ChatMessage, type TurnDiffSummary } from "../../types";
 import ChatMarkdown from "../ChatMarkdown";
-import { GitForkIcon } from "lucide-react";
+import { CornerUpLeftIcon, GitForkIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import { ProposedPlanCard } from "./ProposedPlanCard";
 import { HtmlRenderFrame } from "./HtmlRenderFrame";
@@ -16,6 +16,7 @@ import { useAssistantMessageText, useProject, useThreadShell } from "../../state
 import { MessageCopyButton } from "./MessageCopyButton";
 import { AssistantCitationSource } from "./AssistantCitationSource";
 import { resolveAssistantMessageCopyState } from "./MessagesTimeline.logic";
+import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
 import { useUiStateStore } from "~/uiStateStore";
@@ -129,6 +130,34 @@ function AssistantForkButton({
   );
 }
 
+function AssistantSendToMainButton({ message }: { readonly message: ChatMessage }) {
+  const onSendToMainChat = use(TimelineRowCtx).onSendToMainChat;
+  const text = message.text?.trim() ?? "";
+  if (onSendToMainChat === undefined || message.streaming || text.length === 0) return null;
+
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            type="button"
+            size="xs"
+            variant="ghost"
+            onClick={() => {
+              onSendToMainChat(text);
+              toastManager.add({ type: "success", title: "Added to the main chat's composer" });
+            }}
+            aria-label="Send to main chat"
+          />
+        }
+      >
+        <CornerUpLeftIcon className="size-3" />
+      </TooltipTrigger>
+      <TooltipPopup side="top">Send to main chat</TooltipPopup>
+    </Tooltip>
+  );
+}
+
 export function AssistantMetaTimelineRow({
   row,
 }: {
@@ -185,6 +214,7 @@ function AssistantMessageMeta({
         showCopyButton={showCopyButton}
         streaming={copyStreaming}
       />
+      <AssistantSendToMainButton message={message} />
       {projectedItem?.item.type === "assistant_message" ? (
         <AssistantForkButton projectedItem={projectedItem} />
       ) : null}

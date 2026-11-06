@@ -271,6 +271,8 @@ interface MessagesTimelineProps {
     readonly open?: () => void;
   } | null;
   workflowOpening?: WorkflowOpening | null;
+  /** Set only in an embedded side chat, which shows "Send to main chat" on its answers. */
+  onSendToMainChat?: (text: string) => void;
   onForkFromRun?: (input: {
     readonly sourceThreadId: ThreadId;
     readonly runId: RunId;
@@ -373,6 +375,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   turnItemSource,
   parentThreadLink = null,
   workflowOpening = null,
+  onSendToMainChat,
   onForkFromRun,
   supportsConversationRollback,
   threadStartCheckpointReady = false,
@@ -1039,6 +1042,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     renderHtmlRender,
     turnItemSource,
     workflowOpening,
+    onSendToMainChat,
     onForkFromRun,
     onToggleTurnFold,
     onToggleAttemptFold,

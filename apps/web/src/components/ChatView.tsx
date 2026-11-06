@@ -195,7 +195,11 @@ import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { toastManager } from "./ui/toast";
 import { projectScriptIdFromCommand } from "~/projectScripts";
 import { newMessageId } from "~/lib/utils";
-import { isInSideChatPane, type SideChatParentPanel } from "~/lib/sideChatPane";
+import {
+  appendToComposerDraft,
+  isInSideChatPane,
+  type SideChatParentPanel,
+} from "~/lib/sideChatPane";
 import {
   NO_PROVIDER_MODEL_SELECTION,
   providerInstanceEntriesFor,
@@ -3245,10 +3249,15 @@ export default function ChatView(props: ChatViewProps) {
     (folders: Parameters<ChatComposerHandle["addDroppedFolders"]>[0]) =>
       composerRef.current?.addDroppedFolders(folders),
   );
+  const sendSideChatTextToComposerStable = useStableCallback((text: string) => {
+    appendToComposerDraft(baseComposerDraftTarget, text);
+    composerRef.current?.focusAtEnd();
+  });
   // Above the early return, where React Compiler can cache it for the side chat pane.
   const sideChatParentPanel = {
     openToolDiff: onOpenToolDiffStable,
     runShellCommand: runSideChatShellCommandStable,
+    sendToComposer: sendSideChatTextToComposerStable,
   };
 
   if (!activeThread) {
@@ -3558,7 +3567,9 @@ export default function ChatView(props: ChatViewProps) {
                     onOpenToolDiff={parentPanel?.openToolDiff ?? onOpenToolDiffStable}
                     // Side chat runs keep no checkpoints to diff, and a fork would promote the side chat.
                     {...(embedded
-                      ? {}
+                      ? parentPanel
+                        ? { onSendToMainChat: parentPanel.sendToComposer }
+                        : {}
                       : {
                           onOpenTurnDiff: onOpenTurnDiffStable,
                           onForkFromRun: onForkFromRunStable,

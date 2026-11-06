@@ -1,6 +1,7 @@
 import type { OrchestrationV2ThreadShell, ScopedThreadRef } from "@t3tools/contracts";
 
 import type { ToolCallDiffTarget } from "../diffPanelStore";
+import { useComposerDraftStore, type ComposerThreadTarget } from "../composerDraftStore";
 import { useRightPanelStore } from "../rightPanelStore";
 
 /** Whether an event started in the side chat pane (`data-side-chat-pane`), which the main chat ignores. */
@@ -16,6 +17,12 @@ export function isInSideChatPane(target: EventTarget | null): boolean {
 export interface SideChatParentPanel {
   readonly openToolDiff: (target: ToolCallDiffTarget) => void;
   readonly runShellCommand: (command: string) => void;
+  readonly sendToComposer: (text: string) => void;
+}
+
+/** Adds `text` after what the user already typed, separated by a blank line. */
+export function appendToDraftPrompt(prompt: string, text: string): string {
+  return prompt.trim().length === 0 ? text : `${prompt.replace(/\s+$/, "")}\n\n${text}`;
 }
 
 /** Opens `thread` in its tab when it is a side chat of `parentRef`; false for any other thread. */
@@ -28,4 +35,10 @@ export function openSideChatTab(
   }
   useRightPanelStore.getState().openSideChat(parentRef, thread.id);
   return true;
+}
+
+/** Appends `text` to the composer draft of `target`, keeping what the user already typed. */
+export function appendToComposerDraft(target: ComposerThreadTarget, text: string): void {
+  const store = useComposerDraftStore.getState();
+  store.setPrompt(target, appendToDraftPrompt(store.getComposerDraft(target)?.prompt ?? "", text));
 }

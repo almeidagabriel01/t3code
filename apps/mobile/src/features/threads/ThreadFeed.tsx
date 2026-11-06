@@ -3,6 +3,7 @@ import * as Dialog from "../../components/ui/Dialog";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { useWorkspaceSettledContentWidth } from "../layout/workspace-content-width";
 import { ThreadMarkdownVideo, ThreadMediaVisibleContext } from "./ThreadMarkdownVideo";
+import { SendToMainChatButton } from "./sendToMainChat";
 import { useMarkdownImageSource } from "../../native/useMarkdownImageSource";
 import {
   enrichedContextLinkCustomization,
@@ -353,6 +354,7 @@ export interface ThreadFeedProps {
   /** Null while the thread's creation is queued: reading detail then caches a not-found as deleted. */
   readonly detailRef: ScopedThreadRef | null;
   readonly threadTitle: string;
+  readonly onSendToMainChat?: (text: string) => void;
   readonly workspaceRoot?: string | null;
   readonly feed: ReadonlyArray<ThreadFeedEntry>;
   readonly pendingHandoff?: HandoffEndpoints | null;
@@ -1702,6 +1704,7 @@ function renderFeedEntry(
     readonly markdownContentWidth: number;
     readonly contentWidth: number;
     readonly threadTitle: string;
+    readonly onSendToMainChat?: ((text: string) => void) | undefined;
     readonly workflowOpening: WorkflowOpening | null;
     readonly userMessageGrouping: GroupedThreadFeedRow["userMessageGrouping"];
     readonly assistantFirstMessageIds: ReadonlySet<string>;
@@ -2322,6 +2325,14 @@ function renderFeedEntry(
                 iconSize={props.replyActionSize.icon}
                 projectedItem={message.projectedItem}
                 sourceTitle={props.threadTitle}
+              />
+            ) : null}
+            {props.onSendToMainChat ? (
+              <SendToMainChatButton
+                iconColor={iconSubtleColor}
+                buttonSize={props.replyActionSize.button}
+                iconSize={props.replyActionSize.icon}
+                onPress={() => props.onSendToMainChat?.(renderedText)}
               />
             ) : null}
             <Text className="font-t3-medium text-xs tabular-nums text-foreground-secondary">
@@ -3815,6 +3826,7 @@ export const ThreadFeed = memo(function ThreadFeed({
             markdownContentWidth,
             contentWidth,
             threadTitle: props.threadTitle,
+            onSendToMainChat: props.onSendToMainChat,
             skills: props.skills,
             workspaceRoot: props.workspaceRoot,
             workflowOpening,

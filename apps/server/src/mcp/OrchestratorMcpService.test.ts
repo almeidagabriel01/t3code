@@ -3339,6 +3339,87 @@ describe("OrchestratorMcpService provider resolution", () => {
   });
 });
 
+describe("OrchestratorMcpService side chat send", () => {
+  const mainId = ThreadId.make("thread:main");
+  const sideId = ThreadId.make("thread:side");
+  const otherId = ThreadId.make("thread:other");
+  const withLineage = (
+    id: ThreadId,
+    modes: Parameters<typeof liveThreadShell>[1],
+    lineage: Partial<OrchestrationV2ThreadShell["lineage"]> = {},
+  ): OrchestrationV2ThreadShell => {
+    const shell = liveThreadShell(id, modes);
+    return { ...shell, lineage: { ...shell.lineage, ...lineage } };
+  };
+  const shells = [
+    withLineage(mainId, { runtimeMode: "full-access", interactionMode: "default" }),
+    withLineage(
+      sideId,
+      { runtimeMode: "approval-required", interactionMode: "plan" },
+      { parentThreadId: mainId, sideChat: true },
+    ),
+    withLineage(otherId, { runtimeMode: "full-access", interactionMode: "default" }),
+  ];
+  const scope: McpInvocationScope = {
+    environmentId: EnvironmentId.make("environment:side-chat-send"),
+    requestNamespace: "provider-session:side-chat-send",
+    thread: {
+      threadId: sideId,
+      providerSessionId: "provider-session:side-chat-send",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+    },
+    client: undefined,
+    capabilities: new Set(["orchestration"]),
+    issuedAt: 1,
+  };
+  const sendFrom = (threadId: ThreadId) =>
+    Effect.gen(function* () {
+      const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
+      return yield* mcp.sendToThread(scope, { threadId, message: "the summary" }).pipe(Effect.flip);
+    }).pipe(
+      Effect.provide(
+        layerOrchestratorService.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              NodeServices.layer,
+              NodeCrypto.layer,
+              Layer.mock(ThreadManagementService.ThreadManagementService)({
+                getThreadShell: (id) =>
+                  Effect.succeed(shells.find((shell) => shell.id === id) ?? null),
+                getThreadRecords: (id) =>
+                  Effect.succeed(idleThreadProjection(shells.find((shell) => shell.id === id)!)),
+                getProjectThreadRecords: ({ threadId: id }) =>
+                  Effect.succeed(idleThreadProjection(shells.find((shell) => shell.id === id)!)),
+                sendToThread: () => Effect.fail(new Error("reached send") as never),
+              }),
+              ServerSettings.layerTest(),
+              Layer.mock(ProviderRegistry.ProviderRegistry)({
+                getProviders: Effect.succeed([]),
+              }),
+              Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+                list: () => Effect.succeed([]),
+              }),
+              Layer.mock(ProjectService.ProjectService)({}),
+              Layer.mock(SecretRequests.SecretRequests)({}),
+              Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+              Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+            ),
+          ),
+        ),
+      ),
+    );
+
+  it.effect("lets a side chat send to its own main chat but to no other broader thread", () =>
+    Effect.gen(function* () {
+      const toMain = yield* sendFrom(mainId);
+      assert.equal(toMain.code, "orchestration_error");
+      assert.include(toMain.message, "reached send");
+      const toOther = yield* sendFrom(otherId);
+      assert.equal(toOther.code, "runtime_mode_escalation_denied");
+    }),
+  );
+});
+
 describe("OrchestratorMcpService thread lookup", () => {
   const bareId = ThreadId.make("5d0b4a3e-8c1f-4a52-9d37-2f6c7e1b9a04");
   const launched = liveThreadShell(ThreadId.make(`mcp:${bareId}`));

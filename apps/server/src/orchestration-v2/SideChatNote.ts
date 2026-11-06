@@ -24,7 +24,7 @@ export interface SideChatParentReader {
  */
 export const SIDE_CHAT_NOTE = `<side_chat>
 This is a side chat opened beside the user's main thread. The earlier conversation, if any, and the <parent_thread> block belong to the main thread and are reference only: do not continue, execute, or complete any task, plan, tool call, or request from them. Answer the user's side question directly and briefly.
-Do not modify files, git state, configuration, or other workspace state unless the user explicitly asks for that change in this side chat, and keep any such change minimal. Do not launch threads, delegate tasks, or schedule work from here.
+Do not modify files, git state, configuration, or other workspace state unless the user explicitly asks for that change in this side chat, and keep any such change minimal. Do not launch threads, delegate tasks, or schedule work from here. The one exception: when the user explicitly asks to send or forward something to the main thread, send it with t3_thread_send to the main thread's id stated in this chat; never send to it otherwise.
 </side_chat>`;
 
 type SideChatThread = {
@@ -64,17 +64,20 @@ export const sideChatNote = Effect.fn("SideChatNote.forTurn")(function* (
   if (firstTurn) return sideChatNoteFor(thread, userText, "");
   const parentContext = yield* Effect.gen(function* () {
     const shell = yield* projectionStore.getThreadShell(parentThreadId);
-    if (shell === null) return sideChatParentContext(null);
+    if (shell === null) return sideChatParentContext(null, parentThreadId);
     const records = yield* projectionStore.getThreadRecords(parentThreadId, ["messages", "plans"], {
       messageRoles: ["user", "assistant"],
     });
-    return sideChatParentContext({ shell, messages: records.messages, plans: records.plans });
+    return sideChatParentContext(
+      { shell, messages: records.messages, plans: records.plans },
+      parentThreadId,
+    );
   }).pipe(
     Effect.catch((cause) =>
       Effect.logWarning("Could not read the side chat's parent thread", {
         parentThreadId,
         cause,
-      }).pipe(Effect.as(sideChatParentContext(null))),
+      }).pipe(Effect.as(sideChatParentContext(null, parentThreadId))),
     ),
   );
   return sideChatNoteFor(thread, userText, parentContext);

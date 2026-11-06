@@ -349,6 +349,9 @@ in its composer.
 To use what you learned, choose **Bring back**. The thread gets the side chat with
 your next message there. Bring back is available while the thread is idle.
 
+To pass a single answer on, choose **Send to main chat** under it, which adds the text to the
+main thread's composer, or ask the side chat to send it.
+
 The header shows what the main thread is doing, such as Working or Needs approval.
 Choose **Start over** to discard the side chat and open a fresh one from the main
 thread's latest state.

@@ -2,6 +2,7 @@ import type {
   OrchestrationV2ConversationMessage,
   OrchestrationV2PlanArtifact,
   OrchestrationV2ThreadShell,
+  ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
@@ -106,9 +107,13 @@ function transcriptLines(messages: SideChatParentSnapshot["messages"]): Readonly
  * (the parent had no completed turn to fork) or a fork that stops where the parent was when it
  * was created, so this block is what keeps it aligned with the parent's progress.
  */
-export function sideChatParentContext(snapshot: SideChatParentSnapshot | null): string {
+export function sideChatParentContext(
+  snapshot: SideChatParentSnapshot | null,
+  parentThreadId: ThreadId,
+): string {
   if (snapshot === null) {
     return `<parent_thread>
+Parent thread id: ${parentThreadId}
 The main thread's current state could not be read for this message. Say so if the user asks what the main thread is doing.
 </parent_thread>`;
   }
@@ -122,6 +127,7 @@ The main thread's current state could not be read for this message. Say so if th
   return [
     "<parent_thread>",
     "The main thread's live state, read when the user sent this message. Use it to answer questions about what the main thread is doing; it is newer than any earlier conversation in this chat.",
+    `Parent thread id: ${parentThreadId}`,
     `Title: ${shell.title}`,
     `Status: ${runStatusLine(shell)}`,
     ...(goal == null ? [] : [`Goal (${goal.status}): ${clip(goal.objective, MAX_MESSAGE_CHARS)}`]),

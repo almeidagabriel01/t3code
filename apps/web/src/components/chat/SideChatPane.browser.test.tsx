@@ -73,7 +73,7 @@ const pane = () => (
   <SideChatPane
     parentRef={parentRef}
     threadId={threadId}
-    parentPanel={{ openToolDiff: vi.fn(), runShellCommand: vi.fn() }}
+    parentPanel={{ openToolDiff: vi.fn(), runShellCommand: vi.fn(), sendToComposer: vi.fn() }}
     onClose={vi.fn()}
   />
 );

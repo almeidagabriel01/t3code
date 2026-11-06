@@ -833,6 +833,20 @@ describe("MessagesTimeline automation prompts", () => {
 const SENDER_THREAD_ID = ThreadId.make("thread-sender");
 const AGENT_MESSAGE = "Review finished\n\nThe migration drops the index before backfilling it.";
 
+describe("MessagesTimeline send to main chat", () => {
+  it("offers the button only in a side chat and sends the answer's text", async () => {
+    setup();
+    const entries = [message("The summary", { role: "assistant" }, "answer")];
+    await using plain = await renderTimeline(entries);
+    expect(plain.buttons("Send to main chat")).toHaveLength(0);
+
+    const onSendToMainChat = vi.fn();
+    await using side = await renderTimeline(entries, { onSendToMainChat });
+    await click(side.button("Send to main chat"));
+    expect(onSendToMainChat).toHaveBeenCalledWith("The summary");
+  });
+});
+
 describe("MessagesTimeline agent messages", () => {
   it("folds a message from another agent into a one-line preview", async () => {
     setup();

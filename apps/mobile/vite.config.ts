@@ -16,6 +16,7 @@ const reactTests = [
   "src/features/projects/useProjectOrganize.test.tsx",
   "src/features/threads/ThreadSideChatsRow.test.tsx",
   "src/features/threads/ThreadSideChatBar.test.tsx",
+  "src/features/threads/sendToMainChat.test.tsx",
   "src/features/connection/ConnectionEnvironmentRow.test.tsx",
   "src/features/kanban/KanbanBoardRouteScreen.test.tsx",
   "src/features/kanban/KanbanCardMenu.test.tsx",
