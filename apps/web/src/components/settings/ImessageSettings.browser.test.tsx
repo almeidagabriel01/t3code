@@ -72,6 +72,15 @@ it("lists iMessage in the settings navigation", async () => {
 
 const eventually = (check: () => void) => vi.waitFor(check, { timeout: 10_000 });
 
+it("offers the channel language as one labelled select", async () => {
+  resetFakeImessage();
+  await using _screen = await openImessage();
+  await expect.element(page.getByText("Language", { exact: true })).toBeVisible();
+  await expect
+    .element(page.getByRole("combobox", { name: "Language" }))
+    .toHaveTextContent("Automatic (Mac language)");
+});
+
 it("shows access states and rechecks on demand", async () => {
   resetFakeImessage({}, "full_disk_access_missing");
   await using _screen = await openImessage();

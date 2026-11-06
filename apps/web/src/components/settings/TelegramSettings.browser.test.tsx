@@ -58,6 +58,15 @@ async function openTelegram() {
 
 const eventually = (check: () => void) => vi.waitFor(check, { timeout: 10_000 });
 
+it("offers the channel language as one labelled select", async () => {
+  resetFakeTelegram();
+  await using _screen = await openTelegram();
+  await expect.element(page.getByText("Language", { exact: true })).toBeVisible();
+  await expect
+    .element(page.getByRole("combobox", { name: "Language" }))
+    .toHaveTextContent("Automatic (Mac language)");
+});
+
 it("lists Telegram in the settings navigation", async () => {
   resetFakeTelegram();
   await using _screen = await render(

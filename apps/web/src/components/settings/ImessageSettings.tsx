@@ -37,6 +37,7 @@ import {
   imessageStatusLabel,
   imessageSwitchHint,
 } from "./ImessageSettings.logic";
+import { ChannelLanguageRow } from "./ChannelLanguageRow";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 
@@ -280,6 +281,7 @@ function ImessageEnvironment(props: {
             />
           }
         />
+        <ChannelLanguageRow environmentId={environmentId} disabled={!canAct} />
       </SettingsSection>
 
       <HandleSection

@@ -37,6 +37,7 @@ import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { ChannelLanguageRow } from "./ChannelLanguageRow";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 
@@ -391,6 +392,7 @@ function TelegramEnvironment(props: {
             />
           }
         />
+        <ChannelLanguageRow environmentId={environmentId} disabled={!canAct} />
       </SettingsSection>
 
       <TokenSection
