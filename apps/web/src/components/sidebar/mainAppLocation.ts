@@ -3,9 +3,14 @@ import { useNavigate, type AnyRouter } from "@tanstack/react-router";
 import { GUEST_PAGE_PATH } from "../../guestPage";
 import { withoutAssistantCitationHash } from "../../lib/assistantCitationNavigation";
 
-/** Settings and Usage open as modals over the last main-app view. */
+/** Settings and Usage are not main-app views: closing them returns to the last one. */
 export function isAppModalPage(pathname: string) {
   return pathname === "/settings" || pathname.startsWith("/settings/") || pathname === "/usage";
+}
+
+/** Settings is a page in the main area; Usage is still a modal over the last view. */
+export function isSettingsPage(pathname: string) {
+  return pathname === "/settings" || pathname.startsWith("/settings/");
 }
 
 export function isSidebarUtilityPage(pathname: string) {

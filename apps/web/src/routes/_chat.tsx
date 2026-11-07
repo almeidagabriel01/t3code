@@ -3,7 +3,7 @@ import { Outlet, createFileRoute, redirect, useMatches } from "@tanstack/react-r
 import { useState } from "react";
 
 import { ThreadRouteView } from "../components/ThreadRouteView";
-import { isAppModalPage } from "../components/sidebar/mainAppLocation";
+import { isAppModalPage, isSettingsPage } from "../components/sidebar/mainAppLocation";
 import { SidebarInset } from "../components/ui/sidebar";
 import { resolveThreadRouteTarget, type ThreadRouteTarget } from "../threadRoutes";
 import { retainThreadFindForRoute } from "../components/chat/threadFindStore";
@@ -20,9 +20,10 @@ function ChatRouteLayout() {
   const threadTarget = useThreadRouteTarget();
   // Read matches, not location, so this agrees with the params useThreadRouteTarget reads.
   const modalOpen = useMatches({
-    select: (matches) => matches.some((match) => isAppModalPage(match.pathname)),
+    select: (matches) =>
+      matches.some((match) => isAppModalPage(match.pathname) && !isSettingsPage(match.pathname)),
   });
-  // Settings and Usage render over the thread that opened them, so ChatView never remounts.
+  // Usage renders over the thread that opened them, so ChatView never remounts.
   const [backgroundTarget, setBackgroundTarget] = useState(threadTarget);
   if (!modalOpen && threadRouteTargetKey(backgroundTarget) !== threadRouteTargetKey(threadTarget)) {
     setBackgroundTarget(threadTarget);

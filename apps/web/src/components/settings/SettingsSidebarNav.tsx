@@ -169,7 +169,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   );
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
-  // Below md the nav is an icon rail; searching expands it over the page.
+  // In a narrow page the nav is an icon rail; searching expands it over the page.
   const [compactSearchOpen, setCompactSearchOpen] = useState(false);
   const [activeResultIndex, setActiveResultIndex] = useState(0);
   const results = searchSettings(query, searchableItems);
@@ -283,11 +283,10 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
     <nav
       {...navArea}
       role="navigation"
-      data-glass-pane="rail"
       className={cn(
-        "flex w-60 shrink-0 flex-col border-e bg-sidebar text-sidebar-foreground max-md:w-14",
+        "flex w-60 shrink-0 flex-col border-e text-sidebar-foreground @max-xl/settings:w-14",
         compactSearchOpen &&
-          "max-md:absolute max-md:inset-y-0 max-md:start-0 max-md:z-10 max-md:w-full",
+          "@max-xl/settings:bg-background @max-xl/settings:absolute @max-xl/settings:inset-y-0 @max-xl/settings:start-0 @max-xl/settings:z-10 @max-xl/settings:w-full",
       )}
     >
       <SidebarContent className="overflow-x-hidden">
@@ -296,7 +295,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
             <div
               className={cn(
                 "flex h-8 items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
-                !compactSearchOpen && "max-md:hidden",
+                !compactSearchOpen && "@max-xl/settings:hidden",
               )}
             >
               <SearchIcon className="size-4 shrink-0 text-sidebar-muted-foreground/80" />
@@ -393,7 +392,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
             ) : (
               <div className="flex flex-col gap-4">
                 {compactSearchOpen ? null : (
-                  <SidebarMenu className="md:hidden">
+                  <SidebarMenu className="@xl/settings:hidden">
                     <SidebarMenuItem>
                       <SidebarMenuButton
                         aria-label="Search settings"
@@ -415,7 +414,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                       key={group.heading ?? index}
                       role="group"
                       aria-label={group.heading ?? undefined}
-                      className="flex flex-col gap-1 max-md:border-t max-md:border-sidebar-border max-md:pt-4 max-md:first:border-t-0 max-md:first:pt-0"
+                      className="flex flex-col gap-1 @max-xl/settings:border-t @max-xl/settings:border-sidebar-border @max-xl/settings:pt-4 @max-xl/settings:first:border-t-0 @max-xl/settings:first:pt-0"
                     >
                       {group.heading ? (
                         // The group carries this label; a heading is not a valid tree child.
@@ -423,7 +422,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                           aria-hidden="true"
                           className={cn(
                             "px-2 text-xs font-medium text-sidebar-muted-foreground/80",
-                            !compactSearchOpen && "max-md:hidden",
+                            !compactSearchOpen && "@max-xl/settings:hidden",
                           )}
                         >
                           {group.heading}
@@ -446,7 +445,10 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                               >
                                 <Icon />
                                 <span
-                                  className={cn("truncate", !compactSearchOpen && "max-md:sr-only")}
+                                  className={cn(
+                                    "truncate",
+                                    !compactSearchOpen && "@max-xl/settings:sr-only",
+                                  )}
                                 >
                                   {SETTINGS_SECTION_LABELS[to]}
                                 </span>
@@ -463,7 +465,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
           </div>
         </SidebarGroup>
       </SidebarContent>
-      <SidebarFooter className="max-md:hidden">
+      <SidebarFooter className="@max-xl/settings:hidden">
         <Suspense fallback={null}>
           <T3ConnectSidebarSignIn />
         </Suspense>
