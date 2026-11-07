@@ -97,6 +97,7 @@ export function makeReplayServerConfig(
     const environmentThemesDir = path.join(stateDir, "themes");
     const worktreesDir = path.join(baseDir, "worktrees");
     const providerStatusCacheDir = path.join(baseDir, "caches");
+    const sharedDir = path.join(baseDir, "shared");
 
     for (const directory of [
       stateDir,
@@ -107,6 +108,7 @@ export function makeReplayServerConfig(
       environmentThemesDir,
       worktreesDir,
       providerStatusCacheDir,
+      sharedDir,
     ]) {
       yield* fs.makeDirectory(directory, { recursive: true });
     }
@@ -146,6 +148,7 @@ export function makeReplayServerConfig(
       settingsPath: path.join(stateDir, "settings.json"),
       providerStatusCacheDir,
       worktreesDir,
+      sharedDir,
       attachmentsDir,
       browserArtifactsDir: path.join(stateDir, "browser-artifacts"),
       environmentThemesDir,

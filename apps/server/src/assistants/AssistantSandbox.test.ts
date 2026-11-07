@@ -8,6 +8,7 @@ import * as Redacted from "effect/Redacted";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
+import { ServerConfig } from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as AssistantSandbox from "./AssistantSandbox.ts";
@@ -100,6 +101,7 @@ const harness = (initial: Partial<Docker> = {}, bundleFails = false) => {
     Layer.provide(
       Layer.mergeAll(
         Layer.succeed(ProcessRunner.ProcessRunner, runner),
+        Layer.succeed(ServerConfig, { sharedDir: "/base/shared" } as never),
         Layer.succeed(
           ServerEnvironment.ServerEnvironment,
           ServerEnvironment.ServerEnvironment.of({
@@ -191,6 +193,7 @@ describe("AssistantSandbox", () => {
         assert.include(run, "unless-stopped");
         assert.include(run.join(" "), "t3-assistant-sandbox-77830f5d-home:/home/t3");
         assert.include(run.join(" "), "t3-assistant-sandbox-77830f5d-work:/workspace");
+        assert.include(run.join(" "), "/base/shared:/home/t3/shared");
         assert.isTrue(run.at(-1)!.startsWith("t3-assistant-sandbox:1.2.3-"));
         const before = docker.calls.length;
         yield* s.ensure;

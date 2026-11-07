@@ -190,6 +190,29 @@ describe("CodexAdapterV2 runtime policy", () => {
       }),
   );
 
+  it.effect("adds the policy's directories to a workspace-write sandbox only", () =>
+    Effect.gen(function* () {
+      const build = (runtimeMode: "auto" | "full-access" | "approval-required") =>
+        CodexAdapterV2.buildCodexTurnStartParams({
+          nativeThreadId: `native-dirs-${runtimeMode}`,
+          codexInput: [{ type: "text", text: "test" }],
+          runtimePolicy: {
+            runtimeMode,
+            interactionMode: "default",
+            cwd: null,
+            additionalDirectories: ["/base/shared"],
+          },
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        });
+      assert.deepEqual((yield* build("auto")).sandboxPolicy, {
+        type: "workspaceWrite",
+        writableRoots: ["/base/shared"],
+      });
+      assert.deepEqual((yield* build("full-access")).sandboxPolicy, { type: "dangerFullAccess" });
+      assert.deepEqual((yield* build("approval-required")).sandboxPolicy, { type: "readOnly" });
+    }),
+  );
+
   it.effect("derives concrete Codex turn policies from every T3 runtime mode", () =>
     Effect.gen(function* () {
       const build = (

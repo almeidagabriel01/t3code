@@ -11,6 +11,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import { ServerConfig } from "../config.ts";
 import { RuntimePolicyV2 } from "../orchestration-v2/RuntimePolicy.ts";
 import { AssistantDirectory } from "./AssistantDirectory.ts";
 import * as AssistantRuntimePolicy from "./AssistantRuntimePolicy.ts";
@@ -39,6 +40,7 @@ const resolveFor = (
               } as never),
           }),
         ),
+        Layer.provide(Layer.succeed(ServerConfig, { sharedDir: "/shared" } as never)),
         Layer.provide(
           Layer.mock(AssistantDirectory)({
             forThread: (id) =>
@@ -69,6 +71,9 @@ it.effect("pins read-only assistants to a read-only sandbox and leaves the rest 
       assert.strictEqual((yield* resolveFor(assistantThread, access)).sandboxPolicy, undefined);
     }
     assert.strictEqual((yield* resolveFor(plainThread, "read-only")).sandboxPolicy, undefined);
+    // The shared folder is for assistants only.
+    assert.deepStrictEqual(readOnly.additionalDirectories, ["/shared"]);
+    assert.strictEqual((yield* resolveFor(plainThread, "full")).additionalDirectories, undefined);
   }),
 );
 

@@ -1546,6 +1546,8 @@ export function makeClaudeQueryOptions(input: {
   readonly resumeSessionAt?: string;
   readonly cwd: string | null;
   readonly attachmentsDir?: string;
+  /** From the runtime policy: folders besides `cwd` the turn may use. */
+  readonly policyDirectories?: ReadonlyArray<string>;
   readonly settings?: ClaudeSettings;
   readonly sdkSettings?: string | ClaudeSdkSettings;
   readonly environment?: NodeJS.ProcessEnv;
@@ -1697,6 +1699,7 @@ export function makeClaudeQueryOptions(input: {
   const additionalDirectories = [
     ...(input.cwd === null ? [] : [input.cwd]),
     ...(input.attachmentsDir === undefined ? [] : [input.attachmentsDir]),
+    ...(input.policyDirectories ?? []),
     ...claudeLaunchArgDirectories(input.settings?.launchArgs),
   ];
   const withDirectories =
@@ -10592,6 +10595,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ...(resumeSessionAt === undefined ? {} : { resumeSessionAt }),
             cwd: turnInput.runtimePolicy.cwd,
             attachmentsDir,
+            ...(turnInput.runtimePolicy.additionalDirectories === undefined
+              ? {}
+              : { policyDirectories: turnInput.runtimePolicy.additionalDirectories }),
             settings: adapterOptions.settings,
             ...(launchArgSettings === undefined
               ? {}

@@ -498,9 +498,28 @@ export const OrchestratorMcpThreadReadResult = Schema.Struct({
 });
 export type OrchestratorMcpThreadReadResult = typeof OrchestratorMcpThreadReadResult.Type;
 
+export const ORCHESTRATOR_MCP_SEND_MAX_RECIPIENTS = 32;
+export const ORCHESTRATOR_MCP_SEND_MAX_PATHS = 10;
+
 export const OrchestratorMcpThreadSendInput = Schema.Struct({
   environmentId: OrchestratorMcpEnvironmentTarget,
   threadId: ThreadId,
+  threadIds: Schema.optional(
+    Schema.Array(ThreadId)
+      .check(Schema.isMaxLength(ORCHESTRATOR_MCP_SEND_MAX_RECIPIENTS - 1))
+      .annotate({
+        description:
+          "More assistants to ask besides `threadId` (up to 31); replies arrive together as one message. Assistants only.",
+      }),
+  ),
+  paths: Schema.optional(
+    Schema.Array(TrimmedNonEmptyString)
+      .check(Schema.isMaxLength(ORCHESTRATOR_MCP_SEND_MAX_PATHS))
+      .annotate({
+        description:
+          "Up to 10 absolute file paths to hand to assistants, also in a reply. Copied to the shared folder (100 MiB each, 250 MiB in all). Assistants only.",
+      }),
+  ),
   message: OrchestratorMcpPrompt,
   mode: Schema.optional(Schema.Literals(["auto", "queue", "steer", "restart"])),
   expectsReply: Schema.optional(
@@ -519,14 +538,21 @@ export const OrchestratorMcpThreadSendInput = Schema.Struct({
 });
 export type OrchestratorMcpThreadSendInput = typeof OrchestratorMcpThreadSendInput.Type;
 
-export const OrchestratorMcpThreadSendResult = Schema.Struct({
+const OrchestratorMcpThreadSendOutcome = Schema.Struct({
   threadId: ThreadId,
   link: Schema.optional(Schema.String),
   messageId: MessageId,
-  runId: RunId,
+  // A reply held for the rest of its group starts no run yet.
+  runId: Schema.optional(RunId),
   taskId: Schema.optional(NodeId),
-  status: OrchestrationV2RunStatus,
-  delivery: Schema.Literals(["started", "queued", "steered", "restarted"]),
+  status: Schema.optional(OrchestrationV2RunStatus),
+  delivery: Schema.Literals(["started", "queued", "steered", "restarted", "held"]),
+});
+
+export const OrchestratorMcpThreadSendResult = Schema.Struct({
+  ...OrchestratorMcpThreadSendOutcome.fields,
+  paths: Schema.optional(Schema.Array(Schema.String)),
+  recipients: Schema.optional(Schema.Array(OrchestratorMcpThreadSendOutcome)),
 });
 export type OrchestratorMcpThreadSendResult = typeof OrchestratorMcpThreadSendResult.Type;
 

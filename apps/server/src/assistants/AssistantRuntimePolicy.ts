@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
+import { ServerConfig } from "../config.ts";
 import { RuntimePolicyV2, type RuntimePolicyV2Shape } from "../orchestration-v2/RuntimePolicy.ts";
 import { AssistantDirectory } from "./AssistantDirectory.ts";
 
@@ -25,26 +26,31 @@ export function assistantRuntimeOverride(
 }
 
 /** Resolved on every turn start, so an access change applies to the next turn. */
-export const layer: Layer.Layer<RuntimePolicyV2, never, RuntimePolicyV2 | AssistantDirectory> =
-  Layer.effect(
-    RuntimePolicyV2,
-    Effect.gen(function* () {
-      const base = yield* RuntimePolicyV2;
-      const directory = yield* AssistantDirectory;
-      return {
-        resolve: Effect.fn("AssistantRuntimePolicy.resolve")(function* (input) {
-          const policy = yield* base.resolve(input);
-          const found = yield* directory.forThread(input.thread.id);
-          const override = Option.isNone(found)
-            ? undefined
-            : assistantRuntimeOverride(
-                found.value.assistant.toolAccess,
-                found.value.assistant.workspace,
-              );
-          return override === undefined
-            ? policy
-            : ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({ ...policy, ...override });
-        }),
-      } satisfies RuntimePolicyV2Shape;
-    }),
-  );
+export const layer: Layer.Layer<
+  RuntimePolicyV2,
+  never,
+  RuntimePolicyV2 | AssistantDirectory | ServerConfig
+> = Layer.effect(
+  RuntimePolicyV2,
+  Effect.gen(function* () {
+    const base = yield* RuntimePolicyV2;
+    const directory = yield* AssistantDirectory;
+    const { sharedDir } = yield* ServerConfig;
+    return {
+      resolve: Effect.fn("AssistantRuntimePolicy.resolve")(function* (input) {
+        const policy = yield* base.resolve(input);
+        const found = yield* directory.forThread(input.thread.id);
+        if (Option.isNone(found)) return policy;
+        // Only assistants see the shared folder: it is where they hand files to each other.
+        return ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          ...policy,
+          ...assistantRuntimeOverride(
+            found.value.assistant.toolAccess,
+            found.value.assistant.workspace,
+          ),
+          additionalDirectories: [...(policy.additionalDirectories ?? []), sharedDir],
+        });
+      }),
+    } satisfies RuntimePolicyV2Shape;
+  }),
+);

@@ -1,5 +1,6 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as ServerConfigService from "../config.ts";
 import { assert, describe, it } from "@effect/vitest";
 import {
   CommandId,
@@ -32,6 +33,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -3933,10 +3935,12 @@ describe("OrchestratorMcpService thread stop", () => {
 describe("OrchestratorMcpService assistant requests", () => {
   const askerId = ThreadId.make("assistant:asker:1");
   const helperId = ThreadId.make("assistant:helper:1");
+  const helper2Id = ThreadId.make("assistant:helper2:1");
   const plainId = ThreadId.make("thread:plain");
   const shells = [
     liveThreadShell(askerId, { runtimeMode: "full-access" }),
     liveThreadShell(helperId, { runtimeMode: "approval-required" }),
+    liveThreadShell(helper2Id, { runtimeMode: "approval-required" }),
     liveThreadShell(plainId, { runtimeMode: "approval-required" }),
   ];
   const scopeOf = (threadId: ThreadId): McpInvocationScope => ({
@@ -3953,7 +3957,7 @@ describe("OrchestratorMcpService assistant requests", () => {
   });
   type Sent = { messageId: string; commandId: string; text: string; mode: string };
 
-  const harness = (failSend = false) =>
+  const harness = (failSend = false, baseDir?: string) =>
     Effect.gen(function* () {
       const sent = yield* Ref.make<ReadonlyArray<Sent>>([]);
       const layer = layerOrchestratorService.pipe(
@@ -3989,6 +3993,10 @@ describe("OrchestratorMcpService assistant requests", () => {
             Layer.mock(SecretRequests.SecretRequests)({}),
             Layer.mock(RemoteDelegation.RemoteDelegation)({}),
             Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+            ServerConfigService.ServerConfig.layerTest(
+              process.cwd(),
+              baseDir ?? { prefix: "t3-assistant-requests-" },
+            ).pipe(Layer.provide(NodeServices.layer)),
             Layer.mock(AssistantDirectory)({
               forThread: (id) =>
                 Effect.succeedSome({
@@ -4004,6 +4012,191 @@ describe("OrchestratorMcpService assistant requests", () => {
       );
       return { sent, layer };
     });
+
+  it.effect("holds replies to a request sent to several assistants and delivers them as one", () =>
+    Effect.gen(function* () {
+      const { sent, layer } = yield* harness();
+      yield* Effect.gen(function* () {
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const requests = yield* AssistantRequests;
+        const first = yield* mcp.sendToThread(scopeOf(askerId), {
+          threadId: helperId,
+          threadIds: [helper2Id, helperId],
+          message: "status?",
+          clientRequestId: "fan",
+        });
+        const again = yield* mcp.sendToThread(scopeOf(askerId), {
+          threadId: helperId,
+          threadIds: [helper2Id],
+          message: "status?",
+          clientRequestId: "fan",
+        });
+        assert.deepEqual(
+          again.recipients?.map((r) => r.messageId),
+          first.recipients?.map((r) => r.messageId),
+        );
+        assert.equal(first.recipients?.length, 2);
+        const [toHelper, toHelper2] = first.recipients!;
+        assert.notEqual(toHelper!.messageId, toHelper2!.messageId);
+
+        const answer = (threadId: ThreadId, requestId: string, message: string) =>
+          mcp.sendToThread(scopeOf(threadId), {
+            threadId: askerId,
+            message,
+            replyTo: requestId as never,
+          });
+        const held = yield* answer(helperId, toHelper!.messageId, "Status: done A");
+        assert.equal(held.delivery, "held");
+        const heldAgain = yield* answer(helperId, toHelper!.messageId, "Status: done A");
+        assert.equal(heldAgain.delivery, "held");
+        assert.equal((yield* Ref.get(sent)).filter((s) => s.text.includes("<t3_reply")).length, 0);
+
+        const done = yield* answer(helper2Id, toHelper2!.messageId, "Status: done B");
+        assert.equal(done.delivery, "queued");
+        const repeat = yield* answer(helper2Id, toHelper2!.messageId, "Status: done B");
+        assert.equal(repeat.delivery, "held");
+        const replies = (yield* Ref.get(sent)).filter((s) => s.text.includes("<t3_reply"));
+        assert.equal(replies.length, 1);
+        assert.equal(replies[0]!.messageId, done.messageId);
+        assert.include(replies[0]!.text, "Status: done A");
+        assert.include(replies[0]!.text, "Status: done B");
+        assert.include(replies[0]!.text, 'status="answered"');
+        assert.equal((yield* requests.settle(toHelper!.messageId)).kind, "held");
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("a blocked recipient counts as answered in the grouped delivery", () =>
+    Effect.gen(function* () {
+      const { sent, layer } = yield* harness();
+      yield* Effect.gen(function* () {
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const requests = yield* AssistantRequests;
+        const first = yield* mcp.sendToThread(scopeOf(askerId), {
+          threadId: helperId,
+          threadIds: [helper2Id],
+          message: "status?",
+        });
+        const [toHelper, toHelper2] = first.recipients!;
+        yield* mcp.sendToThread(scopeOf(helperId), {
+          threadId: askerId,
+          message: "Status: done",
+          replyTo: toHelper!.messageId,
+        });
+        yield* requests.claimBlocked(
+          toHelper2!.messageId,
+          helper2Id,
+          "Status: blocked\nResult: failed",
+        );
+        const outcome = yield* requests.settle(toHelper2!.messageId);
+        assert.equal(outcome.kind, "complete");
+        assert.deepEqual(
+          outcome.kind === "complete" ? outcome.delivery.entries.map((e) => e.status) : [],
+          ["answered", "blocked"],
+        );
+        assert.equal((yield* Ref.get(sent)).filter((s) => s.text.includes("<t3_reply")).length, 0);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect(
+    "hands files over in a request and in a reply, copied once, and drops them on failure",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-send-paths-" });
+        const file = `${dir}/report.txt`;
+        yield* fs.writeFileString(file, "data");
+        const { sent, layer } = yield* harness();
+        yield* Effect.gen(function* () {
+          const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
+          const first = yield* mcp.sendToThread(scopeOf(askerId), {
+            threadId: helperId,
+            message: "read this",
+            paths: [file],
+            clientRequestId: "p1",
+          });
+          const copied = first.paths![0]!;
+          assert.match(copied, /shared\/transfers\/asker\/.*report\.txt$/);
+          assert.equal(yield* fs.readFileString(copied), "data");
+          const again = yield* mcp.sendToThread(scopeOf(askerId), {
+            threadId: helperId,
+            message: "read this",
+            paths: [file],
+            clientRequestId: "p1",
+          });
+          assert.deepEqual(again.paths, first.paths);
+          assert.include((yield* Ref.get(sent))[0]!.text, `](<${copied}>)`);
+
+          const answer = yield* mcp.sendToThread(scopeOf(helperId), {
+            threadId: askerId,
+            message: "Status: done",
+            paths: [file],
+            replyTo: first.messageId,
+          });
+          assert.match(answer.paths![0]!, /shared\/transfers\/helper\/.*report\.txt$/);
+          assert.include((yield* Ref.get(sent)).at(-1)!.text, `](<${answer.paths![0]!}>)`);
+
+          const missing = yield* mcp
+            .sendToThread(scopeOf(askerId), {
+              threadId: helperId,
+              message: "x",
+              paths: [`${dir}/nope`],
+            })
+            .pipe(Effect.flip);
+          assert.include(missing.message, "does not exist");
+        }).pipe(Effect.provide(layer));
+      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("a failed send leaves no copied files behind", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-send-paths-fail-" });
+      const file = `${dir}/report.txt`;
+      yield* fs.writeFileString(file, "data");
+      const { layer } = yield* harness(true, `${dir}/base`);
+      yield* Effect.gen(function* () {
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const failed = yield* mcp
+          .sendToThread(scopeOf(askerId), {
+            threadId: helperId,
+            message: "x",
+            paths: [file],
+            clientRequestId: "pf",
+          })
+          .pipe(Effect.flip);
+        assert.equal(failed.code, "orchestration_error");
+        assert.deepEqual(yield* fs.readDirectory(`${dir}/base/shared/transfers/asker`), []);
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("refuses several recipients unless every one is an assistant, or on a reply", () =>
+    Effect.gen(function* () {
+      const { layer } = yield* harness();
+      yield* Effect.gen(function* () {
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const mixed = yield* mcp
+          .sendToThread(scopeOf(askerId), {
+            threadId: helperId,
+            threadIds: [plainId],
+            message: "x",
+          })
+          .pipe(Effect.flip);
+        assert.equal(mixed.code, "invalid_request");
+        const reply = yield* mcp
+          .sendToThread(scopeOf(helperId), {
+            threadId: askerId,
+            threadIds: [helper2Id],
+            message: "x",
+            replyTo: MessageId.make("message:any"),
+          })
+          .pipe(Effect.flip);
+        assert.equal(reply.code, "invalid_request");
+      }).pipe(Effect.provide(layer));
+    }),
+  );
 
   it.effect("sends a request without waiting, and the reply routes back once", () =>
     Effect.gen(function* () {

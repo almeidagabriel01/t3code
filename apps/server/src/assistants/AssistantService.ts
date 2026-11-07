@@ -47,6 +47,7 @@ import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import { removeOwnerTransfers } from "./AssistantTransfers.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
@@ -814,6 +815,9 @@ const make = Effect.gen(function* () {
           yield* sql`DELETE FROM assistants WHERE assistant_id = ${assistantId}`;
           yield* leaveTeams(assistantId);
           yield* files(AssistantAvatars.removeAvatarImages(assistantId));
+          // Its transfers and the requests it was waiting on go with it; the rest of `shared/` stays.
+          yield* removeOwnerTransfers(config.sharedDir, assistantId);
+          yield* sql`DELETE FROM assistant_requests WHERE sender_thread_id LIKE ${`assistant:${assistantId}:%`}`;
           yield* connectors
             .purge(assistantId, decodeMcpServers(row.mcp_servers_json))
             .pipe(

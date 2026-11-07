@@ -342,6 +342,38 @@ it.effect("restore brings back this assistant's own conversation only", () => {
   }).pipe(Effect.provide(layer));
 });
 
+it.effect("remove clears the assistant's transfers and requests, not the rest of shared/", () => {
+  const { layer } = harness();
+  return Effect.gen(function* () {
+    const assistants = yield* Assistants.AssistantService;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const { sharedDir } = yield* ServerConfig.ServerConfig;
+    const sql = yield* SqlClient.SqlClient;
+    const made = yield* assistants.create(create());
+    const mine = path.join(sharedDir, "transfers", made.id, "message_1");
+    const theirs = path.join(sharedDir, "transfers", "someone-else", "message_2");
+    const loose = path.join(sharedDir, "notes.txt");
+    for (const file of [path.join(mine, "a.txt"), path.join(theirs, "b.txt"), loose]) {
+      yield* fileSystem.makeDirectory(path.dirname(file), { recursive: true });
+      yield* fileSystem.writeFileString(file, "x");
+    }
+    yield* sql`INSERT INTO assistant_requests (request_id, group_id, sender_thread_id, recipient_thread_id, status, created_at)
+      VALUES ('r1', 'r1', ${`assistant:${made.id}:1`}, 'assistant:other:1', 'open', 'now'),
+             ('r2', 'r2', 'assistant:other:1', ${`assistant:${made.id}:1`}, 'open', 'now')`;
+    yield* assistants.remove(made.id);
+    assert.isFalse(yield* fileSystem.exists(mine));
+    assert.isTrue(yield* fileSystem.exists(path.join(theirs, "b.txt")));
+    assert.isTrue(yield* fileSystem.exists(loose));
+    assert.deepEqual(
+      (yield* sql<{ request_id: string }>`SELECT request_id FROM assistant_requests`).map(
+        (row) => row.request_id,
+      ),
+      ["r2"],
+    );
+  }).pipe(Effect.provide(layer));
+});
+
 it.effect("remove deletes the row first, then every conversation and its schedules", () => {
   const { layer, pointers, threads, taskDeletes } = harness();
   return Effect.gen(function* () {

@@ -169,7 +169,7 @@ const handlers = {
       }),
   ),
   t3_thread_send: McpToolAccess.writesThreads(
-    (input) => [input.threadId],
+    (input) => [input.threadId, ...(input.threadIds ?? [])],
     (input) =>
       Effect.gen(function* () {
         const scope = yield* McpInvocationContext.McpInvocationContext;

@@ -103,3 +103,73 @@ it.effect("keeps the request open when the blocked notice cannot be delivered", 
     assert.isTrue(Option.isNone(yield* requests.claimBlocked(requestId, helper)));
   }).pipe(Effect.provide(layer));
 });
+
+it.effect(
+  "holds a blocked notice until the whole group answered, then delivers one message",
+  () => {
+    const { sends, layer } = harness();
+    const other = ThreadId.make("assistant:helper2:1");
+    return Effect.gen(function* () {
+      const reactor = yield* Reactor.AssistantRequestReactor;
+      const requests = yield* AssistantRequests;
+      for (const [id, recipient] of [
+        ["message:g:a", helper],
+        ["message:g:b", other],
+      ] as const) {
+        yield* requests.open({
+          requestId: id as never,
+          groupId: "message:g" as never,
+          senderThreadId: asker,
+          recipientThreadId: recipient,
+        });
+      }
+      yield* reactor.handle(runEvent("failed", "message:g:a"));
+      assert.equal(sends.length, 0);
+      yield* requests.claimReply({
+        requestId: "message:g:b",
+        recipientThreadId: other,
+        senderThreadId: asker,
+        text: "Status: done B",
+      });
+      // The blocked one was claimed first, so the last answer completes the group.
+      const outcome = yield* requests.settle("message:g:b");
+      assert.equal(outcome.kind, "complete");
+      assert.deepEqual(
+        outcome.kind === "complete" ? outcome.delivery.entries.map((e) => e.status) : [],
+        ["blocked", "answered"],
+      );
+    }).pipe(Effect.provide(layer));
+  },
+);
+
+it.effect("sends the grouped notice from the reactor when the blocked run is the last", () => {
+  const { sends, layer } = harness();
+  const other = ThreadId.make("assistant:helper2:1");
+  return Effect.gen(function* () {
+    const reactor = yield* Reactor.AssistantRequestReactor;
+    const requests = yield* AssistantRequests;
+    for (const [id, recipient] of [
+      ["message:g:a", helper],
+      ["message:g:b", other],
+    ] as const) {
+      yield* requests.open({
+        requestId: id as never,
+        groupId: "message:g" as never,
+        senderThreadId: asker,
+        recipientThreadId: recipient,
+      });
+    }
+    yield* requests.claimReply({
+      requestId: "message:g:b",
+      recipientThreadId: other,
+      senderThreadId: asker,
+      text: "Status: done B",
+    });
+    assert.equal((yield* requests.settle("message:g:b")).kind, "held");
+    yield* reactor.handle(runEvent("failed", "message:g:a"));
+    assert.equal(sends.length, 1);
+    assert.equal(sends[0]!.messageId, "assistant-reply:message:g");
+    assert.include(sends[0]!.text as string, "Status: done B");
+    assert.include(sends[0]!.text as string, 'status="blocked"');
+  }).pipe(Effect.provide(layer));
+});

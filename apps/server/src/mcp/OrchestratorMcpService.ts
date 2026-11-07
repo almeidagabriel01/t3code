@@ -1,4 +1,5 @@
 import {
+  assistantIdFromThreadId,
   CommandId,
   isAssistantThreadId,
   type EnvironmentId,
@@ -90,10 +91,13 @@ import * as Stream from "effect/Stream";
 import { AssistantDirectory } from "../assistants/AssistantDirectory.ts";
 import {
   AssistantRequests,
+  deliveryText,
   replyMessageId,
   replyText,
   requestText,
 } from "../assistants/AssistantRequests.ts";
+import { copyTransfer, removeTransfer, transferText } from "../assistants/AssistantTransfers.ts";
+import { ServerConfig } from "../config.ts";
 import { projectScopeRefusal, sandboxRefusal } from "../assistants/AssistantSandboxPolicy.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import {
@@ -1040,6 +1044,7 @@ const make = Effect.gen(function* () {
   const remoteDelegation = yield* RemoteDelegation.RemoteDelegation;
   const assistantDirectory = yield* Effect.serviceOption(AssistantDirectory);
   const assistantRequests = yield* Effect.serviceOption(AssistantRequests);
+  const serverConfig = yield* Effect.serviceOption(ServerConfig);
 
   /** A sandboxed assistant starts work only in its sandbox: anything else is refused with the id to use. */
   const refuseOutsideSandbox = (scope: McpInvocationScope, target: EnvironmentId | undefined) =>
@@ -3168,11 +3173,13 @@ const make = Effect.gen(function* () {
       const { parent, limits, target } = yield* loadScopedThread(scope, input.threadId);
       yield* assertLiveCallerForOtherThread(scope, parent, target);
       const callerThreadId = parent?.thread.id;
+      const recipientIds = [...new Set([input.threadId, ...(input.threadIds ?? [])])];
+      const paths = input.paths ?? [];
       // Between two assistants a send does not block: the answer comes back as a new message.
       const exchange =
         callerThreadId !== undefined &&
         isAssistantThreadId(callerThreadId) &&
-        isAssistantThreadId(input.threadId) &&
+        recipientIds.every(isAssistantThreadId) &&
         Option.isSome(assistantRequests) &&
         Option.isSome(assistantDirectory)
           ? {
@@ -3187,15 +3194,66 @@ const make = Effect.gen(function* () {
           "replyTo answers an assistant's request and is only sent from one assistant to another.",
         );
       }
+      if ((recipientIds.length > 1 || paths.length > 0) && exchange === undefined) {
+        return yield* failure(
+          "invalid_request",
+          "threadIds and paths are only for an assistant sending to assistants.",
+        );
+      }
+      if (input.replyTo !== undefined && recipientIds.length > 1) {
+        return yield* failure("invalid_request", "A reply goes to the one assistant that asked.");
+      }
+      const sharedDir = Option.map(serverConfig, (config) => config.sharedDir);
+      if (paths.length > 0 && Option.isNone(sharedDir)) {
+        return yield* failure("invalid_request", "Files cannot be handed over on this server.");
+      }
+      const from =
+        exchange === undefined
+          ? undefined
+          : {
+              name: Option.match(exchange.self, {
+                onNone: () => "An assistant",
+                onSome: (f) => f.assistant.name,
+              }),
+              handle: Option.match(exchange.self, {
+                onNone: () => "",
+                onSome: (f) => f.assistant.handle,
+              }),
+              threadId: exchange.caller,
+            };
+      const ownerId = callerThreadId === undefined ? null : assistantIdFromThreadId(callerThreadId);
+      // A repeat finds the folder it made before, so nothing is copied twice.
+      const copyFiles = (transferId: string) =>
+        Option.isNone(sharedDir) || paths.length === 0 || ownerId === null || from === undefined
+          ? Effect.succeed([] as ReadonlyArray<string>)
+          : copyTransfer({
+              sharedDir: sharedDir.value,
+              ownerId,
+              transferId,
+              sender: { name: from.name, handle: from.handle },
+              recipients: recipientIds,
+              paths,
+            }).pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
+      const dropFiles = (transferId: string) =>
+        Option.isNone(sharedDir) || ownerId === null
+          ? Effect.void
+          : removeTransfer(sharedDir.value, ownerId, transferId);
+
+      const replyFiles =
+        exchange !== undefined && input.replyTo !== undefined
+          ? yield* copyFiles(replyMessageId(input.replyTo))
+          : [];
       const reply =
         exchange !== undefined && input.replyTo !== undefined
           ? yield* exchange.requests.claimReply({
               requestId: input.replyTo,
               recipientThreadId: exchange.caller,
               senderThreadId: input.threadId,
+              text: `${input.message}${transferText(replyFiles)}`,
             })
           : undefined;
       if (reply === "unknown" || reply === "closed") {
+        if (input.replyTo !== undefined) yield* dropFiles(replyMessageId(input.replyTo));
         return yield* failure(
           "invalid_request",
           reply === "unknown"
@@ -3203,10 +3261,19 @@ const make = Effect.gen(function* () {
             : `Request ${input.replyTo} was already closed as blocked.`,
         );
       }
-      // The asker opted in to hearing back, so a reply is not held to the sender's modes.
-      if (reply === undefined && !isSideChatToItsMainChat(parent?.thread, target.thread.id)) {
-        yield* resolveRuntimeMode(limits.runtimeMode, target.thread.runtimeMode);
-        yield* resolveInteractionMode(limits.interactionMode, target.thread.interactionMode);
+      // Every recipient is checked before the first gets anything.
+      const targets = [{ threadId: input.threadId, target }];
+      for (const threadId of recipientIds.slice(1)) {
+        const other = yield* loadScopedThread(scope, threadId);
+        yield* assertLiveCallerForOtherThread(scope, other.parent, other.target);
+        targets.push({ threadId, target: other.target });
+      }
+      for (const { target: each } of targets) {
+        // The asker opted in to hearing back, so a reply is not held to the sender's modes.
+        if (reply === undefined && !isSideChatToItsMainChat(parent?.thread, each.thread.id)) {
+          yield* resolveRuntimeMode(limits.runtimeMode, each.thread.runtimeMode);
+          yield* resolveInteractionMode(limits.interactionMode, each.thread.interactionMode);
+        }
       }
 
       const mode =
@@ -3220,84 +3287,149 @@ const make = Effect.gen(function* () {
         input.clientRequestId ??
           (exchange === undefined
             ? undefined
-            : `auto:${Hash.string(`${input.threadId}\0${input.message}`).toString(36)}:${input.message.length}`),
+            : `auto:${Hash.string(`${recipientIds.toSorted().join(",")}\0${input.message}${paths.length === 0 ? "" : `\0${paths.join("\0")}`}`).toString(36)}:${input.message.length}`),
       );
       const operation = "thread-send";
-      const requestId = stableOperationMessageId({ scope, requestKey: key, operation });
-      const messageId = reply === undefined ? requestId : replyMessageId(input.replyTo!);
-      const commandId =
-        reply === undefined
-          ? stableCommandId({ scope, requestKey: key, operation })
-          : CommandId.make(messageId);
+      const groupId = stableOperationMessageId({ scope, requestKey: key, operation });
+      const grouped = recipientIds.length > 1;
       const expectsReply =
         exchange !== undefined && reply === undefined && input.expectsReply !== false;
-      let text = input.message;
-      if (exchange !== undefined) {
-        const from = {
-          name: Option.match(exchange.self, {
-            onNone: () => "An assistant",
-            onSome: (f) => f.assistant.name,
-          }),
-          handle: Option.match(exchange.self, {
-            onNone: () => "",
-            onSome: (f) => f.assistant.handle,
-          }),
-          threadId: exchange.caller,
-        };
-        text =
-          reply === undefined
-            ? requestText(from, requestId, expectsReply, input.message)
-            : replyText(from, input.replyTo!, input.message);
-        if (expectsReply) {
+      const files = reply === undefined ? yield* copyFiles(groupId) : [];
+
+      // A reply that completes its group goes out as one message; otherwise it is held or sent alone.
+      const settled =
+        exchange !== undefined && reply !== undefined
+          ? yield* exchange.requests.settle(input.replyTo!)
+          : ({ kind: "single" } as const);
+      const memoryGrantCeiling = yield* captureCallerMemoryCeiling(scope);
+      const post = (message: {
+        readonly threadId: ThreadId;
+        readonly projectId: ProjectId;
+        readonly commandId: CommandId;
+        readonly messageId: MessageId;
+        readonly text: string;
+      }) =>
+        threadManagement
+          .sendToThread({
+            projectId: message.projectId,
+            memoryGrantCeiling,
+            commandId: message.commandId,
+            threadId: message.threadId,
+            ...(parent === undefined ? {} : { senderThreadId: parent.thread.id }),
+            messageId: message.messageId,
+            text: message.text,
+            attachments: [],
+            mode,
+            createdBy: "agent",
+            creationSource: "mcp",
+          })
+          .pipe(
+            Effect.mapError((error) =>
+              isThreadManagementError(error)
+                ? threadManagementFailure(error)
+                : failure(
+                    "orchestration_error",
+                    `Unable to send to thread ${message.threadId}: ${userFacingDispatchErrorMessage(error) ?? errorMessage(error)}`,
+                  ),
+            ),
+          );
+      const outcomeOf = (
+        threadId: ThreadId,
+        messageId: MessageId,
+        result: Effect.Success<ReturnType<typeof post>>,
+      ) =>
+        ({
+          threadId,
+          link: threadLinkFor(scope, threadId),
+          messageId,
+          runId: result.run.id,
+          ...(result.run.delegatedTaskId === undefined
+            ? {}
+            : { taskId: result.run.delegatedTaskId }),
+          status: result.run.status,
+          delivery: result.delivery,
+        }) satisfies NonNullable<OrchestratorMcpThreadSendResult["recipients"]>[number];
+
+      if (settled.kind === "held") {
+        return {
+          threadId: input.threadId,
+          link: threadLinkFor(scope, input.threadId),
+          messageId: replyMessageId(input.replyTo!),
+          delivery: "held",
+        } satisfies OrchestratorMcpThreadSendResult;
+      }
+      if (settled.kind === "complete") {
+        const messageId = replyMessageId(settled.delivery.groupId as MessageId);
+        const result = yield* post({
+          threadId: input.threadId,
+          projectId: target.thread.projectId,
+          commandId: CommandId.make(messageId),
+          messageId,
+          text: yield* deliveryText(Option.getOrUndefined(assistantDirectory), settled.delivery),
+        }).pipe(Effect.tapError(() => exchange!.requests.reopen(input.replyTo!)));
+        return outcomeOf(
+          input.threadId,
+          messageId,
+          result,
+        ) satisfies OrchestratorMcpThreadSendResult;
+      }
+
+      const requestIdFor = (threadId: ThreadId) =>
+        grouped ? MessageId.make(`${groupId}:to:${stablePart(threadId)}`) : groupId;
+      if (expectsReply && exchange !== undefined) {
+        // Every row exists before the first send, so a fast reply never finds a group of one.
+        for (const threadId of recipientIds) {
           yield* exchange.requests.open({
-            requestId,
+            requestId: requestIdFor(threadId),
+            ...(grouped ? { groupId } : {}),
             senderThreadId: exchange.caller,
-            recipientThreadId: input.threadId,
+            recipientThreadId: threadId,
           });
         }
       }
-      const memoryGrantCeiling = yield* captureCallerMemoryCeiling(scope);
-      const result = yield* threadManagement
-        .sendToThread({
-          projectId: target.thread.projectId,
-          memoryGrantCeiling,
+      const sends: Array<NonNullable<OrchestratorMcpThreadSendResult["recipients"]>[number]> = [];
+      for (const [index, { threadId, target: each }] of targets.entries()) {
+        const requestId = requestIdFor(threadId);
+        const messageId = reply === undefined ? requestId : replyMessageId(input.replyTo!);
+        const commandId =
+          reply !== undefined
+            ? CommandId.make(messageId)
+            : stableCommandId({ scope, requestKey: key, operation, ...(grouped ? { index } : {}) });
+        const text =
+          from === undefined
+            ? input.message
+            : reply === undefined
+              ? requestText(from, requestId, expectsReply, input.message, files)
+              : replyText(from, input.replyTo!, input.message, replyFiles);
+        const result = yield* post({
+          threadId,
+          projectId: each.thread.projectId,
           commandId,
-          threadId: input.threadId,
-          ...(parent === undefined ? {} : { senderThreadId: parent.thread.id }),
           messageId,
           text,
-          attachments: [],
-          mode,
-          createdBy: "agent",
-          creationSource: "mcp",
-        })
-        .pipe(
+        }).pipe(
           Effect.tapError(() =>
-            exchange === undefined
-              ? Effect.void
-              : reply === "claimed"
-                ? exchange.requests.reopen(input.replyTo!)
-                : expectsReply
-                  ? exchange.requests.forget(requestId)
-                  : Effect.void,
-          ),
-          Effect.mapError((error) =>
-            isThreadManagementError(error)
-              ? threadManagementFailure(error)
-              : failure(
-                  "orchestration_error",
-                  `Unable to send to thread ${input.threadId}: ${userFacingDispatchErrorMessage(error) ?? errorMessage(error)}`,
-                ),
+            Effect.gen(function* () {
+              if (exchange === undefined) return;
+              if (reply === "claimed") yield* exchange.requests.reopen(input.replyTo!);
+              else if (expectsReply) {
+                for (const unsent of recipientIds.slice(index)) {
+                  yield* exchange.requests.forget(requestIdFor(unsent));
+                }
+              }
+              if (index === 0)
+                yield* dropFiles(reply === undefined ? groupId : replyMessageId(input.replyTo!));
+            }),
           ),
         );
+        sends.push(outcomeOf(threadId, messageId, result));
+      }
       return {
-        threadId: input.threadId,
-        link: threadLinkFor(scope, input.threadId),
-        messageId,
-        runId: result.run.id,
-        ...(result.run.delegatedTaskId === undefined ? {} : { taskId: result.run.delegatedTaskId }),
-        status: result.run.status,
-        delivery: result.delivery,
+        ...sends[0]!,
+        ...(files.length === 0 && replyFiles.length === 0
+          ? {}
+          : { paths: [...files, ...replyFiles] }),
+        ...(grouped ? { recipients: sends } : {}),
       } satisfies OrchestratorMcpThreadSendResult;
     }),
     waitForThread: Effect.fn("OrchestratorMcpService.waitForThread")(function* (scope, input) {

@@ -11,6 +11,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as HttpClient from "effect/http/HttpClient";
 import * as NodeModule from "node:module";
 
+import { ServerConfig } from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ProcessRunner from "../processRunner.ts";
 
@@ -122,7 +123,7 @@ const sandboxContainerName = (environmentId: string) =>
   `t3-assistant-sandbox-${environmentId.replace(/[^a-zA-Z0-9]/g, "").slice(0, 8)}`;
 
 /** Published on this machine's loopback only; Docker picks the host port. */
-const sandboxRunArgs = (name: string, image: string) => [
+const sandboxRunArgs = (name: string, image: string, sharedDir: string) => [
   "run",
   "-d",
   "--name",
@@ -141,6 +142,9 @@ const sandboxRunArgs = (name: string, image: string) => [
   `${name}-home:${HOME}`,
   "-v",
   `${name}-work:${WORKSPACE}`,
+  // The sandbox's own T3 home is HOME, so this is the folder its server calls `shared`.
+  "-v",
+  `${sharedDir}:${HOME}/shared`,
   image,
 ];
 
@@ -189,6 +193,7 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const runner = yield* ProcessRunner.ProcessRunner;
     const environment = yield* ServerEnvironment.ServerEnvironment;
+    const { sharedDir } = yield* ServerConfig;
     const source = yield* SandboxBundleSource;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -289,7 +294,7 @@ export const layer = Layer.effect(
       const descriptor = yield* environment.getDescriptor;
       const image = sandboxImageTag(descriptor.serverVersion, bundle);
       yield* buildImage(image, bundle);
-      yield* dockerOrFail("create the sandbox", sandboxRunArgs(containerName, image));
+      yield* dockerOrFail("create the sandbox", sandboxRunArgs(containerName, image, sharedDir));
       return yield* read();
     });
 

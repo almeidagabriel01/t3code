@@ -319,6 +319,19 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
     assert.isUndefined(options.extraArgs?.["add-dir"]);
   });
 
+  it("adds the runtime policy's directories to Claude's", () => {
+    const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      nativeThreadId: "native-policy-dirs",
+      resume: false,
+      cwd: "/workspace",
+      attachmentsDir: "/attachments",
+      policyDirectories: ["/base/shared"],
+      settings: AUTO_COMPACT_CLAUDE_SETTINGS,
+    });
+    assert.deepEqual(options.additionalDirectories, ["/workspace", "/attachments", "/base/shared"]);
+  });
+
   it("gives delegated children Claude's subagent prompt cache TTL", () => {
     const lineage = (relationshipToParent: "fork" | "subagent" | null) => ({
       lineage: {
