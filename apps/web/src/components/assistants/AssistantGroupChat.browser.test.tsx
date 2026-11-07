@@ -51,6 +51,20 @@ vi.mock(import("~/rpc/requestLatencyState"), async (original) => ({
   ...(await original()),
   trackRpcRequestSent: () => {},
 }));
+// A member's group thread that waits on the user: a real shell with its id and approval replaced.
+const waiting = vi.hoisted(() => new Set<string>());
+vi.mock(import("~/state/entities"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    useThreadShell: (ref) => {
+      const real = actual.useThreadShell(ref);
+      const base = actual.useQuietThreadShells()[0]!;
+      if (ref === null || !waiting.has(ref.threadId)) return real;
+      return { ...base, id: ref.threadId, hasPendingApprovals: true } as typeof base;
+    },
+  };
+});
 
 installFakeEnvironment([threadWithHistory("thread-a", 2)], { assistants: true });
 await page.viewport(1400, 900);
@@ -136,6 +150,7 @@ const eventually = (check: () => void) => vi.waitFor(check, { timeout: 10_000 })
 
 async function openChat(options: { team?: AssistantTeam } = {}) {
   clearGroupDrafts();
+  waiting.clear();
   appAtomRegistry.set(assistantDialogAtom, null);
   appAtomRegistry.set(assistantTeamDialogAtom, null);
   Object.assign(fakeGroupChat, {
@@ -283,6 +298,18 @@ it("labels a reply with the member it answers and previews it going to that memb
   await userEvent.click(page.getByRole("button", { name: /^Reply/ }).first());
   await userEvent.type(composer(), "and then?");
   await expect.element(page.getByText("To Ada", { exact: true })).toBeInTheDocument();
+});
+
+it("says on the card when the member waits for the user's approval", async () => {
+  publishGroupChat([message(1, { text: "@ada go" })], [task("t-1", 1)]);
+  await using _screen = await openChat();
+  await expect.element(page.getByTestId("group-task-card")).toBeInTheDocument();
+  await expect.element(page.getByTestId("group-task-needs")).not.toBeInTheDocument();
+  waiting.add(`assistant:ada:g-${"0".repeat(16)}`);
+  publishGroupChat([message(1, { text: "@ada go" })], [task("t-1", 1, { updatedAt: WHEN })]);
+  await expect
+    .element(page.getByTestId("group-task-needs"))
+    .toHaveTextContent("Needs your approval · Open the conversation to answer");
 });
 
 it("keeps an unsent message when the user leaves the chat and comes back", async () => {

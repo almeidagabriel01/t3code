@@ -8,6 +8,8 @@ type Item = { message: { id: string } };
 const { mocks, Children } = vi.hoisted(() => ({
   Children: ({ children }: { children?: ReactNode }) => children,
   mocks: {
+    /** Group threads that wait on the user's approval. */
+    waiting: new Set<string>(),
     live: null as unknown,
     teams: [] as unknown[],
     environmentIds: ["hub"],
@@ -164,6 +166,22 @@ vi.mock("../files/FileMarkdownPreview", () => ({
 }));
 vi.mock("../workspace/useSelectWorkspaceDetail", () => ({
   useSelectWorkspaceDetail: () => mocks.selectDetail,
+}));
+vi.mock("../../state/entities", () => ({
+  useThreadShell: (ref: { threadId: string } | null) =>
+    ref === null || !mocks.waiting.has(ref.threadId)
+      ? null
+      : {
+          hasPendingApprovals: true,
+          hasPendingUserInput: false,
+          pendingSubagentRequest: null,
+          pendingGuestMessageCount: 0,
+          queuedMessageCount: 0,
+          runtime: null,
+          blockedOnThreadWait: false,
+          latestRun: null,
+          source: { latestVisibleMessage: null },
+        },
 }));
 vi.mock("../../state/assistants", () => ({
   useAssistantEntries: () => ({
@@ -378,6 +396,19 @@ describe("group chat feed", () => {
     expect(container.querySelector('[data-testid="group-routing"]')?.textContent).toBe(
       "Jarvis (lead) is choosing who answers…",
     );
+  });
+
+  it("says on a running card when its member waits for the user's approval", () => {
+    mocks.waiting = new Set(["assistant:ada:g-0123456789abcdef"]);
+    mocks.live = snapshot(
+      [message("m1", 1, { author: "user", assistantId: null, text: "@ada go" })],
+      [task("t1", "running", "ada"), task("t22", "running", "bo")],
+    );
+    render();
+    const needs = container.querySelectorAll('[data-testid="group-task-needs"]');
+    expect(needs).toHaveLength(1);
+    expect(needs[0]?.textContent).toBe("Needs your approval · Open the conversation to answer");
+    mocks.waiting = new Set();
   });
 
   it("says what to do in an empty chat, and nothing before the first snapshot", () => {

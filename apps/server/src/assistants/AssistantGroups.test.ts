@@ -87,6 +87,7 @@ const harness = (options: Options = {}) => {
     text: string;
     mode: string;
     createdBy: string;
+    modelSelection?: ModelSelection;
   }> = [];
   const dispatched: Array<{ type: string; threadId: string; commandId: string; runId?: string }> =
     [];
@@ -509,7 +510,13 @@ it.effect("a member's exec thread is launched once, lazily, like its own convers
   return Effect.gen(function* () {
     const groups = yield* h.setup;
     yield* groups.post({ teamId: TEAM, text: "@ada one" }, h.user);
+    // Ada switched models in her own conversation: the next task in the group follows.
+    h.fakeThreads.get("assistant:ada:1")!.modelSelection = selection(claude, "ada-new");
     yield* groups.post({ teamId: TEAM, text: "@ada two" }, h.user);
+    assert.deepEqual(
+      h.sent.map((input) => input.modelSelection),
+      [selection(codex, "ada-model"), selection(claude, "ada-new")],
+    );
     assert.lengthOf(h.launched, 1);
     assert.deepInclude(h.launched[0], {
       commandId: "assistant-group-launch:team:1:ada",

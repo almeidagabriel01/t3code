@@ -82,6 +82,7 @@ type TaskHandlers = {
 
 function TaskCards(
   props: TaskHandlers & {
+    readonly environmentId: EnvironmentId;
     readonly tasks: ReadonlyArray<AssistantGroupTask>;
     readonly showOwner: boolean;
   },
@@ -90,6 +91,7 @@ function TaskCards(
     <GroupTaskCard
       key={task.id}
       task={task}
+      environmentId={props.environmentId}
       ownerName={
         props.showOwner
           ? props.members.find((member) => member.id === task.ownerId)?.name

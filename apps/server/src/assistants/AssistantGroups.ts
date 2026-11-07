@@ -702,8 +702,12 @@ const make = Effect.gen(function* () {
       followup: task.followup,
     });
     const messageId = taskMessageId(task.task_id, task.revision);
+    // The member works on its own current model, so a change in its conversation reaches its groups.
+    const own =
+      owner.thread_id === null ? undefined : yield* inspectThread(owner.thread_id as ThreadId);
     const sent = yield* threads
       .sendToThread({
+        ...(own?.modelSelection === undefined ? {} : { modelSelection: own.modelSelection }),
         projectId: exec.success.projectId,
         commandId: CommandId.make(messageId),
         messageId: MessageId.make(messageId),

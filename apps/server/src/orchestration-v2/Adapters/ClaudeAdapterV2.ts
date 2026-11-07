@@ -1804,6 +1804,12 @@ export const CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS: ReadonlyArray<string> = [
   "mcp__t3-code__html_render",
 ];
 
+/**
+ * A group member coordinates through t3_group whatever its access: the tool only changes the
+ * group's chat and tasks inside T3, never the machine, so a read-only member can still take part.
+ */
+export const CLAUDE_GROUP_MEMBER_T3_MCP_TOOL = "mcp__t3-code__t3_group";
+
 // T3 waits can block for an hour; exceed Claude's default 60 s timeout.
 export const CLAUDE_T3_MCP_TOOL_TIMEOUT_MS = 65 * 60 * 1_000;
 
@@ -1845,7 +1851,7 @@ export function claudeMcpQueryOverrides(input: {
     };
   }
   const mcpAllowedTools = input.readOnlySandbox
-    ? CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS
+    ? [...CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS, CLAUDE_GROUP_MEMBER_T3_MCP_TOOL]
     : [CLAUDE_T3_MCP_TOOL_WILDCARD];
   return {
     allowedTools: Array.from(new Set([...(input.allowedTools ?? []), ...mcpAllowedTools])),

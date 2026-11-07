@@ -1,3 +1,5 @@
+import { assistantPresence } from "@t3tools/client-runtime/assistantRobot";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   ASSISTANT_GROUP_STATUS_LABEL,
   assistantGroupPauseReasonLabel,
@@ -7,6 +9,7 @@ import {
   type Assistant,
   type AssistantGroupTask,
   type AssistantGroupTaskAction,
+  type EnvironmentId,
 } from "@t3tools/contracts";
 import { View } from "react-native";
 
@@ -14,6 +17,7 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
 import { Menu } from "../../components/ui/Menu";
 import { cn } from "../../lib/cn";
+import { useThreadShell } from "../../state/entities";
 
 const STATUS_TONE: Record<AssistantGroupTask["status"], string> = {
   queued: "text-foreground-muted",
@@ -34,6 +38,7 @@ const ACTION_LABEL: Record<Exclude<AssistantGroupTaskAction, "reassign">, string
 /** One task of a request: its state, what was asked, and what the user can do with it. */
 export function GroupTaskCard(props: {
   readonly task: AssistantGroupTask;
+  readonly environmentId: EnvironmentId;
   /** Shown when the card is not under its owner's own message. */
   readonly ownerName?: string | undefined;
   /** Active members that can take the task over, without its owner. */
@@ -43,6 +48,12 @@ export function GroupTaskCard(props: {
   readonly onOpenConversation: () => void;
 }) {
   const { task } = props;
+  // A running member that waits on an approval or a question is answered in its own thread.
+  const shell = useThreadShell(
+    task.status === "running" ? scopeThreadRef(props.environmentId, task.threadId) : null,
+  );
+  const presence = shell === null ? null : assistantPresence(shell);
+  const needs = presence?.mood === "needs" ? presence.detail : null;
   return (
     <View
       testID="group-task-card"
@@ -62,6 +73,11 @@ export function GroupTaskCard(props: {
       <Text className="text-xs text-foreground" numberOfLines={2}>
         {task.instruction}
       </Text>
+      {needs === null ? null : (
+        <Text testID="group-task-needs" className="text-xs font-t3-bold text-warning-foreground">
+          {needs} · Open the conversation to answer
+        </Text>
+      )}
       {task.status === "paused" ? (
         <Text className="text-xs text-foreground-muted">
           {assistantGroupPauseReasonLabel(task.reason)}

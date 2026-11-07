@@ -1,3 +1,5 @@
+import { assistantPresence } from "@t3tools/client-runtime/assistantRobot";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   ASSISTANT_GROUP_STATUS_LABEL,
   assistantGroupPauseReasonLabel,
@@ -11,6 +13,7 @@ import {
 } from "@t3tools/contracts";
 import { MessageSquareIcon } from "lucide-react";
 
+import { useThreadShell } from "../../state/entities";
 import { RelativeTime } from "../RelativeTime";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -48,6 +51,12 @@ export function GroupTaskCard(props: {
 }) {
   const { task } = props;
   const actions = assistantGroupTaskActions(task);
+  // A running member that waits on an approval or a question is answered in its own thread.
+  const shell = useThreadShell(
+    task.status === "running" ? scopeThreadRef(props.environmentId, task.threadId) : null,
+  );
+  const presence = shell === null ? null : assistantPresence(shell);
+  const needs = presence?.mood === "needs" ? presence.detail : null;
   return (
     <div
       data-testid="group-task-card"
@@ -81,6 +90,11 @@ export function GroupTaskCard(props: {
       {task.status === "paused" ? (
         <p className="text-muted-foreground">{assistantGroupPauseReasonLabel(task.reason)}</p>
       ) : null}
+      {needs === null ? null : (
+        <p data-testid="group-task-needs" className="font-medium text-warning-foreground">
+          {needs} · Open the conversation to answer
+        </p>
+      )}
       <div className="flex flex-wrap items-center gap-1.5">
         {actions.map((action) =>
           action === "reassign" ? (
@@ -116,7 +130,11 @@ export function GroupTaskCard(props: {
             </Button>
           ),
         )}
-        <Button size="xs" variant="ghost-muted" onClick={props.onOpenConversation}>
+        <Button
+          size="xs"
+          variant={needs === null ? "ghost-muted" : "outline"}
+          onClick={props.onOpenConversation}
+        >
           <MessageSquareIcon />
           Open conversation
         </Button>
