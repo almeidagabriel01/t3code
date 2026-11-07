@@ -1076,11 +1076,11 @@ it.effect.each([
 });
 
 it.effect.each([
-  ["a project assistant sending into its own project", "sameProject", null],
-  ["a project assistant sending into another project", "plain", "own project"],
-  ["a project assistant messaging another assistant", "current", null],
-  ["an everywhere assistant sending into any project", "plain", null, "current"],
-] as const)("project scope: %s", ([, target, refusal, sender = "scoped"]) => {
+  ["a project assistant sending into its own project", "scoped", "sameProject", null],
+  ["a project assistant sending into another project", "scoped", "plain", "own project"],
+  ["a project assistant messaging another assistant", "scoped", "current", null],
+  ["an everywhere assistant sending into any project", "current", "plain", null],
+] as const)("project scope: %s", ([, sender, target, refusal]) => {
   const dispatched: Array<unknown> = [];
   return Effect.gen(function* () {
     const threads = yield* ThreadManagementService.ThreadManagementService;

@@ -69,6 +69,19 @@ own archive, delete and unarchive pass the guard. Keep it that way.
 All read the directory with `Effect.serviceOption`, so layers that don't provide it behave as before.
 A runtime layer that forgets to provide it silently loses enforcement; `runtimeLayer.ts` must wire it.
 
+## Project scope and avatars
+
+`assistants.scope` is `project` when the assistant's project is not Scratch or the managed
+`assistants` project (`ManagedProjectFolders.isAssistantHomeProject`). It is stored, not derived,
+because `toAssistant` and `AssistantDirectory` are synchronous and layer-light; rows from before it
+existed are filled on the first list or subscribe, and count as `all` until then.
+`projectScopeRefusal` mirrors `sandboxRefusal` at the same sites (`t3_thread_launch`, remote
+`delegate_task`, scheduled tasks, and `message.dispatch` to a non-assistant thread).
+
+An image avatar is copied from the finished upload into `<stateDir>/assistant-avatars/` after a magic
+byte check: pending uploads are swept after a while, so the upload itself cannot be the avatar. It is
+served through the signed `assistant-avatar` asset resource.
+
 ## Teams
 
 An `assistant_teams` row holds members (a JSON array of assistant ids), an optional leader and its

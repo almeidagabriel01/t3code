@@ -10,8 +10,12 @@ and it can't be archived or deleted.
 Open **Settings → Assistants**, or use **+** next to Assistants in the sidebar. Each assistant has:
 
 - **Name** and **handle**. The handle is a short lowercase name that agents use to find it.
+- **Avatar**. A robot in a color you pick, or your own PNG, JPEG or WebP image up to 2 MB. Until you
+  pick one, the robot comes from its handle.
 - **Project**. The conversation runs in this project's folder. Changing it starts a new conversation,
-  because a thread can't move between projects.
+  because a thread can't move between projects. Choosing a real project makes it a **project
+  assistant**: it shows a project badge, is listed under that project, and may only launch,
+  delegate and message work inside it (see [Project assistants](#project-assistants)).
 - **Model**. Change it from the model picker in the conversation, or in the assistant's settings.
 - **Instructions**. Sent with every message, so they keep applying after a long conversation is
   compacted, resumed or moved to another provider. An edit applies from the next message.
@@ -19,6 +23,13 @@ Open **Settings → Assistants**, or use **+** next to Assistants in the sidebar
 - **Workspace**: **This Mac** or a **Sandbox container**, described in
   [Work in a sandbox](#work-in-a-sandbox).
 - **Role** and **Reports to**, which place it in a reporting line (see [Reporting lines](#reporting-lines)).
+
+## Project assistants
+
+An assistant that lives in **No project** works across all your projects. One that lives in a real
+project is a project assistant. T3 Code refuses its launches, delegated tasks and messages to agent
+conversations in any other project, and tells it why. It can still message other assistants, under the
+usual [reporting line and team rules](#reporting-lines).
 
 ## Tool access
 
@@ -125,24 +136,39 @@ channels, even if that assistant only replies when you message it. Pausing **Ass
 you** silences it too. Edit the time or delete the schedule under **Schedules**. The
 standup is recognised by the first line of its prompt, so keep that line when you edit it.
 
-## Teams
+## Groups
 
-A team is a group of assistants that talk to each other while you watch. Under **Settings >
-Assistants > Teams**, choose **New team**, name it and pick at least two members. An assistant can be
-in several teams. The sidebar and Home list your teams under the assistants.
+A group is a set of assistants that talk to each other while you watch. Create one from the sidebar
+(**+** next to Groups) or under **Settings > Assistants > Groups**: give it a name, then add members
+now or later. A group can be empty or hold a single assistant. An assistant can be in several groups.
+The sidebar and Home list your groups under the assistants.
 
 - Members may message each other in any direction, and each member's instructions list its
-  teammates. Ask one to "check with the team" and it asks a teammate.
-- Open a team (**Activity**, or its row in the sidebar or Home) to read every message the members
+  groupmates. Ask one to "check with the group" and it asks one.
+- Open a group (**Activity**, or its row in the sidebar or Home) to read every message the members
   sent each other and the replies they got, oldest first, and jump to the conversation it landed in.
 - A leader is optional. Choose one among the members and give it a title such as CEO, CFO or Head
-  of Research. Teammates are told to report their results to it, and the title shows next to its
-  name. The leader does not change who may message whom.
+  of Research. Members are told to report their results to it, and the title shows next to its
+  name. The leader does not change who may message whom. The role shown for a member is its own
+  **Role**.
 - To keep two assistants from answering each other forever, one assistant may send at most 20
-  messages an hour to its teammates. Past that, T3 Code refuses the send and the assistant reports
+  messages an hour to its groupmates. Past that, T3 Code refuses the send and the assistant reports
   to you instead.
-- Deleting an assistant removes it from its teams. A team left with fewer than two members is
-  deleted. Archived members stay in the team and come back when unarchived.
+- Deleting an assistant removes it from its groups, which stay even when they end up empty. Archived
+  members stay in the group and come back when unarchived.
+
+## Agents can create assistants
+
+Ask any agent to "make an assistant that reviews my PRs" or "put Ana and Bob in a group". It uses the
+`t3_assistant` tool to create, edit, archive and group assistants.
+
+- **You choose the tool access.** If you don't say which level, the agent asks you: use the default
+  (up to its own level) or a custom setup.
+- **At or below the agent's own level**, the assistant is made right away.
+- **Above it** (or when changing an assistant that has more access than the agent), nothing happens
+  until you approve. The request shows up as a decision card; when you approve, the agent repeats the
+  call and the assistant is made once.
+- Groups can be created and changed without approval, using only active assistants.
 
 ## Schedules
 
@@ -260,4 +286,4 @@ apart, give it its own project. See [Memory](./memory.md).
 - **Delete** removes the assistant and all of its conversations.
 
 Assistant conversations never appear in project thread lists. Agents can find an assistant with the
-`t3_assistant` tool and message its thread, but they can't create or configure assistants.
+`t3_assistant` tool and message its thread.

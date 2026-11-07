@@ -1,10 +1,31 @@
-import { assert, it } from "@effect/vitest";
-import type { Assistant } from "@t3tools/contracts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import { expect, it } from "@effect/vitest";
+import {
+  type Assistant,
+  type AssistantTeam,
+  EnvironmentId,
+  ProjectId,
+  ProviderInstanceId,
+  type OrchestrationV2ThreadShell,
+  type RuntimeMode,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Stream from "effect/Stream";
 
 import * as AssistantService from "../../../assistants/AssistantService.ts";
-import { run } from "./handlers.ts";
+import * as DecisionService from "../../../decisions/DecisionService.ts";
+import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
+import * as SqlitePersistence from "../../../persistence/Sqlite.ts";
+import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
+import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import * as McpToolAccess from "../../McpToolAccess.ts";
+import * as AssistantHandlers from "./handlers.ts";
+import { AssistantToolkit, type AssistantParameters } from "./tools.ts";
+
+const providerInstanceId = ProviderInstanceId.make("codex");
+const home = ProjectId.make("home");
 
 const assistant = (id: string, extra: Partial<Assistant>) =>
   ({
@@ -17,12 +38,15 @@ const assistant = (id: string, extra: Partial<Assistant>) =>
     role: "",
     reportsTo: null,
     mcpServers: [],
+    avatar: null,
+    scope: "all",
     archivedAt: null,
     ...extra,
   }) as unknown as Assistant;
 
-const layer = Layer.mock(AssistantService.AssistantService)({
-  list: Effect.succeed([
+/** An in-memory AssistantService that records every write the tool makes. */
+const assistantsMock = () => {
+  const rows: Array<Assistant> = [
     assistant("ceo", {
       role: "CEO",
       askBeforeActing: true,
@@ -39,40 +63,311 @@ const layer = Layer.mock(AssistantService.AssistantService)({
         },
       ],
     }),
-    assistant("eng", { role: "Engineer", reportsTo: "ceo" as never }),
-  ]),
-  teams: Effect.succeed([
+    assistant("eng", { role: "Engineer", reportsTo: "ceo" as never, toolAccess: "read-only" }),
+    assistant("gone", { archivedAt: "2026-01-01T00:00:00.000Z" }),
+  ];
+  const teams: Array<AssistantTeam> = [
     {
       id: "t1",
       name: "Core",
       memberIds: ["ceo", "eng"],
       leaderId: "ceo",
       leaderTitle: "CEO",
-    },
-  ] as never),
-});
+    } as never,
+  ];
+  const writes: Array<unknown> = [];
+  const layer = Layer.mock(AssistantService.AssistantService)({
+    list: Effect.sync(() => [...rows]),
+    teams: Effect.sync(() => [...teams]),
+    create: (input, options) =>
+      Effect.sync(() => {
+        const id = options?.id ?? "random";
+        let made = rows.find((row) => row.id === id);
+        if (made === undefined) {
+          writes.push({ create: input });
+          made = assistant(id, { ...input, handle: input.name.toLowerCase() } as never);
+          rows.push(made);
+        }
+        return made;
+      }),
+    update: (input) =>
+      Effect.sync(() => {
+        writes.push({ update: input });
+        const index = rows.findIndex((row) => row.id === input.assistantId);
+        const next = {
+          ...rows[index]!,
+          ...input,
+          archivedAt: input.archived ? "now" : null,
+        } as unknown as Assistant;
+        rows[index] = next;
+        return next;
+      }),
+    createTeam: (input, options) =>
+      Effect.sync(() => {
+        const existing = teams.find((team) => team.id === options?.id);
+        if (existing !== undefined) return existing;
+        const team = {
+          ...input,
+          id: options?.id ?? "t",
+          leaderId: input.leaderId ?? null,
+        } as never;
+        writes.push({ createTeam: input });
+        teams.push(team);
+        return team;
+      }),
+    updateTeam: (input) =>
+      Effect.sync(() => {
+        writes.push({ updateTeam: input });
+        const index = teams.findIndex((team) => team.id === input.teamId);
+        teams[index] = { ...teams[index]!, ...input } as never;
+        return teams[index]!;
+      }),
+  });
+  return { layer, writes };
+};
+
+const harness = (callerMode: RuntimeMode) =>
+  Effect.gen(function* () {
+    const { layer, writes } = assistantsMock();
+    const threadId = ThreadId.make("thread-1");
+    const deps = Layer.succeedContext(
+      yield* Layer.build(
+        Layer.mergeAll(
+          NodeCrypto.layer,
+          layer,
+          Layer.succeed(McpInvocationContext.McpInvocationContext, {
+            environmentId: EnvironmentId.make("environment"),
+            requestNamespace: "thread:test",
+            thread: { threadId, providerSessionId: "session", providerInstanceId },
+            client: undefined,
+            issuedAt: 0,
+            capabilities: new Set(["orchestration" as const]),
+          }),
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadShell: (id) =>
+              Effect.succeed({
+                id,
+                projectId: home,
+                title: "Planner",
+                deletedAt: null,
+                archivedAt: null,
+                activeRunId: "run-1",
+                providerInstanceId,
+                runtimeMode: callerMode,
+                interactionMode: "default",
+              } as unknown as OrchestrationV2ThreadShell),
+            sendToThread: () => Effect.succeed({} as never),
+          }),
+          Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+            ensureAssistantProject: Effect.succeed({ projectId: home }),
+            namedProjectsRoot: "",
+          }),
+        ).pipe(
+          Layer.provideMerge(
+            DecisionService.layer.pipe(
+              Layer.provide(
+                Layer.mergeAll(
+                  SqlitePersistence.layerMemory,
+                  NodeCrypto.layer,
+                  Layer.mock(ThreadManagement.ThreadManagementService)({
+                    sendToThread: () => Effect.succeed({} as never),
+                  }),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    const toolkit = yield* AssistantToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(AssistantHandlers.layer).pipe(Layer.provide(deps)),
+      ),
+    );
+    const call = (input: AssistantParameters) =>
+      toolkit.handle("t3_assistant", input).pipe(
+        Stream.unwrap,
+        Stream.runCollect,
+        Effect.map((results) => results.at(-1)?.result as Record<string, any>),
+        Effect.provide(deps),
+      );
+    const decisions = yield* DecisionService.DecisionService.pipe(Effect.provide(deps));
+    return { call, writes, decisions };
+  });
 
 it.effect("list and read give each assistant its role, leader and reports by handle", () =>
   Effect.gen(function* () {
-    const listed = yield* run({ action: "list" });
-    assert.deepInclude((listed.assistants as Array<object>)[0], {
+    const { call } = yield* harness("full-access");
+    const listed = yield* call({ action: "list" });
+    expect(listed.assistants[0]).toMatchObject({
       handle: "ceo",
       role: "CEO",
       askBeforeActing: true,
       workspace: "sandbox",
       icon: "scout",
+      avatar: null,
+      scope: "all",
       connectors: [{ name: "docs", transport: "http", enabled: true }],
       reportsTo: null,
       reports: ["eng"],
       teams: [{ name: "Core", members: ["ceo", "eng"], leader: "ceo", leaderTitle: "CEO" }],
     });
-    const read = yield* run({ action: "read", handle: "@ENG" });
-    assert.notInclude(JSON.stringify(listed), "hasValue");
-    assert.deepInclude(read, { role: "Engineer", reportsTo: "ceo", reports: [] });
-    assert.strictEqual((yield* Effect.flip(run({ action: "read" }))).code, "invalid_request");
-    assert.strictEqual(
-      (yield* Effect.flip(run({ action: "read", handle: "nobody" }))).code,
-      "invalid_request",
+    expect(JSON.stringify(listed)).not.toContain("hasValue");
+    expect(yield* call({ action: "read", handle: "@ENG" })).toMatchObject({
+      role: "Engineer",
+      reportsTo: "ceo",
+      reports: [],
+    });
+    expect(yield* call({ action: "read" })).toMatchObject({ code: "invalid_request" });
+    expect(yield* call({ action: "read", handle: "nobody" })).toMatchObject({
+      code: "invalid_request",
+    });
+  }),
+);
+
+it.effect(
+  "create at or below the caller's level is made at once, once, however often it repeats",
+  () =>
+    Effect.gen(function* () {
+      const { call, writes } = yield* harness("auto-accept-edits");
+      const input = {
+        action: "create",
+        name: "Scribe",
+        instructions: "Write.",
+        toolAccess: "workspace-write",
+        avatarHue: 120,
+        clientRequestId: "c1",
+      } as const;
+      const first = yield* call(input);
+      expect(first).toMatchObject({ status: "created", assistant: { handle: "scribe" } });
+      expect(yield* call(input)).toEqual(first);
+      expect(writes).toEqual([
+        {
+          create: expect.objectContaining({
+            projectId: home,
+            toolAccess: "workspace-write",
+            avatar: { kind: "robot", hue: 120 },
+          }),
+        },
+      ]);
+      // A lower level than the caller's is as good.
+      expect(
+        yield* call({ ...input, name: "Reader", toolAccess: "read-only", clientRequestId: "c2" }),
+      ).toMatchObject({
+        status: "created",
+      });
+    }),
+);
+
+it.effect("create without a toolAccess is refused so the agent asks the user", () =>
+  Effect.gen(function* () {
+    const { call, writes } = yield* harness("full-access");
+    const refused = yield* call({ action: "create", name: "X", instructions: "" });
+    expect(refused).toMatchObject({ code: "invalid_request" });
+    expect(refused.message).toContain("Ask the user");
+    expect(writes).toEqual([]);
+  }),
+);
+
+it.effect("create above the caller's level waits for approval, then is made once", () =>
+  Effect.gen(function* () {
+    const { call, writes, decisions } = yield* harness("auto-accept-edits");
+    const input = {
+      action: "create",
+      name: "Boss",
+      instructions: "Run things.",
+      toolAccess: "full",
+      clientRequestId: "up",
+    } as const;
+    const pending = yield* call(input);
+    expect(pending).toMatchObject({ status: "pending_approval" });
+    expect(yield* call(input)).toEqual(pending);
+    expect(writes).toEqual([]);
+
+    yield* decisions.answer({ decisionId: pending.decisionId, optionId: "accept" });
+    const made = yield* call(input);
+    expect(made).toMatchObject({ status: "created", assistant: { toolAccess: "full" } });
+    expect(yield* call(input)).toEqual(made);
+    expect(writes).toHaveLength(1);
+
+    // A decline is final for that call.
+    const other = { ...input, name: "Nope", clientRequestId: "no" };
+    const declined = yield* call(other);
+    yield* decisions.answer({ decisionId: declined.decisionId, optionId: "deny" });
+    expect(yield* call(other)).toMatchObject({ code: "invalid_request" });
+    expect(writes).toHaveLength(1);
+  }),
+);
+
+it.effect("update and archive: steering an assistant above the caller needs approval", () =>
+  Effect.gen(function* () {
+    const { call, writes, decisions } = yield* harness("auto-accept-edits");
+    // "ceo" is full-access, above the caller: not editable without the user.
+    const steer = {
+      action: "update",
+      handle: "ceo",
+      instructions: "New orders",
+      clientRequestId: "u1",
+    } as const;
+    const pending = yield* call(steer);
+    expect(pending).toMatchObject({ status: "pending_approval" });
+    expect(writes).toEqual([]);
+    yield* decisions.answer({ decisionId: pending.decisionId, optionId: "accept" });
+    expect(yield* call(steer)).toMatchObject({ status: "updated" });
+    // "eng" is read-only: the caller may edit it, but not raise it past its own level.
+    expect(
+      yield* call({ action: "update", handle: "eng", role: "QA", reportsTo: "ceo" }),
+    ).toMatchObject({ status: "updated" });
+    expect(
+      yield* call({ action: "update", handle: "eng", toolAccess: "full", clientRequestId: "u2" }),
+    ).toMatchObject({ status: "pending_approval" });
+    expect(yield* call({ action: "archive", handle: "eng" })).toMatchObject({ status: "archived" });
+    expect(writes.at(-1)).toEqual({ update: expect.objectContaining({ archived: true }) });
+  }),
+);
+
+it.effect("groups: created empty, members added and removed, only active assistants join", () =>
+  Effect.gen(function* () {
+    const { call, writes } = yield* harness("approval-required");
+    const empty = yield* call({ action: "group_create", name: "Ops", clientRequestId: "g1" });
+    expect(empty).toMatchObject({ status: "created", group: { name: "Ops", members: [] } });
+    expect(yield* call({ action: "group_create", name: "Ops", clientRequestId: "g1" })).toEqual(
+      empty,
     );
-  }).pipe(Effect.provide(layer)),
+    expect(writes).toHaveLength(1);
+
+    const grown = yield* call({
+      action: "group_update",
+      group: "ops",
+      addMembers: ["ceo", "@eng"],
+      leader: "ceo",
+      leaderTitle: "Head",
+    });
+    expect(grown.group).toMatchObject({
+      members: ["ceo", "eng"],
+      leader: "ceo",
+      leaderTitle: "Head",
+    });
+    const shrunk = yield* call({ action: "group_update", group: "Ops", removeMembers: ["eng"] });
+    expect(shrunk.group.members).toEqual(["ceo"]);
+    expect(
+      (yield* call({ action: "group_update", group: "Ops", members: ["eng"], name: "Ops 2" }))
+        .group,
+    ).toMatchObject({ name: "Ops 2", members: ["eng"] });
+
+    expect(
+      yield* call({ action: "group_update", group: "Ops 2", addMembers: ["gone"] }),
+    ).toMatchObject({
+      code: "invalid_request",
+      message: "@gone is archived.",
+    });
+    expect(yield* call({ action: "group_create", name: "Bad", members: ["nobody"] })).toMatchObject(
+      {
+        code: "invalid_request",
+      },
+    );
+    expect(yield* call({ action: "group_update", group: "ghost" })).toMatchObject({
+      code: "invalid_request",
+    });
+  }),
 );
