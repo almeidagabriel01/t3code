@@ -2,14 +2,22 @@ import {
   DEFAULT_ASSISTANT_AUTONOMY,
   type Assistant,
   type AssistantId,
+  type AssistantTeam,
   type EnvironmentId,
   type ModelSelection,
   type ProjectId,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
+import { appAtomRegistry } from "../../state/atom-registry";
 import {
   assistantDraftFor,
+  assistantEditorAtom,
+  assistantInGroup,
+  avatarImageProblem,
+  setAssistantGroup,
+  startAssistantEditor,
+  teamMembershipUpdates,
   assistantCreateInput,
   assistantUpdateInput,
   assistantDraftHasChanges,
@@ -44,6 +52,8 @@ const assistant = {
   createdAt: "2026-01-01T00:00:00.000Z",
   updatedAt: "2026-01-01T00:00:00.000Z",
 } as unknown as Assistant;
+
+const appAssistantEditor = () => appAtomRegistry.get(assistantEditorAtom)!;
 
 const editorFor = <A extends Assistant | null>(
   existing: A,
@@ -99,30 +109,111 @@ describe("assistant draft", () => {
       handle: "scout",
       projectId: "p1",
       instructions: "",
-      toolAccess: "full",
+      toolAccess: "workspace-write",
+      askBeforeActing: true,
+      avatar: { kind: "robot", hue: 210, variant: 0 },
     });
   });
 
-  it("sends the icon on update when it changed, and on create only when one is chosen", () => {
+  it("sends the robot avatar on create unless a picture waits, and on update only when touched", () => {
+    const file = { kind: "file", file: { previewUri: "x" } } as never;
+    const picked = { avatar: { hue: 30, variant: 2 }, avatarImage: file };
     expect(
-      assistantUpdateInput(editorFor(assistant, { icon: "spark" }), "p1" as ProjectId),
-    ).toEqual({ assistantId: "a1", icon: "spark" });
-    const iconic = { ...assistant, icon: "spark" };
-    expect(assistantUpdateInput(editorFor(iconic, { icon: null }), "p1" as ProjectId)).toEqual({
+      assistantCreateInput(editorFor(null, { name: "S", ...picked }), "p1" as ProjectId),
+    ).not.toHaveProperty("avatar");
+    expect(
+      assistantCreateInput(
+        editorFor(null, { name: "S", avatar: { hue: 30, variant: 2 } }),
+        "p1" as ProjectId,
+      ),
+    ).toMatchObject({ avatar: { kind: "robot", hue: 30, variant: 2 } });
+    const shuffled = { avatar: { hue: 150, variant: 5 }, avatarTouched: true };
+    expect(assistantUpdateInput(editorFor(assistant, shuffled), "p1" as ProjectId)).toEqual({
       assistantId: "a1",
-      icon: null,
+      avatar: { kind: "robot", hue: 150, variant: 5 },
     });
-    // An id this client does not know is treated as none, so saving does not clear it.
-    const unknown = { ...assistant, icon: "laser" };
-    expect(assistantUpdateInput(editorFor(unknown, {}), "p1" as ProjectId)).toEqual({
+    expect(
+      assistantUpdateInput(
+        editorFor(assistant, { ...shuffled, avatarImage: file }),
+        "p1" as ProjectId,
+      ),
+    ).toEqual({ assistantId: "a1" });
+    // Untouched, the stored avatar is never overwritten.
+    expect(assistantUpdateInput(editorFor(assistant), "p1" as ProjectId)).toEqual({
       assistantId: "a1",
     });
+  });
+
+  it("starts a new assistant on Edit files and ask before acting, from a preset", () => {
+    expect(assistantDraftFor(null)).toMatchObject({
+      toolAccess: "workspace-write",
+      askBeforeActing: true,
+      projectId: null,
+      avatarImage: null,
+      avatarTouched: false,
+      groupChoices: {},
+    });
     expect(
-      assistantCreateInput(editorFor(null, { name: "S", icon: "scout" }), "p1" as ProjectId),
-    ).toMatchObject({ icon: "scout" });
+      assistantDraftFor(null, { projectId: "p9" as ProjectId, teamId: "t9" as never }),
+    ).toMatchObject({ projectId: "p9", groupChoices: { t9: true } });
+    // An existing assistant keeps what it has, and a stored picture is kept as is.
+    expect(assistantDraftFor(assistant, { projectId: "p9" as ProjectId })).toMatchObject({
+      toolAccess: "read-only",
+      askBeforeActing: false,
+      projectId: "p1",
+      groupChoices: {},
+    });
+    const withImage = { ...assistant, avatar: { kind: "image", revision: 2 } } as Assistant;
+    expect(assistantDraftFor(withImage).avatarImage).toEqual({ kind: "stored" });
+  });
+
+  it.each([
+    ["image/png", 1024, null],
+    ["IMAGE/JPEG", 1024, null],
+    ["image/webp", 2 * 1024 * 1024, null],
+    ["image/gif", 1024, "Use a PNG, JPEG or WebP image."],
+    ["image/png", 2 * 1024 * 1024 + 1, "The image must be under 2 MB."],
+  ])("checks an avatar image of %s, %i bytes", (mimeType, sizeBytes, problem) => {
+    expect(avatarImageProblem({ mimeType, sizeBytes })).toBe(problem);
+  });
+
+  it("tracks group choices against current membership", () => {
+    const team = (id: string, memberIds: string[], leaderId: string | null = null) =>
+      ({ id, name: id, memberIds, leaderId, leaderTitle: null }) as unknown as AssistantTeam;
+    const mine = team("t1", ["a1", "z"], "a1");
+    const other = team("t2", ["z"]);
+    const empty = team("t3", []);
+    startAssistantEditor("env" as EnvironmentId, assistant);
+    const editor = () => appAssistantEditor();
+    expect(assistantInGroup(editor(), mine)).toBe(true);
+    expect(assistantInGroup(editor(), other)).toBe(false);
+    setAssistantGroup(mine, false);
+    setAssistantGroup(other, true);
+    expect(editor().current.groupChoices).toEqual({ t1: false, t2: true });
+    expect(assistantDraftHasChanges(editor())).toBe(true);
     expect(
-      assistantCreateInput(editorFor(null, { name: "S" }), "p1" as ProjectId),
-    ).not.toHaveProperty("icon");
+      teamMembershipUpdates([mine, other, empty], assistant.id, (t) =>
+        assistantInGroup(editor(), t),
+      ),
+    ).toEqual([
+      { teamId: "t1", memberIds: ["z"], leaderId: null, leaderTitle: null },
+      { teamId: "t2", memberIds: ["z", "a1"] },
+    ]);
+    // Going back to where the form started forgets the choice, so it is no change.
+    setAssistantGroup(mine, true);
+    setAssistantGroup(other, false);
+    expect(editor().current.groupChoices).toEqual({});
+    expect(assistantDraftHasChanges(editor())).toBe(false);
+    // A preset group is already ticked from the start, and unticking it is a change.
+    startAssistantEditor("env" as EnvironmentId, null, { teamId: "t3" as never });
+    expect(assistantInGroup(editor(), empty)).toBe(true);
+    expect(assistantDraftHasChanges(editor())).toBe(false);
+    setAssistantGroup(empty, false);
+    expect(assistantInGroup(editor(), empty)).toBe(false);
+    expect(assistantDraftHasChanges(editor())).toBe(true);
+    // No editor open: nothing happens.
+    appAtomRegistry.set(assistantEditorAtom, null);
+    setAssistantGroup(empty, true);
   });
 
   it("sends ask before acting on create only when it is on", () => {

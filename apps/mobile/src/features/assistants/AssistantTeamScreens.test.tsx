@@ -162,22 +162,30 @@ describe("team form", () => {
   it("asks to open a team first when nothing was chosen", async () => {
     mocks.target = null;
     await act(async () => root.render(<AssistantTeamEditRouteScreen />));
-    expect(container.textContent).toContain("Open a team first.");
+    expect(container.textContent).toContain("Open a group first.");
   });
 
-  it("creates a team once it has two members; the title field needs a leader", async () => {
+  it("creates a group with no members or one; the title field needs a leader", async () => {
     await act(async () => root.render(<AssistantTeamEditRouteScreen />));
+    expect(buttonNamed("Create group")?.disabled).toBe(true);
     await text("Name", "Money");
+    expect(buttonNamed("Create group")?.disabled).toBe(false);
+    await act(async () => buttonNamed("Create group")?.click());
+    expect(mocks.create).toHaveBeenLastCalledWith({
+      name: "Money",
+      memberIds: [],
+      leaderId: null,
+      leaderTitle: null,
+    });
     await click("ANA");
-    expect(buttonNamed("Create team")?.disabled).toBe(true);
+    expect(buttonNamed("Create group")?.disabled).toBe(false);
     expect(el("Leader title")).toBeNull();
     await click("BOB");
-    expect(buttonNamed("Create team")?.disabled).toBe(false);
     // The leader list repeats the members: the second BOB row is the radio.
     const bobRows = container.querySelectorAll<HTMLButtonElement>('[aria-label="BOB"]');
     await act(async () => bobRows[1]?.click());
     await text("Leader title", "  CFO ");
-    await act(async () => buttonNamed("Create team")?.click());
+    await act(async () => buttonNamed("Create group")?.click());
     expect(mocks.create).toHaveBeenCalledWith({
       name: "Money",
       memberIds: ["ana", "bob"],
@@ -194,7 +202,7 @@ describe("team form", () => {
     await text("Name", "X");
     await click("ANA");
     await click("CY");
-    await act(async () => buttonNamed("Create team")?.click());
+    await act(async () => buttonNamed("Create group")?.click());
     expect(container.textContent).toContain("Nope.");
     expect(mocks.goBack).not.toHaveBeenCalled();
   });
@@ -213,12 +221,12 @@ describe("team form", () => {
       leaderId: null,
       leaderTitle: null,
     });
-    await act(async () => buttonNamed("Delete team")?.click());
+    await act(async () => buttonNamed("Delete group")?.click());
     expect(mocks.confirm).toHaveBeenCalled();
     expect(mocks.remove).toHaveBeenCalledWith("t1");
     mocks.remove.mockResolvedValue({ ok: false, message: "Gone wrong" });
-    await act(async () => buttonNamed("Delete team")?.click());
-    expect(mocks.alert).toHaveBeenCalledWith("Could not delete the team", "Gone wrong");
+    await act(async () => buttonNamed("Delete group")?.click());
+    expect(mocks.alert).toHaveBeenCalledWith("Could not delete the group", "Gone wrong");
   });
 });
 

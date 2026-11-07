@@ -469,7 +469,7 @@ const SETTINGS_SCREENS = {
   }),
   SettingsAssistantTeamEdit: createNativeStackScreen({
     screen: AssistantTeamEditRouteScreen,
-    options: { ...SETTINGS_PAGE_OPTIONS, title: "Team" },
+    options: { ...SETTINGS_PAGE_OPTIONS, title: "Group" },
   }),
   SettingsAssistantTeamActivity: createNativeStackScreen({
     screen: AssistantTeamActivityRouteScreen,

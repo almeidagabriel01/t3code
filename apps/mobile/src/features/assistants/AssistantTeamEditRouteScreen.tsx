@@ -22,6 +22,7 @@ import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScroll
 import { useAssistantEntries, useAssistantTeamActions } from "../../state/assistants";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { ChoiceRow, FieldHeader, TextField } from "./AssistantFormFields";
+import { AssistantAvatar } from "./assistantPresentation";
 import { assistantTeamTargetAtom } from "./assistantTeamTarget";
 
 export function AssistantTeamEditRouteScreen() {
@@ -29,8 +30,8 @@ export function AssistantTeamEditRouteScreen() {
   const { teams } = useAssistantEntries();
   if (target === null) {
     return (
-      <SettingsScreen title="Team">
-        <Text className="p-5 text-base text-foreground-muted">Open a team first.</Text>
+      <SettingsScreen title="Group">
+        <Text className="p-5 text-base text-foreground-muted">Open a group first.</Text>
       </SettingsScreen>
     );
   }
@@ -108,22 +109,22 @@ function TeamForm(props: {
   const remove = () => {
     if (team === null) return;
     Dialog.confirm({
-      title: `Delete the team ${team.name}?`,
-      message: "Its members stay; they just stop being able to message each other as a team.",
+      title: `Delete the group ${team.name}?`,
+      message: "Its members stay; they just stop being able to message each other as a group.",
       confirmText: "Delete",
       destructive: true,
       onConfirm: () => {
         void (async () => {
           const reply = await actions.remove(team.id);
           if (reply.ok) navigation.goBack();
-          else Dialog.alert("Could not delete the team", reply.message);
+          else Dialog.alert("Could not delete the group", reply.message);
         })();
       },
     });
   };
 
   return (
-    <SettingsScreen title={team ? `${team.name} team` : "New team"}>
+    <SettingsScreen title={team ? team.name : "New group"}>
       <ScrollView
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
@@ -135,7 +136,7 @@ function TeamForm(props: {
       >
         <TextField
           label="Name"
-          description="Shown in Settings and on Home."
+          description="Shown on the Assistants page and on Home."
           value={name}
           maxLength={ASSISTANT_TEAM_NAME_MAX_LENGTH}
           autoCapitalize="sentences"
@@ -144,14 +145,16 @@ function TeamForm(props: {
         <View className="gap-2">
           <FieldHeader
             label="Members"
-            description="At least two. Members can message each other in any direction, and you can follow what they say."
+            description="None, one or several. Members can message each other in any direction, and you can follow what they say."
           />
           <ListSection>
             {choices.map((assistant) => (
               <ChoiceRow
                 key={assistant.id}
                 role="checkbox"
-                icon="person.crop.circle"
+                leading={
+                  <AssistantAvatar assistant={assistant} environmentId={environmentId} size={28} />
+                }
                 label={assistant.name}
                 description={assistant.archivedAt === null ? undefined : "Archived"}
                 selected={memberIds.includes(assistant.id)}
@@ -163,7 +166,7 @@ function TeamForm(props: {
         <View className="gap-2">
           <FieldHeader
             label="Leader"
-            description="Optional. Teammates are told to report their results to the leader. It does not change who may message whom."
+            description="Optional. Members are told to report their results to the leader. It does not change who may message whom."
           />
           <ListSection>
             <ChoiceRow
@@ -179,7 +182,13 @@ function TeamForm(props: {
                 <ChoiceRow
                   key={assistant.id}
                   role="radio"
-                  icon="star.fill"
+                  leading={
+                    <AssistantAvatar
+                      assistant={assistant}
+                      environmentId={environmentId}
+                      size={28}
+                    />
+                  }
                   label={assistant.name}
                   selected={effectiveLeader === assistant.id}
                   onPress={() => setLeaderId(assistant.id)}
@@ -208,7 +217,7 @@ function TeamForm(props: {
           </Text>
         ) : null}
         <Button
-          label={team ? "Save" : "Create team"}
+          label={team ? "Save" : "Create group"}
           tone="primary"
           fullWidth
           loading={saving}
@@ -220,8 +229,8 @@ function TeamForm(props: {
             <ListActionRow
               icon="trash"
               tone="danger"
-              label="Delete team"
-              description="Members stay; the team and its shortcut go away."
+              label="Delete group"
+              description="Members stay; the group goes away."
               disabled={!actions.canAct}
               onPress={remove}
             />

@@ -9,7 +9,7 @@ import { scheduledTaskDefaultModel } from "../settings/scheduledTaskDraft";
 import { assistantEditorAtom } from "./assistantDraft";
 
 export function assistantProjectName(project: EnvironmentProject): string {
-  return project.isScratch === true ? "No project" : project.title;
+  return project.isScratch === true ? "All projects" : project.title;
 }
 
 /**

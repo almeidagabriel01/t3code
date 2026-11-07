@@ -8,7 +8,7 @@ vi.mock("expo-image", () => ({ Image: () => null }));
 vi.mock("../../state/assistants", () => ({ useAssistantEntries: () => null }));
 vi.mock("../../state/assets", () => ({ useAssetUrlState: () => null }));
 
-import { budgetSpendLine } from "./assistantPresentation";
+import { assistantAdvancedSummary, budgetSpendLine } from "./assistantPresentation";
 
 const budget = (period: "daily" | "weekly" | "monthly") =>
   ({ period, spentUsd: 1.5 }) as NonNullable<AssistantSpend["budget"]>;
@@ -25,5 +25,33 @@ describe("budgetSpendLine", () => {
     expect(line.startsWith("At least ")).toBe(partial);
     expect(line).toContain(` ${when} · estimated at API prices`);
     expect(line).toContain("budget" in spend ? "1.50" : "4.00");
+  });
+});
+
+describe("assistantAdvancedSummary", () => {
+  const base = {
+    toolAccess: "workspace-write",
+    workspace: "host",
+    budget: { enabled: false, amount: "" },
+    connectors: [],
+    askBeforeActing: true,
+  } as const;
+
+  it("summarizes the defaults of a new assistant", () => {
+    expect(assistantAdvancedSummary(base)).toBe(
+      "Edit files · This Mac · no spending limit · no connectors · asks before messaging other threads",
+    );
+  });
+
+  it.each([
+    [{ workspace: "sandbox" }, "Sandbox container"],
+    [{ budget: { enabled: true, amount: " 5 " } }, "$5 limit"],
+    [{ budget: { enabled: true, amount: "" } }, "spending limit"],
+    [{ connectors: [1] }, "1 connector"],
+    [{ connectors: [1, 2] }, "2 connectors"],
+    [{ askBeforeActing: false }, "messages other threads freely"],
+    [{ toolAccess: "full" }, "Full access"],
+  ] as const)("reflects %j", (change, part) => {
+    expect(assistantAdvancedSummary({ ...base, ...change })).toContain(part);
   });
 });

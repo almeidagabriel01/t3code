@@ -90,6 +90,7 @@ const reactTests = [
   "src/features/assistants/AssistantSandboxSection.test.tsx",
   "src/features/assistants/AssistantTeamScreens.test.tsx",
   "src/features/assistants/assistantAvatar.test.tsx",
+  "src/features/assistants/AssistantAvatarPicker.test.tsx",
   "src/features/assistants/SettingsAssistantsRouteScreen.test.tsx",
   "src/features/assistants/AutonomySettingsSection.test.tsx",
   "src/features/assistants/AssistantWatchesSection.test.tsx",

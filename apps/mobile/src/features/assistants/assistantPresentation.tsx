@@ -69,6 +69,30 @@ export const TOOL_ACCESS_OPTIONS: ReadonlyArray<{
   },
 ];
 
+/** The one line shown beside "Advanced" while it is closed. */
+export function assistantAdvancedSummary(draft: {
+  readonly toolAccess: AssistantToolAccess;
+  readonly workspace: AssistantWorkspace;
+  readonly budget: { readonly enabled: boolean; readonly amount: string };
+  readonly connectors: ReadonlyArray<unknown>;
+  readonly askBeforeActing: boolean;
+}): string {
+  const amount = draft.budget.amount.trim();
+  return [
+    toolAccessLabel(draft.toolAccess),
+    draft.workspace === "host" ? "This Mac" : "Sandbox container",
+    draft.budget.enabled
+      ? amount === ""
+        ? "spending limit"
+        : `$${amount} limit`
+      : "no spending limit",
+    draft.connectors.length === 0
+      ? "no connectors"
+      : `${draft.connectors.length} connector${draft.connectors.length === 1 ? "" : "s"}`,
+    draft.askBeforeActing ? "asks before messaging other threads" : "messages other threads freely",
+  ].join(" · ");
+}
+
 export function toolAccessLabel(access: AssistantToolAccess): string {
   return TOOL_ACCESS_OPTIONS.find((option) => option.value === access)?.label ?? access;
 }

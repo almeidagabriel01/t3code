@@ -19,7 +19,7 @@ import {
 import { assistantSandboxView } from "@t3tools/client-runtime/state/assistants";
 import type { MenuAction } from "@react-native-menu/menu";
 import { useRef, useState } from "react";
-import { Platform, View } from "react-native";
+import { Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/ui/AppText";
@@ -36,6 +36,7 @@ import { NativeStackScreenOptions } from "../../native/StackHeader";
 import {
   useAssistantActions,
   useAssistantEntries,
+  useAssistantTeamActions,
   useAssistantSpend,
   useAssistantSandbox,
   useAssistantsEnvironmentIds,
@@ -48,6 +49,7 @@ import { SettingsScreen } from "../settings/components/SettingsScreen";
 import {
   assistantCreateInput,
   assistantDraftHasChanges,
+  assistantInGroup,
   assistantProjectChanged,
   assistantUpdateInput,
   changeAssistantEditorEnvironment,
@@ -55,16 +57,20 @@ import {
   effectiveAssistantHandle,
   isAssistantHandleValid,
   isBudgetDraftValid,
+  setAssistantGroup,
+  teamMembershipUpdates,
   updateAssistantDraft,
   type AssistantEditor,
 } from "./assistantDraft";
-import { AssistantIconPicker } from "./AssistantIconPicker";
-import { MenuField, SwitchRow, TextField } from "./AssistantFormFields";
+import { AssistantAvatarPicker } from "./AssistantAvatarPicker";
+import { uploadAvatarImage } from "./assistantAvatarUpload";
+import { ChoiceRow, FieldHeader, MenuField, SwitchRow, TextField } from "./AssistantFormFields";
 import { AssistantConnectorsSection } from "./AssistantConnectorsSection";
 import { AssistantNotificationsSection } from "./AssistantNotificationsSection";
 import { AssistantSchedulesSection } from "./AssistantSchedulesSection";
 import { AssistantWatchesSection } from "./AssistantWatchesSection";
 import {
+  assistantAdvancedSummary,
   BUDGET_PERIOD_OPTIONS,
   budgetSpendLine,
   TOOL_ACCESS_OPTIONS,
@@ -133,6 +139,7 @@ function AssistantForm(props: { readonly editor: AssistantEditor }) {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const actions = useAssistantActions(environmentId);
+  const teamActions = useAssistantTeamActions(environmentId);
   const sandboxView = assistantSandboxView(useAssistantSandbox(environmentId));
   const flows = useAssistantFlows(environmentId);
   const entries = useAssistantEntries();
@@ -148,12 +155,16 @@ function AssistantForm(props: { readonly editor: AssistantEditor }) {
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [standup, setStandup] = useState<"idle" | "adding" | "added">("idle");
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   // Set once the save lands, so the removal guard lets the form close.
   const closing = useRef(false);
 
   const team = [...entries.active, ...entries.archived]
     .filter((entry) => entry.environmentId === environmentId)
     .map((entry) => entry.assistant);
+  const groups = entries.teams
+    .filter((entry) => entry.environmentId === environmentId)
+    .map((entry) => entry.team);
   const leaders = leaderChoices(team, assistant?.id ?? null);
   const reports = live ? directReports(team, live.id) : [];
   const addStandup = async () => {
@@ -221,9 +232,40 @@ function AssistantForm(props: { readonly editor: AssistantEditor }) {
       assistant === null
         ? await actions.create(assistantCreateInput(editor, effectiveProject.id))
         : await actions.update(assistantUpdateInput({ ...editor, assistant }, effectiveProject.id));
+    if (!reply.ok) {
+      setSaving(false);
+      setError(reply.message);
+      return;
+    }
+    // The assistant is saved; a picture or group that fails is reported without losing it.
+    const problems: string[] = [];
+    if (current.avatarImage?.kind === "file") {
+      try {
+        const attachmentId = await uploadAvatarImage(environmentId, current.avatarImage.file);
+        const set = await actions.setAvatarImage({
+          assistantId: reply.value.id,
+          attachmentId,
+        });
+        if (!set.ok) problems.push(set.message);
+      } catch (cause) {
+        problems.push(cause instanceof Error ? cause.message : "The image upload failed.");
+      }
+    }
+    for (const update of teamMembershipUpdates(groups, reply.value.id, (team) =>
+      assistantInGroup(editor, team),
+    )) {
+      const result = await teamActions.update(update);
+      if (!result.ok) {
+        problems.push(
+          `${groups.find((team) => team.id === update.teamId)?.name}: ${result.message}`,
+        );
+      }
+    }
     setSaving(false);
-    if (reply.ok) close();
-    else setError(reply.message);
+    close();
+    if (problems.length > 0) {
+      Dialog.alert(`${current.name.trim()} was saved, but not everything`, problems.join(" "));
+    }
   };
 
   const projectActions: MenuAction[] = projects.map((project) => ({
@@ -279,6 +321,12 @@ function AssistantForm(props: { readonly editor: AssistantEditor }) {
             onSelect={(id) => changeAssistantEditorEnvironment(id as EnvironmentId)}
           />
         ) : null}
+        <AssistantAvatarPicker
+          value={current}
+          assistant={live}
+          environmentId={environmentId}
+          onChange={(next) => updateAssistantDraft({ ...next, avatarTouched: true })}
+        />
         <TextField
           label="Name"
           description="Shown on Home and at the top of its conversation."
@@ -287,24 +335,72 @@ function AssistantForm(props: { readonly editor: AssistantEditor }) {
           autoCapitalize="sentences"
           onChange={(name) => updateAssistantDraft({ name })}
         />
+        <View className="gap-2">
+          <View className="gap-0.5 px-2">
+            <Text textRole="footnote" className="font-t3-medium text-foreground">
+              Model
+            </Text>
+            <Text textRole="footnote" className="text-foreground-muted">
+              {assistant ? "For its current conversation." : "Starts on your default."}
+            </Text>
+          </View>
+          <ListSection>
+            <ListRow
+              icon="cube"
+              label={modelLabel ?? "No providers available"}
+              disabled={modelLabel === null}
+              onPress={() => navigation.navigate("SettingsAssistantModel")}
+            />
+          </ListSection>
+        </View>
         <TextField
-          label="Handle"
-          description="How channels and agents address it. Lowercase letters, numbers and dashes."
-          value={handle}
-          autoCapitalize="none"
-          onChange={(value) => updateAssistantDraft({ handle: value.toLowerCase() })}
+          label="What should it do?"
+          description="Its role and rules, in your words."
+          value={current.instructions}
+          maxLength={ASSISTANT_INSTRUCTIONS_MAX_CHARS}
+          multiline
+          autoCapitalize="sentences"
+          onChange={(instructions) => updateAssistantDraft({ instructions })}
           footer={
-            !showHandleError ? null : (
-              <Text textRole="footnote" className="px-2 text-danger-foreground">
-                Use 1 to 32 lowercase letters, numbers or dashes, starting and ending with a letter
-                or number.
-              </Text>
-            )
+            <Text textRole="footnote" className="px-2 text-right text-foreground-muted">
+              {current.instructions.length.toLocaleString()} /{" "}
+              {ASSISTANT_INSTRUCTIONS_MAX_CHARS.toLocaleString()}
+            </Text>
           }
+        />
+        <View className="gap-2">
+          <FieldHeader label="Groups" description="Members of a group can message each other." />
+          {groups.length === 0 ? (
+            <Text textRole="footnote" className="px-2 text-foreground-muted">
+              No groups yet. Create one from the Assistants page.
+            </Text>
+          ) : (
+            <ListSection>
+              {groups.map((team) => (
+                <ChoiceRow
+                  key={team.id}
+                  role="checkbox"
+                  icon="person.2"
+                  label={team.name}
+                  selected={assistantInGroup(editor, team)}
+                  onPress={() => setAssistantGroup(team, !assistantInGroup(editor, team))}
+                />
+              ))}
+            </ListSection>
+          )}
+        </View>
+        <TextField
+          label="Role"
+          description="What it is to the others, such as CEO or Engineer. Agents see it."
+          value={current.role}
+          maxLength={ASSISTANT_ROLE_MAX_LENGTH}
+          placeholder="CEO, Engineer…"
+          autoCapitalize="sentences"
+          onChange={(role) => updateAssistantDraft({ role })}
         />
         <MenuField
           label="Project"
-          description="The folder it works in, and whose memory it shares."
+          description="All projects, or the one project it works in and shares memory with."
           value={
             effectiveProject ? assistantProjectName(effectiveProject) : "No projects available"
           }
@@ -319,345 +415,350 @@ function AssistantForm(props: { readonly editor: AssistantEditor }) {
             ) : null
           }
         />
-        <View className="gap-2">
-          <View className="gap-0.5 px-2">
-            <Text textRole="footnote" className="font-t3-medium text-foreground">
-              Model and effort
-            </Text>
-            <Text textRole="footnote" className="text-foreground-muted">
-              {assistant
-                ? "Applies to its current conversation."
-                : "Starts on your default model unless you choose another."}
-            </Text>
-          </View>
-          <ListSection>
-            <ListRow
-              icon="cube"
-              label={modelLabel ?? "No providers available"}
-              disabled={modelLabel === null}
-              onPress={() => navigation.navigate("SettingsAssistantModel")}
+        <View className="gap-3">
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Advanced"
+            accessibilityState={{ expanded: advancedOpen }}
+            onPress={() => setAdvancedOpen((open) => !open)}
+            className="min-h-10 flex-row items-center gap-2 px-2 active:opacity-70"
+          >
+            <SymbolView
+              name={advancedOpen ? "chevron.down" : "chevron.right"}
+              size={12}
+              tintColorClassName="accent-icon-subtle"
+              type="monochrome"
             />
-          </ListSection>
-        </View>
-        <TextField
-          label="Instructions"
-          description="Standing guidance sent with every turn: its role, tone and rules."
-          value={current.instructions}
-          maxLength={ASSISTANT_INSTRUCTIONS_MAX_CHARS}
-          multiline
-          autoCapitalize="sentences"
-          onChange={(instructions) => updateAssistantDraft({ instructions })}
-          footer={
-            <Text textRole="footnote" className="px-2 text-right text-foreground-muted">
-              {current.instructions.length.toLocaleString()} /{" "}
-              {ASSISTANT_INSTRUCTIONS_MAX_CHARS.toLocaleString()}
+            <Text textRole="footnote" className="font-t3-bold text-foreground">
+              Advanced
             </Text>
-          }
-        />
-        <AssistantIconPicker
-          value={current.icon}
-          name={current.name}
-          onChange={(icon) => updateAssistantDraft({ icon })}
-        />
-        <View className="gap-2">
-          <View className="gap-0.5 px-2">
-            <Text textRole="footnote" className="font-t3-medium text-foreground">
-              Tool access
-            </Text>
-            <Text textRole="footnote" className="text-foreground-muted">
-              What it may do without asking. Enforced by the conversation's permissions.
-            </Text>
-          </View>
-          <ListSection>
-            {TOOL_ACCESS_OPTIONS.map((option) => (
-              <RowPressable
-                key={option.value}
-                accessibilityRole="radio"
-                accessibilityLabel={option.label}
-                accessibilityHint={option.description}
-                accessibilityState={{ selected: current.toolAccess === option.value }}
-                onPress={() =>
-                  updateAssistantDraft({ toolAccess: option.value as AssistantToolAccess })
-                }
-                className="bg-grouped-card"
+            {advancedOpen ? null : (
+              <Text
+                textRole="footnote"
+                className="min-w-0 flex-1 text-foreground-muted"
+                numberOfLines={1}
               >
-                <ListRowLayout
-                  icon={option.icon}
-                  label={option.label}
-                  description={option.description}
-                  accessory={
-                    current.toolAccess === option.value ? (
-                      <SymbolView
-                        name="checkmark"
-                        size={16}
-                        tintColorClassName="accent-icon"
-                        type="monochrome"
-                        weight="semibold"
+                {assistantAdvancedSummary(current)}
+              </Text>
+            )}
+          </Pressable>
+          {advancedOpen ? (
+            <View className="gap-5">
+              <TextField
+                label="Handle"
+                description="How channels and agents address it. Lowercase letters, numbers and dashes."
+                value={handle}
+                autoCapitalize="none"
+                onChange={(value) => updateAssistantDraft({ handle: value.toLowerCase() })}
+                footer={
+                  !showHandleError ? null : (
+                    <Text textRole="footnote" className="px-2 text-danger-foreground">
+                      Use 1 to 32 lowercase letters, numbers or dashes, starting and ending with a
+                      letter or number.
+                    </Text>
+                  )
+                }
+              />
+              <View className="gap-2">
+                <View className="gap-0.5 px-2">
+                  <Text textRole="footnote" className="font-t3-medium text-foreground">
+                    Tool access
+                  </Text>
+                  <Text textRole="footnote" className="text-foreground-muted">
+                    What it may do without asking. Enforced by the conversation's permissions.
+                  </Text>
+                </View>
+                <ListSection>
+                  {TOOL_ACCESS_OPTIONS.map((option) => (
+                    <RowPressable
+                      key={option.value}
+                      accessibilityRole="radio"
+                      accessibilityLabel={option.label}
+                      accessibilityHint={option.description}
+                      accessibilityState={{ selected: current.toolAccess === option.value }}
+                      onPress={() =>
+                        updateAssistantDraft({ toolAccess: option.value as AssistantToolAccess })
+                      }
+                      className="bg-grouped-card"
+                    >
+                      <ListRowLayout
+                        icon={option.icon}
+                        label={option.label}
+                        description={option.description}
+                        accessory={
+                          current.toolAccess === option.value ? (
+                            <SymbolView
+                              name="checkmark"
+                              size={16}
+                              tintColorClassName="accent-icon"
+                              type="monochrome"
+                              weight="semibold"
+                            />
+                          ) : undefined
+                        }
                       />
-                    ) : undefined
-                  }
-                />
-              </RowPressable>
-            ))}
-          </ListSection>
-        </View>
-        <View className="gap-2">
-          <View className="gap-0.5 px-2">
-            <Text textRole="footnote" className="font-t3-medium text-foreground">
-              Workspace
-            </Text>
-            <Text textRole="footnote" className="text-foreground-muted">
-              Where it runs commands and edits files. Its tool access applies there.
-            </Text>
-          </View>
-          <ListSection>
-            {WORKSPACE_OPTIONS.map((option) => {
-              const unavailable = option.value === "sandbox" ? sandboxView.unavailableReason : null;
-              return (
-                <RowPressable
-                  key={option.value}
-                  accessibilityRole="radio"
-                  accessibilityLabel={option.label}
-                  accessibilityHint={unavailable ?? option.description}
-                  accessibilityState={{
-                    selected: current.workspace === option.value,
-                    disabled: unavailable !== null,
-                  }}
-                  disabled={unavailable !== null}
-                  onPress={() => updateAssistantDraft({ workspace: option.value })}
-                  className="bg-grouped-card"
-                >
-                  <ListRowLayout
-                    icon={option.icon}
-                    label={option.label}
-                    description={unavailable ?? option.description}
-                    disabled={unavailable !== null}
-                    accessory={
-                      current.workspace === option.value ? (
-                        <SymbolView
-                          name="checkmark"
-                          size={16}
-                          tintColorClassName="accent-icon"
-                          type="monochrome"
-                          weight="semibold"
+                    </RowPressable>
+                  ))}
+                </ListSection>
+              </View>
+              <View className="gap-2">
+                <View className="gap-0.5 px-2">
+                  <Text textRole="footnote" className="font-t3-medium text-foreground">
+                    Workspace
+                  </Text>
+                  <Text textRole="footnote" className="text-foreground-muted">
+                    Where it runs commands and edits files. Its tool access applies there.
+                  </Text>
+                </View>
+                <ListSection>
+                  {WORKSPACE_OPTIONS.map((option) => {
+                    const unavailable =
+                      option.value === "sandbox" ? sandboxView.unavailableReason : null;
+                    return (
+                      <RowPressable
+                        key={option.value}
+                        accessibilityRole="radio"
+                        accessibilityLabel={option.label}
+                        accessibilityHint={unavailable ?? option.description}
+                        accessibilityState={{
+                          selected: current.workspace === option.value,
+                          disabled: unavailable !== null,
+                        }}
+                        disabled={unavailable !== null}
+                        onPress={() => updateAssistantDraft({ workspace: option.value })}
+                        className="bg-grouped-card"
+                      >
+                        <ListRowLayout
+                          icon={option.icon}
+                          label={option.label}
+                          description={unavailable ?? option.description}
+                          disabled={unavailable !== null}
+                          accessory={
+                            current.workspace === option.value ? (
+                              <SymbolView
+                                name="checkmark"
+                                size={16}
+                                tintColorClassName="accent-icon"
+                                type="monochrome"
+                                weight="semibold"
+                              />
+                            ) : undefined
+                          }
                         />
-                      ) : undefined
+                      </RowPressable>
+                    );
+                  })}
+                </ListSection>
+              </View>
+              <View className="gap-2">
+                <View className="gap-0.5 px-2">
+                  <Text textRole="footnote" className="font-t3-medium text-foreground">
+                    Ask before acting
+                  </Text>
+                  <Text textRole="footnote" className="text-foreground-muted">
+                    Before this assistant sends anything into another conversation, it asks you here
+                    and waits for your approval.
+                  </Text>
+                </View>
+                <ListSection>
+                  <SwitchRow
+                    icon="checkmark.circle"
+                    label="Ask before acting"
+                    value={current.askBeforeActing}
+                    onChange={(askBeforeActing) => updateAssistantDraft({ askBeforeActing })}
+                  />
+                </ListSection>
+              </View>
+              <MenuField
+                label="Reports to"
+                description="Its leader can ask it for work and gets the answer back. It never messages up on its own."
+                value={
+                  leaders.find((leader) => leader.id === current.reportsTo)?.name ?? NO_LEADER_LABEL
+                }
+                actions={[
+                  {
+                    id: "",
+                    title: NO_LEADER_LABEL,
+                    state: current.reportsTo === null ? "on" : "off",
+                  },
+                  ...leaders.map((leader) => ({
+                    id: leader.id,
+                    title: leader.name,
+                    state: leader.id === current.reportsTo ? ("on" as const) : ("off" as const),
+                  })),
+                ]}
+                onSelect={(id) =>
+                  updateAssistantDraft({ reportsTo: id === "" ? null : (id as AssistantId) })
+                }
+              />
+              {live && environmentId !== null && reports.length > 0 ? (
+                <DailyStandupSection
+                  environmentId={environmentId}
+                  threadId={live.threadId}
+                  reportNames={reports.map((report) => report.name)}
+                  state={standup}
+                  disabled={!actions.canAct}
+                  onAdd={() => void addStandup()}
+                />
+              ) : null}
+              <View className="gap-2">
+                <View className="gap-0.5 px-2">
+                  <Text textRole="footnote" className="font-t3-medium text-foreground">
+                    Spending limit
+                  </Text>
+                  <Text textRole="footnote" className="text-foreground-muted">
+                    Caps what it may spend across all its conversations, estimated at API prices.
+                  </Text>
+                </View>
+                <ListSection>
+                  <SwitchRow
+                    icon="chart.bar.xaxis"
+                    label="Limit spending"
+                    value={budget.enabled}
+                    onChange={(enabled) => updateBudget({ enabled })}
+                  />
+                </ListSection>
+                {spendLine ? (
+                  <Text textRole="footnote" className="px-2 text-foreground-muted">
+                    {spendLine}
+                  </Text>
+                ) : null}
+              </View>
+              {budget.enabled ? (
+                <>
+                  <TextField
+                    label="Amount (USD)"
+                    description="The most it may spend in each period."
+                    value={budget.amount}
+                    keyboardType="decimal-pad"
+                    autoCapitalize="none"
+                    onChange={(amount) => updateBudget({ amount })}
+                    footer={
+                      isBudgetDraftValid(budget) || budget.amount === "" ? null : (
+                        <Text textRole="footnote" className="px-2 text-danger-foreground">
+                          Enter an amount above zero and a warning between 1 and 100.
+                        </Text>
+                      )
                     }
                   />
-                </RowPressable>
-              );
-            })}
-          </ListSection>
-        </View>
-        <View className="gap-2">
-          <View className="gap-0.5 px-2">
-            <Text textRole="footnote" className="font-t3-medium text-foreground">
-              Ask before acting
-            </Text>
-            <Text textRole="footnote" className="text-foreground-muted">
-              Before this assistant sends anything into another conversation, it asks you here and
-              waits for your approval.
-            </Text>
-          </View>
-          <ListSection>
-            <SwitchRow
-              icon="checkmark.circle"
-              label="Ask before acting"
-              value={current.askBeforeActing}
-              onChange={(askBeforeActing) => updateAssistantDraft({ askBeforeActing })}
-            />
-          </ListSection>
-        </View>
-        <TextField
-          label="Role"
-          description="What it is to the others, such as CEO or Engineer. Agents see it."
-          value={current.role}
-          maxLength={ASSISTANT_ROLE_MAX_LENGTH}
-          placeholder="CEO, Engineer…"
-          autoCapitalize="sentences"
-          onChange={(role) => updateAssistantDraft({ role })}
-        />
-        <MenuField
-          label="Reports to"
-          description="Its leader can ask it for work and gets the answer back. It never messages up on its own."
-          value={leaders.find((leader) => leader.id === current.reportsTo)?.name ?? NO_LEADER_LABEL}
-          actions={[
-            { id: "", title: NO_LEADER_LABEL, state: current.reportsTo === null ? "on" : "off" },
-            ...leaders.map((leader) => ({
-              id: leader.id,
-              title: leader.name,
-              state: leader.id === current.reportsTo ? ("on" as const) : ("off" as const),
-            })),
-          ]}
-          onSelect={(id) =>
-            updateAssistantDraft({ reportsTo: id === "" ? null : (id as AssistantId) })
-          }
-        />
-        {live && environmentId !== null && reports.length > 0 ? (
-          <DailyStandupSection
-            environmentId={environmentId}
-            threadId={live.threadId}
-            reportNames={reports.map((report) => report.name)}
-            state={standup}
-            disabled={!actions.canAct}
-            onAdd={() => void addStandup()}
-          />
-        ) : null}
-        <View className="gap-2">
-          <View className="gap-0.5 px-2">
-            <Text textRole="footnote" className="font-t3-medium text-foreground">
-              Spending limit
-            </Text>
-            <Text textRole="footnote" className="text-foreground-muted">
-              Caps what it may spend across all its conversations, estimated at API prices.
-            </Text>
-          </View>
-          <ListSection>
-            <SwitchRow
-              icon="chart.bar.xaxis"
-              label="Limit spending"
-              value={budget.enabled}
-              onChange={(enabled) => updateBudget({ enabled })}
-            />
-          </ListSection>
-          {spendLine ? (
-            <Text textRole="footnote" className="px-2 text-foreground-muted">
-              {spendLine}
-            </Text>
+                  <View className="gap-2">
+                    <View className="gap-0.5 px-2">
+                      <Text textRole="footnote" className="font-t3-medium text-foreground">
+                        Period
+                      </Text>
+                      <Text textRole="footnote" className="text-foreground-muted">
+                        How often the spending count starts over.
+                      </Text>
+                    </View>
+                    <ListSection>
+                      {BUDGET_PERIOD_OPTIONS.map((option) => (
+                        <RowPressable
+                          key={option.value}
+                          accessibilityRole="radio"
+                          accessibilityLabel={option.label}
+                          accessibilityState={{ selected: budget.period === option.value }}
+                          onPress={() => updateBudget({ period: option.value as BudgetPeriod })}
+                          className="bg-grouped-card"
+                        >
+                          <ListRowLayout
+                            icon={option.icon}
+                            label={option.label}
+                            accessory={
+                              budget.period === option.value ? (
+                                <SymbolView
+                                  name="checkmark"
+                                  size={16}
+                                  tintColorClassName="accent-icon"
+                                  type="monochrome"
+                                  weight="semibold"
+                                />
+                              ) : undefined
+                            }
+                          />
+                        </RowPressable>
+                      ))}
+                    </ListSection>
+                  </View>
+                  <TextField
+                    label="Warn at (%)"
+                    description="Shows a warning once this share of the limit is spent."
+                    value={budget.warnAt}
+                    keyboardType="number-pad"
+                    autoCapitalize="none"
+                    onChange={(warnAt) => updateBudget({ warnAt })}
+                  />
+                  <View className="gap-2">
+                    <View className="gap-0.5 px-2">
+                      <Text textRole="footnote" className="font-t3-medium text-foreground">
+                        When the limit is reached
+                      </Text>
+                      <Text textRole="footnote" className="text-foreground-muted">
+                        Off keeps it running and only warns.
+                      </Text>
+                    </View>
+                    <ListSection>
+                      <SwitchRow
+                        icon="stop.fill"
+                        label="Stop when reached"
+                        value={budget.block}
+                        onChange={(block) => updateBudget({ block })}
+                      />
+                    </ListSection>
+                  </View>
+                </>
+              ) : null}
+              <View className="gap-2">
+                <View className="gap-0.5 px-2">
+                  <Text textRole="footnote" className="font-t3-medium text-foreground">
+                    Memory
+                  </Text>
+                  <Text textRole="footnote" className="text-foreground-muted">
+                    Give the assistant its own project to keep its memory apart.
+                  </Text>
+                </View>
+                <ListSection>
+                  <ListRow
+                    icon="brain"
+                    label={
+                      effectiveProject
+                        ? `Shared with ${assistantProjectName(effectiveProject)}`
+                        : "Memory follows the assistant's project"
+                    }
+                    description="Open Memory settings"
+                    onPress={() => navigation.navigate("SettingsMemory")}
+                  />
+                </ListSection>
+              </View>
+              <AssistantConnectorsSection
+                value={current.connectors}
+                onChange={(connectors) => updateAssistantDraft({ connectors })}
+              />
+              <AssistantNotificationsSection
+                value={current.autonomy}
+                onChange={(autonomy) => updateAssistantDraft({ autonomy })}
+                globalAutonomy={globalAutonomy}
+                projects={projectOptions}
+                defaultProjectId={effectiveProject?.id ?? null}
+              />
+              {assistant?.threadId ? (
+                <AssistantSchedulesSection
+                  environmentId={environmentId}
+                  environmentLabel={environmentLabel(environmentId)}
+                  assistant={assistant}
+                  modelSelection={modelSelection}
+                />
+              ) : null}
+              {assistant ? (
+                <AssistantWatchesSection
+                  environmentId={environmentId}
+                  assistantId={assistant.id}
+                  notifies={current.autonomy.mode === "reply-and-notify"}
+                  projects={projectOptions}
+                />
+              ) : null}
+            </View>
           ) : null}
         </View>
-        {budget.enabled ? (
-          <>
-            <TextField
-              label="Amount (USD)"
-              description="The most it may spend in each period."
-              value={budget.amount}
-              keyboardType="decimal-pad"
-              autoCapitalize="none"
-              onChange={(amount) => updateBudget({ amount })}
-              footer={
-                isBudgetDraftValid(budget) || budget.amount === "" ? null : (
-                  <Text textRole="footnote" className="px-2 text-danger-foreground">
-                    Enter an amount above zero and a warning between 1 and 100.
-                  </Text>
-                )
-              }
-            />
-            <View className="gap-2">
-              <View className="gap-0.5 px-2">
-                <Text textRole="footnote" className="font-t3-medium text-foreground">
-                  Period
-                </Text>
-                <Text textRole="footnote" className="text-foreground-muted">
-                  How often the spending count starts over.
-                </Text>
-              </View>
-              <ListSection>
-                {BUDGET_PERIOD_OPTIONS.map((option) => (
-                  <RowPressable
-                    key={option.value}
-                    accessibilityRole="radio"
-                    accessibilityLabel={option.label}
-                    accessibilityState={{ selected: budget.period === option.value }}
-                    onPress={() => updateBudget({ period: option.value as BudgetPeriod })}
-                    className="bg-grouped-card"
-                  >
-                    <ListRowLayout
-                      icon={option.icon}
-                      label={option.label}
-                      accessory={
-                        budget.period === option.value ? (
-                          <SymbolView
-                            name="checkmark"
-                            size={16}
-                            tintColorClassName="accent-icon"
-                            type="monochrome"
-                            weight="semibold"
-                          />
-                        ) : undefined
-                      }
-                    />
-                  </RowPressable>
-                ))}
-              </ListSection>
-            </View>
-            <TextField
-              label="Warn at (%)"
-              description="Shows a warning once this share of the limit is spent."
-              value={budget.warnAt}
-              keyboardType="number-pad"
-              autoCapitalize="none"
-              onChange={(warnAt) => updateBudget({ warnAt })}
-            />
-            <View className="gap-2">
-              <View className="gap-0.5 px-2">
-                <Text textRole="footnote" className="font-t3-medium text-foreground">
-                  When the limit is reached
-                </Text>
-                <Text textRole="footnote" className="text-foreground-muted">
-                  Off keeps it running and only warns.
-                </Text>
-              </View>
-              <ListSection>
-                <SwitchRow
-                  icon="stop.fill"
-                  label="Stop when reached"
-                  value={budget.block}
-                  onChange={(block) => updateBudget({ block })}
-                />
-              </ListSection>
-            </View>
-          </>
-        ) : null}
-        <View className="gap-2">
-          <View className="gap-0.5 px-2">
-            <Text textRole="footnote" className="font-t3-medium text-foreground">
-              Memory
-            </Text>
-            <Text textRole="footnote" className="text-foreground-muted">
-              Give the assistant its own project to keep its memory apart.
-            </Text>
-          </View>
-          <ListSection>
-            <ListRow
-              icon="brain"
-              label={
-                effectiveProject
-                  ? `Shared with ${assistantProjectName(effectiveProject)}`
-                  : "Memory follows the assistant's project"
-              }
-              description="Open Memory settings"
-              onPress={() => navigation.navigate("SettingsMemory")}
-            />
-          </ListSection>
-        </View>
-        <AssistantConnectorsSection
-          value={current.connectors}
-          onChange={(connectors) => updateAssistantDraft({ connectors })}
-        />
-        <AssistantNotificationsSection
-          value={current.autonomy}
-          onChange={(autonomy) => updateAssistantDraft({ autonomy })}
-          globalAutonomy={globalAutonomy}
-          projects={projectOptions}
-          defaultProjectId={effectiveProject?.id ?? null}
-        />
-        {assistant?.threadId ? (
-          <AssistantSchedulesSection
-            environmentId={environmentId}
-            environmentLabel={environmentLabel(environmentId)}
-            assistant={assistant}
-            modelSelection={modelSelection}
-          />
-        ) : null}
-        {assistant ? (
-          <AssistantWatchesSection
-            environmentId={environmentId}
-            assistantId={assistant.id}
-            notifies={current.autonomy.mode === "reply-and-notify"}
-            projects={projectOptions}
-          />
-        ) : null}
         {error ? (
           <Text
             accessibilityRole="alert"

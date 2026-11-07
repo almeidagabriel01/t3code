@@ -10,6 +10,8 @@ export interface ListRowContentProps {
   readonly label: string;
   readonly description?: string;
   readonly detail?: string;
+  /** Drawn in place of the icon, for an avatar. */
+  readonly leading?: ReactNode;
   readonly disabled?: boolean;
   /** Paths keep their meaningful end visible on one line. */
   readonly labelTruncatesStart?: boolean;
@@ -20,6 +22,7 @@ export function ListRowLayout({
   label,
   description,
   detail,
+  leading,
   disabled,
   labelTruncatesStart,
   accessory,
@@ -35,7 +38,9 @@ export function ListRowLayout({
         disabled && "opacity-45",
       )}
     >
-      {icon ? (
+      {leading ? (
+        <View className="items-center justify-center">{leading}</View>
+      ) : icon ? (
         <View className="size-6 items-center justify-center">
           <SymbolView
             name={icon}

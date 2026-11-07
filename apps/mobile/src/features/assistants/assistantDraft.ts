@@ -4,18 +4,22 @@ import {
   connectorsEqual,
   type ConnectorDraft,
 } from "@t3tools/client-runtime/assistantConnectors";
-import { assistantIconFor } from "@t3tools/client-runtime/assistantIcons";
+import { ASSISTANT_ROBOT_HUES, assistantRobotLook } from "@t3tools/client-runtime/assistantRobot";
 import { sameAssistantAutonomy } from "@t3tools/client-runtime/autonomy";
 import {
+  ASSISTANT_AVATAR_MAX_BYTES,
+  ASSISTANT_AVATAR_MIME_TYPES,
   assistantHandleFromName,
   AssistantHandle,
   DEFAULT_ASSISTANT_AUTONOMY,
   type Assistant,
-  type AssistantIconId,
   type AssistantId,
   type AssistantAutonomy,
   type AssistantsCreateInput,
   type AssistantsUpdateInput,
+  type AssistantTeam,
+  type AssistantTeamId,
+  type AssistantTeamsUpdateInput,
   type AssistantToolAccess,
   type AssistantWorkspace,
   type BudgetPeriod,
@@ -27,7 +31,19 @@ import {
 import * as Schema from "effect/Schema";
 import { Atom } from "effect/reactivity";
 
+import type { DraftComposerImageAttachment } from "../../lib/composerImages";
 import { appAtomRegistry } from "../../state/atom-registry";
+
+export type AvatarImageDraft =
+  | { readonly kind: "stored" }
+  | { readonly kind: "file"; readonly file: DraftComposerImageAttachment }
+  | null;
+
+/** Where "new assistant here" starts: a project or a group's "+". */
+export interface AssistantPreset {
+  readonly projectId?: ProjectId;
+  readonly teamId?: AssistantTeamId;
+}
 
 export interface AssistantDraft {
   readonly name: string;
@@ -41,7 +57,12 @@ export interface AssistantDraft {
   readonly toolAccess: AssistantToolAccess;
   readonly askBeforeActing: boolean;
   readonly workspace: AssistantWorkspace;
-  readonly icon: AssistantIconId | null;
+  readonly avatar: { readonly hue: number; readonly variant: number };
+  /** The stored picture kept as is, a picked one waiting for Save, or none (the robot). */
+  readonly avatarImage: AvatarImageDraft;
+  readonly avatarTouched: boolean;
+  /** Groups the user ticked or unticked; absent means the assistant's current membership. */
+  readonly groupChoices: Readonly<Record<string, boolean>>;
   readonly connectors: ReadonlyArray<ConnectorDraft>;
   readonly role: string;
   readonly reportsTo: AssistantId | null;
@@ -120,6 +141,7 @@ export interface AssistantEditor {
   readonly environmentId: EnvironmentId;
   /** Absent when creating. */
   readonly assistant: Assistant | null;
+  readonly preset?: AssistantPreset;
   readonly initial: AssistantDraft;
   readonly current: AssistantDraft;
 }
@@ -130,17 +152,30 @@ export const assistantEditorAtom = Atom.make<AssistantEditor | null>(null).pipe(
   Atom.withLabel("assistants:editor"),
 );
 
-export function assistantDraftFor(assistant: Assistant | null): AssistantDraft {
+export function assistantDraftFor(
+  assistant: Assistant | null,
+  preset: AssistantPreset = {},
+): AssistantDraft {
+  const look = assistantRobotLook(
+    assistant ?? {
+      id: "new",
+      avatar: { kind: "robot", hue: ASSISTANT_ROBOT_HUES[0], variant: 0 },
+    },
+  );
   return {
     name: assistant?.name ?? "",
     handle: assistant?.handle ?? null,
-    projectId: assistant?.projectId ?? null,
+    projectId: assistant?.projectId ?? preset.projectId ?? null,
     modelSelection: null,
     instructions: assistant?.instructions ?? "",
-    toolAccess: assistant?.toolAccess ?? "full",
-    askBeforeActing: assistant?.askBeforeActing ?? false,
+    toolAccess: assistant?.toolAccess ?? "workspace-write",
+    askBeforeActing: assistant?.askBeforeActing ?? true,
     workspace: assistant?.workspace ?? "host",
-    icon: assistantIconFor(assistant?.icon)?.id ?? null,
+    avatar: look,
+    avatarImage: assistant?.avatar?.kind === "image" ? { kind: "stored" } : null,
+    avatarTouched: false,
+    groupChoices:
+      assistant === null && preset.teamId !== undefined ? { [preset.teamId]: true } : {},
     connectors: connectorDraftsFrom(assistant?.mcpServers ?? []),
     role: assistant?.role ?? "",
     reportsTo: assistant?.reportsTo ?? null,
@@ -149,11 +184,16 @@ export function assistantDraftFor(assistant: Assistant | null): AssistantDraft {
   };
 }
 
-export function startAssistantEditor(environmentId: EnvironmentId, assistant: Assistant | null) {
-  const draft = assistantDraftFor(assistant);
+export function startAssistantEditor(
+  environmentId: EnvironmentId,
+  assistant: Assistant | null,
+  preset?: AssistantPreset,
+) {
+  const draft = assistantDraftFor(assistant, preset);
   appAtomRegistry.set(assistantEditorAtom, {
     environmentId,
     assistant,
+    ...(preset === undefined ? {} : { preset }),
     initial: draft,
     current: draft,
   });
@@ -171,6 +211,72 @@ export function updateAssistantDraft(change: Partial<AssistantDraft>) {
 
 export function discardAssistantEditor() {
   appAtomRegistry.set(assistantEditorAtom, null);
+}
+
+/** Why a picked image cannot be an avatar, or null. The server checks the bytes again. */
+export function avatarImageProblem(image: {
+  readonly mimeType: string;
+  readonly sizeBytes: number;
+}): string | null {
+  if (
+    !(ASSISTANT_AVATAR_MIME_TYPES as ReadonlyArray<string>).includes(image.mimeType.toLowerCase())
+  ) {
+    return "Use a PNG, JPEG or WebP image.";
+  }
+  if (image.sizeBytes > ASSISTANT_AVATAR_MAX_BYTES) {
+    return `The image must be under ${ASSISTANT_AVATAR_MAX_BYTES / 1024 / 1024} MB.`;
+  }
+  return null;
+}
+
+const robotAvatarOf = (draft: AssistantDraft) =>
+  ({ kind: "robot", hue: draft.avatar.hue, variant: draft.avatar.variant }) as const;
+
+/** Whether the assistant is in this group as the form stands. */
+export function assistantInGroup(editor: AssistantEditor, team: AssistantTeam): boolean {
+  return (
+    editor.current.groupChoices[team.id] ??
+    (editor.assistant !== null && team.memberIds.includes(editor.assistant.id))
+  );
+}
+
+/** Ticks or unticks a group; a choice that matches where the form started is forgotten. */
+export function setAssistantGroup(team: AssistantTeam, selected: boolean) {
+  const editor = appAtomRegistry.get(assistantEditorAtom);
+  if (!editor) return;
+  const member = editor.assistant !== null && team.memberIds.includes(editor.assistant.id);
+  const { [team.id]: _dropped, ...rest } = editor.current.groupChoices;
+  const groupChoices =
+    editor.initial.groupChoices[team.id] === undefined && selected === member
+      ? rest
+      : { ...rest, [team.id]: selected };
+  updateAssistantDraft({ groupChoices });
+}
+
+/**
+ * One team update per group the assistant joined or left. A leader must be a member, so leaving a
+ * group as its leader hands the lead back.
+ */
+export function teamMembershipUpdates(
+  teams: ReadonlyArray<AssistantTeam>,
+  assistantId: AssistantId,
+  inGroup: (team: AssistantTeam) => boolean,
+): ReadonlyArray<AssistantTeamsUpdateInput> {
+  return teams.flatMap((team) => {
+    const wasMember = team.memberIds.includes(assistantId);
+    if (inGroup(team) === wasMember) return [];
+    return [
+      {
+        teamId: team.id,
+        memberIds: wasMember
+          ? team.memberIds.filter((id) => id !== assistantId)
+          : [...team.memberIds, assistantId],
+        ...(wasMember && team.leaderId === assistantId
+          ? { leaderId: null, leaderTitle: null }
+          : {}),
+      },
+    ];
+  });
 }
 
 export function assistantDraftHasChanges(editor: AssistantEditor): boolean {
@@ -217,7 +323,7 @@ export function assistantCreateInput(
     toolAccess: current.toolAccess,
     ...(current.askBeforeActing ? { askBeforeActing: true } : {}),
     ...(current.workspace === "host" ? {} : { workspace: current.workspace }),
-    ...(current.icon === null ? {} : { icon: current.icon }),
+    ...(current.avatarImage?.kind === "file" ? {} : { avatar: robotAvatarOf(current) }),
     ...(current.connectors.length === 0
       ? {}
       : { mcpServers: connectorInputsFrom(current.connectors) }),
@@ -254,8 +360,8 @@ export function assistantUpdateInput(
       ? { askBeforeActing: current.askBeforeActing }
       : {}),
     ...(current.workspace !== assistant.workspace ? { workspace: current.workspace } : {}),
-    ...(current.icon !== (assistantIconFor(assistant.icon)?.id ?? null)
-      ? { icon: current.icon }
+    ...(current.avatarTouched && current.avatarImage?.kind !== "file"
+      ? { avatar: robotAvatarOf(current) }
       : {}),
     ...(connectorsEqual(editor.initial.connectors, current.connectors)
       ? {}

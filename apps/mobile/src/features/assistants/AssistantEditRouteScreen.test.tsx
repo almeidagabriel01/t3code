@@ -13,6 +13,13 @@ const { mocks, Children } = vi.hoisted(() => ({
   mocks: {
     spend: null as unknown,
     update: vi.fn(),
+    create: vi.fn(),
+    setAvatarImage: vi.fn(),
+    teamUpdate: vi.fn(),
+    alert: vi.fn(),
+    upload: vi.fn(),
+    teams: [] as unknown[],
+    goBack: vi.fn(),
     entries: [] as unknown[],
     tasks: [] as Array<{ threadId: string | null; prompt: string }>,
     sandbox: null as unknown,
@@ -27,7 +34,15 @@ vi.mock("../../state/server", () => ({
 vi.mock("react-native", () => ({
   View: Children,
   Platform: { OS: "android" },
-  Pressable: Children,
+  Pressable: (props: {
+    accessibilityLabel?: string;
+    onPress?: () => void;
+    children?: ReactNode;
+  }) => (
+    <button aria-label={props.accessibilityLabel} onClick={props.onPress}>
+      {props.children}
+    </button>
+  ),
   TextInput: (props: {
     accessibilityLabel?: string;
     value: string;
@@ -46,7 +61,7 @@ vi.mock("../../state/assets", () => ({ useAssetUrlState: () => null }));
 vi.mock("uniwind", () => ({ withUniwind: (component: unknown) => component }));
 vi.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ bottom: 0 }) }));
 vi.mock("@react-navigation/native", () => ({
-  useNavigation: () => ({ goBack: vi.fn(), dispatch: vi.fn(), navigate: vi.fn() }),
+  useNavigation: () => ({ goBack: mocks.goBack, dispatch: vi.fn(), navigate: vi.fn() }),
   usePreventRemove: () => undefined,
 }));
 vi.mock("../../components/ui/AppText", () => ({ AppText: Children }));
@@ -58,7 +73,9 @@ vi.mock("../../components/ui/Button", () => ({
     </button>
   ),
 }));
-vi.mock("../../components/ui/Dialog", () => ({ alert: vi.fn() }));
+vi.mock("../../components/ui/Dialog", () => ({
+  alert: (...args: unknown[]) => mocks.alert(...args),
+}));
 vi.mock("../../components/ui/ListActionRow", () => ({
   ListActionRow: (props: { label: string; disabled?: boolean; onPress: () => void }) => (
     <button disabled={props.disabled} onClick={props.onPress}>
@@ -132,14 +149,42 @@ vi.mock("../../native/StackHeader", () => ({ NativeStackScreenOptions: () => nul
 vi.mock("../layout/native-glass-header-items", () => ({ withNativeGlassHeaderItem: vi.fn() }));
 vi.mock("../settings/components/SettingsScreen", () => ({ SettingsScreen: Children }));
 vi.mock("../../state/assistants", () => ({
-  useAssistantActions: () => ({ canAct: true, update: mocks.update, create: vi.fn() }),
-  useAssistantEntries: () => ({ active: mocks.entries, archived: [] }),
+  useAssistantActions: () => ({
+    canAct: true,
+    update: mocks.update,
+    create: mocks.create,
+    setAvatarImage: mocks.setAvatarImage,
+  }),
+  useAssistantTeamActions: () => ({ canAct: true, update: mocks.teamUpdate }),
+  useAssistantEntries: () => ({ active: mocks.entries, archived: [], teams: mocks.teams }),
   useAssistantSpend: () => ({ data: mocks.spend }),
   useAssistantSandbox: () => mocks.sandbox,
   useAssistantsEnvironmentIds: () => ["hub"],
 }));
 vi.mock("../../state/use-remote-environment-registry", () => ({
   useSavedRemoteConnections: () => ({ savedConnectionsById: {} }),
+}));
+vi.mock("./assistantAvatarUpload", () => ({ uploadAvatarImage: mocks.upload }));
+vi.mock("./AssistantAvatarPicker", () => ({
+  AssistantAvatarPicker: (props: {
+    onChange: (next: { avatar: unknown; avatarImage: unknown }) => void;
+  }) => (
+    <>
+      <button
+        aria-label="avatar:shuffle"
+        onClick={() => props.onChange({ avatar: { hue: 30, variant: 3 }, avatarImage: null })}
+      />
+      <button
+        aria-label="avatar:upload"
+        onClick={() =>
+          props.onChange({
+            avatar: { hue: 30, variant: 3 },
+            avatarImage: { kind: "file", file: { previewUri: "p" } },
+          })
+        }
+      />
+    </>
+  ),
 }));
 vi.mock("./AssistantSchedulesSection", () => ({ AssistantSchedulesSection: () => null }));
 vi.mock("./AssistantWatchesSection", () => ({
@@ -196,14 +241,16 @@ const assistant = (budget: unknown = null) =>
 
 let root: Root;
 let container: HTMLDivElement;
-const render = (target: Assistant) => {
+const render = (target: Assistant | null, options: { advanced?: boolean } = {}) => {
   startAssistantEditor("hub" as never, target);
   act(() => root.render(<AssistantEditRouteScreen />));
+  if (options.advanced !== false) pick("Advanced");
 };
 const pick = (label: string) => {
-  const found = Array.from(container.querySelectorAll("button")).find(
-    (entry) => entry.getAttribute("aria-label") === label || entry.textContent === label,
-  );
+  const buttons = Array.from(container.querySelectorAll("button"));
+  const found =
+    buttons.find((entry) => entry.getAttribute("aria-label") === label) ??
+    buttons.findLast((entry) => entry.textContent === label);
   if (!found) throw new Error(`Missing button: ${label}`);
   act(() => found.click());
 };
@@ -226,7 +273,13 @@ beforeEach(() => {
   mocks.entries = [];
   mocks.tasks = [];
   mocks.sandbox = null;
-  mocks.update.mockReset().mockResolvedValue({ ok: true });
+  mocks.teams = [];
+  for (const fn of [mocks.alert, mocks.goBack, mocks.upload]) fn.mockReset();
+  mocks.update.mockReset().mockResolvedValue({ ok: true, value: { id: "a1" } });
+  mocks.create.mockReset().mockResolvedValue({ ok: true, value: { id: "new1" } });
+  mocks.setAvatarImage.mockReset().mockResolvedValue({ ok: true, value: {} });
+  mocks.teamUpdate.mockReset().mockResolvedValue({ ok: true, value: {} });
+  mocks.upload.mockResolvedValue("att-1");
 });
 afterEach(() => act(() => root.unmount()));
 
@@ -315,17 +368,158 @@ describe("assistant spending limit", () => {
   });
 });
 
-describe("assistant icon", () => {
-  it("selects one icon at a time and saves it", async () => {
-    render(assistant());
-    expect(container.textContent).toContain("Shown instead of its initial.");
-    const state = (label: string) =>
-      container.querySelector(`button[aria-label="${label}"]`)?.getAttribute("aria-checked");
-    expect(state("Initial")).toBe("true");
-    pick("Scout");
-    expect([state("Scout"), state("Initial")]).toEqual(["true", "false"]);
+describe("basic fields and Advanced", () => {
+  const advancedSummary =
+    "Edit files · This Mac · no spending limit · no connectors · asks before messaging other threads";
+
+  it("shows the basics first and keeps everything else under a collapsed Advanced with a summary", () => {
+    render(null, { advanced: false });
+    for (const label of ["Name", "Model", "What should it do?", "Groups", "Role"]) {
+      expect(container.textContent).toContain(label);
+    }
+    expect(container.textContent).toContain("Project");
+    expect(container.textContent).toContain("All projects");
+    expect(container.textContent).toContain(advancedSummary);
+    for (const hidden of ["Handle", "Tool access", "Workspace", "Spending limit", "Connectors"]) {
+      expect(container.textContent).not.toContain(hidden);
+    }
+    pick("Advanced");
+    expect(container.textContent).not.toContain(advancedSummary);
+    for (const shown of ["Handle", "Tool access", "Workspace", "Spending limit", "Connectors"]) {
+      expect(container.textContent).toContain(shown);
+    }
+    pick("Advanced");
+    expect(container.textContent).toContain(advancedSummary);
+  });
+
+  it("starts a new assistant on Edit files with ask before acting on, and creates it with a robot", async () => {
+    render(null);
+    expect(field("Ask before acting")?.checked).toBe(true);
+    expect(
+      container.querySelector('button[aria-label="Edit files"]')?.getAttribute("aria-checked"),
+    ).toBe("true");
+    type("Name", "Scout");
+    await act(async () => pick("Create assistant"));
+    expect(mocks.create.mock.calls[0]?.[0]).toMatchObject({
+      name: "Scout",
+      handle: "scout",
+      projectId: "p1",
+      toolAccess: "workspace-write",
+      askBeforeActing: true,
+      avatar: { kind: "robot", hue: 210, variant: 0 },
+    });
+    expect(mocks.goBack).toHaveBeenCalled();
+  });
+
+  it("asks for the first group and ticks the preset group of a new assistant", async () => {
+    render(null);
+    expect(container.textContent).toContain("No groups yet. Create one from the Assistants page.");
+    mocks.teams = [
+      { environmentId: "hub", team: { id: "t1", name: "Finance", memberIds: [], leaderId: null } },
+      { environmentId: "other", team: { id: "t9", name: "Elsewhere", memberIds: [] } },
+    ];
+    startAssistantEditor("hub" as never, null, { teamId: "t1" as never });
+    act(() => root.render(<AssistantEditRouteScreen />));
+    expect(container.textContent).not.toContain("Elsewhere");
+    const group = () =>
+      container.querySelector('button[aria-label="Finance"]')?.getAttribute("aria-checked");
+    expect(group()).toBe("true");
+    type("Name", "Cfo");
+    await act(async () => pick("Create assistant"));
+    expect(mocks.teamUpdate).toHaveBeenCalledWith({ teamId: "t1", memberIds: ["new1"] });
+  });
+
+  it("saves group changes of an existing assistant after the update, handing back a lead it gives up", async () => {
+    mocks.teams = [
+      {
+        environmentId: "hub",
+        team: { id: "t1", name: "Finance", memberIds: ["a1", "z"], leaderId: "a1" },
+      },
+      { environmentId: "hub", team: { id: "t2", name: "Ops", memberIds: ["z"], leaderId: null } },
+    ];
+    render(assistant(), { advanced: false });
+    expect(
+      container.querySelector('button[aria-label="Finance"]')?.getAttribute("aria-checked"),
+    ).toBe("true");
+    pick("Finance");
+    pick("Ops");
     await act(async () => pick("Save"));
-    expect(mocks.update.mock.calls[0]?.[0].icon).toBe("scout");
+    expect(mocks.teamUpdate.mock.calls).toEqual([
+      [{ teamId: "t1", memberIds: ["z"], leaderId: null, leaderTitle: null }],
+      [{ teamId: "t2", memberIds: ["z", "a1"] }],
+    ]);
+    expect(mocks.alert).not.toHaveBeenCalled();
+    expect(mocks.goBack).toHaveBeenCalled();
+  });
+
+  it("keeps the saved assistant and says what did not work", async () => {
+    mocks.teams = [
+      { environmentId: "hub", team: { id: "t2", name: "Ops", memberIds: [], leaderId: null } },
+    ];
+    mocks.teamUpdate.mockResolvedValue({ ok: false, message: "Too many." });
+    render(assistant(), { advanced: false });
+    pick("Ops");
+    await act(async () => pick("Save"));
+    expect(mocks.alert).toHaveBeenCalledWith(
+      "Jarvis was saved, but not everything",
+      "Ops: Too many.",
+    );
+    expect(mocks.goBack).toHaveBeenCalled();
+  });
+
+  it("refuses a failed save on the form", async () => {
+    mocks.create.mockResolvedValue({ ok: false, message: "Taken." });
+    render(null, { advanced: false });
+    type("Name", "Scout");
+    await act(async () => pick("Create assistant"));
+    expect(container.textContent).toContain("Taken.");
+    expect(mocks.goBack).not.toHaveBeenCalled();
+    expect(mocks.teamUpdate).not.toHaveBeenCalled();
+  });
+});
+
+describe("assistant avatar", () => {
+  it("sends a shuffled robot on update, and nothing when it was not touched", async () => {
+    render(assistant(), { advanced: false });
+    pick("avatar:shuffle");
+    await act(async () => pick("Save"));
+    expect(mocks.update.mock.calls[0]?.[0]).toMatchObject({
+      avatar: { kind: "robot", hue: 30, variant: 3 },
+    });
+    expect(mocks.setAvatarImage).not.toHaveBeenCalled();
+  });
+
+  it("uploads a picked image after saving and sets it as the avatar", async () => {
+    render(assistant(), { advanced: false });
+    pick("avatar:upload");
+    await act(async () => pick("Save"));
+    expect(mocks.update.mock.calls[0]?.[0]).not.toHaveProperty("avatar");
+    expect(mocks.upload).toHaveBeenCalledWith("hub", { previewUri: "p" });
+    expect(mocks.setAvatarImage).toHaveBeenCalledWith({ assistantId: "a1", attachmentId: "att-1" });
+    expect(mocks.alert).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["the upload throws", () => mocks.upload.mockRejectedValue(new Error("Offline.")), "Offline."],
+    [
+      "the upload throws something odd",
+      () => mocks.upload.mockRejectedValue("x"),
+      "The image upload failed.",
+    ],
+    [
+      "the server refuses the image",
+      () => mocks.setAvatarImage.mockResolvedValue({ ok: false, message: "Not an image." }),
+      "Not an image.",
+    ],
+  ])("keeps the assistant when %s", async (_name, arrange, message) => {
+    arrange();
+    render(null, { advanced: false });
+    type("Name", "Scout");
+    pick("avatar:upload");
+    await act(async () => pick("Create assistant"));
+    expect(mocks.create.mock.calls[0]?.[0]).not.toHaveProperty("avatar");
+    expect(mocks.alert).toHaveBeenCalledWith("Scout was saved, but not everything", message);
+    expect(mocks.goBack).toHaveBeenCalled();
   });
 });
 

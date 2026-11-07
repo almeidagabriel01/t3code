@@ -27,6 +27,7 @@ export function FieldHeader(props: { readonly label: string; readonly descriptio
 export function ChoiceRow(props: {
   readonly role: "radio" | "checkbox";
   readonly icon?: AppSymbolName;
+  readonly leading?: ReactNode;
   readonly label: string;
   readonly description?: string;
   readonly selected: boolean;
@@ -43,6 +44,7 @@ export function ChoiceRow(props: {
     >
       <ListRowLayout
         icon={props.icon}
+        leading={props.leading}
         label={props.label}
         description={props.description}
         accessory={
