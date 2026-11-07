@@ -661,6 +661,7 @@ export const fakeAssistantEdits = {
   spend: null as AssistantSpend | null,
   updates: [] as unknown[],
   creates: [] as unknown[],
+  avatarImages: [] as unknown[],
   /** What a create returns; null leaves it pending, which holds back every later assistant edit. */
   created: null as Assistant | null,
 };
@@ -668,6 +669,11 @@ handlers[WS_METHODS.assistantsSpend] = () =>
   fakeAssistantEdits.spend ? Effect.succeed(fakeAssistantEdits.spend) : Effect.never;
 handlers[WS_METHODS.assistantsUpdate] = (input: { readonly assistantId: string }) => {
   fakeAssistantEdits.updates.push(input);
+  const found = fakeAssistants.items.find((item) => item.id === input.assistantId);
+  return found ? Effect.succeed(found) : Effect.never;
+};
+handlers[WS_METHODS.assistantsSetAvatarImage] = (input: { readonly assistantId: string }) => {
+  fakeAssistantEdits.avatarImages.push(input);
   const found = fakeAssistants.items.find((item) => item.id === input.assistantId);
   return found ? Effect.succeed(found) : Effect.never;
 };

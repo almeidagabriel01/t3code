@@ -12,6 +12,13 @@ describe("assistant avatars", () => {
     ["an unknown icon falls back to the robot", null, "laser", null, "idle"],
     ["no icon and no avatar derive a robot", null, null, null, "idle"],
     ["a chosen robot replaces the legacy icon", { kind: "robot", hue: 30 }, "scout", null, "idle"],
+    [
+      "an image waits as a robot until its URL arrives",
+      { kind: "image", revision: 1 },
+      null,
+      null,
+      "idle",
+    ],
   ])("avatar: %s", async (_name, avatar, icon, drawnIcon, robot) => {
     await using screen = await render(
       <AssistantAvatar assistant={{ id: AssistantId.make("a1"), avatar, icon }} />,

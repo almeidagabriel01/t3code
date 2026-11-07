@@ -8,8 +8,9 @@ import {
   BudgetPeriod,
   DEFAULT_ASSISTANT_AUTONOMY,
   type AssistantAutonomy,
-  type AssistantIconId,
   type AssistantId,
+  type AssistantTeam,
+  type AssistantTeamId,
   type AssistantToolAccess,
   type AssistantWorkspace,
   type EnvironmentId,
@@ -37,9 +38,8 @@ import * as Schema from "effect/Schema";
 import { BrainIcon, CalendarPlusIcon } from "lucide-react";
 import { useState } from "react";
 
-import { assistantInitial } from "@t3tools/client-runtime/assistantPresence";
-import { assistantIconFor } from "@t3tools/client-runtime/assistantIcons";
-import { AssistantIconPicker } from "./AssistantIconPicker";
+import { ASSISTANT_ROBOT_HUES, assistantRobotLook } from "@t3tools/client-runtime/assistantRobot";
+import { uploadStandaloneAttachment } from "../../lib/attachmentUploadQueue";
 import { useEnvironmentSettings } from "../../hooks/useSettings";
 import { useSidebarProjectGroups } from "../../hooks/useSidebarProjectGroups";
 import {
@@ -56,6 +56,7 @@ import {
   useAssistantEntries,
   useAssistantSpend,
   useAssistantsEnvironmentIds,
+  useAssistantTeamActions,
 } from "../../state/assistants";
 import { useEnvironmentProviders, useEnvironments } from "../../state/environments";
 import { useProjects, useThreadShell } from "../../state/entities";
@@ -70,6 +71,9 @@ import { BUDGET_PERIOD_LABELS } from "../settings/ProviderBudgetSection";
 import { SETTINGS_PICKER_TRIGGER_CLASSNAME } from "../settings/settingsLayout";
 import { Alert, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
+import { Checkbox } from "../ui/checkbox";
+import { Collapsible, CollapsiblePanel } from "../ui/collapsible";
+import { CollapsibleSectionHeader } from "../ui/collapsible-section-header";
 import {
   Dialog,
   DialogDescription,
@@ -85,6 +89,8 @@ import { Radio, RadioGroup } from "../ui/radio-group";
 import { Switch } from "../ui/switch";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Textarea } from "../ui/textarea";
+import { toastManager } from "../ui/toast";
+import { AssistantAvatarPicker, type AvatarDraft } from "./AssistantAvatarPicker";
 import { AssistantConnectorsField } from "./AssistantConnectorsField";
 import { AssistantNotifications } from "./AssistantNotifications";
 import { AssistantWorkspaceField } from "./AssistantWorkspaceField";
@@ -93,7 +99,7 @@ import { AssistantWatches } from "./AssistantWatches";
 import { budgetFromDraft, budgetToDraft, spendLine, type BudgetDraft } from "./assistantBudget";
 import { assistantDialogAtom, type AssistantDialogTarget } from "./assistantDialogState";
 import { useAssistantFlows } from "./useAssistantFlows";
-import { TOOL_ACCESS_OPTIONS } from "./assistantPresentation";
+import { TOOL_ACCESS_OPTIONS, toolAccessLabel } from "./assistantPresentation";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 
 const isValidHandle = Schema.is(AssistantHandle);
@@ -294,6 +300,11 @@ function AssistantDialog(props: {
   );
   const environmentId = existing?.environmentId ?? pickedEnvironmentId ?? environmentIds[0] ?? null;
   const actions = useAssistantActions((environmentId ?? "") as EnvironmentId);
+  const teamActions = useAssistantTeamActions((environmentId ?? "") as EnvironmentId);
+  const { teams: teamEntries } = useAssistantEntries();
+  const teams = teamEntries
+    .filter((entry) => entry.environmentId === environmentId)
+    .map((entry) => entry.team);
   const { openConversation } = useAssistantFlows((environmentId ?? "") as EnvironmentId);
   const router = useRouter();
 
@@ -301,17 +312,27 @@ function AssistantDialog(props: {
   const [handleInput, setHandleInput] = useState<string | null>(null);
   const [instructions, setInstructions] = useState(assistant?.instructions ?? "");
   const [toolAccess, setToolAccess] = useState<AssistantToolAccess>(
-    assistant?.toolAccess ?? "full",
+    assistant?.toolAccess ?? "workspace-write",
   );
-  const [askBeforeActing, setAskBeforeActing] = useState(assistant?.askBeforeActing ?? false);
+  const [askBeforeActing, setAskBeforeActing] = useState(assistant?.askBeforeActing ?? true);
   const [workspace, setWorkspace] = useState<AssistantWorkspace>(assistant?.workspace ?? "host");
-  const [icon, setIcon] = useState<AssistantIconId | null>(
-    assistantIconFor(assistant?.icon)?.id ?? null,
-  );
+  const [avatar, setAvatar] = useState<AvatarDraft>(() => {
+    const look = assistantRobotLook(
+      assistant ?? {
+        id: "new",
+        avatar: { kind: "robot", hue: ASSISTANT_ROBOT_HUES[0], variant: 0 },
+      },
+    );
+    return { ...look, image: assistant?.avatar?.kind === "image" ? { kind: "stored" } : null };
+  });
+  const [avatarTouched, setAvatarTouched] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [connectors, setConnectors] = useState<ReadonlyArray<ConnectorDraft>>(() =>
     connectorDraftsFrom(assistant?.mcpServers ?? []),
   );
-  const [projectId, setProjectId] = useState<ProjectId | null>(assistant?.projectId ?? null);
+  const [projectId, setProjectId] = useState<ProjectId | null>(
+    assistant?.projectId ?? props.target.preset?.projectId ?? null,
+  );
   const [pickedModel, setPickedModel] = useState<ModelSelection | null>(null);
   const [role, setRole] = useState(assistant?.role ?? "");
   const [reportsTo, setReportsTo] = useState<AssistantId | null>(assistant?.reportsTo ?? null);
@@ -324,8 +345,16 @@ function AssistantDialog(props: {
     (environmentId ?? "") as EnvironmentId,
     assistant && assistant.budget !== null ? assistant.id : null,
   );
+  const [groupChoices, setGroupChoices] = useState<ReadonlyMap<AssistantTeamId, boolean>>(
+    new Map(),
+  );
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const presetTeamId = props.target.preset?.teamId;
+  const inGroup = (candidate: AssistantTeam) =>
+    groupChoices.get(candidate.id) ??
+    ((assistant !== null && candidate.memberIds.includes(assistant.id)) ||
+      (assistant === null && candidate.id === presetTeamId));
 
   const team = [...active, ...archived]
     .filter((entry) => entry.environmentId === environmentId)
@@ -345,7 +374,7 @@ function AssistantDialog(props: {
   const effectiveProject = projects.find((project) => project.id === effectiveProjectId) ?? null;
   const projectOptions = projects.map((project) => ({
     id: project.id,
-    label: project.isScratch ? "No project" : projectName(project),
+    label: project.isScratch ? "All projects" : projectName(project),
   }));
 
   const settings = useEnvironmentSettings((environmentId ?? "") as EnvironmentId);
@@ -378,6 +407,20 @@ function AssistantDialog(props: {
           allowPromptInjectedEffort: false,
           planModeEnabled: settings.planModeEnabled || selectsPlanAgent(model.options),
         };
+
+  const advancedSummary = [
+    toolAccessLabel(toolAccess),
+    workspace === "host" ? "This Mac" : "Sandbox container",
+    budgetDraft.enabled
+      ? budgetDraft.amount.trim() === ""
+        ? "spending limit"
+        : `$${budgetDraft.amount.trim()} limit`
+      : "no spending limit",
+    connectors.length === 0
+      ? "no connectors"
+      : `${connectors.length} connector${connectors.length === 1 ? "" : "s"}`,
+    askBeforeActing ? "asks before messaging other threads" : "messages other threads freely",
+  ].join(" · ");
 
   const derivedHandle = assistantHandleFromName(name) ?? "";
   const handle = handleInput ?? (assistant ? assistant.handle : derivedHandle);
@@ -412,6 +455,8 @@ function AssistantDialog(props: {
     );
     const connectorProblem = connectorsChanged ? connectorDraftsProblem(connectors) : null;
     if (connectorProblem !== null) return setError(connectorProblem);
+    const robotAvatar = { kind: "robot", hue: avatar.hue, variant: avatar.variant } as const;
+    const pendingFile = avatar.image?.kind === "file" ? avatar.image.file : null;
     setSaving(true);
     setError(null);
     const trimmedName = name.trim();
@@ -426,7 +471,7 @@ function AssistantDialog(props: {
           ...(toolAccess !== assistant.toolAccess ? { toolAccess } : {}),
           ...(askBeforeActing !== assistant.askBeforeActing ? { askBeforeActing } : {}),
           ...(workspace !== assistant.workspace ? { workspace } : {}),
-          ...(icon !== (assistantIconFor(assistant.icon)?.id ?? null) ? { icon } : {}),
+          ...(avatarTouched && pendingFile === null ? { avatar: robotAvatar } : {}),
           ...(connectorsChanged ? { mcpServers: connectorInputsFrom(connectors) } : {}),
           ...(role.trim() !== assistant.role ? { role: role.trim() } : {}),
           ...(reportsTo !== assistant.reportsTo ? { reportsTo } : {}),
@@ -442,16 +487,55 @@ function AssistantDialog(props: {
           toolAccess,
           ...(askBeforeActing ? { askBeforeActing } : {}),
           ...(workspace === "host" ? {} : { workspace }),
-          ...(icon === null ? {} : { icon }),
+          ...(pendingFile === null ? { avatar: robotAvatar } : {}),
           ...(connectors.length === 0 ? {} : { mcpServers: connectorInputsFrom(connectors) }),
           ...(role.trim() === "" ? {} : { role: role.trim() }),
           ...(reportsTo === null ? {} : { reportsTo }),
           ...(budget.budget ? { budget: budget.budget } : {}),
           ...(sameAssistantAutonomy(autonomy, DEFAULT_ASSISTANT_AUTONOMY) ? {} : { autonomy }),
         });
+    if (!reply.ok) {
+      setSaving(false);
+      return setError(reply.message);
+    }
+    // The assistant is saved; a picture or group that fails is reported without losing it.
+    const problems: string[] = [];
+    if (pendingFile !== null && environmentId !== null) {
+      try {
+        const uploaded = await uploadStandaloneAttachment(environmentId, pendingFile);
+        const set = await actions.setAvatarImage({
+          assistantId: reply.value.id,
+          attachmentId: uploaded.attachmentId,
+        });
+        if (!set.ok) problems.push(set.message);
+      } catch (cause) {
+        problems.push(cause instanceof Error ? cause.message : "The image upload failed.");
+      }
+    }
+    for (const candidate of teams) {
+      const wasMember = candidate.memberIds.includes(reply.value.id);
+      if (inGroup(candidate) === wasMember) continue;
+      const result = await teamActions.update({
+        teamId: candidate.id,
+        memberIds: wasMember
+          ? candidate.memberIds.filter((id) => id !== reply.value.id)
+          : [...candidate.memberIds, reply.value.id],
+        // A leader must be a member, so leaving a group as its leader hands the lead back.
+        ...(wasMember && candidate.leaderId === reply.value.id
+          ? { leaderId: null, leaderTitle: null }
+          : {}),
+      });
+      if (!result.ok) problems.push(`${candidate.name}: ${result.message}`);
+    }
     setSaving(false);
-    if (!reply.ok) return setError(reply.message);
     props.onClose();
+    if (problems.length > 0) {
+      toastManager.add({
+        type: "error",
+        title: `${trimmedName} was saved, but not everything`,
+        description: problems.join(" "),
+      });
+    }
     // Settings stays put for setting up several; elsewhere the new assistant opens to talk to it.
     if (!assistant && !router.state.location.pathname.startsWith("/settings")) {
       openConversation(reply.value);
@@ -471,7 +555,7 @@ function AssistantDialog(props: {
         </DialogHeader>
         <DialogPanel>
           <form
-            className="flex flex-col gap-5"
+            className="@container/assistant flex flex-col gap-5"
             onSubmit={(event) => {
               event.preventDefault();
               void save();
@@ -508,44 +592,135 @@ function AssistantDialog(props: {
                 </Select>
               </div>
             ) : null}
-            <div className="flex flex-col gap-1.5">
-              <FieldLabel
-                htmlFor="assistant-name"
-                label="Name"
-                description="Shown in the sidebar and at the top of its conversation."
-              />
-              <Input
-                id="assistant-name"
-                autoFocus
-                value={name}
-                maxLength={ASSISTANT_NAME_MAX_LENGTH}
-                onChange={(event) => setName(event.target.value)}
-              />
+            <AssistantAvatarPicker
+              value={avatar}
+              assistant={assistant}
+              onChange={(next) => {
+                setAvatar(next);
+                setAvatarTouched(true);
+              }}
+            />
+            <div className="grid items-start gap-5 @md/assistant:grid-cols-2">
+              <div className="flex flex-col gap-1.5">
+                <FieldLabel
+                  htmlFor="assistant-name"
+                  label="Name"
+                  description="Shown in the sidebar."
+                />
+                <Input
+                  id="assistant-name"
+                  autoFocus
+                  value={name}
+                  maxLength={ASSISTANT_NAME_MAX_LENGTH}
+                  onChange={(event) => setName(event.target.value)}
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <FieldLabel
+                  htmlFor="assistant-model"
+                  label="Model"
+                  description={
+                    assistant ? "For its current conversation." : "Starts on your default."
+                  }
+                />
+                <div id="assistant-model">
+                  {model !== null &&
+                  entries.some((entry) => entry.instanceId === model.instanceId) ? (
+                    <ProviderModelPicker
+                      environmentId={environmentId}
+                      activeInstanceId={model.instanceId}
+                      model={model.model}
+                      lockedProvider={null}
+                      instanceEntries={entries}
+                      modelOptionsByInstance={getCustomModelOptionsByInstance(
+                        settings,
+                        providers,
+                        model.instanceId,
+                        model.model,
+                      )}
+                      triggerAriaLabel="Assistant model"
+                      isComposerOwned={false}
+                      triggerClassName={cn(
+                        SETTINGS_PICKER_TRIGGER_CLASSNAME,
+                        "min-h-9 w-full text-left sm:min-h-8 sm:max-w-none",
+                      )}
+                      onInstanceModelChange={(instanceId, next) =>
+                        setPickedModel(createModelSelection(instanceId, next))
+                      }
+                    />
+                  ) : (
+                    <span className="text-sm text-muted-foreground">No providers available</span>
+                  )}
+                </div>
+              </div>
             </div>
             <div className="flex flex-col gap-1.5">
               <FieldLabel
-                htmlFor="assistant-handle"
-                label="Handle"
-                description="How channels and agents address it. Lowercase letters, numbers and dashes."
+                htmlFor="assistant-instructions"
+                label="What should it do?"
+                description="Its role and rules, in your words."
+              />
+              <Textarea
+                id="assistant-instructions"
+                rows={4}
+                value={instructions}
+                maxLength={ASSISTANT_INSTRUCTIONS_MAX_CHARS}
+                onChange={(event) => setInstructions(event.target.value)}
+              />
+              <p className="text-end text-xs text-muted-foreground tabular-nums">
+                {instructions.length.toLocaleString()} /{" "}
+                {ASSISTANT_INSTRUCTIONS_MAX_CHARS.toLocaleString()}
+              </p>
+            </div>
+            <fieldset className="flex flex-col gap-1.5">
+              <legend className="text-sm font-medium">Groups</legend>
+              <p className="text-xs text-muted-foreground">
+                Members of a group can message each other.
+              </p>
+              {teams.length === 0 ? (
+                <p className="text-xs text-muted-foreground">
+                  No groups yet. Create one from the Assistants page.
+                </p>
+              ) : (
+                <ul className="flex flex-col gap-0.5">
+                  {teams.map((candidate) => (
+                    <li key={candidate.id}>
+                      <label className="flex cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-sm hover:bg-foreground/8">
+                        <Checkbox
+                          aria-label={candidate.name}
+                          checked={inGroup(candidate)}
+                          onCheckedChange={(checked) =>
+                            setGroupChoices((current) =>
+                              new Map(current).set(candidate.id, Boolean(checked)),
+                            )
+                          }
+                        />
+                        <span className="truncate">{candidate.name}</span>
+                      </label>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </fieldset>
+            <div className="flex flex-col gap-1.5">
+              <FieldLabel
+                htmlFor="assistant-role"
+                label="Role"
+                description="What it is to the others, such as CEO or Engineer. Agents see it."
               />
               <Input
-                id="assistant-handle"
-                value={handle}
-                aria-invalid={!handleValid && (handleInput !== null || name.trim().length > 0)}
-                onChange={(event) => setHandleInput(event.target.value.toLowerCase())}
+                id="assistant-role"
+                placeholder="CEO, Engineer…"
+                value={role}
+                maxLength={ASSISTANT_ROLE_MAX_LENGTH}
+                onChange={(event) => setRole(event.target.value)}
               />
-              {!handleValid && (handleInput !== null || name.trim().length > 0) ? (
-                <p className="text-xs text-destructive-foreground">
-                  Use 1 to 32 lowercase letters, numbers or dashes, starting and ending with a
-                  letter or number.
-                </p>
-              ) : null}
             </div>
             <div className="flex flex-col gap-1.5">
               <FieldLabel
                 htmlFor="assistant-project"
                 label="Project"
-                description="The folder it works in, and whose memory it shares."
+                description="All projects, or the one project it works in and shares memory with."
               />
               <Select
                 value={effectiveProjectId}
@@ -555,7 +730,7 @@ function AssistantDialog(props: {
                   <SelectValue>
                     {effectiveProject
                       ? effectiveProject.isScratch
-                        ? "No project"
+                        ? "All projects"
                         : projectName(effectiveProject)
                       : "No projects available"}
                   </SelectValue>
@@ -563,7 +738,7 @@ function AssistantDialog(props: {
                 <SelectPopup alignItemWithTrigger={false}>
                   {projects.map((project) => (
                     <SelectItem hideIndicator key={project.id} value={project.id}>
-                      {project.isScratch ? "No project" : projectName(project)}
+                      {project.isScratch ? "All projects" : projectName(project)}
                     </SelectItem>
                   ))}
                 </SelectPopup>
@@ -577,230 +752,200 @@ function AssistantDialog(props: {
                 </Alert>
               ) : null}
             </div>
-            <div className="flex flex-col gap-1.5">
-              <FieldLabel
-                htmlFor="assistant-model"
-                label="Model"
-                description={
-                  assistant
-                    ? "Applies to its current conversation."
-                    : "Starts on your default model unless you choose another."
-                }
-              />
-              <div id="assistant-model">
-                {model !== null &&
-                entries.some((entry) => entry.instanceId === model.instanceId) ? (
-                  <ProviderModelPicker
-                    environmentId={environmentId}
-                    activeInstanceId={model.instanceId}
-                    model={model.model}
-                    lockedProvider={null}
-                    instanceEntries={entries}
-                    modelOptionsByInstance={getCustomModelOptionsByInstance(
-                      settings,
-                      providers,
-                      model.instanceId,
-                      model.model,
-                    )}
-                    triggerAriaLabel="Assistant model"
-                    isComposerOwned={false}
-                    triggerClassName={cn(
-                      SETTINGS_PICKER_TRIGGER_CLASSNAME,
-                      "min-h-9 w-full text-left sm:min-h-8 sm:max-w-none",
-                    )}
-                    onInstanceModelChange={(instanceId, next) =>
-                      setPickedModel(createModelSelection(instanceId, next))
-                    }
-                  />
-                ) : (
-                  <span className="text-sm text-muted-foreground">No providers available</span>
-                )}
-              </div>
-            </div>
-            {model !== null &&
-            traits !== null &&
-            getTraitsSectionVisibility(traits).hasAnyControls ? (
-              <div className="flex flex-col gap-1.5">
-                <FieldLabel
-                  htmlFor="assistant-effort"
-                  label="Effort"
-                  description="How much it reasons on each turn, plus the other options this model has."
-                />
-                <div id="assistant-effort">
-                  <TraitsPicker
-                    {...traits}
-                    triggerClassName={cn(
-                      SETTINGS_PICKER_TRIGGER_CLASSNAME,
-                      "min-h-9 w-full justify-start text-left sm:min-h-8 sm:max-w-none",
-                    )}
-                    onModelOptionsChange={(modelOptions) =>
-                      setPickedModel(
-                        createModelSelection(model.instanceId, model.model, modelOptions),
-                      )
-                    }
-                  />
-                </div>
-              </div>
-            ) : null}
-            <div className="flex flex-col gap-1.5">
-              <FieldLabel
-                htmlFor="assistant-instructions"
-                label="Instructions"
-                description="Standing guidance sent with every turn: its role, tone and rules."
-              />
-              <Textarea
-                id="assistant-instructions"
-                rows={6}
-                value={instructions}
-                maxLength={ASSISTANT_INSTRUCTIONS_MAX_CHARS}
-                onChange={(event) => setInstructions(event.target.value)}
-              />
-              <p className="text-end text-xs text-muted-foreground tabular-nums">
-                {instructions.length.toLocaleString()} /{" "}
-                {ASSISTANT_INSTRUCTIONS_MAX_CHARS.toLocaleString()}
-              </p>
-            </div>
-            <AssistantIconPicker value={icon} initial={assistantInitial(name)} onChange={setIcon} />
-            <fieldset className="flex flex-col gap-1.5">
-              <legend className="text-sm font-medium">Tool access</legend>
-              <p className="text-xs text-muted-foreground">
-                What it may do without asking. Enforced by the conversation's permissions.
-              </p>
-              <RadioGroup
-                aria-label="Tool access"
-                value={toolAccess}
-                onValueChange={(value) => setToolAccess(value as AssistantToolAccess)}
-              >
-                {TOOL_ACCESS_OPTIONS.map((option) => (
-                  <label
-                    key={option.value}
-                    className="flex cursor-pointer items-start gap-2.5 rounded-md px-2 py-1.5 outline-hidden hover:bg-foreground/8"
-                  >
-                    <Radio value={option.value} className="mt-0.5" />
-                    <option.icon
-                      aria-hidden
-                      className="mt-0.5 size-4 shrink-0 text-muted-foreground"
-                    />
-                    <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                      <span className="text-sm">{option.label}</span>
-                      <span className="text-xs font-normal text-muted-foreground">
-                        {option.description}
-                      </span>
+            <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
+              <CollapsibleSectionHeader
+                expanded={advancedOpen}
+                tone="emphasized"
+                aria-label="Advanced"
+                onClick={() => setAdvancedOpen((open) => !open)}
+                accessory={
+                  advancedOpen ? null : (
+                    <span className="min-w-0 truncate font-normal text-muted-foreground">
+                      {advancedSummary}
                     </span>
-                  </label>
-                ))}
-              </RadioGroup>
-            </fieldset>
-            <AssistantWorkspaceField
-              environmentId={environmentId}
-              value={workspace}
-              onChange={setWorkspace}
-            />
-            <AskBeforeActingField checked={askBeforeActing} onChange={setAskBeforeActing} />
-            <fieldset className="flex flex-col gap-3">
-              <legend className="text-sm font-medium">Team</legend>
-              <p className="text-xs text-muted-foreground">
-                Its place among your assistants: a leader asks its reports for work.
-              </p>
-              <div className="flex flex-col gap-1.5">
-                <FieldLabel
-                  htmlFor="assistant-role"
-                  label="Role"
-                  description="What it is to the others, such as CEO or Engineer. Agents see it."
-                />
-                <Input
-                  id="assistant-role"
-                  placeholder="CEO, Engineer…"
-                  value={role}
-                  maxLength={ASSISTANT_ROLE_MAX_LENGTH}
-                  onChange={(event) => setRole(event.target.value)}
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <FieldLabel
-                  htmlFor="assistant-reports-to"
-                  label="Reports to"
-                  description="Its leader can ask it for work and gets the answer back. It never messages up on its own."
-                />
-                <Select
-                  value={reportsTo ?? NO_LEADER_VALUE}
-                  onValueChange={(next) =>
-                    setReportsTo(next === NO_LEADER_VALUE ? null : (next as AssistantId))
-                  }
-                >
-                  <SelectTrigger id="assistant-reports-to" aria-label="Reports to">
-                    <SelectValue>
-                      {leaders.find((leader) => leader.id === reportsTo)?.name ?? NO_LEADER_LABEL}
-                    </SelectValue>
-                  </SelectTrigger>
-                  <SelectPopup alignItemWithTrigger={false}>
-                    <SelectItem hideIndicator value={NO_LEADER_VALUE}>
-                      {NO_LEADER_LABEL}
-                    </SelectItem>
-                    {leaders.map((leader) => (
-                      <SelectItem hideIndicator key={leader.id} value={leader.id}>
-                        {leader.name}
-                      </SelectItem>
-                    ))}
-                  </SelectPopup>
-                </Select>
-              </div>
-              {assistant && environmentId !== null && reports.length > 0 ? (
-                <DailyStandup
-                  environmentId={environmentId}
-                  threadId={assistant.threadId}
-                  reportNames={reports.map((report) => report.name)}
-                  added={standupAdded}
-                  disabled={saving || !actions.canAct}
-                  onAdd={() => void addStandup()}
-                />
-              ) : null}
-            </fieldset>
-            <AssistantConnectorsField value={connectors} onChange={setConnectors} />
-            <BudgetFields
-              draft={budgetDraft}
-              onChange={(patch) => setBudgetDraft((current) => ({ ...current, ...patch }))}
-              spent={spend ? spendLine(spend) : null}
-            />
-            <AssistantNotifications
-              value={autonomy}
-              onChange={setAutonomy}
-              globalAutonomy={settings.autonomy}
-              projects={projectOptions}
-              defaultProjectId={effectiveProjectId}
-            />
-            {assistant?.threadId && environmentId !== null ? (
-              <AssistantSchedules
-                environmentId={environmentId}
-                threadId={assistant.threadId}
-                onNavigate={props.onClose}
-              />
-            ) : null}
-            {assistant && environmentId !== null ? (
-              <AssistantWatches
-                environmentId={environmentId}
-                assistantId={assistant.id}
-                notifies={autonomy.mode === "reply-and-notify"}
-                projects={projectOptions}
-              />
-            ) : null}
-            <div className="flex flex-col gap-0.5">
-              <span className="text-sm font-medium">Memory</span>
-              <p className="text-xs text-muted-foreground">
-                {effectiveProject
-                  ? `Shared with ${effectiveProject.isScratch ? "No project" : projectName(effectiveProject)}. Give the assistant its own project to keep its memory apart.`
-                  : "Memory follows the assistant's project."}
-              </p>
-              <Link
-                to="/settings/memory"
-                search={validateMemorySettingsSearch({ environmentId: environmentId ?? undefined })}
-                onClick={props.onClose}
-                className="mt-1 inline-flex w-fit cursor-pointer items-center gap-1.5 rounded-sm text-xs text-foreground/75 outline-hidden hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                  )
+                }
               >
-                <BrainIcon aria-hidden className="size-3.5" />
-                Open Memory settings
-              </Link>
-            </div>
+                Advanced
+              </CollapsibleSectionHeader>
+              <CollapsiblePanel animate={false}>
+                <div className="flex flex-col gap-5 pt-3">
+                  <div className="flex flex-col gap-1.5">
+                    <FieldLabel
+                      htmlFor="assistant-handle"
+                      label="Handle"
+                      description="How channels and agents address it. Lowercase letters, numbers and dashes."
+                    />
+                    <Input
+                      id="assistant-handle"
+                      value={handle}
+                      aria-invalid={
+                        !handleValid && (handleInput !== null || name.trim().length > 0)
+                      }
+                      onChange={(event) => setHandleInput(event.target.value.toLowerCase())}
+                    />
+                    {!handleValid && (handleInput !== null || name.trim().length > 0) ? (
+                      <p className="text-xs text-destructive-foreground">
+                        Use 1 to 32 lowercase letters, numbers or dashes, starting and ending with a
+                        letter or number.
+                      </p>
+                    ) : null}
+                  </div>
+                  {model !== null &&
+                  traits !== null &&
+                  getTraitsSectionVisibility(traits).hasAnyControls ? (
+                    <div className="flex flex-col gap-1.5">
+                      <FieldLabel
+                        htmlFor="assistant-effort"
+                        label="Effort"
+                        description="How much it reasons on each turn, plus the other options this model has."
+                      />
+                      <div id="assistant-effort">
+                        <TraitsPicker
+                          {...traits}
+                          triggerClassName={cn(
+                            SETTINGS_PICKER_TRIGGER_CLASSNAME,
+                            "min-h-9 w-full justify-start text-left sm:min-h-8 sm:max-w-none",
+                          )}
+                          onModelOptionsChange={(modelOptions) =>
+                            setPickedModel(
+                              createModelSelection(model.instanceId, model.model, modelOptions),
+                            )
+                          }
+                        />
+                      </div>
+                    </div>
+                  ) : null}
+                  <fieldset className="flex flex-col gap-1.5">
+                    <legend className="text-sm font-medium">Tool access</legend>
+                    <p className="text-xs text-muted-foreground">
+                      What it may do without asking. Enforced by the conversation's permissions.
+                    </p>
+                    <RadioGroup
+                      aria-label="Tool access"
+                      value={toolAccess}
+                      onValueChange={(value) => setToolAccess(value as AssistantToolAccess)}
+                    >
+                      {TOOL_ACCESS_OPTIONS.map((option) => (
+                        <label
+                          key={option.value}
+                          className="flex cursor-pointer items-start gap-2.5 rounded-md px-2 py-1.5 outline-hidden hover:bg-foreground/8"
+                        >
+                          <Radio value={option.value} className="mt-0.5" />
+                          <option.icon
+                            aria-hidden
+                            className="mt-0.5 size-4 shrink-0 text-muted-foreground"
+                          />
+                          <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                            <span className="text-sm">{option.label}</span>
+                            <span className="text-xs font-normal text-muted-foreground">
+                              {option.description}
+                            </span>
+                          </span>
+                        </label>
+                      ))}
+                    </RadioGroup>
+                  </fieldset>
+                  <AssistantWorkspaceField
+                    environmentId={environmentId}
+                    value={workspace}
+                    onChange={setWorkspace}
+                  />
+                  <AskBeforeActingField checked={askBeforeActing} onChange={setAskBeforeActing} />
+                  <fieldset className="flex flex-col gap-3">
+                    <legend className="text-sm font-medium">Team</legend>
+                    <p className="text-xs text-muted-foreground">Its leader can ask it for work.</p>
+                    <div className="flex flex-col gap-1.5">
+                      <FieldLabel
+                        htmlFor="assistant-reports-to"
+                        label="Reports to"
+                        description="Its leader can ask it for work and gets the answer back. It never messages up on its own."
+                      />
+                      <Select
+                        value={reportsTo ?? NO_LEADER_VALUE}
+                        onValueChange={(next) =>
+                          setReportsTo(next === NO_LEADER_VALUE ? null : (next as AssistantId))
+                        }
+                      >
+                        <SelectTrigger id="assistant-reports-to" aria-label="Reports to">
+                          <SelectValue>
+                            {leaders.find((leader) => leader.id === reportsTo)?.name ??
+                              NO_LEADER_LABEL}
+                          </SelectValue>
+                        </SelectTrigger>
+                        <SelectPopup alignItemWithTrigger={false}>
+                          <SelectItem hideIndicator value={NO_LEADER_VALUE}>
+                            {NO_LEADER_LABEL}
+                          </SelectItem>
+                          {leaders.map((leader) => (
+                            <SelectItem hideIndicator key={leader.id} value={leader.id}>
+                              {leader.name}
+                            </SelectItem>
+                          ))}
+                        </SelectPopup>
+                      </Select>
+                    </div>
+                    {assistant && environmentId !== null && reports.length > 0 ? (
+                      <DailyStandup
+                        environmentId={environmentId}
+                        threadId={assistant.threadId}
+                        reportNames={reports.map((report) => report.name)}
+                        added={standupAdded}
+                        disabled={saving || !actions.canAct}
+                        onAdd={() => void addStandup()}
+                      />
+                    ) : null}
+                  </fieldset>
+                  <AssistantConnectorsField value={connectors} onChange={setConnectors} />
+                  <BudgetFields
+                    draft={budgetDraft}
+                    onChange={(patch) => setBudgetDraft((current) => ({ ...current, ...patch }))}
+                    spent={spend ? spendLine(spend) : null}
+                  />
+                  <AssistantNotifications
+                    value={autonomy}
+                    onChange={setAutonomy}
+                    globalAutonomy={settings.autonomy}
+                    projects={projectOptions}
+                    defaultProjectId={effectiveProjectId}
+                  />
+                  {assistant?.threadId && environmentId !== null ? (
+                    <AssistantSchedules
+                      environmentId={environmentId}
+                      threadId={assistant.threadId}
+                      onNavigate={props.onClose}
+                    />
+                  ) : null}
+                  {assistant && environmentId !== null ? (
+                    <AssistantWatches
+                      environmentId={environmentId}
+                      assistantId={assistant.id}
+                      notifies={autonomy.mode === "reply-and-notify"}
+                      projects={projectOptions}
+                    />
+                  ) : null}
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-sm font-medium">Memory</span>
+                    <p className="text-xs text-muted-foreground">
+                      {effectiveProject
+                        ? `Shared with ${effectiveProject.isScratch ? "All projects" : projectName(effectiveProject)}. Give the assistant its own project to keep its memory apart.`
+                        : "Memory follows the assistant's project."}
+                    </p>
+                    <Link
+                      to="/settings/memory"
+                      search={validateMemorySettingsSearch({
+                        environmentId: environmentId ?? undefined,
+                      })}
+                      onClick={props.onClose}
+                      className="mt-1 inline-flex w-fit cursor-pointer items-center gap-1.5 rounded-sm text-xs text-foreground/75 outline-hidden hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                    >
+                      <BrainIcon aria-hidden className="size-3.5" />
+                      Open Memory settings
+                    </Link>
+                  </div>
+                </div>
+              </CollapsiblePanel>
+            </Collapsible>
             {error ? (
               <Alert variant="error">
                 <AlertDescription>{error}</AlertDescription>

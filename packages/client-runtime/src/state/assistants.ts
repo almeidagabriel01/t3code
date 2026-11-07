@@ -174,6 +174,7 @@ export function createAssistantsEnvironmentAtoms<R, E>(
       | typeof WS_METHODS.assistantsUpdate
       | typeof WS_METHODS.assistantsDelete
       | typeof WS_METHODS.assistantsReset
+      | typeof WS_METHODS.assistantsSetAvatarImage
       | typeof WS_METHODS.assistantTeamsCreate
       | typeof WS_METHODS.assistantTeamsUpdate
       | typeof WS_METHODS.assistantTeamsDelete
@@ -201,6 +202,7 @@ export function createAssistantsEnvironmentAtoms<R, E>(
     update: command(WS_METHODS.assistantsUpdate, "update"),
     delete: command(WS_METHODS.assistantsDelete, "delete"),
     reset: command(WS_METHODS.assistantsReset, "reset"),
+    setAvatarImage: command(WS_METHODS.assistantsSetAvatarImage, "setAvatarImage"),
     createTeam: command(WS_METHODS.assistantTeamsCreate, "createTeam"),
     updateTeam: command(WS_METHODS.assistantTeamsUpdate, "updateTeam"),
     deleteTeam: command(WS_METHODS.assistantTeamsDelete, "deleteTeam"),

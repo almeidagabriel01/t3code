@@ -1,5 +1,6 @@
-import type { Assistant, AssistantToolAccess } from "@t3tools/contracts";
+import type { Assistant, AssistantToolAccess, EnvironmentId } from "@t3tools/contracts";
 import { LockIcon, PenLineIcon, ShieldOffIcon, type LucideIcon } from "lucide-react";
+import { useState } from "react";
 
 import {
   ASSISTANT_ICON_STROKE_WIDTH,
@@ -8,7 +9,9 @@ import {
 } from "@t3tools/client-runtime/assistantIcons";
 import { assistantAccent, assistantInitial } from "@t3tools/client-runtime/assistantPresence";
 import { assistantRobotLook, type AssistantMood } from "@t3tools/client-runtime/assistantRobot";
+import { useAssetUrlState } from "~/assets/assetUrls";
 import { cn } from "~/lib/utils";
+import { useAssistantEntries } from "~/state/assistants";
 import { AssistantRobot } from "./AssistantRobot";
 
 export const TOOL_ACCESS_OPTIONS: ReadonlyArray<{
@@ -42,7 +45,7 @@ export function toolAccessLabel(access: AssistantToolAccess): string {
 }
 
 /** The assistant's icon in the current text color; null when it has none or the id is unknown. */
-export function AssistantIconGlyph(props: {
+function AssistantIconGlyph(props: {
   readonly icon: string | null | undefined;
   readonly className?: string;
 }) {
@@ -67,16 +70,73 @@ export function AssistantIconGlyph(props: {
   );
 }
 
+/** The uploaded picture, loaded through its signed URL; the robot shows until it arrives or if it fails. */
+function AssistantImageAvatar(props: {
+  readonly assistant: Pick<Assistant, "id" | "avatar" | "icon">;
+  readonly revision: number;
+  readonly environmentId: EnvironmentId | null | undefined;
+  readonly mood: AssistantMood | undefined;
+  readonly className: string | undefined;
+}) {
+  const { assistant } = props;
+  const entries = useAssistantEntries();
+  const environmentId =
+    props.environmentId ??
+    [...entries.active, ...entries.archived].find((entry) => entry.assistant.id === assistant.id)
+      ?.environmentId ??
+    null;
+  const asset = useAssetUrlState(
+    environmentId,
+    { _tag: "assistant-avatar", assistantId: assistant.id },
+    String(props.revision),
+  );
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  if (asset._tag !== "Success" || asset.url === failedUrl) {
+    return (
+      <AssistantRobot
+        look={assistantRobotLook(assistant)}
+        {...(props.mood === undefined ? {} : { mood: props.mood })}
+        className={cn("size-5", props.className)}
+      />
+    );
+  }
+  return (
+    <img
+      alt=""
+      aria-hidden
+      draggable={false}
+      src={asset.url}
+      data-assistant-avatar-image=""
+      className={cn("size-5 shrink-0 object-cover", props.className)}
+      style={{ borderRadius: "28%" }}
+      onError={() => setFailedUrl(asset.url)}
+    />
+  );
+}
+
 /**
- * The assistant's robot, or the icon it chose before robots existed. The face follows `mood`, so a
- * row shows at a glance whether it works, waits on the user or failed.
+ * The assistant's picture, its robot, or the icon it chose before robots existed. The robot's face
+ * follows `mood`, so a row shows at a glance whether it works, waits on the user or failed.
  */
 export function AssistantAvatar(props: {
   readonly assistant: Pick<Assistant, "id" | "avatar" | "icon">;
   readonly mood?: AssistantMood;
   readonly className?: string;
+  /** Where the picture is served from; found from the assistant list when left out. */
+  readonly environmentId?: EnvironmentId | null;
 }) {
   const { assistant } = props;
+  if (assistant.avatar?.kind === "image") {
+    return (
+      <AssistantImageAvatar
+        assistant={assistant}
+        revision={assistant.avatar.revision}
+        environmentId={props.environmentId}
+        mood={props.mood}
+        className={props.className}
+      />
+    );
+  }
   if (assistant.avatar === null && assistantIconFor(assistant.icon) !== null) {
     const hue = assistantRobotLook(assistant).hue;
     return (

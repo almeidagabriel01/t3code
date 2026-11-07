@@ -15,6 +15,7 @@ import {
   type AssistantsCreateInput,
   type AssistantSandboxStatus,
   type AssistantsResetInput,
+  type AssistantsSetAvatarImageInput,
   type AssistantsUpdateInput,
   type AssistantTeam,
   type AssistantTeamId,
@@ -137,6 +138,9 @@ export function useAssistantActions(environmentId: EnvironmentId) {
   const update = useAtomCommand(assistantsEnvironment.update, { reportFailure: false });
   const remove = useAtomCommand(assistantsEnvironment.delete, { reportFailure: false });
   const reset = useAtomCommand(assistantsEnvironment.reset, { reportFailure: false });
+  const setAvatarImage = useAtomCommand(assistantsEnvironment.setAvatarImage, {
+    reportFailure: false,
+  });
   const reply = <A>(
     result:
       | { readonly _tag: "Success"; readonly value: A }
@@ -152,6 +156,8 @@ export function useAssistantActions(environmentId: EnvironmentId) {
     remove: async (assistantId: Assistant["id"]) =>
       reply(await remove({ environmentId, input: { assistantId } })),
     reset: async (input: AssistantsResetInput) => reply(await reset({ environmentId, input })),
+    setAvatarImage: async (input: AssistantsSetAvatarImageInput) =>
+      reply(await setAvatarImage({ environmentId, input })),
   };
 }
 

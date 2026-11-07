@@ -116,22 +116,42 @@ it("creates a team with members, a leader and its title", async () => {
   fakeTeamEdits.creates = [];
   publishAssistants([assistant("ana", "Ana"), assistant("bob", "Bob"), assistant("cy", "Cy")]);
   await using _screen = await openApp("/settings/assistants");
-  await userEvent.click(page.getByRole("button", { name: "New team" }));
+  await userEvent.click(page.getByRole("button", { name: "New group" }));
   await userEvent.fill(page.getByLabelText("Name"), "Money");
   // The title field only exists once there is a leader.
   expect(page.getByLabelText("Leader title").query()).toBeNull();
   await userEvent.click(page.getByRole("checkbox", { name: "Ana" }));
   // A group may start with a single member.
-  await expect.element(page.getByRole("button", { name: "Create team" })).toBeEnabled();
+  await expect.element(page.getByRole("button", { name: "Create group" })).toBeEnabled();
   await userEvent.click(page.getByRole("checkbox", { name: "Bob" }));
   await userEvent.click(page.getByRole("combobox", { name: "Leader" }));
   await userEvent.click(page.getByRole("option", { name: "Bob" }));
   await userEvent.fill(page.getByLabelText("Leader title"), "CFO");
-  await userEvent.click(page.getByRole("button", { name: "Create team" }));
+  await userEvent.click(page.getByRole("button", { name: "Create group" }));
   await eventually(() =>
     expect(fakeTeamEdits.creates).toMatchObject([
       { name: "Money", memberIds: ["ana", "bob"], leaderId: "bob", leaderTitle: "CFO" },
     ]),
+  );
+});
+
+it("creates an empty group and shows each member's avatar in the list", async () => {
+  fakeTeamEdits.creates = [];
+  publishAssistants([assistant("ana", "Ana")]);
+  await using _screen = await openApp("/settings/assistants");
+  await userEvent.click(page.getByRole("button", { name: "New group" }));
+  await userEvent.fill(page.getByLabelText("Name"), "Later");
+  expect(page.getByRole("checkbox", { name: "Ana" }).element().closest("label")).not.toBeNull();
+  expect(
+    page
+      .getByRole("checkbox", { name: "Ana" })
+      .element()
+      .closest("label")
+      ?.querySelector("[data-assistant-robot]"),
+  ).not.toBeNull();
+  await userEvent.click(page.getByRole("button", { name: "Create group" }));
+  await eventually(() =>
+    expect(fakeTeamEdits.creates).toMatchObject([{ name: "Later", memberIds: [], leaderId: null }]),
   );
 });
 
@@ -163,7 +183,8 @@ it("the sidebar lists teams and opens the same view", async () => {
   fakeTeamEdits.messages = [];
   publishAssistants([assistant("ana", "Ana"), assistant("bob", "Bob")], [team]);
   await using _screen = await openApp("/");
-  await userEvent.click(page.getByTestId("sidebar-team-row"));
+  await userEvent.click(page.getByRole("button", { name: "Growth actions" }));
+  await userEvent.click(page.getByRole("menuitem", { name: "Team activity" }));
   await expect
     .element(page.getByText("No messages between members yet", { exact: false }))
     .toBeVisible();

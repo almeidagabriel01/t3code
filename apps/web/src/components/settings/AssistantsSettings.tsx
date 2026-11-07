@@ -81,7 +81,7 @@ function AssistantRow(props: {
       candidate.environmentId === environmentId && candidate.id === assistant.projectId,
   );
   const projectName = project?.isScratch
-    ? "No project"
+    ? "All projects"
     : (groups.find((group) =>
         group.memberProjects.some(
           (member) => member.environmentId === environmentId && member.id === assistant.projectId,
@@ -349,24 +349,23 @@ export function AssistantsSettingsPanel() {
                 {hasDefault ? null : <RestoreJarvisRow environmentId={environmentId} />}
               </SettingsSection>
               <SettingsSection
-                title={multipleEnvironments ? `Teams · ${labelOf(environmentId)}` : "Teams"}
+                title={multipleEnvironments ? `Groups · ${labelOf(environmentId)}` : "Groups"}
                 icon={<UsersIcon className="size-4 text-muted-foreground" />}
                 headerAction={
                   <Button
                     size="xs"
                     variant="ghost-muted"
-                    disabled={entries.length < 2}
                     onClick={() => openAssistantTeamDialog({ environmentId })}
                   >
                     <PlusIcon />
-                    New team
+                    New group
                   </Button>
                 }
               >
                 {inEnvironment(teams, environmentId).length === 0 ? (
                   <SettingsRow
-                    title="No teams yet"
-                    description="A team lets its assistants message each other while you watch. Add a leader if you want one."
+                    title="No groups yet"
+                    description="A group lets its assistants message each other while you watch. Add a leader if you want one."
                   />
                 ) : (
                   inEnvironment(teams, environmentId).map((entry) => (

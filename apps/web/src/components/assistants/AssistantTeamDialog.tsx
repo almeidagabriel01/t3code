@@ -118,7 +118,7 @@ function AssistantTeamDialog(props: {
   const remove = async () => {
     if (team === null) return;
     const confirmed = await requestConfirmDialog(
-      `Delete the team ${team.name}?\nIts members stay; they just stop being able to message each other as a team.`,
+      `Delete the group ${team.name}?\nIts members stay; they just stop being able to message each other as a team.`,
       { variant: "destructive" },
     );
     if (confirmed === false) return;
@@ -133,7 +133,7 @@ function AssistantTeamDialog(props: {
     <Dialog open onOpenChange={(open) => !open && !saving && props.onClose()}>
       <DialogPopup className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>{team ? `${team.name} team` : "New team"}</DialogTitle>
+          <DialogTitle>{team ? `${team.name} group` : "New group"}</DialogTitle>
           <DialogDescription>
             Members can message each other in any direction, and you can follow what they say. A
             leader is optional.
@@ -159,7 +159,9 @@ function AssistantTeamDialog(props: {
             </div>
             <fieldset className="flex flex-col gap-2">
               <legend className="text-sm font-medium">Members</legend>
-              <p className="text-xs text-muted-foreground">At least two assistants.</p>
+              <p className="text-xs text-muted-foreground">
+                Optional: a group can start empty and members join later.
+              </p>
               <ul className="flex flex-col gap-0.5">
                 {choices.map((assistant) => (
                   <li key={assistant.id}>
@@ -169,7 +171,7 @@ function AssistantTeamDialog(props: {
                         checked={memberIds.includes(assistant.id)}
                         onCheckedChange={(checked) => toggle(assistant.id, Boolean(checked))}
                       />
-                      <AssistantAvatar assistant={assistant} />
+                      <AssistantAvatar assistant={assistant} className="size-6" />
                       <span className="truncate">{assistant.name}</span>
                       {assistant.archivedAt === null ? null : (
                         <span className="text-xs text-muted-foreground">archived</span>
@@ -244,14 +246,14 @@ function AssistantTeamDialog(props: {
               disabled={saving || !actions.canAct}
               onClick={() => void remove()}
             >
-              Delete team
+              Delete group
             </Button>
           ) : null}
           <Button variant="outline" disabled={saving} onClick={props.onClose}>
             Cancel
           </Button>
           <Button disabled={!canSave} onClick={() => void save()}>
-            {team ? "Save" : "Create team"}
+            {team ? "Save" : "Create group"}
           </Button>
         </DialogFooter>
       </DialogPopup>

@@ -133,11 +133,15 @@ const scheduledTask = (id: string, title: string, threadId: string | null): Sche
   runCount: 0,
 });
 
+// The dialog keeps everything but the basics behind "Advanced".
+const openAdvanced = () => userEvent.click(page.getByRole("button", { name: "Advanced" }));
+
 async function openEditDialog(name: string) {
   // The dialog target is app-wide state that outlives a disposed screen.
   appAtomRegistry.set(assistantDialogAtom, null);
   const screen = await openApp("/settings/assistants");
   await userEvent.click(page.getByRole("button", { name: `Edit ${name}` }));
+  await openAdvanced();
   return screen;
 }
 
@@ -442,6 +446,7 @@ it("saves the assistant's notification choices, inherited or custom", async () =
 
   fakeAssistantEdits.updates = [];
   await userEvent.click(page.getByRole("button", { name: "Edit Jarvis" }));
+  await openAdvanced();
   await userEvent.click(page.getByRole("radio", { name: "Reply and notify me" }));
   await userEvent.click(page.getByRole("radio", { name: "Only for these" }));
   await userEvent.click(page.getByRole("checkbox", { name: "Run looks stuck" }));
@@ -497,6 +502,7 @@ it("creates an assistant that works in the sandbox", async () => {
   await using _screen = await openApp("/settings/assistants");
   await userEvent.click(settingsContent().getByRole("button", { name: "New assistant" }));
   await userEvent.fill(page.getByLabelText("Name"), "Boxed");
+  await openAdvanced();
   await userEvent.click(page.getByRole("radio", { name: /Sandbox container/ }));
   await userEvent.click(page.getByRole("button", { name: "Create assistant" }));
   await eventually(() =>
@@ -588,17 +594,6 @@ it("signing in to the sandbox's providers asks the server for a one-time pairing
   await eventually(() =>
     expect(fakeSandbox.calls).toMatchObject([{ tag: "assistantSandbox.pairing" }]),
   );
-});
-
-it("picks an icon in the edit dialog and saves it", async () => {
-  publishAssistants([assistant("jarvis", "Jarvis")]);
-  fakeAssistantEdits.updates = [];
-  await using _screen = await openEditDialog("Jarvis");
-  const scout = page.getByRole("radio", { name: "Scout" });
-  await userEvent.click(scout);
-  await expect.element(scout).toBeChecked();
-  await userEvent.click(page.getByRole("button", { name: "Save" }));
-  await eventually(() => expect(fakeAssistantEdits.updates).toMatchObject([{ icon: "scout" }]));
 });
 
 it("adds a connector with a header, then saves it without echoing secrets", async () => {
@@ -716,16 +711,6 @@ it("a command connector takes arguments and variables", async () => {
   );
 });
 
-it("clears an icon back to the initial", async () => {
-  publishAssistants([assistant("jarvis", "Jarvis", { icon: "scout" })]);
-  fakeAssistantEdits.updates = [];
-  await using _screen = await openEditDialog("Jarvis");
-  await expect.element(page.getByRole("radio", { name: "Scout" })).toBeChecked();
-  await userEvent.click(page.getByRole("radio", { name: "Initial" }));
-  await userEvent.click(page.getByRole("button", { name: "Save" }));
-  await eventually(() => expect(fakeAssistantEdits.updates).toMatchObject([{ icon: null }]));
-});
-
 it("keeps an unchanged assistant's autonomy out of the update", async () => {
   publishAssistants([
     assistant("jarvis", "Jarvis", {
@@ -833,10 +818,10 @@ it("creates an assistant with its notification choice", async () => {
   await userEvent.click(settingsContent().getByRole("button", { name: "New assistant" }));
   await userEvent.fill(page.getByLabelText("Name"), "Scout");
   await userEvent.fill(page.getByLabelText("Role"), "Researcher");
+  await openAdvanced();
   await userEvent.click(page.getByRole("combobox", { name: "Reports to" }));
   await userEvent.click(page.getByRole("option", { name: "Jarvis" }));
   await userEvent.click(page.getByRole("radio", { name: "Reply and notify me" }));
-  await userEvent.click(page.getByRole("switch", { name: "Ask before acting" }));
   await userEvent.click(page.getByRole("button", { name: "Create assistant" }));
   await eventually(() =>
     expect(fakeAssistantEdits.creates).toMatchObject([
