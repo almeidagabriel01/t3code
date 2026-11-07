@@ -69,7 +69,6 @@ vi.mock("../../state/assistants", () => ({
   }),
 }));
 vi.mock("./assistantTeamState", () => ({
-  openAssistantTeamActivity: state.openTeam,
   openAssistantTeamDialog: state.openTeamDialog,
 }));
 vi.mock("./assistantDialogState", () => ({ openAssistantDialog: state.openDialog }));
@@ -293,9 +292,6 @@ describe("AssistantSidebarSection", () => {
     await userEvent.click(screen.getByRole("button", { name: "Growth actions" }));
     await userEvent.click(screen.getByRole("menuitem", { name: "Edit group" }));
     expect(state.openTeamDialog).toHaveBeenCalledWith({ environmentId: "env", teamId: "t1" });
-    await userEvent.click(screen.getByRole("button", { name: "Growth actions" }));
-    await userEvent.click(screen.getByRole("menuitem", { name: "Team activity" }));
-    expect(state.openTeam).toHaveBeenCalledWith("env", "t1");
     await userEvent.click(screen.getByRole("button", { name: "Growth actions" }));
     await userEvent.click(screen.getByRole("menuitem", { name: "New assistant in this group" }));
     expect(state.openDialog).toHaveBeenCalledWith({

@@ -3,19 +3,11 @@ import {
   ASSISTANT_INSTRUCTIONS_MAX_CHARS,
   ASSISTANT_NAME_MAX_LENGTH,
   ASSISTANT_ROLE_MAX_LENGTH,
-  type AssistantId,
   type AssistantToolAccess,
   type BudgetPeriod,
   type EnvironmentId,
   type ProjectId,
-  type ThreadId,
 } from "@t3tools/contracts";
-import {
-  directReports,
-  hasStandupTask,
-  leaderChoices,
-  NO_LEADER_LABEL,
-} from "@t3tools/client-runtime/assistantTeam";
 import { assistantSandboxView } from "@t3tools/client-runtime/state/assistants";
 import type { MenuAction } from "@react-native-menu/menu";
 import { useRef, useState } from "react";
@@ -41,8 +33,6 @@ import {
   useAssistantSandbox,
   useAssistantsEnvironmentIds,
 } from "../../state/assistants";
-import { useEnvironmentQuery } from "../../state/query";
-import { serverEnvironment } from "../../state/server";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { withNativeGlassHeaderItem } from "../layout/native-glass-header-items";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
@@ -79,46 +69,6 @@ import {
 import { assistantProjectName, useAssistantEditor } from "./useAssistantEditor";
 import { useAssistantFlows } from "./useAssistantFlows";
 
-/** Offers the leader's standup until its conversation has one; then points at its schedule. */
-function DailyStandupSection(props: {
-  readonly environmentId: EnvironmentId;
-  readonly threadId: ThreadId | null;
-  readonly reportNames: ReadonlyArray<string>;
-  readonly state: "idle" | "adding" | "added";
-  readonly disabled: boolean;
-  readonly onAdd: () => void;
-}) {
-  const tasks = useEnvironmentQuery(
-    serverEnvironment.scheduledTasksLive({ environmentId: props.environmentId, input: {} }),
-  );
-  const exists = props.state === "added" || hasStandupTask(tasks.data?.tasks ?? [], props.threadId);
-  return (
-    <View className="gap-2">
-      <View className="gap-0.5 px-2">
-        <Text textRole="footnote" className="font-t3-medium text-foreground">
-          Daily standup
-        </Text>
-        <Text textRole="footnote" className="text-foreground-muted">
-          {exists
-            ? "It is in its schedules below, where you can change or remove it."
-            : `Weekdays at 9:00 it asks ${props.reportNames.join(", ")} for status and sends you one short report.`}
-        </Text>
-      </View>
-      {exists ? null : (
-        <ListSection>
-          <ListActionRow
-            icon="calendar.badge.clock"
-            label="Add daily standup"
-            loading={props.state === "adding"}
-            disabled={props.disabled}
-            onPress={props.onAdd}
-          />
-        </ListSection>
-      )}
-    </View>
-  );
-}
-
 export function AssistantEditRouteScreen() {
   const { editor } = useAssistantEditor();
   if (!editor) {
@@ -154,27 +104,13 @@ function AssistantForm(props: { readonly editor: AssistantEditor }) {
   const spend = useAssistantSpend(environmentId, assistant?.id ?? null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [standup, setStandup] = useState<"idle" | "adding" | "added">("idle");
   const [advancedOpen, setAdvancedOpen] = useState(false);
   // Set once the save lands, so the removal guard lets the form close.
   const closing = useRef(false);
 
-  const team = [...entries.active, ...entries.archived]
-    .filter((entry) => entry.environmentId === environmentId)
-    .map((entry) => entry.assistant);
   const groups = entries.teams
     .filter((entry) => entry.environmentId === environmentId)
     .map((entry) => entry.team);
-  const leaders = leaderChoices(team, assistant?.id ?? null);
-  const reports = live ? directReports(team, live.id) : [];
-  const addStandup = async () => {
-    if (!live) return;
-    setStandup("adding");
-    setError(null);
-    const reply = await actions.update({ assistantId: live.id, addStandup: true });
-    setStandup(reply.ok ? "added" : "idle");
-    if (!reply.ok) setError(reply.message);
-  };
 
   const budget = current.budget;
   const updateBudget = (change: Partial<typeof budget>) =>
@@ -569,38 +505,6 @@ function AssistantForm(props: { readonly editor: AssistantEditor }) {
                   />
                 </ListSection>
               </View>
-              <MenuField
-                label="Reports to"
-                description="Its leader can ask it for work and gets the answer back. It never messages up on its own."
-                value={
-                  leaders.find((leader) => leader.id === current.reportsTo)?.name ?? NO_LEADER_LABEL
-                }
-                actions={[
-                  {
-                    id: "",
-                    title: NO_LEADER_LABEL,
-                    state: current.reportsTo === null ? "on" : "off",
-                  },
-                  ...leaders.map((leader) => ({
-                    id: leader.id,
-                    title: leader.name,
-                    state: leader.id === current.reportsTo ? ("on" as const) : ("off" as const),
-                  })),
-                ]}
-                onSelect={(id) =>
-                  updateAssistantDraft({ reportsTo: id === "" ? null : (id as AssistantId) })
-                }
-              />
-              {live && environmentId !== null && reports.length > 0 ? (
-                <DailyStandupSection
-                  environmentId={environmentId}
-                  threadId={live.threadId}
-                  reportNames={reports.map((report) => report.name)}
-                  state={standup}
-                  disabled={!actions.canAct}
-                  onAdd={() => void addStandup()}
-                />
-              ) : null}
               <View className="gap-2">
                 <View className="gap-0.5 px-2">
                   <Text textRole="footnote" className="font-t3-medium text-foreground">

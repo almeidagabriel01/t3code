@@ -1,13 +1,5 @@
 import { createMemoryHistory } from "@tanstack/react-router";
-import type {
-  Assistant,
-  AssistantId,
-  AssistantTeam,
-  AssistantTeamId,
-  AssistantTeamMessage,
-  ProjectId,
-  ThreadId,
-} from "@t3tools/contracts";
+import type { Assistant, AssistantId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import type * as Context from "effect/Context";
 import { expect, it, vi } from "vite-plus/test";
@@ -19,7 +11,7 @@ import { AppRoot } from "~/AppRoot";
 import { __setClientSettingsForTests } from "~/hooks/useSettings";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { getRouter } from "~/router";
-import { assistantTeamActivityAtom, assistantTeamDialogAtom } from "./assistantTeamState";
+import { assistantTeamDialogAtom } from "./assistantTeamState";
 import {
   fakeTeamEdits,
   installFakeEnvironment,
@@ -63,7 +55,6 @@ const assistant = (id: string, name: string): Assistant => ({
   threadId: `assistant:${id}:1` as ThreadId,
   generation: 1,
   role: "",
-  reportsTo: null,
   budget: null,
   askBeforeActing: false,
   workspace: "host",
@@ -77,34 +68,10 @@ const assistant = (id: string, name: string): Assistant => ({
   updatedAt: "2026-03-17T19:00:00.000Z",
 });
 
-const team: AssistantTeam = {
-  id: "t1" as AssistantTeamId,
-  name: "Growth",
-  memberIds: ["ana", "bob"] as AssistantId[],
-  leaderId: "bob" as AssistantId,
-  leaderTitle: "CFO",
-  createdAt: "2026-03-17T19:00:00.000Z",
-  updatedAt: "2026-03-17T19:00:00.000Z",
-};
-
-const message = (n: number, from: string, to: string, text: string): AssistantTeamMessage => ({
-  messageId: `m${n}`,
-  at: `2026-03-17T19:00:0${n}.000Z`,
-  fromAssistantId: from as AssistantId,
-  toAssistantId: to as AssistantId,
-  fromThreadId: `assistant:${from}:1` as ThreadId,
-  toThreadId: `assistant:${to}:1` as ThreadId,
-  text,
-  truncated: false,
-  reply: null,
-  waiting: false,
-});
-
 const eventually = (check: () => void) => vi.waitFor(check, { timeout: 10_000 });
 
 async function openApp(path: string) {
   appAtomRegistry.set(assistantTeamDialogAtom, null);
-  appAtomRegistry.set(assistantTeamActivityAtom, null);
   const router = getRouter(createMemoryHistory({ initialEntries: [path] }));
   await router.load();
   const container = document.createElement("div");
@@ -112,25 +79,22 @@ async function openApp(path: string) {
   return render(<AppRoot router={router} />, { container, router: false });
 }
 
-it("creates a team with members, a leader and its title", async () => {
+it("creates a team with members and a lead", async () => {
   fakeTeamEdits.creates = [];
   publishAssistants([assistant("ana", "Ana"), assistant("bob", "Bob"), assistant("cy", "Cy")]);
   await using _screen = await openApp("/settings/assistants");
   await userEvent.click(page.getByRole("button", { name: "New group" }));
   await userEvent.fill(page.getByLabelText("Name"), "Money");
-  // The title field only exists once there is a leader.
-  expect(page.getByLabelText("Leader title").query()).toBeNull();
   await userEvent.click(page.getByRole("checkbox", { name: "Ana" }));
   // A group may start with a single member.
   await expect.element(page.getByRole("button", { name: "Create group" })).toBeEnabled();
   await userEvent.click(page.getByRole("checkbox", { name: "Bob" }));
-  await userEvent.click(page.getByRole("combobox", { name: "Leader" }));
+  await userEvent.click(page.getByRole("combobox", { name: "Lead" }));
   await userEvent.click(page.getByRole("option", { name: "Bob" }));
-  await userEvent.fill(page.getByLabelText("Leader title"), "CFO");
   await userEvent.click(page.getByRole("button", { name: "Create group" }));
   await eventually(() =>
     expect(fakeTeamEdits.creates).toMatchObject([
-      { name: "Money", memberIds: ["ana", "bob"], leaderId: "bob", leaderTitle: "CFO" },
+      { name: "Money", memberIds: ["ana", "bob"], leadId: "bob" },
     ]),
   );
 });
@@ -151,41 +115,6 @@ it("creates an empty group and shows each member's avatar in the list", async ()
   ).not.toBeNull();
   await userEvent.click(page.getByRole("button", { name: "Create group" }));
   await eventually(() =>
-    expect(fakeTeamEdits.creates).toMatchObject([{ name: "Later", memberIds: [], leaderId: null }]),
+    expect(fakeTeamEdits.creates).toMatchObject([{ name: "Later", memberIds: [], leadId: null }]),
   );
-});
-
-it("the team view lists only the member-to-member messages, with the leader's title", async () => {
-  fakeTeamEdits.messages = [
-    {
-      ...message(1, "ana", "bob", "Are the Q3 numbers final?"),
-      reply: { text: "Final, signed off.", at: "2026-03-17T19:00:05.000Z", truncated: false },
-    },
-    { ...message(2, "bob", "ana", "Yes, signed off."), waiting: true },
-    message(3, "ana", "bob", "Thanks"),
-  ];
-  publishAssistants([assistant("ana", "Ana"), assistant("bob", "Bob")], [team]);
-  await using _screen = await openApp("/settings/assistants");
-  await expect.element(page.getByRole("button", { name: "Activity" })).toBeVisible();
-  await expect.element(page.getByText("Bob (CFO)", { exact: false })).toBeVisible();
-  await userEvent.click(page.getByRole("button", { name: "Activity" }));
-  await expect.element(page.getByText("Are the Q3 numbers final?")).toBeVisible();
-  await expect.element(page.getByText("Yes, signed off.")).toBeVisible();
-  await expect.element(page.getByText("CFO", { exact: true }).first()).toBeVisible();
-  await expect.element(page.getByText("Final, signed off.")).toBeVisible();
-  await expect.element(page.getByText("replied")).toBeVisible();
-  await expect.element(page.getByText("Waiting for a reply…")).toBeVisible();
-  await expect.element(page.getByText("No reply")).toBeVisible();
-  expect(page.getByTestId("team-message").elements()).toHaveLength(3);
-});
-
-it("the sidebar lists teams and opens the same view", async () => {
-  fakeTeamEdits.messages = [];
-  publishAssistants([assistant("ana", "Ana"), assistant("bob", "Bob")], [team]);
-  await using _screen = await openApp("/");
-  await userEvent.click(page.getByRole("button", { name: "Growth actions" }));
-  await userEvent.click(page.getByRole("menuitem", { name: "Team activity" }));
-  await expect
-    .element(page.getByText("No messages between members yet", { exact: false }))
-    .toBeVisible();
 });

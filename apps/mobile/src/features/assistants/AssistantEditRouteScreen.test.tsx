@@ -1,5 +1,4 @@
 import {
-  ASSISTANT_STANDUP_PROMPT_HEAD,
   DEFAULT_ASSISTANT_AUTONOMY,
   DEFAULT_AUTONOMY_SETTINGS,
   type Assistant,
@@ -232,7 +231,6 @@ const assistant = (budget: unknown = null) =>
     workspace: "host",
     icon: null,
     role: "",
-    reportsTo: null,
     autonomy: DEFAULT_ASSISTANT_AUTONOMY,
     budget,
     isDefault: false,
@@ -415,7 +413,7 @@ describe("basic fields and Advanced", () => {
     render(null);
     expect(container.textContent).toContain("No groups yet. Create one from the Assistants page.");
     mocks.teams = [
-      { environmentId: "hub", team: { id: "t1", name: "Finance", memberIds: [], leaderId: null } },
+      { environmentId: "hub", team: { id: "t1", name: "Finance", memberIds: [] } },
       { environmentId: "other", team: { id: "t9", name: "Elsewhere", memberIds: [] } },
     ];
     startAssistantEditor("hub" as never, null, { teamId: "t1" as never });
@@ -433,9 +431,9 @@ describe("basic fields and Advanced", () => {
     mocks.teams = [
       {
         environmentId: "hub",
-        team: { id: "t1", name: "Finance", memberIds: ["a1", "z"], leaderId: "a1" },
+        team: { id: "t1", name: "Finance", memberIds: ["a1", "z"], leadId: "a1" },
       },
-      { environmentId: "hub", team: { id: "t2", name: "Ops", memberIds: ["z"], leaderId: null } },
+      { environmentId: "hub", team: { id: "t2", name: "Ops", memberIds: ["z"] } },
     ];
     render(assistant(), { advanced: false });
     expect(
@@ -445,7 +443,7 @@ describe("basic fields and Advanced", () => {
     pick("Ops");
     await act(async () => pick("Save"));
     expect(mocks.teamUpdate.mock.calls).toEqual([
-      [{ teamId: "t1", memberIds: ["z"], leaderId: null, leaderTitle: null }],
+      [{ teamId: "t1", memberIds: ["z"], leadId: null }],
       [{ teamId: "t2", memberIds: ["z", "a1"] }],
     ]);
     expect(mocks.alert).not.toHaveBeenCalled();
@@ -453,9 +451,7 @@ describe("basic fields and Advanced", () => {
   });
 
   it("keeps the saved assistant and says what did not work", async () => {
-    mocks.teams = [
-      { environmentId: "hub", team: { id: "t2", name: "Ops", memberIds: [], leaderId: null } },
-    ];
+    mocks.teams = [{ environmentId: "hub", team: { id: "t2", name: "Ops", memberIds: [] } }];
     mocks.teamUpdate.mockResolvedValue({ ok: false, message: "Too many." });
     render(assistant(), { advanced: false });
     pick("Ops");
@@ -686,63 +682,11 @@ describe("assistant team", () => {
     assistant: { ...assistant(), id, name, handle: id, ...extra } as Assistant,
   });
 
-  it("saves the role and leader, never offering itself or anyone below it", async () => {
-    const me = assistant();
-    mocks.entries = [
-      entry("a1", "Jarvis"),
-      entry("boss", "Boss"),
-      entry("kid", "Kid", { reportsTo: "a1" }),
-    ];
-    render(me);
-    type("Role", " Chief ");
-    expect(container.querySelector('button[aria-label="menu:Kid"]')).toBeNull();
-    expect(container.querySelector('button[aria-label="menu:Jarvis"]')).toBeNull();
-    pick("menu:Boss");
-    await act(async () => pick("Save"));
-    expect(mocks.update.mock.calls[0]?.[0]).toMatchObject({ role: "Chief", reportsTo: "boss" });
-  });
-
-  it("clears the leader with Nobody and creates under one", async () => {
-    mocks.entries = [entry("boss", "Boss")];
-    render(assistant());
-    pick("menu:Boss");
-    pick("menu:Nobody");
-    expect(
-      Array.from(container.querySelectorAll("button")).find((b) => b.textContent === "Save")!
-        .disabled,
-    ).toBe(true);
-  });
-
-  it("offers the standup only to a leader and adds it once", async () => {
-    mocks.entries = [entry("a1", "Jarvis"), entry("kid", "Kid", { reportsTo: "a1" })];
-    render(assistant());
-    await act(async () => pick("Add daily standup"));
-    expect(mocks.update).toHaveBeenCalledWith({ assistantId: "a1", addStandup: true });
-    expect(container.textContent).toContain("It is in its schedules below");
-    expect(container.textContent).not.toContain("Add daily standup");
-  });
-
-  it("does not offer a standup the conversation already has, even renamed", () => {
-    mocks.entries = [entry("a1", "Jarvis"), entry("kid", "Kid", { reportsTo: "a1" })];
-    mocks.tasks = [{ threadId: "thread-1", prompt: `${ASSISTANT_STANDUP_PROMPT_HEAD}\nAsk.` }];
-    render(assistant());
-    expect(container.textContent).toContain("It is in its schedules below");
-    expect(container.textContent).not.toContain("Add daily standup");
-  });
-
-  it("shows a refused standup and lets the user retry", async () => {
-    mocks.entries = [entry("a1", "Jarvis"), entry("kid", "Kid", { reportsTo: "a1" })];
-    mocks.update.mockResolvedValueOnce({ ok: false, message: "Nope." });
-    render(assistant());
-    await act(async () => pick("Add daily standup"));
-    expect(container.textContent).toContain("Nope.");
-    await act(async () => pick("Add daily standup"));
-    expect(container.textContent).toContain("It is in its schedules below");
-  });
-
-  it("has no standup for an assistant without reports", () => {
+  it("saves the trimmed role", async () => {
     mocks.entries = [entry("a1", "Jarvis")];
     render(assistant());
-    expect(container.textContent).not.toContain("Add daily standup");
+    type("Role", " Chief ");
+    await act(async () => pick("Save"));
+    expect(mocks.update.mock.calls[0]?.[0]).toMatchObject({ role: "Chief" });
   });
 });

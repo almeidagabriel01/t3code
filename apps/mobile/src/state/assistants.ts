@@ -204,13 +204,6 @@ export function useAssistantTeamActions(environmentId: EnvironmentId) {
   };
 }
 
-/** The messages members sent each other. */
-export function useAssistantTeamActivity(environmentId: EnvironmentId, teamId: AssistantTeamId) {
-  return useEnvironmentQuery(
-    assistantsEnvironment.teamActivity({ environmentId, input: { teamId } }),
-  );
-}
-
 const sandboxStatusAtom = Atom.family((environmentId: EnvironmentId) =>
   Atom.make((get): AssistantSandboxStatus | null =>
     Option.getOrNull(

@@ -1,9 +1,8 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigation } from "@react-navigation/native";
-import { NO_LEADER_LABEL, teamMemberChoices } from "@t3tools/client-runtime/assistantTeam";
+import { NO_LEAD_LABEL, teamMemberChoices } from "@t3tools/client-runtime/assistantTeam";
 import {
   ASSISTANT_TEAM_NAME_MAX_LENGTH,
-  ASSISTANT_TEAM_TITLE_MAX_LENGTH,
   assistantTeamProblem,
   type AssistantId,
   type AssistantTeam,
@@ -68,13 +67,12 @@ function TeamForm(props: {
   );
   const [name, setName] = useState(team?.name ?? "");
   const [memberIds, setMemberIds] = useState<ReadonlyArray<AssistantId>>(team?.memberIds ?? []);
-  const [leaderId, setLeaderId] = useState<AssistantId | null>(team?.leaderId ?? null);
-  const [leaderTitle, setLeaderTitle] = useState(team?.leaderTitle ?? "");
+  const [leadId, setLeadId] = useState<AssistantId | null>(team?.leadId ?? null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const effectiveLeader = leaderId !== null && memberIds.includes(leaderId) ? leaderId : null;
-  const problem = assistantTeamProblem({ memberIds, leaderId: effectiveLeader });
+  const effectiveLead = leadId !== null && memberIds.includes(leadId) ? leadId : null;
+  const problem = assistantTeamProblem({ memberIds, leadId: effectiveLead });
   const canSave = !saving && actions.canAct && name.trim() !== "" && problem === null;
 
   const toggle = (id: AssistantId) =>
@@ -86,20 +84,17 @@ function TeamForm(props: {
     if (!canSave) return;
     setSaving(true);
     setError(null);
-    const title = effectiveLeader === null ? null : leaderTitle.trim() || null;
     const reply = team
       ? await actions.update({
           teamId: team.id,
           name: name.trim(),
           memberIds,
-          leaderId: effectiveLeader,
-          leaderTitle: title,
+          leadId: effectiveLead,
         })
       : await actions.create({
           name: name.trim(),
           memberIds,
-          leaderId: effectiveLeader,
-          leaderTitle: title,
+          leadId: effectiveLead,
         });
     setSaving(false);
     if (reply.ok) navigation.goBack();
@@ -110,7 +105,7 @@ function TeamForm(props: {
     if (team === null) return;
     Dialog.confirm({
       title: `Delete the group ${team.name}?`,
-      message: "Its members stay; they just stop being able to message each other as a group.",
+      message: "Its members stay; they just stop being teammates.",
       confirmText: "Delete",
       destructive: true,
       onConfirm: () => {
@@ -165,16 +160,16 @@ function TeamForm(props: {
         </View>
         <View className="gap-2">
           <FieldHeader
-            label="Leader"
-            description="Optional. Members are told to report their results to the leader. It does not change who may message whom."
+            label="Lead"
+            description="Optional. Routes requests that mention no one. It does not change who may message whom."
           />
           <ListSection>
             <ChoiceRow
               role="radio"
               icon="person.fill.xmark"
-              label={NO_LEADER_LABEL}
-              selected={effectiveLeader === null}
-              onPress={() => setLeaderId(null)}
+              label={NO_LEAD_LABEL}
+              selected={effectiveLead === null}
+              onPress={() => setLeadId(null)}
             />
             {choices
               .filter((assistant) => memberIds.includes(assistant.id))
@@ -190,23 +185,12 @@ function TeamForm(props: {
                     />
                   }
                   label={assistant.name}
-                  selected={effectiveLeader === assistant.id}
-                  onPress={() => setLeaderId(assistant.id)}
+                  selected={effectiveLead === assistant.id}
+                  onPress={() => setLeadId(assistant.id)}
                 />
               ))}
           </ListSection>
         </View>
-        {effectiveLeader === null ? null : (
-          <TextField
-            label="Leader title"
-            description="CEO, CFO, Head of Research… Agents and the team view show it."
-            value={leaderTitle}
-            maxLength={ASSISTANT_TEAM_TITLE_MAX_LENGTH}
-            autoCapitalize="sentences"
-            placeholder="CEO"
-            onChange={setLeaderTitle}
-          />
-        )}
         {error ? (
           <Text
             accessibilityRole="alert"

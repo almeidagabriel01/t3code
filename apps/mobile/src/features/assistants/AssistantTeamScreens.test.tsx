@@ -7,7 +7,6 @@ const { mocks, Children } = vi.hoisted(() => ({
   mocks: {
     target: null as null | { environmentId: string; teamId: string | null },
     teams: [] as unknown[],
-    messages: null as null | unknown[],
     create: vi.fn(),
     update: vi.fn(),
     remove: vi.fn(),
@@ -105,21 +104,15 @@ vi.mock("../../state/assistants", () => ({
     update: mocks.update,
     remove: mocks.remove,
   }),
-  useAssistantTeamActivity: () => ({
-    data: mocks.messages === null ? null : { messages: mocks.messages },
-    refresh: vi.fn(),
-  }),
 }));
 
-import { AssistantTeamActivityRouteScreen } from "./AssistantTeamActivityRouteScreen";
 import { AssistantTeamEditRouteScreen } from "./AssistantTeamEditRouteScreen";
 
 const team = {
   id: "t1",
   name: "Growth",
   memberIds: ["ana", "bob"],
-  leaderId: "bob",
-  leaderTitle: "CFO",
+  leadId: "bob",
 };
 
 let root: Root;
@@ -142,7 +135,6 @@ beforeEach(() => {
   root = createRoot(container);
   mocks.target = { environmentId: "hub", teamId: null };
   mocks.teams = [{ environmentId: "hub", team }];
-  mocks.messages = null;
   for (const fn of [
     mocks.create,
     mocks.update,
@@ -165,7 +157,7 @@ describe("team form", () => {
     expect(container.textContent).toContain("Open a group first.");
   });
 
-  it("creates a group with no members or one; the title field needs a leader", async () => {
+  it("creates a group with no members or one", async () => {
     await act(async () => root.render(<AssistantTeamEditRouteScreen />));
     expect(buttonNamed("Create group")?.disabled).toBe(true);
     await text("Name", "Money");
@@ -174,23 +166,19 @@ describe("team form", () => {
     expect(mocks.create).toHaveBeenLastCalledWith({
       name: "Money",
       memberIds: [],
-      leaderId: null,
-      leaderTitle: null,
+      leadId: null,
     });
     await click("ANA");
     expect(buttonNamed("Create group")?.disabled).toBe(false);
-    expect(el("Leader title")).toBeNull();
     await click("BOB");
-    // The leader list repeats the members: the second BOB row is the radio.
+    // The lead list repeats the members: the second BOB row is the radio.
     const bobRows = container.querySelectorAll<HTMLButtonElement>('[aria-label="BOB"]');
     await act(async () => bobRows[1]?.click());
-    await text("Leader title", "  CFO ");
     await act(async () => buttonNamed("Create group")?.click());
     expect(mocks.create).toHaveBeenCalledWith({
       name: "Money",
       memberIds: ["ana", "bob"],
-      leaderId: "bob",
-      leaderTitle: "CFO",
+      leadId: "bob",
     });
     expect(mocks.goBack).toHaveBeenCalled();
   });
@@ -207,19 +195,16 @@ describe("team form", () => {
     expect(mocks.goBack).not.toHaveBeenCalled();
   });
 
-  it("edits a team, dropping the leader clears the title, and delete asks first", async () => {
+  it("edits a team, dropping the lead clears it, and delete asks first", async () => {
     mocks.target = { environmentId: "hub", teamId: "t1" };
     await act(async () => root.render(<AssistantTeamEditRouteScreen />));
-    expect(el("Leader title")?.value).toBe("CFO");
     await click("Nobody");
-    expect(el("Leader title")).toBeNull();
     await act(async () => buttonNamed("Save")?.click());
     expect(mocks.update).toHaveBeenCalledWith({
       teamId: "t1",
       name: "Growth",
       memberIds: ["ana", "bob"],
-      leaderId: null,
-      leaderTitle: null,
+      leadId: null,
     });
     await act(async () => buttonNamed("Delete group")?.click());
     expect(mocks.confirm).toHaveBeenCalled();
@@ -227,53 +212,5 @@ describe("team form", () => {
     mocks.remove.mockResolvedValue({ ok: false, message: "Gone wrong" });
     await act(async () => buttonNamed("Delete group")?.click());
     expect(mocks.alert).toHaveBeenCalledWith("Could not delete the group", "Gone wrong");
-  });
-});
-
-describe("team activity", () => {
-  const message = (id: string, from: string, to: string, body: string) => ({
-    messageId: id,
-    at: "2026-11-06T10:00:00.000Z",
-    fromAssistantId: from,
-    toAssistantId: to,
-    fromThreadId: `assistant:${from}:1`,
-    toThreadId: `assistant:${to}:1`,
-    text: body,
-    truncated: false,
-    reply: null as { text: string; at: string; truncated: boolean } | null,
-    waiting: false,
-  });
-
-  it("lists member messages with the leader's title and opens the recipient's thread", async () => {
-    mocks.target = { environmentId: "hub", teamId: "t1" };
-    mocks.messages = [
-      {
-        ...message("m1", "ana", "bob", "Are the numbers final?"),
-        reply: { text: "Final.", at: "2026-11-06T10:05:00.000Z", truncated: false },
-      },
-      { ...message("m2", "bob", "ana", "Ping"), waiting: true },
-      message("m3", "ana", "bob", "Ping again"),
-    ];
-    await act(async () => root.render(<AssistantTeamActivityRouteScreen />));
-    expect(container.textContent).toContain("BOB (CFO) replied");
-    expect(container.textContent).toContain("Final.");
-    expect(container.textContent).toContain("Waiting for a reply…");
-    expect(container.textContent).toContain("No reply");
-    expect(container.textContent).toContain("ANA to BOB (CFO)");
-    expect(container.textContent).toContain("Are the numbers final?");
-    expect(container.textContent).toContain("2 members · BOB (CFO)");
-    await click("Show more");
-    await click("Open BOB");
-    expect(mocks.open).toHaveBeenCalledWith({ threadId: "assistant:bob:1" });
-  });
-
-  it("says so when there are no messages yet, and when no team is open", async () => {
-    mocks.target = { environmentId: "hub", teamId: "t1" };
-    mocks.messages = [];
-    await act(async () => root.render(<AssistantTeamActivityRouteScreen />));
-    expect(container.textContent).toContain("No messages yet");
-    mocks.target = null;
-    await act(async () => root.render(<AssistantTeamActivityRouteScreen />));
-    expect(container.textContent).toContain("Open a team first.");
   });
 });

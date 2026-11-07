@@ -15,19 +15,9 @@ export const assistantTeamDialogAtom = Atom.make<AssistantTeamDialogTarget | nul
   Atom.withLabel("assistants:team-dialog"),
 );
 
-/** The team activity view; Settings and the sidebar open it. */
-export const assistantTeamActivityAtom = Atom.make<{
-  readonly environmentId: EnvironmentId;
-  readonly teamId: AssistantTeamId;
-} | null>(null).pipe(Atom.keepAlive, Atom.withLabel("assistants:team-activity"));
-
 export function openAssistantTeamDialog(target: Partial<AssistantTeamDialogTarget> = {}): void {
   appAtomRegistry.set(assistantTeamDialogAtom, {
     environmentId: target.environmentId ?? null,
     teamId: target.teamId ?? null,
   });
-}
-
-export function openAssistantTeamActivity(environmentId: EnvironmentId, teamId: AssistantTeamId) {
-  appAtomRegistry.set(assistantTeamActivityAtom, { environmentId, teamId });
 }

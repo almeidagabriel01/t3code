@@ -23,10 +23,7 @@ import {
   type AssistantTeamEntry,
 } from "../../state/assistants";
 import { AssistantAvatar as TeamAvatar } from "../assistants/assistantPresentation";
-import {
-  openAssistantTeamActivity,
-  openAssistantTeamDialog,
-} from "../assistants/assistantTeamState";
+import { openAssistantTeamDialog } from "../assistants/assistantTeamState";
 import { useProjects, useThreadShell } from "../../state/entities";
 import { useEnvironmentProviders, useEnvironments } from "../../state/environments";
 import { AssistantAvatar, toolAccessLabel } from "../assistants/assistantPresentation";
@@ -230,14 +227,6 @@ function TeamRow(props: {
       }
       control={
         <span className="flex items-center gap-1">
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => openAssistantTeamActivity(environmentId, team.id)}
-          >
-            <MessageSquareIcon />
-            Activity
-          </Button>
           <IconAction
             label={`Edit ${team.name}`}
             onClick={() => openAssistantTeamDialog({ environmentId, teamId: team.id })}
@@ -293,13 +282,7 @@ export function AssistantsSettingsPanel() {
   ) {
     return entries.filter((entry) => entry.environmentId === environmentId);
   }
-  const teamOf = (entry: AssistantEntry) =>
-    teamSubtitle(
-      entry.assistant,
-      [...active, ...archived]
-        .filter((other) => other.environmentId === entry.environmentId)
-        .map((other) => other.assistant),
-    );
+  const teamOf = (entry: AssistantEntry) => teamSubtitle(entry.assistant);
 
   return (
     <SettingsPageContainer>
@@ -365,7 +348,7 @@ export function AssistantsSettingsPanel() {
                 {inEnvironment(teams, environmentId).length === 0 ? (
                   <SettingsRow
                     title="No groups yet"
-                    description="A group lets its assistants message each other while you watch. Add a leader if you want one."
+                    description="A group lists its assistants as each other's teammates. A lead is optional."
                   />
                 ) : (
                   inEnvironment(teams, environmentId).map((entry) => (

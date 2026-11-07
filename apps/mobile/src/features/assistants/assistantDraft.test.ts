@@ -1,7 +1,6 @@
 import {
   DEFAULT_ASSISTANT_AUTONOMY,
   type Assistant,
-  type AssistantId,
   type AssistantTeam,
   type EnvironmentId,
   type ModelSelection,
@@ -40,7 +39,6 @@ const assistant = {
   threadId: "assistant:a1:1",
   generation: 1,
   role: "",
-  reportsTo: null,
   budget: null,
   askBeforeActing: false,
   workspace: "host",
@@ -192,8 +190,8 @@ describe("assistant draft", () => {
   });
 
   it("tracks group choices against current membership", () => {
-    const team = (id: string, memberIds: string[], leaderId: string | null = null) =>
-      ({ id, name: id, memberIds, leaderId, leaderTitle: null }) as unknown as AssistantTeam;
+    const team = (id: string, memberIds: string[], leadId: string | null = null) =>
+      ({ id, name: id, memberIds, leadId }) as unknown as AssistantTeam;
     const mine = team("t1", ["a1", "z"], "a1");
     const other = team("t2", ["z"]);
     const empty = team("t3", []);
@@ -210,7 +208,7 @@ describe("assistant draft", () => {
         assistantInGroup(editor(), t),
       ),
     ).toEqual([
-      { teamId: "t1", memberIds: ["z"], leaderId: null, leaderTitle: null },
+      { teamId: "t1", memberIds: ["z"], leadId: null },
       { teamId: "t2", memberIds: ["z", "a1"] },
     ]);
     // Going back to where the form started forgets the choice, so it is no change.
@@ -315,29 +313,16 @@ describe("assistant draft", () => {
     ).toBe(true);
   });
 
-  it("sends the trimmed role and leader only when they changed", () => {
-    const boss = "boss" as AssistantId;
+  it("sends the trimmed role only when it changed", () => {
     expect(
-      assistantUpdateInput(
-        editorFor(assistant, { role: " Lead ", reportsTo: boss }),
-        "p1" as ProjectId,
-      ),
-    ).toEqual({ assistantId: "a1", role: "Lead", reportsTo: boss });
-    const led = { ...assistant, role: "Eng", reportsTo: boss } as Assistant;
-    expect(assistantUpdateInput(editorFor(led, { reportsTo: null }), "p1" as ProjectId)).toEqual({
-      assistantId: "a1",
-      reportsTo: null,
-    });
+      assistantUpdateInput(editorFor(assistant, { role: " Lead " }), "p1" as ProjectId),
+    ).toEqual({ assistantId: "a1", role: "Lead" });
     expect(
-      assistantCreateInput(
-        editorFor(null, { name: "S", role: " QA ", reportsTo: boss }),
-        "p1" as ProjectId,
-      ),
-    ).toMatchObject({ role: "QA", reportsTo: boss });
+      assistantCreateInput(editorFor(null, { name: "S", role: " QA " }), "p1" as ProjectId),
+    ).toMatchObject({ role: "QA" });
     expect(
       assistantCreateInput(editorFor(null, { name: "S" }), "p1" as ProjectId),
     ).not.toHaveProperty("role");
-    expect(assistantDraftHasChanges(editorFor(assistant, { reportsTo: boss }))).toBe(true);
   });
 
   it("sends the whole autonomy object only when it differs, and an inherit round-trip is no change", () => {

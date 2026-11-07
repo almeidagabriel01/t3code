@@ -40,7 +40,6 @@ import {
   type ScheduledTask,
   type AssistantsEvent,
   type AssistantTeam,
-  type AssistantTeamMessage,
   type AssistantTeamsCreateInput,
   type Decision,
   type DecisionsEvent,
@@ -585,12 +584,11 @@ export function publishAssistants(items: Assistant[], teams: AssistantTeam[] = [
   }
 }
 
-/** Team calls the fake server received, and the activity it serves. */
+/** Team calls the fake server received. */
 export const fakeTeamEdits = {
   creates: [] as unknown[],
   updates: [] as unknown[],
   deletes: [] as unknown[],
-  messages: [] as AssistantTeamMessage[],
 };
 handlers[WS_METHODS.assistantTeamsCreate] = (input: AssistantTeamsCreateInput) => {
   fakeTeamEdits.creates.push(input);
@@ -598,8 +596,7 @@ handlers[WS_METHODS.assistantTeamsCreate] = (input: AssistantTeamsCreateInput) =
     id: "team-new",
     name: input.name,
     memberIds: input.memberIds,
-    leaderId: input.leaderId ?? null,
-    leaderTitle: input.leaderTitle ?? null,
+    leadId: input.leadId ?? null,
     createdAt: "2026-03-17T19:00:00.000Z",
     updatedAt: "2026-03-17T19:00:00.000Z",
   });
@@ -613,8 +610,6 @@ handlers[WS_METHODS.assistantTeamsDelete] = (input: { readonly teamId: string })
   fakeTeamEdits.deletes.push(input);
   return Effect.succeed({ teamId: input.teamId });
 };
-handlers[WS_METHODS.assistantTeamsActivity] = () =>
-  Effect.succeed({ messages: fakeTeamEdits.messages });
 
 /** The sandbox status the fake serves, and the sandbox calls it received. */
 export const fakeSandbox = {

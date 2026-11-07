@@ -242,10 +242,3 @@ export function useAssistantTeamActions(environmentId: EnvironmentId) {
       reply(await remove({ environmentId, input: { teamId } })),
   };
 }
-
-/** The messages members sent each other; refreshed when the team or its members change. */
-export function useAssistantTeamActivity(environmentId: EnvironmentId, team: AssistantTeam) {
-  return useEnvironmentQuery(
-    assistantsEnvironment.teamActivity({ environmentId, input: { teamId: team.id } }),
-  );
-}

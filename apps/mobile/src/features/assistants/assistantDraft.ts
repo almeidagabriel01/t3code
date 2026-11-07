@@ -65,7 +65,6 @@ export interface AssistantDraft {
   readonly groupChoices: Readonly<Record<string, boolean>>;
   readonly connectors: ReadonlyArray<ConnectorDraft>;
   readonly role: string;
-  readonly reportsTo: AssistantId | null;
   readonly budget: BudgetDraft;
   readonly autonomy: AssistantAutonomy;
 }
@@ -178,7 +177,6 @@ export function assistantDraftFor(
       assistant === null && preset.teamId !== undefined ? { [preset.teamId]: true } : {},
     connectors: connectorDraftsFrom(assistant?.mcpServers ?? []),
     role: assistant?.role ?? "",
-    reportsTo: assistant?.reportsTo ?? null,
     budget: budgetDraftFor(assistant?.budget),
     autonomy: assistant?.autonomy ?? DEFAULT_ASSISTANT_AUTONOMY,
   };
@@ -254,8 +252,8 @@ export function setAssistantGroup(team: AssistantTeam, selected: boolean) {
 }
 
 /**
- * One team update per group the assistant joined or left. A leader must be a member, so leaving a
- * group as its leader hands the lead back.
+ * One team update per group the assistant joined or left. A lead must be a member, so leaving a
+ * group as its lead clears it.
  */
 export function teamMembershipUpdates(
   teams: ReadonlyArray<AssistantTeam>,
@@ -271,9 +269,7 @@ export function teamMembershipUpdates(
         memberIds: wasMember
           ? team.memberIds.filter((id) => id !== assistantId)
           : [...team.memberIds, assistantId],
-        ...(wasMember && team.leaderId === assistantId
-          ? { leaderId: null, leaderTitle: null }
-          : {}),
+        ...(wasMember && team.leadId === assistantId ? { leadId: null } : {}),
       },
     ];
   });
@@ -342,7 +338,6 @@ export function assistantCreateInput(
       ? {}
       : { mcpServers: connectorInputsFrom(current.connectors) }),
     ...(current.role.trim() === "" ? {} : { role: current.role.trim() }),
-    ...(current.reportsTo === null ? {} : { reportsTo: current.reportsTo }),
     ...(current.budget.enabled ? { budget: budgetFromDraft(current.budget) } : {}),
     ...(sameAssistantAutonomy(current.autonomy, DEFAULT_ASSISTANT_AUTONOMY)
       ? {}
@@ -381,7 +376,6 @@ export function assistantUpdateInput(
       ? {}
       : { mcpServers: connectorInputsFrom(current.connectors) }),
     ...(current.role.trim() !== assistant.role ? { role: current.role.trim() } : {}),
-    ...(current.reportsTo !== assistant.reportsTo ? { reportsTo: current.reportsTo } : {}),
     ...(budgetDraftChanged(editor.initial.budget, current.budget)
       ? { budget: budgetFromDraft(current.budget) }
       : {}),

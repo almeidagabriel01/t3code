@@ -1,6 +1,5 @@
 import { assistantPresence } from "@t3tools/client-runtime/assistantRobot";
 import { assistantEntryKey, assistantSections } from "@t3tools/client-runtime/assistantSections";
-import { teamSubtitle } from "@t3tools/client-runtime/assistantTeam";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import type { ReactNode } from "react";
@@ -276,19 +275,9 @@ export function SettingsAssistantsRouteScreen() {
       )
       .map((candidate) => candidate.team.name);
   const detailOf = (entry: AssistantEntry) => {
-    const subtitle = teamSubtitle(
-      entry.assistant,
-      [...active, ...archived]
-        .filter((other) => other.environmentId === entry.environmentId)
-        .map((other) => other.assistant),
-    );
-    return [
-      // The role already shows as a chip beside the name.
-      ...(subtitle === null || subtitle === entry.assistant.role ? [] : [subtitle]),
-      ...(loadedEnvironmentIds.length > 1 && savedConnectionsById[entry.environmentId]
-        ? [savedConnectionsById[entry.environmentId]!.environmentLabel]
-        : []),
-    ];
+    return loadedEnvironmentIds.length > 1 && savedConnectionsById[entry.environmentId]
+      ? [savedConnectionsById[entry.environmentId]!.environmentLabel]
+      : [];
   };
   const card = (entry: AssistantEntry, keyPrefix: string) => (
     <AssistantCard
@@ -372,11 +361,6 @@ export function SettingsAssistantsRouteScreen() {
                         title: "New assistant in this group",
                         onPress: () =>
                           openEditor(entry.environmentId, null, { teamId: entry.team.id }),
-                      },
-                      {
-                        id: "activity",
-                        title: "Team activity",
-                        onPress: () => openTeam.activity(entry.environmentId, entry.team.id),
                       },
                       {
                         id: "edit",

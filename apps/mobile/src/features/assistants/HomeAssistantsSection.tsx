@@ -326,12 +326,10 @@ function GroupFoldRow(props: {
       menuLabel={`${team.name} actions`}
       actions={[
         { id: "edit", title: "Edit group", image: "pencil" },
-        { id: "activity", title: "Team activity", image: "person.2" },
         { id: "new", title: "New assistant in this group", image: "plus" },
       ]}
       onAction={(id) => {
         if (id === "edit") openTeam.edit(environmentId, team.id);
-        else if (id === "activity") openTeam.activity(environmentId, team.id);
         else if (id === "new") openEditor(environmentId, null, { teamId: team.id });
       }}
     />

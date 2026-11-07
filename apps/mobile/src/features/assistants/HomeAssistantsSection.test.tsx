@@ -142,7 +142,7 @@ vi.mock("./useAssistantFlows", () => ({
   }),
 }));
 vi.mock("./assistantTeamTarget", () => ({
-  useOpenAssistantTeam: () => ({ activity: mocks.openTeam, edit: mocks.openTeam }),
+  useOpenAssistantTeam: () => ({ edit: mocks.openTeam }),
 }));
 vi.mock("./openAssistantEditor", () => ({ useOpenAssistantEditor: () => mocks.editor }));
 vi.mock("../home/useHomeSectionPreferences", () => ({
@@ -348,13 +348,11 @@ describe("HomeAssistantsSection", () => {
     expect(byLabel("menu:Reset conversation")?.disabled).toBe(true);
   });
 
-  it("a group's menu edits it, opens its activity and starts an assistant in it", async () => {
+  it("a group's menu edits it and starts an assistant in it", async () => {
     mocks.teams = [team("g1", "Finance", ["a0"])];
     render();
     await click("menu:Edit group");
     expect(mocks.openTeam).toHaveBeenCalledWith("hub", "g1");
-    await click("menu:Team activity");
-    expect(mocks.openTeam).toHaveBeenLastCalledWith("hub", "g1");
     await click("menu:New assistant in this group");
     expect(mocks.editor).toHaveBeenCalledWith("hub", null, { teamId: "g1" });
   });

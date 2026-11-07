@@ -85,7 +85,6 @@ const assistant = (id: string, name: string, overrides: Partial<Assistant> = {})
   threadId: `assistant:${id}:1` as ThreadId,
   generation: 1,
   role: "",
-  reportsTo: null,
   budget: null,
   askBeforeActing: false,
   workspace: "host",
@@ -100,12 +99,11 @@ const assistant = (id: string, name: string, overrides: Partial<Assistant> = {})
   ...overrides,
 });
 
-const team = (id: string, name: string, memberIds: string[], leaderId?: string): AssistantTeam => ({
+const team = (id: string, name: string, memberIds: string[], leadId?: string): AssistantTeam => ({
   id: id as AssistantTeamId,
   name,
   memberIds: memberIds as AssistantId[],
-  leaderId: (leaderId ?? null) as AssistantId | null,
-  leaderTitle: leaderId ? "CEO" : null,
+  leadId: (leadId ?? null) as AssistantId | null,
   createdAt: "2026-03-17T19:00:00.000Z",
   updatedAt: "2026-03-17T19:00:00.000Z",
 });
@@ -359,7 +357,7 @@ it("joins the groups it is ticked into, leaves others and hands back a lead", as
   await userEvent.click(page.getByRole("button", { name: "Save" }));
   await eventually(() =>
     expect(fakeTeamEdits.updates).toMatchObject([
-      { teamId: "t1", memberIds: ["ana"], leaderId: null, leaderTitle: null },
+      { teamId: "t1", memberIds: ["ana"], leadId: null },
       { teamId: "t2", memberIds: ["ana", "jarvis"] },
     ]),
   );

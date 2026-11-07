@@ -84,7 +84,6 @@ const assistant = (id: string, name: string, overrides: Partial<Assistant> = {})
   threadId: `assistant:${id}:1` as ThreadId,
   generation: 1,
   role: "",
-  reportsTo: null,
   budget: null,
   askBeforeActing: false,
   workspace: "host",
@@ -103,8 +102,7 @@ const team = (id: string, name: string, memberIds: string[]): AssistantTeam => (
   id: id as AssistantTeamId,
   name,
   memberIds: memberIds as AssistantId[],
-  leaderId: null,
-  leaderTitle: null,
+  leadId: null,
   createdAt: "2026-03-17T19:00:00.000Z",
   updatedAt: "2026-03-17T19:00:00.000Z",
 });

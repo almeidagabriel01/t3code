@@ -48,7 +48,7 @@ import { Spinner } from "../ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { AssistantAvatar } from "./assistantPresentation";
 import { openAssistantDialog } from "./assistantDialogState";
-import { openAssistantTeamActivity, openAssistantTeamDialog } from "./assistantTeamState";
+import { openAssistantTeamDialog } from "./assistantTeamState";
 import { DescribeAssistantDialog } from "./DescribeAssistantDialog";
 import { useAssistantFlows } from "./useAssistantFlows";
 
@@ -378,10 +378,6 @@ function GroupRow(props: {
           <MenuItem onClick={() => openAssistantTeamDialog({ environmentId, teamId })}>
             <PencilIcon />
             Edit group
-          </MenuItem>
-          <MenuItem onClick={() => openAssistantTeamActivity(environmentId, teamId)}>
-            <UsersIcon />
-            Team activity
           </MenuItem>
           <MenuItem onClick={() => openAssistantDialog({ environmentId, preset: { teamId } })}>
             <PlusIcon />

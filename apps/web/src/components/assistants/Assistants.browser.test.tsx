@@ -1,6 +1,5 @@
 import { createMemoryHistory } from "@tanstack/react-router";
 import {
-  ASSISTANT_STANDUP_PROMPT_HEAD,
   DEFAULT_AUTONOMY_SETTINGS,
   ScheduledTaskId,
   type AutonomyWatch,
@@ -80,7 +79,6 @@ const assistant = (id: string, name: string, overrides: Partial<Assistant> = {})
   threadId: `assistant:${id}:1` as ThreadId,
   generation: 1,
   role: "",
-  reportsTo: null,
   budget: null,
   askBeforeActing: false,
   workspace: "host",
@@ -729,85 +727,25 @@ it("keeps an unchanged assistant's autonomy out of the update", async () => {
   );
 });
 
-it("shows each assistant's role and leader by name in the list", async () => {
+it("shows each assistant's role in the list", async () => {
   publishAssistants([
     assistant("jarvis", "Jarvis", { role: "CEO" }),
-    assistant("eng", "Engineer", { role: "Builder", reportsTo: "jarvis" as AssistantId }),
+    assistant("eng", "Engineer", { role: "Builder" }),
   ]);
   await using _screen = await openApp("/settings/assistants");
   await eventually(() => {
-    expect(document.body.innerText).toContain("@eng · Builder · reports to Jarvis");
+    expect(document.body.innerText).toContain("@eng · Builder");
     expect(document.body.innerText).toContain("@jarvis · CEO ·");
   });
 });
 
-it("saves the role and leader, offering only assistants outside its own branch", async () => {
-  publishAssistants([
-    assistant("jarvis", "Jarvis"),
-    assistant("lead", "Lead", { reportsTo: "jarvis" as AssistantId }),
-    assistant("eng", "Engineer", { reportsTo: "lead" as AssistantId }),
-    assistant("solo", "Solo"),
-  ]);
-  fakeAssistantEdits.updates = [];
-  await using _screen = await openEditDialog("Lead");
-  await userEvent.fill(page.getByLabelText("Role"), "  Tech lead ");
-  await userEvent.click(page.getByRole("combobox", { name: "Reports to" }));
-  // Neither itself nor the Engineer below it can be chosen.
-  expect(page.getByRole("option", { name: "Lead" }).query()).toBeNull();
-  expect(page.getByRole("option", { name: "Engineer" }).query()).toBeNull();
-  await userEvent.click(page.getByRole("option", { name: "Solo" }));
-  await userEvent.click(page.getByRole("button", { name: "Save" }));
-  await eventually(() =>
-    expect(fakeAssistantEdits.updates).toMatchObject([{ role: "Tech lead", reportsTo: "solo" }]),
-  );
-});
-
-it("clears the leader with Nobody", async () => {
-  publishAssistants([
-    assistant("jarvis", "Jarvis"),
-    assistant("eng", "Engineer", { reportsTo: "jarvis" as AssistantId }),
-  ]);
+it("saves a trimmed role", async () => {
+  publishAssistants([assistant("jarvis", "Jarvis"), assistant("eng", "Engineer")]);
   fakeAssistantEdits.updates = [];
   await using _edit = await openEditDialog("Engineer");
-  await userEvent.click(page.getByRole("combobox", { name: "Reports to" }));
-  await userEvent.click(page.getByRole("option", { name: "Nobody" }));
+  await userEvent.fill(page.getByLabelText("Role"), "  Tech lead ");
   await userEvent.click(page.getByRole("button", { name: "Save" }));
-  await eventually(() => expect(fakeAssistantEdits.updates).toMatchObject([{ reportsTo: null }]));
-});
-
-it("offers the daily standup only to a leader, once", async () => {
-  publishAssistants([
-    assistant("jarvis", "Jarvis"),
-    assistant("eng", "Engineer", { reportsTo: "jarvis" as AssistantId }),
-  ]);
-  publishScheduledTasks([]);
-  fakeAssistantEdits.updates = [];
-  {
-    await using _engineer = await openEditDialog("Engineer");
-    await expect.element(page.getByLabelText("Role")).toBeVisible();
-    expect(page.getByRole("button", { name: "Add daily standup" }).query()).toBeNull();
-  }
-  {
-    await using _leader = await openEditDialog("Jarvis");
-    await userEvent.click(page.getByRole("button", { name: "Add daily standup" }));
-    await eventually(() =>
-      expect(fakeAssistantEdits.updates).toMatchObject([
-        { assistantId: "jarvis", addStandup: true },
-      ]),
-    );
-    await expect.element(page.getByText(/It is in its schedules below/)).toBeVisible();
-    expect(page.getByRole("button", { name: "Add daily standup" }).query()).toBeNull();
-  }
-  // A standup that already exists, even renamed, is not offered again.
-  publishScheduledTasks([
-    {
-      ...scheduledTask("standup", "Renamed", "assistant:jarvis:1"),
-      prompt: `${ASSISTANT_STANDUP_PROMPT_HEAD}\nAsk everyone.`,
-    },
-  ]);
-  await using _again = await openEditDialog("Jarvis");
-  await expect.element(page.getByText(/It is in its schedules below/)).toBeVisible();
-  expect(page.getByRole("button", { name: "Add daily standup" }).query()).toBeNull();
+  await eventually(() => expect(fakeAssistantEdits.updates).toMatchObject([{ role: "Tech lead" }]));
 });
 
 it("creates an assistant with its notification choice", async () => {
@@ -819,8 +757,6 @@ it("creates an assistant with its notification choice", async () => {
   await userEvent.fill(page.getByLabelText("Name"), "Scout");
   await userEvent.fill(page.getByLabelText("Role"), "Researcher");
   await openAdvanced();
-  await userEvent.click(page.getByRole("combobox", { name: "Reports to" }));
-  await userEvent.click(page.getByRole("option", { name: "Jarvis" }));
   await userEvent.click(page.getByRole("radio", { name: "Reply and notify me" }));
   await userEvent.click(page.getByRole("button", { name: "Create assistant" }));
   await eventually(() =>
@@ -828,7 +764,6 @@ it("creates an assistant with its notification choice", async () => {
       {
         name: "Scout",
         role: "Researcher",
-        reportsTo: "jarvis",
         askBeforeActing: true,
         autonomy: { mode: "reply-and-notify" },
       },

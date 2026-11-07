@@ -1,12 +1,11 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   ASSISTANT_TEAM_NAME_MAX_LENGTH,
-  ASSISTANT_TEAM_TITLE_MAX_LENGTH,
   assistantTeamProblem,
   type AssistantId,
   type EnvironmentId,
 } from "@t3tools/contracts";
-import { NO_LEADER_LABEL, teamMemberChoices } from "@t3tools/client-runtime/assistantTeam";
+import { NO_LEAD_LABEL, teamMemberChoices } from "@t3tools/client-runtime/assistantTeam";
 import { useState } from "react";
 
 import { requestConfirmDialog } from "../../confirmDialog";
@@ -34,7 +33,7 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { AssistantAvatar } from "./assistantPresentation";
 import { assistantTeamDialogAtom, type AssistantTeamDialogTarget } from "./assistantTeamState";
 
-const NO_LEADER_VALUE = "__nobody__";
+const NO_LEAD_VALUE = "__nobody__";
 
 export function AssistantTeamDialogHost() {
   const target = useAtomValue(assistantTeamDialogAtom);
@@ -76,13 +75,12 @@ function AssistantTeamDialog(props: {
 
   const [name, setName] = useState(team?.name ?? "");
   const [memberIds, setMemberIds] = useState<ReadonlyArray<AssistantId>>(team?.memberIds ?? []);
-  const [leaderId, setLeaderId] = useState<AssistantId | null>(team?.leaderId ?? null);
-  const [leaderTitle, setLeaderTitle] = useState(team?.leaderTitle ?? "");
+  const [leadId, setLeadId] = useState<AssistantId | null>(team?.leadId ?? null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const effectiveLeader = leaderId !== null && memberIds.includes(leaderId) ? leaderId : null;
-  const problem = assistantTeamProblem({ memberIds, leaderId: effectiveLeader, leaderTitle: "" });
+  const effectiveLead = leadId !== null && memberIds.includes(leadId) ? leadId : null;
+  const problem = assistantTeamProblem({ memberIds, leadId: effectiveLead });
   const canSave =
     !saving && actions.canAct && environmentId !== null && name.trim() !== "" && problem === null;
 
@@ -95,20 +93,17 @@ function AssistantTeamDialog(props: {
     if (environmentId === null) return;
     setSaving(true);
     setError(null);
-    const title = effectiveLeader === null ? null : leaderTitle.trim() || null;
     const reply = team
       ? await actions.update({
           teamId: team.id,
           name: name.trim(),
           memberIds,
-          leaderId: effectiveLeader,
-          leaderTitle: title,
+          leadId: effectiveLead,
         })
       : await actions.create({
           name: name.trim(),
           memberIds,
-          leaderId: effectiveLeader,
-          leaderTitle: title,
+          leadId: effectiveLead,
         });
     setSaving(false);
     if (!reply.ok) return setError(reply.message);
@@ -118,7 +113,7 @@ function AssistantTeamDialog(props: {
   const remove = async () => {
     if (team === null) return;
     const confirmed = await requestConfirmDialog(
-      `Delete the group ${team.name}?\nIts members stay; they just stop being able to message each other as a team.`,
+      `Delete the group ${team.name}?\nIts members stay; they just stop being teammates.`,
       { variant: "destructive" },
     );
     if (confirmed === false) return;
@@ -135,8 +130,7 @@ function AssistantTeamDialog(props: {
         <DialogHeader>
           <DialogTitle>{team ? `${team.name} group` : "New group"}</DialogTitle>
           <DialogDescription>
-            Members can message each other in any direction, and you can follow what they say. A
-            leader is optional.
+            Members can message each other in any direction. A lead is optional.
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -183,27 +177,27 @@ function AssistantTeamDialog(props: {
             </fieldset>
             <div className="flex flex-col gap-1.5">
               <div className="flex flex-col gap-0.5">
-                <Label htmlFor="assistant-team-leader">Leader</Label>
+                <Label htmlFor="assistant-team-lead">Lead</Label>
                 <p className="text-xs text-muted-foreground">
-                  Optional. Teammates are told to report their results to the leader. It does not
-                  change who may message whom.
+                  Optional. Routes requests that mention no one. It does not change who may message
+                  whom.
                 </p>
               </div>
               <Select
-                value={effectiveLeader ?? NO_LEADER_VALUE}
+                value={effectiveLead ?? NO_LEAD_VALUE}
                 onValueChange={(next) =>
-                  setLeaderId(next === NO_LEADER_VALUE ? null : (next as AssistantId))
+                  setLeadId(next === NO_LEAD_VALUE ? null : (next as AssistantId))
                 }
               >
-                <SelectTrigger id="assistant-team-leader" aria-label="Leader">
+                <SelectTrigger id="assistant-team-lead" aria-label="Lead">
                   <SelectValue>
-                    {choices.find((assistant) => assistant.id === effectiveLeader)?.name ??
-                      NO_LEADER_LABEL}
+                    {choices.find((assistant) => assistant.id === effectiveLead)?.name ??
+                      NO_LEAD_LABEL}
                   </SelectValue>
                 </SelectTrigger>
                 <SelectPopup alignItemWithTrigger={false}>
-                  <SelectItem hideIndicator value={NO_LEADER_VALUE}>
-                    {NO_LEADER_LABEL}
+                  <SelectItem hideIndicator value={NO_LEAD_VALUE}>
+                    {NO_LEAD_LABEL}
                   </SelectItem>
                   {choices
                     .filter((assistant) => memberIds.includes(assistant.id))
@@ -215,23 +209,6 @@ function AssistantTeamDialog(props: {
                 </SelectPopup>
               </Select>
             </div>
-            {effectiveLeader === null ? null : (
-              <div className="flex flex-col gap-1.5">
-                <div className="flex flex-col gap-0.5">
-                  <Label htmlFor="assistant-team-leader-title">Leader title</Label>
-                  <p className="text-xs text-muted-foreground">
-                    CEO, CFO, Head of Research… Agents and the team view show it.
-                  </p>
-                </div>
-                <Input
-                  id="assistant-team-leader-title"
-                  placeholder="CEO"
-                  value={leaderTitle}
-                  maxLength={ASSISTANT_TEAM_TITLE_MAX_LENGTH}
-                  onChange={(event) => setLeaderTitle(event.target.value)}
-                />
-              </div>
-            )}
             {error ? (
               <Alert variant="error">
                 <AlertDescription>{error}</AlertDescription>

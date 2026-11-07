@@ -18,7 +18,7 @@ const { mocks, Children } = vi.hoisted(() => ({
     hasDefault: true,
     presence: {} as Record<string, Presence>,
     entries: null as null | { active: unknown[]; archived: unknown[]; teams: unknown[] },
-    openTeam: { edit: vi.fn(), activity: vi.fn() },
+    openTeam: { edit: vi.fn() },
   },
 }));
 const assistant = (id: string, name: string, extra: object = {}) => ({
@@ -30,7 +30,6 @@ const assistant = (id: string, name: string, extra: object = {}) => ({
     handle: id,
     budget: null,
     role: "",
-    reportsTo: null,
     scope: "all",
     projectId: "p0",
     threadId: `t-${id}`,
@@ -41,7 +40,7 @@ const assistant = (id: string, name: string, extra: object = {}) => ({
 const defaults = () => ({
   active: [
     assistant("a1", "Jarvis", { isDefault: mocks.hasDefault, budget: {}, role: "CEO" }),
-    assistant("a2", "Plain", { reportsTo: "a1" }),
+    assistant("a2", "Plain"),
   ],
   archived: [] as unknown[],
   teams: [
@@ -51,8 +50,7 @@ const defaults = () => ({
         id: "g1",
         name: "Growth",
         memberIds: ["a1", "a2"],
-        leaderId: "a1",
-        leaderTitle: "CEO",
+        leadId: "a1",
       },
     },
   ],
@@ -214,7 +212,6 @@ beforeEach(() => {
     mocks.archive,
     mocks.open,
     mocks.openTeam.edit,
-    mocks.openTeam.activity,
   ]) {
     fn.mockReset();
   }
@@ -230,7 +227,7 @@ describe("assistants page", () => {
     mocks.budgetState = state;
     render();
     expect(byLabel(`Jarvis, All projects${suffix}`)).not.toBeNull();
-    expect(byLabel("Plain, All projects, reports to Jarvis")).not.toBeNull();
+    expect(byLabel("Plain, All projects")).not.toBeNull();
     expect(mocks.spendQuery).toHaveBeenCalledWith("hub", "a1");
     expect(mocks.spendQuery).toHaveBeenCalledWith("hub", null);
   });
@@ -305,7 +302,7 @@ describe("assistants page", () => {
     expect(buttonIn("Fresh, All projects", "Open thread").disabled).toBe(true);
   });
 
-  it("each group and project starts an assistant in itself; a group also opens activity and edit", async () => {
+  it("each group and project starts an assistant in itself; a group also edits", async () => {
     mocks.entries = {
       active: [assistant("a1", "Scout", { scope: "project", projectId: "p1", isDefault: true })],
       archived: [],
@@ -314,8 +311,6 @@ describe("assistants page", () => {
     render();
     await click("menu:New assistant in this group");
     expect(mocks.openEditor).toHaveBeenCalledWith("hub", null, { teamId: "g1" });
-    await click("menu:Team activity");
-    expect(mocks.openTeam.activity).toHaveBeenCalledWith("hub", "g1");
     await click("menu:Edit group");
     expect(mocks.openTeam.edit).toHaveBeenCalledWith("hub", "g1");
     await click("menu:New assistant in this project");
@@ -345,7 +340,7 @@ describe("assistants page", () => {
   it("names the server on a card only when there are several", () => {
     mocks.environmentIds = ["hub", "lab"];
     render("two");
-    expect(byLabel("Plain, All projects, reports to Jarvis, Hub")).not.toBeNull();
+    expect(byLabel("Plain, All projects, Hub")).not.toBeNull();
   });
 });
 
