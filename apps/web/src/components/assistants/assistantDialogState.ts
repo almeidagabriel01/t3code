@@ -1,4 +1,4 @@
-import type { AssistantId, EnvironmentId } from "@t3tools/contracts";
+import type { AssistantId, AssistantTeamId, EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
@@ -7,6 +7,8 @@ export type AssistantDialogTarget = {
   readonly environmentId: EnvironmentId | null;
   /** Absent when creating. */
   readonly assistantId: AssistantId | null;
+  /** Creating from a project or a group's "+" starts the new assistant there. */
+  readonly preset?: { readonly projectId?: ProjectId; readonly teamId?: AssistantTeamId };
 };
 
 /**
@@ -22,5 +24,6 @@ export function openAssistantDialog(target: Partial<AssistantDialogTarget> = {})
   appAtomRegistry.set(assistantDialogAtom, {
     environmentId: target.environmentId ?? null,
     assistantId: target.assistantId ?? null,
+    ...(target.preset === undefined ? {} : { preset: target.preset }),
   });
 }
