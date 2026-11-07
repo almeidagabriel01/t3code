@@ -280,9 +280,23 @@ export function teamMembershipUpdates(
 }
 
 export function assistantDraftHasChanges(editor: AssistantEditor): boolean {
-  const { budget: initialBudget, autonomy: initialAutonomy, ...initial } = editor.initial;
-  const { budget: currentBudget, autonomy: currentAutonomy, ...current } = editor.current;
+  const {
+    budget: initialBudget,
+    autonomy: initialAutonomy,
+    avatarImage: initialImage,
+    ...initial
+  } = editor.initial;
+  const {
+    budget: currentBudget,
+    autonomy: currentAutonomy,
+    avatarImage: currentImage,
+    ...current
+  } = editor.current;
+  // A picked image carries megabytes of data; it is compared by identity, never serialized.
+  const imageKey = (image: AvatarImageDraft) =>
+    image === null ? "none" : image.kind === "stored" ? "stored" : image.file.id;
   return (
+    imageKey(initialImage) !== imageKey(currentImage) ||
     JSON.stringify(initial) !== JSON.stringify(current) ||
     budgetDraftChanged(initialBudget, currentBudget) ||
     !sameAssistantAutonomy(initialAutonomy, currentAutonomy)

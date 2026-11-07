@@ -138,6 +138,20 @@ describe("assistant draft", () => {
         "p1" as ProjectId,
       ),
     ).toEqual({ assistantId: "a1" });
+    // A picked file counts as a change by its id, and the same file on both sides does not.
+    const pickedFile = (id: string) => ({ kind: "file", file: { id } }) as never;
+    expect(
+      assistantDraftHasChanges({
+        ...editorFor(assistant, { avatarImage: pickedFile("f1") }),
+        initial: { ...assistantDraftFor(assistant), avatarImage: pickedFile("f1") },
+      }),
+    ).toBe(false);
+    expect(assistantDraftHasChanges(editorFor(assistant, { avatarImage: pickedFile("f1") }))).toBe(
+      true,
+    );
+    expect(
+      assistantDraftHasChanges(editorFor(assistant, { avatarImage: { kind: "stored" } })),
+    ).toBe(true);
     // Untouched, the stored avatar is never overwritten.
     expect(assistantUpdateInput(editorFor(assistant), "p1" as ProjectId)).toEqual({
       assistantId: "a1",

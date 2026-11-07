@@ -15,7 +15,6 @@ const { mocks, Children } = vi.hoisted(() => ({
     unarchive: vi.fn(),
     archive: vi.fn(),
     open: vi.fn(),
-    navigate: vi.fn(),
     hasDefault: true,
     presence: {} as Record<string, Presence>,
     entries: null as null | { active: unknown[]; archived: unknown[]; teams: unknown[] },
@@ -92,9 +91,6 @@ vi.mock("react-native", () => ({
       {props.children}
     </button>
   ),
-}));
-vi.mock("@react-navigation/native", () => ({
-  useNavigation: () => ({ navigate: mocks.navigate }),
 }));
 vi.mock("@t3tools/client-runtime/assistantRobot", () => ({
   assistantPresence: (thread: { id: string } | null): Presence =>
@@ -198,7 +194,6 @@ beforeEach(() => {
     mocks.unarchive,
     mocks.archive,
     mocks.open,
-    mocks.navigate,
     mocks.openTeam.edit,
     mocks.openTeam.activity,
   ]) {
@@ -308,14 +303,12 @@ describe("assistants page", () => {
     expect(mocks.openEditor).toHaveBeenLastCalledWith("hub", null, { projectId: "p1" });
   });
 
-  it("the header creates an assistant or a group, or describes one", async () => {
+  it("the header creates an assistant or a group", async () => {
     render();
     await click("New assistant");
     expect(mocks.openEditor).toHaveBeenCalledWith("hub", null);
     await click("New group");
     expect(mocks.openTeam.edit).toHaveBeenCalledWith("hub", null);
-    await click("Describe one and let T3 build it");
-    expect(mocks.navigate).toHaveBeenCalledWith("SettingsAssistantDescribe");
   });
 
   it("says so when no server has assistants, and when there are none yet", () => {

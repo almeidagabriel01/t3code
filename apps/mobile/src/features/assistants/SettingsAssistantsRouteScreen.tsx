@@ -3,7 +3,6 @@ import { assistantEntryKey, assistantSections } from "@t3tools/client-runtime/as
 import { teamSubtitle } from "@t3tools/client-runtime/assistantTeam";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { EnvironmentId, ProjectId } from "@t3tools/contracts";
-import { useNavigation } from "@react-navigation/native";
 import type { ReactNode } from "react";
 import { Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -217,7 +216,6 @@ function RestoreJarvisRow(props: { readonly environmentId: EnvironmentId }) {
 /** Every assistant as a card, grouped like Home, with Open thread, Edit and Archive on each. */
 export function SettingsAssistantsRouteScreen() {
   const { active, archived, teams, environmentIds: loadedEnvironmentIds } = useAssistantEntries();
-  const navigation = useNavigation();
   const openTeam = useOpenAssistantTeam();
   const insets = useSafeAreaInsets();
   const openEditor = useOpenAssistantEditor();
@@ -295,11 +293,6 @@ export function SettingsAssistantsRouteScreen() {
         firstEnvironmentId === null
           ? []
           : [
-              {
-                accessibilityLabel: "Describe one and let T3 build it",
-                icon: "sparkles",
-                onPress: () => navigation.navigate("SettingsAssistantDescribe"),
-              },
               {
                 accessibilityLabel: "New group",
                 icon: "person.2",
