@@ -272,7 +272,9 @@ function activeThreadNeedsUser(thread: ActiveSortInput): boolean {
   );
 }
 
-const WORKING_RUNTIME = new Set(["preparing", "queued", "starting", "running", "waiting"]);
+// "idle" is a session between runs while its subagents work; isThreadWorking counts it too, so
+// the Working section and this ranking agree.
+const WORKING_RUNTIME = new Set(["preparing", "queued", "starting", "running", "waiting", "idle"]);
 
 /** Recent activity leads with what needs you or finished unseen, then running agents, then the rest. */
 export function activeThreadActivityRank(thread: ActiveSortInput): 0 | 1 | 2 {

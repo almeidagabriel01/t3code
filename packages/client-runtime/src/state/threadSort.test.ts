@@ -382,6 +382,8 @@ describe("sortActiveThreadsByOrderKey", () => {
       thread("done", 1, { latestRun: finished }),
       thread("seen", 40, { latestRun: finished, lastVisitedAt: at(52) }),
       thread("working", 2, { runtime: { status: "running" } }),
+      // Between runs while its subagents work: the Working section counts it, so ranking must too.
+      thread("waitsOnSubagent", 0, { runtime: { status: "idle" } }),
       thread("idle", 20),
     ];
     expect(ids(sortActiveThreadsByOrderKey(threads, "activity"))).toEqual([
@@ -391,6 +393,7 @@ describe("sortActiveThreadsByOrderKey", () => {
       "plan",
       "done",
       "working",
+      "waitsOnSubagent",
       "messaged",
       "seen",
       "idle",
