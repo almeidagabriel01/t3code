@@ -173,6 +173,11 @@ export function useThreadShells(): ReadonlyArray<EnvironmentThreadShell> {
   return useAtomValue(environmentThreadShells.threadShellsAtom);
 }
 
+/** Like `useThreadShells`, but streaming ticks do not re-render it; for lists that only read what a turn settles on. */
+export function useQuietThreadShells(): ReadonlyArray<EnvironmentThreadShell> {
+  return useAtomValue(environmentThreadShells.quietThreadShellsAtom);
+}
+
 /** Thread shells minus those the tag filter hides, for lists that show threads to the user. */
 export function useVisibleThreadShells(): ReadonlyArray<EnvironmentThreadShell> {
   return useAtomValue(environmentThreadShells.visibleThreadShellsAtom);

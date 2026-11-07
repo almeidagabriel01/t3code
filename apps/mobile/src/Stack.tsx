@@ -139,6 +139,7 @@ import { AssistantTeamActivityRouteScreen } from "./features/assistants/Assistan
 import { AssistantTeamEditRouteScreen } from "./features/assistants/AssistantTeamEditRouteScreen";
 import { AssistantWatchRouteScreen } from "./features/assistants/AssistantWatchRouteScreen";
 import { AssistantModelPickerRouteScreen } from "./features/assistants/AssistantModelPickerRouteScreen";
+import { DescribeAssistantRouteScreen } from "./features/assistants/DescribeAssistantRouteScreen";
 import { SettingsAssistantsRouteScreen } from "./features/assistants/SettingsAssistantsRouteScreen";
 import { SettingsMacPermissionsRouteScreen } from "./features/settings/SettingsMacPermissionsRouteScreen";
 import { SettingsImessageRouteScreen } from "./features/imessage/SettingsImessageRouteScreen";
@@ -462,6 +463,10 @@ const SETTINGS_SCREENS = {
     screen: SettingsAssistantsRouteScreen,
     linking: "settings/assistants",
     options: { ...SETTINGS_PAGE_OPTIONS, title: "Assistants" },
+  }),
+  SettingsAssistantDescribe: createNativeStackScreen({
+    screen: DescribeAssistantRouteScreen,
+    options: { ...SETTINGS_PAGE_OPTIONS, title: "Describe an assistant" },
   }),
   SettingsAssistantEdit: createNativeStackScreen({
     screen: AssistantEditRouteScreen,

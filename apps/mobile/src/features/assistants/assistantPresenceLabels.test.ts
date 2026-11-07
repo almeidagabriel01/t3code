@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   accentWash,
+  moodTextClass,
   presenceBadgeLabel,
   presenceMessageCount,
   presenceStatusLabel,
@@ -32,5 +33,17 @@ describe("assistant presence presentation", () => {
     expect(presenceBadgeLabel(null, false)).toBe("assistant");
     expect(presenceBadgeLabel("Edits", false)).toBe("assistant · Edits");
     expect(presenceBadgeLabel("Edits", true)).toBe("assistant · Edits · asks first");
+  });
+});
+
+describe("moodTextClass", () => {
+  it.each([
+    ["working", false, "text-adaptive-sky-600-400"],
+    ["needs", false, "text-warning-foreground"],
+    ["failed", true, "text-danger-foreground"],
+    ["idle", false, "text-foreground-tertiary"],
+    ["idle", true, "text-drawer-foreground-muted"],
+  ] as const)("%s (sidebar %s)", (mood, sidebar, expected) => {
+    expect(moodTextClass(mood, sidebar)).toBe(expected);
   });
 });

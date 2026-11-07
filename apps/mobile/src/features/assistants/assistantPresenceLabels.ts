@@ -1,4 +1,5 @@
 import type { AssistantSender } from "@t3tools/client-runtime/assistantPresence";
+import type { AssistantMood } from "@t3tools/client-runtime/assistantRobot";
 
 export const PRESENCE_STACK_LIMIT = 3;
 
@@ -30,4 +31,18 @@ export function presenceBadgeLabel(access: string | null, asksFirst: boolean) {
   return ["assistant", ...(access ? [access] : []), ...(asksFirst ? ["asks first"] : [])].join(
     " · ",
   );
+}
+
+/** Text color of a status line: what it is doing, in the theme's own tokens. */
+export function moodTextClass(mood: AssistantMood, sidebar = false): string {
+  switch (mood) {
+    case "working":
+      return "text-adaptive-sky-600-400";
+    case "needs":
+      return "text-warning-foreground";
+    case "failed":
+      return "text-danger-foreground";
+    case "idle":
+      return sidebar ? "text-drawer-foreground-muted" : "text-foreground-tertiary";
+  }
 }
