@@ -56,7 +56,10 @@ const PANE_URLS = {
 } as const;
 
 /** Values reach these scripts only as `argv`, never spliced into the source. */
-const PERMISSIONS_SCRIPT = `ObjC.import('CoreGraphics'); ObjC.import('ApplicationServices');
+// macOS 27's bridge metadata no longer exposes CGPreflightScreenCaptureAccess, so both are bound.
+export const PERMISSIONS_SCRIPT = `ObjC.import('CoreGraphics'); ObjC.import('ApplicationServices');
+ObjC.bindFunction('CGPreflightScreenCaptureAccess', ['bool', []]);
+ObjC.bindFunction('AXIsProcessTrusted', ['bool', []]);
 function run(argv) {
   let automation = 'unknown';
   if (argv[0] === 'automation') {

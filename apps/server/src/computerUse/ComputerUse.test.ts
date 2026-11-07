@@ -172,6 +172,21 @@ describe("parsePermissions", () => {
       assert.isTrue(parsed.supported);
     }
   });
+
+  // The mocked runner cannot catch a bridge function macOS stops exposing (macOS 27 did).
+  it.live.runIf(HostProcess.Platform.defaultValue() === "darwin")(
+    "the real script reads both permissions",
+    () =>
+      Effect.gen(function* () {
+        const output = yield* (yield* ProcessRunner.ProcessRunner).run({
+          command: "/usr/bin/osascript",
+          args: ["-l", "JavaScript", "-e", ComputerUse.PERMISSIONS_SCRIPT],
+        });
+        const parsed = ComputerUse.parsePermissions(output.stdout);
+        assert.notEqual(parsed.screenRecording, "unknown", output.stderr);
+        assert.notEqual(parsed.accessibility, "unknown", output.stderr);
+      }).pipe(Effect.provide(ProcessRunner.layer.pipe(Layer.provide(NodeServices.layer)))),
+  );
 });
 
 describe("ComputerUse", () => {
