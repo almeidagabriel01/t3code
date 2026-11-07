@@ -20,6 +20,7 @@ describe("resolveActiveDestination", () => {
     ["/draft/draft-1", "home"],
     ["/new", "home"],
     ["/activity", "activity"],
+    ["/assistants", "assistants"],
     ["/kanban", "board"],
     ["/notes", "notes"],
     ["/usage", "usage"],
@@ -36,6 +37,7 @@ describe("resolveActiveDestination", () => {
 });
 
 const everything: RailContext = {
+  assistantsAvailable: true,
   boardAvailable: true,
   notesAvailable: true,
   pullRequestsSupported: true,
@@ -52,6 +54,7 @@ describe("resolveRailItems", () => {
   it("shows the everyday destinations with a working provider", () => {
     expect(shownIds(DEFAULT_RAIL_PREFERENCES, everything)).toEqual([
       "activity",
+      "assistants",
       "board",
       "notes",
       "pullRequests",
@@ -65,6 +68,12 @@ describe("resolveRailItems", () => {
     expect(
       shownIds(DEFAULT_RAIL_PREFERENCES, { ...everything, boardAvailable: false }),
     ).not.toContain("board");
+  });
+
+  it("drops assistants without an assistants environment", () => {
+    expect(
+      shownIds(DEFAULT_RAIL_PREFERENCES, { ...everything, assistantsAvailable: false }),
+    ).not.toContain("assistants");
   });
 
   it("drops notes without a notes environment", () => {

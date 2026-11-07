@@ -7,6 +7,7 @@ import {
   ArrowDownIcon,
   ArrowUpIcon,
   ActivityIcon,
+  BotIcon,
   CalendarClockIcon,
   ChartNoAxesColumnIcon,
   HouseIcon,
@@ -44,6 +45,7 @@ import {
   usePrimaryEnvironmentId,
   usePullRequestsSupported,
 } from "../../state/environments";
+import { useAssistantsEnvironmentIds } from "../../state/assistants";
 import { useKanbanEnvironmentIds } from "../../state/kanban";
 import { useNotesEnvironmentIds } from "../../state/notes";
 import { useActivityBadge } from "../activity/useActivity";
@@ -93,6 +95,11 @@ const RAIL_ITEMS: Record<
   { label: string; icon: LucideIcon | PullRequestGlyphIcon; unavailable?: string }
 > = {
   activity: { label: "Activity", icon: ActivityIcon },
+  assistants: {
+    label: "Assistants",
+    icon: BotIcon,
+    unavailable: "No connected environment has assistants",
+  },
   board: {
     label: "Board",
     icon: SquareKanbanIcon,
@@ -189,7 +196,7 @@ const ActivityRailItem = memo(function ActivityRailItem(props: {
 
 // Rail items, Home included, above the divider. It follows position, not particular items, so
 // it stays put as people reorder or hide items.
-const RAIL_DIVIDER_AFTER = 6;
+const RAIL_DIVIDER_AFTER = 7;
 
 const ADD_PROVIDER_BUTTON_ID = "destination-rail-add-provider";
 const CUSTOMIZE_RAIL_BUTTON_ID = "destination-rail-customize";
@@ -208,6 +215,7 @@ function RailLink(props: {
   active: DestinationId;
   toggleBack: ToggleBack;
   to:
+    | "/assistants"
     | "/kanban"
     | "/notes"
     | "/usage"
@@ -242,6 +250,17 @@ function RailItem(props: {
   switch (props.id) {
     case "activity":
       return <ActivityRailItem active={active === "activity"} onClick={toggleBack("activity")} />;
+    case "assistants":
+      return (
+        <RailLink
+          id="assistants"
+          to="/assistants"
+          label="Assistants"
+          icon={<BotIcon aria-hidden />}
+          active={active}
+          toggleBack={toggleBack}
+        />
+      );
     case "board":
       return (
         <RailLink
@@ -440,6 +459,7 @@ export const DestinationRail = memo(function DestinationRail() {
   const active = resolveActiveDestination(pathname);
   const toggleBack = useToggleBack(active);
   const pullRequestsSupported = usePullRequestsSupported();
+  const assistantsAvailable = useAssistantsEnvironmentIds().length > 0;
   const boardAvailable = useKanbanEnvironmentIds().length > 0;
   const notesAvailable = useNotesEnvironmentIds().length > 0;
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -455,6 +475,7 @@ export const DestinationRail = memo(function DestinationRail() {
   const preferences = railPreferencesForHydration(hydration, savedPreferences);
 
   const context: RailContext = {
+    assistantsAvailable,
     boardAvailable,
     notesAvailable,
     pullRequestsSupported,

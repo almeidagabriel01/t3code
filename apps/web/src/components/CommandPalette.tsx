@@ -56,6 +56,8 @@ import {
   BrainIcon,
   UserRoundIcon,
   UserRoundPlusIcon,
+  UsersIcon,
+  BotIcon,
   ActivityIcon,
   BellOffIcon,
   BellRingIcon,
@@ -96,6 +98,7 @@ import { useDecisionEntries } from "../state/decisions";
 import { useNotesEnvironmentIds } from "../state/notes";
 import { useNotesPaletteItems } from "./notes/notesPaletteItems";
 import { openAssistantDialog } from "./assistants/assistantDialogState";
+import { openAssistantTeamDialog } from "./assistants/assistantTeamState";
 import { useAssistantEntries } from "../state/assistants";
 import {
   useDeferredValue,
@@ -1760,17 +1763,39 @@ function OpenCommandPaletteDialog(props: {
       },
     });
   }
-  if (assistantEntries.active.length > 0) {
-    actionItems.push({
-      kind: "action",
-      value: "action:new-assistant",
-      searchTerms: ["assistant", "new", "create", "add"],
-      title: "New assistant",
-      icon: <UserRoundPlusIcon className={ITEM_ICON_CLASS} />,
-      run: async () => {
-        openAssistantDialog();
+  if (assistantEntries.environmentIds.length > 0) {
+    actionItems.push(
+      {
+        kind: "action",
+        value: "action:new-assistant",
+        searchTerms: ["assistant", "new", "create", "add"],
+        title: "New assistant",
+        icon: <UserRoundPlusIcon className={ITEM_ICON_CLASS} />,
+        run: async () => {
+          openAssistantDialog();
+        },
       },
-    });
+      {
+        kind: "action",
+        value: "action:new-assistant-group",
+        searchTerms: ["assistant", "group", "team", "new", "create", "add"],
+        title: "New group",
+        icon: <UsersIcon className={ITEM_ICON_CLASS} />,
+        run: async () => {
+          openAssistantTeamDialog();
+        },
+      },
+      {
+        kind: "action",
+        value: "action:open-assistants",
+        searchTerms: ["assistants", "agents", "team", "groups"],
+        title: "Open assistants",
+        icon: <BotIcon className={ITEM_ICON_CLASS} />,
+        run: async () => {
+          await navigate({ to: "/assistants" });
+        },
+      },
+    );
   }
 
   actionItems.push({

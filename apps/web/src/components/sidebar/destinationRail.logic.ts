@@ -1,6 +1,7 @@
 export type DestinationId =
   | "home"
   | "activity"
+  | "assistants"
   | "board"
   | "notes"
   | "pullRequests"
@@ -18,6 +19,7 @@ const isWithin = (pathname: string, base: string) =>
 /** Picks the rail destination for a URL. */
 export function resolveActiveDestination(pathname: string): DestinationId {
   if (pathname === "/activity") return "activity";
+  if (pathname === "/assistants") return "assistants";
   if (pathname === "/kanban") return "board";
   if (pathname === "/notes") return "notes";
   if (pathname === "/pull-requests") return "pullRequests";
@@ -31,6 +33,7 @@ export function resolveActiveDestination(pathname: string): DestinationId {
 /** Rail items a person can show, hide, and reorder, in their default order. Home and Settings stay pinned. */
 export const RAIL_ITEM_IDS = [
   "activity",
+  "assistants",
   "board",
   "notes",
   "pullRequests",
@@ -54,6 +57,7 @@ export interface RailPreferences {
 export const DEFAULT_RAIL_PREFERENCES: RailPreferences = { order: [], shown: [], hidden: [] };
 
 export interface RailContext {
+  readonly assistantsAvailable: boolean;
   readonly boardAvailable: boolean;
   readonly notesAvailable: boolean;
   readonly pullRequestsSupported: boolean;
@@ -75,6 +79,8 @@ export interface ResolvedRailItem {
 
 function isAvailable(id: RailItemId, context: RailContext): boolean {
   switch (id) {
+    case "assistants":
+      return context.assistantsAvailable;
     case "board":
       return context.boardAvailable;
     case "notes":

@@ -23,6 +23,7 @@ import { Route as ChatPullRequestsRouteImport } from './routes/_chat.pull-reques
 import { Route as ChatNotesRouteImport } from './routes/_chat.notes'
 import { Route as ChatNewRouteImport } from './routes/_chat.new'
 import { Route as ChatKanbanRouteImport } from './routes/_chat.kanban'
+import { Route as ChatAssistantsRouteImport } from './routes/_chat.assistants'
 import { Route as ChatActivityRouteImport } from './routes/_chat.activity'
 import { Route as ThreadsEnvironmentIdThreadIdRouteImport } from './routes/threads.$environmentId.$threadId'
 import { Route as ChatSettingsWorktreesRouteImport } from './routes/_chat.settings.worktrees'
@@ -129,6 +130,11 @@ const ChatNewRoute = ChatNewRouteImport.update({
 const ChatKanbanRoute = ChatKanbanRouteImport.update({
   id: '/kanban',
   path: '/kanban',
+  getParentRoute: () => ChatRoute,
+} as any)
+const ChatAssistantsRoute = ChatAssistantsRouteImport.update({
+  id: '/assistants',
+  path: '/assistants',
   getParentRoute: () => ChatRoute,
 } as any)
 const ChatActivityRoute = ChatActivityRouteImport.update({
@@ -337,6 +343,7 @@ export interface FileRoutesByFullPath {
   '/pair': typeof PairRoute
   '/welcome': typeof WelcomeRoute
   '/activity': typeof ChatActivityRoute
+  '/assistants': typeof ChatAssistantsRoute
   '/kanban': typeof ChatKanbanRoute
   '/new': typeof ChatNewRoute
   '/notes': typeof ChatNotesRoute
@@ -389,6 +396,7 @@ export interface FileRoutesByTo {
   '/pair': typeof PairRoute
   '/welcome': typeof WelcomeRoute
   '/activity': typeof ChatActivityRoute
+  '/assistants': typeof ChatAssistantsRoute
   '/kanban': typeof ChatKanbanRoute
   '/new': typeof ChatNewRoute
   '/notes': typeof ChatNotesRoute
@@ -444,6 +452,7 @@ export interface FileRoutesById {
   '/pair': typeof PairRoute
   '/welcome': typeof WelcomeRoute
   '/_chat/activity': typeof ChatActivityRoute
+  '/_chat/assistants': typeof ChatAssistantsRoute
   '/_chat/kanban': typeof ChatKanbanRoute
   '/_chat/new': typeof ChatNewRoute
   '/_chat/notes': typeof ChatNotesRoute
@@ -500,6 +509,7 @@ export interface FileRouteTypes {
     | '/pair'
     | '/welcome'
     | '/activity'
+    | '/assistants'
     | '/kanban'
     | '/new'
     | '/notes'
@@ -552,6 +562,7 @@ export interface FileRouteTypes {
     | '/pair'
     | '/welcome'
     | '/activity'
+    | '/assistants'
     | '/kanban'
     | '/new'
     | '/notes'
@@ -606,6 +617,7 @@ export interface FileRouteTypes {
     | '/pair'
     | '/welcome'
     | '/_chat/activity'
+    | '/_chat/assistants'
     | '/_chat/kanban'
     | '/_chat/new'
     | '/_chat/notes'
@@ -762,6 +774,13 @@ declare module '@tanstack/react-router' {
       path: '/kanban'
       fullPath: '/kanban'
       preLoaderRoute: typeof ChatKanbanRouteImport
+      parentRoute: typeof ChatRoute
+    }
+    '/_chat/assistants': {
+      id: '/_chat/assistants'
+      path: '/assistants'
+      fullPath: '/assistants'
+      preLoaderRoute: typeof ChatAssistantsRouteImport
       parentRoute: typeof ChatRoute
     }
     '/_chat/activity': {
@@ -1113,6 +1132,7 @@ const ChatSettingsRouteWithChildren = ChatSettingsRoute._addFileChildren(
 
 interface ChatRouteChildren {
   ChatActivityRoute: typeof ChatActivityRoute
+  ChatAssistantsRoute: typeof ChatAssistantsRoute
   ChatKanbanRoute: typeof ChatKanbanRoute
   ChatNewRoute: typeof ChatNewRoute
   ChatNotesRoute: typeof ChatNotesRoute
@@ -1126,6 +1146,7 @@ interface ChatRouteChildren {
 
 const ChatRouteChildren: ChatRouteChildren = {
   ChatActivityRoute: ChatActivityRoute,
+  ChatAssistantsRoute: ChatAssistantsRoute,
   ChatKanbanRoute: ChatKanbanRoute,
   ChatNewRoute: ChatNewRoute,
   ChatNotesRoute: ChatNotesRoute,
