@@ -52,9 +52,10 @@ import {
   useThreadShell,
   useVisibleThreadShells,
 } from "../../state/entities";
-import { useAssistantEntries } from "../../state/assistants";
+import { useAssistantEntries, useAssistantsEnvironmentIds } from "../../state/assistants";
 import { useAutonomyPause } from "../../state/autonomy";
 import { useOpenAssistantEditor } from "../assistants/openAssistantEditor";
+import { useOpenAssistantTeam } from "../assistants/assistantTeamTarget";
 import { useHasKanbanEnvironments } from "../../state/kanban";
 import { useImessageEnvironmentIds } from "../../state/imessageChannel";
 import { useTelegramEnvironmentIds } from "../../state/telegramChannel";
@@ -248,8 +249,10 @@ export function CommandPalette(props: {
   const hasTelegram = useTelegramEnvironmentIds().length > 0;
   const hasMac = useMacEnvironmentIds().length > 0;
   const assistants = useAssistantEntries().active;
+  const hasAssistantsEnvironment = useAssistantsEnvironmentIds().length > 0;
   const autonomyPause = useAutonomyPause();
   const openAssistantEditor = useOpenAssistantEditor();
+  const openAssistantTeam = useOpenAssistantTeam();
   const threads = useVisibleThreadShells();
   const activeThreadRef = parseActiveThreadPath(props.pathname);
   const activeThread = useThreadShell(activeThreadRef);
@@ -477,6 +480,31 @@ export function CommandPalette(props: {
         searchTerms: ["assistant", "new", "create", "add"],
         run: () => openAssistantEditor(firstAssistant.environmentId, null),
       });
+      actions.push(
+        {
+          key: "newAssistantGroup",
+          kind: "action",
+          title: "New assistant group",
+          searchTerms: ["assistant", "group", "team", "new", "create"],
+          run: () => openAssistantTeam.edit(firstAssistant.environmentId, null),
+        },
+        {
+          key: "describeAssistant",
+          kind: "action",
+          title: "Describe an assistant",
+          searchTerms: ["assistant", "group", "build", "create", "describe"],
+          run: () => navigation.navigate("SettingsAssistantDescribe"),
+        },
+      );
+    }
+    if (assistants.length > 0 || hasAssistantsEnvironment) {
+      actions.push({
+        key: "assistants",
+        kind: "action",
+        title: "Assistants",
+        searchTerms: ["assistants", "groups", "team", "agents", "page"],
+        run: () => openSettings(navigation, "SettingsAssistants"),
+      });
     }
     const projectByKey = new Map(
       projects.map((project) => [scopedProjectKey(project.environmentId, project.id), project]),
@@ -597,6 +625,8 @@ export function CommandPalette(props: {
     hasTelegram,
     hasMac,
     assistants,
+    hasAssistantsEnvironment,
+    openAssistantTeam,
     autonomyPause,
     openAssistantEditor,
     canTriage,
