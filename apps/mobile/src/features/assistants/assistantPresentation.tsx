@@ -4,19 +4,24 @@ import type {
   AssistantToolAccess,
   AssistantWorkspace,
   BudgetPeriod,
+  EnvironmentId,
 } from "@t3tools/contracts";
 import {
   ASSISTANT_ICON_STROKE_WIDTH,
   ASSISTANT_ICON_VIEWBOX,
   assistantIconFor,
 } from "@t3tools/client-runtime/assistantIcons";
-import { assistantInitial } from "@t3tools/client-runtime/assistantPresence";
+import { assistantRobotLook, type AssistantMood } from "@t3tools/client-runtime/assistantRobot";
+import { Image } from "expo-image";
+import { useState } from "react";
 import { View } from "react-native";
 import Svg, { Path } from "react-native-svg";
 import { withUniwind } from "uniwind";
 
-import { AppText as Text } from "../../components/ui/AppText";
 import type { AppSymbolName } from "../../components/ui/AppSymbol";
+import { useAssistantEntries } from "../../state/assistants";
+import { useAssetUrlState } from "../../state/assets";
+import { AssistantRobot } from "./AssistantRobot";
 
 export const WORKSPACE_OPTIONS: ReadonlyArray<{
   readonly value: AssistantWorkspace;
@@ -99,46 +104,84 @@ export function AssistantIconGlyph(props: {
   );
 }
 
-function hueOf(handle: string): number {
-  let hash = 0;
-  for (const char of handle) hash = (hash * 31 + char.codePointAt(0)!) % 360;
-  return hash;
-}
-
-/** The assistant's initial on a tint taken from its handle, so each reads as itself. */
-export function AssistantAvatar(props: {
-  readonly assistant: Pick<Assistant, "name" | "handle" | "icon">;
-  readonly size?: number;
+/** The uploaded picture, loaded through its signed URL; the robot shows until it arrives or if it fails. */
+function AssistantImageAvatar(props: {
+  readonly assistant: Pick<Assistant, "id" | "avatar" | "icon">;
+  readonly revision: number;
+  readonly environmentId: EnvironmentId | null | undefined;
+  readonly mood: AssistantMood | undefined;
+  readonly size: number;
 }) {
-  const size = props.size ?? 28;
-  const hue = hueOf(props.assistant.handle);
+  const { assistant, size } = props;
+  const entries = useAssistantEntries();
+  const environmentId =
+    props.environmentId ??
+    [...entries.active, ...entries.archived].find((entry) => entry.assistant.id === assistant.id)
+      ?.environmentId ??
+    null;
+  const asset = useAssetUrlState(
+    environmentId,
+    { _tag: "assistant-avatar", assistantId: assistant.id },
+    String(props.revision),
+  );
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  if (asset._tag !== "Success" || asset.url === failedUrl) {
+    return <AssistantRobot look={assistantRobotLook(assistant)} mood={props.mood} size={size} />;
+  }
   return (
-    <View
+    <Image
       accessibilityElementsHidden
       importantForAccessibility="no-hide-descendants"
-      className="items-center justify-center rounded-full"
-      style={{
-        width: size,
-        height: size,
-        backgroundColor: `hsla(${hue}, 70%, 55%, 0.22)`,
-      }}
-    >
-      {assistantIconFor(props.assistant.icon) ? (
+      source={{ uri: asset.url }}
+      contentFit="cover"
+      style={{ width: size, height: size, borderRadius: size * 0.28 }}
+      onError={() => setFailedUrl(asset.url)}
+    />
+  );
+}
+
+/**
+ * The assistant's picture, its robot, or the icon it chose before robots existed. The robot's face
+ * follows `mood`, so a row shows at a glance whether it works, waits on the user or failed.
+ */
+export function AssistantAvatar(props: {
+  readonly assistant: Pick<Assistant, "id" | "avatar" | "icon">;
+  readonly mood?: AssistantMood;
+  readonly size?: number;
+  /** Where the picture is served from; found from the assistant list when left out. */
+  readonly environmentId?: EnvironmentId | null;
+}) {
+  const { assistant } = props;
+  const size = props.size ?? 28;
+  if (assistant.avatar?.kind === "image") {
+    return (
+      <AssistantImageAvatar
+        assistant={assistant}
+        revision={assistant.avatar.revision}
+        environmentId={props.environmentId}
+        mood={props.mood}
+        size={size}
+      />
+    );
+  }
+  if (assistant.avatar === null && assistantIconFor(assistant.icon) !== null) {
+    const hue = assistantRobotLook(assistant).hue;
+    return (
+      <View
+        accessibilityElementsHidden
+        importantForAccessibility="no-hide-descendants"
+        className="items-center justify-center rounded-full"
+        style={{ width: size, height: size, backgroundColor: `hsla(${hue}, 70%, 55%, 0.22)` }}
+      >
         <AssistantIconGlyph
-          icon={props.assistant.icon}
+          icon={assistant.icon}
           size={size * 0.62}
           color={`hsl(${hue}, 60%, 45%)`}
         />
-      ) : (
-        <Text
-          className="font-t3-bold"
-          style={{ fontSize: size * 0.46, color: `hsl(${hue}, 60%, 45%)` }}
-        >
-          {assistantInitial(props.assistant.name)}
-        </Text>
-      )}
-    </View>
-  );
+      </View>
+    );
+  }
+  return <AssistantRobot look={assistantRobotLook(assistant)} mood={props.mood} size={size} />;
 }
 
 export const BUDGET_PERIOD_OPTIONS: ReadonlyArray<{

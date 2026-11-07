@@ -41,6 +41,8 @@ vi.mock("react-native", () => ({
   ),
 }));
 vi.mock("react-native-svg", () => ({ default: Children, Path: () => null }));
+vi.mock("expo-image", () => ({ Image: () => null }));
+vi.mock("../../state/assets", () => ({ useAssetUrlState: () => null }));
 vi.mock("uniwind", () => ({ withUniwind: (component: unknown) => component }));
 vi.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ bottom: 0 }) }));
 vi.mock("@react-navigation/native", () => ({

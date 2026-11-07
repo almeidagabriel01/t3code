@@ -4,7 +4,9 @@ import { describe, expect, it, vi } from "vite-plus/test";
 vi.mock("react-native", () => ({ View: () => null }));
 vi.mock("react-native-svg", () => ({ default: () => null, Path: () => null }));
 vi.mock("uniwind", () => ({ withUniwind: (component: unknown) => component }));
-vi.mock("../../components/ui/AppText", () => ({ AppText: () => null }));
+vi.mock("expo-image", () => ({ Image: () => null }));
+vi.mock("../../state/assistants", () => ({ useAssistantEntries: () => null }));
+vi.mock("../../state/assets", () => ({ useAssetUrlState: () => null }));
 
 import { budgetSpendLine } from "./assistantPresentation";
 
