@@ -47,15 +47,12 @@ const brief = (
     enabled,
   })),
   role: assistant.role,
-  reportsTo: all.find((other) => other.id === assistant.reportsTo)?.handle ?? null,
-  reports: all.filter((other) => other.reportsTo === assistant.id).map((other) => other.handle),
   teams: teams
     .filter((team) => team.memberIds.includes(assistant.id))
     .map((team) => ({
       name: team.name,
       members: team.memberIds.flatMap((id) => all.find((other) => other.id === id)?.handle ?? []),
-      leader: all.find((other) => other.id === team.leaderId)?.handle ?? null,
-      leaderTitle: team.leaderTitle,
+      lead: all.find((other) => other.id === team.leadId)?.handle ?? null,
     })),
   archived: assistant.archivedAt !== null,
 });
@@ -184,8 +181,6 @@ const mutate = Effect.fn("mcp.assistant.mutate")(function* (input: AssistantPara
       }
       if (input.name === undefined || input.name.trim() === "")
         return yield* invalid("create needs `name`.");
-      const reportsTo =
-        input.reportsTo == null ? undefined : (yield* find(all, input.reportsTo, "reportsTo")).id;
       const projectId = (input.projectId ??
         (yield* (yield* ManagedProjectFolders.ManagedProjectFolders).ensureAssistantProject.pipe(
           Effect.mapError(() => unavailable()),
@@ -207,7 +202,6 @@ const mutate = Effect.fn("mcp.assistant.mutate")(function* (input: AssistantPara
             toolAccess,
             ...(input.workspace === undefined ? {} : { workspace: input.workspace }),
             ...(input.role === undefined ? {} : { role: input.role }),
-            ...(reportsTo === undefined ? {} : { reportsTo }),
             ...(avatar === undefined ? {} : { avatar }),
           },
           { id: `mcp-${sha(key).slice(0, 24)}` },
@@ -226,12 +220,6 @@ const mutate = Effect.fn("mcp.assistant.mutate")(function* (input: AssistantPara
             .pipe(Effect.mapError(failure)),
         );
       }
-      const reportsTo =
-        input.reportsTo === undefined
-          ? undefined
-          : input.reportsTo === null
-            ? null
-            : (yield* find(all, input.reportsTo, "reportsTo")).id;
       // Steering an assistant above your level is as strong as raising yours.
       const reached = rankOf(input.toolAccess ?? target.toolAccess);
       if (Math.max(reached, rankOf(target.toolAccess)) > callerRank) {
@@ -250,7 +238,6 @@ const mutate = Effect.fn("mcp.assistant.mutate")(function* (input: AssistantPara
         ...(input.workspace === undefined ? {} : { workspace: input.workspace }),
         ...(input.projectId === undefined ? {} : { projectId: input.projectId as ProjectId }),
         ...(input.role === undefined ? {} : { role: input.role }),
-        ...(reportsTo === undefined ? {} : { reportsTo }),
         ...(avatar === undefined ? {} : { avatar }),
       };
       return done("updated", yield* assistants.update(update).pipe(Effect.mapError(failure)));
@@ -260,14 +247,13 @@ const mutate = Effect.fn("mcp.assistant.mutate")(function* (input: AssistantPara
       if (name === undefined || name.trim() === "")
         return yield* invalid("group_create needs `name`.");
       const members = yield* resolveActive(all, input.members ?? []);
-      const leader = input.leader == null ? null : (yield* find(all, input.leader, "leader")).id;
+      const lead = input.lead == null ? null : (yield* find(all, input.lead, "lead")).id;
       const team = yield* assistants
         .createTeam(
           {
             name,
             memberIds: members.map((member) => member.id),
-            leaderId: leader,
-            leaderTitle: input.leaderTitle ?? null,
+            leadId: lead,
           },
           { id: `mcp-${sha(key).slice(0, 24)}` },
         )
@@ -293,19 +279,18 @@ const mutate = Effect.fn("mcp.assistant.mutate")(function* (input: AssistantPara
       const memberIds = [...new Set([...base, ...joining.map((member) => member.id)])].filter(
         (id) => !leaving.has(id),
       );
-      const leader =
-        input.leader === undefined
+      const lead =
+        input.lead === undefined
           ? undefined
-          : input.leader === null
+          : input.lead === null
             ? null
-            : (yield* find(all, input.leader, "leader")).id;
+            : (yield* find(all, input.lead, "lead")).id;
       const updated = yield* assistants
         .updateTeam({
           teamId: team.id,
           ...(input.name === undefined ? {} : { name: input.name }),
           memberIds,
-          ...(leader === undefined ? {} : { leaderId: leader }),
-          ...(input.leaderTitle === undefined ? {} : { leaderTitle: input.leaderTitle }),
+          ...(lead === undefined ? {} : { leadId: lead }),
         })
         .pipe(Effect.mapError(failure));
       return { status: "updated", group: teamBrief(updated, all) };
@@ -317,8 +302,7 @@ const teamBrief = (team: AssistantTeam, all: ReadonlyArray<Assistant>): Out => (
   groupId: team.id,
   name: team.name,
   members: team.memberIds.flatMap((id) => all.find((other) => other.id === id)?.handle ?? []),
-  leader: all.find((other) => other.id === team.leaderId)?.handle ?? null,
-  leaderTitle: team.leaderTitle,
+  lead: all.find((other) => other.id === team.leadId)?.handle ?? null,
 });
 
 export const layer = McpToolAccess.toLayer(AssistantToolkit, {

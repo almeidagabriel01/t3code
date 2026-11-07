@@ -99,7 +99,6 @@ describe("assistant client guards", () => {
       WS_METHODS.assistantsSubscribe,
       WS_METHODS.assistantsSpend,
       WS_METHODS.assistantSandboxSubscribe,
-      WS_METHODS.assistantTeamsActivity,
     ])
       expect(Object.hasOwn(CLIENT_GUARDED_RPC_SCOPES, method)).toBe(false);
   });

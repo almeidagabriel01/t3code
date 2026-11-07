@@ -16,41 +16,29 @@ type Colleague = Pick<Assistant, "name" | "handle" | "threadId">;
 const colleague = (other: Colleague) =>
   `${other.name} (@${other.handle}, threadId ${other.threadId ?? "none yet"})`;
 
-/** One line the model can act on: who to ask, who it answers to. Empty without an org relation. */
-function teamLine(leader: Colleague | null, reports: ReadonlyArray<Colleague>): string {
-  const parts = [
-    leader === null
-      ? ""
-      : `You report to ${colleague(leader)}; answer them through your run result, never by messaging them.`,
-    reports.length === 0 ? "" : `Your direct reports: ${reports.map(colleague).join("; ")}.`,
-  ].filter((part) => part !== "");
-  return escapeBody(parts.join(" "));
-}
-
 export interface TeamMembership {
-  readonly team: Pick<AssistantTeam, "name" | "leaderTitle">;
-  readonly leader: Colleague | null;
+  readonly team: Pick<AssistantTeam, "name">;
+  readonly lead: Colleague | null;
   readonly teammates: ReadonlyArray<Colleague & { readonly role?: string | undefined }>;
 }
 
 const TEAM_GUIDANCE =
-  "Talk to a teammate with t3_thread_send to its threadId only when the work needs them, then t3_thread_wait on the run it returns. Keep exchanges short and purposeful, never reply just to acknowledge, and do not message assistants outside your teams. If a send is refused because you messaged teammates too much, stop and report to the user instead. Summarize for the user what the team did.";
+  "These are your teammates; you may hand work to any of them with t3_thread_send to its threadId, then t3_thread_wait on the run it returns. Message one only when the work needs them, keep exchanges short, and never reply just to acknowledge. Summarize for the user what the group did.";
 
-/** One block per team the assistant is in; empty when it is in none. */
+/** One block per group the assistant is in; empty when it is in none. */
 function teamsLines(self: Pick<Colleague, "handle">, teams: ReadonlyArray<TeamMembership>): string {
   if (teams.length === 0) return "";
-  const lines = teams.map(({ team, leader, teammates }) => {
-    const title = team.leaderTitle ?? "leader";
+  const lines = teams.map(({ team, lead, teammates }) => {
     const members = teammates
       .map((mate) => (mate.role ? `${colleague(mate)}, ${mate.role}` : colleague(mate)))
       .join("; ");
-    const leaderLine =
-      leader === null
+    const leadLine =
+      lead === null
         ? ""
-        : leader.handle === self.handle
-          ? ` You are the team's ${title}: coordinate the work and collect your teammates' results.`
-          : ` ${leader.name} is the team's ${title}: report your results to them with t3_thread_send.`;
-    return `Team "${team.name}": ${members}.${leaderLine}`;
+        : lead.handle === self.handle
+          ? " You route group requests that mention no one."
+          : ` ${lead.name} routes group requests that mention no one.`;
+    return `Group "${team.name}": ${members}.${leadLine}`;
   });
   return escapeBody([...lines, TEAM_GUIDANCE].join("\n"));
 }
@@ -65,10 +53,6 @@ export function assistantNoteFor(
     readonly scope?: Assistant["scope"] | undefined;
   },
   userText: string,
-  team: { readonly leader: Colleague | null; readonly reports: ReadonlyArray<Colleague> } = {
-    leader: null,
-    reports: [],
-  },
   teams: ReadonlyArray<TeamMembership> = [],
   /** The sandbox's environment id; null while it is not linked. Read only for a sandboxed assistant. */
   sandboxEnvironmentId: string | null = null,
@@ -83,7 +67,6 @@ export function assistantNoteFor(
       : `access="${assistant.toolAccess}"`;
   const open = `<t3_assistant name="${escapeAttribute(assistant.name)}" handle="${assistant.handle}"${role} ${access}>`;
   const body = [
-    teamLine(team.leader, team.reports),
     teamsLines(assistant, teams),
     assistant.workspace === "sandbox" ? sandboxNoteLine(sandboxEnvironmentId) : "",
     assistant.scope === "project" ? PROJECT_SCOPE_NOTE_LINE : "",
@@ -108,13 +91,12 @@ export const assistantNote = Effect.fn("AssistantNote.forTurn")(function* (
   const found = yield* directory.value.forThread(threadId);
   if (Option.isNone(found)) return "";
   const { assistant } = found.value;
-  const team = userText.trimStart().startsWith("/")
-    ? undefined
-    : yield* directory.value.teamOf(assistant);
-  const teams = team === undefined ? [] : yield* directory.value.teamsOf(assistant);
+  const teams = userText.trimStart().startsWith("/")
+    ? []
+    : yield* directory.value.teamsOf(assistant);
   const sandbox =
     assistant.workspace === "sandbox"
       ? Option.getOrNull(yield* directory.value.sandboxEnvironmentId)
       : null;
-  return assistantNoteFor(assistant, userText, team, teams, sandbox);
+  return assistantNoteFor(assistant, userText, teams, sandbox);
 });

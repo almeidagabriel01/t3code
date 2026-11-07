@@ -1,7 +1,6 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
 import {
-  ASSISTANT_STANDUP_PROMPT_HEAD,
   DEFAULT_AUTONOMY_SETTINGS,
   type AssistantAutonomy,
   type AutonomySettings,
@@ -671,50 +670,6 @@ it.effect("a failed wake run delivers its error, and a paused server delivers no
     assert.lengthOf(yield* outboxRows, rows.length);
   }).pipe(Effect.provide(h.layer));
 });
-
-it.effect(
-  "a leader's standup run reaches the user unless autonomy is paused; other schedules do not",
-  () => {
-    const h = harness();
-    return Effect.gen(function* () {
-      const service = yield* Autonomy.AutonomyService;
-      const sql = yield* SqlClient.SqlClient;
-      yield* addAssistant({ ...awake, mode: "reply-only" });
-      const task = (id: string, prompt: string) =>
-        sql`
-        INSERT INTO scheduled_tasks (
-          task_id, title, prompt, enabled, schedule_json, project_id, thread_id,
-          workspace_strategy_json, model_selection_json, runtime_mode, interaction_mode,
-          created_by, creation_source, created_at, updated_at, last_run_status, run_count
-        ) VALUES (${id}, 'Renamed', ${prompt}, 1, '{}', 'p1', 'assistant:jarvis:1', '{}', '{}',
-          'full-access', 'default', 'system', 'server', '2026-01-01', '2026-01-01', 'never', 0)`;
-      yield* task("standup:1", `${ASSISTANT_STANDUP_PROMPT_HEAD}\nAsk everyone.`);
-      yield* task("other:1", "Check the weather.");
-      h.answers.set("assistant:jarvis:1", "Eng shipped, nothing blocked.");
-      const finish = (id: string, message: string) =>
-        service.handleEvent(run("completed", id, "assistant:jarvis:1", message));
-
-      // The pause switch silences the standup too.
-      yield* Ref.set(h.settings, { ...ON, enabled: false });
-      yield* finish("r0", "scheduled-task-message:standup:1:1600:schedule");
-      assert.lengthOf(yield* outboxRows, 0);
-      yield* Ref.set(h.settings, ON);
-
-      yield* finish("r1", "scheduled-task-message:other:1:1700:schedule");
-      assert.lengthOf(yield* outboxRows, 0);
-      yield* finish("r2", "scheduled-task-message:standup:1:1700:schedule");
-      const rows = yield* outboxRows;
-      assert.lengthOf(rows, 1);
-      assert.include(rows[0]!.message.text, "Daily standup");
-      assert.include(rows[0]!.message.text, "Eng shipped");
-      const decisions = yield* DecisionService.DecisionService;
-      assert.lengthOf(yield* decisions.list({}), 1);
-      // A replay of the same run delivers once.
-      yield* finish("r2", "scheduled-task-message:standup:1:1700:schedule");
-      assert.lengthOf(yield* outboxRows, 1);
-    }).pipe(Effect.provide(h.layer));
-  },
-);
 
 it.effect("start follows the event streams and the sweep timer", () => {
   const h = harness();

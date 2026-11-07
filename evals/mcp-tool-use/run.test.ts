@@ -6,12 +6,7 @@ import * as Layer from "effect/Layer";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { assert, expect, it } from "@effect/vitest";
-import {
-  ASSISTANT_STANDUP_PROMPT,
-  ComposerContextId,
-  EnvironmentId,
-  ThreadId,
-} from "@t3tools/contracts";
+import { ComposerContextId, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 
 import {
@@ -3444,14 +3439,4 @@ it.each([
     }),
     [],
   );
-});
-
-it("the standup case uses the exact standup prompt the server schedules", () => {
-  const line = NodeFS.readFileSync(
-    new URL("./cases/assistant-team.ndjson", import.meta.url),
-    "utf8",
-  )
-    .split("\n")
-    .find((row) => row.includes('"team-standup-asks-each-report"'))!;
-  assert.strictEqual(JSON.parse(line).prompt, ASSISTANT_STANDUP_PROMPT);
 });

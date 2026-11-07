@@ -37,8 +37,6 @@ export const AssistantParameters = Schema.Struct({
   /** A real project makes it a project assistant; leave out for the default home. */
   projectId: Schema.optional(Text(128)),
   role: Schema.optional(Text(60)),
-  /** A handle, or null for top-level. */
-  reportsTo: Schema.optional(Schema.NullOr(Text(64))),
   /** 0-359: the color of its robot avatar. */
   avatarHue: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 359 }))),
   /** group_update: the group's name. group_create: leave it for `name`. */
@@ -47,16 +45,15 @@ export const AssistantParameters = Schema.Struct({
   members: Schema.optional(Schema.Array(Text(64)).check(Schema.isMaxLength(50))),
   addMembers: Schema.optional(Schema.Array(Text(64)).check(Schema.isMaxLength(50))),
   removeMembers: Schema.optional(Schema.Array(Text(64)).check(Schema.isMaxLength(50))),
-  /** A member's handle, or null for no leader. */
-  leader: Schema.optional(Schema.NullOr(Text(64))),
-  leaderTitle: Schema.optional(Schema.NullOr(Text(60))),
+  /** A member's handle, or null for no lead. */
+  lead: Schema.optional(Schema.NullOr(Text(64))),
 });
 export type AssistantParameters = typeof AssistantParameters.Type;
 
 const AssistantTool = Tool.make("t3_assistant", {
   description: [
-    "The user's named assistants (Jarvis, others), each a long-lived thread, and their groups. Read: `list`, or `read` a `handle`: {handle, name, threadId, toolAccess, askBeforeActing, workspace (host or sandbox), icon, avatar, scope (all or project), connectors, role, reportsTo, reports, teams: [{name, members, leader, leaderTitle}], archived}. To ask one something, t3_thread_send to its threadId, then t3_thread_wait. Members of a group may message each other.",
-    "Change (all take an optional `clientRequestId`; a repeat with the same one changes nothing more): `create` {name, instructions, toolAccess, workspace?, projectId?, role?, reportsTo?, avatarHue?}, `update` {handle, any of those}, `archive` {handle}, `group_create` {name, members?: handles, leader?, leaderTitle?}, `group_update` {group, name?, members? (replaces), addMembers?, removeMembers?, leader?, leaderTitle?}. Groups may be empty or hold one assistant; only active assistants can join.",
+    "The user's named assistants (Jarvis, others), each a long-lived thread, and their groups. Read: `list`, or `read` a `handle`: {handle, name, threadId, toolAccess, askBeforeActing, workspace (host or sandbox), icon, avatar, scope (all or project), connectors, role, teams: [{name, members, lead}], archived}. To ask one something, t3_thread_send to its threadId, then t3_thread_wait. Members of a group may message each other.",
+    "Change (all take an optional `clientRequestId`; a repeat with the same one changes nothing more): `create` {name, instructions, toolAccess, workspace?, projectId?, role?, avatarHue?}, `update` {handle, any of those}, `archive` {handle}, `group_create` {name, members?: handles, lead?}, `group_update` {group, name?, members? (replaces), addMembers?, removeMembers?, lead?}. Groups may be empty or hold one assistant; only active assistants can join. A group's optional `lead` (a member's handle) only routes a group request that mentions no one; it gives no extra permissions.",
     'toolAccess is read-only, workspace-write or full, and is the user\'s call: on `create` it is required. If the user did not say which, ask them first and offer `default (up to my level)` or a custom setup; never pick it yourself and do not call create until they answer. Default means your own level, or the closest one below it. A level above yours (or changing an assistant that is above yours) is not made right away: the user gets an approval card and the result is {status: "pending_approval"}. Tell the user it is waiting, then repeat the same call (same clientRequestId) once they approve.',
   ].join(" "),
   parameters: AssistantParameters,

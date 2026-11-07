@@ -35,7 +35,6 @@ const assistant = (id: string, overrides: Partial<Assistant> = {}): Assistant =>
   threadId: `assistant:${id}:1` as ThreadId,
   generation: 1,
   role: "",
-  reportsTo: null,
   budget: null,
   autonomy: { mode: "reply-only", rules: null, projectIds: null, channels: null },
   archivedAt: null,
@@ -81,8 +80,7 @@ describe("assistants state", () => {
       id: id as AssistantTeamId,
       name: id,
       memberIds: ["a", "b"] as AssistantId[],
-      leaderId: null,
-      leaderTitle: null,
+      leadId: null,
       createdAt,
       updatedAt: createdAt,
     });

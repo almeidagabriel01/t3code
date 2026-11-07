@@ -215,14 +215,13 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
     )
   `;
   yield* sql`CREATE UNIQUE INDEX IF NOT EXISTS assistants_default_idx ON assistants(is_default) WHERE is_default = 1`;
-  // Members are a JSON array of assistant ids. A leader is one of them; its title is free text.
+  // Members are a JSON array of assistant ids. The optional lead is one of them.
   yield* sql`
     CREATE TABLE IF NOT EXISTS assistant_teams (
       team_id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       member_ids_json TEXT NOT NULL,
-      leader_id TEXT,
-      leader_title TEXT,
+      lead_id TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     )
@@ -366,8 +365,16 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
   if (!assistantColumns.some((column) => column.name === "role")) {
     yield* sql`ALTER TABLE assistants ADD COLUMN role TEXT NOT NULL DEFAULT ''`;
   }
-  if (!assistantColumns.some((column) => column.name === "reports_to")) {
-    yield* sql`ALTER TABLE assistants ADD COLUMN reports_to TEXT`;
+  // Groups have no leader or org chart; the old leader becomes the lead, the rest is dropped.
+  if (assistantColumns.some((column) => column.name === "reports_to")) {
+    yield* sql`ALTER TABLE assistants DROP COLUMN reports_to`;
+  }
+  const teamColumns = yield* sql<{ readonly name: string }>`PRAGMA table_info(assistant_teams)`;
+  if (teamColumns.some((column) => column.name === "leader_id")) {
+    yield* sql`ALTER TABLE assistant_teams RENAME COLUMN leader_id TO lead_id`;
+  }
+  if (teamColumns.some((column) => column.name === "leader_title")) {
+    yield* sql`ALTER TABLE assistant_teams DROP COLUMN leader_title`;
   }
   if (!assistantColumns.some((column) => column.name === "ask_before_acting")) {
     yield* sql`ALTER TABLE assistants ADD COLUMN ask_before_acting INTEGER NOT NULL DEFAULT 0`;

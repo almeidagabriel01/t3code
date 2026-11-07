@@ -4,7 +4,6 @@ import {
   type AssistantId,
   type AssistantsCreateInput,
   type AssistantTeam,
-  type AssistantTeamActivity,
   type AssistantTeamId,
   type AssistantTeamsCreateInput,
   type AssistantTeamsUpdateInput,
@@ -14,10 +13,6 @@ import {
   type AssistantScope,
   type AssistantsSetAvatarImageInput,
   type AssistantsUpdateInput,
-  ASSISTANT_STANDUP_PROMPT,
-  ASSISTANT_STANDUP_PROMPT_HEAD,
-  ASSISTANT_STANDUP_TASK_TITLE,
-  assistantDescendantIds,
   assistantHandleFromName,
   assistantIdFromThreadId,
   assistantThreadIdFor,
@@ -61,7 +56,6 @@ import {
   type AssistantTeamRow,
   allTeams,
   encodeMemberIds,
-  readTeamActivity,
   toAssistantTeam,
 } from "./AssistantTeams.ts";
 import {
@@ -123,10 +117,6 @@ export class AssistantService extends Context.Service<
       input: AssistantTeamsUpdateInput,
     ) => Effect.Effect<AssistantTeam, AssistantError>;
     readonly removeTeam: (teamId: AssistantTeamId) => Effect.Effect<void, AssistantError>;
-    /** The messages members sent each other, read from their conversations. */
-    readonly teamActivity: (
-      teamId: AssistantTeamId,
-    ) => Effect.Effect<AssistantTeamActivity, AssistantError>;
   }
 >()("t3/assistants/AssistantService") {}
 
@@ -458,79 +448,6 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  /** `self` is absent on create, where no cycle is possible yet. */
-  const checkReportsTo = Effect.fn("AssistantService.checkReportsTo")(function* (
-    self: string | undefined,
-    leaderId: string,
-  ) {
-    const all = yield* allRows;
-    const leader = all.find((row) => row.assistant_id === leaderId);
-    if (leader === undefined) return yield* invalid("That leader does not exist.");
-    if (leader.archived_at !== null) return yield* invalid("That leader is archived.");
-    if (self === undefined) return;
-    if (leaderId === self) return yield* invalid("An assistant can't report to itself.");
-    const below = assistantDescendantIds(
-      all.map((row) => ({ id: row.assistant_id, reportsTo: row.reports_to })),
-      self,
-    );
-    if (below.has(leaderId)) {
-      return yield* invalid(
-        "That leader already reports to this assistant, which would be a loop.",
-      );
-    }
-  });
-
-  /** Reports of a leader that is archived or deleted become top-level; each is announced. */
-  const releaseReports = Effect.fn("AssistantService.releaseReports")(function* (leaderId: string) {
-    const reports = yield* sql<{ readonly assistant_id: string }>`
-      SELECT assistant_id FROM assistants WHERE reports_to = ${leaderId}`;
-    if (reports.length === 0) return;
-    yield* sql`UPDATE assistants SET reports_to = NULL, updated_at = ${yield* nowIso} WHERE reports_to = ${leaderId}`;
-    yield* Effect.forEach(reports, (report) => publish(report.assistant_id), { discard: true });
-  });
-
-  /** Once per assistant: an existing standup, even a renamed or paused one, is left as it is. */
-  const addStandup = Effect.fn("AssistantService.addStandup")(function* (assistantId: string) {
-    const row = yield* findRow(assistantId);
-    if (row.archived_at !== null || row.thread_id === null) {
-      return yield* invalid("Unarchive the assistant before adding a standup.");
-    }
-    const reports = yield* sql<{ readonly one: number }>`
-      SELECT 1 AS one FROM assistants WHERE reports_to = ${assistantId} AND archived_at IS NULL`;
-    if (reports.length === 0) return yield* invalid("Only a leader with reports has a standup.");
-    const listed = yield* scheduledTasks
-      .list()
-      .pipe(Effect.catch(threadFailure("Could not read the assistant's schedules.")));
-    if (
-      listed.tasks.some(
-        (task) =>
-          task.threadId === row.thread_id && task.prompt.startsWith(ASSISTANT_STANDUP_PROMPT_HEAD),
-      )
-    ) {
-      return;
-    }
-    const thread = yield* inspectThread(row.thread_id as ThreadId);
-    const modelSelection =
-      thread?.modelSelection ?? (yield* defaultModelSelection(row.project_id as ProjectId));
-    yield* scheduledTasks
-      .upsert({
-        commandId: CommandId.make(`assistant-standup:${assistantId}`),
-        title: ASSISTANT_STANDUP_TASK_TITLE,
-        prompt: ASSISTANT_STANDUP_PROMPT,
-        enabled: true,
-        schedule: { type: "fixed_time", timeOfDay: "09:00", weekdays: [1, 2, 3, 4, 5] },
-        projectId: row.project_id as ProjectId,
-        threadId: row.thread_id as ThreadId,
-        workspaceStrategy: { type: "root" },
-        modelSelection,
-        runtimeMode: runtimeModeForToolAccess(toAssistant(row).toolAccess),
-        interactionMode: "default",
-        createdBy: "system",
-        creationSource: "server",
-      })
-      .pipe(Effect.catch(threadFailure("Could not add the standup schedule.")));
-  });
-
   const create: AssistantService["Service"]["create"] = Effect.fn("AssistantService.create")(
     function* (input, options) {
       if (input.restoreDefault === true) return yield* ensureDefault;
@@ -549,7 +466,6 @@ const make = Effect.gen(function* () {
             if (existing[0] !== undefined) return toAssistant(existing[0]);
           }
           yield* handleTaken(handle);
-          if (input.reportsTo != null) yield* checkReportsTo(undefined, input.reportsTo);
           const saved =
             input.mcpServers === undefined
               ? undefined
@@ -558,13 +474,13 @@ const make = Effect.gen(function* () {
           yield* sql`
             INSERT INTO assistants (
               assistant_id, handle, name, project_id, instructions, tool_access, is_default,
-              generation, budget_json, autonomy_json, role, reports_to, ask_before_acting,
+              generation, budget_json, autonomy_json, role, ask_before_acting,
               workspace, icon, avatar_json, scope, mcp_servers_json, created_at, updated_at
             ) VALUES (
               ${id}, ${handle}, ${input.name}, ${input.projectId}, ${input.instructions},
               ${input.toolAccess}, 0, 1, ${input.budget ? encodeBudget(input.budget) : null},
               ${input.autonomy ? encodeAutonomy(input.autonomy) : null}, ${input.role?.trim() ?? ""},
-              ${input.reportsTo ?? null}, ${input.askBeforeActing === true ? 1 : 0}, ${input.workspace ?? "host"}, ${input.icon ?? null},
+              ${input.askBeforeActing === true ? 1 : 0}, ${input.workspace ?? "host"}, ${input.icon ?? null},
               ${input.avatar ? encodeAvatar(input.avatar) : null}, ${scope},
               ${saved === undefined ? null : encodeMcpServers(saved.servers)}, ${now}, ${now}
             )`;
@@ -597,9 +513,6 @@ const make = Effect.gen(function* () {
           if (input.handle !== undefined && input.handle !== row.handle) {
             yield* handleTaken(input.handle, row.assistant_id);
           }
-          if (input.reportsTo != null && input.reportsTo !== row.reports_to) {
-            yield* checkReportsTo(row.assistant_id, input.reportsTo);
-          }
           const projectChanged =
             input.projectId !== undefined && input.projectId !== row.project_id;
           if (input.projectId !== undefined && projectChanged)
@@ -631,7 +544,6 @@ const make = Effect.gen(function* () {
             autonomyJson:
               input.autonomy === undefined ? row.autonomy_json : encodeAutonomy(input.autonomy),
             role: input.role?.trim() ?? row.role,
-            reportsTo: input.reportsTo === undefined ? row.reports_to : input.reportsTo,
             askBeforeActing:
               input.askBeforeActing === undefined
                 ? row.ask_before_acting
@@ -677,7 +589,7 @@ const make = Effect.gen(function* () {
                 instructions = ${next.instructions}, tool_access = ${next.toolAccess},
                 project_id = ${next.projectId}, thread_id = ${threadId}, generation = ${generation},
                 budget_json = ${next.budgetJson}, autonomy_json = ${next.autonomyJson},
-                role = ${next.role}, reports_to = ${next.reportsTo},
+                role = ${next.role},
                 ask_before_acting = ${next.askBeforeActing}, workspace = ${next.workspace}, icon = ${next.icon}, avatar_json = ${next.avatarJson}, scope = ${next.scope}, mcp_servers_json = ${mcpServersJson}, archived_at = ${archivedAt}, updated_at = ${now}
               WHERE assistant_id = ${row.assistant_id}`;
             yield* followSchedules({ ...row, generation }, threadId, next.projectId);
@@ -689,7 +601,7 @@ const make = Effect.gen(function* () {
               UPDATE assistants SET name = ${next.name}, handle = ${next.handle},
                 instructions = ${next.instructions}, tool_access = ${next.toolAccess},
                 budget_json = ${next.budgetJson}, autonomy_json = ${next.autonomyJson},
-                role = ${next.role}, reports_to = ${next.reportsTo},
+                role = ${next.role},
                 ask_before_acting = ${next.askBeforeActing}, workspace = ${next.workspace}, icon = ${next.icon}, avatar_json = ${next.avatarJson}, mcp_servers_json = ${mcpServersJson}, archived_at = ${archivedAt}, updated_at = ${now}
               WHERE assistant_id = ${row.assistant_id}`;
             if (
@@ -741,16 +653,9 @@ const make = Effect.gen(function* () {
             yield* files(AssistantAvatars.removeAvatarImages(row.assistant_id));
           }
           yield* publish(row.assistant_id);
-          if (archivedAt !== null && row.archived_at === null) {
-            yield* releaseReports(row.assistant_id);
-          }
           if (archivedAt === null && row.archived_at !== null) {
             // Unarchiving a row whose conversation was deleted while archived.
             yield* ensureLaunched(row.assistant_id);
-            yield* publish(row.assistant_id);
-          }
-          if (input.addStandup === true) {
-            yield* addStandup(row.assistant_id);
             yield* publish(row.assistant_id);
           }
           return toAssistant(yield* findRow(row.assistant_id));
@@ -793,8 +698,7 @@ const make = Effect.gen(function* () {
   const checkTeam = Effect.fn("AssistantService.checkTeam")(function* (
     team: {
       readonly memberIds: ReadonlyArray<string>;
-      readonly leaderId: string | null;
-      readonly leaderTitle: string | null;
+      readonly leadId: string | null;
     },
     kept: ReadonlyArray<string>,
   ) {
@@ -810,17 +714,11 @@ const make = Effect.gen(function* () {
     }
   });
 
-  const leaderTitleOf = (leaderId: string | null, title: string | null | undefined) =>
-    leaderId === null || title == null || title.trim() === "" ? null : title.trim();
-
   const createTeam: AssistantService["Service"]["createTeam"] = Effect.fn(
     "AssistantService.createTeam",
   )(function* (input, options) {
     const id = options?.id ?? (yield* random.uuidV4().pipe(Effect.orDie));
-    const leaderId = input.leaderId ?? null;
-    const leaderTitle = leaderTitleOf(leaderId, input.leaderTitle);
-    if (leaderId === null && (input.leaderTitle ?? "").trim() !== "")
-      return yield* invalid("A leader title needs a leader.");
+    const leadId = input.leadId ?? null;
     return yield* lock.withPermits(1)(
       Effect.gen(function* () {
         // A repeat of a create that already landed is that group, not a second one.
@@ -829,14 +727,14 @@ const make = Effect.gen(function* () {
             yield* sql<AssistantTeamRow>`SELECT * FROM assistant_teams WHERE team_id = ${id}`;
           if (existing[0] !== undefined) return toAssistantTeam(existing[0]);
         }
-        yield* checkTeam({ memberIds: input.memberIds, leaderId, leaderTitle }, []);
+        yield* checkTeam({ memberIds: input.memberIds, leadId }, []);
         const now = yield* nowIso;
         yield* sql`
           INSERT INTO assistant_teams (
-            team_id, name, member_ids_json, leader_id, leader_title, created_at, updated_at
+            team_id, name, member_ids_json, lead_id, created_at, updated_at
           ) VALUES (
-            ${id}, ${input.name}, ${encodeMemberIds(input.memberIds)}, ${leaderId},
-            ${leaderTitle}, ${now}, ${now}
+            ${id}, ${input.name}, ${encodeMemberIds(input.memberIds)}, ${leadId},
+            ${now}, ${now}
           )`;
         const team = toAssistantTeam(yield* findTeamRow(id));
         yield* PubSub.publish(events, { type: "teamUpserted", team });
@@ -853,18 +751,18 @@ const make = Effect.gen(function* () {
         const row = yield* findTeamRow(input.teamId);
         const current = toAssistantTeam(row);
         const memberIds = input.memberIds ?? current.memberIds;
-        const leaderId = input.leaderId === undefined ? current.leaderId : input.leaderId;
-        // Dropping the leader drops its title; a title sent without a leader is refused.
-        const sentTitle = input.leaderTitle === undefined ? current.leaderTitle : input.leaderTitle;
-        const title = input.leaderId === null && input.leaderTitle === undefined ? null : sentTitle;
-        const leaderTitle = leaderTitleOf(leaderId, title);
-        if (leaderId === null && (title ?? "").trim() !== "")
-          return yield* invalid("A leader title needs a leader.");
-        yield* checkTeam({ memberIds, leaderId, leaderTitle }, current.memberIds);
+        // A lead that is dropped from the members goes with them, unless a new one is sent.
+        const leadId =
+          input.leadId !== undefined
+            ? input.leadId
+            : current.leadId !== null && memberIds.includes(current.leadId)
+              ? current.leadId
+              : null;
+        yield* checkTeam({ memberIds, leadId }, current.memberIds);
         yield* sql`
           UPDATE assistant_teams SET name = ${input.name ?? current.name},
-            member_ids_json = ${encodeMemberIds(memberIds)}, leader_id = ${leaderId},
-            leader_title = ${leaderTitle}, updated_at = ${yield* nowIso}
+            member_ids_json = ${encodeMemberIds(memberIds)}, lead_id = ${leadId},
+            updated_at = ${yield* nowIso}
           WHERE team_id = ${input.teamId}`;
         const team = toAssistantTeam(yield* findTeamRow(input.teamId));
         yield* PubSub.publish(events, { type: "teamUpserted", team });
@@ -887,23 +785,15 @@ const make = Effect.gen(function* () {
 
   const teams: AssistantService["Service"]["teams"] = allTeams(sql).pipe(storage);
 
-  const teamActivity: AssistantService["Service"]["teamActivity"] = Effect.fn(
-    "AssistantService.teamActivity",
-  )(function* (teamId) {
-    const team = toAssistantTeam(yield* findTeamRow(teamId));
-    return { messages: yield* readTeamActivity(sql, team) };
-  }, storage);
-
   /** A deleted assistant leaves its teams; a group may be left empty or with one member. */
   const leaveTeams = Effect.fn("AssistantService.leaveTeams")(function* (assistantId: string) {
     for (const team of yield* allTeams(sql)) {
       if (!team.memberIds.includes(assistantId as never)) continue;
       const memberIds = team.memberIds.filter((id) => id !== assistantId);
-      const leaderId = team.leaderId === assistantId ? null : team.leaderId;
+      const leadId = team.leadId === assistantId ? null : team.leadId;
       yield* sql`
         UPDATE assistant_teams SET member_ids_json = ${encodeMemberIds(memberIds)},
-          leader_id = ${leaderId}, leader_title = ${leaderId === null ? null : team.leaderTitle},
-          updated_at = ${yield* nowIso}
+          lead_id = ${leadId}, updated_at = ${yield* nowIso}
         WHERE team_id = ${team.id}`;
       yield* PubSub.publish(events, {
         type: "teamUpserted",
@@ -922,7 +812,6 @@ const make = Effect.gen(function* () {
           const row = yield* findRow(assistantId);
           // The row goes first: the thread guards only protect a live assistant's conversation.
           yield* sql`DELETE FROM assistants WHERE assistant_id = ${assistantId}`;
-          yield* releaseReports(assistantId);
           yield* leaveTeams(assistantId);
           yield* files(AssistantAvatars.removeAvatarImages(assistantId));
           yield* connectors
@@ -1033,7 +922,6 @@ const make = Effect.gen(function* () {
     createTeam,
     updateTeam,
     removeTeam,
-    teamActivity,
   });
 });
 

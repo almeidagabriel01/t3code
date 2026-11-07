@@ -96,3 +96,38 @@ it.effect("keeps one default assistant and one assistant per handle and thread",
     assert.isDefined(yield* insert("f", "f", 0, "assistant:a:1").pipe(Effect.flip));
   }).pipe(Effect.provide(database)),
 );
+
+it.effect("turns an old team leader into the lead and drops reports_to and leader_title", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`
+      CREATE TABLE assistants (
+        assistant_id TEXT PRIMARY KEY, handle TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
+        project_id TEXT NOT NULL, instructions TEXT NOT NULL DEFAULT '', tool_access TEXT NOT NULL,
+        is_default INTEGER NOT NULL DEFAULT 0, thread_id TEXT UNIQUE,
+        generation INTEGER NOT NULL DEFAULT 1, archived_at TEXT, created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL, reports_to TEXT
+      )`;
+    yield* sql`
+      CREATE TABLE assistant_teams (
+        team_id TEXT PRIMARY KEY, name TEXT NOT NULL, member_ids_json TEXT NOT NULL,
+        leader_id TEXT, leader_title TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      )`;
+    yield* sql`
+      INSERT INTO assistants (assistant_id, handle, name, project_id, tool_access, created_at, updated_at, reports_to)
+      VALUES ('eng', 'eng', 'Eng', 'p', 'full', 't', 't', 'ceo')`;
+    yield* sql`INSERT INTO assistant_teams VALUES ('t1', 'Core', '["ceo","eng"]', 'ceo', 'CEO', 't', 't')`;
+
+    yield* ensureForkSchema();
+    yield* ensureForkSchema();
+
+    assert.deepStrictEqual(yield* sql`SELECT team_id, lead_id FROM assistant_teams`, [
+      { team_id: "t1", lead_id: "ceo" },
+    ]);
+    assert.isFalse((yield* columnsOf("assistant_teams")).includes("leader_title"));
+    assert.isFalse((yield* columnsOf("assistants")).includes("reports_to"));
+    assert.deepStrictEqual(yield* sql`SELECT assistant_id FROM assistants`, [
+      { assistant_id: "eng" },
+    ]);
+  }).pipe(Effect.provide(database)),
+);

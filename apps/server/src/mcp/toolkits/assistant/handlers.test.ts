@@ -36,7 +36,6 @@ const assistant = (id: string, extra: Partial<Assistant>) =>
     threadId: `assistant:${id}:1`,
     toolAccess: "full",
     role: "",
-    reportsTo: null,
     mcpServers: [],
     avatar: null,
     scope: "all",
@@ -63,7 +62,7 @@ const assistantsMock = () => {
         },
       ],
     }),
-    assistant("eng", { role: "Engineer", reportsTo: "ceo" as never, toolAccess: "read-only" }),
+    assistant("eng", { role: "Engineer", toolAccess: "read-only" }),
     assistant("gone", { archivedAt: "2026-01-01T00:00:00.000Z" }),
   ];
   const teams: Array<AssistantTeam> = [
@@ -71,8 +70,7 @@ const assistantsMock = () => {
       id: "t1",
       name: "Core",
       memberIds: ["ceo", "eng"],
-      leaderId: "ceo",
-      leaderTitle: "CEO",
+      leadId: "ceo",
     } as never,
   ];
   const writes: Array<unknown> = [];
@@ -109,7 +107,7 @@ const assistantsMock = () => {
         const team = {
           ...input,
           id: options?.id ?? "t",
-          leaderId: input.leaderId ?? null,
+          leadId: input.leadId ?? null,
         } as never;
         writes.push({ createTeam: input });
         teams.push(team);
@@ -195,7 +193,7 @@ const harness = (callerMode: RuntimeMode) =>
     return { call, writes, decisions };
   });
 
-it.effect("list and read give each assistant its role, leader and reports by handle", () =>
+it.effect("list and read give each assistant its role and its groups' lead by handle", () =>
   Effect.gen(function* () {
     const { call } = yield* harness("full-access");
     const listed = yield* call({ action: "list" });
@@ -208,15 +206,11 @@ it.effect("list and read give each assistant its role, leader and reports by han
       avatar: null,
       scope: "all",
       connectors: [{ name: "docs", transport: "http", enabled: true }],
-      reportsTo: null,
-      reports: ["eng"],
-      teams: [{ name: "Core", members: ["ceo", "eng"], leader: "ceo", leaderTitle: "CEO" }],
+      teams: [{ name: "Core", members: ["ceo", "eng"], lead: "ceo" }],
     });
     expect(JSON.stringify(listed)).not.toContain("hasValue");
     expect(yield* call({ action: "read", handle: "@ENG" })).toMatchObject({
       role: "Engineer",
-      reportsTo: "ceo",
-      reports: [],
     });
     expect(yield* call({ action: "read" })).toMatchObject({ code: "invalid_request" });
     expect(yield* call({ action: "read", handle: "nobody" })).toMatchObject({
@@ -315,9 +309,9 @@ it.effect("update and archive: steering an assistant above the caller needs appr
     yield* decisions.answer({ decisionId: pending.decisionId, optionId: "accept" });
     expect(yield* call(steer)).toMatchObject({ status: "updated" });
     // "eng" is read-only: the caller may edit it, but not raise it past its own level.
-    expect(
-      yield* call({ action: "update", handle: "eng", role: "QA", reportsTo: "ceo" }),
-    ).toMatchObject({ status: "updated" });
+    expect(yield* call({ action: "update", handle: "eng", role: "QA" })).toMatchObject({
+      status: "updated",
+    });
     expect(
       yield* call({ action: "update", handle: "eng", toolAccess: "full", clientRequestId: "u2" }),
     ).toMatchObject({ status: "pending_approval" });
@@ -340,14 +334,9 @@ it.effect("groups: created empty, members added and removed, only active assista
       action: "group_update",
       group: "ops",
       addMembers: ["ceo", "@eng"],
-      leader: "ceo",
-      leaderTitle: "Head",
+      lead: "ceo",
     });
-    expect(grown.group).toMatchObject({
-      members: ["ceo", "eng"],
-      leader: "ceo",
-      leaderTitle: "Head",
-    });
+    expect(grown.group).toMatchObject({ members: ["ceo", "eng"], lead: "ceo" });
     const shrunk = yield* call({ action: "group_update", group: "Ops", removeMembers: ["eng"] });
     expect(shrunk.group.members).toEqual(["ceo"]);
     expect(

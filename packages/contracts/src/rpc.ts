@@ -444,8 +444,6 @@ import {
   AssistantError,
   AssistantsCreateInput,
   AssistantTeam,
-  AssistantTeamActivity,
-  AssistantTeamsActivityInput,
   AssistantTeamsCreateInput,
   AssistantTeamsDeleteInput,
   AssistantTeamsDeleteResult,
@@ -753,7 +751,6 @@ export const WS_METHODS = {
   assistantTeamsCreate: "assistantTeams.create",
   assistantTeamsUpdate: "assistantTeams.update",
   assistantTeamsDelete: "assistantTeams.delete",
-  assistantTeamsActivity: "assistantTeams.activity",
   autonomyWatchesList: "autonomy.watches.list",
   autonomyWatchUpsert: "autonomy.watches.upsert",
   autonomyWatchSetEnabled: "autonomy.watches.setEnabled",
@@ -2318,11 +2315,6 @@ const WsAssistantTeamsDeleteRpc = Rpc.make(WS_METHODS.assistantTeamsDelete, {
   success: AssistantTeamsDeleteResult,
   error: AssistantRpcErrors,
 });
-const WsAssistantTeamsActivityRpc = Rpc.make(WS_METHODS.assistantTeamsActivity, {
-  payload: AssistantTeamsActivityInput,
-  success: AssistantTeamActivity,
-  error: AssistantRpcErrors,
-});
 
 const AutonomyRpcErrors = Schema.Union([AutonomyError, EnvironmentAuthorizationError]);
 const WsAutonomyWatchesListRpc = Rpc.make(WS_METHODS.autonomyWatchesList, {
@@ -2761,7 +2753,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsAssistantTeamsCreateRpc,
   WsAssistantTeamsUpdateRpc,
   WsAssistantTeamsDeleteRpc,
-  WsAssistantTeamsActivityRpc,
   WsAutonomyWatchesListRpc,
   WsAutonomyWatchUpsertRpc,
   WsAutonomyWatchSetEnabledRpc,

@@ -22,7 +22,7 @@ Open **Settings → Assistants**, or use **+** next to Assistants in the sidebar
 - **Tool access**, described below.
 - **Workspace**: **This Mac** or a **Sandbox container**, described in
   [Work in a sandbox](#work-in-a-sandbox).
-- **Role** and **Reports to**, which place it in a reporting line (see [Reporting lines](#reporting-lines)).
+- **Role**, free text such as CEO or Engineer. The assistants in its groups see it as that teammate's role.
 
 ## Project assistants
 
@@ -116,44 +116,18 @@ researcher assistant for the three most cited papers and summarize them". It fin
 with the `t3_assistant` tool, messages its conversation, and waits for the reply. Any agent can do
 this, not only assistants.
 
-## Reporting lines
-
-Give assistants a **Role** (such as CEO or Engineer) and choose who each **Reports to** in its
-settings. A leader sees its reports, with their handles, in its instructions, and the assistant list
-shows each one's role and leader.
-
-- A leader can ask its reports, and their reports, for work. The report answers through the reply
-  the leader is waiting on. A report can't message its leader or anyone outside its branch, so
-  assistants never end up messaging each other in a loop. T3 Code refuses such a message and says so. A team (below) is how you let assistants talk in any direction.
-- Assistants with no reporting line and no team keep talking to each other freely.
-- Archiving or deleting a leader makes its reports top-level again. A leader can't report to its own
-  report.
-
-On a leader, **Add daily standup** creates an ordinary schedule for weekdays at 9:00 (your local
-time) that asks each direct report for status and then writes one short report. The report reaches
-you like an autonomy notice, in **Activity** and on **Telegram**, following the assistant's
-channels, even if that assistant only replies when you message it. Pausing **Assistants can notify
-you** silences it too. Edit the time or delete the schedule under **Schedules**. The
-standup is recognised by the first line of its prompt, so keep that line when you edit it.
-
 ## Groups
 
-A group is a set of assistants that talk to each other while you watch. Create one from the sidebar
-(**+** next to Groups) or under **Settings > Assistants > Groups**: give it a name, then add members
-now or later. A group can be empty or hold a single assistant. An assistant can be in several groups.
-The sidebar and Home list your groups under the assistants.
+A group is a set of assistants that work together. Create one from the sidebar (**+** next to
+Groups) or under **Settings > Assistants > Groups**: give it a name, then add members now or later. A
+group can be empty or hold a single assistant. An assistant can be in several groups. The sidebar and
+Home list your groups under the assistants.
 
-- Members may message each other in any direction, and each member's instructions list its
-  groupmates. Ask one to "check with the group" and it asks one.
-- Open a group (**Activity**, or its row in the sidebar or Home) to read every message the members
-  sent each other and the replies they got, oldest first, and jump to the conversation it landed in.
-- A leader is optional. Choose one among the members and give it a title such as CEO, CFO or Head
-  of Research. Members are told to report their results to it, and the title shows next to its
-  name. The leader does not change who may message whom. The role shown for a member is its own
-  **Role**.
-- To keep two assistants from answering each other forever, one assistant may send at most 20
-  messages an hour to its groupmates. Past that, T3 Code refuses the send and the assistant reports
-  to you instead.
+- Any assistant may message any other. Each member's instructions list its groupmates with their
+  handle and role and tell it that it may hand work to them. Ask one to "check with the group" and it
+  asks one.
+- A group's **Lead** is optional. It routes requests that mention no one, arriving with the group
+  chat, and gets no extra permissions.
 - Deleting an assistant removes it from its groups, which stay even when they end up empty. Archived
   members stay in the group and come back when unarchived.
 

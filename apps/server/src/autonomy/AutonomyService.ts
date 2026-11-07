@@ -1,6 +1,4 @@
 import {
-  ASSISTANT_STANDUP_PROMPT_HEAD,
-  ASSISTANT_STANDUP_TASK_TITLE,
   assistantIdFromThreadId,
   AutonomyError,
   AutonomyWatch,
@@ -479,21 +477,6 @@ const make = Effect.gen(function* () {
     yield* deliverResult(run, wakes[0].label, config);
   });
 
-  /**
-   * A leader's scheduled standup ended. The user asked for it by adding the schedule, so it
-   * reaches them whatever the assistant's mode; the pause switch still silences it.
-   */
-  const deliverStandup = Effect.fn("AutonomyService.deliverStandup")(function* (run: FinishedRun) {
-    const standups = yield* sql<{ readonly one: number }>`
-      SELECT 1 AS one FROM scheduled_tasks
-      WHERE ${run.userMessageId} LIKE 'scheduled-task-message:' || task_id || ':%'
-        AND prompt LIKE ${`${ASSISTANT_STANDUP_PROMPT_HEAD}%`}`;
-    if (standups.length === 0) return false;
-    const config = yield* settings;
-    if (config.enabled) yield* deliverResult(run, ASSISTANT_STANDUP_TASK_TITLE, config);
-    return true;
-  });
-
   const handleEvent: AutonomyService["Service"]["handleEvent"] = Effect.fn(
     "AutonomyService.handleEvent",
   )(
@@ -531,9 +514,6 @@ const make = Effect.gen(function* () {
           if (run.userMessageId.startsWith(WAKE_MESSAGE_PREFIX)) {
             yield* deliver(run);
             return;
-          }
-          if (run.userMessageId.startsWith("scheduled-task-message:")) {
-            if (yield* deliverStandup(run)) return;
           }
           if (run.status === "cancelled") return;
           const failed = run.status === "failed" || run.status === "interrupted";

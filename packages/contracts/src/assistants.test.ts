@@ -8,6 +8,7 @@ import {
   assistantMcpServersProblem,
   assistantTeamProblem,
   AssistantsEvent,
+  AssistantTeam,
   AssistantMcpServerInput,
   AssistantsUpdateInput,
   assistantHandleFromName,
@@ -20,6 +21,7 @@ const isAssistantHandle = Schema.is(AssistantHandle);
 const isUpdateInput = Schema.is(AssistantsUpdateInput);
 const decode = Schema.decodeUnknownSync(Assistant);
 const decodeEvent = Schema.decodeSync(AssistantsEvent);
+const decodeTeam = Schema.decodeUnknownSync(AssistantTeam);
 
 describe("assistantHandleFromName", () => {
   it.each([
@@ -260,18 +262,30 @@ describe("assistant connectors", () => {
 
 describe("assistantTeamProblem", () => {
   it.each([
-    ["two members, no leader", { memberIds: ["a", "b"] }, null],
-    ["a leader with a title", { memberIds: ["a", "b"], leaderId: "a", leaderTitle: "CEO" }, null],
+    ["two members, no lead", { memberIds: ["a", "b"] }, null],
+    ["a lead among the members", { memberIds: ["a", "b"], leadId: "a" }, null],
     ["one member", { memberIds: ["a"] }, null],
     ["no members", { memberIds: [] }, null],
     ["a repeated member", { memberIds: ["a", "a"] }, "twice"],
-    ["a leader outside the team", { memberIds: ["a", "b"], leaderId: "c" }, "must be a member"],
-    ["a title without a leader", { memberIds: ["a", "b"], leaderTitle: "CEO" }, "needs a leader"],
-    ["a blank title without a leader", { memberIds: ["a", "b"], leaderTitle: " " }, null],
+    ["a lead outside the group", { memberIds: ["a", "b"], leadId: "c" }, "must be a member"],
   ])("%s", (_name, team, problem) => {
     const found = assistantTeamProblem(team);
     if (problem === null) expect(found).toBeNull();
     else expect(found).toContain(problem);
+  });
+
+  it("an old team with leader fields decodes with no lead", () => {
+    const team = decodeTeam({
+      id: "t1",
+      name: "Core",
+      memberIds: ["a"],
+      leaderId: "a",
+      leaderTitle: "CEO",
+      createdAt: "2026-10-01T00:00:00.000Z",
+      updatedAt: "2026-10-01T00:00:00.000Z",
+    });
+    expect(team.leadId).toBeNull();
+    expect(team).not.toHaveProperty("leaderId");
   });
 
   it("an old snapshot without teams still decodes, with none", () => {

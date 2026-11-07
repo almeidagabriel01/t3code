@@ -28,30 +28,6 @@ export type AssistantId = typeof AssistantId.Type;
 
 const AssistantRole = TrimmedString.check(Schema.isMaxLength(ASSISTANT_ROLE_MAX_LENGTH));
 
-/** `id` and everyone below it in the reports-to tree; a cycle in bad data still ends. */
-export function assistantDescendantIds(
-  assistants: ReadonlyArray<{ readonly id: string; readonly reportsTo: string | null }>,
-  id: string,
-): Set<string> {
-  const found = new Set<string>();
-  const queue = [id];
-  for (let next = queue.pop(); next !== undefined; next = queue.pop()) {
-    if (found.has(next)) continue;
-    found.add(next);
-    for (const assistant of assistants) if (assistant.reportsTo === next) queue.push(assistant.id);
-  }
-  return found;
-}
-
-/** The standup task is recognised by this opening line, so a rename of its title is harmless. */
-export const ASSISTANT_STANDUP_PROMPT_HEAD = "Daily team standup.";
-export const ASSISTANT_STANDUP_TASK_TITLE = "Daily standup";
-export const ASSISTANT_STANDUP_PROMPT = [
-  ASSISTANT_STANDUP_PROMPT_HEAD,
-  "Ask each of your direct reports (see your team note) for a short status: t3_thread_send to its threadId, then t3_thread_wait on the run it returns.",
-  "Then write one short report for the user: what each report did, what is blocked, and what needs the user. Skip a report that did not answer and say so.",
-].join("\n");
-
 /** Lowercase slug, unique per environment; channels route `@handle` to it. */
 export const AssistantHandle = Schema.String.check(
   Schema.isPattern(/^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/),
@@ -275,8 +251,6 @@ export const Assistant = Schema.Struct({
   budget: Schema.NullOr(ProviderBudget).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   /** Free text such as "CEO" or "Engineer"; empty when it has none. */
   role: AssistantRole.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
-  /** The leader it answers to; null for a top-level assistant. */
-  reportsTo: Schema.NullOr(AssistantId).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   /** Whether and how it wakes on its own; see `autonomy.ts`. */
   autonomy: AssistantAutonomy.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_ASSISTANT_AUTONOMY)),
@@ -298,7 +272,6 @@ export const Assistant = Schema.Struct({
 export type Assistant = typeof Assistant.Type;
 
 export const ASSISTANT_TEAM_NAME_MAX_LENGTH = 60;
-export const ASSISTANT_TEAM_TITLE_MAX_LENGTH = 60;
 
 export const AssistantTeamId = TrimmedNonEmptyString.pipe(Schema.brand("AssistantTeamId"));
 export type AssistantTeamId = typeof AssistantTeamId.Type;
@@ -306,21 +279,16 @@ export type AssistantTeamId = typeof AssistantTeamId.Type;
 const AssistantTeamName = TrimmedNonEmptyString.check(
   Schema.isMaxLength(ASSISTANT_TEAM_NAME_MAX_LENGTH),
 );
-const AssistantTeamLeaderTitle = TrimmedString.check(
-  Schema.isMaxLength(ASSISTANT_TEAM_TITLE_MAX_LENGTH),
-);
 
 /**
- * A group of assistants that may message each other in any direction. The leader is optional and
- * only a title and a hint in each member's note: it does not change who may message whom.
+ * A group of assistants that may message each other in any direction. The optional lead only
+ * routes a group request that mentions nobody; it gains no permission.
  */
 export const AssistantTeam = Schema.Struct({
   id: AssistantTeamId,
   name: AssistantTeamName,
   memberIds: Schema.Array(AssistantId),
-  leaderId: Schema.NullOr(AssistantId),
-  /** Free text such as "CEO" or "Head of Research"; null unless there is a leader. */
-  leaderTitle: Schema.NullOr(Schema.String),
+  leadId: Schema.NullOr(AssistantId).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -329,15 +297,12 @@ export type AssistantTeam = typeof AssistantTeam.Type;
 /** The first reason a team is unusable, or null. Clients and the server share it. */
 export function assistantTeamProblem(team: {
   readonly memberIds: ReadonlyArray<string>;
-  readonly leaderId?: string | null | undefined;
-  readonly leaderTitle?: string | null | undefined;
+  readonly leadId?: string | null | undefined;
 }): string | null {
   if (new Set(team.memberIds).size !== team.memberIds.length) return "A member is listed twice.";
-  const leaderId = team.leaderId ?? null;
-  if (leaderId !== null && !team.memberIds.includes(leaderId))
-    return "The leader must be a member of the team.";
-  if (leaderId === null && (team.leaderTitle ?? "").trim() !== "")
-    return "A leader title needs a leader.";
+  const leadId = team.leadId ?? null;
+  if (leadId !== null && !team.memberIds.includes(leadId))
+    return "The lead must be a member of the group.";
   return null;
 }
 
@@ -376,7 +341,6 @@ export const AssistantsCreateInput = Schema.Struct({
   avatar: Schema.optional(Schema.NullOr(AssistantRobotAvatar)),
   mcpServers: Schema.optional(Schema.Array(AssistantMcpServerInput)),
   role: Schema.optional(AssistantRole),
-  reportsTo: Schema.optional(Schema.NullOr(AssistantId)),
   /** Brings Jarvis back (recreated or unarchived) and ignores every other field. */
   restoreDefault: Schema.optional(Schema.Boolean),
 });
@@ -414,10 +378,6 @@ export const AssistantsUpdateInput = Schema.Struct({
   /** Replaces the whole list; leave out to keep it. */
   mcpServers: Schema.optional(Schema.Array(AssistantMcpServerInput)),
   role: Schema.optional(AssistantRole),
-  /** Null makes it top-level. */
-  reportsTo: Schema.optional(Schema.NullOr(AssistantId)),
-  /** Adds the daily standup schedule once; it stays an ordinary scheduled task afterwards. */
-  addStandup: Schema.optional(Schema.Literal(true)),
   archived: Schema.optional(Schema.Boolean),
 });
 export type AssistantsUpdateInput = typeof AssistantsUpdateInput.Type;
@@ -506,18 +466,16 @@ export type AssistantSpend = typeof AssistantSpend.Type;
 export const AssistantTeamsCreateInput = Schema.Struct({
   name: AssistantTeamName,
   memberIds: Schema.Array(AssistantId),
-  leaderId: Schema.optional(Schema.NullOr(AssistantId)),
-  leaderTitle: Schema.optional(Schema.NullOr(AssistantTeamLeaderTitle)),
+  leadId: Schema.optional(Schema.NullOr(AssistantId)),
 });
 export type AssistantTeamsCreateInput = typeof AssistantTeamsCreateInput.Type;
 
-/** A field left out is kept; `leaderId: null` removes the leader and its title. */
+/** A field left out is kept; `leadId: null` removes the lead. */
 export const AssistantTeamsUpdateInput = Schema.Struct({
   teamId: AssistantTeamId,
   name: Schema.optional(AssistantTeamName),
   memberIds: Schema.optional(Schema.Array(AssistantId)),
-  leaderId: Schema.optional(Schema.NullOr(AssistantId)),
-  leaderTitle: Schema.optional(Schema.NullOr(AssistantTeamLeaderTitle)),
+  leadId: Schema.optional(Schema.NullOr(AssistantId)),
 });
 export type AssistantTeamsUpdateInput = typeof AssistantTeamsUpdateInput.Type;
 
@@ -525,36 +483,6 @@ export const AssistantTeamsDeleteInput = Schema.Struct({ teamId: AssistantTeamId
 export type AssistantTeamsDeleteInput = typeof AssistantTeamsDeleteInput.Type;
 export const AssistantTeamsDeleteResult = Schema.Struct({ teamId: AssistantTeamId });
 export type AssistantTeamsDeleteResult = typeof AssistantTeamsDeleteResult.Type;
-
-export const AssistantTeamsActivityInput = Schema.Struct({ teamId: AssistantTeamId });
-export type AssistantTeamsActivityInput = typeof AssistantTeamsActivityInput.Type;
-
-/** One message from a member's conversation into another member's, newest last. */
-export const AssistantTeamMessage = Schema.Struct({
-  messageId: Schema.String,
-  at: IsoDateTime,
-  fromAssistantId: AssistantId,
-  toAssistantId: AssistantId,
-  fromThreadId: ThreadId,
-  toThreadId: ThreadId,
-  text: Schema.String,
-  /** The text was cut at `ASSISTANT_TEAM_MESSAGE_MAX_CHARS`; open the thread for the rest. */
-  truncated: Schema.Boolean,
-  /** What the recipient answered in the run this message started; null until there is text. */
-  reply: Schema.NullOr(
-    Schema.Struct({ text: Schema.String, at: IsoDateTime, truncated: Schema.Boolean }),
-  ),
-  /** The recipient's run has not ended, so a reply may still come. */
-  waiting: Schema.Boolean,
-});
-export type AssistantTeamMessage = typeof AssistantTeamMessage.Type;
-export const ASSISTANT_TEAM_MESSAGE_MAX_CHARS = 4_000;
-export const ASSISTANT_TEAM_ACTIVITY_LIMIT = 200;
-
-export const AssistantTeamActivity = Schema.Struct({
-  messages: Schema.Array(AssistantTeamMessage),
-});
-export type AssistantTeamActivity = typeof AssistantTeamActivity.Type;
 
 export const AssistantsDeleteResult = Schema.Struct({ assistantId: AssistantId });
 export type AssistantsDeleteResult = typeof AssistantsDeleteResult.Type;

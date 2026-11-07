@@ -793,7 +793,6 @@ const guardThreads = {
   current: assistantThreadIdFor("helper", 2),
   old: assistantThreadIdFor("helper", 1),
   asker: assistantThreadIdFor("asker", 1),
-  chatty: assistantThreadIdFor("chatty", 1),
   boxed: assistantThreadIdFor("boxed", 1),
   scoped: assistantThreadIdFor("scoped", 1),
   plain: ThreadId.make("thread:guard:plain"),
@@ -830,12 +829,7 @@ const layerAssistantGuardTest = (dispatched: Array<unknown>) =>
     ),
     Layer.provide(
       Layer.succeed(AssistantDirectory, {
-        // The org chart itself is covered by assistantMayMessage; here "old" is a report of "current".
-        mayMessage: (sender, target) =>
-          Effect.succeed(!(sender === guardThreads.old && target === guardThreads.current)),
-        teamOf: () => Effect.succeed({ leader: null, reports: [] }),
         teamsOf: () => Effect.succeed([]),
-        teamSendLimited: (sender) => Effect.succeed(sender === guardThreads.chatty),
         sandboxEnvironmentId: Effect.succeedSome(EnvironmentId.make("environment-sandbox")),
         forThread: (threadId) =>
           Effect.succeed(
@@ -937,10 +931,8 @@ it.effect("assistant guard: a first message cannot rename an assistant thread", 
 });
 
 it.effect.each([
-  ["a report messaging its leader", guardThreads.old, guardThreads.current, "Answer upward"],
-  ["a leader messaging its report", guardThreads.current, guardThreads.old, null],
+  ["any assistant messaging another", guardThreads.old, guardThreads.current, null],
   ["a plain thread messaging an assistant", undefined, guardThreads.current, null],
-  ["a teammate past its hourly cap", guardThreads.chatty, guardThreads.current, "last hour"],
 ] as const)("assistant guard: %s", ([, sender, target, refusal]) => {
   const dispatched: Array<unknown> = [];
   return Effect.gen(function* () {
@@ -1149,10 +1141,7 @@ it.effect("ask before acting: an approval is given back when the send itself fai
         ),
         Layer.provide(
           Layer.succeed(AssistantDirectory, {
-            mayMessage: () => Effect.succeed(true),
-            teamOf: () => Effect.succeed({ leader: null, reports: [] }),
             teamsOf: () => Effect.succeed([]),
-            teamSendLimited: () => Effect.succeed(false),
             sandboxEnvironmentId: Effect.succeedNone,
             forThread: () =>
               Effect.succeedSome({

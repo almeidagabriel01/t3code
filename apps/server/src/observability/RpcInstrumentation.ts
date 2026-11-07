@@ -132,7 +132,6 @@ const RPC_AGGREGATES = {
   [WS_METHODS.assistantTeamsCreate]: "assistants",
   [WS_METHODS.assistantTeamsUpdate]: "assistants",
   [WS_METHODS.assistantTeamsDelete]: "assistants",
-  [WS_METHODS.assistantTeamsActivity]: "assistants",
   [WS_METHODS.autonomyWatchesList]: "autonomy",
   [WS_METHODS.autonomyWatchUpsert]: "autonomy",
   [WS_METHODS.autonomyWatchSetEnabled]: "autonomy",

@@ -214,11 +214,6 @@ export function createAssistantsEnvironmentAtoms<R, E>(
     stopSandbox: command(WS_METHODS.assistantSandboxStop, "stopSandbox"),
     removeSandbox: command(WS_METHODS.assistantSandboxRemove, "removeSandbox"),
     sandboxPairing: command(WS_METHODS.assistantSandboxPairing, "sandboxPairing"),
-    teamActivity: createEnvironmentRpcQueryAtomFamily(runtime, {
-      label: "environment-data:assistants:teamActivity",
-      tag: WS_METHODS.assistantTeamsActivity,
-      staleTimeMs: 10_000,
-    }),
     spend: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:assistants:spend",
       tag: WS_METHODS.assistantsSpend,

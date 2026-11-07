@@ -1,71 +1,27 @@
-import {
-  type Assistant,
-  ASSISTANT_STANDUP_PROMPT_HEAD,
-  assistantDescendantIds,
-} from "@t3tools/contracts";
+import type { Assistant } from "@t3tools/contracts";
 
-type TeamMember = Pick<Assistant, "id" | "name" | "role" | "reportsTo" | "archivedAt">;
+type TeamMember = Pick<Assistant, "id" | "name" | "role" | "archivedAt">;
 
-export const NO_LEADER_LABEL = "Nobody";
+export const NO_LEAD_LABEL = "Nobody";
 
-/** Who the assistant can report to: live assistants outside its own branch of the chart. */
-export function leaderChoices<A extends TeamMember>(
-  assistants: ReadonlyArray<A>,
-  selfId: string | null,
-): ReadonlyArray<A> {
-  const excluded = selfId === null ? new Set<string>() : assistantDescendantIds(assistants, selfId);
-  return assistants.filter((entry) => entry.archivedAt === null && !excluded.has(entry.id));
-}
-
-export function directReports<A extends TeamMember>(
-  assistants: ReadonlyArray<A>,
-  leaderId: string,
-): ReadonlyArray<A> {
-  return assistants.filter((entry) => entry.archivedAt === null && entry.reportsTo === leaderId);
-}
-
-/** "CEO · reports to Jarvis", or whichever half exists; null when it has neither. */
-export function teamSubtitle(assistant: TeamMember, assistants: ReadonlyArray<TeamMember>) {
-  const leader = assistants.find((entry) => entry.id === assistant.reportsTo);
-  return (
-    [assistant.role, leader ? `reports to ${leader.name}` : ""]
-      .filter((part) => part !== "")
-      .join(" · ") || null
-  );
-}
-
-/** Whether the assistant's conversation already has its standup, renamed or paused alike. */
-export function hasStandupTask(
-  tasks: ReadonlyArray<{ readonly threadId: string | null; readonly prompt: string }>,
-  threadId: string | null,
-): boolean {
-  return (
-    threadId !== null &&
-    tasks.some(
-      (task) => task.threadId === threadId && task.prompt.startsWith(ASSISTANT_STANDUP_PROMPT_HEAD),
-    )
-  );
+/** The assistant's own role text, or null when it has none. */
+export function teamSubtitle(assistant: TeamMember) {
+  return assistant.role || null;
 }
 
 type TeamLike = {
   readonly memberIds: ReadonlyArray<string>;
-  readonly leaderId: string | null;
-  readonly leaderTitle: string | null;
+  readonly leadId: string | null;
 };
 
-/** The badge next to the leader's name: its title, or "Leader" when the title was left empty. */
-export function teamLeaderBadge(team: TeamLike): string {
-  return team.leaderTitle !== null && team.leaderTitle !== "" ? team.leaderTitle : "Leader";
-}
-
-/** "3 members · Ana (CEO)", or just the count when the team has no leader. */
+/** "3 members · lead Ana", or just the count when the group has no lead. */
 export function teamSummary(
   team: TeamLike,
   assistants: ReadonlyArray<Pick<Assistant, "id" | "name">>,
 ): string {
   const count = `${team.memberIds.length} members`;
-  const leader = assistants.find((entry) => entry.id === team.leaderId);
-  return leader === undefined ? count : `${count} · ${leader.name} (${teamLeaderBadge(team)})`;
+  const lead = assistants.find((entry) => entry.id === team.leadId);
+  return lead === undefined ? count : `${count} · lead ${lead.name}`;
 }
 
 /** Who can join a team: live assistants, plus members that were archived after joining. */

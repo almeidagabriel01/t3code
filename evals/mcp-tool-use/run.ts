@@ -307,21 +307,12 @@ export const McpToolUseCase = Schema.Struct({
         workspace: Schema.optional(Schema.Literals(["host", "sandbox"])),
         sandboxEnvironmentId: Schema.optional(Schema.NullOr(Schema.String)),
         instructions: Schema.String,
-        leader: Schema.NullOr(
-          Schema.Struct({ name: Schema.String, handle: Schema.String, threadId: Schema.String }),
-        ),
-        reports: Schema.Array(
-          Schema.Struct({ name: Schema.String, handle: Schema.String, threadId: Schema.String }),
-        ),
-        /** The teams it is in, as `AssistantDirectory.teamsOf` gives them to the note. */
+        /** The groups it is in, as `AssistantDirectory.teamsOf` gives them to the note. */
         teams: Schema.optional(
           Schema.Array(
             Schema.Struct({
-              team: Schema.Struct({
-                name: Schema.String,
-                leaderTitle: Schema.NullOr(Schema.String),
-              }),
-              leader: Schema.NullOr(
+              team: Schema.Struct({ name: Schema.String }),
+              lead: Schema.NullOr(
                 Schema.Struct({
                   name: Schema.String,
                   handle: Schema.String,
@@ -1068,22 +1059,12 @@ export const buildMessages = (sample: Sample) => {
       : assistantNoteFor(
           assistant,
           userText,
-          {
-            leader:
-              assistant.leader === null
-                ? null
-                : { ...assistant.leader, threadId: ThreadId.make(assistant.leader.threadId) },
-            reports: assistant.reports.map((report) => ({
-              ...report,
-              threadId: ThreadId.make(report.threadId),
-            })),
-          },
           (assistant.teams ?? []).map((entry) => ({
             ...entry,
-            leader:
-              entry.leader === null
+            lead:
+              entry.lead === null
                 ? null
-                : { ...entry.leader, threadId: ThreadId.make(entry.leader.threadId) },
+                : { ...entry.lead, threadId: ThreadId.make(entry.lead.threadId) },
             teammates: entry.teammates.map((mate) => ({
               ...mate,
               threadId: ThreadId.make(mate.threadId),
