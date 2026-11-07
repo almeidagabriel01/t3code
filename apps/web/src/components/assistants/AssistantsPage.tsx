@@ -1,5 +1,5 @@
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { assistantPresence } from "@t3tools/client-runtime/assistantRobot";
+import { assistantPresence, assistantQueuedLabel } from "@t3tools/client-runtime/assistantRobot";
 import { assistantEntryKey, assistantSections } from "@t3tools/client-runtime/assistantSections";
 import type { AssistantTeamId, EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { ArchiveRestoreIcon, ArchiveIcon, PlusIcon, SettingsIcon, UsersIcon } from "lucide-react";
@@ -74,7 +74,9 @@ function AssistantCard(props: {
             <p className="truncate text-xs text-muted-foreground">Archived</p>
           ) : (
             <p className={cn("truncate text-xs", MOOD_TEXT[presence.mood])}>
-              {since === "" ? presence.detail : `${presence.detail} · ${since}`}
+              {[presence.detail, since, assistantQueuedLabel(presence.queued)]
+                .filter((part) => part !== "" && part !== null)
+                .join(" · ")}
             </p>
           )}
         </div>

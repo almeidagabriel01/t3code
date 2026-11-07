@@ -18,6 +18,7 @@ const state = vi.hoisted(() => ({
   collapsed: false,
   folded: [] as string[],
   moods: {} as Record<string, "working" | "needs" | "failed">,
+  queued: {} as Record<string, number>,
   teams: [] as Array<{
     environmentId: string;
     team: { id: string; name: string; memberIds: string[] };
@@ -39,6 +40,7 @@ const shellFor = (threadId: string) => {
     hasPendingUserInput: false,
     pendingSubagentRequest: null,
     pendingGuestMessageCount: 0,
+    queuedMessageCount: state.queued[threadId] ?? 0,
     blockedOnThreadWait: false,
     latestRun: mood === "working" ? { startedAt: "2020-01-01T00:00:00.000Z" } : null,
     runtime:
@@ -101,6 +103,7 @@ function setup(
     collapsed?: boolean;
     folded?: string[];
     moods?: Record<string, "working" | "needs" | "failed">;
+    queued?: Record<string, number>;
   } = {},
 ) {
   state.specs = specs.map((spec) => (typeof spec === "string" ? { name: spec } : spec));
@@ -108,6 +111,7 @@ function setup(
   state.collapsed = options.collapsed ?? false;
   state.folded = options.folded ?? [];
   state.moods = options.moods ?? {};
+  state.queued = options.queued ?? {};
   state.update.mockClear();
   state.teams = [];
   state.openTeam.mockClear();
@@ -202,6 +206,7 @@ describe("AssistantSidebarSection", () => {
           [threadOf("Jarvis")]: "working",
           [threadOf("Aprovador")]: "failed",
         },
+        queued: { [threadOf("Jarvis")]: 3 },
       },
     );
     state.teams = [team("t1", "Leadership", ["ada", "jarvis", "pesquisador"])];
@@ -223,7 +228,8 @@ describe("AssistantSidebarSection", () => {
     expect(status("ada").getAttribute("data-mood")).toBe("needs");
     expect(status("ada").textContent).toContain("ProOps only · Needs your approval");
     expect(status("jarvis").getAttribute("data-mood")).toBe("working");
-    expect(status("jarvis").textContent).toMatch(/^Working· .+/);
+    expect(status("jarvis").textContent).toMatch(/^Working· .+· 3 queued$/);
+    expect(status("ada").textContent).not.toContain("queued");
     expect(status("aprovador").textContent).toBe("Last run failed");
     expect(screen.container.querySelectorAll('[data-testid="assistant-role"]')).toHaveLength(2);
     await expect.element(screen.getByRole("button", { name: "ProOps" })).toBeVisible();

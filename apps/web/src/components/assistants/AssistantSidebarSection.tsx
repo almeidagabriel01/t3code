@@ -1,5 +1,9 @@
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { assistantPresence, type AssistantMood } from "@t3tools/client-runtime/assistantRobot";
+import {
+  assistantPresence,
+  assistantQueuedLabel,
+  type AssistantMood,
+} from "@t3tools/client-runtime/assistantRobot";
 import { assistantEntryKey, assistantSections } from "@t3tools/client-runtime/assistantSections";
 import {
   EnvironmentId,
@@ -100,6 +104,7 @@ const AssistantRow = memo(function AssistantRow(props: {
   const flows = useAssistantFlows(environmentId);
   const { presence, dotClass, open } = useAssistantState(props.entry, props.onOpen);
   const working = presence.mood === "working";
+  const queuedLabel = assistantQueuedLabel(presence.queued);
   const onKeyDown = (event: ReactKeyboardEvent) => {
     if ((event.target as HTMLElement).closest("button")) return;
     if (event.key === "Enter" || event.key === " ") {
@@ -151,6 +156,11 @@ const AssistantRow = memo(function AssistantRow(props: {
             {presence.since === null ? null : (
               <span className="shrink-0 ps-1">
                 · <RelativeTime timestamp={presence.since} />
+              </span>
+            )}
+            {queuedLabel === null ? null : (
+              <span data-testid="assistant-queued" className="shrink-0 ps-1">
+                · {queuedLabel}
               </span>
             )}
           </span>

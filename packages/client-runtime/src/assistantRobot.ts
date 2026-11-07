@@ -90,6 +90,7 @@ type PresenceThread = Pick<
   | "hasPendingUserInput"
   | "pendingSubagentRequest"
   | "pendingGuestMessageCount"
+  | "queuedMessageCount"
   | "runtime"
   | "blockedOnThreadWait"
   | "latestRun"
@@ -103,7 +104,13 @@ export interface AssistantPresence {
   readonly detail: string;
   /** When the detail's moment happened, for "12m ago" style labels; null when there is none. */
   readonly since: string | null;
+  /** Messages waiting behind its active run. */
+  readonly queued: number;
 }
+
+/** "3 queued" beside the status; null when nothing waits. */
+export const assistantQueuedLabel = (queued: number): string | null =>
+  queued > 0 ? `${queued} queued` : null;
 
 const PREVIEW_LENGTH = 80;
 
@@ -119,6 +126,10 @@ function firstLine(text: string): string {
 
 /** Mood and status line of an assistant from its thread; no thread yet means idle. */
 export function assistantPresence(thread: PresenceThread | null): AssistantPresence {
+  return { ...presenceOf(thread), queued: thread?.queuedMessageCount ?? 0 };
+}
+
+function presenceOf(thread: PresenceThread | null): Omit<AssistantPresence, "queued"> {
   if (thread === null) return { mood: "idle", detail: "Idle", since: null };
   const status = resolveSidebarThreadStatus(thread);
   const message = thread.source.latestVisibleMessage;

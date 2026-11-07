@@ -3,7 +3,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 type Mood = "idle" | "working" | "needs" | "failed";
-type Presence = { mood: Mood; detail: string; since: string | null };
+type Presence = { mood: Mood; detail: string; since: string | null; queued?: number };
 
 const { mocks } = vi.hoisted(() => ({
   mocks: {
@@ -68,6 +68,8 @@ vi.mock("@t3tools/client-runtime/environment", () => ({
     `${ref.environmentId}:${ref.threadId}`,
 }));
 vi.mock("@t3tools/client-runtime/assistantRobot", () => ({
+  assistantQueuedLabel: (queued: number | undefined) =>
+    queued !== undefined && queued > 0 ? `${queued} queued` : null,
   assistantPresence: (thread: { id: string } | null): Presence =>
     thread === null
       ? { mood: "idle", detail: "Idle", since: null }
@@ -268,6 +270,7 @@ describe("HomeAssistantsSection", () => {
       mood: "working",
       detail: "Reading the repo",
       since: "2026-11-06T11:48:00Z",
+      queued: 3,
     };
     mocks.presence.t1 = { mood: "failed", detail: "Last run failed", since: null };
     render(false);
@@ -275,7 +278,7 @@ describe("HomeAssistantsSection", () => {
     const [first, second] = Array.from(
       container.querySelectorAll('[data-testid="assistant-status"]'),
     );
-    expect(first?.textContent).toBe("Reading the repo · 12m");
+    expect(first?.textContent).toBe("Reading the repo · 12m · 3 queued");
     expect(first?.className).toContain("text-adaptive-sky-600-400");
     expect(second?.textContent).toBe("Last run failed");
     expect(second?.className).toContain("text-danger-foreground");

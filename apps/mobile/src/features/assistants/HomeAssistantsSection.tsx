@@ -1,5 +1,5 @@
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { assistantPresence } from "@t3tools/client-runtime/assistantRobot";
+import { assistantPresence, assistantQueuedLabel } from "@t3tools/client-runtime/assistantRobot";
 import { assistantEntryKey, assistantSections } from "@t3tools/client-runtime/assistantSections";
 import {
   hasSidebarNotification,
@@ -204,6 +204,9 @@ function AssistantRow(props: {
             {props.projectLabel ? `${props.projectLabel} only · ` : ""}
             {presence.detail}
             {presence.since === null ? "" : ` · ${relativeTime(presence.since, props.nowMs)}`}
+            {assistantQueuedLabel(presence.queued) === null
+              ? ""
+              : ` · ${assistantQueuedLabel(presence.queued)}`}
           </Text>
         </View>
         {state.working ? (

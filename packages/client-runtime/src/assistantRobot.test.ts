@@ -5,6 +5,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   ASSISTANT_ROBOT_HUES,
   assistantPresence,
+  assistantQueuedLabel,
   assistantRobotLook,
   assistantRobotSpec,
 } from "./assistantRobot.ts";
@@ -67,7 +68,8 @@ describe("assistantRobotSpec", () => {
 
 describe("assistantPresence", () => {
   it.each([
-    ["no thread yet", null, { mood: "idle", detail: "Idle", since: null }],
+    ["no thread yet", null, { mood: "idle", detail: "Idle", since: null, queued: 0 }],
+    ["queued messages", shell({ queuedMessageCount: 3 }), { mood: "idle", queued: 3 }],
     [
       "an approval",
       shell({
@@ -135,5 +137,15 @@ describe("assistantPresence", () => {
     ],
   ] as const)("%s", (_name, thread, expected) => {
     expect(assistantPresence(thread)).toMatchObject(expected);
+  });
+});
+
+describe("assistantQueuedLabel", () => {
+  it.each([
+    [0, null],
+    [1, "1 queued"],
+    [3, "3 queued"],
+  ] as const)("%s", (queued, label) => {
+    expect(assistantQueuedLabel(queued)).toBe(label);
   });
 });

@@ -2,7 +2,7 @@ import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-type Presence = { mood: string; detail: string; since: string | null };
+type Presence = { mood: string; detail: string; since: string | null; queued?: number };
 
 const { mocks, Children } = vi.hoisted(() => ({
   Children: ({ children }: { children?: ReactNode }) => children,
@@ -91,6 +91,8 @@ vi.mock("react-native", () => ({
   ),
 }));
 vi.mock("@t3tools/client-runtime/assistantRobot", () => ({
+  assistantQueuedLabel: (queued: number | undefined) =>
+    queued !== undefined && queued > 0 ? `${queued} queued` : null,
   assistantPresence: (thread: { id: string } | null): Presence =>
     thread === null
       ? { mood: "idle", detail: "Idle", since: null }
@@ -267,10 +269,15 @@ describe("assistants page", () => {
       ...defaults(),
       archived: [assistant("a9", "Old", { archivedAt: "2026-01-01T00:00:00Z" })],
     };
-    mocks.presence["t-a1"] = { mood: "working", detail: "Reading", since: "2026-11-06T11:55:00Z" };
+    mocks.presence["t-a1"] = {
+      mood: "working",
+      detail: "Reading",
+      since: "2026-11-06T11:55:00Z",
+      queued: 2,
+    };
     mocks.presence["t-a9"] = { mood: "working", detail: "Reading", since: null };
     render();
-    expect(container.textContent).toContain("Reading · 5m");
+    expect(container.textContent).toContain("Reading · 5m · 2 queued");
     expect(byLabel("Old, All projects")?.textContent).toContain("Archived");
     expect(byLabel("Old, All projects")?.textContent).toContain("av:idle");
     expect(byLabel("Jarvis, All projects")?.textContent).toContain("av:working");

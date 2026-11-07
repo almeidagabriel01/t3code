@@ -1,4 +1,4 @@
-import { assistantPresence } from "@t3tools/client-runtime/assistantRobot";
+import { assistantPresence, assistantQueuedLabel } from "@t3tools/client-runtime/assistantRobot";
 import { assistantEntryKey, assistantSections } from "@t3tools/client-runtime/assistantSections";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { EnvironmentId, ProjectId } from "@t3tools/contracts";
@@ -55,9 +55,13 @@ function AssistantCard(props: {
     ?.budget?.state;
   const status = archived
     ? "Archived"
-    : presence.since === null
-      ? presence.detail
-      : `${presence.detail} · ${relativeTime(presence.since, props.nowMs)}`;
+    : [
+        presence.detail,
+        presence.since === null ? null : relativeTime(presence.since, props.nowMs),
+        assistantQueuedLabel(presence.queued),
+      ]
+        .filter((part) => part !== null)
+        .join(" · ");
   const where = [
     props.projectLabel,
     ...props.detail,
