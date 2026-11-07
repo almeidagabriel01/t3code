@@ -429,6 +429,17 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
       created_at TEXT NOT NULL
     )
   `;
+  // One row per assistant request that expects a reply, keyed by its message id.
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS assistant_requests (
+      request_id TEXT PRIMARY KEY,
+      sender_thread_id TEXT NOT NULL,
+      recipient_thread_id TEXT NOT NULL,
+      -- 'open' until the recipient replies, or its run fails and the asker is told it is blocked.
+      status TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    )
+  `;
 
   // The destination's memory ceiling, captured when a person or agent saved the task.
   const scheduledColumns = yield* sql<{

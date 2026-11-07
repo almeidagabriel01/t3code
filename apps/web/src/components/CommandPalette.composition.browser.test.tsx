@@ -93,7 +93,7 @@ vi.mock("../state/decisions", async (original) => ({
 }));
 vi.mock("../state/assistants", async (original) => ({
   ...(await original<typeof import("../state/assistants")>()),
-  useAssistantEntries: () => ({ active: [], archived: [] }),
+  useAssistantEntries: () => ({ active: [], archived: [], teams: [], environmentIds: [] }),
 }));
 vi.mock("../state/filesystem", async (original) => ({
   ...(await original<typeof import("../state/filesystem")>()),
