@@ -97,6 +97,8 @@ const assistant = (id: string, name: string, overrides: Partial<Assistant> = {})
 
 // Saves and navigation settle through the real app, which is slow on a busy machine.
 const eventually = (check: () => void) => vi.waitFor(check, { timeout: 10_000 });
+// Settings shows beside the sidebar, whose assistant rows and buttons carry the same names.
+const settingsContent = () => page.getByRole("region", { name: "Settings content" });
 
 async function openApp(path: string) {
   const router = getRouter(createMemoryHistory({ initialEntries: [path] }));
@@ -145,7 +147,9 @@ it("lists assistants in Settings with an Archived section", async () => {
     assistant("old", "Retired", { archivedAt: "2026-03-18T00:00:00.000Z" }),
   ];
   await using _screen = await openApp("/settings/assistants");
-  await expect.element(page.getByRole("button", { name: "New assistant" })).toBeVisible();
+  await expect
+    .element(settingsContent().getByRole("button", { name: "New assistant" }))
+    .toBeVisible();
   await expect.element(page.getByText("Archived", { exact: true })).toBeVisible();
   await expect.element(page.getByRole("button", { name: "Unarchive" })).toBeVisible();
 });
@@ -156,7 +160,7 @@ it("Jarvis can be deleted like any assistant, and Restore Jarvis asks the server
   publishAssistants([fakeAssistantEdits.created]);
   await using _screen = await openApp("/settings/assistants");
   expect(page.getByRole("button", { name: "Restore Jarvis" }).query()).toBeNull();
-  await userEvent.click(page.getByRole("button", { name: "Jarvis actions" }));
+  await userEvent.click(settingsContent().getByRole("button", { name: "Jarvis actions" }));
   await expect.element(page.getByRole("menuitem", { name: "Archive assistant" })).toBeVisible();
   await expect.element(page.getByRole("menuitem", { name: "Delete assistant" })).toBeVisible();
   await userEvent.keyboard("{Escape}");
@@ -491,7 +495,7 @@ it("creates an assistant that works in the sandbox", async () => {
   publishSandbox({ ...fakeSandbox.status, state: "running" });
   appAtomRegistry.set(assistantDialogAtom, null);
   await using _screen = await openApp("/settings/assistants");
-  await userEvent.click(page.getByRole("button", { name: "New assistant" }));
+  await userEvent.click(settingsContent().getByRole("button", { name: "New assistant" }));
   await userEvent.fill(page.getByLabelText("Name"), "Boxed");
   await userEvent.click(page.getByRole("radio", { name: /Sandbox container/ }));
   await userEvent.click(page.getByRole("button", { name: "Create assistant" }));
@@ -826,7 +830,7 @@ it("creates an assistant with its notification choice", async () => {
   publishAssistants([assistant("jarvis", "Jarvis")]);
   appAtomRegistry.set(assistantDialogAtom, null);
   await using _screen = await openApp("/settings/assistants");
-  await userEvent.click(page.getByRole("button", { name: "New assistant" }));
+  await userEvent.click(settingsContent().getByRole("button", { name: "New assistant" }));
   await userEvent.fill(page.getByLabelText("Name"), "Scout");
   await userEvent.fill(page.getByLabelText("Role"), "Researcher");
   await userEvent.click(page.getByRole("combobox", { name: "Reports to" }));
