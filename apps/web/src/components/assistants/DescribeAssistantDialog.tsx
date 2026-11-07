@@ -32,27 +32,27 @@ export function DescribeAssistantDialog(props: {
   const newThread = useNewThreadHandler();
   const canSubmit = description.trim() !== "" && !busy;
 
+  // No try/finally: the React Compiler skips components that use one.
+  const openThread = async (): Promise<string | null> => {
+    const environmentId = scratchEnvironmentId(null);
+    const project = environmentId === null ? null : await openScratchProject(environmentId);
+    if (project === null) return "No Scratch project is available here.";
+    const opened = await newThread(scopeProjectRef(project.environmentId, project.id), {
+      prompt: describeAssistantPrompt(description),
+    });
+    return opened === null ? "Could not open a thread" : null;
+  };
+
   const submit = async () => {
     setBusy(true);
-    try {
-      const environmentId = scratchEnvironmentId(null);
-      const project = environmentId === null ? null : await openScratchProject(environmentId);
-      if (project === null) {
-        toastManager.add({ type: "error", title: "No Scratch project is available here." });
-        return;
-      }
-      const opened = await newThread(scopeProjectRef(project.environmentId, project.id), {
-        prompt: describeAssistantPrompt(description),
-      });
-      if (opened === null) {
-        toastManager.add({ type: "error", title: "Could not open a thread" });
-        return;
-      }
-      setDescription("");
-      props.onOpenChange(false);
-    } finally {
-      setBusy(false);
+    const problem = await openThread().catch(() => "Could not open a thread");
+    setBusy(false);
+    if (problem !== null) {
+      toastManager.add({ type: "error", title: problem });
+      return;
     }
+    setDescription("");
+    props.onOpenChange(false);
   };
 
   return (
