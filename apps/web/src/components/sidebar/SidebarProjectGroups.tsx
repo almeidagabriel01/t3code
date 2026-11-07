@@ -1,4 +1,5 @@
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { ProjectAssistantRows } from "../assistants/ProjectAssistantRows";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
@@ -190,6 +191,7 @@ type ProjectGroupProps = {
   onToggleSettled: (projectKey: string) => void;
   onShowMoreSettled: (projectKey: string) => void;
   onOpenSubagent: (threadRef: ScopedThreadRef) => void;
+  routeThreadKey: string | null;
   onListAttach: (projectKey: string, node: HTMLUListElement) => () => void;
   projectDragEnabled: boolean;
 };
@@ -442,6 +444,13 @@ function SidebarProjectGroup(props: ProjectGroupProps) {
         strategy={drag === null ? idleSortingStrategy : props.dragSortingStrategy}
       >
         <ul ref={attachList} role="presentation" className="relative flex flex-col gap-px">
+          {expanded ? (
+            <ProjectAssistantRows
+              members={project.memberProjects}
+              routeThreadKey={props.routeThreadKey}
+              onOpen={props.onOpenSubagent}
+            />
+          ) : null}
           {items.slice(0, settledStart + 1).flatMap(renderItem)}
           {settledItems.length > 0 || showMore ? (
             <li className="list-none">

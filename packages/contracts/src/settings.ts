@@ -559,6 +559,10 @@ export const ClientSettingsSchema = Schema.Struct({
   sidebarAssistantsCollapsed: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
+  /** Keys of the groups and projects folded inside the Assistants section. */
+  sidebarAssistantsCollapsedGroups: Schema.Array(Schema.String).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   destinationRail: DestinationRailPreferences.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   // Plain ids so a client never fails to decode a surface another app version added.
   rightPanelQuickButtons: Schema.Array(TrimmedNonEmptyString).pipe(
@@ -2069,6 +2073,7 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarAgentsDoneCollapsed: Schema.optionalKey(Schema.Boolean),
   sidebarShowAssistantsSection: Schema.optionalKey(Schema.Boolean),
   sidebarAssistantsCollapsed: Schema.optionalKey(Schema.Boolean),
+  sidebarAssistantsCollapsedGroups: Schema.optionalKey(Schema.Array(Schema.String)),
   destinationRail: Schema.optionalKey(DestinationRailPreferences),
   rightPanelQuickButtons: Schema.optionalKey(Schema.Array(TrimmedNonEmptyString)),
   sidebarAgentActivityDisplayMode: Schema.optionalKey(SidebarAgentActivityDisplayMode),

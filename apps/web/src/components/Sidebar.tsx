@@ -3353,6 +3353,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           }}
                           onShowMoreSettled={projectLayout.showMoreSettled}
                           onOpenSubagent={navigateToThread}
+                          routeThreadKey={routeThreadKey}
                         />,
                       );
                       return items;

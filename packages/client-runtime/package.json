@@ -279,6 +279,10 @@
       "types": "./src/assistantRobot.ts",
       "default": "./src/assistantRobot.ts"
     },
+    "./assistantSections": {
+      "types": "./src/assistantSections.ts",
+      "default": "./src/assistantSections.ts"
+    },
     "./assistantPresence": {
       "types": "./src/assistantPresence.ts",
       "default": "./src/assistantPresence.ts"
