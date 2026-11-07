@@ -35,6 +35,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
@@ -65,6 +66,10 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import { type OrchestratorMcpFailure } from "@t3tools/contracts";
 import { AssistantDirectory } from "../assistants/AssistantDirectory.ts";
+import {
+  AssistantRequests,
+  layer as assistantRequestsLayer,
+} from "../assistants/AssistantRequests.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
 import { idleThreadProjection, liveThreadShell } from "./McpToolAccess.testkit.ts";
@@ -3922,5 +3927,202 @@ describe("OrchestratorMcpService thread stop", () => {
         }).pipe(Effect.provide(layerTest));
       }),
     ),
+  );
+});
+
+describe("OrchestratorMcpService assistant requests", () => {
+  const askerId = ThreadId.make("assistant:asker:1");
+  const helperId = ThreadId.make("assistant:helper:1");
+  const plainId = ThreadId.make("thread:plain");
+  const shells = [
+    liveThreadShell(askerId, { runtimeMode: "full-access" }),
+    liveThreadShell(helperId, { runtimeMode: "approval-required" }),
+    liveThreadShell(plainId, { runtimeMode: "approval-required" }),
+  ];
+  const scopeOf = (threadId: ThreadId): McpInvocationScope => ({
+    environmentId: EnvironmentId.make("environment:assistant-requests"),
+    requestNamespace: `provider-session:${threadId}`,
+    thread: {
+      threadId,
+      providerSessionId: `provider-session:${threadId}`,
+      providerInstanceId: ProviderInstanceId.make("codex"),
+    },
+    client: undefined,
+    capabilities: new Set(["orchestration"]),
+    issuedAt: 1,
+  });
+  type Sent = { messageId: string; commandId: string; text: string; mode: string };
+
+  const harness = (failSend = false) =>
+    Effect.gen(function* () {
+      const sent = yield* Ref.make<ReadonlyArray<Sent>>([]);
+      const layer = layerOrchestratorService.pipe(
+        Layer.provideMerge(assistantRequestsLayer),
+        Layer.provideMerge(SqlitePersistence.layerMemory),
+        Layer.provide(
+          Layer.mergeAll(
+            NodeServices.layer,
+            NodeCrypto.layer,
+            Layer.mock(ThreadManagementService.ThreadManagementService)({
+              getThreadShell: (id) =>
+                Effect.succeed(shells.find((shell) => shell.id === id) ?? null),
+              getThreadRecords: (id) =>
+                Effect.succeed(idleThreadProjection(shells.find((shell) => shell.id === id)!)),
+              getProjectThreadRecords: ({ threadId: id }) =>
+                Effect.succeed(idleThreadProjection(shells.find((shell) => shell.id === id)!)),
+              sendToThread: (input) =>
+                failSend
+                  ? Effect.fail(new Error("delivery failed") as never)
+                  : Ref.update(sent, (all) => [...all, input as unknown as Sent]).pipe(
+                      Effect.as({
+                        run: { id: RunId.make("run:sent"), status: "queued" },
+                        delivery: "queued",
+                      } as never),
+                    ),
+            }),
+            ServerSettings.layerTest(),
+            Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+            Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+              list: () => Effect.succeed([]),
+            }),
+            Layer.mock(ProjectService.ProjectService)({}),
+            Layer.mock(SecretRequests.SecretRequests)({}),
+            Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+            Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+            Layer.mock(AssistantDirectory)({
+              forThread: (id) =>
+                Effect.succeedSome({
+                  assistant: {
+                    name: id.includes("asker") ? "Asker" : "Helper",
+                    handle: "h",
+                  } as never,
+                  current: true,
+                }),
+            }),
+          ),
+        ),
+      );
+      return { sent, layer };
+    });
+
+  it.effect("sends a request without waiting, and the reply routes back once", () =>
+    Effect.gen(function* () {
+      const { sent, layer } = yield* harness();
+      yield* Effect.gen(function* () {
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const first = yield* mcp.sendToThread(scopeOf(askerId), {
+          threadId: helperId,
+          message: "status?",
+        });
+        const again = yield* mcp.sendToThread(scopeOf(askerId), {
+          threadId: helperId,
+          message: "status?",
+        });
+        assert.equal(again.messageId, first.messageId);
+        const [request] = yield* Ref.get(sent);
+        assert.equal(request!.mode, "queue");
+        assert.include(request!.text, `requestId="${first.messageId}" expects_reply="true"`);
+        assert.include(request!.text, "status?");
+
+        // The helper has narrower modes than the asker; answering is still allowed.
+        const reply = { threadId: askerId, message: "Status: done", replyTo: first.messageId };
+        const answered = yield* mcp.sendToThread(scopeOf(helperId), reply);
+        const repeated = yield* mcp.sendToThread(scopeOf(helperId), reply);
+        assert.equal(answered.messageId, `assistant-reply:${first.messageId}`);
+        assert.equal(repeated.messageId, answered.messageId);
+        const replies = (yield* Ref.get(sent)).filter((s) => s.messageId === answered.messageId);
+        assert.equal(replies[0]!.mode, "queue");
+        assert.include(replies[0]!.text, "<t3_reply");
+        assert.notInclude(replies[0]!.text, "<t3_request");
+        assert.include(replies[0]!.text, "do not reply to it");
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("refuses a reply to an unknown or blocked request, and never records a reply", () =>
+    Effect.gen(function* () {
+      const { layer } = yield* harness();
+      yield* Effect.gen(function* () {
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const requests = yield* AssistantRequests;
+        const unknown = yield* mcp
+          .sendToThread(scopeOf(helperId), {
+            threadId: askerId,
+            message: "x",
+            replyTo: MessageId.make("message:none"),
+          })
+          .pipe(Effect.flip);
+        assert.equal(unknown.code, "invalid_request");
+        const asked = yield* mcp.sendToThread(scopeOf(askerId), {
+          threadId: helperId,
+          message: "go",
+        });
+        yield* requests.claimBlocked(asked.messageId, helperId);
+        const closed = yield* mcp
+          .sendToThread(scopeOf(helperId), {
+            threadId: askerId,
+            message: "late",
+            replyTo: asked.messageId,
+          })
+          .pipe(Effect.flip);
+        assert.include(closed.message, "already closed as blocked");
+        const toPlain = yield* mcp
+          .sendToThread(scopeOf(helperId), {
+            threadId: plainId,
+            message: "x",
+            replyTo: asked.messageId,
+          })
+          .pipe(Effect.flip);
+        assert.equal(toPlain.code, "invalid_request");
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("records no request when none is expected or the target is not an assistant", () =>
+    Effect.gen(function* () {
+      const { sent, layer } = yield* harness();
+      yield* Effect.gen(function* () {
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const requests = yield* AssistantRequests;
+        const fyi = yield* mcp.sendToThread(scopeOf(askerId), {
+          threadId: helperId,
+          message: "fyi",
+          expectsReply: false,
+        });
+        assert.equal(
+          yield* requests.claimReply({
+            requestId: fyi.messageId,
+            recipientThreadId: helperId,
+            senderThreadId: askerId,
+          }),
+          "unknown",
+        );
+        yield* mcp.sendToThread(scopeOf(askerId), { threadId: plainId, message: "plain" });
+        const all = yield* Ref.get(sent);
+        assert.include(all[0]!.text, `expects_reply="false"`);
+        assert.equal(all[1]!.text, "plain");
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect(
+    "gives the request back when delivery fails, so the failure is the asker's notice",
+    () =>
+      Effect.gen(function* () {
+        const { layer } = yield* harness(true);
+        yield* Effect.gen(function* () {
+          const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
+          const failed = yield* mcp
+            .sendToThread(scopeOf(askerId), {
+              threadId: helperId,
+              message: "go",
+              clientRequestId: "r1",
+            })
+            .pipe(Effect.flip);
+          assert.equal(failed.code, "orchestration_error");
+          const sql = yield* SqlClient.SqlClient;
+          assert.deepEqual(yield* sql`SELECT * FROM assistant_requests`, []);
+        }).pipe(Effect.provide(layer));
+      }),
   );
 });

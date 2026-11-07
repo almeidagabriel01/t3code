@@ -503,6 +503,18 @@ export const OrchestratorMcpThreadSendInput = Schema.Struct({
   threadId: ThreadId,
   message: OrchestratorMcpPrompt,
   mode: Schema.optional(Schema.Literals(["auto", "queue", "steer", "restart"])),
+  expectsReply: Schema.optional(
+    Schema.Boolean.annotate({
+      description:
+        "To another assistant, default true: do not wait; its reply arrives as a new message here. False when no answer is needed.",
+    }),
+  ),
+  replyTo: Schema.optional(
+    MessageId.annotate({
+      description:
+        "Answering an assistant's request: the `requestId` from its message. The reply wakes the asker and ends the exchange.",
+    }),
+  ),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
 });
 export type OrchestratorMcpThreadSendInput = typeof OrchestratorMcpThreadSendInput.Type;

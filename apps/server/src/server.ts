@@ -204,6 +204,8 @@ import * as CursorUsageAccounts from "@t3tools/provider-cursor/server/CursorUsag
 import * as UsageService from "./usage/UsageService.ts";
 import * as AssistantApprovalReactor from "./assistants/AssistantApprovalReactor.ts";
 import * as AssistantDirectory from "./assistants/AssistantDirectory.ts";
+import * as AssistantRequestReactor from "./assistants/AssistantRequestReactor.ts";
+import * as AssistantRequests from "./assistants/AssistantRequests.ts";
 import * as AutonomyService from "./autonomy/AutonomyService.ts";
 import * as ChannelLanguage from "./channels/ChannelLanguage.ts";
 import * as AssistantSandbox from "./assistants/AssistantSandbox.ts";
@@ -761,6 +763,17 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   ),
   Layer.effectDiscard(
     Effect.gen(function* () {
+      const service = yield* AssistantRequestReactor.AssistantRequestReactor;
+      yield* service.start();
+    }),
+  ).pipe(
+    Layer.provide(AssistantRequestReactor.layer),
+    Layer.provide(AssistantRequests.layer),
+    Layer.provide(AssistantDirectory.layer),
+    Layer.provide(ProjectionStoreV2.layer),
+  ),
+  Layer.effectDiscard(
+    Effect.gen(function* () {
       yield* (yield* ChannelOutbox.ChannelOutbox).start();
       yield* (yield* ChannelBridge.ChannelBridge).start();
       yield* (yield* ChannelReplyReactor.ChannelReplyReactor).start();
@@ -924,6 +937,8 @@ const layerMakeRoutes = Layer.mergeAll(
     Layer.provide(McpOAuth.layerMcpClientAuthenticator),
     // Tools read it with serviceOption to hold a sandboxed assistant's launches; without it they never refuse.
     Layer.provide(AssistantDirectory.layer),
+    // A reply to an assistant's request is recorded here; without it assistants only send.
+    Layer.provide(AssistantRequests.layer),
   ),
   // Follows delegated tasks running in linked environments, including after a restart.
   Layer.effectDiscard(

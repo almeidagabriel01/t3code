@@ -1,5 +1,6 @@
 import {
   CommandId,
+  isAssistantThreadId,
   type EnvironmentId,
   type RunId,
   isProviderAvailable,
@@ -77,6 +78,7 @@ import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
+import * as Hash from "effect/Hash";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
@@ -86,6 +88,12 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import { AssistantDirectory } from "../assistants/AssistantDirectory.ts";
+import {
+  AssistantRequests,
+  replyMessageId,
+  replyText,
+  requestText,
+} from "../assistants/AssistantRequests.ts";
 import { projectScopeRefusal, sandboxRefusal } from "../assistants/AssistantSandboxPolicy.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import {
@@ -1031,6 +1039,7 @@ const make = Effect.gen(function* () {
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const remoteDelegation = yield* RemoteDelegation.RemoteDelegation;
   const assistantDirectory = yield* Effect.serviceOption(AssistantDirectory);
+  const assistantRequests = yield* Effect.serviceOption(AssistantRequests);
 
   /** A sandboxed assistant starts work only in its sandbox: anything else is refused with the id to use. */
   const refuseOutsideSandbox = (scope: McpInvocationScope, target: EnvironmentId | undefined) =>
@@ -3158,38 +3167,120 @@ const make = Effect.gen(function* () {
     sendToThread: Effect.fn("OrchestratorMcpService.sendToThread")(function* (scope, input) {
       const { parent, limits, target } = yield* loadScopedThread(scope, input.threadId);
       yield* assertLiveCallerForOtherThread(scope, parent, target);
-      if (!isSideChatToItsMainChat(parent?.thread, target.thread.id)) {
+      const callerThreadId = parent?.thread.id;
+      // Between two assistants a send does not block: the answer comes back as a new message.
+      const exchange =
+        callerThreadId !== undefined &&
+        isAssistantThreadId(callerThreadId) &&
+        isAssistantThreadId(input.threadId) &&
+        Option.isSome(assistantRequests) &&
+        Option.isSome(assistantDirectory)
+          ? {
+              requests: assistantRequests.value,
+              caller: callerThreadId,
+              self: yield* assistantDirectory.value.forThread(callerThreadId),
+            }
+          : undefined;
+      if (input.replyTo !== undefined && exchange === undefined) {
+        return yield* failure(
+          "invalid_request",
+          "replyTo answers an assistant's request and is only sent from one assistant to another.",
+        );
+      }
+      const reply =
+        exchange !== undefined && input.replyTo !== undefined
+          ? yield* exchange.requests.claimReply({
+              requestId: input.replyTo,
+              recipientThreadId: exchange.caller,
+              senderThreadId: input.threadId,
+            })
+          : undefined;
+      if (reply === "unknown" || reply === "closed") {
+        return yield* failure(
+          "invalid_request",
+          reply === "unknown"
+            ? `No request ${input.replyTo} from that assistant to you. Reply to the requestId in its message.`
+            : `Request ${input.replyTo} was already closed as blocked.`,
+        );
+      }
+      // The asker opted in to hearing back, so a reply is not held to the sender's modes.
+      if (reply === undefined && !isSideChatToItsMainChat(parent?.thread, target.thread.id)) {
         yield* resolveRuntimeMode(limits.runtimeMode, target.thread.runtimeMode);
         yield* resolveInteractionMode(limits.interactionMode, target.thread.interactionMode);
       }
 
-      const mode = input.mode ?? "auto";
-      const key = yield* requestKey(input.clientRequestId);
-      const messageId = stableOperationMessageId({
-        scope,
-        requestKey: key,
-        operation: "thread-send",
-      });
+      const mode =
+        input.mode === undefined || input.mode === "auto"
+          ? exchange === undefined
+            ? "auto"
+            : "queue"
+          : input.mode;
+      // Without a request id the key follows what is sent, so a repeat lands on the same message.
+      const key = yield* requestKey(
+        input.clientRequestId ??
+          (exchange === undefined
+            ? undefined
+            : `auto:${Hash.string(`${input.threadId}\0${input.message}`).toString(36)}:${input.message.length}`),
+      );
+      const operation = "thread-send";
+      const requestId = stableOperationMessageId({ scope, requestKey: key, operation });
+      const messageId = reply === undefined ? requestId : replyMessageId(input.replyTo!);
+      const commandId =
+        reply === undefined
+          ? stableCommandId({ scope, requestKey: key, operation })
+          : CommandId.make(messageId);
+      const expectsReply =
+        exchange !== undefined && reply === undefined && input.expectsReply !== false;
+      let text = input.message;
+      if (exchange !== undefined) {
+        const from = {
+          name: Option.match(exchange.self, {
+            onNone: () => "An assistant",
+            onSome: (f) => f.assistant.name,
+          }),
+          handle: Option.match(exchange.self, {
+            onNone: () => "",
+            onSome: (f) => f.assistant.handle,
+          }),
+          threadId: exchange.caller,
+        };
+        text =
+          reply === undefined
+            ? requestText(from, requestId, expectsReply, input.message)
+            : replyText(from, input.replyTo!, input.message);
+        if (expectsReply) {
+          yield* exchange.requests.open({
+            requestId,
+            senderThreadId: exchange.caller,
+            recipientThreadId: input.threadId,
+          });
+        }
+      }
       const memoryGrantCeiling = yield* captureCallerMemoryCeiling(scope);
       const result = yield* threadManagement
         .sendToThread({
           projectId: target.thread.projectId,
           memoryGrantCeiling,
-          commandId: stableCommandId({
-            scope,
-            requestKey: key,
-            operation: "thread-send",
-          }),
+          commandId,
           threadId: input.threadId,
           ...(parent === undefined ? {} : { senderThreadId: parent.thread.id }),
           messageId,
-          text: input.message,
+          text,
           attachments: [],
           mode,
           createdBy: "agent",
           creationSource: "mcp",
         })
         .pipe(
+          Effect.tapError(() =>
+            exchange === undefined
+              ? Effect.void
+              : reply === "claimed"
+                ? exchange.requests.reopen(input.replyTo!)
+                : expectsReply
+                  ? exchange.requests.forget(requestId)
+                  : Effect.void,
+          ),
           Effect.mapError((error) =>
             isThreadManagementError(error)
               ? threadManagementFailure(error)

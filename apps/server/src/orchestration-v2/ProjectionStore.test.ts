@@ -5245,6 +5245,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       ]) {
         assert.equal(heldShell.latestRunId, runId);
         assert.equal(heldShell.status, "completed");
+        assert.equal(heldShell.queuedMessageCount, 1);
       }
 
       yield* projectionStore.apply({
@@ -5267,6 +5268,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       ]) {
         assert.isNull(onlyHeldShell.latestRunId);
         assert.equal(onlyHeldShell.status, "idle");
+        assert.equal(onlyHeldShell.queuedMessageCount, 2);
       }
 
       yield* projectionStore.apply({

@@ -50,7 +50,8 @@ it("lists each group's teammates with their roles and names the lead only as the
     ),
   );
   assert.ok(asMember.includes("Ray routes group requests that mention no one."));
-  assert.ok(asMember.includes("never reply just to acknowledge"));
+  assert.ok(asMember.includes("send, then end your turn"));
+  assert.ok(asMember.includes("never reply to a reply"));
   const asLead = assistantNoteFor(assistant, "hi", [
     { team, lead: { ...ray, handle: "sam" }, teammates: [lee] },
   ]);

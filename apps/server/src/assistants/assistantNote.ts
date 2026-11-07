@@ -23,7 +23,7 @@ export interface TeamMembership {
 }
 
 const TEAM_GUIDANCE =
-  "These are your teammates; you may hand work to any of them with t3_thread_send to its threadId, then t3_thread_wait on the run it returns. Message one only when the work needs them, keep exchanges short, and never reply just to acknowledge. Summarize for the user what the group did.";
+  "These are your teammates; you may hand work to any of them with t3_thread_send to its threadId. Do not wait: send, then end your turn. The answer arrives later as a new message in this conversation. When a teammate's request carries a requestId, answer it with t3_thread_send to the asker's threadId and replyTo set to that requestId, as Status (done | partial | blocked), Result, Evidence, and Unblock when blocked; never reply to a reply. Message one only when the work needs them, and keep exchanges short. Summarize for the user what the group did.";
 
 /** One block per group the assistant is in; empty when it is in none. */
 function teamsLines(self: Pick<Colleague, "handle">, teams: ReadonlyArray<TeamMembership>): string {
