@@ -90,6 +90,16 @@ describe("resolveInlineCodeFileLinkMeta", () => {
   });
 });
 
+describe("transferred files", () => {
+  it("opens a copy in the shared folder from the link an assistant message carries", () => {
+    const href = "/Users/ana/Library/Application%20Support/t3/shared/transfers/ana/m1/report.txt";
+    expect(resolveMarkdownFileLinkMeta(href, "/repo")).toMatchObject({
+      filePath: "/Users/ana/Library/Application Support/t3/shared/transfers/ana/m1/report.txt",
+      basename: "report.txt",
+    });
+  });
+});
+
 describe("chat file chip paths", () => {
   const cwd = String.raw`C:\Users\alice\project`;
 

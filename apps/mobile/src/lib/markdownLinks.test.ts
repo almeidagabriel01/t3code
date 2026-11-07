@@ -14,6 +14,17 @@ describe("resolveMarkdownLinkPresentation", () => {
     });
   });
 
+  it("opens a file an assistant handed over from the shared folder", () => {
+    expect(
+      resolveMarkdownLinkPresentation(
+        "/Users/ana/Library/Application%20Support/t3/shared/transfers/ana/m1/report.txt",
+      ),
+    ).toMatchObject({
+      kind: "file",
+      path: "/Users/ana/Library/Application Support/t3/shared/transfers/ana/m1/report.txt",
+    });
+  });
+
   it("treats protocol-relative media as an external URL, not a filesystem path", () => {
     expect(resolveMarkdownLinkPresentation("//cdn.example.com/clip.mp4?sig=a%2fb#t=2")).toEqual({
       kind: "external",

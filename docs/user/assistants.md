@@ -117,7 +117,17 @@ with the `t3_assistant` tool and messages its conversation. Between assistants n
 asker sends and ends its turn, and the answer arrives later as a new message that wakes it. If the
 other assistant's run fails or is cancelled before it answers, the asker gets a "Status: blocked"
 message instead of silence. Messages waiting behind an assistant's active run show as "3 queued" on
-its row.
+its row. To ask several assistants at once, say so in one request: their answers are held and arrive
+together as one message.
+
+### Shared folder and sending files
+
+Every assistant can read and write the `shared` folder inside T3 Code's data folder (`~/.t3/shared` by
+default), and the sandbox sees it at `/home/t3/shared`. To hand files over, ask an assistant to send
+them (up to 10 files, 100 MB each and 250 MB in all). T3 Code copies them into `shared/transfers/` when
+it sends, so the recipient keeps a stable copy, and the message shows them as links that open in the
+file viewer. Deleting an assistant removes the files it sent. A sandbox created before this feature
+needs to be recreated to see the folder.
 
 ## Groups
 

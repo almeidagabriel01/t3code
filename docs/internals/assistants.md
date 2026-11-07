@@ -95,8 +95,25 @@ Reply ids derive from the request id, so a repeat lands once, and a reply is nev
 A reply skips the sender-mode ceiling because the asker opted in. `AssistantRequestReactor` turns a
 failed, cancelled or interrupted recipient run into an automatic "Status: blocked" reply; a delivery
 failure is the sender's own tool error. Without a `clientRequestId` the key follows the target and
-text, so an identical send within one session repeats the same request. A request goes to one
-assistant; there are no grouped replies. Shells carry `queuedMessageCount` for the row badge.
+text, so an identical send within one session repeats the same request. Shells carry
+`queuedMessageCount` for the row badge.
+
+A send may name several assistants (`threadIds`). Each gets its own request row (`<group>:to:<thread>`)
+sharing a `group_id`, all opened before the first send so a fast reply never sees a group of one. Replies
+and blocked notices are stored in the rows; `AssistantRequests.settle` claims the group's single
+delivery (`delivered`) once none is open, and the caller that completed it sends one
+`assistant-reply:<group>` message. `reopen` gives the delivery back with the request.
+
+## The shared folder
+
+`<baseDir>/shared` (not under the owner-only state directory) is visible to every assistant:
+`AssistantRuntimePolicy` adds it to `additionalDirectories` of the runtime policy for assistant threads
+only, which Claude passes as extra directories and Codex adds to a workspace-write sandbox's writable
+roots. Other adapters do not read the field yet. The sandbox container mounts it at `/home/t3/shared`,
+which is its own T3 home's `shared`. A send with `paths` copies each file to
+`shared/transfers/<senderAssistantId>/<messageId>/` with a manifest written last (name, size, sha256;
+a folder with a manifest is complete and a repeat returns it). The sender owns the folder: deleting the
+sender, or a send that never delivered, removes it and nothing else under `shared/`.
 
 ## Instructions ride every turn
 
