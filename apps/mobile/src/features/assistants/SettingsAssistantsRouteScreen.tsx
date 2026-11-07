@@ -5,6 +5,8 @@ import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environ
 import { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import type { ReactNode } from "react";
 import { Pressable, View } from "react-native";
+import { SymbolView } from "../../components/ui/AppSymbol";
+import { Menu } from "../../components/ui/Menu";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/ui/AppText";
@@ -184,19 +186,36 @@ function Section(props: {
   );
 }
 
-function SectionAction(props: { readonly label: string; readonly onPress: () => void }) {
+/** A section's actions behind one "⋯", so a long group or project name never pushes them off screen. */
+function SectionMenu(props: {
+  readonly label: string;
+  readonly actions: ReadonlyArray<{
+    readonly id: string;
+    readonly title: string;
+    readonly onPress: () => void;
+  }>;
+}) {
   return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={props.label}
-      hitSlop={6}
-      onPress={props.onPress}
-      className="min-h-9 justify-center px-1 active:opacity-70"
+    <Menu
+      actions={props.actions.map((action) => ({ id: action.id, title: action.title }))}
+      onPressAction={({ nativeEvent }) =>
+        props.actions.find((action) => action.id === nativeEvent.event)?.onPress()
+      }
     >
-      <Text textRole="footnote" className="font-t3-medium text-primary-text">
-        {props.label}
-      </Text>
-    </Pressable>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={props.label}
+        hitSlop={6}
+        className="size-9 items-center justify-center rounded-full active:opacity-70"
+      >
+        <SymbolView
+          name="ellipsis"
+          size={16}
+          tintColorClassName="accent-icon-subtle"
+          type="monochrome"
+        />
+      </Pressable>
+    </Menu>
   );
 }
 
@@ -264,7 +283,8 @@ export function SettingsAssistantsRouteScreen() {
         .map((other) => other.assistant),
     );
     return [
-      ...(subtitle === null ? [] : [subtitle]),
+      // The role already shows as a chip beside the name.
+      ...(subtitle === null || subtitle === entry.assistant.role ? [] : [subtitle]),
       ...(loadedEnvironmentIds.length > 1 && savedConnectionsById[entry.environmentId]
         ? [savedConnectionsById[entry.environmentId]!.environmentLabel]
         : []),
@@ -344,22 +364,27 @@ export function SettingsAssistantsRouteScreen() {
                 count={members.length}
                 {...(members.length === 0 ? { empty: "No members yet." } : {})}
                 actions={
-                  <>
-                    <SectionAction
-                      label={`New assistant in ${entry.team.name}`}
-                      onPress={() =>
-                        openEditor(entry.environmentId, null, { teamId: entry.team.id })
-                      }
-                    />
-                    <SectionAction
-                      label={`Activity of ${entry.team.name}`}
-                      onPress={() => openTeam.activity(entry.environmentId, entry.team.id)}
-                    />
-                    <SectionAction
-                      label={`Edit ${entry.team.name}`}
-                      onPress={() => openTeam.edit(entry.environmentId, entry.team.id)}
-                    />
-                  </>
+                  <SectionMenu
+                    label={`${entry.team.name} actions`}
+                    actions={[
+                      {
+                        id: "new",
+                        title: "New assistant in this group",
+                        onPress: () =>
+                          openEditor(entry.environmentId, null, { teamId: entry.team.id }),
+                      },
+                      {
+                        id: "activity",
+                        title: "Team activity",
+                        onPress: () => openTeam.activity(entry.environmentId, entry.team.id),
+                      },
+                      {
+                        id: "edit",
+                        title: "Edit group",
+                        onPress: () => openTeam.edit(entry.environmentId, entry.team.id),
+                      },
+                    ]}
+                  />
                 }
               >
                 {members.map((member) => card(member, `group:${entry.team.id}`))}
@@ -371,13 +396,18 @@ export function SettingsAssistantsRouteScreen() {
                 title={projectName(project.environmentId, project.projectId)}
                 count={project.members.length}
                 actions={
-                  <SectionAction
-                    label={`New assistant in ${projectName(project.environmentId, project.projectId)}`}
-                    onPress={() =>
-                      openEditor(EnvironmentId.make(project.environmentId), null, {
-                        projectId: ProjectId.make(project.projectId),
-                      })
-                    }
+                  <SectionMenu
+                    label={`${projectName(project.environmentId, project.projectId)} actions`}
+                    actions={[
+                      {
+                        id: "new",
+                        title: "New assistant in this project",
+                        onPress: () =>
+                          openEditor(EnvironmentId.make(project.environmentId), null, {
+                            projectId: ProjectId.make(project.projectId),
+                          }),
+                      },
+                    ]}
                   />
                 }
               >

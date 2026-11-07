@@ -107,6 +107,25 @@ vi.mock("../../components/ui/EmptyState", () => ({
 }));
 vi.mock("../../components/ui/ListSection", () => ({ ListSection: Children }));
 vi.mock("../../components/ui/ScreenScrollView", () => ({ ScreenScrollView: Children }));
+vi.mock("../../components/ui/AppSymbol", () => ({ SymbolView: () => null }));
+vi.mock("../../components/ui/Menu", () => ({
+  Menu: (props: {
+    actions: Array<{ id: string; title: string }>;
+    onPressAction: (event: { nativeEvent: { event: string } }) => void;
+    children?: ReactNode;
+  }) => (
+    <>
+      {props.children}
+      {props.actions.map((action) => (
+        <button
+          key={action.id}
+          aria-label={`menu:${action.title}`}
+          onClick={() => props.onPressAction({ nativeEvent: { event: action.id } })}
+        />
+      ))}
+    </>
+  ),
+}));
 vi.mock("../../lib/clock", () => ({ useNowMinuteMs: () => Date.parse("2026-11-06T12:00:00Z") }));
 vi.mock("../settings/components/SettingsScreen", () => ({
   SettingsScreen: (props: {
@@ -210,7 +229,7 @@ describe("assistants page", () => {
   ] as const)("a %s limit reads %j on the card", (state, suffix) => {
     mocks.budgetState = state;
     render();
-    expect(byLabel(`Jarvis, All projects, CEO${suffix}`)).not.toBeNull();
+    expect(byLabel(`Jarvis, All projects${suffix}`)).not.toBeNull();
     expect(byLabel("Plain, All projects, reports to Jarvis")).not.toBeNull();
     expect(mocks.spendQuery).toHaveBeenCalledWith("hub", "a1");
     expect(mocks.spendQuery).toHaveBeenCalledWith("hub", null);
@@ -257,7 +276,7 @@ describe("assistants page", () => {
     expect(container.textContent).toContain("Reading · 5m");
     expect(byLabel("Old, All projects")?.textContent).toContain("Archived");
     expect(byLabel("Old, All projects")?.textContent).toContain("av:idle");
-    expect(byLabel("Jarvis, All projects, CEO")?.textContent).toContain("av:working");
+    expect(byLabel("Jarvis, All projects")?.textContent).toContain("av:working");
   });
 
   it("a card opens its thread, edits, and archives; an archived one restores", async () => {
@@ -266,11 +285,11 @@ describe("assistants page", () => {
       archived: [assistant("a9", "Old", { archivedAt: "2026-01-01T00:00:00Z" })],
     };
     render();
-    act(() => buttonIn("Jarvis, All projects, CEO", "Open thread").click());
+    act(() => buttonIn("Jarvis, All projects", "Open thread").click());
     expect(mocks.open).toHaveBeenCalledWith(expect.objectContaining({ id: "a1" }));
-    act(() => buttonIn("Jarvis, All projects, CEO", "Edit").click());
+    act(() => buttonIn("Jarvis, All projects", "Edit").click());
     expect(mocks.openEditor).toHaveBeenCalledWith("hub", expect.objectContaining({ id: "a1" }));
-    act(() => buttonIn("Jarvis, All projects, CEO", "Archive").click());
+    act(() => buttonIn("Jarvis, All projects", "Archive").click());
     expect(mocks.archive).toHaveBeenCalledWith(expect.objectContaining({ id: "a1" }));
     expect(byLabel("Old, All projects")?.textContent).not.toContain("Open thread");
     act(() => buttonIn("Old, All projects", "Restore").click());
@@ -293,13 +312,13 @@ describe("assistants page", () => {
       teams: [{ environmentId: "hub", team: { id: "g1", name: "Growth", memberIds: [] } }],
     };
     render();
-    await click("New assistant in Growth");
+    await click("menu:New assistant in this group");
     expect(mocks.openEditor).toHaveBeenCalledWith("hub", null, { teamId: "g1" });
-    await click("Activity of Growth");
+    await click("menu:Team activity");
     expect(mocks.openTeam.activity).toHaveBeenCalledWith("hub", "g1");
-    await click("Edit Growth");
+    await click("menu:Edit group");
     expect(mocks.openTeam.edit).toHaveBeenCalledWith("hub", "g1");
-    await click("New assistant in Website");
+    await click("menu:New assistant in this project");
     expect(mocks.openEditor).toHaveBeenLastCalledWith("hub", null, { projectId: "p1" });
   });
 
