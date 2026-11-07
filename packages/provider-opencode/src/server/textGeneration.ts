@@ -43,6 +43,7 @@ const OpenCodeTextGenerationOperation = Schema.Literals([
   "generateBranchName",
   "generateThreadTitle",
   "generateReviewGuide",
+  "routeAssistantGroup",
 ]);
 
 const openCodeTextGenerationErrorContext = {

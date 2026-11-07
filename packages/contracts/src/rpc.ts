@@ -466,6 +466,16 @@ import {
   AssistantSandboxSubscribeInput,
 } from "./assistants.ts";
 import {
+  AssistantGroupTask,
+  AssistantGroupsEvent,
+  AssistantGroupsHistoryInput,
+  AssistantGroupsHistoryResult,
+  AssistantGroupsPostInput,
+  AssistantGroupsPostResult,
+  AssistantGroupsSubscribeInput,
+  AssistantGroupsTaskActionInput,
+} from "./assistantGroups.ts";
+import {
   AutonomyError,
   AutonomyWatch,
   AutonomyWatchDeleteInput,
@@ -751,6 +761,10 @@ export const WS_METHODS = {
   assistantTeamsCreate: "assistantTeams.create",
   assistantTeamsUpdate: "assistantTeams.update",
   assistantTeamsDelete: "assistantTeams.delete",
+  assistantGroupsSubscribe: "assistantGroups.subscribe",
+  assistantGroupsHistory: "assistantGroups.history",
+  assistantGroupsPost: "assistantGroups.post",
+  assistantGroupsTaskAction: "assistantGroups.taskAction",
   autonomyWatchesList: "autonomy.watches.list",
   autonomyWatchUpsert: "autonomy.watches.upsert",
   autonomyWatchSetEnabled: "autonomy.watches.setEnabled",
@@ -2315,6 +2329,27 @@ const WsAssistantTeamsDeleteRpc = Rpc.make(WS_METHODS.assistantTeamsDelete, {
   success: AssistantTeamsDeleteResult,
   error: AssistantRpcErrors,
 });
+const WsAssistantGroupsSubscribeRpc = Rpc.make(WS_METHODS.assistantGroupsSubscribe, {
+  payload: AssistantGroupsSubscribeInput,
+  success: AssistantGroupsEvent,
+  error: AssistantRpcErrors,
+  stream: true,
+});
+const WsAssistantGroupsHistoryRpc = Rpc.make(WS_METHODS.assistantGroupsHistory, {
+  payload: AssistantGroupsHistoryInput,
+  success: AssistantGroupsHistoryResult,
+  error: AssistantRpcErrors,
+});
+const WsAssistantGroupsPostRpc = Rpc.make(WS_METHODS.assistantGroupsPost, {
+  payload: AssistantGroupsPostInput,
+  success: AssistantGroupsPostResult,
+  error: AssistantRpcErrors,
+});
+const WsAssistantGroupsTaskActionRpc = Rpc.make(WS_METHODS.assistantGroupsTaskAction, {
+  payload: AssistantGroupsTaskActionInput,
+  success: AssistantGroupTask,
+  error: AssistantRpcErrors,
+});
 
 const AutonomyRpcErrors = Schema.Union([AutonomyError, EnvironmentAuthorizationError]);
 const WsAutonomyWatchesListRpc = Rpc.make(WS_METHODS.autonomyWatchesList, {
@@ -2753,6 +2788,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsAssistantTeamsCreateRpc,
   WsAssistantTeamsUpdateRpc,
   WsAssistantTeamsDeleteRpc,
+  WsAssistantGroupsSubscribeRpc,
+  WsAssistantGroupsHistoryRpc,
+  WsAssistantGroupsPostRpc,
+  WsAssistantGroupsTaskActionRpc,
   WsAutonomyWatchesListRpc,
   WsAutonomyWatchUpsertRpc,
   WsAutonomyWatchSetEnabledRpc,

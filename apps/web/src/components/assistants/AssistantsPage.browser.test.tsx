@@ -21,8 +21,10 @@ import { getRouter } from "~/router";
 import { assistantDialogAtom } from "./assistantDialogState";
 import { assistantTeamDialogAtom } from "./assistantTeamState";
 import {
+  ENVIRONMENT_ID,
   PROJECT_ID,
   fakeAssistantEdits,
+  fakeTeamEdits,
   installFakeEnvironment,
   publishAssistants,
   threadWithHistory,
@@ -103,6 +105,7 @@ const team = (id: string, name: string, memberIds: string[]): AssistantTeam => (
   name,
   memberIds: memberIds as AssistantId[],
   leadId: null,
+  archivedAt: null,
   createdAt: "2026-03-17T19:00:00.000Z",
   updatedAt: "2026-03-17T19:00:00.000Z",
 });
@@ -191,6 +194,29 @@ it("lists every assistant as a card under the sidebar's sections", async () => {
   waiting.clear();
   appAtomRegistry.set(assistantDialogAtom, null);
   appAtomRegistry.set(assistantTeamDialogAtom, null);
+});
+
+it("opens a group's chat and lists archived groups with a way back", async () => {
+  fakeTeamEdits.updates = [];
+  publishAssistants(
+    [assistant("bo", "Bo")],
+    [
+      team("t1", "Leaders", ["bo"]),
+      { ...team("t2", "Old crew", ["bo"]), archivedAt: "2026-03-18T00:00:00.000Z" },
+    ],
+  );
+  await using screen = await openApp();
+  await expect.element(section("Leaders")).toBeVisible();
+  expect(section("Old crew").query()).toBeNull();
+  await userEvent.click(section("Leaders").getByRole("button", { name: "Open chat" }));
+  await eventually(() =>
+    expect(screen.router.state.location.pathname).toBe(`/group/${ENVIRONMENT_ID}/t1`),
+  );
+  await screen.router.navigate({ to: "/assistants" });
+  await userEvent.click(section("Archived groups").getByRole("button", { name: "Restore" }));
+  await eventually(() =>
+    expect(fakeTeamEdits.updates).toMatchObject([{ teamId: "t2", archived: false }]),
+  );
 });
 
 it("fits a narrow panel without sideways scrolling", async () => {

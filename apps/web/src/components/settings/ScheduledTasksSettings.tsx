@@ -60,7 +60,7 @@ import {
   type EnvironmentPresentation,
 } from "../../state/environments";
 import { useProjects, useThreadShell } from "../../state/entities";
-import { useThreadAssistant } from "../../state/assistants";
+import { useAssistantEntries, useThreadAssistant } from "../../state/assistants";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { environmentAtomList, environmentIdsKey } from "../../state/environmentAtomList";
 import { formatEnvironmentQueryError, useEnvironmentQuery } from "../../state/query";
@@ -151,6 +151,7 @@ const EMPTY_DRAFT: DraftState = {
   weekdays: new Set([1, 2, 3, 4, 5]),
   projectId: "",
   threadId: "",
+  assistantTeamId: "",
   workspaceMode: "worktree",
   baseRef: "main",
   startFromOrigin: true,
@@ -370,12 +371,15 @@ export function ScheduledTasksSettings(target: {
   readonly taskId?: ScheduledTaskId | undefined;
   /** Opens the create editor bound to this thread's conversation. */
   readonly threadId?: ThreadId | undefined;
+  /** Opens the create editor posting in this assistant group's chat. */
+  readonly assistantTeamId?: string | undefined;
 }) {
   const { scope, environments, connectedEnvironments, environment } = useSettingsScope();
   const [editor, setEditor] = useState<{
     environmentId: EnvironmentId;
     task: ScheduledTask | null;
     bound?: BoundThread;
+    groupId?: string;
   } | null>(null);
   const openForEdit = (environmentId: EnvironmentId, task: ScheduledTask) => {
     setEditor({ environmentId, task });
@@ -435,13 +439,42 @@ export function ScheduledTasksSettings(target: {
       });
     }
   }
+  // A group link opens one create editor too, then it is the user's.
+  const [openedGroupId, setOpenedGroupId] = useState<string | undefined>();
+  if (target.assistantTeamId === undefined && openedGroupId !== undefined) {
+    setOpenedGroupId(undefined);
+  }
+  if (
+    target.assistantTeamId !== undefined &&
+    linkedEnvironmentId !== undefined &&
+    openedGroupId !== target.assistantTeamId
+  ) {
+    setOpenedGroupId(target.assistantTeamId);
+    if (editor === null) {
+      setEditor({
+        environmentId: linkedEnvironmentId,
+        task: null,
+        groupId: target.assistantTeamId,
+      });
+    }
+  }
   const navigate = useNavigate({ from: "/settings/scheduled-tasks" });
   const closeEditor = () => {
     setEditor(null);
-    if (target.taskId === undefined && target.threadId === undefined) return;
+    if (
+      target.taskId === undefined &&
+      target.threadId === undefined &&
+      target.assistantTeamId === undefined
+    )
+      return;
     void navigate({
       to: "/settings/scheduled-tasks",
-      search: ({ taskId: _closed, threadId: _closedThread, ...rest }) => rest,
+      search: ({
+        taskId: _closed,
+        threadId: _closedThread,
+        assistantTeamId: _closedGroup,
+        ...rest
+      }) => rest,
       replace: true,
     });
   };
@@ -512,10 +545,11 @@ export function ScheduledTasksSettings(target: {
       </SettingsSection>
       {editor ? (
         <ScheduledTaskEditorDialog
-          key={`${editor.environmentId}:${editor.task?.id ?? "new"}:${editor.bound?.threadId ?? ""}`}
+          key={`${editor.environmentId}:${editor.task?.id ?? "new"}:${editor.bound?.threadId ?? ""}:${editor.groupId ?? ""}`}
           initialEnvironmentId={editor.environmentId}
           task={editor.task}
           bound={editor.bound}
+          groupId={editor.groupId}
           onClose={closeEditor}
         />
       ) : null}
@@ -798,6 +832,16 @@ function ScheduledTaskRow({
       status={
         <div className="flex flex-wrap items-center gap-2">
           <span>
+            {task.assistantTeamId ? (
+              <>
+                <ScheduledGroupName
+                  environmentId={environmentId}
+                  teamId={task.assistantTeamId}
+                  prefix="Group: "
+                />{" "}
+                ·{" "}
+              </>
+            ) : null}
             {scheduleLabel(task.schedule)} ·{" "}
             {task.blockedByPolicy !== undefined ? (
               task.blockedByPolicy
@@ -1151,11 +1195,13 @@ function ScheduledTaskEditorDialog({
   initialEnvironmentId,
   task,
   bound,
+  groupId,
   onClose,
 }: {
   readonly initialEnvironmentId: EnvironmentId;
   readonly task: ScheduledTask | null;
   readonly bound: BoundThread | undefined;
+  readonly groupId: string | undefined;
   readonly onClose: () => void;
 }) {
   const [saving, setSaving] = useState(false);
@@ -1172,6 +1218,7 @@ function ScheduledTaskEditorDialog({
           initialEnvironmentId={initialEnvironmentId}
           task={task}
           bound={bound}
+          groupId={groupId}
           saving={saving}
           onSavingChange={setSaving}
           onClose={onClose}
@@ -1179,6 +1226,20 @@ function ScheduledTaskEditorDialog({
       </DialogPopup>
     </Dialog>
   );
+}
+
+/** The group's name, or a stand-in while it loads. */
+function ScheduledGroupName(props: {
+  readonly environmentId: EnvironmentId;
+  readonly teamId: string;
+  readonly prefix?: string;
+}) {
+  const { teams } = useAssistantEntries();
+  const name =
+    teams.find(
+      (entry) => entry.environmentId === props.environmentId && entry.team.id === props.teamId,
+    )?.team.name ?? "This group";
+  return `${props.prefix ?? ""}${name}`;
 }
 
 function useBoundThreadName(environmentId: EnvironmentId, threadId: ThreadId | ""): string {
@@ -1197,6 +1258,7 @@ function ScheduledTaskEditorForm({
   initialEnvironmentId,
   task,
   bound,
+  groupId,
   saving,
   onSavingChange: setSaving,
   onClose,
@@ -1204,6 +1266,7 @@ function ScheduledTaskEditorForm({
   readonly initialEnvironmentId: EnvironmentId;
   readonly task: ScheduledTask | null;
   readonly bound: BoundThread | undefined;
+  readonly groupId: string | undefined;
   readonly saving: boolean;
   readonly onSavingChange: (saving: boolean) => void;
   readonly onClose: () => void;
@@ -1243,12 +1306,20 @@ function ScheduledTaskEditorForm({
       ? taskToDraft(task)
       : bound
         ? { ...EMPTY_DRAFT, projectId: bound.projectId, threadId: bound.threadId }
-        : {
-            ...EMPTY_DRAFT,
-            projectId: defaultScheduledTaskProjectId(scopedProjects, scope),
-          },
+        : groupId !== undefined
+          ? {
+              ...EMPTY_DRAFT,
+              projectId: defaultScheduledTaskProjectId(scopedProjects, scope),
+              assistantTeamId: groupId,
+            }
+          : {
+              ...EMPTY_DRAFT,
+              projectId: defaultScheduledTaskProjectId(scopedProjects, scope),
+            },
   );
   const boundName = useBoundThreadName(environmentId, draft.threadId as ThreadId | "");
+  // A task that posts in a group chat has no project, workspace or model choice of its own.
+  const targeted = draft.threadId !== "" || draft.assistantTeamId !== "";
   // Pinned first. The chosen project stays listed after it is archived.
   const projects = scopedProjects
     .filter(
@@ -1382,7 +1453,8 @@ function ScheduledTaskEditorForm({
       enabled: draft.enabled,
       schedule,
       projectId: selectedProjectId as ProjectId,
-      threadId: draft.threadId ? (draft.threadId as ThreadId) : null,
+      threadId: draft.threadId && !draft.assistantTeamId ? (draft.threadId as ThreadId) : null,
+      assistantTeamId: draft.assistantTeamId || null,
       workspaceStrategy,
       modelSelection,
       // Tasks have no mode picker; a mode above the administrator's ceiling would fail every run.
@@ -1506,7 +1578,30 @@ function ScheduledTaskEditorForm({
             />
           </Field>
 
-          {draft.threadId ? (
+          {draft.assistantTeamId ? (
+            <Field label="Posts in">
+              <div className="flex items-center justify-between gap-3">
+                <span className="min-w-0 truncate text-sm">
+                  <ScheduledGroupName
+                    environmentId={environmentId}
+                    teamId={draft.assistantTeamId}
+                    prefix="Group chat · "
+                  />
+                </span>
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="outline"
+                  onClick={() => setDraft((current) => ({ ...current, assistantTeamId: "" }))}
+                >
+                  Run in a new thread
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                The prompt is posted as a message in the group's chat.
+              </p>
+            </Field>
+          ) : draft.threadId ? (
             <Field label="Runs in">
               <div className="flex items-center justify-between gap-3">
                 <span className="min-w-0 truncate text-sm">{boundName}'s conversation</span>
@@ -1577,7 +1672,7 @@ function ScheduledTaskEditorForm({
             </div>
           )}
 
-          {!draft.threadId && draft.workspaceMode === "worktree" ? (
+          {!targeted && draft.workspaceMode === "worktree" ? (
             <Field label="Base branch" htmlFor="scheduled-task-base-ref">
               <WorktreeBaseBranchPicker
                 key={`${environmentId}:${selectedProjectId}`}
@@ -1594,7 +1689,7 @@ function ScheduledTaskEditorForm({
               />
             </Field>
           ) : null}
-          {!draft.threadId && draft.workspaceMode === "existing_worktree" ? (
+          {!targeted && draft.workspaceMode === "existing_worktree" ? (
             <Field label="Checkout path" htmlFor="scheduled-task-checkout">
               <Input
                 id="scheduled-task-checkout"
@@ -1625,7 +1720,7 @@ function ScheduledTaskEditorForm({
             />
           </Field>
 
-          {draft.threadId ? null : (
+          {targeted ? null : (
             <Field label="Model">
               <div>
                 <ProviderModelPicker

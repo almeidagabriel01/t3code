@@ -1,6 +1,10 @@
 import { liveShellEnvironmentIdsAtom } from "../state/shell";
 import { attachSidebarTree } from "../lib/sidebarTree";
-import { type EnvironmentId, type ScopedProjectRef } from "@t3tools/contracts";
+import {
+  type AssistantTeamId,
+  type EnvironmentId,
+  type ScopedProjectRef,
+} from "@t3tools/contracts";
 import type { SidebarThreadOrder } from "@t3tools/contracts/settings";
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
 import { ThreadContextDragGhost } from "./chat/ThreadContextDragGhost";
@@ -1327,6 +1331,16 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     return router.navigate({
       to: "/$environmentId/$threadId",
       params: buildThreadRouteParams(threadRef),
+    });
+  };
+
+  const navigateToGroup = (environmentId: EnvironmentId, teamId: AssistantTeamId) => {
+    if (isMobile) {
+      setOpenMobile(false);
+    }
+    return router.navigate({
+      to: "/group/$environmentId/$teamId",
+      params: { environmentId, teamId },
     });
   };
 
@@ -3305,6 +3319,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           routeThreadKey={routeThreadKey}
                           environmentLabelById={environmentLabelById}
                           onOpenThread={navigateToThread}
+                          onOpenGroup={navigateToGroup}
                         />,
                       );
                       items.push(

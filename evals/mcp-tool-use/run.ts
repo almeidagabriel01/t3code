@@ -53,6 +53,8 @@ import { sideChatParentContext } from "../../apps/server/src/orchestration-v2/Si
 import { withInlineContext } from "../../apps/server/src/orchestration-v2/ContextHandoffDelivery.ts";
 import { AttachmentToolkit } from "../../apps/server/src/mcp/toolkits/attachment/tools.ts";
 import { AssistantToolkit } from "../../apps/server/src/mcp/toolkits/assistant/tools.ts";
+import { GroupToolkit } from "../../apps/server/src/mcp/toolkits/group/tools.ts";
+import { groupTaskPacket } from "../../apps/server/src/assistants/AssistantGroupPacket.ts";
 import { assistantNoteFor } from "../../apps/server/src/assistants/assistantNote.ts";
 import { ComputerToolkit } from "../../apps/server/src/mcp/toolkits/computer/tools.ts";
 import { WatchToolkit } from "../../apps/server/src/mcp/toolkits/autonomy/tools.ts";
@@ -332,6 +334,26 @@ export const McpToolUseCase = Schema.Struct({
         ),
       }),
     ),
+    /** A task in an assistant group: `prompt` is its instruction, wrapped as T3 sends it. */
+    groupTask: Schema.optional(
+      Schema.Struct({
+        group: Schema.String,
+        kind: Schema.optional(Schema.Literals(["root", "child", "reply"])),
+        self: Schema.Struct({ name: Schema.String, handle: Schema.String, role: Schema.String }),
+        members: Schema.Array(
+          Schema.Struct({
+            name: Schema.String,
+            handle: Schema.String,
+            role: Schema.String,
+            isLead: Schema.optional(Schema.Boolean),
+          }),
+        ),
+        news: Schema.Array(
+          Schema.Struct({ seq: Schema.Number, from: Schema.String, text: Schema.String }),
+        ),
+        from: Schema.NullOr(Schema.String),
+      }),
+    ),
     sideChat: Schema.optional(
       Schema.Struct({
         parentThreadId: Schema.String,
@@ -463,6 +485,7 @@ const t3SourceTools: ReadonlyArray<Tool.Any> = [
   ProjectToolkit,
   KanbanToolkit,
   AssistantToolkit,
+  GroupToolkit,
   DecisionToolkit,
   WatchToolkit,
   NoteToolkit,
@@ -1048,10 +1071,26 @@ export const buildMessages = (sample: Sample) => {
     }
     if (turn.text) push(turn.role, text(turn.text));
   }
+  const groupTask = testCase.setup.groupTask;
   const userText =
-    testCase.promptContext === undefined
-      ? testCase.prompt
-      : projectComposerContextForProvider({ text: testCase.prompt, ...testCase.promptContext });
+    groupTask !== undefined
+      ? groupTaskPacket({
+          group: groupTask.group,
+          taskId: "task-1",
+          kind: groupTask.kind ?? "root",
+          self: { ...groupTask.self, isLead: false },
+          members: groupTask.members.map((member) => ({
+            ...member,
+            isLead: member.isLead ?? false,
+          })),
+          news: groupTask.news,
+          from: groupTask.from,
+          instruction: testCase.prompt,
+          followup: null,
+        })
+      : testCase.promptContext === undefined
+        ? testCase.prompt
+        : projectComposerContextForProvider({ text: testCase.prompt, ...testCase.promptContext });
   const assistant = testCase.setup.assistant;
   const note =
     assistant === undefined

@@ -139,10 +139,31 @@ Home list your groups under the assistants.
 - Any assistant may message any other. Each member's instructions list its groupmates with their
   handle and role and tell it that it may hand work to them. Ask one to "check with the group" and it
   asks one.
-- A group's **Lead** is optional. It routes requests that mention no one, arriving with the group
-  chat, and gets no extra permissions.
 - Deleting an assistant removes it from its groups, which stay even when they end up empty. Archived
   members stay in the group and come back when unarchived.
+
+### Group chat
+
+Click a group in the sidebar (or tap it on Home) to open its chat. A message there is a request to
+the members; it does not run an agent by itself.
+
+- Start with `@Ada @Beto` to give each of them a task, or `@everyone` for all members. The line under
+  the box says who will get it.
+- With no mention, the group's **Lead** picks who answers. Set one in **Edit group**; it only routes
+  and gets no extra permissions. A group with one member sends everything to it. Without a lead, the
+  chat asks you to mention someone. Routing needs a lead on Claude, Codex or Antigravity.
+- **Reply** on a member's message sends your follow-up to that member.
+- Each task shows as a card with its owner and status. **Stop** pauses running work, **Resume**
+  continues it, **Reassign** gives it to another member and **Cancel** ends the whole request.
+  **Open conversation** shows the member's own thread for this group.
+- Members can give each other subtasks, hand a task over, or ask each other one short question (two
+  per request). After eight hand-offs for one request the next one pauses until you resume it. At most
+  two tasks run at the same time in a group; the rest wait their turn.
+- **Schedule in this group** (group menu) posts a scheduled message in the chat, for example a
+  morning status request.
+- **Archive group** keeps the chat but stops its work and takes no new messages. Restore it from the
+  group's banner, the Assistants page or Settings > Assistants > Archived groups.
+- An agent in any conversation can post a request into a group ("ask the Leadership group to…").
 
 ## Agents can create assistants
 

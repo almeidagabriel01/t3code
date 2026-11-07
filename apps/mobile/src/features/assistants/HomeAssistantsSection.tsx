@@ -1,5 +1,10 @@
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { assistantPresence, assistantQueuedLabel } from "@t3tools/client-runtime/assistantRobot";
+import {
+  assistantGroupOwnerKey,
+  assistantGroupThreadsOf,
+  assistantPresence,
+  assistantQueuedLabel,
+} from "@t3tools/client-runtime/assistantRobot";
 import { assistantEntryKey, assistantSections } from "@t3tools/client-runtime/assistantSections";
 import {
   hasSidebarNotification,
@@ -27,7 +32,7 @@ import {
 import { SubagentStatusDot } from "../threads/SubagentStatusDot";
 import { AssistantAvatar } from "./assistantPresentation";
 import { moodTextClass } from "./assistantPresenceLabels";
-import { useAssistantFlows } from "./useAssistantFlows";
+import { useAssistantFlows, useAssistantTeamFlows } from "./useAssistantFlows";
 import { useOpenAssistantEditor } from "./openAssistantEditor";
 import { useOpenAssistantTeam } from "./assistantTeamTarget";
 import { useHomeSectionPreferences } from "../home/useHomeSectionPreferences";
@@ -40,14 +45,22 @@ const threadRefOf = ({ assistant, environmentId }: AssistantEntry) =>
 
 function useAssistantState(entry: AssistantEntry) {
   const thread = useThreadShell(threadRefOf(entry));
+  const shells = useQuietThreadShells();
+  const presence = assistantPresence(
+    thread,
+    assistantGroupThreadsOf(shells, entry.environmentId, entry.assistant.id),
+  );
   return {
-    presence: assistantPresence(thread),
-    working: thread !== null && resolveSidebarThreadStatus(thread) === "working",
+    presence,
+    working:
+      (thread !== null && resolveSidebarThreadStatus(thread) === "working") ||
+      presence.mood === "working",
     needsYou:
-      thread !== null &&
-      hasSidebarNotification(
-        thread.lastVisitedAt === undefined ? { ...thread, latestRun: null } : thread,
-      ),
+      presence.mood === "needs" ||
+      (thread !== null &&
+        hasSidebarNotification(
+          thread.lastVisitedAt === undefined ? { ...thread, latestRun: null } : thread,
+        )),
   };
 }
 
@@ -235,29 +248,44 @@ function FoldRow(props: {
   readonly folded: boolean;
   readonly sidebar: boolean;
   readonly onToggle: () => void;
+  /** When set, the name opens this and only the chevron folds. */
+  readonly onOpen?: () => void;
   readonly leading: ReactNode;
   readonly trailing?: ReactNode;
   readonly menuLabel: string;
   readonly actions: MenuAction[];
   readonly onAction: (id: string) => void;
 }) {
+  const chevron = (
+    <SymbolView
+      name={props.folded ? "chevron.right" : "chevron.down"}
+      size={11}
+      tintColorClassName={props.sidebar ? "accent-drawer-foreground-muted" : "accent-icon-subtle"}
+      type="monochrome"
+    />
+  );
   return (
     <View className="flex-row items-center">
+      {props.onOpen ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Fold ${props.label}`}
+          accessibilityState={{ expanded: !props.folded }}
+          hitSlop={6}
+          onPress={props.onToggle}
+          className="min-h-10 justify-center pl-2 active:opacity-70"
+        >
+          {chevron}
+        </Pressable>
+      ) : null}
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={props.label}
-        accessibilityState={{ expanded: !props.folded }}
-        onPress={props.onToggle}
+        accessibilityState={props.onOpen ? undefined : { expanded: !props.folded }}
+        onPress={props.onOpen ?? props.onToggle}
         className="min-h-10 min-w-0 flex-1 flex-row items-center gap-2 px-2 active:opacity-70"
       >
-        <SymbolView
-          name={props.folded ? "chevron.right" : "chevron.down"}
-          size={11}
-          tintColorClassName={
-            props.sidebar ? "accent-drawer-foreground-muted" : "accent-icon-subtle"
-          }
-          type="monochrome"
-        />
+        {props.onOpen ? null : chevron}
         {props.leading}
         <Text
           className={cn(
@@ -297,6 +325,7 @@ function GroupFoldRow(props: {
 }) {
   const openTeam = useOpenAssistantTeam();
   const openEditor = useOpenAssistantEditor();
+  const flows = useAssistantTeamFlows(props.entry.environmentId);
   const { environmentId, team } = props.entry;
   const shown = props.members.slice(0, STACKED_AVATAR_LIMIT);
   const more = props.members.length - shown.length;
@@ -306,6 +335,7 @@ function GroupFoldRow(props: {
       folded={props.folded}
       sidebar={props.sidebar}
       onToggle={props.onToggle}
+      onOpen={() => openTeam.chat(environmentId, team.id)}
       leading={
         <SymbolView
           name="person.2"
@@ -328,12 +358,21 @@ function GroupFoldRow(props: {
       }
       menuLabel={`${team.name} actions`}
       actions={[
+        { id: "chat", title: "Open chat", image: "bubble.left.and.bubble.right" },
         { id: "edit", title: "Edit group", image: "pencil" },
         { id: "new", title: "New assistant in this group", image: "plus" },
+        {
+          id: "archive",
+          title: "Archive group",
+          image: "archivebox",
+          attributes: { disabled: !flows.canAct },
+        },
       ]}
       onAction={(id) => {
-        if (id === "edit") openTeam.edit(environmentId, team.id);
+        if (id === "chat") openTeam.chat(environmentId, team.id);
+        else if (id === "edit") openTeam.edit(environmentId, team.id);
         else if (id === "new") openEditor(environmentId, null, { teamId: team.id });
+        else if (id === "archive") flows.archive(team);
       }}
     />
   );
@@ -345,7 +384,7 @@ export function HomeAssistantsSection(props: {
   readonly sidebar?: boolean;
   readonly environmentLabelById: ReadonlyMap<string, string>;
 }) {
-  const { active, teams } = useAssistantEntries();
+  const { active, activeTeams: teams } = useAssistantEntries();
   const navigation = useNavigation();
   const openEditor = useOpenAssistantEditor();
   const openTeam = useOpenAssistantTeam();
@@ -372,7 +411,9 @@ export function HomeAssistantsSection(props: {
   );
   const needsKeys = new Set<string>();
   for (const shell of shells) {
-    const key = keyByThread.get(scopedThreadKey(scopeThreadRef(shell.environmentId, shell.id)));
+    const key =
+      keyByThread.get(scopedThreadKey(scopeThreadRef(shell.environmentId, shell.id))) ??
+      assistantGroupOwnerKey(shell);
     if (key !== undefined && assistantPresence(shell).mood === "needs") needsKeys.add(key);
   }
   const sections = assistantSections({ assistants: active, teams, needsKeys });

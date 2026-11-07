@@ -43,7 +43,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { Button } from "../../components/ui/Button";
 import { ListActionRow } from "../../components/ui/ListActionRow";
-import { useThreadAssistant } from "../../state/assistants";
+import { useAssistantEntries, useThreadAssistant } from "../../state/assistants";
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import {
@@ -653,6 +653,10 @@ function TaskForm({
     .sort((left, right) => Number(right.pinnedAt != null) - Number(left.pinnedAt != null));
   const config = useEnvironmentServerConfig(environmentId);
   const boundAssistant = useThreadAssistant(environmentId, draft.threadId);
+  const groupName = useAssistantEntries().teams.find(
+    (entry) => entry.environmentId === environmentId && entry.team.id === draft.assistantTeamId,
+  )?.team.name;
+  const bound = draft.threadId !== null || draft.assistantTeamId !== null;
   const modelOptions = buildModelOptions(config, null, undefined, draft.projectId);
   // Existing webhook tasks keep the option so they can still switch to a timer.
   const webhookDenial = managedCapabilityDenial(config?.managedPolicy, "webhookTasks");
@@ -755,7 +759,8 @@ function TaskForm({
       modelSelection: draft.modelSelection,
       schedule,
       enabled: draft.enabled,
-      threadId: draft.threadId,
+      threadId: draft.assistantTeamId === null ? draft.threadId : null,
+      assistantTeamId: draft.assistantTeamId,
       workspaceStrategy:
         draft.workspace === "root"
           ? { type: "root" }
@@ -813,7 +818,7 @@ function TaskForm({
               />
             }
             actions={
-              draft.task || draft.threadId || saving || dictationPending
+              draft.task || bound || saving || dictationPending
                 ? []
                 : availableTargets.map((target) => ({
                     id: target.environmentId,
@@ -842,7 +847,17 @@ function TaskForm({
           {promptField}
         </SettingsSection>
 
-        {draft.threadId ? (
+        {draft.assistantTeamId !== null ? (
+          <SettingsSection title="Posts in">
+            <ListActionRow
+              icon="xmark"
+              label={`Group chat · ${groupName ?? "Group"}`}
+              description="The prompt is posted as a message in the group's chat. Tap to run in a new thread instead."
+              disabled={saving || dictationPending}
+              onPress={() => setDraft({ ...draft, assistantTeamId: null })}
+            />
+          </SettingsSection>
+        ) : draft.threadId ? (
           <SettingsSection title="Conversation">
             <ListActionRow
               icon="xmark"
@@ -858,7 +873,7 @@ function TaskForm({
           </SettingsSection>
         ) : null}
 
-        {draft.threadId ? null : (
+        {bound ? null : (
           <>
             <SettingsSection title="Context">
               <SelectRow
@@ -1372,9 +1387,13 @@ function EnvironmentTasks({
   readonly onEdit: (task: ScheduledTask) => void;
 }) {
   const environmentId = environment.environmentId;
+  const { teams } = useAssistantEntries();
   const tasks = useEnvironmentQuery(
     serverEnvironment.scheduledTasksLive({ environmentId, input: {} }),
   );
+  const groupNameOf = (teamId: string) =>
+    teams.find((entry) => entry.environmentId === environmentId && entry.team.id === teamId)?.team
+      .name;
   const visibleTasks = tasks.data?.tasks.filter(
     (task) => projectIds === null || projectIds.includes(task.projectId),
   );
@@ -1453,6 +1472,9 @@ function EnvironmentTasks({
                 {task.title}
               </Text>
               <Text className="text-sm text-foreground-muted" numberOfLines={2}>
+                {task.assistantTeamId
+                  ? `Group: ${groupNameOf(task.assistantTeamId) ?? "Group"} · `
+                  : ""}
                 {describeSchedule(task)}
                 {!task.enabled
                   ? " · Paused"

@@ -104,6 +104,7 @@ const team = (id: string, name: string, memberIds: string[], leadId?: string): A
   name,
   memberIds: memberIds as AssistantId[],
   leadId: (leadId ?? null) as AssistantId | null,
+  archivedAt: null,
   createdAt: "2026-03-17T19:00:00.000Z",
   updatedAt: "2026-03-17T19:00:00.000Z",
 });

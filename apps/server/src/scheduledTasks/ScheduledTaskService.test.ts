@@ -4,6 +4,7 @@ import * as NodeUtil from "node:util";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it, vi } from "@effect/vitest";
 import {
+  AssistantError,
   ProjectId,
   ProviderInstanceId,
   ScheduledTaskError,
@@ -29,6 +30,7 @@ import * as ThreadManagementService from "../orchestration-v2/ThreadManagementSe
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import { AssistantGroupGate } from "../assistants/AssistantGroupGate.ts";
 import * as ScheduledTaskService from "./ScheduledTaskService.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 
@@ -408,6 +410,100 @@ it.effect("thread cleanup notifies subscribers and a finishing run cannot recrea
       assert.lengthOf((yield* service.list()).tasks, 0);
     }).pipe(Effect.provide(layer));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect(
+  "a task bound to a group posts its prompt there as a routine, once per fire, and no thread starts",
+  () =>
+    Effect.gen(function* () {
+      const posts: Array<{ teamId: string; text: string; label: string; clientRequestId: string }> =
+        [];
+      let failPost = false;
+      const gateLayer = Layer.succeed(AssistantGroupGate, {
+        post: (input) =>
+          failPost
+            ? Effect.fail(
+                new AssistantError({ reason: "archived", message: "This group is archived." }),
+              )
+            : Effect.sync(() => void posts.push(input)),
+        install: () => Effect.void,
+      });
+      const provide = (withGate: boolean) =>
+        ScheduledTaskService.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              ManagedPolicy.layerTest(),
+              Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+              Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+              Layer.mock(SecretRequests.SecretRequests)({}),
+              Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+                namedProjectsRoot: "/projects",
+                isScratchProject: () => Effect.succeed(false),
+              }),
+              NodeCrypto.layer,
+              Scheduler.layer,
+              withGate ? gateLayer : Layer.empty,
+            ),
+          ),
+        );
+      const input = {
+        id: ScheduledTaskId.make("task:group"),
+        title: "Monday report",
+        prompt: "@ada weekly report",
+        enabled: true,
+        schedule: { type: "interval" as const, everyMs: 60_000 },
+        projectId: ProjectId.make("project:test"),
+        // A thread is ignored when a group is named.
+        threadId: ThreadId.make("thread:ignored"),
+        assistantTeamId: "team:1",
+        workspaceStrategy: { type: "root" as const },
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        runtimeMode: "full-access" as const,
+        interactionMode: "default" as const,
+      };
+      yield* Effect.gen(function* () {
+        const service = yield* ScheduledTaskService.ScheduledTaskService;
+        const { task } = yield* service.upsert(input);
+        assert.deepEqual([task.assistantTeamId, task.threadId], ["team:1", null]);
+        assert.equal((yield* service.list()).tasks[0]!.assistantTeamId, "team:1");
+        const ran = yield* service.runNow({ id: task.id });
+        assert.equal(ran.task.lastRunStatus, "succeeded");
+        assert.deepEqual(ran.threadId, null);
+        assert.deepEqual(
+          posts.map((post) => [post.teamId, post.text, post.label]),
+          [["team:1", "@ada weekly report", "Monday report"]],
+        );
+        assert.match(posts[0]!.clientRequestId, /^task:group:\d+:manual$/);
+        // Turning it off and on keeps it a group task.
+        yield* service.setEnabled({ id: task.id, enabled: false });
+        assert.equal(
+          (yield* service.setEnabled({ id: task.id, enabled: true })).task.assistantTeamId,
+          "team:1",
+        );
+        // A group that refuses fails the run with its reason.
+        failPost = true;
+        const failed = yield* service.runNow({ id: task.id });
+        assert.equal(failed.task.lastRunStatus, "failed");
+        assert.equal(failed.task.lastRunError, "This group is archived.");
+        // Deleting the group takes its tasks, and only its tasks.
+        yield* service.upsert({
+          ...input,
+          id: ScheduledTaskId.make("task:other"),
+          assistantTeamId: "team:2",
+        });
+        yield* service.deleteForTeam("team:1");
+        assert.deepEqual(
+          (yield* service.list()).tasks.map((kept) => kept.id),
+          ["task:other"],
+        );
+      }).pipe(Effect.provide(provide(true)));
+      // Without the gate installed anywhere, the run fails loudly instead of posting nowhere.
+      yield* Effect.gen(function* () {
+        const service = yield* ScheduledTaskService.ScheduledTaskService;
+        const failed = yield* service.runNow({ id: ScheduledTaskId.make("task:other") });
+        assert.equal(failed.task.lastRunError, "Assistant groups are unavailable.");
+      }).pipe(Effect.provide(provide(false)));
+    }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
 it.effect("a bound run follows its thread when promotion moves it mid-send", () =>

@@ -35,6 +35,7 @@ import { RemoteDelegation } from "../peer/RemoteDelegation.ts";
 import { PreviewManager } from "../preview/Manager.ts";
 import { PreviewBrowser } from "../preview/PreviewBrowser.ts";
 import { ManagedProjectFolders } from "../project/ManagedProjectFolders.ts";
+import { AssistantGroups } from "../assistants/AssistantGroups.ts";
 import { AssistantService } from "../assistants/AssistantService.ts";
 import { ComputerUse } from "../computerUse/ComputerUse.ts";
 import { DecisionService } from "../decisions/DecisionService.ts";
@@ -77,6 +78,7 @@ const toolHandlerServices = Layer.mergeAll(
   Layer.mock(MemorySyncService)({}),
   Layer.mock(NotesService)({}),
   Layer.mock(AssistantService)({}),
+  Layer.mock(AssistantGroups)({ member: {} as AssistantGroups["Service"]["member"] }),
   Layer.mock(DecisionService)({}),
   Layer.mock(ComputerUse)({}),
   Layer.mock(NoteWorkService)({}),

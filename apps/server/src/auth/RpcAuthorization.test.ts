@@ -53,6 +53,15 @@ describe("RPC authorization scopes", () => {
     );
   });
 
+  it("lets readers watch a group's chat but needs operate scope to post or act on a task", () => {
+    for (const method of [WS_METHODS.assistantGroupsSubscribe, WS_METHODS.assistantGroupsHistory]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);
+    }
+    for (const method of [WS_METHODS.assistantGroupsPost, WS_METHODS.assistantGroupsTaskAction]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationOperateScope);
+    }
+  });
+
   it("separates passive terminal observation from operations that can change a shell", () => {
     for (const method of [WS_METHODS.terminalObserve, WS_METHODS.subscribeTerminalMetadata]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthTerminalReadScope);

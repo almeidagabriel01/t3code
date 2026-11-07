@@ -236,6 +236,8 @@ export const ScheduledTask = Schema.Struct({
   schedule: ScheduledTaskSchedule,
   projectId: ProjectId,
   threadId: Schema.NullOr(ThreadId),
+  /** Posts the prompt in this assistant group's chat instead of a thread. */
+  assistantTeamId: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
   workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy,
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
@@ -275,6 +277,8 @@ const ScheduledTaskUpsertInputFields = Schema.Struct({
   schedule: ScheduledTaskUpsertSchedule,
   projectId: ProjectId,
   threadId: Schema.optional(Schema.NullOr(ThreadId)),
+  /** Posts in this assistant group's chat; `threadId` is then ignored. */
+  assistantTeamId: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy,
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,

@@ -204,6 +204,7 @@ import * as CursorUsageAccounts from "@t3tools/provider-cursor/server/CursorUsag
 import * as UsageService from "./usage/UsageService.ts";
 import * as AssistantApprovalReactor from "./assistants/AssistantApprovalReactor.ts";
 import * as AssistantDirectory from "./assistants/AssistantDirectory.ts";
+import * as AssistantGroupReactor from "./assistants/AssistantGroupReactor.ts";
 import * as AssistantRequestReactor from "./assistants/AssistantRequestReactor.ts";
 import * as AssistantRequests from "./assistants/AssistantRequests.ts";
 import * as AutonomyService from "./autonomy/AutonomyService.ts";
@@ -772,6 +773,12 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
     Layer.provide(AssistantDirectory.layer),
     Layer.provide(ProjectionStoreV2.layer),
   ),
+  Layer.effectDiscard(
+    Effect.gen(function* () {
+      const service = yield* AssistantGroupReactor.AssistantGroupReactor;
+      yield* service.start();
+    }),
+  ).pipe(Layer.provide(AssistantGroupReactor.layer)),
   Layer.effectDiscard(
     Effect.gen(function* () {
       yield* (yield* ChannelOutbox.ChannelOutbox).start();

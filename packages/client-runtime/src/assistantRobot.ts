@@ -1,4 +1,8 @@
-import type { Assistant } from "@t3tools/contracts";
+import {
+  type Assistant,
+  assistantIdFromThreadId,
+  isAssistantGroupThreadId,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
 import { resolveSidebarThreadStatus } from "./state/threadAttention.ts";
@@ -124,9 +128,55 @@ function firstLine(text: string): string {
   return line.length > PREVIEW_LENGTH ? `${line.slice(0, PREVIEW_LENGTH - 1)}…` : line;
 }
 
-/** Mood and status line of an assistant from its thread; no thread yet means idle. */
-export function assistantPresence(thread: PresenceThread | null): AssistantPresence {
-  return { ...presenceOf(thread), queued: thread?.queuedMessageCount ?? 0 };
+type GroupPresenceThread = PresenceThread & { readonly title: string };
+
+/**
+ * Mood and status line of an assistant from its thread; no thread yet means idle. When its own
+ * conversation is idle, work in one of its group threads shows instead ("Working in Leadership").
+ */
+export function assistantPresence(
+  thread: PresenceThread | null,
+  groupThreads: ReadonlyArray<GroupPresenceThread> = [],
+): AssistantPresence {
+  const own = { ...presenceOf(thread), queued: thread?.queuedMessageCount ?? 0 };
+  if (own.mood !== "idle") return own;
+  for (const group of groupThreads) {
+    const presence = presenceOf(group);
+    // A failed group task shows on its card in the chat; the assistant itself is free.
+    if (presence.mood === "idle" || presence.mood === "failed") continue;
+    const where = group.title.split(" · ").at(-1) ?? "a group";
+    return {
+      ...own,
+      mood: presence.mood,
+      detail:
+        presence.mood === "working" ? `Working in ${where}` : `${presence.detail} in ${where}`,
+      since: presence.since,
+    };
+  }
+  return own;
+}
+
+/** The `assistantEntryKey` of the member a group thread belongs to; undefined for other threads. */
+export function assistantGroupOwnerKey(shell: {
+  readonly environmentId: string;
+  readonly id: string;
+}): string | undefined {
+  if (!isAssistantGroupThreadId(shell.id)) return undefined;
+  const assistantId = assistantIdFromThreadId(shell.id);
+  return assistantId === null ? undefined : `${shell.environmentId}:${assistantId}`;
+}
+
+/** The assistant's hidden threads for its groups, out of every thread shell. */
+export function assistantGroupThreadsOf<
+  S extends { readonly environmentId: string; readonly id: string },
+>(shells: ReadonlyArray<S>, environmentId: string, assistantId: string): ReadonlyArray<S> {
+  const prefix = `assistant:${assistantId}:`;
+  return shells.filter(
+    (shell) =>
+      shell.environmentId === environmentId &&
+      shell.id.startsWith(prefix) &&
+      isAssistantGroupThreadId(shell.id),
+  );
 }
 
 function presenceOf(thread: PresenceThread | null): Omit<AssistantPresence, "queued"> {

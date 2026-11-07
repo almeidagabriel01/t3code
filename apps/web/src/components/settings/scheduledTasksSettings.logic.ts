@@ -53,6 +53,9 @@ export function validateScheduledTasksSearch(raw: Record<string, unknown>) {
     ...(typeof raw.threadId === "string" && raw.threadId.trim()
       ? { threadId: ThreadId.make(raw.threadId) }
       : {}),
+    ...(typeof raw.assistantTeamId === "string" && raw.assistantTeamId.trim()
+      ? { assistantTeamId: raw.assistantTeamId.trim() }
+      : {}),
   };
 }
 
@@ -74,6 +77,8 @@ export interface DraftState {
   readonly weekdays: ReadonlySet<number>;
   readonly projectId: string;
   readonly threadId: string;
+  /** Posts the prompt in this assistant group's chat; empty runs it in a thread. */
+  readonly assistantTeamId: string;
   readonly workspaceMode: WorkspaceMode;
   readonly baseRef: string;
   readonly startFromOrigin: boolean;
@@ -258,6 +263,7 @@ export function taskToDraft(task: ScheduledTask): DraftState {
     weekdays,
     projectId: task.projectId,
     threadId: task.threadId ?? "",
+    assistantTeamId: task.assistantTeamId ?? "",
     workspaceMode: task.workspaceStrategy.type,
     baseRef: task.workspaceStrategy.type === "worktree" ? task.workspaceStrategy.baseRef : "main",
     startFromOrigin:

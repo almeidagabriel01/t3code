@@ -1,0 +1,264 @@
+import {
+  ASSISTANT_GROUP_EVERYONE,
+  ASSISTANT_GROUP_HANDOFF_LIMIT,
+  assistantGroupLeadingAddress,
+  type Assistant,
+  type AssistantGroupMessage,
+  type AssistantGroupMessageId,
+  type AssistantGroupTask,
+  type AssistantGroupTaskId,
+  type AssistantGroupTaskStatus,
+  type AssistantGroupsEvent,
+  type AssistantGroupsHistoryResult,
+} from "@t3tools/contracts";
+
+export interface AssistantGroupChatState {
+  readonly messages: ReadonlyMap<AssistantGroupMessageId, AssistantGroupMessage>;
+  readonly tasks: ReadonlyMap<AssistantGroupTaskId, AssistantGroupTask>;
+  /** Older messages exist than the ones loaded. */
+  readonly hasMore: boolean;
+}
+
+/** Folds one event; the first is always a snapshot, so state starts from it. */
+export function applyAssistantGroupsEvent(
+  state: AssistantGroupChatState | null,
+  event: AssistantGroupsEvent,
+): AssistantGroupChatState | null {
+  if (event.type === "snapshot") {
+    return {
+      messages: new Map(event.messages.map((message) => [message.id, message])),
+      tasks: new Map(event.tasks.map((task) => [task.id, task])),
+      hasMore: event.hasMore,
+    };
+  }
+  if (state === null) return null;
+  if (event.type === "message") {
+    return { ...state, messages: new Map(state.messages).set(event.message.id, event.message) };
+  }
+  const current = state.tasks.get(event.task.id);
+  // An older update that arrives late must not undo a newer one.
+  if (current !== undefined && current.updatedAt > event.task.updatedAt) return state;
+  return { ...state, tasks: new Map(state.tasks).set(event.task.id, event.task) };
+}
+
+/** Merges an older page; what the state already holds wins for tasks that changed since. */
+export function applyAssistantGroupHistory(
+  state: AssistantGroupChatState,
+  page: AssistantGroupsHistoryResult,
+): AssistantGroupChatState {
+  const messages = new Map(state.messages);
+  for (const message of page.messages)
+    if (!messages.has(message.id)) messages.set(message.id, message);
+  const tasks = new Map(state.tasks);
+  for (const task of page.tasks) if (!tasks.has(task.id)) tasks.set(task.id, task);
+  return { messages, tasks, hasMore: page.hasMore };
+}
+
+export function oldestAssistantGroupSeq(state: AssistantGroupChatState): number | null {
+  let oldest: number | null = null;
+  for (const message of state.messages.values()) {
+    if (oldest === null || message.seq < oldest) oldest = message.seq;
+  }
+  return oldest;
+}
+
+export type AssistantGroupFeedRole =
+  /** The user, an agent or a schedule asking for work. */
+  | "request"
+  /** A member speaking. */
+  | "answer"
+  /** A routing note or a notice: a small centered line. */
+  | "note";
+
+export interface AssistantGroupFeedRow {
+  readonly message: AssistantGroupMessage;
+  readonly role: AssistantGroupFeedRole;
+  /** Cards shown under the message: its open tasks, or the task a member's message answers. */
+  readonly tasks: ReadonlyArray<AssistantGroupTask>;
+}
+
+function roleOf(message: AssistantGroupMessage): AssistantGroupFeedRole {
+  if (message.kind !== "message") return "note";
+  return message.author === "assistant" ? "answer" : "request";
+}
+
+/**
+ * The chat in seq order. A task that no member has answered yet sits under the request that opened
+ * it; once a member answers, its card moves to that member's latest message for the task.
+ */
+export function assistantGroupFeed(
+  state: AssistantGroupChatState,
+): ReadonlyArray<AssistantGroupFeedRow> {
+  const messages = [...state.messages.values()].sort((a, b) => a.seq - b.seq);
+  const answerOf = new Map<AssistantGroupTaskId, AssistantGroupMessageId>();
+  for (const message of messages) {
+    if (
+      roleOf(message) === "answer" &&
+      message.taskId !== null &&
+      state.tasks.has(message.taskId)
+    ) {
+      answerOf.set(message.taskId, message.id);
+    }
+  }
+  const byMessage = new Map<AssistantGroupMessageId, AssistantGroupTask[]>();
+  const tasks = [...state.tasks.values()].sort(
+    (a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id),
+  );
+  for (const task of tasks) {
+    const holder = answerOf.get(task.id) ?? task.requestMessageId;
+    byMessage.set(holder, [...(byMessage.get(holder) ?? []), task]);
+  }
+  return messages.map((message) => ({
+    message,
+    role: roleOf(message),
+    tasks: byMessage.get(message.id) ?? [],
+  }));
+}
+
+type Recipient = Pick<Assistant, "id" | "name" | "handle">;
+
+function joinNames(names: ReadonlyArray<string>): string {
+  if (names.length < 2) return names[0] ?? "";
+  return `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+}
+
+/**
+ * Who a draft will reach, for the line under the composer, in the server's order: leading
+ * mentions, the member it replies to, the only member, then the lead. The server still decides.
+ */
+export function assistantGroupRecipientsPreview(
+  text: string,
+  members: ReadonlyArray<Recipient>,
+  lead: Recipient | null,
+  replyTo: string | null = null,
+): string | null {
+  if (text.trim() === "") return null;
+  const picked = assistantGroupLeadingAddress(text, members);
+  if (picked !== null) {
+    return picked.length === members.length && members.length > 1
+      ? "To everyone"
+      : `To ${joinNames(picked.map((member) => member.name))}`;
+  }
+  if (replyTo !== null) return `To ${replyTo}`;
+  if (members.length === 1) return `To ${members[0]!.name}`;
+  return lead === null ? "Mention someone" : `${lead.name} (lead) will route it`;
+}
+
+export type AssistantGroupMentionOption<M extends Recipient> =
+  | { readonly kind: "member"; readonly member: M }
+  | { readonly kind: "everyone" };
+
+export interface AssistantGroupMentionQuery {
+  readonly start: number;
+  readonly end: number;
+  readonly query: string;
+}
+
+const LEADING_MENTIONS = /^\s*(?:@[\p{L}\p{N}_-]+[,:]?\s+)*$/u;
+
+/** The `@word` the caret is in, when it opens the message or follows its leading mentions. */
+export function assistantGroupMentionQuery(
+  text: string,
+  caret: number,
+): AssistantGroupMentionQuery | null {
+  const before = text.slice(0, caret);
+  const match = /@([\p{L}\p{N}_-]*)$/u.exec(before);
+  if (match === null || !LEADING_MENTIONS.test(before.slice(0, match.index))) return null;
+  return { start: match.index, end: caret, query: match[1]!.toLowerCase() };
+}
+
+/** Members whose handle or name starts with the query, then `@everyone` when it fits. */
+export function assistantGroupMentionOptions<M extends Recipient>(
+  query: string,
+  members: ReadonlyArray<M>,
+): ReadonlyArray<AssistantGroupMentionOption<M>> {
+  const options: AssistantGroupMentionOption<M>[] = members
+    .filter(
+      (member) =>
+        member.handle.startsWith(query) ||
+        member.name.toLowerCase().replace(/\s+/g, "").startsWith(query),
+    )
+    .map((member) => ({ kind: "member", member }));
+  if (ASSISTANT_GROUP_EVERYONE.startsWith(query)) options.push({ kind: "everyone" });
+  return options;
+}
+
+/** The text with the `@word` replaced by the chosen mention and a space, and where the caret goes. */
+export function insertAssistantGroupMention(
+  text: string,
+  mention: AssistantGroupMentionQuery,
+  option: AssistantGroupMentionOption<Recipient>,
+): { readonly text: string; readonly caret: number } {
+  const handle = option.kind === "everyone" ? ASSISTANT_GROUP_EVERYONE : option.member.handle;
+  const inserted = `@${handle} `;
+  const rest = text.slice(mention.end).replace(/^ /, "");
+  return {
+    text: `${text.slice(0, mention.start)}${inserted}${rest}`,
+    caret: mention.start + inserted.length,
+  };
+}
+
+export const ASSISTANT_GROUP_STATUS_LABEL: Record<AssistantGroupTaskStatus, string> = {
+  queued: "Queued",
+  running: "Running",
+  waiting: "Waiting",
+  completed: "Completed",
+  paused: "Paused",
+  cancelled: "Cancelled",
+  failed: "Failed",
+};
+
+const PAUSE_REASON_LABEL: Record<string, string> = {
+  stopped: "Stopped",
+  handoff_limit: `Hit ${ASSISTANT_GROUP_HANDOFF_LIMIT} hand-offs for this request`,
+  member_removed: "Owner left the group",
+  group_archived: "Group archived",
+  routing_failed: "The lead could not route this",
+};
+
+/** The reason a paused task shows in words; unknown reasons read as "Paused". */
+export function assistantGroupPauseReasonLabel(reason: string | null): string {
+  return (reason !== null ? PAUSE_REASON_LABEL[reason] : undefined) ?? "Paused";
+}
+
+/**
+ * A request that opened no task and got no notice yet: the lead is still choosing who answers it.
+ * The server stores such a message only when it will route it.
+ */
+export function assistantGroupAwaitingRoute(
+  state: AssistantGroupChatState,
+  message: AssistantGroupMessage,
+): boolean {
+  if (message.kind !== "message" || message.author === "assistant") return false;
+  for (const task of state.tasks.values()) if (task.requestMessageId === message.id) return false;
+  for (const other of state.messages.values()) {
+    if (other.replyToMessageId === message.id && other.kind === "notice") return false;
+  }
+  return true;
+}
+
+/** Who wrote a message, as an answer names it: "you", the member, or the agent or schedule. */
+export function assistantGroupAuthorName(
+  message: Pick<AssistantGroupMessage, "author" | "assistantId" | "authorLabel">,
+  memberName: (assistantId: string) => string | undefined,
+): string {
+  switch (message.author) {
+    case "user":
+      return "you";
+    case "assistant":
+      return (
+        (message.assistantId === null ? undefined : memberName(message.assistantId)) ?? "a member"
+      );
+    case "agent":
+      return message.authorLabel ?? "an agent";
+    case "routine":
+      return message.authorLabel ?? "a schedule";
+  }
+}
+
+/** "N running" count for the header: tasks being worked right now. */
+export function assistantGroupRunningCount(state: AssistantGroupChatState): number {
+  let count = 0;
+  for (const task of state.tasks.values()) if (task.status === "running") count += 1;
+  return count;
+}

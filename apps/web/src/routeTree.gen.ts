@@ -62,6 +62,7 @@ import { Route as ChatSettingsAccessRouteImport } from './routes/_chat.settings.
 import { Route as ChatSettingsAboutRouteImport } from './routes/_chat.settings.about'
 import { Route as ChatDraftDraftIdRouteImport } from './routes/_chat.draft.$draftId'
 import { Route as ChatEnvironmentIdThreadIdRouteImport } from './routes/_chat.$environmentId.$threadId'
+import { Route as ChatGroupEnvironmentIdTeamIdRouteImport } from './routes/_chat.group.$environmentId.$teamId'
 
 const WelcomeRoute = WelcomeRouteImport.update({
   id: '/welcome',
@@ -334,6 +335,12 @@ const ChatEnvironmentIdThreadIdRoute =
     path: '/$environmentId/$threadId',
     getParentRoute: () => ChatRoute,
   } as any)
+const ChatGroupEnvironmentIdTeamIdRoute =
+  ChatGroupEnvironmentIdTeamIdRouteImport.update({
+    id: '/group/$environmentId/$teamId',
+    path: '/group/$environmentId/$teamId',
+    getParentRoute: () => ChatRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof ChatIndexRoute
@@ -388,6 +395,7 @@ export interface FileRoutesByFullPath {
   '/settings/threads': typeof ChatSettingsThreadsRoute
   '/settings/worktrees': typeof ChatSettingsWorktreesRoute
   '/threads/$environmentId/$threadId': typeof ThreadsEnvironmentIdThreadIdRoute
+  '/group/$environmentId/$teamId': typeof ChatGroupEnvironmentIdTeamIdRoute
 }
 export interface FileRoutesByTo {
   '/connect': typeof ConnectRoute
@@ -442,6 +450,7 @@ export interface FileRoutesByTo {
   '/settings/threads': typeof ChatSettingsThreadsRoute
   '/settings/worktrees': typeof ChatSettingsWorktreesRoute
   '/threads/$environmentId/$threadId': typeof ThreadsEnvironmentIdThreadIdRoute
+  '/group/$environmentId/$teamId': typeof ChatGroupEnvironmentIdTeamIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -498,6 +507,7 @@ export interface FileRoutesById {
   '/_chat/settings/threads': typeof ChatSettingsThreadsRoute
   '/_chat/settings/worktrees': typeof ChatSettingsWorktreesRoute
   '/threads/$environmentId/$threadId': typeof ThreadsEnvironmentIdThreadIdRoute
+  '/_chat/group/$environmentId/$teamId': typeof ChatGroupEnvironmentIdTeamIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -554,6 +564,7 @@ export interface FileRouteTypes {
     | '/settings/threads'
     | '/settings/worktrees'
     | '/threads/$environmentId/$threadId'
+    | '/group/$environmentId/$teamId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/connect'
@@ -608,6 +619,7 @@ export interface FileRouteTypes {
     | '/settings/threads'
     | '/settings/worktrees'
     | '/threads/$environmentId/$threadId'
+    | '/group/$environmentId/$teamId'
   id:
     | '__root__'
     | '/_chat'
@@ -663,6 +675,7 @@ export interface FileRouteTypes {
     | '/_chat/settings/threads'
     | '/_chat/settings/worktrees'
     | '/threads/$environmentId/$threadId'
+    | '/_chat/group/$environmentId/$teamId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -1049,6 +1062,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatEnvironmentIdThreadIdRouteImport
       parentRoute: typeof ChatRoute
     }
+    '/_chat/group/$environmentId/$teamId': {
+      id: '/_chat/group/$environmentId/$teamId'
+      path: '/group/$environmentId/$teamId'
+      fullPath: '/group/$environmentId/$teamId'
+      preLoaderRoute: typeof ChatGroupEnvironmentIdTeamIdRouteImport
+      parentRoute: typeof ChatRoute
+    }
   }
 }
 
@@ -1142,6 +1162,7 @@ interface ChatRouteChildren {
   ChatIndexRoute: typeof ChatIndexRoute
   ChatEnvironmentIdThreadIdRoute: typeof ChatEnvironmentIdThreadIdRoute
   ChatDraftDraftIdRoute: typeof ChatDraftDraftIdRoute
+  ChatGroupEnvironmentIdTeamIdRoute: typeof ChatGroupEnvironmentIdTeamIdRoute
 }
 
 const ChatRouteChildren: ChatRouteChildren = {
@@ -1156,6 +1177,7 @@ const ChatRouteChildren: ChatRouteChildren = {
   ChatIndexRoute: ChatIndexRoute,
   ChatEnvironmentIdThreadIdRoute: ChatEnvironmentIdThreadIdRoute,
   ChatDraftDraftIdRoute: ChatDraftDraftIdRoute,
+  ChatGroupEnvironmentIdTeamIdRoute: ChatGroupEnvironmentIdTeamIdRoute,
 }
 
 const ChatRouteWithChildren = ChatRoute._addFileChildren(ChatRouteChildren)

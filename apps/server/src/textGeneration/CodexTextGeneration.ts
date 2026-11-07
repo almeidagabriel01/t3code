@@ -502,6 +502,9 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
   return TextGenerationOperations.fromRunner(
     "CodexTextGeneration",
     (request) => runCodexJson(request).pipe(Effect.map((selected) => selected.result)),
-    { memoryRunner: withMemoryExecution(memoryRunnerContext, CODEX_DRIVER, runCodexJson) },
+    {
+      routeAssistantGroup: true,
+      memoryRunner: withMemoryExecution(memoryRunnerContext, CODEX_DRIVER, runCodexJson),
+    },
   );
 });

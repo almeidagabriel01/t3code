@@ -65,6 +65,8 @@ import * as ProcessRunner from "../processRunner.ts";
 import * as AskBeforeActing from "../assistants/AskBeforeActing.ts";
 import * as AskBeforeActingGate from "../assistants/AskBeforeActingGate.ts";
 import * as AssistantConnectors from "../assistants/AssistantConnectors.ts";
+import * as AssistantGroupGate from "../assistants/AssistantGroupGate.ts";
+import * as AssistantGroups from "../assistants/AssistantGroups.ts";
 import * as AssistantDirectory from "../assistants/AssistantDirectory.ts";
 import * as AssistantRuntimePolicy from "../assistants/AssistantRuntimePolicy.ts";
 import * as AssistantService from "../assistants/AssistantService.ts";
@@ -313,6 +315,8 @@ const layerScheduledTaskProvided = ScheduledTaskService.layer.pipe(
       layerThreadManagementProvided,
       layerManagedProjectFoldersProvided,
       layerSecretRequestsProvided,
+      // A task bound to a group posts through this late-bound hook; see AssistantGroups.installLayer.
+      AssistantGroupGate.gateLayer,
     ),
   ),
 );
@@ -402,6 +406,32 @@ const layerAssistantConnectorsProvided = AssistantConnectors.layer.pipe(
   Layer.provide(Layer.merge(ServerSecretStore.layer, AssistantDirectory.layer)),
 );
 
+// One instance: the group service watches the same change stream the clients are served from.
+const layerAssistantServiceProvided = AssistantService.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      layerAssistantConnectorsProvided,
+      layerThreadManagementProvided,
+      layerThreadLaunchProvided,
+      layerManagedProjectFoldersProvided,
+      layerProjectService,
+      layerScheduledTaskProvided,
+    ),
+  ),
+);
+
+const layerAssistantGroupsProvided = AssistantGroups.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      layerOrchestratorProvided,
+      layerThreadManagementProvided,
+      layerThreadLaunchProvided,
+      layerAssistantServiceProvided,
+      layerScheduledTaskProvided,
+    ),
+  ),
+);
+
 export const layerProduction = Layer.mergeAll(
   layer.pipe(Layer.provide(layerProjectService)),
   layerProjectService,
@@ -432,17 +462,11 @@ export const layerProduction = Layer.mergeAll(
       yield* sessions.installConnectors(assistantConnectors.forThread);
     }),
   ).pipe(Layer.provide(layerAssistantConnectorsProvided)),
-  AssistantService.layer.pipe(
-    Layer.provide(
-      Layer.mergeAll(
-        layerAssistantConnectorsProvided,
-        layerThreadManagementProvided,
-        layerThreadLaunchProvided,
-        layerManagedProjectFoldersProvided,
-        layerProjectService,
-        layerScheduledTaskProvided,
-      ),
-    ),
+  layerAssistantServiceProvided,
+  layerAssistantGroupsProvided,
+  // Fills the gate a group's scheduled tasks post through.
+  AssistantGroups.installLayer.pipe(
+    Layer.provide(Layer.merge(layerAssistantGroupsProvided, AssistantGroupGate.gateLayer)),
   ),
   GuestShareService.layer.pipe(
     Layer.provide(Layer.merge(layerOrchestratorProvided, layerCommandOutputHubProvided)),

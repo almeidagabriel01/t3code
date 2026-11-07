@@ -252,3 +252,51 @@ describe("TextGeneration memory routing", () => {
     }),
   );
 });
+
+describe("TextGeneration group routing", () => {
+  it.effect("asks the lead's own instance, and reports one that cannot route as unsupported", () =>
+    Effect.gen(function* () {
+      const routing = ProviderInstanceId.make("routes");
+      const plain = ProviderInstanceId.make("plain");
+      const input = {
+        cwd: "/tmp",
+        modelSelection: createModelSelection(routing, "m"),
+        groupName: "Team",
+        members: [],
+        recentMessages: [],
+        request: "hi",
+      };
+      const generation = yield* TextGeneration.make.pipe(
+        Effect.provideService(
+          ProviderInstanceRegistry.ProviderInstanceRegistry,
+          makeStubRegistry([
+            makeStubInstance(
+              routing,
+              makeStubTextGeneration({
+                routeAssistantGroup: (value) => {
+                  expect(value).toBe(input);
+                  return Effect.succeed({ assistantIds: ["ada"] });
+                },
+              }),
+            ),
+            makeStubInstance(plain, makeStubTextGeneration({})),
+          ]),
+        ),
+        Effect.provide(
+          Layer.mergeAll(
+            ServerSettings.layerTest(),
+            Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
+              resolveLink: () => Effect.die("Routing must not resolve links"),
+            }),
+          ),
+        ),
+      );
+      expect(yield* generation.routeAssistantGroup!(input)).toEqual({ assistantIds: ["ada"] });
+      const refused = yield* generation.routeAssistantGroup!({
+        ...input,
+        modelSelection: createModelSelection(plain, "m"),
+      }).pipe(Effect.flip);
+      expect(refused.detail).toBe("unsupported_operation");
+    }),
+  );
+});

@@ -8,10 +8,19 @@ import {
   selectTeams,
   type AssistantsState,
 } from "@t3tools/client-runtime/state/assistants";
+import {
+  oldestAssistantGroupSeq,
+  type AssistantGroupChatState,
+} from "@t3tools/client-runtime/assistantGroupChat";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   AuthOrchestrationReadScope,
   type Assistant,
+  type AssistantGroupsHistoryResult,
+  type AssistantGroupsPostInput,
+  type AssistantGroupsPostResult,
+  type AssistantGroupsTaskActionInput,
+  type AssistantGroupTask,
   type AssistantsCreateInput,
   type AssistantSandboxStatus,
   type AssistantsResetInput,
@@ -87,17 +96,22 @@ const assistantEntriesAtom = Atom.family((key: string) =>
     const active: AssistantEntry[] = [];
     const archived: AssistantEntry[] = [];
     const teams: AssistantTeamEntry[] = [];
+    const activeTeams: AssistantTeamEntry[] = [];
+    const archivedTeams: AssistantTeamEntry[] = [];
     const environmentIds: EnvironmentId[] = [];
     for (const [environmentId, state] of get(assistantStatesAtom(key))) {
       environmentIds.push(environmentId);
-      for (const team of selectTeams(state)) teams.push({ environmentId, team });
+      for (const team of selectTeams(state)) {
+        teams.push({ environmentId, team });
+        (team.archivedAt === null ? activeTeams : archivedTeams).push({ environmentId, team });
+      }
       for (const assistant of selectActiveAssistants(state))
         active.push({ environmentId, assistant });
       for (const assistant of selectArchivedAssistants(state)) {
         archived.push({ environmentId, assistant });
       }
     }
-    return { active, archived, teams, environmentIds };
+    return { active, archived, teams, activeTeams, archivedTeams, environmentIds };
   }).pipe(Atom.withLabel(`web-assistant-entries:${key}`)),
 );
 
@@ -112,7 +126,7 @@ const threadAssistantAtom = Atom.family((key: string) =>
   }).pipe(Atom.withLabel(`web-thread-assistant:${key}`)),
 );
 
-/** Active and archived assistants of every loaded environment, listed even when it has none. */
+/** Active and archived assistants of every loaded environment, listed even when it has none. `teams` holds every group; the sidebar lists `activeTeams` and the pages add `archivedTeams`. */
 export function useAssistantEntries() {
   return useAtomValue(assistantEntriesAtom(environmentIdsKey(useAssistantsEnvironmentIds())));
 }
@@ -240,5 +254,68 @@ export function useAssistantTeamActions(environmentId: EnvironmentId) {
       reply(await update({ environmentId, input })),
     remove: async (teamId: AssistantTeamId) =>
       reply(await remove({ environmentId, input: { teamId } })),
+  };
+}
+
+/** The chat's live state, or null before the first snapshot. */
+export function useAssistantGroupChat(
+  environmentId: EnvironmentId,
+  teamId: AssistantTeamId,
+): AssistantGroupChatState | null {
+  return Option.getOrNull(
+    AsyncResult.value(
+      useAtomValue(assistantsEnvironment.groupChat({ environmentId, input: { teamId } })),
+    ),
+  );
+}
+
+export type AssistantGroupPostReply =
+  | { readonly ok: true; readonly value: AssistantGroupsPostResult }
+  | { readonly ok: false; readonly message: string; readonly reason: string | null };
+
+/** Posting, paging and task actions of one group chat; refusals come back as replies. */
+export function useAssistantGroupActions(environmentId: EnvironmentId) {
+  const canPost = useAtomValue(assistantsEnvironment.postGroup.permissionAtom(environmentId));
+  const canAct = useAtomValue(assistantsEnvironment.groupTaskAction.permissionAtom(environmentId));
+  const post = useAtomCommand(assistantsEnvironment.postGroup, { reportFailure: false });
+  const taskAction = useAtomCommand(assistantsEnvironment.groupTaskAction, {
+    reportFailure: false,
+  });
+  const history = useAtomCommand(assistantsEnvironment.groupHistory, { reportFailure: false });
+  return {
+    canPost,
+    canAct,
+    post: async (input: AssistantGroupsPostInput): Promise<AssistantGroupPostReply> => {
+      const result = await post({ environmentId, input });
+      if (result._tag === "Success") return { ok: true, value: result.value };
+      const error = squashAtomCommandFailure(result);
+      const reason =
+        typeof error === "object" && error !== null && "reason" in error
+          ? String(error.reason)
+          : null;
+      return { ok: false, message: assistantErrorMessage(error), reason };
+    },
+    taskAction: async (
+      input: AssistantGroupsTaskActionInput,
+    ): Promise<AssistantReply<AssistantGroupTask>> => {
+      const result = await taskAction({ environmentId, input });
+      return result._tag === "Success"
+        ? { ok: true, value: result.value }
+        : { ok: false, message: assistantErrorMessage(squashAtomCommandFailure(result)) };
+    },
+    /** The page before the oldest loaded message. */
+    olderThan: async (
+      teamId: AssistantTeamId,
+      state: AssistantGroupChatState,
+    ): Promise<AssistantReply<AssistantGroupsHistoryResult>> => {
+      const beforeSeq = oldestAssistantGroupSeq(state) ?? undefined;
+      const result = await history({
+        environmentId,
+        input: { teamId, ...(beforeSeq === undefined ? {} : { beforeSeq }) },
+      });
+      return result._tag === "Success"
+        ? { ok: true, value: result.value }
+        : { ok: false, message: assistantErrorMessage(squashAtomCommandFailure(result)) };
+    },
   };
 }

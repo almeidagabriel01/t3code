@@ -5,6 +5,7 @@ import {
   type AutonomyWatch,
   type Assistant,
   type AssistantId,
+  type AssistantTeamId,
   type ProjectId,
   type ScheduledTask,
   type ThreadId,
@@ -26,6 +27,7 @@ import {
   fakeAssistantEdits,
   fakeAssistants,
   fakeSandbox,
+  fakeTeamEdits,
   publishSandbox,
   fakeSettings,
   resetFakeTelegram,
@@ -154,6 +156,32 @@ it("lists assistants in Settings with an Archived section", async () => {
     .toBeVisible();
   await expect.element(page.getByText("Archived", { exact: true })).toBeVisible();
   await expect.element(page.getByRole("button", { name: "Unarchive" })).toBeVisible();
+});
+
+it("lists groups in Settings with a way into their chat, and archived groups with Restore", async () => {
+  const when = "2026-03-17T19:00:00.000Z";
+  const group = (id: string, name: string, archivedAt: string | null) => ({
+    id: id as AssistantTeamId,
+    name,
+    memberIds: ["jarvis"] as AssistantId[],
+    leadId: null,
+    archivedAt,
+    createdAt: when,
+    updatedAt: when,
+  });
+  fakeTeamEdits.updates = [];
+  publishAssistants(
+    [assistant("jarvis", "Jarvis", { isDefault: true })],
+    [group("t1", "Leaders", null), group("t2", "Old crew", "2026-03-18T00:00:00.000Z")],
+  );
+  await using screen = await openApp("/settings/assistants");
+  await userEvent.click(settingsContent().getByRole("button", { name: "Open Leaders chat" }));
+  await eventually(() => expect(screen.router.state.location.pathname).toContain("/group/"));
+  await screen.router.navigate({ to: "/settings/assistants" });
+  await userEvent.click(settingsContent().getByRole("button", { name: "Restore" }));
+  await eventually(() =>
+    expect(fakeTeamEdits.updates).toMatchObject([{ teamId: "t2", archived: false }]),
+  );
 });
 
 it("Jarvis can be deleted like any assistant, and Restore Jarvis asks the server for him", async () => {

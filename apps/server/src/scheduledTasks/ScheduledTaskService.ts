@@ -1,4 +1,5 @@
 import {
+  type AssistantError,
   type MemoryTaskGrantCeiling,
   CommandId,
   MessageId,
@@ -53,6 +54,7 @@ import * as Metrics from "../observability/Metrics.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
+import { AssistantGroupGate } from "../assistants/AssistantGroupGate.ts";
 import * as DueHint from "../scheduling/DueHint.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import { isMissedFixedTimeRun, isSameSchedule, nextScheduledRunAt } from "./Schedule.ts";
@@ -198,6 +200,7 @@ interface ScheduledTaskRow {
   readonly schedule_json: string;
   readonly project_id: string;
   readonly thread_id: string | null;
+  readonly assistant_team_id?: string | null;
   readonly workspace_strategy_json: string;
   readonly model_selection_json: string;
   readonly runtime_mode: string;
@@ -258,6 +261,8 @@ export class ScheduledTaskService extends Context.Service<
     ) => Effect.Effect<ScheduledTaskDeleteResult, ScheduledTaskError>;
     /** Deletes only tasks that still target this thread, including their webhook deliveries. */
     readonly deleteForThread: (threadId: ThreadId) => Effect.Effect<void, ScheduledTaskError>;
+    /** Deletes the tasks that post in this assistant group's chat. */
+    readonly deleteForTeam: (teamId: string) => Effect.Effect<void, ScheduledTaskError>;
     /** Points tasks bound to these threads at the project the threads moved to. */
     readonly moveThreadTasks: (input: {
       readonly threadIds: ReadonlyArray<ThreadId>;
@@ -386,6 +391,7 @@ const decodeRow = Effect.fnUntraced(
       schedule,
       projectId: row.project_id,
       threadId: row.thread_id,
+      ...(row.assistant_team_id ? { assistantTeamId: row.assistant_team_id } : {}),
       workspaceStrategy,
       modelSelection,
       memoryGrantCeiling: row.memory_grant_ceiling ?? "none",
@@ -460,6 +466,7 @@ export const layer = Layer.effect(
     const scheduler = yield* Scheduler.Scheduler;
     const readWebhookOrigin = yield* ScheduledTaskWebhookOrigin;
     const managedPolicy = yield* ManagedPolicy.ManagedPolicy;
+    const groupGate = yield* Effect.serviceOption(AssistantGroupGate);
     const webhookPolicyOrganization = ManagedPolicy.deniedBy(managedPolicy, "webhookTasks");
     // Existing webhook tasks stay stored but report why they do not run.
     const webhookPolicyBlock =
@@ -507,6 +514,7 @@ export const layer = Layer.effect(
         schedule_json,
         project_id,
         thread_id,
+        assistant_team_id,
         workspace_strategy_json,
         model_selection_json,
         runtime_mode,
@@ -549,6 +557,7 @@ export const layer = Layer.effect(
         schedule_json,
         project_id,
         thread_id,
+        assistant_team_id,
         workspace_strategy_json,
         model_selection_json,
         runtime_mode,
@@ -627,6 +636,7 @@ export const layer = Layer.effect(
           schedule_json,
           project_id,
           thread_id,
+          assistant_team_id,
           workspace_strategy_json,
           model_selection_json,
           runtime_mode,
@@ -652,6 +662,7 @@ export const layer = Layer.effect(
           ${JSON.stringify(task.schedule)},
           ${task.projectId},
           ${task.threadId},
+          ${task.assistantTeamId ?? null},
           ${JSON.stringify(task.workspaceStrategy)},
           ${JSON.stringify(task.modelSelection)},
           ${task.runtimeMode},
@@ -678,6 +689,7 @@ export const layer = Layer.effect(
           schedule_json = excluded.schedule_json,
           project_id = excluded.project_id,
           thread_id = excluded.thread_id,
+          assistant_team_id = excluded.assistant_team_id,
           workspace_strategy_json = excluded.workspace_strategy_json,
           model_selection_json = excluded.model_selection_json,
           runtime_mode = excluded.runtime_mode,
@@ -816,6 +828,17 @@ export const layer = Layer.effect(
         ),
     );
 
+    const postToGroup = (
+      task: ScheduledTask,
+      text: string,
+      clientRequestId: string,
+    ): Effect.Effect<ThreadId | null, ScheduledTaskError | AssistantError> =>
+      Option.isNone(groupGate)
+        ? Effect.fail(taskError("Assistant groups are unavailable.", { taskId: task.id }))
+        : groupGate.value
+            .post({ teamId: task.assistantTeamId!, text, label: task.title, clientRequestId })
+            .pipe(Effect.as(null));
+
     const runTask = Effect.fn("ScheduledTaskService.runTask")(function* (
       task: ScheduledTask,
       trigger: "scheduled" | "manual" | "webhook",
@@ -943,36 +966,39 @@ export const layer = Layer.effect(
 
         // Capture defects and interrupts too so dispatch failures still reach markCompleted.
         const result =
-          active.threadId === null
-            ? yield* Effect.exit(
-                threadLaunch
-                  .launch({
-                    commandId,
-                    projectId: active.projectId,
-                    title: active.title,
-                    modelSelection: active.modelSelection,
-                    runtimeMode: active.runtimeMode,
-                    interactionMode: active.interactionMode,
-                    workspaceStrategy: active.workspaceStrategy,
-                    initialMessage: {
-                      messageId,
-                      scheduledTaskId: active.id,
-                      memoryGrantCeiling: active.memoryGrantCeiling ?? "none",
-                      text: prompt,
-                      attachments: [],
-                    },
-                    createdBy: active.createdBy,
-                    creationSource: active.creationSource,
-                  })
-                  .pipe(Effect.map((launched) => launched.threadId)),
-              )
-            : yield* Effect.exit(
-                // The stored selection only seeds fresh threads. A bound run
-                // follows the thread's current provider, so it passes none.
-                sendBound(ThreadId.make(active.threadId), active.projectId, 2).pipe(
-                  Effect.as(ThreadId.make(active.threadId)),
-                ),
-              );
+          active.assistantTeamId != null
+            ? // A group's chat gets the prompt as a routine message; the fire key makes a replay post once.
+              yield* Effect.exit(postToGroup(active, prompt, fireKey))
+            : active.threadId === null
+              ? yield* Effect.exit(
+                  threadLaunch
+                    .launch({
+                      commandId,
+                      projectId: active.projectId,
+                      title: active.title,
+                      modelSelection: active.modelSelection,
+                      runtimeMode: active.runtimeMode,
+                      interactionMode: active.interactionMode,
+                      workspaceStrategy: active.workspaceStrategy,
+                      initialMessage: {
+                        messageId,
+                        scheduledTaskId: active.id,
+                        memoryGrantCeiling: active.memoryGrantCeiling ?? "none",
+                        text: prompt,
+                        attachments: [],
+                      },
+                      createdBy: active.createdBy,
+                      creationSource: active.creationSource,
+                    })
+                    .pipe(Effect.map((launched) => launched.threadId)),
+                )
+              : yield* Effect.exit(
+                  // The stored selection only seeds fresh threads. A bound run
+                  // follows the thread's current provider, so it passes none.
+                  sendBound(ThreadId.make(active.threadId), active.projectId, 2).pipe(
+                    Effect.as(ThreadId.make(active.threadId)),
+                  ),
+                );
 
         const runSucceeded = result._tag === "Success";
         if (webhook !== undefined && runSucceeded) yield* Ref.set(webhook.dispatched, true);
@@ -1233,7 +1259,7 @@ export const layer = Layer.effect(
       // stored above the ceiling can be turned off before its mode is lowered. A task bound to a
       // thread runs in that thread's mode, which the orchestrator checks instead.
       const modeDenial =
-        input.enabled && input.threadId == null
+        input.enabled && input.threadId == null && !input.assistantTeamId
           ? managedRuntimeModeDenial(managedPolicy.summary, input.runtimeMode)
           : undefined;
       if (modeDenial !== undefined) {
@@ -1347,7 +1373,8 @@ export const layer = Layer.effect(
         enabled: input.enabled,
         schedule,
         projectId: input.projectId,
-        threadId: input.threadId ?? null,
+        threadId: input.assistantTeamId ? null : (input.threadId ?? null),
+        ...(input.assistantTeamId ? { assistantTeamId: input.assistantTeamId } : {}),
         workspaceStrategy,
         modelSelection: input.modelSelection,
         memoryGrantCeiling: captured?.memoryGrantCeiling ?? "none",
@@ -1392,7 +1419,7 @@ export const layer = Layer.effect(
         return yield* taskError(webhookPolicyBlock, { taskId: input.id });
       }
       const modeDenial =
-        toggled && input.enabled && existing.threadId === null
+        toggled && input.enabled && existing.threadId === null && !existing.assistantTeamId
           ? managedRuntimeModeDenial(managedPolicy.summary, existing.runtimeMode)
           : undefined;
       if (modeDenial !== undefined) {
@@ -1498,6 +1525,32 @@ export const layer = Layer.effect(
         .pipe(
           Effect.mapError((cause) =>
             taskError("Could not delete thread's schedule tasks.", { cause }),
+          ),
+        );
+      yield* Effect.forEach(removed, ({ task_id }) => forgetWebhookTask(task_id), {
+        discard: true,
+      });
+      if (removed.length > 0) yield* notifyChanged;
+    });
+
+    const deleteForTeam = Effect.fn("ScheduledTaskService.deleteForTeam")(function* (
+      teamId: string,
+    ) {
+      const removed = yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            yield* sql`
+            DELETE FROM scheduled_task_webhook_deliveries
+            WHERE task_id IN (SELECT task_id FROM scheduled_tasks WHERE assistant_team_id = ${teamId})
+          `;
+            return yield* sql<{ task_id: ScheduledTaskId }>`
+            DELETE FROM scheduled_tasks WHERE assistant_team_id = ${teamId} RETURNING task_id
+          `;
+          }),
+        )
+        .pipe(
+          Effect.mapError((cause) =>
+            taskError("Could not delete the group's schedule tasks.", { cause }),
           ),
         );
       yield* Effect.forEach(removed, ({ task_id }) => forgetWebhookTask(task_id), {
@@ -2469,6 +2522,7 @@ export const layer = Layer.effect(
       setEnabled,
       delete: deleteTask,
       deleteForThread,
+      deleteForTeam,
       moveThreadTasks,
       retargetThreadTasks,
       runNow,

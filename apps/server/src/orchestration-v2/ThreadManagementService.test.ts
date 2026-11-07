@@ -796,6 +796,8 @@ const guardThreads = {
   boxed: assistantThreadIdFor("boxed", 1),
   scoped: assistantThreadIdFor("scoped", 1),
   plain: ThreadId.make("thread:guard:plain"),
+  /** A member's hidden thread for a group: never archived, deleted or restored by a client. */
+  group: ThreadId.make("assistant:helper:g-0123456789abcdef"),
   /** A conversation in the project the scoped assistant lives in. */
   sameProject: ThreadId.make("thread:guard:same-project"),
 };
@@ -881,6 +883,15 @@ it.effect.each([
     null,
   ],
   ["archiving a plain thread", "plain", { type: "thread.archive" }, null],
+  ["archiving a group thread", "group", { type: "thread.archive" }, "hidden thread for a group"],
+  ["deleting a group thread", "group", { type: "thread.delete" }, "hidden thread for a group"],
+  ["restoring a group thread", "group", { type: "thread.unarchive" }, "hidden thread for a group"],
+  [
+    "a group thread's other commands",
+    "group",
+    { type: "thread.runtime-mode.set", runtimeMode: "approval-required" },
+    null,
+  ],
 ] as const)("assistant guard: %s", ([, which, partial, refusal]) => {
   const dispatched: Array<unknown> = [];
   return Effect.gen(function* () {

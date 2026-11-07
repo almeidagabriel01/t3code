@@ -1,12 +1,17 @@
 import {
   ASSISTANTS_RESTORE_DEFAULT_INPUT,
   type Assistant,
+  type AssistantTeam,
   type EnvironmentId,
   type ThreadId,
 } from "@t3tools/contracts";
 
 import * as Dialog from "../../components/ui/Dialog";
-import { useAssistantActions, type AssistantReply } from "../../state/assistants";
+import {
+  useAssistantActions,
+  useAssistantTeamActions,
+  type AssistantReply,
+} from "../../state/assistants";
 import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
 
 function failed(title: string, reply: AssistantReply<unknown>) {
@@ -86,6 +91,35 @@ export function useAssistantFlows(environmentId: EnvironmentId) {
       const reply = await actions.reset({ assistantId: assistant.id, restoreThreadId: threadId });
       failed("Could not restore the conversation", reply);
       return reply.ok;
+    },
+  };
+}
+
+/** Archive and restore of a group, shared by Home, Settings and the chat's menu. */
+export function useAssistantTeamFlows(environmentId: EnvironmentId) {
+  const actions = useAssistantTeamActions(environmentId);
+  return {
+    canAct: actions.canAct,
+    archive(team: Pick<AssistantTeam, "id" | "name">) {
+      Dialog.confirm({
+        title: `Archive ${team.name}?`,
+        message:
+          "Its chat is kept, but its work stops and it takes no new messages. You can restore it.",
+        confirmText: "Archive",
+        onConfirm: () => {
+          void (async () =>
+            failed(
+              "Could not archive the group",
+              await actions.update({ teamId: team.id, archived: true }),
+            ))();
+        },
+      });
+    },
+    async restore(team: Pick<AssistantTeam, "id">) {
+      failed(
+        "Could not restore the group",
+        await actions.update({ teamId: team.id, archived: false }),
+      );
     },
   };
 }

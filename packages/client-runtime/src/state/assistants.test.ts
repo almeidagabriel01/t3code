@@ -81,6 +81,7 @@ describe("assistants state", () => {
       name: id,
       memberIds: ["a", "b"] as AssistantId[],
       leadId: null,
+      archivedAt: null,
       createdAt,
       updatedAt: createdAt,
     });

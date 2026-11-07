@@ -275,6 +275,10 @@
       "types": "./src/assistantIcons.ts",
       "default": "./src/assistantIcons.ts"
     },
+    "./assistantGroupChat": {
+      "types": "./src/assistantGroupChat.ts",
+      "default": "./src/assistantGroupChat.ts"
+    },
     "./assistantRobot": {
       "types": "./src/assistantRobot.ts",
       "default": "./src/assistantRobot.ts"

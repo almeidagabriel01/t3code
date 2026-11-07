@@ -137,7 +137,7 @@ const make = Effect.gen(function* () {
     teamsOf: Effect.fn("AssistantDirectory.teamsOf")(function* (assistant) {
       const all = (yield* live).map(toAssistant);
       return (yield* allTeams(sql))
-        .filter((team) => team.memberIds.includes(assistant.id))
+        .filter((team) => team.archivedAt === null && team.memberIds.includes(assistant.id))
         .map((team) => ({
           team,
           lead: all.find((other) => other.id === team.leadId) ?? null,

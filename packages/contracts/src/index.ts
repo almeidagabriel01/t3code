@@ -72,6 +72,7 @@ export * from "./kanban.ts";
 export * from "./decisions.ts";
 export * from "./computerUse.ts";
 export * from "./assistants.ts";
+export * from "./assistantGroups.ts";
 export * from "./autonomy.ts";
 export * from "./channels.ts";
 export * from "./imessageChannel.ts";

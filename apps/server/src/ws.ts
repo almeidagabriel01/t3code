@@ -135,6 +135,7 @@ import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import * as DecisionAttachmentIntake from "./decisions/DecisionAttachmentIntake.ts";
 import * as ComputerUse from "./computerUse/ComputerUse.ts";
 import * as Decisions from "./decisions/DecisionService.ts";
+import * as AssistantGroups from "./assistants/AssistantGroups.ts";
 import * as Assistants from "./assistants/AssistantService.ts";
 import * as Kanban from "./kanban/KanbanService.ts";
 import * as NoteWork from "./notes/NoteWorkService.ts";
@@ -1459,6 +1460,7 @@ export const layerWsRpc = (
       const decisions = yield* Decisions.DecisionService;
       const computerUse = yield* ComputerUse.ComputerUse;
       const assistants = yield* Assistants.AssistantService;
+      const assistantGroups = yield* AssistantGroups.AssistantGroups;
       const assistantSpend = yield* AssistantSpend.AssistantSpend;
       const sandboxControl = yield* AssistantSandboxControl.AssistantSandboxControl;
       const autonomy = yield* AutonomyService.AutonomyService;
@@ -2566,6 +2568,10 @@ export const layerWsRpc = (
         [WS_METHODS.assistantTeamsUpdate]: (input) => assistants.updateTeam(input),
         [WS_METHODS.assistantTeamsDelete]: (input) =>
           assistants.removeTeam(input.teamId).pipe(Effect.as({ teamId: input.teamId })),
+        [WS_METHODS.assistantGroupsSubscribe]: (input) => assistantGroups.subscribe(input.teamId),
+        [WS_METHODS.assistantGroupsHistory]: (input) => assistantGroups.history(input),
+        [WS_METHODS.assistantGroupsPost]: (input) => assistantGroups.post(input, { kind: "user" }),
+        [WS_METHODS.assistantGroupsTaskAction]: (input) => assistantGroups.taskAction(input),
         [WS_METHODS.autonomyWatchesList]: () =>
           autonomy.listWatches.pipe(Effect.map((watches) => ({ watches }))),
         [WS_METHODS.autonomyWatchUpsert]: (input) => autonomy.upsertWatch(input),

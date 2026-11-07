@@ -371,6 +371,7 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
       runAntigravityJson(request).pipe(Effect.map((selected) => selected.result)),
     ),
     {
+      routeAssistantGroup: true,
       memoryRunner: withMemoryExecution(
         options.memoryRunnerContext,
         ProviderDriverKind.make("antigravity"),

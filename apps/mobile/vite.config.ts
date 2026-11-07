@@ -95,6 +95,8 @@ const reactTests = [
   "src/features/assistants/DescribeAssistantRouteScreen.test.tsx",
   "src/features/assistants/describeAssistant.test.tsx",
   "src/features/assistants/SettingsAssistantsRouteScreen.test.tsx",
+  "src/features/assistants/AssistantGroupChatRouteScreen.test.tsx",
+  "src/features/assistants/assistantGroupFlows.test.tsx",
   "src/features/assistants/AutonomySettingsSection.test.tsx",
   "src/features/assistants/AssistantWatchesSection.test.tsx",
   "src/features/assistants/AssistantWatchRouteScreen.test.tsx",

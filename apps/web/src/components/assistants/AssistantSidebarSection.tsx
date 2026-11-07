@@ -1,5 +1,7 @@
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
+  assistantGroupOwnerKey,
+  assistantGroupThreadsOf,
   assistantPresence,
   assistantQueuedLabel,
   type AssistantMood,
@@ -14,6 +16,7 @@ import {
 import {
   ArchiveIcon,
   ChevronDownIcon,
+  MessagesSquareIcon,
   ChevronRightIcon,
   EllipsisIcon,
   FolderIcon,
@@ -25,6 +28,7 @@ import {
   UserRoundIcon,
   UsersIcon,
 } from "lucide-react";
+import { useParams } from "@tanstack/react-router";
 import {
   Fragment,
   memo,
@@ -54,7 +58,7 @@ import { AssistantAvatar } from "./assistantPresentation";
 import { openAssistantDialog } from "./assistantDialogState";
 import { openAssistantTeamDialog } from "./assistantTeamState";
 import { DescribeAssistantDialog } from "./DescribeAssistantDialog";
-import { useAssistantFlows } from "./useAssistantFlows";
+import { useAssistantFlows, useAssistantTeamFlows } from "./useAssistantFlows";
 
 const MOOD_TEXT: Record<AssistantMood, string> = {
   idle: "text-muted-foreground",
@@ -76,7 +80,11 @@ function useAssistantState(entry: AssistantEntry, onOpen: (threadRef: ScopedThre
   const localLastVisitedAt = useUiStateStore((state) =>
     threadKey === null ? undefined : state.threadLastVisitedAtById[threadKey],
   );
-  const presence = assistantPresence(thread);
+  const shells = useQuietThreadShells();
+  const presence = assistantPresence(
+    thread,
+    assistantGroupThreadsOf(shells, environmentId, assistant.id),
+  );
   const dotClass =
     thread === null
       ? null
@@ -282,7 +290,10 @@ function SectionLabel(props: { readonly children: string; readonly tone?: string
 
 const MAX_STACKED_AVATARS = 4;
 
-/** A group or project header: folds its members, shows what it holds, and carries its menu. */
+/**
+ * A group or project header: folds its members, shows what it holds, and carries its menu. With
+ * `onOpen` the row opens something and only the chevron folds.
+ */
 function FoldRow(props: {
   readonly foldKey: string;
   readonly label: string;
@@ -292,33 +303,59 @@ function FoldRow(props: {
   readonly trailing?: ReactNode;
   readonly menuLabel: string;
   readonly menu: ReactNode;
+  readonly onOpen?: () => void;
+  readonly active?: boolean;
 }) {
   const toggle = () => props.onToggle(props.foldKey);
+  const run = props.onOpen ?? toggle;
+  const chevron = (
+    <ChevronDownIcon
+      aria-hidden
+      className={cn("size-3 shrink-0 text-muted-foreground", props.folded && "-rotate-90")}
+    />
+  );
   return (
     <li className="list-none py-0.5">
       <div
         role="button"
         tabIndex={0}
-        aria-expanded={!props.folded}
+        {...(props.onOpen ? {} : { "aria-expanded": !props.folded })}
         aria-label={props.label}
+        aria-current={props.active ? "page" : undefined}
         data-testid="sidebar-assistant-fold"
         className={cn(
           "flex h-8 w-full cursor-pointer items-center gap-2 rounded-md px-(--sidebar-row-content-inset) text-left text-sm font-semibold text-sidebar-foreground select-none hover:bg-sidebar-row-hover",
           FOCUS_RING,
+          props.active && "bg-sidebar-row-active",
         )}
-        onClick={toggle}
+        onClick={(event) => {
+          if (props.onOpen && (event.target as HTMLElement).closest("button")) return;
+          run();
+        }}
         onKeyDown={(event) => {
           if (event.target !== event.currentTarget) return;
           if (event.key === "Enter" || event.key === " ") {
             event.preventDefault();
-            toggle();
+            run();
           }
         }}
       >
-        <ChevronDownIcon
-          aria-hidden
-          className={cn("size-3 shrink-0 text-muted-foreground", props.folded && "-rotate-90")}
-        />
+        {props.onOpen ? (
+          <button
+            type="button"
+            aria-label={`${props.folded ? "Expand" : "Collapse"} ${props.label}`}
+            aria-expanded={!props.folded}
+            onClick={toggle}
+            className={cn(
+              "-ms-1 inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-md hover:bg-foreground/8",
+              FOCUS_RING,
+            )}
+          >
+            {chevron}
+          </button>
+        ) : (
+          chevron
+        )}
         {props.leading}
         <span className="min-w-0 truncate">{props.label}</span>
         {props.trailing}
@@ -353,10 +390,13 @@ function GroupRow(props: {
   readonly entry: AssistantTeamEntry;
   readonly members: ReadonlyArray<AssistantEntry>;
   readonly folded: boolean;
+  readonly active: boolean;
   readonly onToggle: (foldKey: string) => void;
+  readonly onOpen: () => void;
 }) {
   const { environmentId, team } = props.entry;
   const teamId: AssistantTeamId = team.id;
+  const flows = useAssistantTeamFlows(environmentId);
   const shown = props.members.slice(0, MAX_STACKED_AVATARS);
   const more = props.members.length - shown.length;
   return (
@@ -365,6 +405,8 @@ function GroupRow(props: {
       label={team.name}
       folded={props.folded}
       onToggle={props.onToggle}
+      onOpen={props.onOpen}
+      active={props.active}
       leading={<UsersIcon aria-hidden className="size-4 shrink-0 text-(--sidebar-icon-color)" />}
       trailing={
         <span className="flex items-center ps-0.5" data-testid="group-avatars">
@@ -385,6 +427,10 @@ function GroupRow(props: {
       menuLabel={`${team.name} actions`}
       menu={
         <>
+          <MenuItem onClick={props.onOpen}>
+            <MessagesSquareIcon />
+            Open chat
+          </MenuItem>
           <MenuItem onClick={() => openAssistantTeamDialog({ environmentId, teamId })}>
             <PencilIcon />
             Edit group
@@ -392,6 +438,11 @@ function GroupRow(props: {
           <MenuItem onClick={() => openAssistantDialog({ environmentId, preset: { teamId } })}>
             <PlusIcon />
             New assistant in this group
+          </MenuItem>
+          <MenuSeparator />
+          <MenuItem disabled={!flows.canAct} onClick={() => void flows.archive(team)}>
+            <ArchiveIcon />
+            Archive group
           </MenuItem>
         </>
       }
@@ -404,8 +455,11 @@ export const AssistantSidebarSection = memo(function AssistantSidebarSection(pro
   readonly routeThreadKey: string | null;
   readonly environmentLabelById: ReadonlyMap<string, string>;
   readonly onOpenThread: (threadRef: ScopedThreadRef) => void;
+  readonly onOpenGroup: (environmentId: EnvironmentId, teamId: AssistantTeamId) => void;
 }) {
-  const { active, teams } = useAssistantEntries();
+  const { active, activeTeams: teams } = useAssistantEntries();
+  const routeEnvironmentId = useParams({ strict: false, select: (params) => params.environmentId });
+  const routeTeamId = useParams({ strict: false, select: (params) => params.teamId });
   const enabled = useClientSettings((settings) => settings.sidebarShowAssistantsSection);
   const collapsed = useClientSettings((settings) => settings.sidebarAssistantsCollapsed);
   const foldedKeys = useClientSettings((settings) => settings.sidebarAssistantsCollapsedGroups);
@@ -436,7 +490,9 @@ export const AssistantSidebarSection = memo(function AssistantSidebarSection(pro
   );
   const needsKeys = new Set<string>();
   for (const shell of shells) {
-    const key = keyByThread.get(scopedThreadKey(scopeThreadRef(shell.environmentId, shell.id)));
+    const key =
+      keyByThread.get(scopedThreadKey(scopeThreadRef(shell.environmentId, shell.id))) ??
+      assistantGroupOwnerKey(shell);
     if (key !== undefined && assistantPresence(shell).mood === "needs") needsKeys.add(key);
   }
   const sections = assistantSections({ assistants: active, teams, needsKeys });
@@ -596,7 +652,11 @@ export const AssistantSidebarSection = memo(function AssistantSidebarSection(pro
                       entry={team}
                       members={members}
                       folded={folded}
+                      active={
+                        routeTeamId === team.team.id && routeEnvironmentId === team.environmentId
+                      }
                       onToggle={toggleFold}
+                      onOpen={() => props.onOpenGroup(team.environmentId, team.team.id)}
                     />
                     {folded ? null : members.length === 0 ? (
                       <li className="ms-3.5 list-none border-s border-foreground/10 py-1 ps-3 text-xs text-muted-foreground">

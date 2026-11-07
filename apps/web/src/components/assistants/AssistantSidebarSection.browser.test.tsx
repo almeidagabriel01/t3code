@@ -27,6 +27,7 @@ const state = vi.hoisted(() => ({
   openTeam: vi.fn(),
   openTeamDialog: vi.fn(),
   openDialog: vi.fn(),
+  archiveTeam: vi.fn(),
 }));
 
 const threadOf = (name: string) => `assistant:${name.toLowerCase()}:1`;
@@ -68,6 +69,7 @@ vi.mock("../../state/assistants", () => ({
     })),
     archived: [],
     teams: state.teams,
+    activeTeams: state.teams,
   }),
 }));
 vi.mock("./assistantTeamState", () => ({
@@ -94,6 +96,7 @@ vi.mock("../../hooks/useSettings", () => ({
 }));
 vi.mock("./useAssistantFlows", () => ({
   useAssistantFlows: () => ({ canAct: true, reset: vi.fn(), archive: vi.fn() }),
+  useAssistantTeamFlows: () => ({ canAct: true, archive: state.archiveTeam, restore: vi.fn() }),
 }));
 
 function setup(
@@ -117,14 +120,20 @@ function setup(
   state.openTeam.mockClear();
   state.openTeamDialog.mockClear();
   state.openDialog.mockClear();
+  state.archiveTeam.mockClear();
 }
 
-const element = (onOpenThread = vi.fn(), routeThreadKey: string | null = null) => (
+const element = (
+  onOpenThread = vi.fn(),
+  routeThreadKey: string | null = null,
+  onOpenGroup = vi.fn(),
+) => (
   <ul>
     <AssistantSidebarSection
       routeThreadKey={routeThreadKey}
       environmentLabelById={new Map()}
       onOpenThread={onOpenThread}
+      onOpenGroup={onOpenGroup}
     />
   </ul>
 );
@@ -262,7 +271,7 @@ describe("AssistantSidebarSection", () => {
     ];
     await using screen = await render(element());
     expect(screen.container.querySelector('[data-testid="group-avatars"]')?.textContent).toBe("+2");
-    await userEvent.click(screen.getByRole("button", { name: "Growth" }));
+    await userEvent.click(screen.getByRole("button", { name: "Collapse Growth" }));
     expect(state.update).toHaveBeenCalledWith({
       sidebarAssistantsCollapsedGroups: ["group:env:t1"],
     });
@@ -277,9 +286,29 @@ describe("AssistantSidebarSection", () => {
     ];
     await screen.rerender(element());
     expect(rows(screen.container)).toHaveLength(0);
-    await userEvent.click(screen.getByRole("button", { name: "Growth" }));
+    await userEvent.click(screen.getByRole("button", { name: "Expand Growth" }));
     expect(state.update).toHaveBeenLastCalledWith({
       sidebarAssistantsCollapsedGroups: ["project:env:p1"],
+    });
+  });
+
+  it("opens the group chat from the row and the menu, and archives from the menu", async () => {
+    setup(["Jarvis"]);
+    state.teams = [team("t1", "Growth", ["jarvis"])];
+    const onOpenGroup = vi.fn();
+    await using screen = await render(element(vi.fn(), null, onOpenGroup));
+    await userEvent.click(screen.getByRole("button", { name: "Growth", exact: true }));
+    expect(onOpenGroup).toHaveBeenLastCalledWith("env", "t1");
+    expect(state.update).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Growth actions" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "Open chat" }));
+    expect(onOpenGroup).toHaveBeenCalledTimes(2);
+    await userEvent.click(screen.getByRole("button", { name: "Growth actions" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "Archive group" }));
+    expect(state.archiveTeam).toHaveBeenCalledWith({
+      id: "t1",
+      name: "Growth",
+      memberIds: ["jarvis"],
     });
   });
 

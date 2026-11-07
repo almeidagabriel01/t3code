@@ -289,6 +289,8 @@ export const AssistantTeam = Schema.Struct({
   name: AssistantTeamName,
   memberIds: Schema.Array(AssistantId),
   leadId: Schema.NullOr(AssistantId).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  /** An archived group keeps its chat but takes no new messages and runs no work. */
+  archivedAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -476,6 +478,8 @@ export const AssistantTeamsUpdateInput = Schema.Struct({
   name: Schema.optional(AssistantTeamName),
   memberIds: Schema.optional(Schema.Array(AssistantId)),
   leadId: Schema.optional(Schema.NullOr(AssistantId)),
+  /** true archives the group and stops its work; false restores it. */
+  archived: Schema.optional(Schema.Boolean),
 });
 export type AssistantTeamsUpdateInput = typeof AssistantTeamsUpdateInput.Type;
 
@@ -488,6 +492,14 @@ export const AssistantsDeleteResult = Schema.Struct({ assistantId: AssistantId }
 export type AssistantsDeleteResult = typeof AssistantsDeleteResult.Type;
 
 export class AssistantError extends Schema.TaggedError<AssistantError>()("AssistantError", {
-  reason: Schema.Literals(["not_found", "handle_taken", "invalid", "storage"]),
+  reason: Schema.Literals([
+    "not_found",
+    "handle_taken",
+    "invalid",
+    "storage",
+    // A group message that names no member, in a group whose lead cannot route it.
+    "mention_required",
+    "archived",
+  ]),
   message: Schema.String,
 }) {}

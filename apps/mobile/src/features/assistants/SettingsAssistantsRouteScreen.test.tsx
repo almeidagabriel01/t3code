@@ -18,7 +18,10 @@ const { mocks, Children } = vi.hoisted(() => ({
     hasDefault: true,
     presence: {} as Record<string, Presence>,
     entries: null as null | { active: unknown[]; archived: unknown[]; teams: unknown[] },
-    openTeam: { edit: vi.fn() },
+    openTeam: { edit: vi.fn(), chat: vi.fn() },
+    archivedTeams: [] as unknown[],
+    archiveTeam: vi.fn(),
+    restoreTeam: vi.fn(),
   },
 }));
 const assistant = (id: string, name: string, extra: object = {}) => ({
@@ -75,6 +78,11 @@ vi.mock("./useAssistantFlows", () => ({
     archive: mocks.archive,
     openConversation: mocks.open,
   }),
+  useAssistantTeamFlows: () => ({
+    canAct: true,
+    archive: mocks.archiveTeam,
+    restore: mocks.restoreTeam,
+  }),
 }));
 vi.mock("react-native", () => ({
   View: (props: { children?: ReactNode; accessibilityLabel?: string }) => (
@@ -91,6 +99,8 @@ vi.mock("react-native", () => ({
   ),
 }));
 vi.mock("@t3tools/client-runtime/assistantRobot", () => ({
+  assistantGroupThreadsOf: () => [],
+  assistantGroupOwnerKey: () => undefined,
   assistantQueuedLabel: (queued: number | undefined) =>
     queued !== undefined && queued > 0 ? `${queued} queued` : null,
   assistantPresence: (thread: { id: string } | null): Presence =>
@@ -175,10 +185,15 @@ vi.mock("../../state/use-remote-environment-registry", () => ({
   }),
 }));
 vi.mock("../../state/assistants", () => ({
-  useAssistantEntries: () => ({
-    environmentIds: mocks.environmentIds,
-    ...(mocks.entries ?? defaults()),
-  }),
+  useAssistantEntries: () => {
+    const entries = mocks.entries ?? defaults();
+    return {
+      environmentIds: mocks.environmentIds,
+      ...entries,
+      activeTeams: entries.teams,
+      archivedTeams: mocks.archivedTeams,
+    };
+  },
   useAssistantsEnvironmentIds: () => mocks.environmentIds,
   useAssistantSpend: (environmentId: string, assistantId: string | null) => {
     mocks.spendQuery(environmentId, assistantId);
@@ -202,6 +217,7 @@ beforeEach(() => {
   container = window.document.createElement("div");
   root = createRoot(container);
   mocks.entries = null;
+  mocks.archivedTeams = [];
   mocks.budgetState = undefined;
   mocks.presence = {};
   mocks.environmentIds = ["hub"];
@@ -320,8 +336,27 @@ describe("assistants page", () => {
     expect(mocks.openEditor).toHaveBeenCalledWith("hub", null, { teamId: "g1" });
     await click("menu:Edit group");
     expect(mocks.openTeam.edit).toHaveBeenCalledWith("hub", "g1");
+    await click("menu:Open chat");
+    expect(mocks.openTeam.chat).toHaveBeenCalledWith("hub", "g1");
+    await click("menu:Archive group");
+    expect(mocks.archiveTeam).toHaveBeenCalledWith(expect.objectContaining({ id: "g1" }));
     await click("menu:New assistant in this project");
     expect(mocks.openEditor).toHaveBeenLastCalledWith("hub", null, { projectId: "p1" });
+  });
+
+  it("archived groups are listed apart and restore from their row", async () => {
+    mocks.archivedTeams = [
+      { environmentId: "hub", team: { id: "g9", name: "Old crew", memberIds: ["a1", "a2"] } },
+    ];
+    render();
+    expect(container.textContent).toContain("Archived groups");
+    expect(container.textContent).toContain("2 members");
+    await act(async () =>
+      Array.from(container.querySelectorAll("button"))
+        .find((button) => button.textContent === "Restore")
+        ?.click(),
+    );
+    expect(mocks.restoreTeam).toHaveBeenCalledWith(expect.objectContaining({ id: "g9" }));
   });
 
   it("the header creates an assistant or a group", async () => {

@@ -135,6 +135,7 @@ import { KanbanLinkCardRouteScreen } from "./features/kanban/KanbanLinkCardRoute
 import { KanbanLinkThreadRouteScreen } from "./features/kanban/KanbanLinkThreadRouteScreen";
 import { NotesRouteScreen } from "./features/notes/NotesRouteScreen";
 import { AssistantEditRouteScreen } from "./features/assistants/AssistantEditRouteScreen";
+import { AssistantGroupChatRouteScreen } from "./features/assistants/AssistantGroupChatRouteScreen";
 import { AssistantTeamEditRouteScreen } from "./features/assistants/AssistantTeamEditRouteScreen";
 import { AssistantWatchRouteScreen } from "./features/assistants/AssistantWatchRouteScreen";
 import { AssistantModelPickerRouteScreen } from "./features/assistants/AssistantModelPickerRouteScreen";
@@ -888,6 +889,10 @@ const RootStackConfig = createWorkspaceStackNavigator({
       screen: ThreadRouteScreen,
       linking: { path: "threads/:environmentId?/:threadId?", alias: ["new/draft"] },
       options: THREAD_HEADER_OPTIONS,
+    }),
+    AssistantGroupChat: createNativeStackScreen({
+      screen: AssistantGroupChatRouteScreen,
+      options: DETAIL_HEADER_OPTIONS,
     }),
     NewTaskProject: createNativeStackScreen({
       screen: NewTaskRouteScreen,

@@ -99,6 +99,7 @@ import * as MemorySyncService from "./memory/MemorySyncService.ts";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import * as ComputerUse from "./computerUse/ComputerUse.ts";
 import * as Decisions from "./decisions/DecisionService.ts";
+import * as AssistantGroups from "./assistants/AssistantGroups.ts";
 import * as Assistants from "./assistants/AssistantService.ts";
 import * as Kanban from "./kanban/KanbanService.ts";
 import * as NoteWork from "./notes/NoteWorkService.ts";
@@ -744,6 +745,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(Decisions.DecisionService)({}),
   Layer.mock(ComputerUse.ComputerUse)({}),
   Layer.mock(Assistants.AssistantService)({}),
+  Layer.mock(AssistantGroups.AssistantGroups)({ member: {} as never }),
   Layer.mock(NoteWork.NoteWorkService)({}),
   Layer.mock(SecretRequests.SecretRequests)({}),
   Layer.mock(SecretResolver.SecretResolver)({}),
@@ -1422,6 +1424,7 @@ it.effect("the sandbox RPCs reach the control service, and choosing the sandbox 
         create: () => Effect.succeed(assistant),
         update: () => Effect.succeed(assistant),
       }),
+      Layer.mock(AssistantGroups.AssistantGroups)({ member: {} as never }),
     );
     const server = yield* RpcServer.makeNoSerialization(
       RpcGroup.make(

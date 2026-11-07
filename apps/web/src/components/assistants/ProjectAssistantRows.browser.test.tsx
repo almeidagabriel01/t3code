@@ -33,6 +33,7 @@ vi.mock("../../state/assistants", () => ({
   }),
 }));
 vi.mock("../../state/entities", () => ({
+  useQuietThreadShells: () => [],
   useThreadShell: (ref: { threadId: string } | null) =>
     ref === null
       ? null

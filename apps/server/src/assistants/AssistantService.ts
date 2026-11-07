@@ -37,6 +37,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
+import type * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -118,6 +119,14 @@ export class AssistantService extends Context.Service<
       input: AssistantTeamsUpdateInput,
     ) => Effect.Effect<AssistantTeam, AssistantError>;
     readonly removeTeam: (teamId: AssistantTeamId) => Effect.Effect<void, AssistantError>;
+    /** Changes from now on, with no snapshot and no ensure, for services that react to them. */
+    readonly subscribeChanges: Effect.Effect<
+      PubSub.Subscription<AssistantsEvent>,
+      never,
+      Scope.Scope
+    >;
+    /** The model a new thread for this project starts on. */
+    readonly defaultModel: (projectId: ProjectId) => Effect.Effect<ModelSelection, AssistantError>;
   }
 >()("t3/assistants/AssistantService") {}
 
@@ -760,10 +769,16 @@ const make = Effect.gen(function* () {
               ? current.leadId
               : null;
         yield* checkTeam({ memberIds, leadId }, current.memberIds);
+        const archivedAt =
+          input.archived === undefined
+            ? current.archivedAt
+            : input.archived
+              ? (current.archivedAt ?? (yield* nowIso))
+              : null;
         yield* sql`
           UPDATE assistant_teams SET name = ${input.name ?? current.name},
             member_ids_json = ${encodeMemberIds(memberIds)}, lead_id = ${leadId},
-            updated_at = ${yield* nowIso}
+            archived_at = ${archivedAt}, updated_at = ${yield* nowIso}
           WHERE team_id = ${input.teamId}`;
         const team = toAssistantTeam(yield* findTeamRow(input.teamId));
         yield* PubSub.publish(events, { type: "teamUpserted", team });
@@ -926,6 +941,8 @@ const make = Effect.gen(function* () {
     createTeam,
     updateTeam,
     removeTeam,
+    subscribeChanges: PubSub.subscribe(events),
+    defaultModel: defaultModelSelection,
   });
 });
 

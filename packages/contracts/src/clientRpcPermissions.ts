@@ -111,6 +111,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.assistantTeamsCreate]: AuthOrchestrationOperateScope,
   [WS_METHODS.assistantTeamsUpdate]: AuthOrchestrationOperateScope,
   [WS_METHODS.assistantTeamsDelete]: AuthOrchestrationOperateScope,
+  [WS_METHODS.assistantGroupsPost]: AuthOrchestrationOperateScope,
+  [WS_METHODS.assistantGroupsTaskAction]: AuthOrchestrationOperateScope,
   [WS_METHODS.autonomyWatchUpsert]: AuthOrchestrationOperateScope,
   [WS_METHODS.autonomyWatchSetEnabled]: AuthOrchestrationOperateScope,
   [WS_METHODS.autonomyWatchDelete]: AuthOrchestrationOperateScope,

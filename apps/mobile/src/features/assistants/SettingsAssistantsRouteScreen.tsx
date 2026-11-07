@@ -1,4 +1,9 @@
-import { assistantPresence, assistantQueuedLabel } from "@t3tools/client-runtime/assistantRobot";
+import {
+  assistantGroupOwnerKey,
+  assistantGroupThreadsOf,
+  assistantPresence,
+  assistantQueuedLabel,
+} from "@t3tools/client-runtime/assistantRobot";
 import { assistantEntryKey, assistantSections } from "@t3tools/client-runtime/assistantSections";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { EnvironmentId, ProjectId } from "@t3tools/contracts";
@@ -33,7 +38,7 @@ import { AssistantAvatar } from "./assistantPresentation";
 import { moodTextClass } from "./assistantPresenceLabels";
 import { useOpenAssistantEditor } from "./openAssistantEditor";
 import { useOpenAssistantTeam } from "./assistantTeamTarget";
-import { useAssistantFlows } from "./useAssistantFlows";
+import { useAssistantFlows, useAssistantTeamFlows } from "./useAssistantFlows";
 
 function AssistantCard(props: {
   readonly entry: AssistantEntry;
@@ -46,10 +51,13 @@ function AssistantCard(props: {
   const flows = useAssistantFlows(environmentId);
   const openEditor = useOpenAssistantEditor();
   const archived = assistant.archivedAt !== null;
+  const thread = useThreadShell(
+    assistant.threadId === null ? null : scopeThreadRef(environmentId, assistant.threadId),
+  );
+  const shells = useQuietThreadShells();
   const presence = assistantPresence(
-    useThreadShell(
-      assistant.threadId === null ? null : scopeThreadRef(environmentId, assistant.threadId),
-    ),
+    thread,
+    assistantGroupThreadsOf(shells, environmentId, assistant.id),
   );
   const budgetState = useAssistantSpend(environmentId, assistant.budget ? assistant.id : null).data
     ?.budget?.state;
@@ -222,6 +230,54 @@ function SectionMenu(props: {
   );
 }
 
+function GroupMenu(props: { readonly entry: AssistantTeamEntry }) {
+  const { environmentId, team } = props.entry;
+  const openTeam = useOpenAssistantTeam();
+  const openEditor = useOpenAssistantEditor();
+  const flows = useAssistantTeamFlows(environmentId);
+  return (
+    <SectionMenu
+      label={`${team.name} actions`}
+      actions={[
+        { id: "chat", title: "Open chat", onPress: () => openTeam.chat(environmentId, team.id) },
+        {
+          id: "new",
+          title: "New assistant in this group",
+          onPress: () => openEditor(environmentId, null, { teamId: team.id }),
+        },
+        { id: "edit", title: "Edit group", onPress: () => openTeam.edit(environmentId, team.id) },
+        { id: "archive", title: "Archive group", onPress: () => flows.archive(team) },
+      ]}
+    />
+  );
+}
+
+function ArchivedGroupRow(props: { readonly entry: AssistantTeamEntry }) {
+  const { environmentId, team } = props.entry;
+  const flows = useAssistantTeamFlows(environmentId);
+  return (
+    <View className="flex-row items-center gap-3 rounded-2xl bg-grouped-card px-4 py-3">
+      <View className="min-w-0 flex-1">
+        <Text className="text-base text-foreground" numberOfLines={1}>
+          {team.name}
+        </Text>
+        <Text textRole="footnote" className="text-foreground-muted">
+          {team.memberIds.length} members
+        </Text>
+      </View>
+      <Button
+        label="Restore"
+        accessibilityLabel={`Restore ${team.name}`}
+        icon="arrow.uturn.backward"
+        tone="text"
+        size="compact"
+        disabled={!flows.canAct}
+        onPress={() => void flows.restore(team)}
+      />
+    </View>
+  );
+}
+
 function RestoreJarvisRow(props: { readonly environmentId: EnvironmentId }) {
   const flows = useAssistantFlows(props.environmentId);
   return (
@@ -237,7 +293,13 @@ function RestoreJarvisRow(props: { readonly environmentId: EnvironmentId }) {
 
 /** Every assistant as a card, grouped like Home, with Open thread, Edit and Archive on each. */
 export function SettingsAssistantsRouteScreen() {
-  const { active, archived, teams, environmentIds: loadedEnvironmentIds } = useAssistantEntries();
+  const {
+    active,
+    archived,
+    activeTeams: teams,
+    archivedTeams,
+    environmentIds: loadedEnvironmentIds,
+  } = useAssistantEntries();
   const openTeam = useOpenAssistantTeam();
   const insets = useSafeAreaInsets();
   const openEditor = useOpenAssistantEditor();
@@ -262,7 +324,9 @@ export function SettingsAssistantsRouteScreen() {
   );
   const needsKeys = new Set<string>();
   for (const shell of shells) {
-    const key = keyByThread.get(scopedThreadKey(scopeThreadRef(shell.environmentId, shell.id)));
+    const key =
+      keyByThread.get(scopedThreadKey(scopeThreadRef(shell.environmentId, shell.id))) ??
+      assistantGroupOwnerKey(shell);
     if (key !== undefined && assistantPresence(shell).mood === "needs") needsKeys.add(key);
   }
   const sections = assistantSections({ assistants: active, teams, needsKeys });
@@ -297,7 +361,11 @@ export function SettingsAssistantsRouteScreen() {
       }
     />
   );
-  const nothing = active.length === 0 && archived.length === 0 && teams.length === 0;
+  const nothing =
+    active.length === 0 &&
+    archived.length === 0 &&
+    teams.length === 0 &&
+    archivedTeams.length === 0;
 
   return (
     <SettingsScreen
@@ -356,24 +424,7 @@ export function SettingsAssistantsRouteScreen() {
                 title={entry.team.name}
                 count={members.length}
                 {...(members.length === 0 ? { empty: "No members yet." } : {})}
-                actions={
-                  <SectionMenu
-                    label={`${entry.team.name} actions`}
-                    actions={[
-                      {
-                        id: "new",
-                        title: "New assistant in this group",
-                        onPress: () =>
-                          openEditor(entry.environmentId, null, { teamId: entry.team.id }),
-                      },
-                      {
-                        id: "edit",
-                        title: "Edit group",
-                        onPress: () => openTeam.edit(entry.environmentId, entry.team.id),
-                      },
-                    ]}
-                  />
-                }
+                actions={<GroupMenu entry={entry} />}
               >
                 {members.map((member) => card(member, `group:${entry.team.id}`))}
               </Section>
@@ -405,6 +456,13 @@ export function SettingsAssistantsRouteScreen() {
             {sections.unassigned.length === 0 ? null : (
               <Section title="Unassigned" count={sections.unassigned.length}>
                 {sections.unassigned.map((entry) => card(entry, "unassigned"))}
+              </Section>
+            )}
+            {archivedTeams.length === 0 ? null : (
+              <Section title="Archived groups" count={archivedTeams.length}>
+                {archivedTeams.map((entry) => (
+                  <ArchivedGroupRow key={`${entry.environmentId}:${entry.team.id}`} entry={entry} />
+                ))}
               </Section>
             )}
             {archived.length === 0 ? null : (

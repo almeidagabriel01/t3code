@@ -56,6 +56,7 @@ import {
   BrainIcon,
   UserRoundIcon,
   UserRoundPlusIcon,
+  MessagesSquareIcon,
   UsersIcon,
   BotIcon,
   ActivityIcon,
@@ -1759,6 +1760,27 @@ function OpenCommandPaletteDialog(props: {
         await navigate({
           to: "/$environmentId/$threadId",
           params: buildThreadRouteParams(scopeThreadRef(environmentId, threadId)),
+        });
+      },
+    });
+  }
+  for (const { environmentId, team } of assistantEntries.activeTeams) {
+    actionItems.push({
+      kind: "action",
+      value: `action:group-chat:${environmentId}:${team.id}`,
+      searchTerms: ["group", "chat", "team", "assistant", team.name],
+      title: `Open group chat ${team.name}`,
+      ...(multipleAssistantEnvironments
+        ? {
+            description:
+              environments.find((item) => item.environmentId === environmentId)?.label ?? "",
+          }
+        : {}),
+      icon: <MessagesSquareIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        await navigate({
+          to: "/group/$environmentId/$teamId",
+          params: { environmentId, teamId: team.id },
         });
       },
     });

@@ -1,11 +1,11 @@
-import { assistantPresence } from "@t3tools/client-runtime/assistantRobot";
+import { assistantGroupThreadsOf, assistantPresence } from "@t3tools/client-runtime/assistantRobot";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { cn } from "../../lib/cn";
 import { useAssistantEntries, type AssistantEntry } from "../../state/assistants";
-import { useThreadShell } from "../../state/entities";
+import { useQuietThreadShells, useThreadShell } from "../../state/entities";
 import { AssistantAvatar } from "./assistantPresentation";
 import { moodTextClass } from "./assistantPresenceLabels";
 import { useAssistantFlows } from "./useAssistantFlows";
@@ -13,10 +13,13 @@ import { useAssistantFlows } from "./useAssistantFlows";
 function ProjectAssistantRow(props: { readonly entry: AssistantEntry; readonly sidebar: boolean }) {
   const { assistant, environmentId } = props.entry;
   const flows = useAssistantFlows(environmentId);
+  const thread = useThreadShell(
+    assistant.threadId === null ? null : scopeThreadRef(environmentId, assistant.threadId),
+  );
+  const shells = useQuietThreadShells();
   const presence = assistantPresence(
-    useThreadShell(
-      assistant.threadId === null ? null : scopeThreadRef(environmentId, assistant.threadId),
-    ),
+    thread,
+    assistantGroupThreadsOf(shells, environmentId, assistant.id),
   );
   return (
     <Pressable

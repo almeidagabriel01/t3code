@@ -4,6 +4,8 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   ASSISTANT_ROBOT_HUES,
+  assistantGroupOwnerKey,
+  assistantGroupThreadsOf,
   assistantPresence,
   assistantQueuedLabel,
   assistantRobotLook,
@@ -137,6 +139,56 @@ describe("assistantPresence", () => {
     ],
   ] as const)("%s", (_name, thread, expected) => {
     expect(assistantPresence(thread)).toMatchObject(expected);
+  });
+});
+
+describe("assistantPresence with group threads", () => {
+  const working = shell({
+    id: "assistant:ada:g-0123456789abcdef" as never,
+    title: "Ada · Leadership",
+    latestRunId: RunId.make("run-1"),
+    activeRunId: RunId.make("run-1"),
+    activityRunStatus: "running",
+    status: "running",
+  });
+  const asking = shell({
+    title: "Ada · Ops",
+    pendingRuntimeRequest: {
+      id: RuntimeRequestId.make("r1"),
+      kind: "command_approval",
+      createdAt: at,
+    },
+  } as never);
+  const failed = shell({ title: "Ada · Ops", latestRunId: RunId.make("run-1"), status: "failed" });
+
+  it.each([
+    [
+      "an idle assistant working in a group",
+      null,
+      [working],
+      { mood: "working", detail: "Working in Leadership" },
+    ],
+    ["a group approval", null, [asking], { mood: "needs", detail: "Needs your approval in Ops" }],
+    ["a failed group task leaves it idle", null, [failed], { mood: "idle", detail: "Idle" }],
+    [
+      "its own conversation comes first",
+      shell({ pendingGuestMessageCount: 1 }),
+      [working],
+      { mood: "needs", detail: "A guest message waits for you" },
+    ],
+  ] as const)("%s", (_name, own, groups, expected) => {
+    expect(assistantPresence(own, groups)).toMatchObject(expected);
+  });
+
+  it("finds only the assistant's group threads in its environment", () => {
+    const shells = [
+      { environmentId: "e1", id: "assistant:ada:g-0123456789abcdef" },
+      { environmentId: "e1", id: "assistant:ada:3" },
+      { environmentId: "e2", id: "assistant:ada:g-0123456789abcdef" },
+      { environmentId: "e1", id: "assistant:adam:g-0123456789abcdef" },
+    ];
+    expect(assistantGroupThreadsOf(shells, "e1", "ada")).toEqual([shells[0]]);
+    expect(shells.map(assistantGroupOwnerKey)).toEqual(["e1:ada", undefined, "e2:ada", "e1:adam"]);
   });
 });
 

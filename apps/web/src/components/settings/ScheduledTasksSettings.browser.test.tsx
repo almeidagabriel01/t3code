@@ -52,6 +52,7 @@ const state = vi.hoisted(() => ({
   tasksLoaded: true,
   secondary: false,
   boundThread: false,
+  groupTask: false,
 }));
 const secondaryId = EnvironmentId.make("secondary");
 const permissions = new Map<string, Atom.Writable<boolean>>();
@@ -61,6 +62,7 @@ function setup() {
   state.tasksLoaded = true;
   state.secondary = false;
   state.boundThread = false;
+  state.groupTask = false;
   permissions.clear();
   permissions.set(environmentId, Atom.make(true));
   permissions.set(secondaryId, Atom.make(true));
@@ -131,7 +133,11 @@ vi.mock(import("../../state/query"), async (original) => ({
     data:
       request === null || request === threadFamilyRead
         ? request
-        : { tasks: state.tasksLoaded ? [task] : [] },
+        : {
+            tasks: state.tasksLoaded
+              ? [state.groupTask ? { ...task, threadId: null, assistantTeamId: "t1" } : task]
+              : [],
+          },
     error: null,
     isPending: false,
     refresh: vi.fn(),
@@ -250,6 +256,23 @@ describe("ScheduledTasksSettings", () => {
 
     await userEvent.click(dialog.getByRole("button", { name: "Cancel" }));
     await expect.element(dialog).not.toBeInTheDocument();
+    await screen.rerender(<ScheduledTasksSettings />);
+    await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("posts in a linked group's chat, shows the group in the list, and can be unlinked", async () => {
+    setup();
+    state.groupTask = true;
+    await using screen = await render(<ScheduledTasksSettings assistantTeamId="t1" />);
+    await expect.element(page.getByText(/Group: This group/)).toBeVisible();
+    const dialog = page.getByRole("dialog");
+    await expect.element(dialog.getByText("Group chat · This group")).toBeVisible();
+    expect(dialog.getByLabelText("Project").query()).toBeNull();
+    expect(dialog.getByLabelText("Model").query()).toBeNull();
+
+    await userEvent.click(dialog.getByRole("button", { name: "Run in a new thread" }));
+    await expect.element(dialog.getByLabelText("Project")).toBeVisible();
+    await userEvent.click(dialog.getByRole("button", { name: "Cancel" }));
     await screen.rerender(<ScheduledTasksSettings />);
     await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
   });

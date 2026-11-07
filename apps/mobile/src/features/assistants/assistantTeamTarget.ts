@@ -16,7 +16,7 @@ export const assistantTeamTargetAtom = Atom.make<AssistantTeamTarget | null>(nul
   Atom.withLabel("mobile-assistant-team-target"),
 );
 
-/** Opens the team form from Settings and Home. */
+/** Opens the team form or chat from Settings and Home. */
 export function useOpenAssistantTeam() {
   const navigation = useNavigation();
   return {
@@ -24,5 +24,8 @@ export function useOpenAssistantTeam() {
       appAtomRegistry.set(assistantTeamTargetAtom, { environmentId, teamId });
       navigation.navigate("SettingsAssistantTeamEdit");
     },
+    /** The group's chat; works from the tablet sidebar too, which has no route of its own. */
+    chat: (environmentId: EnvironmentId, teamId: AssistantTeamId) =>
+      navigation.navigate("AssistantGroupChat", { environmentId, teamId }),
   };
 }

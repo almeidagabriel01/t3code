@@ -12,6 +12,7 @@ const { mocks, Children } = vi.hoisted(() => ({
     assistant: null as null | { assistant: { name: string } },
     navigate: vi.fn(),
     upsert: vi.fn(),
+    teams: [] as unknown[],
   },
 }));
 vi.mock("react-native", () => ({
@@ -141,7 +142,10 @@ vi.mock("./scheduled-task-editor-state", () => ({
   scheduledTaskEditorSessionAtom: {},
 }));
 vi.mock("../../state/atom-registry", () => ({ appAtomRegistry: { subscribe: vi.fn() } }));
-vi.mock("../../state/assistants", () => ({ useThreadAssistant: () => mocks.assistant }));
+vi.mock("../../state/assistants", () => ({
+  useThreadAssistant: () => mocks.assistant,
+  useAssistantEntries: () => ({ teams: mocks.teams }),
+}));
 vi.mock("../../state/session", () => ({
   usePreparedConnection: () => null,
   readEnvironmentScope: () => true,
@@ -231,6 +235,30 @@ describe("scheduled task bound to a conversation", () => {
     expect(find(/^Project,/)).toBeDefined();
     await act(async () => find("Save changes")!.click());
     expect(mocks.upsert.mock.calls[0]?.[0].input.threadId).toBeNull();
+  });
+});
+
+describe("scheduled task posting in a group chat", () => {
+  it("names the group, hides the run settings and saves with the group and no thread", async () => {
+    mocks.teams = [{ environmentId: "hub", team: { id: "g1", name: "Growth" } }];
+    open({ ...editDraft(task("thread-1")), assistantTeamId: "g1" });
+    expect(find(/^Group chat · Growth/)).toBeDefined();
+    expect(find(/^Project,/)).toBeUndefined();
+    await act(async () => find("Save changes")!.click());
+    expect(mocks.upsert.mock.calls[0]?.[0].input).toMatchObject({
+      assistantTeamId: "g1",
+      threadId: null,
+    });
+  });
+
+  it("running in a new thread instead restores the run settings and saves without the group", async () => {
+    mocks.teams = [];
+    open({ ...editDraft(task(null)), assistantTeamId: "g1" });
+    expect(find(/^Group chat · Group/)).toBeDefined();
+    press(/^Group chat/);
+    expect(find(/^Project,/)).toBeDefined();
+    await act(async () => find("Save changes")!.click());
+    expect(mocks.upsert.mock.calls[0]?.[0].input.assistantTeamId).toBeNull();
   });
 });
 

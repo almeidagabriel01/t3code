@@ -46,7 +46,8 @@ type TextGenerationOp =
   | "generateThreadTitle"
   | "generateReviewGuide"
   | "resolveMemoryConflict"
-  | "generateMemorySummary";
+  | "generateMemorySummary"
+  | "routeAssistantGroup";
 
 const resolveInstance = (
   registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
@@ -166,6 +167,21 @@ export const make = Effect.gen(function* () {
                 }),
               )
             : textGeneration.generateMemorySummary(input),
+        ),
+      );
+    }),
+    // Routing runs on the lead's own selection too: a fallback model could not be the lead's.
+    routeAssistantGroup: Effect.fn("TextGeneration.routeAssistantGroup")(function (input) {
+      return resolveInstance(registry, "routeAssistantGroup", input.modelSelection.instanceId).pipe(
+        Effect.flatMap((textGeneration) =>
+          textGeneration.routeAssistantGroup === undefined
+            ? Effect.fail(
+                new TextGenerationError({
+                  operation: "routeAssistantGroup",
+                  detail: "unsupported_operation",
+                }),
+              )
+            : textGeneration.routeAssistantGroup(input),
         ),
       );
     }),

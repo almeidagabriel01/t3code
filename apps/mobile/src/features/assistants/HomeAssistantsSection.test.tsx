@@ -11,6 +11,8 @@ const { mocks } = vi.hoisted(() => ({
     editor: vi.fn(),
     toggle: vi.fn(),
     openTeam: vi.fn(),
+    chat: vi.fn(),
+    archiveTeam: vi.fn(),
     navigate: vi.fn(),
     reset: vi.fn(),
     archive: vi.fn(),
@@ -68,6 +70,8 @@ vi.mock("@t3tools/client-runtime/environment", () => ({
     `${ref.environmentId}:${ref.threadId}`,
 }));
 vi.mock("@t3tools/client-runtime/assistantRobot", () => ({
+  assistantGroupThreadsOf: () => [],
+  assistantGroupOwnerKey: () => undefined,
   assistantQueuedLabel: (queued: number | undefined) =>
     queued !== undefined && queued > 0 ? `${queued} queued` : null,
   assistantPresence: (thread: { id: string } | null): Presence =>
@@ -125,7 +129,7 @@ vi.mock("../../state/entities", () => ({
   useProjects: () => mocks.projects,
 }));
 vi.mock("../../state/assistants", () => ({
-  useAssistantEntries: () => ({ active: mocks.active, teams: mocks.teams }),
+  useAssistantEntries: () => ({ active: mocks.active, activeTeams: mocks.teams }),
 }));
 vi.mock("../threads/SubagentStatusDot", () => ({
   SubagentStatusDot: (props: { tone: string }) => <u>{`dot:${props.tone}`}</u>,
@@ -142,9 +146,10 @@ vi.mock("./useAssistantFlows", () => ({
     reset: mocks.reset,
     archive: mocks.archive,
   }),
+  useAssistantTeamFlows: () => ({ canAct: true, archive: mocks.archiveTeam }),
 }));
 vi.mock("./assistantTeamTarget", () => ({
-  useOpenAssistantTeam: () => ({ edit: mocks.openTeam }),
+  useOpenAssistantTeam: () => ({ edit: mocks.openTeam, chat: mocks.chat }),
 }));
 vi.mock("./openAssistantEditor", () => ({ useOpenAssistantEditor: () => mocks.editor }));
 vi.mock("../home/useHomeSectionPreferences", () => ({
@@ -321,13 +326,14 @@ describe("HomeAssistantsSection", () => {
     expect(stack.textContent).toContain("+2");
     expect(container.textContent).toContain("No members yet");
     expect(byLabel("Bot0")).not.toBeNull();
-    await click("Everyone");
+    await click("Fold Everyone");
     expect(byLabel("Bot0")).toBeNull();
-    expect(byLabel("Everyone")?.getAttribute("aria-expanded")).toBe("false");
-    await click("Nobody");
+    expect(byLabel("Fold Everyone")?.getAttribute("aria-expanded")).toBe("false");
+    await click("Fold Nobody");
     expect(container.textContent).not.toContain("No members yet");
-    await click("Everyone");
+    await click("Fold Everyone");
     expect(byLabel("Bot0")).not.toBeNull();
+    expect(mocks.chat).not.toHaveBeenCalled();
   });
 
   it("opens a conversation from a row", async () => {
@@ -351,9 +357,16 @@ describe("HomeAssistantsSection", () => {
     expect(byLabel("menu:Reset conversation")?.disabled).toBe(true);
   });
 
-  it("a group's menu edits it and starts an assistant in it", async () => {
+  it("tapping a group opens its chat; its menu opens it, archives it, edits it and starts an assistant in it", async () => {
     mocks.teams = [team("g1", "Finance", ["a0"])];
     render();
+    await click("Finance");
+    expect(mocks.chat).toHaveBeenCalledWith("hub", "g1");
+    mocks.chat.mockClear();
+    await click("menu:Open chat");
+    expect(mocks.chat).toHaveBeenCalledWith("hub", "g1");
+    await click("menu:Archive group");
+    expect(mocks.archiveTeam).toHaveBeenCalledWith(expect.objectContaining({ id: "g1" }));
     await click("menu:Edit group");
     expect(mocks.openTeam).toHaveBeenCalledWith("hub", "g1");
     await click("menu:New assistant in this group");

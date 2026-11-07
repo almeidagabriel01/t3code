@@ -90,3 +90,26 @@ it.effect("a group's note names its lead only as the router of requests that men
     assert.notInclude(note, "report");
   }).pipe(Effect.provide(directoryLayer)),
 );
+
+it.effect(
+  "a member's hidden group thread resolves to the member, and archived groups drop out of its note",
+  () =>
+    Effect.gen(function* () {
+      const directory = yield* Directory.AssistantDirectory;
+      const sql = yield* SqlClient.SqlClient;
+      yield* seed("ann");
+      yield* seed("bo");
+      yield* teamRow("t1", ["ann", "bo"]);
+      yield* teamRow("t2", ["ann", "bo"]);
+      yield* sql`UPDATE assistant_teams SET archived_at = 'now' WHERE team_id = 't2'`;
+      // Sandbox, runtime policy, note and connectors all start from this answer.
+      const group = ThreadId.make("assistant:ann:g-0123456789abcdef");
+      const found = Option.getOrThrow(yield* directory.forThread(group));
+      assert.deepEqual([found.assistant.handle, found.current], ["ann", false]);
+      const ann = found.assistant;
+      assert.deepEqual(
+        (yield* directory.teamsOf(ann)).map((membership) => membership.team.name),
+        ["Team t1"],
+      );
+    }).pipe(Effect.provide(directoryLayer)),
+);

@@ -29,6 +29,7 @@ import { unsupportedMemoryRunner, type MemoryRunner } from "./memoryGenerationRu
 export type { MemoryRunner } from "./memoryGenerationRunner.ts";
 import type { ProviderTextGeneration } from "./textGeneration.ts";
 import {
+  buildAssistantGroupRoutingPrompt,
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
   buildPrContentPrompt,
@@ -122,6 +123,8 @@ export const decodeJsonReply = <S extends Schema.Top>(
 
 export interface FromRunnerOptions {
   readonly memoryRunner?: MemoryRunner;
+  /** Offers `routeAssistantGroup`; left out, the provider reports the operation as unsupported. */
+  readonly routeAssistantGroup?: boolean;
 }
 
 export function fromRunner(
@@ -339,6 +342,17 @@ export function fromRunner(
     });
   });
 
+  const routeAssistantGroup: NonNullable<ProviderTextGeneration["routeAssistantGroup"]> = Effect.fn(
+    `${name}.routeAssistantGroup`,
+  )(function* (input) {
+    return yield* run({
+      operation: "routeAssistantGroup",
+      cwd: input.cwd,
+      modelSelection: input.modelSelection,
+      ...buildAssistantGroupRoutingPrompt(input),
+    });
+  });
+
   return {
     generateCommitMessage,
     generatePrContent,
@@ -347,5 +361,6 @@ export function fromRunner(
     generateReviewGuide,
     resolveMemoryConflict,
     generateMemorySummary,
+    ...(options.routeAssistantGroup === true ? { routeAssistantGroup } : {}),
   } satisfies ProviderTextGeneration;
 }

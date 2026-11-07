@@ -3,6 +3,7 @@ import type {
   OrchestrationV2SearchThreadResult,
 } from "@t3tools/contracts";
 import {
+  isAssistantGroupThreadId,
   isAssistantThreadId,
   isSideChatThread,
   runtimeModeForToolAccess,
@@ -592,6 +593,8 @@ const ASSISTANT_REFUSALS = {
   old_generation:
     "Restore an earlier assistant conversation with the assistant's reset and restore.",
   ask_unavailable: APPROVAL_UNAVAILABLE,
+  group_thread:
+    "This is an assistant's hidden thread for a group. Remove the assistant from the group or delete the group instead.",
 } as const;
 
 const RUNTIME_MODE_RANK: Record<RuntimeMode, number> = {
@@ -833,6 +836,14 @@ const make = Effect.gen(function* () {
                 cause: new Error(ASSISTANT_REFUSALS[reason]),
               }),
             );
+          if (
+            isAssistantGroupThreadId(threadId) &&
+            (command.type === "thread.archive" ||
+              command.type === "thread.delete" ||
+              command.type === "thread.unarchive")
+          ) {
+            return refuse("group_thread");
+          }
           switch (command.type) {
             case "thread.runtime-mode.set":
               return RUNTIME_MODE_RANK[command.runtimeMode] >

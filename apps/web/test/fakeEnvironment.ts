@@ -21,7 +21,12 @@ import {
   TurnItemId,
   WS_METHODS,
   WsRpcGroup,
+  AssistantError,
   type Assistant,
+  type AssistantGroupMessage,
+  type AssistantGroupsEvent,
+  type AssistantGroupsHistoryResult,
+  type AssistantGroupTask,
   type AutonomySettings,
   type AutonomyWatch,
   type AutonomyWatchUpsertInput,
@@ -609,6 +614,70 @@ handlers[WS_METHODS.assistantTeamsUpdate] = (input: { readonly teamId: string })
 handlers[WS_METHODS.assistantTeamsDelete] = (input: { readonly teamId: string }) => {
   fakeTeamEdits.deletes.push(input);
   return Effect.succeed({ teamId: input.teamId });
+};
+
+/** One group's chat as the fake server holds it, and the calls it received. */
+export const fakeGroupChat = {
+  messages: [] as AssistantGroupMessage[],
+  tasks: [] as AssistantGroupTask[],
+  hasMore: false,
+  /** What the next history call returns. */
+  older: null as AssistantGroupsHistoryResult | null,
+  /** Refuses the next post with this reason. */
+  postRefusal: null as {
+    readonly reason: "mention_required" | "archived";
+    readonly message: string;
+  } | null,
+  posts: [] as Array<Record<string, unknown>>,
+  taskActions: [] as Array<Record<string, unknown>>,
+  histories: [] as Array<Record<string, unknown>>,
+};
+const groupChatSubscribers = new Set<Queue.Queue<AssistantGroupsEvent>>();
+handlers[WS_METHODS.assistantGroupsSubscribe] = () =>
+  subscribe<AssistantGroupsEvent>(
+    [
+      {
+        type: "snapshot",
+        messages: fakeGroupChat.messages,
+        tasks: fakeGroupChat.tasks,
+        hasMore: fakeGroupChat.hasMore,
+      },
+    ],
+    (queue) => {
+      groupChatSubscribers.add(queue);
+      return () => groupChatSubscribers.delete(queue);
+    },
+  );
+/** Replaces the chat, including for a subscription an earlier screen left open. */
+export function publishGroupChat(
+  messages: AssistantGroupMessage[],
+  tasks: AssistantGroupTask[] = [],
+  hasMore = false,
+): void {
+  Object.assign(fakeGroupChat, { messages, tasks, hasMore });
+  for (const queue of groupChatSubscribers) {
+    Effect.runSync(Queue.offer(queue, { type: "snapshot", messages, tasks, hasMore }));
+  }
+}
+handlers[WS_METHODS.assistantGroupsHistory] = (input: Record<string, unknown>) => {
+  fakeGroupChat.histories.push(input);
+  return Effect.succeed(fakeGroupChat.older ?? { messages: [], tasks: [], hasMore: false });
+};
+handlers[WS_METHODS.assistantGroupsPost] = (input: Record<string, unknown>) => {
+  fakeGroupChat.posts.push(input);
+  const refusal = fakeGroupChat.postRefusal;
+  if (refusal !== null) return Effect.fail(new AssistantError(refusal));
+  const message = {
+    ...fakeGroupChat.messages.at(-1)!,
+    id: `posted-${fakeGroupChat.posts.length}`,
+    text: String(input.text),
+  } as AssistantGroupMessage;
+  return Effect.succeed({ message, tasks: [] });
+};
+handlers[WS_METHODS.assistantGroupsTaskAction] = (input: { readonly taskId: string }) => {
+  fakeGroupChat.taskActions.push(input);
+  const found = fakeGroupChat.tasks.find((task) => task.id === input.taskId);
+  return found ? Effect.succeed(found) : Effect.never;
 };
 
 /** The sandbox status the fake serves, and the sandbox calls it received. */

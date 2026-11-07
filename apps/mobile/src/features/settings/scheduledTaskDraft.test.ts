@@ -229,4 +229,18 @@ describe("bound task drafts", () => {
       }).threadId,
     ).toBe(thread);
   });
+
+  it("carries a group into a new draft and a saved task, and treats leaving it as a change", () => {
+    const grouped = createDraft(ProjectId.make("p1"), null, null, "g1");
+    expect(grouped.assistantTeamId).toBe("g1");
+    expect(createDraft(ProjectId.make("p1"), null).assistantTeamId).toBeNull();
+    expect(hasScheduledTaskDraftChanges(grouped, { ...grouped, assistantTeamId: null })).toBe(true);
+    const saved = {
+      ...({} as ScheduledTask),
+      schedule: { type: "interval", everyMs: 60_000 },
+      workspaceStrategy: { type: "root" },
+    } as ScheduledTask;
+    expect(editDraft({ ...saved, assistantTeamId: "g1" }).assistantTeamId).toBe("g1");
+    expect(editDraft(saved).assistantTeamId).toBeNull();
+  });
 });

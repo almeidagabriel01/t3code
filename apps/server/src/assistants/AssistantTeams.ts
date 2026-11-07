@@ -9,6 +9,7 @@ export interface AssistantTeamRow {
   readonly name: string;
   readonly member_ids_json: string;
   readonly lead_id: string | null;
+  readonly archived_at?: string | null;
   readonly created_at: string;
   readonly updated_at: string;
 }
@@ -23,6 +24,7 @@ export const toAssistantTeam = (row: AssistantTeamRow): AssistantTeam => ({
   name: row.name,
   memberIds: Option.getOrElse(decodeMemberIds(row.member_ids_json), () => []) as AssistantId[],
   leadId: row.lead_id as AssistantId | null,
+  archivedAt: row.archived_at ?? null,
   createdAt: row.created_at,
   updatedAt: row.updated_at,
 });

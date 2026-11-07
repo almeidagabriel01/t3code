@@ -453,6 +453,61 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
   }
   yield* sql`CREATE INDEX IF NOT EXISTS assistant_requests_group_idx ON assistant_requests(group_id)`;
 
+  // A group's shared chat: messages, one task per recipient, and each member's hidden thread.
+  if (!teamColumns.some((column) => column.name === "archived_at")) {
+    yield* sql`ALTER TABLE assistant_teams ADD COLUMN archived_at TEXT`;
+  }
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS assistant_group_messages (
+      message_id TEXT PRIMARY KEY,
+      team_id TEXT NOT NULL,
+      seq INTEGER NOT NULL,
+      author TEXT NOT NULL,
+      assistant_id TEXT,
+      author_label TEXT,
+      kind TEXT NOT NULL,
+      text TEXT NOT NULL,
+      reply_to TEXT,
+      task_id TEXT,
+      client_request_id TEXT,
+      created_at TEXT NOT NULL,
+      UNIQUE (team_id, seq),
+      UNIQUE (team_id, client_request_id)
+    )
+  `;
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS assistant_group_tasks (
+      task_id TEXT PRIMARY KEY,
+      team_id TEXT NOT NULL,
+      root_id TEXT NOT NULL,
+      parent_id TEXT,
+      kind TEXT NOT NULL,
+      request_message_id TEXT NOT NULL,
+      owner_id TEXT NOT NULL,
+      instruction TEXT NOT NULL,
+      status TEXT NOT NULL,
+      reason TEXT,
+      revision INTEGER NOT NULL DEFAULT 1,
+      result_text TEXT,
+      hops INTEGER NOT NULL DEFAULT 0,
+      followup TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `;
+  yield* sql`CREATE INDEX IF NOT EXISTS assistant_group_tasks_team_idx ON assistant_group_tasks(team_id, status)`;
+  yield* sql`CREATE INDEX IF NOT EXISTS assistant_group_tasks_root_idx ON assistant_group_tasks(root_id)`;
+  // A member's hidden thread for a group, and the last chat message that thread was shown.
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS assistant_group_threads (
+      team_id TEXT NOT NULL,
+      assistant_id TEXT NOT NULL,
+      thread_id TEXT NOT NULL,
+      seen_seq INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (team_id, assistant_id)
+    )
+  `;
+
   // The destination's memory ceiling, captured when a person or agent saved the task.
   const scheduledColumns = yield* sql<{
     readonly name: string;
@@ -462,6 +517,12 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
     !scheduledColumns.some((column) => column.name === "memory_grant_ceiling")
   ) {
     yield* sql`ALTER TABLE scheduled_tasks ADD COLUMN memory_grant_ceiling TEXT NOT NULL DEFAULT 'none'`;
+  }
+  if (
+    scheduledColumns.length > 0 &&
+    !scheduledColumns.some((column) => column.name === "assistant_team_id")
+  ) {
+    yield* sql`ALTER TABLE scheduled_tasks ADD COLUMN assistant_team_id TEXT`;
   }
 
   // The memory continuation scan asks for a thread's newest `run.updated`, first `message.updated`

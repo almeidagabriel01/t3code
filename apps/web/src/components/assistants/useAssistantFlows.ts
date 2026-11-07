@@ -2,12 +2,17 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   ASSISTANTS_RESTORE_DEFAULT_INPUT,
   type Assistant,
+  type AssistantTeam,
   type EnvironmentId,
 } from "@t3tools/contracts";
 import { useRouter } from "@tanstack/react-router";
 
 import { requestConfirmDialog } from "../../confirmDialog";
-import { useAssistantActions, type AssistantReply } from "../../state/assistants";
+import {
+  useAssistantActions,
+  useAssistantTeamActions,
+  type AssistantReply,
+} from "../../state/assistants";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { toastManager } from "../ui/toast";
 
@@ -67,6 +72,30 @@ export function useAssistantFlows(environmentId: EnvironmentId) {
       );
       if (confirmed === false) return;
       failed("Could not delete the assistant", await actions.remove(assistant.id));
+    },
+  };
+}
+
+/** The confirmed group actions, shared by the sidebar, the chat header and the pages. */
+export function useAssistantTeamFlows(environmentId: EnvironmentId) {
+  const actions = useAssistantTeamActions(environmentId);
+  return {
+    canAct: actions.canAct,
+    async archive(team: Pick<AssistantTeam, "id" | "name">) {
+      const confirmed = await requestConfirmDialog(
+        `Archive ${team.name}?\nIts chat is kept, but its work stops and it takes no new messages. You can restore it.`,
+      );
+      if (confirmed === false) return;
+      failed(
+        "Could not archive the group",
+        await actions.update({ teamId: team.id, archived: true }),
+      );
+    },
+    async restore(team: Pick<AssistantTeam, "id">) {
+      failed(
+        "Could not restore the group",
+        await actions.update({ teamId: team.id, archived: false }),
+      );
     },
   };
 }

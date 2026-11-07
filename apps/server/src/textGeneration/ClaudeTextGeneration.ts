@@ -272,7 +272,9 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
           Effect.provideService(HostProcess.HomeDirectory, home),
         );
       const workingDirectory =
-        operation === "generateThreadTitle" || TextGenerationOperations.isMemoryOperation(operation)
+        operation === "generateThreadTitle" ||
+        operation === "routeAssistantGroup" ||
+        TextGenerationOperations.isMemoryOperation(operation)
           ? yield* fileSystem
               .makeTempDirectoryScoped({ prefix: "t3code-claude-title-" })
               .pipe(
@@ -432,6 +434,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     "ClaudeTextGeneration",
     (request) => runClaudeJson(request).pipe(Effect.map((selected) => selected.result)),
     {
+      routeAssistantGroup: true,
       memoryRunner: withMemoryExecution(
         memoryRunnerContext,
         ProviderDriverKind.make("claudeAgent"),

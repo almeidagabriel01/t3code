@@ -35,9 +35,23 @@ it.effect("upgrades tables an older build created in place, keeping their rows",
         NULL,NULL,'[]','[]',NULL,'user','2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z')`;
     yield* sql`CREATE TABLE scheduled_tasks (task_id TEXT PRIMARY KEY)`;
     yield* sql`INSERT INTO scheduled_tasks VALUES ('t1')`;
+    // A teams table from before groups could be archived.
+    yield* sql`
+      CREATE TABLE assistant_teams (
+        team_id TEXT PRIMARY KEY, name TEXT NOT NULL, member_ids_json TEXT NOT NULL,
+        lead_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      )`;
+    yield* sql`INSERT INTO assistant_teams VALUES ('g1', 'Core', '[]', NULL, 't', 't')`;
 
     yield* ensureForkSchema();
     yield* ensureForkSchema();
+
+    assert.deepStrictEqual(yield* sql`SELECT team_id, archived_at FROM assistant_teams`, [
+      { team_id: "g1", archived_at: null },
+    ]);
+    assert.deepStrictEqual(yield* sql`SELECT task_id, assistant_team_id FROM scheduled_tasks`, [
+      { task_id: "t1", assistant_team_id: null },
+    ]);
 
     const cards = yield* columnsOf("kanban_cards");
     for (const name of ["parent_card_id", "attachments_json", "cover_attachment_id"]) {
@@ -129,5 +143,35 @@ it.effect("turns an old team leader into the lead and drops reports_to and leade
     assert.deepStrictEqual(yield* sql`SELECT assistant_id FROM assistants`, [
       { assistant_id: "eng" },
     ]);
+  }).pipe(Effect.provide(database)),
+);
+
+it.effect("keeps a group's messages numbered once and a request id once per group", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* ensureForkSchema();
+    yield* ensureForkSchema();
+    const message = (id: string, team: string, seq: number, request: string | null) =>
+      sql`INSERT INTO assistant_group_messages
+        (message_id, team_id, seq, author, kind, text, client_request_id, created_at)
+        VALUES (${id}, ${team}, ${seq}, 'user', 'message', 'hi', ${request}, 't')`;
+    yield* message("m1", "g1", 1, "r1");
+    yield* message("m2", "g2", 1, "r1");
+    yield* message("m3", "g1", 2, null);
+    yield* message("m4", "g1", 3, null);
+    assert.isDefined(yield* message("m5", "g1", 1, null).pipe(Effect.flip));
+    assert.isDefined(yield* message("m6", "g1", 4, "r1").pipe(Effect.flip));
+    yield* sql`INSERT INTO assistant_group_threads (team_id, assistant_id, thread_id) VALUES ('g1', 'a', 't1')`;
+    assert.isDefined(
+      yield* sql`INSERT INTO assistant_group_threads (team_id, assistant_id, thread_id)
+        VALUES ('g1', 'a', 't2')`.pipe(Effect.flip),
+    );
+    yield* sql`INSERT INTO assistant_group_tasks
+      (task_id, team_id, root_id, kind, request_message_id, owner_id, instruction, status, created_at, updated_at)
+      VALUES ('t', 'g1', 't', 'root', 'm1', 'a', 'do', 'queued', 't', 't')`;
+    assert.deepStrictEqual(
+      yield* sql`SELECT revision, hops, seen_seq FROM assistant_group_tasks, assistant_group_threads`,
+      [{ revision: 1, hops: 0, seen_seq: 0 }],
+    );
   }).pipe(Effect.provide(database)),
 );

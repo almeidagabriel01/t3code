@@ -1,4 +1,5 @@
 import type { EnvironmentId } from "@t3tools/contracts";
+import { useNavigate } from "@tanstack/react-router";
 import { Fragment } from "react";
 import { teamSubtitle, teamSummary } from "@t3tools/client-runtime/assistantTeam";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -9,6 +10,7 @@ import {
   UsersIcon,
   EllipsisIcon,
   MessageSquareIcon,
+  MessagesSquareIcon,
   PencilIcon,
   PlusIcon,
   RefreshCwIcon,
@@ -28,7 +30,7 @@ import { useProjects, useThreadShell } from "../../state/entities";
 import { useEnvironmentProviders, useEnvironments } from "../../state/environments";
 import { AssistantAvatar, toolAccessLabel } from "../assistants/assistantPresentation";
 import { openAssistantDialog } from "../assistants/assistantDialogState";
-import { useAssistantFlows } from "../assistants/useAssistantFlows";
+import { useAssistantFlows, useAssistantTeamFlows } from "../assistants/useAssistantFlows";
 import { getDisplayModelName } from "../chat/providerIconUtils";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
@@ -206,6 +208,7 @@ function TeamRow(props: {
   readonly assistants: ReadonlyArray<AssistantEntry["assistant"]>;
 }) {
   const { team, environmentId } = props.entry;
+  const navigate = useNavigate();
   const members = team.memberIds.flatMap((id) => props.assistants.find((a) => a.id === id) ?? []);
   return (
     <SettingsRow
@@ -228,12 +231,50 @@ function TeamRow(props: {
       control={
         <span className="flex items-center gap-1">
           <IconAction
+            label={`Open ${team.name} chat`}
+            onClick={() =>
+              void navigate({
+                to: "/group/$environmentId/$teamId",
+                params: { environmentId, teamId: team.id },
+              })
+            }
+          >
+            <MessagesSquareIcon />
+          </IconAction>
+          <IconAction
             label={`Edit ${team.name}`}
             onClick={() => openAssistantTeamDialog({ environmentId, teamId: team.id })}
           >
             <PencilIcon />
           </IconAction>
         </span>
+      }
+    />
+  );
+}
+
+function ArchivedTeamRow(props: { readonly entry: AssistantTeamEntry }) {
+  const { team, environmentId } = props.entry;
+  const flows = useAssistantTeamFlows(environmentId);
+  return (
+    <SettingsRow
+      title={
+        <span className="inline-flex items-center gap-2">
+          <UsersIcon className="size-4 text-muted-foreground" />
+          {team.name}
+        </span>
+      }
+      description={`${team.memberIds.length} members`}
+      control={
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={!flows.canAct}
+          onClick={() => void flows.restore(team)}
+        >
+          <ArchiveRestoreIcon />
+          Restore
+        </Button>
       }
     />
   );
@@ -270,7 +311,7 @@ function RestoreJarvisRow(props: { readonly environmentId: EnvironmentId }) {
 }
 
 export function AssistantsSettingsPanel() {
-  const { active, archived, teams, environmentIds } = useAssistantEntries();
+  const { active, archived, activeTeams, archivedTeams, environmentIds } = useAssistantEntries();
   const { environments } = useEnvironments();
   const multipleEnvironments = environmentIds.length > 1;
   const labelOf = (environmentId: EnvironmentId) =>
@@ -345,13 +386,13 @@ export function AssistantsSettingsPanel() {
                   </Button>
                 }
               >
-                {inEnvironment(teams, environmentId).length === 0 ? (
+                {inEnvironment(activeTeams, environmentId).length === 0 ? (
                   <SettingsRow
                     title="No groups yet"
                     description="A group lists its assistants as each other's teammates. A lead is optional."
                   />
                 ) : (
-                  inEnvironment(teams, environmentId).map((entry) => (
+                  inEnvironment(activeTeams, environmentId).map((entry) => (
                     <TeamRow
                       key={entry.team.id}
                       entry={entry}
@@ -374,6 +415,24 @@ export function AssistantsSettingsPanel() {
           );
         })
       )}
+      {environmentIds.map((environmentId) => {
+        const groups = inEnvironment(archivedTeams, environmentId);
+        return groups.length === 0 ? null : (
+          <SettingsSection
+            key={`groups:${environmentId}`}
+            title={
+              multipleEnvironments
+                ? `Archived groups · ${labelOf(environmentId)}`
+                : "Archived groups"
+            }
+            icon={<ArchiveIcon className="size-4 text-muted-foreground" />}
+          >
+            {groups.map((entry) => (
+              <ArchivedTeamRow key={entry.team.id} entry={entry} />
+            ))}
+          </SettingsSection>
+        );
+      })}
       {environmentIds.map((environmentId) => {
         const entries = inEnvironment(archived, environmentId);
         return entries.length === 0 ? null : (

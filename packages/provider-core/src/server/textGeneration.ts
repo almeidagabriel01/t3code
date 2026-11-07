@@ -101,7 +101,30 @@ export type ReviewGuideGenerationResult = Omit<
   "headSha" | "generatedAt" | "modelSelection"
 >;
 
+export interface AssistantGroupRoutingInput {
+  readonly cwd: string;
+  readonly modelSelection: ModelSelection;
+  readonly groupName: string;
+  readonly members: ReadonlyArray<{
+    readonly id: string;
+    readonly handle: string;
+    readonly name: string;
+    readonly role: string;
+    readonly instructions: string;
+  }>;
+  readonly recentMessages: ReadonlyArray<{ readonly from: string; readonly text: string }>;
+  readonly request: string;
+}
+
+export interface AssistantGroupRoutingResult {
+  readonly assistantIds: ReadonlyArray<string>;
+}
+
 export interface ProviderTextGeneration {
+  /** Which members of an assistant group a message is for; only some providers can route. */
+  readonly routeAssistantGroup?: (
+    input: AssistantGroupRoutingInput,
+  ) => Effect.Effect<AssistantGroupRoutingResult, TextGenerationError>;
   readonly resolveMemoryConflict?: (
     input: ResolveMemoryConflictInput,
   ) => Effect.Effect<ResolveMemoryConflictExecutionResult, TextGenerationError>;

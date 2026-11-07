@@ -204,6 +204,8 @@ export type ScheduledTaskDraft = {
   readonly projectId: ProjectId | null;
   /** The conversation each run continues; model and workspace then follow that thread. */
   readonly threadId: ThreadId | null;
+  /** The group whose chat each run posts in; then there is no thread, model or workspace of its own. */
+  readonly assistantTeamId: string | null;
   readonly modelSelection: ModelSelection | null;
   readonly modelSelectionIsExplicit: boolean;
   readonly schedule: ScheduleDraft;
@@ -221,6 +223,7 @@ function draftSignature(draft: ScheduledTaskDraft): string {
     draft.prompt,
     draft.projectId,
     draft.threadId,
+    draft.assistantTeamId,
     draft.modelSelection?.instanceId,
     draft.modelSelection?.model,
     [...(draft.modelSelection?.options ?? [])]
@@ -256,6 +259,7 @@ export function createDraft(
   projectId: ProjectId | null,
   modelSelection: ModelSelection | null,
   threadId: ThreadId | null = null,
+  assistantTeamId: string | null = null,
 ): ScheduledTaskDraft {
   return {
     task: null,
@@ -263,6 +267,7 @@ export function createDraft(
     prompt: "",
     projectId,
     threadId,
+    assistantTeamId,
     modelSelection,
     modelSelectionIsExplicit: false,
     schedule: DEFAULT_SCHEDULE,
@@ -282,6 +287,7 @@ export function editDraft(task: ScheduledTask): ScheduledTaskDraft {
     prompt: task.prompt,
     projectId: task.projectId,
     threadId: task.threadId,
+    assistantTeamId: task.assistantTeamId ?? null,
     modelSelection: task.modelSelection,
     modelSelectionIsExplicit: true,
     schedule: scheduleDraftForTask(task),

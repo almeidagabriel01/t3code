@@ -7,6 +7,7 @@ import { buildMemoryConflictPrompt, buildMemorySummaryPrompt } from "./memoryGen
 import { strictOutputSchemaViolations } from "./strictOutputSchema.ts";
 import type { Operation } from "./textGenerationOperations.ts";
 import {
+  buildAssistantGroupRoutingPrompt,
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
   buildPrContentPrompt,
@@ -99,6 +100,14 @@ const operationSchemas = Effect.gen(function* () {
         baseBranch: "main",
         baseCommit: "abc123",
         settledReview: "",
+      }).outputSchema,
+    ],
+    routeAssistantGroup: [
+      buildAssistantGroupRoutingPrompt({
+        groupName: "Team",
+        members: [],
+        recentMessages: [],
+        request: "Hi",
       }).outputSchema,
     ],
     generateMemorySummary: [(yield* buildMemorySummaryPrompt(summaryInput)).outputSchema],

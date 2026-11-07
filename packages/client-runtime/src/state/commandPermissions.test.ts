@@ -195,6 +195,8 @@ describe("command permissions", () => {
     WS_METHODS.assistantTeamsCreate,
     WS_METHODS.assistantTeamsUpdate,
     WS_METHODS.assistantTeamsDelete,
+    WS_METHODS.assistantGroupsPost,
+    WS_METHODS.assistantGroupsTaskAction,
     WS_METHODS.assistantSandboxStart,
     WS_METHODS.assistantSandboxStop,
     WS_METHODS.assistantSandboxRemove,

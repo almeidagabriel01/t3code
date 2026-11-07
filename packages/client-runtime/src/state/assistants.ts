@@ -11,6 +11,7 @@ import {
 import * as Stream from "effect/Stream";
 import { Atom } from "effect/reactivity";
 
+import { applyAssistantGroupsEvent, type AssistantGroupChatState } from "../assistantGroupChat.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { subscribe } from "../rpc/client.ts";
 import {
@@ -178,6 +179,9 @@ export function createAssistantsEnvironmentAtoms<R, E>(
       | typeof WS_METHODS.assistantTeamsCreate
       | typeof WS_METHODS.assistantTeamsUpdate
       | typeof WS_METHODS.assistantTeamsDelete
+      | typeof WS_METHODS.assistantGroupsPost
+      | typeof WS_METHODS.assistantGroupsTaskAction
+      | typeof WS_METHODS.assistantGroupsHistory
       | typeof WS_METHODS.assistantSandboxStart
       | typeof WS_METHODS.assistantSandboxStop
       | typeof WS_METHODS.assistantSandboxRemove
@@ -206,6 +210,18 @@ export function createAssistantsEnvironmentAtoms<R, E>(
     createTeam: command(WS_METHODS.assistantTeamsCreate, "createTeam"),
     updateTeam: command(WS_METHODS.assistantTeamsUpdate, "updateTeam"),
     deleteTeam: command(WS_METHODS.assistantTeamsDelete, "deleteTeam"),
+    /** One group's chat, live: the newest page first, then each change. */
+    groupChat: createEnvironmentSubscriptionAtomFamily(runtime, {
+      label: "environment-data:assistants:group-chat",
+      subscribe: (input: { readonly teamId: AssistantTeamId }) =>
+        subscribe(WS_METHODS.assistantGroupsSubscribe, input).pipe(
+          Stream.scan((): AssistantGroupChatState | null => null, applyAssistantGroupsEvent),
+          Stream.filter((state): state is AssistantGroupChatState => state !== null),
+        ),
+    }),
+    groupHistory: command(WS_METHODS.assistantGroupsHistory, "groupHistory"),
+    postGroup: command(WS_METHODS.assistantGroupsPost, "postGroup"),
+    groupTaskAction: command(WS_METHODS.assistantGroupsTaskAction, "groupTaskAction"),
     sandbox: createEnvironmentSubscriptionAtomFamily(runtime, {
       label: "environment-data:assistants:sandbox",
       subscribe: (_input: null) => subscribe(WS_METHODS.assistantSandboxSubscribe, {}),

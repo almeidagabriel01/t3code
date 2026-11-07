@@ -26,6 +26,8 @@ vi.mock("@t3tools/client-runtime/environment", () => ({
   scopeThreadRef: (environmentId: string, threadId: string) => ({ environmentId, threadId }),
 }));
 vi.mock("@t3tools/client-runtime/assistantRobot", () => ({
+  assistantGroupThreadsOf: () => [],
+  assistantGroupOwnerKey: () => undefined,
   assistantPresence: () =>
     mocks.mood === "needs"
       ? { mood: "needs", detail: "Needs your approval", since: null }
@@ -39,7 +41,10 @@ vi.mock("../../components/ui/AppText", () => ({
 vi.mock("../../state/assistants", () => ({
   useAssistantEntries: () => ({ active: mocks.active }),
 }));
-vi.mock("../../state/entities", () => ({ useThreadShell: () => ({}) }));
+vi.mock("../../state/entities", () => ({
+  useThreadShell: () => ({}),
+  useQuietThreadShells: () => [],
+}));
 vi.mock("./assistantPresentation", () => ({
   AssistantAvatar: (props: { mood: string }) => <i>{`av:${props.mood}`}</i>,
 }));

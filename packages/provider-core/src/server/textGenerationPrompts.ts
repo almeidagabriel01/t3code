@@ -482,3 +482,59 @@ export function buildThreadTitlePrompt(input: ThreadTitlePromptInput) {
 
   return { prompt, outputSchema };
 }
+
+export interface AssistantGroupRoutingPromptInput {
+  readonly groupName: string;
+  readonly members: ReadonlyArray<{
+    readonly id: string;
+    readonly handle: string;
+    readonly name: string;
+    readonly role: string;
+    readonly instructions: string;
+  }>;
+  /** Oldest first. */
+  readonly recentMessages: ReadonlyArray<{ readonly from: string; readonly text: string }>;
+  readonly request: string;
+}
+
+const ROUTING_INSTRUCTIONS_CHARS = 300;
+const ROUTING_HISTORY_CHARS = 4_000;
+
+/** Picks who in a group a message is for; unknown ids are dropped by the caller. */
+export function buildAssistantGroupRoutingPrompt(input: AssistantGroupRoutingPromptInput) {
+  const members = input.members.map((member) => {
+    const instructions = Array.from(member.instructions.replace(/\s+/g, " ").trim())
+      .slice(0, ROUTING_INSTRUCTIONS_CHARS)
+      .join("");
+    return `- id ${member.id} (@${member.handle}) ${member.name}${member.role ? `, ${member.role}` : ""}${instructions ? `: ${instructions}` : ""}`;
+  });
+  // Newest messages first until the budget is spent, then back to reading order.
+  const recent: string[] = [];
+  let used = 0;
+  for (const message of input.recentMessages.toReversed()) {
+    const line = `${message.from}: ${limitSection(message.text, 600)}`;
+    if (used + line.length > ROUTING_HISTORY_CHARS) break;
+    used += line.length;
+    recent.unshift(line);
+  }
+  const prompt = [
+    `You route messages in the group chat "${input.groupName}" to the members who should work on them.`,
+    "Return a JSON object with one key: assistantIds, an array of member ids.",
+    "Rules:",
+    "- pick each member whose role or area the request touches",
+    "- when the request touches one area or none, pick the one member best able to take it",
+    "- pick everyone when the request is addressed to the whole group",
+    "- use only the ids listed below",
+    "",
+    "Members:",
+    ...members,
+    "",
+    "Recent messages:",
+    ...(recent.length === 0 ? ["(none)"] : recent),
+    "",
+    "Request:",
+    limitSection(input.request, 8_000),
+  ].join("\n");
+  const outputSchema = Schema.Struct({ assistantIds: Schema.Array(Schema.String) });
+  return { prompt, outputSchema };
+}

@@ -1,11 +1,11 @@
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { assistantPresence } from "@t3tools/client-runtime/assistantRobot";
+import { assistantGroupThreadsOf, assistantPresence } from "@t3tools/client-runtime/assistantRobot";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { memo } from "react";
 
 import { cn } from "~/lib/utils";
 import { type AssistantEntry, useAssistantEntries } from "../../state/assistants";
-import { useThreadShell } from "../../state/entities";
+import { useQuietThreadShells, useThreadShell } from "../../state/entities";
 import { AssistantAvatar } from "./assistantPresentation";
 
 const MOOD_TEXT = {
@@ -23,7 +23,12 @@ const ProjectAssistantRow = memo(function ProjectAssistantRow(props: {
   const { assistant, environmentId } = props.entry;
   const threadRef =
     assistant.threadId === null ? null : scopeThreadRef(environmentId, assistant.threadId);
-  const presence = assistantPresence(useThreadShell(threadRef));
+  const thread = useThreadShell(threadRef);
+  const shells = useQuietThreadShells();
+  const presence = assistantPresence(
+    thread,
+    assistantGroupThreadsOf(shells, environmentId, assistant.id),
+  );
   return (
     <li className="list-none">
       <button

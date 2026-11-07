@@ -14,6 +14,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
+import * as AssistantGroups from "../../../assistants/AssistantGroups.ts";
 import * as AssistantService from "../../../assistants/AssistantService.ts";
 import * as DecisionService from "../../../decisions/DecisionService.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
@@ -128,6 +129,7 @@ const harness = (callerMode: RuntimeMode) =>
   Effect.gen(function* () {
     const { layer, writes } = assistantsMock();
     const threadId = ThreadId.make("thread-1");
+    const posts: Array<Parameters<AssistantGroups.AssistantGroups["Service"]["agentPost"]>[0]> = [];
     const deps = Layer.succeedContext(
       yield* Layer.build(
         Layer.mergeAll(
@@ -160,6 +162,16 @@ const harness = (callerMode: RuntimeMode) =>
             ensureAssistantProject: Effect.succeed({ projectId: home }),
             namedProjectsRoot: "",
           }),
+          Layer.mock(AssistantGroups.AssistantGroups)({
+            member: {} as AssistantGroups.AssistantGroups["Service"]["member"],
+            agentPost: (input) => {
+              posts.push(input);
+              return Effect.succeed({
+                message: { id: "m-1" },
+                tasks: [{ id: "t-1", ownerId: "eng", status: "queued" }],
+              } as never);
+            },
+          }),
         ).pipe(
           Layer.provideMerge(
             DecisionService.layer.pipe(
@@ -190,7 +202,7 @@ const harness = (callerMode: RuntimeMode) =>
         Effect.provide(deps),
       );
     const decisions = yield* DecisionService.DecisionService.pipe(Effect.provide(deps));
-    return { call, writes, decisions };
+    return { call, writes, decisions, posts };
   });
 
 it.effect("list and read give each assistant its role and its groups' lead by handle", () =>
@@ -357,6 +369,48 @@ it.effect("groups: created empty, members added and removed, only active assista
     );
     expect(yield* call({ action: "group_update", group: "ghost" })).toMatchObject({
       code: "invalid_request",
+    });
+  }),
+);
+
+it.effect("group_post posts from the calling conversation and needs a group and a text", () =>
+  Effect.gen(function* () {
+    const { call, posts } = yield* harness("approval-required");
+    expect(
+      yield* call({
+        action: "group_post",
+        group: " Ops ",
+        text: " @eng ship it ",
+        paths: ["/home/user/a.txt"],
+      }),
+    ).toEqual({
+      status: "posted",
+      messageId: "m-1",
+      tasks: [{ taskId: "t-1", owner: "eng", status: "queued" }],
+    });
+    expect(posts).toEqual([
+      expect.objectContaining({
+        callerThreadId: "thread-1",
+        group: "Ops",
+        text: "@eng ship it",
+        paths: ["/home/user/a.txt"],
+      }),
+    ]);
+    // A repeat of the same call carries the same request id, so the service posts it once.
+    yield* call({
+      action: "group_post",
+      group: " Ops ",
+      text: " @eng ship it ",
+      paths: ["/home/user/a.txt"],
+    });
+    expect(posts[1]!.clientRequestId).toBe(posts[0]!.clientRequestId);
+    expect(yield* call({ action: "group_post", text: "hi" })).toMatchObject({
+      code: "invalid_request",
+      message: "group_post needs `group`: the group's name or id.",
+    });
+    expect(yield* call({ action: "group_post", group: "Ops" })).toMatchObject({
+      code: "invalid_request",
+      message: "group_post needs `text`: the complete request.",
     });
   }),
 );

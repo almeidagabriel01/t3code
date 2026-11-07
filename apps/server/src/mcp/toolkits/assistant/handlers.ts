@@ -15,6 +15,7 @@ import {
 import * as Effect from "effect/Effect";
 import type * as Schema from "effect/Schema";
 
+import * as AssistantGroups from "../../../assistants/AssistantGroups.ts";
 import * as AssistantService from "../../../assistants/AssistantService.ts";
 import * as DecisionService from "../../../decisions/DecisionService.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
@@ -172,6 +173,34 @@ const mutate = Effect.fn("mcp.assistant.mutate")(function* (input: AssistantPara
     input.avatarHue === undefined ? undefined : ({ kind: "robot", hue: input.avatarHue } as const);
 
   switch (input.action) {
+    case "group_post": {
+      if (caller.caller === undefined) {
+        return yield* invalid("group_post needs a conversation to post from.");
+      }
+      if (input.group === undefined || input.group.trim() === "")
+        return yield* invalid("group_post needs `group`: the group's name or id.");
+      if (input.text === undefined || input.text.trim() === "")
+        return yield* invalid("group_post needs `text`: the complete request.");
+      const groups = yield* AssistantGroups.AssistantGroups;
+      const posted = yield* groups
+        .agentPost({
+          callerThreadId: caller.caller.id,
+          group: input.group.trim(),
+          text: input.text.trim(),
+          ...(input.paths === undefined ? {} : { paths: input.paths }),
+          clientRequestId: key,
+        })
+        .pipe(Effect.mapError(failure));
+      return {
+        status: "posted",
+        messageId: posted.message.id,
+        tasks: posted.tasks.map((task) => ({
+          taskId: task.id,
+          owner: all.find((assistant) => assistant.id === task.ownerId)?.handle ?? task.ownerId,
+          status: task.status,
+        })),
+      } satisfies Out;
+    }
     case "create": {
       const toolAccess = input.toolAccess;
       if (toolAccess === undefined) {

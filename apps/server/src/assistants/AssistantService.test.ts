@@ -16,6 +16,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -948,6 +949,45 @@ it.effect("teams: validation, lead rules and deletion cleanup", () => {
     assert.deepEqual(yield* assistants.teams, []);
   }).pipe(Effect.provide(layer));
 });
+
+it.effect(
+  "archiving a group keeps its members, restoring clears it, and changes are published",
+  () => {
+    const { layer } = harness();
+    return Effect.gen(function* () {
+      const assistants = yield* Assistants.AssistantService;
+      const subscription = yield* assistants.subscribeChanges;
+      const ana = yield* assistants.create(create({ name: "Ana" }));
+      const team = yield* assistants.createTeam({ name: "Core", memberIds: [ana.id] });
+      assert.isNull(team.archivedAt);
+      const archived = yield* assistants.updateTeam({ teamId: team.id, archived: true });
+      assert.isString(archived.archivedAt);
+      assert.deepEqual(archived.memberIds, [ana.id]);
+      // Archiving again keeps the first time; other edits leave it alone.
+      const again = yield* assistants.updateTeam({
+        teamId: team.id,
+        archived: true,
+        name: "Core 2",
+      });
+      assert.equal(again.archivedAt, archived.archivedAt);
+      assert.equal(
+        (yield* assistants.updateTeam({ teamId: team.id, name: "Core 3" })).archivedAt,
+        archived.archivedAt,
+      );
+      assert.isNull(
+        (yield* assistants.updateTeam({ teamId: team.id, archived: false })).archivedAt,
+      );
+      const seen = yield* PubSub.takeAll(subscription);
+      assert.deepEqual(
+        seen
+          .filter((event) => event.type === "teamUpserted")
+          .map((event) => event.team.archivedAt === null),
+        [true, false, false, false, true],
+      );
+      assert.isNumber((yield* assistants.defaultModel(repo)).model.length);
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  },
+);
 
 it.effect(
   "scope follows the project: home projects are for everyone, a real project is its own",

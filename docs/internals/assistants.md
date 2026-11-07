@@ -77,13 +77,40 @@ served through the signed `assistant-avatar` asset resource.
 ## Teams
 
 An `assistant_teams` row holds members (a JSON array of assistant ids) and an optional lead. The
-lead is one of the members and only routes a group request that mentions nobody (built later); it
-never changes who may message whom. `AssistantService` owns team CRUD and publishes `teamUpserted`
+lead is one of the members and only routes a group chat message that mentions nobody; it never
+changes who may message whom. `AssistantService` owns team CRUD and publishes `teamUpserted`
 and `teamRemoved` on the assistants stream (the snapshot carries `teams`), so one subscription feeds
 every client. A group may hold any number of members, none included, so one can be made from the
 sidebar before anyone joins it. Deleting an assistant, or removing it from the members, clears the
 lead when it was that member; archiving leaves membership alone. `ensureForkSchema` renames the old
 `leader_id` column to `lead_id` and drops `leader_title` and `assistants.reports_to`.
+
+## Group chat (an OpenBot channel)
+
+`AssistantGroups` owns a group's chat (`assistant_group_messages`, seq per group) and its tasks
+(`assistant_group_tasks`). A chat message runs nothing itself: it opens one root task per recipient,
+and each member works its tasks in its own hidden thread for that group,
+`assistant:<assistantId>:g-<hash>` (`assistant_group_threads`). The suffix is a hash because team ids
+may hold `:`; look the group up in the table, never parse it out of the id. `forThread` resolves these
+threads as non-current, so sandbox, runtime policy, connectors and the note apply, and
+`guardAssistantThread` refuses archive, delete and unarchive on them; the service changes their
+lifecycle through the Orchestrator directly.
+
+Recipients come from the text first (`assistantGroupLeadingAddress`), then a reply to a member
+message, then a group of one; only then does the lead route, through the optional
+`routeAssistantGroup` text-generation op (Claude, Codex, Antigravity). The capability is checked on the
+lead's own provider before anything is stored, so a group that cannot route refuses with
+`mention_required` instead of storing a message nobody gets.
+
+A task starts by queueing `group-task:<taskId>:<revision>` into the owner's thread; the reactor maps the
+run back by that id and ignores stale revisions, so resume and reassign bump the revision. At most two
+tasks run per group. A finished run posts the `result` tool text or the run's last assistant message;
+a task with unsettled children waits and runs again with their results. Hand-offs (assign, transfer)
+count on the root and the ninth pauses with `handoff_limit`; member replies are a separate limit of two
+per request. Team changes arrive through `AssistantService.subscribeChanges` (no snapshot, so it never
+seeds Jarvis) and `reconcile` heals changes made while the server was down. A scheduled task with
+`assistant_team_id` posts through the late-bound `AssistantGroupGate`, since scheduled tasks sit below
+assistants in the layer graph.
 
 ## Requests between assistants never block
 

@@ -1,8 +1,21 @@
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { assistantPresence, assistantQueuedLabel } from "@t3tools/client-runtime/assistantRobot";
+import {
+  assistantGroupOwnerKey,
+  assistantGroupThreadsOf,
+  assistantPresence,
+  assistantQueuedLabel,
+} from "@t3tools/client-runtime/assistantRobot";
 import { assistantEntryKey, assistantSections } from "@t3tools/client-runtime/assistantSections";
 import type { AssistantTeamId, EnvironmentId, ProjectId } from "@t3tools/contracts";
-import { ArchiveRestoreIcon, ArchiveIcon, PlusIcon, SettingsIcon, UsersIcon } from "lucide-react";
+import {
+  ArchiveRestoreIcon,
+  ArchiveIcon,
+  MessagesSquareIcon,
+  PlusIcon,
+  SettingsIcon,
+  UsersIcon,
+} from "lucide-react";
+import { useNavigate } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 
 import { isElectron } from "../../env";
@@ -25,7 +38,7 @@ import { SidebarInset } from "../ui/sidebar";
 import { openAssistantDialog } from "./assistantDialogState";
 import { AssistantAvatar } from "./assistantPresentation";
 import { openAssistantTeamDialog } from "./assistantTeamState";
-import { useAssistantFlows } from "./useAssistantFlows";
+import { useAssistantFlows, useAssistantTeamFlows } from "./useAssistantFlows";
 
 const MOOD_TEXT = {
   idle: "text-muted-foreground",
@@ -45,7 +58,12 @@ function AssistantCard(props: {
   const archived = assistant.archivedAt !== null;
   const threadRef =
     assistant.threadId === null ? null : scopeThreadRef(environmentId, assistant.threadId);
-  const presence = assistantPresence(useThreadShell(threadRef));
+  const thread = useThreadShell(threadRef);
+  const shells = useQuietThreadShells();
+  const presence = assistantPresence(
+    thread,
+    assistantGroupThreadsOf(shells, props.entry.environmentId, props.entry.assistant.id),
+  );
   const since = presence.since === null ? "" : formatRelativeTimeLabel(presence.since, props.nowMs);
   return (
     <article
@@ -137,6 +155,37 @@ function AssistantCard(props: {
   );
 }
 
+function ArchivedGroupCard(props: { readonly entry: AssistantTeamEntry }) {
+  const { environmentId, team } = props.entry;
+  const flows = useAssistantTeamFlows(environmentId);
+  return (
+    <article
+      data-testid="archived-group-card"
+      aria-label={team.name}
+      className="flex min-w-0 flex-col gap-3 rounded-xl border border-foreground/12 bg-card/70 p-3 @lg/assistants:p-4"
+    >
+      <div className="flex min-w-0 items-center gap-2">
+        <UsersIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+        <h3 className="min-w-0 truncate text-sm font-medium">{team.name}</h3>
+      </div>
+      <p className="truncate text-xs text-muted-foreground">
+        Archived · {team.memberIds.length} members
+      </p>
+      <div className="flex flex-wrap items-center gap-1.5">
+        <Button
+          size="xs"
+          variant="outline"
+          disabled={!flows.canAct}
+          onClick={() => void flows.restore(team)}
+        >
+          <ArchiveRestoreIcon />
+          Restore
+        </Button>
+      </div>
+    </article>
+  );
+}
+
 function Section(props: {
   readonly title: string;
   readonly count?: number;
@@ -168,11 +217,12 @@ function Section(props: {
 
 /** Every assistant, grouped like the sidebar, with a card each. */
 export function AssistantsPage() {
-  const { active, archived, teams } = useAssistantEntries();
+  const { active, archived, teams, activeTeams, archivedTeams } = useAssistantEntries();
   const environmentIds = useAssistantsEnvironmentIds();
   const projects = useProjects();
   const shells = useQuietThreadShells();
   const nowMs = useNowMinuteMs();
+  const navigate = useNavigate();
 
   const keyByThread = new Map(
     active.flatMap((entry) =>
@@ -188,10 +238,12 @@ export function AssistantsPage() {
   );
   const needsKeys = new Set<string>();
   for (const shell of shells) {
-    const key = keyByThread.get(scopedThreadKey(scopeThreadRef(shell.environmentId, shell.id)));
+    const key =
+      keyByThread.get(scopedThreadKey(scopeThreadRef(shell.environmentId, shell.id))) ??
+      assistantGroupOwnerKey(shell);
     if (key !== undefined && assistantPresence(shell).mood === "needs") needsKeys.add(key);
   }
-  const sections = assistantSections({ assistants: active, teams, needsKeys });
+  const sections = assistantSections({ assistants: active, teams: activeTeams, needsKeys });
 
   const projectName = (environmentId: string, projectId: string) =>
     projects.find((project) => project.environmentId === environmentId && project.id === projectId)
@@ -294,6 +346,19 @@ export function AssistantsPage() {
                 {...(members.length === 0 ? { empty: "No members yet." } : {})}
                 actions={
                   <>
+                    <Button
+                      size="xs"
+                      variant="ghost-muted"
+                      onClick={() =>
+                        void navigate({
+                          to: "/group/$environmentId/$teamId",
+                          params: { environmentId: entry.environmentId, teamId: entry.team.id },
+                        })
+                      }
+                    >
+                      <MessagesSquareIcon />
+                      Open chat
+                    </Button>
                     {newAssistantHere(entry.environmentId as EnvironmentId, {
                       teamId: entry.team.id,
                     })}
@@ -330,6 +395,16 @@ export function AssistantsPage() {
             {sections.unassigned.length === 0 ? null : (
               <Section title="Unassigned" count={sections.unassigned.length}>
                 {sections.unassigned.map((entry) => card(entry, "unassigned"))}
+              </Section>
+            )}
+            {archivedTeams.length === 0 ? null : (
+              <Section title="Archived groups" count={archivedTeams.length}>
+                {archivedTeams.map((entry) => (
+                  <ArchivedGroupCard
+                    key={`${entry.environmentId}:${entry.team.id}`}
+                    entry={entry}
+                  />
+                ))}
               </Section>
             )}
             {archived.length === 0 ? null : (
