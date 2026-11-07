@@ -9,7 +9,7 @@ import {
   type RuntimeMode,
 } from "@t3tools/contracts";
 import { AssistantDirectory } from "../assistants/AssistantDirectory.ts";
-import { sandboxRefusal } from "../assistants/AssistantSandboxPolicy.ts";
+import { projectScopeRefusal, sandboxRefusal } from "../assistants/AssistantSandboxPolicy.ts";
 import { APPROVAL_UNAVAILABLE, AskBeforeActingGate } from "../assistants/AskBeforeActingGate.ts";
 import type {
   ProjectionRecordField,
@@ -906,7 +906,18 @@ const make = Effect.gen(function* () {
       target: undefined,
     });
     if (Option.isSome(refusal)) return yield* reject(command, refusal.value);
+    // A project assistant messages agents only inside its own project.
     const found = yield* directory.forThread(sender);
+    if (Option.isSome(found) && found.value.assistant.scope === "project") {
+      const target = yield* orchestrator
+        .getThreadShell(command.threadId)
+        .pipe(Effect.orElseSucceed(() => null));
+      const outside = yield* projectScopeRefusal(assistantDirectory, {
+        threadId: sender,
+        projectId: target?.projectId,
+      });
+      if (Option.isSome(outside)) return yield* reject(command, outside.value);
+    }
     if (Option.isNone(found) || !found.value.assistant.askBeforeActing) return Effect.void;
     // A replayed command already ran under its approval; the receipt makes it a no-op.
     const receipt = yield* receipts

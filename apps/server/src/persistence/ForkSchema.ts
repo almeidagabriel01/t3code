@@ -386,6 +386,12 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
   if (!assistantColumns.some((column) => column.name === "icon")) {
     yield* sql`ALTER TABLE assistants ADD COLUMN icon TEXT`;
   }
+  if (!assistantColumns.some((column) => column.name === "avatar_json")) {
+    yield* sql`ALTER TABLE assistants ADD COLUMN avatar_json TEXT`;
+  }
+  if (!assistantColumns.some((column) => column.name === "scope")) {
+    yield* sql`ALTER TABLE assistants ADD COLUMN scope TEXT`;
+  }
   if (!assistantColumns.some((column) => column.name === "mcp_servers_json")) {
     yield* sql`ALTER TABLE assistants ADD COLUMN mcp_servers_json TEXT`;
   }

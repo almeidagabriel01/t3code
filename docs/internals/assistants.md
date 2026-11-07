@@ -75,8 +75,9 @@ An `assistant_teams` row holds members (a JSON array of assistant ids), an optio
 free-text title. A leader and a title are hints in each member's note and badges in the clients;
 they never change `mayMessage`. `AssistantService` owns team CRUD and publishes `teamUpserted` and
 `teamRemoved` on the assistants stream (the snapshot carries `teams`), so one subscription feeds
-every client. Deleting an assistant prunes it from its teams in the same lock and dissolves a team
-left below two members; archiving leaves membership alone.
+every client. A group may hold any number of members, none included, so one can be made from the
+sidebar before anyone joins it. Deleting an assistant prunes it from its groups in the same lock
+(a leader that leaves loses its title too); archiving leaves membership alone.
 
 The team view has no storage of its own: `readTeamActivity` reads the member-to-member messages
 back from `orchestration_events` (latest event per message id wins, because a message is

@@ -1,4 +1,4 @@
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
@@ -47,3 +47,40 @@ export function sandboxNoteLine(environmentId: string | null): string {
     ? "Your workspace is the sandbox container, which is not linked yet: you cannot run commands or edit files until the user starts it in Settings → Assistants. On this Mac you only read."
     : `Your workspace is the sandbox container (environmentId ${environmentId}). On this Mac you only read: shell commands that change anything, and file edits, are blocked here. For any request to change files, run commands, install, build or test, start that work in the sandbox with t3_thread_launch (environmentId ${environmentId}) or delegate_task (target.environmentId ${environmentId}), then report its result.`;
 }
+
+/**
+ * Why `threadId` may not start or message work in another project, or none when it may. Only a
+ * project assistant is held: it works inside its own project. `projectId` is the project the work
+ * lands in (undefined when the caller names none, which means its own); `elsewhere` is true for
+ * work aimed at another environment, whose projects are never this one.
+ */
+export const projectScopeRefusal = Effect.fn("AssistantSandboxPolicy.projectScopeRefusal")(
+  function* (
+    directory: Option.Option<AssistantDirectoryShape>,
+    input: {
+      readonly threadId: ThreadId | undefined;
+      readonly projectId?: ProjectId | undefined;
+      readonly elsewhere?: boolean | undefined;
+    },
+  ) {
+    if (Option.isNone(directory) || input.threadId === undefined) return Option.none<string>();
+    const found = yield* directory.value.forThread(input.threadId);
+    if (Option.isNone(found) || found.value.assistant.scope !== "project") {
+      return Option.none<string>();
+    }
+    if (
+      input.elsewhere !== true &&
+      (input.projectId ?? found.value.assistant.projectId) === found.value.assistant.projectId
+    ) {
+      return Option.none<string>();
+    }
+    return Option.some(PROJECT_SCOPE_REFUSAL);
+  },
+);
+
+const PROJECT_SCOPE_REFUSAL =
+  "You are a project assistant: you may only launch, delegate and message work inside your own project. Omit the project, or ask the user to do this from another conversation.";
+
+/** The note line for a project assistant. */
+export const PROJECT_SCOPE_NOTE_LINE =
+  "You belong to one project. Launch, delegate and message work only inside it; other projects are out of reach.";

@@ -1,6 +1,7 @@
 import {
   type EnvironmentId,
   type OrchestrationV2LinkOrigin,
+  type ProjectId,
   OrchestratorMcpEnvironmentTarget,
   OrchestratorMcpFailure,
   type ProviderInteractionMode,
@@ -21,7 +22,7 @@ import {
   type DispatchModeRefusal,
 } from "../orchestration-v2/DispatchModeLimit.ts";
 import { AssistantDirectory } from "../assistants/AssistantDirectory.ts";
-import { sandboxRefusal } from "../assistants/AssistantSandboxPolicy.ts";
+import { projectScopeRefusal, sandboxRefusal } from "../assistants/AssistantSandboxPolicy.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import { assertNotLinked, assertSameLink, callerLinkOrigin } from "./linkOrigin.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
@@ -422,6 +423,23 @@ const routed = Effect.fn("McpToolAccess.routed")(function* <Tools extends Record
             threadId: scope.thread?.threadId,
             localEnvironmentId: scope.environmentId,
             target,
+          });
+          if (Option.isSome(refusal)) {
+            return yield* new OrchestratorMcpFailure({
+              code: "invalid_request",
+              message: refusal.value,
+            });
+          }
+        }
+        // A project assistant starts work only in its own project, here or forwarded.
+        if (SANDBOX_HELD_TOOLS.has(name)) {
+          const named = params as { readonly projectId?: ProjectId; readonly scratch?: boolean };
+          const refusal = yield* projectScopeRefusal(assistantDirectory, {
+            threadId: scope.thread?.threadId,
+            projectId: named.projectId,
+            // Scratch is its own project; another environment's projects are never this one.
+            elsewhere:
+              named.scratch === true || (target !== undefined && target !== scope.environmentId),
           });
           if (Option.isSome(refusal)) {
             return yield* new OrchestratorMcpFailure({

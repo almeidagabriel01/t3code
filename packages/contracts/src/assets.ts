@@ -52,6 +52,10 @@ export const AssetResource = Schema.Union([
   Schema.TaggedStruct("native-app-icon", {
     app: ToolActivityNativeAppReference,
   }),
+  /** The uploaded image of an assistant whose avatar is `{ kind: "image" }`. */
+  Schema.TaggedStruct("assistant-avatar", {
+    assistantId: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
+  }),
   // Media a change request body points at on its host. A private repository serves these only
   // to a request that carries a credential, which the client has none of, so the server fetches
   // them with the credential the host's driver holds for the repository at `cwd`.

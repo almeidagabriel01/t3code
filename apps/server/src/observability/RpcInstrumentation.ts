@@ -128,6 +128,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.assistantsUpdate]: "assistants",
   [WS_METHODS.assistantsDelete]: "assistants",
   [WS_METHODS.assistantsReset]: "assistants",
+  [WS_METHODS.assistantsSetAvatarImage]: "assistants",
   [WS_METHODS.assistantTeamsCreate]: "assistants",
   [WS_METHODS.assistantTeamsUpdate]: "assistants",
   [WS_METHODS.assistantTeamsDelete]: "assistants",

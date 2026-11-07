@@ -151,6 +151,32 @@ export const ASSISTANT_ICON_IDS = [
 export const AssistantIconId = Schema.Literals(ASSISTANT_ICON_IDS);
 export type AssistantIconId = typeof AssistantIconId.Type;
 
+export const ASSISTANT_AVATAR_MAX_BYTES = 2 * 1024 * 1024;
+export const ASSISTANT_AVATAR_MIME_TYPES = ["image/png", "image/jpeg", "image/webp"] as const;
+
+/**
+ * What an assistant wears: a generated robot (hue and a small variant pick its look) or an image
+ * the user uploaded, served as the `assistant-avatar` asset. `revision` only busts caches. A kind
+ * from a newer writer decodes to null, which clients treat like no avatar.
+ */
+export const AssistantRobotAvatar = Schema.Struct({
+  kind: Schema.Literal("robot"),
+  hue: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 359 })),
+  variant: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 7 }))),
+});
+export const AssistantAvatar = Schema.Union([
+  AssistantRobotAvatar,
+  Schema.Struct({ kind: Schema.Literal("image"), revision: Schema.Int }),
+]);
+export type AssistantAvatar = typeof AssistantAvatar.Type;
+
+/**
+ * "project" when the assistant lives in a real project: it may only launch, delegate and message
+ * work there. "all" is the default home (Scratch or the managed assistants project). Server-derived.
+ */
+export const AssistantScope = Schema.Literals(["all", "project"]);
+export type AssistantScope = typeof AssistantScope.Type;
+
 /** Servers T3 itself injects; a connector may not shadow them. */
 export const ASSISTANT_MCP_RESERVED_NAMES: ReadonlyArray<string> = ["t3-code", "t3-code-direct"];
 export const ASSISTANT_MCP_MAX_SERVERS = 20;
@@ -260,6 +286,9 @@ export const Assistant = Schema.Struct({
   workspace: AssistantWorkspace.pipe(Schema.withDecodingDefault(Effect.succeed("host" as const))),
   /** An `AssistantIconId`, kept a plain string so an id from a newer client still decodes. */
   icon: Schema.NullOr(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  /** Null derives a robot from the handle. An `icon` set before avatars existed keeps showing until this is set. */
+  avatar: Schema.NullOr(AssistantAvatar).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  scope: AssistantScope.pipe(Schema.withDecodingDefault(Effect.succeed("all" as const))),
   /** Extra MCP servers injected only into this assistant's sessions, next to T3's own. */
   mcpServers: Schema.Array(AssistantMcpServer).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   archivedAt: Schema.NullOr(IsoDateTime),
@@ -270,7 +299,6 @@ export type Assistant = typeof Assistant.Type;
 
 export const ASSISTANT_TEAM_NAME_MAX_LENGTH = 60;
 export const ASSISTANT_TEAM_TITLE_MAX_LENGTH = 60;
-export const ASSISTANT_TEAM_MIN_MEMBERS = 2;
 
 export const AssistantTeamId = TrimmedNonEmptyString.pipe(Schema.brand("AssistantTeamId"));
 export type AssistantTeamId = typeof AssistantTeamId.Type;
@@ -305,8 +333,6 @@ export function assistantTeamProblem(team: {
   readonly leaderTitle?: string | null | undefined;
 }): string | null {
   if (new Set(team.memberIds).size !== team.memberIds.length) return "A member is listed twice.";
-  if (team.memberIds.length < ASSISTANT_TEAM_MIN_MEMBERS)
-    return `A team needs at least ${ASSISTANT_TEAM_MIN_MEMBERS} members.`;
   const leaderId = team.leaderId ?? null;
   if (leaderId !== null && !team.memberIds.includes(leaderId))
     return "The leader must be a member of the team.";
@@ -346,6 +372,8 @@ export const AssistantsCreateInput = Schema.Struct({
   askBeforeActing: Schema.optional(Schema.Boolean),
   workspace: Schema.optional(AssistantWorkspace),
   icon: Schema.optional(Schema.NullOr(AssistantIconId)),
+  /** A robot only: an image goes through `assistants.setAvatarImage`. */
+  avatar: Schema.optional(Schema.NullOr(AssistantRobotAvatar)),
   mcpServers: Schema.optional(Schema.Array(AssistantMcpServerInput)),
   role: Schema.optional(AssistantRole),
   reportsTo: Schema.optional(Schema.NullOr(AssistantId)),
@@ -381,6 +409,8 @@ export const AssistantsUpdateInput = Schema.Struct({
   workspace: Schema.optional(AssistantWorkspace),
   /** Null goes back to the initial. */
   icon: Schema.optional(Schema.NullOr(AssistantIconId)),
+  /** A robot only; null clears the avatar (and an uploaded image). Images go through `assistants.setAvatarImage`. */
+  avatar: Schema.optional(Schema.NullOr(AssistantRobotAvatar)),
   /** Replaces the whole list; leave out to keep it. */
   mcpServers: Schema.optional(Schema.Array(AssistantMcpServerInput)),
   role: Schema.optional(AssistantRole),
@@ -437,6 +467,17 @@ export type AssistantSandboxPairingInput = typeof AssistantSandboxPairingInput.T
 /** A one-time link that connects a client on this machine to the sandbox, to sign in to its providers. */
 export const AssistantSandboxPairing = Schema.Struct({ pairingUrl: Schema.String });
 export type AssistantSandboxPairing = typeof AssistantSandboxPairing.Type;
+
+/**
+ * Upload the image first with `attachments.createUploadUrl` (png, jpeg or webp, up to
+ * `ASSISTANT_AVATAR_MAX_BYTES`); the server checks its bytes, keeps its own copy and returns the
+ * assistant with an image avatar. Clear it with `assistants.update { avatar: null }`.
+ */
+export const AssistantsSetAvatarImageInput = Schema.Struct({
+  assistantId: AssistantId,
+  attachmentId: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
+});
+export type AssistantsSetAvatarImageInput = typeof AssistantsSetAvatarImageInput.Type;
 
 export const AssistantsDeleteInput = Schema.Struct({ assistantId: AssistantId });
 export type AssistantsDeleteInput = typeof AssistantsDeleteInput.Type;

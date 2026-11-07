@@ -100,6 +100,8 @@ export class ManagedProjectFolders extends Context.Service<
       ScratchFolderError | ScratchProjectError
     >;
     readonly isScratchProject: (projectId: ProjectId) => Effect.Effect<boolean>;
+    /** The Scratch project or the managed `assistants` one: where assistants without a project live. Never creates either. */
+    readonly isAssistantHomeProject: (projectId: ProjectId) => Effect.Effect<boolean>;
     readonly folderForThread: (input: {
       readonly projectId: ProjectId;
       readonly threadId: ThreadId;
@@ -350,6 +352,15 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  const isAssistantHomeProject: ManagedProjectFolders["Service"]["isAssistantHomeProject"] = (
+    projectId,
+  ) =>
+    Effect.zipWith(
+      isScratchProject(projectId),
+      isScratchRoot(projectId, path.resolve(config.baseDir, "assistants")),
+      (scratch, assistants) => scratch || assistants,
+    );
+
   const folderForThread: ManagedProjectFolders["Service"]["folderForThread"] = Effect.fn(
     "ManagedProjectFolders.folderForThread",
   )(function* (input) {
@@ -500,6 +511,7 @@ const make = Effect.gen(function* () {
     ensureScratchProject,
     ensureAssistantProject,
     isScratchProject,
+    isAssistantHomeProject,
     folderForThread,
     namedProjectsRoot,
     createNamedProject,

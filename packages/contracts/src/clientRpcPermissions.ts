@@ -103,6 +103,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.assistantsUpdate]: AuthOrchestrationOperateScope,
   [WS_METHODS.assistantsDelete]: AuthOrchestrationOperateScope,
   [WS_METHODS.assistantsReset]: AuthOrchestrationOperateScope,
+  [WS_METHODS.assistantsSetAvatarImage]: AuthOrchestrationOperateScope,
   [WS_METHODS.assistantSandboxStart]: AuthOrchestrationOperateScope,
   [WS_METHODS.assistantSandboxStop]: AuthOrchestrationOperateScope,
   [WS_METHODS.assistantSandboxRemove]: AuthOrchestrationOperateScope,

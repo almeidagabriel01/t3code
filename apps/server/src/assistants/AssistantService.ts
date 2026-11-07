@@ -11,6 +11,8 @@ import {
   assistantTeamProblem,
   type AssistantsEvent,
   type AssistantsResetInput,
+  type AssistantScope,
+  type AssistantsSetAvatarImageInput,
   type AssistantsUpdateInput,
   ASSISTANT_STANDUP_PROMPT,
   ASSISTANT_STANDUP_PROMPT_HEAD,
@@ -35,8 +37,10 @@ import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
@@ -48,8 +52,10 @@ import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
+import * as AssistantAvatars from "./AssistantAvatars.ts";
 import * as AssistantConnectors from "./AssistantConnectors.ts";
 import {
   type AssistantTeamRow,
@@ -62,6 +68,7 @@ import {
   type AssistantRow,
   decodeMcpServers,
   encodeAutonomy,
+  encodeAvatar,
   encodeBudget,
   encodeMcpServers,
   toAssistant,
@@ -94,13 +101,23 @@ export class AssistantService extends Context.Service<
     readonly subscribe: Stream.Stream<AssistantsEvent, AssistantError>;
     /** Restores Jarvis: recreates or unarchives him and replaces a deleted conversation. */
     readonly ensureDefault: Effect.Effect<Assistant, AssistantError>;
-    readonly create: (input: AssistantsCreateInput) => Effect.Effect<Assistant, AssistantError>;
+    /** `options.id` makes a repeat idempotent: an assistant with that id already is the answer. */
+    readonly create: (
+      input: AssistantsCreateInput,
+      options?: { readonly id?: string },
+    ) => Effect.Effect<Assistant, AssistantError>;
     readonly update: (input: AssistantsUpdateInput) => Effect.Effect<Assistant, AssistantError>;
+    /** Keeps its own copy of a finished avatar upload; clearing goes through `update { avatar: null }`. */
+    readonly setAvatarImage: (
+      input: AssistantsSetAvatarImageInput,
+    ) => Effect.Effect<Assistant, AssistantError>;
     readonly remove: (assistantId: AssistantId) => Effect.Effect<void, AssistantError>;
     readonly reset: (input: AssistantsResetInput) => Effect.Effect<Assistant, AssistantError>;
     readonly teams: Effect.Effect<ReadonlyArray<AssistantTeam>, AssistantError>;
+    /** `options.id` makes a repeat idempotent: a group with that id already is the answer. */
     readonly createTeam: (
       input: AssistantTeamsCreateInput,
+      options?: { readonly id?: string },
     ) => Effect.Effect<AssistantTeam, AssistantError>;
     readonly updateTeam: (
       input: AssistantTeamsUpdateInput,
@@ -143,6 +160,17 @@ const make = Effect.gen(function* () {
   const scheduledTasks = yield* ScheduledTaskService.ScheduledTaskService;
   const connectors = yield* AssistantConnectors.AssistantConnectors;
   const providerRegistry = yield* Effect.serviceOption(ProviderRegistry.ProviderRegistry);
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const config = yield* ServerConfig.ServerConfig;
+  const files = <A, E>(
+    self: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path | ServerConfig.ServerConfig>,
+  ) =>
+    self.pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+      Effect.provideService(ServerConfig.ServerConfig, config),
+    );
   const lock = yield* Semaphore.make(1);
   const events = yield* PubSub.unbounded<AssistantsEvent>();
   yield* Effect.addFinalizer(() => PubSub.shutdown(events));
@@ -174,6 +202,21 @@ const make = Effect.gen(function* () {
     );
 
   const allRows = sql<AssistantRow>`SELECT * FROM assistants ORDER BY is_default DESC, created_at ASC`;
+
+  const scopeFor = (projectId: string): Effect.Effect<AssistantScope> =>
+    folders
+      .isAssistantHomeProject(projectId as ProjectId)
+      .pipe(Effect.map((home) => (home ? "all" : "project")));
+
+  /** Rows from before scopes existed get theirs once; a project that cannot be read stays unset. */
+  const backfillScopes = Effect.gen(function* () {
+    const unset = yield* sql<{ readonly assistant_id: string; readonly project_id: string }>`
+      SELECT assistant_id, project_id FROM assistants WHERE scope IS NULL`;
+    for (const row of unset) {
+      const scope = yield* scopeFor(row.project_id);
+      yield* sql`UPDATE assistants SET scope = ${scope} WHERE assistant_id = ${row.assistant_id}`;
+    }
+  });
 
   /** A thread the server cannot read keeps its state: only a deletion we saw replaces it. */
   const inspectThread = (threadId: ThreadId) =>
@@ -313,10 +356,10 @@ const make = Effect.gen(function* () {
       yield* sql`
         INSERT OR IGNORE INTO assistants (
           assistant_id, handle, name, project_id, instructions, tool_access, is_default,
-          generation, created_at, updated_at
+          generation, scope, created_at, updated_at
         ) VALUES (
           ${DEFAULT_ASSISTANT_ID}, ${DEFAULT_ASSISTANT_ID}, 'Jarvis', ${project.projectId},
-          ${JARVIS_INSTRUCTIONS}, 'full', 1, 1, ${now}, ${now}
+          ${JARVIS_INSTRUCTIONS}, 'full', 1, 1, 'all', ${now}, ${now}
         )`;
     } else if (existing[0]!.archived_at !== null) {
       const row = yield* findRow(DEFAULT_ASSISTANT_ID);
@@ -343,6 +386,7 @@ const make = Effect.gen(function* () {
   });
 
   const ensureAll = Effect.gen(function* () {
+    yield* backfillScopes;
     yield* seedDefault;
     const active = (yield* allRows).filter((row) => row.archived_at === null);
     yield* Effect.forEach(
@@ -488,15 +532,22 @@ const make = Effect.gen(function* () {
   });
 
   const create: AssistantService["Service"]["create"] = Effect.fn("AssistantService.create")(
-    function* (input) {
+    function* (input, options) {
       if (input.restoreDefault === true) return yield* ensureDefault;
       const handle = input.handle ?? assistantHandleFromName(input.name);
       if (handle === null)
         return yield* invalid("Give the assistant a name with letters or digits.");
       yield* requireProject(input.projectId);
-      const id = yield* random.uuidV4().pipe(Effect.orDie);
+      const id = options?.id ?? (yield* random.uuidV4().pipe(Effect.orDie));
+      const scope = yield* scopeFor(input.projectId);
       return yield* lock.withPermits(1)(
         Effect.gen(function* () {
+          // A repeat of a create that already landed is that assistant, not a second one.
+          if (options?.id !== undefined) {
+            const existing =
+              yield* sql<AssistantRow>`SELECT * FROM assistants WHERE assistant_id = ${id}`;
+            if (existing[0] !== undefined) return toAssistant(existing[0]);
+          }
           yield* handleTaken(handle);
           if (input.reportsTo != null) yield* checkReportsTo(undefined, input.reportsTo);
           const saved =
@@ -508,12 +559,13 @@ const make = Effect.gen(function* () {
             INSERT INTO assistants (
               assistant_id, handle, name, project_id, instructions, tool_access, is_default,
               generation, budget_json, autonomy_json, role, reports_to, ask_before_acting,
-              workspace, icon, mcp_servers_json, created_at, updated_at
+              workspace, icon, avatar_json, scope, mcp_servers_json, created_at, updated_at
             ) VALUES (
               ${id}, ${handle}, ${input.name}, ${input.projectId}, ${input.instructions},
               ${input.toolAccess}, 0, 1, ${input.budget ? encodeBudget(input.budget) : null},
               ${input.autonomy ? encodeAutonomy(input.autonomy) : null}, ${input.role?.trim() ?? ""},
               ${input.reportsTo ?? null}, ${input.askBeforeActing === true ? 1 : 0}, ${input.workspace ?? "host"}, ${input.icon ?? null},
+              ${input.avatar ? encodeAvatar(input.avatar) : null}, ${scope},
               ${saved === undefined ? null : encodeMcpServers(saved.servers)}, ${now}, ${now}
             )`;
           const row = yield* findRow(id);
@@ -588,6 +640,13 @@ const make = Effect.gen(function* () {
                   : 0,
             workspace: input.workspace ?? row.workspace,
             icon: input.icon === undefined ? row.icon : input.icon,
+            avatarJson:
+              input.avatar === undefined
+                ? row.avatar_json
+                : input.avatar === null
+                  ? null
+                  : encodeAvatar(input.avatar),
+            scope: projectChanged ? yield* scopeFor(input.projectId!) : row.scope,
           };
           const saved =
             input.mcpServers === undefined
@@ -619,7 +678,7 @@ const make = Effect.gen(function* () {
                 project_id = ${next.projectId}, thread_id = ${threadId}, generation = ${generation},
                 budget_json = ${next.budgetJson}, autonomy_json = ${next.autonomyJson},
                 role = ${next.role}, reports_to = ${next.reportsTo},
-                ask_before_acting = ${next.askBeforeActing}, workspace = ${next.workspace}, icon = ${next.icon}, mcp_servers_json = ${mcpServersJson}, archived_at = ${archivedAt}, updated_at = ${now}
+                ask_before_acting = ${next.askBeforeActing}, workspace = ${next.workspace}, icon = ${next.icon}, avatar_json = ${next.avatarJson}, scope = ${next.scope}, mcp_servers_json = ${mcpServersJson}, archived_at = ${archivedAt}, updated_at = ${now}
               WHERE assistant_id = ${row.assistant_id}`;
             yield* followSchedules({ ...row, generation }, threadId, next.projectId);
             yield* retire(previousThreadId);
@@ -631,7 +690,7 @@ const make = Effect.gen(function* () {
                 instructions = ${next.instructions}, tool_access = ${next.toolAccess},
                 budget_json = ${next.budgetJson}, autonomy_json = ${next.autonomyJson},
                 role = ${next.role}, reports_to = ${next.reportsTo},
-                ask_before_acting = ${next.askBeforeActing}, workspace = ${next.workspace}, icon = ${next.icon}, mcp_servers_json = ${mcpServersJson}, archived_at = ${archivedAt}, updated_at = ${now}
+                ask_before_acting = ${next.askBeforeActing}, workspace = ${next.workspace}, icon = ${next.icon}, avatar_json = ${next.avatarJson}, mcp_servers_json = ${mcpServersJson}, archived_at = ${archivedAt}, updated_at = ${now}
               WHERE assistant_id = ${row.assistant_id}`;
             if (
               previousThreadId !== null &&
@@ -678,6 +737,9 @@ const make = Effect.gen(function* () {
               ),
             );
           }
+          if (input.avatar !== undefined) {
+            yield* files(AssistantAvatars.removeAvatarImages(row.assistant_id));
+          }
           yield* publish(row.assistant_id);
           if (archivedAt !== null && row.archived_at === null) {
             yield* releaseReports(row.assistant_id);
@@ -697,6 +759,29 @@ const make = Effect.gen(function* () {
     },
     storage,
   );
+
+  const setAvatarImage: AssistantService["Service"]["setAvatarImage"] = Effect.fn(
+    "AssistantService.setAvatarImage",
+  )(function* (input) {
+    return yield* lock.withPermits(1)(
+      Effect.gen(function* () {
+        const row = yield* findRow(input.assistantId);
+        yield* files(
+          AssistantAvatars.storeAvatarImage({
+            assistantId: row.assistant_id,
+            attachmentId: input.attachmentId,
+          }),
+        );
+        const now = yield* nowIso;
+        yield* sql`
+          UPDATE assistants SET avatar_json = ${encodeAvatar({ kind: "image", revision: Date.parse(now) })},
+            updated_at = ${now}
+          WHERE assistant_id = ${row.assistant_id}`;
+        yield* publish(row.assistant_id);
+        return toAssistant(yield* findRow(row.assistant_id));
+      }),
+    );
+  }, storage);
 
   const findTeamRow = Effect.fn("AssistantService.findTeamRow")(function* (teamId: string) {
     const rows =
@@ -730,14 +815,20 @@ const make = Effect.gen(function* () {
 
   const createTeam: AssistantService["Service"]["createTeam"] = Effect.fn(
     "AssistantService.createTeam",
-  )(function* (input) {
-    const id = yield* random.uuidV4().pipe(Effect.orDie);
+  )(function* (input, options) {
+    const id = options?.id ?? (yield* random.uuidV4().pipe(Effect.orDie));
     const leaderId = input.leaderId ?? null;
     const leaderTitle = leaderTitleOf(leaderId, input.leaderTitle);
     if (leaderId === null && (input.leaderTitle ?? "").trim() !== "")
       return yield* invalid("A leader title needs a leader.");
     return yield* lock.withPermits(1)(
       Effect.gen(function* () {
+        // A repeat of a create that already landed is that group, not a second one.
+        if (options?.id !== undefined) {
+          const existing =
+            yield* sql<AssistantTeamRow>`SELECT * FROM assistant_teams WHERE team_id = ${id}`;
+          if (existing[0] !== undefined) return toAssistantTeam(existing[0]);
+        }
         yield* checkTeam({ memberIds: input.memberIds, leaderId, leaderTitle }, []);
         const now = yield* nowIso;
         yield* sql`
@@ -803,16 +894,11 @@ const make = Effect.gen(function* () {
     return { messages: yield* readTeamActivity(sql, team) };
   }, storage);
 
-  /** A deleted assistant leaves its teams; one left with fewer than two members is dissolved. */
+  /** A deleted assistant leaves its teams; a group may be left empty or with one member. */
   const leaveTeams = Effect.fn("AssistantService.leaveTeams")(function* (assistantId: string) {
     for (const team of yield* allTeams(sql)) {
       if (!team.memberIds.includes(assistantId as never)) continue;
       const memberIds = team.memberIds.filter((id) => id !== assistantId);
-      if (memberIds.length < 2) {
-        yield* sql`DELETE FROM assistant_teams WHERE team_id = ${team.id}`;
-        yield* PubSub.publish(events, { type: "teamRemoved", teamId: team.id });
-        continue;
-      }
       const leaderId = team.leaderId === assistantId ? null : team.leaderId;
       yield* sql`
         UPDATE assistant_teams SET member_ids_json = ${encodeMemberIds(memberIds)},
@@ -838,6 +924,7 @@ const make = Effect.gen(function* () {
           yield* sql`DELETE FROM assistants WHERE assistant_id = ${assistantId}`;
           yield* releaseReports(assistantId);
           yield* leaveTeams(assistantId);
+          yield* files(AssistantAvatars.removeAvatarImages(assistantId));
           yield* connectors
             .purge(assistantId, decodeMcpServers(row.mcp_servers_json))
             .pipe(
@@ -909,7 +996,7 @@ const make = Effect.gen(function* () {
             // A thread can't change projects, so the assistant follows it to the restored one's.
             yield* sql`
               UPDATE assistants SET thread_id = ${restore}, project_id = ${thread.projectId},
-                updated_at = ${yield* nowIso}
+                scope = ${yield* scopeFor(thread.projectId)}, updated_at = ${yield* nowIso}
               WHERE assistant_id = ${row.assistant_id}`;
             yield* followSchedules(row, restore, thread.projectId);
             if (thread.archivedAt !== null) yield* archiveThread(restore, false);
@@ -939,6 +1026,7 @@ const make = Effect.gen(function* () {
     ensureDefault,
     create,
     update,
+    setAvatarImage,
     remove,
     reset,
     teams,

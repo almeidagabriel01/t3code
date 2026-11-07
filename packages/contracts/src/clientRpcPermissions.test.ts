@@ -85,6 +85,7 @@ describe("assistant client guards", () => {
       WS_METHODS.assistantsUpdate,
       WS_METHODS.assistantsDelete,
       WS_METHODS.assistantsReset,
+      WS_METHODS.assistantsSetAvatarImage,
       WS_METHODS.assistantTeamsCreate,
       WS_METHODS.assistantTeamsUpdate,
       WS_METHODS.assistantTeamsDelete,

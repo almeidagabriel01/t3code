@@ -2555,6 +2555,7 @@ export const layerWsRpc = (
         [WS_METHODS.assistantsDelete]: (input) =>
           assistants.remove(input.assistantId).pipe(Effect.as({ assistantId: input.assistantId })),
         [WS_METHODS.assistantsReset]: (input) => assistants.reset(input),
+        [WS_METHODS.assistantsSetAvatarImage]: (input) => assistants.setAvatarImage(input),
         [WS_METHODS.assistantsSpend]: (input) => assistantSpend.read(input.assistantId),
         [WS_METHODS.assistantSandboxSubscribe]: (_input) => sandboxControl.streamStatus,
         [WS_METHODS.assistantSandboxStart]: (_input) => sandboxControl.start,
@@ -3308,6 +3309,7 @@ export const layerWsRpc = (
             if (
               input.resource._tag === "attachment" ||
               input.resource._tag === "native-app-icon" ||
+              input.resource._tag === "assistant-avatar" ||
               input.resource._tag === "tool-output-image" ||
               input.resource._tag === SOURCE_CONTROL_MEDIA_ASSET ||
               // A network path is served only from the thread's project, looked up below.

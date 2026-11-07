@@ -62,6 +62,7 @@ import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import { isWithinRoot } from "../workspace/KnownWorkspaces.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+import { findAvatarFile } from "../assistants/AssistantAvatars.ts";
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import { extractIcnsPng } from "./icns.ts";
@@ -159,6 +160,12 @@ const AssetClaimsSchema = Schema.Union([
     version: Schema.Literal(1),
     kind: Schema.Literal("native-app-icon"),
     app: ToolActivityNativeAppReference,
+    expiresAt: Schema.Number,
+  }),
+  Schema.Struct({
+    version: Schema.Literal(1),
+    kind: Schema.Literal("assistant-avatar"),
+    assistantId: Schema.String,
     expiresAt: Schema.Number,
   }),
   Schema.Struct({
@@ -831,6 +838,16 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       fileName = "native-app-icon.png";
       break;
     }
+    case "assistant-avatar": {
+      claims = {
+        version: 1,
+        kind: "assistant-avatar",
+        assistantId: input.resource.assistantId,
+        expiresAt,
+      };
+      fileName = "avatar";
+      break;
+    }
     case SOURCE_CONTROL_MEDIA_ASSET: {
       const media = sourceControlDefinitions.mediaUrl(input.resource.url);
       if (media === null) {
@@ -975,6 +992,13 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
       Effect.orElseSucceed(() => null),
     );
     return image ? ({ kind: "bytes", ...image } satisfies ResolvedAsset) : null;
+  }
+
+  if (claims.kind === "assistant-avatar") {
+    const avatar = yield* findAvatarFile(claims.assistantId);
+    return avatar === null
+      ? null
+      : ({ kind: "file", path: avatar.path, mimeType: avatar.mimeType } satisfies ResolvedAsset);
   }
 
   if (claims.kind === "native-app-icon") {

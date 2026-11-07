@@ -252,6 +252,9 @@ describe("assistant connectors", () => {
       },
     ]);
     expect(decode({ ...decoded, mcpServers: undefined }).mcpServers).toEqual([]);
+    // Rows from before avatars and scopes: no avatar, everywhere, the legacy icon untouched.
+    expect([decoded.avatar, decoded.scope, decoded.icon]).toEqual([null, "all", null]);
+    expect(decode({ ...decoded, icon: "scout" }).icon).toBe("scout");
   });
 });
 
@@ -259,7 +262,8 @@ describe("assistantTeamProblem", () => {
   it.each([
     ["two members, no leader", { memberIds: ["a", "b"] }, null],
     ["a leader with a title", { memberIds: ["a", "b"], leaderId: "a", leaderTitle: "CEO" }, null],
-    ["one member", { memberIds: ["a"] }, "at least 2"],
+    ["one member", { memberIds: ["a"] }, null],
+    ["no members", { memberIds: [] }, null],
     ["a repeated member", { memberIds: ["a", "a"] }, "twice"],
     ["a leader outside the team", { memberIds: ["a", "b"], leaderId: "c" }, "must be a member"],
     ["a title without a leader", { memberIds: ["a", "b"], leaderTitle: "CEO" }, "needs a leader"],

@@ -795,7 +795,10 @@ const guardThreads = {
   asker: assistantThreadIdFor("asker", 1),
   chatty: assistantThreadIdFor("chatty", 1),
   boxed: assistantThreadIdFor("boxed", 1),
+  scoped: assistantThreadIdFor("scoped", 1),
   plain: ThreadId.make("thread:guard:plain"),
+  /** A conversation in the project the scoped assistant lives in. */
+  sameProject: ThreadId.make("thread:guard:same-project"),
 };
 
 const layerAssistantGuardTest = (dispatched: Array<unknown>) =>
@@ -812,6 +815,12 @@ const layerAssistantGuardTest = (dispatched: Array<unknown>) =>
               modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "test" },
             },
           } as unknown as OrchestrationV2ThreadProjection),
+        getThreadShell: (threadId) =>
+          Effect.succeed({
+            projectId: ProjectId.make(
+              threadId === guardThreads.sameProject ? "project:scoped" : "project:guard",
+            ),
+          } as never),
         dispatch: (command) =>
           Effect.sync(() => {
             dispatched.push(command);
@@ -838,6 +847,10 @@ const layerAssistantGuardTest = (dispatched: Array<unknown>) =>
                     archivedAt: null,
                     askBeforeActing: threadId === guardThreads.asker,
                     workspace: threadId === guardThreads.boxed ? "sandbox" : "host",
+                    scope: threadId === guardThreads.scoped ? "project" : "all",
+                    projectId: ProjectId.make(
+                      threadId === guardThreads.scoped ? "project:scoped" : "project:guard",
+                    ),
                   } as Assistant,
                   current: threadId === guardThreads.current,
                 }),
@@ -1056,6 +1069,36 @@ it.effect.each([
     } else {
       expect(Option.getOrThrow(result)).toMatchObject({
         cause: { message: expect.stringContaining(`environmentId=${refusal}`) },
+      });
+      expect(dispatched).toEqual([]);
+    }
+  }).pipe(Effect.provide(layerAssistantGuardTest(dispatched)));
+});
+
+it.effect.each([
+  ["a project assistant sending into its own project", "sameProject", null],
+  ["a project assistant sending into another project", "plain", "own project"],
+  ["a project assistant messaging another assistant", "current", null],
+  ["an everywhere assistant sending into any project", "plain", null, "current"],
+] as const)("project scope: %s", ([, target, refusal, sender = "scoped"]) => {
+  const dispatched: Array<unknown> = [];
+  return Effect.gen(function* () {
+    const threads = yield* ThreadManagementService.ThreadManagementService;
+    const result = yield* Effect.flip(
+      threads.dispatch({
+        ...asked(guardThreads[target]),
+        senderThreadId: guardThreads[sender],
+      }),
+    ).pipe(
+      Effect.asSome,
+      Effect.orElseSucceed(() => Option.none()),
+    );
+    if (refusal === null) {
+      expect(Option.isNone(result)).toBe(true);
+      expect(dispatched).toHaveLength(1);
+    } else {
+      expect(Option.getOrThrow(result)).toMatchObject({
+        cause: { message: expect.stringContaining(refusal) },
       });
       expect(dispatched).toEqual([]);
     }

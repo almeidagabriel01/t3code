@@ -86,7 +86,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import { AssistantDirectory } from "../assistants/AssistantDirectory.ts";
-import { sandboxRefusal } from "../assistants/AssistantSandboxPolicy.ts";
+import { projectScopeRefusal, sandboxRefusal } from "../assistants/AssistantSandboxPolicy.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import {
   subagentResultForRun,
@@ -1039,6 +1039,20 @@ const make = Effect.gen(function* () {
       localEnvironmentId: scope.environmentId,
       target,
     }).pipe(
+      Effect.flatMap(
+        Option.match({
+          onNone: () => Effect.void,
+          onSome: (message) => Effect.fail(failure("invalid_request", message)),
+        }),
+      ),
+    );
+
+  /** A project assistant starts work only in its own project; another environment's projects are never it. */
+  const refuseOutsideProject = (
+    scope: McpInvocationScope,
+    input: { readonly projectId?: ProjectId | undefined; readonly elsewhere?: boolean },
+  ) =>
+    projectScopeRefusal(assistantDirectory, { threadId: scope.thread?.threadId, ...input }).pipe(
       Effect.flatMap(
         Option.match({
           onNone: () => Effect.void,
@@ -2026,7 +2040,10 @@ const make = Effect.gen(function* () {
         );
       }
       // A task bound to this conversation runs in its read-only session; any other starts a thread here.
-      if (!bindToCurrentThread) yield* refuseOutsideSandbox(scope, undefined);
+      if (!bindToCurrentThread) {
+        yield* refuseOutsideSandbox(scope, undefined);
+        yield* refuseOutsideProject(scope, { projectId });
+      }
       const modelSelection =
         parent?.thread.modelSelection ?? (yield* projectDefaultModelSelection(project));
       const derivedTitle = input.prompt.split("\n")[0]?.trim() ?? "";
@@ -2383,6 +2400,7 @@ const make = Effect.gen(function* () {
           ? undefined
           : PeerForwarding.remoteTarget(callerScope, input.target.environmentId);
       yield* refuseOutsideSandbox(callerScope, environmentId);
+      yield* refuseOutsideProject(callerScope, { elsewhere: environmentId !== undefined });
       if (input.target !== undefined && environmentId !== undefined) {
         yield* requireCapability(callerScope);
         const scope = yield* requireThreadScope(callerScope, "delegate_task");

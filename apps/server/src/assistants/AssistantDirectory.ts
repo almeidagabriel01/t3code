@@ -1,6 +1,7 @@
 import {
   type Assistant,
   type AssistantId,
+  AssistantAvatar,
   AssistantMcpServer,
   type AssistantTeam,
   type AssistantToolAccess,
@@ -48,6 +49,9 @@ export interface AssistantRow {
   readonly ask_before_acting: number;
   readonly workspace: string;
   readonly icon: string | null;
+  readonly avatar_json: string | null;
+  /** "project" when it lives in a real project; null until the service has worked it out. */
+  readonly scope: string | null;
   readonly mcp_servers_json: string | null;
   readonly created_at: string;
   readonly updated_at: string;
@@ -58,6 +62,11 @@ const BudgetJson = Schema.fromJsonString(ProviderBudget);
 const decodeBudgetOption = Schema.decodeOption(BudgetJson);
 const decodeBudget = (json: string) => Option.getOrNull(decodeBudgetOption(json));
 export const encodeBudget = Schema.encodeSync(BudgetJson);
+
+const AvatarJson = Schema.fromJsonString(AssistantAvatar);
+// A kind written by a newer version decodes to no avatar, which shows the handle's robot.
+const decodeAvatarOption = Schema.decodeOption(AvatarJson);
+export const encodeAvatar = Schema.encodeSync(AvatarJson);
 
 const AutonomyJson = Schema.fromJsonString(AssistantAutonomy);
 // A row that no longer decodes falls back to "only answers", the safe default.
@@ -93,6 +102,8 @@ export const toAssistant = (row: AssistantRow): Assistant => ({
   askBeforeActing: row.ask_before_acting === 1,
   workspace: (row.workspace === "sandbox" ? "sandbox" : "host") satisfies AssistantWorkspace,
   icon: row.icon,
+  avatar: row.avatar_json === null ? null : Option.getOrNull(decodeAvatarOption(row.avatar_json)),
+  scope: row.scope === "project" ? "project" : "all",
   mcpServers: decodeMcpServers(row.mcp_servers_json),
   budget: row.budget_json === null ? null : decodeBudget(row.budget_json),
   autonomy:

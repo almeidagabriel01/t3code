@@ -187,6 +187,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.assistantsUpdate]: AuthOrchestrationOperateScope,
   [WS_METHODS.assistantsDelete]: AuthOrchestrationOperateScope,
   [WS_METHODS.assistantsReset]: AuthOrchestrationOperateScope,
+  [WS_METHODS.assistantsSetAvatarImage]: AuthOrchestrationOperateScope,
   [WS_METHODS.assistantTeamsCreate]: AuthOrchestrationOperateScope,
   [WS_METHODS.assistantTeamsUpdate]: AuthOrchestrationOperateScope,
   [WS_METHODS.assistantTeamsDelete]: AuthOrchestrationOperateScope,

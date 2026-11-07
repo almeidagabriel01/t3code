@@ -7,6 +7,7 @@ import {
   ProviderInteractionMode,
   RuntimeMode,
   ThreadId,
+  ProjectId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
@@ -509,8 +510,17 @@ it.effect("refuses a linked environment to a tool that acts as its calling threa
   }),
 );
 
-const LaunchProbeToolkit = Toolkit.make(Tool.make("t3_thread_launch", linkedProbe));
-const launchServer = (sandbox: Option.Option<EnvironmentId>) =>
+const LaunchProbeToolkit = Toolkit.make(
+  Tool.make("t3_thread_launch", {
+    ...linkedProbe,
+    parameters: Schema.Struct({
+      ...linkedProbe.parameters.fields,
+      projectId: Schema.optional(ProjectId),
+      scratch: Schema.optional(Schema.Boolean),
+    }),
+  }),
+);
+const launchServer = (sandbox: Option.Option<EnvironmentId>, scope: "all" | "project" = "all") =>
   McpHttpServer.toolkitRegistration(
     LaunchProbeToolkit,
     McpToolAccess.toLayer(LaunchProbeToolkit, {
@@ -538,6 +548,8 @@ const launchServer = (sandbox: Option.Option<EnvironmentId>) =>
               ? Option.some({
                   assistant: {
                     workspace: threadId === fullAccessThreadId ? "sandbox" : "host",
+                    scope,
+                    projectId: ProjectId.make("project-a"),
                   } as never,
                   current: true,
                 })
@@ -596,5 +608,25 @@ it.effect.each([
   call("t3_thread_launch", scope, args).pipe(
     Effect.map((outcome) => expect(outcome).toBe(expected)),
     Effect.provide(launchServer(sandbox)),
+  ),
+);
+
+it.effect.each([
+  ["a project assistant launching in its own project", {}, "here"],
+  ["... naming its own project", { projectId: ProjectId.make("project-a") }, "here"],
+  ["... naming another project", { projectId: ProjectId.make("project-b") }, "invalid_request"],
+  ["... asking for scratch", { scratch: true }, "invalid_request"],
+  ["... naming another environment", { environmentId: other }, "invalid_request"],
+] as const)("project scope: %s", ([, args, expected]) =>
+  call("t3_thread_launch", supervised, args).pipe(
+    Effect.map((outcome) => expect(outcome).toBe(expected)),
+    Effect.provide(launchServer(Option.none(), "project")),
+  ),
+);
+
+it.effect("project scope: an assistant for every project may launch in any", () =>
+  call("t3_thread_launch", supervised, { projectId: ProjectId.make("project-b") }).pipe(
+    Effect.map((outcome) => expect(outcome).toBe("here")),
+    Effect.provide(launchServer(Option.none(), "all")),
   ),
 );

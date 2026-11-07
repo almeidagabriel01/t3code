@@ -1,4 +1,5 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   type AssistantError,
@@ -26,6 +27,11 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
+import * as ServerConfig from "../config.ts";
+import { createPendingAttachmentId } from "../attachmentStore.ts";
+import * as AssistantAvatars from "./AssistantAvatars.ts";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as AssistantConnectors from "./AssistantConnectors.ts";
@@ -120,6 +126,7 @@ const harness = () => {
     }),
     Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
       ensureAssistantProject: Effect.succeed({ projectId: scratch }),
+      isAssistantHomeProject: (projectId) => Effect.succeed(projectId === scratch),
       namedProjectsRoot: "",
     }),
     Layer.mock(ScheduledTaskService.ScheduledTaskService)({
@@ -148,6 +155,10 @@ const harness = () => {
   );
   const base = Layer.mergeAll(
     NodeCrypto.layer,
+    NodeServices.layer,
+    ServerConfig.ServerConfig.layerTest(process.cwd(), { prefix: "assistants-test-" }).pipe(
+      Layer.provide(NodeServices.layer),
+    ),
     ServerSettings.layerTest(),
     SqlitePersistence.layerMemory,
   );
@@ -981,10 +992,12 @@ it.effect("teams: validation, leader rules, deletion cleanup and member-to-membe
         Effect.map((error) => error.message),
       );
 
-    assert.include(
-      yield* refused(assistants.createTeam({ name: "Solo", memberIds: [ana.id] })),
-      "at least 2",
-    );
+    // A group can start empty or with one member; it still needs a name and real members.
+    const empty = yield* assistants.createTeam({ name: "Empty", memberIds: [] });
+    const solo = yield* assistants.createTeam({ name: "Solo", memberIds: [ana.id] });
+    assert.deepEqual([empty.memberIds, solo.memberIds], [[], [ana.id]]);
+    yield* assistants.removeTeam(empty.id);
+    yield* assistants.removeTeam(solo.id);
     assert.include(
       yield* refused(
         assistants.createTeam({ name: "T", memberIds: [ana.id, bob.id], leaderId: cy.id }),
@@ -1083,7 +1096,7 @@ it.effect("teams: validation, leader rules, deletion cleanup and member-to-membe
     const long = (yield* assistants.teamActivity(team.id)).messages.at(-1)!;
     assert.deepEqual([long.text.length, long.truncated], [4000, true]);
 
-    // Deleting a member removes it; the leader slot empties; below two members the team ends.
+    // Deleting a member removes it; the leader slot empties; the group stays even when one is left.
     yield* assistants.update({ assistantId: dee.id, archived: false });
     yield* assistants.remove(bob.id);
     const left = (yield* assistants.teams)[0]!;
@@ -1092,13 +1105,135 @@ it.effect("teams: validation, leader rules, deletion cleanup and member-to-membe
       [[ana.id, cy.id], null, null],
     );
     yield* assistants.remove(cy.id);
-    assert.deepEqual(yield* assistants.teams, []);
+    assert.deepEqual(
+      (yield* assistants.teams).map((kept) => kept.memberIds),
+      [[ana.id]],
+    );
+    yield* assistants.remove(ana.id);
+    assert.deepEqual(
+      (yield* assistants.teams).map((kept) => kept.memberIds),
+      [[]],
+    );
+    yield* assistants.removeTeam(team.id);
     assert.equal((yield* assistants.removeTeam(team.id).pipe(Effect.flip)).reason, "not_found");
     const another = yield* assistants.createTeam({
       name: "Two",
-      memberIds: [ana.id, (yield* make("Eve")).id],
+      memberIds: [dee.id, (yield* make("Eve")).id],
     });
     yield* assistants.removeTeam(another.id);
     assert.deepEqual(yield* assistants.teams, []);
   }).pipe(Effect.provide(layer));
 });
+
+it.effect(
+  "scope follows the project: home projects are for everyone, a real project is its own",
+  () => {
+    const { layer } = harness();
+    return Effect.gen(function* () {
+      const assistants = yield* Assistants.AssistantService;
+      const everywhere = yield* assistants.create(create({ name: "Home", projectId: scratch }));
+      const scoped = yield* assistants.create(create({ name: "Repo" }));
+      assert.deepEqual([everywhere.scope, scoped.scope], ["all", "project"]);
+      assert.equal(
+        (yield* assistants.update({ assistantId: scoped.id, projectId: scratch })).scope,
+        "all",
+      );
+      assert.equal(
+        (yield* assistants.update({ assistantId: scoped.id, projectId: repo })).scope,
+        "project",
+      );
+      // A row from before scopes existed is worked out on the next read.
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`UPDATE assistants SET scope = NULL WHERE assistant_id = ${scoped.id}`;
+      const listed = yield* assistants.list;
+      assert.equal(listed.find((one) => one.id === scoped.id)?.scope, "project");
+    }).pipe(Effect.provide(layer));
+  },
+);
+
+it.effect(
+  "create with an id is idempotent; without avatar or icon an old row still decodes",
+  () => {
+    const { layer, launched } = harness();
+    return Effect.gen(function* () {
+      const assistants = yield* Assistants.AssistantService;
+      const first = yield* assistants.create(create(), { id: "mcp-fixed" });
+      const again = yield* assistants.create(create(), { id: "mcp-fixed" });
+      assert.deepEqual([first.id, again.id], ["mcp-fixed", "mcp-fixed"]);
+      assert.lengthOf(launched, 1);
+      assert.deepEqual([first.avatar, first.icon], [null, null]);
+      const team = yield* assistants.createTeam({ name: "G", memberIds: [] }, { id: "team-fixed" });
+      const teamAgain = yield* assistants.createTeam(
+        { name: "G", memberIds: [] },
+        { id: "team-fixed" },
+      );
+      assert.equal(team.id, teamAgain.id);
+      assert.lengthOf(yield* assistants.teams, 1);
+      // An avatar written by a newer version decodes to none instead of hiding the assistant.
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`UPDATE assistants SET avatar_json = '{"kind":"hologram"}' WHERE assistant_id = 'mcp-fixed'`;
+      assert.isNull((yield* assistants.list).find((one) => one.id === "mcp-fixed")?.avatar);
+    }).pipe(Effect.provide(layer));
+  },
+);
+
+const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
+
+it.effect(
+  "avatar: robot set and clear, image upload checked by bytes and size, then cleared",
+  () => {
+    const { layer } = harness();
+    return Effect.gen(function* () {
+      const assistants = yield* Assistants.AssistantService;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const config = yield* ServerConfig.ServerConfig;
+      const made = yield* assistants.create(
+        create({ avatar: { kind: "robot", hue: 200, variant: 2 } }),
+      );
+      assert.deepEqual(made.avatar, { kind: "robot", hue: 200, variant: 2 });
+
+      yield* fileSystem.makeDirectory(config.attachmentsDir, { recursive: true });
+      const upload = (bytes: Uint8Array) =>
+        Effect.gen(function* () {
+          const id = createPendingAttachmentId("png");
+          yield* fileSystem.writeFile(path.join(config.attachmentsDir, `${id}.png`), bytes);
+          return id;
+        });
+      const refused = (attachmentId: string) =>
+        assistants.setAvatarImage({ assistantId: made.id, attachmentId }).pipe(
+          Effect.flip,
+          Effect.map((error) => error.message),
+        );
+
+      assert.include(
+        yield* refused(yield* upload(new TextEncoder().encode("<svg/>"))),
+        "PNG, JPEG or WebP",
+      );
+      assert.include(
+        yield* refused(yield* upload(new Uint8Array(2 * 1024 * 1024 + 1).fill(1))),
+        "larger",
+      );
+      assert.include(yield* refused("chat-thread-attachment"), "Upload the image first");
+      assert.include(yield* refused("pending-00000000-0000-0000-0000-000000000000-png"), "gone");
+
+      const set = yield* assistants.setAvatarImage({
+        assistantId: made.id,
+        attachmentId: yield* upload(PNG),
+      });
+      assert.equal(set.avatar?.kind, "image");
+      const stored = yield* AssistantAvatars.findAvatarFile(made.id);
+      assert.equal(stored?.mimeType, "image/png");
+      assert.deepEqual(Array.from(yield* fileSystem.readFile(stored!.path)), Array.from(PNG));
+
+      const cleared = yield* assistants.update({ assistantId: made.id, avatar: null });
+      assert.isNull(cleared.avatar);
+      assert.isNull(yield* AssistantAvatars.findAvatarFile(made.id));
+
+      // Deleting the assistant removes a stored image too.
+      yield* assistants.setAvatarImage({ assistantId: made.id, attachmentId: yield* upload(PNG) });
+      yield* assistants.remove(made.id);
+      assert.isNull(yield* AssistantAvatars.findAvatarFile(made.id));
+    }).pipe(Effect.provide(layer));
+  },
+);
