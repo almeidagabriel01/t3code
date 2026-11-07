@@ -36,8 +36,9 @@ function avatarFileProblem(file: File): string | null {
   return null;
 }
 
+// The tile is one padding wider than the robot, so the inset outline frames it without covering it.
 const TILE_CLASS =
-  "inline-flex size-10 cursor-pointer items-center justify-center rounded-xl outline-none hover:opacity-85 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring data-checked:outline-2 data-checked:-outline-offset-2 data-checked:outline-primary";
+  "inline-flex size-12 cursor-pointer items-center justify-center rounded-2xl p-1 outline-none hover:bg-foreground/8 focus-visible:outline-solid focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring data-checked:outline-solid data-checked:outline-2 data-checked:-outline-offset-2 data-checked:outline-primary";
 
 /** Eight robot colors, a shuffle for the robot's shape, or the user's own picture. */
 export function AssistantAvatarPicker(props: {
@@ -71,7 +72,7 @@ export function AssistantAvatarPicker(props: {
       <div className="flex flex-wrap items-center gap-2">
         <RadioGroup
           aria-label="Avatar color"
-          className="flex flex-wrap gap-2"
+          className="flex flex-wrap gap-1"
           value={robotSelected ? String(value.hue) : ""}
           onValueChange={(next) => {
             setProblem(null);
@@ -110,7 +111,7 @@ export function AssistantAvatarPicker(props: {
           <>
             <span
               data-avatar-image-preview=""
-              className="inline-flex size-10 rounded-xl outline-2 -outline-offset-2 outline-primary"
+              className="inline-flex size-12 rounded-2xl p-1 outline-solid outline-2 -outline-offset-2 outline-primary"
             >
               {value.image.kind === "file" ? (
                 <img
