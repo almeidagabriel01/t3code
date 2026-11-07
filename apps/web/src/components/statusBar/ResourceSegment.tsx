@@ -116,31 +116,39 @@ const SCOPE_HINT: Record<"mac" | "t3", string> = {
 function FigureRow({
   scope,
   label,
+  detail,
   cpuPercent,
   memory,
 }: {
   readonly scope: "mac" | "t3";
   readonly label: string;
+  readonly detail?: string;
   readonly cpuPercent: number | null;
   readonly memory: string;
 }) {
   return (
-    <div className="flex items-baseline gap-3 px-3 py-0.5 text-xs tabular-nums">
+    <div className="flex items-center justify-between px-3 py-0.5 text-xs tabular-nums">
       <Tooltip>
         <TooltipTrigger
-          render={<span className="w-8 shrink-0 cursor-default font-medium text-foreground" />}
+          render={<span className="min-w-0 cursor-default truncate font-medium text-foreground" />}
         >
           {label}
+          {detail === undefined ? null : (
+            <span className="font-normal text-muted-foreground"> · {detail}</span>
+          )}
         </TooltipTrigger>
         <TooltipPopup side="bottom" className="max-w-xs">
           {SCOPE_HINT[scope]} {CPU_SCALE_HINT}
         </TooltipPopup>
       </Tooltip>
-      <span className="w-20 text-foreground">
-        {cpuPercent === null ? "--" : formatCpu(cpuPercent)}{" "}
-        <span className="text-muted-foreground">CPU</span>
-      </span>
-      <span className="text-foreground">{memory}</span>
+      {/* Same columns as the process table below, so the figures read down its CPU and Memory. */}
+      <div className="flex items-center gap-2">
+        <div className={cn(METRICS, "text-foreground")}>
+          <span className={CPU_COLUMN}>{cpuPercent === null ? "--" : formatCpu(cpuPercent)}</span>
+          <span className={MEM_COLUMN}>{memory}</span>
+        </div>
+        <span className={GUTTER} aria-hidden />
+      </div>
     </div>
   );
 }
@@ -165,7 +173,8 @@ function ResourceFigures({
           scope="mac"
           label="Mac"
           cpuPercent={macCpu}
-          memory={`${formatMemory(host.totalMemoryBytes - host.availableMemoryBytes)} / ${formatMemory(host.totalMemoryBytes)}`}
+          detail={`${formatMemory(host.totalMemoryBytes)} total`}
+          memory={formatMemory(host.totalMemoryBytes - host.availableMemoryBytes)}
         />
       )}
       {t3 === null ? null : (

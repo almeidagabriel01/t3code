@@ -66,6 +66,7 @@ const proc = (
   }) as unknown as ResourceTelemetryProcess;
 
 const snapshot = {
+  groups: { allT3: { currentCpuPercent: 1, currentRssBytes: 6_000_000, processCount: 3 } },
   processes: [
     proc(10, [], 1_000_000),
     proc(20, [21], 2_000_000),
@@ -186,12 +187,13 @@ describe("EnvironmentSection", () => {
       <EnvironmentSection {...props} snapshot={busy} sort="memory" label={null} />,
       { router: "/" },
     );
-    await expect.element(screen.getByText("Mac", { exact: true })).toBeVisible();
+    await expect.element(screen.getByText(/^Mac/)).toBeVisible();
     await expect.element(screen.getByText("T3", { exact: true })).toBeVisible();
     const text = screen.container.textContent ?? "";
-    expect(text).toContain("40% CPU");
-    expect(text).toContain("12.0 GB / 16.0 GB");
-    expect(text).not.toContain("50% CPU");
+    expect(text).toContain("16.00 GB total");
+    expect(text).toContain("12.00 GB");
+    expect(text.match(/40%/g)).toHaveLength(2);
+    expect(text).not.toContain("50%");
     expect(text).not.toContain("Host");
     expect(text).not.toContain("free of");
   });
