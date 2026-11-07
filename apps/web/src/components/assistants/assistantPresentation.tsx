@@ -7,7 +7,9 @@ import {
   assistantIconFor,
 } from "@t3tools/client-runtime/assistantIcons";
 import { assistantAccent, assistantInitial } from "@t3tools/client-runtime/assistantPresence";
+import { assistantRobotLook, type AssistantMood } from "@t3tools/client-runtime/assistantRobot";
 import { cn } from "~/lib/utils";
+import { AssistantRobot } from "./AssistantRobot";
 
 export const TOOL_ACCESS_OPTIONS: ReadonlyArray<{
   readonly value: AssistantToolAccess;
@@ -65,33 +67,40 @@ export function AssistantIconGlyph(props: {
   );
 }
 
-function hueOf(handle: string): number {
-  let hash = 0;
-  for (const char of handle) hash = (hash * 31 + char.codePointAt(0)!) % 360;
-  return hash;
-}
-
-/** The assistant's initial on a tint taken from its handle, so each reads as itself. */
+/**
+ * The assistant's robot, or the icon it chose before robots existed. The face follows `mood`, so a
+ * row shows at a glance whether it works, waits on the user or failed.
+ */
 export function AssistantAvatar(props: {
-  readonly assistant: Pick<Assistant, "name" | "handle" | "icon">;
+  readonly assistant: Pick<Assistant, "id" | "avatar" | "icon">;
+  readonly mood?: AssistantMood;
   readonly className?: string;
 }) {
-  const hue = hueOf(props.assistant.handle);
+  const { assistant } = props;
+  if (assistant.avatar === null && assistantIconFor(assistant.icon) !== null) {
+    const hue = assistantRobotLook(assistant).hue;
+    return (
+      <span
+        aria-hidden
+        className={cn(
+          "inline-flex size-5 shrink-0 items-center justify-center rounded-full",
+          props.className,
+        )}
+        style={{
+          backgroundColor: `oklch(0.72 0.12 ${hue} / 0.28)`,
+          color: `light-dark(oklch(0.45 0.15 ${hue}), oklch(0.84 0.11 ${hue}))`,
+        }}
+      >
+        <AssistantIconGlyph icon={assistant.icon} />
+      </span>
+    );
+  }
   return (
-    <span
-      aria-hidden
-      className={cn(
-        "inline-flex size-5 shrink-0 items-center justify-center rounded-full text-2xs leading-none font-semibold",
-        props.className,
-      )}
-      style={{
-        backgroundColor: `oklch(0.72 0.12 ${hue} / 0.28)`,
-        color: `light-dark(oklch(0.45 0.15 ${hue}), oklch(0.84 0.11 ${hue}))`,
-      }}
-    >
-      <AssistantIconGlyph icon={props.assistant.icon} />
-      {assistantIconFor(props.assistant.icon) ? null : assistantInitial(props.assistant.name)}
-    </span>
+    <AssistantRobot
+      look={assistantRobotLook(assistant)}
+      {...(props.mood === undefined ? {} : { mood: props.mood })}
+      className={cn("size-5", props.className)}
+    />
   );
 }
 

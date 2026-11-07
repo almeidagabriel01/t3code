@@ -275,6 +275,10 @@
       "types": "./src/assistantIcons.ts",
       "default": "./src/assistantIcons.ts"
     },
+    "./assistantRobot": {
+      "types": "./src/assistantRobot.ts",
+      "default": "./src/assistantRobot.ts"
+    },
     "./assistantPresence": {
       "types": "./src/assistantPresence.ts",
       "default": "./src/assistantPresence.ts"
