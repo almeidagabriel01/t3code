@@ -85,6 +85,19 @@ sidebar before anyone joins it. Deleting an assistant, or removing it from the m
 lead when it was that member; archiving leaves membership alone. `ensureForkSchema` renames the old
 `leader_id` column to `lead_id` and drops `leader_title` and `assistants.reports_to`.
 
+## Requests between assistants never block
+
+A `t3_thread_send` from one assistant thread to another is a request: it queues (never steers, so the
+run's `userMessageId` is the request) and carries a header naming the asker. `assistant_requests`
+keys it by that message id. The recipient answers with `replyTo` set to the id; the server claims the
+row once (`AssistantRequests.claimReply`) and queues the reply to the asker, which starts a run there.
+Reply ids derive from the request id, so a repeat lands once, and a reply is never itself a request.
+A reply skips the sender-mode ceiling because the asker opted in. `AssistantRequestReactor` turns a
+failed, cancelled or interrupted recipient run into an automatic "Status: blocked" reply; a delivery
+failure is the sender's own tool error. Without a `clientRequestId` the key follows the target and
+text, so an identical send within one session repeats the same request. A request goes to one
+assistant; there are no grouped replies. Shells carry `queuedMessageCount` for the row badge.
+
 ## Instructions ride every turn
 
 `assistantNote` prepends `<t3_assistant …>` to every prompt, like the side-chat note. Sending it once

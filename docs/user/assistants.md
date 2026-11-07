@@ -113,8 +113,11 @@ takes effect.
 
 Assistants don't talk to each other on their own. Ask one to consult another, for example "ask my
 researcher assistant for the three most cited papers and summarize them". It finds that assistant
-with the `t3_assistant` tool, messages its conversation, and waits for the reply. Any agent can do
-this, not only assistants.
+with the `t3_assistant` tool and messages its conversation. Between assistants nothing blocks: the
+asker sends and ends its turn, and the answer arrives later as a new message that wakes it. If the
+other assistant's run fails or is cancelled before it answers, the asker gets a "Status: blocked"
+message instead of silence. Messages waiting behind an assistant's active run show as "3 queued" on
+its row.
 
 ## Groups
 
