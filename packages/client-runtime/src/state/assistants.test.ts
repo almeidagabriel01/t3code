@@ -28,6 +28,8 @@ const assistant = (id: string, overrides: Partial<Assistant> = {}): Assistant =>
   askBeforeActing: false,
   workspace: "host",
   icon: null,
+  avatar: null,
+  scope: "all",
   mcpServers: [],
   isDefault: false,
   threadId: `assistant:${id}:1` as ThreadId,

@@ -68,6 +68,8 @@ const assistant = (id: string, name: string): Assistant => ({
   askBeforeActing: false,
   workspace: "host",
   icon: null,
+  avatar: null,
+  scope: "all",
   mcpServers: [],
   autonomy: { mode: "reply-only", rules: null, projectIds: null, channels: null },
   archivedAt: null,
@@ -119,7 +121,8 @@ it("creates a team with members, a leader and its title", async () => {
   // The title field only exists once there is a leader.
   expect(page.getByLabelText("Leader title").query()).toBeNull();
   await userEvent.click(page.getByRole("checkbox", { name: "Ana" }));
-  await expect.element(page.getByRole("button", { name: "Create team" })).toBeDisabled();
+  // A group may start with a single member.
+  await expect.element(page.getByRole("button", { name: "Create team" })).toBeEnabled();
   await userEvent.click(page.getByRole("checkbox", { name: "Bob" }));
   await userEvent.click(page.getByRole("combobox", { name: "Leader" }));
   await userEvent.click(page.getByRole("option", { name: "Bob" }));

@@ -85,6 +85,8 @@ const assistant = (id: string, name: string, overrides: Partial<Assistant> = {})
   askBeforeActing: false,
   workspace: "host",
   icon: null,
+  avatar: null,
+  scope: "all",
   mcpServers: [],
   autonomy: { mode: "reply-only", rules: null, projectIds: null, channels: null },
   archivedAt: null,
