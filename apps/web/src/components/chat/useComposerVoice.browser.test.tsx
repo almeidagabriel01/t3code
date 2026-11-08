@@ -226,14 +226,15 @@ it("stops and asks to check the input when no sound arrives", async () => {
   using _timers = fakeTimers();
   await userEvent.click(dictate());
   await expect.element(page.getByRole("status")).toBeVisible();
-  // The first window lets preparation finish; the no-sound deadline is armed inside it.
-  for (const _window of [0, 1]) {
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(4_000);
-    });
-  }
-  await vi.waitFor(() =>
-    expect(document.body.textContent).toContain("No sound is reaching T3 Code"),
+  // Preparation finishes in real time, then arms the no-sound deadline on the fake clock.
+  await vi.waitFor(
+    async () => {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_000);
+      });
+      expect(document.body.textContent).toContain("No sound is reaching T3 Code");
+    },
+    { timeout: 10_000 },
   );
   await expect.element(message()).toHaveValue("Hello");
 });

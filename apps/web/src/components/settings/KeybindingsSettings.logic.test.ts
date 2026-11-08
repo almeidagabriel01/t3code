@@ -9,6 +9,7 @@ import { resolveShortcutCommand } from "../../keybindings";
 
 import {
   buildKeybindingRows,
+  commandLabel,
   keybindingConflictLabels,
   keybindingFromKeyboardEvent,
   parseWhenExpressionDraft,
@@ -35,6 +36,10 @@ describe("KeybindingsSettings.logic", () => {
     expect(after.find((row) => row.command === "chat.new")?.id).not.toBe(
       before.find((row) => row.command === "chat.new")?.id,
     );
+  });
+
+  it("names the dictation command for the Keybindings list", () => {
+    expect(commandLabel("composer.dictate")).toBe("Composer: Dictate or Insert Dictated Text");
   });
 
   it("shares a stable editor for resolved duplicates but separates commands, shortcuts, and conditions", () => {
