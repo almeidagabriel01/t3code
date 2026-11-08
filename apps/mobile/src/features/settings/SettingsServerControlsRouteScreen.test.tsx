@@ -127,6 +127,18 @@ vi.mock("./components/KeepAwakeSection", () => ({
     />
   ),
 }));
+vi.mock("./components/WorktreeSnapshotsSection", () => ({
+  WorktreeSnapshotsSection: (props: {
+    value: number | null | undefined;
+    onChange: (days: number | null) => void;
+  }) => (
+    <button
+      aria-label="worktree snapshots"
+      data-value={String(props.value)}
+      onClick={() => props.onChange(7)}
+    />
+  ),
+}));
 vi.mock("./components/HeavyQueueSection", () => ({
   HeavyQueueSection: (props: { environmentId: string }) => (
     <i aria-label="heavy queue" data-env={props.environmentId} />
@@ -253,6 +265,35 @@ describe("SettingsServerControlsRouteScreen", () => {
       environmentId: "local",
       input: { patch: { keepAwake: "always" } },
     });
+  });
+
+  it("saves the snapshot retention picked on the Maintenance page", () => {
+    act(() => root.render(<SettingsEnvironmentMaintenanceRouteScreen />));
+    const section = () =>
+      container.querySelector<HTMLButtonElement>('[aria-label="worktree snapshots"]')!;
+    expect(section().dataset.value).toBe("30");
+    act(() => section().click());
+    expect(mocks.updateSettings).toHaveBeenCalledWith({
+      environmentId: "local",
+      input: { patch: { storageCleanup: { worktreeSnapshotsAfterDays: 7 } } },
+    });
+  });
+
+  it("selects no snapshot retention when machines differ", () => {
+    const remote = environment("remote", "Remote");
+    remote.serverConfig.settings = {
+      ...remote.serverConfig.settings,
+      storageCleanup: {
+        ...remote.serverConfig.settings.storageCleanup,
+        worktreeSnapshotsAfterDays: null,
+      },
+    };
+    mocks.targets = [environment("local", "Local"), remote];
+    act(() => root.render(<SettingsEnvironmentMaintenanceRouteScreen />));
+    expect(
+      container.querySelector<HTMLButtonElement>('[aria-label="worktree snapshots"]')!.dataset
+        .value,
+    ).toBe("undefined");
   });
 
   it("disables auto-settle when a selected environment cannot save settings", () => {
