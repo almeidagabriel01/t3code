@@ -9,6 +9,8 @@ import * as HttpApiSchema from "effect/http-api/HttpApiSchema";
 import * as HttpServerRespondable from "effect/http/HttpServerRespondable";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
+import * as Voice from "./voice.ts";
+export * from "./voice.ts";
 import {
   AuthAccessTokenResult,
   AuthBrowserSessionRequest,
@@ -837,6 +839,35 @@ class EnvironmentWebhooksHttpApi extends HttpApiGroup.make("webhooks")
   .add(HttpApiEndpoint.patch("webhookPatch", WEBHOOK_PATH, webhookEndpoint))
   .add(HttpApiEndpoint.get("webhookGet", WEBHOOK_PATH, webhookEndpoint)) {}
 
+const EnvironmentVoiceHttpErrors = [
+  ...EnvironmentScopedOperationErrors,
+  EnvironmentHttpForbiddenError,
+  ...Voice.VoiceHttpErrors,
+] as const;
+const voiceEndpoint = <P extends Schema.Top, S extends Schema.Top>(payload: P, success: S) => ({
+  headers: OptionalBearerHeaders,
+  payload,
+  success,
+  error: EnvironmentVoiceHttpErrors,
+});
+
+class EnvironmentVoiceHttpApi extends HttpApiGroup.make("voice")
+  .add(
+    HttpApiEndpoint.post(
+      "transcribe",
+      Voice.VOICE_TRANSCRIBE_PATH,
+      voiceEndpoint(Voice.VoiceTranscriptionInput, Voice.VoiceTranscriptionResult),
+    ),
+  )
+  .add(
+    HttpApiEndpoint.post(
+      "prewarm",
+      Voice.VOICE_PREWARM_PATH,
+      voiceEndpoint(Voice.VoicePrewarmInput, Voice.VoicePrewarmResult),
+    ),
+  )
+  .middleware(EnvironmentAuthenticatedAuth) {}
+
 export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentMetadataHttpApi)
   .add(EnvironmentAuthHttpApi)
@@ -845,4 +876,5 @@ export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentPullRequestsHttpApi)
   .add(EnvironmentProjectsHttpApi)
   .add(EnvironmentConnectHttpApi)
-  .add(EnvironmentWebhooksHttpApi) {}
+  .add(EnvironmentWebhooksHttpApi)
+  .add(EnvironmentVoiceHttpApi) {}

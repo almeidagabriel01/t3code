@@ -206,6 +206,9 @@ import {
 } from "./ComposerAttachmentStrip";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { ComposerFooterPrimaryActions } from "./ComposerFooterControls";
+import { ComposerVoiceButton } from "./ComposerVoiceButton";
+import { ComposerVoiceError, ComposerVoiceRecorderBar } from "./ComposerVoiceRecorderBar";
+import { useComposerVoice } from "./useComposerVoice";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { ThreadDecisionBanner } from "../decisions/ThreadDecisionBanner";
 import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
@@ -2090,12 +2093,45 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     return showPlanFollowUpPrompt || composerSendState.hasSendableContent;
   };
 
+  const voice = useComposerVoice({
+    environmentId,
+    threadId: activeThreadId,
+    providerInstanceId: selectedInstanceId,
+    ownerKey: composerDraftTargetKey,
+    enabled:
+      canOperateThread &&
+      !isSendBusy &&
+      !isPreparingWorktree &&
+      environmentUnavailable === null &&
+      !noProviderAvailable &&
+      !projectSelectionRequired &&
+      pendingUserInputs.length === 0 &&
+      activePendingApproval === null &&
+      !isEditingQueuedMessage,
+    readDraft: () => {
+      const text = promptRef.current;
+      return {
+        text,
+        selection: composerEditorRef.current?.readSelectionRange() ?? {
+          start: text.length,
+          end: text.length,
+        },
+      };
+    },
+    commitDraft: (text, selection) => {
+      applyPromptReplacementStable(0, promptRef.current.length, text, {
+        expandedCursorAfterReplace: selection.end,
+      });
+    },
+    subscribeDraft: useComposerDraftStore.subscribe,
+  });
   const submitComposer = (
     event?: { preventDefault: () => void },
     dispatchMode?: ComposerDispatchMode,
     submissionIntent?: ComposerSubmissionIntent,
   ) => {
     if (
+      voice.blocksSubmission() ||
       noProviderAvailable ||
       isSendDisabled ||
       !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)
@@ -3501,8 +3537,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             <ComposerPromptLengthValidation
               message={providerInputSubmissionError ?? composerSubmissionError}
             />
+            <ComposerVoiceError voice={voice} />
 
-            {isComposerCollapsedMobile ? null : (
+            {voice.isActive ? (
+              <div className="px-3 pb-2 sm:px-4">
+                <ComposerVoiceRecorderBar
+                  voice={voice}
+                  disabled={isSendDisabled}
+                  onSend={() => void voice.send(submitComposerStable)}
+                />
+              </div>
+            ) : null}
+            {isComposerCollapsedMobile || voice.isActive ? null : (
               <div
                 data-chat-composer-footer="true"
                 className={cn(
@@ -3528,6 +3574,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   >
                     {composerControls}
                   </div>
+                  <ComposerVoiceButton {...voice.voiceControl} />
                   <ComposerFooterPrimaryActions
                     compact={isComposerPrimaryActionsCompact}
                     canOperateThread={canOperateThread}

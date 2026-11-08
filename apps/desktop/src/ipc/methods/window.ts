@@ -3,6 +3,7 @@ import {
   DesktopAppBrandingSchema,
   DesktopEnvironmentBootstrapSchema,
   DesktopMediaReadSchema,
+  DesktopMicrophoneAccessSchema,
   DesktopThemeSchema,
   EDITORS,
   EditorId,
@@ -40,6 +41,7 @@ import * as ElectronTheme from "../../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as Electron from "electron";
 import * as MacPermissions from "../../permissions/MacPermissions.ts";
+import { resolveMicrophoneAccess } from "../../permissions/MicrophoneAccess.ts";
 import { safariPermissionCheck } from "../../preview/BrowserImport/SafariPermission.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
@@ -363,7 +365,8 @@ export const openSystemSettings = DesktopIpc.makeIpcMethod({
     if (environment.platform !== "darwin") return false;
     const owner = Electron.BrowserWindow.getFocusedWindow();
     const opened = yield* shell.openSystemSettings(pane);
-    if (opened && environment.isPackaged) {
+    // macOS lists apps that asked for the microphone itself; there is nothing to drag in.
+    if (opened && environment.isPackaged && pane !== "microphone") {
       const permissions = yield* MacPermissions.MacPermissions;
       const isGranted = yield* safariPermissionCheck;
       yield* permissions.showHelper(pane, owner, isGranted);
@@ -469,6 +472,22 @@ export const pickThemeFiles = DesktopIpc.makeIpcMethod({
         return { name, size, text } satisfies PickedThemeFile;
       }).pipe(Effect.orElseSucceed((): PickedThemeFile => ({ name, size: 0, text: "" })));
     });
+  }),
+});
+
+export const requestMicrophoneAccess = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.REQUEST_MICROPHONE_ACCESS_CHANNEL,
+  payload: Schema.Undefined,
+  result: DesktopMicrophoneAccessSchema,
+  handler: Effect.fn("desktop.ipc.window.requestMicrophoneAccess")(function* () {
+    const environment = yield* DesktopEnvironment.DesktopEnvironment;
+    return yield* Effect.promise(() =>
+      resolveMicrophoneAccess({
+        platform: environment.platform,
+        readStatus: () => Electron.systemPreferences.getMediaAccessStatus("microphone"),
+        ask: () => Electron.systemPreferences.askForMediaAccess("microphone"),
+      }),
+    );
   }),
 });
 

@@ -4,6 +4,7 @@ import {
   resetVoiceInputGlobalsForTests,
   resolveTranscriptCommit,
   VoiceInputController,
+  VoiceRecorderError,
   VOICE_RECORDING_LIMIT_SECONDS,
   type VoiceDraftSnapshot,
   type VoiceInputControllerDependencies,
@@ -113,6 +114,28 @@ describe("resolveTranscriptCommit", () => {
 
 describe("VoiceInputController", () => {
   beforeEach(() => resetVoiceInputGlobalsForTests());
+
+  it("shows a recorder's own start error and its fix, and keeps other failures generic", async () => {
+    const blocked = createHarness();
+    blocked.recorder.prepareToRecordAsync.mockRejectedValueOnce(
+      new VoiceRecorderError("Allow the microphone in site settings.", "settings"),
+    );
+    await blocked.controller.start();
+    expect(blocked.controller.currentState).toEqual({
+      phase: "error",
+      error: "Allow the microphone in site settings.",
+      errorAction: "settings",
+    });
+    expect(blocked.recorder.record).not.toHaveBeenCalled();
+
+    const unknown = createHarness();
+    unknown.recorder.prepareToRecordAsync.mockRejectedValueOnce(new Error("internal detail"));
+    await unknown.controller.start();
+    expect(unknown.controller.currentState).toMatchObject({
+      error: "Could not start voice recording.",
+      errorAction: "retry",
+    });
+  });
 
   it("checks support and permission before recording", async () => {
     const unsupported = createHarness({ getTranscriber: () => null });

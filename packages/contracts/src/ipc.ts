@@ -1022,8 +1022,18 @@ export const DesktopMediaReadSchema = Schema.Struct({
 });
 export type DesktopMediaRead = typeof DesktopMediaReadSchema.Type;
 
-export const SystemSettingsPaneSchema = Schema.Literals(["full-disk-access"]);
+export const SystemSettingsPaneSchema = Schema.Literals(["full-disk-access", "microphone"]);
 export type SystemSettingsPane = typeof SystemSettingsPaneSchema.Type;
+
+/** `unsupported` off macOS, where the browser prompt is the only gate. */
+export const DesktopMicrophoneAccessSchema = Schema.Literals([
+  "granted",
+  "denied",
+  "restricted",
+  "unavailable",
+  "unsupported",
+]);
+export type DesktopMicrophoneAccess = typeof DesktopMicrophoneAccessSchema.Type;
 
 export interface DesktopBridge extends DesktopWindowMaterialBridge {
   getAppBranding: () => DesktopAppBranding | null;
@@ -1112,6 +1122,7 @@ export interface DesktopBridge extends DesktopWindowMaterialBridge {
   /** Reads http(s) media in the main process, outside renderer CORS and CSP; null on network failure. */
   readMedia: (url: string) => Promise<DesktopMediaRead | null>;
   openSystemSettings: (pane: SystemSettingsPane) => Promise<boolean>;
+  requestMicrophoneAccess: () => Promise<DesktopMicrophoneAccess>;
   checkSystemPermission: (pane: SystemSettingsPane) => Promise<boolean>;
   probeRemoteEditors: () => Promise<readonly EditorId[]>;
   pasteAsText: () => Promise<void>;
