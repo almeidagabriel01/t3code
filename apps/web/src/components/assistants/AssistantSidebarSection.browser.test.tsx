@@ -16,7 +16,9 @@ const state = vi.hoisted(() => ({
   }>,
   enabled: true,
   collapsed: false,
-  folded: [] as string[],
+  expanded: [] as string[],
+  showAll: false,
+  updated: {} as Record<string, string>,
   moods: {} as Record<string, "working" | "needs" | "failed">,
   queued: {} as Record<string, number>,
   teams: [] as Array<{
@@ -35,6 +37,8 @@ const shellFor = (threadId: string) => {
   const mood = state.moods[threadId];
   return {
     id: threadId,
+    title: threadId.includes(":g-") ? "Task · Growth" : threadId,
+    updatedAt: state.updated[threadId] ?? "2020-01-01T00:00:00.000Z",
     environmentId: "env",
     lastVisitedAt: null,
     hasPendingApprovals: mood === "needs",
@@ -82,7 +86,12 @@ vi.mock("./DescribeAssistantDialog", () => ({
 vi.mock("../../state/entities", () => ({
   useThreadShell: (ref: { threadId: string } | null) =>
     ref === null ? null : shellFor(ref.threadId),
-  useQuietThreadShells: () => state.specs.map((spec) => shellFor(threadOf(spec.name))),
+  useQuietThreadShells: () => [
+    ...state.specs.map((spec) => shellFor(threadOf(spec.name))),
+    ...Object.keys(state.moods)
+      .filter((id) => id.includes(":g-"))
+      .map(shellFor),
+  ],
   useProjects: () => [{ environmentId: "env", id: "p1", title: "ProOps" }],
 }));
 vi.mock("../../hooks/useSettings", () => ({
@@ -90,7 +99,8 @@ vi.mock("../../hooks/useSettings", () => ({
     select({
       sidebarShowAssistantsSection: state.enabled,
       sidebarAssistantsCollapsed: state.collapsed,
-      sidebarAssistantsCollapsedGroups: state.folded,
+      sidebarAssistantsExpandedGroups: state.expanded,
+      sidebarAssistantsShowAll: state.showAll,
     }),
   updateClientSettings: state.update,
 }));
@@ -104,7 +114,9 @@ function setup(
   options: {
     enabled?: boolean;
     collapsed?: boolean;
-    folded?: string[];
+    expanded?: string[];
+    showAll?: boolean;
+    updated?: Record<string, string>;
     moods?: Record<string, "working" | "needs" | "failed">;
     queued?: Record<string, number>;
   } = {},
@@ -112,7 +124,9 @@ function setup(
   state.specs = specs.map((spec) => (typeof spec === "string" ? { name: spec } : spec));
   state.enabled = options.enabled ?? true;
   state.collapsed = options.collapsed ?? false;
-  state.folded = options.folded ?? [];
+  state.expanded = options.expanded ?? [];
+  state.showAll = options.showAll ?? false;
+  state.updated = options.updated ?? {};
   state.moods = options.moods ?? {};
   state.queued = options.queued ?? {};
   state.update.mockClear();
@@ -146,8 +160,14 @@ const rows = (container: HTMLElement) =>
   container.querySelectorAll('[data-testid="sidebar-assistant-row"]');
 const names = (container: HTMLElement) =>
   [...rows(container)].map((row) => row.getAttribute("data-sidebar-row")?.split(":").pop());
-const labels = (container: HTMLElement) =>
-  [...container.querySelectorAll("li[aria-hidden]")].map((li) => li.textContent).filter(Boolean);
+const status = (container: HTMLElement, name: string) =>
+  container.querySelector(
+    `[data-sidebar-row="assistant:env:${name}"] [data-testid="assistant-status"]`,
+  );
+const pill = (container: HTMLElement, name: string) =>
+  container.querySelector(
+    `[data-sidebar-row="assistant:env:${name}"] [data-testid="assistant-project"]`,
+  );
 
 describe("AssistantSidebarSection", () => {
   it.each([
@@ -182,13 +202,13 @@ describe("AssistantSidebarSection", () => {
     await using screen = await render(element(onOpen, "env:assistant:jarvis:1"));
     const avatars = screen.container.querySelectorAll('button[aria-label^="Open "]');
     expect([...avatars].map((avatar) => avatar.getAttribute("aria-label"))).toEqual([
-      "Open Jarvis",
       "Open Revisor, working",
-      "Open Pesquisador",
       "Open Aprovador",
       "Open Escritor",
+      "Open Jarvis",
+      "Open Pesquisador",
     ]);
-    expect(avatars[0]?.getAttribute("aria-current")).toBe("page");
+    expect(avatars[3]?.getAttribute("aria-current")).toBe("page");
     await userEvent.click(screen.getByRole("button", { name: "Open Revisor, working" }));
     expect(onOpen).toHaveBeenCalledWith({
       environmentId: EnvironmentId.make("env"),
@@ -199,7 +219,7 @@ describe("AssistantSidebarSection", () => {
     expect(state.update).toHaveBeenCalledWith({ sidebarAssistantsCollapsed: false });
   });
 
-  it("sorts assistants into needs-you, groups, projects and unassigned, each listed once", async () => {
+  it("lists assistants flat: needs you, working, then recent; no sub-headers; one meta each", async () => {
     setup(
       [
         { name: "Ada", role: "CFO", scope: "project", projectId: "p1" },
@@ -215,81 +235,101 @@ describe("AssistantSidebarSection", () => {
           [threadOf("Jarvis")]: "working",
           [threadOf("Aprovador")]: "failed",
         },
-        queued: { [threadOf("Jarvis")]: 3 },
+        updated: { [threadOf("Pedro")]: "2021-01-01T00:00:00.000Z" },
       },
     );
-    state.teams = [team("t1", "Leadership", ["ada", "jarvis", "pesquisador"])];
     await using screen = await render(element());
-    expect(labels(screen.container)).toEqual(["Needs you · 1", "Groups", "Projects", "Unassigned"]);
-    // Ada needs the user so only the first section lists her; Revisor sits under its project.
     expect(names(screen.container)).toEqual([
       "ada",
       "jarvis",
-      "pesquisador",
-      "revisor",
       "pedro",
       "aprovador",
+      "pesquisador",
+      "revisor",
     ]);
-    const status = (name: string) =>
-      screen.container.querySelector(
-        `[data-sidebar-row="assistant:env:${name}"] [data-testid="assistant-status"]`,
-      )!;
-    expect(status("ada").getAttribute("data-mood")).toBe("needs");
-    expect(status("ada").textContent).toContain("ProOps only · Needs your approval");
-    expect(status("jarvis").getAttribute("data-mood")).toBe("working");
-    expect(status("jarvis").textContent).toMatch(/^Working· .+· 3 queued$/);
-    expect(status("ada").textContent).not.toContain("queued");
-    expect(status("aprovador").textContent).toBe("Last run failed");
+    expect(screen.container.querySelectorAll("li[aria-hidden]:not([data-testid])")).toHaveLength(0);
+    expect(screen.container.textContent).not.toMatch(/Projects|Unassigned|Groups/);
+    expect(status(screen.container, "ada")?.textContent).toBe("Needs you");
+    expect(status(screen.container, "ada")?.getAttribute("data-mood")).toBe("needs");
+    expect(status(screen.container, "jarvis")?.textContent).toBe("Working");
+    expect(status(screen.container, "aprovador")?.textContent).toBe("Last run failed");
+    // An active assistant shows its status instead of the project; an idle project one shows the pill.
+    expect(pill(screen.container, "ada")).toBeNull();
+    expect(pill(screen.container, "revisor")?.getAttribute("aria-label")).toBe("Project: ProOps");
+    expect(pill(screen.container, "pedro")?.getAttribute("aria-label")).toBe("Project: Project");
+    expect(pill(screen.container, "pesquisador")).toBeNull();
+    expect(status(screen.container, "pesquisador")).toBeNull();
     expect(screen.container.querySelectorAll('[data-testid="assistant-role"]')).toHaveLength(2);
-    await expect.element(screen.getByRole("button", { name: "ProOps" })).toBeVisible();
-    // A project without a known name still lists its members.
-    await expect.element(screen.getByRole("button", { name: "Project" })).toBeVisible();
+    expect(screen.container.querySelectorAll('[data-testid="assistant-status-dot"]')).toHaveLength(
+      2,
+    );
   });
 
-  it("omits the Unassigned label when it is the only list, and shows empty groups", async () => {
-    setup(["Jarvis"]);
-    state.teams = [team("t0", "Empty", [])];
+  it("says where a group member works", async () => {
+    setup(["Ada"], { moods: { "assistant:ada:g-0123456789abcdef": "working" } });
     await using screen = await render(element());
-    expect(labels(screen.container)).toEqual(["Groups", "Unassigned"]);
-    expect(screen.container.textContent).toContain("No members yet");
-
-    setup(["Jarvis"]);
-    await screen.rerender(element());
-    expect(labels(screen.container)).toEqual([]);
-    expect(names(screen.container)).toEqual(["jarvis"]);
+    expect(status(screen.container, "ada")?.textContent).toBe("Working in Growth");
   });
 
-  it("folds a group, remembers it, and caps the stacked avatars", async () => {
+  it("shows active assistants plus five recent ones and toggles Show all", async () => {
+    const all = ["A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8"];
+    setup(all, { moods: { [threadOf("A8")]: "working" } });
+    await using screen = await render(element());
+    expect(rows(screen.container)).toHaveLength(6);
+    expect(names(screen.container)[0]).toBe("a8");
+    await userEvent.click(screen.getByRole("button", { name: "Show all (8)" }));
+    expect(state.update).toHaveBeenCalledWith({ sidebarAssistantsShowAll: true });
+
+    setup(all, { showAll: true });
+    await screen.rerender(element());
+    expect(rows(screen.container)).toHaveLength(8);
+    await userEvent.click(screen.getByRole("button", { name: "Show less" }));
+    expect(state.update).toHaveBeenLastCalledWith({ sidebarAssistantsShowAll: false });
+
+    setup(["A1", "A2"]);
+    await screen.rerender(element());
+    expect(screen.container.textContent).not.toMatch(/Show (all|less)/);
+  });
+
+  it("puts a group on one row, collapsed by default, with running or empty status", async () => {
     const members = ["Ada", "Bob", "Cid", "Dee", "Eve", "Fay"];
-    setup(members);
+    setup(members, { moods: { [threadOf("Ada")]: "working", [threadOf("Bob")]: "working" } });
     state.teams = [
       team(
         "t1",
         "Growth",
         members.map((m) => m.toLowerCase()),
       ),
+      team("t0", "Quiet", []),
     ];
     await using screen = await render(element());
-    expect(screen.container.querySelector('[data-testid="group-avatars"]')?.textContent).toBe("+2");
-    await userEvent.click(screen.getByRole("button", { name: "Collapse Growth" }));
+    const groups = screen.container.querySelectorAll('[data-testid="sidebar-assistant-fold"]');
+    expect(groups).toHaveLength(2);
+    expect(groups[0]?.querySelector('[data-testid="group-status"]')?.textContent).toBe("2 running");
+    expect(groups[1]?.querySelector('[data-testid="group-status"]')?.textContent).toBe("empty");
+    expect(groups[0]?.querySelector('[data-testid="group-avatars"]')?.textContent).toBe("+2");
+    // Only the flat list shows the members until the group is expanded.
+    expect(rows(screen.container)).toHaveLength(6);
+    expect(screen.container.querySelector('button[aria-label="Hide Quiet members"]')).toBeNull();
+    expect(screen.container.querySelector('button[aria-label="Show Quiet members"]')).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Show Growth members" }));
     expect(state.update).toHaveBeenCalledWith({
-      sidebarAssistantsCollapsedGroups: ["group:env:t1"],
+      sidebarAssistantsExpandedGroups: ["group:env:t1"],
     });
+    expect(state.openTeam).not.toHaveBeenCalled();
+  });
 
-    setup(members, { folded: ["group:env:t1", "project:env:p1"] });
-    state.teams = [
-      team(
-        "t1",
-        "Growth",
-        members.map((m) => m.toLowerCase()),
-      ),
-    ];
-    await screen.rerender(element());
-    expect(rows(screen.container)).toHaveLength(0);
-    await userEvent.click(screen.getByRole("button", { name: "Expand Growth" }));
-    expect(state.update).toHaveBeenLastCalledWith({
-      sidebarAssistantsCollapsedGroups: ["project:env:p1"],
+  it("shows a group's members under it when expanded, and the chevron hides them again", async () => {
+    setup(["Ada", "Bob"], { expanded: ["group:env:t1", "project:env:p1"] });
+    state.teams = [team("t1", "Growth", ["ada", "bob", "ghost"])];
+    const onOpenGroup = vi.fn();
+    await using screen = await render(element(vi.fn(), null, onOpenGroup));
+    expect(rows(screen.container)).toHaveLength(4);
+    await userEvent.click(screen.getByRole("button", { name: "Hide Growth members" }));
+    expect(state.update).toHaveBeenCalledWith({
+      sidebarAssistantsExpandedGroups: ["project:env:p1"],
     });
+    expect(onOpenGroup).not.toHaveBeenCalled();
   });
 
   it("opens the group chat from the row and the menu, and archives from the menu", async () => {
@@ -312,14 +352,6 @@ describe("AssistantSidebarSection", () => {
     });
   });
 
-  it("folds a project the same way", async () => {
-    setup([{ name: "Revisor", scope: "project", projectId: "p1" }], { folded: ["project:env:p1"] });
-    await using screen = await render(element());
-    expect(rows(screen.container)).toHaveLength(0);
-    await userEvent.click(screen.getByRole("button", { name: "ProOps" }));
-    expect(state.update).toHaveBeenCalledWith({ sidebarAssistantsCollapsedGroups: [] });
-  });
-
   it("runs the group menu", async () => {
     setup(["Jarvis"]);
     state.teams = [team("t1", "Growth", ["jarvis"])];
@@ -334,17 +366,6 @@ describe("AssistantSidebarSection", () => {
       preset: { teamId: "t1" },
     });
     expect(state.update).not.toHaveBeenCalled();
-  });
-
-  it("starts an assistant inside a project from its menu", async () => {
-    setup([{ name: "Revisor", scope: "project", projectId: "p1" }]);
-    await using screen = await render(element());
-    await userEvent.click(screen.getByRole("button", { name: "ProOps actions" }));
-    await userEvent.click(screen.getByRole("menuitem", { name: "New assistant in this project" }));
-    expect(state.openDialog).toHaveBeenCalledWith({
-      environmentId: "env",
-      preset: { projectId: "p1" },
-    });
   });
 
   it("adds an assistant, a group or a described one from the plus menu", async () => {

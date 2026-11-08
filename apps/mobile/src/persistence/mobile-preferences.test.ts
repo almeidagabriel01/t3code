@@ -45,10 +45,22 @@ describe("mobile preferences parser", () => {
   it.effect("keeps the Home section fold booleans and drops other types", () =>
     Effect.gen(function* () {
       expect(
-        yield* loadFrom({ homeAssistantsCollapsed: true, homeAgentsDoneExpanded: false }),
-      ).toEqual({ homeAssistantsCollapsed: true, homeAgentsDoneExpanded: false });
+        yield* loadFrom({
+          homeAssistantsCollapsed: true,
+          homeAgentsDoneExpanded: false,
+          homeAssistantsShowAll: true,
+        }),
+      ).toEqual({
+        homeAssistantsCollapsed: true,
+        homeAgentsDoneExpanded: false,
+        homeAssistantsShowAll: true,
+      });
       expect(
-        yield* loadFrom({ homeAssistantsCollapsed: "yes", homeAgentsDoneExpanded: 1 }),
+        yield* loadFrom({
+          homeAssistantsCollapsed: "yes",
+          homeAgentsDoneExpanded: 1,
+          homeAssistantsShowAll: "x",
+        }),
       ).toEqual({});
     }),
   );

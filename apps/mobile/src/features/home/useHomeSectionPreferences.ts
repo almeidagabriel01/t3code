@@ -11,12 +11,21 @@ export function useHomeSectionPreferences() {
   // Transforms read optimistic state so same-frame presses toggle twice.
   return {
     assistantsCollapsed: loaded && preferencesResult.value.homeAssistantsCollapsed === true,
+    assistantsShowAll: loaded && preferencesResult.value.homeAssistantsShowAll === true,
     agentsDoneExpanded: loaded && preferencesResult.value.homeAgentsDoneExpanded === true,
     toggleAssistants: () => {
       if (!loaded) return;
       savePreferences({
         transform: (current) => ({
           homeAssistantsCollapsed: current.homeAssistantsCollapsed !== true,
+        }),
+      });
+    },
+    toggleAssistantsShowAll: () => {
+      if (!loaded) return;
+      savePreferences({
+        transform: (current) => ({
+          homeAssistantsShowAll: current.homeAssistantsShowAll !== true,
         }),
       });
     },

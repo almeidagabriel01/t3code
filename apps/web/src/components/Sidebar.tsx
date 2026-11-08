@@ -3340,6 +3340,17 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           onDraftContextMenu={handleDraftContextMenu}
                         />,
                       );
+                      if (projectLayout.layout.length > 0) {
+                        items.push(
+                          <li
+                            key="projects-header"
+                            data-testid="sidebar-projects-header"
+                            className="list-none px-(--sidebar-row-content-inset) pt-3 pb-1 text-xs font-medium text-secondary-label"
+                          >
+                            Projects
+                          </li>,
+                        );
+                      }
                       items.push(
                         <SidebarProjectGroups
                           key="project-groups"

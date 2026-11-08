@@ -136,6 +136,7 @@ export interface Preferences {
   readonly threadListWorkingShelfExpanded?: boolean;
   readonly homeAssistantsCollapsed?: boolean;
   readonly homeAgentsDoneExpanded?: boolean;
+  readonly homeAssistantsShowAll?: boolean;
   readonly threadListFilters?: ThreadListFilters;
   readonly pullRequestListFilters?: PullRequestListPreferences;
   readonly workspaceSelections?: WorkspaceSelections;
@@ -221,6 +222,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     threadListWorkingShelfExpanded?: boolean;
     homeAssistantsCollapsed?: boolean;
     homeAgentsDoneExpanded?: boolean;
+    homeAssistantsShowAll?: boolean;
     threadListFilters?: ThreadListFilters;
     pullRequestListFilters?: PullRequestListPreferences;
     workspaceSelections?: WorkspaceSelections;
@@ -385,7 +387,11 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   if (typeof parsed.threadListWorkingShelfExpanded === "boolean") {
     preferences.threadListWorkingShelfExpanded = parsed.threadListWorkingShelfExpanded;
   }
-  for (const key of ["homeAssistantsCollapsed", "homeAgentsDoneExpanded"] as const) {
+  for (const key of [
+    "homeAssistantsCollapsed",
+    "homeAgentsDoneExpanded",
+    "homeAssistantsShowAll",
+  ] as const) {
     if (typeof parsed[key] === "boolean") preferences[key] = parsed[key];
   }
   if (isThreadListFilters(parsed.threadListFilters)) {

@@ -1,19 +1,17 @@
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
-  assistantGroupOwnerKey,
-  assistantGroupThreadsOf,
-  assistantPresence,
-  assistantQueuedLabel,
-} from "@t3tools/client-runtime/assistantRobot";
-import { assistantEntryKey, assistantSections } from "@t3tools/client-runtime/assistantSections";
+  assistantMetaLabel,
+  rankAssistants,
+  visibleAssistants,
+} from "@t3tools/client-runtime/assistantList";
+import { assistantGroupThreadsOf, assistantPresence } from "@t3tools/client-runtime/assistantRobot";
 import {
   hasSidebarNotification,
   resolveSidebarThreadStatus,
 } from "@t3tools/client-runtime/state/thread-attention";
-import { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import type { MenuAction } from "@react-native-menu/menu";
 import { useNavigation } from "@react-navigation/native";
-import { useState, type ReactNode } from "react";
+import { useState } from "react";
 import { Pressable, View } from "react-native";
 
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
@@ -21,8 +19,6 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { Menu } from "../../components/ui/Menu";
 import { cn } from "../../lib/cn";
-import { useNowMinuteMs } from "../../lib/clock";
-import { relativeTime } from "../../lib/time";
 import { useProjects, useQuietThreadShells, useThreadShell } from "../../state/entities";
 import {
   useAssistantEntries,
@@ -131,9 +127,8 @@ function AssistantRow(props: {
   readonly entry: AssistantEntry;
   readonly environmentLabel: string | null;
   readonly sidebar: boolean;
-  readonly nowMs: number;
   readonly nested?: boolean;
-  /** Named in the status line when the assistant is listed somewhere other than its project. */
+  /** Shown as a pill when the assistant is project-scoped and has no status to show. */
   readonly projectLabel?: string | null;
 }) {
   const { assistant, environmentId } = props.entry;
@@ -141,6 +136,8 @@ function AssistantRow(props: {
   const openEditor = useOpenAssistantEditor();
   const state = useAssistantState(props.entry);
   const { presence } = state;
+  const meta = assistantMetaLabel(presence);
+  const muted = props.sidebar ? "text-drawer-foreground-muted" : "text-foreground-muted";
   const actions: MenuAction[] = [
     {
       id: "reset",
@@ -165,67 +162,63 @@ function AssistantRow(props: {
         accessibilityLabel={statusLabel(assistant.name, state)}
         disabled={assistant.threadId === null}
         onPress={() => flows.openConversation(assistant)}
-        className="min-h-12 min-w-0 flex-1 flex-row items-center gap-3 rounded-2xl px-2 active:opacity-70"
+        className="min-h-11 min-w-0 flex-1 flex-row items-center gap-2 rounded-2xl px-2 active:opacity-70"
       >
-        <AssistantAvatar
-          assistant={assistant}
-          environmentId={environmentId}
-          mood={presence.mood}
-          size={32}
-        />
-        <View className="min-w-0 flex-1">
-          <View className="flex-row items-center gap-1.5">
-            <Text
-              className={cn(
-                "shrink text-base font-t3-medium",
-                props.sidebar ? "text-drawer-foreground" : "text-foreground",
-              )}
-              numberOfLines={1}
-            >
-              {assistant.name}
+        <View>
+          <AssistantAvatar
+            assistant={assistant}
+            environmentId={environmentId}
+            mood={presence.mood}
+            size={24}
+          />
+          {state.working || state.needsYou ? (
+            <View className="absolute -right-0.5 -top-0.5">
+              <SubagentStatusDot tone={state.working ? "working" : "completed"} placement="sheet" />
+            </View>
+          ) : null}
+        </View>
+        <Text
+          className={cn(
+            "shrink text-base font-t3-medium",
+            props.sidebar ? "text-drawer-foreground" : "text-foreground",
+          )}
+          numberOfLines={1}
+        >
+          {assistant.name}
+        </Text>
+        {assistant.role === "" ? null : (
+          <View className="max-w-20 rounded-md border border-border px-1.5 py-px">
+            <Text className={cn("text-2xs", muted)} numberOfLines={1}>
+              {assistant.role}
             </Text>
-            {assistant.role === "" ? null : (
-              <View className="max-w-24 rounded-md border border-border px-1.5 py-px">
-                <Text
-                  className={cn(
-                    "text-2xs",
-                    props.sidebar ? "text-drawer-foreground-muted" : "text-foreground-muted",
-                  )}
-                  numberOfLines={1}
-                >
-                  {assistant.role}
-                </Text>
-              </View>
-            )}
-            {props.environmentLabel ? (
-              <Text
-                className={cn(
-                  "max-w-[30%] text-xs",
-                  props.sidebar ? "text-drawer-foreground-muted" : "text-foreground-tertiary",
-                )}
-                numberOfLines={1}
-              >
-                {props.environmentLabel}
-              </Text>
-            ) : null}
           </View>
+        )}
+        {props.environmentLabel ? (
+          <Text className={cn("max-w-[25%] text-xs", muted)} numberOfLines={1}>
+            {props.environmentLabel}
+          </Text>
+        ) : null}
+        <View className="min-w-2 flex-1" />
+        {meta !== null ? (
           <Text
             testID="assistant-status"
-            className={cn("text-xs", moodTextClass(presence.mood, props.sidebar))}
+            className={cn(
+              "max-w-[45%] shrink text-xs",
+              moodTextClass(presence.mood, props.sidebar),
+            )}
             numberOfLines={1}
           >
-            {props.projectLabel ? `${props.projectLabel} only · ` : ""}
-            {presence.detail}
-            {presence.since === null ? "" : ` · ${relativeTime(presence.since, props.nowMs)}`}
-            {assistantQueuedLabel(presence.queued) === null
-              ? ""
-              : ` · ${assistantQueuedLabel(presence.queued)}`}
+            {meta}
           </Text>
-        </View>
-        {state.working ? (
-          <AppActivityIndicator size="small" colorClassName="accent-icon-muted" />
-        ) : state.needsYou ? (
-          <SubagentStatusDot tone="completed" placement="sheet" />
+        ) : props.projectLabel ? (
+          <View
+            testID="assistant-project"
+            className="max-w-24 rounded-md border border-border px-1.5 py-px"
+          >
+            <Text className={cn("text-2xs", muted)} numberOfLines={1}>
+              {props.projectLabel}
+            </Text>
+          </View>
         ) : null}
       </Pressable>
       <RowMenuButton
@@ -242,84 +235,12 @@ function AssistantRow(props: {
   );
 }
 
-/** A group or project header: folds its members, shows what it holds, and carries its menu. */
-function FoldRow(props: {
-  readonly label: string;
-  readonly folded: boolean;
-  readonly sidebar: boolean;
-  readonly onToggle: () => void;
-  /** When set, the name opens this and only the chevron folds. */
-  readonly onOpen?: () => void;
-  readonly leading: ReactNode;
-  readonly trailing?: ReactNode;
-  readonly menuLabel: string;
-  readonly actions: MenuAction[];
-  readonly onAction: (id: string) => void;
-}) {
-  const chevron = (
-    <SymbolView
-      name={props.folded ? "chevron.right" : "chevron.down"}
-      size={11}
-      tintColorClassName={props.sidebar ? "accent-drawer-foreground-muted" : "accent-icon-subtle"}
-      type="monochrome"
-    />
-  );
-  return (
-    <View className="flex-row items-center">
-      {props.onOpen ? (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={`Fold ${props.label}`}
-          accessibilityState={{ expanded: !props.folded }}
-          hitSlop={6}
-          onPress={props.onToggle}
-          className="min-h-10 justify-center pl-2 active:opacity-70"
-        >
-          {chevron}
-        </Pressable>
-      ) : null}
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={props.label}
-        accessibilityState={props.onOpen ? undefined : { expanded: !props.folded }}
-        onPress={props.onOpen ?? props.onToggle}
-        className="min-h-10 min-w-0 flex-1 flex-row items-center gap-2 px-2 active:opacity-70"
-      >
-        {props.onOpen ? null : chevron}
-        {props.leading}
-        <Text
-          className={cn(
-            "shrink text-base font-t3-bold",
-            props.sidebar ? "text-drawer-foreground" : "text-foreground",
-          )}
-          numberOfLines={1}
-        >
-          {props.label}
-        </Text>
-        {props.trailing}
-      </Pressable>
-      <RowMenuButton
-        label={props.menuLabel}
-        sidebar={props.sidebar}
-        actions={props.actions}
-        onAction={props.onAction}
-      />
-    </View>
-  );
-}
-
-function SectionLabel(props: { readonly children: string; readonly tone?: string }) {
-  return (
-    <Text className={cn("px-2 pb-0.5 pt-2 text-xs font-t3-medium", props.tone)}>
-      {props.children}
-    </Text>
-  );
-}
-
+/** One group on one line: the row opens its chat; the chevron shows or hides its members. */
 function GroupFoldRow(props: {
   readonly entry: AssistantTeamEntry;
   readonly members: ReadonlyArray<AssistantEntry>;
-  readonly folded: boolean;
+  readonly running: number;
+  readonly expanded: boolean;
   readonly sidebar: boolean;
   readonly onToggle: () => void;
 }) {
@@ -329,52 +250,85 @@ function GroupFoldRow(props: {
   const { environmentId, team } = props.entry;
   const shown = props.members.slice(0, STACKED_AVATAR_LIMIT);
   const more = props.members.length - shown.length;
+  const mutedIcon = props.sidebar ? "accent-drawer-foreground-muted" : "accent-icon-subtle";
+  const muted = props.sidebar ? "text-drawer-foreground-muted" : "text-foreground-muted";
   return (
-    <FoldRow
-      label={team.name}
-      folded={props.folded}
-      sidebar={props.sidebar}
-      onToggle={props.onToggle}
-      onOpen={() => openTeam.chat(environmentId, team.id)}
-      leading={
-        <SymbolView
-          name="person.2"
-          size={16}
-          tintColorClassName={
-            props.sidebar ? "accent-drawer-foreground-muted" : "accent-icon-subtle"
-          }
-          type="monochrome"
-        />
-      }
-      trailing={
+    <View className="flex-row items-center">
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={team.name}
+        onPress={() => openTeam.chat(environmentId, team.id)}
+        className="min-h-11 min-w-0 flex-1 flex-row items-center gap-2 px-2 active:opacity-70"
+      >
+        <SymbolView name="bubble.left.and.bubble.right" size={14} tintColorClassName={mutedIcon} type="monochrome" />
+        <Text
+          className={cn(
+            "shrink text-base font-t3-medium",
+            props.sidebar ? "text-drawer-foreground" : "text-foreground",
+          )}
+          numberOfLines={1}
+        >
+          {team.name}
+        </Text>
         <View testID="group-avatars" className="flex-row items-center pl-0.5">
           {shown.map(({ assistant }, index) => (
             <View key={assistant.id} style={{ marginLeft: index === 0 ? 0 : -6 }}>
-              <AssistantAvatar assistant={assistant} environmentId={environmentId} size={18} />
+              <AssistantAvatar assistant={assistant} environmentId={environmentId} size={16} />
             </View>
           ))}
           {more > 0 ? <Text className="pl-1 text-2xs text-foreground-muted">+{more}</Text> : null}
         </View>
-      }
-      menuLabel={`${team.name} actions`}
-      actions={[
-        { id: "chat", title: "Open chat", image: "bubble.left.and.bubble.right" },
-        { id: "edit", title: "Edit group", image: "pencil" },
-        { id: "new", title: "New assistant in this group", image: "plus" },
-        {
-          id: "archive",
-          title: "Archive group",
-          image: "archivebox",
-          attributes: { disabled: !flows.canAct },
-        },
-      ]}
-      onAction={(id) => {
-        if (id === "chat") openTeam.chat(environmentId, team.id);
-        else if (id === "edit") openTeam.edit(environmentId, team.id);
-        else if (id === "new") openEditor(environmentId, null, { teamId: team.id });
-        else if (id === "archive") flows.archive(team);
-      }}
-    />
+        <View className="min-w-2 flex-1" />
+        {props.running > 0 ? (
+          <View testID="group-status" className="flex-row items-center gap-1">
+            <AppActivityIndicator size="small" colorClassName="accent-icon-muted" />
+            <Text className={cn("text-xs", muted)}>{props.running} running</Text>
+          </View>
+        ) : props.members.length === 0 ? (
+          <Text testID="group-status" className={cn("text-xs", muted)}>
+            empty
+          </Text>
+        ) : null}
+      </Pressable>
+      {props.members.length === 0 ? null : (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`${props.expanded ? "Hide" : "Show"} ${team.name} members`}
+          accessibilityState={{ expanded: props.expanded }}
+          hitSlop={6}
+          onPress={props.onToggle}
+          className="size-9 items-center justify-center rounded-full active:opacity-70"
+        >
+          <SymbolView
+            name={props.expanded ? "chevron.down" : "chevron.right"}
+            size={11}
+            tintColorClassName={mutedIcon}
+            type="monochrome"
+          />
+        </Pressable>
+      )}
+      <RowMenuButton
+        label={`${team.name} actions`}
+        sidebar={props.sidebar}
+        actions={[
+          { id: "chat", title: "Open chat", image: "bubble.left.and.bubble.right" },
+          { id: "edit", title: "Edit group", image: "pencil" },
+          { id: "new", title: "New assistant in this group", image: "plus" },
+          {
+            id: "archive",
+            title: "Archive group",
+            image: "archivebox",
+            attributes: { disabled: !flows.canAct },
+          },
+        ]}
+        onAction={(id) => {
+          if (id === "chat") openTeam.chat(environmentId, team.id);
+          else if (id === "edit") openTeam.edit(environmentId, team.id);
+          else if (id === "new") openEditor(environmentId, null, { teamId: team.id });
+          else if (id === "archive") flows.archive(team);
+        }}
+      />
+    </View>
   );
 }
 
@@ -388,61 +342,50 @@ export function HomeAssistantsSection(props: {
   const navigation = useNavigation();
   const openEditor = useOpenAssistantEditor();
   const openTeam = useOpenAssistantTeam();
-  const { assistantsCollapsed, toggleAssistants } = useHomeSectionPreferences();
+  const { assistantsCollapsed, toggleAssistants, assistantsShowAll, toggleAssistantsShowAll } =
+    useHomeSectionPreferences();
   const shells = useQuietThreadShells();
   const projects = useProjects();
-  const nowMs = useNowMinuteMs();
-  const [folded, setFolded] = useState<ReadonlySet<string>>(new Set());
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   const sidebar = props.sidebar === true;
   if (active.length === 0 && teams.length === 0) return null;
   const environmentId = active[0]?.environmentId ?? teams[0]!.environmentId;
-  const toggleFold = (key: string) =>
-    setFolded((current) => {
+  const toggleExpanded = (key: string) =>
+    setExpanded((current) => {
       const next = new Set(current);
       if (!next.delete(key)) next.add(key);
       return next;
     });
 
-  const keyByThread = new Map(
-    active.flatMap((entry) => {
-      const ref = threadRefOf(entry);
-      return ref === null ? [] : [[scopedThreadKey(ref), assistantEntryKey(entry)] as const];
-    }),
+  const ranked = rankAssistants(active, shells);
+  const rankedByKey = new Map(
+    ranked.map((item) => [`${item.entry.environmentId}:${item.entry.assistant.id}`, item]),
   );
-  const needsKeys = new Set<string>();
-  for (const shell of shells) {
-    const key =
-      keyByThread.get(scopedThreadKey(scopeThreadRef(shell.environmentId, shell.id))) ??
-      assistantGroupOwnerKey(shell);
-    if (key !== undefined && assistantPresence(shell).mood === "needs") needsKeys.add(key);
-  }
-  const sections = assistantSections({ assistants: active, teams, needsKeys });
+  const { shown: listed, hidden: hiddenInList } = visibleAssistants(ranked, assistantsShowAll);
+  const foldable = assistantsShowAll || hiddenInList > 0;
   const projectName = (envId: string, projectId: string) =>
     projects.find((project) => project.environmentId === envId && project.id === projectId)
       ?.title ?? "Project";
-  const projectLabelOf = (entry: AssistantEntry) =>
-    entry.assistant.scope === "project"
-      ? projectName(entry.environmentId, entry.assistant.projectId)
-      : null;
   const environmentCount = new Set(active.map((entry) => entry.environmentId)).size;
-  const row = (
-    entry: AssistantEntry,
-    extra: { nested?: boolean; projectLabel?: string | null },
-  ) => (
+  const row = (entry: AssistantEntry, nested = false) => (
     <AssistantRow
-      key={assistantEntryKey(entry)}
+      key={`${entry.environmentId}:${entry.assistant.id}`}
       entry={entry}
       sidebar={sidebar}
-      nowMs={nowMs}
+      nested={nested}
       environmentLabel={
         environmentCount > 1 ? (props.environmentLabelById.get(entry.environmentId) ?? null) : null
       }
-      {...extra}
+      projectLabel={
+        entry.assistant.scope === "project"
+          ? projectName(entry.environmentId, entry.assistant.projectId)
+          : null
+      }
     />
   );
   const mutedIcon = sidebar ? "accent-drawer-foreground-muted" : "accent-icon-subtle";
-  const shown = active.slice(0, COLLAPSED_AVATAR_LIMIT);
-  const hidden = active.length - shown.length;
+  const shown = ranked.slice(0, COLLAPSED_AVATAR_LIMIT);
+  const hidden = ranked.length - shown.length;
   const addActions: MenuAction[] = [
     { id: "assistant", title: "New assistant", image: "person.badge.plus" },
     { id: "group", title: "New group", image: "person.2" },
@@ -478,8 +421,11 @@ export function HomeAssistantsSection(props: {
         <View className="min-w-0 flex-1 flex-row items-center justify-end gap-2 pr-1">
           {assistantsCollapsed ? (
             <>
-              {shown.map((entry) => (
-                <AssistantAvatarButton key={assistantEntryKey(entry)} entry={entry} />
+              {shown.map(({ entry }) => (
+                <AssistantAvatarButton
+                  key={`${entry.environmentId}:${entry.assistant.id}`}
+                  entry={entry}
+                />
               ))}
               {hidden > 0 ? (
                 <Pressable
@@ -523,98 +469,43 @@ export function HomeAssistantsSection(props: {
       </View>
       {assistantsCollapsed ? null : (
         <>
-          {sections.needs.length > 0 ? (
-            <>
-              <SectionLabel tone="text-warning-foreground">{`Needs you · ${sections.needs.length}`}</SectionLabel>
-              {sections.needs.map((entry) => row(entry, { projectLabel: projectLabelOf(entry) }))}
-            </>
-          ) : null}
-          {sections.groups.length > 0 ? (
-            <>
-              <SectionLabel
-                tone={sidebar ? "text-drawer-foreground-muted" : "text-foreground-secondary"}
+          {teams.map((team) => {
+            const key = `group:${team.environmentId}:${team.team.id}`;
+            const members = team.team.memberIds.flatMap((id) => {
+              const item = rankedByKey.get(`${team.environmentId}:${id}`);
+              return item === undefined ? [] : [item];
+            });
+            return (
+              <View key={key}>
+                <GroupFoldRow
+                  entry={team}
+                  members={members.map((item) => item.entry)}
+                  running={members.filter((item) => item.presence.mood === "working").length}
+                  expanded={expanded.has(key)}
+                  sidebar={sidebar}
+                  onToggle={() => toggleExpanded(key)}
+                />
+                {expanded.has(key) ? members.map((item) => row(item.entry, true)) : null}
+              </View>
+            );
+          })}
+          {listed.map((item) => row(item.entry))}
+          {foldable ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={assistantsShowAll ? "Show less" : "Show all"}
+              onPress={toggleAssistantsShowAll}
+              className="min-h-10 justify-center px-2 active:opacity-70"
+            >
+              <Text
+                className={cn(
+                  "text-xs font-t3-medium",
+                  sidebar ? "text-drawer-foreground-muted" : "text-foreground-secondary",
+                )}
               >
-                Groups
-              </SectionLabel>
-              {sections.groups.map(({ team, members }) => {
-                const key = `group:${team.environmentId}:${team.team.id}`;
-                return (
-                  <View key={key}>
-                    <GroupFoldRow
-                      entry={team}
-                      members={members}
-                      folded={folded.has(key)}
-                      sidebar={sidebar}
-                      onToggle={() => toggleFold(key)}
-                    />
-                    {folded.has(key) ? null : members.length === 0 ? (
-                      <Text className="ml-3.5 border-l border-border py-1 pl-3 text-xs text-foreground-muted">
-                        No members yet
-                      </Text>
-                    ) : (
-                      members.map((entry) =>
-                        row(entry, { nested: true, projectLabel: projectLabelOf(entry) }),
-                      )
-                    )}
-                  </View>
-                );
-              })}
-            </>
-          ) : null}
-          {sections.projects.length > 0 ? (
-            <>
-              <SectionLabel
-                tone={sidebar ? "text-drawer-foreground-muted" : "text-foreground-secondary"}
-              >
-                Projects
-              </SectionLabel>
-              {sections.projects.map((project) => {
-                const key = `project:${project.environmentId}:${project.projectId}`;
-                const name = projectName(project.environmentId, project.projectId);
-                return (
-                  <View key={key}>
-                    <FoldRow
-                      label={name}
-                      folded={folded.has(key)}
-                      sidebar={sidebar}
-                      onToggle={() => toggleFold(key)}
-                      leading={
-                        <SymbolView
-                          name="folder"
-                          size={16}
-                          tintColorClassName={mutedIcon}
-                          type="monochrome"
-                        />
-                      }
-                      menuLabel={`${name} actions`}
-                      actions={[
-                        { id: "new", title: "New assistant in this project", image: "plus" },
-                      ]}
-                      onAction={() =>
-                        openEditor(EnvironmentId.make(project.environmentId), null, {
-                          projectId: ProjectId.make(project.projectId),
-                        })
-                      }
-                    />
-                    {folded.has(key)
-                      ? null
-                      : project.members.map((entry) => row(entry, { nested: true }))}
-                  </View>
-                );
-              })}
-            </>
-          ) : null}
-          {sections.unassigned.length > 0 ? (
-            <>
-              {sections.needs.length + sections.groups.length + sections.projects.length > 0 ? (
-                <SectionLabel
-                  tone={sidebar ? "text-drawer-foreground-muted" : "text-foreground-secondary"}
-                >
-                  Unassigned
-                </SectionLabel>
-              ) : null}
-              {sections.unassigned.map((entry) => row(entry, {}))}
-            </>
+                {assistantsShowAll ? "Show less" : `Show all (${ranked.length})`}
+              </Text>
+            </Pressable>
           ) : null}
         </>
       )}

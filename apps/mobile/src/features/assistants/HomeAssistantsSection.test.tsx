@@ -21,6 +21,8 @@ const { mocks } = vi.hoisted(() => ({
       team: { id: string; name: string; memberIds: string[] };
     }>,
     collapsed: false,
+    showAll: false,
+    toggleShowAll: vi.fn(),
     presence: {} as Record<string, Presence>,
     notified: new Set<string>(),
     projects: [] as Array<{ environmentId: string; id: string; title: string }>,
@@ -156,6 +158,8 @@ vi.mock("../home/useHomeSectionPreferences", () => ({
   useHomeSectionPreferences: () => ({
     assistantsCollapsed: mocks.collapsed,
     toggleAssistants: mocks.toggle,
+    assistantsShowAll: mocks.showAll,
+    toggleAssistantsShowAll: mocks.toggleShowAll,
   }),
 }));
 
@@ -198,6 +202,7 @@ beforeEach(() => {
   root = createRoot(container);
   Object.assign(mocks, {
     collapsed: false,
+    showAll: false,
     presence: {},
     notified: new Set(),
     active: make(2),
@@ -212,6 +217,7 @@ beforeEach(() => {
     mocks.navigate,
     mocks.reset,
     mocks.archive,
+    mocks.toggleShowAll,
   ]) {
     fn.mockReset();
   }
@@ -237,9 +243,9 @@ describe("HomeAssistantsSection", () => {
     expect(mocks.toggle).toHaveBeenCalledOnce();
   });
 
-  it("splits Needs you, Groups, Projects and Unassigned, naming the project on a project assistant", () => {
+  it("lists assistants flat: needs you, working, then the rest, with one meta each", () => {
     mocks.active = [
-      bot(0),
+      bot(0, { role: "CEO" }),
       bot(1),
       bot(2),
       bot(3, { scope: "project", projectId: "p1" }),
@@ -247,51 +253,34 @@ describe("HomeAssistantsSection", () => {
       bot(5, { scope: "project", projectId: "p9" }),
     ];
     mocks.teams = [team("g1", "Finance", ["a1"])];
-    mocks.presence.t4 = { mood: "needs", detail: "Needs your approval", since: null };
-    render();
-    const text = container.textContent ?? "";
-    for (const label of [
-      "Needs you · 1",
-      "Groups",
-      "Finance",
-      "Projects",
-      "Website",
-      "Unassigned",
-    ]) {
-      expect(text).toContain(label);
-    }
-    expect(text.indexOf("Needs you · 1")).toBeLessThan(text.indexOf("Groups"));
-    expect(text.indexOf("Groups")).toBeLessThan(text.indexOf("Projects"));
-    expect(text.indexOf("Projects")).toBeLessThan(text.indexOf("Unassigned"));
-    // A project assistant outside its own project listing names it; one under its project does not.
-    expect(text).toContain("Website only · Needs your approval");
-    expect(text).toContain("Project");
-    expect(text).not.toContain("Website only · Idle");
-  });
-
-  it("shows the status line with its relative time, the role chip and the mood color", () => {
-    mocks.active = [bot(0, { role: "CEO" }), bot(1)];
-    mocks.presence.t0 = {
-      mood: "working",
-      detail: "Reading the repo",
-      since: "2026-11-06T11:48:00Z",
-      queued: 3,
-    };
+    mocks.presence.t4 = { mood: "needs", detail: "Needs your approval in Finance", since: null };
+    mocks.presence.t2 = { mood: "working", detail: "Reading the repo", since: null };
     mocks.presence.t1 = { mood: "failed", detail: "Last run failed", since: null };
+    mocks.showAll = true;
     render(false);
-    expect(container.textContent).toContain("CEO");
-    const [first, second] = Array.from(
-      container.querySelectorAll('[data-testid="assistant-status"]'),
+    const text = container.textContent ?? "";
+    for (const label of ["Unassigned", "Groups", "Idle"]) {
+      expect(text).not.toContain(label);
+    }
+    const order = ["Bot4", "Bot2", "Bot0", "Bot1", "Bot3", "Bot5"].map((name) =>
+      text.lastIndexOf(name),
     );
-    expect(first?.textContent).toBe("Reading the repo · 12m · 3 queued");
-    expect(first?.className).toContain("text-adaptive-sky-600-400");
-    expect(second?.textContent).toBe("Last run failed");
-    expect(second?.className).toContain("text-danger-foreground");
-    expect(container.textContent).toContain("av:Bot0:working");
-    expect(container.textContent).toContain("av:Bot1:failed");
+    expect(order).toEqual([...order].sort((x, y) => x - y));
+    const statuses = Array.from(container.querySelectorAll('[data-testid="assistant-status"]'));
+    expect(statuses.map((node) => node.textContent)).toEqual([
+      "Needs you",
+      "Working",
+      "Last run failed",
+    ]);
+    expect(statuses[1]?.className).toContain("text-adaptive-sky-600-400");
+    expect(statuses[2]?.className).toContain("text-danger-foreground");
+    const pills = Array.from(container.querySelectorAll('[data-testid="assistant-project"]'));
+    expect(pills.map((node) => node.textContent)).toEqual(["Website", "Project"]);
+    expect(text).toContain("CEO");
+    expect(text).toContain("av:Bot2:working");
     render(true);
     expect(container.querySelector('[data-testid="assistant-status"]')?.className).toContain(
-      "text-adaptive-sky-600-400",
+      "text-warning-foreground",
     );
   });
 
@@ -314,26 +303,51 @@ describe("HomeAssistantsSection", () => {
     expect(container.textContent).not.toContain("Lab");
   });
 
-  it("groups stack their members' avatars with +N, fold, and say No members yet when empty", async () => {
+  it("a group is one row: avatars with +N, running or empty status, members behind the chevron", async () => {
     mocks.active = make(6);
     mocks.teams = [
       team("g1", "Everyone", ["a0", "a1", "a2", "a3", "a4", "a5"]),
       team("g2", "Nobody", []),
     ];
+    mocks.presence.t0 = { mood: "working", detail: "W", since: null };
+    mocks.presence.t1 = { mood: "working", detail: "W", since: null };
+    mocks.showAll = true;
     render();
     const stack = container.querySelector('[data-testid="group-avatars"]')!;
     expect(stack.querySelectorAll("i")).toHaveLength(4);
     expect(stack.textContent).toContain("+2");
-    expect(container.textContent).toContain("No members yet");
-    expect(byLabel("Bot0")).not.toBeNull();
-    await click("Fold Everyone");
-    expect(byLabel("Bot0")).toBeNull();
-    expect(byLabel("Fold Everyone")?.getAttribute("aria-expanded")).toBe("false");
-    await click("Fold Nobody");
-    expect(container.textContent).not.toContain("No members yet");
-    await click("Fold Everyone");
-    expect(byLabel("Bot0")).not.toBeNull();
+    const statuses = Array.from(container.querySelectorAll('[data-testid="group-status"]'));
+    expect(statuses.map((node) => node.textContent)).toEqual(["spinner2 running", "empty"]);
+    expect(byLabel("Show Nobody members")).toBeNull();
+    const bot0 = () => container.querySelectorAll('[aria-label^="Bot0"]').length;
+    expect(bot0()).toBe(2);
+    await click("Show Everyone members");
+    expect(bot0()).toBe(4);
+    expect(byLabel("Hide Everyone members")?.getAttribute("aria-expanded")).toBe("true");
+    await click("Hide Everyone members");
+    expect(bot0()).toBe(2);
     expect(mocks.chat).not.toHaveBeenCalled();
+  });
+
+  it("shows active assistants plus five recent ones, and Show all reveals the rest", async () => {
+    mocks.active = make(9);
+    mocks.presence.t8 = { mood: "working", detail: "W", since: null };
+    render();
+    const rows = () =>
+      container.querySelectorAll('[aria-label^="Bot"]:not([aria-label*="actions"])');
+    expect(rows()).toHaveLength(6);
+    expect(byLabel("Bot7")).toBeNull();
+    expect(container.textContent).toContain("Show all (9)");
+    await click("Show all");
+    expect(mocks.toggleShowAll).toHaveBeenCalledOnce();
+    mocks.showAll = true;
+    render();
+    expect(byLabel("Bot7")).not.toBeNull();
+    expect(byLabel("Show less")).not.toBeNull();
+    mocks.showAll = false;
+    mocks.active = make(3);
+    render();
+    expect(byLabel("Show all")).toBeNull();
   });
 
   it("opens a conversation from a row", async () => {
@@ -371,15 +385,6 @@ describe("HomeAssistantsSection", () => {
     expect(mocks.openTeam).toHaveBeenCalledWith("hub", "g1");
     await click("menu:New assistant in this group");
     expect(mocks.editor).toHaveBeenCalledWith("hub", null, { teamId: "g1" });
-  });
-
-  it("a project header folds and starts an assistant in that project", async () => {
-    mocks.active = [bot(0, { scope: "project", projectId: "p1" })];
-    render();
-    await click("menu:New assistant in this project");
-    expect(mocks.editor).toHaveBeenCalledWith("hub", null, { projectId: "p1" });
-    await click("Website");
-    expect(byLabel("Bot0")).toBeNull();
   });
 
   it("the plus menu offers a new assistant, a new group and the describe flow", async () => {
@@ -420,10 +425,10 @@ describe("HomeAssistantsSection", () => {
     expect(byLabel(label)?.textContent).toContain(dot);
   });
 
-  it("expanded rows show the working spinner and attention dot", () => {
+  it("expanded rows show the working and attention dots", () => {
     mocks.presence.t0 = { mood: "working", detail: "W", since: null };
     render();
-    expect(container.textContent).toContain("spinner");
+    expect(container.textContent).toContain("dot:working");
     mocks.presence = {};
     mocks.notified.add("t0");
     render();

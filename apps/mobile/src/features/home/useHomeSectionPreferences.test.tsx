@@ -37,6 +37,7 @@ describe("useHomeSectionPreferences", () => {
     const waiting = read(AsyncResult.initial());
     waiting.toggleAssistants();
     waiting.toggleAgentsDone();
+    waiting.toggleAssistantsShowAll();
     expect(mocks.save).not.toHaveBeenCalled();
   });
 
@@ -47,12 +48,15 @@ describe("useHomeSectionPreferences", () => {
     expect([prefs.assistantsCollapsed, prefs.agentsDoneExpanded]).toEqual([true, true]);
     prefs.toggleAssistants();
     prefs.toggleAgentsDone();
-    const [a, b] = mocks.save.mock.calls.map(
+    prefs.toggleAssistantsShowAll();
+    const [a, b, c] = mocks.save.mock.calls.map(
       ([update]) => update.transform as (c: object) => object,
     );
     expect(a!({ homeAssistantsCollapsed: true })).toEqual({ homeAssistantsCollapsed: false });
     expect(a!({})).toEqual({ homeAssistantsCollapsed: true });
     expect(b!({})).toEqual({ homeAgentsDoneExpanded: true });
     expect(b!({ homeAgentsDoneExpanded: true })).toEqual({ homeAgentsDoneExpanded: false });
+    expect(c!({})).toEqual({ homeAssistantsShowAll: true });
+    expect(c!({ homeAssistantsShowAll: true })).toEqual({ homeAssistantsShowAll: false });
   });
 });
