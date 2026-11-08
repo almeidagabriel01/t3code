@@ -594,11 +594,11 @@ describe("task cards", () => {
     params: { environmentId: "hub", threadId: "assistant:beto:g-0123456789abcdef" },
   };
 
-  it("opens the task's conversation by pushing it onto the stack", async () => {
+  it("selects the task's conversation as the detail", async () => {
     render();
     await openFirstConversation();
-    expect(mocks.dispatch).toHaveBeenCalledWith(THREAD);
-    expect(mocks.selectDetail).not.toHaveBeenCalled();
+    expect(mocks.selectDetail).toHaveBeenCalledWith(THREAD);
+    expect(mocks.dispatch).not.toHaveBeenCalled();
   });
 });
 

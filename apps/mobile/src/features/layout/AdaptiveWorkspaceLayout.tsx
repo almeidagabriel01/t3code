@@ -578,7 +578,7 @@ function AdaptiveWorkspaceLayoutContent(
       if (layout.primarySidebarOverlaysContent) setPrimarySidebarVisible(false);
       workspace?.dispatch({
         type: "select",
-        tab: detail.name === "Thread" ? "threads" : "pullRequests",
+        tab: detail.name === "PullRequest" ? "pullRequests" : "threads",
       });
       startOpeningDetail(detail);
       navigation.dispatch(selectWorkspaceDetail(detail, sheet));

@@ -29,6 +29,7 @@ const options = {
     "ThreadFiles",
     "PullRequest",
     "PullRequestReviewers",
+    "AssistantGroupChat",
     "Settings",
     "SettingsAppearance",
     "GitOverview",
@@ -44,6 +45,15 @@ const threadB = { name: "Thread", params: { environmentId: "env", threadId: "b" 
 const pullRequest = {
   name: "PullRequest",
   params: { environmentId: "env", projectId: "p", repository: "o/r", number: 1, host: "h" },
+} as const;
+
+const groupA = {
+  name: "AssistantGroupChat",
+  params: { environmentId: "env", teamId: "a" },
+} as const;
+const groupB = {
+  name: "AssistantGroupChat",
+  params: { environmentId: "env", teamId: "b" },
 } as const;
 
 function apply(state: State, action: Parameters<typeof base.getStateForAction>[1]) {
@@ -78,6 +88,17 @@ describe("selectWorkspaceDetail", () => {
     expect(page(second)).toEqual({ names: ["Home", "Thread"], index: 1 });
     expect(second.routes[1]?.key).toBe(first.routes[1]?.key);
     expect(second.routes[1]?.params).toEqual(threadB.params);
+  });
+
+  it("shows a group chat in the column, swapping it in place and replacing a thread", () => {
+    const first = select(select(home(), threadA), groupA);
+    expect(page(first)).toEqual({ names: ["Home", "AssistantGroupChat"], index: 1 });
+    const again = select(first, groupA);
+    expect(again.routes[1]?.key).toBe(first.routes[1]?.key);
+    const other = select(again, groupB);
+    expect(other.routes[1]?.key).toBe(first.routes[1]?.key);
+    expect(other.routes[1]?.params).toEqual(groupB.params);
+    expect(page(select(other, threadA))).toEqual({ names: ["Home", "Thread"], index: 1 });
   });
 
   it.each([

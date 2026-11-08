@@ -7,6 +7,7 @@ const { mocks } = vi.hoisted(() => ({
     update: vi.fn(),
     alert: vi.fn(),
     navigate: vi.fn(),
+    select: vi.fn(),
     startEditor: vi.fn(),
     draftFor: vi.fn(),
     set: vi.fn(),
@@ -24,7 +25,7 @@ vi.mock("../../components/ui/Dialog", () => ({
   alert: (...args: unknown[]) => mocks.alert(...args),
 }));
 vi.mock("../workspace/useSelectWorkspaceDetail", () => ({
-  useSelectWorkspaceDetail: () => vi.fn(),
+  useSelectWorkspaceDetail: () => mocks.select,
 }));
 vi.mock("../../state/atom-registry", () => ({ appAtomRegistry: { set: mocks.set } }));
 vi.mock("../../state/assistants", () => ({
@@ -92,11 +93,11 @@ describe("group archive flows", () => {
 });
 
 describe("opening a group", () => {
-  it("opens its chat by id", () => {
+  it("shows its chat in the detail column", () => {
     run(() => useOpenAssistantTeam()).chat("hub" as never, "g1" as never);
-    expect(mocks.navigate).toHaveBeenCalledWith("AssistantGroupChat", {
-      environmentId: "hub",
-      teamId: "g1",
+    expect(mocks.select).toHaveBeenCalledWith({
+      name: "AssistantGroupChat",
+      params: { environmentId: "hub", teamId: "g1" },
     });
   });
 
