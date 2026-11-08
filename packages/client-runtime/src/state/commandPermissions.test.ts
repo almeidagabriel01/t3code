@@ -1,3 +1,4 @@
+import { createGlobalSkillsEnvironmentAtoms } from "./globalSkills.ts";
 import { requestGuarded, runStreamGuarded } from "../rpc/client.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import * as SubscriptionRef from "effect/SubscriptionRef";
@@ -67,6 +68,28 @@ const setup = Effect.gen(function* () {
 });
 
 describe("command permissions", () => {
+  it.effect("global skill commands require settings write in the destination", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const commands = createGlobalSkillsEnvironmentAtoms(runtime);
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        expect(registry.get(commands.rescan.permissionAtom(env))).toBe(false);
+        expect(registry.get(commands.remove.permissionAtom(env))).toBe(false);
+        registry.set(
+          sessions(env),
+          AsyncResult.success({
+            ...grant(false),
+            scopes: [AuthSettingsWriteScope],
+            permissions: [AuthSettingsWriteScope],
+          }),
+        );
+        expect(registry.get(commands.rescan.permissionAtom(env))).toBe(true);
+        expect(registry.get(commands.remove.permissionAtom(env))).toBe(true);
+      }),
+    ),
+  );
+
   it.effect("requires the destination read grant to refresh providers", () =>
     Effect.scoped(
       Effect.gen(function* () {

@@ -267,6 +267,7 @@ function useSettingsIndexSections(): SettingsListSection[] {
       rows: [
         serverPage("SettingsProviderAccounts", "person.crop.circle", "Providers"),
         serverPage("SettingsThreads", "text.bubble", "Threads"),
+        serverPage("SettingsAgentTools", "hammer", "MCP servers & skills"),
         ...(hasAssistants ? [page("SettingsAssistants", "person.2", "Assistants")] : []),
         ...(hasImessage ? [page("SettingsImessage", "bubble.left", "iMessage")] : []),
         ...(hasTelegram ? [page("SettingsTelegram", "paperplane", "Telegram")] : []),

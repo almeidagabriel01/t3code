@@ -2,6 +2,7 @@ import {
   type EnvironmentId,
   isProviderWorkspaceSnapshotCurrent,
   PROVIDER_WORKSPACE_SNAPSHOT_TTL_MS,
+  T3_SKILL_SCOPE,
   type ProviderInstanceId,
   type ServerProvider,
   type ServerProviderSkill,
@@ -12,7 +13,14 @@ import { Atom } from "effect/reactivity";
 import { deadlineStore } from "./clock.ts";
 import { type AtomCommand, runAtomCommand } from "./state/runtime.ts";
 
-export type ProviderSkillSourceKind = "app" | "repo" | "project" | "personal" | "system" | "other";
+export type ProviderSkillSourceKind =
+  | "t3"
+  | "app"
+  | "repo"
+  | "project"
+  | "personal"
+  | "system"
+  | "other";
 
 function normalizePathSeparators(pathValue: string): string {
   return pathValue.replaceAll("\\", "/");
@@ -62,6 +70,8 @@ export function getProviderSlashCommandsForSlashMenu(
 export function resolveProviderSkillSourceKind(
   skill: Pick<ServerProviderSkill, "path" | "scope">,
 ): ProviderSkillSourceKind {
+  // T3's own skills live under the T3 home, which a plugin path heuristic must not claim.
+  if (skill.scope?.trim().toLowerCase() === T3_SKILL_SCOPE) return "t3";
   const normalizedPath = normalizePathSeparators(skill.path);
   if (normalizedPath.includes("/.codex/plugins/") || normalizedPath.includes("/.agents/plugins/")) {
     return "app";

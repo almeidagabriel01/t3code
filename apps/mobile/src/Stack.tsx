@@ -143,6 +143,7 @@ import { SettingsAssistantsRouteScreen } from "./features/assistants/SettingsAss
 import { SettingsMacPermissionsRouteScreen } from "./features/settings/SettingsMacPermissionsRouteScreen";
 import { SettingsImessageRouteScreen } from "./features/imessage/SettingsImessageRouteScreen";
 import { SettingsTelegramRouteScreen } from "./features/telegram/SettingsTelegramRouteScreen";
+import { SettingsAgentToolsRouteScreen } from "./features/settings/SettingsAgentToolsRouteScreen";
 import { SettingsMemoryRouteScreen } from "./features/settings/SettingsMemoryRouteScreen";
 import { ClaudeChromeRouteScreen } from "./features/settings/ClaudeChromeRouteScreen";
 import { FallbackModelPickerRouteScreen } from "./features/settings/FallbackModelPickerRouteScreen";
@@ -593,6 +594,11 @@ const SETTINGS_SCREENS = {
   SettingsKanbanLinkCard: createNativeStackScreen({
     screen: KanbanLinkCardRouteScreen,
     options: { ...SETTINGS_PAGE_OPTIONS, title: "Switch card" },
+  }),
+  SettingsAgentTools: createNativeStackScreen({
+    screen: SettingsAgentToolsRouteScreen,
+    linking: "settings/agent-tools",
+    options: { ...SETTINGS_PAGE_OPTIONS, title: "MCP servers & skills" },
   }),
   SettingsMemory: createNativeStackScreen({
     screen: SettingsMemoryRouteScreen,

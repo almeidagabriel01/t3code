@@ -84,3 +84,9 @@ describe("planClaudeSkillDispatch", () => {
     });
   });
 });
+
+it("reserves t3 names even when a provider reports them", () => {
+  expect(
+    planClaudeSkillDispatch("$t3:shared", new Map([["t3:shared", { path: "/tmp/skill" }]])),
+  ).toBeUndefined();
+});

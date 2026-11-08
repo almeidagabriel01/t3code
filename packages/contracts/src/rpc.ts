@@ -41,6 +41,11 @@ import {
 import * as Schema from "effect/Schema";
 import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
+import {
+  GLOBAL_SKILLS_WS_METHODS,
+  WsGlobalSkillsRemoveRpc,
+  WsGlobalSkillsRescanRpc,
+} from "./globalSkillsRpc.ts";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import {
@@ -549,6 +554,7 @@ import {
 } from "./memoryRpc.ts";
 
 export const WS_METHODS = {
+  ...GLOBAL_SKILLS_WS_METHODS,
   ...MEMORY_WS_METHODS,
 
   projectsListEntries: "projects.listEntries",
@@ -2632,6 +2638,8 @@ export class RpcScopeAuthorization extends RpcMiddleware.Service<RpcScopeAuthori
 ) {}
 
 export const WsRpcGroup = RpcGroup.make(
+  WsGlobalSkillsRemoveRpc,
+  WsGlobalSkillsRescanRpc,
   WsGuestShareCreateRpc,
   WsServerProbeRpc,
   WsServerGetConfigRpc,

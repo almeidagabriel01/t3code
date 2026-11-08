@@ -14,6 +14,7 @@ import {
   hasCompleteProviderWorkspaceSnapshot,
   isProviderWorkspaceSnapshotScanning,
   resolveProviderSkillsForCwd,
+  resolveProviderSkillSourceKind,
   resolveProviderSlashCommandsForCwd,
 } from "./providerSkills.ts";
 
@@ -130,6 +131,26 @@ describe("workspace provider snapshots", () => {
     expect(hasCompleteProviderWorkspaceSnapshot(provider, "/workspace/project-b")).toBe(false);
     expect(hasCompleteProviderWorkspaceSnapshot(undefined, "/workspace/project-a")).toBe(false);
     expect(hasCompleteProviderWorkspaceSnapshot(provider, null)).toBe(false);
+  });
+});
+
+describe("T3 skills", () => {
+  const t3Skill = {
+    name: "t3:review",
+    path: "/home/me/.t3/skills/review/SKILL.md",
+    scope: "t3",
+    enabled: true,
+  };
+
+  it("shows a T3 skill as T3 even when its path looks like a plugin", () => {
+    expect(resolveProviderSkillSourceKind(t3Skill)).toBe("t3");
+    expect(
+      resolveProviderSkillSourceKind({
+        ...t3Skill,
+        path: "/home/me/.t3/.codex/plugins/x/skills/review/SKILL.md",
+      }),
+    ).toBe("t3");
+    expect(resolveProviderSkillSourceKind({ ...t3Skill, scope: "user" })).toBe("personal");
   });
 });
 

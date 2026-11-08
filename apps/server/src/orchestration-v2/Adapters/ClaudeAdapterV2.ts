@@ -115,6 +115,7 @@ import {
   type ProviderThreadId,
   type RunId,
   type ThreadId,
+  isT3SkillName,
   resolveIdleCompaction,
 } from "@t3tools/contracts";
 
@@ -4859,7 +4860,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         (skills) =>
           new Map(
             skills
-              .filter((skill) => skill.enabled && skill.userInvocable !== false)
+              .filter((s) => s.enabled && s.userInvocable !== false && !isT3SkillName(s.name))
               .map((skill) => [skill.name, skill]),
           ),
       ),

@@ -17,6 +17,9 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as ServerConfig from "../config.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import { providerTextWithSkills } from "../skills/T3SkillText.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 
@@ -92,6 +95,9 @@ export const layer: Layer.Layer<
   Effect.gen(function* () {
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+    // Optional so test assemblies without settings still build; then no skill text is added.
+    const settings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
+    const config = yield* Effect.serviceOption(ServerConfig.ServerConfig);
 
     const load = Effect.fn("ProviderTurnControlService.load")(function* (input: {
       readonly threadId: ThreadId;
@@ -374,9 +380,12 @@ export const layer: Layer.Layer<
               providerTurnId: loaded.providerTurn.id,
               message: {
                 messageId: message.id,
-                text: projectComposerContextForProvider({
-                  text: message.text,
-                  records: message.context?.records ?? [],
+                text: yield* providerTextWithSkills(settings, {
+                  text: projectComposerContextForProvider({
+                    text: message.text,
+                    records: message.context?.records ?? [],
+                  }),
+                  globalSkillsDir: Option.isSome(config) ? config.value.globalSkillsDir : undefined,
                 }),
                 attachments: message.attachments,
                 createdBy: message.createdBy,
@@ -422,5 +431,21 @@ export const layer: Layer.Layer<
           ),
       ),
     });
+  }),
+);
+
+/** Steering text reads the settings and skills folder, so the runtime hands them in. */
+export const layerWithSkills = Layer.unwrap(
+  Effect.gen(function* () {
+    const config = yield* ServerConfig.ServerConfig;
+    const settings = yield* ServerSettings.ServerSettingsService;
+    return layer.pipe(
+      Layer.provide(
+        Layer.merge(
+          Layer.succeed(ServerConfig.ServerConfig, config),
+          Layer.succeed(ServerSettings.ServerSettingsService, settings),
+        ),
+      ),
+    );
   }),
 );

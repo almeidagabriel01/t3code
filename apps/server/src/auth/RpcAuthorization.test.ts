@@ -47,6 +47,12 @@ describe("RPC authorization scopes", () => {
     }
   });
 
+  it("keeps the global skill folder, which agents read, behind settings write", () => {
+    for (const method of [WS_METHODS.globalSkillsRemove, WS_METHODS.globalSkillsRescan]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthSettingsWriteScope);
+    }
+  });
+
   it("keeps triage, which seeds an agent that reads logs and the database, behind operate scope", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.serverPrepareTriage)).toBe(
       AuthOrchestrationOperateScope,

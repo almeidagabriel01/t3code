@@ -516,6 +516,7 @@ function applyServerSettingsPatchFields(
     backgroundActivity,
     worktreeCleanup: worktreeCleanupPatch,
     // Merged per entry below; its `null` removals must not reach deepMerge.
+    mcpServers: mcpServersPatch,
     usageLimitSources: usageLimitSourcesPatch,
     providerBudgets: providerBudgetsPatch,
     folderProjects: folderProjectsPatch,
@@ -729,6 +730,15 @@ function applyServerSettingsPatchFields(
       : {}),
     ...(patch.defaultProjectScripts !== undefined
       ? { defaultProjectScripts: patch.defaultProjectScripts }
+      : {}),
+    ...(mcpServersPatch !== undefined
+      ? {
+          mcpServers: Object.fromEntries(
+            Object.entries({ ...current.mcpServers, ...mcpServersPatch }).flatMap(
+              ([name, server]) => (server === null ? [] : [[name, server] as const]),
+            ),
+          ),
+        }
       : {}),
     ...(usageLimitSourcesPatch !== undefined
       ? {

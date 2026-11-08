@@ -235,6 +235,14 @@
       "types": "./src/state/itemSupport.ts",
       "default": "./src/state/itemSupport.ts"
     },
+    "./mcpServerDrafts": {
+      "types": "./src/mcpServerDrafts.ts",
+      "default": "./src/mcpServerDrafts.ts"
+    },
+    "./state/global-skills": {
+      "types": "./src/state/globalSkills.ts",
+      "default": "./src/state/globalSkills.ts"
+    },
     "./state/kanban": {
       "types": "./src/state/kanban.ts",
       "default": "./src/state/kanban.ts"

@@ -1,3 +1,4 @@
+import { T3SettingsFields, T3SettingsPatchFields } from "./t3SettingsFields.ts";
 import {
   DEFAULT_MEMORY_OWNER_SOURCE_READ_POLICY,
   MemoryHubSettings,
@@ -1331,6 +1332,7 @@ export const KeepAwakeMode = Schema.Literals(KEEP_AWAKE_MODES);
 export type KeepAwakeMode = typeof KeepAwakeMode.Type;
 
 export const ServerSettings = Schema.Struct({
+  ...T3SettingsFields,
   channelLanguage: ChannelLanguage.pipe(
     Schema.catchDecoding(() => Effect.succeedSome("auto" as const)),
     Schema.withDecodingDefault(Effect.succeed("auto" as const)),
@@ -1764,6 +1766,7 @@ const ModelSelectionPatch = Schema.Struct({
 });
 
 const ServerSettingsPatchFields = Schema.Struct({
+  ...T3SettingsPatchFields,
   setModelFavorites: Schema.optionalKey(
     Schema.Array(Schema.Struct({ ...ModelFavorite.fields, favorite: Schema.Boolean })),
   ),

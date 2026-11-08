@@ -65,6 +65,8 @@ import * as ProcessRunner from "../processRunner.ts";
 import * as AskBeforeActing from "../assistants/AskBeforeActing.ts";
 import * as AskBeforeActingGate from "../assistants/AskBeforeActingGate.ts";
 import * as AssistantConnectors from "../assistants/AssistantConnectors.ts";
+import { globalMcpConnectors } from "../mcpServers/GlobalMcpConnectors.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as AssistantDirectory from "../assistants/AssistantDirectory.ts";
 import * as AssistantRuntimePolicy from "../assistants/AssistantRuntimePolicy.ts";
 import * as AssistantService from "../assistants/AssistantService.ts";
@@ -194,7 +196,7 @@ const layerProviderTurnStartServiceProvided = ProviderTurnStartService.layer.pip
   ),
 );
 
-const layerProviderTurnControlServiceProvided = ProviderTurnControlService.layer.pipe(
+const layerProviderTurnControlServiceProvided = ProviderTurnControlService.layerWithSkills.pipe(
   Layer.provide(Layer.merge(ProjectionStore.layer, layerProviderSessionManagerProvided)),
 );
 const layerRuntimeRequestServiceProvided = RuntimeRequestService.layer.pipe(
@@ -429,7 +431,12 @@ export const layerProduction = Layer.mergeAll(
     Effect.gen(function* () {
       const sessions = yield* McpProviderSessions.McpProviderSessions;
       const assistantConnectors = yield* AssistantConnectors.AssistantConnectors;
-      yield* sessions.installConnectors(assistantConnectors.forThread);
+      const settings = yield* ServerSettings.ServerSettingsService;
+      yield* sessions.installConnectors((threadId) =>
+        Effect.all([assistantConnectors.forThread(threadId), globalMcpConnectors(settings)]).pipe(
+          Effect.map(([assistant, global]) => [...assistant, ...global]),
+        ),
+      );
     }),
   ).pipe(Layer.provide(layerAssistantConnectorsProvided)),
   AssistantService.layer.pipe(

@@ -93,27 +93,42 @@ export function mapSettingsSecrets(
     return next;
   };
 
-  return mapSecretFieldGroups(settings, mapFields, (instanceId, environment) =>
-    environment.map((variable) => {
-      const { valueRedacted: _omit, ...rest } = variable;
-      // A secret reference is not itself secret; storage sees the value cleared.
-      const reference = typeof variable.value === "string" ? undefined : variable.value;
-      const result = map({
-        secretName: `provider-env-${encode(instanceId)}-${encode(variable.name)}`,
-        kind: "environment",
-        value: typeof variable.value === "string" ? variable.value : "",
-        redacted: reference === undefined && variable.valueRedacted === true,
-        sensitive: variable.sensitive,
-        providerInstanceId: instanceId,
-        environmentVariable: variable.name,
-      });
-      if (reference !== undefined) return { ...rest, value: reference };
-      return {
-        ...rest,
-        value: result.value,
-        ...(result.redacted ? { valueRedacted: true } : {}),
-      };
-    }),
+  const mapPlain = (secretName: string, value: string) => {
+    const result = map({
+      secretName,
+      kind: "field",
+      value,
+      redacted: value === SECRET_REDACTED,
+      sensitive: true,
+    });
+    return result.redacted ? SECRET_REDACTED : result.value;
+  };
+
+  return mapSecretFieldGroups(
+    settings,
+    mapFields,
+    (instanceId, environment) =>
+      environment.map((variable) => {
+        const { valueRedacted: _omit, ...rest } = variable;
+        // A secret reference is not itself secret; storage sees the value cleared.
+        const reference = typeof variable.value === "string" ? undefined : variable.value;
+        const result = map({
+          secretName: `provider-env-${encode(instanceId)}-${encode(variable.name)}`,
+          kind: "environment",
+          value: typeof variable.value === "string" ? variable.value : "",
+          redacted: reference === undefined && variable.valueRedacted === true,
+          sensitive: variable.sensitive,
+          providerInstanceId: instanceId,
+          environmentVariable: variable.name,
+        });
+        if (reference !== undefined) return { ...rest, value: reference };
+        return {
+          ...rest,
+          value: result.value,
+          ...(result.redacted ? { valueRedacted: true } : {}),
+        };
+      }),
+    mapPlain,
   );
 }
 
@@ -156,6 +171,8 @@ function mapSecretFieldGroups(
     _instanceId,
     environment,
   ) => environment,
+  // MCP server values keep their case; the field mapper lowercases record keys as hostnames.
+  mapPlain: (secretName: string, value: string) => string = (_secretName, value) => value,
 ): ServerSettings {
   const providerInstances = Object.fromEntries(
     Object.entries(settings.providerInstances).map(([instanceId, instance]) => {
@@ -230,8 +247,22 @@ function mapSecretFieldGroups(
       ) as SimlockDeviceHostConfig,
   );
 
+  const mcpServers = Object.fromEntries(
+    Object.entries(settings.mcpServers).map(([name, server]) => {
+      const stdio = server.transport === "stdio";
+      const values = Object.fromEntries(
+        Object.entries(stdio ? server.env : server.headers).map(([field, value]) => [
+          field,
+          mapPlain(`mcp-server:${name}:${stdio ? "env" : "header"}:${field}`, value),
+        ]),
+      );
+      return [name, { ...server, [stdio ? "env" : "headers"]: values }];
+    }),
+  ) as ServerSettings["mcpServers"];
+
   return {
     ...settings,
+    mcpServers,
     providerInstances,
     sourceControlHosts,
     usageLimitSources,

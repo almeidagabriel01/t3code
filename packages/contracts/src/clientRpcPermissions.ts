@@ -1,3 +1,4 @@
+import { GLOBAL_SKILLS_WS_METHODS } from "./globalSkillsRpc.ts";
 import * as Schema from "effect/Schema";
 import { GitPreparePullRequestThreadInput, GitRunStackedActionInput } from "./git.ts";
 import {
@@ -29,6 +30,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   // Reordering or removing queued heavy work changes when other agents' processes run.
   [WS_METHODS.heavyQueuePromote]: AuthTerminalOperateScope,
   [WS_METHODS.heavyQueueCancel]: AuthTerminalOperateScope,
+  [GLOBAL_SKILLS_WS_METHODS.globalSkillsRemove]: AuthSettingsWriteScope,
+  [GLOBAL_SKILLS_WS_METHODS.globalSkillsRescan]: AuthSettingsWriteScope,
   [WS_METHODS.serverRunStorageCleanup]: AuthSettingsWriteScope,
   [WS_METHODS.serverCheckOtlpEndpoint]: AuthSettingsWriteScope,
   [WS_METHODS.serverRefreshProviders]: AuthOrchestrationReadScope,

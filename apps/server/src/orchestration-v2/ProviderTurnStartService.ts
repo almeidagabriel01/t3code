@@ -33,6 +33,7 @@ import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { providerTextWithSkills } from "../skills/T3SkillText.ts";
 import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProviderUsageAnalytics from "../telemetry/ProviderUsageAnalytics.ts";
@@ -162,6 +163,8 @@ export const layer: Layer.Layer<
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    const serverSettings = yield* ServerSettings.ServerSettingsService;
+    const globalSkillsDir = (yield* ServerConfig.ServerConfig).globalSkillsDir;
     const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
     const projects = yield* ProjectService.ProjectService;
     const providerAuth = yield* ProviderAuthService.ProviderAuthService;
@@ -1690,11 +1693,17 @@ export const layer: Layer.Layer<
             .filter((part) => part !== "")
             .join("\n\n");
           const { restartContinuationOfRunId: _resumedRunId, ...promptedInput } = turnInput;
+          const promptText = goalCommand ? userText : withInlineContext(context, userText);
           yield* start({
             ...(noteContinuation ? promptedInput : turnInput),
             message: {
               ...turnInput.message,
-              text: goalCommand ? userText : withInlineContext(context, userText),
+              text: compact
+                ? promptText
+                : yield* providerTextWithSkills(Option.some(serverSettings), {
+                    text: promptText,
+                    globalSkillsDir,
+                  }),
             },
           }).pipe(
             // Clear pending handoff markers for refused prompts so the next turn retains the native session.
