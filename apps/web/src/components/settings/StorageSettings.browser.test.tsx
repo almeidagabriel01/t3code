@@ -104,6 +104,7 @@ function setup() {
       worktreeUnchanged: false,
       browserArtifactsAfterDays: null,
       logsAfterDays: null,
+      worktreeSnapshotsAfterDays: 30,
     },
     projectSettingsOverrides: {},
   };
@@ -234,4 +235,13 @@ it("settles mixed retention statuses independently across selected machines", as
   await screen.rerender(panel());
   await advance(300);
   await expect.element(screen.getByTestId("logs-retention-status")).not.toBeInTheDocument();
+});
+
+it("shows how long worktree snapshots are kept before deletion", async () => {
+  setup();
+  await using screen = await render(panel());
+
+  await expect
+    .element(screen.getByLabelText("Delete old worktree snapshots in days"))
+    .toHaveValue("30");
 });

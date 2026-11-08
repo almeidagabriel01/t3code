@@ -727,6 +727,18 @@ export function StorageCleanupSections() {
       (target) => target.settings.storageCleanup.logsAfterDays !== settings.logsAfterDays,
     );
   const settledArtifactsStatus = useDebouncedValue(`${targetIdsKey}:${artifactsMixed}`, 300);
+  const snapshotsMixed =
+    targets.length > 1 &&
+    targets.some(
+      (target) =>
+        target.settings.storageCleanup.worktreeSnapshotsAfterDays !==
+        settings.worktreeSnapshotsAfterDays,
+    );
+  const settledSnapshotsStatus = useDebouncedValue(`${targetIdsKey}:${snapshotsMixed}`, 300);
+  const snapshotsStatus =
+    targets.length > 1 && settledSnapshotsStatus === `${targetIdsKey}:true`
+      ? "Mixed across selected machines"
+      : undefined;
   const settledLogsStatus = useDebouncedValue(`${targetIdsKey}:${logsMixed}`, 300);
   const artifactsStatus =
     targets.length > 1 && settledArtifactsStatus === `${targetIdsKey}:true`
@@ -790,6 +802,22 @@ export function StorageCleanupSections() {
                 label="Delete old rotated logs"
                 value={settings.logsAfterDays}
                 onChange={(logsAfterDays) => update({ logsAfterDays })}
+              />
+            }
+          />
+        </AnimatedHeight>
+        <AnimatedHeight>
+          <SettingsRow
+            title="Delete old worktree snapshots"
+            status={snapshotsStatus}
+            managedPaths={["storageCleanup.worktreeSnapshotsAfterDays"]}
+            description="Delete the changes saved before cleanup removed a worktree after this many days. Older ones can no longer be restored; the thread still recreates its worktree from the branch."
+            serverScoped
+            control={
+              <RetentionControl
+                label="Delete old worktree snapshots"
+                value={settings.worktreeSnapshotsAfterDays}
+                onChange={(worktreeSnapshotsAfterDays) => update({ worktreeSnapshotsAfterDays })}
               />
             }
           />

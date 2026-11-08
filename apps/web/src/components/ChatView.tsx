@@ -3490,6 +3490,8 @@ export default function ChatView(props: ChatViewProps) {
                 providerStatusBannerKey={providerStatusBannerKey}
                 setDismissedProviderStatusBannerKey={setDismissedProviderStatusBannerKey}
                 onOpenProviderSetup={openProviderSetupStable}
+                worktreePath={activeThread.worktreePath}
+                turnKey={`${activeLatestRun?.runId ?? ""}:${latestRunSettled}`}
                 threadId={activeThread.id}
                 threadError={timelineThreadError}
                 threadErrorClass={
