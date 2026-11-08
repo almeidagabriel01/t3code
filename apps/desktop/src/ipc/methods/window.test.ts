@@ -292,11 +292,15 @@ describe("readMedia", () => {
   );
 });
 
+const environmentLayer = (environment: { platform: NodeJS.Platform; isPackaged?: boolean }) =>
+  Layer.succeed(
+    DesktopEnvironment.DesktopEnvironment,
+    environment as unknown as DesktopEnvironment.DesktopEnvironment["Service"],
+  );
+
 describe("requestMicrophoneAccess", () => {
   const request = (platform: NodeJS.Platform) =>
-    requestMicrophoneAccess
-      .handler(undefined)
-      .pipe(Effect.provide(Layer.mock(DesktopEnvironment.DesktopEnvironment)({ platform })));
+    requestMicrophoneAccess.handler(undefined).pipe(Effect.provide(environmentLayer({ platform })));
 
   it.effect("asks macOS through the system preferences and leaves other platforms alone", () =>
     Effect.gen(function* () {
@@ -324,11 +328,9 @@ describe("openSystemSettings", () => {
             Layer.mock(ElectronShell.ElectronShell)({
               openSystemSettings: (pane) => Effect.sync(() => (opened.push(pane), true)),
             }),
-            Layer.mock(DesktopEnvironment.DesktopEnvironment)({
-              platform: "darwin",
-              isPackaged: true,
-            }),
+            environmentLayer({ platform: "darwin", isPackaged: true }),
             Layer.mock(MacPermissions.MacPermissions)({ showHelper }),
+            NodeServices.layer,
           ),
         ),
       );
@@ -346,8 +348,9 @@ describe("openSystemSettings", () => {
           Effect.provide(
             Layer.mergeAll(
               Layer.mock(ElectronShell.ElectronShell)({}),
-              Layer.mock(DesktopEnvironment.DesktopEnvironment)({ platform: "linux" }),
+              environmentLayer({ platform: "linux" }),
               Layer.mock(MacPermissions.MacPermissions)({}),
+              NodeServices.layer,
             ),
           ),
         );
