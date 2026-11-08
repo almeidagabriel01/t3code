@@ -215,6 +215,26 @@ a saved preference, but simultaneous same-name inputs remain separately selectab
 Transcription runs on your device. T3 Code deletes the temporary audio after
 transcription or cancellation; only the message text is sent when you submit.
 
+## Voice input on desktop and web
+
+Click the composer's microphone to record, then confirm to insert the text into your
+draft, or choose the send arrow to insert it and send. Cancel, or press Esc, to discard
+the recording and keep your draft as it was. The recorder shows where transcription runs.
+
+Unlike on mobile, the recording is sent to the thread's environment, which transcribes it
+with that environment's Codex account signed in with ChatGPT. Dictation is unavailable
+when the environment has no such account. Recordings can be up to five minutes long and
+are not kept.
+
+The first time on a Mac, macOS asks whether T3 Code may use the microphone. If you
+declined, or turned it off later, the composer says so and offers **Open System
+Settings**: turn on T3 Code in **Privacy & Security › Microphone**. T3 Code may need to
+restart to notice the change. In a browser, allow the microphone in the site's settings;
+recording also needs HTTPS or localhost.
+
+If no sound reaches T3 Code within a few seconds, recording stops and the composer asks
+you to check the selected input. Your draft stays as it was.
+
 ## Queued messages
 
 On web and desktop, the composer shows **Interrupt** while the agent is working and the draft is

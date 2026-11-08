@@ -11,13 +11,16 @@ import * as Option from "effect/Option";
 import { vi } from "vite-plus/test";
 import type * as Electron from "electron";
 
-const { focusedWebContents, ownerWindow } = vi.hoisted(() => ({
+const { focusedWebContents, ownerWindow, mediaStatus, askForMedia } = vi.hoisted(() => ({
   focusedWebContents: vi.fn(),
   ownerWindow: vi.fn(),
+  mediaStatus: vi.fn(),
+  askForMedia: vi.fn(),
 }));
 vi.mock("electron", () => ({
   webContents: { getFocusedWebContents: focusedWebContents },
-  BrowserWindow: { fromWebContents: ownerWindow },
+  BrowserWindow: { fromWebContents: ownerWindow, getFocusedWindow: () => null },
+  systemPreferences: { getMediaAccessStatus: mediaStatus, askForMediaAccess: askForMedia },
 }));
 
 import * as DesktopBackendConfiguration from "../../backend/DesktopBackendConfiguration.ts";
@@ -25,7 +28,10 @@ import * as DesktopBackendManager from "../../backend/DesktopBackendManager.ts";
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
 import * as DesktopManagedPolicy from "../../app/DesktopManagedPolicy.ts";
+import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
+import * as ElectronShell from "../../electron/ElectronShell.ts";
+import * as MacPermissions from "../../permissions/MacPermissions.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
@@ -33,8 +39,10 @@ import {
   getLocalEnvironmentBootstraps,
   installRelayTelemetryEnabled,
   pickProjectFavicon,
+  openSystemSettings,
   probeRemoteEditors,
   readMedia,
+  requestMicrophoneAccess,
 } from "./window.ts";
 
 const readyWslConfig: DesktopBackendManager.DesktopBackendStartConfig = {
@@ -280,6 +288,73 @@ describe("readMedia", () => {
         mimeType: "",
         data: new Uint8Array(),
       });
+    }),
+  );
+});
+
+const environmentLayer = (environment: { platform: NodeJS.Platform; isPackaged?: boolean }) =>
+  Layer.succeed(
+    DesktopEnvironment.DesktopEnvironment,
+    environment as unknown as DesktopEnvironment.DesktopEnvironment["Service"],
+  );
+
+describe("requestMicrophoneAccess", () => {
+  const request = (platform: NodeJS.Platform) =>
+    requestMicrophoneAccess.handler(undefined).pipe(Effect.provide(environmentLayer({ platform })));
+
+  it.effect("asks macOS through the system preferences and leaves other platforms alone", () =>
+    Effect.gen(function* () {
+      mediaStatus.mockReturnValue("not-determined");
+      askForMedia.mockResolvedValue(true);
+      assert.strictEqual(yield* request("darwin"), "granted");
+      assert.deepEqual(mediaStatus.mock.calls.at(-1), ["microphone"]);
+      assert.deepEqual(askForMedia.mock.calls.at(-1), ["microphone"]);
+
+      mediaStatus.mockReturnValue("denied");
+      assert.strictEqual(yield* request("darwin"), "denied");
+      assert.strictEqual(yield* request("win32"), "unsupported");
+    }),
+  );
+});
+
+describe("openSystemSettings", () => {
+  it.effect("opens the Microphone pane without the drag-in helper", () =>
+    Effect.gen(function* () {
+      const opened: string[] = [];
+      const showHelper = vi.fn(() => Effect.void);
+      const result = yield* openSystemSettings.handler("microphone").pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            Layer.mock(ElectronShell.ElectronShell)({
+              openSystemSettings: (pane) => Effect.sync(() => (opened.push(pane), true)),
+            }),
+            environmentLayer({ platform: "darwin", isPackaged: true }),
+            Layer.mock(MacPermissions.MacPermissions)({ showHelper }),
+            NodeServices.layer,
+          ),
+        ),
+      );
+      assert.strictEqual(result, true);
+      assert.deepEqual(opened, ["microphone"]);
+      assert.strictEqual(showHelper.mock.calls.length, 0);
+    }),
+  );
+
+  it.effect("does nothing off macOS", () =>
+    Effect.gen(function* () {
+      const result = yield* openSystemSettings
+        .handler("microphone")
+        .pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              Layer.mock(ElectronShell.ElectronShell)({}),
+              environmentLayer({ platform: "linux" }),
+              Layer.mock(MacPermissions.MacPermissions)({}),
+              NodeServices.layer,
+            ),
+          ),
+        );
+      assert.strictEqual(result, false);
     }),
   );
 });

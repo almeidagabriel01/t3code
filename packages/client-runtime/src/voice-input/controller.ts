@@ -6,6 +6,17 @@ import {
   type VoiceTranscriber,
 } from "./transcription.ts";
 
+/** A start failure the user can understand and sometimes fix; other failures stay generic. */
+export class VoiceRecorderError extends Error {
+  readonly errorAction: VoiceInputState["errorAction"];
+
+  constructor(message: string, errorAction: VoiceInputState["errorAction"] = null) {
+    super(message);
+    this.name = "VoiceRecorderError";
+    this.errorAction = errorAction;
+  }
+}
+
 export const VOICE_RECORDING_LIMIT_SECONDS = 5 * 60;
 
 export type VoiceInputPhase = "idle" | "preparing" | "recording" | "transcribing" | "error";
@@ -132,7 +143,10 @@ let activeTranscriptionOperation: Promise<unknown> | null = null;
 
 function acquireSession(): VoiceInputSession | null {
   if (activeSession) return null;
-  const { promise, resolve } = Promise.withResolvers<void>();
+  let resolve!: () => void;
+  const promise = new Promise<void>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
   const token = { abandoned: false, released: promise, release: resolve };
   activeSession = token;
   return token;
@@ -279,9 +293,11 @@ export class VoiceInputController {
       this.capturedDraft = capturedDraft;
       this.dependencies.recorder.record({ forDuration: VOICE_RECORDING_LIMIT_SECONDS });
       this.setState({ phase: "recording", error: null, errorAction: null });
-    } catch {
-      if (this.isCurrent(operationToken))
-        this.setError("Could not start voice recording.", "retry");
+    } catch (error) {
+      if (this.isCurrent(operationToken)) {
+        if (error instanceof VoiceRecorderError) this.setError(error.message, error.errorAction);
+        else this.setError("Could not start voice recording.", "retry");
+      }
     } finally {
       if (sessionToken && this.sessionToken === sessionToken) {
         if (this.isCurrent(operationToken) && this.state.phase === "error") {
