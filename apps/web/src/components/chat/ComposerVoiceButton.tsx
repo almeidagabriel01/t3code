@@ -19,6 +19,7 @@ export function ComposerVoiceButton({ disabled, onClick }: ComposerVoiceButtonPr
             size="icon-sm"
             disabled={disabled}
             aria-label="Dictate"
+            data-composer-shortcut="composer.dictate"
             // Keep the caret in the editor so the transcript lands where the user was typing.
             onPointerDown={(event) => event.preventDefault()}
             onClick={onClick}

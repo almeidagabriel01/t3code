@@ -124,7 +124,7 @@ describe("createRemoteVoiceTranscriber", () => {
     );
     const error = await prepare(transcriber()).catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(VoiceTranscriptionError);
-    expect(error).toMatchObject({ code: "preparation-failed" });
+    expect(error).toMatchObject({ code: "preparation-failed", message: "No Codex" });
   });
 
   it("does not report an abort during prewarm as a failure", async () => {
@@ -149,17 +149,41 @@ describe("createRemoteVoiceTranscriber", () => {
     stubFetch((url) =>
       url.endsWith("/prewarm")
         ? Response.json({ ready: true })
-        : Response.json({ message: "boom" }, { status: 500 }),
+        : Response.json(
+            {
+              _tag: "VoiceTranscriptionUpstreamError",
+              message: "Voice transcription could not be completed.",
+              code: "upstream-failed",
+              retryable: true,
+            },
+            { status: 502 },
+          ),
     );
     const ready = await prepare(transcriber());
     await expect(
       ready.transcribe("blob:wav", { signal: new AbortController().signal }),
-    ).rejects.toMatchObject({ code: "transcription-failed" });
+    ).rejects.toMatchObject({
+      code: "transcription-failed",
+      message: "Voice transcription could not be completed.",
+    });
 
     const aborted = new AbortController();
     aborted.abort();
     await expect(ready.transcribe("blob:wav", { signal: aborted.signal })).rejects.toMatchObject({
       code: "cancelled",
+    });
+  });
+
+  it("does not show transport details for an undeclared server failure", async () => {
+    stubFetch((url) =>
+      url.endsWith("/prewarm") ? Response.json({ ready: true }) : new Response("", { status: 500 }),
+    );
+    const ready = await prepare(transcriber());
+    await expect(
+      ready.transcribe("blob:wav", { signal: new AbortController().signal }),
+    ).rejects.toMatchObject({
+      code: "transcription-failed",
+      message: "Voice transcription failed.",
     });
   });
 

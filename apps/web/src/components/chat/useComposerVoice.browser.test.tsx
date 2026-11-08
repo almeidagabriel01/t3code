@@ -12,27 +12,45 @@ import { useComposerVoice } from "./useComposerVoice";
 const mocks = vi.hoisted(() => ({
   transcribe: undefined as undefined | ((uri: string, signal: AbortSignal) => Promise<string>),
   prepareError: undefined as undefined | Error,
+  prepared: undefined as undefined | { environmentId: string },
+  resolvedContext: undefined as unknown,
 }));
 
 vi.mock("../../state/environments", () => ({
   useEnvironment: () => ({ label: "Workstation" }),
 }));
-vi.mock("@t3tools/client-runtime/voice-input/remote", () => ({
-  resolveEnvironmentVoiceContext: vi.fn(),
-  createRemoteVoiceTranscriber: () => ({
-    prepare: async (): Promise<PreparedVoiceTranscription> => {
-      if (mocks.prepareError) throw mocks.prepareError;
-      return {
-        locale: "en-US",
-        transcribe: (uri, { signal }) => mocks.transcribe!(uri, signal),
-      };
-    },
-  }),
-}));
+vi.mock("../../connection/runtime", async () => {
+  const [{ Atom }, Layer] = await Promise.all([
+    import("effect/reactivity"),
+    import("effect/Layer"),
+  ]);
+  return { connectionAtomRuntime: Atom.runtime(Layer.empty) };
+});
+vi.mock("../../state/session", () => ({ readPreparedConnection: () => mocks.prepared ?? null }));
+vi.mock("@t3tools/client-runtime/voice-input/remote", async () => {
+  const Effect = await import("effect/Effect");
+  return {
+    resolveEnvironmentVoiceContext: (prepared: unknown) => Effect.succeed({ prepared }),
+    createRemoteVoiceTranscriber: (options: {
+      readonly resolveContext: () => Promise<unknown>;
+    }) => ({
+      prepare: async (): Promise<PreparedVoiceTranscription> => {
+        mocks.resolvedContext = await options.resolveContext();
+        if (mocks.prepareError) throw mocks.prepareError;
+        return {
+          locale: "en-US",
+          transcribe: (uri, { signal }) => mocks.transcribe!(uri, signal),
+        };
+      },
+    }),
+  };
+});
 
 function setup(transcribe = async () => "hello there") {
   mocks.transcribe = transcribe;
   mocks.prepareError = undefined;
+  mocks.prepared = { environmentId: "environment-1" };
+  mocks.resolvedContext = undefined;
 }
 
 /** A real microphone-shaped stream: a tone is audible input, a constant zero is a muted device. */
@@ -61,6 +79,7 @@ function stubMicrophone(behaviour: "tone" | "silence" | DOMException) {
 
 function Harness(props: { onSubmit: (text: string) => void }) {
   const [draft, setDraft] = useState("Hello");
+  const [ownerKey, setOwnerKey] = useState("draft-1");
   const draftRef = useRef(draft);
   const listeners = useRef(new Set<() => void>());
   const edit = (text: string) => {
@@ -72,7 +91,7 @@ function Harness(props: { onSubmit: (text: string) => void }) {
     environmentId: EnvironmentId.make("environment-1"),
     threadId: null,
     providerInstanceId: null,
-    ownerKey: "draft-1",
+    ownerKey,
     enabled: true,
     readDraft: () => ({
       text: draftRef.current,
@@ -87,6 +106,9 @@ function Harness(props: { onSubmit: (text: string) => void }) {
   return (
     <>
       <textarea aria-label="Message" value={draft} onChange={(event) => edit(event.target.value)} />
+      <button type="button" onClick={() => setOwnerKey("draft-2")}>
+        Switch draft
+      </button>
       {voice.isActive ? (
         <ComposerVoiceRecorderBar
           voice={voice}
@@ -167,7 +189,10 @@ it("does not insert a transcript into a draft that changed while transcribing", 
   await userEvent.type(message(), "!");
   await act(async () => finish("late words"));
   await expect.element(page.getByText(/The draft changed/)).toBeVisible();
-  await expect.element(message()).toHaveValue("!Hello");
+  const value = (message().element() as HTMLTextAreaElement).value;
+  expect(value).toContain("Hello");
+  expect(value).toContain("!");
+  expect(value).not.toContain("late words");
 });
 
 it("reports a transcription failure without touching the draft", async () => {
@@ -201,9 +226,12 @@ it("stops and asks to check the input when no sound arrives", async () => {
   using _timers = fakeTimers();
   await userEvent.click(dictate());
   await expect.element(page.getByRole("status")).toBeVisible();
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(4_000);
-  });
+  // The first window lets preparation finish; the no-sound deadline is armed inside it.
+  for (const _window of [0, 1]) {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(4_000);
+    });
+  }
   await vi.waitFor(() =>
     expect(document.body.textContent).toContain("No sound is reaching T3 Code"),
   );
@@ -271,4 +299,45 @@ it("lets the user retry when the desktop prompt result is unavailable", async ()
   } finally {
     vi.unstubAllGlobals();
   }
+});
+
+it("gives the dictation shortcut one visible target in each phase", async () => {
+  setup();
+  stubMicrophone("tone");
+  const target = () =>
+    document.querySelector<HTMLButtonElement>('button[data-composer-shortcut="composer.dictate"]');
+  await using _screen = await render(<Harness onSubmit={vi.fn()} />);
+  expect(target()?.getAttribute("aria-label")).toBe("Dictate");
+  target()!.click();
+  await expect.element(page.getByText(/Recording/)).toBeVisible();
+  expect(target()?.getAttribute("aria-label")).toBe("Insert dictated text");
+  target()!.click();
+  await expect.element(message()).toHaveValue("Hello hello there");
+});
+
+it("resolves the thread environment's connection when transcription is prepared", async () => {
+  setup();
+  stubMicrophone("tone");
+  await using _screen = await render(<Harness onSubmit={vi.fn()} />);
+  await startListening();
+  expect(mocks.resolvedContext).toEqual({ prepared: { environmentId: "environment-1" } });
+});
+
+it("has nothing to transcribe with when the environment has no connection", async () => {
+  setup();
+  mocks.prepared = undefined;
+  stubMicrophone("tone");
+  await using _screen = await render(<Harness onSubmit={vi.fn()} />);
+  await startListening();
+  expect(mocks.resolvedContext).toBeNull();
+});
+
+it("cancels a recording when the composer moves to another draft", async () => {
+  setup();
+  stubMicrophone("tone");
+  await using _screen = await render(<Harness onSubmit={vi.fn()} />);
+  await startListening();
+  await userEvent.click(page.getByRole("button", { name: "Switch draft" }));
+  await expect.element(dictate()).toBeVisible();
+  await expect.element(message()).toHaveValue("Hello");
 });

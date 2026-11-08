@@ -1,6 +1,7 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { expect, it, vi } from "@effect/vitest";
+import { expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import {
   AuthOrchestrationOperateScope,
   EnvironmentAuthenticatedAuth,
@@ -32,6 +33,34 @@ import {
 } from "./orchestration-v2/ProjectionStore.ts";
 import { ServerSettingsService } from "./serverSettings.ts";
 import * as VoiceTranscription from "./voiceTranscription.ts";
+
+const appServer = vi.hoisted(() => ({
+  spawns: [] as unknown[],
+  requests: [] as unknown[],
+  spawnFails: false,
+  authStatus: { authMethod: "chatgpt", authToken: "app-token" } as Record<string, unknown>,
+}));
+
+vi.mock("./provider/CodexProvider.ts", async () => {
+  const Effect = await import("effect/Effect");
+  return {
+    withCodexAppServerClient: (input: unknown) =>
+      appServer.spawnFails
+        ? Effect.fail(new Error("spawn failed"))
+        : Effect.sync(() => {
+            appServer.spawns.push(input);
+            return {
+              client: {
+                request: (_method: string, params: unknown) =>
+                  Effect.sync(() => {
+                    appServer.requests.push(params);
+                    return appServer.authStatus;
+                  }),
+              },
+            };
+          }),
+  };
+});
 
 class VoiceTestApi extends HttpApi.make("environment").add(EnvironmentHttpApi.groups.voice) {}
 
@@ -433,6 +462,55 @@ it.layer(NodeServices.layer)("voice session resolution", (it) => {
     Effect.gen(function* () {
       const error = yield* resolve(instances, {}).pipe(Effect.flip);
       expect(error).toMatchObject({ code: "voice-backend-unavailable", retryable: false });
+    }),
+  );
+  const existingCodex = {
+    driver: "codex",
+    enabled: true,
+    config: { setupMode: "existing", binaryPath: "codex" },
+  };
+  const resetAppServer = () => {
+    appServer.spawns.length = 0;
+    appServer.requests.length = 0;
+    appServer.spawnFails = false;
+    appServer.authStatus = { authMethod: "chatgpt", authToken: "app-token" };
+  };
+
+  it.effect("reads the token from one Codex app-server and asks it to refresh on retry", () =>
+    Effect.gen(function* () {
+      resetAppServer();
+      const session = yield* resolve({ [codexId]: existingCodex }, { threadId });
+      expect(appServer.spawns).toHaveLength(0);
+      expect(yield* Effect.scoped(session.token(false))).toBe("app-token");
+      expect(yield* Effect.scoped(session.token(true))).toBe("app-token");
+      expect(appServer.spawns).toHaveLength(1);
+      expect(appServer.requests).toEqual([
+        { includeToken: true, refreshToken: false },
+        { includeToken: true, refreshToken: true },
+      ]);
+    }),
+  );
+
+  it.effect.each([
+    ["an API-key login", { authMethod: "apikey", authToken: null }],
+    ["a missing token", { authMethod: "chatgpt", authToken: null }],
+  ] as const)("reports the backend unavailable for %s", ([_, status]) =>
+    Effect.gen(function* () {
+      resetAppServer();
+      appServer.authStatus = status;
+      const session = yield* resolve({ [codexId]: existingCodex }, {});
+      const error = yield* Effect.scoped(session.token(false)).pipe(Effect.flip);
+      expect(error).toMatchObject({ code: "voice-backend-unavailable", retryable: false });
+    }),
+  );
+
+  it.effect("reports expired credentials when the app-server cannot start", () =>
+    Effect.gen(function* () {
+      resetAppServer();
+      appServer.spawnFails = true;
+      const session = yield* resolve({ [codexId]: existingCodex }, {});
+      const error = yield* Effect.scoped(session.token(false)).pipe(Effect.flip);
+      expect(error).toMatchObject({ code: "upstream-auth-expired", retryable: false });
     }),
   );
 });

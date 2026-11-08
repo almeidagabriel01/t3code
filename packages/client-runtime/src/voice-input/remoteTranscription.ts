@@ -153,10 +153,21 @@ export function createRemoteVoiceTranscriber(
   };
 }
 
+const VOICE_ERROR_TAGS = new Set([
+  "VoiceTranscriptionUpstreamError",
+  "VoiceTranscriptionBadRequestError",
+  "VoiceTranscriptionPayloadTooLargeError",
+]);
+
+/** The client wraps a declared server error as the cause of a fetch error; only the server's own wording is user-safe. */
 function failureMessage(error: unknown): string {
-  const message =
-    typeof error === "object" && error !== null ? Reflect.get(error, "message") : null;
-  return typeof message === "string" && message.length > 0
-    ? message
-    : "Voice transcription failed.";
+  let current: unknown = error;
+  for (let depth = 0; depth < 4 && typeof current === "object" && current !== null; depth++) {
+    const tag = Reflect.get(current, "_tag");
+    const message = Reflect.get(current, "message");
+    if (typeof tag === "string" && VOICE_ERROR_TAGS.has(tag) && typeof message === "string")
+      return message;
+    current = Reflect.get(current, "cause");
+  }
+  return "Voice transcription failed.";
 }

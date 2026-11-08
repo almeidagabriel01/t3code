@@ -18,6 +18,7 @@ function IconAction(props: {
   readonly onClick: () => void;
   readonly disabled?: boolean | undefined;
   readonly variant?: "ghost" | "default";
+  readonly shortcut?: string;
   readonly children: React.ReactNode;
 }) {
   return (
@@ -30,6 +31,7 @@ function IconAction(props: {
             size="icon-sm"
             aria-label={props.label}
             disabled={props.disabled}
+            {...(props.shortcut ? { "data-composer-shortcut": props.shortcut } : {})}
             // The editor keeps focus, so Escape and typing keep working after a click.
             onPointerDown={(event) => event.preventDefault()}
             onClick={props.onClick}
@@ -99,6 +101,7 @@ export function ComposerVoiceRecorderBar({
       </IconAction>
       <IconAction
         label="Insert dictated text"
+        shortcut="composer.dictate"
         tooltip="Insert text"
         disabled={busy || disabled}
         onClick={voice.confirm}
