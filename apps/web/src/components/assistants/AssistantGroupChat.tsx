@@ -19,6 +19,7 @@ import type {
   AssistantTeamId,
   EnvironmentId,
 } from "@t3tools/contracts";
+import { splitAssistantTransferText } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import {
   ArchiveIcon,
@@ -246,6 +247,7 @@ function FeedRow(props: {
   }
   if (props.row.role === "request") {
     const fromUser = message.author === "user";
+    const parts = splitAssistantTransferText(message.text);
     const repliedTo = repliedToName(message, props.chat, props.assistants);
     const label =
       message.authorLabel ?? author?.name ?? (message.author === "routine" ? "Schedule" : "Agent");
@@ -259,7 +261,17 @@ function FeedRow(props: {
           <span className="text-xs text-muted-foreground">Reply to {repliedTo}</span>
         )}
         <div className="max-w-[85%] rounded-2xl bg-primary/12 px-3 py-2 text-sm whitespace-pre-wrap wrap-anywhere @xl/group-chat:max-w-[70%]">
-          <MentionText text={message.text} />
+          <MentionText text={parts.body} />
+          {parts.files === null ? null : (
+            <div data-testid="group-request-files" className="mt-1.5 whitespace-normal">
+              <ChatMarkdown
+                text={parts.files}
+                cwd={undefined}
+                environmentId={props.environmentId}
+                className="wrap-anywhere"
+              />
+            </div>
+          )}
         </div>
         {assistantGroupAwaitingRoute(props.chat, message) ? (
           <p data-testid="group-routing" className="text-xs text-muted-foreground">

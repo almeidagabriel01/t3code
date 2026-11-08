@@ -7,6 +7,20 @@ import { AssistantId, AssistantTeamId } from "./assistants.ts";
  * A group's shared chat, as in an OpenBot channel. A message there runs no agent itself: it opens
  * one task per recipient, and each member works it in its own hidden thread for that group.
  */
+/** The line the server puts before the links to files copied for an assistant. */
+export const ASSISTANT_TRANSFER_HEADING = "Files copied to the shared folder for you:";
+
+/** A message's own text, and the markdown list of files copied with it (null when none). */
+export function splitAssistantTransferText(text: string): {
+  readonly body: string;
+  readonly files: string | null;
+} {
+  const marker = `\n${ASSISTANT_TRANSFER_HEADING}\n`;
+  const at = text.lastIndexOf(marker);
+  if (at < 0) return { body: text, files: null };
+  return { body: text.slice(0, at).trimEnd(), files: text.slice(at + marker.length) };
+}
+
 export const ASSISTANT_GROUP_PARALLEL_LIMIT = 2;
 /** Automatic assignments and transfers per request; the next one pauses until the user acts. */
 export const ASSISTANT_GROUP_HANDOFF_LIMIT = 8;

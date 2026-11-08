@@ -4,6 +4,7 @@ import {
   assistantGroupLeadingAddress,
   assistantGroupTaskActions,
   isAssistantGroupThreadId,
+  splitAssistantTransferText,
 } from "./assistantGroups.ts";
 
 const ada = { id: "ada", handle: "ada", name: "Ada" };
@@ -52,4 +53,14 @@ it.each([
   ["thread-1:g-0123456789abcdef", false],
 ])("isAssistantGroupThreadId(%s)", (threadId, expected) => {
   expect(isAssistantGroupThreadId(threadId)).toBe(expected);
+});
+
+it.each([
+  ["plain text", { body: "plain text", files: null }],
+  [
+    "@beto see this\nFiles copied to the shared folder for you:\n- [a.csv](</s/a.csv>)",
+    { body: "@beto see this", files: "- [a.csv](</s/a.csv>)" },
+  ],
+])("splitAssistantTransferText(%s)", (text, expected) => {
+  expect(splitAssistantTransferText(text)).toEqual(expected);
 });

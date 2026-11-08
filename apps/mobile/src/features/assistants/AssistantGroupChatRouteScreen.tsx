@@ -17,9 +17,10 @@ import {
   type AssistantGroupsHistoryResult,
   type AssistantGroupTask,
   type AssistantGroupTaskAction,
+  splitAssistantTransferText,
 } from "@t3tools/contracts";
 import { LegendList, type LegendListRef } from "@legendapp/list/react-native";
-import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
+import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useRef, useState } from "react";
 import { Platform, Pressable, View } from "react-native";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
@@ -133,6 +134,7 @@ function FeedRow(
   }
   if (props.row.role === "request") {
     const fromUser = message.author === "user";
+    const parts = splitAssistantTransferText(message.text);
     const replyTarget =
       message.replyToMessageId === null
         ? undefined
@@ -153,7 +155,12 @@ function FeedRow(
           <Text className="text-xs text-foreground-muted">Reply to {repliedTo}</Text>
         )}
         <View className="max-w-[85%] rounded-2xl bg-subtle-strong px-3 py-2">
-          <MentionText text={message.text} />
+          <MentionText text={parts.body} />
+          {parts.files === null ? null : (
+            <View testID="group-request-files" className="mt-1.5">
+              <SelectableMarkdownText markdown={parts.files} textStyle={styles.nativeTextStyle} />
+            </View>
+          )}
         </View>
         {assistantGroupAwaitingRoute(props.chat, message) ? (
           <Text testID="group-routing" className="text-xs text-foreground-muted">
@@ -324,14 +331,13 @@ export function AssistantGroupChatRouteScreen({
       environmentId: String(environmentId),
       threadId: ThreadId.make(task.threadId),
     };
-    if (Platform.OS === "android") selectDetail({ name: "Thread", params });
-    else navigation.dispatch(StackActions.push("Thread", params));
+    selectDetail({ name: "Thread", params });
   };
 
   if (team === undefined) {
     return (
       <View className="flex-1 bg-screen">
-        <AppBar title="Group chat" onBack={() => navigation.goBack()} sidebar={false} />
+        <AppBar title="Group chat" onBack={() => navigation.goBack()} />
         {entries.environmentIds.includes(environmentId) ? (
           <EmptyState title="Group not found" detail="It may have been deleted." variant="plain" />
         ) : null}
@@ -348,7 +354,7 @@ export function AssistantGroupChatRouteScreen({
           .filter((part) => part !== null)
           .join(" · ")}
         onBack={() => navigation.goBack()}
-        sidebar={false}
+
         menus={[
           {
             title: `${team.name} actions`,

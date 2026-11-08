@@ -199,6 +199,7 @@ const mutate = Effect.fn("mcp.assistant.mutate")(function* (input: AssistantPara
           owner: all.find((assistant) => assistant.id === task.ownerId)?.handle ?? task.ownerId,
           status: task.status,
         })),
+        next: "Members answer in the group chat, not here; no reply comes back to this conversation. Tell the user to read the answer in that group's chat.",
       } satisfies Out;
     }
     case "create": {

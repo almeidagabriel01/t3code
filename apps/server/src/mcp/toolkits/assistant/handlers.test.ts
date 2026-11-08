@@ -387,6 +387,7 @@ it.effect("group_post posts from the calling conversation and needs a group and 
       status: "posted",
       messageId: "m-1",
       tasks: [{ taskId: "t-1", owner: "eng", status: "queued" }],
+      next: expect.stringContaining("group chat"),
     });
     expect(posts).toEqual([
       expect.objectContaining({

@@ -5,6 +5,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeStreamPromises from "node:stream/promises";
 
+import { ASSISTANT_TRANSFER_HEADING } from "@t3tools/contracts";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 
@@ -128,6 +129,6 @@ export const removeOwnerTransfers = (sharedDir: string, ownerId: string) =>
 export const transferText = (paths: ReadonlyArray<string>) =>
   paths.length === 0
     ? ""
-    : `\nFiles copied to the shared folder for you:\n${paths
+    : `\n${ASSISTANT_TRANSFER_HEADING}\n${paths
         .map((path) => `- [${NodePath.basename(path)}](<${path}>)`)
         .join("\n")}`;
