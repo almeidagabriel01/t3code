@@ -219,6 +219,18 @@ to **Uncommitted changes**, which protects tracked edits and untracked files but
 files such as `.env` and build output. **Any local files** also protects ignored files other than
 `node_modules`. **Edited tracked files** protects only tracked edits and allows untracked and
 ignored files to be deleted. Branches and thread history stay; starting another turn recreates the checkout.
+Before removing a worktree, cleanup saves its uncommitted and untracked changes (not ignored files)
+as a snapshot in the project repository, under `refs/t3/snapshots/<thread>/<time>`. If the changes
+cannot be saved, for example because a nested Git repository sits in the worktree, the worktree is
+kept. A cleaned-up thread shows a **Restore** banner on web, desktop and mobile; sending a message
+restores it too. Restore recreates the worktree at its path and branch and writes the saved changes
+back, including their staged state. If the branch was deleted meanwhile it is recreated where the
+snapshot was taken, and if the branch moved on the changes are merged only when they do not
+conflict; otherwise Restore stops, leaves the worktree removed, and the snapshot stays. Snapshots
+are kept for 30 days by default (**Settings → Storage → Keep worktree snapshots**, or
+**Settings → Maintenance** on mobile); expired ones are pruned at cleanup, and the banner then says
+Restore will recreate the worktree from its branch without those changes. To inspect a snapshot by
+hand, run `git for-each-ref refs/t3/snapshots/`.
 Merge cleanup requires a merged pull request whose commits are included in the remote default
 branch. A squash or rebase merge on GitHub also counts when the pull request targeted the default
 branch and the worktree is still at the pull request's last commit.
