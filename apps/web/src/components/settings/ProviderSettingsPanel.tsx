@@ -110,6 +110,8 @@ import {
   durationToSeconds,
   PROVIDER_HEALTH_INTERVAL_STEP_SECONDS,
 } from "./SettingsPanels.logic";
+import { GlobalSkillsSettings } from "./GlobalSkillsSettings";
+import { McpServersSettings } from "./McpServersSettings";
 import {
   PolicyTooltip,
   SettingResetButton,
@@ -313,6 +315,12 @@ export function ProviderSettingsPanel(target: ProviderSettingsTarget) {
         key={`${target.environmentId ?? ""}:${target.instanceId ?? ""}`}
         {...target}
       />
+      {target.scoped ? (
+        <>
+          <McpServersSettings />
+          <GlobalSkillsSettings />
+        </>
+      ) : null}
     </SettingsPageContainer>
   );
 }

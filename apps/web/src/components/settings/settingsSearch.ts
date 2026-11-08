@@ -1124,6 +1124,22 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "mcp-servers",
+    title: "MCP servers",
+    to: "/settings/providers",
+    searchTerms: [
+      "global mcp server tools stdio http command arguments headers environment variables token _t3 every provider",
+    ],
+    providerSettingsOnly: true,
+  },
+  {
+    id: "t3-skills",
+    title: "T3 skills",
+    to: "/settings/providers",
+    searchTerms: ["global skills folder SKILL.md rescan $t3 every provider enable disable remove"],
+    providerSettingsOnly: true,
+  },
+  {
     id: "provider-budget",
     title: "Spending budget",
     to: "/settings/providers",

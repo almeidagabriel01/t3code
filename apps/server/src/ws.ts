@@ -202,6 +202,7 @@ import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as ServerSettings from "./serverSettings.ts";
+import { makeGlobalSkillsHandlers } from "./skills/GlobalSkillsRpcHandlers.ts";
 import { withCurrentMemoryAccess } from "./memory/MemoryAccess.ts";
 import { invalidateSettingsSecrets } from "./sourceControl/sourceControlHostSecrets.ts";
 import * as DatabaseStorage from "./persistence/DatabaseStorage.ts";
@@ -2196,7 +2197,14 @@ export const layerWsRpc = (
             ),
           ),
       });
+      const globalSkills = makeGlobalSkillsHandlers(
+        config.globalSkillsDir,
+        serverSettings,
+        providerRegistry,
+      );
       const handlers = BaseWsRpcGroup.of({
+        [WS_METHODS.globalSkillsRemove]: globalSkills.globalSkillsRemove,
+        [WS_METHODS.globalSkillsRescan]: globalSkills.globalSkillsRescan,
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           Effect.annotateCurrentSpan({
             "orchestration_v2.command_id": command.commandId,

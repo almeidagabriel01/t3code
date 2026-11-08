@@ -20,6 +20,7 @@ import {
   MessagesSquareIcon,
   PackageIcon,
   SettingsIcon,
+  StarIcon,
   UserRoundIcon,
   type LucideIcon,
 } from "lucide-react";
@@ -266,6 +267,7 @@ const LISTBOX_LABEL_BY_TRIGGER: Record<ComposerTriggerKind, string> = {
 };
 
 const SKILL_SOURCE_ICON_BY_KIND: Record<ProviderSkillSourceKind, LucideIcon> = {
+  t3: StarIcon,
   app: BlocksIcon,
   repo: FolderIcon,
   project: FolderIcon,
@@ -275,6 +277,7 @@ const SKILL_SOURCE_ICON_BY_KIND: Record<ProviderSkillSourceKind, LucideIcon> = {
 };
 
 const SKILL_SOURCE_LABEL_BY_KIND: Record<ProviderSkillSourceKind, string> = {
+  t3: "T3",
   app: "App",
   repo: "Repo",
   project: "Project",

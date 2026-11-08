@@ -812,7 +812,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   Layer.provideMerge(
     Layer.mergeAll(Keybindings.layer, EnvironmentTheme.layer, UsageLimitSources.layer),
   ),
-  Layer.provideMerge(ProviderRegistry.layer),
+  Layer.provideMerge(ProviderRegistry.layer.pipe(Layer.provide(layerServerSettings))),
   Layer.provideMerge(ProviderInstanceRegistryHydration.layer),
   // Provider hydration builds the Claude runner, which reports agents to the same scanner the
   // terminal and preview layers share.

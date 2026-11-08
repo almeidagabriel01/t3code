@@ -1,3 +1,5 @@
+import * as GlobalSkillRegistry from "../skills/GlobalSkillsRegistry.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import {
   defaultInstanceIdForDriver,
   isProviderWorkspaceSnapshotCurrent,
@@ -54,6 +56,7 @@ export class ProviderRegistry extends Context.Service<
   ProviderRegistry,
   {
     readonly getProviders: Effect.Effect<ReadonlyArray<ServerProvider>>;
+    readonly rescanGlobalSkills?: Effect.Effect<ReadonlyArray<ServerProvider>>;
 
     readonly refresh: (
       provider?: ProviderDriverKind,
@@ -355,6 +358,11 @@ export const layer = Layer.effect(
     const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
     const serviceScope = yield* Effect.scope;
     const config = yield* ServerConfig.ServerConfig;
+    const settings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
+    const globalSkills = GlobalSkillRegistry.makeGlobalSkillInventory(
+      config.globalSkillsDir,
+      settings,
+    );
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
 
@@ -485,6 +493,7 @@ export const layer = Layer.effect(
       },
     ) {
       const manifest = yield* manifestService.current;
+      const globals = yield* globalSkills.scan;
       const nextProvidersWithUpdateState = yield* Effect.forEach(
         nextProviders,
         applyProviderUpdateState,
@@ -513,7 +522,10 @@ export const layer = Layer.effect(
 
           const providers = orderProviderSnapshots(
             [...mergedProviders.values()].map((provider) =>
-              classifyCompatibility(provider, manifest),
+              GlobalSkillRegistry.mergeGlobalSkills(
+                classifyCompatibility(provider, manifest),
+                globals,
+              ),
             ),
           );
           const providersToPersist = providers.filter((provider) =>
@@ -934,6 +946,9 @@ export const layer = Layer.effect(
         Effect.map(([, nextProviders]) => nextProviders),
       );
 
+    const rescanGlobalSkills = globalSkills.rescan(updateProviders);
+    yield* globalSkills.watch(rescanGlobalSkills);
+
     const refreshWorkspaceSnapshot = Effect.fn("refreshWorkspaceSnapshot")(function* (input: {
       readonly instanceId: ProviderInstanceId;
       readonly cwd: string;
@@ -976,6 +991,7 @@ export const layer = Layer.effect(
         : Effect.void;
       const runScan = refreshMachineSnapshot.pipe(
         Effect.andThen(instance.snapshotForCwd(input.cwd)),
+        Effect.flatMap(globalSkills.workspace(provider)),
         // Scans fail on error; returned inventory remains valid even when provider health reports an error.
         Effect.flatMap((scopedSnapshot) =>
           instanceRegistry.getInstance(input.instanceId).pipe(
@@ -1071,6 +1087,7 @@ export const layer = Layer.effect(
 
     return {
       getProviders: Ref.get(providersRef),
+      rescanGlobalSkills,
       refresh: (provider?: ProviderDriverKind) =>
         refresh(provider).pipe(Effect.catchCause(recoverRefreshFailure)),
       refreshInstance: (instanceId: ProviderInstanceId) =>

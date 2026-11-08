@@ -33,6 +33,7 @@ import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { providerTextWithSkills } from "../skills/T3SkillText.ts";
 import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
 import { makeThreadWorkspace } from "./ThreadWorkspace.ts";
 import * as EventSink from "./EventSink.ts";
@@ -141,6 +142,8 @@ export const layer: Layer.Layer<
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    const serverSettings = yield* ServerSettings.ServerSettingsService;
+    const globalSkillsDir = (yield* ServerConfig.ServerConfig).globalSkillsDir;
     const projects = yield* ProjectService.ProjectService;
     const providerAuth = yield* ProviderAuthService.ProviderAuthService;
     const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
@@ -823,6 +826,11 @@ export const layer: Layer.Layer<
       const userText = projectComposerContextForProvider({
         text: message.text,
         records: message.context?.records ?? [],
+      });
+      // Notes and context keep the raw text; only what the provider receives carries skills.
+      const providerText = yield* providerTextWithSkills(Option.some(serverSettings), {
+        text: userText,
+        globalSkillsDir,
       });
       // Codex and Claude parse /goal from the prompt, so it goes verbatim and history waits a turn.
       const goalDriver = session.driver === "codex" || session.driver === "claudeAgent";
@@ -1605,7 +1613,7 @@ export const layer: Layer.Layer<
             ...(noteContinuation ? promptedInput : turnInput),
             message: {
               ...turnInput.message,
-              text: goalCommand ? userText : withInlineContext(context, userText),
+              text: goalCommand ? providerText : withInlineContext(context, providerText),
             },
           }).pipe(
             // Clear pending handoff markers for refused prompts so the next turn retains the native session.
@@ -1706,7 +1714,7 @@ export const layer: Layer.Layer<
         loadRunInterruptReason: runControls.loadRunInterruptReason,
         message: {
           messageId: message.id,
-          text: userText,
+          text: providerText,
           attachments: message.attachments,
           createdBy: message.createdBy,
           creationSource: message.creationSource,

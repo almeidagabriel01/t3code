@@ -70,10 +70,13 @@ const normalize = (target: string) => {
   }
   return `/${parts.join("/")}`;
 };
-const layerWorktreeLocation = (worktreesDir = managedWorktreesDir) =>
+const layerWorktreeLocation = (worktreesDir = managedWorktreesDir, globalSkillsDir?: string) =>
   Layer.mergeAll(
     Path.layer,
-    Layer.mock(ServerConfig.ServerConfig)({ worktreesDir } as ServerConfig.ServerConfig["Service"]),
+    Layer.mock(ServerConfig.ServerConfig)({
+      worktreesDir,
+      globalSkillsDir,
+    } as ServerConfig.ServerConfig["Service"]),
     ServerSettings.layerTest(),
   );
 
@@ -275,6 +278,7 @@ function makeLocalCommandHarness(input: {
   readonly text: string;
   readonly worktreePath?: string;
   readonly worktreesDir?: string;
+  readonly globalSkillsDir?: string;
   readonly workspaceRoot?: string;
   readonly gitWorkflow?: GitWorkflow.GitWorkflowService["Service"];
   readonly fileSystem?: FileSystem.FileSystem;
@@ -955,7 +959,7 @@ function makeLocalCommandHarness(input: {
             }),
         }),
         IdAllocator.layer,
-        layerWorktreeLocation(input.worktreesDir),
+        layerWorktreeLocation(input.worktreesDir, input.globalSkillsDir),
         input.fileSystem === undefined
           ? FileSystem.layerNoop({ exists: () => Effect.succeed(true) })
           : Layer.succeed(FileSystem.FileSystem, input.fileSystem),
@@ -1991,3 +1995,32 @@ for (const previousMessages of [[], ["/compact", " /COMPACT "]]) {
       }),
   );
 }
+
+effectIt.effect(
+  "sends the T3 skills a message names ahead of its text, read from the skills folder",
+  () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const globalSkillsDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-turn-skills-",
+      });
+      yield* fileSystem.makeDirectory(path.join(globalSkillsDir, "one"));
+      yield* fileSystem.writeFileString(
+        path.join(globalSkillsDir, "one", "SKILL.md"),
+        "Do it my way",
+      );
+      const harness = makeLocalCommandHarness({
+        text: "please $t3:one now",
+        globalSkillsDir,
+        previousTurn: { runStatus: "completed", turnStatus: "completed" },
+      });
+
+      yield* harness.start;
+
+      const text = harness.startRootRun.mock.calls[0]?.[0].message.text ?? "";
+      expect(text).toContain('<t3_skill name="t3:one"');
+      expect(text).toContain("Do it my way");
+      expect(text.endsWith("please $t3:one now")).toBe(true);
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);

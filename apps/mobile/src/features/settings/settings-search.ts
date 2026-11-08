@@ -60,6 +60,7 @@ const SETTINGS_SEARCH_TERMS = {
   ],
   SettingsFollowUp: ["follow-ups", "queue", "steer", "while the agent is running"],
   SettingsKanban: ["kanban", "board", "cards", "tasks", "columns"],
+  SettingsAgentTools: ["mcp", "tools", "skills", "stdio", "headers", "rescan", "global"],
   SettingsMemory: ["memory", "remember", "conversations", "import", "sharing", "agent access"],
   SettingsAssistants: [
     "assistants",

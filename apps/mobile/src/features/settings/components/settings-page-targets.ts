@@ -26,6 +26,7 @@ export const SETTINGS_PAGE_TARGETS = [
   "SettingsKanban",
   "SettingsNotes",
   "SettingsMemory",
+  "SettingsAgentTools",
   "SettingsAssistants",
   "SettingsImessage",
   "SettingsTelegram",
