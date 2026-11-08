@@ -90,6 +90,9 @@ export const memoryRuleText = (item: MemoryRuleItem) => stripMemoryRulePrefix(it
 /** Rules are saved as the prefix plus the text the user sees. */
 export const memoryRuleBody = (text: string) => MEMORY_RULE_PREFIX + stripMemoryRulePrefix(text);
 
+/** How long the "rule saved" notice stays before it leaves by itself. */
+export const LEARNED_RULE_VISIBLE_MS = 8_000;
+
 export function memoryRuleScopeLabel(scope: MemoryScope) {
   return scope.kind === "user" ? "All projects" : "This project";
 }

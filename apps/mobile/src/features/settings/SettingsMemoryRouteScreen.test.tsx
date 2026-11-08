@@ -28,14 +28,18 @@ import { AsyncResult } from "effect/reactivity";
 import * as Schema from "effect/Schema";
 import { SettingsMemoryRouteScreen, MemoryEnvironmentEntry } from "./SettingsMemoryRouteScreen";
 import { LearnedRuleNotice } from "../threads/LearnedRuleNotice";
+import { LEARNED_RULE_VISIBLE_MS } from "@t3tools/client-runtime/memory-browsing";
 
 vi.mock("../../state/preferences", async () => {
   const { Atom, AsyncResult } = await import("effect/reactivity");
+  type Preferences = { readonly acknowledgedMemoryRules?: readonly string[] };
+  const preferences = Atom.make<Preferences>({});
   return {
-    mobilePreferencesAtom: Atom.make(AsyncResult.success({})),
+    mobilePreferencesAtom: Atom.make((get) => AsyncResult.success(get(preferences))),
     updateMobilePreferencesAtom: Atom.writable(
       () => null,
-      () => {},
+      (ctx, input: { readonly transform: (current: Preferences) => Preferences }) =>
+        ctx.set(preferences, input.transform(ctx.get(preferences))),
     ),
   };
 });
@@ -419,7 +423,7 @@ describe("native Memory with shared factory", () => {
       input: { scope: { kind: "user" }, payload: { text: "Rule: always run tests" } },
     });
   });
-  it("offers the rule learned in this thread and forgets it on Undo", async () => {
+  const mountLearnedRule = async () => {
     await mount();
     const thread = { environmentId: nativeEnv, threadId: "thread-here" } as never;
     const rule = (id: string, sourceThread: unknown) => {
@@ -447,11 +451,28 @@ describe("native Memory with shared factory", () => {
     await view.unmount();
     view = renderNative(h, <LearnedRuleNotice threadRef={thread} projectId={null} />);
     await view.render();
-    expect(view.container.textContent).toContain("Learned a rule: never rebase");
+  };
+  it("offers the rule learned in this thread and forgets it on Undo", async () => {
+    await mountLearnedRule();
+    expect(view.container.textContent).toContain("Rule saved · All projects");
+    expect(view.container.textContent).toContain("never rebase");
     await view.click("Undo");
     expect(h.calls.find((call) => call.method === WS_METHODS.memoryForget)).toMatchObject({
       input: { memorySpaceId: nativeSpace, memoryId: nativeId },
     });
+  });
+  it("leaves the learned rule notice by itself after a few seconds", async () => {
+    vi.useFakeTimers();
+    try {
+      await mountLearnedRule();
+      expect(view.container.textContent).toContain("never rebase");
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(LEARNED_RULE_VISIBLE_MS);
+      });
+      expect(view.container.textContent).not.toContain("never rebase");
+    } finally {
+      vi.useRealTimers();
+    }
   });
   it("forgets the exact memory after confirmation and drops invalidated bodies", async () => {
     await mount();

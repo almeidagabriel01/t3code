@@ -6,6 +6,8 @@ import { page } from "vite-plus/test/browser";
 
 import "~/index.css";
 
+import { LEARNED_RULE_VISIBLE_MS } from "@t3tools/client-runtime/memory-browsing";
+
 import { render } from "../../../test/render";
 import { ComposerBannerStack } from "./ComposerBannerStack";
 import { useLearnedRuleBanner } from "./useLearnedRuleBanner";
@@ -99,6 +101,7 @@ it("offers a rule learned in this thread and forgets it on Undo", async () => {
   // router: false -- the banner stack renders no links.
   await using screen = await render(<Probe />, { router: false });
   await expect.element(page.getByText("never rebase")).toBeVisible();
+  await expect.element(page.getByText("Rule saved · All projects")).toBeVisible();
   expect(screen.container.textContent).not.toContain("learned elsewhere");
 
   await page.getByRole("button", { name: "Undo" }).click();
@@ -108,4 +111,19 @@ it("offers a rule learned in this thread and forgets it on Undo", async () => {
     input: expect.objectContaining({ memoryId: id(2) }),
   });
   await expect.element(page.getByText("never rebase")).not.toBeInTheDocument();
+});
+
+it("leaves by itself after a few seconds and stays seen", async () => {
+  window.localStorage.clear();
+  using timeouts = vi.spyOn(window, "setTimeout");
+  // router: false -- the banner stack renders no links.
+  await using _screen = await render(<Probe />, { router: false });
+  await expect.element(page.getByText("never rebase")).toBeVisible();
+
+  const leave = timeouts.mock.calls.find((call) => call[1] === LEARNED_RULE_VISIBLE_MS)?.[0];
+  expect(leave).toBeTypeOf("function");
+  (leave as () => void)();
+
+  await expect.element(page.getByText("never rebase")).not.toBeInTheDocument();
+  expect(window.localStorage.getItem("t3code:memory-rule-acknowledged:v1")).toContain(id(2));
 });

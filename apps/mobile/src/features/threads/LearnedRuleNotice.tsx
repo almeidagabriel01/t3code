@@ -1,9 +1,11 @@
 import { useAtomValue, useAtomSet } from "@effect/atom-react";
 import { useNavigation } from "@react-navigation/native";
 import {
+  LEARNED_RULE_VISIBLE_MS,
   memoryBrowseInput,
   memoryPreview,
   memoryProjectScope,
+  memoryRuleScopeLabel,
   memoryRuleText,
   memoryRulesLearnedIn,
 } from "@t3tools/client-runtime/memory-browsing";
@@ -141,23 +143,32 @@ function LearnedRuleList(props: {
           [...(props.scope ? items(projectPage) : []), ...items(userPage)],
           props.threadRef,
         ).find((candidate) => !acknowledged.includes(candidate.memoryId));
+  const shownId = rule?.memoryId;
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a timer: the notice leaves by itself after a few seconds
+  useEffect(() => {
+    if (shownId === undefined) return;
+    const timer = setTimeout(
+      () => updatePreferences({ transform: (current) => withAcknowledged(current, shownId) }),
+      LEARNED_RULE_VISIBLE_MS,
+    );
+    return () => clearTimeout(timer);
+  }, [shownId, updatePreferences]);
+
   if (!rule) return null;
   const acknowledge = () =>
-    updatePreferences({
-      transform: (current) => ({
-        acknowledgedMemoryRules: [...(current.acknowledgedMemoryRules ?? []), rule.memoryId].slice(
-          -500,
-        ),
-      }),
-    });
+    updatePreferences({ transform: (current) => withAcknowledged(current, rule.memoryId) });
   return (
     <View
       accessibilityRole="alert"
       className="mx-3 mb-2 gap-2 rounded-xl border border-border-subtle bg-screen p-3"
     >
-      <Text className="text-sm font-t3-medium text-foreground">
-        Learned a rule: {memoryPreview(memoryRuleText(rule))}
-      </Text>
+      <View className="gap-0.5">
+        <Text className="text-sm font-t3-medium text-foreground">
+          Rule saved · {memoryRuleScopeLabel(rule.scope)}
+        </Text>
+        <Text className="text-sm text-foreground-muted">{memoryPreview(memoryRuleText(rule))}</Text>
+      </View>
       <View className="flex-row flex-wrap gap-2">
         {canForget ? (
           <Button
@@ -196,3 +207,10 @@ function LearnedRuleList(props: {
     </View>
   );
 }
+
+const withAcknowledged = (
+  current: { readonly acknowledgedMemoryRules?: readonly string[] },
+  memoryId: string,
+) => ({
+  acknowledgedMemoryRules: [...(current.acknowledgedMemoryRules ?? []), memoryId].slice(-500),
+});

@@ -1,8 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
+  LEARNED_RULE_VISIBLE_MS,
   memoryBrowseInput,
   memoryPreview,
   memoryProjectScope,
+  memoryRuleScopeLabel,
   memoryRuleText,
   memoryRulesLearnedIn,
   type MemoryRuleItem,
@@ -22,7 +24,7 @@ import * as Schema from "effect/Schema";
 import { BookmarkCheckIcon } from "lucide-react";
 import { lazy, Suspense, useEffect, useState } from "react";
 
-import { useLocalStorage } from "../../hooks/useLocalStorage";
+import { useLocalStorage, writeLocalStorageValue } from "../../hooks/useLocalStorage";
 import { useEnvironmentQuery } from "../../state/query";
 import { memoryEnvironment } from "../../state/memory";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -134,6 +136,25 @@ export function useLearnedRuleBanner(input: {
       : memoryRulesLearnedIn([...projectItems, ...userItems], { environmentId, threadId }).find(
           (candidate) => !acknowledged.ids.includes(candidate.memoryId),
         );
+  const shownId = active && memorySpaceId !== null ? rule?.memoryId : undefined;
+  const editingOpen = editing !== null;
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a timer: the notice leaves by itself unless its edit dialog is open
+  useEffect(() => {
+    if (shownId === undefined || editingOpen) return;
+    const timer = window.setTimeout(
+      () =>
+        writeLocalStorageValue(
+          ACKNOWLEDGED_STORAGE_KEY,
+          (previous) => ({ ids: [...previous.ids, shownId].slice(-500) }),
+          NO_ACKNOWLEDGED,
+          AcknowledgedSchema,
+        ),
+      LEARNED_RULE_VISIBLE_MS,
+    );
+    return () => window.clearTimeout(timer);
+  }, [shownId, editingOpen]);
+
   if (!active || memorySpaceId === null || rule === undefined) return null;
 
   const acknowledge = () =>
@@ -143,7 +164,7 @@ export function useLearnedRuleBanner(input: {
     id: `learned-rule:${rule.memoryId}`,
     variant: "info",
     icon: <BookmarkCheckIcon />,
-    title: "Learned a rule",
+    title: `Rule saved · ${memoryRuleScopeLabel(rule.scope)}`,
     description: memoryPreview(memoryRuleText(rule)),
     dismissLabel: "Dismiss",
     onDismiss: acknowledge,
