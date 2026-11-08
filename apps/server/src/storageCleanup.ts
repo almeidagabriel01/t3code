@@ -48,6 +48,7 @@ import * as TerminalManager from "./terminal/Manager.ts";
 import { isFilesystemRoot, managedWorktreesDirectories } from "./worktreesDirectory.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import { removeLinkedWorktree } from "./vcs/worktreeRemoval.ts";
+import { captureWorktreeSnapshot, pruneWorktreeSnapshots } from "./vcs/worktreeSnapshot.ts";
 import { withWorkspaceLease } from "./workspace/workspaceLease.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
@@ -1153,6 +1154,17 @@ const make = Effect.gen(function* () {
           )
         )
           return keep("settings changed since check");
+        // Removal discards untracked files; the thread's Restore brings them back from this ref.
+        if (!deleted) {
+          const saved = yield* captureWorktreeSnapshot({
+            execute: git.execute,
+            cwd: worktreePath,
+            threadId: thread.id,
+            now,
+          }).pipe(Effect.result);
+          if (saved._tag === "Failure")
+            return keep(`snapshot failed: ${cleanupFailureReason(saved.failure)}`);
+        }
         // Clean only untracked files. Ordinary worktrees retain Git's final tracked-edit check.
         if (settings.worktreeKeepWhen === "tracked-changes")
           yield* cleanupGit(worktreePath, ["clean", "-ffdx"], "git clean");
@@ -1273,6 +1285,25 @@ const make = Effect.gen(function* () {
         }),
       ),
     );
+    if (settings.worktreeSnapshotsAfterDays !== null) {
+      const olderThanMs = now - settings.worktreeSnapshotsAfterDays * DAY_MS;
+      for (const project of yield* projectStore
+        .list({ includeDeleted: true })
+        .pipe(Effect.orElseSucceed(() => []))) {
+        yield* pruneWorktreeSnapshots({
+          execute: git.execute,
+          cwd: project.workspaceRoot,
+          olderThanMs,
+        }).pipe(
+          Effect.catch((error) =>
+            Effect.logDebug("worktree snapshot pruning skipped", {
+              projectId: project.projectId,
+              error,
+            }),
+          ),
+        );
+      }
+    }
     deletedWorktreeWaits = deletedWorktrees.waiting;
     keptDeletedWorktrees = deletedWorktrees.kept;
     sweptDeletions = deletionsAtStart;

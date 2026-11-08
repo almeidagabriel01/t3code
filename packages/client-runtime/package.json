@@ -155,6 +155,10 @@
       "types": "./src/platform/index.ts",
       "default": "./src/platform/index.ts"
     },
+    "./threadWorkspace": {
+      "types": "./src/threadWorkspace.ts",
+      "default": "./src/threadWorkspace.ts"
+    },
     "./providerSessionRestart": {
       "types": "./src/providerSessionRestart.ts",
       "default": "./src/providerSessionRestart.ts"

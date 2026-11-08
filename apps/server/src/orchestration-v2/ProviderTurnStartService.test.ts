@@ -39,6 +39,7 @@ import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { layerRealGit } from "./ProviderTurnStartService.testkit.ts";
+import { captureWorktreeSnapshot } from "../vcs/worktreeSnapshot.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -158,6 +159,7 @@ function startWithMissingWorktree(
           pruneWorktrees,
           createWorktree,
           listLocalBranchNames,
+          latestWorktreeSnapshot: () => Effect.succeed(null),
         }),
         Layer.mock(ProjectService.ProjectService)({
           getById: () =>
@@ -962,6 +964,7 @@ function makeLocalCommandHarness(input: {
               pruneWorktrees: () => Effect.void,
               listLocalBranchNames: () => Effect.succeed(["feature/restore"]),
               createWorktree,
+              latestWorktreeSnapshot: () => Effect.succeed(null),
             })
           : Layer.succeed(GitWorkflow.GitWorkflowService, input.gitWorkflow),
         Layer.mock(ProjectService.ProjectService)({
@@ -1204,6 +1207,62 @@ effectIt.effect(
         expect(harness.projection().runs.at(-1)?.status).toBe("running");
       }
     }).pipe(Effect.scoped, Effect.provide(layerRealGit)),
+);
+
+effectIt.effect("restores a cleaned worktree's saved changes before the provider starts", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const gitWorkflow = yield* GitWorkflow.GitWorkflowService;
+    const driver = yield* GitVcsDriver.GitVcsDriver;
+    const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-send-restores-" });
+    const workspaceRoot = path.join(root, "project");
+    const worktreesDir = path.join(root, "worktrees");
+    const worktreePath = path.join(worktreesDir, "project", "restore");
+    yield* fileSystem.makeDirectory(workspaceRoot);
+    const git = (cwd: string, args: ReadonlyArray<string>) =>
+      driver
+        .execute({ operation: "test.sendRestores", cwd, args })
+        .pipe(Effect.map((result) => result.stdout.trim()));
+    yield* git(workspaceRoot, ["init", "-b", "main"]);
+    yield* git(workspaceRoot, ["config", "user.name", "Test"]);
+    yield* git(workspaceRoot, ["config", "user.email", "test@example.com"]);
+    yield* git(workspaceRoot, ["commit", "--allow-empty", "-m", "base"]);
+    yield* git(workspaceRoot, ["worktree", "add", "-b", "feature/restore", worktreePath]);
+    yield* fileSystem.writeFileString(path.join(worktreePath, "draft.txt"), "unsaved work");
+    yield* captureWorktreeSnapshot({
+      execute: driver.execute,
+      cwd: worktreePath,
+      threadId: "thread-native-account-command",
+      now: 1_000,
+    });
+    yield* fileSystem.remove(worktreePath, { recursive: true });
+
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      workspaceRoot,
+      worktreePath,
+      worktreesDir,
+      fileSystem,
+      gitWorkflow,
+      failReadsAfterRunning: true,
+    });
+    const open = harness.open.getMockImplementation()!;
+    harness.open.mockImplementation(() =>
+      Effect.gen(function* () {
+        expect(yield* fileSystem.readFileString(path.join(worktreePath, "draft.txt"))).toBe(
+          "unsaved work",
+        );
+        return yield* open();
+      }).pipe(Effect.orDie),
+    );
+
+    yield* harness.start;
+
+    expect(harness.open).toHaveBeenCalledOnce();
+    // The snapshot is spent once restored, so a later cleanup cannot replay stale changes.
+    expect(yield* git(workspaceRoot, ["for-each-ref", "refs/t3/snapshots"])).toBe("");
+  }).pipe(Effect.scoped, Effect.provide(layerRealGit)),
 );
 
 effectIt.effect(

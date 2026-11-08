@@ -98,6 +98,7 @@ import {
   type ProviderDriverKind,
   type ProviderInstanceId,
   ThreadId,
+  ThreadWorkspaceError,
   type TerminalMetadataStreamEvent,
   type PullRequestRef,
   MemoryImportRpcError,
@@ -204,6 +205,7 @@ import { withCurrentMemoryAccess } from "./memory/MemoryAccess.ts";
 import { invalidateSettingsSecrets } from "./sourceControl/sourceControlHostSecrets.ts";
 import * as DatabaseStorage from "./persistence/DatabaseStorage.ts";
 import * as StorageCleanup from "./storageCleanup.ts";
+import { makeThreadWorkspace } from "./orchestration-v2/ThreadWorkspace.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import { terminalOutputStream, withTerminalOutputWindow } from "./terminal/OutputProtocol.ts";
 import * as ServerBrowser from "./preview/ServerBrowser.ts";
@@ -1535,6 +1537,7 @@ export const layerWsRpc = (
       const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
       const storageCleanup = yield* StorageCleanup.StorageCleanup;
       const databaseStorage = yield* DatabaseStorage.DatabaseStorage;
+      const threadWorkspace = yield* makeThreadWorkspace;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
       const secretResolver = yield* SecretResolver.SecretResolver;
       const peerLinks = yield* PeerLinks.PeerLinks;
@@ -2945,6 +2948,16 @@ export const layerWsRpc = (
         [WS_METHODS.serverRunStorageCleanup]: () => storageCleanup.runNow,
         [WS_METHODS.serverGetStorageCleanupReport]: () => storageCleanup.reports,
         [WS_METHODS.serverGetDatabaseStorage]: () => databaseStorage.status,
+        [WS_METHODS.threadsGetWorkspaceStatus]: ({ threadId }) =>
+          threadManagement.getThreadShell(threadId).pipe(
+            Effect.mapError((cause) => new ThreadWorkspaceError({ detail: cause.message, cause })),
+            Effect.flatMap((shell) => threadWorkspace.status(shell)),
+          ),
+        [WS_METHODS.threadsRestoreWorkspace]: ({ threadId }) =>
+          threadManagement.getThreadShell(threadId).pipe(
+            Effect.mapError((cause) => new ThreadWorkspaceError({ detail: cause.message, cause })),
+            Effect.flatMap((shell) => threadWorkspace.restore(shell)),
+          ),
         [WS_METHODS.peerLinksList]: (_input) =>
           peerLinks.list.pipe(Effect.map((links) => ({ links }))),
         [WS_METHODS.peerLinksLink]: (input) => peerLinks.link(input),

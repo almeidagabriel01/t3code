@@ -1322,6 +1322,19 @@ export function createServerEnvironmentAtoms<R, E>(
       staleTimeMs: 5 * 60_000,
       refreshIntervalMs: 6 * 60 * 60_000,
     }),
+    threadWorkspaceStatus: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:thread-workspace-status",
+      tag: WS_METHODS.threadsGetWorkspaceStatus,
+      idleTtlMs: 0,
+    }),
+    restoreThreadWorkspace: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:restore-thread-workspace",
+      tag: WS_METHODS.threadsRestoreWorkspace,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => `${environmentId}:${input.threadId}`,
+      },
+    }),
     killListeningPort: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:kill-listening-port",
       tag: WS_METHODS.serverKillListeningPort,

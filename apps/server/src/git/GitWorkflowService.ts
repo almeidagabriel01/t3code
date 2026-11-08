@@ -33,6 +33,13 @@ import * as GitManager from "./GitManager.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
+import {
+  dropWorktreeSnapshots,
+  latestWorktreeSnapshot,
+  restoreWorktreeSnapshot,
+  type WorktreeSnapshot,
+  type WorktreeSnapshotError,
+} from "../vcs/worktreeSnapshot.ts";
 
 export class GitWorkflowService extends Context.Service<
   GitWorkflowService,
@@ -115,6 +122,18 @@ export class GitWorkflowService extends Context.Service<
     ) => Effect.Effect<void, GitCommandError>;
     readonly pruneWorktrees: (input: {
       readonly cwd: string;
+    }) => Effect.Effect<void, GitCommandError>;
+    readonly latestWorktreeSnapshot: (input: {
+      readonly cwd: string;
+      readonly threadId: string;
+    }) => Effect.Effect<WorktreeSnapshot | null, GitCommandError>;
+    readonly restoreWorktreeSnapshot: (input: {
+      readonly cwd: string;
+      readonly snapshot: WorktreeSnapshot;
+    }) => Effect.Effect<void, GitCommandError | WorktreeSnapshotError>;
+    readonly dropWorktreeSnapshots: (input: {
+      readonly cwd: string;
+      readonly threadId: string;
     }) => Effect.Effect<void, GitCommandError>;
     readonly deleteLocalBranch: (
       input: GitVcsDriver.GitDeleteLocalBranchInput,
@@ -464,6 +483,25 @@ export const make = Effect.gen(function* () {
     pruneWorktrees: Effect.fn("GitWorkflowService.pruneWorktrees")(function (input) {
       return ensureGitCommand("GitWorkflowService.pruneWorktrees", input.cwd).pipe(
         Effect.andThen(git.pruneWorktrees(input)),
+      );
+    }),
+    latestWorktreeSnapshot: Effect.fn("GitWorkflowService.latestWorktreeSnapshot")(
+      function (input) {
+        return ensureGitCommand("GitWorkflowService.latestWorktreeSnapshot", input.cwd).pipe(
+          Effect.andThen(latestWorktreeSnapshot({ execute: git.execute, ...input })),
+        );
+      },
+    ),
+    restoreWorktreeSnapshot: Effect.fn("GitWorkflowService.restoreWorktreeSnapshot")(
+      function (input) {
+        return ensureGitCommand("GitWorkflowService.restoreWorktreeSnapshot", input.cwd).pipe(
+          Effect.andThen(restoreWorktreeSnapshot({ execute: git.execute, ...input })),
+        );
+      },
+    ),
+    dropWorktreeSnapshots: Effect.fn("GitWorkflowService.dropWorktreeSnapshots")(function (input) {
+      return ensureGitCommand("GitWorkflowService.dropWorktreeSnapshots", input.cwd).pipe(
+        Effect.andThen(dropWorktreeSnapshots({ execute: git.execute, ...input })),
       );
     }),
     deleteLocalBranch: Effect.fn("GitWorkflowService.deleteLocalBranch")(function (input) {

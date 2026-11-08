@@ -172,6 +172,12 @@ import {
 import { ForkUpdateStatus, ForkUpdateStatusInput } from "./forkUpdates.ts";
 import { OrchestrationSearchThreadsError } from "./threadSearch.ts";
 import {
+  ThreadWorkspaceError,
+  ThreadWorkspaceInput,
+  ThreadWorkspaceRestoreResult,
+  ThreadWorkspaceStatus,
+} from "./threadWorkspace.ts";
+import {
   ProviderUploadFeedbackError,
   ProviderUploadFeedbackInput,
   ProviderUploadFeedbackResult,
@@ -655,6 +661,8 @@ export const WS_METHODS = {
   serverRunStorageCleanup: "server.runStorageCleanup",
   serverGetStorageCleanupReport: "server.getStorageCleanupReport",
   serverGetDatabaseStorage: "server.getDatabaseStorage",
+  threadsGetWorkspaceStatus: "threads.getWorkspaceStatus",
+  threadsRestoreWorkspace: "threads.restoreWorkspace",
   peerLinksList: "peerLinks.list",
   peerLinksLink: "peerLinks.link",
   peerLinksUnlink: "peerLinks.unlink",
@@ -1019,6 +1027,17 @@ const WsServerGetStorageCleanupReportRpc = Rpc.make(WS_METHODS.serverGetStorageC
   success: Schema.NullOr(StorageCleanupReport),
   stream: true,
   error: EnvironmentAuthorizationError,
+});
+
+const WsThreadsGetWorkspaceStatusRpc = Rpc.make(WS_METHODS.threadsGetWorkspaceStatus, {
+  payload: ThreadWorkspaceInput,
+  success: ThreadWorkspaceStatus,
+  error: Schema.Union([ThreadWorkspaceError, EnvironmentAuthorizationError]),
+});
+const WsThreadsRestoreWorkspaceRpc = Rpc.make(WS_METHODS.threadsRestoreWorkspace, {
+  payload: ThreadWorkspaceInput,
+  success: ThreadWorkspaceRestoreResult,
+  error: Schema.Union([ThreadWorkspaceError, EnvironmentAuthorizationError]),
 });
 
 const WsServerGetDatabaseStorageRpc = Rpc.make(WS_METHODS.serverGetDatabaseStorage, {
@@ -2662,6 +2681,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerRunStorageCleanupRpc,
   WsServerGetStorageCleanupReportRpc,
   WsServerGetDatabaseStorageRpc,
+  WsThreadsGetWorkspaceStatusRpc,
+  WsThreadsRestoreWorkspaceRpc,
   WsServerUpdateSettingsRpc,
   WsPeerLinksListRpc,
   WsPeerLinksLinkRpc,
