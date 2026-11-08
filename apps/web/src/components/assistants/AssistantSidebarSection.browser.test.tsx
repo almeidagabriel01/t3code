@@ -92,7 +92,16 @@ vi.mock("../../state/entities", () => ({
       .filter((id) => id.includes(":g-"))
       .map(shellFor),
   ],
-  useProjects: () => [{ environmentId: "env", id: "p1", title: "ProOps" }],
+  useProjects: () => [
+    {
+      environmentId: "env",
+      id: "p1",
+      title: "ProOps",
+      workspaceRoot: "/home/user/proops",
+      faviconPath: null,
+      projectIcon: { kind: "monogram", text: "PO", color: "green" },
+    },
+  ],
 }));
 vi.mock("../../hooks/useSettings", () => ({
   useClientSettings: (select: (settings: Record<string, unknown>) => unknown) =>
