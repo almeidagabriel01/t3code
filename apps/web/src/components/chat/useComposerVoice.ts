@@ -71,7 +71,7 @@ export function useComposerVoice(options: ComposerVoiceOptions) {
     const readDraft = (): VoiceDraftSnapshot => {
       const current = latest();
       const draft = current.readDraft();
-      if (draft.text !== lastText || current.ownerKey !== lastOwner) revision++;
+      if (draft.text !== lastText || current.ownerKey !== lastOwner) revision += 1;
       lastText = draft.text;
       lastOwner = current.ownerKey;
       return { ownerKey: current.ownerKey, ...draft, revision };
