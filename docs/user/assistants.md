@@ -28,8 +28,7 @@ Open **Settings → Assistants**, or use **+** next to Assistants in the sidebar
 
 An assistant that lives in **No project** works across all your projects. One that lives in a real
 project is a project assistant. T3 Code refuses its launches, delegated tasks and messages to agent
-conversations in any other project, and tells it why. It can still message other assistants, under the
-usual [reporting line and team rules](#reporting-lines).
+conversations in any other project, and tells it why. It can still message other assistants.
 
 ## Tool access
 
