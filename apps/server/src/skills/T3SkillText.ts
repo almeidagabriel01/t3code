@@ -18,7 +18,13 @@ export const providerTextWithSkills = Effect.fn("T3SkillText.providerText")(func
   const names = [...input.text.matchAll(SKILL_MENTION_PATTERN)]
     .map((match) => match[2] ?? "")
     .filter(isT3SkillName);
-  if (names.length === 0 || input.globalSkillsDir === undefined || Option.isNone(settings))
+  // A slash command must stay first in the text for the provider to parse it.
+  if (
+    input.text.trimStart().startsWith("/") ||
+    names.length === 0 ||
+    input.globalSkillsDir === undefined ||
+    Option.isNone(settings)
+  )
     return input.text;
   const disabled = yield* settings.value.getSettings.pipe(
     Effect.map((current) => Option.some(current.disabledGlobalSkills)),

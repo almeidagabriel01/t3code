@@ -7,7 +7,8 @@ import {
   HeaderName,
   McpServerName,
   McpServerUrl,
-  resolveT3McpServersForDriver,
+  T3_MCP_SERVER_SUPPORT,
+  t3McpProviderName,
 } from "./mcpServers.ts";
 
 const stdio = {
@@ -17,13 +18,6 @@ const stdio = {
   args: [],
   env: { TOKEN: "example" },
 } as const;
-const http = {
-  enabled: true,
-  transport: "http",
-  url: "https://example.test/mcp",
-  headers: {},
-} as const;
-
 const isEnvKey = Schema.is(EnvKey);
 const isHeaderName = Schema.is(HeaderName);
 const decodePatch = Schema.decodeUnknownSync(ServerSettingsPatch);
@@ -64,31 +58,10 @@ describe("T3 MCP servers", () => {
       decodePatch({ mcpServers: { ok: { ...stdio, env: { "BAD:KEY": "x" } } } }),
     ).toThrow();
   });
-
-  it("resolves only enabled transports supported by the driver", () => {
-    const servers = { local: stdio, remote: http, disabled: { ...stdio, enabled: false } };
-    expect(resolveT3McpServersForDriver(servers, "codex")).toEqual([
-      {
-        providerName: "local_t3",
-        transport: "stdio",
-        command: "tool",
-        args: [],
-        env: { TOKEN: "example" },
-      },
-      {
-        providerName: "remote_t3",
-        transport: "http",
-        url: "https://example.test/mcp",
-        headers: {},
-      },
-    ]);
-    expect(resolveT3McpServersForDriver(servers, "grok").map((s) => s.providerName)).toEqual([
-      "local_t3",
-    ]);
-    expect(resolveT3McpServersForDriver(servers, "fx").map((s) => s.providerName)).toEqual([
-      "local_t3",
-    ]);
-    expect(resolveT3McpServersForDriver(servers, "opencode")).toEqual([]);
-    expect(resolveT3McpServersForDriver(servers, "unknown")).toEqual([]);
+  it("names a server for agents with the T3 suffix and lists transports per driver", () => {
+    expect(t3McpProviderName("local")).toBe("local_t3");
+    expect(T3_MCP_SERVER_SUPPORT.codex).toEqual(["stdio", "http"]);
+    expect(T3_MCP_SERVER_SUPPORT.grok).toEqual(["stdio"]);
+    expect(T3_MCP_SERVER_SUPPORT.opencode).toBeUndefined();
   });
 });

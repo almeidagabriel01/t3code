@@ -32,6 +32,7 @@ it.effect("delivers an enabled T3 skill read at send time", () =>
       }),
     ).toBe("do $t3:one");
     expect(yield* send("no skill here")).toBe("no skill here");
+    expect(yield* send("/native $t3:one")).toBe("/native $t3:one");
     expect(
       yield* providerTextWithSkills(Option.none(), { text: "do $t3:one", globalSkillsDir: root }),
     ).toBe("do $t3:one");

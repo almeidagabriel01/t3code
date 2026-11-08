@@ -45,7 +45,7 @@ describe("T3 MCP settings drafts", () => {
     ).toHaveProperty("error");
   });
   it("shows only providers supporting each transport", () => {
-    expect(supportedProviders("http")).toBe("Codex, Claude, Cursor");
+    expect(supportedProviders("http")).toBe("Codex, Claude, Cursor, ACP agents");
     expect(supportedProviders("stdio")).toBe("Codex, Claude, Cursor, ACP agents");
   });
 });

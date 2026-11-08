@@ -916,6 +916,11 @@ export const layer: Layer.Layer<
         text: message.text,
         records: message.context?.records ?? [],
       });
+      // Notes and context keep the raw text; only what the provider receives carries skills.
+      const providerText = yield* providerTextWithSkills(Option.some(serverSettings), {
+        text: userText,
+        globalSkillsDir,
+      });
       // Codex and Claude parse /goal from the prompt, so it goes verbatim and history waits a turn.
       const goalDriver = session.driver === "codex" || session.driver === "claudeAgent";
       const goalCommand = goalDriver && parseGoalCommand(message) !== null;
@@ -1693,17 +1698,11 @@ export const layer: Layer.Layer<
             .filter((part) => part !== "")
             .join("\n\n");
           const { restartContinuationOfRunId: _resumedRunId, ...promptedInput } = turnInput;
-          const promptText = goalCommand ? userText : withInlineContext(context, userText);
           yield* start({
             ...(noteContinuation ? promptedInput : turnInput),
             message: {
               ...turnInput.message,
-              text: compact
-                ? promptText
-                : yield* providerTextWithSkills(Option.some(serverSettings), {
-                    text: promptText,
-                    globalSkillsDir,
-                  }),
+              text: goalCommand ? providerText : withInlineContext(context, providerText),
             },
           }).pipe(
             // Clear pending handoff markers for refused prompts so the next turn retains the native session.
@@ -1804,7 +1803,7 @@ export const layer: Layer.Layer<
         loadRunInterruptReason: runControls.loadRunInterruptReason,
         message: {
           messageId: message.id,
-          text: userText,
+          text: providerText,
           attachments: message.attachments,
           createdBy: message.createdBy,
           creationSource: message.creationSource,

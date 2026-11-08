@@ -16,7 +16,7 @@ or an HTTPS address (HTTP). Put tokens in environment variables or headers; T3
 stores those values as secrets and shows them masked. Don't put secrets in the
 address itself. Each server has its own switch.
 
-Servers reach a provider session when it starts a turn. Agents see each one as
+Servers apply to threads started after you add them. Agents see each one as
 `<name>_t3`.
 
 | Provider                         | stdio | HTTP |

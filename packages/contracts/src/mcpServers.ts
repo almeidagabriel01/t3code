@@ -63,16 +63,6 @@ export const T3McpServer = Schema.Union([
   }),
 ]);
 export type T3McpServer = typeof T3McpServer.Type;
-export type T3McpServerLaunch =
-  | ({ readonly providerName: string } & Omit<
-      Extract<T3McpServer, { transport: "stdio" }>,
-      "enabled"
-    >)
-  | ({ readonly providerName: string } & Omit<
-      Extract<T3McpServer, { transport: "http" }>,
-      "enabled"
-    >);
-
 export const t3McpProviderName = (name: string) => `${name}_t3`;
 
 /** Drivers whose adapters deliver thread connectors; OpenCode, Pi and Muse have no MCP delivery. */
@@ -84,24 +74,10 @@ export const T3_MCP_SERVER_SUPPORT: Readonly<
   cursor: ["stdio", "http"],
   grok: ["stdio"],
   kiro: ["stdio"],
-  antigravity: ["stdio"],
-  acpRegistry: ["stdio"],
+  antigravity: ["stdio", "http"],
+  acpRegistry: ["stdio", "http"],
   fx: ["stdio"],
 };
-
-export function resolveT3McpServersForDriver(
-  servers: Readonly<Record<string, T3McpServer>>,
-  driver: string,
-): ReadonlyArray<T3McpServerLaunch> {
-  const supported = Object.hasOwn(T3_MCP_SERVER_SUPPORT, driver)
-    ? (T3_MCP_SERVER_SUPPORT[driver] ?? [])
-    : [];
-  return Object.entries(servers).flatMap(([name, server]) => {
-    if (!server.enabled || !supported.includes(server.transport)) return [];
-    const { enabled: _enabled, ...config } = server;
-    return [{ providerName: t3McpProviderName(name), ...config }];
-  });
-}
 
 export const T3McpServerSettingsFields = {
   mcpServers: Schema.Record(Schema.String, T3McpServer)
