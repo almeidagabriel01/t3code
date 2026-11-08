@@ -2258,6 +2258,65 @@ describe("storage cleanup reports and local file policies", () => {
       }),
     ),
   );
+  it.live("saves untracked files in a snapshot before removing the worktree", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, repo, worktree, command, setPolicy } = yield* cleanupFixture();
+        setPolicy("tracked-changes");
+        yield* fs.writeFileString(`${worktree}/notes.txt`, "local data\n");
+        expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "removed" });
+        const refs = (yield* command(repo, ["for-each-ref", "--format=%(refname)"])).stdout;
+        const ref = refs.split("\n").find((name) => name.startsWith("refs/t3/snapshots/thread-1/"));
+        expect(ref).toBeDefined();
+        expect((yield* command(repo, ["show", `${ref}:notes.txt`])).stdout).toBe("local data\n");
+      }),
+    ),
+  );
+  it.live("keeps the worktree when its snapshot cannot be saved", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, worktree, command, setPolicy } = yield* cleanupFixture();
+        setPolicy("tracked-changes");
+        yield* fs.makeDirectory(`${worktree}/inner`);
+        yield* command(`${worktree}/inner`, ["init"]);
+        yield* fs.writeFileString(`${worktree}/inner/x.txt`, "x");
+        yield* command(`${worktree}/inner`, ["add", "."]);
+        yield* command(`${worktree}/inner`, [
+          "-c",
+          "user.email=t@example.test",
+          "-c",
+          "user.name=T",
+          "commit",
+          "-m",
+          "x",
+        ]);
+        const report = yield* service.runNow;
+        expect(report.entries[0]).toMatchObject({ outcome: "kept" });
+        expect(report.entries[0]?.reason).toContain("Snapshot failed");
+        expect(yield* fs.exists(worktree)).toBe(true);
+      }),
+    ),
+  );
+  it.live.each([
+    [30, "expired"],
+    [null, "kept"],
+  ] as const)("prunes snapshots by retention %j", ([days, expected]) =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, repo, command } = yield* cleanupFixture({
+          ...DEFAULT_SERVER_SETTINGS.storageCleanup,
+          worktreeSnapshotsAfterDays: days,
+        });
+        yield* command(repo, ["update-ref", "refs/t3/snapshots/old/1000", "HEAD"]);
+        const recent = "refs/t3/snapshots/new/9999999999999";
+        yield* command(repo, ["update-ref", recent, "HEAD"]);
+        yield* service.runNow;
+        const refs = (yield* command(repo, ["for-each-ref", "--format=%(refname)"])).stdout;
+        expect(refs.includes("refs/t3/snapshots/old/1000")).toBe(expected === "kept");
+        expect(refs.includes(recent)).toBe(true);
+      }),
+    ),
+  );
   it.live.each([
     ["unchanged", "removed", "No commits beyond the project branch"],
     ["unmerged", "kept", "Has commits beyond the project branch"],

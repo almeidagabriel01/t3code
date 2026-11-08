@@ -30,6 +30,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.heavyQueuePromote]: AuthTerminalOperateScope,
   [WS_METHODS.heavyQueueCancel]: AuthTerminalOperateScope,
   [WS_METHODS.serverRunStorageCleanup]: AuthSettingsWriteScope,
+  [WS_METHODS.threadsRestoreWorkspace]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverCheckOtlpEndpoint]: AuthSettingsWriteScope,
   [WS_METHODS.serverRefreshProviders]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsRunAction]: AuthSourceControlWriteScope,

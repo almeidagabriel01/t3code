@@ -7,6 +7,7 @@ import type {
 } from "@t3tools/contracts";
 import type { Dispatch, SetStateAction } from "react";
 import { ProviderStatusBanner } from "./ProviderStatusBanner";
+import { ThreadWorkspaceBanner } from "./ThreadWorkspaceBanner";
 import { dismissThreadErrorBannerForSession, ThreadErrorBanner } from "./ThreadErrorBanner";
 
 /**
@@ -19,6 +20,8 @@ export function ChatBannerLane(props: {
   providerStatusBannerKey: string | null;
   setDismissedProviderStatusBannerKey: Dispatch<SetStateAction<string | null>>;
   onOpenProviderSetup: (instanceId: ProviderInstanceId) => void;
+  worktreePath: string | null;
+  turnKey: string;
   threadId: ThreadId;
   threadError: string | null;
   threadErrorClass: OrchestrationV2ProviderFailureClass | null;
@@ -47,6 +50,12 @@ export function ChatBannerLane(props: {
         status={providerStatus}
         onDismiss={() => setDismissedProviderStatusBannerKey(providerStatusBannerKey)}
         onOpenProviderSetup={onOpenProviderSetup}
+      />
+      <ThreadWorkspaceBanner
+        environmentId={props.environmentId}
+        threadId={threadId}
+        worktreePath={props.worktreePath}
+        turnKey={props.turnKey}
       />
       <ThreadErrorBanner
         error={threadError}

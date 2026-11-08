@@ -207,6 +207,7 @@ import { ThreadFeed, type ThreadFeedHandle, type ThreadFeedHistoryControls } fro
 import { WorkspaceMutationIdProvider } from "./WorkspaceMutationIdProvider";
 import { useThreadTurnSubagents } from "./ThreadAgentsSheet";
 import { ComposerQueuedEditBanner } from "./ComposerQueuedEdit";
+import { ThreadWorkspaceNotice } from "./ThreadWorkspaceNotice";
 import { useThreadQueuedCount } from "./ThreadQueueControl";
 import { ThreadAssistantStack } from "../assistants/AssistantPresence";
 import { ThreadGuestShareBar } from "./ThreadGuestShareBar";
@@ -1657,6 +1658,12 @@ function ThreadDetailBody(
                       threadRef={props.selectedThreadDetailRef}
                       providers={props.serverConfig?.providers ?? []}
                       running={props.activeWorkStartedAt !== null}
+                    />
+                    <ThreadWorkspaceNotice
+                      environmentId={props.environmentId}
+                      threadId={props.selectedThread.id}
+                      worktreePath={props.selectedThread.worktreePath}
+                      turnKey={`${props.selectedThread.latestRun?.runId ?? ""}:${props.activeWorkStartedAt !== null}`}
                     />
                     <LearnedRuleNotice
                       threadRef={props.selectedThreadDetailRef}

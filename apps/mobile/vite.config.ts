@@ -6,6 +6,8 @@ import "vite-plus/test/config";
 const reactTests = [
   "src/state/keepAwake.test.tsx",
   "src/features/settings/components/KeepAwakeSection.test.tsx",
+  "src/features/settings/components/WorktreeSnapshotsSection.test.tsx",
+  "src/features/threads/ThreadWorkspaceNotice.test.tsx",
   "src/state/heavyQueue.test.tsx",
   "src/features/settings/components/HeavyQueueSection.test.tsx",
   "src/features/threads/useVisibleNewTaskScopes.test.tsx",
