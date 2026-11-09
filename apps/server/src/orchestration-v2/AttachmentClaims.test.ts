@@ -168,6 +168,28 @@ describe("AttachmentClaims", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("asks to attach an expired upload again", () =>
+    Effect.gen(function* () {
+      const staged = yield* stagePendingUpload({
+        name: "late.png",
+        bytes: new Uint8Array([1, 2, 3]),
+        mimeType: "image/png",
+      });
+      const config = yield* ServerConfig.ServerConfig;
+      for (const entry of NodeFS.readdirSync(config.attachmentsDir)) {
+        if (entry.startsWith("pending-")) NodeFS.rmSync(`${config.attachmentsDir}/${entry}`);
+      }
+
+      const result = yield* Effect.exit(
+        claimPendingAttachments({ threadId: "thread-claims-expired", attachments: [staged] }),
+      );
+
+      expect(result._tag).toBe("Failure");
+      if (result._tag === "Failure")
+        expect(String(result.cause)).toContain("Attach the file again");
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("rejects duplicate attachment ids before copying anything", () =>
     Effect.gen(function* () {
       const pending = yield* stagePendingUpload({

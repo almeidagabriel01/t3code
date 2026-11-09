@@ -99,14 +99,16 @@ export const claimPendingAttachments = Effect.fn("AttachmentClaims.claimPendingA
           });
           if (!claim.ok) {
             return yield* new AttachmentClaimError({
-              message: `Attachment '${attachment.name}' cannot be sent: ${claim.reason}.`,
+              message: `Attachment '${attachment.name}' cannot be sent: ${claim.reason}.${
+                claim.reason.startsWith("attachment not found") ? " Attach the file again." : ""
+              }`,
             });
           }
           const info = yield* fileSystem.stat(claim.currentPath).pipe(
             Effect.mapError(
               (cause) =>
                 new AttachmentClaimError({
-                  message: `Attachment '${attachment.name}' cannot be sent: attachment not found.`,
+                  message: `Attachment '${attachment.name}' cannot be sent: attachment not found. Attach the file again.`,
                   cause,
                 }),
             ),
