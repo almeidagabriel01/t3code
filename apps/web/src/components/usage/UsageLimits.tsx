@@ -247,22 +247,21 @@ export function useResetCredit(
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
 
-  const redeem = async () => {
+  const redeem = async (): Promise<string | null> => {
     setConfirming(false);
-    if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
+    if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return null;
     setBusy(true);
     setStatus(null);
     const result = await consume({ environmentId, input });
     setBusy(false);
-    if (result._tag === "Success") {
-      setStatus(result.value.warning ?? OUTCOME_TEXT[result.value.outcome]);
-      return;
-    }
-    setStatus(
-      "error" in result.cause && result.cause.error instanceof Error
-        ? result.cause.error.message
-        : "Could not use the reset credit.",
-    );
+    const message =
+      result._tag === "Success"
+        ? (result.value.warning ?? OUTCOME_TEXT[result.value.outcome])
+        : "error" in result.cause && result.cause.error instanceof Error
+          ? result.cause.error.message
+          : "Could not use the reset credit.";
+    setStatus(message);
+    return message;
   };
 
   return { canManageProviders, confirming, setConfirming, busy, status, redeem };

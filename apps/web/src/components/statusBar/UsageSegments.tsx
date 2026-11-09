@@ -1,4 +1,5 @@
 import { refreshUsageLimits } from "@t3tools/client-runtime/state/usage";
+import { AuthProvidersManageScope } from "@t3tools/contracts";
 import type {
   EnvironmentId,
   InstanceBudgetStatus,
@@ -47,6 +48,8 @@ import { formatUsd, TIME_ZONE, useInstanceSpend } from "./useInstanceSpend";
 import { collectUsageSessions } from "@t3tools/client-runtime/state/usageSessions";
 import { LimitName, ResetText, UsageSessionsList } from "./UsageRosterParts";
 import { useUsageItems } from "./useUsageItems";
+import { ResetCreditDialog, resetCreditsSummary, useResetCredit } from "../usage/UsageLimits";
+import { useEnvironmentScope } from "../../state/session";
 import { useMinuteNow } from "./useMinuteNow";
 
 function useUsageRefresh(environmentIds: ReadonlyArray<EnvironmentId>) {
@@ -388,10 +391,12 @@ function RosterRow({
   item,
   display,
   onRetry,
+  onUseReset,
 }: {
   readonly item: UsageItem;
   readonly display: StatusBarUsagePercentage;
   readonly onRetry: () => void;
+  readonly onUseReset: (item: UsageItem) => void;
 }) {
   const now = useMinuteNow();
   const showSessions = useClientSettings((settings) => settings.usageShowSessions);
@@ -440,8 +445,66 @@ function RosterRow({
           ))}
         </div>
       )}
+      <RosterResetCredits item={item} now={now} onUse={onUseReset} />
       {showSessions ? <RosterSessions item={item} now={now} /> : null}
     </div>
+  );
+}
+
+function RosterResetCredits({
+  item,
+  now,
+  onUse,
+}: {
+  readonly item: UsageItem;
+  readonly now: number;
+  readonly onUse: (item: UsageItem) => void;
+}) {
+  const canManageProviders = useEnvironmentScope(item.environmentId, AuthProvidersManageScope);
+  const credits = item.limits?.resetCredits;
+  if (!credits || credits.availableCount === 0) return null;
+  return (
+    <div className="flex items-center gap-2 pl-7.5">
+      <span className="min-w-0 flex-1 truncate text-2xs text-muted-foreground tabular-nums">
+        {resetCreditsSummary(credits, now)}
+      </span>
+      <Button
+        size="xs"
+        variant="outline"
+        disabled={!canManageProviders}
+        onClick={() => onUse(item)}
+      >
+        Use reset
+      </Button>
+    </div>
+  );
+}
+
+/** Mounted outside the popover: popovers stack above dialogs and unmount on close. */
+function StatusBarResetDialog({
+  item,
+  onClose,
+}: {
+  readonly item: UsageItem;
+  readonly onClose: () => void;
+}) {
+  const { canManageProviders, busy, redeem } = useResetCredit(item.environmentId, {
+    instanceId: item.entry.instanceId,
+  });
+  return (
+    <ResetCreditDialog
+      open={!busy}
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+      disabled={!canManageProviders}
+      onConfirm={() =>
+        void redeem().then((message) => {
+          onClose();
+          if (message) toastManager.add({ type: "info", title: message });
+        })
+      }
+    />
   );
 }
 
@@ -451,12 +514,17 @@ function UsageSegmentsBody() {
   const mode = useClientSettings((settings) => settings.statusBarUsageMode);
   const display = useClientSettings((settings) => settings.statusBarUsagePercentage);
   const { refresh, refreshing } = useUsageRefresh(environmentIds);
+  const [open, setOpen] = useState(false);
+  const [resetting, setResetting] = useState<UsageItem | null>(null);
   const items = allItems.filter((item) => isStatusBarItemShown(hidden, item.entry.instanceId));
   if (items.length === 0) return null;
   return (
     // Narrow windows clip the chips instead of drawing them over the ports and memory segments.
     <div className="flex min-w-0 items-center gap-1.5 overflow-hidden">
-      <Popover>
+      {resetting ? (
+        <StatusBarResetDialog item={resetting} onClose={() => setResetting(null)} />
+      ) : null}
+      <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger
           render={<Button variant="status-bar" size="status-bar" aria-label="Usage" />}
         >
@@ -485,7 +553,16 @@ function UsageSegmentsBody() {
               </div>
             </div>
             {items.map((item) => (
-              <RosterRow key={item.key} item={item} display={display} onRetry={refresh} />
+              <RosterRow
+                key={item.key}
+                item={item}
+                display={display}
+                onRetry={refresh}
+                onUseReset={(target) => {
+                  setOpen(false);
+                  setResetting(target);
+                }}
+              />
             ))}
           </div>
         </PopoverPopup>
