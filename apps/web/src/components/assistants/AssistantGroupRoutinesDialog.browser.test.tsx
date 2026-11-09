@@ -75,6 +75,23 @@ vi.mock(import("../../hooks/useSettings"), async (original) => ({
   ...(await original()),
   useEnvironmentSettings: (() => DEFAULT_UNIFIED_SETTINGS) as never,
 }));
+vi.mock(import("../settings/ScheduledTasksSettings"), async () => {
+  const { Dialog, DialogPopup } = await import("../ui/dialog");
+  return {
+    GroupRoutineEditorDialog: ((props: {
+      task: ScheduledTask | null;
+      groupId: string;
+      onClose: () => void;
+    }) => (
+      <Dialog open onOpenChange={(open) => !open && props.onClose()}>
+        <DialogPopup>
+          {props.task ? `editing ${props.task.id}` : "creating"} in {props.groupId}
+          <button onClick={props.onClose}>Close editor</button>
+        </DialogPopup>
+      </Dialog>
+    )) as never,
+  };
+});
 vi.mock(import("../ui/toast"), async (original) => ({
   ...(await original()),
   toastManager: { add: state.toast } as never,
@@ -153,7 +170,7 @@ it("lists only this group's routines with their state, and acts on them", async 
   expect(state.commands[2]!.input).toEqual({ id: "Held", enabled: true });
 });
 
-it("reports a failed action, and opens the editor from Edit and New routine", async () => {
+it("reports a failed action, and opens the editor in place from Edit and New routine", async () => {
   setup([routine("Monday")]);
   state.fail = true;
   await using screen = await render(<Host />, { router: "/assistants" });
@@ -164,19 +181,13 @@ it("reports a failed action, and opens the editor from Edit and New routine", as
     ),
   );
   await userEvent.click(page.getByRole("button", { name: "Edit" }));
-  await vi.waitFor(() =>
-    expect(screen.router?.state.location.search).toMatchObject({ environmentId, taskId: "Monday" }),
-  );
-  expect(appAtomRegistry.get(assistantGroupRoutinesAtom)).toBeNull();
-  setup([routine("Monday")]);
-  await screen.rerender(<Host />);
+  await expect.element(page.getByText("editing Monday in t1", { exact: false })).toBeVisible();
+  await userEvent.click(page.getByRole("button", { name: "Close editor" }));
+  await expect.element(page.getByText("Group routines")).toBeVisible();
   await userEvent.click(page.getByRole("button", { name: "New routine" }));
-  await vi.waitFor(() =>
-    expect(screen.router?.state.location.search).toMatchObject({
-      environmentId,
-      assistantTeamId: "t1",
-    }),
-  );
+  await expect.element(page.getByText("creating in t1", { exact: false })).toBeVisible();
+  expect(screen.router?.state.location.pathname).toBe("/assistants");
+  expect(appAtomRegistry.get(assistantGroupRoutinesAtom)).not.toBeNull();
 });
 
 it.each([

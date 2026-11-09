@@ -78,7 +78,7 @@ import { resolvePastedPath } from "@t3tools/shared/path";
 import { useManagedPolicy } from "~/state/managedPolicy";
 import { ManagedNotice } from "../ManagedPolicy";
 import { readEnvironmentScope } from "~/state/session";
-import { useSettingsScope } from "./SettingsScopeContext";
+import { SettingsScopeProvider, useSettingsScope } from "./SettingsScopeContext";
 import { EnvironmentRow, useEnvironmentTransportLabel } from "./EnvironmentRow";
 import { SettingsGroup } from "./SettingsGroup";
 import { settingsScopeEnvironmentLabel, settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
@@ -94,6 +94,7 @@ import {
   matchesScheduledTaskScope,
   scheduleFromDraft,
   scheduledTaskDefaultModel,
+  scheduledTaskWording,
   taskToDraft,
   type DraftState,
   type ScheduleMode,
@@ -280,12 +281,10 @@ function Field({
 }) {
   return (
     <div className="space-y-1.5">
-      <Label className="flex items-baseline justify-between" htmlFor={htmlFor}>
-        <span>{label}</span>
-        {hint ? (
-          <span className="font-normal text-2xs text-muted-foreground/80">{hint}</span>
-        ) : null}
-      </Label>
+      <div className="space-y-0.5">
+        <Label htmlFor={htmlFor}>{label}</Label>
+        {hint ? <p className="text-xs text-muted-foreground">{hint}</p> : null}
+      </div>
       {children}
     </div>
   );
@@ -1170,6 +1169,26 @@ interface BoundThread {
   readonly projectId: ProjectId;
 }
 
+/** The editor over a group chat: no Settings page or scope behind it, so it brings its own. */
+export function GroupRoutineEditorDialog(props: {
+  readonly environmentId: EnvironmentId;
+  readonly task: ScheduledTask | null;
+  readonly groupId: string;
+  readonly onClose: () => void;
+}) {
+  return (
+    <SettingsScopeProvider search={{}} onChange={() => {}}>
+      <ScheduledTaskEditorDialog
+        initialEnvironmentId={props.environmentId}
+        task={props.task}
+        bound={undefined}
+        groupId={props.groupId}
+        onClose={props.onClose}
+      />
+    </SettingsScopeProvider>
+  );
+}
+
 function ScheduledTaskEditorDialog({
   initialEnvironmentId,
   task,
@@ -1296,6 +1315,7 @@ function ScheduledTaskEditorForm({
               projectId: defaultScheduledTaskProjectId(scopedProjects, scope),
             },
   );
+  const words = scheduledTaskWording(draft.assistantTeamId !== "");
   const boundName = useBoundThreadName(environmentId, draft.threadId as ThreadId | "");
   // A task that posts in a group chat has no project, workspace or model choice of its own.
   const targeted = draft.threadId !== "" || draft.assistantTeamId !== "";
@@ -1468,7 +1488,7 @@ function ScheduledTaskEditorForm({
   return (
     <>
       <DialogHeader>
-        <DialogTitle>{draft.editingId ? "Edit task" : "New task"}</DialogTitle>
+        <DialogTitle>{words.edit(draft.editingId !== null)}</DialogTitle>
         <DialogDescription>
           Run a prompt automatically on an interval, at a fixed time, once at a set date, or when a
           webhook is called.
@@ -2043,20 +2063,24 @@ function ScheduledTaskEditorForm({
             <Field
               label="Run limit"
               htmlFor="scheduled-task-max-runs"
-              hint="The task turns itself off after this many runs. Empty means no limit."
+              hint={`The ${words.noun} turns itself off after this many runs. Empty means no limit.`}
             >
-              <Input
-                type="number"
-                id="scheduled-task-max-runs"
-                nativeInput
-                min={1}
-                step={1}
-                className="w-28"
-                value={draft.maxRuns}
-                onChange={(event) =>
-                  setDraft((current) => ({ ...current, maxRuns: event.target.value }))
-                }
-              />
+              <div className="flex items-center gap-2">
+                <Input
+                  type="number"
+                  id="scheduled-task-max-runs"
+                  aria-label="Run limit"
+                  nativeInput
+                  min={1}
+                  step={1}
+                  className="w-28"
+                  value={draft.maxRuns}
+                  onChange={(event) =>
+                    setDraft((current) => ({ ...current, maxRuns: event.target.value }))
+                  }
+                />
+                <span className="text-xs text-muted-foreground">runs</span>
+              </div>
             </Field>
           )}
           {draft.scheduleMode === "fixed" ? (
@@ -2093,7 +2117,7 @@ function ScheduledTaskEditorForm({
             <div className="min-w-0 space-y-1">
               <Label htmlFor="scheduled-task-enabled">Enabled</Label>
               <p id="scheduled-task-enabled-description" className="text-sm text-muted-foreground">
-                Disabled tasks stay saved but do not run.
+                {`Disabled ${words.noun}s stay saved but do not run.`}
               </p>
             </div>
             <Switch
@@ -2122,7 +2146,7 @@ function ScheduledTaskEditorForm({
           }
           onClick={() => void submit()}
         >
-          {draft.editingId ? "Save task" : "Create task"}
+          {words.submit(draft.editingId !== null)}
         </Button>
       </DialogFooter>
     </>

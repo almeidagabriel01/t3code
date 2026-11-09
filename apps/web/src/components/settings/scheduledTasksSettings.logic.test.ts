@@ -22,6 +22,7 @@ import {
   matchesScheduledTaskScope,
   maxRunsFromDraft,
   scheduleFromDraft,
+  scheduledTaskWording,
   taskToDraft,
   validateScheduledTasksSearch,
 } from "./scheduledTasksSettings.logic";
@@ -416,5 +417,23 @@ describe("run limit and missed-run policy", () => {
     ["many", undefined],
   ])("reads the limit field %j as %j", (text, expected) => {
     expect(maxRunsFromDraft({ maxRuns: text })).toBe(expected);
+  });
+});
+
+describe("scheduledTaskWording", () => {
+  it("calls a group's task a routine and keeps Settings wording otherwise", () => {
+    const group = scheduledTaskWording(true);
+    expect([group.edit(false), group.edit(true), group.submit(false), group.submit(true)]).toEqual([
+      "New routine",
+      "Edit routine",
+      "Create routine",
+      "Save routine",
+    ]);
+    const plain = scheduledTaskWording(false);
+    expect([plain.edit(false), plain.submit(true), plain.noun]).toEqual([
+      "New task",
+      "Save task",
+      "task",
+    ]);
   });
 });

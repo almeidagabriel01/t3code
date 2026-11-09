@@ -20,6 +20,7 @@ import {
   assistantGroupNewSeq,
   assistantGroupMentionOptions,
   assistantGroupMentionQuery,
+  assistantGroupMarkdownMentions,
   assistantGroupTextParts,
   assistantGroupPauseReasonLabel,
   assistantGroupRecipientsPreview,
@@ -291,6 +292,15 @@ describe("composer helpers", () => {
       { start: 0, text: "plain", mention: false },
     ]);
     assert.deepStrictEqual(assistantGroupTextParts("", [ada]), []);
+  });
+
+  it("bolds member mentions in markdown, but not in code", () => {
+    const md = "Oi @Ada, `@ada` e @ghost\n```\n@ada\n```\n- @beto ok\n````\n```\n@ada\n````\n@ada";
+    assert.strictEqual(
+      assistantGroupMarkdownMentions(md, [ada, beto]),
+      "Oi **@Ada**, `@ada` e @ghost\n```\n@ada\n```\n- **@beto** ok\n````\n```\n@ada\n````\n**@ada**",
+    );
+    assert.strictEqual(assistantGroupMarkdownMentions("no mention", [ada]), "no mention");
   });
 
   it("offers matching members and everyone, and inserts the handle with a space", () => {

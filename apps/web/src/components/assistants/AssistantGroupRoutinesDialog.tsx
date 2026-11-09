@@ -8,7 +8,6 @@ import {
   type EnvironmentId,
   type ScheduledTask,
 } from "@t3tools/contracts";
-import { useNavigate } from "@tanstack/react-router";
 import { PauseIcon, PencilIcon, PlayIcon, PlusIcon, Trash2Icon } from "lucide-react";
 import { useState } from "react";
 
@@ -20,6 +19,7 @@ import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { readEnvironmentScope } from "~/state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { GroupRoutineEditorDialog } from "../settings/ScheduledTasksSettings";
 import { scheduleLabel } from "../settings/scheduledTasksSettings.logic";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -171,20 +171,11 @@ function AssistantGroupRoutinesDialog(props: {
   readonly onClose: () => void;
 }) {
   const { environmentId, teamId } = props.target;
-  const navigate = useNavigate();
+  const [editor, setEditor] = useState<{ readonly task: ScheduledTask | null } | null>(null);
   const query = useEnvironmentQuery(
     serverEnvironment.scheduledTasksLive({ environmentId, input: {} }),
   );
   const routines = query.data?.tasks.filter((task) => task.assistantTeamId === teamId);
-  const open = (
-    search: { readonly taskId: ScheduledTask["id"] } | { readonly assistantTeamId: string },
-  ) => {
-    props.onClose();
-    void navigate({
-      to: "/settings/scheduled-tasks",
-      search: { environmentId, ...search },
-    });
-  };
   return (
     <Dialog open onOpenChange={(next) => !next && props.onClose()}>
       <DialogPopup className="max-w-lg">
@@ -210,7 +201,7 @@ function AssistantGroupRoutinesDialog(props: {
                   key={task.id}
                   environmentId={environmentId}
                   task={task}
-                  onEdit={() => open({ taskId: task.id })}
+                  onEdit={() => setEditor({ task })}
                 />
               ))}
             </ul>
@@ -220,12 +211,21 @@ function AssistantGroupRoutinesDialog(props: {
           <Button variant="outline" onClick={props.onClose}>
             Close
           </Button>
-          <Button onClick={() => open({ assistantTeamId: teamId })}>
+          <Button onClick={() => setEditor({ task: null })}>
             <PlusIcon />
             New routine
           </Button>
         </DialogFooter>
       </DialogPopup>
+      {editor ? (
+        <GroupRoutineEditorDialog
+          key={editor.task?.id ?? "new"}
+          environmentId={environmentId}
+          task={editor.task}
+          groupId={teamId}
+          onClose={() => setEditor(null)}
+        />
+      ) : null}
     </Dialog>
   );
 }

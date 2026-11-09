@@ -198,6 +198,44 @@ export function assistantGroupTextParts(
   return parts;
 }
 
+const INLINE_CODE = /(`+)[\s\S]*?\1/g;
+const CODE_FENCE = /^ {0,3}(`{3,}|~{3,})/;
+
+/** Markdown with each member `@mention` made bold, except in code spans and fenced blocks. */
+export function assistantGroupMarkdownMentions(
+  markdown: string,
+  members: ReadonlyArray<Pick<Assistant, "handle" | "name">>,
+): string {
+  if (!markdown.includes("@")) return markdown;
+  const bold = (text: string) =>
+    assistantGroupTextParts(text, members)
+      .map((part) => (part.mention ? `**${part.text}**` : part.text))
+      .join("");
+  let fence: string | null = null;
+  return markdown
+    .split("\n")
+    .map((line) => {
+      const marker = CODE_FENCE.exec(line)?.[1];
+      if (fence !== null) {
+        if (marker !== undefined && marker[0] === fence[0] && marker.length >= fence.length)
+          fence = null;
+        return line;
+      }
+      if (marker !== undefined) {
+        fence = marker;
+        return line;
+      }
+      let out = "";
+      let at = 0;
+      for (const code of line.matchAll(INLINE_CODE)) {
+        out += bold(line.slice(at, code.index)) + code[0];
+        at = code.index + code[0].length;
+      }
+      return out + bold(line.slice(at));
+    })
+    .join("\n");
+}
+
 /** Members whose handle or name starts with the query, then `@everyone` when it fits. */
 export function assistantGroupMentionOptions<M extends Recipient>(
   query: string,
