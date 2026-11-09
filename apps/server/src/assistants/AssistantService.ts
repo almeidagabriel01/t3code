@@ -2,6 +2,7 @@ import {
   type Assistant,
   AssistantError,
   type AssistantId,
+  type AssistantLibrary,
   type AssistantsCreateInput,
   type AssistantTeam,
   type AssistantTeamId,
@@ -48,7 +49,7 @@ import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ProjectService from "../project/ProjectService.ts";
-import { removeOwnerTransfers } from "./AssistantTransfers.ts";
+import { listLibrary, removeOwnerTransfers } from "./AssistantTransfers.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
@@ -128,6 +129,8 @@ export class AssistantService extends Context.Service<
       never,
       Scope.Scope
     >;
+    /** Files it handed over or received through the shared folder, newest first. */
+    readonly library: (assistantId: AssistantId) => Effect.Effect<AssistantLibrary, AssistantError>;
     /** The model a new thread for this project starts on. */
     readonly defaultModel: (projectId: ProjectId) => Effect.Effect<ModelSelection, AssistantError>;
   }
@@ -287,6 +290,26 @@ const make = Effect.gen(function* () {
     yield* threads
       .dispatch(command(CommandId.make(`assistant-cmd:${id}`)))
       .pipe(Effect.catch(threadFailure("Could not update the assistant's conversation.")));
+  });
+
+  /** A muted line in the conversation; a failure to write it never fails the change it reports. */
+  const noteInThread = Effect.fn("AssistantService.noteInThread")(function* (
+    threadId: ThreadId,
+    message: string,
+  ) {
+    const id = yield* random.uuidV4().pipe(Effect.orDie);
+    yield* threads
+      .dispatch({
+        type: "thread.notice.record",
+        commandId: CommandId.make(`assistant-note:${id}`),
+        threadId,
+        message,
+      })
+      .pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("Could not leave a line in the assistant's conversation", { cause }),
+        ),
+      );
   });
 
   const archiveThread = (threadId: ThreadId, archived: boolean) =>
@@ -637,6 +660,7 @@ const make = Effect.gen(function* () {
                   threadId: previousThreadId,
                   title: next.name,
                 }));
+                yield* noteInThread(previousThreadId, `Renamed to ${next.name}`);
               }
               if (input.modelSelection !== undefined) {
                 const modelSelection = input.modelSelection;
@@ -952,7 +976,16 @@ const make = Effect.gen(function* () {
     storage,
   );
 
+  const library: AssistantService["Service"]["library"] = Effect.fn("AssistantService.library")(
+    function* (assistantId) {
+      const row = yield* findRow(assistantId);
+      return yield* listLibrary(config.sharedDir, row.assistant_id);
+    },
+    storage,
+  );
+
   return AssistantService.of({
+    library,
     list,
     subscribe,
     ensureDefault,

@@ -201,6 +201,20 @@ which is its own T3 home's `shared`. A send with `paths` copies each file to
 a folder with a manifest is complete and a repeat returns it). The sender owns the folder: deleting the
 sender, or a send that never delivered, removes it and nothing else under `shared/`.
 
+## Muted lines in the conversation
+
+A rename and a routine's pause or resume leave a line in the assistant's thread through the internal
+`thread.notice.record` command: a runless `system_notice` turn item, so it sits in the timeline in
+order and the agent never receives it (a `notification` message would start a run). Writing it is
+best effort and never fails the change it reports. `ScheduledTaskService` writes the routine lines
+from both `setEnabled` and `upsert`, since the editor and `schedule_task enabled=false` save through
+the latter.
+
+The Work panel's retry is a normal send: a stopped or usage-limited run is continued, because the
+server accepts `manualContinuationOfRunId` only for those, and any other failure asks the same
+conversation to try again. Its library reads the transfer manifests (`listLibrary`): files the
+assistant sent from its own folder, and files others sent to one of its threads.
+
 ## Instructions ride every turn
 
 `assistantNote` prepends `<t3_assistant …>` to every prompt, like the side-chat note. Sending it once

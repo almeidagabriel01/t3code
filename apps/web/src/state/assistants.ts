@@ -233,6 +233,13 @@ export function useAssistantSpend(
   ).data;
 }
 
+/** Files it handed over or received through the shared folder. */
+export function useAssistantLibrary(environmentId: EnvironmentId, assistantId: Assistant["id"]) {
+  return useEnvironmentQuery(
+    assistantsEnvironment.library({ environmentId, input: { assistantId } }),
+  );
+}
+
 /** Each change settles into a reply; the dialog shows a refusal where it happened. */
 export function useAssistantTeamActions(environmentId: EnvironmentId) {
   const canAct = useAtomValue(assistantsEnvironment.createTeam.permissionAtom(environmentId));

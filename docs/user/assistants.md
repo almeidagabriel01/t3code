@@ -196,6 +196,24 @@ the task editor already pointed at that conversation. Schedules belong to the as
 it through a reset, a restore or a project change. An assistant can also schedule its own work when
 you ask it to.
 
+## The Work panel
+
+**Work** on an assistant's card, in its sidebar menu and in its thread menu (the web and the mobile app
+alike) shows what it is up to in one place.
+
+- **Status** says whether it can work now. When it cannot (its project is gone, its sandbox is
+  stopped, its provider is signed out or its model is no longer offered), the card says why and has a
+  button that goes to the fix. A paused Autonomy switch is shown too, with a button to resume it.
+  **Retry** appears when its last run failed or was stopped.
+- **Routines** are the schedules that run in its conversation, with the next run in your local time, a
+  pause and resume switch and **Run now**. Pausing or resuming a routine, and renaming the assistant,
+  leave a muted line in its conversation.
+- **Memory** lists what its conversations taught the memory, with the scope and a link to the
+  conversation each came from. Edit or forget a memory there. On mobile, tapping a memory opens it in
+  Memory to edit.
+- **Library** lists the files it handed to other assistants or received from them in the shared
+  folder. Open or reveal them on the machine that runs the server.
+
 ## Autonomy
 
 Assistants can wake on their own when something needs you, instead of waiting to be asked. T3 Code

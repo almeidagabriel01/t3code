@@ -123,6 +123,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.computerUseOpenSettings]: "server",
   [WS_METHODS.assistantsSubscribe]: "assistants",
   [WS_METHODS.assistantsSpend]: "assistants",
+  [WS_METHODS.assistantsLibrary]: "assistants",
   [WS_METHODS.assistantSandboxSubscribe]: "assistants",
   [WS_METHODS.assistantSandboxStart]: "assistants",
   [WS_METHODS.assistantSandboxStop]: "assistants",

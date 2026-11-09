@@ -43,6 +43,16 @@ vi.mock("../../components/ui/ListActionRow", () => ({
     </button>
   ),
 }));
+vi.mock("../../lib/clock", () => ({ useNowMinuteMs: () => Date.parse("2026-11-09T10:00:00Z") }));
+vi.mock("../../components/ui/IconButton", () => ({
+  IconButton: (props: { accessibilityLabel: string; disabled?: boolean; onPress: () => void }) => (
+    <button
+      aria-label={props.accessibilityLabel}
+      disabled={props.disabled}
+      onClick={props.onPress}
+    />
+  ),
+}));
 vi.mock("../../components/ui/ThemedSwitch", () => ({
   ThemedSwitch: (props: {
     accessibilityLabel: string;
@@ -152,6 +162,33 @@ describe("AssistantSchedulesSection", () => {
       environmentId: "hub",
       input: { id: "4", enabled: true },
     });
+  });
+
+  it("shows when a schedule runs next and why the last run failed, and can run it now", () => {
+    const tomorrow = "2099-03-04T12:00:00.000Z";
+    mocks.tasks = [
+      {
+        ...task("1", "thread-1"),
+        schedule: { type: "interval", everyMs: 3_600_000 },
+        nextRunAt: tomorrow,
+        lastRunStatus: "failed",
+        lastRunError: "Provider said no",
+      },
+      {
+        ...task("2", "thread-1"),
+        schedule: { type: "interval", everyMs: 3_600_000 },
+        lastRunStatus: "running",
+      },
+      task("3", "thread-1"),
+    ];
+    render();
+    expect(container.textContent).toMatch(/Next Mar 4, /);
+    expect(container.textContent).toContain("Last run failed: Provider said no");
+    act(() => button("Run Task 1 now").click());
+    expect(mocks.setEnabled).toHaveBeenCalledWith({ environmentId: "hub", input: { id: "1" } });
+    // A running schedule cannot be started again, and a webhook one runs on its URL.
+    expect((button("Run Task 2 now") as HTMLButtonElement).disabled).toBe(true);
+    expect(container.querySelector('button[aria-label="Run Task 3 now"]')).toBeNull();
   });
 
   it("starts a new schedule bound to the assistant's thread", () => {

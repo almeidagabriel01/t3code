@@ -11,6 +11,7 @@ import * as Schema from "effect/Schema";
 
 import {
   copyTransfer,
+  listLibrary,
   removeOwnerTransfers,
   removeTransfer,
   TRANSFER_MAX_FILE_BYTES,
@@ -84,6 +85,59 @@ it.effect("copies files with a manifest of name, size and sha256, and repeats co
     yield* fs.writeFileString(a, "changed");
     assert.deepEqual(yield* copy(sharedDir, [a, b]), copied);
     assert.equal(yield* fs.readFileString(copied[0]!), "hello");
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect("the library lists what an assistant sent and received, and nothing else", () =>
+  Effect.gen(function* () {
+    const { fs, path, sharedDir, write } = yield* workspace;
+    const a = yield* write("a.txt", "one");
+    const b = yield* write("b.txt", "two");
+    const c = yield* write("c.txt", "three");
+    // asker -> helper, asker -> someone else, helper -> asker.
+    yield* copy(sharedDir, [a], "message:1", "asker");
+    yield* copyTransfer({
+      sharedDir,
+      ownerId: "asker",
+      transferId: "message:2",
+      sender,
+      recipients: ["assistant:other:1"],
+      paths: [b],
+    });
+    yield* copyTransfer({
+      sharedDir,
+      ownerId: "helper",
+      transferId: "message:3",
+      sender: { name: "Helper", handle: "helper" },
+      recipients: ["assistant:asker:2"],
+      paths: [c],
+    });
+    // A manifest that does not parse, and one that names a path outside the shared folder.
+    yield* fs.makeDirectory(path.join(sharedDir, "transfers/asker/broken"), { recursive: true });
+    yield* fs.writeFileString(path.join(sharedDir, "transfers/asker/broken/manifest.json"), "{");
+    yield* fs.makeDirectory(path.join(sharedDir, "transfers/asker/escape"), { recursive: true });
+    yield* fs.writeFileString(
+      path.join(sharedDir, "transfers/asker/escape/manifest.json"),
+      JSON.stringify({ files: [{ name: "passwd", path: "/etc/passwd", size: 1 }] }),
+    );
+
+    const asker = yield* listLibrary(sharedDir, "asker");
+    assert.deepEqual(
+      asker.files
+        .map((file) => [file.name, file.direction, file.from])
+        .sort((x, y) => String(x[0]).localeCompare(String(y[0]))),
+      [
+        ["a.txt", "sent", null],
+        ["b.txt", "sent", null],
+        ["c.txt", "received", "Helper"],
+      ],
+    );
+    assert.isFalse(asker.truncated);
+    assert.deepEqual(
+      (yield* listLibrary(sharedDir, "other")).files.map((file) => [file.name, file.direction]),
+      [["b.txt", "received"]],
+    );
+    assert.deepEqual((yield* listLibrary(sharedDir, "nobody")).files, []);
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
 

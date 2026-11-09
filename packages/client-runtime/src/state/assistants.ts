@@ -239,5 +239,11 @@ export function createAssistantsEnvironmentAtoms<R, E>(
       tag: WS_METHODS.assistantsSpend,
       staleTimeMs: 60_000,
     }),
+    /** Files it handed over or received, newest first. */
+    library: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:assistants:library",
+      tag: WS_METHODS.assistantsLibrary,
+      staleTimeMs: 30_000,
+    }),
   };
 }

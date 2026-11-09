@@ -31,6 +31,7 @@ import {
   type AutonomyWatch,
   type AutonomyWatchUpsertInput,
   type AssistantSandboxStatus,
+  type AssistantLibrary,
   type AssistantSpend,
   type ForkUpdateStatus,
   type MacPermissions,
@@ -274,7 +275,7 @@ function shellOf(thread: FakeThread): OrchestrationV2ThreadShell {
     latestRunId: latest?.id ?? null,
     activeRunId: null,
     // Idle reads as waiting on the user, which shows a per-second duration in the sidebar.
-    status: latest ? "completed" : "idle",
+    status: latest ? (latest.status === "failed" ? "failed" : "completed") : "idle",
     pendingRuntimeRequest: null,
     latestVisibleMessage: null,
     latestUserMessageAt: AT,
@@ -754,6 +755,7 @@ handlers[WS_METHODS.assistantSandboxPairing] = (input: unknown) =>
 /** Spend the fake serves for any assistant, and the update calls it received. */
 export const fakeAssistantEdits = {
   spend: null as AssistantSpend | null,
+  library: null as AssistantLibrary | null,
   updates: [] as unknown[],
   creates: [] as unknown[],
   avatarImages: [] as unknown[],
@@ -762,6 +764,8 @@ export const fakeAssistantEdits = {
 };
 handlers[WS_METHODS.assistantsSpend] = () =>
   fakeAssistantEdits.spend ? Effect.succeed(fakeAssistantEdits.spend) : Effect.never;
+handlers[WS_METHODS.assistantsLibrary] = () =>
+  Effect.succeed(fakeAssistantEdits.library ?? { files: [], truncated: false });
 handlers[WS_METHODS.assistantsUpdate] = (input: { readonly assistantId: string }) => {
   fakeAssistantEdits.updates.push(input);
   const found = fakeAssistants.items.find((item) => item.id === input.assistantId);
@@ -830,6 +834,7 @@ handlers[WS_METHODS.autonomyWatchDelete] = (input: { readonly id: string }) => {
 export const fakeScheduledTasks = {
   items: [] as ScheduledTask[],
   toggles: [] as Array<{ readonly id: string; readonly enabled: boolean }>,
+  runs: [] as string[],
   failToggle: null as string | null,
 };
 const taskSubscribers = new Set<Queue.Queue<{ readonly tasks: ScheduledTask[] }>>();
@@ -853,6 +858,12 @@ handlers[WS_METHODS.scheduledTasksSetEnabled] = (input: {
   }
   const found = fakeScheduledTasks.items.find((item) => item.id === input.id)!;
   return Effect.succeed({ task: { ...found, enabled: input.enabled } });
+};
+
+handlers[WS_METHODS.scheduledTasksRunNow] = (input: { readonly id: string }) => {
+  fakeScheduledTasks.runs.push(input.id);
+  const found = fakeScheduledTasks.items.find((item) => item.id === input.id)!;
+  return Effect.succeed({ task: found });
 };
 
 /** iMessage settings and access the fake server holds, and the calls it received. */

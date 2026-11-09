@@ -122,6 +122,13 @@ export function useAssistantSpend(
   );
 }
 
+/** Files the assistant handed over or received through the shared folder. */
+export function useAssistantLibrary(environmentId: EnvironmentId, assistantId: Assistant["id"]) {
+  return useEnvironmentQuery(
+    assistantsEnvironment.library({ environmentId, input: { assistantId } }),
+  );
+}
+
 /** Environments whose server has assistants. */
 export function useAssistantsEnvironmentIds(): ReadonlyArray<EnvironmentId> {
   return useAtomValue(assistantsEnvironmentIdsAtom);

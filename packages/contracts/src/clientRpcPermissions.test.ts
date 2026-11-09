@@ -102,6 +102,7 @@ describe("assistant client guards", () => {
     for (const method of [
       WS_METHODS.assistantsSubscribe,
       WS_METHODS.assistantsSpend,
+      WS_METHODS.assistantsLibrary,
       WS_METHODS.assistantGroupsSubscribe,
       WS_METHODS.assistantGroupsHistory,
       WS_METHODS.assistantSandboxSubscribe,

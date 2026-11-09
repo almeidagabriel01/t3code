@@ -9,6 +9,7 @@ const { mocks } = vi.hoisted(() => ({
   mocks: {
     open: vi.fn(),
     editor: vi.fn(),
+    work: vi.fn(),
     toggle: vi.fn(),
     openTeam: vi.fn(),
     chat: vi.fn(),
@@ -169,6 +170,7 @@ vi.mock("./assistantTeamTarget", () => ({
   useOpenAssistantTeam: () => ({ edit: mocks.openTeam, chat: mocks.chat }),
 }));
 vi.mock("./openAssistantEditor", () => ({ useOpenAssistantEditor: () => mocks.editor }));
+vi.mock("./assistantWorkTarget", () => ({ useOpenAssistantWork: () => mocks.work }));
 vi.mock("../home/useHomeSectionPreferences", () => ({
   useHomeSectionPreferences: () => ({
     assistantsCollapsed: mocks.collapsed,
@@ -234,6 +236,7 @@ beforeEach(() => {
     mocks.open,
     mocks.toggle,
     mocks.editor,
+    mocks.work,
     mocks.openTeam,
     mocks.navigate,
     mocks.reset,
@@ -410,6 +413,8 @@ describe("HomeAssistantsSection", () => {
     });
     await click("menu:Bot0 settings");
     expect(mocks.editor).toHaveBeenCalledWith("hub", expect.objectContaining({ id: "a0" }));
+    await click("menu:Bot0 work");
+    expect(mocks.work).toHaveBeenCalledWith("hub", "a0");
     await click("menu:Archive assistant");
     expect(mocks.archive).toHaveBeenCalledWith(expect.objectContaining({ id: "a0" }));
     mocks.presence.t0 = { mood: "working", detail: "Working", since: null };

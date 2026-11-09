@@ -495,6 +495,29 @@ export const AssistantSpend = Schema.Struct({
 });
 export type AssistantSpend = typeof AssistantSpend.Type;
 
+export const AssistantsLibraryInput = Schema.Struct({ assistantId: AssistantId });
+export type AssistantsLibraryInput = typeof AssistantsLibraryInput.Type;
+
+/** A file the assistant handed to another assistant, or received from one, in the shared folder. */
+export const AssistantLibraryFile = Schema.Struct({
+  name: Schema.String,
+  /** Absolute path on the server, the same link the conversation shows. */
+  path: Schema.String,
+  size: Schema.Number,
+  direction: Schema.Literals(["sent", "received"]),
+  /** Who sent it, for a received file. */
+  from: Schema.NullOr(Schema.String),
+  savedAt: IsoDateTime,
+});
+export type AssistantLibraryFile = typeof AssistantLibraryFile.Type;
+
+/** Newest first; capped, so `truncated` says a longer list exists. */
+export const AssistantLibrary = Schema.Struct({
+  files: Schema.Array(AssistantLibraryFile),
+  truncated: Schema.Boolean,
+});
+export type AssistantLibrary = typeof AssistantLibrary.Type;
+
 export const AssistantTeamsCreateInput = Schema.Struct({
   name: AssistantTeamName,
   memberIds: Schema.Array(AssistantId),

@@ -3615,6 +3615,13 @@ const OrchestrationV2InternalCommand = Schema.Union([
     targetThreadId: ThreadId,
     createdBy: OrchestrationV2Actor,
   }),
+  /** A muted line in the thread's timeline that no run owns; the agent never receives it. */
+  Schema.Struct({
+    type: Schema.Literal("thread.notice.record"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    message: TrimmedNonEmptyString,
+  }),
 ]);
 export type OrchestrationV2InternalCommand = typeof OrchestrationV2InternalCommand.Type;
 

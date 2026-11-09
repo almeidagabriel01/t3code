@@ -464,6 +464,8 @@ import {
   AssistantsEvent,
   AssistantsResetInput,
   AssistantsSetAvatarImageInput,
+  AssistantLibrary,
+  AssistantsLibraryInput,
   AssistantSpend,
   AssistantsSpendInput,
   AssistantsSubscribeInput,
@@ -779,6 +781,7 @@ export const WS_METHODS = {
   assistantsReset: "assistants.reset",
   assistantsSetAvatarImage: "assistants.setAvatarImage",
   assistantsSpend: "assistants.spend",
+  assistantsLibrary: "assistants.library",
   assistantSandboxSubscribe: "assistantSandbox.subscribe",
   assistantSandboxStart: "assistantSandbox.start",
   assistantSandboxStop: "assistantSandbox.stop",
@@ -2331,6 +2334,11 @@ const WsAssistantsSpendRpc = Rpc.make(WS_METHODS.assistantsSpend, {
   success: AssistantSpend,
   error: AssistantRpcErrors,
 });
+const WsAssistantsLibraryRpc = Rpc.make(WS_METHODS.assistantsLibrary, {
+  payload: AssistantsLibraryInput,
+  success: AssistantLibrary,
+  error: AssistantRpcErrors,
+});
 export const WsAssistantSandboxSubscribeRpc = Rpc.make(WS_METHODS.assistantSandboxSubscribe, {
   payload: AssistantSandboxSubscribeInput,
   success: AssistantSandboxStatus,
@@ -2859,6 +2867,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsAssistantsResetRpc,
   WsAssistantsSetAvatarImageRpc,
   WsAssistantsSpendRpc,
+  WsAssistantsLibraryRpc,
   WsAssistantSandboxSubscribeRpc,
   WsAssistantSandboxStartRpc,
   WsAssistantSandboxStopRpc,

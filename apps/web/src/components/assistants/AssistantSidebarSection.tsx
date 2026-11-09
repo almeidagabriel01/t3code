@@ -13,6 +13,7 @@ import {
 import type { EnvironmentId, AssistantTeamId, ScopedThreadRef } from "@t3tools/contracts";
 import {
   ArchiveIcon,
+  BriefcaseIcon,
   ChevronDownIcon,
   MessagesSquareIcon,
   ChevronRightIcon,
@@ -51,6 +52,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ProjectFavicon, type ProjectFaviconProject } from "../ProjectFavicon";
 import { AssistantAvatar } from "./assistantPresentation";
 import { openAssistantDialog } from "./assistantDialogState";
+import { openAssistantWork } from "./assistantWorkState";
 import { openAssistantGroupSettings, openAssistantTeamDialog } from "./assistantTeamState";
 import { DescribeAssistantDialog } from "./DescribeAssistantDialog";
 import { useAssistantFlows, useAssistantTeamFlows } from "./useAssistantFlows";
@@ -232,6 +234,12 @@ const AssistantRow = memo(function AssistantRow(props: {
             >
               <RefreshCwIcon />
               Reset conversation
+            </MenuItem>
+            <MenuItem
+              onClick={() => openAssistantWork({ environmentId, assistantId: assistant.id })}
+            >
+              <BriefcaseIcon />
+              Assistant work
             </MenuItem>
             <MenuItem
               onClick={() => openAssistantDialog({ environmentId, assistantId: assistant.id })}

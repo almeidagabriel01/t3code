@@ -2,6 +2,7 @@ import {
   type AssistantError,
   type MemoryTaskGrantCeiling,
   CommandId,
+  isAssistantThreadId,
   MessageId,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   type ProjectId,
@@ -1245,6 +1246,33 @@ export const layer = Layer.effect(
         }),
       );
 
+    /** A routine of an assistant paused or resumed leaves a muted line in its conversation. */
+    const noteRoutineToggled = (
+      task: Pick<ScheduledTask, "id" | "title" | "threadId">,
+      enabled: boolean,
+      at: string,
+    ) =>
+      task.threadId === null || !isAssistantThreadId(task.threadId)
+        ? Effect.void
+        : threadManagement
+            .dispatch({
+              type: "thread.notice.record",
+              commandId: CommandId.make(
+                `scheduled-task-note:${task.id}:${at}:${enabled ? "on" : "off"}`,
+              ),
+              threadId: task.threadId,
+              message: `${enabled ? "Resumed" : "Paused"} routine '${task.title}'`,
+            })
+            .pipe(
+              // A failure to leave the line never fails the change it reports.
+              Effect.catch((cause) =>
+                Effect.logWarning(
+                  "Could not leave a routine line in the assistant's conversation",
+                  { cause },
+                ),
+              ),
+            );
+
     const upsert: ScheduledTaskService["Service"]["upsert"] = Effect.fn(
       "ScheduledTaskService.upsert",
     )(function* (input, captured) {
@@ -1399,6 +1427,10 @@ export const layer = Layer.effect(
         webhook,
       );
       yield* notifyChanged;
+      // Saving a routine with its switch flipped is a pause or resume too: the editor and the
+      // `schedule_task` tool both reach it here.
+      if (existingTask !== null && existingTask.enabled !== task.enabled)
+        yield* noteRoutineToggled(task, task.enabled, iso(now));
       return { task: (yield* findTask(id)) ?? task };
     });
 
@@ -1455,6 +1487,7 @@ export const layer = Layer.effect(
         return yield* taskError("Schedule task not found.", { taskId: input.id });
       }
       yield* notifyChanged;
+      if (toggled) yield* noteRoutineToggled(existing, input.enabled, iso(now));
       return {
         task: {
           ...existing,

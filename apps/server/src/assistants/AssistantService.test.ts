@@ -474,10 +474,16 @@ it.effect("update writes the row, then renames, switches access and archives the
     assert.equal(updated.toolAccess, "read-only");
     assert.deepEqual(
       dispatched.map((command) => command.type),
-      ["thread.metadata.update", "thread.model-selection.set", "thread.runtime-mode.set"],
+      [
+        "thread.metadata.update",
+        "thread.notice.record",
+        "thread.model-selection.set",
+        "thread.runtime-mode.set",
+      ],
     );
+    assert.equal((dispatched[1] as unknown as { message: string }).message, "Renamed to Renamed");
     assert.equal(
-      (dispatched[2] as unknown as { runtimeMode: string }).runtimeMode,
+      (dispatched[3] as unknown as { runtimeMode: string }).runtimeMode,
       "approval-required",
     );
 
