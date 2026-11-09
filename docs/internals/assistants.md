@@ -150,6 +150,14 @@ chat hands the number out again: both lower every member's `seen_seq` and the re
 `assistantGroups.conversation` refuses new, compact and clear while a task of the group is queued,
 running or waiting, and republishes a snapshot on the group's stream after undo and clear.
 
+An agent changes a group only on a turn the user started. `t3_assistant` `group_create` and
+`group_update` read the origin of the calling thread's active run from the message that started it
+(`turnOriginOf`, `mcp/turnOrigin.ts`): a `senderThreadId`, `assistant-reply:`, `scheduledTaskId`,
+`group-task:` or `autonomy-wake:` message, or a notification, is refused with `capability_denied`; a
+client credential with no thread counts as the user. The check is in the MCP handler, so the UI's
+`assistantTeams` RPCs are unaffected. A user steering mid-run does not change a run's origin. Each
+change then adds a `change` chat row ("Ada added Bo"): never unread, not part of a member's packet.
+
 ## Requests between assistants never block
 
 A `t3_thread_send` from one assistant thread to another is a request: it queues (never steers, so the

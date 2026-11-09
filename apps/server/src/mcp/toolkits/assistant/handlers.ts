@@ -22,6 +22,7 @@ import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.t
 import { runtimeModeRank } from "../../delegatedTaskModes.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { loadCaller, unavailable } from "../../threadAccess.ts";
+import { requireUserTurn } from "../../turnOrigin.ts";
 import { type AssistantParameters, AssistantToolkit } from "./tools.ts";
 
 type Out = Record<string, Schema.Json>;
@@ -172,6 +173,32 @@ const mutate = Effect.fn("mcp.assistant.mutate")(function* (input: AssistantPara
   const avatar =
     input.avatarHue === undefined ? undefined : ({ kind: "robot", hue: input.avatarHue } as const);
 
+  if (input.action === "group_create" || input.action === "group_update")
+    yield* requireUserTurn(caller, "change a group");
+  /** One chat line per change, so a repeat of the same call adds none. */
+  const announce = (team: AssistantTeam, lines: ReadonlyArray<string>) =>
+    caller.caller === undefined
+      ? Effect.void
+      : Effect.forEach(
+          lines,
+          (text, index) =>
+            AssistantGroups.AssistantGroups.pipe(
+              Effect.flatMap((groups) =>
+                groups.announce({
+                  teamId: team.id,
+                  callerThreadId: caller.caller!.id,
+                  text,
+                  clientRequestId: `change:${sha(key, index)}`,
+                }),
+              ),
+              // The change is made; a missing chat line must not make the caller retry it.
+              Effect.ignore,
+            ),
+          { discard: true },
+        );
+  const nameOf = (id: string) => all.find((other) => other.id === id)?.name ?? id;
+  const listOf = (ids: ReadonlyArray<string>) => ids.map(nameOf).join(", ");
+
   switch (input.action) {
     case "group_post": {
       if (caller.caller === undefined) {
@@ -288,6 +315,9 @@ const mutate = Effect.fn("mcp.assistant.mutate")(function* (input: AssistantPara
           { id: `mcp-${sha(key).slice(0, 24)}` },
         )
         .pipe(Effect.mapError(failure));
+      yield* announce(team, [
+        `created the group "${team.name}"${members.length === 0 ? "" : ` with ${listOf(team.memberIds)}`}`,
+      ]);
       return { status: "created", group: teamBrief(team, all) };
     }
     default: {
@@ -323,6 +353,20 @@ const mutate = Effect.fn("mcp.assistant.mutate")(function* (input: AssistantPara
           ...(lead === undefined ? {} : { leadId: lead }),
         })
         .pipe(Effect.mapError(failure));
+      const added = updated.memberIds.filter((id) => !team.memberIds.includes(id));
+      const removed = team.memberIds.filter((id) => !updated.memberIds.includes(id));
+      yield* announce(updated, [
+        ...(updated.name === team.name ? [] : [`renamed the group to "${updated.name}"`]),
+        ...(added.length === 0 ? [] : [`added ${listOf(added)}`]),
+        ...(removed.length === 0 ? [] : [`removed ${listOf(removed)}`]),
+        ...((updated.leadId ?? null) === (team.leadId ?? null)
+          ? []
+          : [
+              updated.leadId === null || updated.leadId === undefined
+                ? "removed the group's lead"
+                : `made ${nameOf(updated.leadId)} the group's lead`,
+            ]),
+      ]);
       return { status: "updated", group: teamBrief(updated, all) };
     }
   }

@@ -2257,3 +2257,29 @@ it.effect("clear deletes the chat, its tasks, summary and files, and the group s
     );
   }).pipe(Effect.provide(h.layer));
 });
+
+it.effect("an agent's change leaves one chat line, never unread and never sent to members", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const say = () =>
+      groups.announce({
+        teamId: TEAM,
+        callerThreadId: ThreadId.make("assistant:ada:1"),
+        text: 'renamed the group to "Ops"',
+        clientRequestId: "c1",
+      });
+    yield* say();
+    yield* say();
+    const lines = (yield* h.messages).filter((row) => row.kind === "change");
+    assert.lengthOf(lines, 1);
+    assert.equal(lines[0]!.author, "assistant");
+    assert.isTrue(lines[0]!.text.endsWith(' renamed the group to "Ops"'));
+    const [state] = yield* h.sqlRows<{ unread_count: number }>(
+      `SELECT unread_count FROM assistant_team_state WHERE team_id = '${TEAM}'`,
+    );
+    assert.equal(state!.unread_count, 0);
+    yield* groups.post({ teamId: TEAM, text: "@ada go" }, h.user);
+    assert.notInclude(h.sent.at(-1)!.text, "renamed the group");
+  }).pipe(Effect.provide(h.layer));
+});

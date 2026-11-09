@@ -48,13 +48,15 @@ export type AssistantGroupAuthor = typeof AssistantGroupAuthor.Type;
 /**
  * `routing` is the lead naming who answers; `notice` is a status line such as a paused task;
  * `boundary` starts a new conversation (its text is `new` or `compact`): members see only what
- * comes after the latest one.
+ * comes after the latest one; `change` records an agent changing the group (a rename, a new
+ * member): shown muted, never unread, and not part of what members are sent.
  */
 export const AssistantGroupMessageKind = Schema.Literals([
   "message",
   "routing",
   "notice",
   "boundary",
+  "change",
 ]);
 export type AssistantGroupMessageKind = typeof AssistantGroupMessageKind.Type;
 

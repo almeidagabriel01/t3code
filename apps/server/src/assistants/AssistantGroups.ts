@@ -274,6 +274,13 @@ export class AssistantGroups extends Context.Service<
       readonly paths?: ReadonlyArray<string>;
       readonly clientRequestId?: string;
     }) => Effect.Effect<AssistantGroupsPostResult, AssistantError>;
+    /** The chat line an agent's change to the group leaves: "<who> <text>". A repeat adds none. */
+    readonly announce: (input: {
+      readonly teamId: AssistantTeamId;
+      readonly callerThreadId: ThreadId;
+      readonly text: string;
+      readonly clientRequestId: string;
+    }) => Effect.Effect<void, AssistantError>;
     /** What a member's tools do, keyed by the member's own group thread. */
     readonly member: {
       readonly history: (input: {
@@ -1723,6 +1730,30 @@ const make = Effect.gen(function* () {
     storage,
   );
 
+  const announce: AssistantGroups["Service"]["announce"] = Effect.fn("AssistantGroups.announce")(
+    function* (input) {
+      yield* teamRow(input.teamId);
+      const done = yield* sql`
+        SELECT 1 FROM assistant_group_messages
+        WHERE team_id = ${input.teamId} AND client_request_id = ${input.clientRequestId}`;
+      if (done.length > 0) return;
+      const assistantId = assistantIdFromThreadId(input.callerThreadId);
+      const sender = assistantId === null ? [] : yield* assistantRows([assistantId]);
+      const title = yield* inspectThread(input.callerThreadId);
+      const who = sender[0]?.name ?? title?.title ?? "An agent";
+      yield* insertMessage({
+        teamId: input.teamId,
+        author: sender[0] === undefined ? "agent" : "assistant",
+        assistantId: sender[0]?.assistant_id ?? null,
+        authorLabel: sender[0] === undefined ? who : null,
+        kind: "change",
+        text: `${who} ${input.text}`,
+        clientRequestId: input.clientRequestId,
+      });
+    },
+    storage,
+  );
+
   /** Members that left lose their open work and their thread; an archived group pauses everything. */
   const reconcileTeam = Effect.fn("AssistantGroups.reconcileTeam")(function* (team: AssistantTeam) {
     const rows =
@@ -1971,7 +2002,7 @@ const make = Effect.gen(function* () {
           ? ((yield* sql<{ readonly seq: number | null }>`
               SELECT MAX(seq) AS seq FROM assistant_group_messages
               WHERE team_id = ${input.teamId} AND author != 'user'
-                AND kind NOT IN ('routing', 'boundary')`)[0]?.seq ?? 1) - 1
+                AND kind NOT IN ('routing', 'boundary', 'change')`)[0]?.seq ?? 1) - 1
           : (input.readSeq ?? Number.MAX_SAFE_INTEGER);
       const rows = yield* sql<{ readonly read_seq: number }>`
         UPDATE assistant_teams SET read_seq = MIN(${target}, COALESCE(
@@ -2079,6 +2110,7 @@ const make = Effect.gen(function* () {
     markRead,
     conversation,
     agentPost,
+    announce,
     member: memberTools,
     handleRunEvent,
     handleAssistantEvent,

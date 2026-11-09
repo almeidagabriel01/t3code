@@ -524,7 +524,7 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
         AS latest_seq,
       (SELECT COUNT(*) FROM assistant_group_messages m
         WHERE m.team_id = t.team_id AND m.seq > t.read_seq AND m.author != 'user'
-          AND m.kind NOT IN ('routing', 'boundary')) AS unread_count,
+          AND m.kind NOT IN ('routing', 'boundary', 'change')) AS unread_count,
       (SELECT COUNT(*) FROM assistant_group_tasks k
         WHERE k.team_id = t.team_id AND k.status IN ('queued', 'running', 'waiting')) AS open_tasks,
       (SELECT substr(m.text, 1, 400) FROM assistant_group_messages m
