@@ -273,6 +273,7 @@ describe("TextGeneration group routing", () => {
             makeStubInstance(
               routing,
               makeStubTextGeneration({
+                summarizeAssistantGroup: () => Effect.succeed({ summary: "S" }),
                 routeAssistantGroup: (value) => {
                   expect(value).toBe(input);
                   return Effect.succeed({ assistantIds: ["ada"] });
@@ -297,6 +298,19 @@ describe("TextGeneration group routing", () => {
         modelSelection: createModelSelection(plain, "m"),
       }).pipe(Effect.flip);
       expect(refused.detail).toBe("unsupported_operation");
+      const summaryInput = {
+        cwd: "/tmp",
+        modelSelection: createModelSelection(routing, "m"),
+        groupName: "Team",
+        previousSummary: null,
+        messages: [],
+      };
+      expect(yield* generation.summarizeAssistantGroup!(summaryInput)).toEqual({ summary: "S" });
+      const unsummarized = yield* generation.summarizeAssistantGroup!({
+        ...summaryInput,
+        modelSelection: createModelSelection(plain, "m"),
+      }).pipe(Effect.flip);
+      expect(unsummarized.detail).toBe("unsupported_operation");
     }),
   );
 });

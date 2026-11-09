@@ -30,6 +30,7 @@ export type { MemoryRunner } from "./memoryGenerationRunner.ts";
 import type { ProviderTextGeneration } from "./textGeneration.ts";
 import {
   buildAssistantGroupRoutingPrompt,
+  buildAssistantGroupSummaryPrompt,
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
   buildPrContentPrompt,
@@ -123,7 +124,7 @@ export const decodeJsonReply = <S extends Schema.Top>(
 
 export interface FromRunnerOptions {
   readonly memoryRunner?: MemoryRunner;
-  /** Offers `routeAssistantGroup`; left out, the provider reports the operation as unsupported. */
+  /** Offers `routeAssistantGroup` and `summarizeAssistantGroup`; left out, the provider reports the operation as unsupported. */
   readonly routeAssistantGroup?: boolean;
 }
 
@@ -353,6 +354,16 @@ export function fromRunner(
     });
   });
 
+  const summarizeAssistantGroup: NonNullable<ProviderTextGeneration["summarizeAssistantGroup"]> =
+    Effect.fn(`${name}.summarizeAssistantGroup`)(function* (input) {
+      return yield* run({
+        operation: "summarizeAssistantGroup",
+        cwd: input.cwd,
+        modelSelection: input.modelSelection,
+        ...buildAssistantGroupSummaryPrompt(input),
+      });
+    });
+
   return {
     generateCommitMessage,
     generatePrContent,
@@ -361,6 +372,8 @@ export function fromRunner(
     generateReviewGuide,
     resolveMemoryConflict,
     generateMemorySummary,
-    ...(options.routeAssistantGroup === true ? { routeAssistantGroup } : {}),
+    ...(options.routeAssistantGroup === true
+      ? { routeAssistantGroup, summarizeAssistantGroup }
+      : {}),
   } satisfies ProviderTextGeneration;
 }

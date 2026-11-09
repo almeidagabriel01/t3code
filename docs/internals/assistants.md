@@ -102,6 +102,12 @@ message, then a group of one; only then does the lead route, through the optiona
 lead's own provider before anything is stored, so a group that cannot route refuses with
 `mention_required` instead of storing a message nobody gets.
 
+A member's task packet (`AssistantGroupPacket`) holds the chat since its last task, a rolling summary
+of the earlier chat, and older messages the instruction names (`#seq`) or replies to; `t3_group history`
+covers the rest. The summary lives in `assistant_group_summaries`, is refreshed in the background by
+`summarizeAssistantGroup` (the same providers as routing, on the server's text-generation model) once
+16k unsummarized characters pile up, and failing or missing it never delays a task.
+
 A task starts by queueing `group-task:<taskId>:<revision>` into the owner's thread; the reactor maps the
 run back by that id and ignores stale revisions, so resume and reassign bump the revision. At most two
 tasks run per group. A finished run posts the `result` tool text or the run's last assistant message;

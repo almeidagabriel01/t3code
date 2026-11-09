@@ -351,6 +351,12 @@ export const McpToolUseCase = Schema.Struct({
         news: Schema.Array(
           Schema.Struct({ seq: Schema.Number, from: Schema.String, text: Schema.String }),
         ),
+        summary: Schema.optional(Schema.String),
+        quoted: Schema.optional(
+          Schema.Array(
+            Schema.Struct({ seq: Schema.Number, from: Schema.String, text: Schema.String }),
+          ),
+        ),
         from: Schema.NullOr(Schema.String),
       }),
     ),
@@ -1084,6 +1090,8 @@ export const buildMessages = (sample: Sample) => {
             isLead: member.isLead ?? false,
           })),
           news: groupTask.news,
+          summary: groupTask.summary ?? null,
+          quoted: groupTask.quoted ?? [],
           from: groupTask.from,
           instruction: testCase.prompt,
           followup: null,

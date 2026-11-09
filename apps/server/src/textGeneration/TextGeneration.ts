@@ -47,7 +47,8 @@ type TextGenerationOp =
   | "generateReviewGuide"
   | "resolveMemoryConflict"
   | "generateMemorySummary"
-  | "routeAssistantGroup";
+  | "routeAssistantGroup"
+  | "summarizeAssistantGroup";
 
 const resolveInstance = (
   registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
@@ -182,6 +183,24 @@ export const make = Effect.gen(function* () {
                 }),
               )
             : textGeneration.routeAssistantGroup(input),
+        ),
+      );
+    }),
+    summarizeAssistantGroup: Effect.fn("TextGeneration.summarizeAssistantGroup")(function (input) {
+      return resolveInstance(
+        registry,
+        "summarizeAssistantGroup",
+        input.modelSelection.instanceId,
+      ).pipe(
+        Effect.flatMap((textGeneration) =>
+          textGeneration.summarizeAssistantGroup === undefined
+            ? Effect.fail(
+                new TextGenerationError({
+                  operation: "summarizeAssistantGroup",
+                  detail: "unsupported_operation",
+                }),
+              )
+            : textGeneration.summarizeAssistantGroup(input),
         ),
       );
     }),

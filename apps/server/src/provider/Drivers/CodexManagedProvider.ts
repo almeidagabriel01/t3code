@@ -306,6 +306,12 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
       protect("generateThreadTitle", nativeGeneration.generateThreadTitle(value)),
     generateReviewGuide: (value) =>
       protect("generateReviewGuide", nativeGeneration.generateReviewGuide(value)),
+    ...(nativeGeneration.summarizeAssistantGroup === undefined
+      ? {}
+      : {
+          summarizeAssistantGroup: (value) =>
+            protect("summarizeAssistantGroup", nativeGeneration.summarizeAssistantGroup!(value)),
+        }),
     ...(nativeGeneration.routeAssistantGroup === undefined
       ? {}
       : {

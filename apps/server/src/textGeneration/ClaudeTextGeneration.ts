@@ -274,6 +274,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       const workingDirectory =
         operation === "generateThreadTitle" ||
         operation === "routeAssistantGroup" ||
+        operation === "summarizeAssistantGroup" ||
         TextGenerationOperations.isMemoryOperation(operation)
           ? yield* fileSystem
               .makeTempDirectoryScoped({ prefix: "t3code-claude-title-" })
