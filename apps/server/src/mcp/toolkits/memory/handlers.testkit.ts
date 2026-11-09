@@ -14,6 +14,7 @@ import * as Store from "../../../memory/MemoryStore.ts";
 import * as Quota from "../../../memory/MemoryQuotaService.ts";
 import * as Service from "../../../memory/MemoryService.ts";
 import * as Sync from "../../../memory/MemorySyncService.ts";
+import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as Settings from "../../../serverSettings.ts";
 import * as McpHttpServer from "../../McpHttpServer.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -59,10 +60,32 @@ const sync = Layer.mock(Sync.MemorySyncService)({
     permit.pipe(Effect.andThen(Effect.fail(new M.MemoryHubError({ code: "hub_disabled" })))),
 });
 
+/** Fixed matches: eight ordinary threads with two assistant threads among the first. */
+const threadSearch = Layer.mock(ThreadSearch.ThreadSearch)({
+  searchThreads: (input) =>
+    Effect.succeed({
+      matches: [
+        "thread-1",
+        "assistant:other",
+        "assistant:me",
+        ...[2, 3, 4, 5, 6, 7, 8].map((n) => `thread-${n}`),
+      ]
+        .map((threadId) => ({
+          threadId: M.ThreadId.make(threadId),
+          projectId: input.projectId ?? M.ProjectId.make("project-any"),
+          title: `Title ${threadId}`,
+          source: "title" as const,
+          snippet: `about ${input.query}`,
+        }))
+        .slice(0, input.limit ?? 50),
+    }),
+});
+
 const makeLayer = <E, R>(serviceCore: Layer.Layer<Layer.Success<typeof core>, E, R>) =>
   McpHttpServer.layerMemoryToolkit.pipe(
     Layer.provideMerge(serviceCore),
     Layer.provide(sync),
+    Layer.provide(threadSearch),
     Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
     Layer.provideMerge(McpToolAccessTestkit.liveThreadsLayer),
     Layer.provide(NodeServices.layer),

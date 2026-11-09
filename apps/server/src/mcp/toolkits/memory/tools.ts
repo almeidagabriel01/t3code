@@ -6,6 +6,7 @@ import * as McpSchema from "effect/ai/McpSchema";
 import * as MemoryService from "../../../memory/MemoryService.ts";
 import * as MemorySyncService from "../../../memory/MemorySyncService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
+import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 /** JSON Schema presentation only; handlers still decode the original strict contracts. */
@@ -77,12 +78,13 @@ const failure = Schema.Union([M.MemoryRpcError, M.OrchestratorMcpFailure]);
 
 const RecallTool = Tool.dynamic("memory_recall", {
   description:
-    "Find saved memory with one plain query, across this thread, its project and the user. Best match first. Use before saying you do not know something the user may have told you.",
+    "Find saved memory and past conversations with one plain query. Memories first, best match first; threads are the top matching conversations. Use before saying you do not know something the user may have told you.",
   parameters: memoryInputSchema(M.MemoryRecallInput),
   success: M.MemoryRecallResult,
   failure,
   failureMode: "return",
 })
+  .addDependency(ThreadSearch.ThreadSearch)
   .addDependency(McpInvocationContext.McpInvocationContext)
   .addDependency(MemoryService.MemoryService)
   .addDependency(MemorySyncService.MemorySyncService)
@@ -92,7 +94,7 @@ const RecallTool = Tool.dynamic("memory_recall", {
 
 const RememberTool = Tool.dynamic("memory_remember", {
   description:
-    'Persist a memory so future conversations know it. Call this whenever the user says "remember" or states a lasting fact or preference; replying "noted" saves nothing. Give text and scope (project for this project only, user for everywhere). Saving the same text again is harmless. Pass memoryId to replace a memory instead of adding a second. Never store progress reports or tool output.',
+    'Save to memory. Call this when the user says \"remember that ...\" or states a lasting fact or preference; replying \"noted\" saves nothing. Give text and scope (project for this project only, user for everywhere). Saving the same text again is harmless. Pass memoryId to replace a memory instead of adding a second. Never store progress reports or tool output.',
   parameters: memoryInputSchema(M.MemoryRememberInput),
   success: M.MemoryMutationReceipt,
   failure,

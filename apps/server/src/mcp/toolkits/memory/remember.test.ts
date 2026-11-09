@@ -122,3 +122,66 @@ it.effect("remember refuses project scope without project memory and unknown rep
     expect((yield* Fixture.call("memory_remember", { text: "x" })).result.isError).toBe(true);
   }).pipe(Effect.provide(Fixture.layer)),
 );
+
+const threadCaller = (
+  threadId: string,
+  capabilities: ReadonlyArray<"memory" | "orchestration">,
+) => ({
+  ...caller,
+  capabilities: new Set(capabilities),
+  thread: { ...caller.thread, threadId: M.ThreadId.make(threadId) },
+});
+const threadsOf = (body: unknown) =>
+  Effect.map(decodeRecall(body), (result) => result.threads?.map((thread) => thread.threadId));
+
+it.effect("recall adds at most five matching threads, hiding assistant threads from others", () =>
+  Effect.gen(function* () {
+    const result = yield* decodeRecall(
+      (yield* Fixture.call(
+        "memory_recall",
+        { query: "deploys" },
+        threadCaller("thread-9", ["memory", "orchestration"]),
+      )).body,
+    );
+    expect(result.threads?.map((thread) => thread.threadId)).toEqual([
+      "thread-1",
+      "thread-2",
+      "thread-3",
+      "thread-4",
+      "thread-5",
+    ]);
+    expect(result.threads?.[0]).toMatchObject({
+      title: "Title thread-1",
+      snippet: "about deploys",
+    });
+    expect(result.threads?.[0]?.updatedAt).toEqual(expect.any(String));
+  }).pipe(Effect.provide(Fixture.layer)),
+);
+
+it.effect("recall shows an assistant thread only to that assistant", () =>
+  Effect.gen(function* () {
+    expect(
+      yield* threadsOf(
+        (yield* Fixture.call(
+          "memory_recall",
+          { query: "deploys" },
+          threadCaller("assistant:me", ["memory", "orchestration"]),
+        )).body,
+      ),
+    ).toEqual(["thread-1", "assistant:me", "thread-2", "thread-3", "thread-4"]);
+  }).pipe(Effect.provide(Fixture.layer)),
+);
+
+it.effect("recall without the orchestration capability returns no threads", () =>
+  Effect.gen(function* () {
+    expect(
+      yield* threadsOf(
+        (yield* Fixture.call(
+          "memory_recall",
+          { query: "deploys" },
+          threadCaller("thread-9", ["memory"]),
+        )).body,
+      ),
+    ).toBeUndefined();
+  }).pipe(Effect.provide(Fixture.layer)),
+);

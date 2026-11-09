@@ -7,6 +7,7 @@ import * as MemorySyncService from "../../../memory/MemorySyncService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { schemaIssueSummary } from "../../../memory/memoryDiagnostics.ts";
+import { recallThreads } from "./recallThreads.ts";
 import { MemoryToolkit } from "./tools.ts";
 
 const isMemoryError = Schema.is(M.MemoryRpcError);
@@ -171,11 +172,13 @@ const handlers = {
     Effect.gen(function* () {
       const service = yield* MemoryService.MemoryService;
       const value = yield* decodeRecall(input);
-      return yield* service.recall(
+      const recalled = yield* service.recall(
         { ...value, memorySpaceId: yield* currentSpace },
         yield* invocationPermit("read"),
         yield* callerThread,
       );
+      const threads = yield* recallThreads(value.query);
+      return threads === undefined ? recalled : { ...recalled, threads };
     }).pipe(Effect.catch(memoryFailure("memory_recall"))),
   ),
   memory_remember: McpToolAccess.writesWithCapability((input) =>

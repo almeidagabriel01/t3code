@@ -5,7 +5,15 @@ import * as Schema from "effect/Schema";
 import * as SchemaParser from "effect/SchemaParser";
 import * as SchemaAST from "effect/SchemaAST";
 import * as SchemaTransformation from "effect/SchemaTransformation";
-import { EnvironmentId, EventId, MessageId, NonNegativeInt, PositiveInt } from "./baseSchemas.ts";
+import {
+  EnvironmentId,
+  EventId,
+  MessageId,
+  NonNegativeInt,
+  PositiveInt,
+  ProjectId,
+  ThreadId,
+} from "./baseSchemas.ts";
 import { ScopedThreadRef, ScopedProjectRef } from "./environment.ts";
 import { ProviderDriverKind } from "./providerInstance.ts";
 
@@ -1643,9 +1651,20 @@ export const MemoryRecallHit = struct({
 });
 export type MemoryRecallHit = typeof MemoryRecallHit.Type;
 
+/** A past conversation that matches the query, from the thread search. */
+export const MemoryRecallThread = struct({
+  threadId: ThreadId,
+  projectId: ProjectId,
+  title: Schema.String,
+  snippet: Schema.optionalKey(Schema.String),
+  updatedAt: Schema.String,
+});
+export type MemoryRecallThread = typeof MemoryRecallThread.Type;
+
 export const MemoryRecallResult = bounded(
   struct({
     items: array(MemoryRecallHit),
+    threads: Schema.optionalKey(array(MemoryRecallThread, 5)),
     note: Schema.optionalKey(Schema.String),
   }),
   MEMORY_PAGE_MAX_UTF8_BYTES,

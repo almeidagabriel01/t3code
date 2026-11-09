@@ -11,6 +11,7 @@ import * as McpHttpServer from "../../McpHttpServer.ts";
 import * as McpToolAccessTestkit from "../../McpToolAccess.testkit.ts";
 import * as Schema from "effect/Schema";
 import { Tool } from "effect/ai";
+import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as MemoryService from "../../../memory/MemoryService.ts";
 import { decideMemoryOperation } from "../../../memory/MemoryDecider.ts";
 import { scanMemoryValue } from "../../../memory/MemorySecretScanner.ts";
@@ -276,6 +277,7 @@ it.effect(
         Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
         Layer.provideMerge(McpToolAccessTestkit.liveThreadsLayer),
         Layer.provide(Layer.mock(Sync.MemorySyncService)({})),
+        Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
         Layer.provide(NodeServices.layer),
       );
       yield* Effect.gen(function* () {
