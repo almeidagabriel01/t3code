@@ -80,7 +80,7 @@ interface Options {
   readonly summaryGate?: Deferred.Deferred<void>;
   readonly route?: (input: {
     readonly members: ReadonlyArray<{ readonly id: string }>;
-  }) => ReadonlyArray<string> | "fail";
+  }) => ReadonlyArray<string> | "fail" | "none";
 }
 
 const harness = (options: Options = {}) => {
@@ -230,7 +230,9 @@ const harness = (options: Options = {}) => {
         const picked = options.route?.(input) ?? [];
         return picked === "fail"
           ? Effect.fail(new Boom())
-          : Effect.succeed({ assistantIds: picked });
+          : picked === "none"
+            ? Effect.succeed({ assistantIds: [], noReply: true })
+            : Effect.succeed({ assistantIds: picked });
       }) as never,
       ...(options.summarize?.(0) === "unsupported"
         ? {}
@@ -488,11 +490,16 @@ it.effect("a reply to a member's message goes to that member's task owner", () =
       followUp.tasks.map((task) => task.ownerId),
       ["cy"],
     );
-    // A reply to something that is not a member's answer falls through to the next rule.
-    const refused = yield* groups
-      .post({ teamId: TEAM, text: "again", replyToMessageId: followUp.message.id }, h.user)
-      .pipe(Effect.flip);
-    assert.equal(refused.reason, "mention_required");
+    // A reply to something that is not a member's answer falls through to the next rule: with one
+    // task open, its owner takes it.
+    const again = yield* groups.post(
+      { teamId: TEAM, text: "again", replyToMessageId: followUp.message.id },
+      h.user,
+    );
+    assert.deepEqual(
+      again.tasks.map((task) => task.ownerId),
+      ["cy"],
+    );
   }).pipe(Effect.provide(h.layer));
 });
 
@@ -508,17 +515,139 @@ it.effect("a group of one takes any message", () => {
   }).pipe(Effect.provide(h.layer));
 });
 
-it.effect.each([
-  ["no lead", { lead: null }],
-  ["a lead whose provider cannot route", { lead: "beto", routable: [codex] }],
-] as const)("a message that names no one is refused before it is stored: %s", ([, options]) => {
-  const h = harness(options);
+it.effect(
+  "a message that names no one is refused before it is stored when the lead cannot route",
+  () => {
+    const h = harness({ lead: "beto", routable: [codex] });
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      const error = yield* groups.post({ teamId: TEAM, text: "hello?" }, h.user).pipe(Effect.flip);
+      assert.equal(error.reason, "mention_required");
+      assert.equal(error.message, Groups.MENTION_REQUIRED_MESSAGE);
+      assert.lengthOf(yield* h.messages, 0);
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+it.effect("with no lead a message is kept, and routed once a lead is set", () => {
+  const h = harness({ lead: null, routable: [claude], route: () => ["cy"] });
   return Effect.gen(function* () {
     const groups = yield* h.setup;
-    const error = yield* groups.post({ teamId: TEAM, text: "hello?" }, h.user).pipe(Effect.flip);
-    assert.equal(error.reason, "mention_required");
-    assert.equal(error.message, Groups.MENTION_REQUIRED_MESSAGE);
-    assert.lengthOf(yield* h.messages, 0);
+    const sql = yield* SqlClient.SqlClient;
+    const posted = yield* groups.post({ teamId: TEAM, text: "who takes the logo?" }, h.user);
+    assert.deepEqual(posted.tasks, []);
+    assert.lengthOf(yield* h.messages, 1);
+    assert.lengthOf(yield* h.tasks, 0);
+    // Stays pending across a restart.
+    yield* groups.reconcile;
+    assert.lengthOf(yield* h.messages, 1);
+    yield* sql`UPDATE assistant_teams SET lead_id = 'beto' WHERE team_id = ${TEAM}`;
+    const team = {
+      id: TEAM,
+      memberIds: ["ada", "beto", "cy"],
+      leadId: "beto",
+      archivedAt: null,
+    } as never;
+    yield* groups.handleAssistantEvent({ type: "teamUpserted", team });
+    yield* groups.idle;
+    assert.deepEqual(
+      (yield* h.tasks).map((task) => task.owner_id),
+      ["cy"],
+    );
+    yield* groups.handleAssistantEvent({ type: "teamUpserted", team });
+    yield* groups.idle;
+    assert.lengthOf(yield* h.tasks, 1);
+    assert.lengthOf(h.routeCalls, 1);
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect(
+  "the lead can decide a message needs no reply: no task, one muted line, never rerouted",
+  () => {
+    const h = harness({ lead: "beto", routable: [claude], route: () => "none" });
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      const posted = yield* groups.post({ teamId: TEAM, text: "ok, thanks" }, h.user);
+      yield* groups.idle;
+      assert.lengthOf(yield* h.tasks, 0);
+      assert.deepEqual(
+        (yield* h.messages).map((row) => [row.kind, row.text, row.reply_to]),
+        [
+          ["message", "ok, thanks", null],
+          ["change", "No reply needed", posted.message.id],
+        ],
+      );
+      yield* groups.reconcile;
+      yield* groups.idle;
+      assert.lengthOf(h.routeCalls, 1);
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+it.effect("a bare continue resumes the newest stopped task, before anything asks the lead", () => {
+  const h = harness({ lead: "beto", routable: [claude], route: () => ["cy"] });
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const first = yield* groups.post({ teamId: TEAM, text: "@ada draft the plan" }, h.user);
+    yield* groups.taskAction({ taskId: first.tasks[0]!.id, action: "stop" });
+    assert.deepEqual(
+      (yield* h.tasks).map((task) => task.status),
+      ["paused"],
+    );
+    const posted = yield* groups.post({ teamId: TEAM, text: "Continua!" }, h.user);
+    assert.deepEqual(posted.tasks, []);
+    assert.deepEqual(
+      (yield* h.tasks).map((task) => [task.owner_id, task.status]),
+      [["ada", "running"]],
+    );
+    assert.lengthOf(h.sent, 2);
+    const note = (yield* h.messages).at(-1)!;
+    assert.deepEqual(
+      [note.kind, note.text, note.reply_to],
+      ["routing", "Resumed Ada's task", posted.message.id],
+    );
+    assert.lengthOf(h.routeCalls, 0);
+    // Nothing is stopped now, so the next one goes the normal way (one task open: its owner).
+    const next = yield* groups.post({ teamId: TEAM, text: "continue" }, h.user);
+    assert.deepEqual(
+      next.tasks.map((task) => task.ownerId),
+      ["ada"],
+    );
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect(
+  "a follow-up goes to the owner of the one open task; with several open the lead routes",
+  () => {
+    const h = harness({ lead: "beto", routable: [claude], route: () => ["cy"] });
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      yield* groups.post({ teamId: TEAM, text: "@ada the budget" }, h.user);
+      const followUp = yield* groups.post({ teamId: TEAM, text: "include Q3 too" }, h.user);
+      assert.deepEqual(
+        followUp.tasks.map((task) => task.ownerId),
+        ["ada"],
+      );
+      assert.lengthOf(h.routeCalls, 0);
+      yield* groups.post({ teamId: TEAM, text: "@cy the logo" }, h.user);
+      yield* groups.post({ teamId: TEAM, text: "and what about the date?" }, h.user);
+      yield* groups.idle;
+      assert.lengthOf(h.routeCalls, 1);
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+it.effect("an agent's message never resumes or follows up; the lead routes it", () => {
+  const h = harness({ lead: "beto", routable: [claude], route: () => ["cy"] });
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    yield* groups.post({ teamId: TEAM, text: "@ada the budget" }, h.user);
+    yield* groups.post(
+      { teamId: TEAM, text: "any news?" },
+      { kind: "agent", assistantId: null, label: "Planning chat" },
+    );
+    yield* groups.idle;
+    assert.lengthOf(h.routeCalls, 1);
   }).pipe(Effect.provide(h.layer));
 });
 
@@ -1484,7 +1613,7 @@ it.effect("on start, a message the lead was still routing is routed again", () =
 });
 
 it.effect("on start, a message nobody can route any more says so in the chat", () => {
-  const h = harness();
+  const h = harness({ lead: "beto", routable: [codex] });
   return Effect.gen(function* () {
     const groups = yield* h.setup;
     const sql = yield* SqlClient.SqlClient;
@@ -1569,6 +1698,8 @@ it.effect("routing names only the lead's own pick quietly, and counts three name
       (yield* h.messages).map((row) => row.kind),
       ["message"],
     );
+    // With its task done nothing is open, so the next message goes to the lead again.
+    yield* h.finish(0, "completed", "Done.");
     yield* groups.post({ teamId: TEAM, text: "everybody" }, h.user);
     yield* groups.idle;
     assert.equal((yield* h.messages).at(-1)!.text, "Beto (lead) routed it to Ada, Beto and Cy");

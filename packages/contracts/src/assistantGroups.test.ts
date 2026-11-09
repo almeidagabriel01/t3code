@@ -4,7 +4,8 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   AssistantGroupMessage,
   AssistantGroupsPostInput,
-  assistantGroupLeadingAddress,
+  assistantGroupAddress,
+  assistantGroupMentions,
   assistantGroupTaskActions,
   isAssistantGroupThreadId,
   splitAssistantTransferText,
@@ -12,26 +13,83 @@ import {
 
 const ada = { id: "ada", handle: "ada", name: "Ada" };
 const beto = { id: "beto", handle: "beto-r", name: "Beto Rocha" };
-const members = [ada, beto];
+const ana = { id: "ana", handle: "ana-p", name: "Ana Paula" };
+const anaMaria = { id: "anam", handle: "anam", name: "Ana Paula Maria" };
+const jose = { id: "jose", handle: "jose", name: "José Álvaro" };
 
-describe("assistantGroupLeadingAddress", () => {
+describe("assistantGroupAddress", () => {
   it.each([
     ["@ada what now?", [ada]],
     ["@ada @beto-r compare", [ada, beto]],
     ["  @Ada, @betorocha: compare", [ada, beto]],
     ["@ada @ada twice", [ada]],
-    ["@everyone status?", members],
-    ["@ada @everyone", members],
+    ["@everyone status?", [ada, beto, jose]],
+    ["@ada @everyone", [ada, beto, jose]],
     ["@nobody hi", null],
     ["@ada @nobody hi", [ada]],
-    ["hi @ada", null],
     ["no mention", null],
-  ])("%s", (text, expected) => {
-    expect(assistantGroupLeadingAddress(text, members)).toEqual(expected);
+    ["", null],
+    // anywhere in the text
+    ["hi @ada", [ada]],
+    ["obrigado @Ada", [ada]],
+    ["thanks @ada, and @beto-r too", [ada, beto]],
+    ["(@ada)", [ada]],
+    ["ok.@ada", [ada]],
+    // names with spaces: full name, case and accents ignored, handle too
+    ["@Beto Rocha look", [beto]],
+    ["@beto   rocha look", [beto]],
+    ["@BETO ROCHA!", [beto]],
+    ["@beto rocha, @ada", [beto, ada]],
+    ["@beto only", null],
+    ["@Jose Alvaro vem", [jose]],
+    ["@JOSÉ ÁLVARO vem", [jose]],
+    ["@josealvaro vem", [jose]],
+    ["@jose vem", [jose]],
+    // a quote or reply marker before the @ still addresses
+    ["> earlier text\n@ada answer this", [ada]],
+    ["> @ada said so", [ada]],
+    // not an address: code, links, emails, inside a word
+    ["run `@ada` now", null],
+    ["```\n@ada\n```", null],
+    ["```\n@ada never closed", null],
+    ["see https://x.com/@ada/post", null],
+    ["see www.x.com/@ada", null],
+    ["mail ada@x.com", null],
+    ["mail me@ada", null],
+    ["@adamant thing", null],
+    ["@ada-x thing", null],
+    // code skipped, the rest still counts
+    ["`@ada` is a handle, ask @beto-r", [beto]],
+    ["```\n@ada\n```\nbut @beto-r", [beto]],
+  ])("%j", (text, expected) => {
+    expect(assistantGroupAddress(text, [ada, beto, jose])).toEqual(expected);
+  });
+
+  it("takes the longest name when one is a prefix of another", () => {
+    const group = [ana, anaMaria, { id: "an", handle: "an", name: "Ana" }];
+    expect(assistantGroupAddress("@Ana Paula Maria ok", group)).toEqual([anaMaria]);
+    expect(assistantGroupAddress("@Ana Paula ok", group)).toEqual([ana]);
+    expect(assistantGroupAddress("@Ana ok", group)).toEqual([group[2]]);
+    expect(assistantGroupAddress("@Ana Silva ok", group)).toEqual([group[2]]);
   });
 
   it("@everyone in an empty group names no one", () => {
-    expect(assistantGroupLeadingAddress("@everyone hi", [])).toBeNull();
+    expect(assistantGroupAddress("@everyone hi", [])).toBeNull();
+  });
+});
+
+describe("assistantGroupMentions", () => {
+  it("returns each mention's span in the original text", () => {
+    const text = "Oi @José Álvaro e @everyone, não @x";
+    expect(
+      assistantGroupMentions(text, [jose]).map((found) => [
+        text.slice(found.start, found.end),
+        found.member?.id ?? null,
+      ]),
+    ).toEqual([
+      ["@José Álvaro", "jose"],
+      ["@everyone", null],
+    ]);
   });
 });
 

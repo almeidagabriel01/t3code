@@ -59,7 +59,7 @@ const describe = (member: PacketMember) =>
   `${member.name} (@${member.handle}${member.role === "" ? "" : `, ${member.role}`}${member.isLead ? ", lead" : ""})`;
 
 const TOOLS =
-  "Work within your role. If this task belongs to another member's role, transfer it to them instead of doing it; if only part of it does, assign that part. Your final answer is posted to the group chat as you. t3_group: history (older messages), assign (give a member a subtask and wait for it), transfer (hand this task to a member), reply (ask a member one short question, waits for the answer), result (post your answer explicitly).";
+  "Do the work yourself, in your role. Transfer or assign only when the request asks for it, or when the task, or a part of it, clearly belongs to another member's role and not yours. Your final answer is posted to the group chat as you. t3_group: history (older messages), assign (give a member a subtask and wait for it), transfer (hand this task to a member), reply (ask a member one short question, waits for the answer), result (post your answer explicitly).";
 const REPLY_TOOLS =
   "This task only answers the question. Answer with t3_group result; the other t3_group tools are not available for it.";
 

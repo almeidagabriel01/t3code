@@ -96,11 +96,17 @@ threads as non-current, so sandbox, runtime policy, connectors and the note appl
 `guardAssistantThread` refuses archive, delete and unarchive on them; the service changes their
 lifecycle through the Orchestrator directly.
 
-Recipients come from the text first (`assistantGroupLeadingAddress`), then a reply to a member
-message, then a group of one; only then does the lead route, through the optional
-`routeAssistantGroup` text-generation op (Claude, Codex, Antigravity). The capability is checked on the
-lead's own provider before anything is stored, so a group that cannot route refuses with
-`mention_required` instead of storing a message nobody gets.
+Recipients are decided before any model, first match winning (`routeGroupMessage`): the `@` mentions
+anywhere in the text (`assistantGroupMentions`, the one parser the clients highlight and preview
+with), a reply to a member message, a user's bare "continue" (resumes the newest stopped root task),
+a user's follow-up while exactly one task is open (its owner), then a group of one. Only then does the
+lead route, through the optional `routeAssistantGroup` text-generation op (Claude, Codex,
+Antigravity), which may answer `noReply` for a thanks: no task, a muted `change` line that also marks
+the message as handled. With no lead a message is stored and left pending (clients show it as waiting,
+derived from "no task and no note"); `routePending` routes it when a team change sets one and on
+start. A lead whose provider cannot route still refuses with `mention_required` before anything is
+stored. Agents and schedules skip the continue and follow-up rules: they are not the user answering
+what is on screen.
 
 A member's task packet (`AssistantGroupPacket`) holds the chat since its last task, a rolling summary
 of the earlier chat, and older messages the instruction names (`#seq`) or replies to; `t3_group history`

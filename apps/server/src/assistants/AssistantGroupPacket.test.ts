@@ -36,6 +36,10 @@ it("names the group, the members and the task, and escapes the group in the tag"
   );
   assert.include(packet, "Your task, from the user: Close the books");
   assert.include(packet, "t3_group: history");
+  // Members do the work themselves; handing off is for a clear mismatch or when asked.
+  assert.include(packet, "Do the work yourself, in your role.");
+  assert.include(packet, "Transfer or assign only when the request asks for it");
+  assert.notInclude(packet, "instead of doing it");
   assert.notInclude(packet, "New in the group chat");
   assert.isTrue(packet.endsWith("</t3_group_task>"));
 });

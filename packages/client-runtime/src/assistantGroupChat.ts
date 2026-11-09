@@ -1,7 +1,9 @@
 import {
   ASSISTANT_GROUP_EVERYONE,
   ASSISTANT_GROUP_HANDOFF_LIMIT,
-  assistantGroupLeadingAddress,
+  assistantGroupAddress,
+  assistantGroupMentions,
+  foldAssistantGroupText,
   type Assistant,
   type AssistantTeam,
   type AssistantGroupMessage,
@@ -141,7 +143,7 @@ export function assistantGroupRecipientsPreview(
   replyTo: string | null = null,
 ): string | null {
   if (text.trim() === "") return null;
-  const picked = assistantGroupLeadingAddress(text, members);
+  const picked = assistantGroupAddress(text, members);
   if (picked !== null) {
     return picked.length === members.length && members.length > 1
       ? "To everyone"
@@ -149,7 +151,7 @@ export function assistantGroupRecipientsPreview(
   }
   if (replyTo !== null) return `To ${replyTo}`;
   if (members.length === 1) return `To ${members[0]!.name}`;
-  return lead === null ? "Mention someone" : `${lead.name} (lead) will route it`;
+  return lead === null ? "Waits for a lead" : `${lead.name} (lead) will route it`;
 }
 
 export type AssistantGroupMentionOption<M extends Recipient> =
@@ -162,17 +164,38 @@ export interface AssistantGroupMentionQuery {
   readonly query: string;
 }
 
-const LEADING_MENTIONS = /^\s*(?:@[\p{L}\p{N}_-]+[,:]?\s+)*$/u;
+/** What the picker may hold after the `@`: up to three words, none trailing (a picked mention ends in a space). */
+const MENTION_BEING_TYPED = /(?:^|[\s(])@((?:[\p{L}\p{N}_-]+(?: [\p{L}\p{N}_-]+){0,2})?)$/u;
 
-/** The `@word` the caret is in, when it opens the message or follows its leading mentions. */
+/** The `@word` the caret is in, anywhere a mention could start. */
 export function assistantGroupMentionQuery(
   text: string,
   caret: number,
 ): AssistantGroupMentionQuery | null {
-  const before = text.slice(0, caret);
-  const match = /@([\p{L}\p{N}_-]*)$/u.exec(before);
-  if (match === null || !LEADING_MENTIONS.test(before.slice(0, match.index))) return null;
-  return { start: match.index, end: caret, query: match[1]!.toLowerCase() };
+  const match = MENTION_BEING_TYPED.exec(text.slice(0, caret));
+  if (match === null) return null;
+  return {
+    start: caret - match[1]!.length - 1,
+    end: caret,
+    query: foldAssistantGroupText(match[1]!),
+  };
+}
+
+/** The text cut into plain and mention runs, for highlighting; same parser as the server's. */
+export function assistantGroupTextParts(
+  text: string,
+  members: ReadonlyArray<Pick<Assistant, "handle" | "name">>,
+): ReadonlyArray<{ readonly start: number; readonly text: string; readonly mention: boolean }> {
+  const parts: Array<{ start: number; text: string; mention: boolean }> = [];
+  let at = 0;
+  for (const found of assistantGroupMentions(text, members)) {
+    if (found.start > at)
+      parts.push({ start: at, text: text.slice(at, found.start), mention: false });
+    parts.push({ start: found.start, text: text.slice(found.start, found.end), mention: true });
+    at = found.end;
+  }
+  if (at < text.length) parts.push({ start: at, text: text.slice(at), mention: false });
+  return parts;
 }
 
 /** Members whose handle or name starts with the query, then `@everyone` when it fits. */
@@ -184,7 +207,8 @@ export function assistantGroupMentionOptions<M extends Recipient>(
     .filter(
       (member) =>
         member.handle.startsWith(query) ||
-        member.name.toLowerCase().replace(/\s+/g, "").startsWith(query),
+        foldAssistantGroupText(member.name).replace(/\s+/g, " ").startsWith(query) ||
+        foldAssistantGroupText(member.name).replace(/\s+/g, "").startsWith(query),
     )
     .map((member) => ({ kind: "member", member }));
   if (ASSISTANT_GROUP_EVERYONE.startsWith(query)) options.push({ kind: "everyone" });
@@ -230,8 +254,8 @@ export function assistantGroupPauseReasonLabel(reason: string | null): string {
 }
 
 /**
- * A request that opened no task and got no notice yet: the lead is still choosing who answers it.
- * The server stores such a message only when it will route it.
+ * A request that opened no task and got no note yet: the lead is still choosing who answers it, or
+ * the group has no lead and the message waits for one.
  */
 export function assistantGroupAwaitingRoute(
   state: AssistantGroupChatState,
@@ -240,7 +264,11 @@ export function assistantGroupAwaitingRoute(
   if (message.kind !== "message" || message.author === "assistant") return false;
   for (const task of state.tasks.values()) if (task.requestMessageId === message.id) return false;
   for (const other of state.messages.values()) {
-    if (other.replyToMessageId === message.id && other.kind === "notice") return false;
+    if (
+      other.replyToMessageId === message.id &&
+      (other.kind === "notice" || other.kind === "change" || other.kind === "routing")
+    )
+      return false;
   }
   return true;
 }
