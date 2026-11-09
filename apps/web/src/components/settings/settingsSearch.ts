@@ -999,6 +999,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     desktopOnly: true,
   },
   {
+    id: "show-in-menu-bar",
+    title: "Show in menu bar",
+    to: "/settings/general",
+    searchTerms: ["tray icon macos desktop app threads needs you running pinned"],
+    desktopOnly: true,
+    macOnly: true,
+  },
+  {
     id: "text-generation-model",
     title: "Text generation model",
     to: "/settings/threads",

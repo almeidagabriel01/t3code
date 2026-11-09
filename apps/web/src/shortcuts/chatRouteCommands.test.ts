@@ -63,3 +63,23 @@ describe("new thread commands", () => {
     }
   });
 });
+
+describe("desktop tray new thread", () => {
+  it("answers the menu-bar New thread action and stops answering on dispose", () => {
+    using _settings = vi
+      .spyOn(settings, "getClientSettings")
+      .mockReturnValue(DEFAULT_CLIENT_SETTINGS);
+    using _projects = vi.spyOn(entities, "readProjects").mockReturnValue([project("active")]);
+    using startLocal = vi.spyOn(threadActions, "startNewThreadFromContext").mockResolvedValue(true);
+    using _register = vi.spyOn(dispatcher, "registerCommands").mockReturnValue(() => {});
+    const dispose = vi.fn();
+    using registerAction = vi.spyOn(dispatcher, "registerMenuAction").mockReturnValue(dispose);
+
+    installChatRouteCommands({ state: { matches: [] } } as unknown as AnyRouter)();
+
+    expect(registerAction.mock.calls[0]![0]).toBe("tray.new-thread");
+    registerAction.mock.calls[0]![1]();
+    expect(startLocal).toHaveBeenCalledOnce();
+    expect(dispose).toHaveBeenCalledOnce();
+  });
+});

@@ -34,6 +34,7 @@ const clientSettings: ClientSettings = {
   browserDefaultProfileId: "work",
   confirmQuit: "double-click",
   confirmThreadArchive: true,
+  showInMenuBar: false,
   confirmThreadDelete: false,
   confirmThreadUnpin: false,
   contextWindowMeterEnabled: false,

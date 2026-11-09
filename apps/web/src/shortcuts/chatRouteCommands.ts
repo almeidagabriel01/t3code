@@ -1,4 +1,8 @@
-import { AuthPreviewOperateScope, type EnvironmentId } from "@t3tools/contracts";
+import {
+  AuthPreviewOperateScope,
+  DESKTOP_TRAY_NEW_THREAD_ACTION,
+  type EnvironmentId,
+} from "@t3tools/contracts";
 import type { AnyRouter } from "@tanstack/react-router";
 
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
@@ -24,7 +28,7 @@ import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../termina
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { useUiStateStore } from "../uiStateStore";
-import { type CommandHandler, registerCommands } from "./dispatcher";
+import { type CommandHandler, registerCommands, registerMenuAction } from "./dispatcher";
 
 const CHAT_ROUTE_ID = "/_chat";
 
@@ -94,12 +98,15 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
     event.stopPropagation();
   };
 
-  const startNewLocal: CommandHandler = (event) => {
-    claim(event);
+  const startNewLocalThread = () => {
     // With no current or open project, such as when every project is archived, pick one.
     void startNewThreadFromContext(readThreadContext()).then((started) => {
       if (!started) openCommandPalette({ open: "new-thread-in" });
     });
+  };
+  const startNewLocal: CommandHandler = (event) => {
+    claim(event);
+    startNewLocalThread();
   };
 
   const previewCommand =
@@ -110,7 +117,7 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
       if (threadRef && canOperatePreview(threadRef.environmentId)) dispatchPreviewAction(action);
     };
 
-  return registerCommands(
+  const disposeCommands = registerCommands(
     {
       "chat.newLocal": startNewLocal,
       "chat.newWithoutProject": (event) => {
@@ -182,4 +189,10 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
       },
     },
   );
+  // The desktop menu-bar icon's "New thread", which works from any page.
+  const disposeTrayAction = registerMenuAction(DESKTOP_TRAY_NEW_THREAD_ACTION, startNewLocalThread);
+  return () => {
+    disposeCommands();
+    disposeTrayAction();
+  };
 }
