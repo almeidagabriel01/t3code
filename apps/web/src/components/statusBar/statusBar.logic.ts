@@ -1,20 +1,5 @@
+import { formatCompactCountdown, shortLimitName } from "@t3tools/client-runtime/state/usageReset";
 import type { ServerProviderUsageWindow } from "@t3tools/contracts";
-
-const MINUTE = 60_000;
-const HOUR = 60 * MINUTE;
-const DAY = 24 * HOUR;
-
-/** "3d12h", "3h49m", "12m"; null without a reset time. */
-export function formatCompactCountdown(resetsAt: string | undefined, now: number): string | null {
-  if (resetsAt === undefined) return null;
-  const at = Date.parse(resetsAt);
-  if (!Number.isFinite(at)) return null;
-  const left = at - now;
-  if (left < MINUTE) return "now";
-  if (left >= DAY) return `${Math.floor(left / DAY)}d${Math.floor((left % DAY) / HOUR)}h`;
-  if (left >= HOUR) return `${Math.floor(left / HOUR)}h${Math.floor((left % HOUR) / MINUTE)}m`;
-  return `${Math.floor(left / MINUTE)}m`;
-}
 
 /** The session and weekly windows lead with a countdown; any further windows follow compactly. */
 export function selectBarWindows(windows: ReadonlyArray<ServerProviderUsageWindow>) {
@@ -37,16 +22,6 @@ export interface ChipEntry {
   readonly resets: string | null;
 }
 
-/** "Weekly · Fable" reads as "Fable": the chip is already grouped under its window kind. */
-function shortWindowName(window: ServerProviderUsageWindow): string {
-  const scoped = /^(?:weekly|monthly)\s*·\s*(.+)$/i.exec(window.label);
-  if (scoped?.[1]) return scoped[1];
-  if (window.kind === "session") return "Session";
-  if (window.kind === "weekly") return "Week";
-  if (window.kind === "monthly") return "Month";
-  return window.label;
-}
-
 /** Each window reads name, percentage, bar, then the session's time left. */
 export function selectChipEntries(
   windows: ReadonlyArray<ServerProviderUsageWindow>,
@@ -60,7 +35,7 @@ export function selectChipEntries(
       {
         window: tightest,
         bar: false,
-        name: shortWindowName(tightest),
+        name: shortLimitName(tightest),
         resets: formatCompactCountdown(tightest.resetsAt, now),
       },
     ];
@@ -70,10 +45,10 @@ export function selectChipEntries(
     ...primary.map((window) => ({
       window,
       bar: true,
-      name: shortWindowName(window),
+      name: shortLimitName(window),
       resets: window.kind === "session" ? formatCompactCountdown(window.resetsAt, now) : null,
     })),
-    ...extra.map((window) => ({ window, bar: false, name: shortWindowName(window), resets: null })),
+    ...extra.map((window) => ({ window, bar: false, name: shortLimitName(window), resets: null })),
   ];
 }
 

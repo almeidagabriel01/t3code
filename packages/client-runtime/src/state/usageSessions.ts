@@ -112,6 +112,14 @@ function collectSessionsWhere(input: {
     .map(({ session }) => session);
 }
 
+/** Waiting and working threads are running; recent ones are finished. */
+export function splitSessions(sessions: ReadonlyArray<UsageSession>) {
+  return {
+    running: sessions.filter((session) => session.state !== "recent"),
+    finished: sessions.filter((session) => session.state === "recent"),
+  };
+}
+
 /** Groups keep the order of their first session, so the most urgent project leads. */
 export function groupSessionsByProject(sessions: ReadonlyArray<UsageSession>) {
   const groups = new Map<string, UsageSession[]>();

@@ -64,4 +64,11 @@ describe("mobile preferences parser", () => {
       ).toEqual({});
     }),
   );
+
+  it.effect("keeps a known usage reset display and drops anything else", () =>
+    Effect.gen(function* () {
+      expect(yield* loadFrom({ usageResetDisplay: "both" })).toEqual({ usageResetDisplay: "both" });
+      expect(yield* loadFrom({ usageResetDisplay: "weekday" })).toEqual({});
+    }),
+  );
 });

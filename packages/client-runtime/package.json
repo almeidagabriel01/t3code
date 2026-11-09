@@ -255,6 +255,10 @@
       "types": "./src/state/kanban.ts",
       "default": "./src/state/kanban.ts"
     },
+    "./state/usageReset": {
+      "types": "./src/state/usageReset.ts",
+      "default": "./src/state/usageReset.ts"
+    },
     "./state/usageSessions": {
       "types": "./src/state/usageSessions.ts",
       "default": "./src/state/usageSessions.ts"
