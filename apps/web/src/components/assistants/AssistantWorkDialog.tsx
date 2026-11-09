@@ -44,7 +44,6 @@ import { assistantWorkAtom } from "./assistantWorkState";
 import { AssistantSchedules } from "./AssistantSchedules";
 import { AssistantWorkLibrary } from "./AssistantWorkLibrary";
 import { AssistantWorkMemory } from "./AssistantWorkMemory";
-import { useAssistantFlows } from "./useAssistantFlows";
 
 const TABS = [
   { id: "routines", label: "Routines" },
@@ -162,7 +161,6 @@ function AssistantStatusCard(props: {
 }) {
   const { environmentId, assistant } = props;
   const navigate = useNavigate();
-  const flows = useAssistantFlows(environmentId);
   const projects = useProjects();
   const shell = useThreadShell(
     assistant.threadId === null ? null : scopeThreadRef(environmentId, assistant.threadId),
@@ -195,8 +193,6 @@ function AssistantStatusCard(props: {
       case "editAssistant":
         props.onNavigate();
         return openAssistantDialog({ environmentId, assistantId: assistant.id });
-      case "restore":
-        return flows.unarchive(assistant);
       case "resumeAutonomy":
         return void updateSettings({ autonomy: { ...autonomy, enabled: true } });
       case "startSandbox": {

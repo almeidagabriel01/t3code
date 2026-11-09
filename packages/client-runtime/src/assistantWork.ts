@@ -12,12 +12,7 @@ import {
 import type { EnvironmentThreadShell } from "./state/models.ts";
 
 /** Where a status card's button goes; each client maps it to its own navigation. */
-export type AssistantWorkFix =
-  | "providers"
-  | "startSandbox"
-  | "resumeAutonomy"
-  | "restore"
-  | "editAssistant";
+export type AssistantWorkFix = "providers" | "startSandbox" | "resumeAutonomy" | "editAssistant";
 
 export type AssistantWorkStatus =
   | { readonly ok: true }
@@ -31,7 +26,7 @@ export type AssistantWorkStatus =
     };
 
 export interface AssistantWorkStatusInput {
-  readonly assistant: Pick<Assistant, "archivedAt" | "workspace">;
+  readonly assistant: Pick<Assistant, "workspace">;
   readonly projectFound: boolean;
   /** The conversation's model; null until its thread exists. */
   readonly modelSelection: ModelSelection | null;
@@ -67,12 +62,6 @@ const SANDBOX_REASON = {
  */
 export function assistantWorkStatus(input: AssistantWorkStatusInput): AssistantWorkStatus {
   const { assistant, modelSelection, providers, sandbox } = input;
-  if (assistant.archivedAt !== null) {
-    return blocked("Archived", "It is archived, so it does not work.", {
-      kind: "restore",
-      label: "Restore",
-    });
-  }
   if (!input.projectFound) {
     return blocked("Its project is missing", "The project it works in is no longer available.", {
       kind: "editAssistant",

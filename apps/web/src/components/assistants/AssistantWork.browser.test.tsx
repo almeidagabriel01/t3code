@@ -211,7 +211,7 @@ it("lists the files it sent and received", async () => {
   };
   await using _screen = await openWork();
   const dialog = page.getByRole("dialog", { name: "Jarvis work" });
-  await userEvent.click(dialog.getByRole("radio", { name: "Library" }));
+  await userEvent.click(dialog.getByRole("button", { name: "Library" }));
   await expect.element(dialog.getByText("report.pdf")).toBeVisible();
   await expect.element(dialog.getByText(/Received from Ada/)).toBeVisible();
   await expect.element(dialog.getByText(/Sent · 2 KB/)).toBeVisible();
@@ -224,7 +224,7 @@ it("lists the files it sent and received", async () => {
 it("says memory is not ready when the server has no memory space", async () => {
   await using _screen = await openWork();
   const dialog = page.getByRole("dialog", { name: "Jarvis work" });
-  await userEvent.click(dialog.getByRole("radio", { name: "Memory" }));
+  await userEvent.click(dialog.getByRole("button", { name: "Memory" }));
   await expect
     .element(dialog.getByText("Memory is off or still getting ready on this server."))
     .toBeVisible();

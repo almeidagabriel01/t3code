@@ -27,6 +27,7 @@ import { useEnvironmentServerConfig, useProjects, useThreadShell } from "../../s
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useAutonomySettings } from "../../state/autonomy";
+import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { AssistantSchedulesSection } from "./AssistantSchedulesSection";
 import { AssistantWorkLibrarySection } from "./AssistantWorkLibrarySection";
@@ -72,6 +73,7 @@ function AssistantWork(props: {
   readonly assistant: Assistant;
 }) {
   const { environmentId, assistant } = props;
+  const { savedConnectionsById } = useSavedRemoteConnections();
   const shell = useThreadShell(
     assistant.threadId === null ? null : scopeThreadRef(environmentId, assistant.threadId),
   );
@@ -80,7 +82,9 @@ function AssistantWork(props: {
       <StatusSection environmentId={environmentId} assistant={assistant} />
       <AssistantSchedulesSection
         environmentId={environmentId}
-        environmentLabel=""
+        environmentLabel={
+          savedConnectionsById[environmentId]?.environmentLabel ?? String(environmentId)
+        }
         assistant={assistant}
         modelSelection={shell?.modelSelection ?? null}
       />
@@ -126,8 +130,6 @@ function StatusSection(props: {
         return navigation.navigate("SettingsProviderAccounts");
       case "editAssistant":
         return openEditor(environmentId, assistant);
-      case "restore":
-        return;
       case "resumeAutonomy":
         return void write({ ...autonomy, enabled: true });
       case "startSandbox": {

@@ -76,6 +76,9 @@ vi.mock("../../state/autonomy", () => ({
   useAutonomySettings: () => ({ autonomy: mocks.autonomy, write: mocks.writeAutonomy }),
 }));
 vi.mock("../../state/threads", () => ({ threadEnvironment: { startTurn: {} } }));
+vi.mock("../../state/use-remote-environment-registry", () => ({
+  useSavedRemoteConnections: () => ({ savedConnectionsById: { hub: { environmentLabel: "Hub" } } }),
+}));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => mocks.startTurn }));
 
 import { AssistantWorkRouteScreen } from "./AssistantWorkRouteScreen";

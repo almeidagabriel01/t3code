@@ -20,6 +20,8 @@ import * as Option from "effect/Option";
 import { PencilIcon } from "lucide-react";
 import { lazy, Suspense, useEffect, useState } from "react";
 
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { buildThreadRouteParams } from "../../threadRoutes";
 import { memoryEnvironment } from "../../state/memory";
 import { useEnvironmentQuery } from "../../state/query";
 import { useEnvironmentScope } from "../../state/session";
@@ -200,7 +202,7 @@ export function AssistantMemoryList(props: {
               {sourceThreadId === null ? null : (
                 <Link
                   to="/$environmentId/$threadId"
-                  params={{ environmentId, threadId: sourceThreadId }}
+                  params={buildThreadRouteParams(scopeThreadRef(environmentId, sourceThreadId))}
                   onClick={props.onNavigate}
                   className="cursor-pointer text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
                 >

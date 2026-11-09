@@ -22,7 +22,7 @@ const provider = (overrides: Record<string, unknown> = {}) =>
   }) as unknown as ServerProvider;
 
 const base: AssistantWorkStatusInput = {
-  assistant: { archivedAt: null, workspace: "host" },
+  assistant: { workspace: "host" },
   projectFound: true,
   modelSelection: { instanceId: "claude", model: "opus" } as never,
   providers: [provider()],
@@ -33,35 +33,34 @@ const base: AssistantWorkStatusInput = {
 describe("assistantWorkStatus", () => {
   it.each([
     ["works", {}, null],
-    ["archived", { assistant: { archivedAt: "2026-11-01", workspace: "host" } }, "restore"],
     ["project missing", { projectFound: false }, "editAssistant"],
     [
       "sandbox stopped",
-      { assistant: { archivedAt: null, workspace: "sandbox" }, sandbox: { state: "stopped" } },
+      { assistant: { workspace: "sandbox" }, sandbox: { state: "stopped" } },
       "startSandbox",
     ],
     [
       "sandbox not created",
-      { assistant: { archivedAt: null, workspace: "sandbox" }, sandbox: { state: "not_created" } },
+      { assistant: { workspace: "sandbox" }, sandbox: { state: "not_created" } },
       "startSandbox",
     ],
     [
       "docker down has no button",
       {
-        assistant: { archivedAt: null, workspace: "sandbox" },
+        assistant: { workspace: "sandbox" },
         sandbox: { state: "docker_unavailable" },
       },
       "none",
     ],
     [
       "sandbox starting has no button",
-      { assistant: { archivedAt: null, workspace: "sandbox" }, sandbox: { state: "starting" } },
+      { assistant: { workspace: "sandbox" }, sandbox: { state: "starting" } },
       "none",
     ],
     [
       "failed sandbox reports its error",
       {
-        assistant: { archivedAt: null, workspace: "sandbox" },
+        assistant: { workspace: "sandbox" },
         sandbox: { state: "failed", error: "port busy" },
       },
       "startSandbox",
@@ -95,7 +94,7 @@ describe("assistantWorkStatus", () => {
   it("names the failure of a sandbox that could not start", () => {
     const status = assistantWorkStatus({
       ...base,
-      assistant: { archivedAt: null, workspace: "sandbox" },
+      assistant: { workspace: "sandbox" },
       sandbox: { state: "failed", error: "port busy" },
     });
     expect(status).toMatchObject({ ok: false, severity: "blocked", detail: "port busy" });
@@ -110,12 +109,13 @@ describe("assistantWorkStatus", () => {
   it("puts the most fundamental reason first", () => {
     const status = assistantWorkStatus({
       ...base,
-      assistant: { archivedAt: "2026-11-01", workspace: "host" },
+      assistant: { workspace: "sandbox" },
       projectFound: false,
+      sandbox: { state: "stopped", error: null },
       providers: [],
       autonomyEnabled: false,
     });
-    expect(status).toMatchObject({ fix: { kind: "restore" } });
+    expect(status).toMatchObject({ title: "Its project is missing" });
   });
 });
 
