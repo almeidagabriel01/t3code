@@ -29,6 +29,10 @@ const popoverViewportPaddingClassName = {
   none: "rounded-[calc(var(--radius-lg)-1px)] py-0 [--viewport-inline-padding:0px]",
 } as const;
 
+// A popup too tall for either side of its button clamps there instead of jumping beside it, which
+// detaches it from the button (Base UI's default falls back to the cross axis).
+const STAY_ON_AXIS = { fallbackAxisSide: "none" } as const;
+
 function PopoverPopup({
   children,
   className,
@@ -75,7 +79,7 @@ function PopoverPopup({
         align={align}
         alignOffset={alignOffset}
         anchor={anchor}
-        collisionAvoidance={collisionAvoidance}
+        collisionAvoidance={collisionAvoidance ?? STAY_ON_AXIS}
         collisionPadding={variant === "panel" ? 0 : undefined}
         className={cn(
           "h-(--positioner-height) max-h-(--available-height) w-(--positioner-width) max-w-(--available-width) transition-transform data-instant:transition-none",

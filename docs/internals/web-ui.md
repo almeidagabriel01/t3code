@@ -9,6 +9,11 @@ Don't style a raw `<button>`, `<input>`, `<select>`, or `<textarea>` to look lik
 primitive provides. Raw elements are right when the element isn't that control: semantic rows, tabs,
 resize handles, swatches, editor surfaces, anything whose behavior or geometry differs by design.
 
+Size a popover's scrolling content with a fixed height or max height, then clamp it with
+`max-h-(--available-height)`. Base UI measures the popup with `--available-height` set to
+`max-content`, which voids `min()` or `calc()` built on it. The popup is then measured at full
+content height, and an open popup grows to fill the screen.
+
 ## Styles
 
 Style with Tailwind classes in the component that renders the element.
