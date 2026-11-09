@@ -76,6 +76,8 @@ interface Options {
   readonly routable?: ReadonlyArray<ProviderInstanceId>;
   /** What the summary call answers; "fail" errors it and "unsupported" leaves the operation out. */
   readonly summarize?: (call: number) => string | "fail" | "unsupported";
+  /** Holds every summary call until it completes. */
+  readonly summaryGate?: Deferred.Deferred<void>;
   readonly route?: (input: {
     readonly members: ReadonlyArray<{ readonly id: string }>;
   }) => ReadonlyArray<string> | "fail";
@@ -236,9 +238,11 @@ const harness = (options: Options = {}) => {
             summarizeAssistantGroup: ((input: (typeof summaryCalls)[number]) => {
               summaryCalls.push(input);
               const answer = options.summarize?.(summaryCalls.length) ?? "A summary.";
-              return answer === "fail"
-                ? Effect.fail(new Boom())
-                : Effect.succeed({ summary: answer });
+              const result =
+                answer === "fail" ? Effect.fail(new Boom()) : Effect.succeed({ summary: answer });
+              return options.summaryGate === undefined
+                ? result
+                : Deferred.await(options.summaryGate).pipe(Effect.andThen(result));
             }) as never,
           }),
     }),
@@ -2114,6 +2118,23 @@ it.effect(
     }).pipe(Effect.provide(h.layer));
   },
 );
+
+it.effect("a summary still running when a new conversation starts is dropped", () => {
+  const gate = Deferred.makeUnsafe<void>();
+  const h = harness({ summarize: () => "Stale summary.", summaryGate: gate });
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    yield* groups.post({ teamId: TEAM, text: bulk("a") }, h.user);
+    yield* groups.post({ teamId: TEAM, text: bulk("b") }, h.user);
+    yield* h.finish(0, "completed", "ok");
+    yield* h.finish(1, "completed", "ok");
+    yield* groups.conversation({ teamId: TEAM, action: "new" });
+    yield* Deferred.succeed(gate, undefined);
+    yield* groups.idle;
+    assert.lengthOf(h.summaryCalls, 1);
+    assert.lengthOf(yield* h.sqlRows("SELECT * FROM assistant_group_summaries"), 0);
+  }).pipe(Effect.provide(h.layer));
+});
 
 it.effect("compact writes a summary now, then draws the boundary", () => {
   const h = harness({ summarize: () => "Compact summary." });

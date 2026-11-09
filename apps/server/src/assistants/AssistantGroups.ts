@@ -887,9 +887,14 @@ const make = Effect.gen(function* () {
       if (summary === "") return false;
       // A group deleted meanwhile keeps no summary behind.
       yield* loadTeam(teamId);
+      // A New conversation, Compact or Clear that ran while the model worked wins.
       yield* sql`
         INSERT INTO assistant_group_summaries (team_id, summary, through_seq, updated_at)
-        VALUES (${teamId}, ${summary}, ${top}, ${yield* nowIso})
+        SELECT ${teamId}, ${summary}, ${top}, ${yield* nowIso}
+        WHERE (SELECT COALESCE(MAX(seq), 0) FROM assistant_group_messages
+            WHERE team_id = ${teamId} AND kind = 'boundary') = ${boundary}
+          AND EXISTS (SELECT 1 FROM assistant_group_messages
+            WHERE team_id = ${teamId} AND seq = ${top} AND kind = 'message')
         ON CONFLICT (team_id) DO UPDATE SET summary = excluded.summary,
           through_seq = excluded.through_seq, updated_at = excluded.updated_at
         WHERE excluded.through_seq > through_seq`;
