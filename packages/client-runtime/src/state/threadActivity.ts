@@ -151,18 +151,31 @@ export function selectSidebarMarkReadTargets<
 }
 
 /**
- * Cache ranks before sorting. Within a rank, newer threads come first by
- * creation time: updatedAt moves on every streamed event of a running thread,
- * so ordering by it would swap working rows while they stream.
+ * Lowest rank first, then the thread the user prompted last (creation time when never
+ * prompted). Streamed events move updatedAt, never the prompt time, so rows hold their
+ * places while threads run. Wakes and agent messages also move latestUserMessageAt, so it
+ * stands in only for servers that send no authored time.
  */
 export function sortPriorityThreadsForSidebar<
-  T extends Pick<SidebarThreadSummary, "environmentId" | "id" | "createdAt">,
+  T extends Pick<SidebarThreadSummary, "environmentId" | "id" | "createdAt"> & {
+    readonly latestUserMessageAt?: string | null | undefined;
+    readonly latestUserAuthoredMessageAt?: string | null | undefined;
+  },
 >(threads: readonly T[], ranks: ReadonlyMap<string, number>): T[] {
   const key = (thread: T) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+  const promptAt = (thread: T) =>
+    Math.max(
+      firstValidTimestampMs(thread.createdAt),
+      firstValidTimestampMs(
+        thread.latestUserAuthoredMessageAt === undefined
+          ? thread.latestUserMessageAt
+          : thread.latestUserAuthoredMessageAt,
+      ),
+    );
   return [...threads].sort(
     (left, right) =>
       (ranks.get(key(left)) ?? 2) - (ranks.get(key(right)) ?? 2) ||
-      firstValidTimestampMs(right.createdAt) - firstValidTimestampMs(left.createdAt) ||
+      promptAt(right) - promptAt(left) ||
       key(left).localeCompare(key(right)),
   );
 }
