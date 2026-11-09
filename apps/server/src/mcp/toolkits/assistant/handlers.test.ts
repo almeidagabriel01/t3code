@@ -125,10 +125,14 @@ const assistantsMock = () => {
   return { layer, writes };
 };
 
-const harness = (callerMode: RuntimeMode) =>
+const harness = (
+  callerMode: RuntimeMode,
+  startedBy: Record<string, unknown> = { id: "m-user", createdBy: "user" },
+) =>
   Effect.gen(function* () {
     const { layer, writes } = assistantsMock();
     const threadId = ThreadId.make("thread-1");
+    const announced: Array<{ text: string; clientRequestId: string }> = [];
     const posts: Array<Parameters<AssistantGroups.AssistantGroups["Service"]["agentPost"]>[0]> = [];
     const deps = Layer.succeedContext(
       yield* Layer.build(
@@ -157,6 +161,11 @@ const harness = (callerMode: RuntimeMode) =>
                 interactionMode: "default",
               } as unknown as OrchestrationV2ThreadShell),
             sendToThread: () => Effect.succeed({} as never),
+            getThreadRecords: () =>
+              Effect.succeed({
+                runs: [{ id: "run-1", userMessageId: startedBy.id }],
+                messages: [startedBy],
+              } as never),
           }),
           Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
             ensureAssistantProject: Effect.succeed({ projectId: home }),
@@ -164,6 +173,10 @@ const harness = (callerMode: RuntimeMode) =>
           }),
           Layer.mock(AssistantGroups.AssistantGroups)({
             member: {} as AssistantGroups.AssistantGroups["Service"]["member"],
+            announce: (input) =>
+              Effect.sync(() => {
+                announced.push({ text: input.text, clientRequestId: input.clientRequestId });
+              }),
             agentPost: (input) => {
               posts.push(input);
               return Effect.succeed({
@@ -202,7 +215,7 @@ const harness = (callerMode: RuntimeMode) =>
         Effect.provide(deps),
       );
     const decisions = yield* DecisionService.DecisionService.pipe(Effect.provide(deps));
-    return { call, writes, decisions, posts };
+    return { call, writes, decisions, posts, announced };
   });
 
 it.effect("list and read give each assistant its role and its groups' lead by handle", () =>
@@ -413,5 +426,70 @@ it.effect("group_post posts from the calling conversation and needs a group and 
       code: "invalid_request",
       message: "group_post needs `text`: the complete request.",
     });
+  }),
+);
+
+it.effect("a group change leaves one chat line per change, and a repeat leaves none", () =>
+  Effect.gen(function* () {
+    const { call, announced } = yield* harness("approval-required");
+    yield* call({ action: "group_create", name: "Ops", members: ["ceo"], clientRequestId: "g1" });
+    yield* call({
+      action: "group_update",
+      group: "Core",
+      name: "Core 2",
+      removeMembers: ["eng"],
+      lead: null,
+    });
+    expect(announced.map((line) => line.text)).toEqual([
+      'created the group "Ops" with CEO',
+      'renamed the group to "Core 2"',
+      "removed ENG",
+      "removed the group's lead",
+    ]);
+    expect(new Set(announced.map((line) => line.clientRequestId)).size).toBe(4);
+  }),
+);
+
+it.effect("a group change is refused unless the turn came from the user", () =>
+  Effect.gen(function* () {
+    const refusals = [
+      [{ id: "m1", createdBy: "agent", senderThreadId: "assistant:eng:1" }, "another assistant"],
+      [{ id: "assistant-reply:r1", createdBy: "agent" }, "another assistant"],
+      [{ id: "m2", createdBy: "user", scheduledTaskId: "task-1" }, "a scheduled task"],
+      [{ id: "group-task:t:1", createdBy: "system" }, "a group task"],
+      [{ id: "autonomy-wake:k", createdBy: "user" }, "an automatic message"],
+      [{ id: "m3", createdBy: "user", notification: { summary: "x" } }, "an automatic message"],
+    ] as const;
+    for (const [startedBy, label] of refusals) {
+      const { call, writes, announced } = yield* harness("approval-required", startedBy);
+      for (const input of [
+        { action: "group_create", name: "Ops" },
+        { action: "group_update", group: "Core", name: "New" },
+      ] as const) {
+        expect(yield* call(input)).toMatchObject({
+          code: "capability_denied",
+          message: expect.stringContaining(`this turn came from ${label}`),
+        });
+      }
+      // Reads, group_post and assistant changes are not group changes.
+      expect(yield* call({ action: "list" })).toHaveProperty("assistants");
+      expect(writes).toEqual([]);
+      expect(announced).toEqual([]);
+    }
+  }),
+);
+
+it.effect("a user turn, including a channel or decision answer, may change a group", () =>
+  Effect.gen(function* () {
+    for (const startedBy of [
+      { id: "m1", createdBy: "user", creationSource: "web" },
+      { id: "decision-answer:d1", createdBy: "user", creationSource: "server" },
+    ]) {
+      const { call, announced } = yield* harness("approval-required", startedBy);
+      expect(yield* call({ action: "group_create", name: "Ops" })).toMatchObject({
+        status: "created",
+      });
+      expect(announced).toHaveLength(1);
+    }
   }),
 );

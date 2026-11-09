@@ -135,6 +135,7 @@ describe("group feed", () => {
           }),
           message(5, { author: "assistant", kind: "notice" }),
           message(6, { kind: "boundary", text: "compact" }),
+          message(7, { author: "assistant", kind: "change", text: "Ada added Bo" }),
         ],
         [
           task("a", 1),
@@ -152,6 +153,7 @@ describe("group feed", () => {
         [4, "note", []],
         [5, "note", []],
         [6, "boundary", []],
+        [7, "note", []],
       ],
     );
     assert.strictEqual(
@@ -162,7 +164,7 @@ describe("group feed", () => {
       assistantGroupBoundaryLabel(message(7, { text: "new" })),
       "New conversation started",
     );
-    // A boundary is never unread.
+    // A boundary and a change line are never unread.
     assert.isNull(assistantGroupNewSeq(state, 5));
   });
 

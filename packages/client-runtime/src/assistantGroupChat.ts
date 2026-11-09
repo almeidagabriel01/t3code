@@ -266,7 +266,12 @@ export function assistantGroupAuthorName(
 
 /** A message the user did not write and that is worth reading (routing notes are chatter). */
 function countsAsUnread(message: Pick<AssistantGroupMessage, "author" | "kind">): boolean {
-  return message.author !== "user" && message.kind !== "routing" && message.kind !== "boundary";
+  return (
+    message.author !== "user" &&
+    message.kind !== "routing" &&
+    message.kind !== "boundary" &&
+    message.kind !== "change"
+  );
 }
 
 /** The newest loaded message number, 0 for an empty chat. */
