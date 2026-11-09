@@ -307,6 +307,10 @@
       "types": "./src/assistantRobot.ts",
       "default": "./src/assistantRobot.ts"
     },
+    "./assistantTasks": {
+      "types": "./src/assistantTasks.ts",
+      "default": "./src/assistantTasks.ts"
+    },
     "./assistantList": {
       "types": "./src/assistantList.ts",
       "default": "./src/assistantList.ts"

@@ -120,6 +120,8 @@ export interface AssistantDirectoryShape {
   readonly forThread: (
     threadId: ThreadId,
   ) => Effect.Effect<Option.Option<{ readonly assistant: Assistant; readonly current: boolean }>>;
+  /** The assistant that launched this thread as a task. Task threads are ordinary threads. */
+  readonly taskOwner: (threadId: ThreadId) => Effect.Effect<Option.Option<Assistant>>;
 }
 
 export class AssistantDirectory extends Context.Service<
@@ -152,6 +154,13 @@ const make = Effect.gen(function* () {
       // A failed read must not look like "not linked": the refusal would then send the work nowhere.
       Effect.orDie,
     ),
+    taskOwner: Effect.fn("AssistantDirectory.taskOwner")(function* (threadId) {
+      if (isAssistantThreadId(threadId)) return Option.none();
+      const rows = yield* sql<AssistantRow>`
+        SELECT a.* FROM assistant_tasks t JOIN assistants a ON a.assistant_id = t.assistant_id
+        WHERE t.thread_id = ${threadId}`;
+      return Option.fromNullishOr(rows[0]).pipe(Option.map(toAssistant));
+    }, Effect.orDie),
     forThread: Effect.fn("AssistantDirectory.forThread")(function* (threadId) {
       if (!isAssistantThreadId(threadId)) return Option.none();
       const current =

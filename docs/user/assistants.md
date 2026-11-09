@@ -108,6 +108,18 @@ and opens its pane in System Settings on that Mac:
 Use **Check again** after granting one. macOS may ask you to reopen T3 Code before a new permission
 takes effect.
 
+## Tasks
+
+An assistant answers quick things itself. For real work that takes several steps in code, it
+starts a thread in the right project with a full brief, using its instructions, model and access. You
+are not asked to wait: when the thread finishes, the assistant wakes up, checks the result, runs the
+tests, asks a teammate to review when that helps, sends fixes back, and only then tells you.
+
+The threads an assistant launched are listed under it in the sidebar and on the Assistants page with
+their state (running, waiting, done or failed). Open one to see the work; the thread shows the
+assistant's face in the mood of the task, and tapping it returns to the assistant. A project assistant
+can only start tasks in its own project.
+
 ## Assistants can consult each other
 
 Assistants don't talk to each other on their own. Ask one to consult another, for example "ask my

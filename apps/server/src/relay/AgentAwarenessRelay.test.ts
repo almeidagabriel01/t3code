@@ -541,7 +541,7 @@ describe("AgentAwarenessRelay", () => {
         yield* Queue.take(pulls);
         yield* made.relay.drain;
       });
-      yield* send({ type: "snapshot", assistants: [], teams: [team(true)] });
+      yield* send({ type: "snapshot", assistants: [], teams: [team(true)], tasks: [] });
       return { ...made, send };
     });
     const alerts = (

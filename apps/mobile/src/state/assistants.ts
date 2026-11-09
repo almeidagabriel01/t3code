@@ -1,8 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   assistantErrorMessage,
+  assistantForTaskThread,
   assistantForThread,
   createAssistantsEnvironmentAtoms,
+  selectAssistantTasks,
   selectActiveAssistants,
   selectArchivedAssistants,
   selectTeams,
@@ -16,6 +18,7 @@ import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtim
 import {
   AuthOrchestrationReadScope,
   type Assistant,
+  type AssistantTask,
   type AssistantGroupConversationAction,
   type AssistantGroupsHistoryResult,
   type AssistantGroupsPostInput,
@@ -36,6 +39,7 @@ import {
 } from "@t3tools/contracts";
 import type * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
+import { useMemo } from "react";
 import { AsyncResult, Atom } from "effect/reactivity";
 
 import { useEnvironmentQuery } from "./query";
@@ -141,6 +145,33 @@ export function useThreadAssistant(
   if (environmentId === null || threadId === null) return null;
   const state = states.find(([id]) => id === environmentId)?.[1];
   const assistant = state ? assistantForThread(state, threadId) : undefined;
+  return assistant ? { environmentId, assistant } : null;
+}
+
+/** The threads this assistant launched for real work, oldest first. */
+export function useAssistantTasks(
+  environmentId: EnvironmentId,
+  assistantId: Assistant["id"],
+): ReadonlyArray<AssistantTask> {
+  const states = useAtomValue(assistantStatesAtom);
+  const state = states.find(([id]) => id === environmentId)?.[1];
+  return useMemo(
+    () => (state ? selectAssistantTasks(state, assistantId) : NO_TASKS),
+    [state, assistantId],
+  );
+}
+
+const NO_TASKS: ReadonlyArray<AssistantTask> = [];
+
+/** The assistant that launched this thread as a task, or null for any other thread. */
+export function useTaskAssistant(
+  environmentId: EnvironmentId | null,
+  threadId: ThreadId | null,
+): AssistantEntry | null {
+  const states = useAtomValue(assistantStatesAtom);
+  if (environmentId === null || threadId === null) return null;
+  const state = states.find(([id]) => id === environmentId)?.[1];
+  const assistant = state ? assistantForTaskThread(state, threadId) : undefined;
   return assistant ? { environmentId, assistant } : null;
 }
 

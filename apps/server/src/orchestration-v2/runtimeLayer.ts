@@ -72,6 +72,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as AssistantDirectory from "../assistants/AssistantDirectory.ts";
 import * as AssistantRuntimePolicy from "../assistants/AssistantRuntimePolicy.ts";
 import * as AssistantService from "../assistants/AssistantService.ts";
+import * as AssistantTasks from "../assistants/AssistantTasks.ts";
 import * as KanbanService from "../kanban/KanbanService.ts";
 import * as NotesLayers from "../notes/NotesLayers.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
@@ -413,6 +414,7 @@ const layerAssistantServiceProvided = AssistantService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
       layerAssistantConnectorsProvided,
+      AssistantTasks.layer,
       layerThreadManagementProvided,
       layerThreadLaunchProvided,
       layerManagedProjectFoldersProvided,

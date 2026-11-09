@@ -20,10 +20,10 @@ it("wraps the instructions, escapes the markup and skips slash commands", () => 
   assert.strictEqual(note.match(/<\/t3_assistant>/g)?.length, 1);
   assert.ok(note.endsWith("</t3_assistant>"));
   assert.strictEqual(assistantNoteFor(assistant, "  /compact"), "");
-  assert.strictEqual(
-    assistantNoteFor({ ...assistant, instructions: " " }, "hi"),
-    '<t3_assistant name="Sam &quot;the&quot; &lt;helper>" handle="sam" access="read-only">\n</t3_assistant>',
-  );
+  // Blank instructions leave only the standing task guidance in the block.
+  const blank = assistantNoteFor({ ...assistant, instructions: " " }, "hi");
+  assert.ok(blank.includes("t3_thread_launch"));
+  assert.ok(blank.endsWith("\n</t3_assistant>"));
 });
 
 it("escapes the role into the opening tag", () => {

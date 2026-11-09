@@ -51,6 +51,7 @@ import { useKanbanEnvironmentIds, useThreadKanbanCard } from "../../state/kanban
 import { AssistantAvatar } from "../assistants/assistantPresentation";
 import { useThreadAssistant } from "../../state/assistants";
 import { AssistantPresenceStack } from "./AssistantPresenceStack";
+import { AssistantTaskBadge } from "../assistants/AssistantTaskBadge";
 import { ThreadNotesButton } from "../notes/ThreadNotesButton";
 
 interface ChatHeaderProps {
@@ -461,6 +462,9 @@ export const ChatHeader = memo(function ChatHeader({
           ) : null}
         </WorkspaceBreadcrumbItem>
       </WorkspaceBreadcrumb>
+      {isServerThread ? (
+        <AssistantTaskBadge environmentId={activeThreadEnvironmentId} threadId={activeThreadId} />
+      ) : null}
       {isServerThread ? (
         <AssistantPresenceStack
           environmentId={activeThreadEnvironmentId}

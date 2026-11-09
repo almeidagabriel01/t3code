@@ -455,6 +455,18 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
   }
   yield* sql`CREATE INDEX IF NOT EXISTS assistant_requests_group_idx ON assistant_requests(group_id)`;
 
+  // A thread an assistant launched for real work; its state is the thread's own.
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS assistant_tasks (
+      thread_id TEXT PRIMARY KEY,
+      assistant_id TEXT NOT NULL,
+      project_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    )
+  `;
+  yield* sql`CREATE INDEX IF NOT EXISTS assistant_tasks_assistant_idx ON assistant_tasks(assistant_id)`;
+
   // A group's shared chat: messages, one task per recipient, and each member's hidden thread.
   if (!teamColumns.some((column) => column.name === "archived_at")) {
     yield* sql`ALTER TABLE assistant_teams ADD COLUMN archived_at TEXT`;

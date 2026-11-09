@@ -11,7 +11,9 @@ import type {
 
 import {
   applyAssistantsEvent,
+  assistantForTaskThread,
   assistantForThread,
+  selectAssistantTasks,
   selectActiveAssistants,
   selectArchivedAssistants,
   selectTeams,
@@ -50,6 +52,7 @@ describe("assistants state", () => {
       type: "snapshot",
       assistants: [assistant("jarvis", { isDefault: true }), assistant("bb"), assistant("c")],
       teams: [],
+      tasks: [],
     })!;
     const archived = applyAssistantsEvent(state, {
       type: "upserted",
@@ -75,6 +78,30 @@ describe("assistants state", () => {
     assert.isUndefined(assistantForThread(removed, "assistant:jarvis:0" as ThreadId));
   });
 
+  it("folds task links next to assistants and finds a thread's owner", () => {
+    const link = (threadId: string, assistantId: string) => ({
+      threadId: threadId as ThreadId,
+      assistantId: assistantId as AssistantId,
+      projectId: "p" as ProjectId,
+      title: threadId,
+      createdAt: "2026-10-01T00:00:00.000Z",
+    });
+    const state = applyAssistantsEvent(null, {
+      type: "snapshot",
+      assistants: [assistant("a"), assistant("b")],
+      teams: [],
+      tasks: [link("t1", "a")],
+    })!;
+    const added = applyAssistantsEvent(state, { type: "taskUpserted", task: link("t2", "b") })!;
+    assert.deepStrictEqual(
+      selectAssistantTasks(added, "a" as AssistantId).map((task) => task.threadId),
+      ["t1"],
+    );
+    assert.strictEqual(assistantForTaskThread(added, "t2" as ThreadId)?.id, "b");
+    assert.isUndefined(assistantForTaskThread(added, "other" as ThreadId));
+    assert.isNull(applyAssistantsEvent(null, { type: "taskUpserted", task: link("t3", "a") }));
+  });
+
   it("folds team events next to assistant ones, oldest team first", () => {
     const team = (id: string, createdAt: string): AssistantTeam => ({
       id: id as AssistantTeamId,
@@ -89,6 +116,7 @@ describe("assistants state", () => {
       type: "snapshot",
       assistants: [assistant("a")],
       teams: [team("t2", "2026-10-02T00:00:00.000Z")],
+      tasks: [],
     })!;
     const added = applyAssistantsEvent(state, {
       type: "teamUpserted",

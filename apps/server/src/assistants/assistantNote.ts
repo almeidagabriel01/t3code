@@ -43,6 +43,9 @@ function teamsLines(self: Pick<Colleague, "handle">, teams: ReadonlyArray<TeamMe
   return escapeBody([...lines, TEAM_GUIDANCE].join("\n"));
 }
 
+const TASKS_LINE =
+  "Do quick things yourself, here: a question, a lookup, a small tweak. For real multi-step code work, start a thread with t3_thread_launch in the right project and give it a full brief: goal, files, constraints, how to verify. It carries your instructions, model and access. You are woken when it finishes, so never wait on it. Then check its diff, run the tests, ask a teammate to review when that helps, send fixes with t3_thread_send, and only then tell the user.";
+
 const ASK_BEFORE_ACTING_LINE =
   "Ask before acting is on: a message you send into another agent conversation is held until the user approves it in this conversation. If a send says it is waiting for approval, tell the user it is waiting and stop; send the same message again only after they approve, and never send it another way if they decline.";
 
@@ -68,6 +71,7 @@ export function assistantNoteFor(
   const open = `<t3_assistant name="${escapeAttribute(assistant.name)}" handle="${assistant.handle}"${role} ${access}>`;
   const body = [
     teamsLines(assistant, teams),
+    TASKS_LINE,
     assistant.workspace === "sandbox" ? sandboxNoteLine(sandboxEnvironmentId) : "",
     assistant.scope === "project" ? PROJECT_SCOPE_NOTE_LINE : "",
     assistant.askBeforeActing === true ? ASK_BEFORE_ACTING_LINE : "",
@@ -76,6 +80,22 @@ export function assistantNoteFor(
     .filter((part) => part !== "")
     .join("\n");
   return body === "" ? `${open}\n</t3_assistant>` : `${open}\n${body}\n</t3_assistant>`;
+}
+
+/** The note of a thread an assistant launched: its instructions travel with the work. */
+function assistantTaskNoteFor(
+  assistant: Pick<Assistant, "name" | "handle" | "instructions">,
+  userText: string,
+): string {
+  if (userText.trimStart().startsWith("/")) return "";
+  const open = `<t3_assistant_task assistant="${escapeAttribute(assistant.name)}" handle="${assistant.handle}">`;
+  const body = [
+    `${assistant.name} launched this thread and reviews its result. Finish with what you changed, what you ran and what is left.`,
+    escapeBody(assistant.instructions.trim()),
+  ]
+    .filter((part) => part !== "")
+    .join("\n");
+  return `${open}\n${body}\n</t3_assistant_task>`;
 }
 
 /**
@@ -89,7 +109,10 @@ export const assistantNote = Effect.fn("AssistantNote.forTurn")(function* (
 ) {
   if (Option.isNone(directory)) return "";
   const found = yield* directory.value.forThread(threadId);
-  if (Option.isNone(found)) return "";
+  if (Option.isNone(found)) {
+    const owner = yield* directory.value.taskOwner(threadId);
+    return Option.isNone(owner) ? "" : assistantTaskNoteFor(owner.value, userText);
+  }
   const { assistant } = found.value;
   const teams = userText.trimStart().startsWith("/")
     ? []

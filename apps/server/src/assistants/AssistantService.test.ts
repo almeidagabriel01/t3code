@@ -36,6 +36,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as AssistantConnectors from "./AssistantConnectors.ts";
 import * as AssistantDirectory from "./AssistantDirectory.ts";
+import * as AssistantTaskLinks from "./AssistantTasks.ts";
 import * as Assistants from "./AssistantService.ts";
 
 const scratch = ProjectId.make("scratch");
@@ -177,7 +178,11 @@ const harness = () => {
     Layer.provide(Layer.merge(secretStore, AssistantDirectory.layer)),
   );
   const layer = Assistants.layer.pipe(
-    Layer.provideMerge(Layer.mergeAll(mocks, connectorsLayer).pipe(Layer.provideMerge(base))),
+    Layer.provideMerge(
+      Layer.mergeAll(mocks, connectorsLayer, AssistantTaskLinks.layer).pipe(
+        Layer.provideMerge(base),
+      ),
+    ),
   );
   return {
     secretValues,

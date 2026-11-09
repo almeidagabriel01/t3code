@@ -31,6 +31,7 @@ import {
 } from "../../state/assistants";
 import { SubagentStatusDot } from "../threads/SubagentStatusDot";
 import { AssistantAvatar } from "./assistantPresentation";
+import { AssistantTaskRows } from "./AssistantTaskRows";
 import { moodTextClass } from "./assistantPresenceLabels";
 import { useAssistantFlows, useAssistantTeamFlows } from "./useAssistantFlows";
 import { useOpenAssistantEditor } from "./openAssistantEditor";
@@ -158,83 +159,92 @@ function AssistantRow(props: {
     },
   ];
   return (
-    <View
-      className={cn("flex-row items-center", props.nested && "ml-3.5 border-l border-border pl-1")}
-    >
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={statusLabel(assistant.name, state)}
-        disabled={assistant.threadId === null}
-        onPress={() => flows.openConversation(assistant)}
-        className="min-h-11 min-w-0 flex-1 flex-row items-center gap-2 rounded-2xl px-2 active:opacity-70"
-      >
-        <View>
-          <AssistantAvatar
-            assistant={assistant}
-            environmentId={environmentId}
-            mood={assistantFace(presence)}
-            size={24}
-          />
-          {state.working || state.needsYou ? (
-            <View className="absolute -right-0.5 -top-0.5">
-              <SubagentStatusDot tone={state.working ? "working" : "completed"} placement="sheet" />
-            </View>
-          ) : null}
-        </View>
-        <Text
-          className={cn(
-            "shrink text-base font-t3-medium",
-            props.sidebar ? "text-drawer-foreground" : "text-foreground",
-          )}
-          numberOfLines={1}
-        >
-          {assistant.name}
-        </Text>
-        {assistant.role === "" ? null : (
-          <View className="max-w-20 rounded-md border border-border px-1.5 py-px">
-            <Text className={cn("text-2xs", muted)} numberOfLines={1}>
-              {assistant.role}
-            </Text>
-          </View>
+    <View>
+      <View
+        className={cn(
+          "flex-row items-center",
+          props.nested && "ml-3.5 border-l border-border pl-1",
         )}
-        {props.environmentLabel ? (
-          <Text className={cn("max-w-[25%] text-xs", muted)} numberOfLines={1}>
-            {props.environmentLabel}
-          </Text>
-        ) : null}
-        <View className="min-w-2 flex-1" />
-        {meta !== null ? (
+      >
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={statusLabel(assistant.name, state)}
+          disabled={assistant.threadId === null}
+          onPress={() => flows.openConversation(assistant)}
+          className="min-h-11 min-w-0 flex-1 flex-row items-center gap-2 rounded-2xl px-2 active:opacity-70"
+        >
+          <View>
+            <AssistantAvatar
+              assistant={assistant}
+              environmentId={environmentId}
+              mood={assistantFace(presence)}
+              size={24}
+            />
+            {state.working || state.needsYou ? (
+              <View className="absolute -right-0.5 -top-0.5">
+                <SubagentStatusDot
+                  tone={state.working ? "working" : "completed"}
+                  placement="sheet"
+                />
+              </View>
+            ) : null}
+          </View>
           <Text
-            testID="assistant-status"
             className={cn(
-              "max-w-[45%] shrink text-xs",
-              moodTextClass(presence.mood, props.sidebar),
+              "shrink text-base font-t3-medium",
+              props.sidebar ? "text-drawer-foreground" : "text-foreground",
             )}
             numberOfLines={1}
           >
-            {meta}
+            {assistant.name}
           </Text>
-        ) : props.projectLabel ? (
-          <View
-            testID="assistant-project"
-            className="max-w-24 rounded-md border border-border px-1.5 py-px"
-          >
-            <Text className={cn("text-2xs", muted)} numberOfLines={1}>
-              {props.projectLabel}
+          {assistant.role === "" ? null : (
+            <View className="max-w-20 rounded-md border border-border px-1.5 py-px">
+              <Text className={cn("text-2xs", muted)} numberOfLines={1}>
+                {assistant.role}
+              </Text>
+            </View>
+          )}
+          {props.environmentLabel ? (
+            <Text className={cn("max-w-[25%] text-xs", muted)} numberOfLines={1}>
+              {props.environmentLabel}
             </Text>
-          </View>
-        ) : null}
-      </Pressable>
-      <RowMenuButton
-        label={`${assistant.name} actions`}
-        sidebar={props.sidebar}
-        actions={actions}
-        onAction={(id) => {
-          if (id === "reset") flows.reset(assistant, { openAfter: true });
-          else if (id === "settings") openEditor(environmentId, assistant);
-          else if (id === "archive") flows.archive(assistant);
-        }}
-      />
+          ) : null}
+          <View className="min-w-2 flex-1" />
+          {meta !== null ? (
+            <Text
+              testID="assistant-status"
+              className={cn(
+                "max-w-[45%] shrink text-xs",
+                moodTextClass(presence.mood, props.sidebar),
+              )}
+              numberOfLines={1}
+            >
+              {meta}
+            </Text>
+          ) : props.projectLabel ? (
+            <View
+              testID="assistant-project"
+              className="max-w-24 rounded-md border border-border px-1.5 py-px"
+            >
+              <Text className={cn("text-2xs", muted)} numberOfLines={1}>
+                {props.projectLabel}
+              </Text>
+            </View>
+          ) : null}
+        </Pressable>
+        <RowMenuButton
+          label={`${assistant.name} actions`}
+          sidebar={props.sidebar}
+          actions={actions}
+          onAction={(id) => {
+            if (id === "reset") flows.reset(assistant, { openAfter: true });
+            else if (id === "settings") openEditor(environmentId, assistant);
+            else if (id === "archive") flows.archive(assistant);
+          }}
+        />
+      </View>
+      <AssistantTaskRows entry={props.entry} sidebar={props.sidebar} />
     </View>
   );
 }

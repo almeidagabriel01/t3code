@@ -338,6 +338,16 @@ export function assistantTeamProblem(team: {
   return null;
 }
 
+/** A thread an assistant launched for real work. Its state is the thread's own, read from its shell. */
+export const AssistantTask = Schema.Struct({
+  threadId: ThreadId,
+  assistantId: AssistantId,
+  projectId: ProjectId,
+  title: Schema.String,
+  createdAt: IsoDateTime,
+});
+export type AssistantTask = typeof AssistantTask.Type;
+
 export const AssistantsSubscribeInput = Schema.Struct({});
 export type AssistantsSubscribeInput = typeof AssistantsSubscribeInput.Type;
 
@@ -347,8 +357,11 @@ export const AssistantsEvent = Schema.Union([
     type: Schema.Literal("snapshot"),
     assistants: Schema.Array(Assistant),
     teams: Schema.Array(AssistantTeam).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+    /** Absent from older servers. */
+    tasks: Schema.Array(AssistantTask).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   }),
   Schema.Struct({ type: Schema.Literal("upserted"), assistant: Assistant }),
+  Schema.Struct({ type: Schema.Literal("taskUpserted"), task: AssistantTask }),
   Schema.Struct({ type: Schema.Literal("removed"), assistantId: AssistantId }),
   Schema.Struct({ type: Schema.Literal("teamUpserted"), team: AssistantTeam }),
   Schema.Struct({ type: Schema.Literal("teamRemoved"), teamId: AssistantTeamId }),

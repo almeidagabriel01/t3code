@@ -574,7 +574,14 @@ export const fakeAssistants = { items: [] as Assistant[], teams: [] as Assistant
 const assistantSubscribers = new Set<Queue.Queue<AssistantsEvent>>();
 handlers[WS_METHODS.assistantsSubscribe] = () =>
   subscribe<AssistantsEvent>(
-    [{ type: "snapshot", assistants: fakeAssistants.items, teams: fakeAssistants.teams }],
+    [
+      {
+        type: "snapshot",
+        assistants: fakeAssistants.items,
+        teams: fakeAssistants.teams,
+        tasks: [],
+      },
+    ],
     (queue) => {
       assistantSubscribers.add(queue);
       return () => assistantSubscribers.delete(queue);
@@ -585,7 +592,7 @@ export function publishAssistants(items: Assistant[], teams: AssistantTeam[] = [
   fakeAssistants.items = items;
   fakeAssistants.teams = teams;
   for (const queue of assistantSubscribers) {
-    Effect.runSync(Queue.offer(queue, { type: "snapshot", assistants: items, teams }));
+    Effect.runSync(Queue.offer(queue, { type: "snapshot", assistants: items, teams, tasks: [] }));
   }
 }
 
