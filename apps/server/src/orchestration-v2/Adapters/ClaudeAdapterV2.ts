@@ -1797,7 +1797,6 @@ export const CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS: ReadonlyArray<string> = [
   "mcp__t3-code__t3_thread_diff",
   "mcp__t3-code__t3_docs",
   "mcp__t3-code__t3_host",
-  "mcp__t3-code__t3_heavy",
   "mcp__t3-code__t3_preview_list",
   "mcp__t3-code__t3_environment_read",
   "mcp__t3-code__t3_environment_links",
