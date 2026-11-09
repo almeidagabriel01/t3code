@@ -3,6 +3,7 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   ASSISTANT_GROUP_STATUS_LABEL,
   assistantGroupPauseReasonLabel,
+  assistantGroupWaitingReason,
 } from "@t3tools/client-runtime/assistantGroupChat";
 import {
   assistantGroupTaskActions,
@@ -57,6 +58,7 @@ export function GroupTaskCard(props: {
   );
   const presence = shell === null ? null : assistantPresence(shell);
   const needs = presence?.mood === "needs" ? presence.detail : null;
+  const waiting = assistantGroupWaitingReason(task);
   return (
     <div
       data-testid="group-task-card"
@@ -87,6 +89,25 @@ export function GroupTaskCard(props: {
           <RelativeTime timestamp={task.updatedAt} />
         </span>
       </div>
+      {task.expectedResult === undefined ? null : (
+        <p data-testid="group-task-expected" className="truncate text-muted-foreground">
+          Expected: {task.expectedResult}
+        </p>
+      )}
+      {task.resources === undefined ? null : (
+        <div data-testid="group-task-resources" className="flex flex-wrap gap-1">
+          {task.resources.map((resource) => (
+            <Badge key={resource} variant="outline" size="sm">
+              {resource}
+            </Badge>
+          ))}
+        </div>
+      )}
+      {waiting === null ? null : (
+        <p data-testid="group-task-waiting" className="text-warning-foreground">
+          {waiting}
+        </p>
+      )}
       {task.status === "paused" ? (
         <p className="text-muted-foreground">{assistantGroupPauseReasonLabel(task.reason)}</p>
       ) : null}

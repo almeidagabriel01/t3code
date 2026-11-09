@@ -253,6 +253,13 @@ export function assistantGroupPauseReasonLabel(reason: string | null): string {
   return (reason !== null ? PAUSE_REASON_LABEL[reason] : undefined) ?? "Paused";
 }
 
+/** Why a queued task is held back by a resource: "waiting for <resource> (used by <member>)". */
+export function assistantGroupWaitingReason(
+  task: Pick<AssistantGroupTask, "status" | "reason">,
+): string | null {
+  return task.status === "queued" && task.reason?.startsWith("waiting for ") ? task.reason : null;
+}
+
 /**
  * A request that opened no task and got no note yet: the lead is still choosing who answers it, or
  * the group has no lead and the message waits for one.

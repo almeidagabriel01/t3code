@@ -3,6 +3,7 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   ASSISTANT_GROUP_STATUS_LABEL,
   assistantGroupPauseReasonLabel,
+  assistantGroupWaitingReason,
 } from "@t3tools/client-runtime/assistantGroupChat";
 import {
   assistantGroupTaskActions,
@@ -54,6 +55,7 @@ export function GroupTaskCard(props: {
   );
   const presence = shell === null ? null : assistantPresence(shell);
   const needs = presence?.mood === "needs" ? presence.detail : null;
+  const waiting = assistantGroupWaitingReason(task);
   return (
     <View
       testID="group-task-card"
@@ -73,6 +75,29 @@ export function GroupTaskCard(props: {
       <Text className="text-xs text-foreground" numberOfLines={2}>
         {task.instruction}
       </Text>
+      {task.expectedResult === undefined ? null : (
+        <Text
+          testID="group-task-expected"
+          className="text-xs text-foreground-muted"
+          numberOfLines={2}
+        >
+          Expected: {task.expectedResult}
+        </Text>
+      )}
+      {task.resources === undefined ? null : (
+        <View testID="group-task-resources" className="flex-row flex-wrap gap-1">
+          {task.resources.map((resource) => (
+            <View key={resource} className="rounded-full border border-border px-2 py-0.5">
+              <Text className="text-[11px] text-foreground-muted">{resource}</Text>
+            </View>
+          ))}
+        </View>
+      )}
+      {waiting === null ? null : (
+        <Text testID="group-task-waiting" className="text-xs text-warning-foreground">
+          {waiting}
+        </Text>
+      )}
       {needs === null ? null : (
         <Text testID="group-task-needs" className="text-xs font-t3-bold text-warning-foreground">
           {needs} · Open the conversation to answer

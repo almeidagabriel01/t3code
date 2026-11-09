@@ -135,3 +135,18 @@ it("clips the group's instructions and memories, and leaves blank ones out", () 
   assert.notInclude(blank, "Group instructions:");
   assert.notInclude(blank, "Group memories:");
 });
+
+it("adds the expected result, reserved resources and stopped tasks to the packet", () => {
+  const packet = groupTaskPacket({
+    ...base,
+    expectedResult: "tests pass",
+    resources: ["folder:/w/app", "browser"],
+    stopped: [{ taskId: "gt:9", status: "paused", reason: "stopped", instruction: "Old job" }],
+  });
+  assert.include(packet, "Expected result: tests pass");
+  assert.include(packet, "no other task uses them meanwhile): folder:/w/app, browser");
+  assert.include(packet, "- gt:9 (paused, stopped): Old job");
+  const plain = groupTaskPacket(base);
+  assert.notInclude(plain, "Expected result");
+  assert.notInclude(plain, "stopped tasks");
+});

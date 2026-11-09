@@ -77,6 +77,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import { TextGeneration } from "../textGeneration/TextGeneration.ts";
 import { AssistantGroupGate } from "./AssistantGroupGate.ts";
 import { routeGroupMessage } from "./AssistantGroupRouting.ts";
+import { firstConflict, normalizeResources } from "./AssistantGroupResources.ts";
 import {
   childResultsText,
   groupTaskPacket,
@@ -120,6 +121,11 @@ const SUMMARY_INPUT_CHARS = 24_000;
 const SUMMARY_MESSAGE_CHARS = 2_000;
 /** Most older messages a task's #seq mentions pull into its packet. */
 const QUOTED_MESSAGES = 8;
+const EXPECTED_RESULT_CHARS = 500;
+const CANCEL_REASON_CHARS = 300;
+/** Stopped tasks a packet lists, and the instruction text kept for each. */
+const STOPPED_LISTED = 5;
+const STOPPED_INSTRUCTION_CHARS = 120;
 
 /** Waiting for a slot or a run, or running: work the owner is still on. */
 const ACTIVE: ReadonlyArray<AssistantGroupTaskStatus> = ["queued", "running", "waiting"];
@@ -180,6 +186,9 @@ interface TaskRow {
   readonly result_text: string | null;
   readonly hops: number;
   readonly followup: string | null;
+  readonly expected_result: string | null;
+  readonly source_seqs_json: string;
+  readonly resources_json: string;
   readonly created_at: string;
   readonly updated_at: string;
 }
@@ -213,6 +222,16 @@ const toMessage = (row: MessageRow): AssistantGroupMessage => ({
   createdAt: row.created_at,
 });
 
+const NumbersJson = Schema.fromJsonString(Schema.Array(Schema.Int));
+const StringsJson = Schema.fromJsonString(Schema.Array(Schema.String));
+const decodeNumbers = Schema.decodeUnknownOption(NumbersJson);
+const decodeStrings = Schema.decodeUnknownOption(StringsJson);
+const encodeNumbers = Schema.encodeSync(NumbersJson);
+const encodeStrings = Schema.encodeSync(StringsJson);
+const sourceSeqsOf = (row: TaskRow) =>
+  Option.getOrElse(decodeNumbers(row.source_seqs_json), () => []);
+const resourcesOf = (row: TaskRow) => Option.getOrElse(decodeStrings(row.resources_json), () => []);
+
 const toTask = (row: TaskRow): AssistantGroupTask => ({
   id: row.task_id as AssistantGroupTaskId,
   teamId: row.team_id as AssistantTeamId,
@@ -225,6 +244,9 @@ const toTask = (row: TaskRow): AssistantGroupTask => ({
   status: row.status as AssistantGroupTaskStatus,
   reason: row.reason,
   threadId: groupThreadId(row.owner_id, row.team_id),
+  ...(row.expected_result === null ? {} : { expectedResult: row.expected_result }),
+  ...(sourceSeqsOf(row).length === 0 ? {} : { sourceSeqs: sourceSeqsOf(row) }),
+  ...(resourcesOf(row).length === 0 ? {} : { resources: resourcesOf(row) }),
   createdAt: row.created_at,
   updatedAt: row.updated_at,
 });
@@ -297,6 +319,9 @@ export class AssistantGroups extends Context.Service<
         readonly callerThreadId: ThreadId;
         readonly member: string;
         readonly instruction: string;
+        readonly expectedResult?: string;
+        readonly sourceSeqs?: ReadonlyArray<number>;
+        readonly resources?: ReadonlyArray<string>;
       }) => Effect.Effect<
         { readonly taskId: AssistantGroupTaskId; readonly status: AssistantGroupTaskStatus },
         AssistantError
@@ -319,6 +344,12 @@ export class AssistantGroups extends Context.Service<
       readonly result: (input: {
         readonly callerThreadId: ThreadId;
         readonly text: string;
+      }) => Effect.Effect<GroupToolResult, AssistantError>;
+      /** Cancels a task the caller gave (and what that task gave on), stopping its runs. */
+      readonly cancel: (input: {
+        readonly callerThreadId: ThreadId;
+        readonly taskId: string;
+        readonly reason: string;
       }) => Effect.Effect<GroupToolResult, AssistantError>;
     };
     /** A member's run on a group thread ended or changed; moves its task along. */
@@ -548,17 +579,23 @@ const make = Effect.gen(function* () {
     readonly status: AssistantGroupTaskStatus;
     readonly reason?: string | null;
     readonly followup?: string | null;
+    readonly expectedResult?: string | null;
+    readonly sourceSeqs?: ReadonlyArray<number>;
+    readonly resources?: ReadonlyArray<string>;
   }) {
     const id = yield* newId("gt");
     const now = yield* nowIso;
     const rows = yield* sql<TaskRow>`
       INSERT INTO assistant_group_tasks (
         task_id, team_id, root_id, parent_id, kind, request_message_id, owner_id, instruction,
-        status, reason, revision, hops, followup, created_at, updated_at
+        status, reason, revision, hops, followup, expected_result, source_seqs_json, resources_json,
+        created_at, updated_at
       ) VALUES (
         ${id}, ${input.teamId}, ${input.rootId ?? id}, ${input.parentId ?? null}, ${input.kind},
         ${input.requestMessageId}, ${input.ownerId}, ${input.instruction}, ${input.status},
-        ${input.reason ?? null}, 1, 0, ${input.followup ?? null}, ${now}, ${now}
+        ${input.reason ?? null}, 1, 0, ${input.followup ?? null}, ${input.expectedResult ?? null},
+        ${encodeNumbers(input.sourceSeqs ?? [])}, ${encodeStrings(input.resources ?? [])},
+        ${now}, ${now}
       ) RETURNING *`;
     yield* publishTask(rows[0]!);
     yield* assistants.refreshTeamChat(input.teamId);
@@ -770,9 +807,18 @@ const make = Effect.gen(function* () {
         SELECT summary FROM assistant_group_summaries WHERE team_id = ${team.id}`)[0]?.summary ??
       null;
     const replyTarget = (yield* getMessage(task.request_message_id))?.reply_to ?? "";
-    const mentioned = [...task.instruction.matchAll(/#(\d+)/g)]
-      .map((match) => Number(match[1]))
-      .slice(0, QUOTED_MESSAGES);
+    const mentioned = [
+      ...new Set([
+        ...sourceSeqsOf(task),
+        ...[...task.instruction.matchAll(/#(\d+)/g)].map((match) => Number(match[1])),
+      ]),
+    ].slice(0, QUOTED_MESSAGES);
+    const stopped = yield* sql<TaskRow>`
+      SELECT t.* FROM assistant_group_tasks t
+      JOIN assistant_group_messages m ON m.message_id = t.request_message_id
+      WHERE t.team_id = ${team.id} AND t.owner_id = ${owner.assistant_id}
+        AND t.task_id <> ${task.task_id} AND t.status IN ('paused', 'failed') AND m.seq > ${boundary}
+      ORDER BY t.updated_at DESC, t.rowid DESC LIMIT ${STOPPED_LISTED}`;
     const quoted = yield* sql<MessageRow>`
       SELECT * FROM assistant_group_messages
       WHERE team_id = ${team.id} AND kind = 'message'
@@ -790,6 +836,14 @@ const make = Effect.gen(function* () {
       quoted: quoted.map((row) => ({ seq: row.seq, from: labelOf(row, names), text: row.text })),
       from,
       instruction: task.instruction,
+      expectedResult: task.expected_result,
+      resources: resourcesOf(task),
+      stopped: stopped.map((row) => ({
+        taskId: row.task_id,
+        status: row.status,
+        reason: row.reason,
+        instruction: clip(row.instruction, STOPPED_INSTRUCTION_CHARS),
+      })),
       followup: task.followup,
       instructions: team.instructions ?? "",
       memories: team.memories ?? [],
@@ -912,7 +966,22 @@ const make = Effect.gen(function* () {
     }).pipe(Effect.ensuring(Effect.sync(() => void summarizing.delete(teamId))));
   });
 
-  /** Starts queued tasks, oldest first, while the group has free slots. */
+  /** Sets why a queued task waits without moving it in the queue, which orders by updated_at. */
+  const setWaitReason = Effect.fn("AssistantGroups.setWaitReason")(function* (
+    task: TaskRow,
+    reason: string | null,
+  ) {
+    if (task.reason === reason) return;
+    const rows = yield* sql<TaskRow>`
+      UPDATE assistant_group_tasks SET reason = ${reason} WHERE task_id = ${task.task_id} RETURNING *`;
+    yield* publishTask(rows[0]!);
+  });
+
+  /**
+   * Starts queued tasks, oldest first, while the group has free slots. A task waits while another
+   * running or earlier-queued one holds an overlapping resource. Only running tasks hold: a parent
+   * waiting on its children has ended its run and gives its resources up, so no wait is circular.
+   */
   const pump = Effect.fn("AssistantGroups.pump")(function* (teamId: string) {
     const team = yield* loadTeam(teamId).pipe(Effect.orElseSucceed(() => undefined));
     if (team === undefined || team.archivedAt !== null) return;
@@ -921,10 +990,33 @@ const make = Effect.gen(function* () {
       SELECT * FROM assistant_group_tasks
       WHERE team_id = ${teamId} AND status IN ('queued', 'running')
       ORDER BY updated_at ASC, rowid ASC`;
-    let running = live.filter((task) => task.status === "running").length;
+    let running = 0;
+    const held = new Map<string, string>();
+    const hold = (task: TaskRow, who: string) => {
+      for (const resource of resourcesOf(task)) if (!held.has(resource)) held.set(resource, who);
+    };
     for (const task of live) {
-      if (running >= ASSISTANT_GROUP_PARALLEL_LIMIT) break;
+      if (task.status !== "running") continue;
+      running += 1;
+      if (resourcesOf(task).length > 0) hold(task, yield* nameOf(task.owner_id));
+    }
+    for (const task of live) {
       if (task.status !== "queued") continue;
+      const wanted = resourcesOf(task);
+      const clash = firstConflict(wanted, held);
+      // A task that waits still claims its resources, so a later one cannot overtake it.
+      if (wanted.length > 0 && (clash !== null || running >= ASSISTANT_GROUP_PARALLEL_LIMIT)) {
+        hold(task, yield* nameOf(task.owner_id));
+      }
+      if (clash !== null) {
+        yield* setWaitReason(task, `waiting for ${clash.resource} (used by ${clash.holder})`);
+        continue;
+      }
+      if (running >= ASSISTANT_GROUP_PARALLEL_LIMIT) {
+        yield* setWaitReason(task, null);
+        continue;
+      }
+      if (wanted.length > 0) hold(task, yield* nameOf(task.owner_id));
       if (yield* startTask(team, task)) running += 1;
     }
   });
@@ -1607,6 +1699,10 @@ const make = Effect.gen(function* () {
           }
           const root = yield* rootOf(task);
           const over = root.hops + 1 > ASSISTANT_GROUP_HANDOFF_LIMIT;
+          const expected = clip((input.expectedResult ?? "").trim(), EXPECTED_RESULT_CHARS);
+          const sourceSeqs = [...new Set(input.sourceSeqs ?? [])]
+            .filter((seq) => Number.isInteger(seq) && seq > 0)
+            .slice(0, QUOTED_MESSAGES);
           const child = yield* insertTask({
             teamId: team.id,
             rootId: task.root_id,
@@ -1617,6 +1713,9 @@ const make = Effect.gen(function* () {
             instruction: input.instruction,
             status: over ? "paused" : "queued",
             reason: over ? "handoff_limit" : null,
+            expectedResult: expected === "" ? null : expected,
+            sourceSeqs,
+            resources: normalizeResources(input.resources ?? []),
           });
           if (over) {
             yield* insertMessage({
@@ -1765,6 +1864,45 @@ const make = Effect.gen(function* () {
           if (pending.length > 0) return { accepted: false, message: RESULT_WAITS_FOR_REPLY };
           yield* patchTask(task, { result_text: clip(input.text, RESULT_MAX_CHARS) });
           return { accepted: true, message: "Your answer is posted when this task ends." };
+        }),
+      );
+    }, storage),
+    cancel: Effect.fn("AssistantGroups.member.cancel")(function* (input) {
+      return yield* lock.withPermits(1)(
+        Effect.gen(function* () {
+          const { team, task } = yield* callerTask(input.callerThreadId);
+          const target = yield* getTask(input.taskId);
+          const parent = target?.parent_id == null ? undefined : yield* getTask(target.parent_id);
+          // Only a task the caller gave: its parent is a task the caller owns.
+          if (
+            target === undefined ||
+            target.team_id !== team.id ||
+            parent === undefined ||
+            parent.owner_id !== task.owner_id
+          ) {
+            return yield* invalid("You can only cancel a task you assigned.");
+          }
+          if (target.status === "cancelled")
+            return { accepted: true, message: "Already cancelled." };
+          if (target.status === "completed") {
+            return { accepted: false, message: "That task is already completed." };
+          }
+          const reason = clip(input.reason.trim(), CANCEL_REASON_CHARS);
+          const open = [target, ...(yield* descendants(target))].filter((row) =>
+            OPEN.includes(row.status as AssistantGroupTaskStatus),
+          );
+          let cancelled = target;
+          for (const row of open) {
+            if (row.status === "running") yield* stopRun(row);
+            const done = yield* patchTask(row, {
+              status: "cancelled",
+              reason: row === target && reason !== "" ? reason : null,
+            });
+            if (row === target) cancelled = done;
+          }
+          yield* resumeParent(cancelled);
+          yield* pump(team.id);
+          return { accepted: true, message: "Cancelled." };
         }),
       );
     }, storage),

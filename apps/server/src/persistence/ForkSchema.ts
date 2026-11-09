@@ -503,6 +503,14 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
       updated_at TEXT NOT NULL
     )
   `;
+  const groupTaskColumns = yield* sql<{
+    readonly name: string;
+  }>`PRAGMA table_info(assistant_group_tasks)`;
+  if (!groupTaskColumns.some((column) => column.name === "expected_result")) {
+    yield* sql`ALTER TABLE assistant_group_tasks ADD COLUMN expected_result TEXT`;
+    yield* sql`ALTER TABLE assistant_group_tasks ADD COLUMN source_seqs_json TEXT NOT NULL DEFAULT '[]'`;
+    yield* sql`ALTER TABLE assistant_group_tasks ADD COLUMN resources_json TEXT NOT NULL DEFAULT '[]'`;
+  }
   yield* sql`CREATE INDEX IF NOT EXISTS assistant_group_tasks_team_idx ON assistant_group_tasks(team_id, status)`;
   yield* sql`CREATE INDEX IF NOT EXISTS assistant_group_tasks_root_idx ON assistant_group_tasks(root_id)`;
   // How far the user has read each group's chat. Groups that already have messages start read.
