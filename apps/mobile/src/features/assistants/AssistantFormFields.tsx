@@ -30,6 +30,7 @@ export function ChoiceRow(props: {
   readonly leading?: ReactNode;
   readonly label: string;
   readonly description?: string;
+  readonly descriptionTruncatesStart?: boolean;
   readonly selected: boolean;
   readonly onPress: () => void;
 }) {
@@ -47,6 +48,7 @@ export function ChoiceRow(props: {
         leading={props.leading}
         label={props.label}
         description={props.description}
+        descriptionTruncatesStart={props.descriptionTruncatesStart}
         accessory={
           props.role === "checkbox" ? (
             <SymbolView

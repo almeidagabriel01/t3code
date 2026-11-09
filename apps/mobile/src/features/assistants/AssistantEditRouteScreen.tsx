@@ -350,6 +350,7 @@ function AssistantForm(props: { readonly editor: AssistantEditor }) {
                 icon={row.id === ALL_PROJECTS ? "globe" : "folder.fill"}
                 label={row.label}
                 description={row.detail ?? undefined}
+                descriptionTruncatesStart
                 selected={picked.includes(row.id)}
                 onPress={() =>
                   updateAssistantDraft({ projectIds: toggleAssistantProject(picked, row.id) })

@@ -15,6 +15,7 @@ export interface ListRowContentProps {
   readonly disabled?: boolean;
   /** Paths keep their meaningful end visible on one line. */
   readonly labelTruncatesStart?: boolean;
+  readonly descriptionTruncatesStart?: boolean;
 }
 
 export function ListRowLayout({
@@ -25,6 +26,7 @@ export function ListRowLayout({
   leading,
   disabled,
   labelTruncatesStart,
+  descriptionTruncatesStart,
   accessory,
   tone = "default",
 }: ListRowContentProps & { readonly accessory?: ReactNode; readonly tone?: "default" | "danger" }) {
@@ -60,7 +62,13 @@ export function ListRowLayout({
           {label}
         </AppText>
         {description ? (
-          <AppText textRole="footnote" className="text-foreground-muted">
+          <AppText
+            textRole="footnote"
+            className="text-foreground-muted"
+            {...(descriptionTruncatesStart
+              ? { numberOfLines: 1, ellipsizeMode: "head" as const }
+              : {})}
+          >
             {description}
           </AppText>
         ) : null}
