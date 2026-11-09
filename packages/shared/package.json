@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./heavyEntryName": {
+      "types": "./src/heavyEntryName.ts",
+      "import": "./src/heavyEntryName.ts"
+    },
     "./changedFileKind": {
       "types": "./src/changedFileKind.ts",
       "import": "./src/changedFileKind.ts"

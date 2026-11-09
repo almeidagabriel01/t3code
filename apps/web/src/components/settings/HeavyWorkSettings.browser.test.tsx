@@ -4,6 +4,7 @@ import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
+import "../../index.css";
 
 const mocks = vi.hoisted(() => ({
   scope: { environmentIds: ["env"] } as { environmentIds: string[] },

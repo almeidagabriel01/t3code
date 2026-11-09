@@ -138,7 +138,7 @@ describe("HeavyQueueSection", () => {
     mocks.titles = { t1: "Fix login" };
     setup(
       [
-        entry("a", { startedAt: NOW, threadId: "t1" }),
+        entry("a", { startedAt: NOW, threadId: "t1", name: "Build iPhone" }),
         entry("b", { note: "Moved by the user" }),
         entry("c"),
       ],
@@ -149,8 +149,8 @@ describe("HeavyQueueSection", () => {
     );
     const view = await mount();
     const rows = [...view.host.querySelectorAll("p")].map((row) => row.textContent);
-    expect(rows.find((row) => row?.startsWith("cmd a"))).toMatch(
-      /^cmd a\|App Project · Fix login · Always first · Running /,
+    expect(rows.find((row) => row?.startsWith("Build iPhone"))).toMatch(
+      /^Build iPhone\|cmd a · App Project · Fix login · Always first · Running /,
     );
     expect(rows.find((row) => row?.startsWith("cmd b"))).toMatch(
       /Waiting .* · letting the last one ramp up · Moved by the user\|#1$/,

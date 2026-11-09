@@ -1,4 +1,5 @@
 import type { HeavyQueueEntry, HeavyQueueState } from "@t3tools/contracts";
+import { heavyEntryName } from "@t3tools/shared/heavyEntryName";
 
 const LOAD_PER_CORE_HIGH = 1.5;
 const MEMORY_FREE_LOW = 0.1;
@@ -35,6 +36,7 @@ export const heavyStatus = (input: {
     .filter((entry) => entry.startedAt === null)
     .map((entry, index) => ({
       ...entry,
+      name: heavyEntryName(entry),
       position: index + 1,
       ...(input.reasons[entry.id] === undefined ? {} : { reason: input.reasons[entry.id] }),
     }));
@@ -49,7 +51,7 @@ export const heavyStatus = (input: {
       availableMemoryPercent: round(availableMemoryPercent),
       workingAgents: input.workingAgents,
     },
-    running,
+    running: running === null ? null : { ...running, name: heavyEntryName(running) },
     machine: input.machine,
     runningCount: active.length,
     maxRunning: input.maxRunning,

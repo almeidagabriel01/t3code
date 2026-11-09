@@ -1,3 +1,4 @@
+import { heavyEntryName } from "@t3tools/shared/heavyEntryName";
 import {
   closestCenter,
   DndContext,
@@ -96,7 +97,7 @@ function RowMenu({
     const target = moveTarget(entries, entry.id, action);
     if (target !== undefined) void actions.move(entry.id, target);
   };
-  const label = readableLabel(entry.label);
+  const label = heavyEntryName(entry);
   return (
     <Menu>
       <MenuTrigger
@@ -213,7 +214,8 @@ function Row({
     transition,
     isDragging,
   } = useSortable({ id: entry.id, disabled: running || !actions.canChange });
-  const label = readableLabel(entry.label);
+  const label = heavyEntryName(entry);
+  const command = readableLabel(entry.label);
   const title = entry.threadId === null ? undefined : threadTitle(entry.threadId);
   const detail = [state.reasons[entry.id], entry.note].filter(Boolean).join(" · ");
   const Icon = running ? PlayIcon : HourglassIcon;
@@ -261,13 +263,14 @@ function Row({
             </span>
           )}
         </div>
+        <div className="truncate text-xs font-medium text-foreground/90">{label}</div>
         <Tooltip>
           <TooltipTrigger
             render={
-              <div className="cursor-default truncate font-mono text-2xs text-foreground/90" />
+              <div className="cursor-default truncate font-mono text-3xs text-muted-foreground" />
             }
           >
-            {label}
+            {command}
           </TooltipTrigger>
           <TooltipPopup side="top" className="max-w-sm break-all">
             {entry.label}

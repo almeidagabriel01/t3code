@@ -10,6 +10,7 @@ import {
   ruleForRoot,
   type MoveAction,
 } from "@t3tools/client-runtime/state/heavyQueueModel";
+import { heavyEntryName } from "@t3tools/shared/heavyEntryName";
 import { ThreadId, type EnvironmentId, type HeavyQueueEntry } from "@t3tools/contracts";
 import { useEffect, useState } from "react";
 import { Alert } from "react-native";
@@ -55,6 +56,7 @@ function QueueEntryRows(props: {
   const origin = thread?.title ?? entry.cwd.split(/[\\/]/).findLast(Boolean) ?? entry.cwd;
   const running = position === null;
   const description = [
+    readableLabel(entry.label),
     project?.title,
     origin,
     rule === undefined ? undefined : PRIORITY_LABEL[rule.priority],
@@ -76,7 +78,7 @@ function QueueEntryRows(props: {
     <>
       <ListRowLayout
         icon={running ? "play" : "hourglass"}
-        label={readableLabel(entry.label)}
+        label={heavyEntryName(entry)}
         description={description}
         {...(position === null ? {} : { detail: `#${position}` })}
       />
@@ -172,7 +174,7 @@ export function HeavyQueueSection(props: { readonly environmentId: EnvironmentId
     cancel: (entry) =>
       Alert.alert(
         entry.startedAt === null ? "Remove from the queue?" : "Stop the running command?",
-        readableLabel(entry.label),
+        heavyEntryName(entry),
         [
           { text: "Keep", style: "cancel" },
           {

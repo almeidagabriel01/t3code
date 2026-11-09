@@ -145,9 +145,18 @@ describe("t3 heavy", () => {
   it("parses the queue dir and the separator", () => {
     expect(parseHeavyArgs(["--queue-dir", "/q", "--", "vp", "test"])).toEqual({
       dir: "/q",
+      name: undefined,
       program: "vp",
       args: ["test"],
     });
+    expect(
+      parseHeavyArgs(["--name", "Server tests", "--queue-dir", "/q", "--", "vp", "test"]),
+    ).toMatchObject({
+      name: "Server tests",
+      dir: "/q",
+      program: "vp",
+    });
+    expect(parseHeavyArgs(["--queue-dir", "/q", "--name", "  ", "--", "vp"]).name).toBeUndefined();
     expect(parseHeavyArgs(["vp"]).dir).toBe(Queue.defaultQueueDir());
   });
 });

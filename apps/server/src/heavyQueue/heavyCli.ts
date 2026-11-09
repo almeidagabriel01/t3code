@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off globalTimers:off
-/** `t3 heavy [--queue-dir <dir>] -- <program> [args...]`: waits for the machine's heavy slot, then runs the program. */
+/** `t3 heavy [--name <title>] [--queue-dir <dir>] -- <program> [args...]`: waits for the machine's heavy slot, then runs the program. */
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeOS from "node:os";
@@ -20,12 +20,14 @@ const WAITING_EXIT: Record<(typeof SIGNALS)[number], number> = {
 export const parseHeavyArgs = (args: ReadonlyArray<string>) => {
   let rest = args;
   let dir = defaultQueueDir();
-  if (rest[0] === "--queue-dir" && rest[1] !== undefined) {
-    dir = rest[1];
+  let name: string | undefined;
+  while (rest[1] !== undefined && (rest[0] === "--queue-dir" || rest[0] === "--name")) {
+    if (rest[0] === "--name") name = rest[1].trim().slice(0, 60) || undefined;
+    else dir = rest[1];
     rest = rest.slice(2);
   }
   if (rest[0] === "--") rest = rest.slice(1);
-  return { dir, program: rest[0], args: rest.slice(1) };
+  return { dir, name, program: rest[0], args: rest.slice(1) };
 };
 
 const cpuTimes = () =>
@@ -57,9 +59,11 @@ const makeHostReader = () => {
 };
 
 export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> => {
-  const { dir, program, args } = parseHeavyArgs(argv);
+  const { dir, name, program, args } = parseHeavyArgs(argv);
   if (program === undefined) {
-    process.stderr.write("Usage: t3 heavy [--queue-dir <dir>] -- <program> [args...]\n");
+    process.stderr.write(
+      "Usage: t3 heavy [--name <title>] [--queue-dir <dir>] -- <program> [args...]\n",
+    );
     process.exit(2);
   }
   const id = NodeCrypto.randomUUID();
@@ -69,6 +73,7 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
     pid: process.pid,
     threadId: process.env.T3CODE_THREAD_ID ?? null,
     label,
+    ...(name === undefined ? {} : { name }),
     cwd: process.cwd(),
     createdAt: new Date().toISOString(),
     startedAt: null,

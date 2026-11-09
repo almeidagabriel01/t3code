@@ -782,7 +782,17 @@ export const makeDeviceTools = Effect.fn("evaluateMcpToolUse.makeDeviceTools")(f
         Layer.mergeAll(
           liveThreadsLayer,
           Layer.mock(ProjectService.ProjectService)({ getById: () => Effect.succeedNone }),
-          Layer.mock(HeavyQueue.HeavyQueue)({ state: Effect.succeed({ entries: [] }) }),
+          Layer.mock(HeavyQueue.HeavyQueue)({
+            state: Effect.succeed({
+              entries: [],
+              paused: false,
+              rules: [],
+              maxRunning: 3,
+              reasons: {},
+              machine: null,
+              room: true,
+            }),
+          }),
           ServerSettingsService.layerTest({
             enableDeviceSupport: true,
             enableAgentDeviceAccess: world.deviceAgentAccess !== false,

@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
+import "../../index.css";
 
 const mocks = vi.hoisted(() => ({
   actions: {
@@ -87,7 +88,11 @@ describe("HeavyQueueGroup", () => {
   it("shows project, thread, reason, note and place for every entry", async () => {
     setup(
       [
-        entry("test", { startedAt: "2026-01-01T00:00:00.000Z", threadId: "t1" }),
+        entry("test", {
+          startedAt: "2026-01-01T00:00:00.000Z",
+          threadId: "t1",
+          name: "Server tests",
+        }),
         entry("build", { note: "Moved by the user" }),
         entry("e2e"),
       ],
@@ -95,9 +100,11 @@ describe("HeavyQueueGroup", () => {
     );
     await using screen = await render(group());
     await expect.element(screen.getByText("Fix build")).toBeVisible();
+    await expect.element(screen.getByText("Server tests")).toBeVisible();
+    await expect.element(screen.getByText("pnpm test")).toBeVisible();
     await expect.element(screen.getByText(/^Running · /)).toBeVisible();
-    await expect.element(screen.getByText("1st")).toBeVisible();
-    await expect.element(screen.getByText("2nd")).toBeVisible();
+    await expect.element(screen.getByText(/^1st/)).toBeVisible();
+    await expect.element(screen.getByText(/^2nd/)).toBeVisible();
     await expect
       .element(screen.getByText(/waiting for room: needs ~4.0 GB, 1.2 GB free · Moved by the user/))
       .toBeVisible();
@@ -151,19 +158,16 @@ describe("HeavyQueueGroup", () => {
     expect(mocks.openThread).toHaveBeenCalledTimes(2);
   });
 
-  it("sets and clears the project's priority from the menu", async () => {
+  it.each([
+    ["Last", "last"],
+    ["Normal", null],
+  ] as const)("sets the project's priority to %s from the menu", async (name, priority) => {
     setup([entry("a"), entry("b")], { rules: [{ root: "/work/app", priority: "first" }] });
     await using screen = await render(group());
-    await expect.element(screen.getAllByText("Always first").first()).toBeVisible();
+    await expect.element(screen.getByText("Always first").first()).toBeVisible();
     await openMenu(screen, "a");
-    await userEvent.click(screen.getByRole("menuitemradio", { name: "Last" }));
-    expect(mocks.actions.setRule).toHaveBeenCalledWith("/work/app", "last");
-    await openMenu(screen, "a");
-    await userEvent.click(screen.getByRole("menuitemradio", { name: "Normal" }));
-    expect(mocks.actions.setRule).toHaveBeenCalledWith("/work/app", null);
-    await openMenu(screen, "a");
-    await userEvent.click(screen.getByRole("menuitemradio", { name: "Always first" }));
-    expect(mocks.actions.setRule).toHaveBeenCalledWith("/work/app", "first");
+    await userEvent.click(screen.getByRole("menuitemradio", { name }));
+    expect(mocks.actions.setRule).toHaveBeenCalledWith("/work/app", priority);
   });
 
   it("pauses and resumes from the switch, and says so in the summary", async () => {

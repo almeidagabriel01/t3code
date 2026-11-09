@@ -58,7 +58,8 @@ external display.
 When several agents run tests, builds or simulators at once, they queue on the
 machine that hosts T3 Code. Agents put the command behind `t3 heavy`, and the
 queue starts jobs in order. Open the **Resource Manager** in the status bar to
-see each job with its project, the thread that queued it, how long it has run
+see each job with a short name (agents give one with `--name`; otherwise T3
+derives it from the command, which shows below it) and its project, the thread that queued it, how long it has run
 or waited, and why a waiting job has not started ("waiting for room: needs
 ~4 GB, 1.2 GB free", "letting the last one ramp up", "paused"). On mobile it is
 under Settings → Maintenance.

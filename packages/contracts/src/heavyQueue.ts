@@ -8,6 +8,8 @@ export const HeavyQueueEntry = Schema.Struct({
   /** The agent thread that queued it; null when run outside an agent. */
   threadId: Schema.NullOr(Schema.String),
   label: Schema.String,
+  /** Short human title given with `--name`; absent on older entries. */
+  name: Schema.optionalKey(Schema.String),
   cwd: Schema.String,
   createdAt: Schema.String,
   /** Set once the entry holds the slot; at most one entry has it. */
