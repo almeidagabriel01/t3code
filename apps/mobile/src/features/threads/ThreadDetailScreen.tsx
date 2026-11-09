@@ -210,6 +210,7 @@ import { ComposerQueuedEditBanner } from "./ComposerQueuedEdit";
 import { ThreadWorkspaceNotice } from "./ThreadWorkspaceNotice";
 import { useThreadQueuedCount } from "./ThreadQueueControl";
 import { ThreadAssistantStack } from "../assistants/AssistantPresence";
+import { AssistantTaskChip } from "../assistants/AssistantTaskChip";
 import { ThreadGuestShareBar } from "./ThreadGuestShareBar";
 import { ThreadComposerKanbanCardChip } from "../kanban/ThreadComposerKanbanCardChip";
 import { ThreadKanbanCardChip } from "../kanban/ThreadKanbanCardChip";
@@ -1673,6 +1674,12 @@ function ThreadDetailBody(
                       threadRef={props.selectedThreadDetailRef}
                       canOperateThread={props.canOperateThread}
                     />
+                    {props.draftMode ? null : (
+                      <AssistantTaskChip
+                        environmentId={props.environmentId}
+                        threadId={props.selectedThread.id}
+                      />
+                    )}
                     {props.draftMode ? null : (
                       <ThreadAssistantStack
                         environmentId={props.environmentId}

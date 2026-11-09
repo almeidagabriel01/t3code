@@ -295,6 +295,6 @@ describe("assistantTeamProblem", () => {
 
   it("an old snapshot without teams still decodes, with none", () => {
     const decoded = decodeEvent({ type: "snapshot", assistants: [] });
-    expect(decoded).toMatchObject({ type: "snapshot", teams: [] });
+    expect(decoded).toMatchObject({ type: "snapshot", teams: [], tasks: [] });
   });
 });

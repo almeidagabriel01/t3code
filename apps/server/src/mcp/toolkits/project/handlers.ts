@@ -11,6 +11,7 @@ import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import { linkTaskLaunch, unlinkTaskLaunch } from "../../../assistants/AssistantTasks.ts";
 import { OrchestratorRuntimeModeAboveCeilingError } from "../../../orchestration-v2/Orchestrator.ts";
 import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadMessageIntake from "../../../orchestration-v2/ThreadMessageIntake.ts";
@@ -233,6 +234,12 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             )?.supportedRuntimeModes,
           });
         }
+        const linked = yield* linkTaskLaunch({
+          callerThreadId: caller?.id,
+          threadId,
+          projectId,
+          title: input.title,
+        });
         const result = yield* ThreadMessageIntake.launchThread({
           commandId,
           threadId,
@@ -281,6 +288,8 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             }
             return unavailable();
           }),
+          // A launch that fails takes its task link back; a replay keeps the first one.
+          Effect.tapError(() => (linked && !replaying ? unlinkTaskLaunch(threadId) : Effect.void)),
         );
         const thread = result.projection.thread;
         const run = result.projection.runs.find((run) => run.userMessageId === messageId);

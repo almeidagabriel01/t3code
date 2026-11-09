@@ -55,6 +55,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as AssistantAvatars from "./AssistantAvatars.ts";
 import * as AssistantConnectors from "./AssistantConnectors.ts";
+import { AssistantTasks } from "./AssistantTasks.ts";
 import {
   type AssistantTeamRow,
   allTeams,
@@ -166,6 +167,7 @@ const make = Effect.gen(function* () {
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const scheduledTasks = yield* ScheduledTaskService.ScheduledTaskService;
   const connectors = yield* AssistantConnectors.AssistantConnectors;
+  const tasks = yield* AssistantTasks;
   const providerRegistry = yield* Effect.serviceOption(ProviderRegistry.ProviderRegistry);
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -461,11 +463,23 @@ const make = Effect.gen(function* () {
           const chatSubscription = yield* PubSub.subscribe(chatEvents);
           const assistants = (yield* allRows).map(toAssistant);
           const teams = yield* allTeams(sql);
+          const taskSubscription = yield* PubSub.subscribe(tasks.changes);
           return Stream.concat(
-            Stream.succeed<AssistantsEvent>({ type: "snapshot", assistants, teams }),
-            Stream.merge(
-              Stream.fromSubscription(subscription),
-              Stream.fromSubscription(chatSubscription),
+            Stream.succeed<AssistantsEvent>({
+              type: "snapshot",
+              assistants,
+              teams,
+              tasks: yield* tasks.list,
+            }),
+            Stream.mergeAll(
+              [
+                Stream.fromSubscription(subscription),
+                Stream.fromSubscription(chatSubscription),
+                Stream.fromSubscription(taskSubscription).pipe(
+                  Stream.map((task): AssistantsEvent => ({ type: "taskUpserted", task })),
+                ),
+              ],
+              { concurrency: "unbounded" },
             ),
           );
         }),
@@ -909,6 +923,7 @@ const make = Effect.gen(function* () {
           // Its transfers and the requests it was waiting on go with it; the rest of `shared/` stays.
           yield* removeOwnerTransfers(config.sharedDir, assistantId);
           yield* sql`DELETE FROM assistant_requests WHERE sender_thread_id LIKE ${`assistant:${assistantId}:%`}`;
+          yield* tasks.removeFor(assistantId);
           yield* connectors
             .purge(assistantId, decodeMcpServers(row.mcp_servers_json))
             .pipe(

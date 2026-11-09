@@ -207,6 +207,8 @@ import * as AssistantApprovalReactor from "./assistants/AssistantApprovalReactor
 import * as AssistantDirectory from "./assistants/AssistantDirectory.ts";
 import * as AssistantGroupReactor from "./assistants/AssistantGroupReactor.ts";
 import * as AssistantRequestReactor from "./assistants/AssistantRequestReactor.ts";
+import * as AssistantTaskReactor from "./assistants/AssistantTaskReactor.ts";
+import * as AssistantTasks from "./assistants/AssistantTasks.ts";
 import * as AssistantRequests from "./assistants/AssistantRequests.ts";
 import * as AutonomyService from "./autonomy/AutonomyService.ts";
 import * as ChannelLanguage from "./channels/ChannelLanguage.ts";
@@ -778,6 +780,16 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   ),
   Layer.effectDiscard(
     Effect.gen(function* () {
+      const service = yield* AssistantTaskReactor.AssistantTaskReactor;
+      yield* service.start();
+    }),
+  ).pipe(
+    Layer.provide(AssistantTaskReactor.layer),
+    Layer.provide(AssistantTasks.layer),
+    Layer.provide(ProjectionStoreV2.layer),
+  ),
+  Layer.effectDiscard(
+    Effect.gen(function* () {
       const service = yield* AssistantGroupReactor.AssistantGroupReactor;
       yield* service.start();
     }),
@@ -950,6 +962,8 @@ const layerMakeRoutes = Layer.mergeAll(
     Layer.provide(AssistantDirectory.layer),
     // A reply to an assistant's request is recorded here; without it assistants only send.
     Layer.provide(AssistantRequests.layer),
+    // A thread an assistant launches is linked to it here.
+    Layer.provide(AssistantTasks.layer),
   ),
   // Follows delegated tasks running in linked environments, including after a restart.
   Layer.effectDiscard(

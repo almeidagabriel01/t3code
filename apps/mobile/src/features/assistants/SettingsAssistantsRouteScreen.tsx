@@ -40,6 +40,7 @@ import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { AssistantSandboxSection } from "./AssistantSandboxSection";
 import { AutonomySettingsSection } from "./AutonomySettingsSection";
 import { AssistantAvatar } from "./assistantPresentation";
+import { AssistantTaskRows } from "./AssistantTaskRows";
 import { moodTextClass } from "./assistantPresenceLabels";
 import { useOpenAssistantEditor } from "./openAssistantEditor";
 import { useOpenAssistantWork } from "./assistantWorkTarget";
@@ -120,6 +121,7 @@ function AssistantCard(props: {
           </Text>
         </View>
       </View>
+      {archived ? null : <AssistantTaskRows entry={props.entry} />}
       {props.groupNames.length === 0 ? null : (
         <View className="flex-row flex-wrap gap-1">
           {props.groupNames.map((name) => (

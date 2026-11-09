@@ -25,6 +25,7 @@ const state = vi.hoisted(() => ({
     environmentId: string;
     team: { id: string; name: string; memberIds: string[] };
   }>,
+  tasks: [] as Array<{ threadId: string; title: string; createdAt: string }>,
   update: vi.fn(),
   openTeam: vi.fn(),
   openTeamDialog: vi.fn(),
@@ -38,7 +39,9 @@ const shellFor = (threadId: string) => {
   const mood = state.moods[threadId];
   return {
     id: threadId,
-    title: threadId.includes(":g-") ? "Task · Growth" : threadId,
+    title:
+      state.tasks.find((task) => task.threadId === threadId)?.title ??
+      (threadId.includes(":g-") ? "Task · Growth" : threadId),
     updatedAt: state.updated[threadId] ?? "2020-01-01T00:00:00.000Z",
     environmentId: "env",
     lastVisitedAt: null,
@@ -76,6 +79,8 @@ vi.mock("../../state/assistants", () => ({
     teams: state.teams,
     activeTeams: state.teams,
   }),
+  useAssistantTasks: (_environmentId: string, assistantId: string) =>
+    assistantId === "jarvis" ? state.tasks : [],
 }));
 vi.mock("./assistantTeamState", () => ({
   openAssistantTeamDialog: state.openTeamDialog,
@@ -89,6 +94,7 @@ vi.mock("../../state/entities", () => ({
   useThreadShell: (ref: { threadId: string } | null) =>
     ref === null ? null : shellFor(ref.threadId),
   useQuietThreadShells: () => [
+    ...state.tasks.map((task) => ({ ...shellFor(task.threadId), environmentId: "env" })),
     ...state.specs.map((spec) => shellFor(threadOf(spec.name))),
     ...Object.keys(state.moods)
       .filter((id) => id.includes(":g-"))
@@ -147,6 +153,7 @@ function setup(
   state.openGroupSettings.mockClear();
   state.openDialog.mockClear();
   state.archiveTeam.mockClear();
+  state.tasks = [];
 }
 
 const element = (
@@ -182,6 +189,31 @@ const pill = (container: HTMLElement, name: string) =>
   );
 
 describe("AssistantSidebarSection", () => {
+  it("lists an assistant's tasks under it with their state, and opens one on click", async () => {
+    setup(["Jarvis"], { moods: { "task-1": "working", "task-2": "failed" } });
+    state.tasks = [
+      { threadId: "task-1", title: "Add retry", createdAt: "2026-11-01T00:00:00.000Z" },
+      { threadId: "task-2", title: "Fix flaky test", createdAt: "2026-11-02T00:00:00.000Z" },
+      { threadId: "task-3", title: "Old chore", createdAt: "2026-10-01T00:00:00.000Z" },
+    ];
+    const onOpen = vi.fn();
+    await using screen = await render(element(onOpen, "env:task-3"));
+    const tasks = [...screen.container.querySelectorAll('[data-testid="assistant-task-row"]')];
+    expect(
+      tasks.map((task) => [task.getAttribute("aria-label"), task.getAttribute("data-state")]),
+    ).toEqual([
+      ["Add retry, Running", "running"],
+      ["Fix flaky test, Failed", "failed"],
+      ["Old chore, Done", "done"],
+    ]);
+    expect(tasks[2]?.getAttribute("aria-current")).toBe("page");
+    await userEvent.click(screen.getByRole("button", { name: "Add retry, Running" }));
+    expect(onOpen).toHaveBeenCalledWith({
+      environmentId: EnvironmentId.make("env"),
+      threadId: ThreadId.make("task-1"),
+    });
+  });
+
   it.each([
     { name: "has no assistants or groups", names: [], options: {} },
     { name: "is switched off", names: ["Jarvis"], options: { enabled: false } },

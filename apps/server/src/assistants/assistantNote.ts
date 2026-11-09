@@ -47,6 +47,11 @@ function teamsLines(self: Pick<Colleague, "handle">, teams: ReadonlyArray<TeamMe
   return escapeBody([...lines, TEAM_GUIDANCE].join("\n"));
 }
 
+const TASKS_FOLLOW =
+  "It carries your instructions, model and access. You are woken when it finishes, so never wait on it. Then check its diff, run the tests, ask a teammate to review when that helps, send fixes with t3_thread_send, and only then tell the user.";
+const TASKS_HOST = `Do quick things yourself, here: a question, a lookup, a small tweak. Real multi-step code work (changing several files, adding tests, running a suite) is never done in this conversation: start a thread for it with t3_thread_launch in the right project, with a full brief of goal, files, constraints and how to verify. ${TASKS_FOLLOW}`;
+const TASKS_SANDBOX = `Any change to files, and any command that changes anything, is work for a thread, never for this conversation: start it with t3_thread_launch in your sandbox, with a full brief of goal, files, constraints and how to verify. ${TASKS_FOLLOW}`;
+
 const ASK_BEFORE_ACTING_LINE =
   "Ask before acting is on: a message you send into another agent conversation is held until the user approves it in this conversation. If a send says it is waiting for approval, tell the user it is waiting and stop; send the same message again only after they approve, and never send it another way if they decline.";
 
@@ -77,12 +82,29 @@ export function assistantNoteFor(
       ? sandboxNoteLine(sandboxEnvironmentId)
       : HOST_CONTAINER_NOTE_LINE,
     assistant.scope === "project" ? projectScopeNoteLine(assistant.projectIds ?? []) : "",
+    assistant.workspace === "sandbox" ? TASKS_SANDBOX : TASKS_HOST,
     assistant.askBeforeActing === true ? ASK_BEFORE_ACTING_LINE : "",
     escapeBody(assistant.instructions.trim()),
   ]
     .filter((part) => part !== "")
     .join("\n");
   return body === "" ? `${open}\n</t3_assistant>` : `${open}\n${body}\n</t3_assistant>`;
+}
+
+/** The note of a thread an assistant launched: its instructions travel with the work. */
+function assistantTaskNoteFor(
+  assistant: Pick<Assistant, "name" | "handle" | "instructions">,
+  userText: string,
+): string {
+  if (userText.trimStart().startsWith("/")) return "";
+  const open = `<t3_assistant_task assistant="${escapeAttribute(assistant.name)}" handle="${assistant.handle}">`;
+  const body = [
+    `${assistant.name} launched this thread and reviews its result. Finish with what you changed, what you ran and what is left.`,
+    escapeBody(assistant.instructions.trim()),
+  ]
+    .filter((part) => part !== "")
+    .join("\n");
+  return `${open}\n${body}\n</t3_assistant_task>`;
 }
 
 /**
@@ -96,7 +118,10 @@ export const assistantNote = Effect.fn("AssistantNote.forTurn")(function* (
 ) {
   if (Option.isNone(directory)) return "";
   const found = yield* directory.value.forThread(threadId);
-  if (Option.isNone(found)) return "";
+  if (Option.isNone(found)) {
+    const owner = yield* directory.value.taskOwner(threadId);
+    return Option.isNone(owner) ? "" : assistantTaskNoteFor(owner.value, userText);
+  }
   const { assistant } = found.value;
   const teams = userText.trimStart().startsWith("/")
     ? []

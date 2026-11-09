@@ -52,6 +52,7 @@ import { Spinner } from "../ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ProjectFavicon, type ProjectFaviconProject } from "../ProjectFavicon";
 import { AssistantAvatar } from "./assistantPresentation";
+import { AssistantTaskRows } from "./AssistantTaskRows";
 import { openAssistantDialog } from "./assistantDialogState";
 import { openAssistantWork } from "./assistantWorkState";
 import { openAssistantGroupSettings, openAssistantTeamDialog } from "./assistantTeamState";
@@ -106,6 +107,8 @@ const AssistantRow = memo(function AssistantRow(props: {
   readonly entry: AssistantEntry;
   readonly environmentLabel: string | null;
   readonly isActive: boolean;
+  /** The open thread, so a task row of it can show as current. */
+  readonly activeThreadKey?: string | null;
   readonly onOpen: (threadRef: ScopedThreadRef) => void;
   /** Shown as a pill when the assistant is project-scoped and has no status to show. */
   readonly projectLabel?: string | null;
@@ -256,6 +259,11 @@ const AssistantRow = memo(function AssistantRow(props: {
           </MenuPopup>
         </Menu>
       </div>
+      <AssistantTaskRows
+        entry={props.entry}
+        activeThreadKey={props.activeThreadKey}
+        onOpen={props.onOpen}
+      />
     </li>
   );
 });
@@ -539,6 +547,7 @@ export const AssistantSidebarSection = memo(function AssistantSidebarSection(pro
             : undefined
         }
         isActive={key !== null && key === props.routeThreadKey}
+        activeThreadKey={props.routeThreadKey}
         onOpen={props.onOpenThread}
       />
     );

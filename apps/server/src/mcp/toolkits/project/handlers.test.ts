@@ -22,6 +22,7 @@ import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import * as DocumentText from "../../../provider/DocumentText.ts";
 import { OrchestratorRuntimeModeAboveCeilingError } from "../../../orchestration-v2/Orchestrator.ts";
@@ -37,6 +38,10 @@ import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../../../vcs/VcsProcess.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
+import * as AssistantDirectory from "../../../assistants/AssistantDirectory.ts";
+import * as AssistantTasks from "../../../assistants/AssistantTasks.ts";
+import * as SqlitePersistence from "../../../persistence/Sqlite.ts";
+import { liveThreadShell } from "../../McpToolAccess.testkit.ts";
 import * as ProjectHandlers from "./handlers.ts";
 import { ProjectToolkit } from "./tools.ts";
 
@@ -665,4 +670,84 @@ it.effect("deleting a project through MCP also discards its clone record", () =>
 
     expect(discarded).toEqual([harness.projectId]);
   }),
+);
+
+it.effect(
+  "a thread an assistant launches becomes its task, once, and other callers link nothing",
+  () =>
+    Effect.gen(function* () {
+      const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+      const { projectId, dependencies } = clientLaunchHarness({
+        runtimeModeCeiling: "auto",
+        launched,
+      });
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`
+      INSERT INTO assistants
+        (assistant_id, handle, name, project_id, tool_access, thread_id, created_at, updated_at)
+      VALUES ('jarvis', 'jarvis', 'Jarvis', 'p1', 'full', 'assistant:jarvis:1', '2026-01-01', '2026-01-01')`;
+      const tasks = yield* AssistantTasks.AssistantTasks;
+      const toolkit = yield* ProjectToolkit.pipe(
+        Effect.provide(
+          McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(
+            Layer.provide(dependencies),
+          ),
+        ),
+      );
+      const launchFrom = (callerThreadId: ThreadId, title: string, clientRequestId: string) =>
+        toolkit
+          .handle("t3_thread_launch", { title, projectId, message: "Go", clientRequestId })
+          .pipe(
+            Stream.unwrap,
+            Stream.runCollect,
+            Effect.provideService(McpInvocationContext.McpInvocationContext, {
+              environmentId: EnvironmentId.make("environment"),
+              requestNamespace: `provider:${callerThreadId}`,
+              thread: {
+                threadId: callerThreadId,
+                providerSessionId: `provider:${callerThreadId}`,
+                providerInstanceId: ProviderInstanceId.make("codex"),
+              },
+              client: undefined,
+              capabilities: new Set(["orchestration" as const]),
+              issuedAt: 0,
+            }),
+            Effect.provideService(
+              ThreadManagement.ThreadManagementService,
+              ThreadManagement.ThreadManagementService.of({
+                getThreadShell: (threadId: ThreadId) =>
+                  Effect.succeed(
+                    threadId === callerThreadId
+                      ? liveThreadShell(threadId)
+                      : launched.some((launch) => launch.threadId === threadId)
+                        ? ({
+                            id: threadId,
+                            projectId,
+                            modelSelection: liveThreadShell(threadId).modelSelection,
+                            deletedAt: null,
+                          } as unknown as OrchestrationV2ThreadShell)
+                        : null,
+                  ),
+              } as never),
+            ),
+            Effect.provide(dependencies),
+          );
+
+      yield* launchFrom(ThreadId.make("assistant:jarvis:1"), "Add retry", "key-1");
+      // A retry of the same launch keeps the first link.
+      yield* launchFrom(ThreadId.make("assistant:jarvis:1"), "Renamed", "key-1");
+      yield* launchFrom(ThreadId.make("thread:plain"), "Plain", "key-2");
+      const linked = yield* tasks.list;
+      expect(linked.map((task) => [task.assistantId, task.title])).toEqual([
+        ["jarvis", "Add retry"],
+      ]);
+      expect(linked[0]?.threadId).toBe(launched[0]?.threadId);
+      expect(linked[0]?.projectId).toBe(projectId);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(AssistantTasks.layer, AssistantDirectory.layer).pipe(
+          Layer.provideMerge(SqlitePersistence.layerMemory),
+        ),
+      ),
+    ),
 );

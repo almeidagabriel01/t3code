@@ -175,6 +175,26 @@ client credential with no thread counts as the user. The check is in the MCP han
 `assistantTeams` RPCs are unaffected. A user steering mid-run does not change a run's origin. Each
 change then adds a `change` chat row ("Ada added Bo"): never unread, not part of a member's packet.
 
+## Tasks are ordinary threads with an owner
+
+A `t3_thread_launch` from an assistant thread writes an `assistant_tasks` row (thread, assistant,
+project, title) before the launch starts, so a run that ends fast still finds it; a failed launch
+takes it back. The thread stays a normal project thread: no flag on it, listed in project lists.
+Three things follow the row, none of them a new mechanism:
+
+- `AssistantDirectory.taskOwner` (one primary-key lookup per ordinary turn start, the price of not
+  flagging threads) lets `assistantNote` prepend a short `<t3_assistant_task>` block with
+  the owner's instructions on every turn of the thread, like the assistant's own note. Model and access
+  are inherited by the launch itself.
+- `AssistantTaskReactor` queues a message to the owner's current conversation when a run of the task
+  thread ends. The message id derives from the run, so a replay wakes once, and it carries the task
+  thread as `senderThreadId`, which makes the turn's origin "assistant", never the user.
+- The assistants stream carries the links (`tasks` in the snapshot, `taskUpserted`). The state is not
+  stored: clients read it from the thread's own shell (`assistantTaskState`), so it cannot go stale.
+
+The project check is the existing `projectScopeRefusal` at `t3_thread_launch`; a refused launch never
+reaches the link.
+
 ## Requests between assistants never block
 
 A `t3_thread_send` from one assistant thread to another is a request: it queues (never steers, so the

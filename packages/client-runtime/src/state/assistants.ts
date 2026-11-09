@@ -3,6 +3,7 @@ import {
   type Assistant,
   type AssistantId,
   type AssistantsEvent,
+  type AssistantTask,
   type AssistantTeam,
   type AssistantSandboxStatus,
   type AssistantTeamId,
@@ -24,6 +25,8 @@ import {
 export interface AssistantsState {
   readonly assistants: ReadonlyMap<AssistantId, Assistant>;
   readonly teams: ReadonlyMap<AssistantTeamId, AssistantTeam>;
+  /** Threads assistants launched for real work, by thread id. */
+  readonly tasks: ReadonlyMap<ThreadId, AssistantTask>;
 }
 
 /** Folds one event; the first is always a snapshot, so state starts from it. */
@@ -35,9 +38,13 @@ export function applyAssistantsEvent(
     return {
       assistants: new Map(event.assistants.map((assistant) => [assistant.id, assistant])),
       teams: new Map(event.teams.map((team) => [team.id, team])),
+      tasks: new Map(event.tasks.map((task) => [task.threadId, task])),
     };
   }
   if (state === null) return null;
+  if (event.type === "taskUpserted") {
+    return { ...state, tasks: new Map(state.tasks).set(event.task.threadId, event.task) };
+  }
   if (event.type === "teamUpserted" || event.type === "teamRemoved") {
     const teams = new Map(state.teams);
     if (event.type === "teamRemoved") teams.delete(event.teamId);
@@ -90,6 +97,23 @@ export function assistantForThread(
     if (assistant.threadId === threadId) return assistant;
   }
   return undefined;
+}
+
+/** One assistant's tasks, oldest first; the caller adds each thread's state. */
+export function selectAssistantTasks(
+  state: AssistantsState,
+  assistantId: AssistantId,
+): ReadonlyArray<AssistantTask> {
+  return [...state.tasks.values()].filter((task) => task.assistantId === assistantId);
+}
+
+/** The assistant that launched this thread as a task, if any. */
+export function assistantForTaskThread(
+  state: AssistantsState,
+  threadId: ThreadId,
+): Assistant | undefined {
+  const task = state.tasks.get(threadId);
+  return task === undefined ? undefined : state.assistants.get(task.assistantId);
 }
 
 export interface AssistantSandboxView {

@@ -1,8 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   assistantErrorMessage,
+  assistantForTaskThread,
   assistantForThread,
   createAssistantsEnvironmentAtoms,
+  selectAssistantTasks,
   selectActiveAssistants,
   selectArchivedAssistants,
   selectTeams,
@@ -16,6 +18,7 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 import {
   AuthOrchestrationReadScope,
   type Assistant,
+  type AssistantTask,
   type AssistantGroupConversationAction,
   type AssistantGroupsHistoryResult,
   type AssistantGroupsPostInput,
@@ -127,6 +130,42 @@ const threadAssistantAtom = Atom.family((key: string) =>
     return null;
   }).pipe(Atom.withLabel(`web-thread-assistant:${key}`)),
 );
+
+const assistantTasksAtom = Atom.family((key: string) =>
+  Atom.make((get) => {
+    const [environmentId, assistantId] = key.split("\u0000") as [EnvironmentId, Assistant["id"]];
+    return get(assistantStatesAtom(environmentId)).flatMap(([, state]) =>
+      selectAssistantTasks(state, assistantId),
+    );
+  }).pipe(Atom.withLabel(`web-assistant-tasks:${key}`)),
+);
+
+/** The threads this assistant launched for real work, oldest first. */
+export function useAssistantTasks(
+  environmentId: EnvironmentId,
+  assistantId: Assistant["id"],
+): ReadonlyArray<AssistantTask> {
+  return useAtomValue(assistantTasksAtom(`${environmentId}\u0000${assistantId}`));
+}
+
+const taskAssistantAtom = Atom.family((key: string) =>
+  Atom.make((get) => {
+    const [environmentId, threadId] = key.split("\u0000") as [EnvironmentId, ThreadId];
+    for (const [, state] of get(assistantStatesAtom(environmentId))) {
+      const assistant = assistantForTaskThread(state, threadId);
+      if (assistant) return { environmentId, assistant } satisfies AssistantEntry;
+    }
+    return null;
+  }).pipe(Atom.withLabel(`web-task-assistant:${key}`)),
+);
+
+/** The assistant that launched this thread as a task, or null for any other thread. */
+export function useTaskAssistant(
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+): AssistantEntry | null {
+  return useAtomValue(taskAssistantAtom(`${environmentId}\u0000${threadId}`));
+}
 
 /** Active and archived assistants of every loaded environment, listed even when it has none. `teams` holds every group; the sidebar lists `activeTeams` and the pages add `archivedTeams`. */
 export function useAssistantEntries() {

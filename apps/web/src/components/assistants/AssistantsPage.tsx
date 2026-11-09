@@ -44,6 +44,7 @@ import { SidebarInset } from "../ui/sidebar";
 import { openAssistantDialog } from "./assistantDialogState";
 import { openAssistantWork } from "./assistantWorkState";
 import { AssistantAvatar } from "./assistantPresentation";
+import { AssistantTaskRows } from "./AssistantTaskRows";
 import { openAssistantTeamDialog } from "./assistantTeamState";
 import { useAssistantFlows, useAssistantTeamFlows } from "./useAssistantFlows";
 
@@ -107,6 +108,7 @@ function AssistantCard(props: {
           )}
         </div>
       </div>
+      {archived ? null : <AssistantTaskRows entry={props.entry} onOpen={flows.openThread} roomy />}
       {props.groupNames.length === 0 ? null : (
         <ul aria-label="Groups" className="flex flex-wrap gap-1">
           {props.groupNames.map((name) => (

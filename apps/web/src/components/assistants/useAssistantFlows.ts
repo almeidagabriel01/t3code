@@ -4,6 +4,7 @@ import {
   type Assistant,
   type AssistantTeam,
   type EnvironmentId,
+  type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { useRouter } from "@tanstack/react-router";
 
@@ -35,9 +36,17 @@ export function useAssistantFlows(environmentId: EnvironmentId) {
     });
   };
 
+  const openThread = (threadRef: ScopedThreadRef) => {
+    void router.navigate({
+      to: "/$environmentId/$threadId",
+      params: buildThreadRouteParams(threadRef),
+    });
+  };
+
   return {
     canAct: actions.canAct,
     openConversation,
+    openThread,
     async reset(assistant: Assistant, options: { readonly openAfter?: boolean } = {}) {
       const confirmed = await requestConfirmDialog(
         `Start a new conversation with ${assistant.name}?\nThe current one moves to Archive, where you can restore it.`,

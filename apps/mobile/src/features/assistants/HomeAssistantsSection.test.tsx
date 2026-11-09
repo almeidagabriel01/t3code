@@ -30,6 +30,7 @@ const { mocks } = vi.hoisted(() => ({
     }>,
     collapsed: false,
     showAll: false,
+    tasks: [] as Array<{ threadId: string; title: string; createdAt: string }>,
     toggleShowAll: vi.fn(),
     presence: {} as Record<string, Presence>,
     notified: new Set<string>(),
@@ -132,16 +133,20 @@ vi.mock("../../lib/clock", () => ({ useNowMinuteMs: () => Date.parse("2026-11-06
 vi.mock("../../state/entities", () => ({
   useThreadShell: (ref: { threadId: string } | null) =>
     ref === null ? null : { id: ref.threadId, lastVisitedAt: "x" },
-  useQuietThreadShells: () =>
-    mocks.active.flatMap((entry) =>
+  useQuietThreadShells: () => [
+    ...mocks.active.flatMap((entry) =>
       entry.assistant.threadId === null
         ? []
         : [{ environmentId: entry.environmentId, id: entry.assistant.threadId }],
     ),
+    ...mocks.tasks.map((task) => ({ environmentId: "hub", id: task.threadId, title: task.title })),
+  ],
   useProjects: () => mocks.projects,
 }));
 vi.mock("../../state/assistants", () => ({
   useAssistantEntries: () => ({ active: mocks.active, activeTeams: mocks.teams }),
+  useAssistantTasks: (_environmentId: string, assistantId: string) =>
+    assistantId === "a0" ? mocks.tasks : [],
 }));
 vi.mock("../threads/SubagentStatusDot", () => ({
   SubagentStatusDot: (props: { tone: string }) => <u>{`dot:${props.tone}`}</u>,
@@ -230,6 +235,7 @@ beforeEach(() => {
     notified: new Set(),
     active: make(2),
     teams: [],
+    tasks: [],
     projects: [{ environmentId: "hub", id: "p1", title: "Website" }],
   });
   for (const fn of [
@@ -308,6 +314,31 @@ describe("HomeAssistantsSection", () => {
     expect(container.querySelector('[data-testid="assistant-status"]')?.className).toContain(
       "text-warning-foreground",
     );
+  });
+
+  it("lists an assistant's tasks under it with their state, and opens one on tap", async () => {
+    mocks.tasks = [
+      { threadId: "w1", title: "Add retry", createdAt: "2026-11-01T00:00:00.000Z" },
+      { threadId: "w2", title: "Fix flaky test", createdAt: "2026-11-02T00:00:00.000Z" },
+      { threadId: "w3", title: "Old chore", createdAt: "2026-10-01T00:00:00.000Z" },
+    ];
+    mocks.presence.w1 = { mood: "working", detail: "Working", since: null };
+    mocks.presence.w2 = { mood: "failed", detail: "Last run failed", since: null };
+    render(false);
+    const rows = Array.from(
+      container.querySelectorAll('[data-testid="assistant-task-list"] button'),
+    );
+    expect(rows.map((row) => row.getAttribute("aria-label"))).toEqual([
+      "Add retry, Running",
+      "Fix flaky test, Failed",
+      "Old chore, Done",
+    ]);
+    expect(container.textContent).toContain("av:Bot0:working");
+    await click("Fix flaky test, Failed");
+    expect(mocks.open).toHaveBeenCalledWith({ threadId: "w2" });
+    mocks.tasks = [];
+    render(true);
+    expect(container.querySelector('[data-testid="assistant-task-list"]')).toBeNull();
   });
 
   it("names the environment only when assistants live on several", () => {

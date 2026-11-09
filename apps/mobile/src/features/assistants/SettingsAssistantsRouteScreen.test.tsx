@@ -199,6 +199,7 @@ vi.mock("../../state/assistants", () => ({
     };
   },
   useAssistantsEnvironmentIds: () => mocks.environmentIds,
+  useAssistantTasks: () => [],
   useAssistantSpend: (environmentId: string, assistantId: string | null) => {
     mocks.spendQuery(environmentId, assistantId);
     return { data: assistantId ? { budget: { state: mocks.budgetState } } : null };
