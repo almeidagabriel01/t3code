@@ -550,6 +550,7 @@ const launchServer = (sandbox: Option.Option<EnvironmentId>, scope: "all" | "pro
                     workspace: threadId === fullAccessThreadId ? "sandbox" : "host",
                     scope,
                     projectId: ProjectId.make("project-a"),
+                    projectIds: [ProjectId.make("project-a"), ProjectId.make("project-c")],
                   } as never,
                   current: true,
                 })
@@ -614,6 +615,7 @@ it.effect.each([
 it.effect.each([
   ["a project assistant launching in its own project", {}, "here"],
   ["... naming its own project", { projectId: ProjectId.make("project-a") }, "here"],
+  ["... naming a second listed project", { projectId: ProjectId.make("project-c") }, "here"],
   ["... naming another project", { projectId: ProjectId.make("project-b") }, "invalid_request"],
   ["... asking for scratch", { scratch: true }, "invalid_request"],
   ["... naming another environment", { environmentId: other }, "invalid_request"],

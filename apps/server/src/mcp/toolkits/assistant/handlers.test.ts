@@ -34,6 +34,7 @@ const assistant = (id: string, extra: Partial<Assistant>) =>
     handle: id,
     name: id.toUpperCase(),
     projectId: "p1",
+    projectIds: [],
     threadId: `assistant:${id}:1`,
     toolAccess: "full",
     role: "",
@@ -285,6 +286,32 @@ it.effect("create without a toolAccess is refused so the agent asks the user", (
     expect(refused).toMatchObject({ code: "invalid_request" });
     expect(refused.message).toContain("Ask the user");
     expect(writes).toEqual([]);
+  }),
+);
+
+it.effect("create and update pass the list of projects, the first being the home", () =>
+  Effect.gen(function* () {
+    const { call, writes } = yield* harness("full-access");
+    yield* call({
+      action: "create",
+      name: "Many",
+      instructions: "",
+      toolAccess: "read-only",
+      projectIds: ["a", "b"],
+      clientRequestId: "many",
+    });
+    yield* call({
+      action: "update",
+      handle: "eng",
+      projectIds: ["b", "c"],
+      clientRequestId: "upd",
+    });
+    const listed = yield* call({ action: "read", handle: "eng" });
+    expect(writes).toEqual([
+      { create: expect.objectContaining({ projectId: "a", projectIds: ["a", "b"] }) },
+      { update: expect.objectContaining({ projectIds: ["b", "c"] }) },
+    ]);
+    expect(listed).toMatchObject({ projectIds: ["b", "c"] });
   }),
 );
 

@@ -239,7 +239,10 @@ export const Assistant = Schema.Struct({
   id: AssistantId,
   handle: AssistantHandle,
   name: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSISTANT_NAME_MAX_LENGTH)),
+  /** Home project: where its conversation lives. */
   projectId: ProjectId,
+  /** Projects it may work in (the home one first); empty when its scope is "all". */
+  projectIds: Schema.Array(ProjectId).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   instructions: Schema.String.check(Schema.isMaxLength(ASSISTANT_INSTRUCTIONS_MAX_CHARS)),
   toolAccess: AssistantToolAccess,
   /** Jarvis: made on first use, then archived, deleted and restored like any other. */
@@ -360,6 +363,8 @@ export const AssistantsCreateInput = Schema.Struct({
   /** Derived from the name when absent. */
   handle: Schema.optional(AssistantHandle),
   projectId: ProjectId,
+  /** Projects it may work in; the first is its home and replaces `projectId`. Empty is ignored. */
+  projectIds: Schema.optional(Schema.Array(ProjectId)),
   /** The default new-thread model when absent. */
   modelSelection: Schema.optional(ModelSelection),
   instructions: Schema.String.check(Schema.isMaxLength(ASSISTANT_INSTRUCTIONS_MAX_CHARS)),
@@ -387,12 +392,17 @@ export const ASSISTANTS_RESTORE_DEFAULT_INPUT: AssistantsCreateInput = {
   restoreDefault: true,
 };
 
-/** Changing `projectId` starts a new generation: a thread can't move between projects. */
+/**
+ * Changing the home project starts a new generation: a thread can't move between projects.
+ * `projectIds` keeps the current home when it is still listed, so adding projects does not.
+ */
 export const AssistantsUpdateInput = Schema.Struct({
   assistantId: AssistantId,
   name: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(ASSISTANT_NAME_MAX_LENGTH))),
   handle: Schema.optional(AssistantHandle),
   projectId: Schema.optional(ProjectId),
+  /** A non-empty list makes it a project assistant over exactly these projects. */
+  projectIds: Schema.optional(Schema.Array(ProjectId)),
   modelSelection: Schema.optional(ModelSelection),
   instructions: Schema.optional(
     Schema.String.check(Schema.isMaxLength(ASSISTANT_INSTRUCTIONS_MAX_CHARS)),

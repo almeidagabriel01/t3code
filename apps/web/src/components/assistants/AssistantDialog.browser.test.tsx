@@ -79,6 +79,7 @@ const assistant = (id: string, name: string, overrides: Partial<Assistant> = {})
   handle: id,
   name,
   projectId: PROJECT_ID,
+  projectIds: [],
   instructions: "",
   toolAccess: "full",
   isDefault: false,
@@ -333,7 +334,7 @@ it("starts in the project the sidebar asked for", async () => {
   publishAssistants([assistant("jarvis", "Jarvis")]);
   await using _screen = await openApp();
   openAssistantDialog({ preset: { projectId: PROJECT_ID as ProjectId } });
-  await expect.element(page.getByRole("combobox", { name: "Project" })).toHaveTextContent("render");
+  await expect.element(page.getByRole("checkbox", { name: "render" })).toBeChecked();
   await userEvent.fill(page.getByLabelText("Name"), "Scout");
   await userEvent.click(page.getByRole("button", { name: "Create assistant" }));
   await eventually(() =>

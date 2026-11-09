@@ -36,6 +36,7 @@ const brief = (
   handle: assistant.handle,
   name: assistant.name,
   projectId: assistant.projectId,
+  projectIds: [...assistant.projectIds],
   threadId: assistant.threadId,
   toolAccess: assistant.toolAccess,
   askBeforeActing: assistant.askBeforeActing ?? false,
@@ -238,7 +239,8 @@ const mutate = Effect.fn("mcp.assistant.mutate")(function* (input: AssistantPara
       }
       if (input.name === undefined || input.name.trim() === "")
         return yield* invalid("create needs `name`.");
-      const projectId = (input.projectId ??
+      const projectId = (input.projectIds?.[0] ??
+        input.projectId ??
         (yield* (yield* ManagedProjectFolders.ManagedProjectFolders).ensureAssistantProject.pipe(
           Effect.mapError(() => unavailable()),
         )).projectId) as ProjectId;
@@ -255,6 +257,9 @@ const mutate = Effect.fn("mcp.assistant.mutate")(function* (input: AssistantPara
           {
             name: input.name,
             projectId,
+            ...(input.projectIds === undefined
+              ? {}
+              : { projectIds: input.projectIds as ReadonlyArray<ProjectId> }),
             instructions: input.instructions ?? "",
             toolAccess,
             ...(input.workspace === undefined ? {} : { workspace: input.workspace }),
@@ -294,6 +299,9 @@ const mutate = Effect.fn("mcp.assistant.mutate")(function* (input: AssistantPara
         ...(input.toolAccess === undefined ? {} : { toolAccess: input.toolAccess }),
         ...(input.workspace === undefined ? {} : { workspace: input.workspace }),
         ...(input.projectId === undefined ? {} : { projectId: input.projectId as ProjectId }),
+        ...(input.projectIds === undefined
+          ? {}
+          : { projectIds: input.projectIds as ReadonlyArray<ProjectId> }),
         ...(input.role === undefined ? {} : { role: input.role }),
         ...(avatar === undefined ? {} : { avatar }),
       };

@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import type { AssistantDirectoryShape } from "./AssistantDirectory.ts";
-import { PROJECT_SCOPE_NOTE_LINE, sandboxNoteLine } from "./AssistantSandboxPolicy.ts";
+import { projectScopeNoteLine, sandboxNoteLine } from "./AssistantSandboxPolicy.ts";
 
 const escapeAttribute = (value: string) =>
   value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
@@ -51,6 +51,7 @@ export function assistantNoteFor(
     readonly askBeforeActing?: boolean | undefined;
     readonly workspace?: Assistant["workspace"] | undefined;
     readonly scope?: Assistant["scope"] | undefined;
+    readonly projectIds?: ReadonlyArray<string> | undefined;
   },
   userText: string,
   teams: ReadonlyArray<TeamMembership> = [],
@@ -69,7 +70,7 @@ export function assistantNoteFor(
   const body = [
     teamsLines(assistant, teams),
     assistant.workspace === "sandbox" ? sandboxNoteLine(sandboxEnvironmentId) : "",
-    assistant.scope === "project" ? PROJECT_SCOPE_NOTE_LINE : "",
+    assistant.scope === "project" ? projectScopeNoteLine(assistant.projectIds ?? []) : "",
     assistant.askBeforeActing === true ? ASK_BEFORE_ACTING_LINE : "",
     escapeBody(assistant.instructions.trim()),
   ]

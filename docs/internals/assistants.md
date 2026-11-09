@@ -67,8 +67,12 @@ A runtime layer that forgets to provide it silently loses enforcement; `runtimeL
 `assistants` project (`ManagedProjectFolders.isAssistantHomeProject`). It is stored, not derived,
 because `toAssistant` and `AssistantDirectory` are synchronous and layer-light; rows from before it
 existed are filled on the first list or subscribe, and count as `all` until then.
-`projectScopeRefusal` mirrors `sandboxRefusal` at the same sites (`t3_thread_launch`, remote
-`delegate_task`, scheduled tasks, and `message.dispatch` to a non-assistant thread).
+`projectId` is the home project, where the conversation lives and a thread cannot move; a project
+assistant also has `project_ids_json`, the list of projects it may work in, home first (read as just the
+home when null). Adding projects keeps the home, so it starts no new generation; dropping the home does.
+`projectScopeRefusal` is the one allow check and mirrors `sandboxRefusal` at the same sites
+(`t3_thread_launch`, remote `delegate_task`, scheduled tasks, and `message.dispatch` to a non-assistant
+thread): the target project must be on the list. New paths call it rather than comparing project ids.
 
 An image avatar is copied from the finished upload into `<stateDir>/assistant-avatars/` after a magic
 byte check: pending uploads are swept after a while, so the upload itself cannot be the avatar. It is

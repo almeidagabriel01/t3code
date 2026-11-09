@@ -1,3 +1,4 @@
+import { listedProjects } from "@t3tools/client-runtime/assistantSections";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   assistantMetaLabel,
@@ -519,7 +520,9 @@ export const AssistantSidebarSection = memo(function AssistantSidebarSection(pro
         }
         projectLabel={
           entry.assistant.scope === "project"
-            ? (projectOf(entry.environmentId, entry.assistant.projectId)?.title ?? "Project")
+            ? listedProjects(entry.assistant)
+                .map((projectId) => projectOf(entry.environmentId, projectId)?.title ?? "Project")
+                .join(", ")
             : null
         }
         project={

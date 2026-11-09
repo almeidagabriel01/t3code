@@ -1,3 +1,4 @@
+import { listedProjects } from "@t3tools/client-runtime/assistantSections";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   assistantMetaLabel,
@@ -414,7 +415,9 @@ export function HomeAssistantsSection(props: {
       }
       projectLabel={
         entry.assistant.scope === "project"
-          ? projectName(entry.environmentId, entry.assistant.projectId)
+          ? listedProjects(entry.assistant)
+              .map((projectId) => projectName(entry.environmentId, projectId))
+              .join(", ")
           : null
       }
     />

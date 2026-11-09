@@ -61,6 +61,16 @@ it("lists each group's teammates with their roles and names the lead only as the
   assert.ok(!assistantNoteFor(assistant, "hi").includes("Group "));
 });
 
+it("names the projects a project assistant may work in", () => {
+  const one = assistantNoteFor({ ...assistant, scope: "project", projectIds: ["p1"] }, "hi");
+  assert.ok(one.includes("one project (projectId p1)"));
+  const many = assistantNoteFor({ ...assistant, scope: "project", projectIds: ["p1", "p2"] }, "hi");
+  assert.ok(many.includes("these projects (projectId p1, p2)"));
+  assert.ok(
+    !assistantNoteFor({ ...assistant, scope: "all", projectIds: [] }, "hi").includes("projectId"),
+  );
+});
+
 it("tells a sandboxed assistant where its work runs, or that the sandbox is not linked yet", () => {
   const boxed = { ...assistant, workspace: "sandbox" } as const;
   const linked = assistantNoteFor(boxed, "hi", [], "environment-sandbox");

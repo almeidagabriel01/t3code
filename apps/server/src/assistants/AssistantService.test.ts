@@ -1038,6 +1038,60 @@ it.effect(
 );
 
 it.effect(
+  "a project assistant keeps a list of projects, and only a new home starts a conversation",
+  () => {
+    const { layer } = harness();
+    const docs = ProjectId.make("docs");
+    const web = ProjectId.make("web");
+    return Effect.gen(function* () {
+      const assistants = yield* Assistants.AssistantService;
+      const made = yield* assistants.create(create({ projectIds: [repo, docs, repo] }));
+      assert.deepEqual(
+        [made.projectId, made.projectIds, made.scope],
+        [repo, [repo, docs], "project"],
+      );
+      const added = yield* assistants.update({
+        assistantId: made.id,
+        projectIds: [docs, repo, web],
+      });
+      assert.deepEqual(
+        [added.projectId, added.projectIds, added.generation],
+        [repo, [docs, repo, web], 1],
+      );
+      const moved = yield* assistants.update({ assistantId: made.id, projectIds: [docs, web] });
+      assert.deepEqual(
+        [moved.projectId, moved.projectIds, moved.generation],
+        [docs, [docs, web], 2],
+      );
+      const single = yield* assistants.update({ assistantId: made.id, projectId: web });
+      assert.deepEqual([single.projectId, single.projectIds], [web, [web]]);
+      const everywhere = yield* assistants.update({
+        assistantId: made.id,
+        projectIds: [web, scratch],
+      });
+      assert.deepEqual([everywhere.scope, everywhere.projectIds], ["all", []]);
+      // A row saved before lists existed reads as a list of its one project.
+      const sql = yield* SqlClient.SqlClient;
+      const old = yield* assistants.create(create({ name: "Old" }));
+      yield* sql`UPDATE assistants SET project_ids_json = NULL WHERE assistant_id = ${old.id}`;
+      assert.deepEqual((yield* assistants.list).find((one) => one.id === old.id)?.projectIds, [
+        repo,
+      ]);
+      yield* sql`UPDATE assistants SET project_ids_json = 'not json' WHERE assistant_id = ${old.id}`;
+      assert.deepEqual((yield* assistants.list).find((one) => one.id === old.id)?.projectIds, [
+        repo,
+      ]);
+      // A saved list is read as it is stored.
+      yield* sql`UPDATE assistants SET project_ids_json = '["web","docs"]', project_id = 'web' WHERE assistant_id = ${old.id}`;
+      assert.deepEqual((yield* assistants.list).find((one) => one.id === old.id)?.projectIds, [
+        web,
+        docs,
+      ]);
+    }).pipe(Effect.provide(layer));
+  },
+);
+
+it.effect(
   "create with an id is idempotent; without avatar or icon an old row still decodes",
   () => {
     const { layer, launched } = harness();

@@ -6,10 +6,9 @@ import {
   type AssistantToolAccess,
   type BudgetPeriod,
   type EnvironmentId,
-  type ProjectId,
 } from "@t3tools/contracts";
+import { toggleAssistantProject } from "@t3tools/client-runtime/assistantSections";
 import { assistantSandboxView } from "@t3tools/client-runtime/state/assistants";
-import type { MenuAction } from "@react-native-menu/menu";
 import { useRef, useState } from "react";
 import { Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -84,8 +83,15 @@ export function AssistantEditRouteScreen() {
 function AssistantForm(props: { readonly editor: AssistantEditor }) {
   const { editor } = props;
   const { assistant, current, environmentId } = editor;
-  const { projects, effectiveProject, modelLabel, modelSelection, globalAutonomy } =
-    useAssistantEditor();
+  const {
+    projects,
+    picked,
+    scratchId,
+    effectiveProject,
+    modelLabel,
+    modelSelection,
+    globalAutonomy,
+  } = useAssistantEditor();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const actions = useAssistantActions(environmentId);
@@ -128,6 +134,7 @@ function AssistantForm(props: { readonly editor: AssistantEditor }) {
     current.name.trim().length > 0 &&
     handleValid &&
     effectiveProject !== null &&
+    picked.length > 0 &&
     isBudgetDraftValid(current.budget) &&
     (assistant === null || hasChanges);
 
@@ -166,8 +173,8 @@ function AssistantForm(props: { readonly editor: AssistantEditor }) {
     setError(null);
     const reply =
       assistant === null
-        ? await actions.create(assistantCreateInput(editor, effectiveProject.id))
-        : await actions.update(assistantUpdateInput({ ...editor, assistant }, effectiveProject.id));
+        ? await actions.create(assistantCreateInput(editor, picked))
+        : await actions.update(assistantUpdateInput({ ...editor, assistant }, picked));
     if (!reply.ok) {
       setSaving(false);
       setError(reply.message);
@@ -203,12 +210,6 @@ function AssistantForm(props: { readonly editor: AssistantEditor }) {
       Dialog.alert(`${current.name.trim()} was saved, but not everything`, problems.join(" "));
     }
   };
-
-  const projectActions: MenuAction[] = projects.map((project) => ({
-    id: project.id,
-    title: assistantProjectName(project),
-    state: project.id === effectiveProject?.id ? "on" : "off",
-  }));
 
   const projectOptions = projects.map((project) => ({
     id: project.id,
@@ -334,23 +335,42 @@ function AssistantForm(props: { readonly editor: AssistantEditor }) {
           autoCapitalize="sentences"
           onChange={(role) => updateAssistantDraft({ role })}
         />
-        <MenuField
-          label="Project"
-          description="All projects, or the one project it works in and shares memory with."
-          value={
-            effectiveProject ? assistantProjectName(effectiveProject) : "No projects available"
-          }
-          actions={projectActions}
-          onSelect={(id) => updateAssistantDraft({ projectId: id as ProjectId })}
-          footer={
-            projectChanged ? (
-              <Text textRole="footnote" className="px-2 text-warning-foreground">
-                Changing the project starts a new conversation. The current one moves to Archive,
-                where you can restore it.
-              </Text>
-            ) : null
-          }
-        />
+        <View className="gap-2">
+          <FieldHeader
+            label="Projects"
+            description="All projects, or the projects it works in. Work in any other project is refused."
+          />
+          {projects.length === 0 ? (
+            <Text textRole="footnote" className="px-2 text-foreground-muted">
+              No projects available
+            </Text>
+          ) : (
+            <ListSection>
+              {[...projects]
+                .sort((x, y) => Number(y.isScratch === true) - Number(x.isScratch === true))
+                .map((project) => (
+                  <ChoiceRow
+                    key={project.id}
+                    role="checkbox"
+                    icon={project.isScratch === true ? "globe" : "folder.fill"}
+                    label={assistantProjectName(project)}
+                    selected={picked.includes(project.id)}
+                    onPress={() =>
+                      updateAssistantDraft({
+                        projectIds: toggleAssistantProject(picked, scratchId, project.id),
+                      })
+                    }
+                  />
+                ))}
+            </ListSection>
+          )}
+          {projectChanged ? (
+            <Text textRole="footnote" className="px-2 text-warning-foreground">
+              Changing the home project starts a new conversation. The current one moves to Archive,
+              where you can restore it.
+            </Text>
+          ) : null}
+        </View>
         <View className="gap-3">
           <Pressable
             accessibilityRole="button"

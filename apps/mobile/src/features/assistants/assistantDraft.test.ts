@@ -81,13 +81,13 @@ describe("assistant draft", () => {
   it("sends only what changed when editing", () => {
     const project = "p2" as ProjectId;
     const model = { instanceId: "codex", model: "gpt" } as unknown as ModelSelection;
-    expect(assistantUpdateInput(editorFor(assistant), "p1" as ProjectId)).toEqual({
+    expect(assistantUpdateInput(editorFor(assistant), ["p1" as ProjectId])).toEqual({
       assistantId: "a1",
     });
     expect(
       assistantUpdateInput(
         editorFor(assistant, { name: " Scout 2 ", toolAccess: "full", modelSelection: model }),
-        project,
+        [project],
       ),
     ).toEqual({
       assistantId: "a1",
@@ -97,12 +97,29 @@ describe("assistant draft", () => {
       toolAccess: "full",
     });
     expect(
-      assistantUpdateInput(editorFor(assistant, { askBeforeActing: true }), "p1" as ProjectId),
+      assistantUpdateInput(editorFor(assistant, { askBeforeActing: true }), ["p1" as ProjectId]),
     ).toEqual({ assistantId: "a1", askBeforeActing: true });
   });
 
+  it("sends a list of projects when several are picked, and only when the pick changed", () => {
+    const two = ["p1", "p2"] as ProjectId[];
+    expect(assistantUpdateInput(editorFor(assistant), two)).toEqual({
+      assistantId: "a1",
+      projectId: "p1",
+      projectIds: two,
+    });
+    const listed = { ...assistant, scope: "project", projectIds: two } as Assistant;
+    expect(assistantUpdateInput(editorFor(listed), [...two].reverse())).toEqual({
+      assistantId: "a1",
+    });
+    expect(assistantCreateInput(editorFor(null, { name: "Scout" }), two)).toMatchObject({
+      projectId: "p1",
+      projectIds: two,
+    });
+  });
+
   it("sends the whole form when creating, with the derived handle", () => {
-    expect(assistantCreateInput(editorFor(null, { name: "Scout" }), "p1" as ProjectId)).toEqual({
+    expect(assistantCreateInput(editorFor(null, { name: "Scout" }), ["p1" as ProjectId])).toEqual({
       name: "Scout",
       handle: "scout",
       projectId: "p1",
@@ -117,24 +134,22 @@ describe("assistant draft", () => {
     const file = { kind: "file", file: { previewUri: "x" } } as never;
     const picked = { avatar: { hue: 30, variant: 2 }, avatarImage: file };
     expect(
-      assistantCreateInput(editorFor(null, { name: "S", ...picked }), "p1" as ProjectId),
+      assistantCreateInput(editorFor(null, { name: "S", ...picked }), ["p1" as ProjectId]),
     ).not.toHaveProperty("avatar");
     expect(
-      assistantCreateInput(
-        editorFor(null, { name: "S", avatar: { hue: 30, variant: 2 } }),
+      assistantCreateInput(editorFor(null, { name: "S", avatar: { hue: 30, variant: 2 } }), [
         "p1" as ProjectId,
-      ),
+      ]),
     ).toMatchObject({ avatar: { kind: "robot", hue: 30, variant: 2 } });
     const shuffled = { avatar: { hue: 150, variant: 5 }, avatarTouched: true };
-    expect(assistantUpdateInput(editorFor(assistant, shuffled), "p1" as ProjectId)).toEqual({
+    expect(assistantUpdateInput(editorFor(assistant, shuffled), ["p1" as ProjectId])).toEqual({
       assistantId: "a1",
       avatar: { kind: "robot", hue: 150, variant: 5 },
     });
     expect(
-      assistantUpdateInput(
-        editorFor(assistant, { ...shuffled, avatarImage: file }),
+      assistantUpdateInput(editorFor(assistant, { ...shuffled, avatarImage: file }), [
         "p1" as ProjectId,
-      ),
+      ]),
     ).toEqual({ assistantId: "a1" });
     // A picked file counts as a change by its id, and the same file on both sides does not.
     const pickedFile = (id: string) => ({ kind: "file", file: { id } }) as never;
@@ -151,7 +166,7 @@ describe("assistant draft", () => {
       assistantDraftHasChanges(editorFor(assistant, { avatarImage: { kind: "stored" } })),
     ).toBe(true);
     // Untouched, the stored avatar is never overwritten.
-    expect(assistantUpdateInput(editorFor(assistant), "p1" as ProjectId)).toEqual({
+    expect(assistantUpdateInput(editorFor(assistant), ["p1" as ProjectId])).toEqual({
       assistantId: "a1",
     });
   });
@@ -160,21 +175,27 @@ describe("assistant draft", () => {
     expect(assistantDraftFor(null)).toMatchObject({
       toolAccess: "workspace-write",
       askBeforeActing: true,
-      projectId: null,
+      projectIds: null,
       avatarImage: null,
       avatarTouched: false,
       groupChoices: {},
     });
     expect(
       assistantDraftFor(null, { projectId: "p9" as ProjectId, teamId: "t9" as never }),
-    ).toMatchObject({ projectId: "p9", groupChoices: { t9: true } });
+    ).toMatchObject({ projectIds: ["p9"], groupChoices: { t9: true } });
     // An existing assistant keeps what it has, and a stored picture is kept as is.
     expect(assistantDraftFor(assistant, { projectId: "p9" as ProjectId })).toMatchObject({
       toolAccess: "read-only",
       askBeforeActing: false,
-      projectId: "p1",
+      projectIds: ["p1"],
       groupChoices: {},
     });
+    const listed = {
+      ...assistant,
+      scope: "project",
+      projectIds: ["p1", "p2"],
+    } as unknown as Assistant;
+    expect(assistantDraftFor(listed).projectIds).toEqual(["p1", "p2"]);
     const withImage = { ...assistant, avatar: { kind: "image", revision: 2 } } as Assistant;
     expect(assistantDraftFor(withImage).avatarImage).toEqual({ kind: "stored" });
   });
@@ -230,20 +251,20 @@ describe("assistant draft", () => {
 
   it("sends ask before acting on create only when it is on", () => {
     const create = (askBeforeActing: boolean) =>
-      assistantCreateInput(editorFor(null, { name: "S", askBeforeActing }), "p1" as ProjectId);
+      assistantCreateInput(editorFor(null, { name: "S", askBeforeActing }), ["p1" as ProjectId]);
     expect(create(true)).toMatchObject({ askBeforeActing: true });
     expect(create(false)).not.toHaveProperty("askBeforeActing");
   });
 
   it("sends the workspace on create only when it is the sandbox, and on update only when it changed", () => {
     const create = (workspace: "host" | "sandbox") =>
-      assistantCreateInput(editorFor(null, { name: "S", workspace }), "p1" as ProjectId);
+      assistantCreateInput(editorFor(null, { name: "S", workspace }), ["p1" as ProjectId]);
     expect(create("sandbox")).toMatchObject({ workspace: "sandbox" });
     expect(create("host")).not.toHaveProperty("workspace");
     expect(
-      assistantUpdateInput(editorFor(assistant, { workspace: "sandbox" }), "p1" as ProjectId),
+      assistantUpdateInput(editorFor(assistant, { workspace: "sandbox" }), ["p1" as ProjectId]),
     ).toEqual({ assistantId: "a1", workspace: "sandbox" });
-    expect(assistantUpdateInput(editorFor(assistant, {}), "p1" as ProjectId)).toEqual({
+    expect(assistantUpdateInput(editorFor(assistant, {}), ["p1" as ProjectId])).toEqual({
       assistantId: "a1",
     });
   });
@@ -275,13 +296,13 @@ describe("assistant draft", () => {
   it("sends the budget only when it changed, and null when switched off", () => {
     const on = { ...budgetDraftFor(null), enabled: true, amount: "5" };
     expect(
-      assistantCreateInput(editorFor(null, { name: "S" }), "p1" as ProjectId),
+      assistantCreateInput(editorFor(null, { name: "S" }), ["p1" as ProjectId]),
     ).not.toHaveProperty("budget");
     expect(
-      assistantCreateInput(editorFor(null, { name: "S", budget: on }), "p1" as ProjectId),
+      assistantCreateInput(editorFor(null, { name: "S", budget: on }), ["p1" as ProjectId]),
     ).toMatchObject({ budget: { amountUsd: 5 } });
     expect(
-      assistantUpdateInput(editorFor(assistant, { budget: on }), "p1" as ProjectId),
+      assistantUpdateInput(editorFor(assistant, { budget: on }), ["p1" as ProjectId]),
     ).toMatchObject({ budget: { amountUsd: 5 } });
     const limited = {
       ...assistant,
@@ -294,7 +315,7 @@ describe("assistant draft", () => {
       },
     } as Assistant;
     const off = { ...budgetDraftFor(limited.budget), enabled: false };
-    expect(assistantUpdateInput(editorFor(limited, { budget: off }), "p1" as ProjectId)).toEqual({
+    expect(assistantUpdateInput(editorFor(limited, { budget: off }), ["p1" as ProjectId])).toEqual({
       assistantId: "a1",
       budget: null,
     });
@@ -315,13 +336,13 @@ describe("assistant draft", () => {
 
   it("sends the trimmed role only when it changed", () => {
     expect(
-      assistantUpdateInput(editorFor(assistant, { role: " Lead " }), "p1" as ProjectId),
+      assistantUpdateInput(editorFor(assistant, { role: " Lead " }), ["p1" as ProjectId]),
     ).toEqual({ assistantId: "a1", role: "Lead" });
     expect(
-      assistantCreateInput(editorFor(null, { name: "S", role: " QA " }), "p1" as ProjectId),
+      assistantCreateInput(editorFor(null, { name: "S", role: " QA " }), ["p1" as ProjectId]),
     ).toMatchObject({ role: "QA" });
     expect(
-      assistantCreateInput(editorFor(null, { name: "S" }), "p1" as ProjectId),
+      assistantCreateInput(editorFor(null, { name: "S" }), ["p1" as ProjectId]),
     ).not.toHaveProperty("role");
   });
 
@@ -329,22 +350,22 @@ describe("assistant draft", () => {
     const notify = { ...DEFAULT_ASSISTANT_AUTONOMY, mode: "reply-and-notify" as const };
     const custom = { ...notify, rules: ["ciFailed" as const], channels: ["t3" as const] };
     expect(
-      assistantCreateInput(editorFor(null, { name: "S" }), "p1" as ProjectId),
+      assistantCreateInput(editorFor(null, { name: "S" }), ["p1" as ProjectId]),
     ).not.toHaveProperty("autonomy");
     expect(
-      assistantCreateInput(editorFor(null, { name: "S", autonomy: custom }), "p1" as ProjectId),
+      assistantCreateInput(editorFor(null, { name: "S", autonomy: custom }), ["p1" as ProjectId]),
     ).toMatchObject({ autonomy: custom });
     expect(
-      assistantUpdateInput(editorFor(assistant, { autonomy: notify }), "p1" as ProjectId),
+      assistantUpdateInput(editorFor(assistant, { autonomy: notify }), ["p1" as ProjectId]),
     ).toMatchObject({ autonomy: notify });
     const saved = { ...assistant, autonomy: custom } as Assistant;
     const backToInherit = editorFor(saved, { autonomy: { ...custom, rules: null } });
-    expect(assistantUpdateInput(backToInherit, "p1" as ProjectId)).toMatchObject({
+    expect(assistantUpdateInput(backToInherit, ["p1" as ProjectId])).toMatchObject({
       autonomy: { rules: null, channels: ["t3"] },
     });
     expect(assistantDraftHasChanges(backToInherit)).toBe(true);
     const reordered = editorFor(saved, { autonomy: { ...custom, rules: [...custom.rules] } });
     expect(assistantDraftHasChanges(reordered)).toBe(false);
-    expect(assistantUpdateInput(reordered, "p1" as ProjectId)).toEqual({ assistantId: "a1" });
+    expect(assistantUpdateInput(reordered, ["p1" as ProjectId])).toEqual({ assistantId: "a1" });
   });
 });

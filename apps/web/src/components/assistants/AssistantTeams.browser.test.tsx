@@ -47,6 +47,7 @@ __setClientSettingsForTests({
 const assistant = (id: string, name: string): Assistant => ({
   id: id as AssistantId,
   handle: id,
+  projectIds: [],
   name,
   projectId: "project-1" as ProjectId,
   instructions: "",
