@@ -3,6 +3,8 @@ import {
   assistantGroupAuthorName,
   assistantGroupAwaitingRoute,
   assistantGroupFeed,
+  assistantGroupLatestSeq,
+  assistantGroupNewSeq,
   assistantGroupRunningCount,
   type AssistantGroupChatState,
   type AssistantGroupFeedRow,
@@ -22,7 +24,7 @@ import {
 } from "@t3tools/contracts";
 import { LegendList, type LegendListRef } from "@legendapp/list/react-native";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
-import { useRef, useState } from "react";
+import { Fragment, useRef, useState } from "react";
 import { Platform, Pressable, View } from "react-native";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 
@@ -50,8 +52,10 @@ import { AssistantAvatar } from "./assistantPresentation";
 import { useOpenAssistantTeam } from "./assistantTeamTarget";
 import { useOpenAssistantEditor } from "./openAssistantEditor";
 import { useAssistantTeamFlows } from "./useAssistantFlows";
+import { useGroupReadMarker } from "./useGroupReadMarker";
 import { useScheduleInGroup } from "./useScheduleInGroup";
 
+const NEW_JUMP_MIN_ROWS = 4;
 const MENTION_TOKEN = /(@[\p{L}\p{N}_-]+)/u;
 
 /** The text with each `@mention` picked out, as the user typed it. */
@@ -70,6 +74,21 @@ function MentionText(props: { readonly text: string }) {
         );
       })}
     </Text>
+  );
+}
+
+function NewDivider() {
+  return (
+    <View
+      accessibilityRole="none"
+      accessibilityLabel="New messages"
+      testID="group-new-divider"
+      className="flex-row items-center gap-2 px-4 py-1.5"
+    >
+      <View className="h-px flex-1 bg-primary/40" />
+      <Text className="text-xs font-t3-medium text-primary-text">New</Text>
+      <View className="h-px flex-1 bg-primary/40" />
+    </View>
   );
 }
 
@@ -272,6 +291,9 @@ export function AssistantGroupChatRouteScreen({
     readonly name: string;
   } | null>(null);
   const list = useRef<LegendListRef>(null);
+  const [atBottom, setAtBottom] = useState(true);
+  // Where the "New" line goes, fixed when the chat first shows: it stays until the user leaves.
+  const [newSeq, setNewSeq] = useState<number | null | undefined>(undefined);
 
   const team = entries.teams.find(
     (entry) => entry.environmentId === environmentId && entry.team.id === teamId,
@@ -291,6 +313,20 @@ export function AssistantGroupChatRouteScreen({
   const rows = chat === null ? [] : assistantGroupFeed(chat);
   const archived = team?.archivedAt != null;
   const lead = members.find((member) => member.id === team?.leadId);
+  if (newSeq === undefined && chat !== null && team !== undefined) {
+    setNewSeq(assistantGroupNewSeq(chat, team.chat?.readSeq ?? 0));
+  }
+  useGroupReadMarker({
+    latestSeq: chat === null ? null : assistantGroupLatestSeq(chat),
+    readSeq: team?.chat?.readSeq ?? 0,
+    atBottom,
+    enabled: team !== undefined && actions.canMarkRead,
+    markRead: (readSeq) => void actions.markRead(teamId, { readSeq }),
+  });
+
+  // Open on the first unread message when several rows lie below it, else stay at the end.
+  const newIndex = rows.findIndex((row) => row.message.seq === newSeq);
+  const jumpTo = newIndex >= 0 && rows.length - newIndex > NEW_JUMP_MIN_ROWS ? newIndex : null;
 
   const loadOlder = async () => {
     if (chat === null || !chat.hasMore || loadingOlder) return;
@@ -392,6 +428,21 @@ export function AssistantGroupChatRouteScreen({
                 icon: "calendar.badge.clock",
                 onPress: () => scheduleInGroup(environmentId, team.id),
               },
+              (team.chat?.unreadCount ?? 0) > 0
+                ? {
+                    id: "read",
+                    title: "Mark as read",
+                    icon: "envelope.open",
+                    disabled: !flows.canMarkRead,
+                    onPress: () => void flows.markRead(team),
+                  }
+                : {
+                    id: "unread",
+                    title: "Mark as unread",
+                    icon: "envelope.badge",
+                    disabled: !flows.canMarkRead,
+                    onPress: () => void flows.markUnread(team),
+                  },
               archived
                 ? {
                     id: "restore",
@@ -412,6 +463,8 @@ export function AssistantGroupChatRouteScreen({
         ]}
       />
       <LegendList
+        // The initial position is read at mount, so the list restarts once the chat has loaded.
+        key={chat === null ? "loading" : "ready"}
         ref={list}
         renderScrollComponent={Platform.OS === "ios" ? NativeScrollView : undefined}
         className="flex-1"
@@ -420,12 +473,22 @@ export function AssistantGroupChatRouteScreen({
         estimatedItemSize={72}
         keyExtractor={(row) => row.message.id}
         alignItemsAtEnd
-        initialScrollAtEnd
+        initialScrollAtEnd={jumpTo === null}
+        initialScrollIndex={jumpTo ?? undefined}
         maintainScrollAtEnd
         maintainVisibleContentPosition
         keyboardDismissMode="on-drag"
         keyboardShouldPersistTaps="handled"
         onStartReached={() => void loadOlder()}
+        onScroll={({ nativeEvent }) =>
+          setAtBottom(
+            nativeEvent.contentSize.height -
+              nativeEvent.contentOffset.y -
+              nativeEvent.layoutMeasurement.height <
+              48,
+          )
+        }
+        scrollEventThrottle={100}
         ListHeaderComponent={
           chat?.hasMore ? (
             <View className="items-center py-2">
@@ -453,20 +516,23 @@ export function AssistantGroupChatRouteScreen({
           )
         }
         renderItem={({ item }) => (
-          <FeedRow
-            environmentId={environmentId}
-            row={item}
-            chat={chat!}
-            assistants={byId}
-            members={members}
-            lead={lead}
-            canAct={actions.canAct}
-            archived={archived}
-            onReply={(message, name) => setReplyTo({ id: message.id, name })}
-            onPreview={setPreview}
-            onTaskAction={(task, action, ownerId) => void taskAction(task, action, ownerId)}
-            onOpenConversation={openConversation}
-          />
+          <Fragment>
+            {item.message.seq === newSeq ? <NewDivider /> : null}
+            <FeedRow
+              environmentId={environmentId}
+              row={item}
+              chat={chat!}
+              assistants={byId}
+              members={members}
+              lead={lead}
+              canAct={actions.canAct}
+              archived={archived}
+              onReply={(message, name) => setReplyTo({ id: message.id, name })}
+              onPreview={setPreview}
+              onTaskAction={(task, action, ownerId) => void taskAction(task, action, ownerId)}
+              onOpenConversation={openConversation}
+            />
+          </Fragment>
         )}
       />
       {archived ? (

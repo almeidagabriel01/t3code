@@ -15,6 +15,11 @@ const { mocks, Children } = vi.hoisted(() => ({
     environmentIds: ["hub"],
     canPost: true,
     canAct: true,
+    canMarkRead: true,
+    markRead: vi.fn(),
+    markUnread: vi.fn(),
+    markReadFlow: vi.fn(),
+    appState: "active",
     post: vi.fn(),
     taskAction: vi.fn(),
     olderThan: vi.fn(),
@@ -39,6 +44,12 @@ vi.mock("react-native", () => ({
   ),
   ScrollView: Children,
   Platform: { OS: "ios" },
+  AppState: {
+    get currentState() {
+      return mocks.appState;
+    },
+    addEventListener: () => ({ remove: () => {} }),
+  },
   Pressable: (props: {
     accessibilityLabel?: string;
     disabled?: boolean;
@@ -76,14 +87,39 @@ vi.mock("@legendapp/list/react-native", () => ({
     keyExtractor: (item: Item) => string;
     renderItem: (info: { item: Item }) => ReactNode;
     onStartReached: () => void;
+    initialScrollIndex?: number;
+    initialScrollAtEnd?: boolean;
+    onScroll: (event: {
+      nativeEvent: {
+        contentSize: { height: number };
+        contentOffset: { y: number };
+        layoutMeasurement: { height: number };
+      };
+    }) => void;
     ListHeaderComponent: ReactNode;
     ListEmptyComponent: ReactNode;
   }) => {
-    useImperativeHandle(props.ref, () => ({ scrollToEnd: mocks.scrollToEnd }));
+    useImperativeHandle(props.ref, () => ({
+      scrollToEnd: mocks.scrollToEnd,
+    }));
+    const scroll = (y: number) =>
+      props.onScroll({
+        nativeEvent: {
+          contentSize: { height: 1000 },
+          contentOffset: { y },
+          layoutMeasurement: { height: 400 },
+        },
+      });
     return (
-      <div>
+      <div
+        data-testid="list"
+        data-initial-index={props.initialScrollIndex}
+        data-at-end={String(props.initialScrollAtEnd)}
+      >
         {props.ListHeaderComponent}
         <button aria-label="start reached" onClick={props.onStartReached} />
+        <button aria-label="scroll up" onClick={() => scroll(0)} />
+        <button aria-label="scroll down" onClick={() => scroll(600)} />
         {props.data.length === 0
           ? props.ListEmptyComponent
           : props.data.map((item) => (
@@ -214,6 +250,8 @@ vi.mock("../../state/assistants", () => ({
   useAssistantGroupActions: () => ({
     canPost: mocks.canPost,
     canAct: mocks.canAct,
+    canMarkRead: mocks.canMarkRead,
+    markRead: mocks.markRead,
     post: mocks.post,
     taskAction: mocks.taskAction,
     olderThan: mocks.olderThan,
@@ -230,8 +268,11 @@ vi.mock("./useScheduleInGroup", () => ({ useScheduleInGroup: () => mocks.schedul
 vi.mock("./useAssistantFlows", () => ({
   useAssistantTeamFlows: () => ({
     canAct: true,
+    canMarkRead: mocks.canMarkRead,
     archive: mocks.archive,
     restore: mocks.restore,
+    markRead: mocks.markReadFlow,
+    markUnread: mocks.markUnread,
   }),
 }));
 
@@ -347,6 +388,8 @@ beforeEach(() => {
     environmentIds: ["hub"],
     canPost: true,
     canAct: true,
+    canMarkRead: true,
+    appState: "active",
     live: snapshot(FEED, [
       task("t1", "paused", "ada", { reason: "stopped" }),
       task("t22", "running", "beto"),
@@ -364,6 +407,9 @@ beforeEach(() => {
     mocks.archive,
     mocks.restore,
     mocks.scrollToEnd,
+    mocks.markRead,
+    mocks.markUnread,
+    mocks.markReadFlow,
     mocks.openTeam.edit,
     mocks.pick,
     mocks.prepare,
@@ -371,6 +417,7 @@ beforeEach(() => {
   ])
     fn.mockReset();
   mocks.release.mockResolvedValue(undefined);
+  mocks.markRead.mockResolvedValue({ ok: true, value: undefined });
   mocks.post.mockResolvedValue({ ok: true, value: {} });
   mocks.taskAction.mockResolvedValue({ ok: true, value: {} });
 });
@@ -653,6 +700,103 @@ describe("group header and archive", () => {
     await click("header:Restore group");
     expect(mocks.restore).toHaveBeenCalledTimes(2);
     expect(byLabel("header:Archive group")).toBeNull();
+  });
+});
+
+describe("read position", () => {
+  const chat = (readSeq: number, unreadCount: number) => ({
+    latestSeq: 4,
+    readSeq,
+    unreadCount,
+    working: false,
+    preview: null,
+  });
+  const newLine = () => container.querySelector('[data-testid="group-new-divider"]');
+  const remount = () => {
+    act(() => root.unmount());
+    root = createRoot(container);
+  };
+
+  it("puts a New line above the first message others wrote past the read position, and keeps it", () => {
+    mocks.teams = [team({ chat: chat(2, 2) })];
+    render();
+    const order = [...container.querySelectorAll("[data-testid]")].map((node) =>
+      node.getAttribute("data-testid"),
+    );
+    // m3 is the first unread; the user's own and the routing message above it are skipped.
+    expect(order.indexOf("group-new-divider")).toBe(order.indexOf("group-answer") - 1);
+    mocks.teams = [team({ chat: chat(4, 0) })];
+    render();
+    expect(newLine()).not.toBeNull();
+  });
+
+  it("shows no New line when everything is read", () => {
+    mocks.teams = [team({ chat: chat(4, 0) })];
+    render();
+    expect(newLine()).toBeNull();
+  });
+
+  it("opens on the New line only when several rows lie below it, else at the end", () => {
+    const list = () => container.querySelector('[data-testid="list"]')!;
+    mocks.teams = [team({ chat: chat(0, 3) })];
+    render();
+    // The line is near the end, so the list stays there.
+    expect([list().getAttribute("data-initial-index"), list().getAttribute("data-at-end")]).toEqual(
+      [null, "true"],
+    );
+    remount();
+    mocks.live = snapshot([
+      message("m1", 1),
+      ...[2, 3, 4, 5, 6].map((seq) =>
+        message(`x${seq}`, seq, { author: "user", assistantId: null }),
+      ),
+    ]);
+    render();
+    expect([list().getAttribute("data-initial-index"), list().getAttribute("data-at-end")]).toEqual(
+      ["0", "false"],
+    );
+  });
+
+  it("marks the chat read once the newest message has been in view, not while scrolled up", async () => {
+    vi.useFakeTimers();
+    mocks.teams = [team({ chat: chat(2, 2) })];
+    render();
+    await click("scroll up");
+    vi.advanceTimersByTime(1000);
+    expect(mocks.markRead).not.toHaveBeenCalled();
+    await click("scroll down");
+    vi.advanceTimersByTime(1000);
+    expect(mocks.markRead).toHaveBeenCalledOnce();
+    expect(mocks.markRead).toHaveBeenCalledWith("g1", { readSeq: 4 });
+    vi.useRealTimers();
+  });
+
+  it("marks nothing read in the background, without permission, or when already read", () => {
+    vi.useFakeTimers();
+    const unread = { teams: [team({ chat: chat(2, 2) })], canMarkRead: true, appState: "active" };
+    for (const change of [
+      { appState: "background" },
+      { canMarkRead: false },
+      { teams: [team({ chat: chat(4, 0) })] },
+    ]) {
+      Object.assign(mocks, unread, change);
+      render();
+      vi.advanceTimersByTime(1000);
+      remount();
+    }
+    expect(mocks.markRead).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  it("marks a read group unread and an unread one read from the header menu", async () => {
+    mocks.teams = [team({ chat: chat(4, 0) })];
+    render();
+    await click("header:Mark as unread");
+    expect(mocks.markUnread).toHaveBeenCalledWith(expect.objectContaining({ id: "g1" }));
+    mocks.teams = [team({ chat: chat(2, 2) })];
+    render();
+    await click("header:Mark as read");
+    expect(mocks.markReadFlow).toHaveBeenCalledWith(expect.objectContaining({ id: "g1" }));
   });
 });
 

@@ -250,6 +250,7 @@ function GroupFoldRow(props: {
   const { environmentId, team } = props.entry;
   const shown = props.members.slice(0, STACKED_AVATAR_LIMIT);
   const more = props.members.length - shown.length;
+  const unread = team.chat?.unreadCount ?? 0;
   const mutedIcon = props.sidebar ? "accent-drawer-foreground-muted" : "accent-icon-subtle";
   const muted = props.sidebar ? "text-drawer-foreground-muted" : "text-foreground-muted";
   return (
@@ -284,6 +285,17 @@ function GroupFoldRow(props: {
           {more > 0 ? <Text className="pl-1 text-2xs text-foreground-muted">+{more}</Text> : null}
         </View>
         <View className="min-w-2 flex-1" />
+        {unread > 0 ? (
+          <View
+            testID="group-unread"
+            accessibilityLabel={`${unread} unread`}
+            className="min-w-5 items-center rounded-full bg-primary px-1.5 py-px"
+          >
+            <Text className="text-2xs font-t3-bold text-primary-foreground">
+              {unread > 99 ? "99+" : unread}
+            </Text>
+          </View>
+        ) : null}
         {props.running > 0 ? (
           <View testID="group-status" className="flex-row items-center gap-1">
             <AppActivityIndicator size="small" colorClassName="accent-icon-muted" />
@@ -317,6 +329,19 @@ function GroupFoldRow(props: {
         sidebar={props.sidebar}
         actions={[
           { id: "chat", title: "Open chat", image: "bubble.left.and.bubble.right" },
+          unread > 0
+            ? {
+                id: "read",
+                title: "Mark as read",
+                image: "envelope.open",
+                attributes: { disabled: !flows.canMarkRead },
+              }
+            : {
+                id: "unread",
+                title: "Mark as unread",
+                image: "envelope.badge",
+                attributes: { disabled: !flows.canMarkRead || (team.chat?.latestSeq ?? 0) === 0 },
+              },
           { id: "edit", title: "Edit group", image: "pencil" },
           { id: "new", title: "New assistant in this group", image: "plus" },
           {
@@ -328,6 +353,8 @@ function GroupFoldRow(props: {
         ]}
         onAction={(id) => {
           if (id === "chat") openTeam.chat(environmentId, team.id);
+          else if (id === "read") void flows.markRead(team);
+          else if (id === "unread") void flows.markUnread(team);
           else if (id === "edit") openTeam.edit(environmentId, team.id);
           else if (id === "new") openEditor(environmentId, null, { teamId: team.id });
           else if (id === "archive") flows.archive(team);

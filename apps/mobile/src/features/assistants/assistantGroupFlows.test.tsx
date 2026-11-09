@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 const { mocks } = vi.hoisted(() => ({
   mocks: {
     update: vi.fn(),
+    markRead: vi.fn(),
     alert: vi.fn(),
     navigate: vi.fn(),
     select: vi.fn(),
@@ -31,6 +32,7 @@ vi.mock("../../state/atom-registry", () => ({ appAtomRegistry: { set: mocks.set 
 vi.mock("../../state/assistants", () => ({
   useAssistantActions: () => ({ canAct: true }),
   useAssistantTeamActions: () => ({ canAct: true, update: mocks.update }),
+  useAssistantGroupActions: () => ({ canMarkRead: true, markRead: mocks.markRead }),
 }));
 vi.mock("../settings/scheduled-task-editor", () => ({
   useScheduledTaskEditor: () => ({
@@ -60,9 +62,17 @@ const run = <T,>(hook: () => T): T => {
 beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   root = createRoot(window.document.createElement("div"));
-  for (const fn of [mocks.update, mocks.alert, mocks.navigate, mocks.startEditor, mocks.set])
+  for (const fn of [
+    mocks.update,
+    mocks.markRead,
+    mocks.alert,
+    mocks.navigate,
+    mocks.startEditor,
+    mocks.set,
+  ])
     fn.mockReset();
   mocks.update.mockResolvedValue({ ok: true, value: {} });
+  mocks.markRead.mockResolvedValue({ ok: true, value: undefined });
   mocks.draftFor.mockReset().mockReturnValue({ title: "", assistantTeamId: null });
 });
 afterEach(() => act(() => root.unmount()));
@@ -89,6 +99,23 @@ describe("group archive flows", () => {
     flows.archive(team);
     await act(async () => undefined);
     expect(mocks.alert).toHaveBeenCalledWith("Could not archive the group", "no");
+  });
+});
+
+describe("group read flows", () => {
+  it("marks read up to the newest message and unread through the server's own rule", async () => {
+    const flows = run(() => useAssistantTeamFlows("hub" as never));
+    expect(flows.canMarkRead).toBe(true);
+    await flows.markRead({ id: "g1", chat: { latestSeq: 7 } } as never);
+    expect(mocks.markRead).toHaveBeenLastCalledWith("g1", { readSeq: 7 });
+    await flows.markRead({ id: "g1" } as never);
+    expect(mocks.markRead).toHaveBeenLastCalledWith("g1", { readSeq: 0 });
+    await flows.markUnread({ id: "g1" } as never);
+    expect(mocks.markRead).toHaveBeenLastCalledWith("g1", { unread: true });
+    expect(mocks.alert).not.toHaveBeenCalled();
+    mocks.markRead.mockResolvedValue({ ok: false, message: "no" });
+    await flows.markUnread({ id: "g1" } as never);
+    expect(mocks.alert).toHaveBeenCalledWith("Could not update the group", "no");
   });
 });
 
