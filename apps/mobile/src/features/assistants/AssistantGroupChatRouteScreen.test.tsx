@@ -771,7 +771,7 @@ describe("read position", () => {
     vi.useRealTimers();
   });
 
-  it("marks nothing read in the background, without permission, or when already read", () => {
+  it("marks nothing read in the background, without permission, when already read, or while opened at the New line", async () => {
     vi.useFakeTimers();
     const unread = { teams: [team({ chat: chat(2, 2) })], canMarkRead: true, appState: "active" };
     for (const change of [
@@ -785,6 +785,30 @@ describe("read position", () => {
       remount();
     }
     expect(mocks.markRead).not.toHaveBeenCalled();
+    // Opened at the New line, far from the end: nothing is read until the user scrolls down.
+    mocks.live = snapshot([
+      message("m1", 1),
+      ...[2, 3, 4, 5, 6].map((seq) =>
+        message(`x${seq}`, seq, { author: "user", assistantId: null }),
+      ),
+    ]);
+    mocks.teams = [team({ chat: chat(0, 1) })];
+    mocks.canMarkRead = true;
+    mocks.appState = "active";
+    render();
+    vi.advanceTimersByTime(1000);
+    expect(mocks.markRead).not.toHaveBeenCalled();
+    await click("scroll down");
+    vi.advanceTimersByTime(1000);
+    expect(mocks.markRead).toHaveBeenCalledWith("g1", { readSeq: 6 });
+    // A server that sends no counters is left alone.
+    remount();
+    mocks.markRead.mockClear();
+    mocks.teams = [team()];
+    render();
+    vi.advanceTimersByTime(1000);
+    expect(mocks.markRead).not.toHaveBeenCalled();
+    expect(newLine()).toBeNull();
     vi.useRealTimers();
   });
 

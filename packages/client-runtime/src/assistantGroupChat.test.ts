@@ -310,6 +310,9 @@ describe("read position", () => {
     assert.isNull(assistantGroupFinished(undefined, idle));
     assert.isNull(assistantGroupFinished(busy, busy));
     assert.isNull(assistantGroupFinished(busy, { name: "Ops" }));
+    assert.isNull(
+      assistantGroupFinished(busy, { ...idle, archivedAt: "2026-11-09T00:00:00.000Z" }),
+    );
     assert.strictEqual(
       assistantGroupFinished(busy, { name: "Ops", chat: chatOf(false, "x".repeat(300)) })?.body
         .length,

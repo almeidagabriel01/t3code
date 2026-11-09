@@ -282,13 +282,18 @@ export function assistantGroupNewSeq(
   return first;
 }
 
-type TeamChat = Pick<AssistantTeam, "name"> & { readonly chat?: AssistantTeam["chat"] };
+type TeamChat = Pick<AssistantTeam, "name"> & {
+  readonly chat?: AssistantTeam["chat"];
+  readonly archivedAt?: AssistantTeam["archivedAt"];
+};
 
 /** A group whose tasks went from open to none: the work of a request is done. */
 export function assistantGroupFinished(
   previous: TeamChat | undefined,
   next: TeamChat,
 ): { readonly title: string; readonly body: string } | null {
+  // Archiving a busy group pauses its tasks; that is not a request finishing.
+  if (next.archivedAt != null) return null;
   if (previous?.chat?.working !== true || next.chat === undefined || next.chat.working) return null;
   const preview = next.chat.preview?.replace(/\s+/g, " ").trim() ?? "";
   return {

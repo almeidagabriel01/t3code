@@ -415,13 +415,14 @@ export function AssistantGroupChat(props: {
   const rows = chat === null ? [] : assistantGroupFeed(chat);
   const archived = team?.archivedAt != null;
   if (newSeq === undefined && chat !== null && team !== undefined) {
-    setNewSeq(assistantGroupNewSeq(chat, team.chat?.readSeq ?? 0));
+    // A server without counters sends none: there is no position to draw a line from.
+    setNewSeq(team.chat === undefined ? null : assistantGroupNewSeq(chat, team.chat.readSeq));
   }
   useGroupReadMarker({
     latestSeq: chat === null ? null : assistantGroupLatestSeq(chat),
     readSeq: team?.chat?.readSeq ?? 0,
     atBottom,
-    enabled: team !== undefined && actions.canMarkRead,
+    enabled: team?.chat !== undefined && actions.canMarkRead,
     markRead: (readSeq) => void actions.markRead(teamId, { readSeq }),
   });
 

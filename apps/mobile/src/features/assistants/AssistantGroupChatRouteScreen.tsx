@@ -292,6 +292,7 @@ export function AssistantGroupChatRouteScreen({
   } | null>(null);
   const list = useRef<LegendListRef>(null);
   const [atBottom, setAtBottom] = useState(true);
+  const [scrolled, setScrolled] = useState(false);
   // Where the "New" line goes, fixed when the chat first shows: it stays until the user leaves.
   const [newSeq, setNewSeq] = useState<number | null | undefined>(undefined);
 
@@ -314,19 +315,21 @@ export function AssistantGroupChatRouteScreen({
   const archived = team?.archivedAt != null;
   const lead = members.find((member) => member.id === team?.leadId);
   if (newSeq === undefined && chat !== null && team !== undefined) {
-    setNewSeq(assistantGroupNewSeq(chat, team.chat?.readSeq ?? 0));
+    // A server without counters sends none: there is no position to draw a line from.
+    setNewSeq(team.chat === undefined ? null : assistantGroupNewSeq(chat, team.chat.readSeq));
   }
-  useGroupReadMarker({
-    latestSeq: chat === null ? null : assistantGroupLatestSeq(chat),
-    readSeq: team?.chat?.readSeq ?? 0,
-    atBottom,
-    enabled: team !== undefined && actions.canMarkRead,
-    markRead: (readSeq) => void actions.markRead(teamId, { readSeq }),
-  });
 
   // Open on the first unread message when several rows lie below it, else stay at the end.
   const newIndex = rows.findIndex((row) => row.message.seq === newSeq);
   const jumpTo = newIndex >= 0 && rows.length - newIndex > NEW_JUMP_MIN_ROWS ? newIndex : null;
+  useGroupReadMarker({
+    latestSeq: chat === null ? null : assistantGroupLatestSeq(chat),
+    readSeq: team?.chat?.readSeq ?? 0,
+    // The list opens at the New line when it jumps, so nothing is at the end until the user scrolls.
+    atBottom: scrolled ? atBottom : jumpTo === null,
+    enabled: team?.chat !== undefined && actions.canMarkRead,
+    markRead: (readSeq) => void actions.markRead(teamId, { readSeq }),
+  });
 
   const loadOlder = async () => {
     if (chat === null || !chat.hasMore || loadingOlder) return;
@@ -480,14 +483,15 @@ export function AssistantGroupChatRouteScreen({
         keyboardDismissMode="on-drag"
         keyboardShouldPersistTaps="handled"
         onStartReached={() => void loadOlder()}
-        onScroll={({ nativeEvent }) =>
+        onScroll={({ nativeEvent }) => {
+          setScrolled(true);
           setAtBottom(
             nativeEvent.contentSize.height -
               nativeEvent.contentOffset.y -
               nativeEvent.layoutMeasurement.height <
               48,
-          )
-        }
+          );
+        }}
         scrollEventThrottle={100}
         ListHeaderComponent={
           chat?.hasMore ? (

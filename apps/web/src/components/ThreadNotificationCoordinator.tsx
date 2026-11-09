@@ -8,7 +8,7 @@ import type { AnyRouter } from "@tanstack/react-router";
 import { threadKey } from "@t3tools/client-runtime/state/entities";
 import type { EnvironmentId, OrchestrationV2ThreadShell, ThreadId } from "@t3tools/contracts";
 import type { ClientSettings } from "@t3tools/contracts/settings";
-import { isSideChatThread } from "@t3tools/contracts";
+import { isAssistantGroupThreadId, isSideChatThread } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import type { AtomRegistry } from "effect/reactivity";
 import {
@@ -267,7 +267,11 @@ export function startThreadNotifications(
           ? `${thread.latestRun?.runId ?? ""}:${status}`
           : null;
       const completedAt = Date.parse(thread.latestRun?.completedAt ?? "");
-      const settled = status === "ready" && thread.latestRun?.status === "completed";
+      // A member's finished task is told once for the whole group, not once per member.
+      const settled =
+        status === "ready" &&
+        thread.latestRun?.status === "completed" &&
+        !isAssistantGroupThreadId(thread.id);
       const state = {
         raw: rawThread,
         subagentRequest,
