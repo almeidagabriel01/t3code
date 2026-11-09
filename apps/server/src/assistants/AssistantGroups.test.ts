@@ -24,6 +24,9 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerConfig from "../config.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import { resolveAttachmentPath } from "../attachmentStore.ts";
+import * as ResourceCleanupService from "../orchestration-v2/ResourceCleanupService.ts";
+import * as DocumentText from "../provider/DocumentText.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -91,7 +94,9 @@ const harness = (options: Options = {}) => {
     mode: string;
     createdBy: string;
     modelSelection?: ModelSelection;
+    attachments: ReadonlyArray<{ id: string; type: string; name: string }>;
   }> = [];
+  const cleaned: string[] = [];
   const dispatched: Array<{ type: string; threadId: string; commandId: string; runId?: string }> =
     [];
   const launched: Array<{
@@ -235,6 +240,13 @@ const harness = (options: Options = {}) => {
             }) as never,
           }),
     }),
+    Layer.mock(DocumentText.DocumentText)({ ensure: () => Effect.sync(() => undefined) }),
+    Layer.succeed(ResourceCleanupService.ResourceCleanupService, {
+      cleanupScheduledTasks: () => Effect.void,
+      cleanupTerminals: () => Effect.void,
+      cleanupPreviews: () => Effect.void,
+      cleanupAttachments: (ids) => Effect.sync(() => void cleaned.push(...ids)),
+    }),
     ServerSettings.layerTest(),
   );
   const base = Layer.mergeAll(
@@ -326,6 +338,7 @@ const harness = (options: Options = {}) => {
     runs,
     live,
     deletedTeams,
+    cleaned,
     routeCalls,
     summaryCalls,
     state,
@@ -1808,5 +1821,171 @@ it.effect("a member cannot ask itself", () => {
       .reply({ callerThreadId: adaThread, messageId: own.message_id, text: "me?" })
       .pipe(Effect.flip);
     assert.equal(error.message, "You cannot ask yourself.");
+  }).pipe(Effect.provide(h.layer));
+});
+
+const PENDING_IMAGE = "pending-7c9e6679-7425-40de-944b-e07fc1f90ae7-png";
+const PENDING_FILE = "pending-8d0f7780-8536-41ef-a55c-f18fd2a01bf8-pdf";
+const imageUpload = {
+  type: "image",
+  id: PENDING_IMAGE,
+  name: "shot.png",
+  mimeType: "image/png",
+  sizeBytes: 3,
+} as const;
+const fileUpload = {
+  type: "file",
+  id: PENDING_FILE,
+  name: "sheet.pdf",
+  mimeType: "application/pdf",
+  sizeBytes: 4,
+} as const;
+
+/** Stores the bytes a pending upload would hold, where the claim looks for them. */
+const storeUploads = Effect.gen(function* () {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const config = yield* ServerConfig.ServerConfig;
+  for (const [upload, bytes] of [
+    [imageUpload, "png"],
+    [fileUpload, "%PDF"],
+  ] as const) {
+    const path = resolveAttachmentPath({
+      attachmentsDir: config.attachmentsDir,
+      attachment: upload,
+    })!;
+    yield* fileSystem.makeDirectory(config.attachmentsDir, { recursive: true });
+    yield* fileSystem.writeFileString(path, bytes);
+  }
+  return config.attachmentsDir;
+});
+
+it.effect(
+  "a message keeps its uploads under the group, and each member that gets the task receives its own copies",
+  () => {
+    const h = harness();
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      const dir = yield* storeUploads;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const posted = yield* groups.post(
+        { teamId: TEAM, text: "@ada look", attachments: [imageUpload, fileUpload] },
+        h.user,
+      );
+      const stored = posted.message.attachments!;
+      assert.deepEqual(
+        stored.map((attachment) => [attachment.type, attachment.name]),
+        [
+          ["image", "shot.png"],
+          ["file", "sheet.pdf"],
+        ],
+      );
+      assert.isTrue(stored.every((attachment) => attachment.id.startsWith("group-")));
+      // Reading the history back returns the same attachments.
+      const history = yield* groups.history({ teamId: TEAM });
+      assert.deepEqual(history.messages[0]!.attachments, stored);
+
+      // The task's turn gets images as images and files as files, in the member's own namespace.
+      const turn = h.sent[0]!;
+      assert.deepEqual(
+        turn.attachments.map((attachment) => [attachment.type, attachment.name]),
+        [
+          ["image", "shot.png"],
+          ["file", "sheet.pdf"],
+        ],
+      );
+      assert.isTrue(
+        turn.attachments.every((attachment) => attachment.id.startsWith("assistant-ada-")),
+      );
+      for (const attachment of turn.attachments) {
+        const path = resolveAttachmentPath({
+          attachmentsDir: dir,
+          attachment: attachment as never,
+        })!;
+        assert.isTrue(yield* fileSystem.exists(path));
+      }
+
+      // A hand-over starts the same message as Beto's task with copies of its own.
+      yield* groups.member.transfer({ callerThreadId: adaThread, member: "beto", note: "yours" });
+      yield* h.finish(0, "completed", "handed off");
+      const betoTurn = h.sent.find((message) => message.threadId === betoThread)!;
+      assert.lengthOf(betoTurn.attachments, 2);
+      assert.isTrue(
+        betoTurn.attachments.every((attachment) => attachment.id.startsWith("assistant-beto-")),
+      );
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+it.effect("an upload that is not pending, or is gone, refuses the post and stores nothing", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    yield* storeUploads;
+    const foreign = yield* groups
+      .post(
+        {
+          teamId: TEAM,
+          text: "@ada look",
+          attachments: [{ ...imageUpload, id: "thread-1-7c9e6679-7425-40de-944b-e07fc1f90ae7" }],
+        },
+        h.user,
+      )
+      .pipe(Effect.flip);
+    assert.equal(foreign.reason, "invalid");
+    const gone = yield* groups
+      .post(
+        {
+          teamId: TEAM,
+          text: "@ada look",
+          attachments: [
+            imageUpload,
+            { ...fileUpload, id: "pending-11111111-2222-4333-8444-555555555555-pdf" },
+          ],
+        },
+        h.user,
+      )
+      .pipe(Effect.flip);
+    assert.equal(gone.reason, "invalid");
+    assert.include(gone.message, "sheet.pdf");
+    assert.lengthOf(yield* h.messages, 0);
+    assert.lengthOf(h.sent, 0);
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("a file that cannot be copied for the member leaves the others in the task", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const dir = yield* storeUploads;
+    const fileSystem = yield* FileSystem.FileSystem;
+    yield* groups.post({ teamId: TEAM, text: "@ada one" }, h.user);
+    yield* groups.post({ teamId: TEAM, text: "@ada two" }, h.user);
+    // The third waits for a slot, and its image is lost before it starts.
+    const third = yield* groups.post(
+      { teamId: TEAM, text: "@ada three", attachments: [imageUpload, fileUpload] },
+      h.user,
+    );
+    yield* fileSystem.remove(
+      resolveAttachmentPath({ attachmentsDir: dir, attachment: third.message.attachments![0]! })!,
+    );
+    yield* h.finish(0, "completed", "one done");
+    assert.deepEqual(
+      h.sent[2]!.attachments.map((attachment) => attachment.name),
+      ["sheet.pdf"],
+    );
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("deleting a group removes the files its messages kept", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    yield* storeUploads;
+    const posted = yield* groups.post(
+      { teamId: TEAM, text: "@ada look", attachments: [imageUpload] },
+      h.user,
+    );
+    yield* groups.handleAssistantEvent({ type: "teamRemoved", teamId: TEAM } as never);
+    assert.deepEqual(h.cleaned, [posted.message.attachments![0]!.id]);
   }).pipe(Effect.provide(h.layer));
 });

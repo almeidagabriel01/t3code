@@ -26,6 +26,8 @@ import {
   type AssistantTeamId,
   assistantGroupLeadingAddress,
   assistantIdFromThreadId,
+  ChatAttachment,
+  ChatAttachmentId,
   CommandId,
   isAssistantGroupThreadId,
   TextGenerationError,
@@ -42,18 +44,25 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FiberSet from "effect/FiberSet";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import type * as Scope from "effect/Scope";
+import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
+import { createDeterministicAttachmentId, resolveAttachmentPath } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
+import * as AttachmentClaims from "../orchestration-v2/AttachmentClaims.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import * as ResourceCleanupService from "../orchestration-v2/ResourceCleanupService.ts";
+import * as DocumentText from "../provider/DocumentText.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import { forkParked } from "../serverActivation.ts";
@@ -140,6 +149,7 @@ interface MessageRow {
   readonly reply_to: string | null;
   readonly task_id: string | null;
   readonly client_request_id: string | null;
+  readonly attachments_json: string;
   readonly created_at: string;
 }
 
@@ -169,6 +179,13 @@ interface ThreadRow {
   readonly seen_seq: number;
 }
 
+const EMPTY_MESSAGE = { attachments_json: "[]" } as MessageRow;
+const AttachmentsJson = Schema.fromJsonString(Schema.Array(ChatAttachment));
+const decodeAttachments = Schema.decodeUnknownOption(AttachmentsJson);
+const encodeAttachments = Schema.encodeSync(AttachmentsJson);
+const attachmentsOf = (row: MessageRow): ReadonlyArray<ChatAttachment> =>
+  Option.getOrElse(decodeAttachments(row.attachments_json), () => []);
+
 const toMessage = (row: MessageRow): AssistantGroupMessage => ({
   id: row.message_id as AssistantGroupMessageId,
   teamId: row.team_id as AssistantTeamId,
@@ -180,6 +197,7 @@ const toMessage = (row: MessageRow): AssistantGroupMessage => ({
   text: row.text,
   replyToMessageId: row.reply_to as AssistantGroupMessageId | null,
   taskId: row.task_id as AssistantGroupTaskId | null,
+  ...(attachmentsOf(row).length === 0 ? {} : { attachments: attachmentsOf(row) }),
   createdAt: row.created_at,
 });
 
@@ -300,6 +318,9 @@ const make = Effect.gen(function* () {
   const registry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
   const textGeneration = yield* TextGeneration;
   const config = yield* ServerConfig.ServerConfig;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const documents = yield* DocumentText.DocumentText;
+  const cleanup = yield* ResourceCleanupService.ResourceCleanupService;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const lock = yield* Semaphore.make(1);
   const events = yield* PubSub.unbounded<{
@@ -462,18 +483,19 @@ const make = Effect.gen(function* () {
     readonly replyTo?: string | null;
     readonly taskId?: string | null;
     readonly clientRequestId?: string | null;
+    readonly attachments?: ReadonlyArray<ChatAttachment>;
   }) {
     const id = yield* newId("gm");
     // The next number is read in the same statement that takes it.
     const rows = yield* sql<MessageRow>`
       INSERT INTO assistant_group_messages (
         message_id, team_id, seq, author, assistant_id, author_label, kind, text, reply_to,
-        task_id, client_request_id, created_at
+        task_id, client_request_id, attachments_json, created_at
       )
       SELECT ${id}, ${input.teamId}, COALESCE(MAX(seq), 0) + 1, ${input.author},
         ${input.assistantId ?? null}, ${input.authorLabel ?? null}, ${input.kind}, ${input.text},
         ${input.replyTo ?? null}, ${input.taskId ?? null}, ${input.clientRequestId ?? null},
-        ${yield* nowIso}
+        ${encodeAttachments(input.attachments ?? [])}, ${yield* nowIso}
       FROM assistant_group_messages WHERE team_id = ${input.teamId}
       RETURNING *`;
     yield* publishMessage(rows[0]!);
@@ -734,6 +756,10 @@ const make = Effect.gen(function* () {
     // The member works on its own current model, so a change in its conversation reaches its groups.
     const own =
       owner.thread_id === null ? undefined : yield* inspectThread(owner.thread_id as ThreadId);
+    const attachments = yield* copyForThread(
+      exec.success.threadId,
+      attachmentsOf((yield* getMessage(task.request_message_id)) ?? EMPTY_MESSAGE),
+    );
     const sent = yield* threads
       .sendToThread({
         ...(own?.modelSelection === undefined ? {} : { modelSelection: own.modelSelection }),
@@ -742,7 +768,7 @@ const make = Effect.gen(function* () {
         messageId: MessageId.make(messageId),
         threadId: exec.success.threadId,
         text: packet,
-        attachments: [],
+        attachments,
         mode: "queue",
         createdBy: "system",
         creationSource: "server",
@@ -1027,6 +1053,64 @@ const make = Effect.gen(function* () {
       .pipe(storage);
   });
 
+  /** Moves the uploads a message carries to ids the group owns, so they outlive the 24h sweep. */
+  const claimUploads = Effect.fn("AssistantGroups.claimUploads")(function* (
+    teamId: string,
+    attachments: ReadonlyArray<ChatAttachment>,
+  ) {
+    if (attachments.length === 0) return { attachments, claimedPaths: [] };
+    // Anything but a pending upload would let a post name another thread's file.
+    if (!attachments.every(AttachmentClaims.attachmentIsPendingUpload)) {
+      return yield* invalid("Attachments must be fresh uploads.");
+    }
+    return yield* AttachmentClaims.claimPendingAttachments({
+      threadId: `group-${sha256(teamId).slice(0, 16)}`,
+      attachments,
+    }).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(ServerConfig.ServerConfig, config),
+      Effect.provideService(DocumentText.DocumentText, documents),
+      Effect.mapError((error) => assistantError("invalid", error.message)),
+    );
+  });
+
+  /**
+   * The member's own copies of a message's files, so deleting its thread never removes the group's.
+   * A file that cannot be copied is left out; the task and the other files still go.
+   */
+  const copyForThread = Effect.fn("AssistantGroups.copyForThread")(function* (
+    threadId: ThreadId,
+    attachments: ReadonlyArray<ChatAttachment>,
+  ) {
+    const copies: ChatAttachment[] = [];
+    for (const attachment of attachments) {
+      const id = createDeterministicAttachmentId(threadId, attachment.id);
+      const copy = id === null ? null : { ...attachment, id: ChatAttachmentId.make(id) };
+      const from = resolveAttachmentPath({ attachmentsDir: config.attachmentsDir, attachment });
+      const to =
+        copy === null
+          ? null
+          : resolveAttachmentPath({ attachmentsDir: config.attachmentsDir, attachment: copy });
+      if (copy === null || from === null || to === null) continue;
+      const done = yield* Effect.gen(function* () {
+        if (!(yield* fileSystem.exists(to))) yield* fileSystem.copyFile(from, to);
+        if (yield* fileSystem.exists(`${from}.txt`)) {
+          yield* fileSystem.copyFile(`${from}.txt`, `${to}.txt`);
+        }
+      }).pipe(
+        Effect.as(true),
+        Effect.catch((cause) =>
+          Effect.logWarning("assistant groups: could not copy an attachment", {
+            attachmentId: attachment.id,
+            cause,
+          }).pipe(Effect.as(false)),
+        ),
+      );
+      if (done) copies.push(copy);
+    }
+    return copies;
+  });
+
   const post: AssistantGroups["Service"]["post"] = Effect.fn("AssistantGroups.post")(
     function* (input, author) {
       const outcome = yield* lock
@@ -1072,6 +1156,7 @@ const make = Effect.gen(function* () {
               if (lead === undefined)
                 return yield* assistantError("mention_required", MENTION_REQUIRED_MESSAGE);
             }
+            const claimed = yield* claimUploads(team.id, input.attachments ?? []);
             const message = yield* insertMessage({
               teamId: team.id,
               author: author.kind === "user" ? "user" : author.kind,
@@ -1081,7 +1166,14 @@ const make = Effect.gen(function* () {
               text: input.text,
               replyTo: input.replyToMessageId ?? null,
               clientRequestId: input.clientRequestId ?? null,
-            });
+              attachments: claimed.attachments,
+            }).pipe(
+              Effect.onError(() =>
+                AttachmentClaims.releaseClaimedAttachments(claimed.claimedPaths).pipe(
+                  Effect.provideService(FileSystem.FileSystem, fileSystem),
+                ),
+              ),
+            );
             if (lead !== undefined) return { message, lead };
             yield* openRoots(team, message, recipients ?? [], instructionFor(author, input.text));
             yield* pump(team.id);
@@ -1657,6 +1749,15 @@ const make = Effect.gen(function* () {
       .pipe(
         Effect.catch((cause) =>
           Effect.logWarning("assistant groups: schedules were not deleted", { teamId, cause }),
+        ),
+      );
+    const owned = (yield* sql<MessageRow>`
+      SELECT * FROM assistant_group_messages WHERE team_id = ${teamId}`).flatMap(attachmentsOf);
+    yield* cleanup
+      .cleanupAttachments(owned.map((attachment) => attachment.id))
+      .pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("assistant groups: attachments were not deleted", { teamId, cause }),
         ),
       );
     yield* sql`DELETE FROM assistant_group_messages WHERE team_id = ${teamId}`;
