@@ -5,15 +5,19 @@ import {
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ThreadShell,
   type OrchestrationV2TurnItem,
+  type AssistantTeam,
   type Project,
-  type ThreadId,
+  ThreadId,
 } from "@t3tools/contracts";
 import {
   RelayApi,
   type RelayAgentActivityPublishProofPayload,
   type RelayAgentActivityState,
 } from "@t3tools/contracts/relay";
-import { projectThreadAwarenessV2 } from "@t3tools/shared/agentAwareness";
+import {
+  buildAssistantGroupDeepLink,
+  projectThreadAwarenessV2,
+} from "@t3tools/shared/agentAwareness";
 import { turnItemUpdateCanEndBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
@@ -40,6 +44,7 @@ import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import * as AssistantService from "../assistants/AssistantService.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as DecisionService from "../decisions/DecisionService.ts";
 import {
@@ -382,6 +387,7 @@ export const make = Effect.gen(function* () {
   const projects = yield* ProjectService.ProjectService;
   const sql = yield* SqlClient.SqlClient;
   const decisions = yield* DecisionService.DecisionService;
+  const assistants = yield* AssistantService.AssistantService;
   const random = yield* SecureRandom.SecureRandom;
   const scope = yield* Effect.scope;
   const cloudLinkKeyPair = yield* getOrCreateEnvironmentKeyPairFromSecretStore(secrets);
@@ -419,6 +425,19 @@ export const make = Effect.gen(function* () {
           Effect.orElseSucceed(() => false),
         );
   };
+
+  // A member's hidden thread carries the group's finish: the relay only knows threads.
+  const groupFinishes = new Map<
+    ThreadId,
+    { readonly title: string; readonly preview: string; readonly deepLink: string }
+  >();
+  const isGroupThread = (threadId: ThreadId) =>
+    assistantIdFromThreadId(threadId) === null
+      ? Effect.succeed(false)
+      : sql`SELECT 1 FROM assistant_group_threads WHERE thread_id = ${threadId}`.pipe(
+          Effect.map((rows) => rows.length > 0),
+          Effect.orElseSucceed(() => false),
+        );
 
   const openDecisionTitle = (threadId: ThreadId) =>
     sql<{ readonly title: string }>`
@@ -579,7 +598,7 @@ export const make = Effect.gen(function* () {
       projected.state.phase !== "waiting_for_input"
         ? yield* openDecisionTitle(threadId)
         : null;
-    const snapshot =
+    const baseSnapshot =
       projected.state === null || decisionTitle === null
         ? projected
         : {
@@ -591,6 +610,32 @@ export const make = Effect.gen(function* () {
               detail: decisionTitle,
             }),
           };
+    // A member's own completion is silent: the group's finish replaces it, so n members do not buzz n times.
+    const basePhase = baseSnapshot.state?.phase;
+    let snapshot = baseSnapshot;
+    if (
+      baseSnapshot.state !== null &&
+      (basePhase === "completed" || basePhase === "running" || basePhase === "starting") &&
+      (yield* isGroupThread(threadId))
+    ) {
+      const finish = groupFinishes.get(threadId);
+      if (basePhase !== "completed") {
+        groupFinishes.delete(threadId);
+      } else {
+        snapshot = {
+          ...baseSnapshot,
+          state:
+            finish === undefined
+              ? null
+              : sanitizeRelayAgentActivityState({
+                  ...baseSnapshot.state,
+                  threadTitle: finish.title,
+                  projectTitle: finish.preview,
+                  deepLink: finish.deepLink,
+                }),
+        };
+      }
+    }
     const publishIdentity = agentAwarenessPublishIdentity(snapshot.state);
     const publishedStateByThread = yield* Ref.get(publishedStateByThreadRef);
     if (
@@ -853,6 +898,28 @@ export const make = Effect.gen(function* () {
       scope,
     ).pipe(Effect.asVoid);
 
+  const publishGroupFinish = Effect.fn("AgentAwarenessRelay.publishGroupFinish")(function* (
+    team: AssistantTeam,
+  ) {
+    const rows = yield* sql<{ readonly thread_id: string }>`
+      SELECT g.thread_id FROM assistant_group_messages m
+      JOIN assistant_group_threads g ON g.team_id = m.team_id AND g.assistant_id = m.assistant_id
+      WHERE m.team_id = ${team.id} AND m.author = 'assistant' AND m.kind = 'message'
+      ORDER BY m.seq DESC LIMIT 1`;
+    if (rows[0] === undefined) return;
+    const threadId = ThreadId.make(rows[0].thread_id);
+    const preview = (team.chat?.preview ?? "").replace(/\s+/g, " ").trim().slice(0, 120);
+    groupFinishes.set(threadId, {
+      title: team.name,
+      preview: preview === "" ? team.name : preview,
+      deepLink: buildAssistantGroupDeepLink({
+        environmentId: yield* serverEnvironment.getEnvironmentId,
+        teamId: team.id,
+      }),
+    });
+    yield* enqueueThreadPublish(threadId);
+  });
+
   const start: AgentAwarenessRelay["Service"]["start"] = Effect.fn("AgentAwarenessRelay.start")(
     function* () {
       const [relayConfig, publishEnabled] = yield* Effect.all([
@@ -890,6 +957,29 @@ export const make = Effect.gen(function* () {
             ? enqueueThreadPublish(event.decision.fromThreadId)
             : Effect.void,
         ).pipe(Effect.ignore),
+      );
+      // One push per working to idle, never for an archived group; the first event is a snapshot.
+      yield* forkParked(
+        Effect.suspend(() => {
+          const working = new Map<string, boolean>();
+          return Stream.runForEach(assistants.subscribe, (event) => {
+            if (event.type === "snapshot") {
+              working.clear();
+              for (const team of event.teams) working.set(team.id, team.chat?.working ?? false);
+              return Effect.void;
+            }
+            if (event.type === "teamRemoved") {
+              working.delete(event.teamId);
+              return Effect.void;
+            }
+            if (event.type !== "teamUpserted") return Effect.void;
+            const { team } = event;
+            const was = working.get(team.id) === true;
+            const now = team.chat?.working ?? false;
+            working.set(team.id, now);
+            return was && !now && team.archivedAt === null ? publishGroupFinish(team) : Effect.void;
+          });
+        }).pipe(Effect.ignore),
       );
       yield* forkParked(
         Stream.runForEach(threads.streamDomainEvents, (event) => {

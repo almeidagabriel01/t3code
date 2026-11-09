@@ -342,7 +342,7 @@ object AgentNotifications {
     path: String?,
     id: Int
   ): PendingIntent? {
-    val threadPath = path?.takeIf { it.startsWith("/threads/") }
+    val threadPath = path?.takeIf { it.startsWith("/threads/") || it.startsWith("/assistant-groups/") }
     val route = threadPath?.takeUnless { it.contains('?') || it.contains('#') } ?: "/"
     val intent = context.packageManager.getLaunchIntentForPackage(context.packageName)
       ?: return null

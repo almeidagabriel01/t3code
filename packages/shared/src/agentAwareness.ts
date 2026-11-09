@@ -39,6 +39,14 @@ function buildAgentAwarenessDeepLink(input: {
   return `/threads/${encodeURIComponent(input.environmentId)}/${encodeURIComponent(input.threadId)}`;
 }
 
+/** The mobile route of a group's chat; older apps ignore it and open the thread named beside it. */
+export function buildAssistantGroupDeepLink(input: {
+  readonly environmentId: EnvironmentId;
+  readonly teamId: string;
+}): string {
+  return `/assistant-groups/${encodeURIComponent(input.environmentId)}/${encodeURIComponent(input.teamId)}`;
+}
+
 export interface ProjectThreadAwarenessV2Input {
   readonly environmentId: EnvironmentId;
   readonly project: Pick<Project, "title">;
