@@ -61,7 +61,7 @@ export function AssistantSchedules(props: {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Could not run the schedule",
+          title: "Could not run the routine",
           description: error instanceof Error ? error.message : String(error),
         }),
       );
@@ -92,7 +92,7 @@ export function AssistantSchedules(props: {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Could not update schedule",
+          title: "Could not update routine",
           description: error instanceof Error ? error.message : String(error),
         }),
       );
@@ -103,7 +103,7 @@ export function AssistantSchedules(props: {
     <div className="flex flex-col gap-1.5">
       <div className="flex items-start justify-between gap-3">
         <div className="flex flex-col gap-0.5">
-          <span className="text-sm font-medium">Schedules</span>
+          <span className="text-sm font-medium">Routines</span>
           <p className="text-xs text-muted-foreground">
             Prompts that run in this conversation on a timer or a webhook.
           </p>
@@ -115,16 +115,16 @@ export function AssistantSchedules(props: {
           onClick={() => open({ threadId: props.threadId })}
         >
           <PlusIcon />
-          New schedule
+          New routine
         </Button>
       </div>
       {tasksQuery.error !== null ? (
         <p className="text-xs text-destructive-foreground">
-          Could not load schedules: {tasksQuery.error}
+          Could not load routines: {tasksQuery.error}
         </p>
       ) : tasks.length === 0 ? (
         <p className="rounded-md px-2 py-1.5 text-xs text-muted-foreground">
-          Nothing scheduled. Add a schedule to have it check in on its own.
+          No routines yet. Add one to have it check in on its own.
         </p>
       ) : (
         <ul className="m-0 flex list-none flex-col p-0">

@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   ASSISTANT_ROBOT_HUES,
+  newAssistantLook,
   assistantGroupOwnerKey,
   assistantFace,
   assistantGroupThreadsOf,
@@ -247,5 +248,15 @@ describe("assistantQueuedLabel", () => {
     [3, "3 queued"],
   ] as const)("%s", (queued, label) => {
     expect(assistantQueuedLabel(queued)).toBe(label);
+  });
+});
+
+describe("newAssistantLook", () => {
+  it("gives each of the first eight assistants its own color and face, the same every time", () => {
+    const looks = Array.from({ length: 8 }, (_, index) => newAssistantLook(index));
+    expect(new Set(looks.map((look) => look.hue)).size).toBe(8);
+    expect(new Set(looks.map((look) => look.variant)).size).toBe(8);
+    expect(newAssistantLook(3)).toEqual(looks[3]);
+    expect(newAssistantLook(0)).toEqual({ hue: 210, variant: 0 });
   });
 });

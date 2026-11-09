@@ -193,7 +193,7 @@ describe("AssistantSchedulesSection", () => {
 
   it("starts a new schedule bound to the assistant's thread", () => {
     render();
-    act(() => button("New schedule").click());
+    act(() => button("New routine").click());
     expect(mocks.start).toHaveBeenCalledWith({
       environmentId: "hub",
       environmentLabel: "Hub",
@@ -209,6 +209,6 @@ describe("AssistantSchedulesSection", () => {
 
   it("cannot add a schedule before the assistant has a conversation", () => {
     render(null);
-    expect((button("New schedule") as HTMLButtonElement).disabled).toBe(true);
+    expect((button("New routine") as HTMLButtonElement).disabled).toBe(true);
   });
 });

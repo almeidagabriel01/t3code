@@ -339,7 +339,7 @@ it("lists only the schedules bound to the assistant's conversation and manages t
 
   fakeScheduledTasks.failToggle = "Server said no";
   await userEvent.click(page.getByRole("switch", { name: "Pause Morning brief" }));
-  await expect.element(page.getByText("Could not update schedule")).toBeVisible();
+  await expect.element(page.getByText("Could not update routine")).toBeVisible();
   await expect.element(page.getByText("Server said no")).toBeVisible();
 });
 
@@ -360,9 +360,9 @@ it("starts a new schedule bound to the assistant's conversation", async () => {
   publishScheduledTasks([]);
   await using screen = await openEditDialog("Jarvis");
   await expect
-    .element(page.getByText("Nothing scheduled. Add a schedule to have it check in on its own."))
+    .element(page.getByText("No routines yet. Add one to have it check in on its own."))
     .toBeVisible();
-  await userEvent.click(page.getByRole("button", { name: "New schedule" }));
+  await userEvent.click(page.getByRole("button", { name: "New routine" }));
   await eventually(() =>
     expect(screen.router.state.location.search).toMatchObject({
       threadId: "assistant:jarvis:1",
@@ -533,7 +533,9 @@ it("creates an assistant that works in the sandbox", async () => {
   await userEvent.click(page.getByRole("radio", { name: /Sandbox container/ }));
   await userEvent.click(page.getByRole("button", { name: "Create assistant" }));
   await eventually(() =>
-    expect(fakeAssistantEdits.creates).toMatchObject([{ name: "Boxed", workspace: "sandbox" }]),
+    expect(fakeAssistantEdits.creates).toMatchObject([
+      { name: "Boxed", workspace: "sandbox", scope: "all" },
+    ]),
   );
   appAtomRegistry.set(assistantDialogAtom, null);
 });

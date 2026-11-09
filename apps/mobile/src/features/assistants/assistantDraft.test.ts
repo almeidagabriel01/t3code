@@ -13,6 +13,7 @@ import {
   assistantDraftFor,
   assistantEditorAtom,
   assistantInGroup,
+  assistantProjectChanged,
   avatarImageProblem,
   setAssistantGroup,
   startAssistantEditor,
@@ -44,7 +45,7 @@ const assistant = {
   workspace: "host",
   icon: null,
   avatar: null,
-  scope: "all",
+  scope: "project",
   autonomy: DEFAULT_ASSISTANT_AUTONOMY,
   archivedAt: null,
   createdAt: "2026-01-01T00:00:00.000Z",
@@ -116,6 +117,30 @@ describe("assistant draft", () => {
       projectId: "p1",
       projectIds: two,
     });
+  });
+
+  it("maps All projects to scope all, on create and on a move from a project", () => {
+    expect(
+      assistantCreateInput(editorFor(null, { name: "Scout" }), ["all"], "p1" as ProjectId),
+    ).toMatchObject({ projectId: "p1", scope: "all" });
+    expect(assistantUpdateInput(editorFor(assistant), ["all"], "p1" as ProjectId)).toEqual({
+      assistantId: "a1",
+      projectId: "p1",
+      scope: "all",
+    });
+    const everywhere = { ...assistant, scope: "all" } as Assistant;
+    expect(assistantUpdateInput(editorFor(everywhere), ["all"])).toEqual({ assistantId: "a1" });
+    expect([
+      assistantProjectChanged(assistant, null, ["all"]),
+      assistantProjectChanged(everywhere, null, ["all"]),
+    ]).toEqual([true, false]);
+  });
+
+  it("starts each new assistant on a different look, and on All projects", () => {
+    const [first, second] = [0, 1].map((lookIndex) => assistantDraftFor(null, { lookIndex }));
+    expect(first!.avatar).not.toEqual(second!.avatar);
+    expect(first!.projectIds).toBeNull();
+    expect(assistantDraftFor(null, { projectId: "p2" as ProjectId }).projectIds).toEqual(["p2"]);
   });
 
   it("sends the whole form when creating, with the derived handle", () => {

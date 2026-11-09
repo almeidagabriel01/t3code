@@ -49,7 +49,7 @@ export function AssistantSchedulesSection(props: {
     <View className="gap-2">
       <View className="gap-0.5 px-2">
         <Text textRole="footnote" className="font-t3-medium text-foreground">
-          Schedules
+          Routines
         </Text>
         <Text textRole="footnote" className="text-foreground-muted">
           Tasks that run in its current conversation. A reset keeps them attached.
@@ -101,7 +101,7 @@ export function AssistantSchedulesSection(props: {
         ))}
         <ListActionRow
           icon="plus"
-          label="New schedule"
+          label="New routine"
           disabled={assistant.threadId === null}
           onPress={() =>
             open(createDraft(assistant.projectId, props.modelSelection, assistant.threadId), "New")

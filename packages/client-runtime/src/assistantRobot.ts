@@ -84,6 +84,12 @@ function hashString(value: string): number {
   return hash;
 }
 
+/** What a new assistant starts with: the Nth one differs from the ones before it, stably. */
+export const newAssistantLook = (index: number): AssistantRobotLook => ({
+  hue: ASSISTANT_ROBOT_HUES[index % ASSISTANT_ROBOT_HUES.length]!,
+  variant: (index * 3) % ASSISTANT_ROBOT_VARIANTS,
+});
+
 /** The robot an assistant wears: its own pick, or one derived from its id so it never changes. */
 export function assistantRobotLook(assistant: {
   readonly id: string;

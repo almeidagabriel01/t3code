@@ -2,12 +2,14 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   assistantProjectFields,
+  assistantProjectsLabel,
   assistantProjectSelection,
   assistantSections,
   homeAfterPick,
   sameProjects,
   toggleAssistantProject,
   projectAssistants,
+  projectPickerRows,
   type SectionAssistant,
   type SectionTeam,
 } from "./assistantSections.ts";
@@ -167,31 +169,109 @@ describe("the project pick", () => {
     { name: "a project replaces all", cur: ["all"], id: "p1", expected: ["p1"] },
     { name: "clearing the last falls back to all", cur: ["p1"], id: "p1", expected: ["all"] },
   ])("$name", ({ cur, id, expected }) => {
-    expect(toggleAssistantProject(cur, "all", id)).toEqual(expected);
+    expect(toggleAssistantProject(cur, id)).toEqual(expected);
   });
-  it("has no fallback when there is no all entry", () => {
-    expect(toggleAssistantProject(["p1"], null, "p1")).toEqual([]);
+  it.each([
+    {
+      name: "a project assistant lists its projects",
+      scope: "project",
+      ids: ["p1", "p2"],
+      expected: ["p1", "p2"],
+    },
+    {
+      name: "a project assistant without a list is its home",
+      scope: "project",
+      ids: [],
+      expected: ["p1"],
+    },
+    {
+      name: "an assistant for every project starts on All projects",
+      scope: "all",
+      ids: [],
+      expected: ["all"],
+    },
+    { name: "even with a home project listed", scope: "all", ids: ["p1"], expected: ["all"] },
+  ] as const)("starts on: $name", ({ scope, ids, expected }) => {
+    expect(assistantProjectSelection(multiOf(scope, [...ids]))).toEqual(expected);
   });
-  it("starts on the list, or the home of an assistant for every project", () => {
-    expect(assistantProjectSelection(multiOf("project", ["p1", "p2"]))).toEqual(["p1", "p2"]);
-    expect(assistantProjectSelection(multiOf("project", []))).toEqual(["p1"]);
-    expect(assistantProjectSelection(multiOf("all", []))).toEqual(["p1"]);
+  it("keeps the home while it stays picked, and ignores All projects", () => {
+    expect([
+      homeAfterPick("p1", ["p2", "p1"]),
+      homeAfterPick("p1", ["p2"]),
+      homeAfterPick("p1", ["all"]),
+      homeAfterPick(null, ["all"]),
+      homeAfterPick(null, []),
+    ]).toEqual(["p1", "p2", "p1", null, null]);
   });
-  it("keeps the home while it stays picked", () => {
-    expect([homeAfterPick("p1", ["p2", "p1"]), homeAfterPick("p1", ["p2"])]).toEqual(["p1", "p2"]);
-    expect(homeAfterPick(null, [])).toBeNull();
+  it.each([
+    {
+      name: "All projects is scope all",
+      picked: ["all"],
+      expected: { projectId: "h", scope: "all" },
+    },
+    { name: "one project", picked: ["p1"], expected: { projectId: "p1" } },
+    {
+      name: "several projects",
+      picked: ["p1", "p2"],
+      expected: { projectId: "p1", projectIds: ["p1", "p2"] },
+    },
+  ])("sends $name", ({ picked, expected }) => {
+    expect(assistantProjectFields(picked, "h")).toEqual(expected);
   });
-  it("sends one project as projectId and several as a list", () => {
-    expect(assistantProjectFields(["p1"])).toEqual({ projectId: "p1" });
-    expect(assistantProjectFields(["p1", "p2"])).toEqual({
-      projectId: "p1",
-      projectIds: ["p1", "p2"],
-    });
+  it.each([
+    {
+      name: "All projects is always first, even with no projects",
+      projects: [],
+      expected: [{ id: "all", label: "All projects", detail: null }],
+    },
+    {
+      name: "unique labels have no detail",
+      projects: [
+        { id: "a", label: "A", path: "/x/a" },
+        { id: "b", label: "B", path: "/x/b" },
+      ],
+      expected: [
+        { id: "all", label: "All projects", detail: null },
+        { id: "a", label: "A", detail: null },
+        { id: "b", label: "B", detail: null },
+      ],
+    },
+    {
+      name: "duplicate labels show their folder",
+      projects: [
+        { id: "a", label: "repo", path: "/x/a" },
+        { id: "b", label: "repo", path: "/x/b" },
+        { id: "c", label: "other", path: "/x/c" },
+      ],
+      expected: [
+        { id: "all", label: "All projects", detail: null },
+        { id: "a", label: "repo", detail: "/x/a" },
+        { id: "b", label: "repo", detail: "/x/b" },
+        { id: "c", label: "other", detail: null },
+      ],
+    },
+  ])("picker rows: $name", ({ projects, expected }) => {
+    expect(projectPickerRows(projects)).toEqual(expected);
   });
   it("compares picks as sets", () => {
     expect([sameProjects(["a", "b"], ["b", "a"]), sameProjects(["a"], ["a", "b"])]).toEqual([
       true,
       false,
     ]);
+  });
+});
+
+describe("assistantProjectsLabel", () => {
+  it.each([
+    { name: "scope all ignores its home folder", scope: "all", ids: [], expected: "All projects" },
+    {
+      name: "a project lists its names",
+      scope: "project",
+      ids: ["p1", "p2"],
+      expected: "n-p1, n-p2",
+    },
+    { name: "a project without a list is its home", scope: "project", ids: [], expected: "n-p1" },
+  ] as const)("$name", ({ scope, ids, expected }) => {
+    expect(assistantProjectsLabel(multiOf(scope, [...ids]), (id) => `n-${id}`)).toBe(expected);
   });
 });

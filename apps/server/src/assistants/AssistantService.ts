@@ -507,6 +507,11 @@ const make = Effect.gen(function* () {
     };
   });
 
+  const allProjectsHome = folders.ensureAssistantProject.pipe(
+    Effect.map((project) => project.projectId),
+    Effect.catch(threadFailure("Could not create the project for assistants.")),
+  );
+
   const handleTaken = (handle: string, exceptId?: string) =>
     sql<{ readonly one: number }>`
       SELECT 1 AS one FROM assistants WHERE handle = ${handle} AND assistant_id <> ${exceptId ?? ""}`.pipe(
@@ -526,7 +531,12 @@ const make = Effect.gen(function* () {
       if (handle === null)
         return yield* invalid("Give the assistant a name with letters or digits.");
       const listed = [...new Set(input.projectIds ?? [])];
-      const projectIds = listed.length > 0 ? listed : [input.projectId];
+      const projectIds =
+        input.scope === "all"
+          ? [yield* allProjectsHome]
+          : listed.length > 0
+            ? listed
+            : [input.projectId];
       const home = projectIds[0]!;
       const { scope, json: projectIdsJson } = yield* resolveProjects(projectIds);
       const id = options?.id ?? (yield* random.uuidV4().pipe(Effect.orDie));
@@ -588,11 +598,17 @@ const make = Effect.gen(function* () {
           }
           const listed = [...new Set(input.projectIds ?? [])];
           const requested =
-            listed.length > 0
-              ? listed
-              : input.projectId === undefined
-                ? undefined
-                : [input.projectId];
+            input.scope === "all"
+              ? [
+                  (yield* scopeFor(row.project_id)) === "all"
+                    ? (row.project_id as ProjectId)
+                    : yield* allProjectsHome,
+                ]
+              : listed.length > 0
+                ? listed
+                : input.projectId === undefined
+                  ? undefined
+                  : [input.projectId];
           // Adding projects keeps the home one, so it does not start a new conversation.
           const home =
             requested === undefined

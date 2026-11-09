@@ -8,7 +8,7 @@ import {
 import {
   assistantEntryKey,
   assistantSections,
-  listedProjects,
+  assistantProjectsLabel,
 } from "@t3tools/client-runtime/assistantSections";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { EnvironmentId, ProjectId } from "@t3tools/contracts";
@@ -371,13 +371,9 @@ export function SettingsAssistantsRouteScreen() {
       groupNames={groupNamesOf(entry)}
       detail={detailOf(entry)}
       nowMs={nowMs}
-      projectLabel={
-        entry.assistant.scope === "project"
-          ? listedProjects(entry.assistant)
-              .map((projectId) => projectName(entry.environmentId, projectId))
-              .join(", ")
-          : "All projects"
-      }
+      projectLabel={assistantProjectsLabel(entry.assistant, (projectId) =>
+        projectName(entry.environmentId, projectId),
+      )}
     />
   );
   const nothing =

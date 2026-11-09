@@ -32,6 +32,7 @@ vi.mock("../../state/server", () => ({
 }));
 vi.mock("react-native", () => ({
   View: Children,
+  ScrollView: Children,
   Platform: { OS: "android" },
   Pressable: (props: {
     accessibilityLabel?: string;
@@ -207,7 +208,11 @@ vi.mock("./useAssistantEditor", async () => {
         editor,
         projects: [project, { id: "p2", title: "Beta" }],
         picked: editor?.current.projectIds ?? ["p1"],
-        scratchId: null,
+        pickerRows: [
+          { id: "all", label: "All projects", detail: null },
+          { id: "p1", label: "Alpha", detail: null },
+          { id: "p2", label: "Beta", detail: null },
+        ],
         effectiveProject: project,
         modelLabel: "GPT",
         modelSelection: null,
@@ -420,6 +425,14 @@ describe("basic fields and Advanced", () => {
       projectId: "p1",
       projectIds: ["p1", "p2"],
     });
+  });
+
+  it("creates an assistant for every project when All projects is ticked", async () => {
+    render(null);
+    pick("All projects");
+    type("Name", "Scout");
+    await act(async () => pick("Create assistant"));
+    expect(mocks.create.mock.calls[0]?.[0]).toMatchObject({ scope: "all" });
   });
 
   it("asks for the first group and ticks the preset group of a new assistant", async () => {

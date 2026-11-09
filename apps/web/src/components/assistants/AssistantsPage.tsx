@@ -9,7 +9,7 @@ import {
 import {
   assistantEntryKey,
   assistantSections,
-  listedProjects,
+  assistantProjectsLabel,
 } from "@t3tools/client-runtime/assistantSections";
 import type { AssistantTeamId, EnvironmentId, ProjectId } from "@t3tools/contracts";
 import {
@@ -275,11 +275,9 @@ export function AssistantsPage() {
       )
       .map((candidate) => candidate.team.name);
   const projectLabelOf = (entry: AssistantEntry) =>
-    entry.assistant.scope === "project"
-      ? listedProjects(entry.assistant)
-          .map((projectId) => projectName(entry.environmentId, projectId))
-          .join(", ")
-      : "All projects";
+    assistantProjectsLabel(entry.assistant, (projectId) =>
+      projectName(entry.environmentId, projectId),
+    );
   const card = (entry: AssistantEntry, keyPrefix: string) => (
     <AssistantCard
       key={`${keyPrefix}:${assistantEntryKey(entry)}`}
