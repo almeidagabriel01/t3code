@@ -447,6 +447,8 @@ function NoteContent(props: NoteParams) {
         ) : editing ? (
           <>
             <RNTextInput
+              // autoFocus is a no-op while the field is not editable; remount once the draft is restored.
+              key={restored ? "restored" : "restoring"}
               accessibilityLabel="Note markdown"
               multiline
               autoFocus
