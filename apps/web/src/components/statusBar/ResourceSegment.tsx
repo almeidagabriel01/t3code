@@ -749,7 +749,9 @@ function ResourceManager({
     ]),
   );
   return (
-    <div className="flex min-h-0 w-full flex-1 flex-col">
+    // Base UI measures the popup with --available-height set to max-content, which voids a min() height:
+    // the full list then overflows every side and the popup lands beside the button.
+    <div className="flex h-[40rem] max-h-(--available-height) w-full flex-col">
       <div className="flex items-center gap-1.5 border-b border-border px-3 py-1.5 text-2xs font-medium text-foreground">
         <MemoryStickIcon aria-hidden className="size-3 shrink-0 text-muted-foreground" />
         <span className="truncate">Resource Manager</span>
@@ -831,12 +833,7 @@ function ResourceSegmentBody() {
         <span className="tabular-nums">{terminalCount}</span>
         <QueueCount environmentId={primaryEnvironmentId} />
       </PopoverTrigger>
-      <PopoverPopup
-        side="top"
-        align="end"
-        padding="none"
-        className="h-[min(40rem,var(--available-height))] w-[26rem]"
-      >
+      <PopoverPopup side="top" align="end" padding="none" className="w-[26rem]">
         <ResourceManager resources={resources} />
       </PopoverPopup>
     </Popover>
