@@ -635,6 +635,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["status bar used remaining left limit"],
   },
   {
+    id: "status-bar-usage-reset",
+    title: "Reset shown as",
+    to: "/settings/status-bar",
+    searchTerms: ["usage limit reset day weekday countdown time left weekly"],
+  },
+  {
     id: "status-bar-usage-pace",
     title: "Usage pace",
     to: "/settings/status-bar",

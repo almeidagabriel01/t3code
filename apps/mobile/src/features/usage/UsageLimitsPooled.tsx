@@ -27,17 +27,16 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { environmentPresentations } from "../../state/presentation";
+import { AccountSessions } from "./AccountSessions";
 import { ResetCredits } from "./UsageLimitsSection";
 import {
   PaceDetail,
   paceTone,
   UsagePaceSettingsSection,
+  UsageResetSettingsSection,
   useUsagePaceSettings,
 } from "./usagePaceSettings";
-import {
-  collectAccountSessions,
-  groupSessionsByProject,
-} from "@t3tools/client-runtime/state/usageSessions";
+import { collectAccountSessions } from "@t3tools/client-runtime/state/usageSessions";
 import { poolPacePresentation } from "@t3tools/shared/usagePace";
 import { useProjects, useThreadShells } from "../../state/entities";
 import { useOpenLinkedThread } from "../threads/useOpenLinkedThread";
@@ -552,6 +551,7 @@ export function UsageLimitsSection({
           </View>
         </View>
       ) : null}
+      <UsageResetSettingsSection />
       <UsagePaceSettingsSection />
     </View>
   );
@@ -672,45 +672,13 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
                 </Text>
               ) : null}
             </View>
-            {sessions.length > 0 ? (
-              <View className="gap-3 rounded-[24px] border-continuous bg-grouped-card p-4">
-                <Text className="text-sm font-t3-medium text-foreground">
-                  Sessions ({sessions.length})
-                </Text>
-                {groupSessionsByProject(sessions).map((group) => (
-                  <View key={group.projectKey} className="gap-1">
-                    <Text className="text-xs font-t3-medium text-foreground-muted">
-                      {projectTitles.get(group.projectKey) ?? "Project"}
-                    </Text>
-                    {group.sessions.map((session) => (
-                      <Pressable
-                        key={`${session.environmentId}:${session.threadId}`}
-                        accessibilityRole="button"
-                        onPress={() =>
-                          openThread({
-                            environmentId: session.environmentId,
-                            threadId: session.threadId,
-                          })
-                        }
-                        className="min-h-9 flex-row items-center gap-2 active:opacity-70"
-                      >
-                        <Text numberOfLines={1} className="min-w-0 flex-1 text-sm text-foreground">
-                          {session.title}
-                        </Text>
-                        <Text className="text-xs text-foreground-muted">
-                          {session.state === "waiting"
-                            ? "Waiting"
-                            : session.state === "working"
-                              ? "Working"
-                              : ""}{" "}
-                          {session.elapsed}
-                        </Text>
-                      </Pressable>
-                    ))}
-                  </View>
-                ))}
-              </View>
-            ) : null}
+            <AccountSessions
+              sessions={sessions}
+              projectTitles={projectTitles}
+              onOpen={(session) =>
+                openThread({ environmentId: session.environmentId, threadId: session.threadId })
+              }
+            />
             <View className="gap-2 rounded-[24px] border-continuous bg-grouped-card p-4">
               <Text className="text-sm font-t3-medium text-foreground">
                 {account.environments.length ? "Signed in" : "Source"}

@@ -12,11 +12,11 @@ import {
 } from "@t3tools/contracts";
 import {
   formatDuration,
-  formatResetsIn,
   limitsNotice,
   paceRemainingPercent,
   remainingPercent,
 } from "@t3tools/shared/usageLimits";
+import { formatResetLabel } from "@t3tools/client-runtime/state/usageReset";
 import { type ReactNode, useContext, useRef, useState } from "react";
 import { Atom } from "effect/reactivity";
 import { Linking, Pressable, View } from "react-native";
@@ -54,7 +54,7 @@ function WindowRow(props: {
   const remaining = remainingPercent(window);
   const paceSettings = useUsagePaceSettings();
   const timeLeft = paceSettings.pace ? paceRemainingPercent(window, now) : null;
-  const resetsIn = formatResetsIn(window, now);
+  const reset = formatResetLabel({ window, mode: paceSettings.resetDisplay, now });
   const [barWidth, setBarWidth] = useState(0);
   const tickX =
     timeLeft === null || barWidth < 6
@@ -123,7 +123,12 @@ function WindowRow(props: {
       </View>
       <View className="flex-row justify-between gap-3">
         <PaceDetail window={window} now={now} settings={paceSettings} />
-        <Text className="text-xs tabular-nums text-foreground-tertiary">{resetsIn ?? ""}</Text>
+        <Text
+          accessibilityLabel={reset?.title}
+          className="text-xs tabular-nums text-foreground-tertiary"
+        >
+          {reset?.phrase ?? ""}
+        </Text>
       </View>
     </View>
   );

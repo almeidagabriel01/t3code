@@ -15,6 +15,7 @@ const reactTests = [
   "src/features/archive/ArchivedThreadsScreen.test.tsx",
   "src/features/home/archiveProjectMenus.test.tsx",
   "src/features/archive/ArchivedProjectRow.test.tsx",
+  "src/features/usage/AccountSessions.test.tsx",
   "src/features/projects/useProjectOrganize.test.tsx",
   "src/features/threads/ThreadSideChatsRow.test.tsx",
   "src/features/threads/ThreadSideChatBar.test.tsx",

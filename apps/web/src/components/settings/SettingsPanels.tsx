@@ -522,6 +522,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     settings.usageProjectionEnabled !== DEFAULT_UNIFIED_SETTINGS.usageProjectionEnabled ||
     settings.usageDailyBudgetEnabled !== DEFAULT_UNIFIED_SETTINGS.usageDailyBudgetEnabled ||
     settings.usageShowSessions !== DEFAULT_UNIFIED_SETTINGS.usageShowSessions ||
+    settings.usageResetDisplay !== DEFAULT_UNIFIED_SETTINGS.usageResetDisplay ||
     settings.usageWatchThreshold !== DEFAULT_UNIFIED_SETTINGS.usageWatchThreshold ||
     settings.usageCriticalThreshold !== DEFAULT_UNIFIED_SETTINGS.usageCriticalThreshold
       ? ["Status bar"]
@@ -714,6 +715,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       usageProjectionEnabled: DEFAULT_UNIFIED_SETTINGS.usageProjectionEnabled,
       usageDailyBudgetEnabled: DEFAULT_UNIFIED_SETTINGS.usageDailyBudgetEnabled,
       usageShowSessions: DEFAULT_UNIFIED_SETTINGS.usageShowSessions,
+      usageResetDisplay: DEFAULT_UNIFIED_SETTINGS.usageResetDisplay,
       usageWatchThreshold: DEFAULT_UNIFIED_SETTINGS.usageWatchThreshold,
       usageCriticalThreshold: DEFAULT_UNIFIED_SETTINGS.usageCriticalThreshold,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,

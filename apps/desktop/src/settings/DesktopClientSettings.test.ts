@@ -92,6 +92,7 @@ const clientSettings: ClientSettings = {
   usageProjectionEnabled: true,
   usageDailyBudgetEnabled: false,
   usageShowSessions: true,
+  usageResetDisplay: "day",
   usageWatchThreshold: 50,
   usageCriticalThreshold: 70,
   loadBalancingEnabled: false,

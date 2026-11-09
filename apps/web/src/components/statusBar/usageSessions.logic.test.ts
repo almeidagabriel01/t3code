@@ -6,6 +6,7 @@ import {
   collectAccountSessions,
   collectUsageSessions,
   groupSessionsByProject,
+  splitSessions,
 } from "@t3tools/client-runtime/state/usageSessions";
 
 const env = EnvironmentId.make("env-a");
@@ -76,6 +77,9 @@ describe("collectUsageSessions", () => {
       ["working", "working", "12m"],
       ["recent", "recent", "20m ago"],
     ]);
+    const { running: live, finished } = splitSessions(sessions);
+    expect(live.map((s) => s.title)).toEqual(["waiting", "working"]);
+    expect(finished.map((s) => s.title)).toEqual(["recent"]);
   });
 
   it("skips other instances and environments, stale idle, and archived threads", () => {

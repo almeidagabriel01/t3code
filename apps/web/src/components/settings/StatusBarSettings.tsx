@@ -7,6 +7,7 @@ import type {
   StatusBarUsageMode,
   StatusBarUsagePercentage,
   StatusBarUsageRefresh,
+  UsageResetDisplay,
 } from "@t3tools/contracts";
 
 import {
@@ -16,6 +17,7 @@ import {
   NumberFieldIncrement,
   NumberFieldInput,
 } from "../ui/number-field";
+import { Radio, RadioGroup } from "../ui/radio-group";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import {
@@ -47,6 +49,7 @@ type StatusBarSettingsValues = Pick<
   | "usageProjectionEnabled"
   | "usageDailyBudgetEnabled"
   | "usageShowSessions"
+  | "usageResetDisplay"
   | "usageWatchThreshold"
   | "usageCriticalThreshold"
 >;
@@ -58,6 +61,11 @@ const USAGE_MODE_LABELS: Record<StatusBarUsageMode, string> = {
 const USAGE_PERCENTAGE_LABELS: Record<StatusBarUsagePercentage, string> = {
   used: "Used",
   remaining: "Remaining",
+};
+const RESET_DISPLAY_LABELS: Record<UsageResetDisplay, string> = {
+  day: "Day",
+  countdown: "Countdown",
+  both: "Day and countdown",
 };
 const PORTS_COUNT_LABELS: Record<StatusBarPortsCount, string> = {
   project: "Project ports",
@@ -321,6 +329,29 @@ function StatusBarSettingsSections({
               labels={USAGE_PERCENTAGE_LABELS}
               onChange={(statusBarUsagePercentage) => updateSettings({ statusBarUsagePercentage })}
             />
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("status-bar-usage-reset")}
+          description="Weekly limits show the day they reset, or the time when that is within 24 hours. The 5-hour session limit always shows its countdown."
+          control={
+            <RadioGroup
+              aria-label="Reset shown as"
+              value={settings.usageResetDisplay}
+              onValueChange={(value) => {
+                const next = (Object.keys(RESET_DISPLAY_LABELS) as UsageResetDisplay[]).find(
+                  (key) => key === value,
+                );
+                if (next) updateSettings({ usageResetDisplay: next });
+              }}
+            >
+              {(Object.keys(RESET_DISPLAY_LABELS) as UsageResetDisplay[]).map((key) => (
+                <label key={key} className="flex cursor-pointer items-center gap-2 text-sm">
+                  <Radio value={key} />
+                  {RESET_DISPLAY_LABELS[key]}
+                </label>
+              ))}
+            </RadioGroup>
           }
         />
         <ToggleRow

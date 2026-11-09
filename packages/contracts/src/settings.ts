@@ -103,6 +103,8 @@ export const StatusBarUsageMode = Schema.Literals(["verbose", "compact"]);
 export type StatusBarUsageMode = typeof StatusBarUsageMode.Type;
 export const StatusBarUsagePercentage = Schema.Literals(["used", "remaining"]);
 export type StatusBarUsagePercentage = typeof StatusBarUsagePercentage.Type;
+export const UsageResetDisplay = Schema.Literals(["day", "countdown", "both"]);
+export type UsageResetDisplay = typeof UsageResetDisplay.Type;
 export const StatusBarPortsCount = Schema.Literals(["project", "all"]);
 export type StatusBarPortsCount = typeof StatusBarPortsCount.Type;
 export const StatusBarUsageRefresh = Schema.Literals(["1m", "2m", "5m", "15m", "30m", "manual"]);
@@ -610,6 +612,9 @@ export const ClientSettingsSchema = Schema.Struct({
   usageProjectionEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   usageDailyBudgetEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   usageShowSessions: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  usageResetDisplay: UsageResetDisplay.pipe(
+    Schema.withDecodingDefault(Effect.succeed("day" as const)),
+  ),
   usageWatchThreshold: UsageThreshold.pipe(Schema.withDecodingDefault(Effect.succeed(50))),
   usageCriticalThreshold: UsageThreshold.pipe(Schema.withDecodingDefault(Effect.succeed(70))),
   sidebarProjectGroupingMode: SidebarProjectGroupingMode.pipe(
@@ -2104,6 +2109,7 @@ export const ClientSettingsPatch = Schema.Struct({
   usageProjectionEnabled: Schema.optionalKey(Schema.Boolean),
   usageDailyBudgetEnabled: Schema.optionalKey(Schema.Boolean),
   usageShowSessions: Schema.optionalKey(Schema.Boolean),
+  usageResetDisplay: Schema.optionalKey(UsageResetDisplay),
   usageWatchThreshold: Schema.optionalKey(UsageThreshold),
   usageCriticalThreshold: Schema.optionalKey(UsageThreshold),
   sidebarProjectGroupingMode: Schema.optionalKey(SidebarProjectGroupingMode),

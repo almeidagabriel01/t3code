@@ -6,9 +6,8 @@ import type {
   StatusBarUsagePercentage,
   ServerProviderUsageWindow,
 } from "@t3tools/contracts";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { Link, useNavigate } from "@tanstack/react-router";
-import { ChevronRightIcon, SettingsIcon } from "lucide-react";
+import { Link } from "@tanstack/react-router";
+import { SettingsIcon } from "lucide-react";
 import { RegistryContext } from "@effect/atom-react";
 import { useContext, useEffect, useState } from "react";
 
@@ -27,7 +26,6 @@ import {
 } from "@t3tools/shared/usagePace";
 import { useProjects, useThreadShells } from "../../state/entities";
 import { serverEnvironment } from "../../state/server";
-import { buildThreadRouteParams } from "../../threadRoutes";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
@@ -37,7 +35,6 @@ import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
-import { formatCompactCountdown } from "./statusBar.logic";
 import { PaceBar } from "./UsageBarChip";
 import { ChipSummary } from "./UsageChipSummary";
 import {
@@ -47,21 +44,10 @@ import {
 } from "./statusBarItems.logic";
 import { isApiKeyItem, limitsStatus, type UsageItem } from "./usageItems.logic";
 import { formatUsd, TIME_ZONE, useInstanceSpend } from "./useInstanceSpend";
-import {
-  collectUsageSessions,
-  groupSessionsByProject,
-  type UsageSession,
-  type UsageSessionState,
-} from "@t3tools/client-runtime/state/usageSessions";
+import { collectUsageSessions } from "@t3tools/client-runtime/state/usageSessions";
+import { LimitName, ResetText, UsageSessionsList } from "./UsageRosterParts";
 import { useUsageItems } from "./useUsageItems";
 import { useMinuteNow } from "./useMinuteNow";
-
-const SESSIONS_SHOWN = 8;
-const SESSION_STATE: Record<UsageSessionState, { label: string; dot: string }> = {
-  waiting: { label: "Waiting for you", dot: "bg-warning" },
-  working: { label: "Working", dot: "bg-success" },
-  recent: { label: "Recent", dot: "bg-muted-foreground/40" },
-};
 
 function useUsageRefresh(environmentIds: ReadonlyArray<EnvironmentId>) {
   const registry = useContext(RegistryContext);
@@ -345,15 +331,14 @@ function RosterMetric({
   readonly display: StatusBarUsagePercentage;
 }) {
   const { settings, view } = useWindowPace(window, now, display);
-  const resets = formatCompactCountdown(window.resetsAt, now);
+  const resetMode = useClientSettings((settings) => settings.usageResetDisplay);
+  const timestampFormat = usePrimarySettings((s) => s.timestampFormat);
   const details =
     view === null ? [] : [view.projectionText, view.dailyText].filter((line) => line !== null);
   return (
     <div className="flex flex-col gap-0.5">
       <span className="flex items-center gap-1.5">
-        <span className="w-14 shrink-0 truncate text-3xs text-muted-foreground">
-          {window.label}
-        </span>
+        <LimitName window={window} />
         <PaceBar
           thin
           usedPercent={displayedPercent(window.usedPercent, display)}
@@ -369,9 +354,12 @@ function RosterMetric({
         >
           {displayedPercent(window.usedPercent, display)}%
         </span>
-        <span className="w-12 shrink-0 text-end text-3xs tabular-nums text-muted-foreground">
-          {resets ?? ""}
-        </span>
+        <ResetText
+          window={window}
+          now={now}
+          mode={resetMode}
+          hour12={timestampFormat === "locale" ? undefined : timestampFormat === "12-hour"}
+        />
       </span>
       {view === null ? null : (
         <span className="pl-15.5 text-3xs text-muted-foreground tabular-nums">
@@ -383,86 +371,17 @@ function RosterMetric({
   );
 }
 
-function SessionRow({ session }: { readonly session: UsageSession }) {
-  const navigate = useNavigate();
-  const state = SESSION_STATE[session.state];
-  return (
-    <button
-      type="button"
-      className="flex w-full min-w-0 items-center gap-1.5 rounded px-1 py-0.5 text-start hover:bg-accent"
-      onClick={() =>
-        void navigate({
-          to: "/$environmentId/$threadId",
-          params: buildThreadRouteParams(scopeThreadRef(session.environmentId, session.threadId)),
-        })
-      }
-    >
-      <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", state.dot)} />
-      <span className="min-w-0 flex-1 truncate text-2xs text-foreground">{session.title}</span>
-      <span className="shrink-0 text-3xs text-muted-foreground">{state.label}</span>
-      <span className="max-w-24 shrink-0 truncate text-3xs text-muted-foreground">
-        {session.model}
-      </span>
-      <span className="w-12 shrink-0 text-end text-3xs tabular-nums text-muted-foreground">
-        {session.elapsed}
-      </span>
-    </button>
-  );
-}
-
 function RosterSessions({ item, now }: { readonly item: UsageItem; readonly now: number }) {
   const threads = useThreadShells();
   const projects = useProjects();
-  const [open, setOpen] = useState(false);
-  const [showAll, setShowAll] = useState(false);
   const sessions = collectUsageSessions({
     threads,
     instanceId: item.entry.instanceId,
     environmentIds: item.environmentIds,
     now,
   });
-  if (sessions.length === 0) return null;
-  const visible = showAll ? sessions : sessions.slice(0, SESSIONS_SHOWN);
   const titles = new Map(projects.map((p) => [`${p.environmentId}:${p.id}`, p.title]));
-  return (
-    <div className="flex flex-col gap-0.5 pl-7.5">
-      <button
-        type="button"
-        aria-expanded={open}
-        className="flex w-fit items-center gap-1 text-2xs text-muted-foreground hover:text-foreground"
-        onClick={() => setOpen(!open)}
-      >
-        <ChevronRightIcon aria-hidden className={cn("size-3", open && "rotate-90")} />
-        Sessions ({sessions.length})
-      </button>
-      {open ? (
-        <div className="flex flex-col gap-1">
-          {groupSessionsByProject(visible).map((group) => (
-            <div key={group.projectKey} className="flex flex-col">
-              <span className="truncate px-1 text-3xs font-medium text-muted-foreground">
-                {titles.get(group.projectKey) ?? "Project"}
-              </span>
-              {group.sessions.map((session) => (
-                <SessionRow
-                  key={`${session.environmentId}:${session.threadId}`}
-                  session={session}
-                />
-              ))}
-            </div>
-          ))}
-          {sessions.length > visible.length ? (
-            <button
-              type="button"
-              className="w-fit px-1 text-3xs text-muted-foreground hover:text-foreground"
-              onClick={() => setShowAll(true)}
-            >
-              and {sessions.length - visible.length} more
-            </button>
-          ) : null}
-        </div>
-      ) : null}
-    </div>
-  );
+  return <UsageSessionsList sessions={sessions} titles={titles} />;
 }
 
 function RosterRow({

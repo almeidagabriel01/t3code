@@ -14,6 +14,7 @@ import {
   type PullRequestMergeMethod,
   type SidebarProjectGroupingMode,
   type SidebarThreadOrder,
+  type UsageResetDisplay,
 } from "@t3tools/contracts";
 import type { AndroidNavigationStyle } from "../lib/androidNavigationStyle";
 import type { ComposerEnterBehavior } from "../lib/composerEnterBehavior";
@@ -125,6 +126,7 @@ export interface Preferences {
   readonly usageProjectionEnabled?: boolean;
   readonly usageDailyBudgetEnabled?: boolean;
   readonly usageShowSessions?: boolean;
+  readonly usageResetDisplay?: UsageResetDisplay;
   readonly useLastProjectForNewThreads?: boolean;
   readonly lastThreadProject?: typeof ThreadProject.Type;
   readonly modelFavorites?: ReadonlyArray<{
@@ -214,6 +216,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     usageProjectionEnabled?: boolean;
     usageDailyBudgetEnabled?: boolean;
     usageShowSessions?: boolean;
+    usageResetDisplay?: UsageResetDisplay;
     useLastProjectForNewThreads?: boolean;
     lastThreadProject?: typeof ThreadProject.Type;
     modelFavorites?: Preferences["modelFavorites"];
@@ -360,6 +363,13 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     "usageShowSessions",
   ] as const) {
     if (typeof parsed[key] === "boolean") preferences[key] = parsed[key];
+  }
+  if (
+    parsed.usageResetDisplay === "day" ||
+    parsed.usageResetDisplay === "countdown" ||
+    parsed.usageResetDisplay === "both"
+  ) {
+    preferences.usageResetDisplay = parsed.usageResetDisplay;
   }
   if (typeof parsed.useLastProjectForNewThreads === "boolean") {
     preferences.useLastProjectForNewThreads = parsed.useLastProjectForNewThreads;
