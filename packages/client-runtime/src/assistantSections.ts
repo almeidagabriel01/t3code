@@ -98,38 +98,73 @@ export function projectAssistants<A extends SectionAssistant>(
   );
 }
 
-/** What the project picker starts on: the assistant's list, or its home when it works everywhere. */
+/** Where an assistant works, for labels: "All projects" for scope `all` (its home folder is not the answer). */
+export const assistantProjectsLabel = (
+  assistant: SectionAssistant["assistant"],
+  nameOf: (projectId: string) => string,
+): string =>
+  assistant.scope === "all" ? "All projects" : listedProjects(assistant).map(nameOf).join(", ");
+
+/** The picker's "All projects" entry: always offered, and the assistant's scope `all`. */
+export const ALL_PROJECTS = "all";
+
+/** What the project picker starts on: "All projects", or the assistant's list. */
 export const assistantProjectSelection = (
   assistant: SectionAssistant["assistant"],
-): ReadonlyArray<ProjectId> =>
-  assistant.scope === "project" ? listedProjects(assistant) : [assistant.projectId];
+): ReadonlyArray<string> =>
+  assistant.scope === "all" ? [ALL_PROJECTS] : listedProjects(assistant);
 
-/**
- * A pick of several projects. `allId` is the "All projects" (Scratch) entry: it is exclusive, and
- * clearing the last project falls back to it.
- */
-export const toggleAssistantProject = <T extends string>(
-  current: ReadonlyArray<T>,
-  allId: T | null,
-  id: T,
-): ReadonlyArray<T> => {
-  if (id === allId) return [id];
-  const rest = current.filter((entry) => entry !== allId && entry !== id);
+/** A pick of several projects. "All projects" is exclusive, and clearing the last project falls back to it. */
+export const toggleAssistantProject = (
+  current: ReadonlyArray<string>,
+  id: string,
+): ReadonlyArray<string> => {
+  if (id === ALL_PROJECTS) return [id];
+  const rest = current.filter((entry) => entry !== ALL_PROJECTS && entry !== id);
   const next = current.includes(id) ? rest : [...rest, id];
-  return next.length === 0 && allId !== null ? [allId] : next;
+  return next.length === 0 ? [ALL_PROJECTS] : next;
 };
 
-/** The home project after a save: the current one while it stays picked, else the first picked. */
-export const homeAfterPick = <T extends string>(current: T | null, picked: ReadonlyArray<T>) =>
-  current !== null && picked.includes(current) ? current : (picked[0] ?? null);
+/** The home project after a save: the current one while it stays picked, else the first picked project. */
+export const homeAfterPick = <T extends string>(current: T | null, picked: ReadonlyArray<T>) => {
+  const projects = picked.filter((id) => id !== ALL_PROJECTS);
+  if (projects.length === 0) return current;
+  return current !== null && projects.includes(current) ? current : projects[0]!;
+};
 
-/** The fields that carry a pick: one project is `projectId`, several add the list. */
+/**
+ * The fields that carry a pick: "All projects" is scope `all` (the server picks the home; `home` is
+ * only the required placeholder), one project is `projectId`, several add the list.
+ */
 export const assistantProjectFields = <T extends string>(
   picked: ReadonlyArray<T>,
-): { readonly projectId: T; readonly projectIds?: ReadonlyArray<T> } => ({
-  projectId: picked[0]!,
-  ...(picked.length > 1 ? { projectIds: picked } : {}),
-});
+  home: T,
+):
+  | { readonly projectId: T; readonly scope: "all" }
+  | { readonly projectId: T; readonly projectIds?: ReadonlyArray<T> } =>
+  picked.includes(ALL_PROJECTS as T)
+    ? { projectId: home, scope: "all" }
+    : { projectId: picked[0]!, ...(picked.length > 1 ? { projectIds: picked } : {}) };
+
+/** Picker rows, "All projects" first. A label shared by several rows gets its folder as `detail`. */
+export const projectPickerRows = (
+  projects: ReadonlyArray<{ readonly id: string; readonly label: string; readonly path: string }>,
+): ReadonlyArray<{
+  readonly id: string;
+  readonly label: string;
+  readonly detail: string | null;
+}> => {
+  const counts = new Map<string, number>();
+  for (const { label } of projects) counts.set(label, (counts.get(label) ?? 0) + 1);
+  return [
+    { id: ALL_PROJECTS, label: "All projects", detail: null },
+    ...projects.map(({ id, label, path }) => ({
+      id,
+      label,
+      detail: (counts.get(label) ?? 0) > 1 ? path : null,
+    })),
+  ];
+};
 
 export const sameProjects = (a: ReadonlyArray<string>, b: ReadonlyArray<string>) =>
   a.length === b.length && a.every((id) => b.includes(id));

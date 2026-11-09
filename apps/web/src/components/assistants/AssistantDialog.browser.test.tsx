@@ -136,8 +136,8 @@ it("a new assistant starts with the basics, Advanced closed and the safe default
   await expect.element(page.getByLabelText("Name")).toBeVisible();
   await expect.element(page.getByText("Its role and rules, in your words.")).toBeVisible();
   await expect.element(page.getByLabelText("What should it do?")).toBeVisible();
-  expect(page.getByRole("radio", { name: "Color 210" }).element()).toBeTruthy();
-  await expect.element(page.getByRole("radio", { name: "Color 210" })).toBeChecked();
+  // The second assistant starts on its own color, not the first one's.
+  await expect.element(page.getByRole("radio", { name: "Color 30" })).toBeChecked();
   expect(page.getByLabelText("Handle").query()).toBeNull();
   expect(page.getByRole("radio", { name: /Full access/ }).query()).toBeNull();
   await expect
@@ -148,7 +148,7 @@ it("a new assistant starts with the basics, Advanced closed and the safe default
 
   await userEvent.fill(page.getByLabelText("Name"), "Scout");
   await userEvent.fill(page.getByLabelText("What should it do?"), "Research things");
-  await userEvent.click(page.getByRole("radio", { name: "Color 30" }));
+  await userEvent.click(page.getByRole("radio", { name: "Color 280" }));
   await userEvent.click(page.getByRole("button", { name: "Shuffle" }));
   await userEvent.click(page.getByRole("button", { name: "Create assistant" }));
   await eventually(() =>
@@ -158,7 +158,7 @@ it("a new assistant starts with the basics, Advanced closed and the safe default
         instructions: "Research things",
         toolAccess: "workspace-write",
         askBeforeActing: true,
-        avatar: { kind: "robot", hue: 30, variant: 1 },
+        avatar: { kind: "robot", hue: 280, variant: 4 },
       },
     ]),
   );

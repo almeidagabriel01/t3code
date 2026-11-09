@@ -1,6 +1,5 @@
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { ProjectAssistantFaces } from "../assistants/ProjectAssistantFaces";
-import { ProjectAssistantRows } from "../assistants/ProjectAssistantRows";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
@@ -447,13 +446,6 @@ function SidebarProjectGroup(props: ProjectGroupProps) {
         strategy={drag === null ? idleSortingStrategy : props.dragSortingStrategy}
       >
         <ul ref={attachList} role="presentation" className="relative flex flex-col gap-px">
-          {expanded ? (
-            <ProjectAssistantRows
-              members={project.memberProjects}
-              routeThreadKey={props.routeThreadKey}
-              onOpen={props.onOpenSubagent}
-            />
-          ) : null}
           {items.slice(0, settledStart + 1).flatMap(renderItem)}
           {settledItems.length > 0 || showMore ? (
             <li className="list-none">

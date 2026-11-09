@@ -1031,6 +1031,14 @@ it.effect(
       const everywhere = yield* assistants.create(create({ name: "Home", projectId: scratch }));
       const scoped = yield* assistants.create(create({ name: "Repo" }));
       assert.deepEqual([everywhere.scope, scoped.scope], ["all", "project"]);
+      // scope "all" needs no home project from the caller.
+      const asked = yield* assistants.create(create({ name: "Asked", scope: "all" }));
+      assert.deepEqual([asked.scope, asked.projectId], ["all", scratch]);
+      assert.equal(
+        (yield* assistants.update({ assistantId: scoped.id, scope: "all" })).projectId,
+        scratch,
+      );
+      yield* assistants.update({ assistantId: scoped.id, projectId: repo });
       assert.equal(
         (yield* assistants.update({ assistantId: scoped.id, projectId: scratch })).scope,
         "all",

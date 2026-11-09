@@ -1,7 +1,7 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { Fragment } from "react";
-import { listedProjects } from "@t3tools/client-runtime/assistantSections";
+import { assistantProjectsLabel } from "@t3tools/client-runtime/assistantSections";
 import { teamSubtitle, teamSummary } from "@t3tools/client-runtime/assistantTeam";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
@@ -93,11 +93,7 @@ function AssistantRow(props: {
           project?.title ??
           "Unknown project");
   };
-  const projectName = (
-    assistant.scope === "project" ? listedProjects(assistant) : [assistant.projectId]
-  )
-    .map(nameOf)
-    .join(", ");
+  const projectName = assistantProjectsLabel(assistant, nameOf);
   const limitState = useAssistantSpend(
     environmentId,
     assistant.budget === null ? null : assistant.id,

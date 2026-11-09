@@ -4,8 +4,9 @@ import {
   connectorsEqual,
   type ConnectorDraft,
 } from "@t3tools/client-runtime/assistantConnectors";
-import { ASSISTANT_ROBOT_HUES, assistantRobotLook } from "@t3tools/client-runtime/assistantRobot";
+import { assistantRobotLook, newAssistantLook } from "@t3tools/client-runtime/assistantRobot";
 import {
+  ALL_PROJECTS,
   assistantProjectFields,
   assistantProjectSelection,
   sameProjects,
@@ -48,14 +49,16 @@ export type AvatarImageDraft =
 export interface AssistantPreset {
   readonly projectId?: ProjectId;
   readonly teamId?: AssistantTeamId;
+  /** How many assistants exist: the new one's default look follows it. */
+  readonly lookIndex?: number;
 }
 
 export interface AssistantDraft {
   readonly name: string;
   /** Null while it still follows the name. */
   readonly handle: string | null;
-  /** Null until chosen; the form then shows the scratch project. */
-  readonly projectIds: ReadonlyArray<ProjectId> | null;
+  /** Null until chosen; the form then shows "All projects". Holds `ALL_PROJECTS` or project ids. */
+  readonly projectIds: ReadonlyArray<string> | null;
   /** Null until picked; the form then shows the conversation's current or default model. */
   readonly modelSelection: ModelSelection | null;
   readonly instructions: string;
@@ -163,7 +166,7 @@ export function assistantDraftFor(
   const look = assistantRobotLook(
     assistant ?? {
       id: "new",
-      avatar: { kind: "robot", hue: ASSISTANT_ROBOT_HUES[0], variant: 0 },
+      avatar: { kind: "robot", ...newAssistantLook(preset.lookIndex ?? 0) },
     },
   );
   return {
@@ -322,21 +325,23 @@ export function isAssistantHandleValid(handle: string): boolean {
 export function assistantProjectChanged(
   assistant: Assistant | null,
   effectiveProjectId: ProjectId | null,
+  picked: ReadonlyArray<string>,
 ): boolean {
-  return (
-    assistant !== null && effectiveProjectId !== null && effectiveProjectId !== assistant.projectId
-  );
+  if (assistant === null) return false;
+  if (picked.includes(ALL_PROJECTS)) return assistant.scope !== "all";
+  return effectiveProjectId !== null && effectiveProjectId !== assistant.projectId;
 }
 
 export function assistantCreateInput(
   editor: AssistantEditor,
-  picked: ReadonlyArray<ProjectId>,
+  picked: ReadonlyArray<string>,
+  home = picked[0] as ProjectId,
 ): AssistantsCreateInput {
   const { current } = editor;
   return {
     name: current.name.trim(),
     handle: effectiveAssistantHandle(current),
-    ...assistantProjectFields(picked),
+    ...assistantProjectFields(picked as ReadonlyArray<ProjectId>, home),
     ...(current.modelSelection ? { modelSelection: current.modelSelection } : {}),
     instructions: current.instructions,
     toolAccess: current.toolAccess,
@@ -357,7 +362,8 @@ export function assistantCreateInput(
 /** Only what the user changed is sent, so an untouched field never overwrites a newer edit. */
 export function assistantUpdateInput(
   editor: AssistantEditor & { readonly assistant: Assistant },
-  picked: ReadonlyArray<ProjectId>,
+  picked: ReadonlyArray<string>,
+  home = picked[0] as ProjectId,
 ): AssistantsUpdateInput {
   const { assistant, current } = editor;
   const name = current.name.trim();
@@ -368,7 +374,7 @@ export function assistantUpdateInput(
     ...(handle !== assistant.handle ? { handle } : {}),
     ...(sameProjects(picked, assistantProjectSelection(assistant))
       ? {}
-      : assistantProjectFields(picked)),
+      : assistantProjectFields(picked as ReadonlyArray<ProjectId>, home)),
     ...(current.modelSelection ? { modelSelection: current.modelSelection } : {}),
     ...(current.instructions !== assistant.instructions
       ? { instructions: current.instructions }

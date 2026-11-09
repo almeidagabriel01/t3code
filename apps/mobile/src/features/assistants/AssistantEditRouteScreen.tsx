@@ -6,11 +6,12 @@ import {
   type AssistantToolAccess,
   type BudgetPeriod,
   type EnvironmentId,
+  type ProjectId,
 } from "@t3tools/contracts";
-import { toggleAssistantProject } from "@t3tools/client-runtime/assistantSections";
+import { ALL_PROJECTS, toggleAssistantProject } from "@t3tools/client-runtime/assistantSections";
 import { assistantSandboxView } from "@t3tools/client-runtime/state/assistants";
 import { useRef, useState } from "react";
-import { Platform, Pressable, View } from "react-native";
+import { Platform, Pressable, ScrollView as InnerScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/ui/AppText";
@@ -86,7 +87,7 @@ function AssistantForm(props: { readonly editor: AssistantEditor }) {
   const {
     projects,
     picked,
-    scratchId,
+    pickerRows,
     effectiveProject,
     modelLabel,
     modelSelection,
@@ -126,15 +127,16 @@ function AssistantForm(props: { readonly editor: AssistantEditor }) {
   const handleValid = isAssistantHandleValid(handle);
   // An untouched new form isn't wrong yet; flag the handle once there is something to check.
   const showHandleError = !handleValid && (current.handle !== null || current.name.trim() !== "");
-  const projectChanged = assistantProjectChanged(assistant, effectiveProject?.id ?? null);
+  const allPicked = picked.includes(ALL_PROJECTS);
+  const homeId = (effectiveProject?.id ?? ALL_PROJECTS) as ProjectId;
+  const projectChanged = assistantProjectChanged(assistant, effectiveProject?.id ?? null, picked);
   const hasChanges = assistantDraftHasChanges(editor);
   const canSave =
     !saving &&
     actions.canAct &&
     current.name.trim().length > 0 &&
     handleValid &&
-    effectiveProject !== null &&
-    picked.length > 0 &&
+    (allPicked || effectiveProject !== null) &&
     isBudgetDraftValid(current.budget) &&
     (assistant === null || hasChanges);
 
@@ -168,13 +170,13 @@ function AssistantForm(props: { readonly editor: AssistantEditor }) {
   });
 
   const save = async () => {
-    if (!canSave || effectiveProject === null) return;
+    if (!canSave) return;
     setSaving(true);
     setError(null);
     const reply =
       assistant === null
-        ? await actions.create(assistantCreateInput(editor, picked))
-        : await actions.update(assistantUpdateInput({ ...editor, assistant }, picked));
+        ? await actions.create(assistantCreateInput(editor, picked, homeId))
+        : await actions.update(assistantUpdateInput({ ...editor, assistant }, picked, homeId));
     if (!reply.ok) {
       setSaving(false);
       setError(reply.message);
@@ -340,30 +342,23 @@ function AssistantForm(props: { readonly editor: AssistantEditor }) {
             label="Projects"
             description="All projects, or the projects it works in. Work in any other project is refused."
           />
-          {projects.length === 0 ? (
-            <Text textRole="footnote" className="px-2 text-foreground-muted">
-              No projects available
-            </Text>
-          ) : (
-            <ListSection>
-              {[...projects]
-                .sort((x, y) => Number(y.isScratch === true) - Number(x.isScratch === true))
-                .map((project) => (
-                  <ChoiceRow
-                    key={project.id}
-                    role="checkbox"
-                    icon={project.isScratch === true ? "globe" : "folder.fill"}
-                    label={assistantProjectName(project)}
-                    selected={picked.includes(project.id)}
-                    onPress={() =>
-                      updateAssistantDraft({
-                        projectIds: toggleAssistantProject(picked, scratchId, project.id),
-                      })
-                    }
-                  />
-                ))}
-            </ListSection>
-          )}
+          <ListSection>
+            <InnerScrollView className="max-h-72" nestedScrollEnabled>
+              {pickerRows.map((row) => (
+                <ChoiceRow
+                  key={row.id}
+                  role="checkbox"
+                  icon={row.id === ALL_PROJECTS ? "globe" : "folder.fill"}
+                  label={row.label}
+                  description={row.detail ?? undefined}
+                  selected={picked.includes(row.id)}
+                  onPress={() =>
+                    updateAssistantDraft({ projectIds: toggleAssistantProject(picked, row.id) })
+                  }
+                />
+              ))}
+            </InnerScrollView>
+          </ListSection>
           {projectChanged ? (
             <Text textRole="footnote" className="px-2 text-warning-foreground">
               Changing the home project starts a new conversation. The current one moves to Archive,
@@ -644,9 +639,11 @@ function AssistantForm(props: { readonly editor: AssistantEditor }) {
                   <ListRow
                     icon="brain"
                     label={
-                      effectiveProject
-                        ? `Shared with ${assistantProjectName(effectiveProject)}`
-                        : "Memory follows the assistant's project"
+                      allPicked
+                        ? "Shared with All projects"
+                        : effectiveProject
+                          ? `Shared with ${assistantProjectName(effectiveProject)}`
+                          : "Memory follows the assistant's project"
                     }
                     description="Open Memory settings"
                     onPress={() => navigation.navigate("SettingsMemory")}

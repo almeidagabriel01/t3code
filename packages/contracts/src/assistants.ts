@@ -378,6 +378,8 @@ export const AssistantsCreateInput = Schema.Struct({
   projectId: ProjectId,
   /** Projects it may work in; the first is its home and replaces `projectId`. Empty is ignored. */
   projectIds: Schema.optional(Schema.Array(ProjectId)),
+  /** "all" puts it in the assistants' home project and ignores the projects above. */
+  scope: Schema.optional(AssistantScope),
   /** The default new-thread model when absent. */
   modelSelection: Schema.optional(ModelSelection),
   instructions: Schema.String.check(Schema.isMaxLength(ASSISTANT_INSTRUCTIONS_MAX_CHARS)),
@@ -416,6 +418,8 @@ export const AssistantsUpdateInput = Schema.Struct({
   projectId: Schema.optional(ProjectId),
   /** A non-empty list makes it a project assistant over exactly these projects. */
   projectIds: Schema.optional(Schema.Array(ProjectId)),
+  /** "all" moves it to the assistants' home project (kept when it is already in one) and ignores the projects above. */
+  scope: Schema.optional(AssistantScope),
   modelSelection: Schema.optional(ModelSelection),
   instructions: Schema.optional(
     Schema.String.check(Schema.isMaxLength(ASSISTANT_INSTRUCTIONS_MAX_CHARS)),
