@@ -244,7 +244,7 @@ describe("scheduled task posting in a group chat", () => {
     open({ ...editDraft(task("thread-1")), assistantTeamId: "g1" });
     expect(find(/^Group chat · Growth/)).toBeDefined();
     expect(find(/^Project,/)).toBeUndefined();
-    await act(async () => find("Save changes")!.click());
+    await act(async () => find("Save routine")!.click());
     expect(mocks.upsert.mock.calls[0]?.[0].input).toMatchObject({
       assistantTeamId: "g1",
       threadId: null,

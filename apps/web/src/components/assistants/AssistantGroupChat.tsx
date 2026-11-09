@@ -3,6 +3,7 @@ import {
   applyAssistantGroupHistory,
   assistantGroupAuthorName,
   assistantGroupAwaitingRoute,
+  assistantGroupMarkdownMentions,
   assistantGroupTextParts,
   assistantGroupBoundaryLabel,
   assistantGroupFeed,
@@ -364,7 +365,7 @@ function FeedRow(props: {
         )}
         <div className="text-sm leading-relaxed">
           <ChatMarkdown
-            text={message.text}
+            text={assistantGroupMarkdownMentions(message.text, props.members)}
             cwd={undefined}
             environmentId={props.environmentId}
             className="wrap-anywhere"

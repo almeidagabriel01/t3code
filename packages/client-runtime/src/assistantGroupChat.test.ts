@@ -20,6 +20,8 @@ import {
   assistantGroupNewSeq,
   assistantGroupMentionOptions,
   assistantGroupMentionQuery,
+  ASSISTANT_MENTION_HREF,
+  assistantGroupMarkdownMentions,
   assistantGroupTextParts,
   assistantGroupPauseReasonLabel,
   assistantGroupRecipientsPreview,
@@ -291,6 +293,17 @@ describe("composer helpers", () => {
       { start: 0, text: "plain", mention: false },
     ]);
     assert.deepStrictEqual(assistantGroupTextParts("", [ada]), []);
+  });
+
+  it("links member mentions in markdown, but not in code or author bold", () => {
+    const m = (t: string) => `[${t}](${ASSISTANT_MENTION_HREF})`;
+    const md = "Oi @Ada, `@ada` e @ghost\n```\n@ada\n```\n- @beto ok\n````\n```\n@ada\n````\n@ada";
+    assert.strictEqual(
+      assistantGroupMarkdownMentions(md, [ada, beto]),
+      `Oi ${m("@Ada")}, \`@ada\` e @ghost\n\`\`\`\n@ada\n\`\`\`\n- ${m("@beto")} ok\n\`\`\`\`\n\`\`\`\n@ada\n\`\`\`\`\n${m("@ada")}`,
+    );
+    assert.strictEqual(assistantGroupMarkdownMentions("**bold** text", [ada]), "**bold** text");
+    assert.strictEqual(assistantGroupMarkdownMentions("no mention", [ada]), "no mention");
   });
 
   it("offers matching members and everyone, and inserts the handle with a space", () => {

@@ -365,16 +365,20 @@ function GroupRow(props: {
       >
         <HashIcon aria-hidden className="size-4 shrink-0 text-(--sidebar-icon-color)" />
         <span className="min-w-0 truncate">{team.name}</span>
-        <span className="flex items-center ps-0.5" data-testid="group-avatars">
+        {/* The faces give up width first (shrink-100, clipped) so a narrow row keeps the name readable. */}
+        <span
+          className="flex min-w-0 shrink-100 items-center overflow-hidden ps-0.5"
+          data-testid="group-avatars"
+        >
           {shown.map(({ assistant }) => (
             <AssistantAvatar
               key={assistant.id}
               assistant={assistant}
-              className="-ms-1 size-4 first:ms-0"
+              className="-ms-1 size-4 shrink-0 first:ms-0"
             />
           ))}
           {more > 0 ? (
-            <span className="ps-1 text-2xs font-normal text-muted-foreground tabular-nums">
+            <span className="shrink-0 ps-1 text-2xs font-normal text-muted-foreground tabular-nums">
               +{more}
             </span>
           ) : null}

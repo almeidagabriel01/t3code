@@ -2,6 +2,7 @@ import {
   applyAssistantGroupHistory,
   assistantGroupAuthorName,
   assistantGroupAwaitingRoute,
+  assistantGroupMarkdownMentions,
   assistantGroupTextParts,
   assistantGroupBoundaryLabel,
   assistantGroupFeed,
@@ -27,7 +28,7 @@ import {
 import { LegendList, type LegendListRef } from "@legendapp/list/react-native";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { Fragment, useRef, useState } from "react";
-import { Platform, Pressable, View } from "react-native";
+import { Linking, Platform, Pressable, View } from "react-native";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 
 import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
@@ -55,6 +56,11 @@ import { useOpenAssistantTeam } from "./assistantTeamTarget";
 import { useOpenAssistantEditor } from "./openAssistantEditor";
 import { useAssistantTeamFlows } from "./useAssistantFlows";
 import { useGroupReadMarker } from "./useGroupReadMarker";
+
+/** A mention link is a highlight only; any other link opens as the native view would. */
+const onMarkdownLink = (href: string) => {
+  if (!href.startsWith("t3-mention:")) void Linking.openURL(href);
+};
 
 const NEW_JUMP_MIN_ROWS = 4;
 
@@ -266,7 +272,11 @@ function FeedRow(
           onPressAction={() => reply()}
         >
           <Pressable accessibilityLabel={`Message from ${name}`}>
-            <SelectableMarkdownText markdown={message.text} textStyle={styles.nativeTextStyle} />
+            <SelectableMarkdownText
+              markdown={assistantGroupMarkdownMentions(message.text, props.members)}
+              onLinkPress={onMarkdownLink}
+              textStyle={styles.nativeTextStyle}
+            />
           </Pressable>
         </Menu>
         <Pressable
