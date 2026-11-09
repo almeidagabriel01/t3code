@@ -1751,7 +1751,7 @@ describe("WP4 cursor, owner policy and relay contracts", () => {
       credential: "forged",
     });
     rejects(M.MemoryHubDisableInput, { requestId: id(), expectedVersion: 0, credential: "forged" });
-    expect(M.MEMORY_MCP_TOOLS).toHaveLength(9);
+    expect(M.MEMORY_MCP_TOOLS).toHaveLength(10);
     expect(M.MEMORY_ADMINISTRATION_MCP_TOOLS).toEqual([
       "memory_hub_disable",
       "memory_settings_get",

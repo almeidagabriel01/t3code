@@ -244,7 +244,7 @@ it.effect("r5 writer transaction observes lineage changed while upsert waits", (
   }).pipe(Effect.provide(Fixture.layer)),
 );
 
-it.effect.each(["memory_read", "memory_list", "memory_search", "memory_history"] as const)(
+it.effect.each(["memory_read", "memory_list", "memory_recall", "memory_history"] as const)(
   "r5 %s records only returned bodies and closed dependencies",
   (name) =>
     Effect.gen(function* () {
@@ -261,8 +261,8 @@ it.effect.each(["memory_read", "memory_list", "memory_search", "memory_history"]
               limit: 1,
               cursor: a.input.memoryId,
             }
-          : name === "memory_search"
-            ? { memorySpaceId: Fixture.space, query: "19001", mode: "substring", limit: 1 }
+          : name === "memory_recall"
+            ? { query: "19001", limit: 1 }
             : name === "memory_history"
               ? { memorySpaceId: Fixture.space, memoryId: b.input.memoryId, limit: 1 }
               : { memorySpaceId: Fixture.space, memoryId: b.input.memoryId };

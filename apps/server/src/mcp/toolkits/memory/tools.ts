@@ -6,6 +6,7 @@ import * as McpSchema from "effect/ai/McpSchema";
 import * as MemoryService from "../../../memory/MemoryService.ts";
 import * as MemorySyncService from "../../../memory/MemorySyncService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
+import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 /** JSON Schema presentation only; handlers still decode the original strict contracts. */
@@ -65,13 +66,37 @@ const memoryInputSchema = (schema: Schema.Top) => {
   };
 };
 
+/** Read tools fill an omitted memorySpaceId from the server's current space. */
+const spaceOptional = (schema: ReturnType<typeof memoryInputSchema>) => {
+  const required: unknown = Reflect.get(schema, "required");
+  return Array.isArray(required)
+    ? { ...schema, required: required.filter((key) => key !== "memorySpaceId") }
+    : schema;
+};
+
 const failure = Schema.Union([M.MemoryRpcError, M.OrchestratorMcpFailure]);
 
-const SearchTool = Tool.dynamic("memory_search", {
+const RecallTool = Tool.dynamic("memory_recall", {
   description:
-    "Search memory (default scope: user). fts is phrase search; use mode substring for partial text. Pass nextCursor unchanged with the same query and scope, even when items is empty. If indexCoverage is partial/unavailable, do not conclude a memory is absent.",
-  parameters: memoryInputSchema(M.MemorySearchInput),
-  success: M.MemoryPage,
+    "Find saved memory and past conversations with one plain query. Memories first, best match first; threads are the top matching conversations. Use before saying you do not know something the user may have told you.",
+  parameters: memoryInputSchema(M.MemoryRecallInput),
+  success: M.MemoryRecallResult,
+  failure,
+  failureMode: "return",
+})
+  .addDependency(ThreadSearch.ThreadSearch)
+  .addDependency(McpInvocationContext.McpInvocationContext)
+  .addDependency(MemoryService.MemoryService)
+  .addDependency(MemorySyncService.MemorySyncService)
+  .addDependency(ThreadManagementService.ThreadManagementService)
+  .annotate(Tool.Destructive, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.enabledWithMemory);
+
+const RememberTool = Tool.dynamic("memory_remember", {
+  description:
+    'Save to memory. Call this when the user says \"remember that ...\" or states a lasting fact or preference; replying \"noted\" saves nothing. Give text and scope (project for this project only, user for everywhere). Saving the same text again is harmless. Pass memoryId to replace a memory instead of adding a second. Never store progress reports or tool output.',
+  parameters: memoryInputSchema(M.MemoryRememberInput),
+  success: M.MemoryMutationReceipt,
   failure,
   failureMode: "return",
 })
@@ -84,7 +109,7 @@ const SearchTool = Tool.dynamic("memory_search", {
 
 const ListTool = Tool.dynamic("memory_list", {
   description: "List one bounded page of memory items.",
-  parameters: memoryInputSchema(M.MemoryListInput),
+  parameters: spaceOptional(memoryInputSchema(M.MemoryListInput)),
   success: M.MemoryPage,
   failure,
   failureMode: "return",
@@ -98,7 +123,7 @@ const ListTool = Tool.dynamic("memory_list", {
 
 const ReadTool = Tool.dynamic("memory_read", {
   description: "Read one memory item.",
-  parameters: memoryInputSchema(M.MemoryReadInput),
+  parameters: spaceOptional(memoryInputSchema(M.MemoryReadInput)),
   success: M.MemoryItem,
   failure,
   failureMode: "return",
@@ -112,7 +137,7 @@ const ReadTool = Tool.dynamic("memory_read", {
 
 const HistoryTool = Tool.dynamic("memory_history", {
   description: "Read one bounded page of a memory item’s revision history.",
-  parameters: memoryInputSchema(M.MemoryHistoryInput),
+  parameters: spaceOptional(memoryInputSchema(M.MemoryHistoryInput)),
   success: M.MemoryHistoryPage,
   failure,
   failureMode: "return",
@@ -197,7 +222,8 @@ const ReadSourceTool = Tool.dynamic("memory_read_source", {
   .annotate(McpSchema.EnabledWhen, McpInvocationContext.enabledWithMemory);
 
 export const MemoryToolkit = Toolkit.make(
-  SearchTool,
+  RecallTool,
+  RememberTool,
   ListTool,
   ReadTool,
   HistoryTool,

@@ -5,7 +5,15 @@ import * as Schema from "effect/Schema";
 import * as SchemaParser from "effect/SchemaParser";
 import * as SchemaAST from "effect/SchemaAST";
 import * as SchemaTransformation from "effect/SchemaTransformation";
-import { EnvironmentId, EventId, MessageId, NonNegativeInt, PositiveInt } from "./baseSchemas.ts";
+import {
+  EnvironmentId,
+  EventId,
+  MessageId,
+  NonNegativeInt,
+  PositiveInt,
+  ProjectId,
+  ThreadId,
+} from "./baseSchemas.ts";
 import { ScopedThreadRef, ScopedProjectRef } from "./environment.ts";
 import { ProviderDriverKind } from "./providerInstance.ts";
 
@@ -1616,6 +1624,53 @@ export const MemoryUpsertInput = struct({
 }).check(Schema.makeFilter((v) => assertionValid(v.assertionKind, v.payload.evidence)));
 export type MemoryUpsertInput = typeof MemoryUpsertInput.Type;
 
+/** An agent's write: the server fills the space, ids, heads, project key and evidence. */
+export const MemoryRememberInput = struct({
+  text,
+  scope: Schema.optionalKey(Schema.Literals(["user", "project"])),
+  /** Replaces this memory's text; a replacement keeps the memory's scope. */
+  memoryId: Schema.optionalKey(MemoryId),
+}).check(
+  Schema.makeFilter((v) => v.scope !== undefined || v.memoryId !== undefined, {
+    expected: "scope, or memoryId to replace a memory",
+  }),
+);
+export type MemoryRememberInput = typeof MemoryRememberInput.Type;
+
+export const MemoryRecallInput = struct({
+  query: canonical,
+  limit: Schema.optionalKey(PositiveInt.check(Schema.isLessThanOrEqualTo(20))),
+});
+export type MemoryRecallInput = typeof MemoryRecallInput.Type;
+
+export const MemoryRecallHit = struct({
+  memoryId: MemoryId,
+  scope: Schema.Literals(["user", "project", "thread"]),
+  text: Schema.String,
+  createdAtUtc: MemoryUtcTimestamp,
+});
+export type MemoryRecallHit = typeof MemoryRecallHit.Type;
+
+/** A past conversation that matches the query, from the thread search. */
+export const MemoryRecallThread = struct({
+  threadId: ThreadId,
+  projectId: ProjectId,
+  title: Schema.String,
+  snippet: Schema.optionalKey(Schema.String),
+  updatedAt: Schema.String,
+});
+export type MemoryRecallThread = typeof MemoryRecallThread.Type;
+
+export const MemoryRecallResult = bounded(
+  struct({
+    items: array(MemoryRecallHit),
+    threads: Schema.optionalKey(array(MemoryRecallThread, 5)),
+    note: Schema.optionalKey(Schema.String),
+  }),
+  MEMORY_PAGE_MAX_UTF8_BYTES,
+);
+export type MemoryRecallResult = typeof MemoryRecallResult.Type;
+
 export const MemoryForgetInput = struct({
   ...space,
   operationId: MemoryOperationId,
@@ -2792,7 +2847,8 @@ export const MemoryHubSourceReadResultResult = bounded(
 );
 export type MemoryHubSourceReadResultResult = typeof MemoryHubSourceReadResultResult.Type;
 export const MEMORY_MCP_TOOLS = [
-  "memory_search",
+  "memory_recall",
+  "memory_remember",
   "memory_list",
   "memory_read",
   "memory_history",

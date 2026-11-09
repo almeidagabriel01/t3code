@@ -376,6 +376,8 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   t3_project_clone: tool(["Clone", "Cloning", "Cloned", "a repository"], "project-clone"),
   t3_kanban: tool(["Update", "Updating", "Updated", "the kanban board"], "kanban"),
   t3_note: tool(["Update", "Updating", "Updated", "notes"], "notes"),
+  memory_recall: tool(["Recall", "Recalling", "Recalled", "memories"], "memory-search"),
+  memory_remember: tool(["Save", "Saving", "Saved", "a memory"], "memory-save"),
   memory_search: tool(["Search", "Searching", "Searched", "memories"], "memory-search"),
   memory_list: tool(["List", "Listing", "Listed", "memories"], "memory-list"),
   memory_read: tool(["Read", "Reading", "Read", "a memory"], "memory-read"),
