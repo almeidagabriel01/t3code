@@ -2608,9 +2608,18 @@ it.effect("a packet lists the member's stopped and failed tasks, newest first an
        revision, hops, created_at, updated_at)
       VALUES ('gt:other', ${TEAM}, 'gt:other', 'root', 'gm:old', 'beto', 'not hers', 'paused', 1, 0,
         '2026-01-01', '2026-01-09')`;
+    yield* sql`INSERT INTO assistant_group_tasks
+      (task_id, team_id, root_id, parent_id, kind, request_message_id, owner_id, instruction, status,
+       revision, hops, created_at, updated_at)
+      VALUES ('gt:kid', ${TEAM}, 'gt:s0', 'gt:s0', 'child', 'gm:old', 'beto', 'price the plan',
+        'running', 1, 0, '2026-01-01', '2026-01-01')`;
     yield* groups.post({ teamId: TEAM, text: "@ada next" }, h.user);
     const packet = h.sent[0]!.text;
-    const listed = packet.split("\n").filter((line) => line.startsWith("- gt:"));
+    assert.include(
+      packet,
+      "Subtasks you gave that are still open (t3_group cancel stops one):\n- gt:kid (running, Beto): price the plan",
+    );
+    const listed = packet.split("\n").filter((line) => line.startsWith("- gt:s"));
     assert.lengthOf(listed, 5);
     assert.include(packet, "Your stopped tasks in this group");
     assert.match(listed[0]!, /^- gt:s6 \(failed, failed\): stopped job 6 x+…$/);

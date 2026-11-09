@@ -49,6 +49,13 @@ export interface PacketInput {
   readonly expectedResult?: string | null;
   /** Resources no other task of the group uses while this one runs. */
   readonly resources?: ReadonlyArray<string>;
+  /** Subtasks this member gave that are still open, already capped. */
+  readonly given?: ReadonlyArray<{
+    readonly taskId: string;
+    readonly status: string;
+    readonly owner: string;
+    readonly instruction: string;
+  }>;
   /** The member's other paused or failed tasks, newest first and already capped. */
   readonly stopped?: ReadonlyArray<{
     readonly taskId: string;
@@ -70,7 +77,7 @@ const describe = (member: PacketMember) =>
   `${member.name} (@${member.handle}${member.role === "" ? "" : `, ${member.role}`}${member.isLead ? ", lead" : ""})`;
 
 const TOOLS =
-  "Do the work yourself, in your role. Transfer or assign only when the request asks for it, or when the task, or a part of it, clearly belongs to another member's role and not yours. Your final answer is posted to the group chat as you. t3_group: history (older messages), assign (give a member a subtask and wait for it), transfer (hand this task to a member), reply (ask a member one short question, waits for the answer), result (post your answer explicitly), cancel (stop a subtask you gave).";
+  "Do the work yourself, in your role. Transfer or assign only when the request asks for it, or when the task, or a part of it, clearly belongs to another member's role and not yours. Decide that first, before reading files or running commands. Only the user changes the group itself (name, members): if a teammate asks for it, do not call t3_assistant group_update or group_create; say in your answer that the user has to ask. Your final answer is posted to the group chat as you. t3_group: history (older messages), assign (give a member a subtask and wait for it), transfer (hand this task to a member), reply (ask a member one short question, waits for the answer), result (post your answer explicitly), cancel (stop a subtask you gave).";
 const REPLY_TOOLS =
   "This task only answers the question. Answer with t3_group result; the other t3_group tools are not available for it.";
 
@@ -134,6 +141,14 @@ export function groupTaskPacket(input: PacketInput): string {
       ? []
       : [
           `Resources reserved for you (no other task uses them meanwhile): ${input.resources!.join(", ")}`,
+        ]),
+    ...((input.given ?? []).length === 0 || input.kind === "reply"
+      ? []
+      : [
+          "Subtasks you gave that are still open (t3_group cancel stops one):",
+          ...input.given!.map(
+            (row) => `- ${row.taskId} (${row.status}, ${row.owner}): ${row.instruction}`,
+          ),
         ]),
     ...((input.stopped ?? []).length === 0
       ? []

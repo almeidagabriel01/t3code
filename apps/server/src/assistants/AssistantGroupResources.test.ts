@@ -36,7 +36,7 @@ const overlapTable: ReadonlyArray<readonly [string, string, boolean]> = [
   ["browser", "simulator", false],
   ["browser", "folder:/w/app", false],
 ];
-it.each(overlapTable)("%s and %s overlap: %s", ([a, b, expected]) => {
+it.each(overlapTable)("%s and %s overlap: %s", (a, b, expected) => {
   assert.equal(resourcesOverlap(a, b), expected);
 });
 

@@ -358,6 +358,16 @@ export const McpToolUseCase = Schema.Struct({
           ),
         ),
         from: Schema.NullOr(Schema.String),
+        given: Schema.optional(
+          Schema.Array(
+            Schema.Struct({
+              taskId: Schema.String,
+              status: Schema.String,
+              owner: Schema.String,
+              instruction: Schema.String,
+            }),
+          ),
+        ),
       }),
     ),
     sideChat: Schema.optional(
@@ -1095,6 +1105,7 @@ export const buildMessages = (sample: Sample) => {
           from: groupTask.from,
           instruction: testCase.prompt,
           followup: null,
+          ...(groupTask.given === undefined ? {} : { given: groupTask.given }),
         })
       : testCase.promptContext === undefined
         ? testCase.prompt

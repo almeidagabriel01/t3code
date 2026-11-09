@@ -127,7 +127,10 @@ run back by that id and ignores stale revisions, so resume and reassign bump the
 tasks run per group. A finished run posts the `result` tool text or the run's last assistant message;
 a task with unsettled children waits and runs again with their results. Hand-offs (assign, transfer)
 count on the root and the ninth pauses with `handoff_limit`; member replies are a separate limit of two
-per request. Claude pre-approves `t3_group` even in a read-only sandbox, where every other non-read T3
+per request. A subtask may declare `resources` (`folder:<path>` trees, or ids); `pump` holds them only
+for running tasks, so a parent waiting on its children never blocks them, and a queued task that waits
+claims its resources so a later one cannot overtake it (the wait reason is written without touching
+`updated_at`, which orders the queue). A member cancels only tasks its own tasks assigned. Claude pre-approves `t3_group` even in a read-only sandbox, where every other non-read T3
 tool is denied: it changes only group state, and a read-only member must still be able to hand work
 on. Team changes arrive through `AssistantService.subscribeChanges` (no snapshot, so it never
 seeds Jarvis) and `reconcile` heals changes made while the server was down. A scheduled task with

@@ -813,6 +813,12 @@ const make = Effect.gen(function* () {
         ...[...task.instruction.matchAll(/#(\d+)/g)].map((match) => Number(match[1])),
       ]),
     ].slice(0, QUOTED_MESSAGES);
+    const given = yield* sql<TaskRow>`
+      SELECT t.* FROM assistant_group_tasks t
+      JOIN assistant_group_tasks p ON p.task_id = t.parent_id
+      WHERE t.team_id = ${team.id} AND p.owner_id = ${owner.assistant_id} AND t.kind = 'child'
+        AND t.task_id <> ${task.task_id} AND t.status IN ${sql.in([...ACTIVE, "paused"])}
+      ORDER BY t.updated_at DESC, t.rowid DESC LIMIT ${STOPPED_LISTED}`;
     const stopped = yield* sql<TaskRow>`
       SELECT t.* FROM assistant_group_tasks t
       JOIN assistant_group_messages m ON m.message_id = t.request_message_id
@@ -838,6 +844,12 @@ const make = Effect.gen(function* () {
       instruction: task.instruction,
       expectedResult: task.expected_result,
       resources: resourcesOf(task),
+      given: given.map((row) => ({
+        taskId: row.task_id,
+        status: row.status,
+        owner: names.get(row.owner_id) ?? "a member",
+        instruction: clip(row.instruction, STOPPED_INSTRUCTION_CHARS),
+      })),
       stopped: stopped.map((row) => ({
         taskId: row.task_id,
         status: row.status,
