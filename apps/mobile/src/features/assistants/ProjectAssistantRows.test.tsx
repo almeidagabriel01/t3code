@@ -28,6 +28,8 @@ vi.mock("@t3tools/client-runtime/environment", () => ({
 vi.mock("@t3tools/client-runtime/assistantRobot", () => ({
   assistantGroupThreadsOf: () => [],
   assistantGroupOwnerKey: () => undefined,
+  assistantFace: (presence: { mood: string }) =>
+    presence.mood === "needs" ? "waiting" : presence.mood,
   assistantPresence: () =>
     mocks.mood === "needs"
       ? { mood: "needs", detail: "Needs your approval", since: null }
@@ -101,7 +103,7 @@ describe("ProjectAssistantRows", () => {
     ];
     mocks.mood = "needs";
     render(true);
-    expect(container.textContent).toContain("av:needs");
+    expect(container.textContent).toContain("av:waiting");
     expect(container.textContent).toContain("Needs your approval");
     expect(container.textContent).not.toContain("everywhere");
     const rows = container.querySelectorAll("button");

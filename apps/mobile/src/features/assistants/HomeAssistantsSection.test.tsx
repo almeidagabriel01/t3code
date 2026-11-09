@@ -81,6 +81,8 @@ vi.mock("@t3tools/client-runtime/environment", () => ({
 vi.mock("@t3tools/client-runtime/assistantRobot", () => ({
   assistantGroupThreadsOf: () => [],
   assistantGroupOwnerKey: () => undefined,
+  assistantFace: (presence: { mood: string }) =>
+    presence.mood === "needs" ? "waiting" : presence.mood,
   assistantQueuedLabel: (queued: number | undefined) =>
     queued !== undefined && queued > 0 ? `${queued} queued` : null,
   assistantPresence: (thread: { id: string } | null): Presence =>

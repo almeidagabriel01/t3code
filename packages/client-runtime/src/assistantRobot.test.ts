@@ -5,6 +5,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   ASSISTANT_ROBOT_HUES,
   assistantGroupOwnerKey,
+  assistantFace,
   assistantGroupThreadsOf,
   assistantPresence,
   assistantQueuedLabel,
@@ -49,8 +50,26 @@ describe("assistantRobotSpec", () => {
     ["working", "focused"],
     ["needs", "alert"],
     ["failed", "crossed"],
+    ["reading", "open"],
+    ["waiting", "alert"],
+    ["done", "happy"],
+    ["sleeping", "closed"],
   ] as const)("a %s robot has %s eyes", (mood, eyes) => {
     expect(assistantRobotSpec({ hue: 210, variant: 0 }, mood).eyes).toBe(eyes);
+  });
+
+  it.each([
+    ["idle", "blink", null],
+    ["reading", "glance", null],
+    ["working", "think", null],
+    ["needs", null, "dot"],
+    ["failed", null, "ring"],
+    ["done", null, null],
+    ["sleeping", null, null],
+  ] as const)("a %s robot moves with %s and wears badge %s", (mood, motion, badge) => {
+    const spec = assistantRobotSpec({ hue: 210, variant: 0 }, mood);
+    expect(spec.motion).toBe(motion);
+    expect(spec.badge?.kind ?? null).toBe(badge);
   });
 
   it("every variant is a distinct antenna and ear pair, and out-of-range input wraps", () => {
@@ -65,6 +84,30 @@ describe("assistantRobotSpec", () => {
     expect(assistantRobotSpec({ hue: -30, variant: -1 }, "idle").gradientFrom).toBe(
       "hsl(330 85% 66%)",
     );
+  });
+});
+
+describe("assistantFace", () => {
+  const now = Date.parse("2026-11-06T12:00:00.000Z");
+  const ago = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(now - ms));
+  it.each([
+    ["working on a reply", { mood: "working", reading: false, since: null }, "working"],
+    ["working before saying anything", { mood: "working", reading: true, since: null }, "reading"],
+    ["needing the user", { mood: "needs", reading: false, since: null }, "waiting"],
+    ["failed", { mood: "failed", reading: false, since: null }, "failed"],
+    ["never spoke", { mood: "idle", reading: false, since: null }, "idle"],
+    ["just replied", { mood: "idle", reading: false, since: ago(3_000) }, "done"],
+    ["replied a minute ago", { mood: "idle", reading: false, since: ago(60_000) }, "idle"],
+    ["quiet for a day", { mood: "idle", reading: false, since: ago(24 * 3_600_000) }, "sleeping"],
+    ["unparsable moment", { mood: "idle", reading: false, since: "soon" }, "idle"],
+    ["a reply from the future", { mood: "idle", reading: false, since: ago(-5_000) }, "idle"],
+  ] as const)("%s", (_name, presence, face) => {
+    expect(assistantFace(presence, now)).toBe(face);
+  });
+
+  it("without a clock it never reports done or sleeping", () => {
+    expect(assistantFace({ mood: "idle", reading: false, since: ago(3_000) })).toBe("idle");
+    expect(assistantFace({ mood: "idle", reading: false, since: ago(9e8) })).toBe("idle");
   });
 });
 
@@ -109,7 +152,12 @@ describe("assistantPresence", () => {
         status: "running",
         ...said("\n  Running the test suite now.\nThen the build."),
       }),
-      { mood: "working", detail: "Running the test suite now.", since: "2026-11-06T12:00:00.000Z" },
+      {
+        mood: "working",
+        detail: "Running the test suite now.",
+        since: "2026-11-06T12:00:00.000Z",
+        reading: false,
+      },
     ],
     [
       "a run that has not spoken",
@@ -120,7 +168,7 @@ describe("assistantPresence", () => {
         status: "running",
         ...said("do the thing", "user"),
       }),
-      { mood: "working", detail: "Working" },
+      { mood: "working", detail: "Working", reading: true },
     ],
     [
       "a failed run",

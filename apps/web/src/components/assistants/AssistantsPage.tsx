@@ -1,5 +1,6 @@
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
+  assistantFace,
   assistantGroupOwnerKey,
   assistantGroupThreadsOf,
   assistantPresence,
@@ -75,7 +76,8 @@ function AssistantCard(props: {
         <AssistantAvatar
           assistant={assistant}
           environmentId={environmentId}
-          mood={archived ? "idle" : presence.mood}
+          mood={archived ? "sleeping" : assistantFace(presence, props.nowMs)}
+          animated
           className="size-12"
         />
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">

@@ -1,5 +1,9 @@
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { assistantGroupThreadsOf, assistantPresence } from "@t3tools/client-runtime/assistantRobot";
+import {
+  assistantFace,
+  assistantGroupThreadsOf,
+  assistantPresence,
+} from "@t3tools/client-runtime/assistantRobot";
 import { projectAssistants } from "@t3tools/client-runtime/assistantSections";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { memo } from "react";
@@ -44,7 +48,11 @@ const ProjectAssistantRow = memo(function ProjectAssistantRow(props: {
           props.isActive && "bg-sidebar-row-active",
         )}
       >
-        <AssistantAvatar assistant={assistant} mood={presence.mood} className="size-4.5" />
+        <AssistantAvatar
+          assistant={assistant}
+          mood={assistantFace(presence)}
+          className="size-4.5"
+        />
         <span className="min-w-0 truncate font-medium">{assistant.name}</span>
         <span className={cn("min-w-0 flex-1 truncate text-xs", MOOD_TEXT[presence.mood])}>
           {presence.detail}

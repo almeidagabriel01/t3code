@@ -2,7 +2,7 @@ import { AssistantId } from "@t3tools/contracts";
 import type { ReactNode } from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const { mocks } = vi.hoisted(() => ({
   mocks: {
@@ -10,11 +10,17 @@ const { mocks } = vi.hoisted(() => ({
     resource: undefined as unknown,
     revision: undefined as unknown,
     environment: undefined as unknown,
+    foreground: true,
+    reduced: false,
   },
 }));
 
 vi.mock("react-native", () => ({
   View: (props: { children?: ReactNode }) => <div>{props.children}</div>,
+}));
+vi.mock("../../lib/appState", () => ({
+  useAppForeground: () => mocks.foreground,
+  useReduceMotionEnabled: () => mocks.reduced,
 }));
 vi.mock("react-native-svg", () => {
   const tag = (name: string) => (props: Record<string, unknown> & { children?: ReactNode }) => {
@@ -34,6 +40,7 @@ vi.mock("react-native-svg", () => {
     Path: tag("path"),
     Circle: tag("circle"),
     Defs: tag("defs"),
+    G: tag("g"),
     Line: tag("line"),
     LinearGradient: tag("linear"),
     RadialGradient: tag("radial"),
@@ -83,13 +90,18 @@ describe("AssistantRobot", () => {
   it.each([
     ["idle", "rect", 2],
     ["working", "path", 2],
-    ["needs", "circle", 3],
+    ["reading", "rect", 2],
+    ["waiting", "circle", 4],
+    ["needs", "circle", 4],
     ["failed", "path", 2],
+    ["done", "path", 2],
+    ["sleeping", "path", 2],
   ] as const)("%s face draws its eyes", (mood, tag, minimum) => {
     const container = draw(
       <AssistantRobot look={{ hue: 210, variant: 0 }} mood={mood} size={24} />,
     );
-    expect(container.querySelector(`[data-testid="assistant-robot-${mood}"]`)).not.toBeNull();
+    const face = mood === "needs" ? "waiting" : mood;
+    expect(container.querySelector(`[data-testid="assistant-robot-${face}"]`)).not.toBeNull();
     expect(container.querySelectorAll(`[data-tag="${tag}"]`).length).toBeGreaterThanOrEqual(
       minimum,
     );
@@ -113,12 +125,64 @@ describe("AssistantRobot", () => {
   });
 });
 
+describe("AssistantRobot motion", () => {
+  const eyes = (container: HTMLElement) =>
+    JSON.parse(
+      container.querySelector('[data-testid="assistant-robot-eyes"]')!.getAttribute("data-props")!,
+    ) as { transform?: string };
+  const robotAt = (size: number, mood: "idle" | "failed" = "idle") =>
+    draw(<AssistantRobot look={{ hue: 210, variant: 0 }} mood={mood} size={size} />);
+
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => {
+    vi.useRealTimers();
+    mocks.foreground = true;
+    mocks.reduced = false;
+  });
+
+  it("blinks for a beat every period at 24px and up, then opens again", () => {
+    const container = robotAt(24);
+    expect(eyes(container).transform).toBeUndefined();
+    act(() => vi.advanceTimersByTime(2600));
+    expect(eyes(container).transform).toContain("scale(1 0.1)");
+    act(() => vi.advanceTimersByTime(200));
+    expect(eyes(container).transform).toBeUndefined();
+  });
+
+  it.each([
+    ["small avatars", 16, false, true],
+    ["reduce motion", 44, true, true],
+    ["the app in the background", 44, false, false],
+  ] as const)("stays still for %s", (_name, size, reduced, foreground) => {
+    mocks.reduced = reduced;
+    mocks.foreground = foreground;
+    const container = robotAt(size);
+    act(() => vi.advanceTimersByTime(10_000));
+    expect(eyes(container).transform).toBeUndefined();
+  });
+
+  it("a face without motion never ticks", () => {
+    const container = robotAt(44, "failed");
+    act(() => vi.advanceTimersByTime(10_000));
+    expect(eyes(container).transform).toBeUndefined();
+  });
+
+  it("done relaxes to idle after its beat", () => {
+    const container = draw(
+      <AssistantRobot look={{ hue: 210, variant: 0 }} mood="done" size={16} />,
+    );
+    expect(container.querySelector('[data-testid="assistant-robot-done"]')).not.toBeNull();
+    act(() => vi.advanceTimersByTime(9000));
+    expect(container.querySelector('[data-testid="assistant-robot-idle"]')).not.toBeNull();
+  });
+});
+
 describe("AssistantAvatar", () => {
   it("draws the derived robot for no avatar and no icon, with the mood", () => {
     const container = draw(
       <AssistantAvatar assistant={{ id, avatar: null, icon: null }} mood="needs" />,
     );
-    expect(container.querySelector('[data-testid="assistant-robot-needs"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="assistant-robot-waiting"]')).not.toBeNull();
   });
 
   it("keeps the legacy icon only while no avatar is chosen", () => {

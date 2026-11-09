@@ -1,5 +1,5 @@
 import { AssistantId, type Assistant } from "@t3tools/contracts";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { render } from "../../../test/render";
 import { AssistantAccentAvatar, AssistantAvatar } from "./assistantPresentation";
@@ -38,7 +38,46 @@ describe("assistant avatars", () => {
       />,
       { router: false }, // renders no routed content
     );
-    expect(screen.container.querySelector('[data-assistant-robot="needs"]')).not.toBeNull();
+    expect(screen.container.querySelector('[data-assistant-robot="waiting"]')).not.toBeNull();
+  });
+
+  describe("robot motion", () => {
+    const assistant = { id: AssistantId.make("a1"), avatar: null, icon: null };
+    const motionOf = async (node: React.ReactElement) => {
+      await using screen = await render(node, { router: false }); // renders no routed content
+      return screen.container
+        .querySelector("[data-assistant-motion]")
+        ?.getAttribute("data-assistant-motion");
+    };
+
+    it("plays only when animated, visible and motion is allowed", async () => {
+      expect(await motionOf(<AssistantAvatar assistant={assistant} animated />)).toBe("blink");
+      expect(
+        await motionOf(<AssistantAvatar assistant={assistant} mood="working" animated />),
+      ).toBe("think");
+      expect(await motionOf(<AssistantAvatar assistant={assistant} mood="failed" animated />)).toBe(
+        undefined,
+      );
+      // small avatars never ask for it
+      expect(await motionOf(<AssistantAvatar assistant={assistant} />)).toBe(undefined);
+    });
+
+    it("stops while the document is hidden", async () => {
+      using _hidden = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+      expect(await motionOf(<AssistantAvatar assistant={assistant} animated />)).toBe(undefined);
+    });
+
+    it("stops with reduced motion", async () => {
+      using _reduced = vi.spyOn(window, "matchMedia").mockImplementation(
+        (query) =>
+          ({
+            matches: query.includes("reduce"),
+            addEventListener: () => {},
+            removeEventListener: () => {},
+          }) as unknown as MediaQueryList,
+      );
+      expect(await motionOf(<AssistantAvatar assistant={assistant} animated />)).toBe(undefined);
+    });
   });
 
   it("accent avatar draws the icon, or the initial without one", async () => {
