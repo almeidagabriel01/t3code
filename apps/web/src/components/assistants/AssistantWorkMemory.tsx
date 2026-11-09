@@ -6,7 +6,11 @@ import {
   memoryScopeLabel,
 } from "@t3tools/client-runtime/memory-browsing";
 import { memoryLocalSpace } from "@t3tools/client-runtime/memory-presentation";
-import { assistantMemories, type AssistantMemory } from "@t3tools/client-runtime/assistantWork";
+import {
+  assistantMemories,
+  memorySourceLabel,
+  type AssistantMemory,
+} from "@t3tools/client-runtime/assistantWork";
 import {
   AuthMemoryReadScope,
   MEMORY_PAGE_MAX_ITEMS,
@@ -14,6 +18,7 @@ import {
   type EnvironmentId,
   type MemoryScope,
   type MemorySpaceId,
+  type ThreadId,
 } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import * as Option from "effect/Option";
@@ -26,7 +31,7 @@ import { memoryEnvironment } from "../../state/memory";
 import { useEnvironmentQuery } from "../../state/query";
 import { useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { useProjects } from "../../state/entities";
+import { useProjects, useThreadShell } from "../../state/entities";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 
@@ -200,14 +205,11 @@ export function AssistantMemoryList(props: {
                 {scopeLabel}
               </Badge>
               {sourceThreadId === null ? null : (
-                <Link
-                  to="/$environmentId/$threadId"
-                  params={buildThreadRouteParams(scopeThreadRef(environmentId, sourceThreadId))}
-                  onClick={props.onNavigate}
-                  className="cursor-pointer text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
-                >
-                  From a conversation
-                </Link>
+                <SourceLink
+                  environmentId={environmentId}
+                  threadId={sourceThreadId}
+                  onNavigate={props.onNavigate}
+                />
               )}
               <span className="ms-auto flex items-center gap-1">
                 {editing === item.memoryId ? null : (
@@ -230,6 +232,25 @@ export function AssistantMemoryList(props: {
         );
       })}
     </ul>
+  );
+}
+
+function SourceLink(props: {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+  readonly onNavigate: () => void;
+}) {
+  const ref = scopeThreadRef(props.environmentId, props.threadId);
+  const title = useThreadShell(ref)?.title;
+  return (
+    <Link
+      to="/$environmentId/$threadId"
+      params={buildThreadRouteParams(ref)}
+      onClick={props.onNavigate}
+      className="max-w-full cursor-pointer truncate text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+    >
+      {memorySourceLabel(title)}
+    </Link>
   );
 }
 

@@ -11,6 +11,7 @@ const { mocks, Children } = vi.hoisted(() => ({
     environmentIds: ["hub"] as string[],
     spendQuery: vi.fn(),
     openEditor: vi.fn(),
+    openWork: vi.fn(),
     restoreDefault: vi.fn(),
     unarchive: vi.fn(),
     archive: vi.fn(),
@@ -170,6 +171,7 @@ vi.mock("./AssistantSandboxSection", () => ({
   ),
 }));
 vi.mock("./assistantTeamTarget", () => ({ useOpenAssistantTeam: () => mocks.openTeam }));
+vi.mock("./assistantWorkTarget", () => ({ useOpenAssistantWork: () => mocks.openWork }));
 vi.mock("./openAssistantEditor", () => ({ useOpenAssistantEditor: () => mocks.openEditor }));
 vi.mock("../../state/entities", () => ({
   useProjects: () => [{ environmentId: "hub", id: "p1", title: "Website" }],
@@ -227,6 +229,7 @@ beforeEach(() => {
   for (const fn of [
     mocks.spendQuery,
     mocks.openEditor,
+    mocks.openWork,
     mocks.restoreDefault,
     mocks.unarchive,
     mocks.archive,
@@ -311,6 +314,8 @@ describe("assistants page", () => {
     expect(mocks.open).toHaveBeenCalledWith(expect.objectContaining({ id: "a1" }));
     act(() => buttonIn("Jarvis, All projects", "Edit").click());
     expect(mocks.openEditor).toHaveBeenCalledWith("hub", expect.objectContaining({ id: "a1" }));
+    act(() => buttonIn("Jarvis, All projects", "Work").click());
+    expect(mocks.openWork).toHaveBeenCalledWith("hub", "a1");
     act(() => buttonIn("Jarvis, All projects", "Archive").click());
     expect(mocks.archive).toHaveBeenCalledWith(expect.objectContaining({ id: "a1" }));
     expect(byLabel("Old, All projects")?.textContent).not.toContain("Open thread");

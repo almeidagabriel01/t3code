@@ -215,6 +215,11 @@ function localDayNumber(ms: number): number {
   return Date.UTC(part("year"), part("month") - 1, part("day")) / 86_400_000;
 }
 
+/** The memory's source link text: the thread's title when the client has one, else a generic label. */
+export function memorySourceLabel(title: string | null | undefined): string {
+  return title?.trim() || "From a conversation";
+}
+
 /** "Today 9:00 AM", "Tomorrow 9:00 AM", "Wed 9:00 AM" within a week, else "Nov 20, 9:00 AM", in local time. */
 export function formatNextRun(iso: string, nowMs: number): string {
   const atMs = Date.parse(iso);
