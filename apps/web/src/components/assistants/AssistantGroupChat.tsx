@@ -363,7 +363,7 @@ function FeedRow(props: {
             {assistantGroupAuthorName(replyTarget, (id) => props.assistants.get(id)?.name)}
           </p>
         )}
-        <div className="text-sm leading-relaxed [&_strong]:text-primary">
+        <div className="text-sm leading-relaxed">
           <ChatMarkdown
             text={assistantGroupMarkdownMentions(message.text, props.members)}
             cwd={undefined}

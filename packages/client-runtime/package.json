@@ -311,6 +311,10 @@
       "types": "./src/assistantTasks.ts",
       "default": "./src/assistantTasks.ts"
     },
+    "./scheduledTaskWording": {
+      "types": "./src/scheduledTaskWording.ts",
+      "default": "./src/scheduledTaskWording.ts"
+    },
     "./assistantWork": {
       "types": "./src/assistantWork.ts",
       "default": "./src/assistantWork.ts"

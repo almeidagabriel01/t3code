@@ -404,6 +404,7 @@ const CHAT_MARKDOWN_LITERAL_HTML_REHYPE_PLUGINS = [
 ] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
 
 function markdownUrlTransform(href: string) {
+  if (href.startsWith("t3-mention:")) return href;
   if (parseAssistantCitationHref(href)) return href;
   if (parseComposerContextHref(href)) return href;
   if (parseThreadLinkHref(href)) return href;
@@ -1083,6 +1084,8 @@ const CHAT_MARKDOWN_COMPONENTS = {
       renderContextReference,
     } = use(ChatMarkdownRendererContext);
     const text = use(ChatMarkdownTextContext);
+    if (href?.startsWith("t3-mention:"))
+      return <span className="font-semibold text-primary">{children}</span>;
     const citation = href ? parseAssistantCitationHref(href) : null;
     if (citation) return <AssistantCitationChip citation={citation} />;
     const threadLink = href ? parseThreadLinkHref(href) : null;

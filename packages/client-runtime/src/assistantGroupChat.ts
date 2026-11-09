@@ -201,15 +201,18 @@ export function assistantGroupTextParts(
 const INLINE_CODE = /(`+)[\s\S]*?\1/g;
 const CODE_FENCE = /^ {0,3}(`{3,}|~{3,})/;
 
-/** Markdown with each member `@mention` made bold, except in code spans and fenced blocks. */
+/** Scheme of the link a member mention becomes; clients style it and never navigate. */
+export const ASSISTANT_MENTION_HREF = "t3-mention:mention";
+
+/** Markdown with each member `@mention` made a mention link, except in code spans and fenced blocks. */
 export function assistantGroupMarkdownMentions(
   markdown: string,
   members: ReadonlyArray<Pick<Assistant, "handle" | "name">>,
 ): string {
   if (!markdown.includes("@")) return markdown;
-  const bold = (text: string) =>
+  const link = (text: string) =>
     assistantGroupTextParts(text, members)
-      .map((part) => (part.mention ? `**${part.text}**` : part.text))
+      .map((part) => (part.mention ? `[${part.text}](${ASSISTANT_MENTION_HREF})` : part.text))
       .join("");
   let fence: string | null = null;
   return markdown
@@ -228,10 +231,10 @@ export function assistantGroupMarkdownMentions(
       let out = "";
       let at = 0;
       for (const code of line.matchAll(INLINE_CODE)) {
-        out += bold(line.slice(at, code.index)) + code[0];
+        out += link(line.slice(at, code.index)) + code[0];
         at = code.index + code[0].length;
       }
-      return out + bold(line.slice(at));
+      return out + link(line.slice(at));
     })
     .join("\n");
 }

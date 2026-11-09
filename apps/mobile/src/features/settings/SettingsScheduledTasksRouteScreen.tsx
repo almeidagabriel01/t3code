@@ -1,3 +1,4 @@
+import { scheduledTaskWording } from "@t3tools/client-runtime/scheduledTaskWording";
 import * as Dialog from "../../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -128,6 +129,8 @@ function FormField(props: {
   readonly keyboardType?: "decimal-pad" | "number-pad";
   readonly disabled?: boolean;
   readonly placeholder?: string;
+  readonly hint?: string;
+  readonly suffix?: string;
   readonly borderTop?: boolean;
 }) {
   return (
@@ -136,18 +139,26 @@ function FormField(props: {
         props.borderTop ? "gap-2 border-t border-border-subtle px-4 py-3" : "gap-2 px-4 py-3"
       }
     >
-      <Text className="text-sm text-foreground-muted">{props.label}</Text>
-      <RNTextInput
-        accessibilityLabel={props.label}
-        value={props.value}
-        readOnly={props.disabled}
-        onChangeText={props.onChange}
-        textAlignVertical="center"
-        keyboardType={props.keyboardType}
-        placeholder={props.placeholder}
-        placeholderTextColorClassName="accent-foreground-muted"
-        className="min-h-8 font-sans text-base text-foreground"
-      />
+      <View className="gap-0.5">
+        <Text className="text-sm text-foreground-muted">{props.label}</Text>
+        {props.hint ? <Text className="text-xs text-foreground-muted">{props.hint}</Text> : null}
+      </View>
+      <View className="flex-row items-center gap-2">
+        <RNTextInput
+          accessibilityLabel={props.label}
+          value={props.value}
+          readOnly={props.disabled}
+          onChangeText={props.onChange}
+          textAlignVertical="center"
+          keyboardType={props.keyboardType}
+          placeholder={props.placeholder}
+          placeholderTextColorClassName="accent-foreground-muted"
+          className="min-h-8 font-sans text-base text-foreground"
+        />
+        {props.suffix ? (
+          <Text className="text-sm text-foreground-muted">{props.suffix}</Text>
+        ) : null}
+      </View>
     </View>
   );
 }
@@ -156,6 +167,7 @@ function SelectRow(props: {
   readonly label: string;
   readonly value: string;
   readonly valueIcon?: ReactNode;
+  readonly hint?: string;
   readonly actions: MenuAction[];
   readonly onSelect: (id: string) => void;
   readonly borderTop?: boolean;
@@ -181,9 +193,16 @@ function SelectRow(props: {
             : "min-h-14 flex-row items-center gap-3 px-4 py-3"
         }
       >
-        <Text textRole="body" className="text-foreground">
-          {props.label}
-        </Text>
+        <View className="min-w-0 flex-[2]">
+          <Text textRole="body" className="text-foreground">
+            {props.label}
+          </Text>
+          {props.hint ? (
+            <Text textRole="footnote" className="text-foreground-muted">
+              {props.hint}
+            </Text>
+          ) : null}
+        </View>
         {value}
       </View>
     );
@@ -202,9 +221,16 @@ function SelectRow(props: {
             : "min-h-14 flex-row items-center gap-3 px-4 py-3 active:opacity-70"
         }
       >
-        <Text textRole="body" className="text-foreground">
-          {props.label}
-        </Text>
+        <View className="min-w-0 flex-[2]">
+          <Text textRole="body" className="text-foreground">
+            {props.label}
+          </Text>
+          {props.hint ? (
+            <Text textRole="footnote" className="text-foreground-muted">
+              {props.hint}
+            </Text>
+          ) : null}
+        </View>
         {value}
         <SymbolView
           name="chevron.down"
@@ -456,9 +482,11 @@ export function SettingsScheduledTaskEditRouteScreen() {
   return <SettingsScheduledTaskEditorScreen title="Edit scheduled task" />;
 }
 
-function SettingsScheduledTaskEditorScreen({ title }: { readonly title: string }) {
+function SettingsScheduledTaskEditorScreen({ title: pageTitle }: { readonly title: string }) {
   const { editor, voiceOwnerKey, readEditor, setEditor, hasChanges, draftForEnvironment } =
     useScheduledTaskEditor();
+  const inGroup = (editor?.draft.assistantTeamId ?? null) !== null;
+  const title = inGroup ? scheduledTaskWording(true).edit(editor?.draft.task != null) : pageTitle;
   const { availableTargets } = useSettingsEnvironmentFilter();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
@@ -1113,7 +1141,8 @@ function TaskForm({
                 }}
               />
               <SelectRow
-                label="If the server was off"
+                label="If the server was off at that time"
+                hint="Applies to a run missed by more than ten minutes."
                 value={draft.missedRunPolicy === "once" ? "Run once when back" : "Skip it"}
                 borderTop
                 actions={[
@@ -1281,7 +1310,9 @@ function TaskForm({
           )}
           {draft.schedule.mode === "webhook" ? null : (
             <FormField
-              label="Stop after this many runs"
+              label="Run limit"
+              hint="The task turns itself off after this many runs. Empty means no limit."
+              suffix="runs"
               value={draft.maxRuns}
               placeholder="No limit"
               keyboardType="number-pad"
@@ -1320,7 +1351,15 @@ function TaskForm({
           (draft.enabled && draft.schedule.mode === "webhook" && webhookDenial !== undefined)
         }
         onPress={() => void save()}
-        label={saving ? "Saving…" : draft.task ? "Save changes" : "Create task"}
+        label={
+          saving
+            ? "Saving…"
+            : draft.assistantTeamId !== null
+              ? scheduledTaskWording(true).submit(draft.task != null)
+              : draft.task
+                ? "Save changes"
+                : "Create task"
+        }
       />
     </View>
   );

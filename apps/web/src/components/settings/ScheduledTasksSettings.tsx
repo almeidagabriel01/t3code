@@ -78,6 +78,7 @@ import { resolvePastedPath } from "@t3tools/shared/path";
 import { useManagedPolicy } from "~/state/managedPolicy";
 import { ManagedNotice } from "../ManagedPolicy";
 import { readEnvironmentScope } from "~/state/session";
+import { scheduledTaskWording } from "@t3tools/client-runtime/scheduledTaskWording";
 import { SettingsScopeProvider, useSettingsScope } from "./SettingsScopeContext";
 import { EnvironmentRow, useEnvironmentTransportLabel } from "./EnvironmentRow";
 import { SettingsGroup } from "./SettingsGroup";
@@ -94,7 +95,6 @@ import {
   matchesScheduledTaskScope,
   scheduleFromDraft,
   scheduledTaskDefaultModel,
-  scheduledTaskWording,
   taskToDraft,
   type DraftState,
   type ScheduleMode,
