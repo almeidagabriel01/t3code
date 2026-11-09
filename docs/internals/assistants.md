@@ -108,6 +108,14 @@ covers the rest. The summary lives in `assistant_group_summaries`, is refreshed 
 `summarizeAssistantGroup` (the same providers as routing, on the server's text-generation model) once
 16k unsummarized characters pile up, and failing or missing it never delays a task.
 
+A chat message may carry attachments, uploaded as pending first like any composer upload. `post` claims
+them into group-owned ids (`group-<hash>-…`) so they outlive the 24h pending sweep, and
+`assistant_group_messages.attachments_json` keeps them. A task's turn gets its own copies in the member's
+thread namespace (`copyForThread`), because thread deletion removes every attachment id a thread's
+messages name; sharing the group's ids would delete the group's files with one member's thread. The
+group's own files go when the group is removed. Agent posts (`t3_assistant group_post`) still pass
+`paths`, which land as links in the text.
+
 A task starts by queueing `group-task:<taskId>:<revision>` into the owner's thread; the reactor maps the
 run back by that id and ignores stale revisions, so resume and reassign bump the revision. At most two
 tasks run per group. A finished run posts the `result` tool text or the run's last assistant message;

@@ -17,6 +17,7 @@ import {
   type AssistantGroupsHistoryResult,
   type AssistantGroupTask,
   type AssistantGroupTaskAction,
+  type ChatAttachment,
   splitAssistantTransferText,
 } from "@t3tools/contracts";
 import { LegendList, type LegendListRef } from "@legendapp/list/react-native";
@@ -25,6 +26,7 @@ import { useRef, useState } from "react";
 import { Platform, Pressable, View } from "react-native";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 
+import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
 import { AppBar } from "../../components/ui/AppBar";
 import { AppText as Text } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
@@ -41,6 +43,7 @@ import {
 } from "../../state/assistants";
 import { useMarkdownPreviewStyles } from "../files/FileMarkdownPreview";
 import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
+import { GroupMessageAttachments } from "./GroupAttachments";
 import { MENTION_REQUIRED_COPY, GroupComposer, type GroupSendResult } from "./GroupComposer";
 import { GroupTaskCard } from "./GroupTaskCard";
 import { AssistantAvatar } from "./assistantPresentation";
@@ -115,6 +118,7 @@ function FeedRow(
     readonly lead: Assistant | undefined;
     readonly archived: boolean;
     readonly onReply: (message: AssistantGroupMessage, name: string) => void;
+    readonly onPreview: (source: FilePreviewSource) => void;
   },
 ) {
   const { message } = props.row;
@@ -162,6 +166,11 @@ function FeedRow(
             </View>
           )}
         </View>
+        <GroupMessageAttachments
+          environmentId={props.environmentId}
+          attachments={message.attachments ?? []}
+          onPreview={props.onPreview}
+        />
         {assistantGroupAwaitingRoute(props.chat, message) ? (
           <Text testID="group-routing" className="text-xs text-foreground-muted">
             {props.lead === undefined
@@ -257,6 +266,7 @@ export function AssistantGroupChatRouteScreen({
   const scheduleInGroup = useScheduleInGroup();
   const [pages, setPages] = useState<ReadonlyArray<AssistantGroupsHistoryResult>>([]);
   const [loadingOlder, setLoadingOlder] = useState(false);
+  const [preview, setPreview] = useState<FilePreviewSource | null>(null);
   const [replyTo, setReplyTo] = useState<{
     readonly id: AssistantGroupMessage["id"];
     readonly name: string;
@@ -291,10 +301,14 @@ export function AssistantGroupChatRouteScreen({
     setPages((current) => [...current, reply.value]);
   };
 
-  const send = async (text: string): Promise<GroupSendResult> => {
+  const send = async (
+    text: string,
+    attachments: ReadonlyArray<ChatAttachment>,
+  ): Promise<GroupSendResult> => {
     const reply = await actions.post({
       teamId,
       text,
+      ...(attachments.length === 0 ? {} : { attachments }),
       ...(replyTo === null ? {} : { replyToMessageId: replyTo.id }),
     });
     if (reply.ok) {
@@ -449,6 +463,7 @@ export function AssistantGroupChatRouteScreen({
             canAct={actions.canAct}
             archived={archived}
             onReply={(message, name) => setReplyTo({ id: message.id, name })}
+            onPreview={setPreview}
             onTaskAction={(task, action, ownerId) => void taskAction(task, action, ownerId)}
             onOpenConversation={openConversation}
           />
@@ -478,6 +493,7 @@ export function AssistantGroupChatRouteScreen({
         onClearReply={() => setReplyTo(null)}
         onSend={send}
       />
+      <FilePreviewModal source={preview} onRequestClose={() => setPreview(null)} />
     </KeyboardAvoidingView>
   );
 }

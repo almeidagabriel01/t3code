@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 
 import { IsoDateTime, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { AssistantId, AssistantTeamId } from "./assistants.ts";
+import { ChatAttachment, PROVIDER_SEND_TURN_MAX_ATTACHMENTS } from "./chatAttachment.ts";
 
 /**
  * A group's shared chat, as in an OpenBot channel. A message there runs no agent itself: it opens
@@ -63,6 +64,8 @@ export const AssistantGroupMessage = Schema.Struct({
   replyToMessageId: Schema.NullOr(AssistantGroupMessageId),
   /** The task a member's message answers. */
   taskId: Schema.NullOr(AssistantGroupTaskId),
+  /** Files and images sent with the message; absent from older servers and when there are none. */
+  attachments: Schema.optionalKey(Schema.Array(ChatAttachment)),
   createdAt: IsoDateTime,
 });
 export type AssistantGroupMessage = typeof AssistantGroupMessage.Type;
@@ -160,6 +163,10 @@ export const AssistantGroupsPostInput = Schema.Struct({
   replyToMessageId: Schema.optional(AssistantGroupMessageId),
   /** A repeat with the same id posts nothing more. */
   clientRequestId: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(128))),
+  /** Pending uploads, as for a thread message; the server keeps them with the message. */
+  attachments: Schema.optional(
+    Schema.Array(ChatAttachment).check(Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_ATTACHMENTS)),
+  ),
 });
 export type AssistantGroupsPostInput = typeof AssistantGroupsPostInput.Type;
 

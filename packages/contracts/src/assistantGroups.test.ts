@@ -1,6 +1,9 @@
+import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  AssistantGroupMessage,
+  AssistantGroupsPostInput,
   assistantGroupLeadingAddress,
   assistantGroupTaskActions,
   isAssistantGroupThreadId,
@@ -63,4 +66,50 @@ it.each([
   ],
 ])("splitAssistantTransferText(%s)", (text, expected) => {
   expect(splitAssistantTransferText(text)).toEqual(expected);
+});
+
+describe("group message attachments", () => {
+  const image = {
+    type: "image",
+    id: "pending-1",
+    name: "a.png",
+    mimeType: "image/png",
+    sizeBytes: 3,
+  };
+  const file = {
+    type: "file",
+    id: "pending-2",
+    name: "a.pdf",
+    mimeType: "application/pdf",
+    sizeBytes: 5,
+  };
+  const message = {
+    id: "gm:1",
+    teamId: "t1",
+    seq: 1,
+    author: "user",
+    assistantId: null,
+    authorLabel: null,
+    kind: "message",
+    text: "@ada look",
+    replyToMessageId: null,
+    taskId: null,
+    createdAt: "2026-11-09T10:00:00.000Z",
+  };
+
+  it("decodes a message with images and files, and one from an older server without any", () => {
+    const decode = Schema.decodeUnknownSync(AssistantGroupMessage);
+    expect(decode({ ...message, attachments: [image, file] }).attachments).toHaveLength(2);
+    expect(decode(message).attachments).toBeUndefined();
+  });
+
+  it("accepts attachments on a post and refuses more than a turn can carry", () => {
+    const decode = Schema.decodeUnknownSync(AssistantGroupsPostInput);
+    const post = { teamId: "t1", text: "@ada look" };
+    expect(decode({ ...post, attachments: [image, file] }).attachments).toHaveLength(2);
+    expect(decode(post).attachments).toBeUndefined();
+    expect(() =>
+      decode({ ...post, attachments: Array.from({ length: 101 }, () => image) }),
+    ).toThrow();
+  });
 });

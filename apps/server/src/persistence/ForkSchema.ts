@@ -475,6 +475,12 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
       UNIQUE (team_id, client_request_id)
     )
   `;
+  const groupMessageColumns = yield* sql<{
+    readonly name: string;
+  }>`PRAGMA table_info(assistant_group_messages)`;
+  if (!groupMessageColumns.some((column) => column.name === "attachments_json")) {
+    yield* sql`ALTER TABLE assistant_group_messages ADD COLUMN attachments_json TEXT NOT NULL DEFAULT '[]'`;
+  }
   yield* sql`
     CREATE TABLE IF NOT EXISTS assistant_group_tasks (
       task_id TEXT PRIMARY KEY,

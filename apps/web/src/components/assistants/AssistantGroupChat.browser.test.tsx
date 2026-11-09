@@ -47,6 +47,18 @@ vi.mock(
     return { ...actual, layer: Layer.succeed(actual.ConnectionDriver, fakeDriver) };
   },
 );
+const uploads = vi.hoisted(() => ({ upload: vi.fn(), discard: vi.fn() }));
+vi.mock(import("~/lib/attachmentUploadQueue"), async (original) => ({
+  ...(await original()),
+  uploadStandaloneAttachment: uploads.upload,
+  discardStandaloneAttachment: uploads.discard,
+}));
+// A one-pixel image for every attachment, so thumbnails and the viewer have something to show.
+const PIXEL = "data:image/gif;base64,R0lGODlhAQABAAAAACwAAAAAAQABAAACAkQBADs=";
+vi.mock(import("~/assets/assetUrls"), async (original) => ({
+  ...(await original()),
+  useAssetUrls: (_environmentId, resources) => resources.map(() => PIXEL),
+}));
 vi.mock(import("~/rpc/requestLatencyState"), async (original) => ({
   ...(await original()),
   trackRpcRequestSent: () => {},
@@ -470,4 +482,150 @@ it("opens a group's chat from the command palette and says when it is gone", asy
   );
   publishAssistants(people(), []);
   await expect.element(main().getByText("Group not found")).toBeVisible();
+});
+
+const paste = (target: Element, files: ReadonlyArray<File>) => {
+  const clipboardData = new DataTransfer();
+  for (const file of files) clipboardData.items.add(file);
+  target.dispatchEvent(
+    new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true }),
+  );
+};
+const shot = () => new File([new Uint8Array([137, 80, 78, 71])], "shot.png", { type: "image/png" });
+const sheet = () => new File(["%PDF"], "sheet.pdf", { type: "application/pdf" });
+const broken = () => new File(["x"], "broken.txt", { type: "text/plain" });
+
+it("attaches pasted files, keeps the others when one fails, and sends what is ready", async () => {
+  publishGroupChat([message(1)]);
+  uploads.upload.mockReset().mockReset();
+  uploads.discard.mockReset();
+  uploads.upload.mockImplementation(async (_environmentId: string, file: File) => {
+    if (file.name === "broken.txt") throw new Error("Upload rejected (413)");
+    return {
+      attachmentId: `pending-${file.name}`,
+      mimeType: file.type,
+    };
+  });
+  await using _screen = await openChat();
+  paste(composer().element(), [shot(), sheet(), broken()]);
+  const chips = main().getByTestId("group-attachment-chip");
+  await expect.element(chips.nth(0).getByText("shot.png")).toBeVisible();
+  await expect.element(chips.nth(1).getByText("sheet.pdf")).toBeVisible();
+  await expect.element(main().getByRole("alert")).toHaveTextContent("Upload rejected (413)");
+
+  // The failed file holds the send until it is retried or removed; the others stay.
+  await userEvent.type(composer(), "@ada see these");
+  await expect.element(main().getByRole("button", { name: "Send" })).toBeDisabled();
+  await userEvent.click(main().getByRole("button", { name: "Remove broken.txt" }));
+  await expect.element(chips.nth(2)).not.toBeInTheDocument();
+  await expect.element(main().getByRole("button", { name: "Send" })).toBeEnabled();
+
+  // Removing a chip before sending deletes its upload.
+  await userEvent.click(main().getByRole("button", { name: "Remove sheet.pdf" }));
+  expect(uploads.discard).toHaveBeenCalledWith(ENVIRONMENT_ID, "pending-sheet.pdf");
+  paste(composer().element(), [sheet()]);
+  await expect.element(chips.nth(1).getByText("sheet.pdf")).toBeVisible();
+
+  await expect.element(main().getByRole("button", { name: "Send" })).toBeEnabled();
+  await userEvent.click(main().getByRole("button", { name: "Send" }));
+  await eventually(() =>
+    expect(fakeGroupChat.posts).toEqual([
+      {
+        teamId: "t1",
+        text: "@ada see these",
+        attachments: [
+          {
+            type: "image",
+            id: "pending-shot.png",
+            name: "shot.png",
+            mimeType: "image/png",
+            sizeBytes: 4,
+          },
+          {
+            type: "file",
+            id: "pending-sheet.pdf",
+            name: "sheet.pdf",
+            mimeType: "application/pdf",
+            sizeBytes: 4,
+          },
+        ],
+      },
+    ]),
+  );
+  await expect.element(main().getByTestId("group-attachment-chips")).not.toBeInTheDocument();
+});
+
+it("retries a failed upload from its chip, and the picker adds files too", async () => {
+  publishGroupChat([message(1)]);
+  uploads.discard.mockReset();
+  let attempts = 0;
+  uploads.upload.mockReset().mockImplementation(async (_environmentId: string, file: File) => {
+    attempts += 1;
+    if (attempts === 1) throw new Error("Upload failed");
+    return { attachmentId: "pending-a", mimeType: file.type };
+  });
+  await using _screen = await openChat();
+  const input = document.querySelector<HTMLInputElement>('input[type="file"]')!;
+  const files = new DataTransfer();
+  files.items.add(sheet());
+  input.files = files.files;
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+  await expect.element(main().getByRole("alert")).toHaveTextContent("Upload failed");
+  await userEvent.click(main().getByRole("button", { name: "Retry sheet.pdf" }));
+  await expect.element(main().getByRole("alert")).not.toBeInTheDocument();
+  await userEvent.type(composer(), "@ada take it{Enter}");
+  await eventually(() => expect(fakeGroupChat.posts).toHaveLength(1));
+  expect(fakeGroupChat.posts[0]!.attachments).toHaveLength(1);
+});
+
+it("takes files dropped on the composer and shows the drop highlight while dragging", async () => {
+  publishGroupChat([message(1)]);
+  uploads.upload.mockReset().mockImplementation(async (_environmentId: string, file: File) => ({
+    attachmentId: `pending-${file.name}`,
+    mimeType: file.type,
+  }));
+  await using _screen = await openChat();
+  const target = composer().element();
+  const dataTransfer = new DataTransfer();
+  dataTransfer.items.add(sheet());
+  const drag = (type: string) =>
+    target.dispatchEvent(new DragEvent(type, { dataTransfer, bubbles: true, cancelable: true }));
+  drag("dragover");
+  drag("dragleave");
+  // A drag that carries no files is left alone.
+  target.dispatchEvent(
+    new DragEvent("drop", { dataTransfer: new DataTransfer(), bubbles: true, cancelable: true }),
+  );
+  expect(uploads.upload).not.toHaveBeenCalled();
+  drag("drop");
+  await expect
+    .element(main().getByTestId("group-attachment-chip").getByText("sheet.pdf"))
+    .toBeVisible();
+  expect(uploads.upload).toHaveBeenCalledOnce();
+});
+
+it("shows a message's images as thumbnails that open the viewer and its files as chips", async () => {
+  publishGroupChat([
+    message(1, {
+      text: "@ada look at these",
+      attachments: [
+        { type: "image", id: "g-1", name: "shot.png", mimeType: "image/png", sizeBytes: 2048 },
+        {
+          type: "file",
+          id: "g-2",
+          name: "sheet.pdf",
+          mimeType: "application/pdf",
+          sizeBytes: 4096,
+        },
+      ],
+    }),
+  ]);
+  await using _screen = await openChat();
+  const attachments = main().getByTestId("group-message-attachments");
+  await expect.element(attachments.getByRole("img", { name: "shot.png" })).toBeVisible();
+  await expect
+    .element(attachments.getByRole("button", { name: "Download sheet.pdf" }).getByText("4 KB"))
+    .toBeVisible();
+  await userEvent.click(attachments.getByRole("button", { name: "Preview shot.png" }));
+  await expect.element(page.getByRole("dialog")).toBeVisible();
 });
