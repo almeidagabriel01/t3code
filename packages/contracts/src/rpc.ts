@@ -481,6 +481,8 @@ import {
   AssistantGroupsEvent,
   AssistantGroupsHistoryInput,
   AssistantGroupsHistoryResult,
+  AssistantGroupsMarkReadInput,
+  AssistantGroupsMarkReadResult,
   AssistantGroupsPostInput,
   AssistantGroupsPostResult,
   AssistantGroupsSubscribeInput,
@@ -787,6 +789,7 @@ export const WS_METHODS = {
   assistantGroupsHistory: "assistantGroups.history",
   assistantGroupsPost: "assistantGroups.post",
   assistantGroupsTaskAction: "assistantGroups.taskAction",
+  assistantGroupsMarkRead: "assistantGroups.markRead",
   autonomyWatchesList: "autonomy.watches.list",
   autonomyWatchUpsert: "autonomy.watches.upsert",
   autonomyWatchSetEnabled: "autonomy.watches.setEnabled",
@@ -2388,6 +2391,12 @@ const WsAssistantGroupsTaskActionRpc = Rpc.make(WS_METHODS.assistantGroupsTaskAc
   error: AssistantRpcErrors,
 });
 
+const WsAssistantGroupsMarkReadRpc = Rpc.make(WS_METHODS.assistantGroupsMarkRead, {
+  payload: AssistantGroupsMarkReadInput,
+  success: AssistantGroupsMarkReadResult,
+  error: AssistantRpcErrors,
+});
+
 const AutonomyRpcErrors = Schema.Union([AutonomyError, EnvironmentAuthorizationError]);
 const WsAutonomyWatchesListRpc = Rpc.make(WS_METHODS.autonomyWatchesList, {
   payload: AutonomyWatchesListInput,
@@ -2853,6 +2862,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsAssistantGroupsHistoryRpc,
   WsAssistantGroupsPostRpc,
   WsAssistantGroupsTaskActionRpc,
+  WsAssistantGroupsMarkReadRpc,
   WsAutonomyWatchesListRpc,
   WsAutonomyWatchUpsertRpc,
   WsAutonomyWatchSetEnabledRpc,

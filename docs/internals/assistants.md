@@ -128,6 +128,13 @@ seeds Jarvis) and `reconcile` heals changes made while the server was down. A sc
 `assistant_team_id` posts through the late-bound `AssistantGroupGate`, since scheduled tasks sit below
 assistants in the layer graph.
 
+Read position is `assistant_teams.read_seq` (one per group, not per user: a server has one owner).
+The `assistant_team_state` view adds the counters clients show (`AssistantTeam.chat`), so team reads
+select from the view, not the table; `ensureForkSchema` recreates it on every start. Counter changes
+go out as `teamUpserted` through `refreshTeamChat`, which reaches the assistants stream but not
+`subscribeChanges`: reconciling the group on every message would be wasted work. Group finished
+notices are client-side (working to idle on that stream), like thread notices.
+
 ## Requests between assistants never block
 
 A `t3_thread_send` from one assistant thread to another is a request: it queues (never steers, so the

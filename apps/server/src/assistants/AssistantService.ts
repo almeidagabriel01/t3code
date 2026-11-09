@@ -119,6 +119,8 @@ export class AssistantService extends Context.Service<
       input: AssistantTeamsUpdateInput,
     ) => Effect.Effect<AssistantTeam, AssistantError>;
     readonly removeTeam: (teamId: AssistantTeamId) => Effect.Effect<void, AssistantError>;
+    /** Sends the team's current chat counters to clients only, not to `subscribeChanges`. */
+    readonly refreshTeamChat: (teamId: string) => Effect.Effect<void>;
     /** Changes from now on, with no snapshot and no ensure, for services that react to them. */
     readonly subscribeChanges: Effect.Effect<
       PubSub.Subscription<AssistantsEvent>,
@@ -174,6 +176,10 @@ const make = Effect.gen(function* () {
   const lock = yield* Semaphore.make(1);
   const events = yield* PubSub.unbounded<AssistantsEvent>();
   yield* Effect.addFinalizer(() => PubSub.shutdown(events));
+  // Chat counter updates reach clients but not services reacting to team changes, which would
+  // reconcile the group on every message.
+  const chatEvents = yield* PubSub.unbounded<AssistantsEvent>();
+  yield* Effect.addFinalizer(() => PubSub.shutdown(chatEvents));
 
   const nowIso = DateTime.now.pipe(Effect.map(DateTime.formatIso));
   const storage = <A, R>(self: Effect.Effect<A, SqlError | AssistantError, R>) =>
@@ -427,11 +433,15 @@ const make = Effect.gen(function* () {
         Effect.gen(function* () {
           yield* ensureQuietly;
           const subscription = yield* PubSub.subscribe(events);
+          const chatSubscription = yield* PubSub.subscribe(chatEvents);
           const assistants = (yield* allRows).map(toAssistant);
           const teams = yield* allTeams(sql);
           return Stream.concat(
             Stream.succeed<AssistantsEvent>({ type: "snapshot", assistants, teams }),
-            Stream.fromSubscription(subscription),
+            Stream.merge(
+              Stream.fromSubscription(subscription),
+              Stream.fromSubscription(chatSubscription),
+            ),
           );
         }),
       )
@@ -700,7 +710,7 @@ const make = Effect.gen(function* () {
 
   const findTeamRow = Effect.fn("AssistantService.findTeamRow")(function* (teamId: string) {
     const rows =
-      yield* sql<AssistantTeamRow>`SELECT * FROM assistant_teams WHERE team_id = ${teamId}`;
+      yield* sql<AssistantTeamRow>`SELECT * FROM assistant_team_state WHERE team_id = ${teamId}`;
     return rows[0] ?? (yield* assistantError("not_found", "Team not found."));
   });
 
@@ -734,7 +744,7 @@ const make = Effect.gen(function* () {
         // A repeat of a create that already landed is that group, not a second one.
         if (options?.id !== undefined) {
           const existing =
-            yield* sql<AssistantTeamRow>`SELECT * FROM assistant_teams WHERE team_id = ${id}`;
+            yield* sql<AssistantTeamRow>`SELECT * FROM assistant_team_state WHERE team_id = ${id}`;
           if (existing[0] !== undefined) return toAssistantTeam(existing[0]);
         }
         yield* checkTeam({ memberIds: input.memberIds, leadId }, []);
@@ -798,6 +808,16 @@ const make = Effect.gen(function* () {
       }),
     );
   }, storage);
+
+  const refreshTeamChat: AssistantService["Service"]["refreshTeamChat"] = (teamId) =>
+    sql<AssistantTeamRow>`SELECT * FROM assistant_team_state WHERE team_id = ${teamId}`.pipe(
+      Effect.flatMap((rows) =>
+        rows[0] === undefined
+          ? Effect.void
+          : PubSub.publish(chatEvents, { type: "teamUpserted", team: toAssistantTeam(rows[0]) }),
+      ),
+      Effect.ignore,
+    );
 
   const teams: AssistantService["Service"]["teams"] = allTeams(sql).pipe(storage);
 
@@ -941,6 +961,7 @@ const make = Effect.gen(function* () {
     createTeam,
     updateTeam,
     removeTeam,
+    refreshTeamChat,
     subscribeChanges: PubSub.subscribe(events),
     defaultModel: defaultModelSelection,
   });

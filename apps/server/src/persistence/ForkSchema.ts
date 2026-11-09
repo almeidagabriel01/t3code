@@ -369,6 +369,8 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
   if (assistantColumns.some((column) => column.name === "reports_to")) {
     yield* sql`ALTER TABLE assistants DROP COLUMN reports_to`;
   }
+  // Dropped first so no table change below meets a view that reads it.
+  yield* sql`DROP VIEW IF EXISTS assistant_team_state`;
   const teamColumns = yield* sql<{ readonly name: string }>`PRAGMA table_info(assistant_teams)`;
   if (teamColumns.some((column) => column.name === "leader_id")) {
     yield* sql`ALTER TABLE assistant_teams RENAME COLUMN leader_id TO lead_id`;
@@ -503,6 +505,29 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
   `;
   yield* sql`CREATE INDEX IF NOT EXISTS assistant_group_tasks_team_idx ON assistant_group_tasks(team_id, status)`;
   yield* sql`CREATE INDEX IF NOT EXISTS assistant_group_tasks_root_idx ON assistant_group_tasks(root_id)`;
+  // How far the user has read each group's chat. Groups that already have messages start read.
+  if (!teamColumns.some((column) => column.name === "read_seq")) {
+    yield* sql`ALTER TABLE assistant_teams ADD COLUMN read_seq INTEGER NOT NULL DEFAULT 0`;
+    yield* sql`
+      UPDATE assistant_teams SET read_seq = COALESCE(
+        (SELECT MAX(seq) FROM assistant_group_messages m WHERE m.team_id = assistant_teams.team_id), 0)`;
+  }
+  // A team with its chat counters, so a sidebar row needs no second fetch. Recreated on every start.
+  yield* sql`
+    CREATE VIEW assistant_team_state AS
+    SELECT t.*,
+      COALESCE((SELECT MAX(seq) FROM assistant_group_messages m WHERE m.team_id = t.team_id), 0)
+        AS latest_seq,
+      (SELECT COUNT(*) FROM assistant_group_messages m
+        WHERE m.team_id = t.team_id AND m.seq > t.read_seq AND m.author != 'user'
+          AND m.kind != 'routing') AS unread_count,
+      (SELECT COUNT(*) FROM assistant_group_tasks k
+        WHERE k.team_id = t.team_id AND k.status IN ('queued', 'running', 'waiting')) AS open_tasks,
+      (SELECT substr(m.text, 1, 400) FROM assistant_group_messages m
+        WHERE m.team_id = t.team_id AND m.author = 'assistant' AND m.kind = 'message'
+        ORDER BY m.seq DESC LIMIT 1) AS preview
+    FROM assistant_teams t
+  `;
   // A member's hidden thread for a group, and the last chat message that thread was shown.
   yield* sql`
     CREATE TABLE IF NOT EXISTS assistant_group_threads (

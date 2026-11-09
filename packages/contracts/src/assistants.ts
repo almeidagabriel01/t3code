@@ -284,6 +284,19 @@ const AssistantTeamName = TrimmedNonEmptyString.check(
  * A group of assistants that may message each other in any direction. The optional lead only
  * routes a group request that mentions nobody; it gains no permission.
  */
+/** The chat counters of a group, kept on the team so a sidebar row needs no second fetch. */
+export const AssistantTeamChat = Schema.Struct({
+  latestSeq: Schema.Int,
+  /** The last message the user has read; unread messages are the newer ones not written by them. */
+  readSeq: Schema.Int,
+  unreadCount: Schema.Int,
+  /** A task of the group is queued, running or waiting. */
+  working: Schema.Boolean,
+  /** The start of the latest member message, for a "work finished" notice. */
+  preview: Schema.NullOr(Schema.String),
+});
+export type AssistantTeamChat = typeof AssistantTeamChat.Type;
+
 export const AssistantTeam = Schema.Struct({
   id: AssistantTeamId,
   name: AssistantTeamName,
@@ -291,6 +304,8 @@ export const AssistantTeam = Schema.Struct({
   leadId: Schema.NullOr(AssistantId).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   /** An archived group keeps its chat but takes no new messages and runs no work. */
   archivedAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  /** Absent from older servers. */
+  chat: Schema.optionalKey(AssistantTeamChat),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });

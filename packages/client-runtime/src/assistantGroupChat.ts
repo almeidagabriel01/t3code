@@ -3,6 +3,7 @@ import {
   ASSISTANT_GROUP_HANDOFF_LIMIT,
   assistantGroupLeadingAddress,
   type Assistant,
+  type AssistantTeam,
   type AssistantGroupMessage,
   type AssistantGroupMessageId,
   type AssistantGroupTask,
@@ -254,6 +255,46 @@ export function assistantGroupAuthorName(
     case "routine":
       return message.authorLabel ?? "a schedule";
   }
+}
+
+/** A message the user did not write and that is worth reading (routing notes are chatter). */
+function countsAsUnread(message: Pick<AssistantGroupMessage, "author" | "kind">): boolean {
+  return message.author !== "user" && message.kind !== "routing";
+}
+
+/** The newest loaded message number, 0 for an empty chat. */
+export function assistantGroupLatestSeq(state: AssistantGroupChatState): number {
+  let latest = 0;
+  for (const message of state.messages.values()) latest = Math.max(latest, message.seq);
+  return latest;
+}
+
+/** Where the "New" line goes: the first message past the read position that others wrote. */
+export function assistantGroupNewSeq(
+  state: AssistantGroupChatState,
+  readSeq: number,
+): number | null {
+  let first: number | null = null;
+  for (const message of state.messages.values()) {
+    if (message.seq > readSeq && countsAsUnread(message) && (first === null || message.seq < first))
+      first = message.seq;
+  }
+  return first;
+}
+
+type TeamChat = Pick<AssistantTeam, "name"> & { readonly chat?: AssistantTeam["chat"] };
+
+/** A group whose tasks went from open to none: the work of a request is done. */
+export function assistantGroupFinished(
+  previous: TeamChat | undefined,
+  next: TeamChat,
+): { readonly title: string; readonly body: string } | null {
+  if (previous?.chat?.working !== true || next.chat === undefined || next.chat.working) return null;
+  const preview = next.chat.preview?.replace(/\s+/g, " ").trim() ?? "";
+  return {
+    title: `${next.name} finished`,
+    body: preview.length > 140 ? `${preview.slice(0, 139)}…` : preview,
+  };
 }
 
 /** "N running" count for the header: tasks being worked right now. */

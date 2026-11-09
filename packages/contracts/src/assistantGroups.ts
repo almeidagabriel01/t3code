@@ -156,6 +156,20 @@ export const AssistantGroupsHistoryResult = Schema.Struct({
 });
 export type AssistantGroupsHistoryResult = typeof AssistantGroupsHistoryResult.Type;
 
+/**
+ * Sets how far the user has read; lower than before marks the later messages unread again.
+ * `unread` instead moves it to just before the newest message the user did not write.
+ */
+export const AssistantGroupsMarkReadInput = Schema.Struct({
+  teamId: AssistantTeamId,
+  readSeq: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  unread: Schema.optional(Schema.Boolean),
+});
+export type AssistantGroupsMarkReadInput = typeof AssistantGroupsMarkReadInput.Type;
+
+export const AssistantGroupsMarkReadResult = Schema.Struct({ readSeq: Schema.Int });
+export type AssistantGroupsMarkReadResult = typeof AssistantGroupsMarkReadResult.Type;
+
 export const AssistantGroupsPostInput = Schema.Struct({
   teamId: AssistantTeamId,
   text: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSISTANT_GROUP_MESSAGE_MAX_CHARS)),

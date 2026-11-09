@@ -14,6 +14,9 @@ import {
   assistantGroupAuthorName,
   assistantGroupAwaitingRoute,
   assistantGroupFeed,
+  assistantGroupFinished,
+  assistantGroupLatestSeq,
+  assistantGroupNewSeq,
   assistantGroupMentionOptions,
   assistantGroupMentionQuery,
   assistantGroupPauseReasonLabel,
@@ -264,6 +267,53 @@ describe("composer helpers", () => {
     assert.deepStrictEqual(
       insertAssistantGroupMention("@", assistantGroupMentionQuery("@", 1)!, { kind: "everyone" }),
       { text: "@everyone ", caret: 10 },
+    );
+  });
+});
+
+describe("read position", () => {
+  const chat = start(
+    snapshot(
+      [
+        message(1),
+        message(2, { author: "assistant", kind: "routing" }),
+        message(3, { author: "assistant" }),
+        message(4),
+        message(5, { author: "agent", kind: "notice" }),
+      ],
+      [],
+    ),
+  );
+  it("puts the New line before the first message others wrote past the read position", () => {
+    assert.strictEqual(assistantGroupLatestSeq(chat), 5);
+    assert.strictEqual(assistantGroupNewSeq(chat, 0), 3);
+    assert.strictEqual(assistantGroupNewSeq(chat, 3), 5);
+    assert.strictEqual(assistantGroupNewSeq(chat, 5), null);
+    assert.strictEqual(assistantGroupLatestSeq({ ...chat, messages: new Map() }), 0);
+  });
+
+  it("announces a group once, when its work goes from open to none", () => {
+    const chatOf = (working: boolean, preview: string | null) => ({
+      latestSeq: 3,
+      readSeq: 0,
+      unreadCount: 1,
+      working,
+      preview,
+    });
+    const busy = { name: "Ops", chat: chatOf(true, null) };
+    const idle = { name: "Ops", chat: chatOf(false, "All   done.\nShip it.") };
+    assert.deepStrictEqual(assistantGroupFinished(busy, idle), {
+      title: "Ops finished",
+      body: "All done. Ship it.",
+    });
+    assert.isNull(assistantGroupFinished(idle, idle));
+    assert.isNull(assistantGroupFinished(undefined, idle));
+    assert.isNull(assistantGroupFinished(busy, busy));
+    assert.isNull(assistantGroupFinished(busy, { name: "Ops" }));
+    assert.strictEqual(
+      assistantGroupFinished(busy, { name: "Ops", chat: chatOf(false, "x".repeat(300)) })?.body
+        .length,
+      140,
     );
   });
 });
