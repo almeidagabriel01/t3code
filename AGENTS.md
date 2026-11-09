@@ -117,6 +117,7 @@ An empty database is a bad test. Seed your worktree's `.t3` with a copy of real 
   - No `performance.now()` or `Date.now()` deltas. Assert on events and counts, not elapsed time.
   - Browser tests assert through `expect.element` or `vi.waitFor`, never `requestAnimationFrame` or `transitionend`.
   - `vi.mock` factories must not spread a real module that pulls in Shiki or the diff workers.
+  - `vi.mock` factories must not spread `importOriginal` of a module that sits in an import cycle (`usage/UsageLimits` ↔ `UsageLimitsPooled`): loading deadlocks and the run hangs idle with no timeout. Mock a leaf it calls instead.
   - `it.skip` and friends need a tracking issue on the line above: `// quarantine: #1234 <why>`.
   - Lint enforces this: `t3code/no-test-timeout-or-unreasoned-skip`, `t3code/no-frame-waits-in-browser-tests`, `t3code/no-wall-clock-in-tests`, `t3code/no-real-time-wait-in-tests`, `t3code/no-polling-loop-in-tests`.
 - Web browser tests are `*.browser.test.tsx` or `*.browser.test.ts` and render with `await using screen = await render(...)` from `apps/web/test/render.tsx`. `t3code/require-disposable-render` errors on the old patterns.
