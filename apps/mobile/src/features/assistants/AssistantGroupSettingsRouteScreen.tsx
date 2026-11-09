@@ -26,6 +26,7 @@ import {
 } from "../../state/assistants";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { TextField } from "./AssistantFormFields";
+import { GroupRoutinesSection } from "./GroupRoutinesSection";
 import { assistantTeamTargetAtom } from "./assistantTeamTarget";
 
 export function AssistantGroupSettingsRouteScreen() {
@@ -172,6 +173,7 @@ function SettingsForm(props: {
           disabled={busy || !changed || !teamActions.canAct}
           onPress={() => void save()}
         />
+        <GroupRoutinesSection environmentId={environmentId} teamId={team.id} />
         <ListSection
           title="Conversation"
           footer={

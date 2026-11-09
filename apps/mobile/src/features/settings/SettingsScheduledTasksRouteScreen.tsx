@@ -79,6 +79,7 @@ import {
   editDraft,
   parseIntervalMinutes,
   scheduledTaskDefaultModel,
+  parseMaxRuns,
   scheduleFromDraft,
   type ScheduledTaskDraft as Draft,
 } from "./scheduledTaskDraft";
@@ -714,6 +715,11 @@ function TaskForm({
       );
       return;
     }
+    const maxRuns = parseMaxRuns(draft.maxRuns);
+    if (maxRuns === undefined) {
+      Dialog.alert("Invalid run limit", "Enter a whole number from 1, or leave it blank.");
+      return;
+    }
     if (draft.schedule.mode === "once" && !offersOnce) {
       Dialog.alert(
         "Once is not available here",
@@ -761,6 +767,8 @@ function TaskForm({
       enabled: draft.enabled,
       threadId: draft.assistantTeamId === null ? draft.threadId : null,
       assistantTeamId: draft.assistantTeamId,
+      missedRunPolicy: draft.missedRunPolicy,
+      maxRuns: draft.schedule.mode === "webhook" ? null : maxRuns,
       workspaceStrategy:
         draft.workspace === "root"
           ? { type: "root" }
@@ -1104,6 +1112,26 @@ function TaskForm({
                   setDraft({ ...draft, schedule: { ...draft.schedule, weekdays } });
                 }}
               />
+              <SelectRow
+                label="If the server was off"
+                value={draft.missedRunPolicy === "once" ? "Run once when back" : "Skip it"}
+                borderTop
+                actions={[
+                  {
+                    id: "skip",
+                    title: "Skip it",
+                    state: draft.missedRunPolicy === "skip" ? "on" : undefined,
+                  },
+                  {
+                    id: "once",
+                    title: "Run once when back",
+                    state: draft.missedRunPolicy === "once" ? "on" : undefined,
+                  },
+                ]}
+                onSelect={(id) =>
+                  setDraft({ ...draft, missedRunPolicy: id === "once" ? "once" : "skip" })
+                }
+              />
             </>
           ) : draft.schedule.mode === "webhook" && webhookDenial !== undefined && draft.enabled ? (
             <Text className="border-t border-border-subtle px-4 py-3 text-sm text-foreground-muted">
@@ -1250,6 +1278,17 @@ function TaskForm({
                 </Text>
               ) : null}
             </>
+          )}
+          {draft.schedule.mode === "webhook" ? null : (
+            <FormField
+              label="Stop after this many runs"
+              value={draft.maxRuns}
+              placeholder="No limit"
+              keyboardType="number-pad"
+              disabled={saving}
+              borderTop
+              onChange={(maxRuns) => setDraft({ ...draft, maxRuns })}
+            />
           )}
           <View className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3">
             <Text textRole="body" className="min-w-0 flex-1 text-foreground">

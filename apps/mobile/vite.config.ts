@@ -92,6 +92,7 @@ const reactTests = [
   "src/features/decisions/DecisionCard.test.tsx",
   "src/features/decisions/DecisionAttachments.test.tsx",
   "src/features/assistants/AssistantSchedulesSection.test.tsx",
+  "src/features/assistants/GroupRoutinesSection.test.tsx",
   "src/features/assistants/AssistantWorkRouteScreen.test.tsx",
   "src/features/assistants/AssistantWorkMemorySection.test.tsx",
   "src/features/assistants/AssistantWorkLibrarySection.test.tsx",

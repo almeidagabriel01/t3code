@@ -59,6 +59,7 @@ vi.mock("./AssistantFormFields", () => ({
   ),
 }));
 vi.mock("./assistantTeamTarget", () => ({ assistantTeamTargetAtom: {} }));
+vi.mock("./GroupRoutinesSection", () => ({ GroupRoutinesSection: () => null }));
 vi.mock("../../state/assistants", () => ({
   useAssistantEntries: () => ({ teams: mocks.teams }),
   useAssistantTeamActions: () => ({ canAct: true, update: mocks.update }),
