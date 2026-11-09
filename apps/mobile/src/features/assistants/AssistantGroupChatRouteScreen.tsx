@@ -2,6 +2,7 @@ import {
   applyAssistantGroupHistory,
   assistantGroupAuthorName,
   assistantGroupAwaitingRoute,
+  assistantGroupMarkdownMentions,
   assistantGroupTextParts,
   assistantGroupBoundaryLabel,
   assistantGroupFeed,
@@ -266,7 +267,10 @@ function FeedRow(
           onPressAction={() => reply()}
         >
           <Pressable accessibilityLabel={`Message from ${name}`}>
-            <SelectableMarkdownText markdown={message.text} textStyle={styles.nativeTextStyle} />
+            <SelectableMarkdownText
+              markdown={assistantGroupMarkdownMentions(message.text, props.members)}
+              textStyle={styles.nativeTextStyle}
+            />
           </Pressable>
         </Menu>
         <Pressable
