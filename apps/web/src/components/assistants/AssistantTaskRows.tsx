@@ -42,10 +42,9 @@ export const AssistantTaskRows = memo(function AssistantTaskRows(props: {
     const byId = new Map(
       shells.filter((shell) => shell.environmentId === environmentId).map((s) => [s.id, s]),
     );
-    let done = 0;
-    return assistantTaskRows(tasks, (threadId) => byId.get(threadId as never)).filter((row) =>
-      row.state !== "done" ? true : ++done <= MAX_DONE,
-    );
+    const all = assistantTaskRows(tasks, (threadId) => byId.get(threadId as never));
+    const shownDone = new Set(all.filter((row) => row.state === "done").slice(0, MAX_DONE));
+    return all.filter((row) => row.state !== "done" || shownDone.has(row));
   })();
   if (rows.length === 0) return null;
   return (
