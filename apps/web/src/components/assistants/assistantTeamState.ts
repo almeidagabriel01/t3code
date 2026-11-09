@@ -21,3 +21,18 @@ export function openAssistantTeamDialog(target: Partial<AssistantTeamDialogTarge
     teamId: target.teamId ?? null,
   });
 }
+
+export type AssistantGroupSettingsTarget = {
+  readonly environmentId: EnvironmentId;
+  readonly teamId: AssistantTeamId;
+};
+
+/** A group's settings dialog; the chat header and the sidebar row open it. */
+export const assistantGroupSettingsAtom = Atom.make<AssistantGroupSettingsTarget | null>(null).pipe(
+  Atom.keepAlive,
+  Atom.withLabel("assistants:group-settings"),
+);
+
+export function openAssistantGroupSettings(target: AssistantGroupSettingsTarget): void {
+  appAtomRegistry.set(assistantGroupSettingsAtom, target);
+}

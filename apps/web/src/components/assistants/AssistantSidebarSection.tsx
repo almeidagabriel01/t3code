@@ -50,7 +50,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ProjectFavicon, type ProjectFaviconProject } from "../ProjectFavicon";
 import { AssistantAvatar } from "./assistantPresentation";
 import { openAssistantDialog } from "./assistantDialogState";
-import { openAssistantTeamDialog } from "./assistantTeamState";
+import { openAssistantGroupSettings, openAssistantTeamDialog } from "./assistantTeamState";
 import { DescribeAssistantDialog } from "./DescribeAssistantDialog";
 import { useAssistantFlows, useAssistantTeamFlows } from "./useAssistantFlows";
 
@@ -438,6 +438,10 @@ function GroupRow(props: {
             <MenuItem onClick={() => openAssistantTeamDialog({ environmentId, teamId })}>
               <PencilIcon />
               Edit group
+            </MenuItem>
+            <MenuItem onClick={() => openAssistantGroupSettings({ environmentId, teamId })}>
+              <SettingsIcon />
+              Group settings
             </MenuItem>
             <MenuItem onClick={() => openAssistantDialog({ environmentId, preset: { teamId } })}>
               <PlusIcon />

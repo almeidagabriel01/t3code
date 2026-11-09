@@ -889,6 +889,28 @@ it.effect("teams: validation, lead rules and deletion cleanup", () => {
     assert.isNull(headless.leadId);
     const led = yield* assistants.updateTeam({ teamId: team.id, leadId: bob.id, name: "Money" });
     assert.deepEqual([led.name, led.leadId], ["Money", bob.id]);
+    assert.deepEqual([team.instructions, team.memories], ["", []]);
+    const briefed = yield* assistants.updateTeam({
+      teamId: team.id,
+      instructions: "  Answer in Portuguese.  ",
+      memories: ["Budget is 5k"],
+    });
+    assert.deepEqual(
+      [briefed.instructions, briefed.memories],
+      ["Answer in Portuguese.", ["Budget is 5k"]],
+    );
+    // A field left out is kept.
+    const renamed = yield* assistants.updateTeam({ teamId: team.id, name: "Money 2" });
+    assert.deepEqual(
+      [renamed.instructions, renamed.memories],
+      ["Answer in Portuguese.", ["Budget is 5k"]],
+    );
+    yield* assistants.updateTeam({
+      teamId: team.id,
+      name: "Money",
+      instructions: "",
+      memories: [],
+    });
     // A lead that is not a member is refused; one dropped from the members is cleared.
     assert.include(
       yield* refused(assistants.updateTeam({ teamId: team.id, leadId: dee.id })),

@@ -16,6 +16,7 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 import {
   AuthOrchestrationReadScope,
   type Assistant,
+  type AssistantGroupConversationAction,
   type AssistantGroupsHistoryResult,
   type AssistantGroupsPostInput,
   type AssistantGroupsPostResult,
@@ -292,10 +293,26 @@ export function useAssistantGroupActions(environmentId: EnvironmentId) {
   });
   const history = useAtomCommand(assistantsEnvironment.groupHistory, { reportFailure: false });
   const markRead = useAtomCommand(assistantsEnvironment.markGroupRead, { reportFailure: false });
+  const converse = useAtomCommand(assistantsEnvironment.groupConversation, {
+    reportFailure: false,
+  });
   return {
     canPost,
     canAct,
     canMarkRead,
+    canConverse: useAtomValue(
+      assistantsEnvironment.groupConversation.permissionAtom(environmentId),
+    ),
+    /** New conversation, compact, undo or clear; the chat follows through its own stream. */
+    conversation: async (
+      teamId: AssistantTeamId,
+      action: AssistantGroupConversationAction,
+    ): Promise<AssistantReply> => {
+      const result = await converse({ environmentId, input: { teamId, action } });
+      return result._tag === "Success"
+        ? { ok: true, value: undefined }
+        : { ok: false, message: assistantErrorMessage(squashAtomCommandFailure(result)) };
+    },
     /** Moves the read position; `readSeq` is a message number, `unread` marks the newest unread. */
     markRead: async (
       teamId: AssistantTeamId,

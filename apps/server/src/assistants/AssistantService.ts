@@ -58,6 +58,7 @@ import {
   type AssistantTeamRow,
   allTeams,
   encodeMemberIds,
+  encodeMemories,
   toAssistantTeam,
 } from "./AssistantTeams.ts";
 import {
@@ -788,7 +789,10 @@ const make = Effect.gen(function* () {
         yield* sql`
           UPDATE assistant_teams SET name = ${input.name ?? current.name},
             member_ids_json = ${encodeMemberIds(memberIds)}, lead_id = ${leadId},
-            archived_at = ${archivedAt}, updated_at = ${yield* nowIso}
+            archived_at = ${archivedAt},
+            instructions = ${input.instructions?.trim() ?? current.instructions ?? ""},
+            memories_json = ${encodeMemories(input.memories ?? current.memories ?? [])},
+            updated_at = ${yield* nowIso}
           WHERE team_id = ${input.teamId}`;
         const team = toAssistantTeam(yield* findTeamRow(input.teamId));
         yield* PubSub.publish(events, { type: "teamUpserted", team });

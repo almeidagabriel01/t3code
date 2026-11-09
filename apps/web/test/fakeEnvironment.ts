@@ -631,6 +631,7 @@ export const fakeGroupChat = {
   posts: [] as Array<Record<string, unknown>>,
   taskActions: [] as Array<Record<string, unknown>>,
   reads: [] as Array<Record<string, unknown>>,
+  conversations: [] as Array<Record<string, unknown>>,
   histories: [] as Array<Record<string, unknown>>,
 };
 const groupChatSubscribers = new Set<Queue.Queue<AssistantGroupsEvent>>();
@@ -678,6 +679,31 @@ handlers[WS_METHODS.assistantGroupsPost] = (input: Record<string, unknown>) => {
 handlers[WS_METHODS.assistantGroupsMarkRead] = (input: { readonly readSeq?: number }) => {
   fakeGroupChat.reads.push(input);
   return Effect.succeed({ readSeq: input.readSeq ?? 0 });
+};
+handlers[WS_METHODS.assistantGroupsConversation] = (input: {
+  readonly teamId: string;
+  readonly action: string;
+}) => {
+  fakeGroupChat.conversations.push(input);
+  const { messages, tasks } = fakeGroupChat;
+  if (input.action === "clear") publishGroupChat([], []);
+  else if (input.action === "new" || input.action === "compact") {
+    const seq = (messages.at(-1)?.seq ?? 0) + 1;
+    publishGroupChat(
+      [
+        ...messages,
+        {
+          ...messages[0]!,
+          id: `boundary-${seq}`,
+          seq,
+          kind: "boundary",
+          text: input.action,
+        } as AssistantGroupMessage,
+      ],
+      tasks,
+    );
+  }
+  return Effect.succeed({ teamId: input.teamId });
 };
 handlers[WS_METHODS.assistantGroupsTaskAction] = (input: { readonly taskId: string }) => {
   fakeGroupChat.taskActions.push(input);

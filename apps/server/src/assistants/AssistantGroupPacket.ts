@@ -9,6 +9,8 @@ export const PACKET_CHAT_CHARS = 24_000;
 export const PACKET_SUMMARY_CHARS = 4_000;
 export const PACKET_QUOTED_CHARS = 4_000;
 const PACKET_MESSAGE_CHARS = 4_000;
+const PACKET_INSTRUCTIONS_CHARS = 4_000;
+const PACKET_MEMORIES_CHARS = 4_000;
 
 export interface PacketMember {
   readonly name: string;
@@ -38,6 +40,9 @@ export interface PacketInput {
   /** "the user", "Ada (a teammate, not the user)"; null when the instruction names its sender. */
   readonly from: string | null;
   readonly instruction: string;
+  /** What the user set for the whole group. */
+  readonly instructions?: string;
+  readonly memories?: ReadonlyArray<string>;
   /** Finished results of the tasks this one gave, or a hand-over note. */
   readonly followup: string | null;
 }
@@ -97,6 +102,15 @@ export function groupTaskPacket(input: PacketInput): string {
   return [
     `<t3_group_task group="${escapeAttribute(input.group)}" task="${escapeAttribute(input.taskId)}" kind="${input.kind}">`,
     `You are ${input.self.name} (@${input.self.handle}) in the group "${input.group}". Members: ${input.members.map(describe).join(", ")}.`,
+    ...((input.instructions ?? "").trim() === ""
+      ? []
+      : ["Group instructions:", clip(input.instructions!.trim(), PACKET_INSTRUCTIONS_CHARS)]),
+    ...((input.memories ?? []).length === 0
+      ? []
+      : [
+          "Group memories:",
+          clip(input.memories!.map((memory) => `- ${memory}`).join("\n"), PACKET_MEMORIES_CHARS),
+        ]),
     ...(summary === "" ? [] : ["Summary of earlier chat:", clip(summary, PACKET_SUMMARY_CHARS)]),
     ...(quoted.length === 0 ? [] : ["Earlier messages this task refers to:", ...quoted]),
     ...(news === "" ? [] : ["New in the group chat since your last task:", news]),

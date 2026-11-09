@@ -22,7 +22,7 @@ import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { getRouter } from "~/router";
 import { clearGroupDrafts } from "./GroupComposer";
 import { assistantDialogAtom } from "./assistantDialogState";
-import { assistantTeamDialogAtom } from "./assistantTeamState";
+import { assistantGroupSettingsAtom, assistantTeamDialogAtom } from "./assistantTeamState";
 import {
   ENVIRONMENT_ID,
   PROJECT_ID,
@@ -165,10 +165,12 @@ async function openChat(options: { team?: AssistantTeam } = {}) {
   waiting.clear();
   appAtomRegistry.set(assistantDialogAtom, null);
   appAtomRegistry.set(assistantTeamDialogAtom, null);
+  appAtomRegistry.set(assistantGroupSettingsAtom, null);
   Object.assign(fakeGroupChat, {
     posts: [],
     taskActions: [],
     reads: [],
+    conversations: [],
     histories: [],
     postRefusal: null,
     older: null,
@@ -688,4 +690,82 @@ it("marks a group unread or read from its sidebar menu", async () => {
   await userEvent.click(actions);
   await userEvent.click(page.getByRole("menuitem", { name: "Mark as read" }));
   await eventually(() => expect(fakeGroupChat.reads.at(-1)).toEqual({ teamId: "t1", readSeq: 4 }));
+});
+
+const openGroupSettings = async () => {
+  await userEvent.click(main().getByRole("button", { name: "Leadership actions" }));
+  await userEvent.click(page.getByRole("menuitem", { name: "Group settings" }));
+};
+
+it("edits the group's instructions and memories from its settings", async () => {
+  publishGroupChat([message(1)]);
+  await using _screen = await openChat({
+    team: team({ instructions: "Be brief.", memories: ["Budget is 5k"] }),
+  });
+  await openGroupSettings();
+  const instructions = page.getByRole("textbox", { name: "Group instructions" });
+  await expect.element(instructions).toHaveValue("Be brief.");
+  await expect.element(page.getByRole("textbox", { name: "Memory 1" })).toHaveValue("Budget is 5k");
+  await userEvent.clear(instructions);
+  await userEvent.type(instructions, "Be brief. Answer in Portuguese.");
+  await userEvent.click(page.getByRole("button", { name: "Add memory" }));
+  await userEvent.type(page.getByRole("textbox", { name: "Memory 2" }), "The year starts in March");
+  await userEvent.click(page.getByRole("button", { name: "Remove memory 1" }));
+  await userEvent.click(page.getByRole("button", { name: "Save" }));
+  await eventually(() =>
+    expect(fakeTeamEdits.updates).toEqual([
+      {
+        teamId: "t1",
+        instructions: "Be brief. Answer in Portuguese.",
+        memories: ["The year starts in March"],
+      },
+    ]),
+  );
+});
+
+it("starts a new conversation with a divider above which the old messages stay, and can undo it", async () => {
+  publishGroupChat([
+    message(1),
+    message(2, { author: "assistant", assistantId: "ada" as AssistantId, text: "an answer" }),
+  ]);
+  await using _screen = await openChat();
+  await openGroupSettings();
+  await expect.element(page.getByRole("button", { name: "Undo divider" })).not.toBeInTheDocument();
+  await userEvent.click(page.getByRole("button", { name: "New conversation" }));
+  await eventually(() =>
+    expect(fakeGroupChat.conversations).toEqual([{ teamId: "t1", action: "new" }]),
+  );
+  await expect
+    .element(main().getByTestId("group-boundary"))
+    .toHaveTextContent("New conversation started");
+  await expect.element(main().getByText("an answer")).toBeVisible();
+  await openGroupSettings();
+  await userEvent.click(page.getByRole("button", { name: "Undo divider" }));
+  await eventually(() =>
+    expect(fakeGroupChat.conversations.at(-1)).toEqual({ teamId: "t1", action: "undo" }),
+  );
+});
+
+it("clears the history only after a confirmation", async () => {
+  publishGroupChat([message(1, { text: "an old request" })]);
+  await using _screen = await openChat();
+  await openGroupSettings();
+  await userEvent.click(page.getByRole("button", { name: "Clear history" }));
+  await userEvent.click(page.getByRole("button", { name: "Confirm" }));
+  await eventually(() =>
+    expect(fakeGroupChat.conversations).toEqual([{ teamId: "t1", action: "clear" }]),
+  );
+  await expect.element(main().getByText("No messages yet")).toBeVisible();
+  await expect.element(main().getByText("an old request")).not.toBeInTheDocument();
+});
+
+it("keeps the conversation buttons off while the group is working", async () => {
+  publishGroupChat([message(1)]);
+  await using _screen = await openChat({ team: team({ chat: chatOf({ working: true }) }) });
+  await userEvent.click(main().getByRole("button", { name: "Leadership actions" }));
+  await userEvent.click(page.getByRole("menuitem", { name: "Group settings" }));
+  for (const name of ["New conversation", "Compact context", "Clear history"]) {
+    await expect.element(page.getByRole("button", { name })).toBeDisabled();
+  }
+  await expect.element(page.getByText(/The group is working/)).toBeVisible();
 });

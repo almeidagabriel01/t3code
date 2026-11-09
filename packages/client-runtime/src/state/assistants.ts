@@ -183,6 +183,7 @@ export function createAssistantsEnvironmentAtoms<R, E>(
       | typeof WS_METHODS.assistantGroupsTaskAction
       | typeof WS_METHODS.assistantGroupsHistory
       | typeof WS_METHODS.assistantGroupsMarkRead
+      | typeof WS_METHODS.assistantGroupsConversation
       | typeof WS_METHODS.assistantSandboxStart
       | typeof WS_METHODS.assistantSandboxStop
       | typeof WS_METHODS.assistantSandboxRemove
@@ -222,6 +223,7 @@ export function createAssistantsEnvironmentAtoms<R, E>(
     }),
     groupHistory: command(WS_METHODS.assistantGroupsHistory, "groupHistory"),
     markGroupRead: command(WS_METHODS.assistantGroupsMarkRead, "markGroupRead"),
+    groupConversation: command(WS_METHODS.assistantGroupsConversation, "groupConversation"),
     postGroup: command(WS_METHODS.assistantGroupsPost, "postGroup"),
     groupTaskAction: command(WS_METHODS.assistantGroupsTaskAction, "groupTaskAction"),
     sandbox: createEnvironmentSubscriptionAtomFamily(runtime, {

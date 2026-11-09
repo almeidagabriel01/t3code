@@ -116,3 +116,18 @@ it("quoted messages are kept newest first within their own budget", () => {
   assert.notInclude(packet, "[#1 Cy]");
   assert.isAtMost(packet.split("[#").slice(1).join("[#").length, PACKET_QUOTED_CHARS + 600);
 });
+
+it("clips the group's instructions and memories, and leaves blank ones out", () => {
+  const packet = groupTaskPacket({
+    ...base,
+    instructions: `  Be brief. ${"x".repeat(5_000)}`,
+    memories: ["Budget is 5k", "m".repeat(5_000)],
+  });
+  assert.include(packet, "Group instructions:\nBe brief. xxx");
+  assert.isBelow(packet.indexOf("Group memories:"), packet.indexOf("Your task"));
+  assert.include(packet, "Group memories:\n- Budget is 5k\n- mmm");
+  assert.isBelow(packet.length, 12_000);
+  const blank = groupTaskPacket({ ...base, instructions: "  ", memories: [] });
+  assert.notInclude(blank, "Group instructions:");
+  assert.notInclude(blank, "Group memories:");
+});

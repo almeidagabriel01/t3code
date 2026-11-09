@@ -15,6 +15,8 @@ import {
   type AssistantGroupTaskKind,
   type AssistantGroupTaskStatus,
   type AssistantGroupsEvent,
+  type AssistantGroupsConversationInput,
+  type AssistantGroupsConversationResult,
   type AssistantGroupsHistoryInput,
   type AssistantGroupsHistoryResult,
   type AssistantGroupsMarkReadInput,
@@ -259,6 +261,10 @@ export class AssistantGroups extends Context.Service<
     readonly markRead: (
       input: AssistantGroupsMarkReadInput,
     ) => Effect.Effect<AssistantGroupsMarkReadResult, AssistantError>;
+    /** Draws a boundary, compacts, removes the latest boundary or clears the chat. */
+    readonly conversation: (
+      input: AssistantGroupsConversationInput,
+    ) => Effect.Effect<AssistantGroupsConversationResult, AssistantError>;
     /** A post from a conversation that is not in the group: an assistant's or any agent's. */
     readonly agentPost: (input: {
       readonly callerThreadId: ThreadId;
@@ -376,6 +382,13 @@ const make = Effect.gen(function* () {
     return rows[0] ?? (yield* assistantError("not_found", "Group not found."));
   });
   const loadTeam = (teamId: string) => teamRow(teamId).pipe(Effect.map(toAssistantTeam));
+  /** The newest boundary's seq: what members see starts after it. 0 when there is none. */
+  const boundaryOf = (teamId: string) =>
+    sql<{ readonly seq: number | null }>`
+      SELECT MAX(seq) AS seq FROM assistant_group_messages
+      WHERE team_id = ${teamId} AND kind = 'boundary'`.pipe(
+      Effect.map((rows) => rows[0]?.seq ?? 0),
+    );
 
   const assistantRows = (ids: ReadonlyArray<string>) =>
     ids.length === 0
@@ -714,9 +727,10 @@ const make = Effect.gen(function* () {
       (yield* sql<ThreadRow>`
       SELECT * FROM assistant_group_threads
       WHERE team_id = ${team.id} AND assistant_id = ${owner.assistant_id}`)[0]?.seen_seq ?? 0;
+    const boundary = yield* boundaryOf(team.id);
     const chat = yield* sql<MessageRow>`
       SELECT * FROM assistant_group_messages
-      WHERE team_id = ${team.id} AND seq > ${seen} AND kind = 'message'
+      WHERE team_id = ${team.id} AND seq > ${Math.max(seen, boundary)} AND kind = 'message'
         AND message_id <> ${task.kind === "child" ? "" : task.request_message_id}
         AND NOT (author = 'assistant' AND assistant_id = ${owner.assistant_id})
       ORDER BY seq ASC`;
@@ -767,6 +781,8 @@ const make = Effect.gen(function* () {
       from,
       instruction: task.instruction,
       followup: task.followup,
+      instructions: team.instructions ?? "",
+      memories: team.memories ?? [],
     });
     const messageId = taskMessageId(task.task_id, task.revision);
     // The member works on its own current model, so a change in its conversation reaches its groups.
@@ -808,24 +824,35 @@ const make = Effect.gen(function* () {
    * Folds the chat since the last summary into a new one once enough has piled up. A failure or a
    * provider without the operation leaves the old summary (or none) and costs the tasks nothing.
    */
-  const summarize = Effect.fn("AssistantGroups.summarize")(function* (teamId: string) {
-    if (summarizing.has(teamId)) return;
+  const summarize = Effect.fn("AssistantGroups.summarize")(function* (
+    teamId: string,
+    force: boolean,
+  ) {
+    if (summarizing.has(teamId)) return false;
     summarizing.add(teamId);
-    yield* Effect.gen(function* () {
+    return yield* Effect.gen(function* () {
       const team = yield* loadTeam(teamId);
-      if (team.archivedAt !== null) return;
-      const through =
+      if (team.archivedAt !== null && !force) return false;
+      const boundary = yield* boundaryOf(teamId);
+      const through = Math.max(
+        boundary,
         (yield* sql<{ readonly through_seq: number }>`
           SELECT through_seq FROM assistant_group_summaries WHERE team_id = ${teamId}`)[0]
-          ?.through_seq ?? 0;
+          ?.through_seq ?? 0,
+      );
       const stats = (yield* sql<{ readonly chars: number | null; readonly top: number | null }>`
         SELECT SUM(LENGTH(text)) AS chars, MAX(seq) AS top FROM assistant_group_messages
         WHERE team_id = ${teamId} AND seq > ${through} AND kind = 'message'`)[0];
       const top = stats?.top ?? 0;
       // Retry a failed attempt only once the chat has moved on.
-      if ((stats?.chars ?? 0) < SUMMARY_TRIGGER_CHARS || top <= (summaryTried.get(teamId) ?? 0)) {
-        return;
+      if (
+        !force &&
+        ((stats?.chars ?? 0) < SUMMARY_TRIGGER_CHARS || top <= (summaryTried.get(teamId) ?? 0))
+      ) {
+        return false;
       }
+      // Nothing new since the last summary: it already covers the chat.
+      if (top === 0) return force;
       summaryTried.set(teamId, top);
       const previous =
         (yield* sql<{ readonly summary: string }>`
@@ -847,7 +874,7 @@ const make = Effect.gen(function* () {
         read.unshift({ from: labelOf(row, names), text });
       }
       const summarizeCall = textGeneration.summarizeAssistantGroup;
-      if (summarizeCall === undefined) return;
+      if (summarizeCall === undefined) return false;
       const { textGenerationModelSelection } = yield* serverSettings.getSettings;
       const made = yield* summarizeCall({
         cwd: config.baseDir,
@@ -857,7 +884,7 @@ const make = Effect.gen(function* () {
         messages: read,
       });
       const summary = clip(made.summary.trim(), PACKET_SUMMARY_CHARS);
-      if (summary === "") return;
+      if (summary === "") return false;
       // A group deleted meanwhile keeps no summary behind.
       yield* loadTeam(teamId);
       yield* sql`
@@ -866,6 +893,7 @@ const make = Effect.gen(function* () {
         ON CONFLICT (team_id) DO UPDATE SET summary = excluded.summary,
           through_seq = excluded.through_seq, updated_at = excluded.updated_at
         WHERE excluded.through_seq > through_seq`;
+      return true;
     }).pipe(Effect.ensuring(Effect.sync(() => void summarizing.delete(teamId))));
   });
 
@@ -873,7 +901,7 @@ const make = Effect.gen(function* () {
   const pump = Effect.fn("AssistantGroups.pump")(function* (teamId: string) {
     const team = yield* loadTeam(teamId).pipe(Effect.orElseSucceed(() => undefined));
     if (team === undefined || team.archivedAt !== null) return;
-    yield* FiberSet.run(routing, summarize(teamId).pipe(quietly("summary")));
+    yield* FiberSet.run(routing, summarize(teamId, false).pipe(quietly("summary")));
     const live = yield* sql<TaskRow>`
       SELECT * FROM assistant_group_tasks
       WHERE team_id = ${teamId} AND status IN ('queued', 'running')
@@ -973,6 +1001,7 @@ const make = Effect.gen(function* () {
         const recent = yield* sql<MessageRow>`
           SELECT * FROM assistant_group_messages
           WHERE team_id = ${teamId} AND seq < ${message.seq} AND kind = 'message'
+            AND seq > ${yield* boundaryOf(teamId)}
           ORDER BY seq DESC LIMIT ${ROUTING_HISTORY_MESSAGES}`;
         const names = new Map(members.map((member) => [member.assistant_id, member.name]));
         return {
@@ -1423,6 +1452,7 @@ const make = Effect.gen(function* () {
       const rows = yield* sql<MessageRow>`
           SELECT * FROM assistant_group_messages
           WHERE team_id = ${caller.team_id} AND seq < ${input.beforeSeq ?? Number.MAX_SAFE_INTEGER}
+            AND seq > ${input.beforeSeq === undefined ? yield* boundaryOf(caller.team_id) : 0}
           ORDER BY seq DESC LIMIT ${ASSISTANT_GROUP_PAGE_SIZE + 1}`;
       const messages: AssistantGroupMessage[] = [];
       let used = 0;
@@ -1755,6 +1785,22 @@ const make = Effect.gen(function* () {
     }
   });
 
+  /** The group's chat, tasks, summary and the files of its messages; nothing else of the group. */
+  const clearChat = Effect.fn("AssistantGroups.clearChat")(function* (teamId: string) {
+    const owned = (yield* sql<MessageRow>`
+      SELECT * FROM assistant_group_messages WHERE team_id = ${teamId}`).flatMap(attachmentsOf);
+    yield* cleanup
+      .cleanupAttachments(owned.map((attachment) => attachment.id))
+      .pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("assistant groups: attachments were not deleted", { teamId, cause }),
+        ),
+      );
+    yield* sql`DELETE FROM assistant_group_messages WHERE team_id = ${teamId}`;
+    yield* sql`DELETE FROM assistant_group_tasks WHERE team_id = ${teamId}`;
+    yield* sql`DELETE FROM assistant_group_summaries WHERE team_id = ${teamId}`;
+  });
+
   /** The group is gone: its work stops, its threads, chat and schedules go. */
   const removeGroup = Effect.fn("AssistantGroups.removeGroup")(function* (teamId: string) {
     const running = yield* sql<TaskRow>`
@@ -1770,19 +1816,8 @@ const make = Effect.gen(function* () {
           Effect.logWarning("assistant groups: schedules were not deleted", { teamId, cause }),
         ),
       );
-    const owned = (yield* sql<MessageRow>`
-      SELECT * FROM assistant_group_messages WHERE team_id = ${teamId}`).flatMap(attachmentsOf);
-    yield* cleanup
-      .cleanupAttachments(owned.map((attachment) => attachment.id))
-      .pipe(
-        Effect.catch((cause) =>
-          Effect.logWarning("assistant groups: attachments were not deleted", { teamId, cause }),
-        ),
-      );
-    yield* sql`DELETE FROM assistant_group_messages WHERE team_id = ${teamId}`;
-    yield* sql`DELETE FROM assistant_group_tasks WHERE team_id = ${teamId}`;
+    yield* clearChat(teamId);
     yield* sql`DELETE FROM assistant_group_threads WHERE team_id = ${teamId}`;
-    yield* sql`DELETE FROM assistant_group_summaries WHERE team_id = ${teamId}`;
   });
 
   /** A deleted assistant: its group threads go with it; its tasks wait for a new owner. */
@@ -1930,8 +1965,8 @@ const make = Effect.gen(function* () {
         input.unread === true
           ? ((yield* sql<{ readonly seq: number | null }>`
               SELECT MAX(seq) AS seq FROM assistant_group_messages
-              WHERE team_id = ${input.teamId} AND author != 'user' AND kind != 'routing'`)[0]
-              ?.seq ?? 1) - 1
+              WHERE team_id = ${input.teamId} AND author != 'user'
+                AND kind NOT IN ('routing', 'boundary')`)[0]?.seq ?? 1) - 1
           : (input.readSeq ?? Number.MAX_SAFE_INTEGER);
       const rows = yield* sql<{ readonly read_seq: number }>`
         UPDATE assistant_teams SET read_seq = MIN(${target}, COALESCE(
@@ -1942,6 +1977,86 @@ const make = Effect.gen(function* () {
     },
     storage,
   );
+
+  const conversation: AssistantGroups["Service"]["conversation"] = Effect.fn(
+    "AssistantGroups.conversation",
+  )(function* (input) {
+    const { teamId } = input;
+    const ensureIdle = Effect.gen(function* () {
+      const open = yield* sql<{ readonly n: number }>`
+        SELECT COUNT(*) AS n FROM assistant_group_tasks
+        WHERE team_id = ${teamId} AND status IN ${sql.in(ACTIVE)}`;
+      if ((open[0]?.n ?? 0) > 0) {
+        return yield* invalid("The group is working. Stop its tasks first.");
+      }
+    });
+    const publishPage = Effect.gen(function* () {
+      const page = yield* readPage(teamId, undefined);
+      yield* PubSub.publish(events, { teamId, event: { type: "snapshot", ...page } });
+      yield* assistants.refreshTeamChat(teamId);
+    });
+    yield* teamRow(teamId);
+    if (input.action === "compact") {
+      yield* ensureIdle;
+      const boundary = yield* boundaryOf(teamId);
+      const fresh = yield* sql<{ readonly n: number }>`
+        SELECT COUNT(*) AS n FROM assistant_group_messages
+        WHERE team_id = ${teamId} AND seq > ${boundary} AND kind = 'message'`;
+      if ((fresh[0]?.n ?? 0) === 0) return yield* invalid("There is nothing to compact.");
+      // The summary is written before the boundary, so a failure leaves the chat as it was.
+      const done = yield* summarize(teamId, true).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("assistant groups: compact failed", { teamId, cause }).pipe(
+            Effect.as(false),
+          ),
+        ),
+      );
+      if (!done) return yield* invalid("Could not summarize the chat. Try again in a moment.");
+    }
+    yield* lock.withPermits(1)(
+      Effect.gen(function* () {
+        switch (input.action) {
+          case "new":
+          case "compact":
+            yield* ensureIdle;
+            if (input.action === "new") {
+              yield* sql`DELETE FROM assistant_group_summaries WHERE team_id = ${teamId}`;
+            }
+            yield* insertMessage({
+              teamId,
+              author: "user",
+              kind: "boundary",
+              text: input.action,
+            });
+            return;
+          case "undo": {
+            const latest = (yield* sql<MessageRow>`
+              SELECT * FROM assistant_group_messages WHERE team_id = ${teamId}
+              ORDER BY seq DESC LIMIT 1`)[0];
+            if (latest === undefined || latest.kind !== "boundary") {
+              return yield* invalid("Only a boundary with nothing after it can be undone.");
+            }
+            yield* sql`DELETE FROM assistant_group_messages WHERE message_id = ${latest.message_id}`;
+            // The next message reuses this number, so nothing may count it as seen already.
+            yield* sql`
+              UPDATE assistant_group_threads SET seen_seq = MIN(seen_seq, ${latest.seq - 1})
+              WHERE team_id = ${teamId}`;
+            yield* sql`
+              UPDATE assistant_teams SET read_seq = MIN(read_seq, ${latest.seq - 1})
+              WHERE team_id = ${teamId}`;
+            return yield* publishPage;
+          }
+          case "clear":
+            yield* ensureIdle;
+            yield* clearChat(teamId);
+            yield* sql`UPDATE assistant_group_threads SET seen_seq = 0 WHERE team_id = ${teamId}`;
+            yield* sql`UPDATE assistant_teams SET read_seq = 0 WHERE team_id = ${teamId}`;
+            return yield* publishPage;
+        }
+      }),
+    );
+    return { teamId: input.teamId };
+  }, storage);
 
   const history: AssistantGroups["Service"]["history"] = Effect.fn("AssistantGroups.history")(
     function* (input) {
@@ -1957,6 +2072,7 @@ const make = Effect.gen(function* () {
     post,
     taskAction,
     markRead,
+    conversation,
     agentPost,
     member: memberTools,
     handleRunEvent,

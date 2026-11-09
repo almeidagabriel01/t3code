@@ -3,6 +3,7 @@ import {
   applyAssistantGroupHistory,
   assistantGroupAuthorName,
   assistantGroupAwaitingRoute,
+  assistantGroupBoundaryLabel,
   assistantGroupFeed,
   assistantGroupLatestSeq,
   assistantGroupNewSeq,
@@ -34,6 +35,7 @@ import {
   PencilIcon,
   PlusIcon,
   ReplyIcon,
+  SettingsIcon,
 } from "lucide-react";
 import { Fragment, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
@@ -57,7 +59,7 @@ import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { openAssistantDialog } from "./assistantDialogState";
 import { AssistantAvatar } from "./assistantPresentation";
-import { openAssistantTeamDialog } from "./assistantTeamState";
+import { openAssistantGroupSettings, openAssistantTeamDialog } from "./assistantTeamState";
 import { GroupMessageAttachments } from "./GroupAttachments";
 import { GroupComposer, MENTION_REQUIRED_COPY, type GroupSendResult } from "./GroupComposer";
 import { GroupTaskCard } from "./GroupTaskCard";
@@ -147,6 +149,10 @@ function GroupHeader(props: {
           <MenuItem onClick={() => openAssistantTeamDialog({ environmentId, teamId: team.id })}>
             <PencilIcon />
             Edit group
+          </MenuItem>
+          <MenuItem onClick={() => openAssistantGroupSettings({ environmentId, teamId: team.id })}>
+            <SettingsIcon />
+            Group settings
           </MenuItem>
           <MenuItem
             onClick={() => openAssistantDialog({ environmentId, preset: { teamId: team.id } })}
@@ -270,6 +276,20 @@ function FeedRow(props: {
       onOpenConversation={() => props.onOpenConversation(task)}
     />
   ));
+  if (props.row.role === "boundary") {
+    return (
+      <div
+        role="separator"
+        aria-label={assistantGroupBoundaryLabel(message)}
+        data-testid="group-boundary"
+        className="flex items-center gap-2 text-xs font-medium text-muted-foreground"
+      >
+        <span aria-hidden className="h-px flex-1 bg-foreground/12" />
+        {assistantGroupBoundaryLabel(message)}
+        <span aria-hidden className="h-px flex-1 bg-foreground/12" />
+      </div>
+    );
+  }
   if (props.row.role === "note") {
     return (
       <div data-testid="group-note" className="flex flex-col items-center gap-1">

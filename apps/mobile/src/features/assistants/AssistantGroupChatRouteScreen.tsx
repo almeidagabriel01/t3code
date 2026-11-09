@@ -2,6 +2,7 @@ import {
   applyAssistantGroupHistory,
   assistantGroupAuthorName,
   assistantGroupAwaitingRoute,
+  assistantGroupBoundaryLabel,
   assistantGroupFeed,
   assistantGroupLatestSeq,
   assistantGroupNewSeq,
@@ -147,6 +148,22 @@ function FeedRow(
   const cards = (
     <TaskCards {...props} tasks={props.row.tasks} showOwner={props.row.role !== "answer"} />
   );
+  if (props.row.role === "boundary") {
+    return (
+      <View
+        accessibilityRole="none"
+        accessibilityLabel={assistantGroupBoundaryLabel(message)}
+        testID="group-boundary"
+        className="flex-row items-center gap-2 px-4 py-1.5"
+      >
+        <View className="h-px flex-1 bg-border" />
+        <Text className="text-xs font-t3-medium text-foreground-muted">
+          {assistantGroupBoundaryLabel(message)}
+        </Text>
+        <View className="h-px flex-1 bg-border" />
+      </View>
+    );
+  }
   if (props.row.role === "note") {
     return (
       <View testID="group-note" className="items-center gap-1 px-4 py-1.5">
@@ -418,6 +435,12 @@ export function AssistantGroupChatRouteScreen({
                 title: "Edit group",
                 icon: "pencil",
                 onPress: () => openTeam.edit(environmentId, team.id),
+              },
+              {
+                id: "settings",
+                title: "Group settings",
+                icon: "gearshape",
+                onPress: () => openTeam.settings(environmentId, team.id),
               },
               {
                 id: "new",

@@ -10,6 +10,8 @@ export interface AssistantTeamRow {
   readonly member_ids_json: string;
   readonly lead_id: string | null;
   readonly archived_at?: string | null;
+  readonly instructions?: string;
+  readonly memories_json?: string;
   /** Chat counters, present when the row comes from `assistant_team_state`. */
   readonly read_seq?: number;
   readonly latest_seq?: number;
@@ -22,6 +24,7 @@ export interface AssistantTeamRow {
 
 const MemberIdsJson = Schema.fromJsonString(Schema.Array(Schema.String));
 const decodeMemberIds = Schema.decodeOption(MemberIdsJson);
+export const encodeMemories = Schema.encodeSync(MemberIdsJson);
 export const encodeMemberIds = Schema.encodeSync(MemberIdsJson);
 
 // A row that no longer decodes has no members rather than hiding every team.
@@ -31,6 +34,8 @@ export const toAssistantTeam = (row: AssistantTeamRow): AssistantTeam => ({
   memberIds: Option.getOrElse(decodeMemberIds(row.member_ids_json), () => []) as AssistantId[],
   leadId: row.lead_id as AssistantId | null,
   archivedAt: row.archived_at ?? null,
+  instructions: row.instructions ?? "",
+  memories: Option.getOrElse(decodeMemberIds(row.memories_json ?? "[]"), () => []),
   ...(row.latest_seq === undefined
     ? {}
     : {
