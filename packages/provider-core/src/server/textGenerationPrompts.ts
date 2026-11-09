@@ -519,12 +519,13 @@ export function buildAssistantGroupRoutingPrompt(input: AssistantGroupRoutingPro
   }
   const prompt = [
     `You route messages in the group chat "${input.groupName}" to the members who should work on them.`,
-    "Return a JSON object with one key: assistantIds, an array of member ids.",
+    "Return a JSON object with assistantIds (an array of member ids) and noReply (a boolean).",
     "Rules:",
     "- pick each member whose role or area the request touches",
     "- when the request touches one area or none, pick the one member best able to take it",
     "- pick everyone when the request is addressed to the whole group",
     "- use only the ids listed below",
+    "- when the message only thanks, acknowledges, or closes the topic and asks for nothing, return no ids and set noReply to true; otherwise noReply is false",
     "",
     "Members:",
     ...members,
@@ -535,7 +536,10 @@ export function buildAssistantGroupRoutingPrompt(input: AssistantGroupRoutingPro
     "Request:",
     limitSection(input.request, 8_000),
   ].join("\n");
-  const outputSchema = Schema.Struct({ assistantIds: Schema.Array(Schema.String) });
+  const outputSchema = Schema.Struct({
+    assistantIds: Schema.Array(Schema.String),
+    noReply: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  });
   return { prompt, outputSchema };
 }
 

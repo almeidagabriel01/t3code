@@ -2,6 +2,7 @@ import { it as effectIt } from "@effect/vitest";
 import { describe, expect, it } from "vite-plus/test";
 
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 
 import { fromRunner } from "./textGenerationOperations.ts";
 import {
@@ -48,10 +49,26 @@ describe("group routing prompt", () => {
     expect(prompt).toContain("- id id-2 (@m2) Member 2: Handles design.");
     expect(prompt).toContain("pick everyone when the request is addressed to the whole group");
     expect(prompt.endsWith("Request:\nWho pays?")).toBe(true);
+    expect(prompt).toContain("set noReply to true");
     // 4,000 characters hold six of the 600-character lines, and the newest are the ones kept.
     const chat = prompt.split("Recent messages:\n")[1]!.split("\n\nRequest:")[0]!.split("\n");
     expect(chat).toHaveLength(6);
     expect(chat.at(-1)).toContain("19");
+  });
+
+  it("reads noReply as false when the model leaves it out", () => {
+    const { outputSchema } = buildAssistantGroupRoutingPrompt({
+      groupName: "G",
+      members: [],
+      recentMessages: [],
+      request: "ok",
+    });
+    const decode = Schema.decodeUnknownSync(outputSchema as never) as (v: unknown) => unknown;
+    expect(decode({ assistantIds: ["a"] })).toEqual({ assistantIds: ["a"], noReply: false });
+    expect(decode({ assistantIds: [], noReply: true })).toEqual({
+      assistantIds: [],
+      noReply: true,
+    });
   });
 
   it("says so when there is no chat yet", () => {

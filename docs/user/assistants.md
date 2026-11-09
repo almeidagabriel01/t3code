@@ -146,11 +146,13 @@ Home list your groups under the assistants.
 Click a group in the sidebar (or tap it on Home) to open its chat. A message there is a request to
 the members; it does not run an agent by itself.
 
-- Start with `@Ada @Beto` to give each of them a task, or `@everyone` for all members. The line under
-  the box says who will get it.
-- With no mention, the group's **Lead** picks who answers. Set one in **Edit group**; it only routes
-  and gets no extra permissions. A group with one member sends everything to it. Without a lead, the
-  chat asks you to mention someone. Routing needs a lead on Claude, Codex or Antigravity.
+- Write `@Ada @Beto` anywhere in the message to give each of them a task, or `@everyone` for all
+  members. Names with spaces work (`@Ana Paula`). The line under the box says who will get it.
+- With no mention, a short "continue" resumes the group's stopped task, and while exactly one task is
+  open your follow-up goes to its owner. Otherwise the group's **Lead** picks who answers (and may
+  decide nothing needs doing, as for "thanks"). Set one in **Edit group**; it only routes and gets no
+  extra permissions. A group with one member sends everything to it. Without a lead the message waits,
+  and is routed once you set one. Routing needs a lead on Claude, Codex or Antigravity.
 - **Reply** on a member's message sends your follow-up to that member.
 - Each task shows as a card with its owner and status. **Stop** pauses running work, **Resume**
   continues it, **Reassign** gives it to another member and **Cancel** ends the whole request.

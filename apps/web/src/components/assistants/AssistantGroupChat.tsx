@@ -3,6 +3,7 @@ import {
   applyAssistantGroupHistory,
   assistantGroupAuthorName,
   assistantGroupAwaitingRoute,
+  assistantGroupTextParts,
   assistantGroupBoundaryLabel,
   assistantGroupFeed,
   assistantGroupLatestSeq,
@@ -66,23 +67,22 @@ import { GroupTaskCard } from "./GroupTaskCard";
 import { useGroupReadMarker } from "./useGroupReadMarker";
 import { useAssistantTeamFlows } from "./useAssistantFlows";
 
-const MENTION_TOKEN = /(@[\p{L}\p{N}_-]+)/u;
 const MAX_STACKED_AVATARS = 4;
 
-/** The text with each `@mention` picked out, as the user typed it. */
-function MentionText(props: { readonly text: string }) {
-  let offset = 0;
-  return props.text.split(MENTION_TOKEN).map((part, index) => {
-    const key = offset;
-    offset += part.length;
-    return index % 2 === 1 ? (
-      <span key={key} className="font-semibold text-primary">
-        {part}
+/** The text with each `@mention` of a member picked out, as the user typed it. */
+function MentionText(props: {
+  readonly text: string;
+  readonly members: ReadonlyArray<Pick<Assistant, "handle" | "name">>;
+}) {
+  return assistantGroupTextParts(props.text, props.members).map((part) =>
+    part.mention ? (
+      <span key={part.start} className="font-semibold text-primary">
+        {part.text}
       </span>
     ) : (
-      <span key={key}>{part}</span>
-    );
-  });
+      <span key={part.start}>{part.text}</span>
+    ),
+  );
 }
 
 function failed(title: string, message: string) {
@@ -314,7 +314,7 @@ function FeedRow(props: {
           <span className="text-xs text-muted-foreground">Reply to {repliedTo}</span>
         )}
         <div className="max-w-[85%] rounded-2xl bg-primary/12 px-3 py-2 text-sm whitespace-pre-wrap wrap-anywhere @xl/group-chat:max-w-[70%]">
-          <MentionText text={parts.body} />
+          <MentionText text={parts.body} members={props.members} />
           {parts.files === null ? null : (
             <div data-testid="group-request-files" className="mt-1.5 whitespace-normal">
               <ChatMarkdown
@@ -334,7 +334,7 @@ function FeedRow(props: {
         {assistantGroupAwaitingRoute(props.chat, message) ? (
           <p data-testid="group-routing" className="text-xs text-muted-foreground">
             {props.lead === undefined
-              ? "Waiting for someone to take it…"
+              ? "Waiting for a lead to route it. Set one in Edit group."
               : `${props.lead.name} (lead) is choosing who answers…`}
           </p>
         ) : null}

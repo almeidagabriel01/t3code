@@ -233,27 +233,85 @@ export type AssistantGroupsTaskActionInput = typeof AssistantGroupsTaskActionInp
 
 export const ASSISTANT_GROUP_EVERYONE = "everyone";
 
+/** Lowercase with accents dropped, one UTF-16 unit for one unit, so offsets still index the original. */
+export function foldAssistantGroupText(text: string): string {
+  let folded = "";
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index]!;
+    folded += char.normalize("NFD")[0]!.toLowerCase()[0] ?? char;
+  }
+  return folded;
+}
+
+export interface AssistantGroupMention<M> {
+  readonly start: number;
+  readonly end: number;
+  /** The member named; null for `@everyone`. */
+  readonly member: M | null;
+}
+
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+/** Code and links hold `@` that is not an address; blanking keeps offsets. */
+const UNADDRESSABLE = /```[\s\S]*?(?:```|$)|`[^`\n]*`|https?:\/\/\S+|www\.\S+/g;
+const BEFORE_AT = /[\p{L}\p{N}_]/u;
+const NAME_END = String.raw`(?![\p{L}\p{N}_-])`;
+
 /**
- * The members a message opens with: `@everyone`, or leading `@handle` tokens (a name with no
- * spaces also matches, case-insensitive). Null when it opens with no known mention, so the lead
- * routes it. The server decides; clients use it to preview who will get the message.
+ * Every `@mention` in the text, in order: `@everyone`, or a member by handle or full name (spaces
+ * allowed, longest name wins, case and accents ignored). An `@` inside code, a link, or an email
+ * is skipped. The server decides recipients from this; clients highlight and preview with it.
  */
-export function assistantGroupLeadingAddress<
+export function assistantGroupMentions<
+  M extends { readonly handle: string; readonly name: string },
+>(text: string, members: ReadonlyArray<M>): ReadonlyArray<AssistantGroupMention<M>> {
+  const blanked = text.replace(UNADDRESSABLE, (match) => " ".repeat(match.length));
+  const folded = foldAssistantGroupText(blanked);
+  const candidates = members.flatMap((member) => {
+    const name = foldAssistantGroupText(member.name).trim().replace(/\s+/g, " ");
+    const forms = [foldAssistantGroupText(member.handle), name.replace(/ /g, ""), name]
+      .filter((form, index, all) => form !== "" && all.indexOf(form) === index)
+      .map((form) =>
+        form
+          .split(" ")
+          .map(escapeRegExp)
+          .join(String.raw`\s+`),
+      );
+    return forms.map((form) => ({ member, regex: new RegExp(form + NAME_END, "uy") }));
+  });
+  const everyone = new RegExp("everyone" + NAME_END, "uy");
+  const found: AssistantGroupMention<M>[] = [];
+  for (let at = folded.indexOf("@"); at >= 0; at = folded.indexOf("@", at + 1)) {
+    if (at > 0 && BEFORE_AT.test(folded[at - 1]!)) continue;
+    const start = at + 1;
+    everyone.lastIndex = start;
+    let best: { end: number; member: M | null } | null = everyone.test(folded)
+      ? { end: everyone.lastIndex, member: null }
+      : null;
+    for (const { member, regex } of candidates) {
+      regex.lastIndex = start;
+      if (regex.test(folded) && (best === null || regex.lastIndex > best.end)) {
+        best = { end: regex.lastIndex, member };
+      }
+    }
+    if (best !== null) {
+      found.push({ start: at, end: best.end, member: best.member });
+      at = best.end - 1;
+    }
+  }
+  return found;
+}
+
+/**
+ * The members a message addresses with an `@` anywhere in it (`@everyone` is all of them), each
+ * once, in order. Null when it names nobody, so a deterministic rule or the lead takes over.
+ */
+export function assistantGroupAddress<
   M extends { readonly id: string; readonly handle: string; readonly name: string },
 >(text: string, members: ReadonlyArray<M>): ReadonlyArray<M> | null {
   const picked: M[] = [];
-  const pattern = /^\s*@([\p{L}\p{N}_-]+)[,:]?/u;
-  let rest = text;
-  for (let match = pattern.exec(rest); match !== null; match = pattern.exec(rest)) {
-    const token = match[1]!.toLowerCase();
-    if (token === ASSISTANT_GROUP_EVERYONE) return members.length === 0 ? null : members;
-    const member = members.find(
-      (candidate) =>
-        candidate.handle === token || candidate.name.toLowerCase().replace(/\s+/g, "") === token,
-    );
-    if (member === undefined) break;
-    if (!picked.includes(member)) picked.push(member);
-    rest = rest.slice(match[0].length);
+  for (const mention of assistantGroupMentions(text, members)) {
+    if (mention.member === null) return members.length === 0 ? null : members;
+    if (!picked.includes(mention.member)) picked.push(mention.member);
   }
   return picked.length === 0 ? null : picked;
 }

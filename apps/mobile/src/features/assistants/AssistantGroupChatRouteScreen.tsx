@@ -2,6 +2,7 @@ import {
   applyAssistantGroupHistory,
   assistantGroupAuthorName,
   assistantGroupAwaitingRoute,
+  assistantGroupTextParts,
   assistantGroupBoundaryLabel,
   assistantGroupFeed,
   assistantGroupLatestSeq,
@@ -57,23 +58,22 @@ import { useGroupReadMarker } from "./useGroupReadMarker";
 import { useScheduleInGroup } from "./useScheduleInGroup";
 
 const NEW_JUMP_MIN_ROWS = 4;
-const MENTION_TOKEN = /(@[\p{L}\p{N}_-]+)/u;
 
-/** The text with each `@mention` picked out, as the user typed it. */
-function MentionText(props: { readonly text: string }) {
-  const parts = props.text.split(MENTION_TOKEN);
+/** The text with each `@mention` of a member picked out, as the user typed it. */
+function MentionText(props: {
+  readonly text: string;
+  readonly members: ReadonlyArray<Pick<Assistant, "handle" | "name">>;
+}) {
   return (
     <Text className="text-base text-foreground">
-      {parts.map((part, index) => {
-        const mention = index % 2 === 1;
-        // An empty part shares its offset with the mention after it, so the kind joins the key.
-        const key = `${parts.slice(0, index).join("").length}${mention ? "m" : "t"}`;
-        return (
-          <Text key={key} className={mention ? "font-t3-bold text-primary-text" : undefined}>
-            {part}
-          </Text>
-        );
-      })}
+      {assistantGroupTextParts(props.text, props.members).map((part) => (
+        <Text
+          key={part.start}
+          className={part.mention ? "font-t3-bold text-primary-text" : undefined}
+        >
+          {part.text}
+        </Text>
+      ))}
     </Text>
   );
 }
@@ -195,7 +195,7 @@ function FeedRow(
           <Text className="text-xs text-foreground-muted">Reply to {repliedTo}</Text>
         )}
         <View className="max-w-[85%] rounded-2xl bg-subtle-strong px-3 py-2">
-          <MentionText text={parts.body} />
+          <MentionText text={parts.body} members={props.members} />
           {parts.files === null ? null : (
             <View testID="group-request-files" className="mt-1.5">
               <SelectableMarkdownText markdown={parts.files} textStyle={styles.nativeTextStyle} />
@@ -210,7 +210,7 @@ function FeedRow(
         {assistantGroupAwaitingRoute(props.chat, message) ? (
           <Text testID="group-routing" className="text-xs text-foreground-muted">
             {props.lead === undefined
-              ? "Waiting for someone to take it…"
+              ? "Waiting for a lead to route it. Set one in Edit group."
               : `${props.lead.name} (lead) is choosing who answers…`}
           </Text>
         ) : null}

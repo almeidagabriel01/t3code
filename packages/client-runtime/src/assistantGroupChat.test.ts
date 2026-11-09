@@ -20,6 +20,7 @@ import {
   assistantGroupNewSeq,
   assistantGroupMentionOptions,
   assistantGroupMentionQuery,
+  assistantGroupTextParts,
   assistantGroupPauseReasonLabel,
   assistantGroupRecipientsPreview,
   assistantGroupRunningCount,
@@ -208,13 +209,17 @@ describe("assistantGroupAwaitingRoute", () => {
           message(4, { kind: "notice", author: "assistant", replyToMessageId: "m3" as never }),
           message(5, { author: "assistant", assistantId: "ada" as AssistantId }),
           message(6, { kind: "routing", author: "assistant" }),
+          message(7),
+          message(8, { kind: "change", author: "assistant", replyToMessageId: "m7" as never }),
+          message(9),
+          message(10, { kind: "routing", author: "assistant", replyToMessageId: "m9" as never }),
         ],
         [task("k", 2)],
       ),
     );
     assert.deepEqual(
       [...state.messages.values()].map((row) => assistantGroupAwaitingRoute(state, row)),
-      [true, false, false, false, false, false],
+      [true, false, false, false, false, false, false, false, false, false],
     );
   });
 });
@@ -223,12 +228,13 @@ describe("composer helpers", () => {
   it.each([
     ["", jarvis, null],
     ["hello", jarvis, "Jarvis (lead) will route it"],
-    ["hello", null, "Mention someone"],
+    ["hello", null, "Waits for a lead"],
+    ["thanks @ada", jarvis, "To Ada"],
     ["@ada do it", jarvis, "To Ada"],
     ["@ada @betosilva do it", jarvis, "To Ada and Beto Silva"],
     ["@everyone go", null, "To everyone"],
     ["@ada @beto @jarvis go", null, "To everyone"],
-    ["@nobody go", null, "Mention someone"],
+    ["@nobody go", null, "Waits for a lead"],
   ] as const)("previews %j", (text, lead, expected) => {
     assert.strictEqual(assistantGroupRecipientsPreview(text, [ada, beto, jarvis], lead), expected);
   });
@@ -251,6 +257,10 @@ describe("composer helpers", () => {
     ["@Ad", 3, "ad", 0],
     ["@ada @be", 8, "be", 5],
     ["  @ada, @b", 10, "b", 8],
+    ["thanks @ad", 10, "ad", 7],
+    ["(@ad", 4, "ad", 1],
+    ["@Beto Si", 8, "beto si", 0],
+    ["@Álv", 4, "alv", 0],
   ] as const)("opens the picker for %j", (text, caret, query, start) => {
     assert.deepStrictEqual(assistantGroupMentionQuery(text, caret), {
       start,
@@ -260,12 +270,27 @@ describe("composer helpers", () => {
   });
 
   it.each([
-    ["hi @ad", 6],
     ["mail@ada", 8],
-    ["@ada hello @b", 13],
+    ["@ada ", 5],
     ["hello", 5],
+    ["@a b c d", 8],
   ] as const)("does not open the picker for %j", (text, caret) => {
     assert.isNull(assistantGroupMentionQuery(text, caret));
+  });
+
+  it("cuts a text into plain and mention runs, as the server reads it", () => {
+    const text = "Oi @Beto Silva, e `@ada` ou ada@x.com; @ADA!";
+    assert.deepStrictEqual(assistantGroupTextParts(text, [ada, beto]), [
+      { start: 0, text: "Oi ", mention: false },
+      { start: 3, text: "@Beto Silva", mention: true },
+      { start: 14, text: ", e `@ada` ou ada@x.com; ", mention: false },
+      { start: 39, text: "@ADA", mention: true },
+      { start: 43, text: "!", mention: false },
+    ]);
+    assert.deepStrictEqual(assistantGroupTextParts("plain", [ada]), [
+      { start: 0, text: "plain", mention: false },
+    ]);
+    assert.deepStrictEqual(assistantGroupTextParts("", [ada]), []);
   });
 
   it("offers matching members and everyone, and inserts the handle with a space", () => {

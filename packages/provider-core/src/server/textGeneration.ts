@@ -118,6 +118,8 @@ export interface AssistantGroupRoutingInput {
 
 export interface AssistantGroupRoutingResult {
   readonly assistantIds: ReadonlyArray<string>;
+  /** The message asks for nothing (thanks, an acknowledgement): with no ids, nobody is given a task. */
+  readonly noReply?: boolean;
 }
 
 export interface AssistantGroupSummaryInput {

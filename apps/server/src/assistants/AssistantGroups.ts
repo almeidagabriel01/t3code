@@ -28,7 +28,6 @@ import {
   type AssistantsEvent,
   type AssistantTeam,
   type AssistantTeamId,
-  assistantGroupLeadingAddress,
   assistantIdFromThreadId,
   ChatAttachment,
   ChatAttachmentId,
@@ -77,6 +76,7 @@ import { forkParked } from "../serverActivation.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { TextGeneration } from "../textGeneration/TextGeneration.ts";
 import { AssistantGroupGate } from "./AssistantGroupGate.ts";
+import { routeGroupMessage } from "./AssistantGroupRouting.ts";
 import {
   childResultsText,
   groupTaskPacket,
@@ -101,6 +101,7 @@ export interface GroupToolResult {
 }
 
 export const REPLY_LIMIT_MESSAGE = "Reply limit reached; do not mention this to anyone.";
+const NO_REPLY_NOTE = "No reply needed";
 const UNROUTED_NOTICE = "Nobody got this message. Mention a member with @ to send it again.";
 export const MENTION_REQUIRED_MESSAGE = "Mention a member with @, or set a lead that can route.";
 const HANDOFF_LIMIT_NOTICE = `Paused · hit ${ASSISTANT_GROUP_HANDOFF_LIMIT} hand-offs for this request`;
@@ -122,6 +123,8 @@ const QUOTED_MESSAGES = 8;
 
 /** Waiting for a slot or a run, or running: work the owner is still on. */
 const ACTIVE: ReadonlyArray<AssistantGroupTaskStatus> = ["queued", "running", "waiting"];
+const isActive = (task: { readonly status: string }) =>
+  ACTIVE.includes(task.status as AssistantGroupTaskStatus);
 /** Everything the user can still act on. */
 const OPEN_NOW: ReadonlySet<string> = new Set(ACTIVE);
 const OPEN: ReadonlyArray<AssistantGroupTaskStatus> = [...ACTIVE, "paused", "failed"];
@@ -997,6 +1000,18 @@ const make = Effect.gen(function* () {
     return tasks;
   });
 
+  /** A paused or failed task runs again, with its owner or a new one. */
+  const requeue = (task: TaskRow, ownerId: string = task.owner_id) =>
+    patchTask(task, {
+      status: "queued",
+      reason: null,
+      owner_id: ownerId,
+      revision: task.revision + 1,
+      result_text: null,
+    });
+
+  const routingNow = new Set<string>();
+
   const route = Effect.fn("AssistantGroups.route")(function* (
     teamId: string,
     messageId: string,
@@ -1066,6 +1081,18 @@ const make = Effect.gen(function* () {
             picked._tag === "Success"
               ? [...new Set(picked.success.assistantIds.filter((id) => known.has(id)))]
               : [];
+          if (ids.length === 0 && picked._tag === "Success" && picked.success.noReply === true) {
+            // The lead found nothing to do; the muted line also keeps the message from being routed again.
+            yield* insertMessage({
+              teamId,
+              author: "assistant",
+              assistantId: leadId,
+              kind: "change",
+              text: NO_REPLY_NOTE,
+              replyTo: messageId,
+            });
+            return;
+          }
           const sender = prepared.message;
           const author: GroupAuthor =
             sender.author === "agent"
@@ -1108,6 +1135,58 @@ const make = Effect.gen(function* () {
         }),
       )
       .pipe(storage);
+  });
+
+  /** Routes in the background; a message already being routed is not routed twice. */
+  const startRoute = Effect.fn("AssistantGroups.startRoute")(function* (
+    teamId: string,
+    messageId: string,
+    leadId: string,
+    selection: ModelSelection,
+  ) {
+    if (routingNow.has(messageId)) return;
+    routingNow.add(messageId);
+    yield* FiberSet.run(
+      routing,
+      route(teamId, messageId, leadId, selection).pipe(
+        storage,
+        quietly("routing"),
+        Effect.ensuring(Effect.sync(() => void routingNow.delete(messageId))),
+      ),
+    );
+  });
+
+  /** Messages of a group nobody has taken: the lead routes them, and with no lead they keep waiting. */
+  const routePending = Effect.fn("AssistantGroups.routePending")(function* (team: AssistantTeam) {
+    if (team.archivedAt !== null) return;
+    const lead = (yield* activeMembers(team)).find((row) => row.assistant_id === team.leadId);
+    if (lead === undefined) return;
+    const pending = yield* sql<MessageRow>`
+      SELECT * FROM assistant_group_messages m
+      WHERE m.team_id = ${team.id} AND m.kind = 'message' AND m.author <> 'assistant'
+        AND NOT EXISTS (
+          SELECT 1 FROM assistant_group_tasks t WHERE t.request_message_id = m.message_id)
+        AND NOT EXISTS (
+          SELECT 1 FROM assistant_group_messages n
+          WHERE n.reply_to = m.message_id AND n.kind IN ('notice', 'change', 'routing'))
+      ORDER BY m.seq ASC`;
+    if (pending.length === 0) return;
+    const selection = yield* leadSelection(lead);
+    const capable = yield* canRoute(selection);
+    for (const message of pending) {
+      if (capable) {
+        yield* startRoute(team.id, message.message_id, lead.assistant_id, selection);
+      } else {
+        yield* insertMessage({
+          teamId: team.id,
+          author: "assistant",
+          assistantId: null,
+          kind: "notice",
+          text: UNROUTED_NOTICE,
+          replyTo: message.message_id,
+        });
+      }
+    }
   });
 
   /** Moves the uploads a message carries to ids the group owns, so they outlive the 24h sweep. */
@@ -1187,12 +1266,8 @@ const make = Effect.gen(function* () {
               if (repeat[0] !== undefined) return { message: repeat[0], lead: undefined };
             }
             const members = yield* activeMembers(team);
-            // First match wins: an @mention, then the member being answered, then a group of one.
-            let recipients: ReadonlyArray<AssistantRow> | undefined = assistantGroupLeadingAddress(
-              input.text,
-              members.map((row) => ({ id: row.assistant_id, handle: row.handle, name: row.name })),
-            )?.flatMap(({ id }) => members.filter((row) => row.assistant_id === id));
-            if (recipients === undefined && input.replyToMessageId !== undefined) {
+            let replyOwnerId: string | null = null;
+            if (input.replyToMessageId !== undefined) {
               const target = yield* getMessage(input.replyToMessageId);
               const task =
                 target?.team_id === team.id &&
@@ -1200,21 +1275,52 @@ const make = Effect.gen(function* () {
                 target.task_id !== null
                   ? yield* getTask(target.task_id)
                   : undefined;
-              const owner = members.find((member) => member.assistant_id === task?.owner_id);
-              if (owner !== undefined) recipients = [owner];
+              replyOwnerId = task?.owner_id ?? null;
+              if (!members.some((member) => member.assistant_id === replyOwnerId)) {
+                replyOwnerId = null;
+              }
             }
-            if (recipients === undefined && members.length === 1) recipients = members;
+            const tasksNow = yield* sql<TaskRow>`
+              SELECT * FROM assistant_group_tasks
+              WHERE team_id = ${team.id} AND kind <> 'reply' AND status IN ${sql.in([...ACTIVE, "paused", "failed"])}
+              ORDER BY updated_at DESC, rowid DESC`;
+            const decision = routeGroupMessage({
+              text: input.text,
+              members: members.map((row) => ({
+                id: row.assistant_id,
+                handle: row.handle,
+                name: row.name,
+              })),
+              replyOwnerId,
+              stopped: tasksNow
+                .filter((task) => task.parent_id === null && !isActive(task))
+                .map((task) => ({ taskId: task.task_id, ownerId: task.owner_id })),
+              open: tasksNow
+                .filter((task) => task.parent_id === null && isActive(task))
+                .map((task) => task.owner_id),
+              fromUser: author.kind === "user",
+            });
+            const resumed =
+              decision?.kind === "resume"
+                ? tasksNow.find((task) => task.task_id === decision.taskId)
+                : undefined;
+            const recipients: ReadonlyArray<AssistantRow> | undefined =
+              decision?.kind === "members"
+                ? decision.ids.flatMap((id) => members.filter((row) => row.assistant_id === id))
+                : undefined;
             let lead:
               | { readonly row: AssistantRow; readonly selection: ModelSelection }
               | undefined;
-            if (recipients === undefined) {
+            if (decision === null) {
               const row = members.find((member) => member.assistant_id === team.leadId);
+              // With no lead the message waits; clients show it, and a lead set later routes it.
               if (row !== undefined) {
                 const selection = yield* leadSelection(row);
-                if (yield* canRoute(selection)) lead = { row, selection };
+                if (!(yield* canRoute(selection))) {
+                  return yield* assistantError("mention_required", MENTION_REQUIRED_MESSAGE);
+                }
+                lead = { row, selection };
               }
-              if (lead === undefined)
-                return yield* assistantError("mention_required", MENTION_REQUIRED_MESSAGE);
             }
             const claimed = yield* claimUploads(team.id, input.attachments ?? []);
             const message = yield* insertMessage({
@@ -1235,7 +1341,18 @@ const make = Effect.gen(function* () {
               ),
             );
             if (lead !== undefined) return { message, lead };
-            yield* openRoots(team, message, recipients ?? [], instructionFor(author, input.text));
+            if (resumed !== undefined) {
+              yield* requeue(resumed);
+              yield* insertMessage({
+                teamId: team.id,
+                author: "assistant",
+                kind: "routing",
+                text: `Resumed ${yield* nameOf(resumed.owner_id)}'s task`,
+                replyTo: message.message_id,
+              });
+            } else if (recipients !== undefined) {
+              yield* openRoots(team, message, recipients, instructionFor(author, input.text));
+            }
             yield* pump(team.id);
             return { message, lead: undefined };
           }),
@@ -1243,13 +1360,7 @@ const make = Effect.gen(function* () {
         .pipe(storage);
       if (outcome.lead !== undefined) {
         const { row, selection } = outcome.lead;
-        yield* FiberSet.run(
-          routing,
-          route(input.teamId, outcome.message.message_id, row.assistant_id, selection).pipe(
-            storage,
-            quietly("routing"),
-          ),
-        );
+        yield* startRoute(input.teamId, outcome.message.message_id, row.assistant_id, selection);
         return { message: toMessage(outcome.message), tasks: [] };
       }
       // Read after the scheduler ran, so a task that started shows as running.
@@ -1394,13 +1505,7 @@ const make = Effect.gen(function* () {
                 );
               }
               // Resuming a task that hit the hand-off cap goes ahead: the user is the one deciding.
-              const next = yield* patchTask(task, {
-                status: "queued",
-                reason: null,
-                owner_id: ownerId,
-                revision: task.revision + 1,
-                result_text: null,
-              });
+              const next = yield* requeue(task, ownerId);
               yield* pump(team.id);
               return toTask((yield* getTask(next.task_id)) ?? next);
             }
@@ -1876,7 +1981,9 @@ const make = Effect.gen(function* () {
     function* (event) {
       switch (event.type) {
         case "teamUpserted":
-          return yield* lock.withPermits(1)(reconcileTeam(event.team));
+          return yield* lock.withPermits(1)(
+            reconcileTeam(event.team).pipe(Effect.andThen(routePending(event.team))),
+          );
         case "teamRemoved":
           return yield* lock.withPermits(1)(removeGroup(event.teamId));
         case "removed":
@@ -1926,39 +2033,7 @@ const make = Effect.gen(function* () {
         for (const row of owners)
           if (!existing.has(row.assistant_id)) yield* removeAssistant(row.assistant_id);
         // A message the lead was still routing when the server stopped is routed again.
-        const unrouted = yield* sql<MessageRow>`
-          SELECT * FROM assistant_group_messages m
-          WHERE m.kind = 'message' AND m.author <> 'assistant'
-            AND NOT EXISTS (
-              SELECT 1 FROM assistant_group_tasks t WHERE t.request_message_id = m.message_id)
-            AND NOT EXISTS (
-              SELECT 1 FROM assistant_group_messages n
-              WHERE n.reply_to = m.message_id AND n.kind = 'notice')
-          ORDER BY m.seq ASC`;
-        for (const message of unrouted) {
-          const team = teams.find((candidate) => candidate.id === message.team_id);
-          if (team === undefined || team.archivedAt !== null) continue;
-          const lead = (yield* activeMembers(team)).find((row) => row.assistant_id === team.leadId);
-          const selection = lead === undefined ? undefined : yield* leadSelection(lead);
-          if (lead !== undefined && selection !== undefined && (yield* canRoute(selection))) {
-            yield* FiberSet.run(
-              routing,
-              route(team.id, message.message_id, lead.assistant_id, selection).pipe(
-                storage,
-                quietly("routing"),
-              ),
-            );
-          } else {
-            yield* insertMessage({
-              teamId: team.id,
-              author: "assistant",
-              assistantId: null,
-              kind: "notice",
-              text: UNROUTED_NOTICE,
-              replyTo: message.message_id,
-            });
-          }
-        }
+        for (const team of teams) yield* routePending(team);
       }),
     )
     .pipe(quietly("reconcile"));

@@ -575,7 +575,7 @@ describe("group composer", () => {
     mocks.teams = [team({ leadId: null })];
     render();
     await type("hello again");
-    expect(recipients()).toBe("Mention someone");
+    expect(recipients()).toBe("Waits for a lead");
   });
 
   it("offers @everyone and marks the lead in the picker", async () => {
