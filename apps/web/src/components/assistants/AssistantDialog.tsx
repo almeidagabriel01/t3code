@@ -71,6 +71,7 @@ import { BUDGET_PERIOD_LABELS } from "../settings/ProviderBudgetSection";
 import { SETTINGS_PICKER_TRIGGER_CLASSNAME } from "../settings/settingsLayout";
 import { Alert, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
+import { StartTruncatedPath } from "../StartTruncatedPath";
 import { Checkbox } from "../ui/checkbox";
 import { Collapsible, CollapsiblePanel } from "../ui/collapsible";
 import { CollapsibleSectionHeader } from "../ui/collapsible-section-header";
@@ -699,12 +700,10 @@ function AssistantDialog(props: {
                       <span className="flex min-w-0 flex-col">
                         <span className="truncate">{row.label}</span>
                         {row.detail ? (
-                          <span
-                            dir="rtl"
-                            className="truncate text-left text-xs text-muted-foreground"
-                          >
-                            {row.detail}
-                          </span>
+                          <StartTruncatedPath
+                            path={row.detail}
+                            className="text-xs text-muted-foreground"
+                          />
                         ) : null}
                       </span>
                     </label>
