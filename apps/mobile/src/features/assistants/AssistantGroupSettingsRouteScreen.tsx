@@ -9,7 +9,8 @@ import {
   type AssistantTeam,
   type EnvironmentId,
 } from "@t3tools/contracts";
-import { useState } from "react";
+import { useRef, useState, type ComponentRef } from "react";
+import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/ui/AppText";
@@ -27,7 +28,7 @@ import {
 import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { TextField } from "./AssistantFormFields";
 import { GroupRoutinesSection } from "./GroupRoutinesSection";
-import { assistantTeamTargetAtom } from "./assistantTeamTarget";
+import { assistantTeamTargetAtom, type AssistantTeamTarget } from "./assistantTeamTarget";
 
 export function AssistantGroupSettingsRouteScreen() {
   const target = useAtomValue(assistantTeamTargetAtom);
@@ -51,6 +52,7 @@ export function AssistantGroupSettingsRouteScreen() {
       key={`${target.environmentId}:${team.id}`}
       environmentId={target.environmentId}
       team={team}
+      section={target.section}
     />
   );
 }
@@ -65,8 +67,10 @@ const memoriesOf = (text: string) =>
 function SettingsForm(props: {
   readonly environmentId: EnvironmentId;
   readonly team: AssistantTeam;
+  readonly section: AssistantTeamTarget["section"];
 }) {
-  const { environmentId, team } = props;
+  const { environmentId, team, section } = props;
+  const scrollRef = useRef<ComponentRef<typeof ScrollView>>(null);
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const teamActions = useAssistantTeamActions(environmentId);
@@ -125,6 +129,7 @@ function SettingsForm(props: {
   return (
     <SettingsScreen title={`${team.name} settings`}>
       <ScrollView
+        ref={scrollRef}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
         contentInsetAdjustmentBehavior="automatic"
@@ -173,7 +178,16 @@ function SettingsForm(props: {
           disabled={busy || !changed || !teamActions.canAct}
           onPress={() => void save()}
         />
-        <GroupRoutinesSection environmentId={environmentId} teamId={team.id} />
+        <View
+          onLayout={
+            section === "routines"
+              ? (event) =>
+                  scrollRef.current?.scrollTo({ y: event.nativeEvent.layout.y, animated: false })
+              : undefined
+          }
+        >
+          <GroupRoutinesSection environmentId={environmentId} teamId={team.id} />
+        </View>
         <ListSection
           title="Conversation"
           footer={

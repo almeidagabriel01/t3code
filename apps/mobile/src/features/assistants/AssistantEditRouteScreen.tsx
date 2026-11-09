@@ -11,7 +11,7 @@ import {
 import { ALL_PROJECTS, toggleAssistantProject } from "@t3tools/client-runtime/assistantSections";
 import { assistantSandboxView } from "@t3tools/client-runtime/state/assistants";
 import { useRef, useState } from "react";
-import { Platform, Pressable, ScrollView as InnerScrollView, View } from "react-native";
+import { Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/ui/AppText";
@@ -343,21 +343,19 @@ function AssistantForm(props: { readonly editor: AssistantEditor }) {
             description="All projects, or the projects it works in. Work in any other project is refused."
           />
           <ListSection>
-            <InnerScrollView className="max-h-72" nestedScrollEnabled>
-              {pickerRows.map((row) => (
-                <ChoiceRow
-                  key={row.id}
-                  role="checkbox"
-                  icon={row.id === ALL_PROJECTS ? "globe" : "folder.fill"}
-                  label={row.label}
-                  description={row.detail ?? undefined}
-                  selected={picked.includes(row.id)}
-                  onPress={() =>
-                    updateAssistantDraft({ projectIds: toggleAssistantProject(picked, row.id) })
-                  }
-                />
-              ))}
-            </InnerScrollView>
+            {pickerRows.map((row) => (
+              <ChoiceRow
+                key={row.id}
+                role="checkbox"
+                icon={row.id === ALL_PROJECTS ? "globe" : "folder.fill"}
+                label={row.label}
+                description={row.detail ?? undefined}
+                selected={picked.includes(row.id)}
+                onPress={() =>
+                  updateAssistantDraft({ projectIds: toggleAssistantProject(picked, row.id) })
+                }
+              />
+            ))}
           </ListSection>
           {projectChanged ? (
             <Text textRole="footnote" className="px-2 text-warning-foreground">

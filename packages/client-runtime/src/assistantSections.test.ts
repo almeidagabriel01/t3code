@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   assistantProjectFields,
+  assistantProjectsChip,
   assistantProjectsLabel,
   assistantProjectSelection,
   assistantSections,
@@ -273,5 +274,15 @@ describe("assistantProjectsLabel", () => {
     { name: "a project without a list is its home", scope: "project", ids: [], expected: "n-p1" },
   ] as const)("$name", ({ scope, ids, expected }) => {
     expect(assistantProjectsLabel(multiOf(scope, [...ids]), (id) => `n-${id}`)).toBe(expected);
+  });
+});
+
+describe("assistantProjectsChip", () => {
+  it.each([
+    { name: "scope all", scope: "all", ids: [], expected: "All projects" },
+    { name: "one project", scope: "project", ids: ["p1"], expected: "n-p1" },
+    { name: "several projects", scope: "project", ids: ["p1", "p2", "p3"], expected: "n-p1 +2" },
+  ] as const)("$name", ({ scope, ids, expected }) => {
+    expect(assistantProjectsChip(multiOf(scope, [...ids]), (id) => `n-${id}`)).toBe(expected);
   });
 });
