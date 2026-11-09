@@ -198,6 +198,7 @@ describe("serverSettings helpers", () => {
     ).toEqual({
       worktreeAfterDays: null,
       worktreeSettledAfterDays: null,
+      worktreeSnapshotsAfterDays: 30,
       worktreeOnMerge: true,
       worktreeOnDelete: false,
       worktreeUnchanged: false,

@@ -27,13 +27,7 @@ import {
   UsersIcon,
 } from "lucide-react";
 import { useParams } from "@tanstack/react-router";
-import {
-  Fragment,
-  memo,
-  useState,
-  type KeyboardEvent as ReactKeyboardEvent,
-  type ReactNode,
-} from "react";
+import { Fragment, memo, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 
 import { cn } from "~/lib/utils";
 import { updateClientSettings, useClientSettings } from "../../hooks/useSettings";

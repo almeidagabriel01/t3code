@@ -1,4 +1,4 @@
-import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   assistantMetaLabel,
   rankAssistants,
@@ -260,7 +260,12 @@ function GroupFoldRow(props: {
         onPress={() => openTeam.chat(environmentId, team.id)}
         className="min-h-11 min-w-0 flex-1 flex-row items-center gap-2 px-2 active:opacity-70"
       >
-        <SymbolView name="bubble.left.and.bubble.right" size={14} tintColorClassName={mutedIcon} type="monochrome" />
+        <SymbolView
+          name="bubble.left.and.bubble.right"
+          size={14}
+          tintColorClassName={mutedIcon}
+          type="monochrome"
+        />
         <Text
           className={cn(
             "shrink text-base font-t3-medium",
