@@ -81,6 +81,7 @@ describe("RPC authorization scopes", () => {
       WS_METHODS.terminalClose,
       WS_METHODS.previewStopLocalServer,
       WS_METHODS.heavyQueuePromote,
+      WS_METHODS.heavyQueueStartNow,
       WS_METHODS.heavyQueueCancel,
       WS_METHODS.heavyQueueMove,
       WS_METHODS.heavyQueueSetPaused,

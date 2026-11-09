@@ -84,6 +84,7 @@ export function useShutDownDevice(environmentId: EnvironmentId) {
 export function useHeavyQueueActions(environmentId: EnvironmentId) {
   const canChange = useAtomValue(heavyQueueEnvironment.move.permissionAtom(environmentId));
   const moveCommand = useAtomCommand(heavyQueueEnvironment.move, { reportFailure: false });
+  const startNowCommand = useAtomCommand(heavyQueueEnvironment.startNow, { reportFailure: false });
   const cancelCommand = useAtomCommand(heavyQueueEnvironment.cancel, { reportFailure: false });
   const pausedCommand = useAtomCommand(heavyQueueEnvironment.setPaused, { reportFailure: false });
   const ruleCommand = useAtomCommand(heavyQueueEnvironment.setRule, { reportFailure: false });
@@ -97,6 +98,8 @@ export function useHeavyQueueActions(environmentId: EnvironmentId) {
     canChange,
     move: async (id: string, beforeId: string | null) =>
       report("Could not move it", await moveCommand({ environmentId, input: { id, beforeId } })),
+    startNow: async (id: string) =>
+      report("Could not start it", await startNowCommand({ environmentId, input: { id } })),
     cancel: async (id: string, running: boolean) => {
       const message = running
         ? "Stop the running command? It receives a termination signal."

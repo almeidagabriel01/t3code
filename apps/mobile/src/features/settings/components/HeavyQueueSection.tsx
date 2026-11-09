@@ -8,6 +8,7 @@ import {
   queueSummary,
   readableLabel,
   ruleForRoot,
+  usageLine,
   type MoveAction,
 } from "@t3tools/client-runtime/state/heavyQueueModel";
 import { heavyEntryName } from "@t3tools/shared/heavyEntryName";
@@ -28,6 +29,7 @@ const MAX_LIMIT = 8;
 
 type Commands = {
   readonly move: (id: string, beforeId: string | null) => void;
+  readonly startNow: (entry: HeavyQueueEntry) => void;
   readonly cancel: (entry: HeavyQueueEntry) => void;
   readonly setRule: (root: string, priority: "first" | "last" | null) => void;
 };
@@ -38,6 +40,7 @@ function QueueEntryRows(props: {
   readonly entry: HeavyQueueEntry;
   readonly position: number | null;
   readonly reason: string | undefined;
+  readonly usage: string | null;
   readonly rules: ReadonlyArray<{ readonly root: string; readonly priority: "first" | "last" }>;
   readonly canChange: boolean;
   readonly commands: Commands;
@@ -57,6 +60,7 @@ function QueueEntryRows(props: {
   const running = position === null;
   const description = [
     readableLabel(entry.label),
+    props.usage,
     project?.title,
     origin,
     rule === undefined ? undefined : PRIORITY_LABEL[rule.priority],
@@ -89,6 +93,13 @@ function QueueEntryRows(props: {
             label="Run next"
             disabled={!can("next")}
             onPress={() => move("next")}
+          />
+          <SettingsActionRow
+            icon="bolt.circle"
+            label="Start now"
+            description="Ignores how busy the Mac is"
+            disabled={!props.canChange}
+            onPress={() => commands.startNow(entry)}
           />
           <SettingsActionRow
             icon="arrow.up"
@@ -163,6 +174,7 @@ export function HeavyQueueSection(props: { readonly environmentId: EnvironmentId
   const state = useHeavyQueueState(environmentId);
   const canChange = useAtomValue(heavyQueueEnvironment.move.permissionAtom(environmentId));
   const move = useAtomCommand(heavyQueueEnvironment.move);
+  const startNow = useAtomCommand(heavyQueueEnvironment.startNow);
   const cancel = useAtomCommand(heavyQueueEnvironment.cancel);
   const setPaused = useAtomCommand(heavyQueueEnvironment.setPaused);
   const setRule = useAtomCommand(heavyQueueEnvironment.setRule);
@@ -171,6 +183,14 @@ export function HeavyQueueSection(props: { readonly environmentId: EnvironmentId
   const commands: Commands = {
     move: (id, beforeId) => void move({ environmentId, input: { id, beforeId } }),
     setRule: (root, priority) => void setRule({ environmentId, input: { root, priority } }),
+    startNow: (entry) =>
+      Alert.alert("Start now?", `${heavyEntryName(entry)} starts even if the Mac is busy.`, [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Start now",
+          onPress: () => void startNow({ environmentId, input: { id: entry.id } }),
+        },
+      ]),
     cancel: (entry) =>
       Alert.alert(
         entry.startedAt === null ? "Remove from the queue?" : "Stop the running command?",
@@ -251,6 +271,7 @@ export function HeavyQueueSection(props: { readonly environmentId: EnvironmentId
             position={position}
             now={now}
             reason={state.reasons[entry.id]}
+            usage={usageLine(entry, state)}
             rules={state.rules}
             canChange={canChange}
             commands={commands}

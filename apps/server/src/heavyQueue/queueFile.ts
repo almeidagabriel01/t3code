@@ -357,6 +357,8 @@ export const recordSample = (
             ? entry
             : {
                 ...entry,
+                cpu: peak.cpu,
+                memory: peak.memoryBytes,
                 peakCpu: Math.max(entry.peakCpu ?? 0, peak.cpu),
                 peakMemory: Math.max(entry.peakMemory ?? 0, peak.memoryBytes),
               };
@@ -398,6 +400,21 @@ export const promote = (dir: string, id: string, note?: string) =>
   mutate(dir, (doc) =>
     decideMove(doc, id, doc.entries.find((entry) => entry.startedAt === null)?.id ?? id, note),
   );
+
+/** The user override: the waiter starts at once, past the pause, the slots and the load check. */
+export const startNow = (dir: string, id: string) =>
+  mutate(dir, (doc): Decided<MoveResult> => {
+    const target = doc.entries.find((entry) => entry.id === id);
+    if (target === undefined) return { doc, result: "not-found" };
+    if (target.startedAt !== null) return { doc, result: "running" };
+    return {
+      doc: {
+        ...doc,
+        entries: doc.entries.map((entry) => (entry.id === id ? { ...entry, forced: true } : entry)),
+      },
+      result: "ok",
+    };
+  });
 
 /** Removes a waiter, or stops the running `t3 heavy` command with SIGTERM. */
 export const cancel = (dir: string, id: string) => mutate(dir, (doc) => decideCancel(doc, id));

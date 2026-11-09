@@ -280,6 +280,58 @@ describe("admission plan", () => {
     }
   });
 
+  const forced = (id: string, label: string) => ({ ...entry(id, label), forced: true });
+  const full = [
+    entry("r1", "vp run build", 60_000),
+    entry("r2", "vp run build", 60_000),
+    entry("r3", "vp run build", 60_000),
+  ];
+  it.each([
+    { name: "paused", change: { paused: true }, entries: [] },
+    { name: "every slot busy", change: {}, entries: full },
+    {
+      name: "no headroom",
+      change: { sample: { ...calm, headroomSince: null, availableMemoryBytes: GIB } },
+      entries: [entry("r1", "vp run build", 60_000)],
+    },
+    {
+      name: "no load reading",
+      change: { sample: null },
+      entries: [entry("r1", "vp run build", 60_000)],
+    },
+    {
+      name: "an exclusive job running",
+      change: {},
+      entries: [entry("r1", "xcrun simctl boot x", 60_000)],
+    },
+  ])(
+    "admits a forced waiter despite $name, but still holds a normal one",
+    ({ change, entries }) => {
+      const waiters = [entry("n", "vp run build"), forced("f", "vp run build")];
+      const result = plan({ ...base, ...change, entries: [...entries, ...waiters] });
+      expect(result.admit).toBe("f");
+      expect(result.reasons["n"]).toBeDefined();
+      const held = plan({ ...base, ...change, entries: [...entries, entry("n", "vp run build")] });
+      expect(held.admit).toBeNull();
+    },
+  );
+
+  it("admits forced waiters one per plan call, in queue order", () => {
+    const entries = [
+      ...full,
+      entry("n", "vp run build"),
+      forced("f2", "vp run build"),
+      forced("f1", "vp run build"),
+    ];
+    expect(plan({ ...base, paused: true, entries }).admit).toBe("f2");
+    const afterFirst = entries.map((e) => (e.id === "f2" ? { ...e, startedAt: at(0) } : e));
+    const reordered = [
+      ...afterFirst.filter((e) => e.startedAt !== null),
+      ...afterFirst.filter((e) => e.startedAt === null),
+    ];
+    expect(plan({ ...base, paused: true, entries: reordered }).admit).toBe("f1");
+  });
+
   it("asks for a higher memory level to reopen after blocking, so admission does not flap", () => {
     const entries = [entry("r", "vp run build", 60_000), entry("a", "vp run build")];
     // 11.9 - 4 GiB sits above the 20% floor (6.4) but below the 25% reopen level (8).

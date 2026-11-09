@@ -20,6 +20,7 @@ import {
   queueSummary,
   readableLabel,
   ruleForRoot,
+  usageLine,
   type MoveAction,
 } from "@t3tools/client-runtime/state/heavyQueueModel";
 import type { EnvironmentId, HeavyQueueEntry } from "@t3tools/contracts";
@@ -33,6 +34,7 @@ import {
   HourglassIcon,
   MessageSquareIcon,
   PlayIcon,
+  RocketIcon,
   SquareIcon,
   Trash2Icon,
 } from "lucide-react";
@@ -217,6 +219,7 @@ function Row({
   const label = heavyEntryName(entry);
   const command = readableLabel(entry.label);
   const title = entry.threadId === null ? undefined : threadTitle(entry.threadId);
+  const usage = usageLine(entry, state);
   const detail = [state.reasons[entry.id], entry.note].filter(Boolean).join(" · ");
   const Icon = running ? PlayIcon : HourglassIcon;
   return (
@@ -276,6 +279,9 @@ function Row({
             {entry.label}
           </TooltipPopup>
         </Tooltip>
+        {usage === null ? null : (
+          <div className="truncate text-3xs text-muted-foreground">{usage}</div>
+        )}
         <div className="flex min-w-0 items-center gap-1 text-3xs text-muted-foreground">
           {entry.threadId === null ? null : (
             <button
@@ -306,6 +312,25 @@ function Row({
           <Elapsed since={entry.startedAt} prefix="Running ·" />
         )}
       </span>
+      {running ? null : (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant="ghost-muted"
+                size="icon-micro"
+                className="cursor-pointer"
+                aria-label={`Start ${label} now`}
+                disabled={!actions.canChange}
+                onClick={() => void actions.startNow(entry.id)}
+              />
+            }
+          >
+            <RocketIcon aria-hidden />
+          </TooltipTrigger>
+          <TooltipPopup side="top">Start now, even if the Mac is busy</TooltipPopup>
+        </Tooltip>
+      )}
       <RowMenu
         entry={entry}
         entries={entries}

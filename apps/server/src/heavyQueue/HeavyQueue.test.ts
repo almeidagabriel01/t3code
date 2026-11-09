@@ -122,6 +122,29 @@ describe("HeavyQueue", () => {
     ),
   );
 
+  it.effect("state gives a waiter its command's usual cost only when it has history", () =>
+    withQueue((dir, queue) =>
+      Effect.gen(function* () {
+        const job = (id: string): HeavyQueueEntry => ({ ...holder, id, label: "vp run build" });
+        Queue.enqueue(dir, job("old"));
+        Queue.enqueue(dir, job("new"));
+        Queue.enqueue(dir, { ...job("other"), label: "unseen command" });
+        expect((yield* queue.state).estimates).toEqual({});
+        Queue.remove(dir, "holder");
+        Queue.tryStart(dir, "old");
+        Queue.recordSample(
+          dir,
+          { at: 1, busyCores: 1, cpuCount: 8, availableMemoryBytes: 5, totalMemoryBytes: 10 },
+          { old: { cpu: 3, memoryBytes: 1000 } },
+        );
+        Queue.remove(dir, "old");
+        const { estimates } = yield* queue.state;
+        expect(estimates?.["new"]).toMatchObject({ cpu: 3, memoryBytes: 1000 });
+        expect(estimates?.["other"]).toBeUndefined();
+      }),
+    ),
+  );
+
   it.effect("moves, pauses and sets priority rules through the shared file", () =>
     withQueue((dir, queue) =>
       Effect.gen(function* () {

@@ -8,6 +8,7 @@ import {
   ordinal,
   projectForCwd,
   queueSummary,
+  usageLine,
   readableLabel,
   ruleForRoot,
 } from "./heavyQueueModel.ts";
@@ -69,6 +70,55 @@ describe("moveTarget and dropTarget", () => {
     ["b", "r", undefined],
   ])("dropping %s on %s lands before %s", (id, over, expected) => {
     expect(dropTarget(entries, id, over)).toBe(expected);
+  });
+});
+
+describe("usageLine", () => {
+  const GB = 1024 ** 3;
+  const machine = { busyCores: 1, cpuCount: 8, availableMemoryBytes: GB, totalMemoryBytes: 8 * GB };
+  const run = { ...e("r", true), cpu: 2.04, memory: 3.25 * GB, peakCpu: 4, peakMemory: 5 * GB };
+  const usual = (durationMs: number) => ({ b: { cpu: 3.96, memoryBytes: 2.5 * GB, durationMs } });
+  it.each([
+    [
+      "current and peak with the share",
+      run,
+      { machine },
+      "Using 2.0 cores (26%) · 3.3 GB · peak 4.0 cores · 5.0 GB",
+    ],
+    [
+      "no share without a reading",
+      run,
+      { machine: null },
+      "Using 2.0 cores · 3.3 GB · peak 4.0 cores · 5.0 GB",
+    ],
+    [
+      "peak only when older",
+      { ...e("r", true), peakCpu: 1, peakMemory: GB },
+      { machine },
+      "peak 1.0 cores · 1.0 GB",
+    ],
+    ["nothing before a sample", e("r", true), { machine }, null],
+    [
+      "usual in seconds",
+      e("b"),
+      { machine, estimates: usual(45_000) },
+      "Usually ~4.0 cores · 2.5 GB · 45s",
+    ],
+    [
+      "usual in minutes",
+      e("b"),
+      { machine, estimates: usual(150_000) },
+      "Usually ~4.0 cores · 2.5 GB · 3 min",
+    ],
+    [
+      "usual in hours",
+      e("b"),
+      { machine, estimates: usual(5_400_000) },
+      "Usually ~4.0 cores · 2.5 GB · 1.5 h",
+    ],
+    ["nothing without history", e("b"), { machine, estimates: {} }, null],
+  ])("%s", (_name, entry, state, expected) => {
+    expect(usageLine(entry, state)).toBe(expected);
   });
 });
 

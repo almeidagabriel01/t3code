@@ -154,6 +154,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.keepAwakeSubscribeStatus]: "keepAwake",
   [WS_METHODS.heavyQueueSubscribe]: "heavyQueue",
   [WS_METHODS.heavyQueuePromote]: "heavyQueue",
+  [WS_METHODS.heavyQueueStartNow]: "heavyQueue",
   [WS_METHODS.heavyQueueCancel]: "heavyQueue",
   [WS_METHODS.heavyQueueMove]: "heavyQueue",
   [WS_METHODS.heavyQueueSetPaused]: "heavyQueue",

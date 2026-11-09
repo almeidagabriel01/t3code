@@ -210,6 +210,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.keepAwakeSubscribeStatus]: AuthOrchestrationReadScope,
   [WS_METHODS.heavyQueueSubscribe]: AuthOrchestrationReadScope,
   [WS_METHODS.heavyQueuePromote]: AuthTerminalOperateScope,
+  [WS_METHODS.heavyQueueStartNow]: AuthTerminalOperateScope,
   [WS_METHODS.heavyQueueCancel]: AuthTerminalOperateScope,
   [WS_METHODS.heavyQueueMove]: AuthTerminalOperateScope,
   [WS_METHODS.heavyQueueSetPaused]: AuthTerminalOperateScope,
