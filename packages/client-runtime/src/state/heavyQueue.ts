@@ -19,6 +19,10 @@ export function createHeavyQueueEnvironmentAtoms<R, E>(
       label: "environment-data:heavy-queue:promote",
       tag: WS_METHODS.heavyQueuePromote,
     }),
+    startNow: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:heavy-queue:start-now",
+      tag: WS_METHODS.heavyQueueStartNow,
+    }),
     cancel: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:heavy-queue:cancel",
       tag: WS_METHODS.heavyQueueCancel,

@@ -29,6 +29,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.serverKillListeningPort]: AuthTerminalOperateScope,
   // Reordering or removing queued heavy work changes when other agents' processes run.
   [WS_METHODS.heavyQueuePromote]: AuthTerminalOperateScope,
+  [WS_METHODS.heavyQueueStartNow]: AuthTerminalOperateScope,
   [WS_METHODS.heavyQueueCancel]: AuthTerminalOperateScope,
   [WS_METHODS.heavyQueueMove]: AuthTerminalOperateScope,
   [WS_METHODS.heavyQueueSetPaused]: AuthTerminalOperateScope,

@@ -13,7 +13,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
-import { SAMPLE_FRESH_MS } from "./admission.ts";
+import { estimate, SAMPLE_FRESH_MS, signatureOf } from "./admission.ts";
 import * as QueueFile from "./queueFile.ts";
 
 const POLL_INTERVAL = "1 second";
@@ -42,6 +42,8 @@ export class HeavyQueue extends Context.Service<
     readonly stream: Stream.Stream<HeavyQueueState>;
     /** Runs a waiter next; `note` records who asked, for agents acting on the user's request. */
     readonly promote: (id: string, note?: string) => Effect.Effect<void, HeavyQueueError>;
+    /** The user releases a waiter at once, ignoring slots, load and the pause. Never exposed to agents. */
+    readonly startNow: (id: string) => Effect.Effect<void, HeavyQueueError>;
     /** Puts a waiter before `beforeId`, or last when null. */
     readonly move: (id: string, beforeId: string | null) => Effect.Effect<void, HeavyQueueError>;
     /** Removes a waiter, or stops the running `t3 heavy` command. */
@@ -84,8 +86,18 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string) {
     const { doc, plan } = QueueFile.readPlan(dir, now);
     const { entries, paused, rules, maxRunning, sample } = doc;
     const fresh = sample !== null && now - sample.at <= SAMPLE_FRESH_MS;
+    const estimates: Record<string, { cpu: number; memoryBytes: number; durationMs: number }> = {};
+    for (const entry of entries) {
+      if (entry.startedAt !== null || (doc.history[signatureOf(entry.label)] ?? []).length === 0) {
+        continue;
+      }
+      const usual = estimate(doc.history, entry, 1);
+      if (usual.durationMs !== null)
+        estimates[entry.id] = { ...usual, durationMs: usual.durationMs };
+    }
     return {
       entries,
+      estimates,
       paused,
       rules,
       maxRunning,
@@ -158,6 +170,9 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string) {
     ),
     promote: Effect.fn("HeavyQueue.promote")((id: string, note?: string) =>
       act("promoted", () => QueueFile.promote(dir, id, note)),
+    ),
+    startNow: Effect.fn("HeavyQueue.startNow")((id: string) =>
+      act("started", () => QueueFile.startNow(dir, id)),
     ),
     move: Effect.fn("HeavyQueue.move")((id: string, beforeId: string | null) =>
       act("moved", () => QueueFile.move(dir, id, beforeId, "Moved by the user")),

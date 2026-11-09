@@ -2599,6 +2599,7 @@ export const layerWsRpc = (
         [WS_METHODS.keepAwakeSubscribeStatus]: () => keepAwake.streamStatus,
         [WS_METHODS.heavyQueueSubscribe]: () => heavyQueue.stream,
         [WS_METHODS.heavyQueuePromote]: ({ id }) => heavyQueue.promote(id),
+        [WS_METHODS.heavyQueueStartNow]: ({ id }) => heavyQueue.startNow(id),
         [WS_METHODS.heavyQueueCancel]: ({ id }) => heavyQueue.cancel(id),
         [WS_METHODS.heavyQueueMove]: ({ id, beforeId }) => heavyQueue.move(id, beforeId),
         [WS_METHODS.heavyQueueSetPaused]: ({ paused }) => heavyQueue.setPaused(paused),

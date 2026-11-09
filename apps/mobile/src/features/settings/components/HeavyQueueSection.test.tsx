@@ -32,6 +32,7 @@ vi.mock("../../../state/heavyQueue", () => {
   return {
     heavyQueueEnvironment: {
       move: command("move"),
+      startNow: command("startNow"),
       cancel: command("cancel"),
       setPaused: command("setPaused"),
       setRule: command("setRule"),
@@ -183,6 +184,20 @@ describe("HeavyQueueSection", () => {
     expect(mocks.commands.move).toHaveBeenLastCalledWith({
       environmentId: "env",
       input: { id: "d", beforeId: "c" },
+    });
+    await view.unmount();
+  });
+
+  it("starts a waiter now only after the alert is confirmed", async () => {
+    setup([entry("a", { startedAt: NOW }), entry("b")]);
+    const view = await mount();
+    await act(async () => view.button("Start now").click());
+    expect(mocks.commands.startNow).not.toHaveBeenCalled();
+    const buttons = mocks.alert.mock.calls[0]?.[2] as Array<{ text: string; onPress?: () => void }>;
+    buttons.find((b) => b.text === "Start now")?.onPress?.();
+    expect(mocks.commands.startNow).toHaveBeenCalledWith({
+      environmentId: "env",
+      input: { id: "b" },
     });
     await view.unmount();
   });

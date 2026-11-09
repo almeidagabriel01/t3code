@@ -73,6 +73,41 @@ export function formatDuration(fromIso: string, now: number): string {
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
+const GB = 1024 ** 3;
+const cores = (n: number) => `${n.toFixed(1)} cores`;
+const gb = (bytes: number) => `${(bytes / GB).toFixed(1)} GB`;
+const usualTime = (ms: number) => {
+  const seconds = Math.round(ms / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.round(seconds / 60);
+  return minutes < 60 ? `${minutes} min` : `${(minutes / 60).toFixed(1)} h`;
+};
+
+/** One muted line of usage: a running job's current and peak, or a waiter's usual cost. Null when unknown. */
+export function usageLine(
+  entry: HeavyQueueEntry,
+  state: Pick<HeavyQueueState, "estimates" | "machine">,
+): string | null {
+  if (entry.startedAt === null) {
+    const usual = state.estimates?.[entry.id];
+    return usual === undefined
+      ? null
+      : `Usually ~${cores(usual.cpu)} · ${gb(usual.memoryBytes)} · ${usualTime(usual.durationMs)}`;
+  }
+  const parts: string[] = [];
+  if (entry.cpu !== undefined && entry.memory !== undefined) {
+    const share =
+      state.machine === null
+        ? ""
+        : ` (${Math.round((entry.cpu / Math.max(1, state.machine.cpuCount)) * 100)}%)`;
+    parts.push(`Using ${cores(entry.cpu)}${share} · ${gb(entry.memory)}`);
+  }
+  if (entry.peakCpu !== undefined && entry.peakMemory !== undefined) {
+    parts.push(`peak ${cores(entry.peakCpu)} · ${gb(entry.peakMemory)}`);
+  }
+  return parts.length === 0 ? null : parts.join(" · ");
+}
+
 /** "2 of 3 running · Mac has room": what the queue is doing at a glance. */
 export function queueSummary(
   state: Pick<HeavyQueueState, "entries" | "paused" | "maxRunning" | "room" | "machine">,

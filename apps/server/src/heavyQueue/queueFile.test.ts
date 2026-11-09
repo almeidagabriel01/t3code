@@ -58,6 +58,24 @@ describe("heavy queue file", () => {
     expect(Queue.isAlive(deadPid()!)).toBe(false);
   });
 
+  it("startNow lets a waiter start past the pause and full slots, in queue order", () => {
+    const dir = tempDir();
+    for (const id of ["a", "b", "c", "d"]) Queue.enqueue(dir, entry(id));
+    Queue.setMaxRunning(dir, 1);
+    expect(Queue.tryStart(dir, "a")).toEqual({ status: "started" });
+    Queue.setPaused(dir, true);
+    expect(Queue.startNow(dir, "d")).toBe("ok");
+    expect(Queue.startNow(dir, "c")).toBe("ok");
+    expect(Queue.startNow(dir, "a")).toBe("running");
+    expect(Queue.startNow(dir, "nope")).toBe("not-found");
+    expect(Queue.tryStart(dir, "b")).toMatchObject({ status: "waiting", paused: true });
+    expect(Queue.tryStart(dir, "d")).toMatchObject({ status: "waiting", position: 3 });
+    expect(Queue.tryStart(dir, "c")).toEqual({ status: "started" });
+    expect(Queue.tryStart(dir, "d")).toEqual({ status: "started" });
+    expect(Queue.read(dir).filter((e) => e.startedAt !== null)).toHaveLength(3);
+    expect(Queue.tryStart(dir, "b")).toMatchObject({ status: "waiting" });
+  });
+
   it("promotes a waiter ahead of waiters but never ahead of the running entry", () => {
     const dir = tempDir();
     for (const id of ["a", "b", "c", "d"]) Queue.enqueue(dir, entry(id));

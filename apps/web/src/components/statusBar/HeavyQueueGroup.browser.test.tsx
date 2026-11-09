@@ -8,6 +8,7 @@ import "../../index.css";
 const mocks = vi.hoisted(() => ({
   actions: {
     move: vi.fn(),
+    startNow: vi.fn(),
     cancel: vi.fn(),
     setPaused: vi.fn(),
     setRule: vi.fn(),
@@ -56,7 +57,14 @@ const entry = (id: string, over: Partial<HeavyQueueEntry> = {}): HeavyQueueEntry
 });
 
 function setup(entries: ReadonlyArray<HeavyQueueEntry>, over: Partial<HeavyQueueState> = {}) {
-  for (const key of ["move", "cancel", "setPaused", "setRule", "setMaxRunning"] as const) {
+  for (const key of [
+    "move",
+    "startNow",
+    "cancel",
+    "setPaused",
+    "setRule",
+    "setMaxRunning",
+  ] as const) {
     mocks.actions[key].mockReset();
   }
   mocks.openThread.mockReset();
@@ -128,6 +136,35 @@ describe("HeavyQueueGroup", () => {
     await openMenu(screen, menu);
     await userEvent.click(screen.getByRole("menuitem", { name: item }));
     expect(mocks.actions.move).toHaveBeenCalledWith(...expected);
+  });
+
+  it("starts a waiter now from its own button, not for the running one", async () => {
+    setup([entry("run", { startedAt: "2026-01-01T00:00:00.000Z" }), entry("b")]);
+    await using screen = await render(group());
+    expect(screen.container.querySelectorAll('[aria-label^="Start "]')).toHaveLength(1);
+    await userEvent.click(screen.getByRole("button", { name: "Start pnpm b now" }));
+    expect(mocks.actions.startNow).toHaveBeenCalledWith("b");
+  });
+
+  it("shows each job's usage on one muted line", async () => {
+    setup(
+      [
+        entry("run", { startedAt: "2026-01-01T00:00:00.000Z", cpu: 2, memory: 3 * 1024 ** 3 }),
+        entry("b"),
+      ],
+      {
+        estimates: { b: { cpu: 4, memoryBytes: 3 * 1024 ** 3, durationMs: 120_000 } },
+        machine: {
+          busyCores: 2,
+          cpuCount: 8,
+          availableMemoryBytes: 8 * 1024 ** 3,
+          totalMemoryBytes: 16 * 1024 ** 3,
+        },
+      },
+    );
+    await using screen = await render(group());
+    await expect.element(screen.getByText("Using 2.0 cores (25%) · 3.0 GB")).toBeVisible();
+    await expect.element(screen.getByText("Usually ~4.0 cores · 3.0 GB · 2 min")).toBeVisible();
   });
 
   it("greys out moves that would change nothing", async () => {

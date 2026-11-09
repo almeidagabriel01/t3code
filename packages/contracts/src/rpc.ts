@@ -809,6 +809,7 @@ export const WS_METHODS = {
   keepAwakeSubscribeStatus: "keepAwake.subscribeStatus",
   heavyQueueSubscribe: "heavyQueue.subscribe",
   heavyQueuePromote: "heavyQueue.promote",
+  heavyQueueStartNow: "heavyQueue.startNow",
   heavyQueueCancel: "heavyQueue.cancel",
   heavyQueueMove: "heavyQueue.move",
   heavyQueueSetPaused: "heavyQueue.setPaused",
@@ -2481,6 +2482,11 @@ const WsHeavyQueuePromoteRpc = Rpc.make(WS_METHODS.heavyQueuePromote, {
   error: Schema.Union([HeavyQueueError, EnvironmentAuthorizationError]),
 });
 
+const WsHeavyQueueStartNowRpc = Rpc.make(WS_METHODS.heavyQueueStartNow, {
+  payload: HeavyQueueEntryInput,
+  error: Schema.Union([HeavyQueueError, EnvironmentAuthorizationError]),
+});
+
 const WsHeavyQueueCancelRpc = Rpc.make(WS_METHODS.heavyQueueCancel, {
   payload: HeavyQueueEntryInput,
   error: Schema.Union([HeavyQueueError, EnvironmentAuthorizationError]),
@@ -2901,6 +2907,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsKeepAwakeSubscribeStatusRpc,
   WsHeavyQueueSubscribeRpc,
   WsHeavyQueuePromoteRpc,
+  WsHeavyQueueStartNowRpc,
   WsHeavyQueueCancelRpc,
   WsHeavyQueueMoveRpc,
   WsHeavyQueueSetPausedRpc,

@@ -55,6 +55,51 @@ describe("peaksOf", () => {
   });
 });
 
+describe("recordSample", () => {
+  it.each([
+    {
+      name: "first reading",
+      readings: [[2, 100]],
+      expected: { cpu: 2, memory: 100, peakCpu: 2, peakMemory: 100 },
+    },
+    {
+      name: "load drops",
+      readings: [
+        [4, 300],
+        [1, 50],
+      ],
+      expected: { cpu: 1, memory: 50, peakCpu: 4, peakMemory: 300 },
+    },
+    {
+      name: "load rises again",
+      readings: [
+        [1, 50],
+        [3, 200],
+      ],
+      expected: { cpu: 3, memory: 200, peakCpu: 3, peakMemory: 200 },
+    },
+  ])("keeps the latest and the peak: $name", ({ readings, expected }) => {
+    const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-heavy-record-"));
+    try {
+      Queue.enqueue(dir, entry("a", process.pid, false));
+      Queue.tryStart(dir, "a");
+      const machine = {
+        at: 1,
+        busyCores: 1,
+        cpuCount: 8,
+        availableMemoryBytes: 5,
+        totalMemoryBytes: 10,
+      };
+      for (const [cpu, memoryBytes] of readings) {
+        Queue.recordSample(dir, machine, { a: { cpu: cpu!, memoryBytes: memoryBytes! } });
+      }
+      expect(Queue.readDoc(dir).entries[0]).toMatchObject(expected);
+    } finally {
+      NodeFS.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 const peaks = (entries: HeavyQueueEntry[]) => Sampler.peaksOf(entries, processes);
 
 describe("HeavyQueueSampler", () => {
@@ -93,7 +138,7 @@ describe("HeavyQueueSampler", () => {
         availableMemoryBytes: 5,
         totalMemoryBytes: 10,
       });
-      expect(doc.entries[0]).toMatchObject({ peakCpu: 2, peakMemory: 77 });
+      expect(doc.entries[0]).toMatchObject({ cpu: 2, memory: 77, peakCpu: 2, peakMemory: 77 });
     }).pipe(Effect.scoped),
   );
 });

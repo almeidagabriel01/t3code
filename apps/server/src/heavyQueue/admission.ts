@@ -146,6 +146,8 @@ export const plan = (input: PlanInput): Plan => {
     return { admit, reasons, room, holding };
   };
 
+  const forced = waiting.find((entry) => entry.forced === true);
+  if (forced !== undefined) return finish(forced.id, null, true, input.holding);
   if (input.paused) return finish(null, "paused", false, input.holding);
   if (running.some((entry) => kindOf(entry) === "exclusive")) {
     return finish(null, "an exclusive job is running alone", false, input.holding);

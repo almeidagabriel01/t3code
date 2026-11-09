@@ -18,8 +18,13 @@ export const HeavyQueueEntry = Schema.Struct({
   pinned: Schema.optionalKey(Schema.Boolean),
   /** Who last reordered it, when anyone did. */
   note: Schema.optionalKey(Schema.String),
+  /** The user released it: it starts at once, even when slots are full, the machine is loaded or the queue is paused. */
+  forced: Schema.optionalKey(Schema.Boolean),
   /** Held by a T3 server itself rather than a `t3 heavy` command, so it cannot be stopped by signal. */
   server: Schema.optionalKey(Schema.Boolean),
+  /** Latest cores and resident bytes of its process tree, refreshed each sample while it runs. */
+  cpu: Schema.optionalKey(Schema.Number),
+  memory: Schema.optionalKey(Schema.Number),
   /** Peak cores and resident bytes of its process tree so far, sampled while it runs. */
   peakCpu: Schema.optionalKey(Schema.Number),
   peakMemory: Schema.optionalKey(Schema.Number),
@@ -41,7 +46,16 @@ export const HeavyQueueMachine = Schema.Struct({
 });
 
 /** Machine-wide, in run order: the running entry (if any) first, then waiters. */
+/** What a command usually uses, from its finished runs; absent when it has no history. */
+export const HeavyQueueEstimate = Schema.Struct({
+  cpu: Schema.Number,
+  memoryBytes: Schema.Number,
+  durationMs: Schema.Number,
+});
+
 export const HeavyQueueState = Schema.Struct({
+  /** Usual usage of each waiting entry that has history, by entry id. */
+  estimates: Schema.optionalKey(Schema.Record(Schema.String, HeavyQueueEstimate)),
   entries: Schema.Array(HeavyQueueEntry),
   /** While true nothing new starts; the running entry continues. */
   paused: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
