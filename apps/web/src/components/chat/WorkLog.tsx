@@ -7,6 +7,7 @@ import {
   type ReactNode,
 } from "react";
 import { cn } from "../../lib/utils";
+import { isSelectionClick } from "./selectionClick";
 
 const GroupedRows = createContext(false);
 
@@ -54,13 +55,13 @@ function WorkLogLine({ icon, label, trailing, wrapLabel }: RowContent) {
   return (
     <div
       className={cn(
-        "flex min-h-6 min-w-0 gap-1.5 text-sm leading-relaxed select-none [&_*]:select-none",
+        "flex min-h-6 min-w-0 gap-1.5 text-sm leading-relaxed",
         wrapLabel ? "items-start" : "items-center",
       )}
     >
       <div className="flex min-w-0 flex-1 items-baseline gap-1.5">
         {icon ? (
-          <span className="relative w-6 shrink-0 leading-0">
+          <span className="relative w-6 shrink-0 leading-0 select-none">
             <span className="inline-block size-6 overflow-hidden align-[calc(0.5cap_-_0.75rem)]">
               <span className="flex size-full items-center justify-center">{icon}</span>
             </span>
@@ -68,14 +69,14 @@ function WorkLogLine({ icon, label, trailing, wrapLabel }: RowContent) {
         ) : null}
         <div
           className={cn(
-            "min-w-0 flex-1 text-secondary-label",
+            "min-w-0 flex-1 text-secondary-label select-text",
             !wrapLabel && "truncate [&_*]:whitespace-nowrap",
           )}
         >
           {label}
         </div>
       </div>
-      {trailing}
+      {trailing ? <div className="contents select-none">{trailing}</div> : null}
     </div>
   );
 }
@@ -97,13 +98,32 @@ export function WorkLogButton({
   label,
   trailing,
   wrapLabel = false,
+  onClick,
+  onKeyDown,
   ...buttonProps
-}: RowContent & Omit<ComponentProps<"button">, "className" | "style" | "children">) {
+}: RowContent & Omit<ComponentProps<"div">, "className" | "style" | "children">) {
   const className = useRowClassName(true);
+  // A div, not a button, so the label can be drag-selected; a click that ends a selection does not toggle.
   return (
-    <button {...buttonProps} type="button" className={className}>
+    <div
+      {...buttonProps}
+      role="button"
+      tabIndex={0}
+      className={className}
+      onClick={(event) => {
+        if (!isSelectionClick(event)) onClick?.(event);
+      }}
+      onKeyDown={(event) => {
+        onKeyDown?.(event);
+        if (event.defaultPrevented || event.target !== event.currentTarget || event.repeat) return;
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          event.currentTarget.click();
+        }
+      }}
+    >
       <WorkLogLine icon={icon} label={label} trailing={trailing} wrapLabel={wrapLabel} />
-    </button>
+    </div>
   );
 }
 
@@ -118,7 +138,17 @@ export function WorkLogRow({
 }: RowContent & Omit<ComponentProps<"div">, "className" | "style">) {
   const className = useRowClassName(rowProps.onClick !== undefined);
   return (
-    <div {...rowProps} className={className}>
+    <div
+      {...rowProps}
+      className={className}
+      onClick={
+        rowProps.onClick
+          ? (event) => {
+              if (!isSelectionClick(event)) rowProps.onClick?.(event);
+            }
+          : undefined
+      }
+    >
       <WorkLogLine icon={icon} label={label} trailing={trailing} wrapLabel={wrapLabel} />
       {children}
     </div>
