@@ -484,6 +484,32 @@ describe("group chat feed", () => {
     );
   });
 
+  it("shows a task's expected result and resources, and why a queued one waits", () => {
+    mocks.live = snapshot(
+      [message("m1", 1, { author: "user", assistantId: null, text: "@ada go" })],
+      [
+        task("t1", "queued", "ada", {
+          reason: "waiting for browser (used by Bo)",
+          expectedResult: "the build is green",
+          resources: ["folder:/w/app", "browser"],
+        }),
+        task("t22", "running", "bo"),
+      ],
+    );
+    render();
+    expect(container.querySelectorAll('[data-testid="group-task-expected"]')).toHaveLength(1);
+    expect(container.querySelector('[data-testid="group-task-expected"]')?.textContent).toBe(
+      "Expected: the build is green",
+    );
+    expect(container.querySelector('[data-testid="group-task-resources"]')?.textContent).toBe(
+      "folder:/w/appbrowser",
+    );
+    expect(container.querySelectorAll('[data-testid="group-task-waiting"]')).toHaveLength(1);
+    expect(container.querySelector('[data-testid="group-task-waiting"]')?.textContent).toBe(
+      "waiting for browser (used by Bo)",
+    );
+  });
+
   it("says on a running card when its member waits for the user's approval", () => {
     mocks.waiting = new Set(["assistant:ada:g-0123456789abcdef"]);
     mocks.live = snapshot(

@@ -84,6 +84,7 @@ const harness = (options: { readonly thread: boolean }) =>
                 )
               : Effect.succeed({ accepted: true, message: "Asked." });
           },
+          cancel: record("cancel", { accepted: true, message: "Cancelled." } as never),
           result: (input) => {
             calls.push({ method: "result", input });
             return Effect.fail(new AssistantError({ reason: "storage", message: "disk" }));
@@ -126,6 +127,21 @@ it.effect("each action reaches the member tools as the calling group thread", ()
       taskId: "t-2",
       status: "queued",
     });
+    yield* call({
+      action: "assign",
+      member: "beto",
+      text: "x",
+      expectedResult: "done",
+      sourceSeqs: [2],
+      resources: ["browser"],
+    });
+    expect(yield* call({ action: "cancel", taskId: "t-2", text: " stop " })).toEqual({
+      accepted: true,
+      message: "Cancelled.",
+    });
+    expect(yield* call({ action: "cancel" })).toMatchObject({
+      message: "cancel needs `taskId`: the subtask's id.",
+    });
     expect(yield* call({ action: "transfer", member: "beto" })).toEqual({
       taskId: "t-1",
       status: "queued",
@@ -140,6 +156,18 @@ it.effect("each action reaches the member tools as the calling group thread", ()
         method: "assign",
         input: { callerThreadId: threadId, member: "@beto", instruction: "compare prices" },
       },
+      {
+        method: "assign",
+        input: {
+          callerThreadId: threadId,
+          member: "beto",
+          instruction: "x",
+          expectedResult: "done",
+          sourceSeqs: [2],
+          resources: ["browser"],
+        },
+      },
+      { method: "cancel", input: { callerThreadId: threadId, taskId: "t-2", reason: "stop" } },
       { method: "transfer", input: { callerThreadId: threadId, member: "beto", note: "" } },
       { method: "reply", input: { callerThreadId: threadId, seq: 1, text: "which one?" } },
     ]);

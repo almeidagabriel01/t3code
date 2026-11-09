@@ -49,7 +49,14 @@ const run = Effect.fn("mcp.group.run")(function* (input: GroupParameters) {
       const member = yield* need(input.member, "assign needs `member`.");
       const instruction = yield* need(input.text, "assign needs `text`: the subtask.");
       return yield* groups.member
-        .assign({ callerThreadId, member, instruction })
+        .assign({
+          callerThreadId,
+          member,
+          instruction,
+          ...(input.expectedResult === undefined ? {} : { expectedResult: input.expectedResult }),
+          ...(input.sourceSeqs === undefined ? {} : { sourceSeqs: input.sourceSeqs }),
+          ...(input.resources === undefined ? {} : { resources: input.resources }),
+        })
         .pipe(Effect.mapError(failure));
     }
     case "transfer": {
@@ -65,6 +72,14 @@ const run = Effect.fn("mcp.group.run")(function* (input: GroupParameters) {
       return {
         ...(yield* groups.member
           .reply({ callerThreadId, seq: input.seq, text })
+          .pipe(Effect.mapError(failure))),
+      };
+    }
+    case "cancel": {
+      const taskId = yield* need(input.taskId, "cancel needs `taskId`: the subtask's id.");
+      return {
+        ...(yield* groups.member
+          .cancel({ callerThreadId, taskId, reason: input.text?.trim() ?? "" })
           .pipe(Effect.mapError(failure))),
       };
     }

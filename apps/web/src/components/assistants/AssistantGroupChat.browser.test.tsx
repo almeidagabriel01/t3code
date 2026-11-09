@@ -370,6 +370,34 @@ it("replies to a member's message and sends the reply link, or drops it", async 
   await expect.element(main().getByTestId("group-reply-chip")).not.toBeInTheDocument();
 });
 
+it("shows a task's expected result and resources, and why a queued one waits", async () => {
+  publishGroupChat(
+    [message(1)],
+    [
+      task("busy", 1, {
+        status: "queued",
+        reason: "waiting for folder:/w/app (used by Bo)",
+        expectedResult: "the build is green",
+        resources: ["folder:/w/app", "browser"],
+      }),
+      task("plain", 1, { createdAt: "2026-03-17T19:01:00.000Z" }),
+    ],
+  );
+  await using _screen = await openChat();
+  const cards = main().getByTestId("group-task-card");
+  await expect
+    .element(cards.first().getByTestId("group-task-expected"))
+    .toHaveTextContent("Expected: the build is green");
+  await expect
+    .element(cards.first().getByTestId("group-task-resources"))
+    .toHaveTextContent("folder:/w/appbrowser");
+  await expect
+    .element(cards.first().getByTestId("group-task-waiting"))
+    .toHaveTextContent("waiting for folder:/w/app (used by Bo)");
+  await expect.element(cards.nth(1).getByTestId("group-task-expected")).not.toBeInTheDocument();
+  await expect.element(cards.nth(1).getByTestId("group-task-waiting")).not.toBeInTheDocument();
+});
+
 it("stops, resumes, reassigns and cancels tasks, and opens the owner's conversation", async () => {
   publishGroupChat(
     [message(1)],

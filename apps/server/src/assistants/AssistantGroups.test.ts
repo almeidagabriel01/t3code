@@ -2414,3 +2414,216 @@ it.effect("an agent's change leaves one chat line, never unread and never sent t
     assert.notInclude(h.sent.at(-1)!.text, "renamed the group");
   }).pipe(Effect.provide(h.layer));
 });
+
+const assignWith = (
+  groups: Groups.AssistantGroups["Service"],
+  from: ThreadId,
+  member: string,
+  instruction: string,
+  resources?: ReadonlyArray<string>,
+) =>
+  groups.member.assign({
+    callerThreadId: from,
+    member,
+    instruction,
+    ...(resources === undefined ? {} : { resources }),
+  });
+
+it.effect("an assignment keeps its contract and quotes its source messages in the packet", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    yield* groups.post({ teamId: TEAM, text: "@beto earlier thing" }, h.user);
+    yield* h.finish(0, "completed", "ok");
+    yield* groups.post({ teamId: TEAM, text: "@ada go" }, h.user);
+    const child = yield* groups.member.assign({
+      callerThreadId: adaThread,
+      member: "beto",
+      instruction: "Build it",
+      expectedResult: "  the build is green  ",
+      sourceSeqs: [1, 1, -3, 99],
+      resources: ["Folder: /w/app/", "Browser", "browser", " "],
+    });
+    const [row] = yield* h.sqlRows<{
+      expected_result: string;
+      source_seqs_json: string;
+      resources_json: string;
+    }>(`SELECT * FROM assistant_group_tasks WHERE task_id = '${child.taskId}'`);
+    assert.deepEqual(
+      [row!.expected_result, row!.source_seqs_json, row!.resources_json],
+      ["the build is green", "[1,99]", '["folder:/w/app","browser"]'],
+    );
+    const packet = h.sent.at(-1)!.text;
+    assert.include(packet, "Earlier messages this task refers to:\n[#1 user] @beto earlier thing");
+    assert.include(packet, "Expected result: the build is green");
+    assert.include(packet, "folder:/w/app, browser");
+    // A repeat lands on the same task.
+    const repeat = yield* groups.member.assign({
+      callerThreadId: adaThread,
+      member: "beto",
+      instruction: "Build it",
+      resources: ["browser"],
+    });
+    assert.equal(repeat.taskId, child.taskId);
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("tasks sharing a resource run one after another, oldest first", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    yield* groups.post({ teamId: TEAM, text: "@ada go" }, h.user);
+    yield* assignWith(groups, adaThread, "beto", "A", ["folder:/w/app"]);
+    yield* assignWith(groups, adaThread, "cy", "B", ["folder:/w/app/src"]);
+    yield* assignWith(groups, adaThread, "beto", "C", ["folder:/w/app"]);
+    yield* assignWith(groups, adaThread, "cy", "D", ["folder:/w/other"]);
+    const view = () =>
+      h.tasks.pipe(
+        Effect.map((rows) =>
+          rows.slice(1).map((row) => `${row.owner_id}:${row.status}:${row.reason}`),
+        ),
+      );
+    assert.deepEqual(yield* view(), [
+      "beto:running:null",
+      "cy:queued:waiting for folder:/w/app/src (used by Beto)",
+      "beto:queued:waiting for folder:/w/app (used by Beto)",
+      "cy:queued:null",
+    ]);
+    // Ada ends her run (waiting on her children): the free slot goes to D, not to the blocked ones.
+    yield* h.finish(0, "completed", "waiting");
+    assert.deepEqual(yield* view(), [
+      "beto:running:null",
+      "cy:queued:waiting for folder:/w/app/src (used by Beto)",
+      "beto:queued:waiting for folder:/w/app (used by Beto)",
+      "cy:running:null",
+    ]);
+    // A finishes: B (older) takes the folder and C now waits on it.
+    yield* h.finish(1, "completed", "a done");
+    assert.deepEqual(yield* view(), [
+      "beto:completed:null",
+      "cy:running:null",
+      "beto:queued:waiting for folder:/w/app (used by Cy)",
+      "cy:running:null",
+    ]);
+    yield* h.finish(2, "completed", "d done");
+    assert.deepEqual(yield* view(), [
+      "beto:completed:null",
+      "cy:running:null",
+      "beto:queued:waiting for folder:/w/app (used by Cy)",
+      "cy:completed:null",
+    ]);
+    // B failing releases the folder to C.
+    yield* h.finish(3, "failed");
+    assert.deepEqual((yield* view()).slice(1, 3), ["cy:failed:failed", "beto:running:null"]);
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect(
+  "a child waiting on a resource its parent holds starts when the parent's run ends",
+  () => {
+    const h = harness();
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      yield* groups.post({ teamId: TEAM, text: "@ada go" }, h.user);
+      yield* assignWith(groups, adaThread, "beto", "Part", ["browser"]);
+      const grandchild = yield* assignWith(groups, betoThread, "cy", "Sub", ["browser"]);
+      assert.equal(grandchild.status, "queued");
+      yield* h.finish(0, "completed", "waiting");
+      assert.equal((yield* h.tasks)[2]!.status, "queued");
+      // Beto waits on his child without holding the browser, so the child runs: no deadlock.
+      yield* h.finish(1, "completed", "waiting");
+      assert.deepEqual(statusesOf(yield* h.tasks), ["ada:waiting", "beto:waiting", "cy:running"]);
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+it.effect("a member cancels only what it assigned, and a repeat changes nothing more", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    yield* groups.post({ teamId: TEAM, text: "@ada go" }, h.user);
+    const held = yield* assignWith(groups, adaThread, "beto", "A", ["browser"]);
+    const waiter = yield* assignWith(groups, adaThread, "cy", "B", ["browser"]);
+    const [root] = yield* h.tasks;
+    for (const taskId of [held.taskId, root!.task_id, "gt:none"]) {
+      const refused = yield* refusalError(
+        groups.member.cancel({ callerThreadId: betoThread, taskId, reason: "no" }),
+      );
+      assert.equal(refused.message, "You can only cancel a task you assigned.");
+    }
+    const asked = yield* groups.member.cancel({
+      callerThreadId: adaThread,
+      taskId: held.taskId,
+      reason: "the user said stop",
+    });
+    assert.deepEqual(asked, { accepted: true, message: "Cancelled." });
+    const rows = yield* h.tasks;
+    assert.deepEqual(
+      [rows[1]!.status, rows[1]!.reason, rows[2]!.status, rows[2]!.reason],
+      ["cancelled", "the user said stop", "running", null],
+    );
+    const interrupts = () =>
+      h.dispatched.filter((command) => command.type === "run.interrupt").map((c) => c.threadId);
+    assert.deepEqual(interrupts(), [betoThread]);
+    const again = yield* groups.member.cancel({
+      callerThreadId: adaThread,
+      taskId: held.taskId,
+      reason: "again",
+    });
+    assert.deepEqual(again, { accepted: true, message: "Already cancelled." });
+    assert.deepEqual(interrupts(), [betoThread]);
+    assert.equal(waiter.status, "queued");
+    // The interruption that follows changes nothing: the task was already cancelled.
+    yield* h.finish(1, "interrupted");
+    assert.equal((yield* h.tasks)[1]!.status, "cancelled");
+    // A completed task cannot be cancelled.
+    yield* h.finish(2, "completed", "B done");
+    const late = yield* groups.member.cancel({
+      callerThreadId: adaThread,
+      taskId: waiter.taskId,
+      reason: "",
+    });
+    assert.deepEqual(late, { accepted: false, message: "That task is already completed." });
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("a packet lists the member's stopped and failed tasks, newest first and capped", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`INSERT INTO assistant_group_messages
+      (message_id, team_id, seq, author, kind, text, created_at)
+      VALUES ('gm:old', ${TEAM}, 1, 'user', 'message', 'old', '2026-01-01')`;
+    for (let index = 0; index < 7; index += 1) {
+      yield* sql`INSERT INTO assistant_group_tasks
+        (task_id, team_id, root_id, kind, request_message_id, owner_id, instruction, status, reason,
+         revision, hops, created_at, updated_at)
+        VALUES (${`gt:s${index}`}, ${TEAM}, ${`gt:s${index}`}, 'root', 'gm:old', 'ada',
+          ${`stopped job ${index} ${"x".repeat(200)}`}, ${index === 6 ? "failed" : "paused"},
+          ${index === 6 ? "failed" : "stopped"}, 1, 0, '2026-01-01', ${`2026-01-0${index + 1}`})`;
+    }
+    yield* sql`INSERT INTO assistant_group_tasks
+      (task_id, team_id, root_id, kind, request_message_id, owner_id, instruction, status,
+       revision, hops, created_at, updated_at)
+      VALUES ('gt:other', ${TEAM}, 'gt:other', 'root', 'gm:old', 'beto', 'not hers', 'paused', 1, 0,
+        '2026-01-01', '2026-01-09')`;
+    yield* sql`INSERT INTO assistant_group_tasks
+      (task_id, team_id, root_id, parent_id, kind, request_message_id, owner_id, instruction, status,
+       revision, hops, created_at, updated_at)
+      VALUES ('gt:kid', ${TEAM}, 'gt:s0', 'gt:s0', 'child', 'gm:old', 'beto', 'price the plan',
+        'running', 1, 0, '2026-01-01', '2026-01-01')`;
+    yield* groups.post({ teamId: TEAM, text: "@ada next" }, h.user);
+    const packet = h.sent[0]!.text;
+    assert.include(
+      packet,
+      "Subtasks you gave that are still open (t3_group cancel stops one):\n- gt:kid (running, Beto): price the plan",
+    );
+    const listed = packet.split("\n").filter((line) => line.startsWith("- gt:s"));
+    assert.lengthOf(listed, 5);
+    assert.include(packet, "Your stopped tasks in this group");
+    assert.match(listed[0]!, /^- gt:s6 \(failed, failed\): stopped job 6 x+…$/);
+    assert.match(listed[4]!, /^- gt:s2 \(paused, stopped\)/);
+    assert.notInclude(packet, "not hers");
+  }).pipe(Effect.provide(h.layer));
+});

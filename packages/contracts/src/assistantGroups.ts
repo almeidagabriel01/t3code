@@ -106,10 +106,16 @@ export const AssistantGroupTask = Schema.Struct({
   ownerId: AssistantId,
   instruction: Schema.String,
   status: AssistantGroupTaskStatus,
-  /** Why it paused: stopped, handoff_limit, member_removed, group_archived. Unknown ones show as paused. */
+  /** Why it paused: stopped, handoff_limit, member_removed, group_archived. Unknown ones show as paused. A queued task blocked by a resource says "waiting for <resource> (used by <member>)". */
   reason: Schema.NullOr(Schema.String),
   /** The owner's hidden thread for this group, where the work happens. */
   threadId: ThreadId,
+  /** What done looks like, as the assigner wrote it; absent when none was given. */
+  expectedResult: Schema.optionalKey(Schema.String),
+  /** Chat message numbers the subtask is based on. */
+  sourceSeqs: Schema.optionalKey(Schema.Array(Schema.Int)),
+  /** Normalized resources the task holds while it runs; tasks sharing one run in turn. */
+  resources: Schema.optionalKey(Schema.Array(Schema.String)),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
