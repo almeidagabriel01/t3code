@@ -39,10 +39,18 @@ vi.mock("../../components/ui/ListRowLayout", () => ({
   ),
 }));
 vi.mock("../../components/ui/ListActionRow", () => ({
-  ListActionRow: (props: { label: string; loading?: boolean; onPress: () => void }) => (
-    <button disabled={props.loading} onClick={props.onPress}>
-      {props.label}
-    </button>
+  ListActionRow: (props: {
+    label: string;
+    description?: string;
+    loading?: boolean;
+    onPress: () => void;
+  }) => (
+    <>
+      <button disabled={props.loading} onClick={props.onPress}>
+        {props.label}
+      </button>
+      {props.description ? <p>{props.description}</p> : null}
+    </>
   ),
 }));
 vi.mock("../settings/components/SettingsScreen", () => ({
@@ -89,6 +97,7 @@ const assistant = {
   projectId: "project-1",
   threadId: "assistant:ada:1",
   workspace: "host",
+  autonomy: { mode: "reply-only" },
   archivedAt: null,
 } as unknown as Assistant;
 const provider = (overrides: Record<string, unknown> = {}) => ({
@@ -170,18 +179,33 @@ describe("AssistantWorkRouteScreen", () => {
       () => (mocks.providers = [provider({ models: [{ slug: "other" }] })]),
       "Choose a model",
     ],
-    ["autonomy paused", () => (mocks.autonomy = { enabled: false }), "Resume autonomy"],
-  ] as const)("%s: shows why and offers the fix", (_name, arrange, label) => {
-    arrange();
-    render();
-    expect(container.textContent).not.toContain("Ready to work");
-    act(() => button(label).click());
-    if (label === "Sign in")
-      expect(mocks.navigate).toHaveBeenCalledWith("SettingsProviderAccounts");
-    else if (label === "Resume autonomy")
-      expect(mocks.writeAutonomy).toHaveBeenCalledWith({ enabled: true });
-    else expect(mocks.openEditor).toHaveBeenCalledWith("hub", assistant);
-  });
+    [
+      "autonomy paused for an assistant set to notify",
+      () => {
+        mocks.autonomy = { enabled: false };
+        mocks.assistants = [
+          {
+            environmentId: "hub",
+            assistant: { ...assistant, autonomy: { mode: "reply-and-notify" } },
+          },
+        ];
+      },
+      "Resume autonomy",
+    ],
+  ] as [string, () => void, string][])(
+    "%s: shows why and offers the fix",
+    (_name, arrange, label) => {
+      arrange();
+      render();
+      expect(container.textContent).not.toContain("Ready to work");
+      act(() => button(label).click());
+      if (label === "Sign in")
+        expect(mocks.navigate).toHaveBeenCalledWith("SettingsProviderAccounts");
+      else if (label === "Resume autonomy")
+        expect(mocks.writeAutonomy).toHaveBeenCalledWith({ enabled: true });
+      else expect(mocks.openEditor).toHaveBeenCalledWith("hub", assistant);
+    },
+  );
 
   it("starts a stopped sandbox and says why when it cannot", async () => {
     mocks.assistants = [
@@ -195,7 +219,7 @@ describe("AssistantWorkRouteScreen", () => {
     expect(mocks.alert).toHaveBeenCalledWith("Could not start the sandbox", "Docker said no");
   });
 
-  it("retries a failed run by asking again, and a stopped run by continuing it", async () => {
+  it("retries a failed run by asking again", async () => {
     mocks.shell = shell({ runId: "run-1", status: "failed" });
     mocks.startTurn.mockResolvedValue({ _tag: "Success" });
     render();
@@ -210,8 +234,11 @@ describe("AssistantWorkRouteScreen", () => {
       }),
     });
     expect(mocks.startTurn.mock.lastCall![0].input).not.toHaveProperty("manualContinuationOfRunId");
+  });
 
+  it("continues a stopped run where it stopped", async () => {
     mocks.shell = shell({ runId: "run-2", status: "interrupted" });
+    mocks.startTurn.mockResolvedValue({ _tag: "Success" });
     render();
     expect(container.textContent).toContain("Its last run was stopped.");
     await act(async () => button("Retry").click());

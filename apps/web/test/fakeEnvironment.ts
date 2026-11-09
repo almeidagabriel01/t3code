@@ -275,7 +275,7 @@ function shellOf(thread: FakeThread): OrchestrationV2ThreadShell {
     latestRunId: latest?.id ?? null,
     activeRunId: null,
     // Idle reads as waiting on the user, which shows a per-second duration in the sidebar.
-    status: latest ? "completed" : "idle",
+    status: latest ? (latest.status === "failed" ? "failed" : "completed") : "idle",
     pendingRuntimeRequest: null,
     latestVisibleMessage: null,
     latestUserMessageAt: AT,

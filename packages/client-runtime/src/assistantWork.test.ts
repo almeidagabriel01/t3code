@@ -22,8 +22,11 @@ const provider = (overrides: Record<string, unknown> = {}) =>
     ...overrides,
   }) as unknown as ServerProvider;
 
+const asst = (workspace: "host" | "sandbox", mode = "reply-only") =>
+  ({ workspace, autonomy: { mode } }) as unknown as AssistantWorkStatusInput["assistant"];
+
 const base: AssistantWorkStatusInput = {
-  assistant: { workspace: "host" },
+  assistant: asst("host"),
   projectFound: true,
   modelSelection: { instanceId: "claude", model: "opus" } as never,
   providers: [provider()],
@@ -37,31 +40,31 @@ describe("assistantWorkStatus", () => {
     ["project missing", { projectFound: false }, "editAssistant"],
     [
       "sandbox stopped",
-      { assistant: { workspace: "sandbox" }, sandbox: { state: "stopped" } },
+      { assistant: asst("sandbox"), sandbox: { state: "stopped" } },
       "startSandbox",
     ],
     [
       "sandbox not created",
-      { assistant: { workspace: "sandbox" }, sandbox: { state: "not_created" } },
+      { assistant: asst("sandbox"), sandbox: { state: "not_created" } },
       "startSandbox",
     ],
     [
       "docker down has no button",
       {
-        assistant: { workspace: "sandbox" },
+        assistant: asst("sandbox"),
         sandbox: { state: "docker_unavailable" },
       },
       "none",
     ],
     [
       "sandbox starting has no button",
-      { assistant: { workspace: "sandbox" }, sandbox: { state: "starting" } },
+      { assistant: asst("sandbox"), sandbox: { state: "starting" } },
       "none",
     ],
     [
       "failed sandbox reports its error",
       {
-        assistant: { workspace: "sandbox" },
+        assistant: asst("sandbox"),
         sandbox: { state: "failed", error: "port busy" },
       },
       "startSandbox",
@@ -81,7 +84,12 @@ describe("assistantWorkStatus", () => {
     ["provider lists no models yet", { providers: [provider({ models: [] })] }, null],
     ["providers not loaded", { providers: null }, null],
     ["no thread yet", { modelSelection: null }, null],
-    ["autonomy paused", { autonomyEnabled: false }, "resumeAutonomy"],
+    [
+      "autonomy paused, set to notify",
+      { autonomyEnabled: false, assistant: asst("host", "reply-and-notify") },
+      "resumeAutonomy",
+    ],
+    ["autonomy paused, reply only", { autonomyEnabled: false }, null],
     ["autonomy unknown", { autonomyEnabled: null }, null],
   ] as const)("%s", (_name, overrides, fix) => {
     const status = assistantWorkStatus({ ...base, ...overrides } as AssistantWorkStatusInput);
@@ -95,14 +103,20 @@ describe("assistantWorkStatus", () => {
   it("names the failure of a sandbox that could not start", () => {
     const status = assistantWorkStatus({
       ...base,
-      assistant: { workspace: "sandbox" },
+      assistant: asst("sandbox"),
       sandbox: { state: "failed", error: "port busy" },
     });
     expect(status).toMatchObject({ ok: false, severity: "blocked", detail: "port busy" });
   });
 
   it("only limits, not blocks, while autonomy is paused", () => {
-    expect(assistantWorkStatus({ ...base, autonomyEnabled: false })).toMatchObject({
+    expect(
+      assistantWorkStatus({
+        ...base,
+        assistant: asst("host", "reply-and-notify"),
+        autonomyEnabled: false,
+      }),
+    ).toMatchObject({
       severity: "limited",
     });
   });
@@ -110,7 +124,7 @@ describe("assistantWorkStatus", () => {
   it("puts the most fundamental reason first", () => {
     const status = assistantWorkStatus({
       ...base,
-      assistant: { workspace: "sandbox" },
+      assistant: asst("sandbox"),
       projectFound: false,
       sandbox: { state: "stopped", error: null },
       providers: [],

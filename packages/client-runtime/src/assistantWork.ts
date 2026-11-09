@@ -26,7 +26,7 @@ export type AssistantWorkStatus =
     };
 
 export interface AssistantWorkStatusInput {
-  readonly assistant: Pick<Assistant, "workspace">;
+  readonly assistant: Pick<Assistant, "workspace" | "autonomy">;
   readonly projectFound: boolean;
   /** The conversation's model; null until its thread exists. */
   readonly modelSelection: ModelSelection | null;
@@ -109,12 +109,14 @@ export function assistantWorkStatus(input: AssistantWorkStatusInput): AssistantW
       );
     }
   }
-  if (input.autonomyEnabled === false) {
+  // The global switch only matters to an assistant that is set to wake and notify you.
+  if (input.autonomyEnabled === false && assistant.autonomy.mode === "reply-and-notify") {
     return {
       ok: false,
       severity: "limited",
       title: "Autonomy is paused",
-      detail: "It does not wake on its own. It still answers when you message it.",
+      detail:
+        "It is set to notify you, but it does not wake on its own while Autonomy is paused. It still answers when you message it.",
       fix: { kind: "resumeAutonomy", label: "Resume autonomy" },
     };
   }

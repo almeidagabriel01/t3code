@@ -20,6 +20,9 @@ const { mocks, Children } = vi.hoisted(() => {
       failList: false,
       binding: { projectKey: { kind: "repository", groupingKey: "repo" } } as unknown,
       forget: vi.fn(),
+      // Stable like the app's compiled hooks: a new function each render would re-run the effects.
+      getSync: vi.fn(),
+      getBinding: vi.fn(),
       navigate: vi.fn(),
       selectDetail: vi.fn(),
       confirm: vi.fn(),
@@ -32,7 +35,7 @@ vi.mock("@effect/atom-react", () => ({ useAtomValue: () => true }));
 vi.mock("@react-navigation/native", () => ({
   useNavigation: () => ({ navigate: mocks.navigate }),
 }));
-vi.mock("expo-crypto", () => ({ randomUUID: () => "operation-1" }));
+vi.mock("expo-crypto", () => ({ randomUUID: () => "00000000-0000-4000-8000-000000000001" }));
 vi.mock("../../components/ui/AppText", () => ({ AppText: Children }));
 vi.mock("../../components/ui/Dialog", () => ({ confirm: mocks.confirm, alert: mocks.alert }));
 vi.mock("../../components/ui/ListSection", () => ({ ListSection: Children }));
@@ -91,9 +94,9 @@ vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: (command: unknown) =>
     command === mocks.forgetCommand
       ? mocks.forget
-      : command === mocks.syncStatus || (command as { label?: string }).label === "syncStatus"
-        ? () => Promise.resolve({ _tag: "Success", value: mocks.sync })
-        : () => Promise.resolve({ _tag: "Success", value: mocks.binding }),
+      : (command as { label?: string }).label === "syncStatus"
+        ? mocks.getSync
+        : mocks.getBinding,
 }));
 vi.mock("../workspace/useSelectWorkspaceDetail", () => ({
   useSelectWorkspaceDetail: () => mocks.selectDetail,
@@ -151,6 +154,10 @@ beforeEach(() => {
   for (const mock of [mocks.forget, mocks.navigate, mocks.selectDetail, mocks.confirm, mocks.alert])
     mock.mockReset();
   mocks.sync = { state: "ready", memorySpaceId: "space-1" };
+  mocks.getSync.mockImplementation(() => Promise.resolve({ _tag: "Success", value: mocks.sync }));
+  mocks.getBinding.mockImplementation(() =>
+    Promise.resolve({ _tag: "Success", value: mocks.binding }),
+  );
   mocks.canRead = true;
   mocks.failList = false;
   mocks.pages = {
@@ -229,7 +236,7 @@ describe("AssistantWorkMemorySection", () => {
         memorySpaceId: "space-1",
         memoryId: "own",
         expectedHeads: ["rev-own"],
-        operationId: "operation-1",
+        operationId: "00000000-0000-4000-8000-000000000001",
       },
     });
     expect(mocks.alert).not.toHaveBeenCalled();
