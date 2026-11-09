@@ -78,7 +78,10 @@ function AssistantWork(props: {
     assistant.threadId === null ? null : scopeThreadRef(environmentId, assistant.threadId),
   );
   return (
-    <ScrollView contentContainerClassName="gap-6 px-5 pt-4 pb-10">
+    <ScrollView
+      contentInsetAdjustmentBehavior="automatic"
+      contentContainerClassName="gap-6 px-5 pt-4 pb-10"
+    >
       <StatusSection environmentId={environmentId} assistant={assistant} />
       <AssistantSchedulesSection
         environmentId={environmentId}
