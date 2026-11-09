@@ -578,6 +578,32 @@ it("retries a failed upload from its chip, and the picker adds files too", async
   expect(fakeGroupChat.posts[0]!.attachments).toHaveLength(1);
 });
 
+it("takes files dropped on the composer and shows the drop highlight while dragging", async () => {
+  publishGroupChat([message(1)]);
+  uploads.upload.mockReset().mockImplementation(async (_environmentId: string, file: File) => ({
+    attachmentId: `pending-${file.name}`,
+    mimeType: file.type,
+  }));
+  await using _screen = await openChat();
+  const target = composer().element();
+  const dataTransfer = new DataTransfer();
+  dataTransfer.items.add(sheet());
+  const drag = (type: string) =>
+    target.dispatchEvent(new DragEvent(type, { dataTransfer, bubbles: true, cancelable: true }));
+  drag("dragover");
+  drag("dragleave");
+  // A drag that carries no files is left alone.
+  target.dispatchEvent(
+    new DragEvent("drop", { dataTransfer: new DataTransfer(), bubbles: true, cancelable: true }),
+  );
+  expect(uploads.upload).not.toHaveBeenCalled();
+  drag("drop");
+  await expect
+    .element(main().getByTestId("group-attachment-chip").getByText("sheet.pdf"))
+    .toBeVisible();
+  expect(uploads.upload).toHaveBeenCalledOnce();
+});
+
 it("shows a message's images as thumbnails that open the viewer and its files as chips", async () => {
   publishGroupChat([
     message(1, {

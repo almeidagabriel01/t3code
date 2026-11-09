@@ -24,7 +24,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerConfig from "../config.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
-import { resolveAttachmentPath } from "../attachmentStore.ts";
+import { resolveAttachmentPath, resolveAttachmentPathById } from "../attachmentStore.ts";
 import * as ResourceCleanupService from "../orchestration-v2/ResourceCleanupService.ts";
 import * as DocumentText from "../provider/DocumentText.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
@@ -1902,6 +1902,10 @@ it.effect(
           attachment: attachment as never,
         })!;
         assert.isTrue(yield* fileSystem.exists(path));
+        // Cleanup, asset serving and Codex look a file up by its id alone.
+        assert.isNotNull(
+          resolveAttachmentPathById({ attachmentsDir: dir, attachmentId: attachment.id }),
+        );
       }
 
       // A hand-over starts the same message as Beto's task with copies of its own.

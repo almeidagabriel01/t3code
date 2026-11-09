@@ -55,7 +55,11 @@ import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
-import { createDeterministicAttachmentId, resolveAttachmentPath } from "../attachmentStore.ts";
+import {
+  createDeterministicAttachmentId,
+  parseAttachmentFileExtension,
+  resolveAttachmentPath,
+} from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as AttachmentClaims from "../orchestration-v2/AttachmentClaims.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
@@ -1084,7 +1088,10 @@ const make = Effect.gen(function* () {
   ) {
     const copies: ChatAttachment[] = [];
     for (const attachment of attachments) {
-      const id = createDeterministicAttachmentId(threadId, attachment.id);
+      // The extension suffix stays: lookups by id alone (cleanup, assets, Codex) find files by it.
+      const base = createDeterministicAttachmentId(threadId, attachment.id);
+      const extension = parseAttachmentFileExtension(attachment.id);
+      const id = base === null ? null : `${base}${extension === null ? "" : `-${extension}`}`;
       const copy = id === null ? null : { ...attachment, id: ChatAttachmentId.make(id) };
       const from = resolveAttachmentPath({ attachmentsDir: config.attachmentsDir, attachment });
       const to =
