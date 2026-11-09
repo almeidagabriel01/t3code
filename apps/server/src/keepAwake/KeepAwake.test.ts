@@ -86,11 +86,20 @@ const harness = (input: {
     const other = Queue.offer(events, { type: "thread.created", payload: {} });
     const run = (id: string, status: string) =>
       Queue.offer(events, { type: "run.updated", payload: { id, status } });
+    const background = (
+      id: string,
+      pendingBackgroundTasks: ReadonlyArray<{ kind: string; awaited?: boolean }>,
+    ) =>
+      Queue.offer(events, {
+        type: "provider-thread.updated",
+        payload: { id, pendingBackgroundTasks },
+      });
     return {
       children,
       other,
       until,
       run,
+      background,
       setMode: (keepAwake: KeepAwakeMode) => Queue.offer(settingsChanges, { keepAwake }),
       status: service.streamStatus.pipe(Stream.take(1), Stream.runCollect),
     };
@@ -133,6 +142,21 @@ describe("KeepAwake", () => {
       yield* h.until((s) => s.active);
       assert.strictEqual(h.children.length, 2);
       yield* h.run("b", "failed");
+      yield* h.until((s) => !s.active);
+    }),
+  );
+
+  it.effect("while-working holds for background work the agent waits on after its turn", () =>
+    Effect.gen(function* () {
+      const h = yield* harness({ mode: "while-working" });
+      yield* h.background("pt", [{ kind: "subagent" }]);
+      yield* h.until((s) => s.active);
+      // A dev server left running is not work the agent waits on.
+      yield* h.background("pt", [{ kind: "command" }]);
+      yield* h.until((s) => !s.active);
+      yield* h.background("pt", [{ kind: "command", awaited: true }]);
+      yield* h.until((s) => s.active);
+      yield* h.background("pt", []);
       yield* h.until((s) => !s.active);
     }),
   );

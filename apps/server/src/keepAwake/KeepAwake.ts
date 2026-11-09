@@ -2,7 +2,8 @@
  * Holds the host awake through the OS's own inhibitor while the setting asks for it. The server
  * owns the child it spawns and kills only that child.
  */
-import type { KeepAwakeMode, KeepAwakeStatus, RunId } from "@t3tools/contracts";
+import type { KeepAwakeMode, KeepAwakeStatus } from "@t3tools/contracts";
+import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as Clock from "effect/Clock";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
@@ -114,7 +115,8 @@ const make = Effect.gen(function* () {
     active: false,
   });
   const mode = yield* SubscriptionRef.make<KeepAwakeMode>("off");
-  const working = yield* Ref.make<ReadonlySet<RunId>>(new Set());
+  // Runs, plus provider threads whose turn ended while it waits on a subagent or awaited command.
+  const working = yield* Ref.make<ReadonlySet<string>>(new Set());
   const wanted = yield* SubscriptionRef.make(false);
 
   const setActive = (active: boolean) =>
@@ -157,16 +159,26 @@ const make = Effect.gen(function* () {
       ),
     );
     yield* forkParked(
-      Stream.runForEach(orchestrator.streamDomainEvents, (event) =>
-        event.type === "run.created" || event.type === "run.updated"
-          ? Ref.update(working, (current) => {
-              const next = new Set(current);
-              if (isWorking(event.payload.status)) next.add(event.payload.id);
-              else next.delete(event.payload.id);
-              return next;
-            }).pipe(Effect.andThen(refreshWanted))
-          : Effect.void,
-      ).pipe(Effect.catchCause((cause) => Effect.logWarning("keep-awake events ended", { cause }))),
+      Stream.runForEach(orchestrator.streamDomainEvents, (event) => {
+        const entry =
+          event.type === "run.created" || event.type === "run.updated"
+            ? { key: `run:${event.payload.id}`, on: isWorking(event.payload.status) }
+            : event.type === "provider-thread.updated"
+              ? {
+                  key: `background:${event.payload.id}`,
+                  on: backgroundWorkHoldsCompletion(event.payload.pendingBackgroundTasks ?? []),
+                }
+              : null;
+        if (entry === null) return Effect.void;
+        return Ref.update(working, (current) => {
+          const next = new Set(current);
+          if (entry.on) next.add(entry.key);
+          else next.delete(entry.key);
+          return next;
+        }).pipe(Effect.andThen(refreshWanted));
+      }).pipe(
+        Effect.catchCause((cause) => Effect.logWarning("keep-awake events ended", { cause })),
+      ),
     );
     yield* refreshWanted;
     if (Option.isNone(inhibitor)) return;
