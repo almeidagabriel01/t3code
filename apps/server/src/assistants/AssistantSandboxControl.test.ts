@@ -11,6 +11,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as PeerLinks from "../peer/PeerLinks.ts";
@@ -32,6 +33,9 @@ interface World {
   linked: Array<{ readonly url: string; readonly code: string; readonly access: string }>;
   unlinked: string[];
   removed: boolean[];
+  /** The limit each `ensure` and `setCpus` was given. */
+  ensured: Array<number | null>;
+  limits: Array<number | null>;
 }
 
 const harness = (
@@ -47,6 +51,8 @@ const harness = (
     linked: [],
     unlinked: [],
     removed: [],
+    ensured: [],
+    limits: [],
     ...initial,
   };
   const status = () =>
@@ -56,21 +62,24 @@ const harness = (
     }) satisfies AssistantSandbox.AssistantSandboxStatus;
   const sandbox = Layer.succeed(AssistantSandbox.AssistantSandbox, {
     status: Effect.sync(status),
-    ensure: Effect.suspend(() => {
-      if (world.ensureError !== null) {
-        return Effect.fail(
-          new AssistantSandbox.AssistantSandboxError({
-            reason: "docker_failed",
-            message: world.ensureError,
-          }),
-        );
-      }
-      if (world.container !== "running") {
-        world.container = "running";
-        world.url = url;
-      }
-      return Effect.sync(status);
-    }),
+    ensure: (cpus) =>
+      Effect.suspend(() => {
+        world.ensured.push(cpus);
+        if (world.ensureError !== null) {
+          return Effect.fail(
+            new AssistantSandbox.AssistantSandboxError({
+              reason: "docker_failed",
+              message: world.ensureError,
+            }),
+          );
+        }
+        if (world.container !== "running") {
+          world.container = "running";
+          world.url = url;
+        }
+        return Effect.sync(status);
+      }),
+    setCpus: (cpus) => Effect.sync(() => void world.limits.push(cpus)),
     stop: Effect.sync(() => {
       world.container = "stopped";
       return status();
@@ -280,5 +289,119 @@ it.effect("pairingUrl needs a running sandbox and points a client at its loopbac
     assert.deepStrictEqual(yield* control.pairingUrl, {
       pairingUrl: `${url}/pair#token=PAIRCODE`,
     });
+  }).pipe(Effect.provide(layer));
+});
+
+const configured = Effect.gen(function* () {
+  const control = yield* Control.AssistantSandboxControl;
+  return { control, sql: yield* SqlClient.SqlClient };
+});
+
+it.effect("configure stores the CPU limit, applies it to the container and shows it", () => {
+  const { world, layer } = harness();
+  return Effect.gen(function* () {
+    const { control } = yield* configured;
+    assert.deepInclude(yield* control.status, { cpus: null, whenDone: "discard" });
+    assert.isFalse((yield* control.config).chosen);
+    // No container yet: nothing to update, but the choice is kept for the first start.
+    yield* control.configure({ cpus: 4 });
+    assert.deepStrictEqual(world.limits, [4]);
+    assert.deepInclude(yield* control.config, { cpus: 4, chosen: true });
+    yield* started;
+    assert.deepStrictEqual(world.ensured, [4]);
+    const kept = yield* control.configure({ whenDone: "keep" });
+    assert.deepInclude(kept, { cpus: 4, whenDone: "keep" });
+    assert.deepStrictEqual(world.limits, [4]);
+    assert.deepInclude(yield* control.configure({ cpus: null }), { cpus: null });
+    assert.deepStrictEqual(world.limits, [4, null]);
+  }).pipe(Effect.provide(layer));
+});
+
+const forTask = (taskId: string) =>
+  Effect.gen(function* () {
+    const { control } = yield* configured;
+    const status = yield* control.startForTask;
+    yield* control.taskStarted(sandboxId, taskId);
+    return status;
+  });
+
+it.effect("a container started for a task is discarded when its last task ends", () => {
+  const { world, layer } = harness();
+  return Effect.gen(function* () {
+    const { control } = yield* configured;
+    assert.deepInclude(yield* forTask("t1"), { state: "running", environmentId: sandboxId });
+    yield* control.taskStarted(sandboxId, "t2");
+    yield* control.taskEnded("t1");
+    assert.deepStrictEqual(world.removed, []);
+    yield* control.taskEnded("t2");
+    // Files and sign-ins stay: only the container goes.
+    assert.deepStrictEqual(world.removed, [false]);
+    assert.isFalse((yield* control.config).oneOff);
+    assert.strictEqual((yield* control.status).state, "not_created");
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("a container that was already running is never discarded", () => {
+  const { world, layer } = harness();
+  return Effect.gen(function* () {
+    const { control } = yield* configured;
+    yield* started;
+    yield* forTask("t1");
+    yield* control.taskEnded("t1");
+    assert.deepStrictEqual(world.removed, []);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("a container is kept when the setting says keep", () => {
+  const { world, layer } = harness();
+  return Effect.gen(function* () {
+    const { control } = yield* configured;
+    yield* control.configure({ whenDone: "keep" });
+    yield* forTask("t1");
+    yield* control.taskEnded("t1");
+    assert.deepStrictEqual(world.removed, []);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("the user's Start takes a task's container over, and tasks never discard it", () => {
+  const { world, layer } = harness();
+  return Effect.gen(function* () {
+    const { control } = yield* configured;
+    yield* forTask("t1");
+    yield* control.start;
+    assert.isFalse((yield* control.config).oneOff);
+    yield* control.taskEnded("t1");
+    assert.deepStrictEqual(world.removed, []);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("a task that is not tracked, or sandboxed assistants, keep the container", () => {
+  const { world, layer } = harness();
+  return Effect.gen(function* () {
+    const { control, sql } = yield* configured;
+    yield* forTask("t1");
+    // Another environment's task, and one that was never recorded, change nothing.
+    yield* control.taskStarted(EnvironmentId.make("elsewhere"), "t9");
+    yield* control.taskEnded("t9");
+    assert.deepStrictEqual(world.removed, []);
+    yield* sql`
+      INSERT INTO assistants (assistant_id, handle, name, project_id, tool_access, workspace, created_at, updated_at)
+      VALUES ('a1', 'box', 'Box', 'p1', 'full', 'sandbox', 'now', 'now')`;
+    yield* control.taskEnded("t1");
+    assert.deepStrictEqual(world.removed, []);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("discard removes the container but not while a task still runs in it", () => {
+  const { world, layer } = harness();
+  return Effect.gen(function* () {
+    const { control } = yield* configured;
+    yield* forTask("t1");
+    assert.include((yield* Effect.flip(control.discard)).message, "1 task is still running");
+    assert.deepStrictEqual(world.removed, []);
+    yield* control.taskEnded("t1");
+    assert.deepStrictEqual(world.removed, [false]);
+    // Nothing left to discard is not an error.
+    assert.strictEqual((yield* control.discard).state, "not_created");
   }).pipe(Effect.provide(layer));
 });

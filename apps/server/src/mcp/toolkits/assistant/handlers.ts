@@ -23,6 +23,7 @@ import { runtimeModeRank } from "../../delegatedTaskModes.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { loadCaller, unavailable } from "../../threadAccess.ts";
 import { requireUserTurn } from "../../turnOrigin.ts";
+import { containerDiscard, containerTask } from "./containerTask.ts";
 import { type AssistantParameters, AssistantToolkit } from "./tools.ts";
 
 type Out = Record<string, Schema.Json>;
@@ -200,6 +201,14 @@ const mutate = Effect.fn("mcp.assistant.mutate")(function* (input: AssistantPara
   const listOf = (ids: ReadonlyArray<string>) => ids.map(nameOf).join(", ");
 
   switch (input.action) {
+    case "container_task":
+      return yield* containerTask(
+        caller,
+        input,
+        `container:${sha(input.clientRequestId?.trim() || [input, caller.caller?.activeRunId ?? caller.caller?.latestRunId]).slice(0, 48)}`,
+      );
+    case "container_discard":
+      return yield* containerDiscard();
     case "group_post": {
       if (caller.caller === undefined) {
         return yield* invalid("group_post needs a conversation to post from.");

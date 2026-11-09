@@ -34,6 +34,7 @@ import {
 } from "../mcp/delegatedTaskModes.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import { AssistantSandboxControl } from "../assistants/AssistantSandboxControl.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
@@ -75,6 +76,10 @@ export class RemoteDelegation extends Context.Service<
         readonly target: NonNullable<OrchestratorMcpDelegateTaskInput["target"]> & {
           readonly environmentId: EnvironmentId;
         };
+      },
+      options?: {
+        /** With no project there for this repository, clone it there and register it. */
+        readonly cloneMissingProject?: boolean;
       },
     ) => Effect.Effect<{ readonly taskId: NodeId }, OrchestratorMcpFailure>;
     /**
@@ -122,6 +127,8 @@ const make = Effect.gen(function* () {
   const projects = yield* ProjectService.ProjectService;
   const repositoryIdentities = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
   const random = yield* SecureRandom.SecureRandom;
+  // Tells the sandbox which of its tasks are open, so a container made for tasks can go with the last.
+  const sandboxTasks = yield* Effect.serviceOption(AssistantSandboxControl);
   const hereId = yield* ServerEnvironment.ServerEnvironment.pipe(
     Effect.flatMap((environment) => environment.getEnvironmentId),
   );
@@ -143,6 +150,7 @@ const make = Effect.gen(function* () {
     environmentId: EnvironmentId,
     parentProjectId: ProjectId,
     requested: ProjectId | undefined,
+    cloneMissing = false,
   ) {
     if (requested !== undefined) return requested;
     const here = yield* projects.getById(parentProjectId).pipe(
@@ -151,10 +159,9 @@ const make = Effect.gen(function* () {
     );
     // The project's own identity is a one-minute cache that reads blank when
     // cold, so resolve it here, as the other side's t3_project_list does.
-    const key =
-      here === undefined
-        ? undefined
-        : (yield* repositoryIdentities.resolve(here.workspaceRoot))?.canonicalKey;
+    const identity =
+      here === undefined ? undefined : yield* repositoryIdentities.resolve(here.workspaceRoot);
+    const key = identity?.canonicalKey;
     if (key === undefined) {
       return yield* new OrchestratorMcpFailure({
         code: "target_required",
@@ -175,6 +182,26 @@ const make = Effect.gen(function* () {
       cursor = listed.nextCursor;
     }
     if (matches.length === 1) return matches[0]!.id;
+    const remoteUrl = identity?.locator.remoteUrl;
+    if (matches.length === 0 && cloneMissing && remoteUrl !== undefined) {
+      const name = (identity?.name ?? "project").replace(/[^A-Za-z0-9._-]/g, "-");
+      const destinationPath = `/workspace/${name}`;
+      // A clone that already happened (a retry after the register failed) leaves the folder to register.
+      yield* forwarding
+        .call(scope, ProjectToolkit.tools.t3_project_clone, environmentId, {
+          environmentId,
+          remoteUrl,
+          destinationPath,
+        })
+        .pipe(Effect.ignore);
+      const created = yield* forwarding.call(
+        scope,
+        ProjectToolkit.tools.t3_project_create,
+        environmentId,
+        { environmentId, title: here?.title ?? name, workspaceRoot: destinationPath },
+      );
+      return created.id;
+    }
     return yield* new OrchestratorMcpFailure({
       code: "invalid_request",
       message:
@@ -185,7 +212,7 @@ const make = Effect.gen(function* () {
   });
 
   const delegate: RemoteDelegation["Service"]["delegate"] = Effect.fn("RemoteDelegation.delegate")(
-    function* (scope, input) {
+    function* (scope, input, delegateOptions) {
       const parent = yield* threads.getThreadRecords(scope.thread.threadId, ["runs"]).pipe(
         Effect.mapError(
           () =>
@@ -252,6 +279,7 @@ const make = Effect.gen(function* () {
         target.environmentId,
         parent.thread.projectId,
         target.projectId,
+        delegateOptions?.cloneMissingProject === true,
       );
       // One key for the launch there and the record here, so a retry finds both.
       // Both are scoped to the provider session, as every key a caller passes is:
@@ -350,6 +378,9 @@ const make = Effect.gen(function* () {
           message: "The delegated task was not recorded.",
         });
       }
+      if (Option.isSome(sandboxTasks)) {
+        yield* sandboxTasks.value.taskStarted(target.environmentId, taskId);
+      }
       yield* followOne(scope.thread.threadId, taskId).pipe(Effect.forkIn(followers));
       return { taskId };
     },
@@ -388,6 +419,7 @@ const make = Effect.gen(function* () {
           ),
         ),
       );
+    if (Option.isSome(sandboxTasks)) yield* sandboxTasks.value.taskEnded(taskId);
   });
 
   /**

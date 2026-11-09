@@ -392,6 +392,20 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
       linked_at TEXT NOT NULL
     )
   `;
+  // One row at most: how the sandbox is run. `chosen` stays 0 until the user picks a CPU limit.
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS assistant_sandbox_config (
+      singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+      cpus INTEGER,
+      chosen INTEGER NOT NULL DEFAULT 0,
+      when_done TEXT NOT NULL DEFAULT 'discard',
+      one_off INTEGER NOT NULL DEFAULT 0
+    )
+  `;
+  // Tasks running in the sandbox from this environment, so the container outlives the last of them.
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS assistant_sandbox_task (task_id TEXT PRIMARY KEY)
+  `;
   if (!assistantColumns.some((column) => column.name === "icon")) {
     yield* sql`ALTER TABLE assistants ADD COLUMN icon TEXT`;
   }

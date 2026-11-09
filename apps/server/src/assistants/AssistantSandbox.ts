@@ -46,8 +46,15 @@ export class AssistantSandbox extends Context.Service<
   AssistantSandbox,
   {
     readonly status: Effect.Effect<AssistantSandboxStatus>;
-    /** Builds the image when missing, then creates or starts the container; repeating it changes nothing. */
-    readonly ensure: Effect.Effect<AssistantSandboxStatus, AssistantSandboxError>;
+    /**
+     * Builds the image when missing, then creates or starts the container with `cpus` cores at most
+     * (null: no limit); repeating it changes nothing.
+     */
+    readonly ensure: (
+      cpus: number | null,
+    ) => Effect.Effect<AssistantSandboxStatus, AssistantSandboxError>;
+    /** Changes the limit of a container that exists, running or not; nothing to do without one. */
+    readonly setCpus: (cpus: number | null) => Effect.Effect<void, AssistantSandboxError>;
     readonly stop: Effect.Effect<AssistantSandboxStatus, AssistantSandboxError>;
     /** Removes the container; its volumes (the sandbox's T3 home and workspace) go only when asked. */
     readonly remove: (input: {
@@ -123,7 +130,7 @@ const sandboxContainerName = (environmentId: string) =>
   `t3-assistant-sandbox-${environmentId.replace(/[^a-zA-Z0-9]/g, "").slice(0, 8)}`;
 
 /** Published on this machine's loopback only; Docker picks the host port. */
-const sandboxRunArgs = (name: string, image: string, sharedDir: string) => [
+const sandboxRunArgs = (name: string, image: string, sharedDir: string, cpus: number | null) => [
   "run",
   "-d",
   "--name",
@@ -136,6 +143,7 @@ const sandboxRunArgs = (name: string, image: string, sharedDir: string) => [
   "ALL",
   "--security-opt",
   "no-new-privileges",
+  ...(cpus === null ? [] : ["--cpus", String(cpus)]),
   "-p",
   `127.0.0.1::${SERVER_PORT}`,
   "-v",
@@ -281,12 +289,25 @@ export const layer = Layer.effect(
       yield* dockerOrFail("build the sandbox image", ["build", "-t", image, dir], BUILD_TIMEOUT);
     }, Effect.scoped);
 
-    const ensure = Effect.fn("AssistantSandbox.ensure")(function* () {
+    /** `docker update --cpus 0` lifts a limit. */
+    const updateCpus = (containerName: string, cpus: number | null) =>
+      dockerOrFail("set the sandbox CPU limit", [
+        "update",
+        "--cpus",
+        String(cpus ?? 0),
+        containerName,
+      ]);
+
+    const ensure = Effect.fn("AssistantSandbox.ensure")(function* (cpus: number | null) {
       yield* requireDocker();
       const containerName = yield* name;
       const current = yield* read();
-      if (current.state === "running" || current.state === "starting") return current;
+      if (current.state === "running" || current.state === "starting") {
+        yield* updateCpus(containerName, cpus);
+        return current;
+      }
       if (current.state === "stopped") {
+        yield* updateCpus(containerName, cpus);
         yield* dockerOrFail("start the sandbox", ["start", containerName]);
         return yield* read();
       }
@@ -294,8 +315,17 @@ export const layer = Layer.effect(
       const descriptor = yield* environment.getDescriptor;
       const image = sandboxImageTag(descriptor.serverVersion, bundle);
       yield* buildImage(image, bundle);
-      yield* dockerOrFail("create the sandbox", sandboxRunArgs(containerName, image, sharedDir));
+      yield* dockerOrFail(
+        "create the sandbox",
+        sandboxRunArgs(containerName, image, sharedDir, cpus),
+      );
       return yield* read();
+    });
+
+    const setCpus = Effect.fn("AssistantSandbox.setCpus")(function* (cpus: number | null) {
+      const current = yield* read();
+      if (current.state === "docker_unavailable" || current.state === "missing") return;
+      yield* updateCpus(yield* name, cpus);
     });
 
     const stop = Effect.fn("AssistantSandbox.stop")(function* () {
@@ -348,7 +378,12 @@ export const layer = Layer.effect(
 
     return AssistantSandbox.of({
       status: read(),
-      ensure: lock.withPermits(1)(ensure()),
+      ensure: Effect.fn("AssistantSandbox.ensureExclusive")((cpus: number | null) =>
+        lock.withPermits(1)(ensure(cpus)),
+      ),
+      setCpus: Effect.fn("AssistantSandbox.setCpusExclusive")((cpus: number | null) =>
+        lock.withPermits(1)(setCpus(cpus)),
+      ),
       stop: lock.withPermits(1)(stop()),
       remove: Effect.fn("AssistantSandbox.remove")((input) => lock.withPermits(1)(remove(input))),
       pairingCredential: pairingCredential(),

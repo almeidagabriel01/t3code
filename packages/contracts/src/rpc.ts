@@ -468,6 +468,7 @@ import {
   AssistantsSpendInput,
   AssistantsSubscribeInput,
   AssistantsUpdateInput,
+  AssistantSandboxConfigureInput,
   AssistantSandboxPairing,
   AssistantSandboxPairingInput,
   AssistantSandboxRemoveInput,
@@ -783,6 +784,7 @@ export const WS_METHODS = {
   assistantSandboxStart: "assistantSandbox.start",
   assistantSandboxStop: "assistantSandbox.stop",
   assistantSandboxRemove: "assistantSandbox.remove",
+  assistantSandboxConfigure: "assistantSandbox.configure",
   assistantSandboxPairing: "assistantSandbox.pairing",
   assistantTeamsCreate: "assistantTeams.create",
   assistantTeamsUpdate: "assistantTeams.update",
@@ -2352,6 +2354,11 @@ export const WsAssistantSandboxRemoveRpc = Rpc.make(WS_METHODS.assistantSandboxR
   success: AssistantSandboxStatus,
   error: AssistantRpcErrors,
 });
+export const WsAssistantSandboxConfigureRpc = Rpc.make(WS_METHODS.assistantSandboxConfigure, {
+  payload: AssistantSandboxConfigureInput,
+  success: AssistantSandboxStatus,
+  error: AssistantRpcErrors,
+});
 export const WsAssistantSandboxPairingRpc = Rpc.make(WS_METHODS.assistantSandboxPairing, {
   payload: AssistantSandboxPairingInput,
   success: AssistantSandboxPairing,
@@ -2863,6 +2870,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsAssistantSandboxStartRpc,
   WsAssistantSandboxStopRpc,
   WsAssistantSandboxRemoveRpc,
+  WsAssistantSandboxConfigureRpc,
   WsAssistantSandboxPairingRpc,
   WsAssistantTeamsCreateRpc,
   WsAssistantTeamsUpdateRpc,

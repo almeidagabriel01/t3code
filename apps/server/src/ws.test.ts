@@ -12,6 +12,7 @@ import {
   ProviderInstanceId,
   WS_METHODS,
   WsAssistantSandboxPairingRpc,
+  WsAssistantSandboxConfigureRpc,
   WsAssistantSandboxRemoveRpc,
   WsAssistantSandboxStartRpc,
   WsAssistantSandboxStopRpc,
@@ -1400,6 +1401,8 @@ it.effect("the sandbox RPCs reach the control service, and choosing the sandbox 
       environmentId: null,
       url: null,
       linkedEnvironmentsEnabled: true,
+      cpus: null,
+      whenDone: "discard",
     } as const;
     const assistant = { id: "a1" } as never;
     const services = Layer.mergeAll(
@@ -1414,6 +1417,7 @@ it.effect("the sandbox RPCs reach the control service, and choosing the sandbox 
       Layer.mock(ServerEnvironment.ServerEnvironment)({}),
       Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
       Layer.mock(AssistantSandboxControl.AssistantSandboxControl)({
+        configure: (input) => Effect.sync(() => (calls.push(`configure:${input.cpus}`), status)),
         streamStatus: Stream.make(status),
         start: Effect.sync(() => (calls.push("start"), status)),
         stop: Effect.sync(() => (calls.push("stop"), status)),
@@ -1432,6 +1436,7 @@ it.effect("the sandbox RPCs reach the control service, and choosing the sandbox 
         WsAssistantSandboxStartRpc,
         WsAssistantSandboxStopRpc,
         WsAssistantSandboxRemoveRpc,
+        WsAssistantSandboxConfigureRpc,
         WsAssistantSandboxPairingRpc,
         WsAssistantsCreateRpc,
         WsAssistantsUpdateRpc,
@@ -1469,6 +1474,7 @@ it.effect("the sandbox RPCs reach the control service, and choosing the sandbox 
         | "assistantSandboxStart"
         | "assistantSandboxStop"
         | "assistantSandboxRemove"
+        | "assistantSandboxConfigure"
         | "assistantSandboxPairing"
         | "assistantsCreate"
         | "assistantsUpdate"],
@@ -1489,11 +1495,13 @@ it.effect("the sandbox RPCs reach the control service, and choosing the sandbox 
     yield* Queue.take(responses);
     yield* call(WS_METHODS.assistantSandboxRemove, { deleteVolumes: true });
     yield* Queue.take(responses);
+    yield* call(WS_METHODS.assistantSandboxConfigure, { cpus: 2 });
+    yield* Queue.take(responses);
     yield* call(WS_METHODS.assistantSandboxPairing, {});
     assert.deepInclude((yield* Queue.take(responses)) as object, {
       pairingUrl: "http://127.0.0.1:1/pair#token=x",
     });
-    assert.deepStrictEqual(calls, ["start", "stop", "remove:true"]);
+    assert.deepStrictEqual(calls, ["start", "stop", "remove:true", "configure:2"]);
     const base = { name: "Box", projectId: "p1", instructions: "", toolAccess: "full" };
     yield* call(WS_METHODS.assistantsCreate, { ...base, workspace: "sandbox" });
     yield* Queue.take(responses);

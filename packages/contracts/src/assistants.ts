@@ -428,6 +428,10 @@ export const AssistantSandboxState = Schema.Literals([
 ]);
 export type AssistantSandboxState = typeof AssistantSandboxState.Type;
 
+/** What happens to a container started only for one task once that task ends. */
+export const AssistantSandboxWhenDone = Schema.Literals(["discard", "keep"]);
+export type AssistantSandboxWhenDone = typeof AssistantSandboxWhenDone.Type;
+
 export const AssistantSandboxStatus = Schema.Struct({
   state: AssistantSandboxState,
   /** What a start is doing now; null when nothing is in progress. */
@@ -439,6 +443,9 @@ export const AssistantSandboxStatus = Schema.Struct({
   url: Schema.NullOr(Schema.String),
   /** Linked environments (Settings → Labs) must be on here for the sandbox link; Start turns it on. */
   linkedEnvironmentsEnabled: Schema.Boolean,
+  /** The most CPU cores the container may use; null means no limit. */
+  cpus: Schema.NullOr(Schema.Number),
+  whenDone: AssistantSandboxWhenDone,
 });
 export type AssistantSandboxStatus = typeof AssistantSandboxStatus.Type;
 
@@ -453,6 +460,15 @@ export const AssistantSandboxRemoveInput = Schema.Struct({
   deleteVolumes: Schema.Boolean,
 });
 export type AssistantSandboxRemoveInput = typeof AssistantSandboxRemoveInput.Type;
+
+export const AssistantSandboxConfigureInput = Schema.Struct({
+  /** Whole cores, or null for no limit. Applies to a container that exists, at once. */
+  cpus: Schema.optional(
+    Schema.NullOr(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 256 }))),
+  ),
+  whenDone: Schema.optional(AssistantSandboxWhenDone),
+});
+export type AssistantSandboxConfigureInput = typeof AssistantSandboxConfigureInput.Type;
 
 export const AssistantSandboxPairingInput = Schema.Struct({});
 export type AssistantSandboxPairingInput = typeof AssistantSandboxPairingInput.Type;

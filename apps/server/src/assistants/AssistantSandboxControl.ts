@@ -1,8 +1,10 @@
 import {
   AssistantError,
   type AssistantSandboxPairing,
+  type AssistantSandboxConfigureInput,
   type AssistantSandboxRemoveInput,
   type AssistantSandboxStatus,
+  type AssistantSandboxWhenDone,
   EnvironmentId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -29,6 +31,24 @@ const ANSWER_ATTEMPTS = 90;
 /** A link this close to expiring is made again, so work never starts on a token about to die. */
 const RELINK_MARGIN = { minutes: 10 } as const;
 const SANDBOX_LABEL = "Assistant sandbox";
+/** How long a task waits for the sandbox to come up before it is told to ask again. */
+const READY_WAIT = "90 seconds";
+
+export interface SandboxConfig {
+  /** Null: no limit. */
+  readonly cpus: number | null;
+  /** False until the user picked a limit, which the first task that needs the container asks for. */
+  readonly chosen: boolean;
+  readonly whenDone: AssistantSandboxWhenDone;
+  /** The container was started only for tasks, so it may go when the last one ends. */
+  readonly oneOff: boolean;
+}
+const DEFAULT_CONFIG: SandboxConfig = {
+  cpus: null,
+  chosen: false,
+  whenDone: "discard",
+  oneOff: false,
+};
 
 export class AssistantSandboxControl extends Context.Service<
   AssistantSandboxControl,
@@ -41,6 +61,23 @@ export class AssistantSandboxControl extends Context.Service<
      * the steps. Repeating it while a start runs, or once the sandbox is ready, changes nothing.
      */
     readonly start: Effect.Effect<AssistantSandboxStatus>;
+    readonly config: Effect.Effect<SandboxConfig>;
+    /** Changes the CPU limit (also on a container that exists, at once) and what happens when a task is done. */
+    readonly configure: (
+      input: AssistantSandboxConfigureInput,
+    ) => Effect.Effect<AssistantSandboxStatus, AssistantError>;
+    /**
+     * `start` for work that needs the container now: a container it had to bring up is marked as
+     * started for tasks, and the call waits a while for it. Returns the status, `starting` if it
+     * is still building.
+     */
+    readonly startForTask: Effect.Effect<AssistantSandboxStatus>;
+    /** Removes the container, keeping its files and sign-ins; refused while tasks still run in it. */
+    readonly discard: Effect.Effect<AssistantSandboxStatus, AssistantError>;
+    /** A task started in `environmentId`; the container stays until it ends. Others are ignored. */
+    readonly taskStarted: (environmentId: EnvironmentId, taskId: string) => Effect.Effect<void>;
+    /** A task ended. The last one of a container started for tasks discards it, when set to. */
+    readonly taskEnded: (taskId: string) => Effect.Effect<void>;
     readonly stop: Effect.Effect<AssistantSandboxStatus, AssistantError>;
     /**
      * A one-time link that connects a client on this machine to the running sandbox. Its address is
@@ -75,7 +112,9 @@ const sameStatus = (left: AssistantSandboxStatus, right: AssistantSandboxStatus)
   left.error === right.error &&
   left.environmentId === right.environmentId &&
   left.url === right.url &&
-  left.linkedEnvironmentsEnabled === right.linkedEnvironmentsEnabled;
+  left.linkedEnvironmentsEnabled === right.linkedEnvironmentsEnabled &&
+  left.cpus === right.cpus &&
+  left.whenDone === right.whenDone;
 
 const make = Effect.gen(function* () {
   const sandbox = yield* AssistantSandbox.AssistantSandbox;
@@ -88,6 +127,48 @@ const make = Effect.gen(function* () {
     step: null,
     error: null,
   });
+
+  const readConfig = sql<{
+    readonly cpus: number | null;
+    readonly chosen: number;
+    readonly when_done: string;
+    readonly one_off: number;
+  }>`SELECT cpus, chosen, when_done, one_off FROM assistant_sandbox_config WHERE singleton = 1`.pipe(
+    Effect.map((rows): SandboxConfig =>
+      rows[0] === undefined
+        ? DEFAULT_CONFIG
+        : {
+            cpus: rows[0].cpus,
+            chosen: rows[0].chosen === 1,
+            whenDone: rows[0].when_done === "keep" ? "keep" : "discard",
+            oneOff: rows[0].one_off === 1,
+          },
+    ),
+    Effect.orElseSucceed(() => DEFAULT_CONFIG),
+  );
+
+  const writeConfig = (config: SandboxConfig) =>
+    sql`
+      INSERT INTO assistant_sandbox_config (singleton, cpus, chosen, when_done, one_off)
+      VALUES (1, ${config.cpus}, ${config.chosen ? 1 : 0}, ${config.whenDone}, ${config.oneOff ? 1 : 0})
+      ON CONFLICT (singleton) DO UPDATE SET
+        cpus = excluded.cpus, chosen = excluded.chosen,
+        when_done = excluded.when_done, one_off = excluded.one_off
+    `.pipe(Effect.orDie, Effect.asVoid);
+
+  const countOf = (rows: ReadonlyArray<{ readonly n: number }>) => rows[0]?.n ?? 0;
+  const openTasks = sql<{
+    readonly n: number;
+  }>`SELECT COUNT(*) AS n FROM assistant_sandbox_task`.pipe(
+    Effect.map(countOf),
+    Effect.orElseSucceed(() => 0),
+  );
+  const sandboxAssistants = sql<{
+    readonly n: number;
+  }>`SELECT COUNT(*) AS n FROM assistants WHERE workspace = 'sandbox' AND archived_at IS NULL`.pipe(
+    Effect.map(countOf),
+    Effect.orElseSucceed(() => 0),
+  );
 
   const recordedEnvironment = sql<{ readonly environment_id: string }>`
     SELECT environment_id FROM assistant_sandbox WHERE singleton = 1`.pipe(
@@ -120,7 +201,10 @@ const make = Effect.gen(function* () {
     const current = yield* SubscriptionRef.get(progress);
     const container = yield* sandbox.status;
     const linked = yield* liveLink(container.url);
+    const config = yield* readConfig;
     const base = {
+      cpus: config.cpus,
+      whenDone: config.whenDone,
       step: current.step,
       error: current.error,
       environmentId: Option.getOrNull(linked),
@@ -216,7 +300,7 @@ const make = Effect.gen(function* () {
       yield* settings.updateSettings({ linkedEnvironmentsEnabled: true });
     }
     yield* setStep("Starting the sandbox (the first time builds its image, which takes minutes)");
-    yield* sandbox.ensure;
+    yield* sandbox.ensure((yield* readConfig).cpus);
     yield* setStep("Waiting for the sandbox to answer");
     const url = yield* waitUntilAnswering();
     yield* setStep("Linking this Mac to the sandbox");
@@ -237,7 +321,7 @@ const make = Effect.gen(function* () {
     }),
   );
 
-  const start = Effect.gen(function* () {
+  const begin = Effect.gen(function* () {
     const alreadyRunning = yield* SubscriptionRef.modify(progress, (current) =>
       current.running
         ? ([true, current] as const)
@@ -247,10 +331,103 @@ const make = Effect.gen(function* () {
     return yield* status;
   });
 
+  /** The user's own Start: the container is theirs now, not something a task may discard. */
+  const start = Effect.gen(function* () {
+    const config = yield* readConfig;
+    if (config.oneOff) yield* writeConfig({ ...config, oneOff: false });
+    return yield* begin;
+  });
+
+  const startForTask = Effect.gen(function* () {
+    const before = yield* sandbox.status;
+    const idle = !(yield* SubscriptionRef.get(progress)).running;
+    const config = yield* readConfig;
+    if (idle && (before.state === "missing" || before.state === "stopped") && !config.oneOff) {
+      yield* writeConfig({ ...config, oneOff: true });
+    }
+    yield* begin;
+    // The start runs in the background; wait for it to settle, not for as long as a first build can take.
+    yield* SubscriptionRef.changes(progress).pipe(
+      Stream.filter((current) => !current.running),
+      Stream.runHead,
+      Effect.timeoutOption(READY_WAIT),
+    );
+    return yield* status;
+  });
+
   const asAssistantError = (error: AssistantSandbox.AssistantSandboxError) =>
     new AssistantError({ reason: "invalid", message: error.message });
 
   const stop = sandbox.stop.pipe(Effect.mapError(asAssistantError), Effect.andThen(status));
+
+  const configure = Effect.fn("AssistantSandboxControl.configure")(function* (
+    input: AssistantSandboxConfigureInput,
+  ) {
+    const current = yield* readConfig;
+    const cpus = input.cpus === undefined ? current.cpus : input.cpus;
+    if (cpus !== current.cpus) {
+      yield* sandbox.setCpus(cpus).pipe(Effect.mapError(asAssistantError));
+    }
+    yield* writeConfig({
+      ...current,
+      cpus,
+      chosen: current.chosen || input.cpus !== undefined,
+      whenDone: input.whenDone ?? current.whenDone,
+    });
+    return yield* status;
+  });
+
+  const discardNow = Effect.gen(function* () {
+    yield* sandbox.remove({ deleteVolumes: false });
+    yield* SubscriptionRef.set(progress, { running: false, step: null, error: null });
+    const config = yield* readConfig;
+    if (config.oneOff) yield* writeConfig({ ...config, oneOff: false });
+  });
+
+  const discard = Effect.gen(function* () {
+    const running = yield* openTasks;
+    if (running > 0) {
+      return yield* new AssistantError({
+        reason: "invalid",
+        message: `${running} task${running === 1 ? " is" : "s are"} still running in the container. Discard it once they end.`,
+      });
+    }
+    yield* discardNow.pipe(Effect.mapError(asAssistantError));
+    return yield* status;
+  });
+
+  const taskStarted = Effect.fn("AssistantSandboxControl.taskStarted")(
+    function* (environmentId: EnvironmentId, taskId: string) {
+      const recorded = yield* recordedEnvironment;
+      if (Option.isNone(recorded) || recorded.value !== environmentId) return;
+      yield* sql`INSERT OR IGNORE INTO assistant_sandbox_task (task_id) VALUES (${taskId})`;
+    },
+    Effect.catchCause((cause) =>
+      Effect.logWarning("Assistant sandbox could not record a task", cause),
+    ),
+  );
+
+  const taskEnded = Effect.fn("AssistantSandboxControl.taskEnded")(
+    function* (taskId: string) {
+      const deleted =
+        yield* sql`DELETE FROM assistant_sandbox_task WHERE task_id = ${taskId} RETURNING task_id`;
+      if (deleted.length === 0) return;
+      const config = yield* readConfig;
+      // One container serves every sandboxed assistant, so it stays while one needs it.
+      if (
+        !config.oneOff ||
+        config.whenDone !== "discard" ||
+        (yield* openTasks) > 0 ||
+        (yield* sandboxAssistants) > 0
+      ) {
+        return;
+      }
+      yield* discardNow;
+    },
+    Effect.catchCause((cause) =>
+      Effect.logWarning("Assistant sandbox discard after a task failed", cause),
+    ),
+  );
 
   const remove = Effect.fn("AssistantSandboxControl.remove")(function* (
     input: AssistantSandboxRemoveInput,
@@ -287,7 +464,20 @@ const make = Effect.gen(function* () {
     Stream.changesWith(sameStatus),
   );
 
-  return AssistantSandboxControl.of({ status, streamStatus, start, stop, pairingUrl, remove });
+  return AssistantSandboxControl.of({
+    status,
+    streamStatus,
+    start,
+    config: readConfig,
+    configure,
+    startForTask,
+    discard,
+    taskStarted,
+    taskEnded,
+    stop,
+    pairingUrl,
+    remove,
+  });
 });
 
 export const layer = Layer.effect(AssistantSandboxControl, make);
