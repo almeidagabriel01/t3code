@@ -1627,7 +1627,12 @@ const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(function* 
     if (found.length === 0) return toolResult(call.id, "No matching deferred tools found");
     return loadTools(tools, call.id, found);
   }
-  const mock = testCase.setup.mocks?.[name];
+  const configured = testCase.setup.mocks?.[name];
+  // `{ byAction: { <action>: result } }` answers each action of one tool differently, as T3 does.
+  const mock =
+    isRecord(configured) && isRecord(configured.byAction)
+      ? configured.byAction[String(input.action)]
+      : configured;
   // T3 answers device calls from the world. A mock that is a T3 device error fails inside T3.
   const failure = deviceFailure(mock);
   const fromWorld = mock === undefined || mock === "default" || failure !== undefined;

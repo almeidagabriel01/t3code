@@ -13,6 +13,7 @@ import * as Stream from "effect/Stream";
 
 import * as AssistantGroups from "../../../assistants/AssistantGroups.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
+import * as ScheduledTaskService from "../../../scheduledTasks/ScheduledTaskService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as GroupHandlers from "./handlers.ts";
@@ -20,7 +21,33 @@ import { GroupToolkit, type GroupParameters } from "./tools.ts";
 
 const threadId = ThreadId.make("assistant:ada:g-0123456789abcdef");
 
-const harness = (options: { readonly thread: boolean }) =>
+const stored = {
+  id: "scheduled-task:r1",
+  title: "Monday",
+  prompt: "@ada weekly numbers",
+  enabled: true,
+  schedule: { type: "fixed_time", timeOfDay: "09:00" },
+  projectId: "p1",
+  threadId: null,
+  assistantTeamId: "team-1",
+  workspaceStrategy: { type: "root" },
+  modelSelection: { instanceId: "codex", model: "m" },
+  runtimeMode: "full-access",
+  interactionMode: "default",
+  createdBy: "user",
+  nextRunAt: "2030-01-01T09:00:00.000Z",
+  lastRunAt: null,
+  lastRunStatus: "never",
+  lastRunError: null,
+  runCount: 0,
+};
+
+const harness = (options: {
+  readonly thread: boolean;
+  /** The message that started the member's turn; a group task by default. */
+  readonly startedBy?: { readonly id: string; readonly createdBy: string };
+  readonly askedByUser?: boolean;
+}) =>
   Effect.gen(function* () {
     const calls: Array<{ readonly method: string; readonly input: unknown }> = [];
     const record =
@@ -29,7 +56,26 @@ const harness = (options: { readonly thread: boolean }) =>
         calls.push({ method, input });
         return Effect.succeed(result);
       };
+    const startedBy = options.startedBy ?? { id: "group-task:t-1:1", createdBy: "system" };
     const deps = Layer.mergeAll(
+      Layer.mock(ScheduledTaskService.ScheduledTaskService)({
+        list: () =>
+          Effect.succeed({
+            tasks: [stored, { ...stored, id: "scheduled-task:other", assistantTeamId: "team-2" }],
+          } as never),
+        upsert: (input) => {
+          calls.push({ method: "upsert", input });
+          return Effect.succeed({ task: { ...stored, ...input } } as never);
+        },
+        delete: (input) => {
+          calls.push({ method: "delete", input });
+          return Effect.succeed(input as never);
+        },
+        runNow: (input) => {
+          calls.push({ method: "runNow", input });
+          return Effect.succeed({} as never);
+        },
+      }),
       Layer.succeed(McpInvocationContext.McpInvocationContext, {
         environmentId: EnvironmentId.make("environment"),
         requestNamespace: "thread:test",
@@ -54,12 +100,23 @@ const harness = (options: { readonly thread: boolean }) =>
             archivedAt: null,
             activeRunId: "run-1",
             providerInstanceId: ProviderInstanceId.make("codex"),
+            modelSelection: { instanceId: "codex", model: "m" },
             runtimeMode: "full-access",
             interactionMode: "default",
           } as unknown as OrchestrationV2ThreadShell),
+        getThreadRecords: () =>
+          Effect.succeed({
+            runs: [{ id: "run-1", userMessageId: startedBy.id }],
+            messages: [startedBy],
+          } as never),
       }),
       Layer.mock(AssistantGroups.AssistantGroups)({
         member: {
+          routineScope: () =>
+            Effect.succeed({
+              teamId: "team-1",
+              askedByUser: options.askedByUser ?? false,
+            } as never),
           history: record("history", {
             messages: [
               {
@@ -214,5 +271,101 @@ it.effect("a client with no calling thread is refused", () =>
       code: expect.any(String),
     });
     expect(calls).toEqual([]);
+  }),
+);
+
+it.effect("routines of the group are listed, and the user's ask lets a member change them", () =>
+  Effect.gen(function* () {
+    const { call, calls } = yield* harness({ thread: true, askedByUser: true });
+    const listed = yield* call({ action: "routines" });
+    expect(listed.routines.map((routine: { routineId: string }) => routine.routineId)).toEqual([
+      "scheduled-task:r1",
+    ]);
+    expect(listed.routines[0]).toMatchObject({ enabled: true, maxRuns: null, missedRun: "skip" });
+    const created = yield* call({
+      action: "routine_save",
+      text: "@ada send the weekly numbers",
+      at: "09:30",
+      weekdays: [1],
+      maxRuns: 4,
+      missedRun: "once",
+    });
+    expect(created).toMatchObject({ routineId: "scheduled-task:r1" });
+    const paused = yield* call({
+      action: "routine_save",
+      routineId: "scheduled-task:r1",
+      enabled: false,
+    });
+    expect(paused).toMatchObject({ enabled: false });
+    yield* call({ action: "routine_run", routineId: "scheduled-task:r1" });
+    yield* call({ action: "routine_delete", routineId: "scheduled-task:r1" });
+    const [create, pause] = calls
+      .filter((entry) => entry.method === "upsert")
+      .map((entry) => entry.input as any);
+    expect(create).toMatchObject({
+      assistantTeamId: "team-1",
+      schedule: { type: "fixed_time", timeOfDay: "09:30", weekdays: [1] },
+      maxRuns: 4,
+      missedRunPolicy: "once",
+      enabled: true,
+    });
+    expect(create.commandId).toMatch(/^group-routine:/);
+    expect(pause).toMatchObject({ id: "scheduled-task:r1", requireExisting: true, enabled: false });
+    expect(pause.schedule).toEqual({ type: "fixed_time", timeOfDay: "09:00" });
+    expect(calls.map((entry) => entry.method).slice(-2)).toEqual(["runNow", "delete"]);
+  }),
+);
+
+it.effect("a member refuses to change routines unless the user asked in the group", () =>
+  Effect.gen(function* () {
+    const { call, calls } = yield* harness({ thread: true, askedByUser: false });
+    for (const input of [
+      { action: "routine_save", text: "x", everyMinutes: 5 },
+      { action: "routine_run", routineId: "scheduled-task:r1" },
+      { action: "routine_delete", routineId: "scheduled-task:r1" },
+    ] as const) {
+      expect(yield* call(input)).toMatchObject({ code: "capability_denied" });
+    }
+    expect(calls).toEqual([]);
+    // Listing is not a change.
+    expect(yield* call({ action: "routines" })).toHaveProperty("routines");
+  }),
+);
+
+it.effect("routine arguments are checked and another group's routine is out of reach", () =>
+  Effect.gen(function* () {
+    const { call } = yield* harness({ thread: true, askedByUser: true });
+    expect(yield* call({ action: "routine_save", everyMinutes: 5 })).toMatchObject({
+      message: "routine_save needs `text`.",
+    });
+    expect(yield* call({ action: "routine_save", text: "x" })).toMatchObject({
+      message: "routine_save needs `runAt`, `at` or `everyMinutes`.",
+    });
+    expect(yield* call({ action: "routine_run" })).toMatchObject({
+      message: "routine_run needs `routineId`.",
+    });
+    expect(yield* call({ action: "routine_delete" })).toMatchObject({
+      message: "routine_delete needs `routineId`.",
+    });
+    expect(
+      yield* call({ action: "routine_delete", routineId: "scheduled-task:other" }),
+    ).toMatchObject({ code: "invalid_request" });
+    expect(
+      yield* call({ action: "routine_save", text: "x", runAt: "2031-01-01T10:00:00Z" }),
+    ).toMatchObject({ routineId: "scheduled-task:r1" });
+  }),
+);
+
+it.effect("a routine turn or a user turn outside a task decides who asked", () =>
+  Effect.gen(function* () {
+    const user = yield* harness({
+      thread: true,
+      startedBy: { id: "m-1", createdBy: "user" },
+    });
+    expect(
+      yield* user.call({ action: "routine_run", routineId: "scheduled-task:r1" }),
+    ).toMatchObject({
+      started: true,
+    });
   }),
 );

@@ -426,6 +426,7 @@ it.effect(
                 new AssistantError({ reason: "archived", message: "This group is archived." }),
               )
             : Effect.sync(() => void posts.push(input)),
+        note: () => Effect.void,
         install: () => Effect.void,
       });
       const provide = (withGate: boolean) =>
