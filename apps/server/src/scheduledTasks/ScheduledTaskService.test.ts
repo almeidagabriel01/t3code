@@ -45,6 +45,7 @@ const insertRow = (
     status: string;
     scheduleJson?: string;
     prompt?: string;
+    maxRuns?: number;
   },
   now: string,
 ) =>
@@ -67,6 +68,7 @@ const insertRow = (
     next_run_at: row.next,
     last_run_at: null,
     last_run_status: row.status,
+    ...(row.maxRuns === undefined ? {} : { max_runs: row.maxRuns }),
     last_run_error: null,
     run_count: 0,
   })}`;
@@ -173,6 +175,8 @@ it.effect(
         { id: "stuck-valid", next: now, status: "running" },
         { id: "stuck-corrupt", next: now, status: "running", scheduleJson: "broken" },
         { id: "stuck-huge", next: now, status: "running", scheduleJson: hugeInterval },
+        // Its interrupted run was its last allowed one.
+        { id: "stuck-limited", next: now, status: "running", maxRuns: 1 },
         { id: null, next: now, status: "running" },
         { id: "due-bad-date", next: "", status: "never" },
         { id: "due-healthy", next: now, status: "never" },
@@ -235,10 +239,14 @@ it.effect(
         last_run_error: string | null;
         next_run_at: string | null;
         run_count: number;
-      }>`SELECT task_id, last_run_status, last_run_error, next_run_at, run_count
+        enabled: number;
+      }>`SELECT task_id, last_run_status, last_run_error, next_run_at, run_count, enabled
        FROM scheduled_tasks ORDER BY task_id`;
       const byId = new Map(rows.map((row) => [row.task_id, row]));
-      assert.equal(rows.length, 9);
+      assert.equal(rows.length, 10);
+      assert.equal(byId.get("stuck-limited")?.enabled, 0);
+      assert.isNull(byId.get("stuck-limited")?.next_run_at);
+      assert.equal(byId.get("stuck-valid")?.enabled, 1);
       assert.equal(byId.get("stuck-valid")?.last_run_status, "failed");
       assert.isNotNull(byId.get("stuck-valid")?.next_run_at);
       assert.equal(byId.get("stuck-corrupt")?.last_run_status, "failed");
@@ -246,7 +254,7 @@ it.effect(
       const stuckHuge = byId.get("stuck-huge");
       assert.equal(stuckHuge?.last_run_status, "failed");
       assert.isNull(stuckHuge?.next_run_at);
-      for (const id of ["stuck-valid", "stuck-corrupt", "stuck-huge", null]) {
+      for (const id of ["stuck-valid", "stuck-corrupt", "stuck-huge", "stuck-limited", null]) {
         const row = byId.get(id);
         assert.equal(row?.last_run_error, "Run was interrupted by a server restart.");
         assert.equal(row?.run_count, 1);

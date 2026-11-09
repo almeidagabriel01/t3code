@@ -1247,6 +1247,20 @@ export const layer = Layer.effect(
                     ) THEN 0 ELSE 1 END
                 WHERE task_id IS ${row.task_id} AND last_run_status = 'running'
               `;
+              // The interrupted run counts, so it can be the one that reaches the limit.
+              const stopped = yield* sql<{ run_count: number }>`
+                UPDATE scheduled_tasks SET enabled = 0, next_run_at = NULL
+                WHERE task_id IS ${row.task_id} AND enabled = 1
+                  AND max_runs IS NOT NULL AND run_count >= max_runs
+                RETURNING run_count
+              `;
+              const runCount = stopped[0]?.run_count;
+              if (runCount !== undefined)
+                yield* noteGroup(
+                  decoded.success,
+                  `Routine '${decoded.success.title}' reached its run limit of ${decoded.success.maxRuns} and stopped`,
+                  `limit:${runCount}`,
+                );
               return;
             }
             yield* Effect.logWarning(
