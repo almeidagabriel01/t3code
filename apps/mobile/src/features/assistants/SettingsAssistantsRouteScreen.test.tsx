@@ -317,7 +317,11 @@ describe("assistants page", () => {
     expect(mocks.openEditor).toHaveBeenCalledWith("hub", expect.objectContaining({ id: "a1" }));
     act(() => buttonIn("Jarvis, All projects", "Work").click());
     expect(mocks.openWork).toHaveBeenCalledWith("hub", "a1");
-    act(() => buttonIn("Jarvis, All projects", "Archive").click());
+    act(() =>
+      byLabel("Jarvis, All projects")!
+        .querySelector<HTMLButtonElement>('[aria-label="menu:Archive assistant"]')!
+        .click(),
+    );
     expect(mocks.archive).toHaveBeenCalledWith(expect.objectContaining({ id: "a1" }));
     expect(byLabel("Old, All projects")?.textContent).not.toContain("Open thread");
     act(() => buttonIn("Old, All projects", "Restore").click());

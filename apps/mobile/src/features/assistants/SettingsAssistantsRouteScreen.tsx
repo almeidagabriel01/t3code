@@ -85,7 +85,6 @@ function AssistantCard(props: {
   ].filter((part): part is string => part !== null);
   return (
     <View
-      accessible
       accessibilityLabel={`${assistant.name}, ${where.join(", ")}`}
       className="gap-3 rounded-2xl bg-grouped-card p-4"
     >
@@ -131,7 +130,7 @@ function AssistantCard(props: {
           ))}
         </View>
       )}
-      <View className="flex-row flex-wrap items-center gap-2">
+      <View className="flex-row items-center gap-2">
         {archived ? (
           <Button
             label="Restore"
@@ -163,14 +162,19 @@ function AssistantCard(props: {
               size="compact"
               onPress={() => openEditor(environmentId, assistant)}
             />
-            <Button
-              label="Archive"
-              icon="archivebox"
-              tone="text"
-              size="compact"
-              disabled={!flows.canAct}
-              onPress={() => flows.archive(assistant)}
-            />
+            <View className="flex-1" />
+            {flows.canAct ? (
+              <SectionMenu
+                label={`${assistant.name} actions`}
+                actions={[
+                  {
+                    id: "archive",
+                    title: "Archive assistant",
+                    onPress: () => flows.archive(assistant),
+                  },
+                ]}
+              />
+            ) : null}
           </>
         )}
       </View>
