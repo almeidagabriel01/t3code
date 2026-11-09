@@ -134,6 +134,10 @@ select from the view, not the table; `ensureForkSchema` recreates it on every st
 go out as `teamUpserted` through `refreshTeamChat`, which reaches the assistants stream but not
 `subscribeChanges`: reconciling the group on every message would be wasted work. Group finished
 notices are client-side (working to idle on that stream), like thread notices.
+The mobile push is the exception: `AgentAwarenessRelay` watches the same stream and publishes the finish
+as a completion of the last speaker's hidden thread, titled with the group and deep-linked to
+`/assistant-groups/<env>/<team>` (the relay takes any `/` path). Members' own completions are silent,
+so the relay worker needs no change.
 
 A group's instructions and memories are columns on `assistant_teams` (`instructions`, `memories_json`)
 edited through `assistantTeams.update`, and every task packet carries them. Group memories are not in

@@ -6,6 +6,7 @@ import { consumeLastAgentNotificationResponse } from "./notificationResponseCons
 import {
   extractAgentNotificationDeepLink,
   routeAgentNotificationResponseOnce,
+  threadDeepLinkOnScreen,
 } from "./notificationPayload";
 
 function responseWithData(data: Record<string, unknown>, identifier = "notification-1") {
@@ -62,6 +63,22 @@ describe("extractAgentNotificationDeepLink", () => {
         }),
       ),
     ).toBe("/threads/env/thread");
+  });
+
+  it("opens a group chat from its explicit deep link, which wins over the thread ids", () => {
+    expect(
+      extractAgentNotificationDeepLink(
+        responseWithData({
+          deepLink: "/assistant-groups/env%201/team",
+          environmentId: "env 1",
+          threadId: "assistant:lead:g-1",
+        }),
+      ),
+    ).toBe("/assistant-groups/env%201/team");
+    expect(threadDeepLinkOnScreen("/assistant-groups/env/team")).toBe("/assistant-groups/env/team");
+    expect(
+      extractAgentNotificationDeepLink(responseWithData({ deepLink: "/assistant-groups/env" })),
+    ).toBeNull();
   });
 
   it("falls back to the thread route from environment and thread ids", () => {

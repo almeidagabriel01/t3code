@@ -903,6 +903,7 @@ const RootStackConfig = createWorkspaceStackNavigator({
     }),
     AssistantGroupChat: createNativeStackScreen({
       screen: AssistantGroupChatRouteScreen,
+      linking: "assistant-groups/:environmentId/:teamId",
       options: DETAIL_HEADER_OPTIONS,
     }),
     NewTaskProject: createNativeStackScreen({

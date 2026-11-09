@@ -48,7 +48,7 @@ function encodeThreadDeepLink(input: {
   }
 }
 
-function normalizeThreadDeepLink(value: string): string | null {
+function normalizeDeepLink(value: string): string | null {
   if (
     value.trim() !== value ||
     value.startsWith("//") ||
@@ -59,33 +59,41 @@ function normalizeThreadDeepLink(value: string): string | null {
   }
 
   const parts = value.split("/");
-  if (parts.length !== 4 || parts[0] !== "" || parts[1] !== "threads") {
+  if (
+    parts.length !== 4 ||
+    parts[0] !== "" ||
+    (parts[1] !== "threads" && parts[1] !== "assistant-groups")
+  ) {
     return null;
   }
 
   try {
-    return encodeThreadDeepLink({
-      environmentId: decodeURIComponent(parts[2] ?? ""),
-      threadId: decodeURIComponent(parts[3] ?? ""),
-    });
+    const environmentId = decodeURIComponent(parts[2] ?? "");
+    const id = decodeURIComponent(parts[3] ?? "");
+    if (parts[1] === "assistant-groups") {
+      return environmentId.length === 0 || id.length === 0
+        ? null
+        : `/assistant-groups/${encodeURIComponent(environmentId)}/${encodeURIComponent(id)}`;
+    }
+    return encodeThreadDeepLink({ environmentId, threadId: id });
   } catch {
     return null;
   }
 }
 
 export function threadDeepLinkOnScreen(pathname: string): string | null {
-  const match = /^\/threads\/([^/]+)\/([^/]+)(?:\/|$)/.exec(pathname);
-  if (!match?.[1] || !match[2]) {
+  const match = /^\/(threads|assistant-groups)\/([^/]+)\/([^/]+)(?:\/|$)/.exec(pathname);
+  if (!match?.[2] || !match[3]) {
     return null;
   }
-  return `/threads/${match[1]}/${match[2]}`;
+  return `/${match[1]}/${match[2]}/${match[3]}`;
 }
 
 export function extractAgentNotificationDeepLink(response: unknown): string | null {
   const data = dataFromNotificationResponse(response);
   const deepLink = data?.deepLink;
   if (typeof deepLink === "string") {
-    const normalizedDeepLink = normalizeThreadDeepLink(deepLink);
+    const normalizedDeepLink = normalizeDeepLink(deepLink);
     if (normalizedDeepLink) {
       return normalizedDeepLink;
     }

@@ -1,6 +1,8 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import {
+  AssistantTeam,
+  type AssistantsEvent,
   DecisionId,
   EnvironmentId,
   EventId,
@@ -32,6 +34,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import * as AssistantService from "../assistants/AssistantService.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import {
   PUBLISH_AGENT_ACTIVITY_SECRET,
@@ -99,6 +102,7 @@ function shell(overrides: Partial<OrchestrationV2ThreadShell> = {}): Orchestrati
 
 const PublishPayload = Schema.Struct({ state: Schema.NullOr(RelayAgentActivityState) });
 const decodePublishPayload = Schema.decodeUnknownSync(Schema.fromJsonString(PublishPayload));
+const decodeTeam = Schema.decodeSync(AssistantTeam);
 const unused = () => Effect.die("Unexpected test dependency call");
 
 describe("startup agent activity", () => {
@@ -150,6 +154,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
     readonly readShell?: (threadId: ThreadId) => Effect.Effect<OrchestrationV2ThreadShell | null>;
     readonly domainEvents?: Stream.Stream<OrchestrationV2DomainEvent>;
     readonly decisionEvents?: Stream.Stream<DecisionsEvent>;
+    readonly teamEvents?: Stream.Stream<AssistantsEvent>;
   } = {},
 ) {
   const values = new Map<string, Uint8Array>(
@@ -283,6 +288,9 @@ const makeTestRelay = Effect.fnUntraced(function* (
       expireDue: unused(),
       deliverPending: unused(),
     }),
+    Effect.provideService(AssistantService.AssistantService, {
+      subscribe: options.teamEvents ?? Stream.empty,
+    } as never),
     Effect.provideService(ServerEnvironment.ServerEnvironment, {
       getEnvironmentId: Effect.succeed(EnvironmentId.make("relay-environment")),
       getDescriptor: unused(),
@@ -482,6 +490,89 @@ describe("AgentAwarenessRelay", () => {
         yield* Queue.take(pulls);
         yield* relay.drain;
         assert.equal(publications.length, 0);
+      }).pipe(Effect.scoped),
+    );
+  });
+
+  describe("assistant group finish", () => {
+    const GROUP_THREAD = ThreadId.make("assistant:lead:g-abc");
+    const team = (working: boolean, archivedAt: string | null = null) =>
+      decodeTeam({
+        id: "team-1",
+        name: "Release crew",
+        memberIds: ["lead"],
+        leadId: "lead",
+        archivedAt,
+        chat: {
+          latestSeq: 2,
+          readSeq: 0,
+          unreadCount: 1,
+          working,
+          preview: "Shipped  the\nrelease",
+        },
+        createdAt: NOW,
+        updatedAt: NOW,
+      });
+    const setup = Effect.gen(function* () {
+      const events = yield* Queue.unbounded<AssistantsEvent>();
+      const pulls = yield* Queue.unbounded<void>();
+      const made = yield* makeTestRelay({
+        teamEvents: Stream.fromEffectRepeat(
+          Queue.offer(pulls, undefined).pipe(Effect.andThen(Queue.take(events))),
+        ),
+      });
+      yield* made.sql`INSERT INTO assistant_group_threads (team_id, assistant_id, thread_id)
+        VALUES ('team-1', 'lead', ${GROUP_THREAD})`;
+      yield* made.sql`INSERT INTO assistant_group_messages
+        (message_id, team_id, seq, author, assistant_id, kind, text, created_at)
+        VALUES ('m1', 'team-1', 1, 'assistant', 'lead', 'message', 'Shipped', ${NOW})`;
+      yield* Ref.set(
+        made.currentShell,
+        shell({
+          id: GROUP_THREAD,
+          status: "completed",
+          latestRunCompletedAt: DateTime.makeUnsafe("2026-09-04T12:00:01.000Z"),
+        }),
+      );
+      yield* made.relay.start();
+      yield* Queue.take(pulls);
+      const send = Effect.fnUntraced(function* (event: AssistantsEvent) {
+        yield* Queue.offer(events, event);
+        yield* Queue.take(pulls);
+        yield* made.relay.drain;
+      });
+      yield* send({ type: "snapshot", assistants: [], teams: [team(true)] });
+      return { ...made, send };
+    });
+    const alerts = (
+      publications: ReadonlyArray<{ readonly state: RelayAgentActivityState | null }>,
+    ) => publications.flatMap((publication) => (publication.state ? [publication.state] : []));
+
+    it.effect("pushes the group once per working to idle, silencing the member's own", () =>
+      Effect.gen(function* () {
+        const { relay, publications, send } = yield* setup;
+        yield* relay.publishThread(GROUP_THREAD);
+        yield* send({ type: "teamUpserted", team: team(false) });
+        yield* send({ type: "teamUpserted", team: team(false) });
+        yield* TestClock.adjust("5 seconds");
+        yield* relay.drain;
+        const pushed = alerts(publications);
+        assert.equal(pushed.length, 1);
+        assert.equal(pushed[0]?.phase, "completed");
+        assert.equal(pushed[0]?.threadTitle, "Release crew");
+        assert.equal(pushed[0]?.projectTitle, "Shipped the release");
+        assert.equal(pushed[0]?.deepLink, "/assistant-groups/relay-environment/team-1");
+      }).pipe(Effect.scoped),
+    );
+
+    it.effect("pushes nothing for an archived group or a member finishing alone", () =>
+      Effect.gen(function* () {
+        const { relay, publications, send } = yield* setup;
+        yield* send({ type: "teamUpserted", team: team(false, NOW) });
+        yield* relay.publishThread(GROUP_THREAD);
+        yield* TestClock.adjust("5 seconds");
+        yield* relay.drain;
+        assert.equal(alerts(publications).length, 0);
       }).pipe(Effect.scoped),
     );
   });
