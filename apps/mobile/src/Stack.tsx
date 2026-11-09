@@ -139,6 +139,7 @@ import { AssistantGroupChatRouteScreen } from "./features/assistants/AssistantGr
 import { AssistantGroupSettingsRouteScreen } from "./features/assistants/AssistantGroupSettingsRouteScreen";
 import { AssistantTeamEditRouteScreen } from "./features/assistants/AssistantTeamEditRouteScreen";
 import { AssistantWatchRouteScreen } from "./features/assistants/AssistantWatchRouteScreen";
+import { AssistantWorkRouteScreen } from "./features/assistants/AssistantWorkRouteScreen";
 import { AssistantModelPickerRouteScreen } from "./features/assistants/AssistantModelPickerRouteScreen";
 import { DescribeAssistantRouteScreen } from "./features/assistants/DescribeAssistantRouteScreen";
 import { SettingsAssistantsRouteScreen } from "./features/assistants/SettingsAssistantsRouteScreen";
@@ -481,6 +482,10 @@ const SETTINGS_SCREENS = {
   SettingsAssistantGroupSettings: createNativeStackScreen({
     screen: AssistantGroupSettingsRouteScreen,
     options: { ...SETTINGS_PAGE_OPTIONS, title: "Group settings" },
+  }),
+  SettingsAssistantWork: createNativeStackScreen({
+    screen: AssistantWorkRouteScreen,
+    options: { ...SETTINGS_PAGE_OPTIONS, title: "Work" },
   }),
   SettingsAssistantWatch: createNativeStackScreen({
     screen: AssistantWatchRouteScreen,

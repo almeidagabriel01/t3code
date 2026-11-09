@@ -23,6 +23,7 @@ import { turnThreadIntoProject, canTurnThreadIntoProject } from "./turnThreadInt
 import { whenRootNavigationReady, rootNavigationRef } from "../../lib/rootNavigation";
 import { useAssistantFlows } from "../assistants/useAssistantFlows";
 import { useOpenAssistantEditor } from "../assistants/openAssistantEditor";
+import { useOpenAssistantWork } from "../assistants/assistantWorkTarget";
 import { useThreadListActions } from "../home/useThreadListActions";
 import { threadCanArchive } from "../home/threadArchive";
 import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
@@ -66,6 +67,7 @@ export function useThreadMenu(
     assistantEntry?.environmentId ?? thread?.environmentId ?? ("" as EnvironmentId),
   );
   const openAssistantEditor = useOpenAssistantEditor();
+  const openAssistantWork = useOpenAssistantWork();
   const restartAgentSession = useRestartAgentSession();
   const kanbanEnvironmentIds = useKanbanEnvironmentIds();
   const linkedCard = useThreadKanbanCard(
@@ -169,6 +171,9 @@ export function useThreadMenu(
           if (assistantEntry) {
             assistantFlows.reset(assistantEntry.assistant, { openAfter: true });
           }
+        },
+        assistantWork: () => {
+          if (assistantEntry) openAssistantWork(environmentId, assistantEntry.assistant.id);
         },
         assistantSettings: () => {
           if (assistantEntry) openAssistantEditor(environmentId, assistantEntry.assistant);

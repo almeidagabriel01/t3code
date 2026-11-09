@@ -97,6 +97,7 @@ export function buildThreadMenuActions(input: ThreadMenuInput): MenuAction[] {
       image: "arrow.clockwise",
       attributes: { disabled: input.assistant.resetDisabled === true },
     },
+    { id: "assistant-work", title: `${input.assistant.name} work`, image: "briefcase" },
     { id: "assistant-settings", title: `${input.assistant.name} settings`, image: "gearshape" },
   ];
 }
@@ -252,6 +253,7 @@ export interface ThreadMenuHandlers {
   readonly openNotes?: () => void;
   readonly turnIntoProject: () => void;
   readonly resetAssistant?: () => void;
+  readonly assistantWork?: () => void;
   readonly assistantSettings?: () => void;
   readonly delete: () => void;
   readonly openCustomSnooze: () => void;
@@ -314,6 +316,8 @@ export function runThreadMenuEvent(
       return handlers.turnIntoProject();
     case "reset-assistant":
       return handlers.resetAssistant?.();
+    case "assistant-work":
+      return handlers.assistantWork?.();
     case "assistant-settings":
       return handlers.assistantSettings?.();
     case "delete":

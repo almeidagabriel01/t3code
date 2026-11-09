@@ -137,7 +137,11 @@ describe("thread menu", () => {
     ]) {
       expect(assistantIds).not.toContain(removed);
     }
-    expect(assistantIds.slice(-2)).toEqual(["reset-assistant", "assistant-settings"]);
+    expect(assistantIds.slice(-3)).toEqual([
+      "reset-assistant",
+      "assistant-work",
+      "assistant-settings",
+    ]);
     expect(buildThreadMenuActions({ ...input, assistant: { name: "Jarvis" } }).at(-1)?.title).toBe(
       "Jarvis settings",
     );

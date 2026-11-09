@@ -34,6 +34,7 @@ import { AssistantAvatar } from "./assistantPresentation";
 import { moodTextClass } from "./assistantPresenceLabels";
 import { useAssistantFlows, useAssistantTeamFlows } from "./useAssistantFlows";
 import { useOpenAssistantEditor } from "./openAssistantEditor";
+import { useOpenAssistantWork } from "./assistantWorkTarget";
 import { useOpenAssistantTeam } from "./assistantTeamTarget";
 import { useHomeSectionPreferences } from "../home/useHomeSectionPreferences";
 
@@ -138,6 +139,7 @@ function AssistantRow(props: {
   const { assistant, environmentId } = props.entry;
   const flows = useAssistantFlows(environmentId);
   const openEditor = useOpenAssistantEditor();
+  const openWork = useOpenAssistantWork();
   const state = useAssistantState(props.entry);
   const { presence } = state;
   const meta = assistantMetaLabel(presence);
@@ -149,6 +151,7 @@ function AssistantRow(props: {
       image: "arrow.clockwise",
       attributes: { disabled: !flows.canAct || state.working },
     },
+    { id: "work", title: `${assistant.name} work`, image: "briefcase" },
     { id: "settings", title: `${assistant.name} settings`, image: "gearshape" },
     {
       id: "archive",
@@ -231,6 +234,7 @@ function AssistantRow(props: {
         actions={actions}
         onAction={(id) => {
           if (id === "reset") flows.reset(assistant, { openAfter: true });
+          else if (id === "work") openWork(environmentId, assistant.id);
           else if (id === "settings") openEditor(environmentId, assistant);
           else if (id === "archive") flows.archive(assistant);
         }}

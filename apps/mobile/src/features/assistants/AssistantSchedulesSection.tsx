@@ -1,13 +1,16 @@
 import { useNavigation } from "@react-navigation/native";
+import { formatNextRun } from "@t3tools/client-runtime/assistantWork";
 import type { Assistant, EnvironmentId, ModelSelection, ScheduledTask } from "@t3tools/contracts";
 import { View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
+import { IconButton } from "../../components/ui/IconButton";
 import { ListActionRow } from "../../components/ui/ListActionRow";
 import { ListRowLayout } from "../../components/ui/ListRowLayout";
 import { ListSection } from "../../components/ui/ListSection";
 import { RowPressable } from "../../components/ui/RowPressable";
 import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
+import { useNowMinuteMs } from "../../lib/clock";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -29,6 +32,11 @@ export function AssistantSchedulesSection(props: {
   );
   const setEnabled = useAtomCommand(serverEnvironment.setScheduledTaskEnabled, {
     label: "scheduled task enabled",
+    reportFailure: true,
+  });
+  const nowMs = useNowMinuteMs();
+  const runNow = useAtomCommand(serverEnvironment.runScheduledTaskNow, {
+    label: "scheduled task run now",
     reportFailure: true,
   });
   const bound =
@@ -59,9 +67,27 @@ export function AssistantSchedulesSection(props: {
               <ListRowLayout
                 icon="calendar.badge.clock"
                 label={task.title}
-                description={`${describeSchedule(task)}${task.enabled ? "" : " · Paused"}`}
+                description={[
+                  `${describeSchedule(task)}${task.enabled ? "" : " · Paused"}`,
+                  task.enabled && task.nextRunAt !== null
+                    ? `Next ${formatNextRun(task.nextRunAt, nowMs)}`
+                    : null,
+                  task.lastRunStatus === "failed"
+                    ? `Last run failed${task.lastRunError ? `: ${task.lastRunError}` : ""}`
+                    : null,
+                ]
+                  .filter((line) => line !== null && line !== "")
+                  .join("\n")}
               />
             </RowPressable>
+            {task.schedule.type === "webhook" ? null : (
+              <IconButton
+                accessibilityLabel={`Run ${task.title} now`}
+                icon="play"
+                disabled={task.lastRunStatus === "running"}
+                onPress={() => void runNow({ environmentId, input: { id: task.id } })}
+              />
+            )}
             <View className="pr-4">
               <ThemedSwitch
                 accessibilityLabel={`${task.title} enabled`}
