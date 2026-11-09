@@ -29,7 +29,7 @@ const MAX_DONE = 2;
  */
 export const AssistantTaskRows = memo(function AssistantTaskRows(props: {
   readonly entry: AssistantEntry;
-  readonly activeThreadKey?: string | null;
+  readonly activeThreadKey?: string | null | undefined;
   readonly onOpen: (threadRef: ScopedThreadRef) => void;
   /** Larger rows and no left rule, for the assistant page. */
   readonly roomy?: boolean;

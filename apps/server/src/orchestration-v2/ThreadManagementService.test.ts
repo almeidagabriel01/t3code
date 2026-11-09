@@ -839,6 +839,7 @@ const layerAssistantGuardTest = (dispatched: Array<unknown>) =>
       Layer.succeed(AssistantDirectory, {
         teamsOf: () => Effect.succeed([]),
         sandboxEnvironmentId: Effect.succeedSome(EnvironmentId.make("environment-sandbox")),
+        taskOwner: () => Effect.succeedNone,
         forThread: (threadId) =>
           Effect.succeed(
             threadId === guardThreads.plain
@@ -1165,6 +1166,7 @@ it.effect("ask before acting: an approval is given back when the send itself fai
           Layer.succeed(AssistantDirectory, {
             teamsOf: () => Effect.succeed([]),
             sandboxEnvironmentId: Effect.succeedNone,
+            taskOwner: () => Effect.succeedNone,
             forThread: () =>
               Effect.succeedSome({
                 assistant: {

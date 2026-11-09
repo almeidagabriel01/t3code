@@ -47,8 +47,10 @@ function teamsLines(self: Pick<Colleague, "handle">, teams: ReadonlyArray<TeamMe
   return escapeBody([...lines, TEAM_GUIDANCE].join("\n"));
 }
 
-const TASKS_LINE =
-  "Do quick things yourself, here: a question, a lookup, a small tweak. For real multi-step code work, start a thread with t3_thread_launch in the right project and give it a full brief: goal, files, constraints, how to verify. It carries your instructions, model and access. You are woken when it finishes, so never wait on it. Then check its diff, run the tests, ask a teammate to review when that helps, send fixes with t3_thread_send, and only then tell the user.";
+const TASKS_FOLLOW =
+  "It carries your instructions, model and access. You are woken when it finishes, so never wait on it. Then check its diff, run the tests, ask a teammate to review when that helps, send fixes with t3_thread_send, and only then tell the user.";
+const TASKS_HOST = `Do quick things yourself, here: a question, a lookup, a small tweak. Real multi-step code work (changing several files, adding tests, running a suite) is never done in this conversation: start a thread for it with t3_thread_launch in the right project, with a full brief of goal, files, constraints and how to verify. ${TASKS_FOLLOW}`;
+const TASKS_SANDBOX = `Any change to files, and any command that changes anything, is work for a thread, never for this conversation: start it with t3_thread_launch in your sandbox, with a full brief of goal, files, constraints and how to verify. ${TASKS_FOLLOW}`;
 
 const ASK_BEFORE_ACTING_LINE =
   "Ask before acting is on: a message you send into another agent conversation is held until the user approves it in this conversation. If a send says it is waiting for approval, tell the user it is waiting and stop; send the same message again only after they approve, and never send it another way if they decline.";
@@ -76,11 +78,11 @@ export function assistantNoteFor(
   const open = `<t3_assistant name="${escapeAttribute(assistant.name)}" handle="${assistant.handle}"${role} ${access}>`;
   const body = [
     teamsLines(assistant, teams),
-    TASKS_LINE,
     assistant.workspace === "sandbox"
       ? sandboxNoteLine(sandboxEnvironmentId)
       : HOST_CONTAINER_NOTE_LINE,
     assistant.scope === "project" ? projectScopeNoteLine(assistant.projectIds ?? []) : "",
+    assistant.workspace === "sandbox" ? TASKS_SANDBOX : TASKS_HOST,
     assistant.askBeforeActing === true ? ASK_BEFORE_ACTING_LINE : "",
     escapeBody(assistant.instructions.trim()),
   ]

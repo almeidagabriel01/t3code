@@ -66,15 +66,17 @@ const make = Effect.gen(function* () {
       const stored = yield* forThread(task.threadId);
       if (Option.isSome(stored)) yield* PubSub.publish(changes, stored.value);
     }, Effect.orDie),
-    unlink: (threadId) =>
-      sql`DELETE FROM assistant_tasks WHERE thread_id = ${threadId}`.pipe(Effect.orDie),
+    unlink: Effect.fn("AssistantTasks.unlink")(function* (threadId) {
+      yield* sql`DELETE FROM assistant_tasks WHERE thread_id = ${threadId}`;
+    }, Effect.orDie),
     forThread,
     list: sql<TaskRow>`SELECT * FROM assistant_tasks ORDER BY created_at ASC, thread_id ASC`.pipe(
       Effect.map((rows) => rows.map(toTask)),
       Effect.orDie,
     ),
-    removeFor: (assistantId) =>
-      sql`DELETE FROM assistant_tasks WHERE assistant_id = ${assistantId}`.pipe(Effect.orDie),
+    removeFor: Effect.fn("AssistantTasks.removeFor")(function* (assistantId) {
+      yield* sql`DELETE FROM assistant_tasks WHERE assistant_id = ${assistantId}`;
+    }, Effect.orDie),
     changes,
   });
 });
