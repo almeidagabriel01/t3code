@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 
 import { assistantNoteFor } from "./assistantNote.ts";
+import { HOST_CONTAINER_NOTE_LINE } from "./AssistantSandboxPolicy.ts";
 
 const assistant = {
   name: 'Sam "the" <helper>',
@@ -22,7 +23,7 @@ it("wraps the instructions, escapes the markup and skips slash commands", () => 
   assert.strictEqual(assistantNoteFor(assistant, "  /compact"), "");
   assert.strictEqual(
     assistantNoteFor({ ...assistant, instructions: " " }, "hi"),
-    '<t3_assistant name="Sam &quot;the&quot; &lt;helper>" handle="sam" access="read-only">\n</t3_assistant>',
+    `<t3_assistant name="Sam &quot;the&quot; &lt;helper>" handle="sam" access="read-only">\n${HOST_CONTAINER_NOTE_LINE}\n</t3_assistant>`,
   );
 });
 
@@ -68,5 +69,9 @@ it("tells a sandboxed assistant where its work runs, or that the sandbox is not 
   assert.ok(linked.includes("On this Mac you only read"));
   assert.ok(linked.includes(`access="read-only" sandbox_access="${assistant.toolAccess}"`));
   assert.ok(assistantNoteFor(boxed, "hi").includes("not linked yet"));
-  assert.ok(!assistantNoteFor(assistant, "hi", [], "environment-sandbox").includes("sandbox"));
+  const host = assistantNoteFor(assistant, "hi", [], "environment-sandbox");
+  assert.ok(!host.includes("sandbox"));
+  // An assistant on this Mac may send one task to the container; a sandboxed one already works there.
+  assert.ok(host.includes("container_task"));
+  assert.ok(!linked.includes("container_task"));
 });

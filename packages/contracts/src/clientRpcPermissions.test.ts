@@ -96,6 +96,7 @@ describe("assistant client guards", () => {
       WS_METHODS.assistantSandboxStart,
       WS_METHODS.assistantSandboxStop,
       WS_METHODS.assistantSandboxRemove,
+      WS_METHODS.assistantSandboxConfigure,
       WS_METHODS.assistantSandboxPairing,
     ])
       expect(clientRpcRequiredScopes(method, {})).toEqual(["orchestration:operate"]);

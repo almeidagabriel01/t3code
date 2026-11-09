@@ -329,6 +329,19 @@ folder inside it is what separates them.
   still create a thread on this machine with its own runtime mode, because only the assistant's own
   thread is capped.
 
+- **One task in the container, from an assistant that stays on this Mac.** `t3_assistant
+  container_task` ([`containerTask.ts`](../../apps/server/src/mcp/toolkits/assistant/containerTask.ts))
+  asks the CPU limit once (a decision, stored in `assistant_sandbox_config`, editable in Settings;
+  `docker update --cpus` applies it to a container that exists), starts and links the container,
+  then calls `RemoteDelegation.delegate` with `cloneMissingProject`, which finds the project there
+  by repository or clones and registers it. `RemoteDelegation` tells `AssistantSandboxControl`
+  when such a task starts and ends (`assistant_sandbox_task`). The container is discarded
+  (removed, volumes kept so sign-ins and clones survive) when the last task ends only if that
+  task's call brought it up (`one_off`), the setting says discard, and no sandboxed assistant is
+  active; the explicit `container_discard` obeys the same two guards. The user pressing Start
+  clears `one_off`. A task's row shows "Assistant sandbox" as where it ran, set at delegation
+  because the container's own label is its hostname. After a restart `RemoteDelegation.start`
+  follows open tasks again, so the discard still happens when they end.
 - **The link is the existing peer link.** [`AssistantSandboxControl`](../../apps/server/src/assistants/AssistantSandboxControl.ts)
   builds and starts the container in the background, mints a pairing credential inside it and calls
   `PeerLinks.link` with full access (the per-call limits narrow it). A live link at the container's

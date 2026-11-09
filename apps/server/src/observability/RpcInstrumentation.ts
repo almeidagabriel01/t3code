@@ -128,6 +128,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.assistantSandboxStart]: "assistants",
   [WS_METHODS.assistantSandboxStop]: "assistants",
   [WS_METHODS.assistantSandboxRemove]: "assistants",
+  [WS_METHODS.assistantSandboxConfigure]: "assistants",
   [WS_METHODS.assistantSandboxPairing]: "assistants",
   [WS_METHODS.assistantsCreate]: "assistants",
   [WS_METHODS.assistantsUpdate]: "assistants",

@@ -22,6 +22,7 @@ import {
   type AssistantGroupsPostResult,
   type AssistantGroupsTaskActionInput,
   type AssistantGroupTask,
+  type AssistantSandboxConfigureInput,
   type AssistantSandboxStatus,
   type AssistantsCreateInput,
   type AssistantsResetInput,
@@ -245,6 +246,9 @@ export function useAssistantSandboxActions(environmentId: EnvironmentId) {
   const start = useAtomCommand(assistantsEnvironment.startSandbox, { reportFailure: false });
   const stop = useAtomCommand(assistantsEnvironment.stopSandbox, { reportFailure: false });
   const remove = useAtomCommand(assistantsEnvironment.removeSandbox, { reportFailure: false });
+  const configure = useAtomCommand(assistantsEnvironment.configureSandbox, {
+    reportFailure: false,
+  });
   const reply = <A>(
     result:
       | { readonly _tag: "Success"; readonly value: A }
@@ -259,6 +263,8 @@ export function useAssistantSandboxActions(environmentId: EnvironmentId) {
     stop: async () => reply(await stop({ environmentId, input: {} })),
     remove: async (deleteVolumes: boolean) =>
       reply(await remove({ environmentId, input: { deleteVolumes } })),
+    configure: async (input: AssistantSandboxConfigureInput) =>
+      reply(await configure({ environmentId, input })),
   };
 }
 

@@ -604,6 +604,31 @@ it("stops a running sandbox, offers the provider sign-in, and removes it keeping
   );
 });
 
+it("shows the sandbox CPU limit and what happens when a task is done, and saves a change", async () => {
+  publishAssistants([assistant("jarvis", "Jarvis")]);
+  fakeSandbox.calls = [];
+  publishSandbox({ ...fakeSandbox.status, state: "stopped", cpus: 3, whenDone: "discard" });
+  appAtomRegistry.set(assistantDialogAtom, null);
+  await using _screen = await openApp("/settings/assistants");
+  const cpu = page.getByRole("combobox", { name: "CPU limit" });
+  await expect.element(cpu).toHaveTextContent("3 cores");
+  await userEvent.click(cpu);
+  await userEvent.click(page.getByRole("option", { name: "No limit" }));
+  await eventually(() =>
+    expect(fakeSandbox.calls.at(-1)).toMatchObject({
+      tag: "assistantSandbox.configure",
+      input: { cpus: null },
+    }),
+  );
+  const whenDone = page.getByRole("combobox", { name: "When a task is done" });
+  await expect.element(whenDone).toHaveTextContent("Discard the container");
+  await userEvent.click(whenDone);
+  await userEvent.click(page.getByRole("option", { name: "Keep the container" }));
+  await eventually(() =>
+    expect(fakeSandbox.calls.at(-1)).toMatchObject({ input: { whenDone: "keep" } }),
+  );
+});
+
 it("signing in to the sandbox's providers asks the server for a one-time pairing link", async () => {
   publishAssistants([assistant("jarvis", "Jarvis")]);
   fakeSandbox.calls = [];

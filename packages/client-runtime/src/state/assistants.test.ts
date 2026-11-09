@@ -16,6 +16,8 @@ import {
   selectArchivedAssistants,
   selectTeams,
   assistantSandboxView,
+  sandboxCpuChoices,
+  sandboxCpuLabel,
 } from "./assistants.ts";
 
 const assistant = (id: string, overrides: Partial<Assistant> = {}): Assistant => ({
@@ -121,6 +123,8 @@ describe("assistantSandboxView", () => {
     environmentId: "environment-box" as AssistantSandboxStatus["environmentId"],
     url: "http://127.0.0.1:49152",
     linkedEnvironmentsEnabled: true,
+    cpus: null,
+    whenDone: "discard",
     ...overrides,
   });
 
@@ -159,5 +163,20 @@ describe("assistantSandboxView", () => {
     );
     assert.isNull(assistantSandboxView(status({})).unavailableReason);
     assert.isFalse(assistantSandboxView(status({ environmentId: null })).canSignIn);
+  });
+});
+
+describe("sandboxCpuChoices", () => {
+  it("offers no limit first, the presets, and a stored value that is not a preset in order", () => {
+    assert.deepStrictEqual(
+      sandboxCpuChoices(null).map((choice) => choice.label),
+      ["No limit", "1 core", "2 cores", "4 cores", "8 cores", "16 cores"],
+    );
+    assert.deepStrictEqual(
+      sandboxCpuChoices(3).map((choice) => choice.value),
+      [null, 1, 2, 3, 4, 8, 16],
+    );
+    assert.strictEqual(sandboxCpuChoices(4).length, 6);
+    assert.strictEqual(sandboxCpuLabel(3), "3 cores");
   });
 });

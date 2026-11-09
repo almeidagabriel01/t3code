@@ -83,6 +83,7 @@ const harness = (initial: Partial<Docker> = {}, bundleFails = false) => {
           docker.container = "none";
           return out("name");
         case "volume":
+        case "update":
           return out("");
         case "inspect":
           return docker.container === "none"
@@ -186,7 +187,7 @@ describe("AssistantSandbox", () => {
   it.effect("ensure builds once, publishes on loopback only, and repeats without effect", () =>
     withSandbox({}, (s, docker) =>
       Effect.gen(function* () {
-        const first = yield* s.ensure;
+        const first = yield* s.ensure(null);
         assert.strictEqual(first.state, "running");
         const run = docker.calls.find((call) => call[0] === "run")!;
         assert.include(run, "127.0.0.1::3773");
@@ -196,7 +197,7 @@ describe("AssistantSandbox", () => {
         assert.include(run.join(" "), "/base/shared:/home/t3/shared");
         assert.isTrue(run.at(-1)!.startsWith("t3-assistant-sandbox:1.2.3-"));
         const before = docker.calls.length;
-        yield* s.ensure;
+        yield* s.ensure(null);
         assert.deepStrictEqual(
           commands(docker)
             .slice(before)
@@ -212,13 +213,13 @@ describe("AssistantSandbox", () => {
     Effect.gen(function* () {
       yield* withSandbox({ image: true }, (s, docker) =>
         Effect.gen(function* () {
-          yield* s.ensure;
+          yield* s.ensure(null);
           assert.notInclude(commands(docker), "build");
         }),
       );
       yield* withSandbox({ container: "stopped" }, (s, docker) =>
         Effect.gen(function* () {
-          assert.strictEqual((yield* s.ensure).state, "running");
+          assert.strictEqual((yield* s.ensure(null)).state, "running");
           assert.include(commands(docker), "start");
           assert.notInclude(commands(docker), "run");
         }),
@@ -226,13 +227,63 @@ describe("AssistantSandbox", () => {
     }),
   );
 
+  it.effect(
+    "the CPU limit is passed at creation and lifted or changed on a container that exists",
+    () =>
+      Effect.gen(function* () {
+        yield* withSandbox({}, (s, docker) =>
+          Effect.gen(function* () {
+            yield* s.ensure(2);
+            const run = docker.calls.find((call) => call[0] === "run")!;
+            assert.strictEqual(run[run.indexOf("--cpus") + 1], "2");
+          }),
+        );
+        yield* withSandbox({}, (s, docker) =>
+          Effect.gen(function* () {
+            yield* s.ensure(null);
+            assert.notInclude(
+              docker.calls.find((call) => call[0] === "run")!,
+              "--cpus",
+            );
+          }),
+        );
+        yield* withSandbox({ container: "stopped" }, (s, docker) =>
+          Effect.gen(function* () {
+            yield* s.ensure(4);
+            assert.deepStrictEqual(
+              docker.calls.find((call) => call[0] === "update"),
+              ["update", "--cpus", "4", "t3-assistant-sandbox-77830f5d"],
+            );
+            yield* s.setCpus(null);
+            assert.deepStrictEqual(
+              docker.calls
+                .filter((call) => call[0] === "update")
+                .at(-1)
+                ?.slice(1, 3),
+              ["--cpus", "0"],
+            );
+          }),
+        );
+        yield* withSandbox({}, (s, docker) =>
+          Effect.gen(function* () {
+            yield* s.setCpus(2);
+            assert.notInclude(commands(docker), "update");
+          }),
+        );
+      }),
+  );
+
   it.effect("ensure fails with a reason when docker or the build is unavailable", () =>
     Effect.gen(function* () {
-      const noDocker = yield* withSandbox({ available: false }, (s) => s.ensure.pipe(Effect.flip));
+      const noDocker = yield* withSandbox({ available: false }, (s) =>
+        s.ensure(null).pipe(Effect.flip),
+      );
       assert.strictEqual(noDocker.reason, "docker_unavailable");
-      const noBundle = yield* withSandbox({}, (s) => s.ensure.pipe(Effect.flip), true);
+      const noBundle = yield* withSandbox({}, (s) => s.ensure(null).pipe(Effect.flip), true);
       assert.strictEqual(noBundle.reason, "bundle_missing");
-      const failed = yield* withSandbox({ failing: "build" }, (s) => s.ensure.pipe(Effect.flip));
+      const failed = yield* withSandbox({ failing: "build" }, (s) =>
+        s.ensure(null).pipe(Effect.flip),
+      );
       assert.strictEqual(failed.reason, "docker_failed");
       assert.include(failed.message, "last line");
     }),

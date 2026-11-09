@@ -84,3 +84,7 @@ const PROJECT_SCOPE_REFUSAL =
 /** The note line for a project assistant. */
 export const PROJECT_SCOPE_NOTE_LINE =
   "You belong to one project. Launch, delegate and message work only inside it; other projects are out of reach.";
+
+/** The note line for an assistant that works on this Mac, which may send one task to the container. */
+export const HOST_CONTAINER_NOTE_LINE =
+  "You work on this Mac. Only when the user asks for the container, send that one task there with t3_assistant container_task; everything else runs here.";

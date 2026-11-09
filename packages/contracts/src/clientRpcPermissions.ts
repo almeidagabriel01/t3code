@@ -115,6 +115,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.assistantSandboxStart]: AuthOrchestrationOperateScope,
   [WS_METHODS.assistantSandboxStop]: AuthOrchestrationOperateScope,
   [WS_METHODS.assistantSandboxRemove]: AuthOrchestrationOperateScope,
+  [WS_METHODS.assistantSandboxConfigure]: AuthOrchestrationOperateScope,
   [WS_METHODS.assistantSandboxPairing]: AuthOrchestrationOperateScope,
   [WS_METHODS.assistantTeamsCreate]: AuthOrchestrationOperateScope,
   [WS_METHODS.assistantTeamsUpdate]: AuthOrchestrationOperateScope,

@@ -3,7 +3,11 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import type { AssistantDirectoryShape } from "./AssistantDirectory.ts";
-import { PROJECT_SCOPE_NOTE_LINE, sandboxNoteLine } from "./AssistantSandboxPolicy.ts";
+import {
+  HOST_CONTAINER_NOTE_LINE,
+  PROJECT_SCOPE_NOTE_LINE,
+  sandboxNoteLine,
+} from "./AssistantSandboxPolicy.ts";
 
 const escapeAttribute = (value: string) =>
   value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
@@ -68,7 +72,9 @@ export function assistantNoteFor(
   const open = `<t3_assistant name="${escapeAttribute(assistant.name)}" handle="${assistant.handle}"${role} ${access}>`;
   const body = [
     teamsLines(assistant, teams),
-    assistant.workspace === "sandbox" ? sandboxNoteLine(sandboxEnvironmentId) : "",
+    assistant.workspace === "sandbox"
+      ? sandboxNoteLine(sandboxEnvironmentId)
+      : HOST_CONTAINER_NOTE_LINE,
     assistant.scope === "project" ? PROJECT_SCOPE_NOTE_LINE : "",
     assistant.askBeforeActing === true ? ASK_BEFORE_ACTING_LINE : "",
     escapeBody(assistant.instructions.trim()),
