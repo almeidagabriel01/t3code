@@ -140,6 +140,34 @@ export function assistantSandboxView(status: AssistantSandboxStatus | null): Ass
   };
 }
 
+const SANDBOX_CPU_PRESETS = [1, 2, 4, 8, 16];
+
+export const SANDBOX_CPU_DESCRIPTION =
+  "The most CPU cores the container may use. It applies at once, also to a running container.";
+
+export function sandboxCpuLabel(cpus: number | null): string {
+  return cpus === null ? "No limit" : `${cpus} ${cpus === 1 ? "core" : "cores"}`;
+}
+
+/** The presets, plus the current limit when it is not one of them, so a stored value always shows. */
+export function sandboxCpuChoices(
+  current: number | null,
+): ReadonlyArray<{ readonly value: number | null; readonly label: string }> {
+  const counts =
+    current === null || SANDBOX_CPU_PRESETS.includes(current)
+      ? SANDBOX_CPU_PRESETS
+      : [...SANDBOX_CPU_PRESETS, current].sort((left, right) => left - right);
+  return [null, ...counts].map((value) => ({ value, label: sandboxCpuLabel(value) }));
+}
+
+export const SANDBOX_WHEN_DONE_DESCRIPTION =
+  "A container started only for one task goes away when its last task ends; its files and provider sign-ins stay. One you started yourself is never discarded.";
+
+export const SANDBOX_WHEN_DONE_CHOICES = [
+  { value: "discard", label: "Discard the container" },
+  { value: "keep", label: "Keep the container" },
+] as const;
+
 function assistantsStateStream<E, R>(
   events: Stream.Stream<AssistantsEvent, E, R>,
 ): Stream.Stream<AssistantsState, E, R> {
@@ -187,6 +215,7 @@ export function createAssistantsEnvironmentAtoms<R, E>(
       | typeof WS_METHODS.assistantSandboxStart
       | typeof WS_METHODS.assistantSandboxStop
       | typeof WS_METHODS.assistantSandboxRemove
+      | typeof WS_METHODS.assistantSandboxConfigure
       | typeof WS_METHODS.assistantSandboxPairing,
   >(
     tag: TTag,
@@ -233,6 +262,7 @@ export function createAssistantsEnvironmentAtoms<R, E>(
     startSandbox: command(WS_METHODS.assistantSandboxStart, "startSandbox"),
     stopSandbox: command(WS_METHODS.assistantSandboxStop, "stopSandbox"),
     removeSandbox: command(WS_METHODS.assistantSandboxRemove, "removeSandbox"),
+    configureSandbox: command(WS_METHODS.assistantSandboxConfigure, "configureSandbox"),
     sandboxPairing: command(WS_METHODS.assistantSandboxPairing, "sandboxPairing"),
     spend: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:assistants:spend",

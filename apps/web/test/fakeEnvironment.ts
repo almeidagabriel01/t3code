@@ -720,6 +720,8 @@ export const fakeSandbox = {
     environmentId: null,
     url: null,
     linkedEnvironmentsEnabled: false,
+    cpus: null,
+    whenDone: "discard",
   } as AssistantSandboxStatus,
   calls: [] as Array<{ readonly tag: string; readonly input: unknown }>,
 };
@@ -738,6 +740,7 @@ for (const tag of [
   WS_METHODS.assistantSandboxStart,
   WS_METHODS.assistantSandboxStop,
   WS_METHODS.assistantSandboxRemove,
+  WS_METHODS.assistantSandboxConfigure,
 ]) {
   handlers[tag] = (input: unknown) =>
     Effect.sync(() => {

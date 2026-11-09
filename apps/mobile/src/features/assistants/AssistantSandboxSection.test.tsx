@@ -10,6 +10,7 @@ const { mocks } = vi.hoisted(() => ({
     start: vi.fn(),
     stop: vi.fn(),
     remove: vi.fn(),
+    configure: vi.fn(),
     alert: vi.fn(),
     confirms: [] as Array<{
       title: string;
@@ -26,6 +27,11 @@ vi.mock("../../components/ui/Dialog", () => ({
 vi.mock("../../components/ui/ListActionRow", () => ({
   ListActionRow: (props: { label: string; disabled?: boolean; onPress: () => void }) => (
     <button aria-label={props.label} disabled={props.disabled} onClick={props.onPress} />
+  ),
+}));
+vi.mock("./AssistantFormFields", () => ({
+  ChoiceRow: (props: { label: string; selected: boolean; onPress: () => void }) => (
+    <button aria-label={props.label} aria-checked={props.selected} onClick={props.onPress} />
   ),
 }));
 vi.mock("../../components/ui/ListRowLayout", () => ({
@@ -49,6 +55,7 @@ vi.mock("../../state/assistants", () => ({
     start: mocks.start,
     stop: mocks.stop,
     remove: mocks.remove,
+    configure: mocks.configure,
   }),
 }));
 
@@ -61,6 +68,8 @@ const status = (state: string, extra: object = {}) => ({
   environmentId: "box",
   url: null,
   linkedEnvironmentsEnabled: true,
+  cpus: null,
+  whenDone: "discard",
   ...extra,
 });
 
@@ -80,12 +89,13 @@ beforeEach(() => {
   mocks.status = status("running");
   mocks.canAct = true;
   mocks.confirms = [];
-  for (const mock of [mocks.start, mocks.stop, mocks.remove, mocks.alert]) {
+  for (const mock of [mocks.start, mocks.stop, mocks.remove, mocks.configure, mocks.alert]) {
     mock.mockReset();
   }
   mocks.start.mockResolvedValue({ ok: true });
   mocks.stop.mockResolvedValue({ ok: true });
   mocks.remove.mockResolvedValue({ ok: true });
+  mocks.configure.mockResolvedValue({ ok: true });
 });
 afterEach(() => act(() => root.unmount()));
 
@@ -126,6 +136,33 @@ describe("AssistantSandboxSection", () => {
     mocks.canAct = false;
     render();
     expect(button("Stop").disabled).toBe(true);
+  });
+
+  it("lists the CPU limit and the when-done choice, and saves a different one", async () => {
+    mocks.status = status("stopped", { cpus: 3 });
+    render();
+    expect(container.textContent).toContain("CPU limit");
+    expect(container.textContent).toContain("The most CPU cores the container may use.");
+    // A stored value that is not a preset still shows, selected.
+    expect(button("3 cores").getAttribute("aria-checked")).toBe("true");
+    expect(button("No limit").getAttribute("aria-checked")).toBe("false");
+    await act(async () => button("No limit").click());
+    expect(mocks.configure).toHaveBeenLastCalledWith({ cpus: null });
+    await act(async () => button("Keep the container").click());
+    expect(mocks.configure).toHaveBeenLastCalledWith({ whenDone: "keep" });
+    // The current choice, or a read-only environment, saves nothing.
+    mocks.configure.mockClear();
+    await act(async () => button("3 cores").click());
+    await act(async () => button("Discard the container").click());
+    mocks.canAct = false;
+    render();
+    await act(async () => button("No limit").click());
+    expect(mocks.configure).not.toHaveBeenCalled();
+    mocks.canAct = true;
+    mocks.configure.mockResolvedValue({ ok: false, message: "Docker said no" });
+    render();
+    await act(async () => button("No limit").click());
+    expect(mocks.alert).toHaveBeenCalledWith("Could not change the CPU limit", "Docker said no");
   });
 
   it("removes the container, then asks whether to keep or delete its files", async () => {

@@ -1,4 +1,10 @@
-import { assistantSandboxView } from "@t3tools/client-runtime/state/assistants";
+import {
+  assistantSandboxView,
+  SANDBOX_CPU_DESCRIPTION,
+  SANDBOX_WHEN_DONE_CHOICES,
+  SANDBOX_WHEN_DONE_DESCRIPTION,
+  sandboxCpuChoices,
+} from "@t3tools/client-runtime/state/assistants";
 import type { EnvironmentId } from "@t3tools/contracts";
 
 import * as Dialog from "../../components/ui/Dialog";
@@ -6,6 +12,7 @@ import { ListActionRow } from "../../components/ui/ListActionRow";
 import { ListRowLayout } from "../../components/ui/ListRowLayout";
 import { ListSection } from "../../components/ui/ListSection";
 import { useAssistantSandbox, useAssistantSandboxActions } from "../../state/assistants";
+import { ChoiceRow } from "./AssistantFormFields";
 
 /** The sandbox container assistants may work in: its state and Start / Stop / Remove. */
 export function AssistantSandboxSection(props: {
@@ -44,41 +51,79 @@ export function AssistantSandboxSection(props: {
     });
 
   return (
-    <ListSection
-      title={`Sandbox${props.suffix}`}
-      footer={
-        "A Linux container (Docker) on the server's machine where assistants set to Sandbox run commands and edit files. To sign in to providers inside it, open T3 Code on that Mac, Settings, Assistants, Sandbox."
-      }
-    >
-      <ListRowLayout
-        icon="cube"
-        label={`Sandbox container · ${view.label}`}
-        {...(view.detail === null ? {} : { description: view.detail })}
-      />
-      <ListRowLayout
-        icon="link"
-        label={`Linked environments · ${status.linkedEnvironmentsEnabled ? "On" : "Off"}`}
-        description="The sandbox link needs it. Starting the sandbox turns it on."
-      />
-      <ListActionRow
-        icon="play"
-        label="Start"
-        disabled={disabled || !view.canStart}
-        onPress={() => void run("Could not start the sandbox", actions.start)}
-      />
-      <ListActionRow
-        icon="stop.fill"
-        label="Stop"
-        disabled={disabled || !view.canStop}
-        onPress={() => void run("Could not stop the sandbox", actions.stop)}
-      />
-      <ListActionRow
-        icon="trash"
-        label="Remove"
-        tone="danger"
-        disabled={disabled || !view.canRemove}
-        onPress={remove}
-      />
-    </ListSection>
+    <>
+      <ListSection
+        title={`Sandbox${props.suffix}`}
+        footer={
+          "A Linux container (Docker) on the server's machine where assistants set to Sandbox run commands and edit files. To sign in to providers inside it, open T3 Code on that Mac, Settings, Assistants, Sandbox."
+        }
+      >
+        <ListRowLayout
+          icon="cube"
+          label={`Sandbox container · ${view.label}`}
+          {...(view.detail === null ? {} : { description: view.detail })}
+        />
+        <ListRowLayout
+          icon="link"
+          label={`Linked environments · ${status.linkedEnvironmentsEnabled ? "On" : "Off"}`}
+          description="The sandbox link needs it. Starting the sandbox turns it on."
+        />
+        <ListActionRow
+          icon="play"
+          label="Start"
+          disabled={disabled || !view.canStart}
+          onPress={() => void run("Could not start the sandbox", actions.start)}
+        />
+        <ListActionRow
+          icon="stop.fill"
+          label="Stop"
+          disabled={disabled || !view.canStop}
+          onPress={() => void run("Could not stop the sandbox", actions.stop)}
+        />
+        <ListActionRow
+          icon="trash"
+          label="Remove"
+          tone="danger"
+          disabled={disabled || !view.canRemove}
+          onPress={remove}
+        />
+      </ListSection>
+      <ListSection title="CPU limit" footer={SANDBOX_CPU_DESCRIPTION}>
+        {sandboxCpuChoices(status.cpus).map((choice) => (
+          <ChoiceRow
+            key={choice.label}
+            role="radio"
+            icon="bolt"
+            label={choice.label}
+            selected={choice.value === status.cpus}
+            onPress={() =>
+              disabled || choice.value === status.cpus
+                ? undefined
+                : void run("Could not change the CPU limit", () =>
+                    actions.configure({ cpus: choice.value }),
+                  )
+            }
+          />
+        ))}
+      </ListSection>
+      <ListSection title="When a task is done" footer={SANDBOX_WHEN_DONE_DESCRIPTION}>
+        {SANDBOX_WHEN_DONE_CHOICES.map((choice) => (
+          <ChoiceRow
+            key={choice.value}
+            role="radio"
+            icon={choice.value === "discard" ? "trash" : "archivebox"}
+            label={choice.label}
+            selected={choice.value === status.whenDone}
+            onPress={() =>
+              disabled || choice.value === status.whenDone
+                ? undefined
+                : void run("Could not change this setting", () =>
+                    actions.configure({ whenDone: choice.value }),
+                  )
+            }
+          />
+        ))}
+      </ListSection>
+    </>
   );
 }

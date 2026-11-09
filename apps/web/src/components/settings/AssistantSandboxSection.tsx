@@ -1,11 +1,26 @@
 import type { EnvironmentId } from "@t3tools/contracts";
-import { assistantSandboxView } from "@t3tools/client-runtime/state/assistants";
+import {
+  assistantSandboxView,
+  SANDBOX_CPU_DESCRIPTION,
+  SANDBOX_WHEN_DONE_CHOICES,
+  SANDBOX_WHEN_DONE_DESCRIPTION,
+  sandboxCpuChoices,
+  sandboxCpuLabel,
+} from "@t3tools/client-runtime/state/assistants";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { useRouter } from "@tanstack/react-router";
-import { BoxIcon, KeyRoundIcon, LinkIcon, PlayIcon, SquareIcon, Trash2Icon } from "lucide-react";
+import {
+  BoxIcon,
+  CpuIcon,
+  KeyRoundIcon,
+  LinkIcon,
+  PlayIcon,
+  SquareIcon,
+  Trash2Icon,
+} from "lucide-react";
 
 import { requestConfirmDialog } from "../../confirmDialog";
 import { connectPairing } from "../../connection/onboarding";
@@ -13,6 +28,7 @@ import { useAssistantSandbox, useAssistantSandboxActions } from "../../state/ass
 import { useEnvironments } from "../../state/environments";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { toastManager } from "../ui/toast";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 
@@ -118,6 +134,83 @@ export function AssistantSandboxSection(props: {
           </span>
         }
       />
+      {status === null ? null : (
+        <>
+          <SettingsRow
+            title={
+              <span className="inline-flex items-center gap-2">
+                <CpuIcon className="size-4 text-muted-foreground" />
+                CPU limit
+              </span>
+            }
+            description={SANDBOX_CPU_DESCRIPTION}
+            control={
+              <Select
+                value={status.cpus === null ? "none" : String(status.cpus)}
+                disabled={disabled}
+                onValueChange={(value) =>
+                  void run("Could not change the CPU limit", () =>
+                    actions.configure({ cpus: value === "none" ? null : Number(value) }),
+                  )
+                }
+              >
+                <SelectTrigger size="sm" className="w-full sm:w-56" aria-label="CPU limit">
+                  <SelectValue>{sandboxCpuLabel(status.cpus)}</SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  {sandboxCpuChoices(status.cpus).map((choice) => (
+                    <SelectItem
+                      hideIndicator
+                      key={choice.label}
+                      value={choice.value === null ? "none" : String(choice.value)}
+                    >
+                      {choice.label}
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
+            }
+          />
+          <SettingsRow
+            title="When a task is done"
+            description={SANDBOX_WHEN_DONE_DESCRIPTION}
+            control={
+              <Select
+                value={status.whenDone}
+                disabled={disabled}
+                onValueChange={(value) => {
+                  const choice = SANDBOX_WHEN_DONE_CHOICES.find((item) => item.value === value);
+                  if (choice !== undefined) {
+                    void run("Could not change this setting", () =>
+                      actions.configure({ whenDone: choice.value }),
+                    );
+                  }
+                }}
+              >
+                <SelectTrigger
+                  size="sm"
+                  className="w-full sm:w-56"
+                  aria-label="When a task is done"
+                >
+                  <SelectValue>
+                    {
+                      SANDBOX_WHEN_DONE_CHOICES.find((item) => item.value === status.whenDone)
+                        ?.label
+                    }
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  {SANDBOX_WHEN_DONE_CHOICES.map((item) => (
+                    <SelectItem hideIndicator key={item.value} value={item.value}>
+                      {item.label}
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
+            }
+          />
+        </>
+      )}
       <SettingsRow
         title={
           <span className="inline-flex items-center gap-2">
