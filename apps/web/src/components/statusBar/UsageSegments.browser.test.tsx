@@ -63,6 +63,7 @@ describe("UsageSegments reset credits", () => {
     await userEvent.click(page.getByRole("button", { name: "Use reset" }));
 
     await expect.element(page.getByText("Use a reset credit?")).toBeVisible();
+    await expect.element(page.getByText(/one credit on Codex/)).toBeVisible();
     await expect.element(page.getByText("2 reset credits banked")).not.toBeInTheDocument();
     expect(mocks.consume).not.toHaveBeenCalled();
 

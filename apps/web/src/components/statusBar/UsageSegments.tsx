@@ -498,6 +498,7 @@ function StatusBarResetDialog({
         if (!open) onClose();
       }}
       disabled={!canManageProviders}
+      account={item.entry.displayName}
       onConfirm={() =>
         void redeem().then((message) => {
           onClose();

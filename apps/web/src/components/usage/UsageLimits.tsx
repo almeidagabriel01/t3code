@@ -274,11 +274,13 @@ export function ResetCreditDialog({
   onOpenChange,
   onConfirm,
   disabled = false,
+  account = "your account",
 }: {
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
   readonly onConfirm: () => void;
   readonly disabled?: boolean;
+  readonly account?: string;
 }) {
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
@@ -286,7 +288,7 @@ export function ResetCreditDialog({
         <AlertDialogHeader>
           <AlertDialogTitle>Use a reset credit?</AlertDialogTitle>
           <AlertDialogDescription>
-            This redeems one credit on your account and clears the current rate-limit windows. It
+            This redeems one credit on {account} and clears the current rate-limit windows. It
             cannot be undone.
           </AlertDialogDescription>
         </AlertDialogHeader>
