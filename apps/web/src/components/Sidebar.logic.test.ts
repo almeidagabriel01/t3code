@@ -1699,21 +1699,37 @@ describe("Activity Priority", () => {
     ).toBeNull();
   });
 
-  it("sorts attention, work and unread by creation time with stable scoped-key ties", () => {
+  it("sorts attention, work and unread by last prompt, then creation time, with stable scoped-key ties", () => {
     const thread = (id: string, createdAt: string, overrides: ThreadFixtureOverrides = {}) =>
       makeThread({ id: ThreadId.make(id), createdAt, updatedAt: createdAt, ...overrides });
     const attention = thread("attention", before, { hasPendingApprovals: true });
     const working = thread("working", after, { runtime: runtimeOf("running") });
     const unread = thread("unread", after, { latestRun: makeLatestRun(), lastVisitedAt: before });
     const tie = thread("z-attention", before, { hasPendingUserInput: true });
-    const threads = [tie, unread, working, attention];
+    const lastPrompt = "2026-03-09T10:09:00.000Z";
+    const prompted = thread("prompted", before, {
+      latestRun: makeLatestRun(),
+      lastVisitedAt: before,
+      latestUserMessageAt: lastPrompt,
+      latestUserAuthoredMessageAt: lastPrompt,
+    });
+    // A wake moves latestUserMessageAt without being the user's prompt.
+    const woken = thread("woken", before, {
+      latestRun: makeLatestRun(),
+      lastVisitedAt: before,
+      latestUserMessageAt: lastPrompt,
+      latestUserAuthoredMessageAt: null,
+    });
+    const threads = [tie, woken, unread, prompted, working, attention];
     const ranks = new Map(threads.map((thread) => [keyOf(thread), rank(thread)!]));
     const ordered = sortPriorityThreadsForSidebar(threads, ranks);
     expect(ordered.map((thread) => thread.id)).toEqual([
       "attention",
       "z-attention",
       "working",
+      "prompted",
       "unread",
+      "woken",
     ]);
     const streamed = threads.map((candidate) =>
       candidate === attention ? { ...candidate, updatedAt: "2999-01-01T00:00:00.000Z" } : candidate,
