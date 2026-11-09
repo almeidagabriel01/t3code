@@ -28,6 +28,9 @@ const { mocks, Children } = vi.hoisted(() => ({
     archive: vi.fn(),
     restore: vi.fn(),
     scrollToEnd: vi.fn(),
+    pick: vi.fn(),
+    prepare: vi.fn(),
+    release: vi.fn(),
   },
 }));
 vi.mock("react-native", () => ({
@@ -45,6 +48,23 @@ vi.mock("react-native", () => ({
     <button aria-label={props.accessibilityLabel} disabled={props.disabled} onClick={props.onPress}>
       {props.children}
     </button>
+  ),
+}));
+vi.mock("../../lib/composerImages", () => ({
+  pickComposerFiles: (...args: unknown[]) => mocks.pick(...args),
+}));
+vi.mock("../../lib/attachmentUpload", () => ({
+  prepareTurnAttachments: (...args: unknown[]) => mocks.prepare(...args),
+  releasePendingAttachmentUploads: (...args: unknown[]) => mocks.release(...args),
+}));
+vi.mock("../../state/assets", () => ({ useAssetUrl: () => "https://hub/asset" }));
+vi.mock("../../lib/assetImageSource", () => ({
+  assetImageSource: (_environmentId: string, _resource: unknown, url: string) => ({ uri: url }),
+}));
+vi.mock("expo-image", () => ({ Image: () => <i>thumb</i> }));
+vi.mock("../../components/FilePreviewModal", () => ({
+  FilePreviewModal: (props: { source: { name: string; kind: string } | null }) => (
+    <div data-testid="preview">{props.source && `${props.source.kind}:${props.source.name}`}</div>
   ),
 }));
 vi.mock("../../native/NativeScrollViewMarker", () => ({ NativeScrollView: Children }));
@@ -345,8 +365,12 @@ beforeEach(() => {
     mocks.restore,
     mocks.scrollToEnd,
     mocks.openTeam.edit,
+    mocks.pick,
+    mocks.prepare,
+    mocks.release,
   ])
     fn.mockReset();
+  mocks.release.mockResolvedValue(undefined);
   mocks.post.mockResolvedValue({ ok: true, value: {} });
   mocks.taskAction.mockResolvedValue({ ok: true, value: {} });
 });
@@ -629,5 +653,145 @@ describe("group header and archive", () => {
     await click("header:Restore group");
     expect(mocks.restore).toHaveBeenCalledTimes(2);
     expect(byLabel("header:Archive group")).toBeNull();
+  });
+});
+
+describe("group attachments", () => {
+  const draft = (name: string, type: "image" | "file" = "file") => ({
+    id: `draft-${name}`,
+    type,
+    name,
+    mimeType: type === "image" ? "image/png" : "application/pdf",
+    sizeBytes: 2048,
+  });
+  const uploaded = (name: string, type: "image" | "file" = "file") => ({
+    status: "ready",
+    attachments: [
+      {
+        type,
+        id: `pending-${name}`,
+        name,
+        mimeType: type === "image" ? "image/png" : "application/pdf",
+        sizeBytes: 2048,
+        dataUrl: "data:ignored",
+      },
+    ],
+  });
+  const chips = () => container.querySelectorAll('[data-testid="group-attachment-chip"]');
+
+  it("attaches from the picker, keeps the others when one upload fails, and sends what is ready", async () => {
+    mocks.pick.mockResolvedValue({
+      files: [draft("shot.png", "image"), draft("sheet.pdf"), draft("broken.pdf")],
+      error: null,
+    });
+    mocks.prepare.mockImplementation(async (input: { attachments: Array<{ name: string }> }) => {
+      const { name } = input.attachments[0]!;
+      if (name === "broken.pdf") throw new Error("Upload rejected (413)");
+      return uploaded(name, name.endsWith(".png") ? "image" : "file");
+    });
+    render();
+    await click("Attach files");
+    expect(chips()).toHaveLength(3);
+    expect(text()).toContain("Upload rejected (413)");
+
+    // The failed file holds the send until it is retried or removed; the others stay.
+    await type("@ada see these");
+    expect(byLabel("Send")!.disabled).toBe(true);
+    await click("Remove broken.pdf");
+    expect(chips()).toHaveLength(2);
+    expect(mocks.release).not.toHaveBeenCalled();
+    expect(byLabel("Send")!.disabled).toBe(false);
+
+    await click("Send");
+    expect(mocks.post).toHaveBeenCalledWith({
+      teamId: "g1",
+      text: "@ada see these",
+      attachments: [
+        {
+          type: "image",
+          id: "pending-shot.png",
+          name: "shot.png",
+          mimeType: "image/png",
+          sizeBytes: 2048,
+        },
+        {
+          type: "file",
+          id: "pending-sheet.pdf",
+          name: "sheet.pdf",
+          mimeType: "application/pdf",
+          sizeBytes: 2048,
+        },
+      ],
+    });
+    expect(chips()).toHaveLength(0);
+    expect(mocks.release).toHaveBeenCalledWith("hub", ["pending-shot.png", "pending-sheet.pdf"]);
+  });
+
+  it("removes an uploaded file's pending upload, and retries a failed one from its chip", async () => {
+    mocks.pick.mockResolvedValue({ files: [draft("a.pdf"), draft("b.pdf")], error: null });
+    let attempts = 0;
+    mocks.prepare.mockImplementation(async (input: { attachments: Array<{ name: string }> }) => {
+      const { name } = input.attachments[0]!;
+      if (name === "b.pdf" && (attempts += 1) === 1) return { status: "abandoned" };
+      return uploaded(name);
+    });
+    render();
+    await click("Attach files");
+    expect(text()).toContain("Upload failed for 'b.pdf'.");
+    await click("Retry b.pdf");
+    expect(text()).not.toContain("Upload failed");
+    await click("Remove a.pdf");
+    expect(mocks.release).toHaveBeenCalledWith("hub", ["pending-a.pdf"]);
+    expect(chips()).toHaveLength(1);
+  });
+
+  it("tells the user what the picker could not take, and when it fails outright", async () => {
+    mocks.pick.mockResolvedValueOnce({
+      files: [],
+      error: "You can attach up to 100 files per message.",
+    });
+    render();
+    await click("Attach files");
+    expect(mocks.alert).toHaveBeenCalledWith(
+      "Could not attach",
+      "You can attach up to 100 files per message.",
+    );
+    mocks.pick.mockRejectedValueOnce(new Error("Picker unavailable"));
+    await click("Attach files");
+    expect(mocks.alert).toHaveBeenLastCalledWith("Could not attach", "Picker unavailable");
+  });
+
+  it("shows a message's files and opens one in the file preview", async () => {
+    mocks.live = snapshot([
+      message("m1", 1, {
+        author: "user",
+        assistantId: null,
+        text: "@ada look",
+        attachments: [
+          { type: "image", id: "g-1", name: "shot.png", mimeType: "image/png", sizeBytes: 2048 },
+          {
+            type: "file",
+            id: "g-2",
+            name: "sheet.pdf",
+            mimeType: "application/pdf",
+            sizeBytes: 4096,
+          },
+          { type: "file", id: "g-3", name: "notes.txt", mimeType: "text/plain", sizeBytes: 10 },
+        ],
+      }),
+    ]);
+    render();
+    expect(
+      container.querySelectorAll('[data-testid="group-message-attachments"] button'),
+    ).toHaveLength(3);
+    expect(text()).toContain("sheet.pdf");
+    await click("Open shot.png");
+    expect(container.querySelector('[data-testid="preview"]')!.textContent).toBe("image:shot.png");
+    await click("Open sheet.pdf");
+    expect(container.querySelector('[data-testid="preview"]')!.textContent).toBe("pdf:sheet.pdf");
+    await click("Open notes.txt");
+    expect(container.querySelector('[data-testid="preview"]')!.textContent).toBe(
+      "document:notes.txt",
+    );
   });
 });

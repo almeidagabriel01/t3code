@@ -7,16 +7,26 @@ import {
 import {
   ASSISTANT_GROUP_MESSAGE_MAX_CHARS,
   type Assistant,
+  type ChatAttachment,
   type EnvironmentId,
 } from "@t3tools/contracts";
-import { AtSignIcon, SendIcon, XIcon } from "lucide-react";
-import { useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
+import { AtSignIcon, PaperclipIcon, SendIcon, XIcon } from "lucide-react";
+import {
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ClipboardEvent,
+  type DragEvent,
+  type KeyboardEvent,
+} from "react";
 
 import { cn } from "~/lib/utils";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Textarea } from "../ui/textarea";
 import { AssistantAvatar } from "./assistantPresentation";
+import { GroupAttachmentChips } from "./GroupAttachments";
+import { useGroupAttachments } from "./useGroupAttachments";
 
 export const MENTION_REQUIRED_COPY = "Mention a member with @, or set a lead in Edit group.";
 
@@ -43,7 +53,10 @@ export function GroupComposer(props: {
   readonly disabledReason: string | null;
   readonly replyingTo: { readonly name: string } | null;
   readonly onClearReply: () => void;
-  readonly onSend: (text: string) => Promise<GroupSendResult>;
+  readonly onSend: (
+    text: string,
+    attachments: ReadonlyArray<ChatAttachment>,
+  ) => Promise<GroupSendResult>;
 }) {
   const [text, setDraft] = useState(() => drafts.get(props.draftKey) ?? "");
   const setText = (next: string) => {
@@ -71,7 +84,11 @@ export function GroupComposer(props: {
     lead,
     props.replyingTo?.name ?? null,
   );
-  const canSend = !props.disabled && !sending && text.trim() !== "";
+  const attached = useGroupAttachments(props.environmentId, props.disabled);
+  const picker = useRef<HTMLInputElement>(null);
+  const [dragging, setDragging] = useState(false);
+  // A file still uploading or failed holds the send, so it is never dropped without the user knowing.
+  const canSend = !props.disabled && !sending && text.trim() !== "" && !attached.unsettled;
 
   // The caret can only move once React has put the inserted text in the field.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- places the DOM caret after an insert
@@ -96,11 +113,12 @@ export function GroupComposer(props: {
     if (!canSend) return;
     setSending(true);
     setError(null);
-    const result = await props.onSend(text.trim());
+    const result = await props.onSend(text.trim(), attached.ready);
     setSending(false);
     if (result.ok) {
       setText("");
       setCaret(0);
+      attached.clear();
     } else setError(result.message);
   };
 
@@ -130,8 +148,38 @@ export function GroupComposer(props: {
     }
   };
 
+  const hasFiles = (event: DragEvent) => event.dataTransfer.types.includes("Files");
+  const onPaste = (event: ClipboardEvent) => {
+    const files = Array.from(event.clipboardData.files);
+    if (files.length === 0) return;
+    event.preventDefault();
+    attached.add(files);
+  };
+  const onDrop = (event: DragEvent) => {
+    setDragging(false);
+    if (props.disabled || !hasFiles(event)) return;
+    event.preventDefault();
+    attached.add(Array.from(event.dataTransfer.files));
+  };
+
   return (
-    <div className="flex flex-col gap-1.5 px-3 pt-2 pb-3 @xl/group-chat:px-6">
+    <div
+      className={cn(
+        "flex flex-col gap-1.5 px-3 pt-2 pb-3 @xl/group-chat:px-6",
+        dragging && "bg-primary/8",
+      )}
+      onPaste={onPaste}
+      onDragOver={(event) => {
+        if (props.disabled || !hasFiles(event)) return;
+        event.preventDefault();
+        setDragging(true);
+      }}
+      onDragLeave={(event) => {
+        const next = event.relatedTarget;
+        if (!(next instanceof Node) || !event.currentTarget.contains(next)) setDragging(false);
+      }}
+      onDrop={onDrop}
+    >
       {props.replyingTo === null ? null : (
         <div className="flex items-center gap-1.5">
           <Badge variant="info" size="sm" data-testid="group-reply-chip">
@@ -199,7 +247,33 @@ export function GroupComposer(props: {
             ))}
           </ul>
         ) : null}
+        <GroupAttachmentChips
+          items={attached.items}
+          onRemove={attached.remove}
+          onRetry={attached.retry}
+        />
         <div className="flex items-end gap-2">
+          <input
+            ref={picker}
+            type="file"
+            multiple
+            hidden
+            aria-label="Attach files"
+            onChange={(event) => {
+              const files = Array.from(event.currentTarget.files ?? []);
+              event.currentTarget.value = "";
+              attached.add(files);
+            }}
+          />
+          <Button
+            size="icon"
+            variant="ghost-muted"
+            aria-label="Attach files"
+            disabled={props.disabled || attached.full}
+            onClick={() => picker.current?.click()}
+          >
+            <PaperclipIcon />
+          </Button>
           <Textarea
             ref={field}
             size="sm"

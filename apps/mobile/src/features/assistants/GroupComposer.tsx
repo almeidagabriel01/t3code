@@ -7,6 +7,7 @@ import {
 import {
   ASSISTANT_GROUP_MESSAGE_MAX_CHARS,
   type Assistant,
+  type ChatAttachment,
   type EnvironmentId,
 } from "@t3tools/contracts";
 import { useState } from "react";
@@ -14,6 +15,8 @@ import { Pressable, ScrollView, View } from "react-native";
 
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
+import * as Dialog from "../../components/ui/Dialog";
+import { GroupAttachmentChips, useGroupAttachments } from "./GroupAttachments";
 import { AssistantAvatar } from "./assistantPresentation";
 
 export const MENTION_REQUIRED_COPY = "Mention a member with @, or set a lead in Edit group.";
@@ -31,7 +34,10 @@ export function GroupComposer(props: {
   readonly disabledReason: string | null;
   readonly replyingTo: { readonly name: string } | null;
   readonly onClearReply: () => void;
-  readonly onSend: (text: string) => Promise<GroupSendResult>;
+  readonly onSend: (
+    text: string,
+    attachments: ReadonlyArray<ChatAttachment>,
+  ) => Promise<GroupSendResult>;
 }) {
   const [text, setText] = useState("");
   const [caret, setCaret] = useState(0);
@@ -50,7 +56,18 @@ export function GroupComposer(props: {
     lead,
     props.replyingTo?.name ?? null,
   );
-  const canSend = !props.disabled && !sending && text.trim() !== "";
+  const attached = useGroupAttachments(props.environmentId);
+  // A file still uploading or failed holds the send, so it is never dropped without the user knowing.
+  const canSend = !props.disabled && !sending && text.trim() !== "" && !attached.unsettled;
+
+  const attach = async () => {
+    const problem = await attached
+      .pick()
+      .catch((cause: unknown) =>
+        cause instanceof Error ? cause.message : "Could not attach the file.",
+      );
+    if (problem !== null) Dialog.alert("Could not attach", problem);
+  };
 
   const pick = (index: number) => {
     const option = options[index];
@@ -65,11 +82,12 @@ export function GroupComposer(props: {
     if (!canSend) return;
     setSending(true);
     setError(null);
-    const result = await props.onSend(text.trim());
+    const result = await props.onSend(text.trim(), attached.ready);
     setSending(false);
     if (result.ok) {
       setText("");
       setCaret(0);
+      attached.clear();
     } else setError(result.message);
   };
 
@@ -139,7 +157,21 @@ export function GroupComposer(props: {
           ))}
         </ScrollView>
       )}
+      <GroupAttachmentChips
+        items={attached.items}
+        onRemove={attached.remove}
+        onRetry={attached.retry}
+      />
       <View className="flex-row items-end gap-2">
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Attach files"
+          disabled={props.disabled || attached.full}
+          onPress={() => void attach()}
+          className="size-11 items-center justify-center rounded-full active:opacity-70 disabled:opacity-40"
+        >
+          <SymbolView name="paperclip" size={20} tintColorClassName="accent-icon-subtle" />
+        </Pressable>
         <TextInput
           accessibilityLabel="Message the group"
           placeholder={props.disabledReason ?? "Message the group. Type @ to pick who gets it."}

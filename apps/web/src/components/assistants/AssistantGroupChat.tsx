@@ -17,6 +17,7 @@ import type {
   AssistantGroupTaskAction,
   AssistantTeam,
   AssistantTeamId,
+  ChatAttachment,
   EnvironmentId,
 } from "@t3tools/contracts";
 import { splitAssistantTransferText } from "@t3tools/contracts";
@@ -53,6 +54,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { openAssistantDialog } from "./assistantDialogState";
 import { AssistantAvatar } from "./assistantPresentation";
 import { openAssistantTeamDialog } from "./assistantTeamState";
+import { GroupMessageAttachments } from "./GroupAttachments";
 import { GroupComposer, MENTION_REQUIRED_COPY, type GroupSendResult } from "./GroupComposer";
 import { GroupTaskCard } from "./GroupTaskCard";
 import { useAssistantTeamFlows } from "./useAssistantFlows";
@@ -273,6 +275,11 @@ function FeedRow(props: {
             </div>
           )}
         </div>
+        <GroupMessageAttachments
+          environmentId={props.environmentId}
+          attachments={message.attachments ?? []}
+          align={fromUser ? "end" : "start"}
+        />
         {assistantGroupAwaitingRoute(props.chat, message) ? (
           <p data-testid="group-routing" className="text-xs text-muted-foreground">
             {props.lead === undefined
@@ -398,10 +405,14 @@ export function AssistantGroupChat(props: {
     setPages((current) => [...current, reply.value]);
   };
 
-  const send = async (text: string): Promise<GroupSendResult> => {
+  const send = async (
+    text: string,
+    attachments: ReadonlyArray<ChatAttachment>,
+  ): Promise<GroupSendResult> => {
     const reply = await actions.post({
       teamId,
       text,
+      ...(attachments.length === 0 ? {} : { attachments }),
       ...(replyTo === null ? {} : { replyToMessageId: replyTo.id }),
     });
     if (reply.ok) {
