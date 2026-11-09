@@ -872,7 +872,7 @@ function TaskForm({
             }}
           />
         </SettingsSection>
-        <SettingsSection title="Task">
+        <SettingsSection title={scheduledTaskWording(draft.assistantTeamId !== null).section}>
           <FormField
             label="Name"
             disabled={saving}
@@ -1039,7 +1039,7 @@ function TaskForm({
                   : []),
                 { value: "interval", label: "Interval" },
                 ...(webhookDenial === undefined || draft.schedule.mode === "webhook"
-                  ? [{ value: "webhook" as const, label: "On webhook" }]
+                  ? [{ value: "webhook" as const, label: "Webhook" }]
                   : []),
               ]}
               selected={draft.schedule.mode}
@@ -1311,8 +1311,8 @@ function TaskForm({
           {draft.schedule.mode === "webhook" ? null : (
             <FormField
               label="Run limit"
-              hint="The task turns itself off after this many runs. Empty means no limit."
-              suffix="runs"
+              hint={scheduledTaskWording(draft.assistantTeamId !== null).runLimitHint}
+              suffix={scheduledTaskWording(draft.assistantTeamId !== null).runsUnit(draft.maxRuns)}
               value={draft.maxRuns}
               placeholder="No limit"
               keyboardType="number-pad"

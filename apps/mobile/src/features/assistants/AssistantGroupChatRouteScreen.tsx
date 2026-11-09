@@ -460,7 +460,7 @@ export function AssistantGroupChatRouteScreen({
                 id: "routines",
                 title: "Group routines",
                 icon: "calendar.badge.clock",
-                onPress: () => openTeam.settings(environmentId, team.id),
+                onPress: () => openTeam.settings(environmentId, team.id, "routines"),
               },
               (team.chat?.unreadCount ?? 0) > 0
                 ? {

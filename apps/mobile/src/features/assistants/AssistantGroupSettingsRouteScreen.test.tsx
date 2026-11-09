@@ -5,7 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 const { mocks, Children } = vi.hoisted(() => ({
   Children: ({ children }: { children?: ReactNode }) => children,
   mocks: {
-    target: null as null | { environmentId: string; teamId: string | null },
+    target: null as null | { environmentId: string; teamId: string | null; section?: "routines" },
+    scrollTo: vi.fn(),
     teams: [] as unknown[],
     chat: null as null | { messages: Map<string, { seq: number; kind: string }> },
     canConverse: true,
@@ -47,7 +48,21 @@ vi.mock("../../components/ui/ListSection", () => ({
     </section>
   ),
 }));
-vi.mock("../../components/ui/ScreenScrollView", () => ({ ScreenScrollView: Children }));
+vi.mock("../../components/ui/ScreenScrollView", () => ({
+  ScreenScrollView: ({ children, ref }: { children?: ReactNode; ref?: { current: unknown } }) => {
+    if (ref) ref.current = { scrollTo: mocks.scrollTo };
+    return children;
+  },
+}));
+vi.mock("react-native", () => ({
+  View: ({
+    children,
+    onLayout,
+  }: {
+    children?: ReactNode;
+    onLayout?: (event: { nativeEvent: { layout: { y: number } } }) => void;
+  }) => <div ref={() => onLayout?.({ nativeEvent: { layout: { y: 480 } } })}>{children}</div>,
+}));
 vi.mock("../settings/components/SettingsScreen", () => ({ SettingsScreen: Children }));
 vi.mock("./AssistantFormFields", () => ({
   TextField: (props: { label: string; value: string; onChange: (value: string) => void }) => (
@@ -108,7 +123,8 @@ beforeEach(() => {
     chat: null,
     canConverse: true,
   });
-  for (const fn of [mocks.update, mocks.conversation, mocks.goBack, mocks.confirm]) fn.mockReset();
+  for (const fn of [mocks.scrollTo, mocks.update, mocks.conversation, mocks.goBack, mocks.confirm])
+    fn.mockReset();
   mocks.update.mockResolvedValue({ ok: true, value: {} });
   mocks.conversation.mockResolvedValue({ ok: true, value: undefined });
 });
@@ -119,6 +135,14 @@ describe("group settings", () => {
     mocks.target = null;
     await render();
     expect(container.textContent).toContain("Open a group first.");
+  });
+
+  it("opens scrolled to Routines only when asked", async () => {
+    await render();
+    expect(mocks.scrollTo).not.toHaveBeenCalled();
+    mocks.target = { environmentId: "hub", teamId: "t1", section: "routines" };
+    await render();
+    expect(mocks.scrollTo).toHaveBeenCalledWith({ y: 480, animated: false });
   });
 
   it("saves instructions and one memory per line, dropping blank lines", async () => {

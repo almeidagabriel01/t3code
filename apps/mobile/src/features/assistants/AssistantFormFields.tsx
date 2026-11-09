@@ -48,7 +48,14 @@ export function ChoiceRow(props: {
         label={props.label}
         description={props.description}
         accessory={
-          props.selected ? (
+          props.role === "checkbox" ? (
+            <SymbolView
+              name={props.selected ? "checkmark.circle.fill" : "circle"}
+              size={20}
+              tintColorClassName={props.selected ? "accent-icon" : "accent-icon-subtle"}
+              type="monochrome"
+            />
+          ) : props.selected ? (
             <SymbolView
               name="checkmark"
               size={16}

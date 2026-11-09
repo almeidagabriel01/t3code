@@ -722,7 +722,7 @@ describe("group header and archive", () => {
     expect(mocks.openEditor).toHaveBeenCalledWith("hub", null, { teamId: "g1" });
     mocks.openTeam.settings.mockClear();
     await click("header:Group routines");
-    expect(mocks.openTeam.settings).toHaveBeenCalledWith("hub", "g1");
+    expect(mocks.openTeam.settings).toHaveBeenCalledWith("hub", "g1", "routines");
     await click("header:Archive group");
     expect(mocks.archive).toHaveBeenCalledWith(expect.objectContaining({ id: "g1" }));
     expect(byLabel("header:Restore group")).toBeNull();

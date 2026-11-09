@@ -9,6 +9,8 @@ export interface AssistantTeamTarget {
   readonly environmentId: EnvironmentId;
   /** Absent when creating a team. */
   readonly teamId: AssistantTeamId | null;
+  /** Group settings opens scrolled to this section. */
+  readonly section?: "routines";
 }
 
 /** Which team the edit screen shows; routes carry no params, like the assistant form. */
@@ -27,8 +29,12 @@ export function useOpenAssistantTeam() {
       navigation.navigate("SettingsAssistantTeamEdit");
     },
     /** Instructions, memories and the conversation actions of a group. */
-    settings: (environmentId: EnvironmentId, teamId: AssistantTeamId) => {
-      appAtomRegistry.set(assistantTeamTargetAtom, { environmentId, teamId });
+    settings: (
+      environmentId: EnvironmentId,
+      teamId: AssistantTeamId,
+      section?: AssistantTeamTarget["section"],
+    ) => {
+      appAtomRegistry.set(assistantTeamTargetAtom, { environmentId, teamId, section });
       navigation.navigate("SettingsAssistantGroupSettings");
     },
     /** The group's chat; shown in the detail column like a thread row. */

@@ -1,4 +1,4 @@
-import { listedProjects } from "@t3tools/client-runtime/assistantSections";
+import { assistantProjectsChip } from "@t3tools/client-runtime/assistantSections";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   assistantMetaLabel,
@@ -427,13 +427,9 @@ export function HomeAssistantsSection(props: {
       environmentLabel={
         environmentCount > 1 ? (props.environmentLabelById.get(entry.environmentId) ?? null) : null
       }
-      projectLabel={
-        entry.assistant.scope === "project"
-          ? listedProjects(entry.assistant)
-              .map((projectId) => projectName(entry.environmentId, projectId))
-              .join(", ")
-          : null
-      }
+      projectLabel={assistantProjectsChip(entry.assistant, (projectId) =>
+        projectName(entry.environmentId, projectId),
+      )}
     />
   );
   const mutedIcon = sidebar ? "accent-drawer-foreground-muted" : "accent-icon-subtle";

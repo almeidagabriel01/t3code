@@ -307,7 +307,7 @@ describe("HomeAssistantsSection", () => {
     expect(statuses[1]?.className).toContain("text-adaptive-sky-600-400");
     expect(statuses[2]?.className).toContain("text-danger-foreground");
     const pills = Array.from(container.querySelectorAll('[data-testid="assistant-project"]'));
-    expect(pills.map((node) => node.textContent)).toEqual(["Website", "Project"]);
+    expect(pills.map((node) => node.textContent)).toEqual(["All projects", "Website", "Project"]);
     expect(text).toContain("CEO");
     expect(text).toContain("av:Bot2:working");
     render(true);
