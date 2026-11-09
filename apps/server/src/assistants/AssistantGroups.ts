@@ -306,6 +306,13 @@ export class AssistantGroups extends Context.Service<
       readonly text: string;
       readonly clientRequestId: string;
     }) => Effect.Effect<void, AssistantError>;
+    /** The chat line a routine's change leaves, from the schedule itself. A repeat adds none. */
+    readonly announceRoutine: (input: {
+      readonly teamId: AssistantTeamId;
+      readonly label: string;
+      readonly text: string;
+      readonly clientRequestId: string;
+    }) => Effect.Effect<void, AssistantError>;
     /** What a member's tools do, keyed by the member's own group thread. */
     readonly member: {
       readonly history: (input: {
@@ -351,6 +358,13 @@ export class AssistantGroups extends Context.Service<
         readonly taskId: string;
         readonly reason: string;
       }) => Effect.Effect<GroupToolResult, AssistantError>;
+      /** The caller's group, and whether the request its task came from was written by the user. */
+      readonly routineScope: (input: {
+        readonly callerThreadId: ThreadId;
+      }) => Effect.Effect<
+        { readonly teamId: AssistantTeamId; readonly askedByUser: boolean },
+        AssistantError
+      >;
     };
     /** A member's run on a group thread ended or changed; moves its task along. */
     readonly handleRunEvent: (event: OrchestrationV2DomainEvent) => Effect.Effect<void>;
@@ -1918,6 +1932,11 @@ const make = Effect.gen(function* () {
         }),
       );
     }, storage),
+    routineScope: Effect.fn("AssistantGroups.member.routineScope")(function* (input) {
+      const { team, task } = yield* callerTask(input.callerThreadId);
+      const request = yield* getMessage((yield* rootOf(task)).request_message_id);
+      return { teamId: team.id, askedByUser: request?.author === "user" };
+    }, storage),
   };
 
   const agentPost: AssistantGroups["Service"]["agentPost"] = Effect.fn("AssistantGroups.agentPost")(
@@ -2008,6 +2027,24 @@ const make = Effect.gen(function* () {
     },
     storage,
   );
+
+  const announceRoutine: AssistantGroups["Service"]["announceRoutine"] = Effect.fn(
+    "AssistantGroups.announceRoutine",
+  )(function* (input) {
+    yield* teamRow(input.teamId);
+    const done = yield* sql`
+      SELECT 1 FROM assistant_group_messages
+      WHERE team_id = ${input.teamId} AND client_request_id = ${input.clientRequestId}`;
+    if (done.length > 0) return;
+    yield* insertMessage({
+      teamId: input.teamId,
+      author: "routine",
+      authorLabel: input.label,
+      kind: "change",
+      text: input.text,
+      clientRequestId: input.clientRequestId,
+    });
+  }, storage);
 
   /** Members that left lose their open work and their thread; an archived group pauses everything. */
   const reconcileTeam = Effect.fn("AssistantGroups.reconcileTeam")(function* (team: AssistantTeam) {
@@ -2336,6 +2373,7 @@ const make = Effect.gen(function* () {
     conversation,
     agentPost,
     announce,
+    announceRoutine,
     member: memberTools,
     handleRunEvent,
     handleAssistantEvent,
@@ -2352,17 +2390,25 @@ export const installLayer = Layer.effectDiscard(
   Effect.gen(function* () {
     const gate = yield* AssistantGroupGate;
     const groups = yield* AssistantGroups;
-    yield* gate.install((input) =>
-      groups
-        .post(
-          {
-            teamId: input.teamId as AssistantTeamId,
-            text: input.text as AssistantGroupsPostInput["text"],
-            clientRequestId: input.clientRequestId,
-          },
-          { kind: "routine", label: input.label },
-        )
-        .pipe(Effect.asVoid),
+    yield* gate.install(
+      (input) =>
+        groups
+          .post(
+            {
+              teamId: input.teamId as AssistantTeamId,
+              text: input.text as AssistantGroupsPostInput["text"],
+              clientRequestId: input.clientRequestId,
+            },
+            { kind: "routine", label: input.label },
+          )
+          .pipe(Effect.asVoid),
+      (input) =>
+        groups.announceRoutine({
+          teamId: input.teamId as AssistantTeamId,
+          label: input.label,
+          text: input.text,
+          clientRequestId: input.clientRequestId,
+        }),
     );
   }),
 );

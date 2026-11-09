@@ -4,6 +4,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
+import { AssistantGroups } from "../assistants/AssistantGroups.ts";
 import { WAKE_MESSAGE_PREFIX } from "../autonomy/autonomyRules.ts";
 import type { Caller } from "./threadAccess.ts";
 
@@ -39,13 +40,9 @@ export const turnOriginOf = (
   return "other";
 };
 
-/** A client credential has no turn: the user who issued it is the caller. */
-export const requireUserTurn = Effect.fn("mcp.requireUserTurn")(function* (
-  caller: Caller,
-  what: string,
-) {
+const startingMessage = Effect.fn("mcp.startingMessage")(function* (caller: Caller) {
   const shell = caller.caller;
-  if (shell === undefined) return;
+  if (shell === undefined) return undefined;
   const runId = shell.activeRunId ?? shell.latestRunId;
   const records =
     runId === null
@@ -57,10 +54,45 @@ export const requireUserTurn = Effect.fn("mcp.requireUserTurn")(function* (
           })
           .pipe(Effect.orElseSucceed(() => undefined));
   const userMessageId = records?.runs.find((run) => run.id === runId)?.userMessageId;
-  const origin = turnOriginOf(records?.messages.find((message) => message.id === userMessageId));
-  if (origin === "user") return;
-  return yield* new OrchestratorMcpFailure({
+  return { message: records?.messages.find((message) => message.id === userMessageId) };
+});
+
+const denied = (what: string, origin: Exclude<TurnOrigin, "user">) =>
+  new OrchestratorMcpFailure({
     code: "capability_denied",
     message: `Only the user can ${what}; this turn came from ${ORIGIN_LABELS[origin]}. Ask the user. Do not retry.`,
   });
+
+/** A client credential has no turn: the user who issued it is the caller. */
+export const requireUserTurn = Effect.fn("mcp.requireUserTurn")(function* (
+  caller: Caller,
+  what: string,
+) {
+  const start = yield* startingMessage(caller);
+  if (start === undefined) return;
+  const origin = turnOriginOf(start.message);
+  if (origin === "user") return;
+  return yield* denied(what, origin);
+});
+
+/**
+ * Like `requireUserTurn`, and a member's group task counts too when the request it came from
+ * (however many hand-offs ago) was written by the user in the group's chat.
+ */
+export const requireUserAskedInGroup = Effect.fn("mcp.requireUserAskedInGroup")(function* (
+  caller: Caller,
+  what: string,
+) {
+  const start = yield* startingMessage(caller);
+  if (start === undefined) return;
+  const origin = turnOriginOf(start.message);
+  if (origin === "user") return;
+  if (origin === "group") {
+    const groups = yield* AssistantGroups;
+    const scope = yield* groups.member
+      .routineScope({ callerThreadId: caller.caller!.id })
+      .pipe(Effect.orElseSucceed(() => undefined));
+    if (scope?.askedByUser === true) return;
+  }
+  return yield* denied(what, origin);
 });

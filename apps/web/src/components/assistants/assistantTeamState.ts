@@ -36,3 +36,13 @@ export const assistantGroupSettingsAtom = Atom.make<AssistantGroupSettingsTarget
 export function openAssistantGroupSettings(target: AssistantGroupSettingsTarget): void {
   appAtomRegistry.set(assistantGroupSettingsAtom, target);
 }
+
+/** A group's routines list; the chat header and the sidebar row open it. */
+export const assistantGroupRoutinesAtom = Atom.make<AssistantGroupSettingsTarget | null>(null).pipe(
+  Atom.keepAlive,
+  Atom.withLabel("assistants:group-routines"),
+);
+
+export function openAssistantGroupRoutines(target: AssistantGroupSettingsTarget): void {
+  appAtomRegistry.set(assistantGroupRoutinesAtom, target);
+}

@@ -215,6 +215,8 @@ interface ScheduledTaskRow {
   readonly last_run_status: string;
   readonly last_run_error: string | null;
   readonly run_count: number;
+  readonly missed_run_policy?: string | null;
+  readonly max_runs?: number | null;
   readonly memory_grant_ceiling?: MemoryTaskGrantCeiling | null;
   readonly webhook_token: string | null;
   readonly webhook_secret: string | null;
@@ -355,6 +357,9 @@ function requireFutureOnce(
     : Effect.void;
 }
 
+const limitReached = (task: Pick<ScheduledTask, "maxRuns" | "runCount">) =>
+  task.maxRuns != null && task.runCount >= task.maxRuns;
+
 function errorMessage(error: unknown): string {
   const failure = Cause.isCause(error) ? Cause.squash(error) : error;
   return failure instanceof Error ? failure.message : String(failure);
@@ -407,6 +412,8 @@ const decodeRow = Effect.fnUntraced(
       lastRunStatus: row.last_run_status,
       lastRunError: row.last_run_error,
       runCount: row.run_count,
+      ...(row.missed_run_policy === "once" ? { missedRunPolicy: "once" } : {}),
+      ...(row.max_runs == null ? {} : { maxRuns: row.max_runs }),
       ...(webhook === undefined ? {} : { webhook }),
     });
   },
@@ -529,6 +536,8 @@ export const layer = Layer.effect(
         last_run_status,
         last_run_error,
         run_count,
+        missed_run_policy,
+        max_runs,
         memory_grant_ceiling,
         webhook_token,
         webhook_secret
@@ -572,6 +581,8 @@ export const layer = Layer.effect(
         last_run_status,
         last_run_error,
         run_count,
+        missed_run_policy,
+        max_runs,
         memory_grant_ceiling,
         webhook_token,
         webhook_secret
@@ -651,6 +662,8 @@ export const layer = Layer.effect(
           last_run_status,
           last_run_error,
           run_count,
+          missed_run_policy,
+          max_runs,
           memory_grant_ceiling,
           webhook_token,
           webhook_secret
@@ -677,6 +690,8 @@ export const layer = Layer.effect(
           ${task.lastRunStatus},
           ${task.lastRunError},
           ${task.runCount},
+          ${task.missedRunPolicy ?? "skip"},
+          ${task.maxRuns ?? null},
           ${task.memoryGrantCeiling ?? "none"},
           ${webhook.token},
           ${webhook.secret}
@@ -696,6 +711,8 @@ export const layer = Layer.effect(
           runtime_mode = excluded.runtime_mode,
           interaction_mode = excluded.interaction_mode,
           memory_grant_ceiling = excluded.memory_grant_ceiling,
+          missed_run_policy = excluded.missed_run_policy,
+          max_runs = excluded.max_runs,
           creation_source = excluded.creation_source,
           updated_at = excluded.updated_at,
           -- Keep a next_run_at that a finishing run moved during this save, unless
@@ -775,7 +792,8 @@ export const layer = Layer.effect(
       sql`
         UPDATE scheduled_tasks
         SET updated_at = ${input.completedAtIso},
-            next_run_at = ${input.nextRunAtIso},
+            enabled = CASE WHEN max_runs IS NOT NULL AND run_count + 1 >= max_runs THEN 0 ELSE enabled END,
+            next_run_at = CASE WHEN max_runs IS NOT NULL AND run_count + 1 >= max_runs THEN NULL ELSE ${input.nextRunAtIso} END,
             last_run_status = ${input.status},
             last_run_error = ${input.error},
             run_count = run_count + 1
@@ -839,6 +857,27 @@ export const layer = Layer.effect(
         : groupGate.value
             .post({ teamId: task.assistantTeamId!, text, label: task.title, clientRequestId })
             .pipe(Effect.as(null));
+
+    /** A routine of a group leaves a muted line in the chat; a failure never fails the change it reports. */
+    const noteGroup = (
+      task: Pick<ScheduledTask, "id" | "title" | "assistantTeamId">,
+      text: string,
+      key: string,
+    ) =>
+      task.assistantTeamId == null || Option.isNone(groupGate)
+        ? Effect.void
+        : groupGate.value
+            .note({
+              teamId: task.assistantTeamId,
+              text,
+              label: task.title,
+              clientRequestId: `routine-note:${task.id}:${key}`,
+            })
+            .pipe(
+              Effect.catch((cause) =>
+                Effect.logWarning("Could not leave a routine line in the group's chat", { cause }),
+              ),
+            );
 
     const runTask = Effect.fn("ScheduledTaskService.runTask")(function* (
       task: ScheduledTask,
@@ -1015,18 +1054,22 @@ export const layer = Layer.effect(
           const [row] = yield* getRows(task.id);
           const current = row === undefined ? null : yield* decodeRow(row, origin);
           const scheduleSource = current ?? task;
+          const counted = { ...scheduleSource, runCount: scheduleSource.runCount + 1 };
+          const stopped = limitReached(counted);
           const completed: ScheduledTask = {
-            ...scheduleSource,
+            ...counted,
+            enabled: stopped ? false : counted.enabled,
             updatedAt: iso(completedAt),
             lastRunAt: startedAtIso,
             // A manual run that starts before a one-time run must not use it up.
-            nextRunAt: nextRunAt(
-              scheduleSource,
-              scheduleSource.schedule.type === "once" ? startedAt : completedAt,
-            ),
+            nextRunAt: stopped
+              ? null
+              : nextRunAt(
+                  scheduleSource,
+                  scheduleSource.schedule.type === "once" ? startedAt : completedAt,
+                ),
             lastRunStatus,
             lastRunError,
-            runCount: scheduleSource.runCount + 1,
           };
           if (current === null) return { recorded: completed, written: false };
           // startedAtIso in the guard ensures this writes only to the row this
@@ -1071,6 +1114,12 @@ export const layer = Layer.effect(
             ),
           );
         if (written) yield* notifyChanged;
+        if (written && limitReached(recorded) && recorded.enabled === false)
+          yield* noteGroup(
+            recorded,
+            `Routine '${recorded.title}' reached its run limit of ${recorded.maxRuns} and stopped`,
+            `limit:${recorded.runCount}`,
+          );
         // The stored row can belong to a replacement, so report this dispatch separately.
         return { task: recorded, threadId, dispatchFailed: !runSucceeded };
       }).pipe(
@@ -1161,7 +1210,7 @@ export const layer = Layer.effect(
         due,
         ({ task, dueAt }) =>
           Effect.suspend(() =>
-            isMissedFixedTimeRun(task.schedule, dueAt, now)
+            isMissedFixedTimeRun(task.schedule, dueAt, now) && task.missedRunPolicy !== "once"
               ? rescheduleMissedRun(task, now)
               : runTask(task, "scheduled"),
           ).pipe(
@@ -1248,30 +1297,36 @@ export const layer = Layer.effect(
 
     /** A routine of an assistant paused or resumed leaves a muted line in its conversation. */
     const noteRoutineToggled = (
-      task: Pick<ScheduledTask, "id" | "title" | "threadId">,
+      task: Pick<ScheduledTask, "id" | "title" | "threadId" | "assistantTeamId">,
       enabled: boolean,
       at: string,
     ) =>
-      task.threadId === null || !isAssistantThreadId(task.threadId)
-        ? Effect.void
-        : threadManagement
-            .dispatch({
-              type: "thread.notice.record",
-              commandId: CommandId.make(
-                `scheduled-task-note:${task.id}:${at}:${enabled ? "on" : "off"}`,
-              ),
-              threadId: task.threadId,
-              message: `${enabled ? "Resumed" : "Paused"} routine '${task.title}'`,
-            })
-            .pipe(
-              // A failure to leave the line never fails the change it reports.
-              Effect.catch((cause) =>
-                Effect.logWarning(
-                  "Could not leave a routine line in the assistant's conversation",
-                  { cause },
+      task.assistantTeamId != null
+        ? noteGroup(
+            task,
+            `${enabled ? "Resumed" : "Paused"} routine '${task.title}'`,
+            `${enabled ? "on" : "off"}:${at}`,
+          )
+        : task.threadId === null || !isAssistantThreadId(task.threadId)
+          ? Effect.void
+          : threadManagement
+              .dispatch({
+                type: "thread.notice.record",
+                commandId: CommandId.make(
+                  `scheduled-task-note:${task.id}:${at}:${enabled ? "on" : "off"}`,
                 ),
-              ),
-            );
+                threadId: task.threadId,
+                message: `${enabled ? "Resumed" : "Paused"} routine '${task.title}'`,
+              })
+              .pipe(
+                // A failure to leave the line never fails the change it reports.
+                Effect.catch((cause) =>
+                  Effect.logWarning(
+                    "Could not leave a routine line in the assistant's conversation",
+                    { cause },
+                  ),
+                ),
+              );
 
     const upsert: ScheduledTaskService["Service"]["upsert"] = Effect.fn(
       "ScheduledTaskService.upsert",
@@ -1394,6 +1449,12 @@ export const layer = Layer.effect(
         isSameSchedule(existingTask.schedule, schedule);
       if (!scheduleUnchanged)
         yield* requireFutureOnce({ enabled: input.enabled, schedule }, now, id);
+      const missedRunPolicy = input.missedRunPolicy ?? existingTask?.missedRunPolicy;
+      const maxRuns = input.maxRuns === undefined ? existingTask?.maxRuns : input.maxRuns;
+      const missedAndLimit = {
+        ...(missedRunPolicy === "once" ? { missedRunPolicy } : {}),
+        ...(maxRuns == null ? {} : { maxRuns }),
+      } as const;
       const task: ScheduledTask = {
         id,
         title: input.title,
@@ -1419,7 +1480,13 @@ export const layer = Layer.effect(
         lastRunStatus: existingTask?.lastRunStatus ?? "never",
         lastRunError: existingTask?.lastRunError ?? null,
         runCount: existingTask?.runCount ?? 0,
+        ...missedAndLimit,
       };
+      if (task.enabled && limitReached(task))
+        return yield* taskError(
+          `It has already run ${task.runCount} times, its limit. Raise the limit before turning it on.`,
+          { taskId: id },
+        );
       yield* saveTask(
         task,
         input.requireExisting === true,
@@ -1431,6 +1498,20 @@ export const layer = Layer.effect(
       // `schedule_task` tool both reach it here.
       if (existingTask !== null && existingTask.enabled !== task.enabled)
         yield* noteRoutineToggled(task, task.enabled, iso(now));
+      else if (
+        // A repeated save (a retry, a replayed commandId) changes nothing and says nothing.
+        existingTask === null ||
+        existingTask.title !== task.title ||
+        existingTask.prompt !== task.prompt ||
+        existingTask.missedRunPolicy !== task.missedRunPolicy ||
+        existingTask.maxRuns !== task.maxRuns ||
+        !isSameSchedule(existingTask.schedule, task.schedule)
+      )
+        yield* noteGroup(
+          task,
+          `${existingTask === null ? "Added" : "Edited"} routine '${task.title}'`,
+          `${existingTask === null ? "add" : "edit"}:${existingTask === null ? task.createdAt : iso(now)}`,
+        );
       return { task: (yield* findTask(id)) ?? task };
     });
 
@@ -1457,6 +1538,11 @@ export const layer = Layer.effect(
       if (modeDenial !== undefined) {
         return yield* taskError(modeDenial, { taskId: input.id });
       }
+      if (toggled && input.enabled && limitReached(existing))
+        return yield* taskError(
+          `It has already run ${existing.runCount} times, its limit. Raise the limit before turning it on.`,
+          { taskId: input.id },
+        );
       const now = yield* localNow;
       if (toggled) {
         yield* requireFutureOnce(
@@ -1531,12 +1617,17 @@ export const layer = Layer.effect(
         { discard: true },
       );
 
-    const deleteTask: ScheduledTaskService["Service"]["delete"] = (input) =>
-      deleteRow(input.id).pipe(
-        Effect.andThen(forgetWebhookTask(input.id)),
-        Effect.andThen(notifyChanged),
-        Effect.as({ id: input.id }),
-      );
+    const deleteTask: ScheduledTaskService["Service"]["delete"] = Effect.fn(
+      "ScheduledTaskService.delete",
+    )(function* (input) {
+      const before = yield* Effect.orElseSucceed(findTask(input.id), () => null);
+      yield* deleteRow(input.id);
+      yield* forgetWebhookTask(input.id);
+      yield* notifyChanged;
+      if (before !== null)
+        yield* noteGroup(before, `Deleted routine '${before.title}'`, `delete:${before.createdAt}`);
+      return { id: input.id };
+    });
 
     const deleteForThread = Effect.fn("ScheduledTaskService.deleteForThread")(function* (
       threadId: ThreadId,
@@ -1632,6 +1723,12 @@ export const layer = Layer.effect(
         return yield* taskError("Webhook tasks run when their URL receives a request.", {
           taskId: input.id,
         });
+      }
+      if (limitReached(task)) {
+        return yield* taskError(
+          `It has already run ${task.runCount} times, its limit. Raise the limit to run it again.`,
+          { taskId: input.id },
+        );
       }
       return yield* runTask(task, "manual").pipe(
         Effect.mapError((cause) =>

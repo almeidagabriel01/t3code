@@ -16,6 +16,7 @@ import {
   createDraft,
   editDraft,
   hasScheduledTaskDraftChanges,
+  parseMaxRuns,
 } from "./scheduledTaskDraft";
 
 describe("scheduleDraftForTask", () => {
@@ -242,5 +243,33 @@ describe("bound task drafts", () => {
     } as ScheduledTask;
     expect(editDraft({ ...saved, assistantTeamId: "g1" }).assistantTeamId).toBe("g1");
     expect(editDraft(saved).assistantTeamId).toBeNull();
+  });
+});
+
+describe("run limit and missed-run policy", () => {
+  it.each([
+    ["", null],
+    [" ", null],
+    ["5", 5],
+    ["0", undefined],
+    ["1.5", undefined],
+    ["x", undefined],
+  ])("reads the limit field %j as %j", (text, expected) => {
+    expect(parseMaxRuns(text)).toBe(expected);
+  });
+
+  it("carries both into a new draft and a saved task, and treats changing them as a change", () => {
+    const fresh = createDraft(ProjectId.make("p1"), null);
+    expect([fresh.missedRunPolicy, fresh.maxRuns]).toEqual(["skip", ""]);
+    const saved = {
+      ...({} as ScheduledTask),
+      schedule: { type: "interval", everyMs: 60_000 },
+      workspaceStrategy: { type: "root" },
+    } as ScheduledTask;
+    expect(editDraft(saved)).toMatchObject({ missedRunPolicy: "skip", maxRuns: "" });
+    const limited = editDraft({ ...saved, missedRunPolicy: "once", maxRuns: 3 });
+    expect([limited.missedRunPolicy, limited.maxRuns]).toEqual(["once", "3"]);
+    expect(hasScheduledTaskDraftChanges(fresh, { ...fresh, maxRuns: "2" })).toBe(true);
+    expect(hasScheduledTaskDraftChanges(fresh, { ...fresh, missedRunPolicy: "once" })).toBe(true);
   });
 });

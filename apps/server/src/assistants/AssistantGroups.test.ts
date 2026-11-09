@@ -2627,3 +2627,61 @@ it.effect("a packet lists the member's stopped and failed tasks, newest first an
     assert.notInclude(packet, "not hers");
   }).pipe(Effect.provide(h.layer));
 });
+
+it.effect("routineScope says who wrote the request a member's task came from", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    yield* groups.post({ teamId: TEAM, text: "@ada plan the launch" }, h.user);
+    const user = yield* groups.member.routineScope({ callerThreadId: adaThread });
+    assert.deepEqual(user, { teamId: TEAM, askedByUser: true });
+    // A task handed on from the user's request still counts as the user's ask.
+    yield* groups.member.assign({
+      callerThreadId: adaThread,
+      member: "beto",
+      instruction: "Build",
+    });
+    assert.equal(
+      (yield* groups.member.routineScope({ callerThreadId: betoThread })).askedByUser,
+      true,
+    );
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("a task that a schedule's post opened is not the user's ask", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    yield* groups.post(
+      { teamId: TEAM, text: "@ada weekly report" },
+      { kind: "routine", label: "Monday report" },
+    );
+    const scope = yield* groups.member.routineScope({ callerThreadId: adaThread });
+    assert.deepEqual(scope, { teamId: TEAM, askedByUser: false });
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("a routine change line is muted, authored by the schedule, and added once", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const line = {
+      teamId: TEAM as never,
+      label: "Monday",
+      text: "Paused routine 'Monday'",
+      clientRequestId: "routine-note:t:off:1",
+    };
+    yield* groups.announceRoutine(line);
+    yield* groups.announceRoutine(line);
+    const rows = yield* h.messages;
+    assert.deepEqual(
+      rows.map((row) => [row.author, row.author_label, row.kind, row.text]),
+      [["routine", "Monday", "change", "Paused routine 'Monday'"]],
+    );
+    assert.equal(h.sent.length, 0);
+    const missing = yield* groups
+      .announceRoutine({ ...line, teamId: "nope" as never })
+      .pipe(Effect.flip);
+    assert.equal(missing.reason, "not_found");
+  }).pipe(Effect.provide(h.layer));
+});

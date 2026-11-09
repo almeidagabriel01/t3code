@@ -19,7 +19,6 @@ import type {
   ProjectId,
   ScheduledTask,
   ScheduledTaskId,
-  ScheduledTaskSchedule,
   ScheduledTaskUpsertInput,
   ScheduledTaskWebhookDeliverySummary,
   ThreadId,
@@ -85,6 +84,9 @@ import { SettingsGroup } from "./SettingsGroup";
 import { settingsScopeEnvironmentLabel, settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
 import {
   WEBHOOK_SIGNATURE_DEFAULTS,
+  maxRunsFromDraft,
+  scheduleLabel,
+  WEEKDAY_LABELS,
   scheduleDraftErrors,
   toDateTimeLocalValue,
   webhookDeliveryLabel,
@@ -129,7 +131,6 @@ import {
 } from "./settingsLayout";
 
 const WEEKDAY_ORDER = [1, 2, 3, 4, 5, 6, 0] as const;
-const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 const WEEKDAY_SHORT = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"] as const;
 
 const WORKSPACE_MODE_LABELS: Record<WorkspaceMode, string> = {
@@ -152,6 +153,8 @@ const EMPTY_DRAFT: DraftState = {
   projectId: "",
   threadId: "",
   assistantTeamId: "",
+  missedRunPolicy: "skip",
+  maxRuns: "",
   workspaceMode: "worktree",
   baseRef: "main",
   startFromOrigin: true,
@@ -295,30 +298,6 @@ function splitModelKey(value: string): ModelSelection | null {
     instanceId: ProviderInstanceId.make(value.slice(0, index)),
     model: value.slice(index + 1),
   };
-}
-
-const ONCE_FORMATTER = new Intl.DateTimeFormat(undefined, {
-  dateStyle: "medium",
-  timeStyle: "short",
-});
-
-export function scheduleLabel(schedule: ScheduledTaskSchedule): string {
-  if (schedule.type === "webhook") return "On webhook";
-  if (schedule.type === "once") return `Once, ${ONCE_FORMATTER.format(new Date(schedule.runAt))}`;
-  if (schedule.type === "interval") {
-    const minutes = schedule.everyMs / 60_000;
-    return Number.isInteger(minutes)
-      ? `Every ${minutes} min`
-      : `Every ${Math.round(schedule.everyMs / 1000)} sec`;
-  }
-  const weekdays = schedule.weekdays ?? [];
-  const days =
-    weekdays.length === 0
-      ? "Daily"
-      : weekdays.length === 5 && weekdays.every((day) => day >= 1 && day <= 5)
-        ? "Weekdays"
-        : weekdays.map((day) => WEEKDAY_LABELS[day]).join(", ");
-  return `${days} at ${schedule.timeOfDay}`;
 }
 
 /** formatRelativeTime handles only the past; upcoming runs need future labels. */
@@ -1426,6 +1405,11 @@ function ScheduledTaskEditorForm({
       );
       return;
     }
+    const maxRuns = maxRunsFromDraft(draft);
+    if (maxRuns === undefined) {
+      reportFailure("Invalid run limit", "Enter a whole number from 1, or leave it empty.");
+      return;
+    }
     if (draft.workspaceMode === "existing_worktree" && !draft.existingWorktreePath.trim()) {
       reportFailure("Checkout path is required", "Enter the path of the checkout to run in.");
       return;
@@ -1455,6 +1439,8 @@ function ScheduledTaskEditorForm({
       projectId: selectedProjectId as ProjectId,
       threadId: draft.threadId && !draft.assistantTeamId ? (draft.threadId as ThreadId) : null,
       assistantTeamId: draft.assistantTeamId || null,
+      missedRunPolicy: draft.missedRunPolicy,
+      maxRuns: schedule.type === "webhook" ? null : maxRuns,
       workspaceStrategy,
       modelSelection,
       // Tasks have no mode picker; a mode above the administrator's ceiling would fail every run.
@@ -2052,6 +2038,56 @@ function ScheduledTaskEditorForm({
               </div>
             )}
           </div>
+
+          {draft.scheduleMode === "webhook" ? null : (
+            <Field
+              label="Run limit"
+              htmlFor="scheduled-task-max-runs"
+              hint="The task turns itself off after this many runs. Empty means no limit."
+            >
+              <Input
+                type="number"
+                id="scheduled-task-max-runs"
+                nativeInput
+                min={1}
+                step={1}
+                className="w-28"
+                value={draft.maxRuns}
+                onChange={(event) =>
+                  setDraft((current) => ({ ...current, maxRuns: event.target.value }))
+                }
+              />
+            </Field>
+          )}
+          {draft.scheduleMode === "fixed" ? (
+            <Field
+              label="If the server was off at that time"
+              htmlFor="scheduled-task-missed-run"
+              hint="Applies to a run missed by more than ten minutes."
+            >
+              <Select
+                value={draft.missedRunPolicy}
+                onValueChange={(value) =>
+                  setDraft((current) => ({
+                    ...current,
+                    missedRunPolicy: value === "once" ? "once" : "skip",
+                  }))
+                }
+              >
+                <div className="grid w-64 grid-cols-1">
+                  <SelectTrigger id="scheduled-task-missed-run" size="sm">
+                    <SelectValue>
+                      {draft.missedRunPolicy === "once" ? "Run once when it is back" : "Skip it"}
+                    </SelectValue>
+                  </SelectTrigger>
+                </div>
+                <SelectPopup>
+                  <SelectItem value="skip">Skip it</SelectItem>
+                  <SelectItem value="once">Run once when it is back</SelectItem>
+                </SelectPopup>
+              </Select>
+            </Field>
+          ) : null}
 
           <div className="flex items-center justify-between gap-4">
             <div className="min-w-0 space-y-1">

@@ -215,7 +215,19 @@ export type ScheduledTaskDraft = {
   readonly enabled: boolean;
   readonly startFromOrigin: boolean;
   readonly runtimeMode: RuntimeMode;
+  /** What a daily or weekly task does when the server was off at its time. */
+  readonly missedRunPolicy: "skip" | "once";
+  /** Stop after this many runs; empty means no limit. */
+  readonly maxRuns: string;
 };
+
+/** The limit as the server takes it: a whole number from 1, null for none, undefined if invalid. */
+export function parseMaxRuns(value: string): number | null | undefined {
+  const text = value.trim();
+  if (text === "") return null;
+  const runs = Number(text);
+  return Number.isSafeInteger(runs) && runs >= 1 ? runs : undefined;
+}
 
 function draftSignature(draft: ScheduledTaskDraft): string {
   return JSON.stringify([
@@ -245,6 +257,8 @@ function draftSignature(draft: ScheduledTaskDraft): string {
     draft.enabled,
     draft.startFromOrigin,
     draft.runtimeMode,
+    draft.missedRunPolicy,
+    draft.maxRuns,
   ]);
 }
 
@@ -277,6 +291,8 @@ export function createDraft(
     enabled: true,
     startFromOrigin: true,
     runtimeMode: "full-access",
+    missedRunPolicy: "skip",
+    maxRuns: "",
   };
 }
 
@@ -303,5 +319,7 @@ export function editDraft(task: ScheduledTask): ScheduledTaskDraft {
         ? (task.workspaceStrategy.startFromOrigin ?? false)
         : true,
     runtimeMode: task.runtimeMode,
+    missedRunPolicy: task.missedRunPolicy ?? "skip",
+    maxRuns: task.maxRuns == null ? "" : String(task.maxRuns),
   };
 }

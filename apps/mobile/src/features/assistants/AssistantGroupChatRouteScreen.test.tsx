@@ -29,7 +29,6 @@ const { mocks, Children } = vi.hoisted(() => ({
     selectDetail: vi.fn(),
     openTeam: { edit: vi.fn(), settings: vi.fn() },
     openEditor: vi.fn(),
-    schedule: vi.fn(),
     archive: vi.fn(),
     restore: vi.fn(),
     scrollToEnd: vi.fn(),
@@ -264,7 +263,6 @@ vi.mock("./assistantPresentation", () => ({
 }));
 vi.mock("./assistantTeamTarget", () => ({ useOpenAssistantTeam: () => mocks.openTeam }));
 vi.mock("./openAssistantEditor", () => ({ useOpenAssistantEditor: () => mocks.openEditor }));
-vi.mock("./useScheduleInGroup", () => ({ useScheduleInGroup: () => mocks.schedule }));
 vi.mock("./useAssistantFlows", () => ({
   useAssistantTeamFlows: () => ({
     canAct: true,
@@ -403,7 +401,6 @@ beforeEach(() => {
     mocks.dispatch,
     mocks.selectDetail,
     mocks.openEditor,
-    mocks.schedule,
     mocks.archive,
     mocks.restore,
     mocks.scrollToEnd,
@@ -723,8 +720,9 @@ describe("group header and archive", () => {
     expect(mocks.openTeam.settings).toHaveBeenCalledWith("hub", "g1");
     await click("header:New assistant in this group");
     expect(mocks.openEditor).toHaveBeenCalledWith("hub", null, { teamId: "g1" });
-    await click("header:Schedule in this group");
-    expect(mocks.schedule).toHaveBeenCalledWith("hub", "g1");
+    mocks.openTeam.settings.mockClear();
+    await click("header:Group routines");
+    expect(mocks.openTeam.settings).toHaveBeenCalledWith("hub", "g1");
     await click("header:Archive group");
     expect(mocks.archive).toHaveBeenCalledWith(expect.objectContaining({ id: "g1" }));
     expect(byLabel("header:Restore group")).toBeNull();

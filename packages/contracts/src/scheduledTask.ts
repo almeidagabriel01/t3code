@@ -216,6 +216,12 @@ export const ScheduledTaskUpsertSchedule = Schema.Union([
 ]);
 export type ScheduledTaskUpsertSchedule = typeof ScheduledTaskUpsertSchedule.Type;
 
+/** What a daily or weekly routine does when the server was off at its time: skip it, or run once now. */
+export const ScheduledTaskMissedRunPolicy = Schema.Literals(["skip", "once"]);
+export type ScheduledTaskMissedRunPolicy = typeof ScheduledTaskMissedRunPolicy.Type;
+
+const ScheduledTaskMaxRuns = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1));
+
 export const ScheduledTaskRunStatus = Schema.Literals(["never", "running", "succeeded", "failed"]);
 export type ScheduledTaskRunStatus = typeof ScheduledTaskRunStatus.Type;
 
@@ -251,6 +257,10 @@ export const ScheduledTask = Schema.Struct({
   lastRunStatus: ScheduledTaskRunStatus,
   lastRunError: Schema.NullOr(Schema.String),
   runCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  /** Absent means skip. Only fixed-time schedules can miss a run. */
+  missedRunPolicy: Schema.optionalKey(ScheduledTaskMissedRunPolicy),
+  /** The task turns itself off once it has run this many times; absent or null is no limit. */
+  maxRuns: Schema.optionalKey(Schema.NullOr(ScheduledTaskMaxRuns)),
   webhook: Schema.optional(ScheduledTaskWebhookEndpoint),
   /** Why the task cannot run regardless of `enabled`, such as a managed policy refusing webhooks. */
   blockedByPolicy: Schema.optionalKey(Schema.String),
@@ -285,6 +295,10 @@ const ScheduledTaskUpsertInputFields = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   createdBy: Schema.optional(OrchestrationV2Actor),
   creationSource: Schema.optional(OrchestrationV2CreationSource),
+  /** Omitted keeps the stored value (skip for a new task). */
+  missedRunPolicy: Schema.optional(ScheduledTaskMissedRunPolicy),
+  /** Omitted keeps the stored limit; null removes it. */
+  maxRuns: Schema.optional(Schema.NullOr(ScheduledTaskMaxRuns)),
 });
 // Memory ceiling is captured from the authenticated caller, never public task input.
 export const ScheduledTaskUpsertInput = Schema.Unknown.check(

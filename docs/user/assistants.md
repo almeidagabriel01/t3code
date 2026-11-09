@@ -173,8 +173,11 @@ the members; it does not run an agent by itself.
 - Members can give each other subtasks, hand a task over, or ask each other one short question (two
   per request). After eight hand-offs for one request the next one pauses until you resume it. At most
   two tasks run at the same time in a group; the rest wait their turn.
-- **Schedule in this group** (group menu) posts a scheduled message in the chat, for example a
-  morning status request.
+- **Group routines** (group menu) lists the scheduled messages that post in the chat, for example a
+  morning status request, with the next run in your local time, the last result, **Run now**, pause
+  and resume, edit and delete. A routine can stop after a number of runs, and a daily or weekly one
+  can skip or run once when T3 Code was off at its time. A member creates or changes a routine only
+  when you asked for it in the group. Each change leaves a muted line in the chat.
 - **Archive group** keeps the chat but stops its work and takes no new messages. Restore it from the
   group's banner, the Assistants page or Settings > Assistants > Archived groups.
 - A group with messages you have not read shows a count in the sidebar and on Home. Opening the

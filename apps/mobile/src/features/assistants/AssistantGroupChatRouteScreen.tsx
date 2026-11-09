@@ -55,7 +55,6 @@ import { useOpenAssistantTeam } from "./assistantTeamTarget";
 import { useOpenAssistantEditor } from "./openAssistantEditor";
 import { useAssistantTeamFlows } from "./useAssistantFlows";
 import { useGroupReadMarker } from "./useGroupReadMarker";
-import { useScheduleInGroup } from "./useScheduleInGroup";
 
 const NEW_JUMP_MIN_ROWS = 4;
 
@@ -299,7 +298,6 @@ export function AssistantGroupChatRouteScreen({
   const flows = useAssistantTeamFlows(environmentId);
   const openTeam = useOpenAssistantTeam();
   const openEditor = useOpenAssistantEditor();
-  const scheduleInGroup = useScheduleInGroup();
   const [pages, setPages] = useState<ReadonlyArray<AssistantGroupsHistoryResult>>([]);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [preview, setPreview] = useState<FilePreviewSource | null>(null);
@@ -449,10 +447,10 @@ export function AssistantGroupChatRouteScreen({
                 onPress: () => openEditor(environmentId, null, { teamId: team.id }),
               },
               {
-                id: "schedule",
-                title: "Schedule in this group",
+                id: "routines",
+                title: "Group routines",
                 icon: "calendar.badge.clock",
-                onPress: () => scheduleInGroup(environmentId, team.id),
+                onPress: () => openTeam.settings(environmentId, team.id),
               },
               (team.chat?.unreadCount ?? 0) > 0
                 ? {
