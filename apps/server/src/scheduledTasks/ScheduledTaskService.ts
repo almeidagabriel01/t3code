@@ -2,6 +2,7 @@ import {
   type AssistantError,
   type MemoryTaskGrantCeiling,
   CommandId,
+  isAssistantThreadId,
   MessageId,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   type ProjectId,
@@ -1455,6 +1456,25 @@ export const layer = Layer.effect(
         return yield* taskError("Schedule task not found.", { taskId: input.id });
       }
       yield* notifyChanged;
+      if (toggled && existing.threadId !== null && isAssistantThreadId(existing.threadId)) {
+        // A failure to leave the line never fails the change it reports.
+        yield* threadManagement
+          .dispatch({
+            type: "thread.notice.record",
+            commandId: CommandId.make(
+              `scheduled-task-note:${input.id}:${iso(now)}:${input.enabled ? "on" : "off"}`,
+            ),
+            threadId: existing.threadId,
+            message: `${input.enabled ? "Resumed" : "Paused"} routine '${existing.title}'`,
+          })
+          .pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning("Could not leave a routine line in the assistant's conversation", {
+                cause,
+              }),
+            ),
+          );
+      }
       return {
         task: {
           ...existing,
