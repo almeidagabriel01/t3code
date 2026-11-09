@@ -54,6 +54,7 @@ const makeCore = <E, R>(
   );
 export const core = makeCore(Service.layer, database);
 const sync = Layer.mock(Sync.MemorySyncService)({
+  readLocalReadiness: () => Effect.succeed({ memorySpaceId: space, bootstrap: "ready" as const }),
   syncStatus: (_input, permit) =>
     permit.pipe(Effect.andThen(Effect.fail(new M.MemoryHubError({ code: "hub_disabled" })))),
 });

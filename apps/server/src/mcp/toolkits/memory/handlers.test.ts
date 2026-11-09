@@ -26,7 +26,7 @@ const decodeHistory = Schema.decodeUnknownEffect(M.MemoryHistoryPage);
 const encodeError = Schema.encodeSync(M.MemoryRpcError);
 const decodeRefusal = Schema.decodeUnknownEffect(M.OrchestratorMcpFailure);
 
-it("registers all nine core tools", () => {
+it("registers every memory tool", () => {
   expect(Object.keys(MemoryToolkit.tools).sort()).toEqual([...M.MEMORY_MCP_TOOLS].sort());
   for (const tool of Object.values(MemoryToolkit.tools))
     expect(Tool.getJsonSchema(tool).type).toBe("object");
@@ -43,19 +43,10 @@ it.effect(
         { ...Fixture.upsert(21), memoryId: M.MemoryId.make(Fixture.id(20)) },
         Effect.void,
       );
-      const query = {
-        memorySpaceId: Fixture.space,
-        query: "synthetic",
-        mode: "substring" as const,
-        limit: 1,
+      const recalled = (yield* Fixture.call("memory_recall", { query: "synthetic" })).body as {
+        items: ReadonlyArray<unknown>;
       };
-      const direct = yield* service.search(query, Effect.void);
-      expect(direct.nextCursor).not.toBeNull();
-      expect((yield* Fixture.call("memory_search", query)).body).toEqual(direct);
-      const continuation = { ...query, cursor: direct.nextCursor! };
-      expect((yield* Fixture.call("memory_search", continuation)).body).toEqual(
-        yield* service.search(continuation, Effect.void),
-      );
+      expect(recalled.items).toHaveLength(2);
       expect(
         (yield* decodePage(
           (yield* Fixture.call("memory_list", {
@@ -129,16 +120,14 @@ it.effect(
   () =>
     Effect.gen(function* () {
       for (const [name, input, fields] of [
-        ["memory_list", {}, ["memorySpaceId", "includeQuarantined"]],
-        ["memory_list", { limit: 1 }, ["memorySpaceId", "includeQuarantined"]],
-        ["memory_search", { query: "synthetic" }, ["memorySpaceId"]],
+        ["memory_list", {}, ["includeQuarantined"]],
+        ["memory_list", { limit: 1 }, ["includeQuarantined"]],
       ] as const) {
         const { result, body } = yield* Fixture.call(name, input);
         expect(result.isError).toBe(true);
         const refusal = yield* decodeRefusal(body);
         expect(refusal.code).toBe("invalid_request");
         for (const field of fields) expect(refusal.message).toContain(field);
-        expect(refusal.message).toContain("memory_sync_status");
       }
       const rejected = "not-a-space-synthetic-value";
       const invalid = yield* decodeRefusal(
@@ -172,29 +161,31 @@ it.effect.each(M.MEMORY_MCP_TOOLS.filter((name) => name !== "memory_read_source"
       const input =
         name === "memory_upsert"
           ? Fixture.upsert()
-          : name === "memory_list"
-            ? { memorySpaceId: Fixture.space, includeQuarantined: false }
-            : name === "memory_search"
-              ? { memorySpaceId: Fixture.space, query: "synthetic" }
-              : name === "memory_sync_status"
-                ? {}
-                : name === "memory_forget"
-                  ? {
-                      memorySpaceId: Fixture.space,
-                      memoryId: Fixture.memoryId,
-                      operationId: M.MemoryOperationId.make(Fixture.id(4)),
-                      expectedHeads: [],
-                    }
-                  : name === "memory_revert_resolution"
+          : name === "memory_remember"
+            ? { text: "synthetic", scope: "user" }
+            : name === "memory_recall"
+              ? { query: "synthetic" }
+              : name === "memory_list"
+                ? { memorySpaceId: Fixture.space, includeQuarantined: false }
+                : name === "memory_sync_status"
+                  ? {}
+                  : name === "memory_forget"
                     ? {
                         memorySpaceId: Fixture.space,
                         memoryId: Fixture.memoryId,
-                        operationId: M.MemoryOperationId.make(Fixture.id(5)),
-                        resolutionId: M.MemoryResolutionId.make(Fixture.id(6)),
-                        restoredRevisionId: M.MemoryRevisionId.make(Fixture.id(7)),
-                        expectedHeads: [M.MemoryRevisionId.make(Fixture.id(8))],
+                        operationId: M.MemoryOperationId.make(Fixture.id(4)),
+                        expectedHeads: [],
                       }
-                    : { memorySpaceId: Fixture.space, memoryId: Fixture.memoryId };
+                    : name === "memory_revert_resolution"
+                      ? {
+                          memorySpaceId: Fixture.space,
+                          memoryId: Fixture.memoryId,
+                          operationId: M.MemoryOperationId.make(Fixture.id(5)),
+                          resolutionId: M.MemoryResolutionId.make(Fixture.id(6)),
+                          restoredRevisionId: M.MemoryRevisionId.make(Fixture.id(7)),
+                          expectedHeads: [M.MemoryRevisionId.make(Fixture.id(8))],
+                        }
+                      : { memorySpaceId: Fixture.space, memoryId: Fixture.memoryId };
       expect((yield* Fixture.call(name, input, Fixture.scope([]))).body).toMatchObject({
         code: "unavailable",
       });

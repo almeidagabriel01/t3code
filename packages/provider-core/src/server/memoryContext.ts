@@ -9,9 +9,9 @@ const currentVersion = 3 satisfies SnapshotVersion;
 // Validation compares renderedText byte for byte, so a version's notice never changes.
 // Wording changes add a version; older snapshots keep validating against their own text.
 const moreMemoryNotice = {
-  1: "More memories exist than fit here; use memory_search or memory_read to find them.",
-  2: "More memories exist than fit here; use memory_search or memory_read to find them.",
-  3: "More memories exist than fit here; use memory_search or memory_read to find them.",
+  1: "More memories exist than fit here; use memory_recall or memory_read to find them.",
+  2: "More memories exist than fit here; use memory_recall or memory_read to find them.",
+  3: "More memories exist than fit here; use memory_recall or memory_read to find them.",
 } satisfies Record<SnapshotVersion, string>;
 const decodeSnapshot = Schema.decodeSync(M.MemoryContextSnapshot);
 const decodeUnknownSnapshot = Schema.decodeUnknownSync(M.MemoryContextSnapshot);

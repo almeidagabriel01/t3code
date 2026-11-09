@@ -113,7 +113,7 @@ source: {&quot;environmentId&quot;:&quot;env&lt;&amp;\&quot;&apos;&quot;,&quot;s
       const omitted = packMemoryContext(input([item(1, text)]))!;
       expect(omitted.items).toEqual([]);
       expect(memoryContextText(omitted)).toContain(
-        "More memories exist than fit here; use memory_search or memory_read to find them.",
+        "More memories exist than fit here; use memory_recall or memory_read to find them.",
       );
     }
     expect(new TextEncoder().encode(memoryContextText(exact)).length).toBeLessThanOrEqual(
@@ -180,7 +180,7 @@ source: {&quot;environmentId&quot;:&quot;env&lt;&amp;\&quot;&apos;&quot;,&quot;s
       validateMemoryContext({
         ...nearLimit,
         renderedText: nearLimit.renderedText.replace(
-          "memory_search or memory_read",
+          "memory_recall or memory_read",
           "execute_tool",
         ),
       }),

@@ -135,7 +135,8 @@ const memoryFailure =
       : Effect.fail(mapped);
   };
 
-const decodeSearch = argumentsOf("memory_search", M.MemorySearchInput);
+const decodeRecall = argumentsOf("memory_recall", M.MemoryRecallInput);
+const decodeRemember = argumentsOf("memory_remember", M.MemoryRememberInput);
 const decodeList = argumentsOf("memory_list", M.MemoryListInput);
 const decodeReadSource = argumentsOf("memory_read_source", M.MemoryReadSourceInput);
 const decodeRead = argumentsOf("memory_read", M.MemoryReadInput);
@@ -154,22 +155,59 @@ const callerThread = Effect.gen(function* () {
     ? { environmentId: caller.environmentId, threadId: caller.thread.threadId }
     : undefined;
 });
+/** Read tools default to this server's memory space, so a query or id alone is enough. */
+const currentSpace = Effect.gen(function* () {
+  const sync = yield* MemorySyncService.MemorySyncService;
+  const { memorySpaceId } = yield* sync.readLocalReadiness();
+  if (!memorySpaceId) return yield* new M.MemoryRpcError({ code: "hub_disabled" });
+  return memorySpaceId;
+});
+const withCurrentSpace = (input: unknown) =>
+  typeof input !== "object" || input === null || "memorySpaceId" in input
+    ? Effect.succeed(input)
+    : Effect.map(currentSpace, (memorySpaceId) => ({ ...input, memorySpaceId }));
 const handlers = {
-  memory_search: McpToolAccess.reads((input) =>
+  memory_recall: McpToolAccess.reads((input) =>
     Effect.gen(function* () {
       const service = yield* MemoryService.MemoryService;
-      return yield* service.search(
-        yield* decodeSearch(input),
+      const value = yield* decodeRecall(input);
+      return yield* service.recall(
+        { ...value, memorySpaceId: yield* currentSpace },
         yield* invocationPermit("read"),
         yield* callerThread,
       );
-    }).pipe(Effect.catch(memoryFailure("memory_search"))),
+    }).pipe(Effect.catch(memoryFailure("memory_recall"))),
+  ),
+  memory_remember: McpToolAccess.writesWithCapability((input) =>
+    Effect.gen(function* () {
+      const service = yield* MemoryService.MemoryService;
+      const value = yield* decodeRemember(input);
+      return yield* service
+        .remember(
+          { ...value, memorySpaceId: yield* currentSpace },
+          yield* invocationPermit("write"),
+          yield* callerThread,
+        )
+        .pipe(
+          Effect.catchTags({
+            MemoryRememberScopeUnavailable: () =>
+              Effect.fail(
+                new M.OrchestratorMcpFailure({
+                  code: "invalid_request",
+                  message:
+                    "This conversation has no project memory, so nothing was saved. Save it with scope user.",
+                }),
+              ),
+          }),
+          Effect.flatMap((stored) => receipt(stored.receipt)),
+        );
+    }).pipe(Effect.catch(memoryFailure("memory_remember"))),
   ),
   memory_list: McpToolAccess.reads((input) =>
     Effect.gen(function* () {
       const service = yield* MemoryService.MemoryService;
       return yield* service.list(
-        yield* decodeList(input),
+        yield* decodeList(yield* withCurrentSpace(input)),
         yield* invocationPermit("read"),
         yield* callerThread,
       );
@@ -179,7 +217,7 @@ const handlers = {
     Effect.gen(function* () {
       const service = yield* MemoryService.MemoryService;
       return yield* service.read(
-        yield* decodeRead(input),
+        yield* decodeRead(yield* withCurrentSpace(input)),
         yield* invocationPermit("read"),
         yield* callerThread,
       );
@@ -199,7 +237,7 @@ const handlers = {
     Effect.gen(function* () {
       const service = yield* MemoryService.MemoryService;
       return yield* service.history(
-        yield* decodeHistory(input),
+        yield* decodeHistory(yield* withCurrentSpace(input)),
         yield* invocationPermit("read"),
         yield* callerThread,
       );
