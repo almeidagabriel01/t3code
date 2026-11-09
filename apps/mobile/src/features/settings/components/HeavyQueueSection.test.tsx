@@ -238,7 +238,7 @@ describe("HeavyQueueSection", () => {
     const options = mocks.alert.mock.calls[0]?.[2] as Array<{ text: string; onPress: () => void }>;
     for (const text of ["Always first", "Last", "Normal"])
       options.find((o) => o.text === text)?.onPress();
-    expect(mocks.commands.setRule.mock.calls.map(([call]) => call.input)).toEqual([
+    expect(mocks.commands.setRule!.mock.calls.map(([call]) => call.input)).toEqual([
       { root: "/work/app", priority: "first" },
       { root: "/work/app", priority: "last" },
       { root: "/work/app", priority: null },

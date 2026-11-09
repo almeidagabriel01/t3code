@@ -83,7 +83,7 @@ function QueueEntryRows(props: {
       {running ? null : (
         <>
           <SettingsActionRow
-            icon="arrow.up.to.line"
+            icon="arrow.up.circle"
             label="Run next"
             disabled={!can("next")}
             onPress={() => move("next")}
@@ -122,7 +122,7 @@ function QueueEntryRows(props: {
       )}
       {project === undefined ? null : (
         <SettingsActionRow
-          icon="flag"
+          icon="tag"
           label="Priority for this project"
           disabled={!props.canChange}
           onPress={() =>
@@ -145,7 +145,7 @@ function QueueEntryRows(props: {
       )}
       {running && entry.server === true ? null : (
         <SettingsActionRow
-          icon={running ? "stop" : "trash"}
+          icon={running ? "xmark" : "trash"}
           label={running ? "Stop" : "Remove"}
           tone="danger"
           disabled={!props.canChange}
@@ -195,7 +195,7 @@ export function HeavyQueueSection(props: { readonly environmentId: EnvironmentId
       title="Heavy work queue"
       footer="Agents queue tests, builds and simulators here. Up to the limit run at once, and the next one starts only when the machine has room."
     >
-      <ListRowLayout icon="gauge" label={queueSummary(state)} />
+      <ListRowLayout icon="timer" label={queueSummary(state)} />
       <SettingsSwitchRow
         icon="pause"
         label="Pause queue"
@@ -204,7 +204,7 @@ export function HeavyQueueSection(props: { readonly environmentId: EnvironmentId
         disabled={!canChange}
         onValueChange={(paused) => void setPaused({ environmentId, input: { paused } })}
       />
-      <ListRowLayout icon="square.stack" label={`Run up to ${state.maxRunning} at once`} />
+      <ListRowLayout icon="checklist.unchecked" label={`Run up to ${state.maxRunning} at once`} />
       <SettingsActionRow
         icon="plus"
         label="Allow one more"
