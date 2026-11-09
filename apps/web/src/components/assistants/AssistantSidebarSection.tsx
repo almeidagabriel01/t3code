@@ -14,6 +14,7 @@ import type { EnvironmentId, AssistantTeamId, ScopedThreadRef } from "@t3tools/c
 import {
   ArchiveIcon,
   BriefcaseIcon,
+  CalendarClockIcon,
   ChevronDownIcon,
   MessagesSquareIcon,
   ChevronRightIcon,
@@ -53,7 +54,11 @@ import { ProjectFavicon, type ProjectFaviconProject } from "../ProjectFavicon";
 import { AssistantAvatar } from "./assistantPresentation";
 import { openAssistantDialog } from "./assistantDialogState";
 import { openAssistantWork } from "./assistantWorkState";
-import { openAssistantGroupSettings, openAssistantTeamDialog } from "./assistantTeamState";
+import {
+  openAssistantGroupRoutines,
+  openAssistantGroupSettings,
+  openAssistantTeamDialog,
+} from "./assistantTeamState";
 import { DescribeAssistantDialog } from "./DescribeAssistantDialog";
 import { useAssistantFlows, useAssistantTeamFlows } from "./useAssistantFlows";
 
@@ -455,6 +460,10 @@ function GroupRow(props: {
             <MenuItem onClick={() => openAssistantGroupSettings({ environmentId, teamId })}>
               <SettingsIcon />
               Group settings
+            </MenuItem>
+            <MenuItem onClick={() => openAssistantGroupRoutines({ environmentId, teamId })}>
+              <CalendarClockIcon />
+              Group routines
             </MenuItem>
             <MenuItem onClick={() => openAssistantDialog({ environmentId, preset: { teamId } })}>
               <PlusIcon />

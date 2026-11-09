@@ -29,6 +29,7 @@ const state = vi.hoisted(() => ({
   openTeam: vi.fn(),
   openTeamDialog: vi.fn(),
   openGroupSettings: vi.fn(),
+  openGroupRoutines: vi.fn(),
   openDialog: vi.fn(),
   archiveTeam: vi.fn(),
 }));
@@ -80,6 +81,7 @@ vi.mock("../../state/assistants", () => ({
 vi.mock("./assistantTeamState", () => ({
   openAssistantTeamDialog: state.openTeamDialog,
   openAssistantGroupSettings: state.openGroupSettings,
+  openAssistantGroupRoutines: state.openGroupRoutines,
 }));
 vi.mock("./assistantDialogState", () => ({ openAssistantDialog: state.openDialog }));
 vi.mock("./DescribeAssistantDialog", () => ({
@@ -145,6 +147,7 @@ function setup(
   state.openTeam.mockClear();
   state.openTeamDialog.mockClear();
   state.openGroupSettings.mockClear();
+  state.openGroupRoutines.mockClear();
   state.openDialog.mockClear();
   state.archiveTeam.mockClear();
 }
@@ -374,6 +377,9 @@ describe("AssistantSidebarSection", () => {
     await userEvent.click(screen.getByRole("button", { name: "Growth actions" }));
     await userEvent.click(screen.getByRole("menuitem", { name: "Group settings" }));
     expect(state.openGroupSettings).toHaveBeenCalledWith({ environmentId: "env", teamId: "t1" });
+    await userEvent.click(screen.getByRole("button", { name: "Growth actions" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "Group routines" }));
+    expect(state.openGroupRoutines).toHaveBeenCalledWith({ environmentId: "env", teamId: "t1" });
     await userEvent.click(screen.getByRole("button", { name: "Growth actions" }));
     await userEvent.click(screen.getByRole("menuitem", { name: "New assistant in this group" }));
     expect(state.openDialog).toHaveBeenCalledWith({

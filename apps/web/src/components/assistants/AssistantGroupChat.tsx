@@ -60,7 +60,11 @@ import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { openAssistantDialog } from "./assistantDialogState";
 import { AssistantAvatar } from "./assistantPresentation";
-import { openAssistantGroupSettings, openAssistantTeamDialog } from "./assistantTeamState";
+import {
+  openAssistantGroupRoutines,
+  openAssistantGroupSettings,
+  openAssistantTeamDialog,
+} from "./assistantTeamState";
 import { GroupMessageAttachments } from "./GroupAttachments";
 import { GroupComposer, MENTION_REQUIRED_COPY, type GroupSendResult } from "./GroupComposer";
 import { GroupTaskCard } from "./GroupTaskCard";
@@ -97,7 +101,6 @@ function GroupHeader(props: {
   readonly running: number;
 }) {
   const { environmentId, team } = props;
-  const navigate = useNavigate();
   const flows = useAssistantTeamFlows(environmentId);
   const archived = team.archivedAt !== null;
   const shown = props.members.slice(0, MAX_STACKED_AVATARS);
@@ -160,16 +163,9 @@ function GroupHeader(props: {
             <PlusIcon />
             New assistant in this group
           </MenuItem>
-          <MenuItem
-            onClick={() =>
-              void navigate({
-                to: "/settings/scheduled-tasks",
-                search: { environmentId, assistantTeamId: team.id },
-              })
-            }
-          >
+          <MenuItem onClick={() => openAssistantGroupRoutines({ environmentId, teamId: team.id })}>
             <CalendarClockIcon />
-            Schedule in this group
+            Group routines
           </MenuItem>
           {(team.chat?.unreadCount ?? 0) > 0 ? (
             <MenuItem disabled={!flows.canMarkRead} onClick={() => void flows.markRead(team)}>

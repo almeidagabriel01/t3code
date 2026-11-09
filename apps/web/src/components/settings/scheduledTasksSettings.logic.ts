@@ -6,6 +6,7 @@ import {
   ScheduledTaskId,
   ThreadId,
   type ScheduledTask,
+  type ScheduledTaskSchedule,
   type ScheduledTaskUpsertSchedule,
   type ModelSelection,
   type RuntimeMode,
@@ -79,6 +80,10 @@ export interface DraftState {
   readonly threadId: string;
   /** Posts the prompt in this assistant group's chat; empty runs it in a thread. */
   readonly assistantTeamId: string;
+  /** What a daily or weekly task does when the server was off at its time. */
+  readonly missedRunPolicy: "skip" | "once";
+  /** Stop after this many runs; empty runs without a limit. */
+  readonly maxRuns: string;
   readonly workspaceMode: WorkspaceMode;
   readonly baseRef: string;
   readonly startFromOrigin: boolean;
@@ -264,6 +269,8 @@ export function taskToDraft(task: ScheduledTask): DraftState {
     projectId: task.projectId,
     threadId: task.threadId ?? "",
     assistantTeamId: task.assistantTeamId ?? "",
+    missedRunPolicy: task.missedRunPolicy ?? "skip",
+    maxRuns: task.maxRuns == null ? "" : String(task.maxRuns),
     workspaceMode: task.workspaceStrategy.type,
     baseRef: task.workspaceStrategy.type === "worktree" ? task.workspaceStrategy.baseRef : "main",
     startFromOrigin:
@@ -356,4 +363,38 @@ export function defaultScheduledTaskProjectId<
       (scopedToProject ? scopedProjects[0] : undefined)
     )?.id ?? ""
   );
+}
+
+/** The limit field as the server takes it: a whole number from 1, or null for no limit. */
+export function maxRunsFromDraft(draft: Pick<DraftState, "maxRuns">): number | null | undefined {
+  const text = draft.maxRuns.trim();
+  if (text === "") return null;
+  const value = Number(text);
+  return Number.isSafeInteger(value) && value >= 1 ? value : undefined;
+}
+
+export const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
+
+const ONCE_FORMATTER = new Intl.DateTimeFormat(undefined, {
+  dateStyle: "medium",
+  timeStyle: "short",
+});
+
+export function scheduleLabel(schedule: ScheduledTaskSchedule): string {
+  if (schedule.type === "webhook") return "On webhook";
+  if (schedule.type === "once") return `Once, ${ONCE_FORMATTER.format(new Date(schedule.runAt))}`;
+  if (schedule.type === "interval") {
+    const minutes = schedule.everyMs / 60_000;
+    return Number.isInteger(minutes)
+      ? `Every ${minutes} min`
+      : `Every ${Math.round(schedule.everyMs / 1000)} sec`;
+  }
+  const weekdays = schedule.weekdays ?? [];
+  const days =
+    weekdays.length === 0
+      ? "Daily"
+      : weekdays.length === 5 && weekdays.every((day) => day >= 1 && day <= 5)
+        ? "Weekdays"
+        : weekdays.map((day) => WEEKDAY_LABELS[day]).join(", ");
+  return `${days} at ${schedule.timeOfDay}`;
 }

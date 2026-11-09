@@ -31,6 +31,7 @@ import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { AssistantAvatar } from "./assistantPresentation";
+import { AssistantGroupRoutinesHost } from "./AssistantGroupRoutinesDialog";
 import { AssistantGroupSettingsHost } from "./AssistantGroupSettingsDialog";
 import { assistantTeamDialogAtom, type AssistantTeamDialogTarget } from "./assistantTeamState";
 
@@ -48,6 +49,7 @@ export function AssistantTeamDialogHost() {
         />
       )}
       <AssistantGroupSettingsHost />
+      <AssistantGroupRoutinesHost />
     </>
   );
 }

@@ -20,6 +20,7 @@ import {
   scheduledTaskDefaultModel,
   defaultScheduledTaskProjectId,
   matchesScheduledTaskScope,
+  maxRunsFromDraft,
   scheduleFromDraft,
   taskToDraft,
   validateScheduledTasksSearch,
@@ -392,5 +393,28 @@ describe("validateScheduledTasksSearch", () => {
       }),
     ).toEqual({ environmentId: "env", taskId: "t1", threadId: "assistant:a:1" });
     expect(validateScheduledTasksSearch({ threadId: "  ", taskId: 4 })).toEqual({});
+  });
+});
+
+describe("run limit and missed-run policy", () => {
+  it("opens a saved task with its policy and limit, and defaults an older one", () => {
+    expect(taskToDraft(legacyTask)).toMatchObject({ missedRunPolicy: "skip", maxRuns: "" });
+    expect(taskToDraft({ ...legacyTask, missedRunPolicy: "once", maxRuns: 4 })).toMatchObject({
+      missedRunPolicy: "once",
+      maxRuns: "4",
+    });
+  });
+
+  it.each([
+    ["", null],
+    ["  ", null],
+    ["3", 3],
+    [" 12 ", 12],
+    ["0", undefined],
+    ["2.5", undefined],
+    ["-1", undefined],
+    ["many", undefined],
+  ])("reads the limit field %j as %j", (text, expected) => {
+    expect(maxRunsFromDraft({ maxRuns: text })).toBe(expected);
   });
 });

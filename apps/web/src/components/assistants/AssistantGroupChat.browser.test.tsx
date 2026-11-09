@@ -22,7 +22,11 @@ import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { getRouter } from "~/router";
 import { clearGroupDrafts } from "./GroupComposer";
 import { assistantDialogAtom } from "./assistantDialogState";
-import { assistantGroupSettingsAtom, assistantTeamDialogAtom } from "./assistantTeamState";
+import {
+  assistantGroupRoutinesAtom,
+  assistantGroupSettingsAtom,
+  assistantTeamDialogAtom,
+} from "./assistantTeamState";
 import {
   ENVIRONMENT_ID,
   PROJECT_ID,
@@ -474,9 +478,9 @@ it("shows an archived group as read-only with a way back", async () => {
   );
 });
 
-it("runs the header menu: edit, new assistant, schedule and archive", async () => {
+it("runs the header menu: edit, new assistant, routines and archive", async () => {
   publishGroupChat([message(1)]);
-  await using screen = await openChat();
+  await using _screen = await openChat();
   const menu = () => main().getByRole("button", { name: "Leadership actions" });
   await userEvent.click(menu());
   await userEvent.click(page.getByRole("menuitem", { name: "Edit group" }));
@@ -493,12 +497,9 @@ it("runs the header menu: edit, new assistant, schedule and archive", async () =
     expect(fakeTeamEdits.updates).toMatchObject([{ teamId: "t1", archived: true }]),
   );
   await userEvent.click(menu());
-  await userEvent.click(page.getByRole("menuitem", { name: "Schedule in this group" }));
-  await eventually(() => {
-    expect(screen.router.state.location.pathname).toBe("/settings/scheduled-tasks");
-    expect(screen.router.state.location.search).toMatchObject({ assistantTeamId: "t1" });
-  });
-  await expect.element(page.getByText("Group chat · Leadership")).toBeVisible();
+  await userEvent.click(page.getByRole("menuitem", { name: "Group routines" }));
+  expect(appAtomRegistry.get(assistantGroupRoutinesAtom)).toMatchObject({ teamId: "t1" });
+  appAtomRegistry.set(assistantGroupRoutinesAtom, null);
 });
 
 it("opens a group's chat from the command palette and says when it is gone", async () => {
