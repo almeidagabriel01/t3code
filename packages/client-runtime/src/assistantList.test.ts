@@ -94,6 +94,8 @@ describe("assistantMetaLabel", () => {
     ["failed", "Last run failed", "Last run failed"],
     ["idle", "Idle", null],
   ] as const)("%s / %s", (mood, detail, expected) => {
-    expect(assistantMetaLabel({ mood, detail, since: null, queued: 0 })).toBe(expected);
+    expect(assistantMetaLabel({ mood, detail, since: null, reading: false, queued: 0 })).toBe(
+      expected,
+    );
   });
 });

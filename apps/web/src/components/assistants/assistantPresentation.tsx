@@ -8,7 +8,11 @@ import {
   assistantIconFor,
 } from "@t3tools/client-runtime/assistantIcons";
 import { assistantAccent, assistantInitial } from "@t3tools/client-runtime/assistantPresence";
-import { assistantRobotLook, type AssistantMood } from "@t3tools/client-runtime/assistantRobot";
+import {
+  assistantRobotLook,
+  type AssistantFace,
+  type AssistantMood,
+} from "@t3tools/client-runtime/assistantRobot";
 import { useAssetUrlState } from "~/assets/assetUrls";
 import { cn } from "~/lib/utils";
 import { useAssistantEntries } from "~/state/assistants";
@@ -75,7 +79,8 @@ function AssistantImageAvatar(props: {
   readonly assistant: Pick<Assistant, "id" | "avatar" | "icon">;
   readonly revision: number;
   readonly environmentId: EnvironmentId | null | undefined;
-  readonly mood: AssistantMood | undefined;
+  readonly mood: AssistantMood | AssistantFace | undefined;
+  readonly animated: boolean | undefined;
   readonly className: string | undefined;
 }) {
   const { assistant } = props;
@@ -96,6 +101,7 @@ function AssistantImageAvatar(props: {
       <AssistantRobot
         look={assistantRobotLook(assistant)}
         {...(props.mood === undefined ? {} : { mood: props.mood })}
+        {...(props.animated === undefined ? {} : { animated: props.animated })}
         className={cn("size-5", props.className)}
       />
     );
@@ -120,7 +126,9 @@ function AssistantImageAvatar(props: {
  */
 export function AssistantAvatar(props: {
   readonly assistant: Pick<Assistant, "id" | "avatar" | "icon">;
-  readonly mood?: AssistantMood;
+  readonly mood?: AssistantMood | AssistantFace;
+  /** Play the robot's sparse motion; only for avatars of 24px and up. */
+  readonly animated?: boolean;
   readonly className?: string;
   /** Where the picture is served from; found from the assistant list when left out. */
   readonly environmentId?: EnvironmentId | null;
@@ -133,6 +141,7 @@ export function AssistantAvatar(props: {
         revision={assistant.avatar.revision}
         environmentId={props.environmentId}
         mood={props.mood}
+        animated={props.animated}
         className={props.className}
       />
     );
@@ -159,6 +168,7 @@ export function AssistantAvatar(props: {
     <AssistantRobot
       look={assistantRobotLook(assistant)}
       {...(props.mood === undefined ? {} : { mood: props.mood })}
+      {...(props.animated === undefined ? {} : { animated: props.animated })}
       className={cn("size-5", props.className)}
     />
   );

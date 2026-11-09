@@ -1,4 +1,5 @@
 import {
+  assistantFace,
   assistantGroupOwnerKey,
   assistantGroupThreadsOf,
   assistantPresence,
@@ -85,7 +86,7 @@ function AssistantCard(props: {
         <AssistantAvatar
           assistant={assistant}
           environmentId={environmentId}
-          mood={archived ? "idle" : presence.mood}
+          mood={archived ? "sleeping" : assistantFace(presence, props.nowMs)}
           size={44}
         />
         <View className="min-w-0 flex-1 gap-0.5">

@@ -11,6 +11,41 @@ import type { EnvironmentThreadShell } from "./state/models.ts";
 /** What the robot's face shows; it follows the assistant's thread. */
 export type AssistantMood = "idle" | "working" | "needs" | "failed";
 
+/** What the robot draws: the mood plus finer states derived from the same thread. */
+export type AssistantFace =
+  | "idle"
+  | "reading"
+  | "working"
+  | "waiting"
+  | "failed"
+  | "done"
+  | "sleeping";
+
+/** How long "done" shows after the assistant's last reply, and how long idle before it sleeps. */
+export const ASSISTANT_DONE_MS = 8_000;
+const ASSISTANT_SLEEP_MS = 6 * 60 * 60 * 1000;
+
+/** Moods map to faces one to one, "needs" being the face that waits on the user. */
+export const faceOfMood = (face: AssistantMood | AssistantFace): AssistantFace =>
+  face === "needs" ? "waiting" : face;
+
+/**
+ * `now` decides done (just replied) and sleeping (quiet for hours); without it the face is
+ * time-free, which is what rows that never re-render on a clock should use.
+ */
+export function assistantFace(
+  presence: Pick<AssistantPresence, "mood" | "reading" | "since">,
+  now?: number,
+): AssistantFace {
+  if (presence.mood === "working") return presence.reading ? "reading" : "working";
+  if (presence.mood !== "idle") return faceOfMood(presence.mood);
+  if (now === undefined) return "idle";
+  const age = presence.since === null ? Number.NaN : now - Date.parse(presence.since);
+  if (Number.isNaN(age)) return "idle";
+  if (age >= 0 && age <= ASSISTANT_DONE_MS) return "done";
+  return age > ASSISTANT_SLEEP_MS ? "sleeping" : "idle";
+}
+
 export interface AssistantRobotLook {
   readonly hue: number;
   readonly variant: number;
@@ -24,7 +59,11 @@ export interface AssistantRobotSpec {
   readonly gradientFrom: string;
   readonly gradientTo: string;
   readonly visor: string;
-  readonly eyes: "open" | "focused" | "alert" | "crossed";
+  readonly eyes: "open" | "focused" | "alert" | "crossed" | "closed" | "happy";
+  /** The one sparse motion this face may play; clients animate it only where it is big enough. */
+  readonly motion: "blink" | "glance" | "think" | null;
+  /** Amber dot for waiting, red ring for failed. */
+  readonly badge: { readonly kind: "dot" | "ring"; readonly color: string } | null;
   readonly eyeColor: string;
   readonly tipColor: string;
   readonly antenna: "single" | "double" | "none" | "ring";
@@ -62,26 +101,41 @@ export function assistantRobotLook(assistant: {
 
 export function assistantRobotSpec(
   look: AssistantRobotLook,
-  mood: AssistantMood,
+  mood: AssistantMood | AssistantFace,
 ): AssistantRobotSpec {
   const hue = ((Math.round(look.hue) % 360) + 360) % 360;
   const variant =
     ((Math.round(look.variant) % ASSISTANT_ROBOT_VARIANTS) + ASSISTANT_ROBOT_VARIANTS) %
     ASSISTANT_ROBOT_VARIANTS;
   const face = {
-    idle: { eyes: "open", eyeColor: "#d6f3ff", tipColor: `hsl(${hue} 90% 80%)` },
-    working: { eyes: "focused", eyeColor: "#8fe3ff", tipColor: "#8fe3ff" },
-    needs: { eyes: "alert", eyeColor: "#ffd28a", tipColor: "#ffb454" },
-    failed: { eyes: "crossed", eyeColor: "#ff8a8a", tipColor: "#ff6b6b" },
+    idle: { eyes: "open", motion: "blink", eyeColor: "#d6f3ff", tipColor: `hsl(${hue} 90% 80%)` },
+    reading: {
+      eyes: "open",
+      motion: "glance",
+      eyeColor: "#d6f3ff",
+      tipColor: `hsl(${hue} 90% 80%)`,
+    },
+    working: { eyes: "focused", motion: "think", eyeColor: "#8fe3ff", tipColor: "#8fe3ff" },
+    waiting: { eyes: "alert", motion: null, eyeColor: "#ffd28a", tipColor: "#ffb454" },
+    failed: { eyes: "crossed", motion: null, eyeColor: "#ff8a8a", tipColor: "#ff6b6b" },
+    done: { eyes: "happy", motion: null, eyeColor: "#b8f5c8", tipColor: "#7ee2a0" },
+    sleeping: { eyes: "closed", motion: null, eyeColor: "#9aa8c4", tipColor: "#9aa8c4" },
   } as const satisfies Record<
-    AssistantMood,
-    Pick<AssistantRobotSpec, "eyes" | "eyeColor" | "tipColor">
+    AssistantFace,
+    Pick<AssistantRobotSpec, "eyes" | "motion" | "eyeColor" | "tipColor">
   >;
+  const key = faceOfMood(mood);
   return {
     gradientFrom: `hsl(${hue} 85% 66%)`,
     gradientTo: `hsl(${(hue + 40) % 360} 80% 46%)`,
     visor: "hsl(230 30% 12%)",
-    ...face[mood],
+    ...face[key],
+    badge:
+      key === "waiting"
+        ? { kind: "dot", color: "#ffb454" }
+        : key === "failed"
+          ? { kind: "ring", color: "#ff6b6b" }
+          : null,
     antenna: ANTENNAS[variant % ANTENNAS.length]!,
     ears: variant >= ANTENNAS.length,
     light: "#ffffff",
@@ -108,6 +162,8 @@ export interface AssistantPresence {
   readonly detail: string;
   /** When the detail's moment happened, for "12m ago" style labels; null when there is none. */
   readonly since: string | null;
+  /** Working but nothing said yet: it is still reading the request. */
+  readonly reading: boolean;
   /** Messages waiting behind its active run. */
   readonly queued: number;
 }
@@ -151,6 +207,7 @@ export function assistantPresence(
       detail:
         presence.mood === "working" ? `Working in ${where}` : `${presence.detail} in ${where}`,
       since: presence.since,
+      reading: presence.reading,
     };
   }
   return own;
@@ -180,34 +237,41 @@ export function assistantGroupThreadsOf<
 }
 
 function presenceOf(thread: PresenceThread | null): Omit<AssistantPresence, "queued"> {
-  if (thread === null) return { mood: "idle", detail: "Idle", since: null };
+  if (thread === null) return { mood: "idle", detail: "Idle", since: null, reading: false };
   const status = resolveSidebarThreadStatus(thread);
   const message = thread.source.latestVisibleMessage;
   const said = message !== null && message.role === "assistant" ? firstLine(message.text) : "";
   const spokeAt = message === null ? null : DateTime.formatIso(message.updatedAt);
   switch (status) {
     case "approval":
-      return { mood: "needs", detail: "Needs your approval", since: null };
+      return { mood: "needs", detail: "Needs your approval", since: null, reading: false };
     case "input":
-      return { mood: "needs", detail: "Asked you a question", since: null };
+      return { mood: "needs", detail: "Asked you a question", since: null, reading: false };
     case "request":
-      return { mood: "needs", detail: "A guest message waits for you", since: null };
+      return {
+        mood: "needs",
+        detail: "A guest message waits for you",
+        since: null,
+        reading: false,
+      };
     case "working":
     case "waiting":
       return {
         mood: "working",
+        reading: message === null || message.role === "user",
         detail: said === "" ? "Working" : said,
         since: thread.runtime?.activityStartedAt ?? thread.latestRun?.startedAt ?? null,
       };
     case "failed":
       return {
         mood: "failed",
+        reading: false,
         detail: "Last run failed",
         since: thread.latestRun?.completedAt ?? null,
       };
     case "limited":
-      return { mood: "failed", detail: "Hit a usage limit", since: null };
+      return { mood: "failed", detail: "Hit a usage limit", since: null, reading: false };
     case "ready":
-      return { mood: "idle", detail: said === "" ? "Idle" : said, since: spokeAt };
+      return { mood: "idle", detail: said === "" ? "Idle" : said, since: spokeAt, reading: false };
   }
 }

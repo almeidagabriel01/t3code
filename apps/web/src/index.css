@@ -2632,3 +2632,58 @@ code {
   outline: 2px solid var(--ring);
   outline-offset: -2px;
 }
+
+/* Assistant robot: short bursts inside long pauses, transform/opacity only. The component adds
+   data-assistant-motion only while the document is visible and motion is allowed. */
+@keyframes assistant-robot-blink {
+  0%,
+  92%,
+  100% {
+    transform: scaleY(1);
+  }
+  96% {
+    transform: scaleY(0.1);
+  }
+}
+
+@keyframes assistant-robot-glance {
+  0%,
+  25%,
+  82%,
+  100% {
+    transform: translateX(0);
+  }
+  32%,
+  50% {
+    transform: translateX(-2px);
+  }
+  57%,
+  75% {
+    transform: translateX(2px);
+  }
+}
+
+@keyframes assistant-robot-think {
+  0%,
+  60%,
+  100% {
+    opacity: 1;
+  }
+  80% {
+    opacity: 0.35;
+  }
+}
+
+[data-assistant-motion="blink"] .assistant-robot-eyes {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: assistant-robot-blink 5.5s infinite;
+}
+
+[data-assistant-motion="glance"] .assistant-robot-eyes {
+  animation: assistant-robot-glance 6s infinite;
+}
+
+[data-assistant-motion="think"] .assistant-robot-tip {
+  animation: assistant-robot-think 2.4s infinite;
+}

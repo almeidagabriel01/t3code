@@ -11,7 +11,11 @@ import {
   ASSISTANT_ICON_VIEWBOX,
   assistantIconFor,
 } from "@t3tools/client-runtime/assistantIcons";
-import { assistantRobotLook, type AssistantMood } from "@t3tools/client-runtime/assistantRobot";
+import {
+  assistantRobotLook,
+  type AssistantFace,
+  type AssistantMood,
+} from "@t3tools/client-runtime/assistantRobot";
 import { Image } from "expo-image";
 import { useState } from "react";
 import { View } from "react-native";
@@ -133,7 +137,7 @@ function AssistantImageAvatar(props: {
   readonly assistant: Pick<Assistant, "id" | "avatar" | "icon">;
   readonly revision: number;
   readonly environmentId: EnvironmentId | null | undefined;
-  readonly mood: AssistantMood | undefined;
+  readonly mood: AssistantMood | AssistantFace | undefined;
   readonly size: number;
 }) {
   const { assistant, size } = props;
@@ -170,7 +174,7 @@ function AssistantImageAvatar(props: {
  */
 export function AssistantAvatar(props: {
   readonly assistant: Pick<Assistant, "id" | "avatar" | "icon">;
-  readonly mood?: AssistantMood;
+  readonly mood?: AssistantMood | AssistantFace;
   readonly size?: number;
   /** Where the picture is served from; found from the assistant list when left out. */
   readonly environmentId?: EnvironmentId | null;

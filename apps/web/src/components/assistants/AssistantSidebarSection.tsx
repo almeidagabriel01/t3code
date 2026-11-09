@@ -7,6 +7,7 @@ import {
 import {
   assistantGroupThreadsOf,
   assistantPresence,
+  assistantFace,
   type AssistantMood,
 } from "@t3tools/client-runtime/assistantRobot";
 import type { EnvironmentId, AssistantTeamId, ScopedThreadRef } from "@t3tools/contracts";
@@ -139,7 +140,11 @@ const AssistantRow = memo(function AssistantRow(props: {
         onKeyDown={onKeyDown}
       >
         <span className="relative inline-flex shrink-0">
-          <AssistantAvatar assistant={assistant} mood={presence.mood} className="size-5" />
+          <AssistantAvatar
+            assistant={assistant}
+            mood={assistantFace(presence)}
+            className="size-5"
+          />
           {statusDot ? (
             <span
               aria-hidden
@@ -278,7 +283,7 @@ const AssistantAvatarButton = memo(function AssistantAvatarButton(props: {
           />
         }
       >
-        <AssistantAvatar assistant={assistant} mood={presence.mood} className="size-5" />
+        <AssistantAvatar assistant={assistant} mood={assistantFace(presence)} className="size-5" />
         {working ? (
           <span className="absolute -right-0.5 -bottom-0.5 inline-flex rounded-full bg-sidebar">
             <Spinner size="xs" tone="muted" aria-hidden />

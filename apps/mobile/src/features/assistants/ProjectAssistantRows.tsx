@@ -1,4 +1,8 @@
-import { assistantGroupThreadsOf, assistantPresence } from "@t3tools/client-runtime/assistantRobot";
+import {
+  assistantFace,
+  assistantGroupThreadsOf,
+  assistantPresence,
+} from "@t3tools/client-runtime/assistantRobot";
 import { projectAssistants } from "@t3tools/client-runtime/assistantSections";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { Pressable, View } from "react-native";
@@ -33,7 +37,7 @@ function ProjectAssistantRow(props: { readonly entry: AssistantEntry; readonly s
       <AssistantAvatar
         assistant={assistant}
         environmentId={environmentId}
-        mood={presence.mood}
+        mood={assistantFace(presence)}
         size={24}
       />
       <Text

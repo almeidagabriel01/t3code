@@ -4,7 +4,11 @@ import {
   rankAssistants,
   visibleAssistants,
 } from "@t3tools/client-runtime/assistantList";
-import { assistantGroupThreadsOf, assistantPresence } from "@t3tools/client-runtime/assistantRobot";
+import {
+  assistantFace,
+  assistantGroupThreadsOf,
+  assistantPresence,
+} from "@t3tools/client-runtime/assistantRobot";
 import {
   hasSidebarNotification,
   resolveSidebarThreadStatus,
@@ -81,7 +85,7 @@ function AssistantAvatarButton(props: { readonly entry: AssistantEntry }) {
       <AssistantAvatar
         assistant={assistant}
         environmentId={environmentId}
-        mood={state.presence.mood}
+        mood={assistantFace(state.presence)}
         size={28}
       />
       {state.working || state.needsYou ? (
@@ -168,7 +172,7 @@ function AssistantRow(props: {
           <AssistantAvatar
             assistant={assistant}
             environmentId={environmentId}
-            mood={presence.mood}
+            mood={assistantFace(presence)}
             size={24}
           />
           {state.working || state.needsYou ? (
