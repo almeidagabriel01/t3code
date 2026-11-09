@@ -367,6 +367,9 @@ describe("ClientSettings notifications", () => {
   it("requires opt-in when existing settings omit notification preferences", () => {
     expect(decodeClientSettings({}).notificationMode).toBe("off");
     expect(decodeClientSettings({}).inAppNotificationsEnabled).toBe(false);
+    expect(decodeClientSettings({}).showInMenuBar).toBe(true);
+    expect(decodeClientSettings({ showInMenuBar: false }).showInMenuBar).toBe(false);
+    expect(decodeClientSettingsPatch({})).not.toHaveProperty("showInMenuBar");
     expect(decodeClientSettingsPatch({})).not.toHaveProperty("inAppNotificationsEnabled");
     expect(decodeClientSettingsPatch({})).not.toHaveProperty("notificationMode");
   });

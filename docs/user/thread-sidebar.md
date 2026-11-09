@@ -164,6 +164,11 @@ deleted.
 On mobile, Home shows the same threads in a **Needs you** section, and the tablet sidebar does too.
 Its menu has **Mark all as read** and **Clear read**.
 
+On macOS, the desktop app also puts the same view in the menu bar: threads that need you, running
+threads and pinned threads, from every connected environment, with **New thread**, **Open T3 Code**
+and **Quit**. Choose a thread to open it. A number next to the icon counts the threads that need
+you. Turn the icon off under **Settings → General → Show in menu bar**.
+
 ### Fold working threads (beta)
 
 Threads the agent is working on by itself, or waiting on work they will resume from, move into a

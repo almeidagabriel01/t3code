@@ -1035,6 +1035,27 @@ export const DesktopMicrophoneAccessSchema = Schema.Literals([
 ]);
 export type DesktopMicrophoneAccess = typeof DesktopMicrophoneAccessSchema.Type;
 
+/** Menu actions the tray sends to the renderer; the open-thread one carries `{environmentId, threadId}` as JSON. */
+export const DESKTOP_TRAY_NEW_THREAD_ACTION = "tray.new-thread";
+export const DESKTOP_TRAY_OPEN_THREAD_ACTION_PREFIX = "tray.open-thread:";
+
+export interface DesktopTrayThread {
+  readonly environmentId: string;
+  readonly threadId: string;
+  readonly title: string;
+  readonly project: string | null;
+  /** Set only when more than one environment is connected. */
+  readonly environment: string | null;
+}
+
+/** What the menu-bar icon lists. Each section is capped by the sender; counts are uncapped. */
+export interface DesktopTrayMenu {
+  readonly attention: ReadonlyArray<DesktopTrayThread>;
+  readonly running: ReadonlyArray<DesktopTrayThread>;
+  readonly pinned: ReadonlyArray<DesktopTrayThread>;
+  readonly attentionCount: number;
+}
+
 export interface DesktopBridge extends DesktopWindowMaterialBridge {
   getAppBranding: () => DesktopAppBranding | null;
   getRelayTelemetryEnabled: () => boolean;
@@ -1042,6 +1063,8 @@ export interface DesktopBridge extends DesktopWindowMaterialBridge {
   getClientPlatform: () => string;
   setNotificationBadge: (badge: { count: number; image: string | null }) => Promise<void>;
   onNotificationBadgeClear: (listener: () => void) => () => void;
+  /** Publishes the menu-bar contents; null removes the icon. macOS only, a no-op elsewhere. */
+  setTrayMenu: (menu: DesktopTrayMenu | null) => Promise<void>;
   onTrackpadScrollBegin: (listener: () => void) => () => void;
   onTrackpadScrollEnd: (listener: () => void) => () => void;
   /**
