@@ -246,14 +246,28 @@ describe("AssistantWorkMemorySection", () => {
   });
 
   it.each([
-    ["no read permission", () => (mocks.canRead = false), "Memory read permission is required"],
+    [
+      "no read permission",
+      () => {
+        mocks.canRead = false;
+      },
+      "Memory read permission is required",
+    ],
     [
       "no memory space",
-      () => (mocks.sync = { state: "disabled", retainedLocalSpaceId: null }),
+      () => {
+        mocks.sync = { state: "disabled", retainedLocalSpaceId: null };
+      },
       "Memory is off or still getting ready",
     ],
-    ["nothing learned", () => (mocks.pages = {}), "Nothing remembered yet."],
-  ] as const)("%s", async (_name, arrange, message) => {
+    [
+      "nothing learned",
+      () => {
+        mocks.pages = {};
+      },
+      "Nothing remembered yet.",
+    ],
+  ] as [string, () => void, string][])("%s", async (_name, arrange, message) => {
     arrange();
     await render();
     expect(container.textContent).toContain(message);
