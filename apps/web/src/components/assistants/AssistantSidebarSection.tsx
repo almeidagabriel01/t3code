@@ -342,7 +342,7 @@ function GroupRow(props: {
   const more = props.members.length - shown.length;
   const unread = team.chat?.unreadCount ?? 0;
   return (
-    <li className="list-none py-px">
+    <li className="@container/group-row list-none py-px">
       <div
         role="button"
         tabIndex={0}
@@ -365,9 +365,9 @@ function GroupRow(props: {
       >
         <HashIcon aria-hidden className="size-4 shrink-0 text-(--sidebar-icon-color)" />
         <span className="min-w-0 truncate">{team.name}</span>
-        {/* The faces give up width first (shrink-100, clipped) so a narrow row keeps the name readable. */}
+        {/* A narrow row drops the faces whole rather than clipping one, so the name stays readable. */}
         <span
-          className="flex min-w-0 shrink-100 items-center overflow-hidden ps-0.5"
+          className="flex shrink-0 items-center ps-0.5 @max-[15rem]/group-row:hidden"
           data-testid="group-avatars"
         >
           {shown.map(({ assistant }) => (
