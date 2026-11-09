@@ -119,6 +119,20 @@ function AssistantCard(props: {
             {status}
           </Text>
         </View>
+        {archived || !flows.canAct ? null : (
+          <View className="-me-2 -mt-1">
+            <SectionMenu
+              label={`${assistant.name} actions`}
+              actions={[
+                {
+                  id: "archive",
+                  title: "Archive assistant",
+                  onPress: () => flows.archive(assistant),
+                },
+              ]}
+            />
+          </View>
+        )}
       </View>
       {archived ? null : <AssistantTaskRows entry={props.entry} />}
       {props.groupNames.length === 0 ? null : (
@@ -130,7 +144,7 @@ function AssistantCard(props: {
           ))}
         </View>
       )}
-      <View className="flex-row items-center gap-2">
+      <View className="flex-row flex-wrap items-center gap-2">
         {archived ? (
           <Button
             label="Restore"
@@ -162,19 +176,6 @@ function AssistantCard(props: {
               size="compact"
               onPress={() => openEditor(environmentId, assistant)}
             />
-            <View className="flex-1" />
-            {flows.canAct ? (
-              <SectionMenu
-                label={`${assistant.name} actions`}
-                actions={[
-                  {
-                    id: "archive",
-                    title: "Archive assistant",
-                    onPress: () => flows.archive(assistant),
-                  },
-                ]}
-              />
-            ) : null}
           </>
         )}
       </View>
