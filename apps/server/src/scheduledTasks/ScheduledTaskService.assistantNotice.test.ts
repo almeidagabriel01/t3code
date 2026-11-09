@@ -37,12 +37,12 @@ it.effect("pausing and resuming an assistant's routine leaves a line in its conv
     );
     yield* Effect.gen(function* () {
       const service = yield* ScheduledTaskService.ScheduledTaskService;
-      const upsert = (id: string, threadId: string) =>
+      const upsert = (id: string, threadId: string, enabled = true) =>
         service.upsert({
           id: ScheduledTaskId.make(id),
           title: "Daily report",
           prompt: "Report",
-          enabled: true,
+          enabled,
           schedule: { type: "interval", everyMs: 60_000 },
           projectId: ProjectId.make("project:test"),
           threadId: ThreadId.make(threadId),
@@ -58,11 +58,18 @@ it.effect("pausing and resuming an assistant's routine leaves a line in its conv
       yield* service.setEnabled({ id: task.id, enabled: false });
       yield* service.setEnabled({ id: task.id, enabled: true });
       yield* service.setEnabled({ id: ordinary.id, enabled: false });
+      // Saving the routine with its switch flipped, as the editor and `schedule_task` do, counts;
+      // saving it unchanged, or a first save, does not.
+      yield* upsert("task:assistant", "assistant:ada:1", false);
+      yield* upsert("task:assistant", "assistant:ada:1", false);
+      yield* upsert("task:ordinary", "thread:ordinary", true);
+      yield* upsert("task:new", "assistant:ada:1", false);
       assert.deepEqual(
         notices.map(({ type, threadId, message }) => [type, threadId, message]),
         [
           ["thread.notice.record", "assistant:ada:1", "Paused routine 'Daily report'"],
           ["thread.notice.record", "assistant:ada:1", "Resumed routine 'Daily report'"],
+          ["thread.notice.record", "assistant:ada:1", "Paused routine 'Daily report'"],
         ],
       );
     }).pipe(Effect.provide(layer));
