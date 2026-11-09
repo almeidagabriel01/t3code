@@ -2038,3 +2038,201 @@ it.effect("deleting a group removes the files its messages kept", () => {
     assert.deepEqual(h.cleaned, [posted.message.attachments![0]!.id]);
   }).pipe(Effect.provide(h.layer));
 });
+
+const setSettings = (instructions: string, memories: ReadonlyArray<string>) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`UPDATE assistant_teams SET instructions = ${instructions},
+      memories_json = ${JSON.stringify(memories)} WHERE team_id = ${TEAM}`;
+  });
+
+it.effect("every task packet carries the group's instructions and memories", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    yield* setSettings("Answer in Portuguese.", [
+      "The fiscal year starts in March",
+      "Budget is 5k",
+    ]);
+    yield* groups.post({ teamId: TEAM, text: "@ada first" }, h.user);
+    assert.include(h.sent[0]!.text, "Group instructions:\nAnswer in Portuguese.");
+    assert.include(
+      h.sent[0]!.text,
+      "Group memories:\n- The fiscal year starts in March\n- Budget is 5k",
+    );
+    yield* setSettings("", []);
+    yield* groups.post({ teamId: TEAM, text: "@beto second" }, h.user);
+    assert.notInclude(h.sent[1]!.text, "Group instructions:");
+    assert.notInclude(h.sent[1]!.text, "Group memories:");
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect(
+  "a new conversation keeps the old chat visible but out of news, summary and history",
+  () => {
+    const h = harness({ summarize: () => "Old summary." });
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      yield* groups.post({ teamId: TEAM, text: bulk("a") }, h.user);
+      yield* groups.post({ teamId: TEAM, text: bulk("b") }, h.user);
+      yield* groups.idle;
+      assert.lengthOf(yield* h.sqlRows("SELECT * FROM assistant_group_summaries"), 1);
+      yield* h.finish(0, "completed", "ok");
+      yield* h.finish(1, "completed", "ok");
+      yield* groups.conversation({ teamId: TEAM, action: "new" });
+      assert.lengthOf(yield* h.sqlRows("SELECT * FROM assistant_group_summaries"), 0);
+      const boundary = (yield* h.messages).filter((row) => row.kind === "boundary");
+      assert.deepEqual(
+        boundary.map((row) => [row.author, row.text]),
+        [["user", "new"]],
+      );
+      const boundarySeq = boundary[0]!.seq;
+      yield* groups.post({ teamId: TEAM, text: "@beto after" }, h.user);
+      const packet = h.sent.at(-1)!.text;
+      assert.notInclude(packet, "Summary of earlier chat");
+      assert.notInclude(packet, "aaaa");
+      assert.notInclude(packet, "New in the group chat");
+      // The old messages stay in the chat, and a member can still ask for them.
+      assert.isAbove((yield* groups.history({ teamId: TEAM })).messages.length, 3);
+      const fresh = yield* groups.member.history({ callerThreadId: betoThread });
+      assert.deepEqual(
+        fresh.messages.map((message) => message.seq),
+        [boundarySeq + 1],
+      );
+      const older = yield* groups.member.history({
+        callerThreadId: betoThread,
+        beforeSeq: boundarySeq + 1,
+      });
+      assert.isAbove(older.messages.length, 1);
+      // The next summary reads only what follows the boundary.
+      yield* groups.post({ teamId: TEAM, text: bulk("c") }, h.user);
+      yield* groups.post({ teamId: TEAM, text: bulk("d") }, h.user);
+      yield* groups.idle;
+      const last = h.summaryCalls.at(-1)!;
+      assert.isNull(last.previousSummary);
+      assert.isTrue(last.messages.every((message) => !message.text.startsWith("@ada aa")));
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+it.effect("compact writes a summary now, then draws the boundary", () => {
+  const h = harness({ summarize: () => "Compact summary." });
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    yield* groups.post({ teamId: TEAM, text: "@ada one" }, h.user);
+    yield* h.finish(0, "completed", "done one");
+    yield* groups.conversation({ teamId: TEAM, action: "compact" });
+    assert.lengthOf(h.summaryCalls, 1);
+    assert.deepEqual(
+      (yield* h.messages).filter((row) => row.kind === "boundary").map((row) => row.text),
+      ["compact"],
+    );
+    yield* groups.post({ teamId: TEAM, text: "@beto two" }, h.user);
+    const packet = h.sent.at(-1)!.text;
+    assert.include(packet, "Summary of earlier chat:\nCompact summary.");
+    assert.notInclude(packet, "done one");
+    yield* h.finish(1, "completed", "ok two");
+    yield* groups.conversation({ teamId: TEAM, action: "compact" });
+    // Nothing new since: nothing to compact.
+    const none = yield* groups.conversation({ teamId: TEAM, action: "compact" }).pipe(Effect.flip);
+    assert.equal(none.reason, "invalid");
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("compact without a usable summary draws no boundary", () => {
+  const failing = harness({ summarize: () => "fail" });
+  const unsupported = harness({ summarize: () => "unsupported" });
+  const run = (h: ReturnType<typeof harness>) =>
+    Effect.gen(function* () {
+      const groups = yield* h.setup;
+      yield* groups.post({ teamId: TEAM, text: "@ada one" }, h.user);
+      yield* h.finish(0, "completed", "done one");
+      const error = yield* groups
+        .conversation({ teamId: TEAM, action: "compact" })
+        .pipe(Effect.flip);
+      assert.equal(error.reason, "invalid");
+      assert.isUndefined((yield* h.messages).find((row) => row.kind === "boundary"));
+    }).pipe(Effect.provide(h.layer));
+  return Effect.gen(function* () {
+    yield* run(failing);
+    yield* run(unsupported);
+  });
+});
+
+it.effect("new, compact and clear wait for the group to stop working", () => {
+  const h = harness({ summarize: () => "S." });
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    yield* groups.post({ teamId: TEAM, text: "@ada busy" }, h.user);
+    for (const action of ["new", "compact", "clear"] as const) {
+      const error = yield* groups.conversation({ teamId: TEAM, action }).pipe(Effect.flip);
+      assert.equal(error.reason, "invalid");
+    }
+    assert.lengthOf(yield* h.messages, 1);
+    const missing = yield* groups
+      .conversation({ teamId: AssistantTeamId.make("nope"), action: "new" })
+      .pipe(Effect.flip);
+    assert.equal(missing.reason, "not_found");
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect(
+  "undo removes only a boundary with nothing after it, and no member skips what reuses its number",
+  () => {
+    const h = harness();
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      yield* groups.post({ teamId: TEAM, text: "@ada one" }, h.user);
+      yield* h.finish(0, "completed", "ok");
+      yield* groups.conversation({ teamId: TEAM, action: "new" });
+      yield* groups.post({ teamId: TEAM, text: "@beto two" }, h.user);
+      const refusal = yield* groups
+        .conversation({ teamId: TEAM, action: "undo" })
+        .pipe(Effect.flip);
+      assert.equal(refusal.reason, "invalid");
+      yield* h.finish(1, "completed", "ok two");
+      yield* groups.conversation({ teamId: TEAM, action: "new" });
+      yield* groups.conversation({ teamId: TEAM, action: "undo" });
+      assert.lengthOf(
+        (yield* h.messages).filter((row) => row.kind === "boundary"),
+        1,
+      );
+      yield* groups.post({ teamId: TEAM, text: "@ada three" }, h.user);
+      assert.include(h.sent.at(-1)!.text, "three");
+      const none = yield* groups.conversation({ teamId: TEAM, action: "undo" }).pipe(Effect.flip);
+      assert.equal(none.reason, "invalid");
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+it.effect("clear deletes the chat, its tasks, summary and files, and the group starts over", () => {
+  const h = harness({ summarize: () => "S." });
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    yield* storeUploads;
+    const posted = yield* groups.post(
+      { teamId: TEAM, text: "@ada look", attachments: [imageUpload] },
+      h.user,
+    );
+    yield* h.finish(0, "completed", "seen");
+    yield* groups.conversation({ teamId: TEAM, action: "compact" });
+    yield* groups.markRead({ teamId: TEAM });
+    yield* groups.conversation({ teamId: TEAM, action: "clear" });
+    assert.deepEqual(h.cleaned, [posted.message.attachments![0]!.id]);
+    assert.lengthOf(yield* h.messages, 0);
+    assert.lengthOf(yield* h.tasks, 0);
+    assert.lengthOf(yield* h.sqlRows("SELECT * FROM assistant_group_summaries"), 0);
+    const [team] = yield* h.sqlRows<{ read_seq: number }>(
+      "SELECT read_seq FROM assistant_teams WHERE team_id = 'team:1'",
+    );
+    assert.equal(team!.read_seq, 0);
+    // The member's hidden thread stays, and it takes the next message as new.
+    assert.isAbove((yield* h.sqlRows("SELECT * FROM assistant_group_threads")).length, 0);
+    yield* groups.post({ teamId: TEAM, text: "@ada again" }, h.user);
+    assert.include(h.sent.at(-1)!.text, "again");
+    assert.deepEqual(
+      (yield* h.messages).map((row) => row.seq),
+      [1],
+    );
+  }).pipe(Effect.provide(h.layer));
+});

@@ -13,6 +13,7 @@ import {
   applyAssistantGroupsEvent,
   assistantGroupAuthorName,
   assistantGroupAwaitingRoute,
+  assistantGroupBoundaryLabel,
   assistantGroupFeed,
   assistantGroupFinished,
   assistantGroupLatestSeq,
@@ -106,6 +107,12 @@ describe("group chat state", () => {
     assert.isNull(
       oldestAssistantGroupSeq({ messages: new Map(), tasks: new Map(), hasMore: false }),
     );
+    // After a clear nothing of an earlier page comes back, even once new messages arrive.
+    const cleared = start(snapshot([], [], false));
+    const page = { messages: [message(2)], tasks: [], hasMore: false };
+    assert.strictEqual(applyAssistantGroupHistory(cleared, page).messages.size, 0);
+    const restarted = start(snapshot([message(1, { id: "fresh" } as never)], [], false));
+    assert.strictEqual(applyAssistantGroupHistory(restarted, page).messages.size, 1);
   });
 });
 
@@ -127,6 +134,7 @@ describe("group feed", () => {
             taskId: "a" as never,
           }),
           message(5, { author: "assistant", kind: "notice" }),
+          message(6, { kind: "boundary", text: "compact" }),
         ],
         [
           task("a", 1),
@@ -143,8 +151,19 @@ describe("group feed", () => {
         [3, "answer", ["a"]],
         [4, "note", []],
         [5, "note", []],
+        [6, "boundary", []],
       ],
     );
+    assert.strictEqual(
+      assistantGroupBoundaryLabel(message(6, { text: "compact" })),
+      "Context compacted",
+    );
+    assert.strictEqual(
+      assistantGroupBoundaryLabel(message(7, { text: "new" })),
+      "New conversation started",
+    );
+    // A boundary is never unread.
+    assert.isNull(assistantGroupNewSeq(state, 5));
   });
 
   it("labels pauses in words and an unknown reason as paused", () => {

@@ -512,6 +512,10 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
       UPDATE assistant_teams SET read_seq = COALESCE(
         (SELECT MAX(seq) FROM assistant_group_messages m WHERE m.team_id = assistant_teams.team_id), 0)`;
   }
+  if (!teamColumns.some((column) => column.name === "instructions")) {
+    yield* sql`ALTER TABLE assistant_teams ADD COLUMN instructions TEXT NOT NULL DEFAULT ''`;
+    yield* sql`ALTER TABLE assistant_teams ADD COLUMN memories_json TEXT NOT NULL DEFAULT '[]'`;
+  }
   // A team with its chat counters, so a sidebar row needs no second fetch. Recreated on every start.
   yield* sql`
     CREATE VIEW assistant_team_state AS
@@ -520,7 +524,7 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
         AS latest_seq,
       (SELECT COUNT(*) FROM assistant_group_messages m
         WHERE m.team_id = t.team_id AND m.seq > t.read_seq AND m.author != 'user'
-          AND m.kind != 'routing') AS unread_count,
+          AND m.kind NOT IN ('routing', 'boundary')) AS unread_count,
       (SELECT COUNT(*) FROM assistant_group_tasks k
         WHERE k.team_id = t.team_id AND k.status IN ('queued', 'running', 'waiting')) AS open_tasks,
       (SELECT substr(m.text, 1, 400) FROM assistant_group_messages m

@@ -197,6 +197,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.assistantGroupsPost]: AuthOrchestrationOperateScope,
   [WS_METHODS.assistantGroupsTaskAction]: AuthOrchestrationOperateScope,
   [WS_METHODS.assistantGroupsMarkRead]: AuthOrchestrationOperateScope,
+  [WS_METHODS.assistantGroupsConversation]: AuthOrchestrationOperateScope,
   [WS_METHODS.autonomyWatchesList]: AuthOrchestrationReadScope,
   [WS_METHODS.autonomyWatchUpsert]: AuthOrchestrationOperateScope,
   [WS_METHODS.autonomyWatchSetEnabled]: AuthOrchestrationOperateScope,

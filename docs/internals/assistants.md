@@ -135,6 +135,21 @@ go out as `teamUpserted` through `refreshTeamChat`, which reaches the assistants
 `subscribeChanges`: reconciling the group on every message would be wasted work. Group finished
 notices are client-side (working to idle on that stream), like thread notices.
 
+A group's instructions and memories are columns on `assistant_teams` (`instructions`, `memories_json`)
+edited through `assistantTeams.update`, and every task packet carries them. Group memories are not in
+the memory system: its scopes (user, project, thread) are a synced wire protocol with its own permits,
+quotas and hub peers, and a group scope would change that protocol for a short list of facts.
+
+A conversation boundary is a chat row of kind `boundary` (text `new` or `compact`), not a column: its
+seq orders it with the messages, clients draw it as a divider, and the newest one's seq is the floor
+for what a member's packet, the lead's routing history, the summarizer and the default `t3_group
+history` page read. The messages above it stay in the chat and in an explicit `beforeSeq` page. New
+conversation also drops the summary; compact writes it first, then the boundary, so a failed summary
+leaves the chat unchanged. Seqs are `MAX + 1`, so removing the newest boundary (undo) or clearing the
+chat hands the number out again: both lower every member's `seen_seq` and the read position first.
+`assistantGroups.conversation` refuses new, compact and clear while a task of the group is queued,
+running or waiting, and republishes a snapshot on the group's stream after undo and clear.
+
 ## Requests between assistants never block
 
 A `t3_thread_send` from one assistant thread to another is a request: it queues (never steers, so the

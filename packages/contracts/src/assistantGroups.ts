@@ -45,8 +45,17 @@ export type AssistantGroupTaskId = typeof AssistantGroupTaskId.Type;
 export const AssistantGroupAuthor = Schema.Literals(["user", "assistant", "agent", "routine"]);
 export type AssistantGroupAuthor = typeof AssistantGroupAuthor.Type;
 
-/** `routing` is the lead naming who answers; `notice` is a status line such as a paused task. */
-export const AssistantGroupMessageKind = Schema.Literals(["message", "routing", "notice"]);
+/**
+ * `routing` is the lead naming who answers; `notice` is a status line such as a paused task;
+ * `boundary` starts a new conversation (its text is `new` or `compact`): members see only what
+ * comes after the latest one.
+ */
+export const AssistantGroupMessageKind = Schema.Literals([
+  "message",
+  "routing",
+  "notice",
+  "boundary",
+]);
 export type AssistantGroupMessageKind = typeof AssistantGroupMessageKind.Type;
 
 export const AssistantGroupMessage = Schema.Struct({
@@ -169,6 +178,28 @@ export type AssistantGroupsMarkReadInput = typeof AssistantGroupsMarkReadInput.T
 
 export const AssistantGroupsMarkReadResult = Schema.Struct({ readSeq: Schema.Int });
 export type AssistantGroupsMarkReadResult = typeof AssistantGroupsMarkReadResult.Type;
+
+/**
+ * `new` and `compact` draw a boundary (compact first writes a summary of the chat); `undo` removes
+ * the latest boundary while nothing came after it; `clear` deletes the chat. All but `undo` refuse
+ * while the group is working.
+ */
+export const AssistantGroupConversationAction = Schema.Literals([
+  "new",
+  "compact",
+  "undo",
+  "clear",
+]);
+export type AssistantGroupConversationAction = typeof AssistantGroupConversationAction.Type;
+
+export const AssistantGroupsConversationInput = Schema.Struct({
+  teamId: AssistantTeamId,
+  action: AssistantGroupConversationAction,
+});
+export type AssistantGroupsConversationInput = typeof AssistantGroupsConversationInput.Type;
+
+export const AssistantGroupsConversationResult = Schema.Struct({ teamId: AssistantTeamId });
+export type AssistantGroupsConversationResult = typeof AssistantGroupsConversationResult.Type;
 
 export const AssistantGroupsPostInput = Schema.Struct({
   teamId: AssistantTeamId,

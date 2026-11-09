@@ -167,6 +167,11 @@ the members; it does not run an agent by itself.
   been in view. **Mark as unread** and **Mark as read** are in the group's menu. When a group finishes
   the work of a request while you are elsewhere, you get the usual completion notification with the
   last answer's start (web and desktop; the phone shows the count only).
+- **Group settings** (group menu) holds instructions every member gets with each task, a short list
+  of group memories, and the conversation actions. **New conversation** and **Compact context**
+  (summarizes first) draw a divider: members read only what comes after it, and the older messages
+  stay above. **Undo divider** removes the latest one while nothing follows it. **Clear history**
+  deletes the chat, its tasks and files after you confirm. These wait until the group stops working.
 - An agent in any conversation can post a request into a group ("ask the Leadership group to…").
 
 ## Agents can create assistants

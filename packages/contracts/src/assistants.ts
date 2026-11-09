@@ -273,8 +273,20 @@ export type Assistant = typeof Assistant.Type;
 
 export const ASSISTANT_TEAM_NAME_MAX_LENGTH = 60;
 
+/** What the user tells every member of a group; sent with each of their tasks. */
+export const ASSISTANT_TEAM_INSTRUCTIONS_MAX_CHARS = 4_000;
+export const ASSISTANT_TEAM_MEMORIES_MAX = 20;
+export const ASSISTANT_TEAM_MEMORY_MAX_CHARS = 300;
+
 export const AssistantTeamId = TrimmedNonEmptyString.pipe(Schema.brand("AssistantTeamId"));
 export type AssistantTeamId = typeof AssistantTeamId.Type;
+
+const AssistantTeamInstructions = Schema.String.check(
+  Schema.isMaxLength(ASSISTANT_TEAM_INSTRUCTIONS_MAX_CHARS),
+);
+const AssistantTeamMemories = Schema.Array(
+  TrimmedNonEmptyString.check(Schema.isMaxLength(ASSISTANT_TEAM_MEMORY_MAX_CHARS)),
+).check(Schema.isMaxLength(ASSISTANT_TEAM_MEMORIES_MAX));
 
 const AssistantTeamName = TrimmedNonEmptyString.check(
   Schema.isMaxLength(ASSISTANT_TEAM_NAME_MAX_LENGTH),
@@ -306,6 +318,9 @@ export const AssistantTeam = Schema.Struct({
   archivedAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   /** Absent from older servers. */
   chat: Schema.optionalKey(AssistantTeamChat),
+  /** Absent from older servers. */
+  instructions: Schema.optionalKey(AssistantTeamInstructions),
+  memories: Schema.optionalKey(AssistantTeamMemories),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -495,6 +510,9 @@ export const AssistantTeamsUpdateInput = Schema.Struct({
   leadId: Schema.optional(Schema.NullOr(AssistantId)),
   /** true archives the group and stops its work; false restores it. */
   archived: Schema.optional(Schema.Boolean),
+  instructions: Schema.optional(AssistantTeamInstructions),
+  /** Replaces the whole list. */
+  memories: Schema.optional(AssistantTeamMemories),
 });
 export type AssistantTeamsUpdateInput = typeof AssistantTeamsUpdateInput.Type;
 

@@ -47,9 +47,13 @@ export function applyAssistantGroupHistory(
   state: AssistantGroupChatState,
   page: AssistantGroupsHistoryResult,
 ): AssistantGroupChatState {
+  // A page loaded before a clear or an undo names messages the chat no longer has: only what
+  // lies before the oldest message the live chat holds can still be older history.
+  const oldest = oldestAssistantGroupSeq(state);
+  if (oldest === null) return state;
   const messages = new Map(state.messages);
   for (const message of page.messages)
-    if (!messages.has(message.id)) messages.set(message.id, message);
+    if (!messages.has(message.id) && message.seq < oldest) messages.set(message.id, message);
   const tasks = new Map(state.tasks);
   for (const task of page.tasks) if (!tasks.has(task.id)) tasks.set(task.id, task);
   return { messages, tasks, hasMore: page.hasMore };
@@ -69,7 +73,9 @@ export type AssistantGroupFeedRole =
   /** A member speaking. */
   | "answer"
   /** A routing note or a notice: a small centered line. */
-  | "note";
+  | "note"
+  /** A new conversation or a compaction: a divider; older messages stay above it. */
+  | "boundary";
 
 export interface AssistantGroupFeedRow {
   readonly message: AssistantGroupMessage;
@@ -79,6 +85,7 @@ export interface AssistantGroupFeedRow {
 }
 
 function roleOf(message: AssistantGroupMessage): AssistantGroupFeedRole {
+  if (message.kind === "boundary") return "boundary";
   if (message.kind !== "message") return "note";
   return message.author === "assistant" ? "answer" : "request";
 }
@@ -259,7 +266,7 @@ export function assistantGroupAuthorName(
 
 /** A message the user did not write and that is worth reading (routing notes are chatter). */
 function countsAsUnread(message: Pick<AssistantGroupMessage, "author" | "kind">): boolean {
-  return message.author !== "user" && message.kind !== "routing";
+  return message.author !== "user" && message.kind !== "routing" && message.kind !== "boundary";
 }
 
 /** The newest loaded message number, 0 for an empty chat. */
@@ -307,4 +314,9 @@ export function assistantGroupRunningCount(state: AssistantGroupChatState): numb
   let count = 0;
   for (const task of state.tasks.values()) if (task.status === "running") count += 1;
   return count;
+}
+
+/** The divider's wording, for a boundary message's `new` or `compact` text. */
+export function assistantGroupBoundaryLabel(message: Pick<AssistantGroupMessage, "text">): string {
+  return message.text === "compact" ? "Context compacted" : "New conversation started";
 }
