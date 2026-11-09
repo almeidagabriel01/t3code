@@ -1,4 +1,5 @@
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { ProjectAssistantFaces } from "../assistants/ProjectAssistantFaces";
 import { ProjectAssistantRows } from "../assistants/ProjectAssistantRows";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import type { ScopedThreadRef } from "@t3tools/contracts";
@@ -397,13 +398,15 @@ function SidebarProjectGroup(props: ProjectGroupProps) {
           <Tooltip>
             <TooltipTrigger
               render={
-                <span className="min-w-0 flex-1 truncate text-sm font-medium text-sidebar-foreground/90" />
+                <span className="min-w-0 truncate text-sm font-medium text-sidebar-foreground/90" />
               }
             >
               {project.displayName}
             </TooltipTrigger>
             <TooltipPopup side="top">{project.displayName}</TooltipPopup>
           </Tooltip>
+          <ProjectAssistantFaces members={project.memberProjects} onOpen={props.onOpenSubagent} />
+          <span aria-hidden className="-ms-2.5 min-w-0 flex-1" />
           {expanded ? null : <ProjectNotificationDot threads={group.openThreads} />}
           {hiddenCount > 0 ? (
             <span

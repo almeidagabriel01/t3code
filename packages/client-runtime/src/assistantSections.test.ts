@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { assistantSections, type SectionAssistant, type SectionTeam } from "./assistantSections.ts";
+import {
+  assistantSections,
+  projectAssistants,
+  type SectionAssistant,
+  type SectionTeam,
+} from "./assistantSections.ts";
 
 const a = (id: string, scope: "all" | "project" = "all", projectId = "p1"): SectionAssistant => ({
   environmentId: "env",
@@ -78,5 +83,40 @@ describe("assistantSections", () => {
       projects: result.projects.map((p) => [p.projectId, ids(p.members)]),
       unassigned: ids(result.unassigned),
     }).toEqual(expected);
+  });
+});
+
+describe("projectAssistants", () => {
+  const b = (id: string, scope: "all" | "project", projectId: string, environmentId = "env") => ({
+    ...a(id, scope, projectId),
+    environmentId,
+  });
+  it.each([
+    { name: "keeps project scope of the member", members: [["env", "p1"]], expected: ["ada"] },
+    { name: "ignores other projects", members: [["env", "p9"]], expected: [] },
+    { name: "matches the environment too", members: [["other", "p1"]], expected: [] },
+    {
+      name: "any member of a merged project counts",
+      members: [
+        ["other", "p1"],
+        ["env2", "p2"],
+      ],
+      expected: ["cy"],
+    },
+    { name: "no members", members: [], expected: [] },
+  ])("$name", ({ members, expected }) => {
+    const entries = [
+      b("ada", "project", "p1"),
+      b("bob", "all", "p1"),
+      b("cy", "project", "p2", "env2"),
+    ];
+    const result = projectAssistants(
+      entries,
+      members.map(([environmentId, projectId]) => ({
+        environmentId: environmentId!,
+        projectId: projectId!,
+      })),
+    );
+    expect(ids(result)).toEqual(expected);
   });
 });

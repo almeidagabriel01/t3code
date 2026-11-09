@@ -68,3 +68,18 @@ export function assistantSections<A extends SectionAssistant, T extends SectionT
   }
   return { needs, groups, projects: [...projects.values()], unassigned };
 }
+
+/** The project-scoped assistants of any of `members` (a project can span environments). */
+export function projectAssistants<A extends SectionAssistant>(
+  assistants: ReadonlyArray<A>,
+  members: ReadonlyArray<{ readonly environmentId: string; readonly projectId: string }>,
+): ReadonlyArray<A> {
+  return assistants.filter(
+    ({ environmentId, assistant }) =>
+      assistant.scope === "project" &&
+      members.some(
+        (member) =>
+          member.environmentId === environmentId && member.projectId === assistant.projectId,
+      ),
+  );
+}

@@ -1,4 +1,5 @@
 import { assistantGroupThreadsOf, assistantPresence } from "@t3tools/client-runtime/assistantRobot";
+import { projectAssistants } from "@t3tools/client-runtime/assistantSections";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { Pressable, View } from "react-native";
 
@@ -61,14 +62,7 @@ export function ProjectAssistantRows(props: {
   readonly sidebar?: boolean;
 }) {
   const { active } = useAssistantEntries();
-  const entries = active.filter(
-    ({ environmentId, assistant }) =>
-      assistant.scope === "project" &&
-      props.members.some(
-        (member) =>
-          member.environmentId === environmentId && member.projectId === assistant.projectId,
-      ),
-  );
+  const entries = projectAssistants(active, props.members);
   if (entries.length === 0) return null;
   return (
     <View className="pb-2" style={{ paddingHorizontal: props.gutter }}>

@@ -1,5 +1,6 @@
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { assistantGroupThreadsOf, assistantPresence } from "@t3tools/client-runtime/assistantRobot";
+import { projectAssistants } from "@t3tools/client-runtime/assistantSections";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { memo } from "react";
 
@@ -60,12 +61,9 @@ export function ProjectAssistantRows(props: {
   readonly onOpen: (threadRef: ScopedThreadRef) => void;
 }) {
   const { active } = useAssistantEntries();
-  const entries = active.filter(
-    ({ environmentId, assistant }) =>
-      assistant.scope === "project" &&
-      props.members.some(
-        (member) => member.environmentId === environmentId && member.id === assistant.projectId,
-      ),
+  const entries = projectAssistants(
+    active,
+    props.members.map((member) => ({ environmentId: member.environmentId, projectId: member.id })),
   );
   return entries.map((entry) => (
     <ProjectAssistantRow
