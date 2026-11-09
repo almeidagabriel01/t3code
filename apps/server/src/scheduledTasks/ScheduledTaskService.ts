@@ -1498,11 +1498,19 @@ export const layer = Layer.effect(
       // `schedule_task` tool both reach it here.
       if (existingTask !== null && existingTask.enabled !== task.enabled)
         yield* noteRoutineToggled(task, task.enabled, iso(now));
-      else
+      else if (
+        // A repeated save (a retry, a replayed commandId) changes nothing and says nothing.
+        existingTask === null ||
+        existingTask.title !== task.title ||
+        existingTask.prompt !== task.prompt ||
+        existingTask.missedRunPolicy !== task.missedRunPolicy ||
+        existingTask.maxRuns !== task.maxRuns ||
+        !isSameSchedule(existingTask.schedule, task.schedule)
+      )
         yield* noteGroup(
           task,
           `${existingTask === null ? "Added" : "Edited"} routine '${task.title}'`,
-          `${existingTask === null ? "add" : "edit"}:${iso(now)}`,
+          `${existingTask === null ? "add" : "edit"}:${existingTask === null ? task.createdAt : iso(now)}`,
         );
       return { task: (yield* findTask(id)) ?? task };
     });

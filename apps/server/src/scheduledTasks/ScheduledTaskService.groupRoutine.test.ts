@@ -84,6 +84,8 @@ it.effect("a group routine leaves a chat line for add, edit, pause, resume and d
       const { task } = yield* service.upsert(input("task:a"));
       yield* TestClock.adjust("1 second");
       yield* service.upsert({ ...input("task:a"), requireExisting: true, title: "Renamed" });
+      // Saving the same thing again, as a retry does, adds no line.
+      yield* service.upsert({ ...input("task:a"), requireExisting: true, title: "Renamed" });
       yield* TestClock.adjust("1 second");
       yield* service.setEnabled({ id: task.id, enabled: false });
       yield* TestClock.adjust("1 second");
