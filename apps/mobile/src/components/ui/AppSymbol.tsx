@@ -15,6 +15,8 @@ import IconCircleHalf2 from "@tabler/icons-react-native/IconCircleHalf2";
 import IconClipboardCopy from "@tabler/icons-react-native/IconClipboardCopy";
 import IconListCheck from "@tabler/icons-react-native/IconListCheck";
 import IconLogout from "@tabler/icons-react-native/IconLogout";
+import IconMail from "@tabler/icons-react-native/IconMail";
+import IconMailOpened from "@tabler/icons-react-native/IconMailOpened";
 import IconNote from "@tabler/icons-react-native/IconNote";
 import IconZoomIn from "@tabler/icons-react-native/IconZoomIn";
 import IconZoomOut from "@tabler/icons-react-native/IconZoomOut";
@@ -185,6 +187,9 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   "arrow.up.message": IconMessageUp,
   "arrow.up.right.circle": IconArrowUpRightCircle,
   "arrow.uturn.backward": IconArrowBackUp,
+  "arrowshape.turn.up.left": IconArrowBackUp,
+  "envelope.badge": IconMail,
+  "envelope.open": IconMailOpened,
   "arrow.uturn.forward": IconArrowForwardUp,
   archivebox: IconArchive,
   "archivebox.fill": IconArchive,
