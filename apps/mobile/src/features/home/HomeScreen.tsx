@@ -59,6 +59,7 @@ import { useThreadListNow } from "../threads/use-thread-list-now";
 import { useSearchScrollRestoration } from "../workspace/useSearchScrollRestoration";
 import { useThreadJumpShortcuts } from "../keyboard/threadKeyboardShortcuts";
 import { HomeAssistantsSection } from "../assistants/HomeAssistantsSection";
+import { ProjectAssistantFaces } from "../assistants/ProjectAssistantFaces";
 import { HomeAgentsSection } from "./HomeAgentsSection";
 import { HomeNeedsYouSection } from "./HomeNeedsYouSection";
 import { HomeDecisionsSection } from "../decisions/HomeDecisionsSection";
@@ -789,6 +790,13 @@ export function HomeScreen(props: HomeScreenProps) {
               ]),
             )
           }
+        />
+      )}
+      {hasSearchQuery || v2ScopedProjectGroup === null ? null : (
+        <ProjectAssistantFaces
+          title={v2ScopedProjectGroup.title}
+          members={v2ScopedProjectGroup.projectRefs}
+          gutter={primaryColumn ? 8 : 16}
         />
       )}
       <HomeAgentsSection threads={props.threads} now={now} gutter={primaryColumn ? 8 : 16} />
