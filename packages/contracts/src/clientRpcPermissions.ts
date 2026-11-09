@@ -30,6 +30,10 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   // Reordering or removing queued heavy work changes when other agents' processes run.
   [WS_METHODS.heavyQueuePromote]: AuthTerminalOperateScope,
   [WS_METHODS.heavyQueueCancel]: AuthTerminalOperateScope,
+  [WS_METHODS.heavyQueueMove]: AuthTerminalOperateScope,
+  [WS_METHODS.heavyQueueSetPaused]: AuthTerminalOperateScope,
+  [WS_METHODS.heavyQueueSetRule]: AuthTerminalOperateScope,
+  [WS_METHODS.heavyQueueSetMaxRunning]: AuthTerminalOperateScope,
   [GLOBAL_SKILLS_WS_METHODS.globalSkillsRemove]: AuthSettingsWriteScope,
   [GLOBAL_SKILLS_WS_METHODS.globalSkillsRescan]: AuthSettingsWriteScope,
   [WS_METHODS.serverRunStorageCleanup]: AuthSettingsWriteScope,

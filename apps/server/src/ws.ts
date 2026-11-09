@@ -2596,6 +2596,11 @@ export const layerWsRpc = (
         [WS_METHODS.heavyQueueSubscribe]: () => heavyQueue.stream,
         [WS_METHODS.heavyQueuePromote]: ({ id }) => heavyQueue.promote(id),
         [WS_METHODS.heavyQueueCancel]: ({ id }) => heavyQueue.cancel(id),
+        [WS_METHODS.heavyQueueMove]: ({ id, beforeId }) => heavyQueue.move(id, beforeId),
+        [WS_METHODS.heavyQueueSetPaused]: ({ paused }) => heavyQueue.setPaused(paused),
+        [WS_METHODS.heavyQueueSetMaxRunning]: ({ maxRunning }) =>
+          heavyQueue.setMaxRunning(maxRunning),
+        [WS_METHODS.heavyQueueSetRule]: ({ root, priority }) => heavyQueue.setRule(root, priority),
         [WS_METHODS.telegramChannelGetSettings]: () => telegramChannelSettings.get,
         [WS_METHODS.telegramChannelConfigure]: (input) => telegramChannelSettings.configure(input),
         [WS_METHODS.telegramChannelSubscribeStatus]: () => telegramChannelSettings.streamStatus,

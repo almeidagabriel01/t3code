@@ -53,6 +53,37 @@ cup in the status bar while it is active.
 Closing a laptop lid still puts it to sleep unless it is plugged in with an
 external display.
 
+## Heavy work queue
+
+When several agents run tests, builds or simulators at once, they queue on the
+machine that hosts T3 Code. Agents put the command behind `t3 heavy`, and the
+queue starts jobs in order. Open the **Resource Manager** in the status bar to
+see each job with a short name (agents give one with `--name`; otherwise T3
+derives it from the command, which shows below it) and its project, the thread that queued it, how long it has run
+or waited, and why a waiting job has not started ("waiting for room: needs
+~4 GB, 1.2 GB free", "letting the last one ramp up", "paused"). On mobile it is
+under Settings → Maintenance.
+
+- **Slots.** Settings → Maintenance → **Heavy work** sets how many jobs run at
+  once (default 3; 1 is strictly one at a time). The next job starts only when
+  the machine has room for what that command used in its last runs, and a few
+  seconds after the previous start so its real load shows first. A later,
+  shorter job may go ahead of one that does not fit yet, but only if it will
+  finish before that one fits. Simulators, emulators and the dev app run alone.
+  Running jobs are never stopped to relieve pressure.
+- **Reorder.** Drag a waiting job, or use its **⋯** menu: **Run next**, **Move
+  up**, **Move down**, **Move to end**, **Open thread**, **Remove**. A running
+  job's menu has **Stop**, which ends its `t3 heavy` command.
+- **Priority per project.** In the same menu, set **Always first** or **Last**
+  for the job's project. New jobs from that project go ahead of, or behind,
+  normal ones; jobs already queued and jobs you moved by hand keep their place.
+  Settings → Maintenance → **Heavy work** lists the rules so you can remove them.
+- **Pause.** The **Pause** switch (also in Settings) stops anything new from
+  starting while running jobs finish. A pause icon appears in the status bar.
+
+Agents never reorder the queue on their own. They may move a job up only when
+you ask them to in the conversation, and the job's note says an agent did it.
+
 ## Local network access
 
 A new service answers only on this machine. Other devices reach it through

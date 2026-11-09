@@ -515,7 +515,15 @@ import {
   TelegramChannelSubscribeStatusInput,
 } from "./telegramChannel.ts";
 import { KeepAwakeStatus, KeepAwakeSubscribeStatusInput } from "./keepAwake.ts";
-import { HeavyQueueEntryInput, HeavyQueueError, HeavyQueueState } from "./heavyQueue.ts";
+import {
+  HeavyQueueEntryInput,
+  HeavyQueueError,
+  HeavyQueueMoveInput,
+  HeavyQueueSetMaxRunningInput,
+  HeavyQueueSetPausedInput,
+  HeavyQueueSetRuleInput,
+  HeavyQueueState,
+} from "./heavyQueue.ts";
 import {
   NoteConflictError,
   NoteDocument,
@@ -791,6 +799,10 @@ export const WS_METHODS = {
   heavyQueueSubscribe: "heavyQueue.subscribe",
   heavyQueuePromote: "heavyQueue.promote",
   heavyQueueCancel: "heavyQueue.cancel",
+  heavyQueueMove: "heavyQueue.move",
+  heavyQueueSetPaused: "heavyQueue.setPaused",
+  heavyQueueSetRule: "heavyQueue.setRule",
+  heavyQueueSetMaxRunning: "heavyQueue.setMaxRunning",
   telegramChannelGetSettings: "telegramChannel.getSettings",
   telegramChannelConfigure: "telegramChannel.configure",
   telegramChannelSubscribeStatus: "telegramChannel.subscribeStatus",
@@ -2441,6 +2453,26 @@ const WsHeavyQueueCancelRpc = Rpc.make(WS_METHODS.heavyQueueCancel, {
   error: Schema.Union([HeavyQueueError, EnvironmentAuthorizationError]),
 });
 
+const WsHeavyQueueMoveRpc = Rpc.make(WS_METHODS.heavyQueueMove, {
+  payload: HeavyQueueMoveInput,
+  error: Schema.Union([HeavyQueueError, EnvironmentAuthorizationError]),
+});
+
+const WsHeavyQueueSetPausedRpc = Rpc.make(WS_METHODS.heavyQueueSetPaused, {
+  payload: HeavyQueueSetPausedInput,
+  error: Schema.Union([HeavyQueueError, EnvironmentAuthorizationError]),
+});
+
+const WsHeavyQueueSetRuleRpc = Rpc.make(WS_METHODS.heavyQueueSetRule, {
+  payload: HeavyQueueSetRuleInput,
+  error: Schema.Union([HeavyQueueError, EnvironmentAuthorizationError]),
+});
+
+const WsHeavyQueueSetMaxRunningRpc = Rpc.make(WS_METHODS.heavyQueueSetMaxRunning, {
+  payload: HeavyQueueSetMaxRunningInput,
+  error: Schema.Union([HeavyQueueError, EnvironmentAuthorizationError]),
+});
+
 const WsKeepAwakeSubscribeStatusRpc = Rpc.make(WS_METHODS.keepAwakeSubscribeStatus, {
   payload: KeepAwakeSubscribeStatusInput,
   success: KeepAwakeStatus,
@@ -2833,6 +2865,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsHeavyQueueSubscribeRpc,
   WsHeavyQueuePromoteRpc,
   WsHeavyQueueCancelRpc,
+  WsHeavyQueueMoveRpc,
+  WsHeavyQueueSetPausedRpc,
+  WsHeavyQueueSetRuleRpc,
+  WsHeavyQueueSetMaxRunningRpc,
   WsTelegramChannelGetSettingsRpc,
   WsTelegramChannelConfigureRpc,
   WsTelegramChannelSubscribeStatusRpc,

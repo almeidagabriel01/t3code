@@ -82,23 +82,45 @@ export function useShutDownDevice(environmentId: EnvironmentId) {
 }
 
 export function useHeavyQueueActions(environmentId: EnvironmentId) {
-  const canPromote = useAtomValue(heavyQueueEnvironment.promote.permissionAtom(environmentId));
-  const canCancel = useAtomValue(heavyQueueEnvironment.cancel.permissionAtom(environmentId));
-  const promoteCommand = useAtomCommand(heavyQueueEnvironment.promote, { reportFailure: false });
+  const canChange = useAtomValue(heavyQueueEnvironment.move.permissionAtom(environmentId));
+  const moveCommand = useAtomCommand(heavyQueueEnvironment.move, { reportFailure: false });
   const cancelCommand = useAtomCommand(heavyQueueEnvironment.cancel, { reportFailure: false });
-  const run = async (command: typeof promoteCommand, id: string, failureTitle: string) => {
-    const result = await command({ environmentId, input: { id } });
-    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-      reportFailure(failureTitle, squashAtomCommandFailure(result));
+  const pausedCommand = useAtomCommand(heavyQueueEnvironment.setPaused, { reportFailure: false });
+  const ruleCommand = useAtomCommand(heavyQueueEnvironment.setRule, { reportFailure: false });
+  const maxCommand = useAtomCommand(heavyQueueEnvironment.setMaxRunning, { reportFailure: false });
+  const report = (title: string, result: { readonly _tag: string }) => {
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result as never)) {
+      reportFailure(title, squashAtomCommandFailure(result as never));
     }
   };
-  const promote = (id: string) => run(promoteCommand, id, "Could not run it next");
-  const cancel = async (id: string) => {
-    if (
-      !(await confirmKill("Remove from the queue? The agent's command will stop waiting and fail."))
-    )
-      return;
-    await run(cancelCommand, id, "Could not remove from the queue");
+  return {
+    canChange,
+    move: async (id: string, beforeId: string | null) =>
+      report("Could not move it", await moveCommand({ environmentId, input: { id, beforeId } })),
+    cancel: async (id: string, running: boolean) => {
+      const message = running
+        ? "Stop the running command? It receives a termination signal."
+        : "Remove from the queue? The agent's command will stop waiting and fail.";
+      if (!(await confirmKill(message))) return;
+      report(
+        running ? "Could not stop it" : "Could not remove from the queue",
+        await cancelCommand({ environmentId, input: { id } }),
+      );
+    },
+    setPaused: async (paused: boolean) =>
+      report(
+        "Could not change the queue",
+        await pausedCommand({ environmentId, input: { paused } }),
+      ),
+    setRule: async (root: string, priority: "first" | "last" | null) =>
+      report(
+        "Could not change the priority",
+        await ruleCommand({ environmentId, input: { root, priority } }),
+      ),
+    setMaxRunning: async (maxRunning: number) =>
+      report(
+        "Could not change the limit",
+        await maxCommand({ environmentId, input: { maxRunning } }),
+      ),
   };
-  return { canPromote, canCancel, promote, cancel };
 }

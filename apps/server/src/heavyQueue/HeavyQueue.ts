@@ -13,6 +13,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
+import { SAMPLE_FRESH_MS } from "./admission.ts";
 import * as QueueFile from "./queueFile.ts";
 
 const POLL_INTERVAL = "1 second";
@@ -28,7 +29,7 @@ const moveFailure = (action: string, result: QueueFile.MoveResult) =>
     ? Effect.void
     : Effect.fail(
         result === "running"
-          ? failure("running", `The running command cannot be ${action}; only waiting ones can.`)
+          ? failure("running", `The running command cannot be ${action}.`)
           : failure("not-found", "That entry is no longer in the queue."),
       );
 
@@ -39,8 +40,20 @@ export class HeavyQueue extends Context.Service<
   {
     readonly state: Effect.Effect<HeavyQueueState>;
     readonly stream: Stream.Stream<HeavyQueueState>;
-    readonly promote: (id: string) => Effect.Effect<void, HeavyQueueError>;
+    /** Runs a waiter next; `note` records who asked, for agents acting on the user's request. */
+    readonly promote: (id: string, note?: string) => Effect.Effect<void, HeavyQueueError>;
+    /** Puts a waiter before `beforeId`, or last when null. */
+    readonly move: (id: string, beforeId: string | null) => Effect.Effect<void, HeavyQueueError>;
+    /** Removes a waiter, or stops the running `t3 heavy` command. */
     readonly cancel: (id: string) => Effect.Effect<void, HeavyQueueError>;
+    /** How many entries may run at once; 1 is strictly one at a time. */
+    readonly setMaxRunning: (maxRunning: number) => Effect.Effect<void, HeavyQueueError>;
+    readonly setPaused: (paused: boolean) => Effect.Effect<void, HeavyQueueError>;
+    /** A null priority clears the folder's rule. */
+    readonly setRule: (
+      root: string,
+      priority: "first" | "last" | null,
+    ) => Effect.Effect<void, HeavyQueueError>;
     /** Runs `effect` once this server holds the slot; frees it on completion, failure or interrupt. */
     readonly withSlot: <A, E, R>(
       label: string,
@@ -66,15 +79,34 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string) {
     "--",
   ].join(" ");
 
-  const state = Effect.sync(() => ({ entries: QueueFile.read(dir) })).pipe(
-    Effect.orElseSucceed(() => ({ entries: [] })),
-  );
+  const state = Effect.gen(function* () {
+    const now = DateTime.toEpochMillis(yield* DateTime.now);
+    const { doc, plan } = QueueFile.readPlan(dir, now);
+    const { entries, paused, rules, maxRunning, sample } = doc;
+    const fresh = sample !== null && now - sample.at <= SAMPLE_FRESH_MS;
+    return {
+      entries,
+      paused,
+      rules,
+      maxRunning,
+      reasons: plan.reasons,
+      room: plan.room,
+      machine: fresh
+        ? {
+            busyCores: sample.busyCores,
+            cpuCount: sample.cpuCount,
+            availableMemoryBytes: sample.availableMemoryBytes,
+            totalMemoryBytes: sample.totalMemoryBytes,
+          }
+        : null,
+    };
+  });
 
-  const move =
-    (action: string, run: (dir: string, id: string) => QueueFile.MoveResult) => (id: string) =>
-      Effect.try({ try: () => run(dir, id), catch: unavailable }).pipe(
-        Effect.flatMap((result) => moveFailure(action, result)),
-      );
+  const act = (action: string, run: () => QueueFile.MoveResult) =>
+    Effect.try({ try: run, catch: unavailable }).pipe(
+      Effect.flatMap((result) => moveFailure(action, result)),
+    );
+  const change = (run: () => void) => Effect.try({ try: run, catch: unavailable });
 
   const withSlot = Effect.fnUntraced(function* <A, E, R>(
     label: string,
@@ -95,6 +127,7 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string) {
             cwd: process.cwd(),
             createdAt,
             startedAt: null,
+            server: true,
           }),
         catch: unavailable,
       }),
@@ -123,8 +156,24 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string) {
       Stream.mapEffect(() => state),
       Stream.changesWith((a, b) => JSON.stringify(a) === JSON.stringify(b)),
     ),
-    promote: move("promoted", QueueFile.promote),
-    cancel: move("removed", QueueFile.cancel),
+    promote: Effect.fn("HeavyQueue.promote")((id: string, note?: string) =>
+      act("promoted", () => QueueFile.promote(dir, id, note)),
+    ),
+    move: Effect.fn("HeavyQueue.move")((id: string, beforeId: string | null) =>
+      act("moved", () => QueueFile.move(dir, id, beforeId, "Moved by the user")),
+    ),
+    cancel: Effect.fn("HeavyQueue.cancel")((id: string) =>
+      act("stopped from here", () => QueueFile.cancel(dir, id)),
+    ),
+    setMaxRunning: Effect.fn("HeavyQueue.setMaxRunning")((maxRunning: number) =>
+      change(() => QueueFile.setMaxRunning(dir, maxRunning)),
+    ),
+    setPaused: Effect.fn("HeavyQueue.setPaused")((paused: boolean) =>
+      change(() => QueueFile.setPaused(dir, paused)),
+    ),
+    setRule: Effect.fn("HeavyQueue.setRule")((root: string, priority: "first" | "last" | null) =>
+      change(() => QueueFile.setRule(dir, root, priority)),
+    ),
     withSlot,
     command: Effect.succeed(command),
   });

@@ -1047,6 +1047,24 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["OTel OTLP telemetry export endpoints logs traces metrics Grafana"],
   },
   {
+    id: "heavy-work-max",
+    title: "Run up to N heavy jobs at once",
+    to: "/settings/maintenance",
+    searchTerms: ["heavy work queue concurrency parallel slots tests builds simulators"],
+  },
+  {
+    id: "heavy-work-pause",
+    title: "Pause heavy work queue",
+    to: "/settings/maintenance",
+    searchTerms: ["heavy work queue hold stop starting"],
+  },
+  {
+    id: "heavy-work-rules",
+    title: "Heavy work priority by project",
+    to: "/settings/maintenance",
+    searchTerms: ["heavy work queue always first last priority project"],
+  },
+  {
     id: "diagnostics",
     title: "Diagnostics",
     to: "/settings/maintenance",

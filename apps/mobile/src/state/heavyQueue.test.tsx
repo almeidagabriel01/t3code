@@ -17,10 +17,10 @@ vi.mock("@t3tools/client-runtime/state/heavyQueue", async () => {
   };
 });
 
-import { useHeavyQueueEntries } from "./heavyQueue";
+import { useHeavyQueueState } from "./heavyQueue";
 
 function Probe({ environmentId }: { environmentId: EnvironmentId }) {
-  return <output>{useHeavyQueueEntries(environmentId).length}</output>;
+  return <output>{useHeavyQueueState(environmentId).entries.length}</output>;
 }
 
 it.each([

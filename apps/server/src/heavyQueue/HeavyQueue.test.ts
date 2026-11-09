@@ -122,6 +122,31 @@ describe("HeavyQueue", () => {
     ),
   );
 
+  it.effect("moves, pauses and sets priority rules through the shared file", () =>
+    withQueue((dir, queue) =>
+      Effect.gen(function* () {
+        Queue.enqueue(dir, { ...holder, id: "x" });
+        Queue.enqueue(dir, { ...holder, id: "y" });
+        yield* queue.move("y", "x");
+        yield* queue.setPaused(true);
+        yield* queue.setRule("/proj", "last");
+        expect(yield* queue.state).toMatchObject({
+          entries: [{ id: holder.id }, { id: "y", note: "Moved by the user" }, { id: "x" }],
+          paused: true,
+          rules: [{ root: "/proj", priority: "last" }],
+          maxRunning: 3,
+          room: false,
+        });
+        yield* queue.setMaxRunning(1);
+        expect((yield* queue.state).reasons["y"]).toBe("paused");
+        expect((yield* queue.state).maxRunning).toBe(1);
+        expect((yield* Effect.flip(queue.move("zzz", null))).reason).toBe("not-found");
+        yield* queue.setRule("/proj", null);
+        expect((yield* queue.state).rules).toEqual([]);
+      }),
+    ),
+  );
+
   it.effect("streams the state at once and again only when it changes", () =>
     withQueue((dir, queue) =>
       Effect.gen(function* () {
