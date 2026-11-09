@@ -264,6 +264,8 @@ const NAME_END = String.raw`(?![\p{L}\p{N}_-])`;
 export function assistantGroupMentions<
   M extends { readonly handle: string; readonly name: string },
 >(text: string, members: ReadonlyArray<M>): ReadonlyArray<AssistantGroupMention<M>> {
+  // Clients run this for every rendered message; most have no `@` at all.
+  if (!text.includes("@")) return [];
   const blanked = text.replace(UNADDRESSABLE, (match) => " ".repeat(match.length));
   const folded = foldAssistantGroupText(blanked);
   const candidates = members.flatMap((member) => {
