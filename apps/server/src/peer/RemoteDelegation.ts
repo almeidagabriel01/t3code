@@ -34,7 +34,7 @@ import {
 } from "../mcp/delegatedTaskModes.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
-import { AssistantSandboxControl } from "../assistants/AssistantSandboxControl.ts";
+import { AssistantSandboxControl, SANDBOX_LABEL } from "../assistants/AssistantSandboxControl.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
@@ -310,13 +310,15 @@ const make = Effect.gen(function* () {
         Effect.map(Option.getOrUndefined),
         Effect.orElseSucceed(() => undefined),
       );
+      const inSandbox =
+        Option.isSome(sandboxTasks) && (yield* sandboxTasks.value.isSandbox(target.environmentId));
       const commandId = CommandId.make(
         `command:mcp:${encodeURIComponent(scope.requestNamespace)}:remote-delegate:${encodeURIComponent(key)}`,
       );
       const remoteChild: OrchestrationV2RemoteTaskChild = {
         environmentId: target.environmentId,
         threadId: launched.threadId,
-        label: link?.label ?? target.environmentId,
+        label: inSandbox ? SANDBOX_LABEL : (link?.label ?? target.environmentId),
         ...(launched.runId === null ? {} : { runId: launched.runId }),
       };
       const recorded = yield* threads

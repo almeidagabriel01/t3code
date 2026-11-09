@@ -399,9 +399,29 @@ it.effect("discard removes the container but not while a task still runs in it",
     yield* forTask("t1");
     assert.include((yield* Effect.flip(control.discard)).message, "1 task is still running");
     assert.deepStrictEqual(world.removed, []);
+    assert.isTrue(yield* control.isSandbox(sandboxId));
+    assert.isFalse(yield* control.isSandbox(EnvironmentId.make("elsewhere")));
     yield* control.taskEnded("t1");
     assert.deepStrictEqual(world.removed, [false]);
     // Nothing left to discard is not an error.
     assert.strictEqual((yield* control.discard).state, "not_created");
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("discard is refused while an assistant works in the container", () => {
+  const { world, layer } = harness();
+  return Effect.gen(function* () {
+    const { control, sql } = yield* configured;
+    yield* forTask("t1");
+    yield* control.taskEnded("t1");
+    yield* forTask("t2");
+    yield* control.taskEnded("t2");
+    yield* sql`
+      INSERT INTO assistants (assistant_id, handle, name, project_id, tool_access, workspace, created_at, updated_at)
+      VALUES ('a1', 'box', 'Box', 'p1', 'full', 'sandbox', 'now', 'now')`;
+    yield* forTask("t3");
+    yield* control.taskEnded("t3");
+    assert.include((yield* Effect.flip(control.discard)).message, "1 assistant works");
+    assert.strictEqual(world.removed.length, 2);
   }).pipe(Effect.provide(layer));
 });

@@ -30,7 +30,8 @@ const WATCH_INTERVAL = "3 seconds";
 const ANSWER_ATTEMPTS = 90;
 /** A link this close to expiring is made again, so work never starts on a token about to die. */
 const RELINK_MARGIN = { minutes: 10 } as const;
-const SANDBOX_LABEL = "Assistant sandbox";
+/** What a task running in the container shows as where it runs; the container reports a hostname. */
+export const SANDBOX_LABEL = "Assistant sandbox";
 /** How long a task waits for the sandbox to come up before it is told to ask again. */
 const READY_WAIT = "90 seconds";
 
@@ -74,6 +75,8 @@ export class AssistantSandboxControl extends Context.Service<
     readonly startForTask: Effect.Effect<AssistantSandboxStatus>;
     /** Removes the container, keeping its files and sign-ins; refused while tasks still run in it. */
     readonly discard: Effect.Effect<AssistantSandboxStatus, AssistantError>;
+    /** Whether `environmentId` is the sandbox container this environment linked to. */
+    readonly isSandbox: (environmentId: EnvironmentId) => Effect.Effect<boolean>;
     /** A task started in `environmentId`; the container stays until it ends. Others are ignored. */
     readonly taskStarted: (environmentId: EnvironmentId, taskId: string) => Effect.Effect<void>;
     /** A task ended. The last one of a container started for tasks discards it, when set to. */
@@ -385,6 +388,13 @@ const make = Effect.gen(function* () {
   });
 
   const discard = Effect.gen(function* () {
+    const working = yield* sandboxAssistants;
+    if (working > 0) {
+      return yield* new AssistantError({
+        reason: "invalid",
+        message: `${working} assistant${working === 1 ? " works" : "s work"} in the container, so it stays. The user can remove it in Settings → Assistants.`,
+      });
+    }
     const running = yield* openTasks;
     if (running > 0) {
       return yield* new AssistantError({
@@ -472,6 +482,12 @@ const make = Effect.gen(function* () {
     configure,
     startForTask,
     discard,
+    isSandbox: Effect.fn("AssistantSandboxControl.isSandbox")(function* (
+      environmentId: EnvironmentId,
+    ) {
+      const recorded = yield* recordedEnvironment;
+      return Option.isSome(recorded) && recorded.value === environmentId;
+    }),
     taskStarted,
     taskEnded,
     stop,

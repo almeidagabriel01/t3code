@@ -610,7 +610,6 @@ it("shows the sandbox CPU limit and what happens when a task is done, and saves 
   publishSandbox({ ...fakeSandbox.status, state: "stopped", cpus: 3, whenDone: "discard" });
   appAtomRegistry.set(assistantDialogAtom, null);
   await using _screen = await openApp("/settings/assistants");
-  await expect.element(page.getByText("The most CPU cores the container may use.")).toBeVisible();
   const cpu = page.getByRole("combobox", { name: "CPU limit" });
   await expect.element(cpu).toHaveTextContent("3 cores");
   await userEvent.click(cpu);

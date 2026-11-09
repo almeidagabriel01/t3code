@@ -2026,6 +2026,7 @@ it.effect("tells the sandbox when a task starts in it and when that task ends", 
       const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
       const events: Array<string> = [];
       const a = yield* makeLaptop(database, offers, undefined, {
+        isSandbox: (environmentId) => Effect.succeed(environmentId === box.environmentId),
         taskStarted: (environmentId, taskId) =>
           Effect.sync(() => void events.push(`started:${environmentId}:${taskId}`)),
         taskEnded: (taskId) => Effect.sync(() => void events.push(`ended:${taskId}`)),
@@ -2034,6 +2035,8 @@ it.effect("tells the sandbox when a task starts in it and when that task ends", 
       yield* seedParent(a);
 
       const delegated = yield* delegateToBox(a);
+      // The row says where it ran in words, not with the container's hostname.
+      expect(delegated.remoteChild.label).toBe("Assistant sandbox");
       expect(events).toEqual([`started:${box.environmentId}:${delegated.taskId}`]);
       yield* Ref.set(thread.status, "completed");
       yield* Deferred.succeed(thread.finished, undefined);

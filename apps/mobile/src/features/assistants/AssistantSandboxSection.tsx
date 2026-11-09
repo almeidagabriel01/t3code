@@ -93,7 +93,7 @@ export function AssistantSandboxSection(props: {
           <ChoiceRow
             key={choice.label}
             role="radio"
-            icon="bolt"
+            icon="timer"
             label={choice.label}
             selected={choice.value === status.cpus}
             onPress={() =>
