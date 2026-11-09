@@ -8,6 +8,7 @@ import {
   assistantRetryPlan,
   assistantWorkStatus,
   formatNextRun,
+  memorySourceLabel,
   type AssistantWorkStatusInput,
 } from "./assistantWork.ts";
 
@@ -229,6 +230,19 @@ describe("assistantMemories", () => {
         (entry) => [entry.item.memoryId, entry.sourceThreadId],
       ),
     ).toEqual([["own", "assistant:ada:3"]]);
+  });
+});
+
+describe("memorySourceLabel", () => {
+  it.each([
+    ["Trip planning", "Trip planning"],
+    ["  Trip planning ", "Trip planning"],
+    ["", "From a conversation"],
+    ["   ", "From a conversation"],
+    [null, "From a conversation"],
+    [undefined, "From a conversation"],
+  ])("%j -> %s", (title, label) => {
+    expect(memorySourceLabel(title)).toBe(label);
   });
 });
 

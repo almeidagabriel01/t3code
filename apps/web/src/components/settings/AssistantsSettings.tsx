@@ -6,6 +6,7 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   ArchiveIcon,
   ArchiveRestoreIcon,
+  BriefcaseIcon,
   UserRoundIcon,
   UsersIcon,
   EllipsisIcon,
@@ -30,6 +31,7 @@ import { useProjects, useThreadShell } from "../../state/entities";
 import { useEnvironmentProviders, useEnvironments } from "../../state/environments";
 import { AssistantAvatar, toolAccessLabel } from "../assistants/assistantPresentation";
 import { openAssistantDialog } from "../assistants/assistantDialogState";
+import { openAssistantWork } from "../assistants/assistantWorkState";
 import { useAssistantFlows, useAssistantTeamFlows } from "../assistants/useAssistantFlows";
 import { getDisplayModelName } from "../chat/providerIconUtils";
 import { Button } from "../ui/button";
@@ -146,6 +148,12 @@ function AssistantRow(props: {
                 <MessageSquareIcon />
                 Open
               </Button>
+              <IconAction
+                label={`${assistant.name} work`}
+                onClick={() => openAssistantWork({ environmentId, assistantId: assistant.id })}
+              >
+                <BriefcaseIcon />
+              </IconAction>
               <IconAction
                 label={`Edit ${assistant.name}`}
                 onClick={() => openAssistantDialog({ environmentId, assistantId: assistant.id })}

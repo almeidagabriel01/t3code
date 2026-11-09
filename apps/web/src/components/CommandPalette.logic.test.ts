@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from "vite-plus/test";
-import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import {
+  AssistantId,
+  EnvironmentId,
+  ProjectId,
+  ProviderInstanceId,
+  ThreadId,
+} from "@t3tools/contracts";
 import type { Thread } from "../types";
 import { makeThreadFixture } from "../test-fixtures";
 import {
@@ -7,6 +13,7 @@ import {
   buildNestedSearchItems,
   resolveCommandPaletteProject,
   buildThreadActionItems,
+  buildAssistantWorkActionItems,
   buildLinkedThreadActionItems,
   filterPinnedBrowseEntries,
   filterCommandPaletteGroups,
@@ -775,6 +782,37 @@ describe("buildThreadActionItems", () => {
       "thread:environment-local:word-fresh",
       "thread:environment-local:prefix-stale",
     ]);
+  });
+});
+
+describe("buildAssistantWorkActionItems", () => {
+  const entry = (environmentId: string, id: string, name: string) => ({
+    environmentId: EnvironmentId.make(environmentId),
+    assistant: { id: AssistantId.make(id), name, handle: id },
+  });
+  const build = (entries: ReturnType<typeof entry>[]) => {
+    const open = vi.fn();
+    const items = buildAssistantWorkActionItems({
+      entries,
+      environmentLabel: (environmentId) => `label:${environmentId}`,
+      icon: null,
+      open,
+    });
+    return { items, open };
+  };
+
+  it("opens each assistant's work, naming the environment only when there are several", async () => {
+    const one = build([entry("local", "ada", "Ada"), entry("local", "bob", "Bob")]);
+    expect(one.items.map((item) => [item.value, item.title, item.description])).toEqual([
+      ["action:assistant-work:local:ada", "Open Ada work", undefined],
+      ["action:assistant-work:local:bob", "Open Bob work", undefined],
+    ]);
+    await one.items[1]!.run();
+    expect(one.open).toHaveBeenCalledWith({ environmentId: "local", assistantId: "bob" });
+
+    const many = build([entry("local", "ada", "Ada"), entry("remote", "ada", "Ada")]);
+    expect(many.items.map((item) => item.description)).toEqual(["label:local", "label:remote"]);
+    expect(many.items[0]!.searchTerms).toContain("Ada");
   });
 });
 

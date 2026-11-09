@@ -38,6 +38,7 @@ import { AutonomySettingsSection } from "./AutonomySettingsSection";
 import { AssistantAvatar } from "./assistantPresentation";
 import { moodTextClass } from "./assistantPresenceLabels";
 import { useOpenAssistantEditor } from "./openAssistantEditor";
+import { useOpenAssistantWork } from "./assistantWorkTarget";
 import { useOpenAssistantTeam } from "./assistantTeamTarget";
 import { useAssistantFlows, useAssistantTeamFlows } from "./useAssistantFlows";
 
@@ -51,6 +52,7 @@ function AssistantCard(props: {
   const { assistant, environmentId } = props.entry;
   const flows = useAssistantFlows(environmentId);
   const openEditor = useOpenAssistantEditor();
+  const openWork = useOpenAssistantWork();
   const archived = assistant.archivedAt !== null;
   const thread = useThreadShell(
     assistant.threadId === null ? null : scopeThreadRef(environmentId, assistant.threadId),
@@ -139,6 +141,14 @@ function AssistantCard(props: {
               size="compact"
               disabled={assistant.threadId === null}
               onPress={() => flows.openConversation(assistant)}
+            />
+            <Button
+              label="Work"
+              icon="briefcase"
+              tone="text"
+              size="compact"
+              accessibilityLabel={`${assistant.name} work`}
+              onPress={() => openWork(environmentId, assistant.id)}
             />
             <Button
               label="Edit"
