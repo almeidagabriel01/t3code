@@ -366,6 +366,18 @@ export const recordSample = (
     };
   });
 
+/** Waiter-side election: the first caller under the lock to find the reading stale becomes the sampler. */
+export const recordSampleIfStale = (
+  dir: string,
+  reading: Omit<Sample, "headroomSince">,
+  staleMs: number,
+) => {
+  const current = readDoc(dir).sample;
+  if (current !== null && reading.at - current.at < staleMs) return false;
+  recordSample(dir, reading, {});
+  return true;
+};
+
 export const setMaxRunning = (dir: string, maxRunning: number) =>
   mutate(dir, (doc) => ({
     doc: { ...doc, maxRunning: Math.max(1, Math.floor(maxRunning)) },

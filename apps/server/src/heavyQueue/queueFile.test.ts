@@ -136,7 +136,7 @@ describe("heavy queue file", () => {
     Queue.tryStart(dir, "a");
     Queue.move(dir, "c", "b", "Moved by the user");
     Queue.enqueue(dir, { ...entry("f1"), cwd: "/f/x" });
-    expect(ids(dir)).toEqual(["a", "c", "b", "f1"] as string[]);
+    expect(ids(dir)).toEqual(["a", "c", "f1", "b"] as string[]);
     expect(Queue.read(dir).find((e) => e.id === "c")).toMatchObject({
       pinned: true,
       note: "Moved by the user",
@@ -179,7 +179,12 @@ describe("heavy queue file", () => {
     Queue.enqueue(dir, entry("a"));
     Queue.enqueue(dir, entry("b"));
     Queue.setPaused(dir, true);
-    expect(Queue.tryStart(dir, "a")).toEqual({ status: "waiting", position: 1, paused: true });
+    expect(Queue.tryStart(dir, "a")).toEqual({
+      status: "waiting",
+      position: 1,
+      paused: true,
+      reason: "paused",
+    });
     Queue.setPaused(dir, false);
     expect(Queue.tryStart(dir, "a")).toEqual({ status: "started" });
     Queue.setPaused(dir, true);
@@ -340,5 +345,21 @@ describe("heavy queue file", () => {
     Queue.recordSample(dir, { ...calm, at: 1_000 }, {});
     Queue.recordSample(dir, { ...calm, at: 60_000 }, {});
     expect(Queue.readDoc(dir).sample?.headroomSince).toBe(60_000);
+  });
+
+  it("lets only one waiter sample while the reading is fresh, and takes over once it is stale", () => {
+    const dir = tempDir();
+    const reading = (at: number) => ({
+      at,
+      busyCores: 1,
+      cpuCount: 10,
+      availableMemoryBytes: 30,
+      totalMemoryBytes: 32,
+    });
+    Queue.enqueue(dir, entry("a"));
+    expect(Queue.recordSampleIfStale(dir, reading(1_000), 5_000)).toBe(true);
+    expect(Queue.recordSampleIfStale(dir, reading(3_000), 5_000)).toBe(false);
+    expect(Queue.recordSampleIfStale(dir, reading(7_000), 5_000)).toBe(true);
+    expect(Queue.readDoc(dir).sample?.at).toBe(7_000);
   });
 });

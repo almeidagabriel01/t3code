@@ -4,9 +4,11 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeOS from "node:os";
 
-import { defaultQueueDir, enqueue, remove, tryStart } from "./queueFile.ts";
+import { defaultQueueDir, enqueue, recordSampleIfStale, remove, tryStart } from "./queueFile.ts";
 
 const POLL_MS = 1000;
+/** A server writes readings every 2 s; past this a waiter takes over sampling. */
+const SAMPLE_STALE_MS = 5000;
 const LABEL_CHARS = 200;
 const SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
 const WAITING_EXIT: Record<(typeof SIGNALS)[number], number> = {
@@ -24,6 +26,34 @@ export const parseHeavyArgs = (args: ReadonlyArray<string>) => {
   }
   if (rest[0] === "--") rest = rest.slice(1);
   return { dir, program: rest[0], args: rest.slice(1) };
+};
+
+const cpuTimes = () =>
+  NodeOS.cpus().reduce(
+    (sum, cpu) => {
+      const t = Object.values(cpu.times).reduce((a, b) => a + b, 0);
+      return { idle: sum.idle + cpu.times.idle, total: sum.total + t };
+    },
+    { idle: 0, total: 0 },
+  );
+
+/** Instantaneous CPU from tick deltas between calls (not the load average). */
+const makeHostReader = () => {
+  let last = cpuTimes();
+  return () => {
+    const now = cpuTimes();
+    const total = now.total - last.total;
+    const busy = total > 0 ? 1 - (now.idle - last.idle) / total : 0;
+    last = now;
+    const cpuCount = NodeOS.cpus().length;
+    return {
+      at: Date.now(),
+      busyCores: busy * cpuCount,
+      cpuCount,
+      availableMemoryBytes: NodeOS.freemem(),
+      totalMemoryBytes: NodeOS.totalmem(),
+    };
+  };
 };
 
 export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> => {
@@ -53,8 +83,14 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
     });
   }
 
+  const readHost = makeHostReader();
+  let lastSampleTry = 0;
   let lastShown = "";
   while (true) {
+    if (Date.now() - lastSampleTry >= 2000) {
+      lastSampleTry = Date.now();
+      recordSampleIfStale(dir, readHost(), SAMPLE_STALE_MS);
+    }
     const start = tryStart(dir, id);
     if (start.status === "removed") {
       process.stderr.write("Removed from the heavy queue by the user.\n");

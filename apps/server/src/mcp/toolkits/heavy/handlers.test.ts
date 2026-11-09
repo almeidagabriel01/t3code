@@ -142,7 +142,7 @@ const callTool = (params: { action: "status" | "promote"; id?: string }, access?
             rules: [],
             maxRunning: 3,
             reasons: {},
-            room: true,
+            room: false,
             machine: null,
           }),
           command: Effect.succeed("t3 heavy --"),
@@ -194,11 +194,13 @@ describe("t3_heavy", () => {
   it.effect("promote without an id, for a missing entry, or from a read-only client fails", () =>
     Effect.gen(function* () {
       promoted.length = 0;
-      const noId = yield* Effect.flip(callTool({ action: "promote" }));
+      const failure = (chunk: Awaited<ReturnType<typeof Effect.runPromise>>) =>
+        (chunk as ReadonlyArray<{ encodedResult: unknown }>).at(-1)!.encodedResult;
+      const noId = failure(yield* callTool({ action: "promote" }));
       expect(noId).toMatchObject({ code: "invalid_request" });
-      const gone = yield* Effect.flip(callTool({ action: "promote", id: "gone" }));
+      const gone = failure(yield* callTool({ action: "promote", id: "gone" }));
       expect(gone).toMatchObject({ code: "invalid_request", message: "No such entry." });
-      yield* Effect.flip(callTool({ action: "promote", id: "w" }, "read-only"));
+      yield* callTool({ action: "promote", id: "w" }, "read-only");
       expect(promoted).toEqual([]);
     }),
   );

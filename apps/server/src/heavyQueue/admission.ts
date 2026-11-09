@@ -33,14 +33,14 @@ export const DEFAULT_MAX_RUNNING = 3;
 export const HISTORY_RUNS = 5;
 /** A newly started job needs this long to show its real load before another is admitted. */
 const SETTLE_MS = 15_000;
-/** Without a reading this fresh, only the first job runs: the CLI cannot measure free memory itself. */
+/** Without a reading this fresh, only the first job runs; waiters take over sampling when no server does. */
 export const SAMPLE_FRESH_MS = 15_000;
 /** Headroom has to hold this long before another job is admitted. */
 const HEADROOM_MS = 6_000;
 const MEMORY_FLOOR = 0.2;
 /** Once blocked, memory has to recover a little past the floor so admission does not flap. */
 const MEMORY_REOPEN = 0.25;
-const CPU_CEILING = 0.9;
+const CPU_CEILING = 0.7;
 /** A head waiting this long stops anything from passing it. */
 const HEAD_PATIENCE_MS = 5 * 60_000;
 const GIB = 1024 ** 3;
