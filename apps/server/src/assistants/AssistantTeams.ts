@@ -10,6 +10,12 @@ export interface AssistantTeamRow {
   readonly member_ids_json: string;
   readonly lead_id: string | null;
   readonly archived_at?: string | null;
+  /** Chat counters, present when the row comes from `assistant_team_state`. */
+  readonly read_seq?: number;
+  readonly latest_seq?: number;
+  readonly unread_count?: number;
+  readonly open_tasks?: number;
+  readonly preview?: string | null;
   readonly created_at: string;
   readonly updated_at: string;
 }
@@ -25,11 +31,22 @@ export const toAssistantTeam = (row: AssistantTeamRow): AssistantTeam => ({
   memberIds: Option.getOrElse(decodeMemberIds(row.member_ids_json), () => []) as AssistantId[],
   leadId: row.lead_id as AssistantId | null,
   archivedAt: row.archived_at ?? null,
+  ...(row.latest_seq === undefined
+    ? {}
+    : {
+        chat: {
+          latestSeq: row.latest_seq,
+          readSeq: row.read_seq ?? 0,
+          unreadCount: row.unread_count ?? 0,
+          working: (row.open_tasks ?? 0) > 0,
+          preview: row.preview ?? null,
+        },
+      }),
   createdAt: row.created_at,
   updatedAt: row.updated_at,
 });
 
 export const allTeams = (sql: SqlClient.SqlClient) =>
-  sql<AssistantTeamRow>`SELECT * FROM assistant_teams ORDER BY created_at ASC, team_id ASC`.pipe(
+  sql<AssistantTeamRow>`SELECT * FROM assistant_team_state ORDER BY created_at ASC, team_id ASC`.pipe(
     Effect.map((rows) => rows.map(toAssistantTeam)),
   );

@@ -168,6 +168,7 @@ async function openChat(options: { team?: AssistantTeam } = {}) {
   Object.assign(fakeGroupChat, {
     posts: [],
     taskActions: [],
+    reads: [],
     histories: [],
     postRefusal: null,
     older: null,
@@ -628,4 +629,63 @@ it("shows a message's images as thumbnails that open the viewer and its files as
     .toBeVisible();
   await userEvent.click(attachments.getByRole("button", { name: "Preview shot.png" }));
   await expect.element(page.getByRole("dialog")).toBeVisible();
+});
+
+const chatOf = (overrides: Partial<NonNullable<AssistantTeam["chat"]>> = {}) => ({
+  latestSeq: 4,
+  readSeq: 1,
+  unreadCount: 2,
+  working: false,
+  preview: null,
+  ...overrides,
+});
+const unreadChat = () =>
+  publishGroupChat([
+    message(1),
+    message(2, { author: "assistant", assistantId: "ada" as AssistantId, text: "first answer" }),
+    message(3, { text: "thanks" }),
+    message(4, { author: "assistant", assistantId: "bo" as AssistantId, text: "second answer" }),
+  ]);
+
+it("shows the unread count, a New line above the first unread message, and marks the chat read once seen", async () => {
+  unreadChat();
+  await using _screen = await openChat({ team: team({ chat: chatOf() }) });
+  const row = page.getByTestId("sidebar-assistant-fold");
+  await expect.element(row.getByTestId("group-unread")).toHaveTextContent("2");
+  await expect.element(main().getByTestId("group-new-divider")).toBeVisible();
+  // The line sits directly above the first answer the user had not read, not above their own message.
+  const feed = main().getByTestId("group-feed").element();
+  const order = [...feed.querySelectorAll("[data-testid]")].map((node) =>
+    node.getAttribute("data-testid"),
+  );
+  expect(order.indexOf("group-new-divider")).toBe(order.indexOf("group-answer") - 1);
+  await eventually(() => expect(fakeGroupChat.reads).toEqual([{ teamId: "t1", readSeq: 4 }]));
+});
+
+it("shows no badge and no New line and marks nothing when everything is read", async () => {
+  unreadChat();
+  await using _screen = await openChat({
+    team: team({ chat: chatOf({ readSeq: 4, unreadCount: 0 }) }),
+  });
+  await expect.element(main().getByText("second answer")).toBeVisible();
+  await expect.element(main().getByTestId("group-new-divider")).not.toBeInTheDocument();
+  await expect.element(page.getByTestId("group-unread")).not.toBeInTheDocument();
+  expect(fakeGroupChat.reads).toEqual([]);
+});
+
+it("marks a group unread or read from its sidebar menu", async () => {
+  unreadChat();
+  await using _screen = await openChat({
+    team: team({ chat: chatOf({ readSeq: 4, unreadCount: 0 }) }),
+  });
+  const actions = page
+    .getByTestId("sidebar-assistant-fold")
+    .getByRole("button", { name: "Leadership actions" });
+  await userEvent.click(actions);
+  await userEvent.click(page.getByRole("menuitem", { name: "Mark as unread" }));
+  await eventually(() => expect(fakeGroupChat.reads).toEqual([{ teamId: "t1", unread: true }]));
+  publishAssistants(people(), [team({ chat: chatOf({ readSeq: 1, unreadCount: 2 }) })]);
+  await userEvent.click(actions);
+  await userEvent.click(page.getByRole("menuitem", { name: "Mark as read" }));
+  await eventually(() => expect(fakeGroupChat.reads.at(-1)).toEqual({ teamId: "t1", readSeq: 4 }));
 });

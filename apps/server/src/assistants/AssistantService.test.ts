@@ -1101,3 +1101,41 @@ it.effect(
     }).pipe(Effect.provide(layer));
   },
 );
+
+it.effect("a chat counter refresh reaches the stream but not services reacting to changes", () => {
+  const { layer } = harness();
+  return Effect.gen(function* () {
+    const assistants = yield* Assistants.AssistantService;
+    const sql = yield* SqlClient.SqlClient;
+    const changes = yield* assistants.subscribeChanges;
+    const ana = yield* assistants.create(create({ name: "Ana" }));
+    const team = yield* assistants.createTeam({ name: "Core", memberIds: [ana.id] });
+    assert.deepEqual(team.chat, {
+      latestSeq: 0,
+      readSeq: 0,
+      unreadCount: 0,
+      working: false,
+      preview: null,
+    });
+    yield* sql`INSERT INTO assistant_group_messages
+      (message_id, team_id, seq, author, kind, text, created_at)
+      VALUES ('m1', ${team.id}, 1, 'assistant', 'message', 'Done', '2026-01-01')`;
+    yield* PubSub.takeAll(changes);
+    // The snapshot arrives after the stream subscribed, so the refresh lands behind it.
+    const events = yield* assistants.subscribe.pipe(
+      Stream.tap((event) =>
+        event.type === "snapshot" ? assistants.refreshTeamChat(team.id) : Effect.void,
+      ),
+      Stream.take(2),
+      Stream.runCollect,
+    );
+    const event = events[1];
+    assert.deepEqual(
+      event?.type === "teamUpserted"
+        ? [event.team.chat?.unreadCount, event.team.chat?.preview]
+        : [],
+      [1, "Done"],
+    );
+    assert.isFalse((yield* PubSub.takeAll(changes)).some((seen) => seen.type === "teamUpserted"));
+  }).pipe(Effect.provide(layer), Effect.scoped);
+});

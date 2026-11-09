@@ -13,12 +13,19 @@ const { mocks } = vi.hoisted(() => ({
     openTeam: vi.fn(),
     chat: vi.fn(),
     archiveTeam: vi.fn(),
+    markRead: vi.fn(),
+    markUnread: vi.fn(),
     navigate: vi.fn(),
     reset: vi.fn(),
     archive: vi.fn(),
     teams: [] as Array<{
       environmentId: string;
-      team: { id: string; name: string; memberIds: string[] };
+      team: {
+        id: string;
+        name: string;
+        memberIds: string[];
+        chat?: { unreadCount: number; latestSeq: number };
+      };
     }>,
     collapsed: false,
     showAll: false,
@@ -148,7 +155,13 @@ vi.mock("./useAssistantFlows", () => ({
     reset: mocks.reset,
     archive: mocks.archive,
   }),
-  useAssistantTeamFlows: () => ({ canAct: true, archive: mocks.archiveTeam }),
+  useAssistantTeamFlows: () => ({
+    canAct: true,
+    canMarkRead: true,
+    archive: mocks.archiveTeam,
+    markRead: mocks.markRead,
+    markUnread: mocks.markUnread,
+  }),
 }));
 vi.mock("./assistantTeamTarget", () => ({
   useOpenAssistantTeam: () => ({ edit: mocks.openTeam, chat: mocks.chat }),
@@ -179,9 +192,15 @@ const bot = (i: number, extra: object = {}) => ({
   },
 });
 const make = (n: number) => Array.from({ length: n }, (_, i) => bot(i));
-const team = (id: string, name: string, memberIds: string[], environmentId = "hub") => ({
+const team = (
+  id: string,
+  name: string,
+  memberIds: string[],
+  environmentId = "hub",
+  chat?: { unreadCount: number; latestSeq: number },
+) => ({
   environmentId,
-  team: { id, name, memberIds },
+  team: { id, name, memberIds, ...(chat === undefined ? {} : { chat }) },
 });
 
 let root: Root;
@@ -217,6 +236,8 @@ beforeEach(() => {
     mocks.navigate,
     mocks.reset,
     mocks.archive,
+    mocks.markRead,
+    mocks.markUnread,
     mocks.toggleShowAll,
   ]) {
     fn.mockReset();
@@ -301,6 +322,29 @@ describe("HomeAssistantsSection", () => {
     mocks.active = [bot(0), { ...bot(1), environmentId: "lab" }];
     render(true, new Map());
     expect(container.textContent).not.toContain("Lab");
+  });
+
+  it("a group with unread messages shows a count and offers Mark as read; otherwise Mark as unread", async () => {
+    mocks.teams = [
+      team("g1", "Busy", [], "hub", { unreadCount: 120, latestSeq: 130 }),
+      team("g2", "Quiet", [], "hub", { unreadCount: 0, latestSeq: 5 }),
+      team("g3", "Empty", [], "hub", { unreadCount: 0, latestSeq: 0 }),
+    ];
+    render();
+    const badges = Array.from(container.querySelectorAll('[data-testid="group-unread"]'));
+    expect(badges.map((node) => node.textContent)).toEqual(["99+"]);
+    expect(byLabel("Busy actions")).not.toBeNull();
+    expect(container.querySelectorAll('[aria-label="menu:Mark as read"]')).toHaveLength(1);
+    expect(container.querySelectorAll('[aria-label="menu:Mark as unread"]')).toHaveLength(2);
+    // A group with no messages has nothing to mark.
+    const unread = container.querySelectorAll<HTMLButtonElement>(
+      '[aria-label="menu:Mark as unread"]',
+    );
+    expect([unread[0]!.disabled, unread[1]!.disabled]).toEqual([false, true]);
+    await act(async () => byLabel("menu:Mark as read")?.click());
+    expect(mocks.markRead).toHaveBeenCalledWith(expect.objectContaining({ id: "g1" }));
+    await act(async () => unread[0]!.click());
+    expect(mocks.markUnread).toHaveBeenCalledWith(expect.objectContaining({ id: "g2" }));
   });
 
   it("a group is one row: avatars with +N, running or empty status, members behind the chevron", async () => {

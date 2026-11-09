@@ -10,6 +10,7 @@ import { useRouter } from "@tanstack/react-router";
 import { requestConfirmDialog } from "../../confirmDialog";
 import {
   useAssistantActions,
+  useAssistantGroupActions,
   useAssistantTeamActions,
   type AssistantReply,
 } from "../../state/assistants";
@@ -79,8 +80,17 @@ export function useAssistantFlows(environmentId: EnvironmentId) {
 /** The confirmed group actions, shared by the sidebar, the chat header and the pages. */
 export function useAssistantTeamFlows(environmentId: EnvironmentId) {
   const actions = useAssistantTeamActions(environmentId);
+  const reading = useAssistantGroupActions(environmentId);
+  const mark = async (
+    teamId: AssistantTeam["id"],
+    position: Parameters<typeof reading.markRead>[1],
+  ) => failed("Could not update the group", await reading.markRead(teamId, position));
   return {
     canAct: actions.canAct,
+    canMarkRead: reading.canMarkRead,
+    markRead: (team: Pick<AssistantTeam, "id" | "chat">) =>
+      mark(team.id, { readSeq: team.chat?.latestSeq ?? 0 }),
+    markUnread: (team: Pick<AssistantTeam, "id">) => mark(team.id, { unread: true }),
     async archive(team: Pick<AssistantTeam, "id" | "name">) {
       const confirmed = await requestConfirmDialog(
         `Archive ${team.name}?\nIts chat is kept, but its work stops and it takes no new messages. You can restore it.`,

@@ -2583,6 +2583,7 @@ export const layerWsRpc = (
         [WS_METHODS.assistantGroupsHistory]: (input) => assistantGroups.history(input),
         [WS_METHODS.assistantGroupsPost]: (input) => assistantGroups.post(input, { kind: "user" }),
         [WS_METHODS.assistantGroupsTaskAction]: (input) => assistantGroups.taskAction(input),
+        [WS_METHODS.assistantGroupsMarkRead]: (input) => assistantGroups.markRead(input),
         [WS_METHODS.autonomyWatchesList]: () =>
           autonomy.listWatches.pipe(Effect.map((watches) => ({ watches }))),
         [WS_METHODS.autonomyWatchUpsert]: (input) => autonomy.upsertWatch(input),

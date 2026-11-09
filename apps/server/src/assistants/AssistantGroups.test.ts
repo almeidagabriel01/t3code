@@ -110,6 +110,7 @@ const harness = (options: Options = {}) => {
     createdBy: string;
   }> = [];
   const deletedTeams: string[] = [];
+  const refreshed: string[] = [];
   const routeCalls: unknown[] = [];
   const summaryCalls: Array<{
     previousSummary: string | null;
@@ -195,6 +196,7 @@ const harness = (options: Options = {}) => {
         live.changes = yield* PubSub.unbounded<AssistantsEvent>();
         return AssistantService.of({
           subscribeChanges: PubSub.subscribe(live.changes),
+          refreshTeamChat: (teamId: string) => Effect.sync(() => void refreshed.push(teamId)),
           defaultModel: () => Effect.succeed(selection(codex, "default-model")),
         } as never);
       }),
@@ -338,6 +340,7 @@ const harness = (options: Options = {}) => {
     runs,
     live,
     deletedTeams,
+    refreshed,
     cleaned,
     routeCalls,
     summaryCalls,
@@ -406,6 +409,48 @@ it.effect("tasks queue in order and start as slots free up", () => {
     assert.isTrue(h.sent.every((message) => message.createdBy === "system"));
   }).pipe(Effect.provide(h.layer));
 });
+
+it.effect(
+  "unread counts what others wrote after the read position, and the position moves both ways",
+  () => {
+    const h = harness();
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      const chat = () =>
+        h
+          .sqlRows<{
+            latest_seq: number;
+            read_seq: number;
+            unread_count: number;
+            open_tasks: number;
+            preview: string | null;
+          }>(`SELECT * FROM assistant_team_state WHERE team_id = '${TEAM}'`)
+          .pipe(Effect.map((rows) => rows[0]!));
+      yield* groups.post({ teamId: TEAM, text: "@ada one" }, h.user);
+      // The user's own message is never unread, and the open task shows as working.
+      const started = yield* chat();
+      assert.deepEqual([started.latest_seq, started.unread_count, started.open_tasks], [1, 0, 1]);
+      yield* h.finish(0, "completed", "Done, boss.");
+      const done = yield* chat();
+      assert.deepEqual([done.unread_count, done.open_tasks, done.preview], [1, 0, "Done, boss."]);
+      assert.isTrue(h.refreshed.length > 0);
+      // Reading clamps to the newest message; a lower position makes later ones unread again.
+      assert.equal((yield* groups.markRead({ teamId: TEAM, readSeq: 99 })).readSeq, 2);
+      assert.equal((yield* chat()).unread_count, 0);
+      assert.equal((yield* groups.markRead({ teamId: TEAM, readSeq: 1 })).readSeq, 1);
+      assert.equal((yield* chat()).unread_count, 1);
+      // Mark as unread lands just before the newest message from anyone but the user.
+      yield* groups.markRead({ teamId: TEAM });
+      assert.equal((yield* chat()).unread_count, 0);
+      assert.equal((yield* groups.markRead({ teamId: TEAM, unread: true })).readSeq, 1);
+      assert.equal((yield* chat()).unread_count, 1);
+      const missing = yield* refusalError(
+        groups.markRead({ teamId: AssistantTeamId.make("nope"), readSeq: 1 }),
+      );
+      assert.equal(missing.reason, "not_found");
+    }).pipe(Effect.provide(h.layer));
+  },
+);
 
 const recipientTable = [
   ["a leading @handle", "@beto please look", ["beto"]],

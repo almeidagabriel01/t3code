@@ -17,6 +17,8 @@ import {
   type AssistantGroupsEvent,
   type AssistantGroupsHistoryInput,
   type AssistantGroupsHistoryResult,
+  type AssistantGroupsMarkReadInput,
+  type AssistantGroupsMarkReadResult,
   type AssistantGroupsPostInput,
   type AssistantGroupsPostResult,
   type AssistantGroupsTaskActionInput,
@@ -119,6 +121,7 @@ const QUOTED_MESSAGES = 8;
 /** Waiting for a slot or a run, or running: work the owner is still on. */
 const ACTIVE: ReadonlyArray<AssistantGroupTaskStatus> = ["queued", "running", "waiting"];
 /** Everything the user can still act on. */
+const OPEN_NOW: ReadonlySet<string> = new Set(ACTIVE);
 const OPEN: ReadonlyArray<AssistantGroupTaskStatus> = [...ACTIVE, "paused", "failed"];
 const SETTLED: ReadonlyArray<AssistantGroupTaskStatus> = ["completed", "cancelled", "failed"];
 const ENDED_RUN = new Set(["completed", "failed", "cancelled", "interrupted"]);
@@ -252,6 +255,10 @@ export class AssistantGroups extends Context.Service<
     readonly taskAction: (
       input: AssistantGroupsTaskActionInput,
     ) => Effect.Effect<AssistantGroupTask, AssistantError>;
+    /** Moves the read position, clamped to the chat's newest message. */
+    readonly markRead: (
+      input: AssistantGroupsMarkReadInput,
+    ) => Effect.Effect<AssistantGroupsMarkReadResult, AssistantError>;
     /** A post from a conversation that is not in the group: an assistant's or any agent's. */
     readonly agentPost: (input: {
       readonly callerThreadId: ThreadId;
@@ -503,6 +510,7 @@ const make = Effect.gen(function* () {
       FROM assistant_group_messages WHERE team_id = ${input.teamId}
       RETURNING *`;
     yield* publishMessage(rows[0]!);
+    yield* assistants.refreshTeamChat(input.teamId);
     return rows[0]!;
   });
 
@@ -530,6 +538,7 @@ const make = Effect.gen(function* () {
         ${input.reason ?? null}, 1, 0, ${input.followup ?? null}, ${now}, ${now}
       ) RETURNING *`;
     yield* publishTask(rows[0]!);
+    yield* assistants.refreshTeamChat(input.teamId);
     return rows[0]!;
   });
 
@@ -550,6 +559,9 @@ const make = Effect.gen(function* () {
         followup = ${next.followup}, hops = ${next.hops}, updated_at = ${yield* nowIso}
       WHERE task_id = ${task.task_id} RETURNING *`;
     yield* publishTask(rows[0]!);
+    if (OPEN_NOW.has(task.status) !== OPEN_NOW.has(next.status)) {
+      yield* assistants.refreshTeamChat(task.team_id);
+    }
     return rows[0]!;
   });
 
@@ -1911,6 +1923,26 @@ const make = Effect.gen(function* () {
         .pipe(storage),
     );
 
+  const markRead: AssistantGroups["Service"]["markRead"] = Effect.fn("AssistantGroups.markRead")(
+    function* (input) {
+      yield* teamRow(input.teamId);
+      const target =
+        input.unread === true
+          ? ((yield* sql<{ readonly seq: number | null }>`
+              SELECT MAX(seq) AS seq FROM assistant_group_messages
+              WHERE team_id = ${input.teamId} AND author != 'user' AND kind != 'routing'`)[0]
+              ?.seq ?? 1) - 1
+          : (input.readSeq ?? Number.MAX_SAFE_INTEGER);
+      const rows = yield* sql<{ readonly read_seq: number }>`
+        UPDATE assistant_teams SET read_seq = MIN(${target}, COALESCE(
+          (SELECT MAX(seq) FROM assistant_group_messages m WHERE m.team_id = assistant_teams.team_id), 0))
+        WHERE team_id = ${input.teamId} RETURNING read_seq`;
+      yield* assistants.refreshTeamChat(input.teamId);
+      return { readSeq: rows[0]!.read_seq };
+    },
+    storage,
+  );
+
   const history: AssistantGroups["Service"]["history"] = Effect.fn("AssistantGroups.history")(
     function* (input) {
       yield* teamRow(input.teamId);
@@ -1924,6 +1956,7 @@ const make = Effect.gen(function* () {
     history,
     post,
     taskAction,
+    markRead,
     agentPost,
     member: memberTools,
     handleRunEvent,

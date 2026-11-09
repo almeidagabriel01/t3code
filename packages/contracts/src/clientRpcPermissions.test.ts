@@ -91,6 +91,7 @@ describe("assistant client guards", () => {
       WS_METHODS.assistantTeamsDelete,
       WS_METHODS.assistantGroupsPost,
       WS_METHODS.assistantGroupsTaskAction,
+      WS_METHODS.assistantGroupsMarkRead,
       WS_METHODS.assistantSandboxStart,
       WS_METHODS.assistantSandboxStop,
       WS_METHODS.assistantSandboxRemove,

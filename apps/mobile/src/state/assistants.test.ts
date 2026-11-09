@@ -77,12 +77,23 @@ describe("group chat hooks", () => {
     const post = vi.fn();
     const taskAction = vi.fn();
     const history = vi.fn();
+    const markRead = vi.fn();
     vi.mocked(useAtomCommand)
       .mockReturnValueOnce(post as never)
       .mockReturnValueOnce(taskAction as never)
-      .mockReturnValueOnce(history as never);
-    vi.mocked(useAtomValue).mockReturnValueOnce(true).mockReturnValueOnce(false);
-    return { post, taskAction, history, actions: useAssistantGroupActions("hub" as never) };
+      .mockReturnValueOnce(history as never)
+      .mockReturnValueOnce(markRead as never);
+    vi.mocked(useAtomValue)
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(true);
+    return {
+      post,
+      taskAction,
+      history,
+      markRead,
+      actions: useAssistantGroupActions("hub" as never),
+    };
   };
 
   it("posts, and hands back the refusal's reason", async () => {
@@ -107,6 +118,29 @@ describe("group chat hooks", () => {
     expect(await actions.post({ teamId: "g1", text: "hi" } as never)).toMatchObject({
       ok: false,
       reason: null,
+    });
+  });
+
+  it("moves the read position by message number or to the newest unread, settling into replies", async () => {
+    const { markRead, actions } = commands();
+    expect(actions.canMarkRead).toBe(true);
+    markRead.mockResolvedValueOnce({ _tag: "Success", value: { readSeq: 5 } });
+    expect(await actions.markRead("g1" as never, { readSeq: 5 })).toEqual({
+      ok: true,
+      value: undefined,
+    });
+    expect(markRead).toHaveBeenCalledWith({
+      environmentId: "hub",
+      input: { teamId: "g1", readSeq: 5 },
+    });
+    markRead.mockResolvedValueOnce({ _tag: "Failure", cause: Cause.fail({ message: "late" }) });
+    expect(await actions.markRead("g1" as never, { unread: true })).toEqual({
+      ok: false,
+      message: "late",
+    });
+    expect(markRead).toHaveBeenLastCalledWith({
+      environmentId: "hub",
+      input: { teamId: "g1", unread: true },
     });
   });
 

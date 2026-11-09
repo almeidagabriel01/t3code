@@ -18,6 +18,8 @@ import {
   EllipsisIcon,
   FolderIcon,
   HashIcon,
+  MailIcon,
+  MailOpenIcon,
   PencilIcon,
   PlusIcon,
   RefreshCwIcon,
@@ -311,6 +313,7 @@ function GroupRow(props: {
   const foldKey = `group:${environmentId}:${teamId}`;
   const shown = props.members.slice(0, MAX_STACKED_AVATARS);
   const more = props.members.length - shown.length;
+  const unread = team.chat?.unreadCount ?? 0;
   return (
     <li className="list-none py-px">
       <div
@@ -366,6 +369,16 @@ function GroupRow(props: {
             empty
           </span>
         ) : null}
+        {unread > 0 ? (
+          <Badge
+            variant="info"
+            size="sm"
+            data-testid="group-unread"
+            aria-label={`${unread} unread`}
+          >
+            {unread > 99 ? "99+" : unread}
+          </Badge>
+        ) : null}
         {props.members.length === 0 ? null : (
           <button
             type="button"
@@ -408,6 +421,20 @@ function GroupRow(props: {
               <MessagesSquareIcon />
               Open chat
             </MenuItem>
+            {unread > 0 ? (
+              <MenuItem disabled={!flows.canMarkRead} onClick={() => void flows.markRead(team)}>
+                <MailOpenIcon />
+                Mark as read
+              </MenuItem>
+            ) : (
+              <MenuItem
+                disabled={!flows.canMarkRead || (team.chat?.latestSeq ?? 0) === 0}
+                onClick={() => void flows.markUnread(team)}
+              >
+                <MailIcon />
+                Mark as unread
+              </MenuItem>
+            )}
             <MenuItem onClick={() => openAssistantTeamDialog({ environmentId, teamId })}>
               <PencilIcon />
               Edit group

@@ -274,14 +274,29 @@ export type AssistantGroupPostReply =
 export function useAssistantGroupActions(environmentId: EnvironmentId) {
   const canPost = useAtomValue(assistantsEnvironment.postGroup.permissionAtom(environmentId));
   const canAct = useAtomValue(assistantsEnvironment.groupTaskAction.permissionAtom(environmentId));
+  const canMarkRead = useAtomValue(
+    assistantsEnvironment.markGroupRead.permissionAtom(environmentId),
+  );
   const post = useAtomCommand(assistantsEnvironment.postGroup, { reportFailure: false });
   const taskAction = useAtomCommand(assistantsEnvironment.groupTaskAction, {
     reportFailure: false,
   });
   const history = useAtomCommand(assistantsEnvironment.groupHistory, { reportFailure: false });
+  const markRead = useAtomCommand(assistantsEnvironment.markGroupRead, { reportFailure: false });
   return {
     canPost,
     canAct,
+    canMarkRead,
+    /** Moves the read position; `readSeq` is a message number, `unread` marks the newest unread. */
+    markRead: async (
+      teamId: AssistantTeamId,
+      position: { readonly readSeq: number } | { readonly unread: true },
+    ): Promise<AssistantReply> => {
+      const result = await markRead({ environmentId, input: { teamId, ...position } });
+      return result._tag === "Success"
+        ? { ok: true, value: undefined }
+        : { ok: false, message: assistantErrorMessage(squashAtomCommandFailure(result)) };
+    },
     post: async (input: AssistantGroupsPostInput): Promise<AssistantGroupPostReply> => {
       const result = await post({ environmentId, input });
       if (result._tag === "Success") return { ok: true, value: result.value };

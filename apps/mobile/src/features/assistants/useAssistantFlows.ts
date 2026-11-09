@@ -9,6 +9,7 @@ import {
 import * as Dialog from "../../components/ui/Dialog";
 import {
   useAssistantActions,
+  useAssistantGroupActions,
   useAssistantTeamActions,
   type AssistantReply,
 } from "../../state/assistants";
@@ -98,8 +99,17 @@ export function useAssistantFlows(environmentId: EnvironmentId) {
 /** Archive and restore of a group, shared by Home, Settings and the chat's menu. */
 export function useAssistantTeamFlows(environmentId: EnvironmentId) {
   const actions = useAssistantTeamActions(environmentId);
+  const reading = useAssistantGroupActions(environmentId);
+  const mark = async (
+    teamId: AssistantTeam["id"],
+    position: Parameters<typeof reading.markRead>[1],
+  ) => failed("Could not update the group", await reading.markRead(teamId, position));
   return {
     canAct: actions.canAct,
+    canMarkRead: reading.canMarkRead,
+    markRead: (team: Pick<AssistantTeam, "id" | "chat">) =>
+      mark(team.id, { readSeq: team.chat?.latestSeq ?? 0 }),
+    markUnread: (team: Pick<AssistantTeam, "id">) => mark(team.id, { unread: true }),
     archive(team: Pick<AssistantTeam, "id" | "name">) {
       Dialog.confirm({
         title: `Archive ${team.name}?`,
