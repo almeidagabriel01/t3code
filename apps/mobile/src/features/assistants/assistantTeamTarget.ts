@@ -26,6 +26,11 @@ export function useOpenAssistantTeam() {
       appAtomRegistry.set(assistantTeamTargetAtom, { environmentId, teamId });
       navigation.navigate("SettingsAssistantTeamEdit");
     },
+    /** Instructions, memories and the conversation actions of a group. */
+    settings: (environmentId: EnvironmentId, teamId: AssistantTeamId) => {
+      appAtomRegistry.set(assistantTeamTargetAtom, { environmentId, teamId });
+      navigation.navigate("SettingsAssistantGroupSettings");
+    },
     /** The group's chat; shown in the detail column like a thread row. */
     chat: (environmentId: EnvironmentId, teamId: AssistantTeamId) =>
       selectDetail({ name: "AssistantGroupChat", params: { environmentId, teamId } }),

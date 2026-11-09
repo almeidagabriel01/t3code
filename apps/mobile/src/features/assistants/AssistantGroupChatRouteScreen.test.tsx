@@ -27,7 +27,7 @@ const { mocks, Children } = vi.hoisted(() => ({
     dispatch: vi.fn(),
     goBack: vi.fn(),
     selectDetail: vi.fn(),
-    openTeam: { edit: vi.fn() },
+    openTeam: { edit: vi.fn(), settings: vi.fn() },
     openEditor: vi.fn(),
     schedule: vi.fn(),
     archive: vi.fn(),
@@ -424,6 +424,21 @@ beforeEach(() => {
 afterEach(() => act(() => root.unmount()));
 
 describe("group chat feed", () => {
+  it("draws a divider where a conversation started or was compacted, with the old messages above", () => {
+    mocks.live = snapshot([
+      message("old", 1),
+      message("b1", 2, { author: "user", assistantId: null, kind: "boundary", text: "new" }),
+      message("b2", 3, { author: "user", assistantId: null, kind: "boundary", text: "compact" }),
+    ]);
+    render();
+    const dividers = [...container.querySelectorAll('[data-testid="group-boundary"]')];
+    expect(dividers.map((node) => node.textContent)).toEqual([
+      "New conversation started",
+      "Context compacted",
+    ]);
+    expect(text()).toContain("old");
+  });
+
   it("shows each kind of row, the header summary, roles, running count and task cards", () => {
     render();
     expect(container.querySelector("h1")?.textContent).toBe("Crew");
@@ -678,6 +693,8 @@ describe("group header and archive", () => {
     render();
     await click("header:Edit group");
     expect(mocks.openTeam.edit).toHaveBeenCalledWith("hub", "g1");
+    await click("header:Group settings");
+    expect(mocks.openTeam.settings).toHaveBeenCalledWith("hub", "g1");
     await click("header:New assistant in this group");
     expect(mocks.openEditor).toHaveBeenCalledWith("hub", null, { teamId: "g1" });
     await click("header:Schedule in this group");
