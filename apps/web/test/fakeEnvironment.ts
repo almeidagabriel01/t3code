@@ -834,6 +834,7 @@ handlers[WS_METHODS.autonomyWatchDelete] = (input: { readonly id: string }) => {
 export const fakeScheduledTasks = {
   items: [] as ScheduledTask[],
   toggles: [] as Array<{ readonly id: string; readonly enabled: boolean }>,
+  runs: [] as string[],
   failToggle: null as string | null,
 };
 const taskSubscribers = new Set<Queue.Queue<{ readonly tasks: ScheduledTask[] }>>();
@@ -857,6 +858,12 @@ handlers[WS_METHODS.scheduledTasksSetEnabled] = (input: {
   }
   const found = fakeScheduledTasks.items.find((item) => item.id === input.id)!;
   return Effect.succeed({ task: { ...found, enabled: input.enabled } });
+};
+
+handlers[WS_METHODS.scheduledTasksRunNow] = (input: { readonly id: string }) => {
+  fakeScheduledTasks.runs.push(input.id);
+  const found = fakeScheduledTasks.items.find((item) => item.id === input.id)!;
+  return Effect.succeed({ task: found });
 };
 
 /** iMessage settings and access the fake server holds, and the calls it received. */

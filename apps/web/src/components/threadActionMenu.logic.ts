@@ -31,6 +31,7 @@ export type ThreadActionMenuId =
   | "archive"
   | "delete"
   | "reset-assistant"
+  | "assistant-work"
   | "assistant-settings";
 
 export type DraftActionMenuId =
@@ -114,6 +115,7 @@ export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean
     "mark-unread",
     "share-guest",
     "link-card",
+    "assistant-work",
     "assistant-settings",
     "copy",
     "copy-path",
@@ -263,6 +265,11 @@ export function buildThreadActionMenuItems(
             icon: "refresh-cw",
             separatorBefore: true,
             disabled: state.isRunning,
+          },
+          {
+            id: "assistant-work" as const,
+            label: `${state.assistant.name} work`,
+            icon: "briefcase",
           },
           {
             id: "assistant-settings" as const,

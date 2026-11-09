@@ -2,6 +2,7 @@ import { RunId, type ServerProvider } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  assistantMemories,
   assistantMemoryScopeKinds,
   assistantRetryPlan,
   assistantWorkStatus,
@@ -144,6 +145,75 @@ describe("assistantMemoryScopeKinds", () => {
   it("adds the project only for a project assistant", () => {
     expect(assistantMemoryScopeKinds({ scope: "all" })).toEqual(["thread"]);
     expect(assistantMemoryScopeKinds({ scope: "project" })).toEqual(["thread", "project"]);
+  });
+});
+
+describe("assistantMemories", () => {
+  const memory = (
+    memoryId: string,
+    createdAtUtc: string,
+    scope: unknown,
+    threadId: string | null,
+    status = "active",
+  ) =>
+    ({
+      memoryId,
+      status,
+      scope,
+      revision: { createdAtUtc },
+      payload: {
+        evidence:
+          threadId === null
+            ? [{ origin: "user", messageIds: [] }]
+            : [
+                {
+                  origin: "thread",
+                  sourceThread: { environmentId: "env", threadId },
+                  messageIds: [],
+                },
+              ],
+      },
+    }) as never;
+  it("keeps what its conversations taught, newest first, once, and says where from", () => {
+    const items = [
+      memory("old", "2026-11-01T00:00:00Z", { kind: "user" }, "assistant:ada:1"),
+      memory("new", "2026-11-05T00:00:00Z", { kind: "project" }, "assistant:ada:g-abc"),
+      memory("dupe", "2026-11-06T00:00:00Z", { kind: "user" }, "assistant:ada:2"),
+      memory("dupe", "2026-11-07T00:00:00Z", { kind: "user" }, "assistant:ada:2"),
+      memory("other assistant", "2026-11-04T00:00:00Z", { kind: "user" }, "assistant:bob:1"),
+      memory("ordinary thread", "2026-11-04T00:00:00Z", { kind: "user" }, "thread:x"),
+      memory("typed by the user", "2026-11-04T00:00:00Z", { kind: "user" }, null),
+      memory("forgotten", "2026-11-04T00:00:00Z", { kind: "user" }, "assistant:ada:1", "forgotten"),
+    ];
+    expect(
+      assistantMemories(items, "ada", "env").map((entry) => [
+        entry.item.memoryId,
+        entry.sourceThreadId,
+      ]),
+    ).toEqual([
+      ["dupe", "assistant:ada:2"],
+      ["new", "assistant:ada:g-abc"],
+      ["old", "assistant:ada:1"],
+    ]);
+  });
+  it("counts the memories scoped to its own conversation even without thread evidence", () => {
+    const own = memory(
+      "own",
+      "2026-11-01T00:00:00Z",
+      { kind: "thread", thread: { threadId: "assistant:ada:3" } },
+      null,
+    );
+    const elsewhere = memory(
+      "else",
+      "2026-11-01T00:00:00Z",
+      { kind: "thread", thread: { threadId: "thread:z" } },
+      null,
+    );
+    expect(
+      assistantMemories([own, elsewhere], "ada", "env", new Set(["assistant:ada:3"])).map(
+        (entry) => [entry.item.memoryId, entry.sourceThreadId],
+      ),
+    ).toEqual([["own", "assistant:ada:3"]]);
   });
 });
 

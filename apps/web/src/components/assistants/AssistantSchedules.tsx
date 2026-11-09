@@ -10,9 +10,11 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { useNavigate } from "@tanstack/react-router";
-import { CalendarClockIcon, PencilIcon, PlusIcon } from "lucide-react";
+import { formatNextRun } from "@t3tools/client-runtime/assistantWork";
+import { CalendarClockIcon, PencilIcon, PlayIcon, PlusIcon } from "lucide-react";
 import { useState } from "react";
 
+import { useNowMinuteMs } from "../../hooks/useNowMinute";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { readEnvironmentScope } from "../../state/session";
@@ -38,8 +40,33 @@ export function AssistantSchedules(props: {
   const setTaskEnabled = useAtomCommand(serverEnvironment.setScheduledTaskEnabled, {
     label: "assistant schedule toggle",
   });
+  const runTaskNow = useAtomCommand(serverEnvironment.runScheduledTaskNow, {
+    label: "assistant schedule run now",
+  });
+  const nowMs = useNowMinuteMs();
   const [busyTaskId, setBusyTaskId] = useState<string | null>(null);
   const tasks = (tasksQuery.data?.tasks ?? []).filter((task) => task.threadId === props.threadId);
+
+  const runNow = async (task: ScheduledTask) => {
+    if (
+      busyTaskId !== null ||
+      !readEnvironmentScope(props.environmentId, AuthOrchestrationOperateScope)
+    )
+      return;
+    setBusyTaskId(task.id);
+    const result = await runTaskNow({ environmentId: props.environmentId, input: { id: task.id } });
+    setBusyTaskId(null);
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      const error = squashAtomCommandFailure(result);
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Could not run the schedule",
+          description: error instanceof Error ? error.message : String(error),
+        }),
+      );
+    }
+  };
 
   const open = (search: { taskId?: ScheduledTask["id"]; threadId?: ThreadId }) => {
     props.onNavigate();
@@ -108,8 +135,28 @@ export function AssistantSchedules(props: {
                 <span className="truncate text-sm">{task.title}</span>
                 <span className="truncate text-xs text-muted-foreground">
                   {taskScheduleLine(task)}
+                  {task.enabled && task.nextRunAt !== null
+                    ? ` (${formatNextRun(task.nextRunAt, nowMs)})`
+                    : ""}
                 </span>
+                {task.lastRunStatus === "failed" ? (
+                  <span className="truncate text-xs text-destructive-foreground">
+                    Last run failed{task.lastRunError ? `: ${task.lastRunError}` : ""}
+                  </span>
+                ) : null}
               </span>
+              {task.schedule.type === "webhook" ? null : (
+                <Button
+                  type="button"
+                  size="icon-xs"
+                  variant="ghost-muted"
+                  aria-label={`Run ${task.title} now`}
+                  disabled={!canOperate || busyTaskId !== null || task.lastRunStatus === "running"}
+                  onClick={() => void runNow(task)}
+                >
+                  <PlayIcon />
+                </Button>
+              )}
               <Button
                 type="button"
                 size="icon-xs"

@@ -17,6 +17,7 @@ import {
 } from "@t3tools/contracts";
 import { useRouter } from "@tanstack/react-router";
 import { openAssistantDialog } from "../components/assistants/assistantDialogState";
+import { openAssistantWork } from "../components/assistants/assistantWorkState";
 import { useAssistantFlows } from "../components/assistants/useAssistantFlows";
 import { useThreadAssistant } from "../state/assistants";
 
@@ -334,6 +335,14 @@ export function useThreadActionMenu(input: {
         case "reset-assistant":
           if (assistantEntry) {
             await assistantFlows.reset(assistantEntry.assistant, { openAfter: true });
+          }
+          return;
+        case "assistant-work":
+          if (assistantEntry) {
+            openAssistantWork({
+              environmentId: assistantEntry.environmentId,
+              assistantId: assistantEntry.assistant.id,
+            });
           }
           return;
         case "assistant-settings":

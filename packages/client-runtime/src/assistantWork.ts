@@ -2,9 +2,11 @@ import {
   isProviderAvailable,
   type Assistant,
   type AssistantSandboxStatus,
+  type MemoryItem,
   type ModelSelection,
   type RunId,
   type ServerProvider,
+  type ThreadId,
 } from "@t3tools/contracts";
 
 import type { EnvironmentThreadShell } from "./state/models.ts";
@@ -151,11 +153,57 @@ export function assistantRetryPlan(
     : { kind: "again" };
 }
 
+/** What Retry says to the assistant, so both clients send the same words. */
+export const ASSISTANT_RETRY_TEXT = {
+  continue: "Continue where you left off.",
+  again: "That did not finish. Please try again.",
+} as const;
+
 /** The memory scopes that hold what the assistant learned: its conversation, and its project when it has one. */
 export function assistantMemoryScopeKinds(
   assistant: Pick<Assistant, "scope">,
 ): ReadonlyArray<"thread" | "project"> {
   return assistant.scope === "project" ? ["thread", "project"] : ["thread"];
+}
+
+export interface AssistantMemory {
+  readonly item: Extract<MemoryItem, { status: "active" }>;
+  /** The conversation of this assistant the memory was learned in; null when it has no thread source. */
+  readonly sourceThreadId: ThreadId | null;
+}
+
+/**
+ * The active memories an assistant's conversations are the source of, newest first. Thread-scoped
+ * memories of its current conversation (`ownThreadIds`) count even without thread evidence.
+ */
+export function assistantMemories(
+  items: ReadonlyArray<MemoryItem>,
+  assistantId: string,
+  environmentId: string,
+  ownThreadIds: ReadonlySet<string> = new Set(),
+): ReadonlyArray<AssistantMemory> {
+  const prefix = `assistant:${assistantId}:`;
+  const seen = new Set<string>();
+  const found: Array<AssistantMemory> = [];
+  for (const item of items) {
+    if (item.status !== "active" || seen.has(item.memoryId)) continue;
+    const source = item.payload.evidence.find(
+      (evidence) =>
+        evidence.sourceThread?.environmentId === environmentId &&
+        evidence.sourceThread.threadId.startsWith(prefix),
+    )?.sourceThread;
+    const own = item.scope.kind === "thread" && ownThreadIds.has(item.scope.thread.threadId);
+    if (source === undefined && !own) continue;
+    seen.add(item.memoryId);
+    found.push({
+      item,
+      sourceThreadId:
+        source?.threadId ?? (item.scope.kind === "thread" ? item.scope.thread.threadId : null),
+    });
+  }
+  return found.sort((a, b) =>
+    b.item.revision.createdAtUtc.localeCompare(a.item.revision.createdAtUtc),
+  );
 }
 
 const clock = (date: Date) =>

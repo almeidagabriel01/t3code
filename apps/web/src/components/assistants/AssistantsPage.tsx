@@ -11,6 +11,7 @@ import type { AssistantTeamId, EnvironmentId, ProjectId } from "@t3tools/contrac
 import {
   ArchiveRestoreIcon,
   ArchiveIcon,
+  BriefcaseIcon,
   MessagesSquareIcon,
   PlusIcon,
   SettingsIcon,
@@ -37,6 +38,7 @@ import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
 import { SidebarInset } from "../ui/sidebar";
 import { openAssistantDialog } from "./assistantDialogState";
+import { openAssistantWork } from "./assistantWorkState";
 import { AssistantAvatar } from "./assistantPresentation";
 import { openAssistantTeamDialog } from "./assistantTeamState";
 import { useAssistantFlows, useAssistantTeamFlows } from "./useAssistantFlows";
@@ -132,6 +134,14 @@ function AssistantCard(props: {
               onClick={() => flows.openConversation(assistant)}
             >
               Open thread
+            </Button>
+            <Button
+              size="xs"
+              variant="outline"
+              onClick={() => openAssistantWork({ environmentId, assistantId: assistant.id })}
+            >
+              <BriefcaseIcon />
+              Work
             </Button>
             <Button
               size="xs"
