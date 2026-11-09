@@ -162,6 +162,11 @@ the members; it does not run an agent by itself.
   morning status request.
 - **Archive group** keeps the chat but stops its work and takes no new messages. Restore it from the
   group's banner, the Assistants page or Settings > Assistants > Archived groups.
+- A group with messages you have not read shows a count in the sidebar and on Home. Opening the
+  chat draws a **New** line above the first one and marks the chat read once the newest message has
+  been in view. **Mark as unread** and **Mark as read** are in the group's menu. When a group finishes
+  the work of a request while you are elsewhere, you get the usual completion notification with the
+  last answer's start (web and desktop; the phone shows the count only).
 - An agent in any conversation can post a request into a group ("ask the Leadership group to…").
 
 ## Agents can create assistants

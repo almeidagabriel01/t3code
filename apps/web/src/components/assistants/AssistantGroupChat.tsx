@@ -4,6 +4,8 @@ import {
   assistantGroupAuthorName,
   assistantGroupAwaitingRoute,
   assistantGroupFeed,
+  assistantGroupLatestSeq,
+  assistantGroupNewSeq,
   assistantGroupRunningCount,
   type AssistantGroupChatState,
   type AssistantGroupFeedRow,
@@ -27,11 +29,13 @@ import {
   ArchiveRestoreIcon,
   CalendarClockIcon,
   EllipsisIcon,
+  MailIcon,
+  MailOpenIcon,
   PencilIcon,
   PlusIcon,
   ReplyIcon,
 } from "lucide-react";
-import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { Fragment, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 import { isElectron } from "../../env";
 import { cn } from "../../lib/utils";
@@ -57,6 +61,7 @@ import { openAssistantTeamDialog } from "./assistantTeamState";
 import { GroupMessageAttachments } from "./GroupAttachments";
 import { GroupComposer, MENTION_REQUIRED_COPY, type GroupSendResult } from "./GroupComposer";
 import { GroupTaskCard } from "./GroupTaskCard";
+import { useGroupReadMarker } from "./useGroupReadMarker";
 import { useAssistantTeamFlows } from "./useAssistantFlows";
 
 const MENTION_TOKEN = /(@[\p{L}\p{N}_-]+)/u;
@@ -160,6 +165,17 @@ function GroupHeader(props: {
             <CalendarClockIcon />
             Schedule in this group
           </MenuItem>
+          {(team.chat?.unreadCount ?? 0) > 0 ? (
+            <MenuItem disabled={!flows.canMarkRead} onClick={() => void flows.markRead(team)}>
+              <MailOpenIcon />
+              Mark as read
+            </MenuItem>
+          ) : (
+            <MenuItem disabled={!flows.canMarkRead} onClick={() => void flows.markUnread(team)}>
+              <MailIcon />
+              Mark as unread
+            </MenuItem>
+          )}
           <MenuSeparator />
           {archived ? (
             <MenuItem disabled={!flows.canAct} onClick={() => void flows.restore(team)}>
@@ -205,6 +221,21 @@ function repliedToName(
   if (message.replyToMessageId === null) return undefined;
   const target = chat.messages.get(message.replyToMessageId);
   return target?.assistantId == null ? undefined : assistants.get(target.assistantId)?.name;
+}
+
+function NewDivider() {
+  return (
+    <div
+      role="separator"
+      aria-label="New messages"
+      data-testid="group-new-divider"
+      className="flex items-center gap-2 text-xs font-medium text-info-foreground"
+    >
+      <span aria-hidden className="h-px flex-1 bg-info/40" />
+      New
+      <span aria-hidden className="h-px flex-1 bg-info/40" />
+    </div>
+  );
 }
 
 function FeedRow(props: {
@@ -361,6 +392,10 @@ export function AssistantGroupChat(props: {
   const scroller = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
   const anchor = useRef<{ readonly height: number; readonly top: number } | null>(null);
+  const [atBottom, setAtBottom] = useState(true);
+  // Where the "New" line goes, fixed when the chat first shows: it stays until the user leaves.
+  const [newSeq, setNewSeq] = useState<number | null | undefined>(undefined);
+  const scrolledToNew = useRef(false);
 
   const team = entries.teams.find(
     (entry) => entry.environmentId === environmentId && entry.team.id === teamId,
@@ -379,6 +414,16 @@ export function AssistantGroupChat(props: {
       : pages.reduce((state, page) => applyAssistantGroupHistory(state, page), live);
   const rows = chat === null ? [] : assistantGroupFeed(chat);
   const archived = team?.archivedAt != null;
+  if (newSeq === undefined && chat !== null && team !== undefined) {
+    setNewSeq(assistantGroupNewSeq(chat, team.chat?.readSeq ?? 0));
+  }
+  useGroupReadMarker({
+    latestSeq: chat === null ? null : assistantGroupLatestSeq(chat),
+    readSeq: team?.chat?.readSeq ?? 0,
+    atBottom,
+    enabled: team !== undefined && actions.canMarkRead,
+    markRead: (readSeq) => void actions.markRead(teamId, { readSeq }),
+  });
 
   // The feed follows new messages only while the user is at its end, and holds still while
   // an older page is added above, so what they were reading does not jump.
@@ -391,6 +436,16 @@ export function AssistantGroupChat(props: {
       anchor.current = null;
     } else if (stickToBottom.current) {
       element.scrollTop = element.scrollHeight;
+    }
+    // Open on the first unread message when it is above the fold, else stay at the end.
+    const divider = element.querySelector("[data-testid=group-new-divider]");
+    if (divider !== null && !scrolledToNew.current) {
+      scrolledToNew.current = true;
+      const gap = divider.getBoundingClientRect().top - element.getBoundingClientRect().top;
+      if (gap < 0) {
+        element.scrollTop += gap - 12;
+        stickToBottom.current = false;
+      }
     }
   });
 
@@ -486,6 +541,7 @@ export function AssistantGroupChat(props: {
             const element = event.currentTarget;
             stickToBottom.current =
               element.scrollHeight - element.scrollTop - element.clientHeight < 48;
+            setAtBottom(stickToBottom.current);
             if (element.scrollTop < 48) void loadOlder();
           }}
         >
@@ -516,27 +572,31 @@ export function AssistantGroupChat(props: {
             {chat === null
               ? null
               : rows.map((row) => (
-                  <FeedRow
-                    key={row.message.id}
-                    environmentId={environmentId}
-                    row={row}
-                    chat={chat}
-                    assistants={byId}
-                    members={members}
-                    lead={lead}
-                    canAct={actions.canAct}
-                    archived={archived}
-                    onReply={(message, name) => setReplyTo({ id: message.id, name })}
-                    onTaskAction={(task, action, ownerId) => void taskAction(task, action, ownerId)}
-                    onOpenConversation={(task) =>
-                      void navigate({
-                        to: "/$environmentId/$threadId",
-                        params: buildThreadRouteParams(
-                          scopeThreadRef(environmentId, task.threadId),
-                        ),
-                      })
-                    }
-                  />
+                  <Fragment key={row.message.id}>
+                    {row.message.seq === newSeq ? <NewDivider /> : null}
+                    <FeedRow
+                      environmentId={environmentId}
+                      row={row}
+                      chat={chat}
+                      assistants={byId}
+                      members={members}
+                      lead={lead}
+                      canAct={actions.canAct}
+                      archived={archived}
+                      onReply={(message, name) => setReplyTo({ id: message.id, name })}
+                      onTaskAction={(task, action, ownerId) =>
+                        void taskAction(task, action, ownerId)
+                      }
+                      onOpenConversation={(task) =>
+                        void navigate({
+                          to: "/$environmentId/$threadId",
+                          params: buildThreadRouteParams(
+                            scopeThreadRef(environmentId, task.threadId),
+                          ),
+                        })
+                      }
+                    />
+                  </Fragment>
                 ))}
           </div>
         </div>

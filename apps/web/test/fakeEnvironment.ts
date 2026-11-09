@@ -630,6 +630,7 @@ export const fakeGroupChat = {
   } | null,
   posts: [] as Array<Record<string, unknown>>,
   taskActions: [] as Array<Record<string, unknown>>,
+  reads: [] as Array<Record<string, unknown>>,
   histories: [] as Array<Record<string, unknown>>,
 };
 const groupChatSubscribers = new Set<Queue.Queue<AssistantGroupsEvent>>();
@@ -673,6 +674,10 @@ handlers[WS_METHODS.assistantGroupsPost] = (input: Record<string, unknown>) => {
     text: String(input.text),
   } as AssistantGroupMessage;
   return Effect.succeed({ message, tasks: [] });
+};
+handlers[WS_METHODS.assistantGroupsMarkRead] = (input: { readonly readSeq?: number }) => {
+  fakeGroupChat.reads.push(input);
+  return Effect.succeed({ readSeq: input.readSeq ?? 0 });
 };
 handlers[WS_METHODS.assistantGroupsTaskAction] = (input: { readonly taskId: string }) => {
   fakeGroupChat.taskActions.push(input);
