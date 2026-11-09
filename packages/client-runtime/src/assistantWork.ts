@@ -195,19 +195,32 @@ export function assistantMemories(
   );
 }
 
-const clock = (date: Date) =>
-  date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+const CLOCK = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
+const WEEKDAY = new Intl.DateTimeFormat(undefined, { weekday: "short" });
+const MONTH_DAY = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" });
+const LOCAL_DAY = new Intl.DateTimeFormat("en-US", {
+  calendar: "gregory",
+  numberingSystem: "latn",
+  year: "numeric",
+  month: "numeric",
+  day: "numeric",
+});
+
+/** The local calendar day of an instant, as a day count. */
+function localDayNumber(ms: number): number {
+  const part = (type: string) =>
+    Number(LOCAL_DAY.formatToParts(ms).find((entry) => entry.type === type)?.value);
+  return Date.UTC(part("year"), part("month") - 1, part("day")) / 86_400_000;
+}
 
 /** "Today 9:00 AM", "Tomorrow 9:00 AM", "Wed 9:00 AM" within a week, else "Nov 20, 9:00 AM", in local time. */
 export function formatNextRun(iso: string, nowMs: number): string {
-  const at = new Date(iso);
-  if (Number.isNaN(at.getTime())) return "";
-  const startOfDay = (date: Date) =>
-    new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
-  const days = Math.round((startOfDay(at) - startOfDay(new Date(nowMs))) / 86_400_000);
-  if (days === 0) return `Today ${clock(at)}`;
-  if (days === 1) return `Tomorrow ${clock(at)}`;
-  if (days > 1 && days < 7)
-    return `${at.toLocaleDateString(undefined, { weekday: "short" })} ${clock(at)}`;
-  return `${at.toLocaleDateString(undefined, { month: "short", day: "numeric" })}, ${clock(at)}`;
+  const atMs = Date.parse(iso);
+  if (Number.isNaN(atMs)) return "";
+  const days = localDayNumber(atMs) - localDayNumber(nowMs);
+  const time = CLOCK.format(atMs);
+  if (days === 0) return `Today ${time}`;
+  if (days === 1) return `Tomorrow ${time}`;
+  if (days > 1 && days < 7) return `${WEEKDAY.format(atMs)} ${time}`;
+  return `${MONTH_DAY.format(atMs)}, ${time}`;
 }

@@ -1,4 +1,5 @@
 import { RunId, type ServerProvider } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -218,13 +219,29 @@ describe("assistantMemories", () => {
 });
 
 describe("formatNextRun", () => {
-  const now = new Date(2026, 10, 9, 10, 0).getTime();
-  const at = (day: number, hour: number) => new Date(2026, 10, day, hour, 30).toISOString();
+  // Whole days apart keep the same local time, so the day words hold in every time zone.
+  const now = Date.UTC(2026, 10, 9, 12, 0);
+  const DAY = 86_400_000;
+  const iso = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(ms));
+  const clock = (ms: number) =>
+    new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(ms);
   it("says today, tomorrow, a weekday within a week, then the date", () => {
-    expect(formatNextRun(at(9, 14), now)).toMatch(/^Today /);
-    expect(formatNextRun(at(10, 9), now)).toMatch(/^Tomorrow /);
-    expect(formatNextRun(at(12, 9), now)).toMatch(/^Thu /);
-    expect(formatNextRun(at(20, 9), now)).toMatch(/^Nov 20, /);
+    const weekday = (ms: number) =>
+      new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(ms);
+    const monthDay = (ms: number) =>
+      new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(ms);
+    expect(formatNextRun(iso(now + 60_000), now)).toBe(`Today ${clock(now + 60_000)}`);
+    expect(formatNextRun(iso(now + DAY), now)).toBe(`Tomorrow ${clock(now + DAY)}`);
+    expect(formatNextRun(iso(now + 3 * DAY), now)).toBe(
+      `${weekday(now + 3 * DAY)} ${clock(now + 3 * DAY)}`,
+    );
+    expect(formatNextRun(iso(now + 11 * DAY), now)).toBe(
+      `${monthDay(now + 11 * DAY)}, ${clock(now + 11 * DAY)}`,
+    );
+    // The past is shown by its date, not as "Today".
+    expect(formatNextRun(iso(now - 3 * DAY), now)).toBe(
+      `${monthDay(now - 3 * DAY)}, ${clock(now - 3 * DAY)}`,
+    );
   });
   it("is empty for a value that is not a date", () => {
     expect(formatNextRun("soon", now)).toBe("");
