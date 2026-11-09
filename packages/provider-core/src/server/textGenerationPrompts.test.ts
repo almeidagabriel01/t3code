@@ -4,7 +4,10 @@ import { describe, expect, it } from "vite-plus/test";
 import * as Effect from "effect/Effect";
 
 import { fromRunner } from "./textGenerationOperations.ts";
-import { buildAssistantGroupRoutingPrompt } from "./textGenerationPrompts.ts";
+import {
+  buildAssistantGroupRoutingPrompt,
+  buildAssistantGroupSummaryPrompt,
+} from "./textGenerationPrompts.ts";
 import { normalizeCliError } from "./textGenerationUtils.ts";
 
 describe("normalizeCliError", () => {
@@ -86,6 +89,34 @@ describe("fromRunner routing", () => {
       expect(requests).toEqual([
         expect.objectContaining({ operation: "routeAssistantGroup", cwd: "/tmp" }),
       ]);
+    }),
+  );
+
+  effectIt.effect("offers the rolling summary with routing, and folds the old summary in", () =>
+    Effect.gen(function* () {
+      const requests: Array<{ operation: string; prompt: string }> = [];
+      const run = ((request: { operation: string; prompt: string }) =>
+        Effect.sync(() => {
+          requests.push(request);
+          return { summary: "S" };
+        })) as never;
+      expect(fromRunner("Plain", run).summarizeAssistantGroup).toBeUndefined();
+      const generation = fromRunner("Routing", run, { routeAssistantGroup: true });
+      const result = yield* generation.summarizeAssistantGroup!({
+        cwd: "/tmp",
+        modelSelection: { instanceId: "i", model: "m" } as never,
+        groupName: "G",
+        previousSummary: "Earlier: budget 5k.",
+        messages: [{ from: "Ada", text: "ship it" }],
+      });
+      expect(result).toEqual({ summary: "S" });
+      expect(requests[0]!.operation).toBe("summarizeAssistantGroup");
+      expect(requests[0]!.prompt).toContain("Earlier: budget 5k.");
+      expect(requests[0]!.prompt).toContain("Ada: ship it");
+      expect(
+        buildAssistantGroupSummaryPrompt({ groupName: "G", previousSummary: null, messages: [] })
+          .prompt,
+      ).toContain("Previous summary:\n(none)");
     }),
   );
 });

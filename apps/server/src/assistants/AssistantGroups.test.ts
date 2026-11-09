@@ -27,6 +27,7 @@ import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import { TextGeneration } from "../textGeneration/TextGeneration.ts";
@@ -70,6 +71,8 @@ interface Options {
   readonly lead?: string | null;
   /** Provider instances whose text generation offers routing. */
   readonly routable?: ReadonlyArray<ProviderInstanceId>;
+  /** What the summary call answers; "fail" errors it and "unsupported" leaves the operation out. */
+  readonly summarize?: (call: number) => string | "fail" | "unsupported";
   readonly route?: (input: {
     readonly members: ReadonlyArray<{ readonly id: string }>;
   }) => ReadonlyArray<string> | "fail";
@@ -103,6 +106,10 @@ const harness = (options: Options = {}) => {
   }> = [];
   const deletedTeams: string[] = [];
   const routeCalls: unknown[] = [];
+  const summaryCalls: Array<{
+    previousSummary: string | null;
+    messages: ReadonlyArray<{ from: string; text: string }>;
+  }> = [];
   const state = { failSend: false, failLaunch: false, deletedSignal: undefined as unknown };
   // Built with the layer, so each test gets its own.
   const live = {} as {
@@ -216,7 +223,19 @@ const harness = (options: Options = {}) => {
           ? Effect.fail(new Boom())
           : Effect.succeed({ assistantIds: picked });
       }) as never,
+      ...(options.summarize?.(0) === "unsupported"
+        ? {}
+        : {
+            summarizeAssistantGroup: ((input: (typeof summaryCalls)[number]) => {
+              summaryCalls.push(input);
+              const answer = options.summarize?.(summaryCalls.length) ?? "A summary.";
+              return answer === "fail"
+                ? Effect.fail(new Boom())
+                : Effect.succeed({ summary: answer });
+            }) as never,
+          }),
     }),
+    ServerSettings.layerTest(),
   );
   const base = Layer.mergeAll(
     NodeCrypto.layer,
@@ -308,6 +327,7 @@ const harness = (options: Options = {}) => {
     live,
     deletedTeams,
     routeCalls,
+    summaryCalls,
     state,
     finish,
     tasks,
@@ -590,6 +610,91 @@ it.effect("the packet carries what the member has not seen, once", () => {
     yield* h.finish(2, "completed", "ok three");
     yield* groups.post({ teamId: TEAM, text: "@ada fourth" }, h.user);
     assert.notInclude(h.sent[3]!.text, "second");
+  }).pipe(Effect.provide(h.layer));
+});
+
+const bulk = (letter: string) => `@ada ${letter.repeat(Groups.SUMMARY_TRIGGER_CHARS / 2 + 100)}`;
+
+it.effect("a long chat is summarized incrementally and the next packet carries the summary", () => {
+  const h = harness({ summarize: (call) => `Summary ${call}.` });
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    yield* groups.post({ teamId: TEAM, text: "@ada short" }, h.user);
+    yield* groups.idle;
+    assert.lengthOf(h.summaryCalls, 0);
+    yield* groups.post({ teamId: TEAM, text: bulk("a") }, h.user);
+    yield* groups.post({ teamId: TEAM, text: bulk("b") }, h.user);
+    yield* groups.idle;
+    assert.lengthOf(h.summaryCalls, 1);
+    assert.isNull(h.summaryCalls[0]!.previousSummary);
+    assert.lengthOf(h.summaryCalls[0]!.messages, 3);
+    yield* h.finish(0, "completed", "ok");
+    yield* h.finish(1, "completed", "ok");
+    yield* groups.post({ teamId: TEAM, text: "@beto hello" }, h.user);
+    const packet = h.sent.find((message) => message.threadId === betoThread)!.text;
+    assert.include(packet, "Summary of earlier chat:\nSummary 1.");
+    yield* groups.post({ teamId: TEAM, text: bulk("c") }, h.user);
+    yield* groups.post({ teamId: TEAM, text: bulk("d") }, h.user);
+    yield* groups.idle;
+    // The second pass folds in only what came after the first.
+    assert.lengthOf(h.summaryCalls, 2);
+    assert.equal(h.summaryCalls[1]!.previousSummary, "Summary 1.");
+    assert.deepEqual(
+      h.summaryCalls[1]!.messages.map((message) => message.text.slice(0, 7)),
+      ["ok", "ok", "@beto h", "@ada cc", "@ada dd"],
+    );
+    const rows = yield* h.sqlRows<{ summary: string; through_seq: number }>(
+      "SELECT * FROM assistant_group_summaries",
+    );
+    assert.deepEqual(
+      rows.map((row) => row.summary),
+      ["Summary 2."],
+    );
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("a summary that fails, is empty or is unsupported never touches the tasks", () => {
+  const failing = harness({ summarize: () => "fail" });
+  const empty = harness({ summarize: () => "  " });
+  const unsupported = harness({ summarize: () => "unsupported" });
+  const run = (h: ReturnType<typeof harness>) =>
+    Effect.gen(function* () {
+      const groups = yield* h.setup;
+      yield* groups.post({ teamId: TEAM, text: bulk("a") }, h.user);
+      yield* groups.post({ teamId: TEAM, text: bulk("b") }, h.user);
+      yield* groups.idle;
+      assert.isAtLeast(h.sent.length, 1);
+      assert.notInclude(h.sent.at(-1)!.text, "Summary of earlier chat");
+      assert.lengthOf(yield* h.sqlRows("SELECT * FROM assistant_group_summaries"), 0);
+    }).pipe(Effect.provide(h.layer));
+  return Effect.gen(function* () {
+    yield* run(failing);
+    // A failed attempt waits for the chat to move on before it asks again.
+    assert.lengthOf(failing.summaryCalls, 1);
+    yield* run(empty);
+    yield* run(unsupported);
+  });
+});
+
+it.effect("a task also carries the older messages it names by #seq or replies to", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    yield* groups.post({ teamId: TEAM, text: "@ada the budget is 5k" }, h.user);
+    yield* h.finish(0, "completed", "noted");
+    yield* groups.post({ teamId: TEAM, text: "@ada what about #1 and #99?" }, h.user);
+    assert.include(
+      h.sent[1]!.text,
+      "Earlier messages this task refers to:\n[#1 user] @ada the budget is 5k",
+    );
+    assert.notInclude(h.sent[1]!.text, "#99 ");
+    yield* h.finish(1, "completed", "yes");
+    const second = (yield* h.messages)[2]!;
+    yield* groups.post(
+      { teamId: TEAM, text: "@ada and this?", replyToMessageId: second.message_id as never },
+      h.user,
+    );
+    assert.include(h.sent[2]!.text, "[#3 user] @ada what about #1");
   }).pipe(Effect.provide(h.layer));
 });
 

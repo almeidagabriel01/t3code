@@ -508,6 +508,16 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
     )
   `;
 
+  // A group's rolling chat summary, and the last message number it covers.
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS assistant_group_summaries (
+      team_id TEXT PRIMARY KEY,
+      summary TEXT NOT NULL,
+      through_seq INTEGER NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `;
+
   // The destination's memory ceiling, captured when a person or agent saved the task.
   const scheduledColumns = yield* sql<{
     readonly name: string;

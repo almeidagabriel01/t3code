@@ -2,6 +2,8 @@ import { assert, it } from "@effect/vitest";
 
 import {
   PACKET_CHAT_CHARS,
+  PACKET_QUOTED_CHARS,
+  PACKET_SUMMARY_CHARS,
   chatNews,
   childResultsText,
   groupTaskPacket,
@@ -18,6 +20,8 @@ const base: PacketInput = {
   self: ada,
   members: [ada, beto],
   news: [],
+  summary: null,
+  quoted: [],
   from: "the user",
   instruction: "Close the books",
   followup: null,
@@ -63,14 +67,14 @@ it.each([
 });
 
 it("keeps the newest chat lines when they do not all fit and says what was left out", () => {
-  const news = Array.from({ length: 6 }, (_, index) => ({
+  const news = Array.from({ length: 10 }, (_, index) => ({
     seq: index + 1,
     from: "user",
     text: `${index + 1}`.repeat(3_900),
   }));
   const lines = chatNews(news).split("\n");
   assert.include(lines[0], "Older messages left out");
-  assert.isTrue(lines.at(-1)!.startsWith("[#6 user]"));
+  assert.isTrue(lines.at(-1)!.startsWith("[#10 user]"));
   assert.isAtMost(lines.slice(1).join("\n").length, PACKET_CHAT_CHARS + 100);
   assert.strictEqual(
     chatNews([{ seq: 1, from: "Beto", text: "x".repeat(5_000) }]).length < 4_100,
@@ -78,4 +82,37 @@ it("keeps the newest chat lines when they do not all fit and says what was left 
   );
   assert.strictEqual(chatNews([]), "");
   assert.include(childResultsText([{ owner: "Cy", status: "failed", text: "" }]), "(no answer)");
+});
+
+it("puts the summary first, cut to its budget, and older quoted messages before the news", () => {
+  const packet = groupTaskPacket({
+    ...base,
+    summary: `  ${"s".repeat(PACKET_SUMMARY_CHARS + 500)}  `,
+    news: [{ seq: 9, from: "user", text: "latest" }],
+    quoted: [
+      { seq: 2, from: "Beto", text: "the budget is 5k" },
+      { seq: 9, from: "user", text: "latest" },
+    ],
+  });
+  const at = (text: string) => packet.indexOf(text);
+  assert.isBelow(at("Summary of earlier chat:"), at("Earlier messages this task refers to:"));
+  assert.isBelow(at("Earlier messages this task refers to:"), at("New in the group chat"));
+  assert.include(packet, "[#2 Beto] the budget is 5k");
+  // A quoted message already in the news is not shown twice.
+  assert.strictEqual(packet.split("[#9 user] latest").length, 2);
+  assert.isBelow(packet.length, PACKET_SUMMARY_CHARS + 1_500);
+  assert.notInclude(groupTaskPacket({ ...base, summary: "   " }), "Summary of earlier chat");
+  assert.notInclude(groupTaskPacket(base), "Earlier messages this task");
+});
+
+it("quoted messages are kept newest first within their own budget", () => {
+  const quoted = Array.from({ length: 4 }, (_, index) => ({
+    seq: index + 1,
+    from: "Cy",
+    text: `${index + 1}`.repeat(2_500),
+  }));
+  const packet = groupTaskPacket({ ...base, quoted });
+  assert.include(packet, "[#4 Cy]");
+  assert.notInclude(packet, "[#1 Cy]");
+  assert.isAtMost(packet.split("[#").slice(1).join("[#").length, PACKET_QUOTED_CHARS + 600);
 });

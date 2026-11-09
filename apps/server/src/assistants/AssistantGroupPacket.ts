@@ -1,7 +1,13 @@
 import type { AssistantGroupTaskKind } from "@t3tools/contracts";
 
-/** Newest chat messages first until this many characters are spent. */
-export const PACKET_CHAT_CHARS = 12_000;
+/**
+ * A packet's chat budget is about 32k characters: the newest unseen messages first until
+ * PACKET_CHAT_CHARS are spent, plus at most PACKET_SUMMARY_CHARS of rolling summary and
+ * PACKET_QUOTED_CHARS of older messages the task points at.
+ */
+export const PACKET_CHAT_CHARS = 24_000;
+export const PACKET_SUMMARY_CHARS = 4_000;
+export const PACKET_QUOTED_CHARS = 4_000;
 const PACKET_MESSAGE_CHARS = 4_000;
 
 export interface PacketMember {
@@ -25,6 +31,10 @@ export interface PacketInput {
   readonly members: ReadonlyArray<PacketMember>;
   /** Oldest first. */
   readonly news: ReadonlyArray<PacketMessage & { readonly text: string }>;
+  /** The rolling summary of the earlier chat, when the group has one. */
+  readonly summary: string | null;
+  /** Older messages the task quotes or replies to; any already in `news` are skipped. */
+  readonly quoted: ReadonlyArray<PacketMessage & { readonly text: string }>;
   /** "the user", "Ada (a teammate, not the user)"; null when the instruction names its sender. */
   readonly from: string | null;
   readonly instruction: string;
@@ -48,20 +58,27 @@ const TOOLS =
 const REPLY_TOOLS =
   "This task only answers the question. Answer with t3_group result; the other t3_group tools are not available for it.";
 
-/** The chat lines a member has not seen, newest kept first when they do not all fit. */
-export function chatNews(news: PacketInput["news"]): string {
+const line = (message: PacketMessage & { readonly text: string }) =>
+  `[#${message.seq} ${message.from}] ${clip(message.text, PACKET_MESSAGE_CHARS)}`;
+
+/** The newest messages that fit the budget, oldest first. */
+function fit(messages: PacketInput["news"], budget: number) {
+  const kept: Array<PacketInput["news"][number]> = [];
   const lines: string[] = [];
   let used = 0;
-  let dropped = false;
-  for (const message of news.toReversed()) {
-    const line = `[#${message.seq} ${message.from}] ${clip(message.text, PACKET_MESSAGE_CHARS)}`;
-    if (used + line.length > PACKET_CHAT_CHARS && lines.length > 0) {
-      dropped = true;
-      break;
-    }
-    used += line.length;
-    lines.unshift(line);
+  for (const message of messages.toReversed()) {
+    const text = line(message);
+    if (used + text.length > budget && lines.length > 0) break;
+    used += text.length;
+    kept.unshift(message);
+    lines.unshift(text);
   }
+  return { kept, lines, dropped: kept.length < messages.length };
+}
+
+/** The chat lines a member has not seen, newest kept first when they do not all fit. */
+export function chatNews(news: PacketInput["news"]): string {
+  const { lines, dropped } = fit(news, PACKET_CHAT_CHARS);
   return [
     ...(dropped ? ["(Older messages left out; t3_group history has the rest.)"] : []),
     ...lines,
@@ -71,9 +88,17 @@ export function chatNews(news: PacketInput["news"]): string {
 /** The text a member's task arrives as. */
 export function groupTaskPacket(input: PacketInput): string {
   const news = chatNews(input.news);
+  const shown = new Set(fit(input.news, PACKET_CHAT_CHARS).kept.map((message) => message.seq));
+  const quoted = fit(
+    input.quoted.filter((message) => !shown.has(message.seq)),
+    PACKET_QUOTED_CHARS,
+  ).lines;
+  const summary = input.summary?.trim() ?? "";
   return [
     `<t3_group_task group="${escapeAttribute(input.group)}" task="${escapeAttribute(input.taskId)}" kind="${input.kind}">`,
     `You are ${input.self.name} (@${input.self.handle}) in the group "${input.group}". Members: ${input.members.map(describe).join(", ")}.`,
+    ...(summary === "" ? [] : ["Summary of earlier chat:", clip(summary, PACKET_SUMMARY_CHARS)]),
+    ...(quoted.length === 0 ? [] : ["Earlier messages this task refers to:", ...quoted]),
     ...(news === "" ? [] : ["New in the group chat since your last task:", news]),
     ...(input.followup === null ? [] : [input.followup]),
     `Your task${input.from === null ? "" : `, from ${input.from}`}: ${input.instruction}`,

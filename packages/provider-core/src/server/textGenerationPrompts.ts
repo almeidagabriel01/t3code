@@ -538,3 +538,30 @@ export function buildAssistantGroupRoutingPrompt(input: AssistantGroupRoutingPro
   const outputSchema = Schema.Struct({ assistantIds: Schema.Array(Schema.String) });
   return { prompt, outputSchema };
 }
+
+export interface AssistantGroupSummaryPromptInput {
+  readonly groupName: string;
+  readonly previousSummary: string | null;
+  /** Oldest first. */
+  readonly messages: ReadonlyArray<{ readonly from: string; readonly text: string }>;
+}
+
+/** Folds new chat into the group's running summary. */
+export function buildAssistantGroupSummaryPrompt(input: AssistantGroupSummaryPromptInput) {
+  const prompt = [
+    `You keep a rolling summary of the group chat "${input.groupName}" so members who missed it can catch up.`,
+    "Return a JSON object with one key: summary, plain text under 250 words.",
+    "Rules:",
+    "- merge the previous summary with the new messages; drop what no longer matters",
+    "- keep decisions, open questions, who owns what, and concrete facts (names, numbers, dates)",
+    "- no greetings, no filler, no quotes of whole messages",
+    "",
+    "Previous summary:",
+    input.previousSummary === null ? "(none)" : limitSection(input.previousSummary, 4_000),
+    "",
+    "New messages:",
+    ...input.messages.map((message) => `${message.from}: ${limitSection(message.text, 2_000)}`),
+  ].join("\n");
+  const outputSchema = Schema.Struct({ summary: Schema.String });
+  return { prompt, outputSchema };
+}

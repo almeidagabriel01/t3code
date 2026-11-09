@@ -44,6 +44,7 @@ const OpenCodeTextGenerationOperation = Schema.Literals([
   "generateThreadTitle",
   "generateReviewGuide",
   "routeAssistantGroup",
+  "summarizeAssistantGroup",
 ]);
 
 const openCodeTextGenerationErrorContext = {

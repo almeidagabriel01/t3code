@@ -120,7 +120,25 @@ export interface AssistantGroupRoutingResult {
   readonly assistantIds: ReadonlyArray<string>;
 }
 
+export interface AssistantGroupSummaryInput {
+  readonly cwd: string;
+  readonly modelSelection: ModelSelection;
+  readonly groupName: string;
+  /** The rolling summary so far; null for the first one. */
+  readonly previousSummary: string | null;
+  /** Oldest first: what was said since that summary. */
+  readonly messages: ReadonlyArray<{ readonly from: string; readonly text: string }>;
+}
+
+export interface AssistantGroupSummaryResult {
+  readonly summary: string;
+}
+
 export interface ProviderTextGeneration {
+  /** Folds new group chat into a rolling summary; offered with `routeAssistantGroup`. */
+  readonly summarizeAssistantGroup?: (
+    input: AssistantGroupSummaryInput,
+  ) => Effect.Effect<AssistantGroupSummaryResult, TextGenerationError>;
   /** Which members of an assistant group a message is for; only some providers can route. */
   readonly routeAssistantGroup?: (
     input: AssistantGroupRoutingInput,

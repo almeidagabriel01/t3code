@@ -57,12 +57,14 @@ import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.t
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import { forkParked } from "../serverActivation.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { TextGeneration } from "../textGeneration/TextGeneration.ts";
 import { AssistantGroupGate } from "./AssistantGroupGate.ts";
 import {
   childResultsText,
   groupTaskPacket,
   handOverText,
+  PACKET_SUMMARY_CHARS,
   type PacketMember,
 } from "./AssistantGroupPacket.ts";
 import { AssistantService } from "./AssistantService.ts";
@@ -93,6 +95,13 @@ const HISTORY_PAGE_CHARS = 24_000;
 const HISTORY_MESSAGE_CHARS = 16_000;
 const RESULT_MAX_CHARS = 20_000;
 const ROUTING_HISTORY_MESSAGES = 10;
+/** The chat grows past this many unsummarized characters, and the summary is refreshed. */
+export const SUMMARY_TRIGGER_CHARS = 16_000;
+/** What one summary call reads of the new messages, newest first. */
+const SUMMARY_INPUT_CHARS = 24_000;
+const SUMMARY_MESSAGE_CHARS = 2_000;
+/** Most older messages a task's #seq mentions pull into its packet. */
+const QUOTED_MESSAGES = 8;
 
 /** Waiting for a slot or a run, or running: work the owner is still on. */
 const ACTIVE: ReadonlyArray<AssistantGroupTaskStatus> = ["queued", "running", "waiting"];
@@ -291,6 +300,7 @@ const make = Effect.gen(function* () {
   const registry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
   const textGeneration = yield* TextGeneration;
   const config = yield* ServerConfig.ServerConfig;
+  const serverSettings = yield* ServerSettings.ServerSettingsService;
   const lock = yield* Semaphore.make(1);
   const events = yield* PubSub.unbounded<{
     readonly teamId: string;
@@ -298,6 +308,9 @@ const make = Effect.gen(function* () {
   }>();
   yield* Effect.addFinalizer(() => PubSub.shutdown(events));
   const routing = yield* FiberSet.make<void, never>();
+  /** Groups being summarized now, and the newest message each attempt covered. */
+  const summarizing = new Set<string>();
+  const summaryTried = new Map<string, number>();
 
   const nowIso = DateTime.now.pipe(Effect.map(DateTime.formatIso));
   const storage = <A, R>(self: Effect.Effect<A, SqlError | AssistantError, R>) =>
@@ -690,6 +703,20 @@ const make = Effect.gen(function* () {
         : parent === undefined
           ? null
           : `${yield* nameOf(parent.owner_id)} (a teammate, not the user)`;
+    const summary =
+      (yield* sql<{ readonly summary: string }>`
+        SELECT summary FROM assistant_group_summaries WHERE team_id = ${team.id}`)[0]?.summary ??
+      null;
+    const replyTarget = (yield* getMessage(task.request_message_id))?.reply_to ?? "";
+    const mentioned = [...task.instruction.matchAll(/#(\d+)/g)]
+      .map((match) => Number(match[1]))
+      .slice(0, QUOTED_MESSAGES);
+    const quoted = yield* sql<MessageRow>`
+      SELECT * FROM assistant_group_messages
+      WHERE team_id = ${team.id} AND kind = 'message'
+        AND message_id <> ${task.request_message_id}
+        AND (seq IN ${sql.in(mentioned.length === 0 ? [-1] : mentioned)} OR message_id = ${replyTarget})
+      ORDER BY seq ASC`;
     const packet = groupTaskPacket({
       group: team.name,
       taskId: task.task_id,
@@ -697,6 +724,8 @@ const make = Effect.gen(function* () {
       self: member(owner),
       members: members.map(member),
       news: chat.map((row) => ({ seq: row.seq, from: labelOf(row, names), text: row.text })),
+      summary,
+      quoted: quoted.map((row) => ({ seq: row.seq, from: labelOf(row, names), text: row.text })),
       from,
       instruction: task.instruction,
       followup: task.followup,
@@ -733,10 +762,76 @@ const make = Effect.gen(function* () {
     return true;
   });
 
+  /**
+   * Folds the chat since the last summary into a new one once enough has piled up. A failure or a
+   * provider without the operation leaves the old summary (or none) and costs the tasks nothing.
+   */
+  const summarize = Effect.fn("AssistantGroups.summarize")(function* (teamId: string) {
+    if (summarizing.has(teamId)) return;
+    summarizing.add(teamId);
+    yield* Effect.gen(function* () {
+      const team = yield* loadTeam(teamId);
+      if (team.archivedAt !== null) return;
+      const through =
+        (yield* sql<{ readonly through_seq: number }>`
+          SELECT through_seq FROM assistant_group_summaries WHERE team_id = ${teamId}`)[0]
+          ?.through_seq ?? 0;
+      const stats = (yield* sql<{ readonly chars: number | null; readonly top: number | null }>`
+        SELECT SUM(LENGTH(text)) AS chars, MAX(seq) AS top FROM assistant_group_messages
+        WHERE team_id = ${teamId} AND seq > ${through} AND kind = 'message'`)[0];
+      const top = stats?.top ?? 0;
+      // Retry a failed attempt only once the chat has moved on.
+      if ((stats?.chars ?? 0) < SUMMARY_TRIGGER_CHARS || top <= (summaryTried.get(teamId) ?? 0)) {
+        return;
+      }
+      summaryTried.set(teamId, top);
+      const previous =
+        (yield* sql<{ readonly summary: string }>`
+          SELECT summary FROM assistant_group_summaries WHERE team_id = ${teamId}`)[0]?.summary ??
+        null;
+      const fresh = yield* sql<MessageRow>`
+        SELECT * FROM assistant_group_messages
+        WHERE team_id = ${teamId} AND seq > ${through} AND seq <= ${top} AND kind = 'message'
+        ORDER BY seq DESC`;
+      const names = new Map(
+        (yield* activeMembers(team)).map((row) => [row.assistant_id, row.name]),
+      );
+      const read: Array<{ readonly from: string; readonly text: string }> = [];
+      let used = 0;
+      for (const row of fresh) {
+        const text = clip(row.text, SUMMARY_MESSAGE_CHARS);
+        if (used + text.length > SUMMARY_INPUT_CHARS && read.length > 0) break;
+        used += text.length;
+        read.unshift({ from: labelOf(row, names), text });
+      }
+      const summarizeCall = textGeneration.summarizeAssistantGroup;
+      if (summarizeCall === undefined) return;
+      const { textGenerationModelSelection } = yield* serverSettings.getSettings;
+      const made = yield* summarizeCall({
+        cwd: config.baseDir,
+        modelSelection: textGenerationModelSelection,
+        groupName: team.name,
+        previousSummary: previous,
+        messages: read,
+      });
+      const summary = clip(made.summary.trim(), PACKET_SUMMARY_CHARS);
+      if (summary === "") return;
+      // A group deleted meanwhile keeps no summary behind.
+      yield* loadTeam(teamId);
+      yield* sql`
+        INSERT INTO assistant_group_summaries (team_id, summary, through_seq, updated_at)
+        VALUES (${teamId}, ${summary}, ${top}, ${yield* nowIso})
+        ON CONFLICT (team_id) DO UPDATE SET summary = excluded.summary,
+          through_seq = excluded.through_seq, updated_at = excluded.updated_at
+        WHERE excluded.through_seq > through_seq`;
+    }).pipe(Effect.ensuring(Effect.sync(() => void summarizing.delete(teamId))));
+  });
+
   /** Starts queued tasks, oldest first, while the group has free slots. */
   const pump = Effect.fn("AssistantGroups.pump")(function* (teamId: string) {
     const team = yield* loadTeam(teamId).pipe(Effect.orElseSucceed(() => undefined));
     if (team === undefined || team.archivedAt !== null) return;
+    yield* FiberSet.run(routing, summarize(teamId).pipe(quietly("summary")));
     const live = yield* sql<TaskRow>`
       SELECT * FROM assistant_group_tasks
       WHERE team_id = ${teamId} AND status IN ('queued', 'running')
@@ -1567,6 +1662,7 @@ const make = Effect.gen(function* () {
     yield* sql`DELETE FROM assistant_group_messages WHERE team_id = ${teamId}`;
     yield* sql`DELETE FROM assistant_group_tasks WHERE team_id = ${teamId}`;
     yield* sql`DELETE FROM assistant_group_threads WHERE team_id = ${teamId}`;
+    yield* sql`DELETE FROM assistant_group_summaries WHERE team_id = ${teamId}`;
   });
 
   /** A deleted assistant: its group threads go with it; its tasks wait for a new owner. */

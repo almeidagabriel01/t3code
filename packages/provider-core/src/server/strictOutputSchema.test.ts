@@ -8,6 +8,7 @@ import { strictOutputSchemaViolations } from "./strictOutputSchema.ts";
 import type { Operation } from "./textGenerationOperations.ts";
 import {
   buildAssistantGroupRoutingPrompt,
+  buildAssistantGroupSummaryPrompt,
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
   buildPrContentPrompt,
@@ -109,6 +110,10 @@ const operationSchemas = Effect.gen(function* () {
         recentMessages: [],
         request: "Hi",
       }).outputSchema,
+    ],
+    summarizeAssistantGroup: [
+      buildAssistantGroupSummaryPrompt({ groupName: "Team", previousSummary: null, messages: [] })
+        .outputSchema,
     ],
     generateMemorySummary: [(yield* buildMemorySummaryPrompt(summaryInput)).outputSchema],
     resolveMemoryConflict: [(yield* buildMemoryConflictPrompt(conflictInput)).outputSchema],
