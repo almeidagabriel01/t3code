@@ -304,6 +304,18 @@ describe("composer helpers", () => {
     );
     assert.strictEqual(assistantGroupMarkdownMentions("**bold** text", [ada]), "**bold** text");
     assert.strictEqual(assistantGroupMarkdownMentions("no mention", [ada]), "no mention");
+    // Links and autolinks stay intact; a mention inside one would nest links.
+    for (const kept of [
+      "[ask @ada](https://x.dev)",
+      "<https://x.dev/@ada>",
+      "see https://x.dev/@ada now",
+    ]) {
+      assert.strictEqual(assistantGroupMarkdownMentions(kept, [ada]), kept);
+    }
+    assert.strictEqual(
+      assistantGroupMarkdownMentions("[docs](https://x.dev) for @ada", [ada]),
+      `[docs](https://x.dev) for ${m("@ada")}`,
+    );
   });
 
   it("offers matching members and everyone, and inserts the handle with a space", () => {

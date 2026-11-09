@@ -198,7 +198,8 @@ export function assistantGroupTextParts(
   return parts;
 }
 
-const INLINE_CODE = /(`+)[\s\S]*?\1/g;
+// Spans a mention link must not enter: code, links (a link inside one would nest), autolinks, bare URLs.
+const PROTECTED_SPAN = /(`+)[\s\S]*?\1|!?\[[^\]]*\]\([^)]*\)|<[^>\s]+>|https?:\/\/\S+/g;
 const CODE_FENCE = /^ {0,3}(`{3,}|~{3,})/;
 
 /** Scheme of the link a member mention becomes; clients style it and never navigate. */
@@ -230,7 +231,7 @@ export function assistantGroupMarkdownMentions(
       }
       let out = "";
       let at = 0;
-      for (const code of line.matchAll(INLINE_CODE)) {
+      for (const code of line.matchAll(PROTECTED_SPAN)) {
         out += link(line.slice(at, code.index)) + code[0];
         at = code.index + code[0].length;
       }
