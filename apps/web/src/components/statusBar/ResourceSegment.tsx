@@ -13,20 +13,17 @@ import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 import {
   AppWindowIcon,
-  ArrowUpToLineIcon,
   BotIcon,
   ChevronDownIcon,
   ChevronRightIcon,
   CpuIcon,
-  HourglassIcon,
   ListOrderedIcon,
+  PauseIcon,
   MemoryStickIcon,
   MonitorIcon,
-  PlayIcon,
   ServerIcon,
   SmartphoneIcon,
   TerminalIcon,
-  Trash2Icon,
   WrenchIcon,
   XIcon,
 } from "lucide-react";
@@ -46,7 +43,7 @@ import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { buildHeavyQueueRows, formatElapsed, ordinal } from "./heavyQueue.logic";
+import { HeavyQueueBody } from "./HeavyQueueBody";
 import { processLabel } from "./processLabel.logic";
 import {
   addUsage,
@@ -61,7 +58,7 @@ import {
 } from "./resourceUsage.logic";
 import { formatMemory, sparklinePoints } from "./statusBar.logic";
 import { isStatusBarItemShown, STATUS_BAR_RESOURCE_ITEM } from "./statusBarItems.logic";
-import { useCloseTerminal, useHeavyQueueActions, useShutDownDevice } from "./useKillTarget";
+import { useCloseTerminal, useShutDownDevice } from "./useKillTarget";
 import {
   useEnvironmentResources,
   useEnvironmentSnapshots,
@@ -494,105 +491,25 @@ function DeviceGroup({
   );
 }
 
-const ELAPSED_REFRESH_MS = 5_000;
-
-function RunningElapsed({ startedAt }: { readonly startedAt: string }) {
-  const [now, setNow] = useState(() => Date.now());
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- coarse timer so the elapsed time does not repaint continuously
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), ELAPSED_REFRESH_MS);
-    return () => clearInterval(timer);
-  }, []);
-  return <>Running · {formatElapsed(startedAt, now)}</>;
-}
-
-/** Renders nothing while the machine-wide heavy-work queue is empty. */
+/** Renders nothing while the machine-wide heavy-work queue is empty and running. */
 export function HeavyQueueGroup({
   environmentId,
   threadTitle,
+  onOpenThread,
 }: {
   readonly environmentId: EnvironmentId;
   readonly threadTitle: (threadId: string) => string | undefined;
+  readonly onOpenThread: (threadId: string) => void;
 }) {
-  const { entries } = useHeavyQueue(environmentId);
-  const { canPromote, canCancel, promote, cancel } = useHeavyQueueActions(environmentId);
-  if (entries.length === 0) return null;
-  const rows = buildHeavyQueueRows(entries, threadTitle);
+  const { entries, paused } = useHeavyQueue(environmentId);
+  if (entries.length === 0 && !paused) return null;
   return (
-    <ProjectGroup title="Heavy work queue" count={rows.length}>
-      {rows.map((row) => {
-        const Icon = row.running ? PlayIcon : HourglassIcon;
-        return (
-          <div
-            key={row.id}
-            className="flex items-center gap-2 py-1.5 pl-10 pr-3 hover:bg-foreground/8"
-          >
-            <span className="shrink-0 text-muted-foreground [&>svg]:size-3">
-              <Icon aria-hidden />
-            </span>
-            <div className="min-w-0 flex-1">
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <div className="cursor-default truncate font-mono text-2xs text-foreground/90" />
-                  }
-                >
-                  {row.label}
-                </TooltipTrigger>
-                <TooltipPopup side="top" className="max-w-sm break-all">
-                  {row.label}
-                </TooltipPopup>
-              </Tooltip>
-              <div className="truncate text-3xs text-muted-foreground">{row.subtitle}</div>
-            </div>
-            {row.running ? null : (
-              <span className="flex shrink-0 items-center gap-0.5">
-                {row.canPromote ? (
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <Button
-                          variant="ghost-muted"
-                          size="icon-micro"
-                          aria-label={`Run next ${row.label}`}
-                          disabled={!canPromote}
-                          onClick={() => void promote(row.id)}
-                        />
-                      }
-                    >
-                      <ArrowUpToLineIcon aria-hidden />
-                    </TooltipTrigger>
-                    <TooltipPopup side="top">Run next</TooltipPopup>
-                  </Tooltip>
-                ) : null}
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <Button
-                        variant="ghost-destructive"
-                        size="icon-micro"
-                        aria-label={`Remove ${row.label}`}
-                        disabled={!canCancel}
-                        onClick={() => void cancel(row.id)}
-                      />
-                    }
-                  >
-                    <Trash2Icon aria-hidden />
-                  </TooltipTrigger>
-                  <TooltipPopup side="top">Remove from the queue</TooltipPopup>
-                </Tooltip>
-              </span>
-            )}
-            <span className="shrink-0 text-2xs tabular-nums text-muted-foreground">
-              {row.startedAt === null ? (
-                ordinal(row.position ?? 0)
-              ) : (
-                <RunningElapsed startedAt={row.startedAt} />
-              )}
-            </span>
-          </div>
-        );
-      })}
+    <ProjectGroup title="Heavy work queue" count={entries.length}>
+      <HeavyQueueBody
+        environmentId={environmentId}
+        threadTitle={threadTitle}
+        onOpenThread={onOpenThread}
+      />
     </ProjectGroup>
   );
 }
@@ -736,6 +653,7 @@ export function EnvironmentSection({
         <HeavyQueueGroup
           environmentId={environmentId}
           threadTitle={(threadId) => infoOf(threadId)?.title}
+          onOpenThread={(threadId) => openThread(threadId as ThreadId)}
         />
         {app === null || appTotal === null ? null : (
           <div className="border-t border-border/50">
@@ -878,14 +796,16 @@ function PrimaryMemory() {
 }
 
 function QueueCount({ environmentId }: { readonly environmentId: EnvironmentId | null }) {
-  const count = useHeavyQueue(environmentId).entries.length;
-  return count === 0 ? null : (
+  const { entries, paused } = useHeavyQueue(environmentId);
+  const count = entries.length;
+  return count === 0 && !paused ? null : (
     <>
       <span className="text-muted-foreground/50">·</span>
       <ListOrderedIcon aria-hidden />
       <span className="tabular-nums" aria-label={`${count} in heavy work queue`}>
         {count}
       </span>
+      {paused ? <PauseIcon aria-label="Heavy work queue paused" className="text-warning" /> : null}
     </>
   );
 }

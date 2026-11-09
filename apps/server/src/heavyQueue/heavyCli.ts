@@ -61,11 +61,11 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
       process.exit(125);
     }
     if (start.status === "started") break;
-    const shown = `${start.position}|${start.running?.id ?? ""}`;
+    const shown = `${start.position}|${start.running?.id ?? ""}|${start.paused ?? ""}`;
     if (shown !== lastShown) {
       lastShown = shown;
       process.stderr.write(
-        `[t3 heavy] waiting: position ${start.position}${start.running ? ` (running: ${start.running.label})` : ""}\n`,
+        `[t3 heavy] waiting: position ${start.position}${start.running ? ` (running: ${start.running.label})` : ""}${start.paused ? " (queue paused)" : ""}\n`,
       );
     }
     await new Promise((resolve) => setTimeout(resolve, POLL_MS));

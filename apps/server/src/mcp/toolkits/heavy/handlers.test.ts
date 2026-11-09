@@ -1,7 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
-import type { HeavyQueueEntry } from "@t3tools/contracts";
+import { HeavyQueueError, type HeavyQueueEntry } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
@@ -30,18 +30,22 @@ const entry = (id: string, threadId: string | null, startedAt: string | null) =>
 const base = {
   entries: [],
   threadId: "me",
-  load1: 1,
+  busyCores: 1,
   cpuCount: 4,
   availableMemoryBytes: 50,
   totalMemoryBytes: 100,
   workingAgents: 3,
+  maxRunning: 3,
+  room: true,
+  reasons: {},
+  machine: null,
   command: "t3 heavy --",
 };
 
 describe("heavyStatus", () => {
   it.each([
     { name: "calm machine, empty queue", change: {}, askUser: false, high: false },
-    { name: "load high, agents busy", change: { load1: 6 }, askUser: true, high: true },
+    { name: "load high, agents busy", change: { busyCores: 6 }, askUser: true, high: true },
     {
       name: "memory low, agents busy",
       change: { availableMemoryBytes: 9 },
@@ -50,13 +54,25 @@ describe("heavyStatus", () => {
     },
     {
       name: "load high but one agent",
-      change: { load1: 6, workingAgents: 1 },
+      change: { busyCores: 6, workingAgents: 1 },
       askUser: false,
       high: false,
     },
     {
-      name: "calm but queue not empty",
+      name: "calm, one running, a free slot",
       change: { entries: [entry("a", null, "t")] },
+      askUser: false,
+      high: false,
+    },
+    {
+      name: "calm but every slot is busy and others wait",
+      change: { entries: [entry("a", null, "t"), entry("b", null, null)], maxRunning: 1 },
+      askUser: true,
+      high: false,
+    },
+    {
+      name: "calm, free slot, but the queue sees no room",
+      change: { entries: [entry("a", null, "t"), entry("b", null, null)], room: false },
       askUser: true,
       high: false,
     },
@@ -94,58 +110,96 @@ describe("heavyStatus", () => {
   });
 });
 
+const promoted: Array<readonly [string, string | undefined]> = [];
+
+const callTool = (params: { action: "status" | "promote"; id?: string }, access?: "read-only") =>
+  Effect.gen(function* () {
+    const toolkit = yield* HeavyToolkit.pipe(
+      Effect.provide(McpToolAccess.HandlersLayer.layer(HeavyHandlers.layer)),
+    );
+    return yield* toolkit
+      .handle("t3_heavy", params as never)
+      .pipe(Stream.unwrap, Stream.runCollect);
+  }).pipe(
+    Effect.provideService(McpInvocationContext.McpInvocationContext, {
+      environmentId: EnvironmentId.make("environment-heavy"),
+      requestNamespace: "session-heavy",
+      thread: {
+        threadId: ThreadId.make("me"),
+        providerSessionId: "session-heavy",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+      },
+      client: access === undefined ? undefined : ({ access } as never),
+      capabilities: new Set(["orchestration" as const]),
+      issuedAt: 1,
+    }),
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.mock(HeavyQueue.HeavyQueue)({
+          state: Effect.succeed({
+            entries: [entry("run", "other", "t"), entry("w", "me", null)],
+            paused: false,
+            rules: [],
+            maxRunning: 3,
+            reasons: {},
+            room: true,
+            machine: null,
+          }),
+          command: Effect.succeed("t3 heavy --"),
+          promote: (id, note) =>
+            id === "gone"
+              ? Effect.fail(new HeavyQueueError({ reason: "not-found", message: "No such entry." }))
+              : Effect.sync(() => void promoted.push([id, note])),
+        }),
+        Layer.mock(HostResources.HostResources)({
+          read: Effect.succeed({
+            sampledAt: 1,
+            cpuUtilization: 0.1,
+            cpuCount: 8,
+            availableMemoryBytes: 5_000,
+            totalMemoryBytes: 8_000,
+          }),
+        }),
+        Layer.mock(ThreadManagement.ThreadManagementService)({
+          getThreadShell: (id) => Effect.succeed(liveThreadShell(id)),
+          listProjectThreads: () => Effect.succeed([liveThreadShell(ThreadId.make("me"))] as never),
+        }),
+      ).pipe(Layer.provideMerge(NodeServices.layer)),
+    ),
+  );
+
 describe("t3_heavy", () => {
   it.effect("answers for the calling thread from the live queue", () =>
     Effect.gen(function* () {
-      const toolkit = yield* HeavyToolkit.pipe(
-        Effect.provide(McpToolAccess.HandlersLayer.layer(HeavyHandlers.layer)),
-      );
-      const chunk = yield* toolkit
-        .handle("t3_heavy", { action: "status" })
-        .pipe(Stream.unwrap, Stream.runCollect);
+      const chunk = yield* callTool({ action: "status" });
       expect(chunk.at(-1)!.result).toMatchObject({
         askUser: true,
         command: "t3 heavy --",
         running: { id: "run" },
         yours: [{ id: "w", position: 1 }],
       });
-    }).pipe(
-      Effect.provideService(McpInvocationContext.McpInvocationContext, {
-        environmentId: EnvironmentId.make("environment-heavy"),
-        requestNamespace: "session-heavy",
-        thread: {
-          threadId: ThreadId.make("me"),
-          providerSessionId: "session-heavy",
-          providerInstanceId: ProviderInstanceId.make("codex"),
-        },
-        client: undefined,
-        capabilities: new Set(["orchestration" as const]),
-        issuedAt: 1,
-      }),
-      Effect.provide(
-        Layer.mergeAll(
-          Layer.mock(HeavyQueue.HeavyQueue)({
-            state: Effect.succeed({
-              entries: [entry("run", "other", "t"), entry("w", "me", null)],
-            }),
-            command: Effect.succeed("t3 heavy --"),
-          }),
-          Layer.mock(HostResources.HostResources)({
-            read: Effect.succeed({
-              sampledAt: 1,
-              cpuUtilization: 0.1,
-              cpuCount: 8,
-              availableMemoryBytes: 5_000,
-              totalMemoryBytes: 8_000,
-            }),
-          }),
-          Layer.mock(ThreadManagement.ThreadManagementService)({
-            getThreadShell: (id) => Effect.succeed(liveThreadShell(id)),
-            listProjectThreads: () =>
-              Effect.succeed([liveThreadShell(ThreadId.make("me"))] as never),
-          }),
-        ).pipe(Layer.provideMerge(NodeServices.layer)),
-      ),
-    ),
+    }),
+  );
+
+  it.effect("promote moves the entry and records which thread asked", () =>
+    Effect.gen(function* () {
+      promoted.length = 0;
+      yield* callTool({ action: "promote", id: "w" });
+      expect(promoted).toHaveLength(1);
+      expect(promoted[0]![0]).toBe("w");
+      expect(promoted[0]![1]).toContain("thread me");
+    }),
+  );
+
+  it.effect("promote without an id, for a missing entry, or from a read-only client fails", () =>
+    Effect.gen(function* () {
+      promoted.length = 0;
+      const noId = yield* Effect.flip(callTool({ action: "promote" }));
+      expect(noId).toMatchObject({ code: "invalid_request" });
+      const gone = yield* Effect.flip(callTool({ action: "promote", id: "gone" }));
+      expect(gone).toMatchObject({ code: "invalid_request", message: "No such entry." });
+      yield* Effect.flip(callTool({ action: "promote", id: "w" }, "read-only"));
+      expect(promoted).toEqual([]);
+    }),
   );
 });

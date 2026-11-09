@@ -30,7 +30,7 @@ Before heavy work (test suites, builds, bundling, simulators or emulators, Docke
 - \`askUser\` false: run it.
 - \`askUser\` true: ask the user before running it, with exactly two choices: run now anyway, or queue it. Use your native question tool when the user is present, \`t3_decision\` when nobody is watching. Never choose for them.
 - Run now: run it directly (\`device_open\` with \`skipHeavyQueue: true\`).
-- Queue: do the light work first and leave heavy steps for the end. Run each heavy command as \`<command> <cmd>\`, where \`command\` comes from \`t3_heavy\`, in the background, and wait on it; a queued command can wait longer than a foreground shell timeout. \`device_open\` waits its turn on its own. Never skip ahead of others in the queue; only the user reorders it.`,
+- Queue: do the light work first and leave heavy steps for the end. Run each heavy command as \`<command> <cmd>\`, where \`command\` comes from \`t3_heavy\`, in the background, and wait on it; a queued command can wait longer than a foreground shell timeout. \`device_open\` waits its turn on its own. Never skip ahead of others in the queue; only the user reorders it. Use \`t3_heavy\` action \`promote\` only when the user explicitly asks you to.`,
 ];
 
 export const T3_CODE_ORCHESTRATION_INSTRUCTIONS = `

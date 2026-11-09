@@ -28,7 +28,7 @@ export interface RankedAssistant<E extends RankableAssistant> {
 }
 
 /** Others shown beside the active ones before "Show all". */
-export const RECENT_ASSISTANT_LIMIT = 5;
+const RECENT_ASSISTANT_LIMIT = 5;
 
 const rankOf = (mood: AssistantPresence["mood"]) =>
   mood === "needs" ? 0 : mood === "working" ? 1 : 2;
@@ -53,7 +53,7 @@ export function rankAssistants<E extends RankableAssistant>(
       const parsed = own === null ? Number.NaN : Date.parse(own.updatedAt);
       return { entry, presence, activityAt: Number.isNaN(parsed) ? 0 : parsed };
     })
-    .toSorted(
+    .sort(
       (a, b) =>
         rankOf(a.presence.mood) - rankOf(b.presence.mood) ||
         b.activityAt - a.activityAt ||

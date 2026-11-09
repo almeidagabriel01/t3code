@@ -107,7 +107,15 @@ const layerProjectsMock = Layer.mock(ProjectService.ProjectService)({
 });
 
 const layerHeavyQueueMock = Layer.mock(HeavyQueue.HeavyQueue)({
-  state: Effect.succeed({ entries: [] }),
+  state: Effect.succeed({
+    entries: [],
+    paused: false,
+    rules: [],
+    maxRunning: 1,
+    reasons: {},
+    room: true,
+    machine: null,
+  }),
 });
 
 const openSession = {

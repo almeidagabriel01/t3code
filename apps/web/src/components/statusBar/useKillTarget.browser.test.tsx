@@ -6,8 +6,7 @@ import { userEvent } from "vite-plus/test/browser";
 import { render } from "../../../test/render";
 
 const mocks = vi.hoisted(() => ({
-  promote: vi.fn(),
-  cancel: vi.fn(),
+  calls: vi.fn(),
   toast: vi.fn(),
   confirm: vi.fn(),
   result: { _tag: "Success" } as { _tag: string },
@@ -19,14 +18,17 @@ vi.mock("../../state/heavyQueue", async () => {
   const allowed = Atom.make(true);
   return {
     heavyQueueEnvironment: {
-      promote: { permissionAtom: () => allowed, name: "promote" },
+      move: { permissionAtom: () => allowed, name: "move" },
       cancel: { permissionAtom: () => allowed, name: "cancel" },
+      setPaused: { permissionAtom: () => allowed, name: "setPaused" },
+      setRule: { permissionAtom: () => allowed, name: "setRule" },
+      setMaxRunning: { permissionAtom: () => allowed, name: "setMaxRunning" },
     },
   };
 });
 vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: (command: { name: string }) => (args: unknown) => {
-    (command.name === "promote" ? mocks.promote : mocks.cancel)(args);
+    mocks.calls(command.name, args);
     return Promise.resolve(mocks.result);
   },
 }));
@@ -48,18 +50,22 @@ import { useHeavyQueueActions } from "./useKillTarget";
 const environmentId = "env" as EnvironmentId;
 
 function Probe() {
-  const { canPromote, canCancel, promote, cancel } = useHeavyQueueActions(environmentId);
+  const actions = useHeavyQueueActions(environmentId);
   return (
     <>
-      <output>{`${canPromote}/${canCancel}`}</output>
-      <button onClick={() => void promote("a")}>promote</button>
-      <button onClick={() => void cancel("b")}>cancel</button>
+      <output>{String(actions.canChange)}</output>
+      <button onClick={() => void actions.move("a", "b")}>move</button>
+      <button onClick={() => void actions.cancel("b", false)}>cancel</button>
+      <button onClick={() => void actions.cancel("c", true)}>stop</button>
+      <button onClick={() => void actions.setPaused(true)}>pause</button>
+      <button onClick={() => void actions.setRule("/p", "first")}>rule</button>
+      <button onClick={() => void actions.setMaxRunning(2)}>max</button>
     </>
   );
 }
 
 function setup(over: { confirm?: boolean; failure?: boolean; interrupted?: boolean } = {}) {
-  for (const mock of [mocks.promote, mocks.cancel, mocks.toast]) mock.mockReset();
+  for (const mock of [mocks.calls, mocks.toast]) mock.mockReset();
   mocks.confirm.mockReset().mockResolvedValue(over.confirm ?? true);
   mocks.result = { _tag: over.failure ? "Failure" : "Success" };
   mocks.interrupted = over.interrupted ?? false;
@@ -72,13 +78,24 @@ function setup(over: { confirm?: boolean; failure?: boolean; interrupted?: boole
 }
 
 describe("useHeavyQueueActions", () => {
-  it("promotes straight away and cancels only after confirmation", async () => {
+  it("sends each change straight away, and removes or stops only after confirmation", async () => {
     await using screen = await setup();
-    await expect.element(screen.getByRole("status")).toHaveTextContent("true/true");
-    await userEvent.click(screen.getByRole("button", { name: "promote" }));
-    expect(mocks.promote).toHaveBeenCalledWith({ environmentId, input: { id: "a" } });
-    await userEvent.click(screen.getByRole("button", { name: "cancel" }));
-    expect(mocks.cancel).toHaveBeenCalledWith({ environmentId, input: { id: "b" } });
+    await expect.element(screen.getByRole("status")).toHaveTextContent("true");
+    for (const name of ["move", "pause", "rule", "max", "cancel", "stop"]) {
+      await userEvent.click(screen.getByRole("button", { name }));
+    }
+    expect(mocks.calls.mock.calls).toEqual([
+      ["move", { environmentId, input: { id: "a", beforeId: "b" } }],
+      ["setPaused", { environmentId, input: { paused: true } }],
+      ["setRule", { environmentId, input: { root: "/p", priority: "first" } }],
+      ["setMaxRunning", { environmentId, input: { maxRunning: 2 } }],
+      ["cancel", { environmentId, input: { id: "b" } }],
+      ["cancel", { environmentId, input: { id: "c" } }],
+    ]);
+    expect(mocks.confirm.mock.calls.map(([message]) => message)).toEqual([
+      expect.stringContaining("Remove from the queue"),
+      expect.stringContaining("Stop the running command"),
+    ]);
     expect(mocks.toast).not.toHaveBeenCalled();
   });
 
@@ -86,7 +103,7 @@ describe("useHeavyQueueActions", () => {
     await using screen = await setup({ confirm: false });
     await userEvent.click(screen.getByRole("button", { name: "cancel" }));
     expect(mocks.confirm).toHaveBeenCalled();
-    expect(mocks.cancel).not.toHaveBeenCalled();
+    expect(mocks.calls).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -94,8 +111,8 @@ describe("useHeavyQueueActions", () => {
     { name: "an interruption is silent", interrupted: true, toasts: 0 },
   ])("$name", async ({ interrupted, toasts }) => {
     await using screen = await setup({ failure: true, interrupted });
-    await userEvent.click(screen.getByRole("button", { name: "promote" }));
-    await vi.waitFor(() => expect(mocks.promote).toHaveBeenCalled());
+    await userEvent.click(screen.getByRole("button", { name: "move" }));
+    await vi.waitFor(() => expect(mocks.calls).toHaveBeenCalled());
     expect(mocks.toast).toHaveBeenCalledTimes(toasts);
   });
 });

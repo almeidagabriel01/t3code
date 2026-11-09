@@ -8,7 +8,15 @@ import { connectionAtomRuntime } from "../connection/runtime";
 
 export const heavyQueueEnvironment = createHeavyQueueEnvironmentAtoms(connectionAtomRuntime);
 
-const EMPTY_QUEUE: HeavyQueueState = { entries: [] };
+const EMPTY_QUEUE: HeavyQueueState = {
+  entries: [],
+  paused: false,
+  rules: [],
+  maxRunning: 1,
+  reasons: {},
+  room: true,
+  machine: null,
+};
 const NO_QUEUE = Atom.make(EMPTY_QUEUE).pipe(Atom.withLabel("web-heavy-queue-none"));
 
 const heavyQueueAtom = Atom.family((environmentId: EnvironmentId) =>

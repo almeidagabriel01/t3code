@@ -102,4 +102,243 @@ describe("heavy queue file", () => {
     expect(ids(dir)).toEqual(["a"]);
     expect(NodeFS.existsSync(lock)).toBe(false);
   });
+
+  it.each([
+    {
+      name: "first goes ahead of normal waiters, FIFO among firsts",
+      cwds: ["/n1", "/f/a", "/n2", "/f/b"],
+      expected: ["f/a", "f/b", "n1", "n2"],
+    },
+    {
+      name: "last goes behind, normal goes before lasts",
+      cwds: ["/l/a", "/n1", "/l/b", "/n2"],
+      expected: ["n1", "n2", "l/a", "l/b"],
+    },
+    {
+      name: "the most specific rule wins",
+      cwds: ["/n", "/f/sub/x", "/f/other"],
+      expected: ["f/other", "n", "f/sub/x"],
+      extra: [{ root: "/f/sub", priority: "last" as const }],
+    },
+  ])("orders new entries by project priority: $name", ({ cwds, expected, extra = [] }) => {
+    const dir = tempDir();
+    Queue.setRule(dir, "/f/", "first");
+    Queue.setRule(dir, "/l", "last");
+    for (const rule of extra) Queue.setRule(dir, rule.root, rule.priority);
+    for (const cwd of cwds) Queue.enqueue(dir, { ...entry(cwd.slice(1)), cwd });
+    expect(ids(dir)).toEqual(expected);
+  });
+
+  it("never puts a first-priority arrival ahead of the running entry or a hand-moved waiter", () => {
+    const dir = tempDir();
+    Queue.setRule(dir, "/f", "first");
+    for (const id of ["a", "b", "c"]) Queue.enqueue(dir, entry(id));
+    Queue.tryStart(dir, "a");
+    Queue.move(dir, "c", "b", "Moved by the user");
+    Queue.enqueue(dir, { ...entry("f1"), cwd: "/f/x" });
+    expect(ids(dir)).toEqual(["a", "c", "b", "f1"] as string[]);
+    expect(Queue.read(dir).find((e) => e.id === "c")).toMatchObject({
+      pinned: true,
+      note: "Moved by the user",
+    });
+  });
+
+  it("clears a rule and keeps rules and pause across other mutations", () => {
+    const dir = tempDir();
+    Queue.setRule(dir, "/f", "first");
+    Queue.setPaused(dir, true);
+    Queue.enqueue(dir, entry("a"));
+    Queue.remove(dir, "a");
+    expect(Queue.readDoc(dir)).toMatchObject({
+      paused: true,
+      rules: [{ root: "/f", priority: "first" }],
+    });
+    Queue.setRule(dir, "/f/", null);
+    expect(Queue.readDoc(dir).rules).toEqual([]);
+  });
+
+  it("moves a waiter before another or to the end, and refuses the running entry", () => {
+    const dir = tempDir();
+    for (const id of ["a", "b", "c", "d"]) Queue.enqueue(dir, entry(id));
+    Queue.tryStart(dir, "a");
+    expect(Queue.move(dir, "d", "b")).toBe("ok");
+    expect(ids(dir)).toEqual(["a", "d", "b", "c"]);
+    expect(Queue.move(dir, "d", null)).toBe("ok");
+    expect(ids(dir)).toEqual(["a", "b", "c", "d"]);
+    expect(Queue.move(dir, "b", "b")).toBe("ok");
+    expect(Queue.move(dir, "b", "a")).toBe("running");
+    expect(Queue.move(dir, "a", "b")).toBe("running");
+    expect(Queue.move(dir, "x", "b")).toBe("not-found");
+    expect(Queue.move(dir, "b", "x")).toBe("not-found");
+    expect(Queue.promote(dir, "b", "by agent")).toBe("ok");
+    expect(ids(dir)).toEqual(["a", "b", "c", "d"]);
+  });
+
+  it("pause holds back every waiter but lets the running entry continue", () => {
+    const dir = tempDir();
+    Queue.enqueue(dir, entry("a"));
+    Queue.enqueue(dir, entry("b"));
+    Queue.setPaused(dir, true);
+    expect(Queue.tryStart(dir, "a")).toEqual({ status: "waiting", position: 1, paused: true });
+    Queue.setPaused(dir, false);
+    expect(Queue.tryStart(dir, "a")).toEqual({ status: "started" });
+    Queue.setPaused(dir, true);
+    expect(Queue.tryStart(dir, "a")).toEqual({ status: "started" });
+    expect(Queue.tryStart(dir, "b")).toMatchObject({ status: "waiting", position: 1 });
+  });
+
+  it("stops a running `t3 heavy` waiter by signal, but never itself", () => {
+    const dir = tempDir();
+    const child = NodeChildProcess.spawn(process.execPath, ["-e", "setTimeout(()=>{},30000)"]);
+    try {
+      Queue.enqueue(dir, entry("held", child.pid));
+      Queue.tryStart(dir, "held");
+      expect(Queue.cancel(dir, "held")).toBe("ok");
+      expect(Queue.read(dir).find((e) => e.id === "held")).toBeDefined();
+    } finally {
+      child.kill("SIGKILL");
+    }
+    const self = tempDir();
+    Queue.enqueue(self, entry("me"));
+    Queue.tryStart(self, "me");
+    expect(Queue.cancel(self, "me")).toBe("running");
+  });
+
+  it("refuses to stop a server-held running entry", () => {
+    const dir = tempDir();
+    Queue.enqueue(dir, { ...entry("srv", process.ppid), server: true });
+    Queue.tryStart(dir, "srv");
+    expect(Queue.cancel(dir, "srv")).toBe("running");
+  });
+
+  it("runs several at once under the plan: settle window, slot cap, backfilled entries move up front", () => {
+    const dir = tempDir();
+    const now = Date.parse("2026-01-01T00:10:00.000Z");
+    const GIB = 1024 ** 3;
+    const sample = {
+      at: now,
+      busyCores: 1,
+      cpuCount: 10,
+      availableMemoryBytes: 30 * GIB,
+      totalMemoryBytes: 32 * GIB,
+    };
+    Queue.setMaxRunning(dir, 2);
+    Queue.recordSample(dir, sample, {});
+    for (const id of ["a", "b", "c"])
+      Queue.enqueue(dir, { ...entry(id), label: "vp run typecheck" });
+    expect(Queue.tryStart(dir, "a", now)).toEqual({ status: "started" });
+    expect(Queue.tryStart(dir, "b", now + 5_000)).toMatchObject({
+      status: "waiting",
+      position: 1,
+      reason: "letting the last one ramp up",
+    });
+    for (const offset of [8_000, 16_000, 20_000])
+      Queue.recordSample(dir, { ...sample, at: now + offset }, {});
+    expect(Queue.tryStart(dir, "c", now + 20_000)).toMatchObject({
+      status: "waiting",
+      position: 2,
+    });
+    expect(Queue.tryStart(dir, "b", now + 20_000)).toEqual({ status: "started" });
+    expect(Queue.readDoc(dir).entries.map((e) => [e.id, e.startedAt !== null])).toEqual([
+      ["a", true],
+      ["b", true],
+      ["c", false],
+    ]);
+    for (const offset of [28_000, 36_000, 40_000])
+      Queue.recordSample(dir, { ...sample, at: now + offset }, {});
+    expect(Queue.tryStart(dir, "c", now + 40_000)).toMatchObject({
+      status: "waiting",
+      position: 1,
+      reason: "all 2 slots are busy",
+    });
+    expect(Queue.readPlan(dir, now + 40_000).plan.room).toBe(true);
+  });
+
+  it("learns a command's cost from a finished run, whichever way it leaves the queue", () => {
+    const dir = tempDir();
+    const now = Date.parse("2026-01-01T00:10:00.000Z");
+    Queue.enqueue(dir, { ...entry("a"), label: "vp run build" });
+    Queue.tryStart(dir, "a", now);
+    Queue.recordSample(
+      dir,
+      { at: now, busyCores: 0, cpuCount: 4, availableMemoryBytes: 1, totalMemoryBytes: 2 },
+      {
+        a: { cpu: 1.5, memoryBytes: 100 },
+      },
+    );
+    Queue.recordSample(
+      dir,
+      { at: now, busyCores: 0, cpuCount: 4, availableMemoryBytes: 1, totalMemoryBytes: 2 },
+      {
+        a: { cpu: 0.5, memoryBytes: 300 },
+      },
+    );
+    expect(Queue.read(dir)[0]).toMatchObject({ peakCpu: 1.5, peakMemory: 300 });
+    Queue.remove(dir, "a");
+    expect(Queue.readDoc(dir).history["vp run build"]).toMatchObject([
+      { cpu: 1.5, memoryBytes: 300 },
+    ]);
+  });
+
+  it("keeps only the last runs per command and ignores finished entries without samples", () => {
+    const dir = tempDir();
+    const GIB = 1024 ** 3;
+    for (let i = 0; i < 7; i += 1) {
+      Queue.enqueue(dir, { ...entry(`r${i}`), label: "vp run build" });
+      Queue.tryStart(dir, `r${i}`);
+      Queue.recordSample(
+        dir,
+        {
+          at: 1_800_000_000_000,
+          busyCores: 0,
+          cpuCount: 4,
+          availableMemoryBytes: GIB,
+          totalMemoryBytes: GIB,
+        },
+        {
+          [`r${i}`]: { cpu: i, memoryBytes: i * 10 },
+        },
+      );
+      Queue.remove(dir, `r${i}`);
+      Queue.enqueue(dir, { ...entry("nosample"), label: "vp run lint" });
+      Queue.tryStart(dir, "nosample");
+      Queue.remove(dir, "nosample");
+    }
+    const runs = Queue.readDoc(dir).history["vp run build"] ?? [];
+    expect(runs.map((r) => r.cpu)).toEqual([2, 3, 4, 5, 6]);
+    expect(Queue.readDoc(dir).history["vp run lint"]).toBeUndefined();
+  });
+
+  it("admits only after headroom held for a steady window, and a pressured sample breaks it", () => {
+    const dir = tempDir();
+    const now = Date.parse("2026-01-01T00:10:00.000Z");
+    const GIB = 1024 ** 3;
+    const calm = { cpuCount: 10, availableMemoryBytes: 30 * GIB, totalMemoryBytes: 32 * GIB };
+    for (const id of ["a", "b"]) Queue.enqueue(dir, { ...entry(id), label: "vp run typecheck" });
+    Queue.tryStart(dir, "a", now - 60_000);
+    const at = (offset: number, busyCores: number) =>
+      Queue.recordSample(dir, { ...calm, at: now + offset, busyCores }, {});
+    at(0, 1);
+    at(2_000, 1);
+    expect(Queue.readDoc(dir).sample?.headroomSince).toBe(now);
+    at(4_000, 9.5);
+    expect(Queue.readDoc(dir).sample?.headroomSince).toBeNull();
+    at(6_000, 1);
+    at(8_000, 1);
+    expect(Queue.tryStart(dir, "b", now + 8_000)).toMatchObject({
+      status: "waiting",
+      reason: "waiting for steady headroom",
+    });
+    at(10_000, 1);
+    at(12_000, 1);
+    expect(Queue.tryStart(dir, "b", now + 12_000)).toEqual({ status: "started" });
+  });
+
+  it("restarts the steady window after a long silence between readings", () => {
+    const dir = tempDir();
+    const calm = { cpuCount: 4, availableMemoryBytes: 9, totalMemoryBytes: 10, busyCores: 0 };
+    Queue.recordSample(dir, { ...calm, at: 1_000 }, {});
+    Queue.recordSample(dir, { ...calm, at: 60_000 }, {});
+    expect(Queue.readDoc(dir).sample?.headroomSince).toBe(60_000);
+  });
 });
