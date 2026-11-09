@@ -418,6 +418,11 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
   if (!assistantColumns.some((column) => column.name === "mcp_servers_json")) {
     yield* sql`ALTER TABLE assistants ADD COLUMN mcp_servers_json TEXT`;
   }
+  // The project list of a project assistant; an existing single project becomes a list of one.
+  if (!assistantColumns.some((column) => column.name === "project_ids_json")) {
+    yield* sql`ALTER TABLE assistants ADD COLUMN project_ids_json TEXT`;
+  }
+  yield* sql`UPDATE assistants SET project_ids_json = json_array(project_id) WHERE project_ids_json IS NULL`;
   yield* sql`
     CREATE TABLE IF NOT EXISTS autonomy_watches (
       watch_id TEXT PRIMARY KEY,

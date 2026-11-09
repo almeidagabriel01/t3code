@@ -1,6 +1,7 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { Fragment } from "react";
+import { listedProjects } from "@t3tools/client-runtime/assistantSections";
 import { teamSubtitle, teamSummary } from "@t3tools/client-runtime/assistantTeam";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
@@ -77,19 +78,26 @@ function AssistantRow(props: {
   const archived = assistant.archivedAt !== null;
   const flows = useAssistantFlows(environmentId);
   const groups = useSidebarProjectGroups();
-  const project = useProjects().find(
-    (candidate) =>
-      candidate.environmentId === environmentId && candidate.id === assistant.projectId,
-  );
-  const projectName = project?.isScratch
-    ? "All projects"
-    : (groups.find((group) =>
-        group.memberProjects.some(
-          (member) => member.environmentId === environmentId && member.id === assistant.projectId,
-        ),
-      )?.displayName ??
-      project?.title ??
-      "Unknown project");
+  const projects = useProjects();
+  const nameOf = (projectId: string) => {
+    const project = projects.find(
+      (candidate) => candidate.environmentId === environmentId && candidate.id === projectId,
+    );
+    return project?.isScratch
+      ? "All projects"
+      : (groups.find((group) =>
+          group.memberProjects.some(
+            (member) => member.environmentId === environmentId && member.id === projectId,
+          ),
+        )?.displayName ??
+          project?.title ??
+          "Unknown project");
+  };
+  const projectName = (
+    assistant.scope === "project" ? listedProjects(assistant) : [assistant.projectId]
+  )
+    .map(nameOf)
+    .join(", ");
   const limitState = useAssistantSpend(
     environmentId,
     assistant.budget === null ? null : assistant.id,

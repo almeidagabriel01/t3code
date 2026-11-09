@@ -1,14 +1,25 @@
-import type { Assistant, AssistantTeam } from "@t3tools/contracts";
+import type { Assistant, AssistantTeam, ProjectId } from "@t3tools/contracts";
 
 export interface SectionAssistant {
   readonly environmentId: string;
-  readonly assistant: Pick<Assistant, "id" | "scope" | "projectId">;
+  readonly assistant: Pick<Assistant, "id" | "scope" | "projectId"> & {
+    /** Absent from a server that predates project lists: its one project is the list. */
+    readonly projectIds?: Assistant["projectIds"];
+  };
 }
 
 export interface SectionTeam {
   readonly environmentId: string;
   readonly team: Pick<AssistantTeam, "id" | "memberIds">;
 }
+
+/** The projects a project assistant belongs to. */
+export const listedProjects = (
+  assistant: SectionAssistant["assistant"],
+): ReadonlyArray<ProjectId> =>
+  assistant.projectIds === undefined || assistant.projectIds.length === 0
+    ? [assistant.projectId]
+    : assistant.projectIds;
 
 export const assistantEntryKey = (entry: SectionAssistant) =>
   `${entry.environmentId}:${entry.assistant.id}`;
@@ -27,7 +38,7 @@ export interface AssistantSections<A extends SectionAssistant, T extends Section
 
 /**
  * Where each active assistant is listed. One that needs the user shows only under `needs`; else it
- * is under each group it belongs to, otherwise under its project (project scope) or unassigned.
+ * is under each group it belongs to, otherwise under each project on its list (project scope) or unassigned.
  */
 export function assistantSections<A extends SectionAssistant, T extends SectionTeam>(input: {
   readonly assistants: ReadonlyArray<A>;
@@ -57,14 +68,16 @@ export function assistantSections<A extends SectionAssistant, T extends SectionT
       unassigned.push(entry);
       continue;
     }
-    const key = `${entry.environmentId}:${entry.assistant.projectId}`;
-    const bucket = projects.get(key) ?? {
-      environmentId: entry.environmentId,
-      projectId: entry.assistant.projectId,
-      members: [],
-    };
-    bucket.members.push(entry);
-    projects.set(key, bucket);
+    for (const projectId of listedProjects(entry.assistant)) {
+      const key = `${entry.environmentId}:${projectId}`;
+      const bucket = projects.get(key) ?? {
+        environmentId: entry.environmentId,
+        projectId,
+        members: [],
+      };
+      bucket.members.push(entry);
+      projects.set(key, bucket);
+    }
   }
   return { needs, groups, projects: [...projects.values()], unassigned };
 }
@@ -79,7 +92,44 @@ export function projectAssistants<A extends SectionAssistant>(
       assistant.scope === "project" &&
       members.some(
         (member) =>
-          member.environmentId === environmentId && member.projectId === assistant.projectId,
+          member.environmentId === environmentId &&
+          (listedProjects(assistant) as ReadonlyArray<string>).includes(member.projectId),
       ),
   );
 }
+
+/** What the project picker starts on: the assistant's list, or its home when it works everywhere. */
+export const assistantProjectSelection = (
+  assistant: SectionAssistant["assistant"],
+): ReadonlyArray<ProjectId> =>
+  assistant.scope === "project" ? listedProjects(assistant) : [assistant.projectId];
+
+/**
+ * A pick of several projects. `allId` is the "All projects" (Scratch) entry: it is exclusive, and
+ * clearing the last project falls back to it.
+ */
+export const toggleAssistantProject = <T extends string>(
+  current: ReadonlyArray<T>,
+  allId: T | null,
+  id: T,
+): ReadonlyArray<T> => {
+  if (id === allId) return [id];
+  const rest = current.filter((entry) => entry !== allId && entry !== id);
+  const next = current.includes(id) ? rest : [...rest, id];
+  return next.length === 0 && allId !== null ? [allId] : next;
+};
+
+/** The home project after a save: the current one while it stays picked, else the first picked. */
+export const homeAfterPick = <T extends string>(current: T | null, picked: ReadonlyArray<T>) =>
+  current !== null && picked.includes(current) ? current : (picked[0] ?? null);
+
+/** The fields that carry a pick: one project is `projectId`, several add the list. */
+export const assistantProjectFields = <T extends string>(
+  picked: ReadonlyArray<T>,
+): { readonly projectId: T; readonly projectIds?: ReadonlyArray<T> } => ({
+  projectId: picked[0]!,
+  ...(picked.length > 1 ? { projectIds: picked } : {}),
+});
+
+export const sameProjects = (a: ReadonlyArray<string>, b: ReadonlyArray<string>) =>
+  a.length === b.length && a.every((id) => b.includes(id));

@@ -5,7 +5,11 @@ import {
   assistantPresence,
   assistantQueuedLabel,
 } from "@t3tools/client-runtime/assistantRobot";
-import { assistantEntryKey, assistantSections } from "@t3tools/client-runtime/assistantSections";
+import {
+  assistantEntryKey,
+  assistantSections,
+  listedProjects,
+} from "@t3tools/client-runtime/assistantSections";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import type { ReactNode } from "react";
@@ -367,7 +371,9 @@ export function SettingsAssistantsRouteScreen() {
       nowMs={nowMs}
       projectLabel={
         entry.assistant.scope === "project"
-          ? projectName(entry.environmentId, entry.assistant.projectId)
+          ? listedProjects(entry.assistant)
+              .map((projectId) => projectName(entry.environmentId, projectId))
+              .join(", ")
           : "All projects"
       }
     />

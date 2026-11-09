@@ -5,6 +5,11 @@ import {
   type ConnectorDraft,
 } from "@t3tools/client-runtime/assistantConnectors";
 import { ASSISTANT_ROBOT_HUES, assistantRobotLook } from "@t3tools/client-runtime/assistantRobot";
+import {
+  assistantProjectFields,
+  assistantProjectSelection,
+  sameProjects,
+} from "@t3tools/client-runtime/assistantSections";
 import { sameAssistantAutonomy } from "@t3tools/client-runtime/autonomy";
 import {
   ASSISTANT_AVATAR_MAX_BYTES,
@@ -50,7 +55,7 @@ export interface AssistantDraft {
   /** Null while it still follows the name. */
   readonly handle: string | null;
   /** Null until chosen; the form then shows the scratch project. */
-  readonly projectId: ProjectId | null;
+  readonly projectIds: ReadonlyArray<ProjectId> | null;
   /** Null until picked; the form then shows the conversation's current or default model. */
   readonly modelSelection: ModelSelection | null;
   readonly instructions: string;
@@ -164,7 +169,11 @@ export function assistantDraftFor(
   return {
     name: assistant?.name ?? "",
     handle: assistant?.handle ?? null,
-    projectId: assistant?.projectId ?? preset.projectId ?? null,
+    projectIds: assistant
+      ? assistantProjectSelection(assistant)
+      : preset.projectId
+        ? [preset.projectId]
+        : null,
     modelSelection: null,
     instructions: assistant?.instructions ?? "",
     toolAccess: assistant?.toolAccess ?? "workspace-write",
@@ -321,13 +330,13 @@ export function assistantProjectChanged(
 
 export function assistantCreateInput(
   editor: AssistantEditor,
-  effectiveProjectId: ProjectId,
+  picked: ReadonlyArray<ProjectId>,
 ): AssistantsCreateInput {
   const { current } = editor;
   return {
     name: current.name.trim(),
     handle: effectiveAssistantHandle(current),
-    projectId: effectiveProjectId,
+    ...assistantProjectFields(picked),
     ...(current.modelSelection ? { modelSelection: current.modelSelection } : {}),
     instructions: current.instructions,
     toolAccess: current.toolAccess,
@@ -348,7 +357,7 @@ export function assistantCreateInput(
 /** Only what the user changed is sent, so an untouched field never overwrites a newer edit. */
 export function assistantUpdateInput(
   editor: AssistantEditor & { readonly assistant: Assistant },
-  effectiveProjectId: ProjectId,
+  picked: ReadonlyArray<ProjectId>,
 ): AssistantsUpdateInput {
   const { assistant, current } = editor;
   const name = current.name.trim();
@@ -357,9 +366,9 @@ export function assistantUpdateInput(
     assistantId: assistant.id,
     ...(name !== assistant.name ? { name } : {}),
     ...(handle !== assistant.handle ? { handle } : {}),
-    ...(assistantProjectChanged(assistant, effectiveProjectId)
-      ? { projectId: effectiveProjectId }
-      : {}),
+    ...(sameProjects(picked, assistantProjectSelection(assistant))
+      ? {}
+      : assistantProjectFields(picked)),
     ...(current.modelSelection ? { modelSelection: current.modelSelection } : {}),
     ...(current.instructions !== assistant.instructions
       ? { instructions: current.instructions }
@@ -392,7 +401,7 @@ export function changeAssistantEditorEnvironment(environmentId: EnvironmentId) {
     appAtomRegistry.set(assistantEditorAtom, {
       ...editor,
       environmentId,
-      current: { ...editor.current, projectId: null, modelSelection: null },
+      current: { ...editor.current, projectIds: null, modelSelection: null },
     });
   }
 }

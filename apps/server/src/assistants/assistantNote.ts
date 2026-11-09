@@ -5,7 +5,7 @@ import * as Option from "effect/Option";
 import type { AssistantDirectoryShape } from "./AssistantDirectory.ts";
 import {
   HOST_CONTAINER_NOTE_LINE,
-  PROJECT_SCOPE_NOTE_LINE,
+  projectScopeNoteLine,
   sandboxNoteLine,
 } from "./AssistantSandboxPolicy.ts";
 
@@ -55,6 +55,7 @@ export function assistantNoteFor(
     readonly askBeforeActing?: boolean | undefined;
     readonly workspace?: Assistant["workspace"] | undefined;
     readonly scope?: Assistant["scope"] | undefined;
+    readonly projectIds?: ReadonlyArray<string> | undefined;
   },
   userText: string,
   teams: ReadonlyArray<TeamMembership> = [],
@@ -75,7 +76,7 @@ export function assistantNoteFor(
     assistant.workspace === "sandbox"
       ? sandboxNoteLine(sandboxEnvironmentId)
       : HOST_CONTAINER_NOTE_LINE,
-    assistant.scope === "project" ? PROJECT_SCOPE_NOTE_LINE : "",
+    assistant.scope === "project" ? projectScopeNoteLine(assistant.projectIds ?? []) : "",
     assistant.askBeforeActing === true ? ASK_BEFORE_ACTING_LINE : "",
     escapeBody(assistant.instructions.trim()),
   ]

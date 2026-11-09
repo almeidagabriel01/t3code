@@ -205,7 +205,9 @@ vi.mock("./useAssistantEditor", async () => {
       const project = { id: "p1", title: "Alpha" };
       return {
         editor,
-        projects: [project],
+        projects: [project, { id: "p2", title: "Beta" }],
+        picked: editor?.current.projectIds ?? ["p1"],
+        scratchId: null,
         effectiveProject: project,
         modelLabel: "GPT",
         modelSelection: null,
@@ -407,6 +409,17 @@ describe("basic fields and Advanced", () => {
       avatar: { kind: "robot", hue: 210, variant: 0 },
     });
     expect(mocks.goBack).toHaveBeenCalled();
+  });
+
+  it("creates an assistant over every project that was ticked", async () => {
+    render(null);
+    pick("Beta");
+    type("Name", "Scout");
+    await act(async () => pick("Create assistant"));
+    expect(mocks.create.mock.calls[0]?.[0]).toMatchObject({
+      projectId: "p1",
+      projectIds: ["p1", "p2"],
+    });
   });
 
   it("asks for the first group and ticks the preset group of a new assistant", async () => {
@@ -650,7 +663,11 @@ describe("assistant notifications", () => {
     pick("Only for these");
     pick("PR checks failed");
     pick("Only these projects");
-    pick("Alpha");
+    act(() =>
+      Array.from(container.querySelectorAll<HTMLButtonElement>('button[aria-label="Alpha"]'))
+        .at(-1)!
+        .click(),
+    );
     pick("Only on these");
     pick("Telegram");
     await act(async () => pick("Save"));

@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { homeAfterPick } from "@t3tools/client-runtime/assistantSections";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { DEFAULT_AUTONOMY_SETTINGS, type ModelSelection } from "@t3tools/contracts";
@@ -20,11 +21,12 @@ export function useAssistantEditor() {
   const editor = useAtomValue(assistantEditorAtom);
   const environmentId = editor?.environmentId ?? null;
   const projects = useProjects().filter((project) => project.environmentId === environmentId);
-  const effectiveProject =
-    projects.find((project) => project.id === editor?.current.projectId) ??
-    projects.find((project) => project.isScratch === true) ??
-    projects[0] ??
-    null;
+  const fallbackId = (projects.find((project) => project.isScratch === true) ?? projects[0])?.id;
+  const scratchId = projects.find((project) => project.isScratch === true)?.id ?? null;
+  const picked = editor?.current.projectIds ?? (fallbackId === undefined ? [] : [fallbackId]);
+  // The home project: the current one while it stays picked. It sets the model and memory.
+  const homeId = homeAfterPick(editor?.assistant?.projectId ?? null, picked);
+  const effectiveProject = projects.find((project) => project.id === homeId) ?? null;
   const config = useEnvironmentServerConfig(environmentId);
   const threadId = editor?.assistant?.threadId ?? null;
   const thread = useThreadShell(
@@ -49,6 +51,8 @@ export function useAssistantEditor() {
   return {
     editor,
     projects,
+    picked,
+    scratchId,
     effectiveProject,
     config,
     modelSelection,

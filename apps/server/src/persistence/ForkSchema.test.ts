@@ -111,6 +111,25 @@ it.effect("keeps one default assistant and one assistant per handle and thread",
   }).pipe(Effect.provide(database)),
 );
 
+it.effect("turns an assistant's single project into a list of one and keeps a saved list", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* ensureForkSchema();
+    yield* sql`
+      INSERT INTO assistants (assistant_id, handle, name, project_id, tool_access, created_at, updated_at, project_ids_json)
+      VALUES ('old', 'old', 'Old', 'p1', 'full', 't', 't', NULL),
+             ('new', 'new', 'New', 'p1', 'full', 't', 't', '["p1","p2"]')`;
+    yield* ensureForkSchema();
+    assert.deepStrictEqual(
+      yield* sql`SELECT assistant_id, project_ids_json FROM assistants ORDER BY assistant_id`,
+      [
+        { assistant_id: "new", project_ids_json: '["p1","p2"]' },
+        { assistant_id: "old", project_ids_json: '["p1"]' },
+      ],
+    );
+  }).pipe(Effect.provide(database)),
+);
+
 it.effect("turns an old team leader into the lead and drops reports_to and leader_title", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;

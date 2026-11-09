@@ -24,6 +24,7 @@ const assistant = (id: string, overrides: Partial<Assistant> = {}): Assistant =>
   id: id as AssistantId,
   handle: id,
   name: id,
+  projectIds: [],
   projectId: "p" as ProjectId,
   instructions: "",
   toolAccess: "full",

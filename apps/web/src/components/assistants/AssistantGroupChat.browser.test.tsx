@@ -91,6 +91,7 @@ const assistant = (id: string, name: string, overrides: Partial<Assistant> = {})
   handle: id,
   name,
   projectId: PROJECT_ID,
+  projectIds: [],
   instructions: "",
   toolAccess: "workspace-write",
   isDefault: false,
