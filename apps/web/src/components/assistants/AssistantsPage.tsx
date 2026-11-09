@@ -6,11 +6,16 @@ import {
   assistantPresence,
   assistantQueuedLabel,
 } from "@t3tools/client-runtime/assistantRobot";
-import { assistantEntryKey, assistantSections } from "@t3tools/client-runtime/assistantSections";
+import {
+  assistantEntryKey,
+  assistantSections,
+  listedProjects,
+} from "@t3tools/client-runtime/assistantSections";
 import type { AssistantTeamId, EnvironmentId, ProjectId } from "@t3tools/contracts";
 import {
   ArchiveRestoreIcon,
   ArchiveIcon,
+  BriefcaseIcon,
   MessagesSquareIcon,
   PlusIcon,
   SettingsIcon,
@@ -37,6 +42,7 @@ import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
 import { SidebarInset } from "../ui/sidebar";
 import { openAssistantDialog } from "./assistantDialogState";
+import { openAssistantWork } from "./assistantWorkState";
 import { AssistantAvatar } from "./assistantPresentation";
 import { AssistantTaskRows } from "./AssistantTaskRows";
 import { openAssistantTeamDialog } from "./assistantTeamState";
@@ -134,6 +140,14 @@ function AssistantCard(props: {
               onClick={() => flows.openConversation(assistant)}
             >
               Open thread
+            </Button>
+            <Button
+              size="xs"
+              variant="outline"
+              onClick={() => openAssistantWork({ environmentId, assistantId: assistant.id })}
+            >
+              <BriefcaseIcon />
+              Work
             </Button>
             <Button
               size="xs"
@@ -262,7 +276,9 @@ export function AssistantsPage() {
       .map((candidate) => candidate.team.name);
   const projectLabelOf = (entry: AssistantEntry) =>
     entry.assistant.scope === "project"
-      ? projectName(entry.environmentId, entry.assistant.projectId)
+      ? listedProjects(entry.assistant)
+          .map((projectId) => projectName(entry.environmentId, projectId))
+          .join(", ")
       : "All projects";
   const card = (entry: AssistantEntry, keyPrefix: string) => (
     <AssistantCard

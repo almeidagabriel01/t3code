@@ -67,8 +67,12 @@ A runtime layer that forgets to provide it silently loses enforcement; `runtimeL
 `assistants` project (`ManagedProjectFolders.isAssistantHomeProject`). It is stored, not derived,
 because `toAssistant` and `AssistantDirectory` are synchronous and layer-light; rows from before it
 existed are filled on the first list or subscribe, and count as `all` until then.
-`projectScopeRefusal` mirrors `sandboxRefusal` at the same sites (`t3_thread_launch`, remote
-`delegate_task`, scheduled tasks, and `message.dispatch` to a non-assistant thread).
+`projectId` is the home project, where the conversation lives and a thread cannot move; a project
+assistant also has `project_ids_json`, the list of projects it may work in, home first (read as just the
+home when null). Adding projects keeps the home, so it starts no new generation; dropping the home does.
+`projectScopeRefusal` is the one allow check and mirrors `sandboxRefusal` at the same sites
+(`t3_thread_launch`, remote `delegate_task`, scheduled tasks, and `message.dispatch` to a non-assistant
+thread): the target project must be on the list. New paths call it rather than comparing project ids.
 
 An image avatar is copied from the finished upload into `<stateDir>/assistant-avatars/` after a magic
 byte check: pending uploads are swept after a while, so the upload itself cannot be the avatar. It is
@@ -221,6 +225,20 @@ which is its own T3 home's `shared`. A send with `paths` copies each file to
 a folder with a manifest is complete and a repeat returns it). The sender owns the folder: deleting the
 sender, or a send that never delivered, removes it and nothing else under `shared/`.
 
+## Muted lines in the conversation
+
+A rename and a routine's pause or resume leave a line in the assistant's thread through the internal
+`thread.notice.record` command: a runless `system_notice` turn item, so it sits in the timeline in
+order and the agent never receives it (a `notification` message would start a run). Writing it is
+best effort and never fails the change it reports. `ScheduledTaskService` writes the routine lines
+from both `setEnabled` and `upsert`, since the editor and `schedule_task enabled=false` save through
+the latter.
+
+The Work panel's retry is a normal send: a stopped or usage-limited run is continued, because the
+server accepts `manualContinuationOfRunId` only for those, and any other failure asks the same
+conversation to try again. Its library reads the transfer manifests (`listLibrary`): files the
+assistant sent from its own folder, and files others sent to one of its threads.
+
 ## Instructions ride every turn
 
 `assistantNote` prepends `<t3_assistant …>` to every prompt, like the side-chat note. Sending it once
@@ -335,6 +353,19 @@ folder inside it is what separates them.
   still create a thread on this machine with its own runtime mode, because only the assistant's own
   thread is capped.
 
+- **One task in the container, from an assistant that stays on this Mac.** `t3_assistant
+  container_task` ([`containerTask.ts`](../../apps/server/src/mcp/toolkits/assistant/containerTask.ts))
+  asks the CPU limit once (a decision, stored in `assistant_sandbox_config`, editable in Settings;
+  `docker update --cpus` applies it to a container that exists), starts and links the container,
+  then calls `RemoteDelegation.delegate` with `cloneMissingProject`, which finds the project there
+  by repository or clones and registers it. `RemoteDelegation` tells `AssistantSandboxControl`
+  when such a task starts and ends (`assistant_sandbox_task`). The container is discarded
+  (removed, volumes kept so sign-ins and clones survive) when the last task ends only if that
+  task's call brought it up (`one_off`), the setting says discard, and no sandboxed assistant is
+  active; the explicit `container_discard` obeys the same two guards. The user pressing Start
+  clears `one_off`. A task's row shows "Assistant sandbox" as where it ran, set at delegation
+  because the container's own label is its hostname. After a restart `RemoteDelegation.start`
+  follows open tasks again, so the discard still happens when they end.
 - **The link is the existing peer link.** [`AssistantSandboxControl`](../../apps/server/src/assistants/AssistantSandboxControl.ts)
   builds and starts the container in the background, mints a pairing credential inside it and calls
   `PeerLinks.link` with full access (the per-call limits narrow it). A live link at the container's

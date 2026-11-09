@@ -5,7 +5,11 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeStreamPromises from "node:stream/promises";
 
-import { ASSISTANT_TRANSFER_HEADING } from "@t3tools/contracts";
+import {
+  ASSISTANT_TRANSFER_HEADING,
+  type AssistantLibrary,
+  type AssistantLibraryFile,
+} from "@t3tools/contracts";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 
@@ -124,6 +128,67 @@ export const removeTransfer = (sharedDir: string, ownerId: string, transferId: s
 /** The assistant was deleted: everything it handed over goes, nothing else in `shared/`. */
 export const removeOwnerTransfers = (sharedDir: string, ownerId: string) =>
   remove(ownerDir(sharedDir, ownerId));
+
+const LIBRARY_MAX_FILES = 200;
+
+const readJson = async (file: string): Promise<unknown> =>
+  JSON.parse(await NodeFSP.readFile(file, "utf8")) as unknown;
+
+/**
+ * Files the assistant handed over (its own folder) and received (other senders' manifests that
+ * name one of its threads), newest first. One unreadable manifest hides only itself.
+ */
+export const listLibrary = (sharedDir: string, assistantId: string) =>
+  Effect.promise(async (): Promise<AssistantLibrary> => {
+    const root = NodePath.join(sharedDir, "transfers");
+    const mine = safe(assistantId);
+    const threadPrefix = `assistant:${assistantId}:`;
+    const found: Array<AssistantLibraryFile> = [];
+    for (const owner of await NodeFSP.readdir(root).catch(() => [])) {
+      for (const transfer of await NodeFSP.readdir(NodePath.join(root, owner)).catch(() => [])) {
+        const manifestPath = NodePath.join(root, owner, transfer, "manifest.json");
+        const manifest = (await readJson(manifestPath).catch(() => null)) as {
+          readonly sender?: { readonly name?: unknown };
+          readonly recipients?: unknown;
+          readonly files?: unknown;
+        } | null;
+        if (manifest === null || typeof manifest !== "object") continue;
+        const sent = owner === mine;
+        const received =
+          !sent &&
+          Array.isArray(manifest.recipients) &&
+          manifest.recipients.some(
+            (recipient) => typeof recipient === "string" && recipient.startsWith(threadPrefix),
+          );
+        if (!sent && !received) continue;
+        const stat = await NodeFSP.stat(manifestPath).catch(() => null);
+        if (stat === null || !Array.isArray(manifest.files)) continue;
+        for (const file of manifest.files as ReadonlyArray<Partial<ManifestFile>>) {
+          // A manifest names paths under its own folder; anything else is not ours to list.
+          if (
+            typeof file?.name !== "string" ||
+            typeof file.path !== "string" ||
+            !file.path.startsWith(`${root}${NodePath.sep}`)
+          ) {
+            continue;
+          }
+          found.push({
+            name: file.name,
+            path: file.path,
+            size: typeof file.size === "number" ? file.size : 0,
+            direction: sent ? "sent" : "received",
+            from: sent || typeof manifest.sender?.name !== "string" ? null : manifest.sender.name,
+            savedAt: stat.mtime.toISOString(),
+          });
+        }
+      }
+    }
+    found.sort((a, b) => b.savedAt.localeCompare(a.savedAt) || a.name.localeCompare(b.name));
+    return {
+      files: found.slice(0, LIBRARY_MAX_FILES),
+      truncated: found.length > LIBRARY_MAX_FILES,
+    };
+  });
 
 /** What the recipient reads: where the copies are, as links the clients open in the file viewer. */
 export const transferText = (paths: ReadonlyArray<string>) =>

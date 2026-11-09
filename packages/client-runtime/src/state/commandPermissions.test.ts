@@ -223,6 +223,7 @@ describe("command permissions", () => {
     WS_METHODS.assistantSandboxStart,
     WS_METHODS.assistantSandboxStop,
     WS_METHODS.assistantSandboxRemove,
+    WS_METHODS.assistantSandboxConfigure,
     WS_METHODS.assistantSandboxPairing,
   ])("uses the target grant for both availability and execution of %s", (method) =>
     Effect.scoped(

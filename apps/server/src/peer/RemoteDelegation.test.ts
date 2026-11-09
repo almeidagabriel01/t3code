@@ -52,6 +52,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import { AssistantSandboxControl } from "../assistants/AssistantSandboxControl.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
@@ -129,6 +130,10 @@ interface BoxThread {
   readonly sent: Ref.Ref<ReadonlyArray<string>>;
   /** Runs as the launch there is answered, before the laptop hears back. */
   readonly afterLaunch: Ref.Ref<Effect.Effect<void>>;
+  /** The box has no project with the laptop's repository until one is registered. */
+  readonly noProject: Ref.Ref<boolean>;
+  readonly cloned: Ref.Ref<ReadonlyArray<string>>;
+  readonly registered: Ref.Ref<ReadonlyArray<string>>;
 }
 
 const makeBoxThread = Effect.gen(function* () {
@@ -163,6 +168,9 @@ const makeBoxThread = Effect.gen(function* () {
     releaseStop: yield* Deferred.make<void>(),
     sent: yield* Ref.make<ReadonlyArray<string>>([]),
     afterLaunch: yield* Ref.make<Effect.Effect<void>>(Effect.void),
+    noProject: yield* Ref.make(false),
+    cloned: yield* Ref.make<ReadonlyArray<string>>([]),
+    registered: yield* Ref.make<ReadonlyArray<string>>([]),
   } satisfies BoxThread;
 });
 
@@ -477,7 +485,18 @@ const boxToolkitLayer = (thread: BoxThread) => {
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/p" }),
     ),
     Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
-    Layer.provide(Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({})),
+    Layer.provide(
+      Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({
+        cloneRepository: (input) =>
+          Ref.update(thread.cloned, (seen) => [...seen, input.destinationPath]).pipe(
+            Effect.as({
+              cwd: input.destinationPath,
+              remoteUrl: input.remoteUrl ?? "",
+              repository: null,
+            } as never),
+          ),
+      }),
+    ),
     Layer.provide(
       ServerConfig.layerTest(process.cwd(), { prefix: "t3-remote-delegation-box-" }).pipe(
         Layer.provide(NodeServices.layer),
@@ -493,10 +512,19 @@ const boxToolkitLayer = (thread: BoxThread) => {
         getById: () => Effect.succeedNone,
         // More than a page, so finding the project with this repository pages.
         listPage: ({ cursor, limit }) =>
-          Effect.succeed({
-            projects: boxProjects.slice(cursor, cursor + limit),
-            nextCursor: cursor + limit < boxProjects.length ? cursor + limit : null,
+          Effect.gen(function* () {
+            const empty = yield* Ref.get(thread.noProject);
+            const registered = (yield* Ref.get(thread.registered)).length > 0;
+            const projects = empty ? (registered ? boxProjects.slice(-1) : []) : boxProjects;
+            return {
+              projects: projects.slice(cursor, cursor + limit),
+              nextCursor: cursor + limit < projects.length ? cursor + limit : null,
+            };
           }),
+        create: (input) =>
+          Ref.update(thread.registered, (seen) => [...seen, input.workspaceRoot]).pipe(
+            Effect.as(boxProjects.at(-1)!),
+          ),
       }),
     ),
     Layer.provide(Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({})),
@@ -540,6 +568,8 @@ const makeLaptop = (
   >,
   /** The laptop's links from before a restart, which keep their sessions there. */
   kept?: Context.Context<Layer.Success<ReturnType<typeof layerLinkingEnvironment>>>,
+  /** The sandbox's record of its open tasks, when this laptop has one. */
+  sandbox?: Partial<AssistantSandboxControl["Service"]>,
 ) =>
   Effect.gen(function* () {
     const linking = kept ?? (yield* layerLinkingEnvironment(laptop).pipe(Layer.build));
@@ -580,11 +610,22 @@ const makeLaptop = (
             }),
           ),
           Layer.provide(
+            sandbox === undefined ? Layer.empty : Layer.mock(AssistantSandboxControl)(sandbox),
+          ),
+          Layer.provide(
             Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
               resolve: (cwd) =>
                 Effect.succeed(
                   cwd === "/home/me/app"
-                    ? ({ canonicalKey: "github.com/acme/app" } as RepositoryIdentity)
+                    ? ({
+                        canonicalKey: "github.com/acme/app",
+                        name: "app",
+                        locator: {
+                          source: "git-remote",
+                          remoteName: "origin",
+                          remoteUrl: "git@github.com:acme/app.git",
+                        },
+                      } as RepositoryIdentity)
                     : null,
                 ),
             }),
@@ -1930,6 +1971,81 @@ it.effect("a local task runs in this thread's project", () =>
       });
       expect(result.isError).toBe(true);
       expect(JSON.stringify(result.content)).toContain("invalid_request");
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect(
+  "clones the repository into the box when it has no such project, only when asked to",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const thread = yield* makeBoxThread;
+        yield* Ref.set(thread.noProject, true);
+        const b = yield* serveBox(thread);
+        const offers = yield* SubscriptionRef.make<
+          ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+        >([]);
+        const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+        const a = yield* makeLaptop(database, offers);
+        yield* linkTo(a.links, b, "full-access");
+        yield* seedParent(a);
+        const input = {
+          task: "Run the CI.",
+          target: {
+            environmentId: box.environmentId,
+            providerInstanceId: instanceId,
+            model: "gpt-5.4",
+          },
+          mode: "async",
+          clientRequestId: "ci-in-box",
+        } as const;
+        const scope = parentScope as McpInvocationContext.McpThreadInvocationScope;
+
+        // Asking the agent to clone and register it is what a plain delegation does.
+        const refused = yield* Effect.flip(a.remote.delegate(scope, input));
+        expect(refused.message).toContain("No project there has this repository");
+        expect(yield* Ref.get(thread.cloned)).toEqual([]);
+
+        yield* a.remote.delegate(scope, input, { cloneMissingProject: true });
+        expect(yield* Ref.get(thread.cloned)).toEqual(["/workspace/app"]);
+        expect(yield* Ref.get(thread.registered)).toEqual(["/workspace/app"]);
+        expect(yield* Ref.get(thread.launched)).not.toBeNull();
+      }),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("tells the sandbox when a task starts in it and when that task ends", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const thread = yield* makeBoxThread;
+      const b = yield* serveBox(thread);
+      const offers = yield* SubscriptionRef.make<
+        ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+      >([]);
+      const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+      const events: Array<string> = [];
+      const a = yield* makeLaptop(database, offers, undefined, {
+        isSandbox: (environmentId) => Effect.succeed(environmentId === box.environmentId),
+        taskStarted: (environmentId, taskId) =>
+          Effect.sync(() => void events.push(`started:${environmentId}:${taskId}`)),
+        taskEnded: (taskId) => Effect.sync(() => void events.push(`ended:${taskId}`)),
+      });
+      yield* linkTo(a.links, b, "full-access");
+      yield* seedParent(a);
+
+      const delegated = yield* delegateToBox(a);
+      // The row says where it ran in words, not with the container's hostname.
+      expect(delegated.remoteChild.label).toBe("Assistant sandbox");
+      expect(events).toEqual([`started:${box.environmentId}:${delegated.taskId}`]);
+      yield* Ref.set(thread.status, "completed");
+      yield* Deferred.succeed(thread.finished, undefined);
+      yield* taskResult(a, delegated.taskId);
+      yield* Effect.yieldNow;
+      expect(events).toEqual([
+        `started:${box.environmentId}:${delegated.taskId}`,
+        `ended:${delegated.taskId}`,
+      ]);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

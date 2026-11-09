@@ -103,6 +103,11 @@ describe("Assistant", () => {
     updatedAt: "2026-10-30T00:00:00.000Z",
   };
 
+  it("reads a row saved before project lists existed as having an empty list", () => {
+    expect(decode(row).projectIds).toEqual([]);
+    expect(decode({ ...row, projectIds: ["a", "b"] }).projectIds).toEqual(["a", "b"]);
+  });
+
   it("reads a row saved before budgets existed as having no budget", () => {
     expect(decode(row).budget).toBeNull();
   });

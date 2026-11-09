@@ -464,10 +464,13 @@ import {
   AssistantsEvent,
   AssistantsResetInput,
   AssistantsSetAvatarImageInput,
+  AssistantLibrary,
+  AssistantsLibraryInput,
   AssistantSpend,
   AssistantsSpendInput,
   AssistantsSubscribeInput,
   AssistantsUpdateInput,
+  AssistantSandboxConfigureInput,
   AssistantSandboxPairing,
   AssistantSandboxPairingInput,
   AssistantSandboxRemoveInput,
@@ -779,10 +782,12 @@ export const WS_METHODS = {
   assistantsReset: "assistants.reset",
   assistantsSetAvatarImage: "assistants.setAvatarImage",
   assistantsSpend: "assistants.spend",
+  assistantsLibrary: "assistants.library",
   assistantSandboxSubscribe: "assistantSandbox.subscribe",
   assistantSandboxStart: "assistantSandbox.start",
   assistantSandboxStop: "assistantSandbox.stop",
   assistantSandboxRemove: "assistantSandbox.remove",
+  assistantSandboxConfigure: "assistantSandbox.configure",
   assistantSandboxPairing: "assistantSandbox.pairing",
   assistantTeamsCreate: "assistantTeams.create",
   assistantTeamsUpdate: "assistantTeams.update",
@@ -2331,6 +2336,11 @@ const WsAssistantsSpendRpc = Rpc.make(WS_METHODS.assistantsSpend, {
   success: AssistantSpend,
   error: AssistantRpcErrors,
 });
+const WsAssistantsLibraryRpc = Rpc.make(WS_METHODS.assistantsLibrary, {
+  payload: AssistantsLibraryInput,
+  success: AssistantLibrary,
+  error: AssistantRpcErrors,
+});
 export const WsAssistantSandboxSubscribeRpc = Rpc.make(WS_METHODS.assistantSandboxSubscribe, {
   payload: AssistantSandboxSubscribeInput,
   success: AssistantSandboxStatus,
@@ -2349,6 +2359,11 @@ export const WsAssistantSandboxStopRpc = Rpc.make(WS_METHODS.assistantSandboxSto
 });
 export const WsAssistantSandboxRemoveRpc = Rpc.make(WS_METHODS.assistantSandboxRemove, {
   payload: AssistantSandboxRemoveInput,
+  success: AssistantSandboxStatus,
+  error: AssistantRpcErrors,
+});
+export const WsAssistantSandboxConfigureRpc = Rpc.make(WS_METHODS.assistantSandboxConfigure, {
+  payload: AssistantSandboxConfigureInput,
   success: AssistantSandboxStatus,
   error: AssistantRpcErrors,
 });
@@ -2859,10 +2874,12 @@ export const WsRpcGroup = RpcGroup.make(
   WsAssistantsResetRpc,
   WsAssistantsSetAvatarImageRpc,
   WsAssistantsSpendRpc,
+  WsAssistantsLibraryRpc,
   WsAssistantSandboxSubscribeRpc,
   WsAssistantSandboxStartRpc,
   WsAssistantSandboxStopRpc,
   WsAssistantSandboxRemoveRpc,
+  WsAssistantSandboxConfigureRpc,
   WsAssistantSandboxPairingRpc,
   WsAssistantTeamsCreateRpc,
   WsAssistantTeamsUpdateRpc,

@@ -311,6 +311,10 @@
       "types": "./src/assistantTasks.ts",
       "default": "./src/assistantTasks.ts"
     },
+    "./assistantWork": {
+      "types": "./src/assistantWork.ts",
+      "default": "./src/assistantWork.ts"
+    },
     "./assistantList": {
       "types": "./src/assistantList.ts",
       "default": "./src/assistantList.ts"

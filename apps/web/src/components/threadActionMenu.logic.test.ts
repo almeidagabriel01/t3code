@@ -92,7 +92,9 @@ describe("buildThreadActionMenuItems", () => {
     for (const removed of ["rename", "regenerate-title", "archive", "delete"]) {
       expect(present).not.toContain(removed);
     }
-    expect(present).toEqual(expect.arrayContaining(["reset-assistant", "assistant-settings"]));
+    expect(present).toEqual(
+      expect.arrayContaining(["reset-assistant", "assistant-work", "assistant-settings"]),
+    );
     const readOnly = ids(false);
     expect(readOnly.find((item) => item.id === "reset-assistant")?.disabled).toBe(true);
     expect(readOnly.find((item) => item.id === "assistant-settings")?.disabled).toBeUndefined();

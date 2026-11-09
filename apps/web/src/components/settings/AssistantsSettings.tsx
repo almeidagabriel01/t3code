@@ -1,11 +1,13 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { Fragment } from "react";
+import { listedProjects } from "@t3tools/client-runtime/assistantSections";
 import { teamSubtitle, teamSummary } from "@t3tools/client-runtime/assistantTeam";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   ArchiveIcon,
   ArchiveRestoreIcon,
+  BriefcaseIcon,
   UserRoundIcon,
   UsersIcon,
   EllipsisIcon,
@@ -30,6 +32,7 @@ import { useProjects, useThreadShell } from "../../state/entities";
 import { useEnvironmentProviders, useEnvironments } from "../../state/environments";
 import { AssistantAvatar, toolAccessLabel } from "../assistants/assistantPresentation";
 import { openAssistantDialog } from "../assistants/assistantDialogState";
+import { openAssistantWork } from "../assistants/assistantWorkState";
 import { useAssistantFlows, useAssistantTeamFlows } from "../assistants/useAssistantFlows";
 import { getDisplayModelName } from "../chat/providerIconUtils";
 import { Button } from "../ui/button";
@@ -75,19 +78,26 @@ function AssistantRow(props: {
   const archived = assistant.archivedAt !== null;
   const flows = useAssistantFlows(environmentId);
   const groups = useSidebarProjectGroups();
-  const project = useProjects().find(
-    (candidate) =>
-      candidate.environmentId === environmentId && candidate.id === assistant.projectId,
-  );
-  const projectName = project?.isScratch
-    ? "All projects"
-    : (groups.find((group) =>
-        group.memberProjects.some(
-          (member) => member.environmentId === environmentId && member.id === assistant.projectId,
-        ),
-      )?.displayName ??
-      project?.title ??
-      "Unknown project");
+  const projects = useProjects();
+  const nameOf = (projectId: string) => {
+    const project = projects.find(
+      (candidate) => candidate.environmentId === environmentId && candidate.id === projectId,
+    );
+    return project?.isScratch
+      ? "All projects"
+      : (groups.find((group) =>
+          group.memberProjects.some(
+            (member) => member.environmentId === environmentId && member.id === projectId,
+          ),
+        )?.displayName ??
+          project?.title ??
+          "Unknown project");
+  };
+  const projectName = (
+    assistant.scope === "project" ? listedProjects(assistant) : [assistant.projectId]
+  )
+    .map(nameOf)
+    .join(", ");
   const limitState = useAssistantSpend(
     environmentId,
     assistant.budget === null ? null : assistant.id,
@@ -146,6 +156,12 @@ function AssistantRow(props: {
                 <MessageSquareIcon />
                 Open
               </Button>
+              <IconAction
+                label={`${assistant.name} work`}
+                onClick={() => openAssistantWork({ environmentId, assistantId: assistant.id })}
+              >
+                <BriefcaseIcon />
+              </IconAction>
               <IconAction
                 label={`Edit ${assistant.name}`}
                 onClick={() => openAssistantDialog({ environmentId, assistantId: assistant.id })}

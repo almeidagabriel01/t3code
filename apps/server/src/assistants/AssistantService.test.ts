@@ -479,10 +479,16 @@ it.effect("update writes the row, then renames, switches access and archives the
     assert.equal(updated.toolAccess, "read-only");
     assert.deepEqual(
       dispatched.map((command) => command.type),
-      ["thread.metadata.update", "thread.model-selection.set", "thread.runtime-mode.set"],
+      [
+        "thread.metadata.update",
+        "thread.notice.record",
+        "thread.model-selection.set",
+        "thread.runtime-mode.set",
+      ],
     );
+    assert.equal((dispatched[1] as unknown as { message: string }).message, "Renamed to Renamed");
     assert.equal(
-      (dispatched[2] as unknown as { runtimeMode: string }).runtimeMode,
+      (dispatched[3] as unknown as { runtimeMode: string }).runtimeMode,
       "approval-required",
     );
 
@@ -1038,6 +1044,60 @@ it.effect(
       yield* sql`UPDATE assistants SET scope = NULL WHERE assistant_id = ${scoped.id}`;
       const listed = yield* assistants.list;
       assert.equal(listed.find((one) => one.id === scoped.id)?.scope, "project");
+    }).pipe(Effect.provide(layer));
+  },
+);
+
+it.effect(
+  "a project assistant keeps a list of projects, and only a new home starts a conversation",
+  () => {
+    const { layer } = harness();
+    const docs = ProjectId.make("docs");
+    const web = ProjectId.make("web");
+    return Effect.gen(function* () {
+      const assistants = yield* Assistants.AssistantService;
+      const made = yield* assistants.create(create({ projectIds: [repo, docs, repo] }));
+      assert.deepEqual(
+        [made.projectId, made.projectIds, made.scope],
+        [repo, [repo, docs], "project"],
+      );
+      const added = yield* assistants.update({
+        assistantId: made.id,
+        projectIds: [docs, repo, web],
+      });
+      assert.deepEqual(
+        [added.projectId, added.projectIds, added.generation],
+        [repo, [docs, repo, web], 1],
+      );
+      const moved = yield* assistants.update({ assistantId: made.id, projectIds: [docs, web] });
+      assert.deepEqual(
+        [moved.projectId, moved.projectIds, moved.generation],
+        [docs, [docs, web], 2],
+      );
+      const single = yield* assistants.update({ assistantId: made.id, projectId: web });
+      assert.deepEqual([single.projectId, single.projectIds], [web, [web]]);
+      const everywhere = yield* assistants.update({
+        assistantId: made.id,
+        projectIds: [web, scratch],
+      });
+      assert.deepEqual([everywhere.scope, everywhere.projectIds], ["all", []]);
+      // A row saved before lists existed reads as a list of its one project.
+      const sql = yield* SqlClient.SqlClient;
+      const old = yield* assistants.create(create({ name: "Old" }));
+      yield* sql`UPDATE assistants SET project_ids_json = NULL WHERE assistant_id = ${old.id}`;
+      assert.deepEqual((yield* assistants.list).find((one) => one.id === old.id)?.projectIds, [
+        repo,
+      ]);
+      yield* sql`UPDATE assistants SET project_ids_json = 'not json' WHERE assistant_id = ${old.id}`;
+      assert.deepEqual((yield* assistants.list).find((one) => one.id === old.id)?.projectIds, [
+        repo,
+      ]);
+      // A saved list is read as it is stored.
+      yield* sql`UPDATE assistants SET project_ids_json = '["web","docs"]', project_id = 'web' WHERE assistant_id = ${old.id}`;
+      assert.deepEqual((yield* assistants.list).find((one) => one.id === old.id)?.projectIds, [
+        web,
+        docs,
+      ]);
     }).pipe(Effect.provide(layer));
   },
 );

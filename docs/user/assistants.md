@@ -12,10 +12,11 @@ Open **Settings → Assistants**, or use **+** next to Assistants in the sidebar
 - **Name** and **handle**. The handle is a short lowercase name that agents use to find it.
 - **Avatar**. A robot in a color you pick, or your own PNG, JPEG or WebP image up to 2 MB. Until you
   pick one, the robot comes from its handle.
-- **Project**. The conversation runs in this project's folder. Changing it starts a new conversation,
-  because a thread can't move between projects. Choosing a real project makes it a **project
-  assistant**: it shows a project badge, is listed under that project, and may only launch,
-  delegate and message work inside it (see [Project assistants](#project-assistants)).
+- **Projects**. **All projects**, or the projects you tick. The conversation runs in the first one
+  (its home); changing the home starts a new conversation, because a thread can't move between
+  projects, but adding more projects does not. An assistant with real projects is a **project
+  assistant**: it shows a project badge, is listed under each of its projects, and may only launch,
+  delegate and message work inside them (see [Project assistants](#project-assistants)).
 - **Model**. Change it from the model picker in the conversation, or in the assistant's settings.
 - **Instructions**. Sent with every message, so they keep applying after a long conversation is
   compacted, resumed or moved to another provider. An edit applies from the next message.
@@ -26,9 +27,9 @@ Open **Settings → Assistants**, or use **+** next to Assistants in the sidebar
 
 ## Project assistants
 
-An assistant that lives in **No project** works across all your projects. One that lives in a real
-project is a project assistant. T3 Code refuses its launches, delegated tasks and messages to agent
-conversations in any other project, and tells it why. It can still message other assistants.
+An assistant set to **All projects** works across all your projects. One set to real projects is a
+project assistant. T3 Code refuses its launches, delegated tasks and messages to agent conversations
+in any project outside its list, and tells it why. It can still message other assistants.
 
 ## Tool access
 
@@ -207,6 +208,24 @@ An assistant's settings list the scheduled tasks that run in its conversation. *
 the task editor already pointed at that conversation. Schedules belong to the assistant: they follow
 it through a reset, a restore or a project change. An assistant can also schedule its own work when
 you ask it to.
+
+## The Work panel
+
+**Work** on an assistant's card, in its sidebar menu and in its thread menu (the web and the mobile app
+alike) shows what it is up to in one place.
+
+- **Status** says whether it can work now. When it cannot (its project is gone, its sandbox is
+  stopped, its provider is signed out or its model is no longer offered), the card says why and has a
+  button that goes to the fix. A paused Autonomy switch is shown too, with a button to resume it.
+  **Retry** appears when its last run failed or was stopped.
+- **Routines** are the schedules that run in its conversation, with the next run in your local time, a
+  pause and resume switch and **Run now**. Pausing or resuming a routine, and renaming the assistant,
+  leave a muted line in its conversation.
+- **Memory** lists what its conversations taught the memory, with the scope and a link to the
+  conversation each came from. Edit or forget a memory there. On mobile, tapping a memory opens it in
+  Memory to edit.
+- **Library** lists the files it handed to other assistants or received from them in the shared
+  folder. Open or reveal them on the machine that runs the server.
 
 ## Autonomy
 

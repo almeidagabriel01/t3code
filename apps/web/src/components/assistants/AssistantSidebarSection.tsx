@@ -1,3 +1,4 @@
+import { listedProjects } from "@t3tools/client-runtime/assistantSections";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   assistantMetaLabel,
@@ -13,6 +14,7 @@ import {
 import type { EnvironmentId, AssistantTeamId, ScopedThreadRef } from "@t3tools/contracts";
 import {
   ArchiveIcon,
+  BriefcaseIcon,
   ChevronDownIcon,
   MessagesSquareIcon,
   ChevronRightIcon,
@@ -52,6 +54,7 @@ import { ProjectFavicon, type ProjectFaviconProject } from "../ProjectFavicon";
 import { AssistantAvatar } from "./assistantPresentation";
 import { AssistantTaskRows } from "./AssistantTaskRows";
 import { openAssistantDialog } from "./assistantDialogState";
+import { openAssistantWork } from "./assistantWorkState";
 import { openAssistantGroupSettings, openAssistantTeamDialog } from "./assistantTeamState";
 import { DescribeAssistantDialog } from "./DescribeAssistantDialog";
 import { useAssistantFlows, useAssistantTeamFlows } from "./useAssistantFlows";
@@ -235,6 +238,12 @@ const AssistantRow = memo(function AssistantRow(props: {
             >
               <RefreshCwIcon />
               Reset conversation
+            </MenuItem>
+            <MenuItem
+              onClick={() => openAssistantWork({ environmentId, assistantId: assistant.id })}
+            >
+              <BriefcaseIcon />
+              Assistant work
             </MenuItem>
             <MenuItem
               onClick={() => openAssistantDialog({ environmentId, assistantId: assistant.id })}
@@ -527,7 +536,9 @@ export const AssistantSidebarSection = memo(function AssistantSidebarSection(pro
         }
         projectLabel={
           entry.assistant.scope === "project"
-            ? (projectOf(entry.environmentId, entry.assistant.projectId)?.title ?? "Project")
+            ? listedProjects(entry.assistant)
+                .map((projectId) => projectOf(entry.environmentId, projectId)?.title ?? "Project")
+                .join(", ")
             : null
         }
         project={

@@ -800,6 +800,8 @@ const guardThreads = {
   group: ThreadId.make("assistant:helper:g-0123456789abcdef"),
   /** A conversation in the project the scoped assistant lives in. */
   sameProject: ThreadId.make("thread:guard:same-project"),
+  /** A conversation in the second project on the scoped assistant's list. */
+  secondProject: ThreadId.make("thread:guard:second-project"),
 };
 
 const layerAssistantGuardTest = (dispatched: Array<unknown>) =>
@@ -819,7 +821,11 @@ const layerAssistantGuardTest = (dispatched: Array<unknown>) =>
         getThreadShell: (threadId) =>
           Effect.succeed({
             projectId: ProjectId.make(
-              threadId === guardThreads.sameProject ? "project:scoped" : "project:guard",
+              threadId === guardThreads.sameProject
+                ? "project:scoped"
+                : threadId === guardThreads.secondProject
+                  ? "project:second"
+                  : "project:guard",
             ),
           } as never),
         dispatch: (command) =>
@@ -847,7 +853,11 @@ const layerAssistantGuardTest = (dispatched: Array<unknown>) =>
                     projectId: ProjectId.make(
                       threadId === guardThreads.scoped ? "project:scoped" : "project:guard",
                     ),
-                  } as Assistant,
+                    projectIds:
+                      threadId === guardThreads.scoped
+                        ? [ProjectId.make("project:scoped"), ProjectId.make("project:second")]
+                        : [],
+                  } as unknown as Assistant,
                   current: threadId === guardThreads.current,
                 }),
           ),
@@ -1080,7 +1090,8 @@ it.effect.each([
 
 it.effect.each([
   ["a project assistant sending into its own project", "scoped", "sameProject", null],
-  ["a project assistant sending into another project", "scoped", "plain", "own project"],
+  ["a project assistant sending into its second project", "scoped", "secondProject", null],
+  ["a project assistant sending into a project off its list", "scoped", "plain", "your list"],
   ["a project assistant messaging another assistant", "scoped", "current", null],
   ["an everywhere assistant sending into any project", "current", "plain", null],
 ] as const)("project scope: %s", ([, sender, target, refusal]) => {

@@ -2,6 +2,7 @@ import {
   type Assistant,
   AssistantError,
   type AssistantId,
+  type AssistantLibrary,
   type AssistantsCreateInput,
   type AssistantTeam,
   type AssistantTeamId,
@@ -48,7 +49,7 @@ import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ProjectService from "../project/ProjectService.ts";
-import { removeOwnerTransfers } from "./AssistantTransfers.ts";
+import { listLibrary, removeOwnerTransfers } from "./AssistantTransfers.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
@@ -70,6 +71,7 @@ import {
   encodeBudget,
   encodeMcpServers,
   toAssistant,
+  encodeProjectIds,
 } from "./AssistantDirectory.ts";
 
 const JARVIS_INSTRUCTIONS = [
@@ -129,6 +131,8 @@ export class AssistantService extends Context.Service<
       never,
       Scope.Scope
     >;
+    /** Files it handed over or received through the shared folder, newest first. */
+    readonly library: (assistantId: AssistantId) => Effect.Effect<AssistantLibrary, AssistantError>;
     /** The model a new thread for this project starts on. */
     readonly defaultModel: (projectId: ProjectId) => Effect.Effect<ModelSelection, AssistantError>;
   }
@@ -289,6 +293,26 @@ const make = Effect.gen(function* () {
     yield* threads
       .dispatch(command(CommandId.make(`assistant-cmd:${id}`)))
       .pipe(Effect.catch(threadFailure("Could not update the assistant's conversation.")));
+  });
+
+  /** A muted line in the conversation; a failure to write it never fails the change it reports. */
+  const noteInThread = Effect.fn("AssistantService.noteInThread")(function* (
+    threadId: ThreadId,
+    message: string,
+  ) {
+    const id = yield* random.uuidV4().pipe(Effect.orDie);
+    yield* threads
+      .dispatch({
+        type: "thread.notice.record",
+        commandId: CommandId.make(`assistant-note:${id}`),
+        threadId,
+        message,
+      })
+      .pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("Could not leave a line in the assistant's conversation", { cause }),
+        ),
+      );
   });
 
   const archiveThread = (threadId: ThreadId, archived: boolean) =>
@@ -471,6 +495,18 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  /** The home project is the list's first; every project must exist. "all" if any is a home one. */
+  const resolveProjects = Effect.fn("AssistantService.resolveProjects")(function* (
+    projectIds: ReadonlyArray<ProjectId>,
+  ) {
+    yield* Effect.forEach(projectIds, requireProject);
+    const scopes = yield* Effect.forEach(projectIds, scopeFor);
+    return {
+      scope: scopes.includes("all") ? ("all" as const) : ("project" as const),
+      json: encodeProjectIds(projectIds),
+    };
+  });
+
   const handleTaken = (handle: string, exceptId?: string) =>
     sql<{ readonly one: number }>`
       SELECT 1 AS one FROM assistants WHERE handle = ${handle} AND assistant_id <> ${exceptId ?? ""}`.pipe(
@@ -489,9 +525,11 @@ const make = Effect.gen(function* () {
       const handle = input.handle ?? assistantHandleFromName(input.name);
       if (handle === null)
         return yield* invalid("Give the assistant a name with letters or digits.");
-      yield* requireProject(input.projectId);
+      const listed = [...new Set(input.projectIds ?? [])];
+      const projectIds = listed.length > 0 ? listed : [input.projectId];
+      const home = projectIds[0]!;
+      const { scope, json: projectIdsJson } = yield* resolveProjects(projectIds);
       const id = options?.id ?? (yield* random.uuidV4().pipe(Effect.orDie));
-      const scope = yield* scopeFor(input.projectId);
       return yield* lock.withPermits(1)(
         Effect.gen(function* () {
           // A repeat of a create that already landed is that assistant, not a second one.
@@ -510,13 +548,13 @@ const make = Effect.gen(function* () {
             INSERT INTO assistants (
               assistant_id, handle, name, project_id, instructions, tool_access, is_default,
               generation, budget_json, autonomy_json, role, ask_before_acting,
-              workspace, icon, avatar_json, scope, mcp_servers_json, created_at, updated_at
+              workspace, icon, avatar_json, scope, project_ids_json, mcp_servers_json, created_at, updated_at
             ) VALUES (
-              ${id}, ${handle}, ${input.name}, ${input.projectId}, ${input.instructions},
+              ${id}, ${handle}, ${input.name}, ${home}, ${input.instructions},
               ${input.toolAccess}, 0, 1, ${input.budget ? encodeBudget(input.budget) : null},
               ${input.autonomy ? encodeAutonomy(input.autonomy) : null}, ${input.role?.trim() ?? ""},
               ${input.askBeforeActing === true ? 1 : 0}, ${input.workspace ?? "host"}, ${input.icon ?? null},
-              ${input.avatar ? encodeAvatar(input.avatar) : null}, ${scope},
+              ${input.avatar ? encodeAvatar(input.avatar) : null}, ${scope}, ${projectIdsJson},
               ${saved === undefined ? null : encodeMcpServers(saved.servers)}, ${now}, ${now}
             )`;
           const row = yield* findRow(id);
@@ -548,10 +586,22 @@ const make = Effect.gen(function* () {
           if (input.handle !== undefined && input.handle !== row.handle) {
             yield* handleTaken(input.handle, row.assistant_id);
           }
-          const projectChanged =
-            input.projectId !== undefined && input.projectId !== row.project_id;
-          if (input.projectId !== undefined && projectChanged)
-            yield* requireProject(input.projectId);
+          const listed = [...new Set(input.projectIds ?? [])];
+          const requested =
+            listed.length > 0
+              ? listed
+              : input.projectId === undefined
+                ? undefined
+                : [input.projectId];
+          // Adding projects keeps the home one, so it does not start a new conversation.
+          const home =
+            requested === undefined
+              ? row.project_id
+              : requested.includes(row.project_id as ProjectId)
+                ? row.project_id
+                : requested[0]!;
+          const projectChanged = home !== row.project_id;
+          const resolved = requested === undefined ? undefined : yield* resolveProjects(requested);
           // A deleted conversation is replaced first, so the changes below land on a live one.
           yield* ensureLaunched(row.assistant_id);
           row = yield* findRow(row.assistant_id);
@@ -569,7 +619,7 @@ const make = Effect.gen(function* () {
             handle: input.handle ?? row.handle,
             instructions: input.instructions ?? row.instructions,
             toolAccess: input.toolAccess ?? toAssistant(row).toolAccess,
-            projectId: input.projectId ?? row.project_id,
+            projectId: home,
             budgetJson:
               input.budget === undefined
                 ? row.budget_json
@@ -593,7 +643,8 @@ const make = Effect.gen(function* () {
                 : input.avatar === null
                   ? null
                   : encodeAvatar(input.avatar),
-            scope: projectChanged ? yield* scopeFor(input.projectId!) : row.scope,
+            scope: resolved?.scope ?? row.scope,
+            projectIdsJson: resolved?.json ?? row.project_ids_json ?? null,
           };
           const saved =
             input.mcpServers === undefined
@@ -625,7 +676,7 @@ const make = Effect.gen(function* () {
                 project_id = ${next.projectId}, thread_id = ${threadId}, generation = ${generation},
                 budget_json = ${next.budgetJson}, autonomy_json = ${next.autonomyJson},
                 role = ${next.role},
-                ask_before_acting = ${next.askBeforeActing}, workspace = ${next.workspace}, icon = ${next.icon}, avatar_json = ${next.avatarJson}, scope = ${next.scope}, mcp_servers_json = ${mcpServersJson}, archived_at = ${archivedAt}, updated_at = ${now}
+                ask_before_acting = ${next.askBeforeActing}, workspace = ${next.workspace}, icon = ${next.icon}, avatar_json = ${next.avatarJson}, scope = ${next.scope}, project_ids_json = ${next.projectIdsJson}, mcp_servers_json = ${mcpServersJson}, archived_at = ${archivedAt}, updated_at = ${now}
               WHERE assistant_id = ${row.assistant_id}`;
             yield* followSchedules({ ...row, generation }, threadId, next.projectId);
             yield* retire(previousThreadId);
@@ -637,7 +688,7 @@ const make = Effect.gen(function* () {
                 instructions = ${next.instructions}, tool_access = ${next.toolAccess},
                 budget_json = ${next.budgetJson}, autonomy_json = ${next.autonomyJson},
                 role = ${next.role},
-                ask_before_acting = ${next.askBeforeActing}, workspace = ${next.workspace}, icon = ${next.icon}, avatar_json = ${next.avatarJson}, mcp_servers_json = ${mcpServersJson}, archived_at = ${archivedAt}, updated_at = ${now}
+                ask_before_acting = ${next.askBeforeActing}, workspace = ${next.workspace}, icon = ${next.icon}, avatar_json = ${next.avatarJson}, scope = ${next.scope}, project_ids_json = ${next.projectIdsJson}, mcp_servers_json = ${mcpServersJson}, archived_at = ${archivedAt}, updated_at = ${now}
               WHERE assistant_id = ${row.assistant_id}`;
             if (
               previousThreadId !== null &&
@@ -651,6 +702,7 @@ const make = Effect.gen(function* () {
                   threadId: previousThreadId,
                   title: next.name,
                 }));
+                yield* noteInThread(previousThreadId, `Renamed to ${next.name}`);
               }
               if (input.modelSelection !== undefined) {
                 const modelSelection = input.modelSelection;
@@ -943,7 +995,11 @@ const make = Effect.gen(function* () {
             // A thread can't change projects, so the assistant follows it to the restored one's.
             yield* sql`
               UPDATE assistants SET thread_id = ${restore}, project_id = ${thread.projectId},
-                scope = ${yield* scopeFor(thread.projectId)}, updated_at = ${yield* nowIso}
+                scope = ${yield* scopeFor(thread.projectId)},
+                project_ids_json = CASE
+                  WHEN EXISTS (SELECT 1 FROM json_each(project_ids_json) WHERE value = ${thread.projectId})
+                  THEN project_ids_json ELSE json_array(${thread.projectId}) END,
+                updated_at = ${yield* nowIso}
               WHERE assistant_id = ${row.assistant_id}`;
             yield* followSchedules(row, restore, thread.projectId);
             if (thread.archivedAt !== null) yield* archiveThread(restore, false);
@@ -967,7 +1023,16 @@ const make = Effect.gen(function* () {
     storage,
   );
 
+  const library: AssistantService["Service"]["library"] = Effect.fn("AssistantService.library")(
+    function* (assistantId) {
+      const row = yield* findRow(assistantId);
+      return yield* listLibrary(config.sharedDir, row.assistant_id);
+    },
+    storage,
+  );
+
   return AssistantService.of({
+    library,
     list,
     subscribe,
     ensureDefault,

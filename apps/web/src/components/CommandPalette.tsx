@@ -54,6 +54,7 @@ import {
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import {
   BrainIcon,
+  BriefcaseIcon,
   UserRoundIcon,
   UserRoundPlusIcon,
   MessagesSquareIcon,
@@ -99,6 +100,7 @@ import { useDecisionEntries } from "../state/decisions";
 import { useNotesEnvironmentIds } from "../state/notes";
 import { useNotesPaletteItems } from "./notes/notesPaletteItems";
 import { openAssistantDialog } from "./assistants/assistantDialogState";
+import { openAssistantWork } from "./assistants/assistantWorkState";
 import { openAssistantTeamDialog } from "./assistants/assistantTeamState";
 import { useAssistantEntries } from "../state/assistants";
 import {
@@ -223,6 +225,7 @@ import {
   getCommandPaletteInputPlaceholder,
   getCommandPaletteMode,
   ITEM_ICON_CLASS,
+  buildAssistantWorkActionItems,
   RECENT_THREAD_LIMIT,
   createCommandPaletteSearchState,
   type CommandPaletteGroup,
@@ -1764,6 +1767,15 @@ function OpenCommandPaletteDialog(props: {
       },
     });
   }
+  actionItems.push(
+    ...buildAssistantWorkActionItems({
+      entries: assistantEntries.active,
+      environmentLabel: (environmentId) =>
+        environments.find((item) => item.environmentId === environmentId)?.label ?? null,
+      icon: <BriefcaseIcon className={ITEM_ICON_CLASS} />,
+      open: openAssistantWork,
+    }),
+  );
   for (const { environmentId, team } of assistantEntries.activeTeams) {
     actionItems.push({
       kind: "action",

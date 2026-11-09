@@ -5,7 +5,11 @@ import {
   assistantPresence,
   assistantQueuedLabel,
 } from "@t3tools/client-runtime/assistantRobot";
-import { assistantEntryKey, assistantSections } from "@t3tools/client-runtime/assistantSections";
+import {
+  assistantEntryKey,
+  assistantSections,
+  listedProjects,
+} from "@t3tools/client-runtime/assistantSections";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import type { ReactNode } from "react";
@@ -39,6 +43,7 @@ import { AssistantAvatar } from "./assistantPresentation";
 import { AssistantTaskRows } from "./AssistantTaskRows";
 import { moodTextClass } from "./assistantPresenceLabels";
 import { useOpenAssistantEditor } from "./openAssistantEditor";
+import { useOpenAssistantWork } from "./assistantWorkTarget";
 import { useOpenAssistantTeam } from "./assistantTeamTarget";
 import { useAssistantFlows, useAssistantTeamFlows } from "./useAssistantFlows";
 
@@ -52,6 +57,7 @@ function AssistantCard(props: {
   const { assistant, environmentId } = props.entry;
   const flows = useAssistantFlows(environmentId);
   const openEditor = useOpenAssistantEditor();
+  const openWork = useOpenAssistantWork();
   const archived = assistant.archivedAt !== null;
   const thread = useThreadShell(
     assistant.threadId === null ? null : scopeThreadRef(environmentId, assistant.threadId),
@@ -141,6 +147,14 @@ function AssistantCard(props: {
               size="compact"
               disabled={assistant.threadId === null}
               onPress={() => flows.openConversation(assistant)}
+            />
+            <Button
+              label="Work"
+              icon="briefcase"
+              tone="text"
+              size="compact"
+              accessibilityLabel={`${assistant.name} work`}
+              onPress={() => openWork(environmentId, assistant.id)}
             />
             <Button
               label="Edit"
@@ -359,7 +373,9 @@ export function SettingsAssistantsRouteScreen() {
       nowMs={nowMs}
       projectLabel={
         entry.assistant.scope === "project"
-          ? projectName(entry.environmentId, entry.assistant.projectId)
+          ? listedProjects(entry.assistant)
+              .map((projectId) => projectName(entry.environmentId, projectId))
+              .join(", ")
           : "All projects"
       }
     />

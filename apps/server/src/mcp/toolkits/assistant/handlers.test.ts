@@ -2,6 +2,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { expect, it } from "@effect/vitest";
 import {
   type Assistant,
+  AssistantError,
   type AssistantTeam,
   EnvironmentId,
   ProjectId,
@@ -15,7 +16,9 @@ import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
 import * as AssistantGroups from "../../../assistants/AssistantGroups.ts";
+import * as AssistantSandboxControl from "../../../assistants/AssistantSandboxControl.ts";
 import * as AssistantService from "../../../assistants/AssistantService.ts";
+import * as RemoteDelegation from "../../../peer/RemoteDelegation.ts";
 import * as DecisionService from "../../../decisions/DecisionService.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as SqlitePersistence from "../../../persistence/Sqlite.ts";
@@ -34,6 +37,7 @@ const assistant = (id: string, extra: Partial<Assistant>) =>
     handle: id,
     name: id.toUpperCase(),
     projectId: "p1",
+    projectIds: [],
     threadId: `assistant:${id}:1`,
     toolAccess: "full",
     role: "",
@@ -125,13 +129,31 @@ const assistantsMock = () => {
   return { layer, writes };
 };
 
+const sandboxId = EnvironmentId.make("environment-sandbox");
+
+/** The container and the delegation, as far as the tool can tell. */
+const containerWorld = () => ({
+  config: { cpus: null as number | null, chosen: false, whenDone: "discard", oneOff: false },
+  status: { state: "running", environmentId: sandboxId as EnvironmentId | null, error: null } as {
+    state: string;
+    environmentId: EnvironmentId | null;
+    error: string | null;
+  },
+  configured: [] as Array<unknown>,
+  delegated: [] as Array<{ input: any; options: unknown }>,
+  discardError: null as string | null,
+  discards: 0,
+});
+
 const harness = (
   callerMode: RuntimeMode,
   startedBy: Record<string, unknown> = { id: "m-user", createdBy: "user" },
+  callerThread = "thread-1",
 ) =>
   Effect.gen(function* () {
     const { layer, writes } = assistantsMock();
-    const threadId = ThreadId.make("thread-1");
+    const container = containerWorld();
+    const threadId = ThreadId.make(callerThread);
     const announced: Array<{ text: string; clientRequestId: string }> = [];
     const posts: Array<Parameters<AssistantGroups.AssistantGroups["Service"]["agentPost"]>[0]> = [];
     const deps = Layer.succeedContext(
@@ -139,6 +161,36 @@ const harness = (
         Layer.mergeAll(
           NodeCrypto.layer,
           layer,
+          Layer.mock(AssistantSandboxControl.AssistantSandboxControl)({
+            config: Effect.sync(() => container.config as never),
+            configure: (input) =>
+              Effect.sync(() => {
+                container.configured.push(input);
+                container.config = {
+                  ...container.config,
+                  cpus: input.cpus ?? container.config.cpus,
+                  chosen: true,
+                };
+                return {} as never;
+              }),
+            startForTask: Effect.sync(() => container.status as never),
+            discard: Effect.suspend(() => {
+              if (container.discardError !== null) {
+                return Effect.fail(
+                  new AssistantError({ reason: "invalid", message: container.discardError }),
+                );
+              }
+              container.discards += 1;
+              return Effect.succeed({ state: "not_created" } as never);
+            }),
+          }),
+          Layer.mock(RemoteDelegation.RemoteDelegation)({
+            delegate: (_scope, input, options) =>
+              Effect.sync(() => {
+                container.delegated.push({ input, options });
+                return { taskId: "task-1" as never };
+              }),
+          }),
           Layer.succeed(McpInvocationContext.McpInvocationContext, {
             environmentId: EnvironmentId.make("environment"),
             requestNamespace: "thread:test",
@@ -215,7 +267,7 @@ const harness = (
         Effect.provide(deps),
       );
     const decisions = yield* DecisionService.DecisionService.pipe(Effect.provide(deps));
-    return { call, writes, decisions, posts, announced };
+    return { call, writes, decisions, posts, announced, container };
   });
 
 it.effect("list and read give each assistant its role and its groups' lead by handle", () =>
@@ -285,6 +337,32 @@ it.effect("create without a toolAccess is refused so the agent asks the user", (
     expect(refused).toMatchObject({ code: "invalid_request" });
     expect(refused.message).toContain("Ask the user");
     expect(writes).toEqual([]);
+  }),
+);
+
+it.effect("create and update pass the list of projects, the first being the home", () =>
+  Effect.gen(function* () {
+    const { call, writes } = yield* harness("full-access");
+    yield* call({
+      action: "create",
+      name: "Many",
+      instructions: "",
+      toolAccess: "read-only",
+      projectIds: ["a", "b"],
+      clientRequestId: "many",
+    });
+    yield* call({
+      action: "update",
+      handle: "eng",
+      projectIds: ["b", "c"],
+      clientRequestId: "upd",
+    });
+    const listed = yield* call({ action: "read", handle: "eng" });
+    expect(writes).toEqual([
+      { create: expect.objectContaining({ projectId: "a", projectIds: ["a", "b"] }) },
+      { update: expect.objectContaining({ projectIds: ["b", "c"] }) },
+    ]);
+    expect(listed).toMatchObject({ projectIds: ["b", "c"] });
   }),
 );
 
@@ -491,5 +569,126 @@ it.effect("a user turn, including a channel or decision answer, may change a gro
       });
       expect(announced).toHaveLength(1);
     }
+  }),
+);
+
+const containerTask = { action: "container_task", text: "Run the CI." } as const;
+
+it.effect("container_task asks for the CPU limit once, then starts the task, keyed per call", () =>
+  Effect.gen(function* () {
+    const { call, container, decisions } = yield* harness("full-access");
+    const pending = yield* call({ ...containerTask, clientRequestId: "ci" });
+    expect(pending).toMatchObject({ status: "pending_decision" });
+    // Asking again before the answer shows the same question and starts nothing.
+    expect(yield* call({ ...containerTask, clientRequestId: "ci" })).toEqual(pending);
+    expect(container.delegated).toEqual([]);
+
+    yield* decisions.answer({ decisionId: pending.decisionId, optionId: "none" });
+    const started = yield* call({ ...containerTask, clientRequestId: "ci" });
+    expect(started).toMatchObject({
+      status: "started",
+      taskId: "task-1",
+      environmentId: sandboxId,
+    });
+    expect(container.configured).toEqual([{ cpus: null }]);
+    expect(container.delegated).toHaveLength(1);
+    expect(container.delegated[0]!.input).toMatchObject({
+      task: "Run the CI.",
+      mode: "async",
+      target: { environmentId: sandboxId },
+    });
+    // The project is cloned into the container when it is missing there.
+    expect(container.delegated[0]!.options).toEqual({ cloneMissingProject: true });
+
+    // Chosen once: no second question, and the same request id lands on the same key.
+    const again = yield* call({ ...containerTask, clientRequestId: "ci" });
+    expect(again).toMatchObject({ status: "started" });
+    expect(container.delegated[1]!.input.clientRequestId).toBe(
+      container.delegated[0]!.input.clientRequestId,
+    );
+    expect(yield* decisions.list({})).toHaveLength(1);
+  }),
+);
+
+it.effect("container_task stores the number of cores the user picked", () =>
+  Effect.gen(function* () {
+    const { call, container, decisions } = yield* harness("full-access");
+    const pending = yield* call(containerTask);
+    yield* decisions.answer({ decisionId: pending.decisionId, optionId: "cpus-2" });
+    yield* call(containerTask);
+    expect(container.configured).toEqual([{ cpus: 2 }]);
+  }),
+);
+
+it.effect("container_task without a request id derives one from the task", () =>
+  Effect.gen(function* () {
+    const { call, container } = yield* harness("full-access");
+    container.config = { ...container.config, chosen: true };
+    yield* call(containerTask);
+    yield* call(containerTask);
+    yield* call({ ...containerTask, text: "Run the linter." });
+    const keys = container.delegated.map((entry) => entry.input.clientRequestId);
+    expect(keys[0]).toBe(keys[1]);
+    expect(keys[2]).not.toBe(keys[0]);
+    expect(keys[0].length).toBeLessThan(64);
+  }),
+);
+
+it.effect("container_task says when the container is still starting or cannot start", () =>
+  Effect.gen(function* () {
+    const { call, container } = yield* harness("full-access");
+    container.config = { ...container.config, chosen: true };
+    container.status = { state: "starting", environmentId: null, error: null };
+    expect(yield* call(containerTask)).toMatchObject({ status: "starting" });
+    container.status = { state: "docker_unavailable", environmentId: null, error: null };
+    expect(yield* call(containerTask)).toMatchObject({ code: "invalid_request" });
+    container.status = { state: "failed", environmentId: null, error: "Build failed." };
+    expect(yield* call(containerTask)).toMatchObject({ message: "Build failed." });
+    expect(container.delegated).toEqual([]);
+  }),
+);
+
+it.effect(
+  "container_task refuses an empty task and an assistant whose workspace is the container",
+  () =>
+    Effect.gen(function* () {
+      const { call, container } = yield* harness("full-access");
+      expect(yield* call({ action: "container_task" })).toMatchObject({ code: "invalid_request" });
+      const sandboxed = yield* harness(
+        "full-access",
+        { id: "m-user", createdBy: "user" },
+        "assistant:ceo:1",
+      );
+      const refused = yield* sandboxed.call(containerTask);
+      expect(refused).toMatchObject({ code: "invalid_request" });
+      expect(refused.message).toContain("already the container");
+      expect(container.delegated).toEqual([]);
+      expect(sandboxed.container.delegated).toEqual([]);
+    }),
+);
+
+it.effect("container_task is refused for good when the user dismisses the CPU question", () =>
+  Effect.gen(function* () {
+    const { call, container, decisions } = yield* harness("full-access");
+    const pending = yield* call(containerTask);
+    yield* decisions.dismiss(pending.decisionId);
+    expect(yield* call(containerTask)).toMatchObject({ code: "invalid_request" });
+    expect(container.delegated).toEqual([]);
+  }),
+);
+
+it.effect("container_discard discards the container, and reports why it cannot", () =>
+  Effect.gen(function* () {
+    const { call, container } = yield* harness("full-access");
+    expect(yield* call({ action: "container_discard" })).toMatchObject({
+      status: "discarded",
+      container: "not_created",
+    });
+    expect(container.discards).toBe(1);
+    container.discardError = "1 task is still running in the container.";
+    expect(yield* call({ action: "container_discard" })).toMatchObject({
+      code: "invalid_request",
+      message: "1 task is still running in the container.",
+    });
   }),
 );

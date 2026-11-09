@@ -87,6 +87,7 @@ import IconGitCommit from "@tabler/icons-react-native/IconGitCommit";
 import IconGitBranch from "@tabler/icons-react-native/IconGitBranch";
 import IconGitMerge from "@tabler/icons-react-native/IconGitMerge";
 import IconGitPullRequest from "@tabler/icons-react-native/IconGitPullRequest";
+import IconBriefcase from "@tabler/icons-react-native/IconBriefcase";
 import IconHammer from "@tabler/icons-react-native/IconHammer";
 import IconHome from "@tabler/icons-react-native/IconHome";
 import IconInfoCircle from "@tabler/icons-react-native/IconInfoCircle";
@@ -245,6 +246,7 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   folder: IconFolder,
   "folder.badge.plus": IconFolderPlus,
   "folder.fill": IconFolder,
+  briefcase: IconBriefcase,
   gearshape: IconSettings,
   globe: IconWorld,
   hammer: IconHammer,

@@ -19,6 +19,8 @@ import {
   type AddProjectRemoteSourceReadiness,
 } from "@t3tools/client-runtime/operations/projects";
 import {
+  type Assistant,
+  type AssistantId,
   type EnvironmentId,
   type ProjectId,
   type EnvironmentMachineKind,
@@ -38,6 +40,27 @@ import { isSidebarHiddenThread } from "./Sidebar.logic";
 export const RECENT_THREAD_LIMIT = 12;
 export const ITEM_ICON_CLASS = "size-4 text-icon-muted";
 export const ADDON_ICON_CLASS = "size-4";
+
+export function buildAssistantWorkActionItems(input: {
+  readonly entries: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly assistant: Pick<Assistant, "id" | "name" | "handle">;
+  }>;
+  readonly environmentLabel: (environmentId: EnvironmentId) => string | null;
+  readonly icon: ReactNode;
+  readonly open: (target: { environmentId: EnvironmentId; assistantId: AssistantId }) => void;
+}): CommandPaletteActionItem[] {
+  const multiple = new Set(input.entries.map((entry) => entry.environmentId)).size > 1;
+  return input.entries.map(({ environmentId, assistant }) => ({
+    kind: "action",
+    value: `action:assistant-work:${environmentId}:${assistant.id}`,
+    searchTerms: ["assistant", "work", "memory", "library", assistant.name, assistant.handle],
+    title: `Open ${assistant.name} work`,
+    ...(multiple ? { description: input.environmentLabel(environmentId) ?? "" } : {}),
+    icon: input.icon,
+    run: async () => input.open({ environmentId, assistantId: assistant.id }),
+  }));
+}
 
 export function buildLinkedThreadActionItems(
   input: CommandPaletteLinkedThreads & {

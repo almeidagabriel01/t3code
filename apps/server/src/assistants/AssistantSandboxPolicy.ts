@@ -50,8 +50,8 @@ export function sandboxNoteLine(environmentId: string | null): string {
 
 /**
  * Why `threadId` may not start or message work in another project, or none when it may. Only a
- * project assistant is held: it works inside its own project. `projectId` is the project the work
- * lands in (undefined when the caller names none, which means its own); `elsewhere` is true for
+ * project assistant is held: it works inside the projects on its list. `projectId` is the project the
+ * work lands in (undefined when the caller names none, which means its home); `elsewhere` is true for
  * work aimed at another environment, whose projects are never this one.
  */
 export const projectScopeRefusal = Effect.fn("AssistantSandboxPolicy.projectScopeRefusal")(
@@ -68,9 +68,10 @@ export const projectScopeRefusal = Effect.fn("AssistantSandboxPolicy.projectScop
     if (Option.isNone(found) || found.value.assistant.scope !== "project") {
       return Option.none<string>();
     }
+    const { assistant } = found.value;
     if (
       input.elsewhere !== true &&
-      (input.projectId ?? found.value.assistant.projectId) === found.value.assistant.projectId
+      assistant.projectIds.includes(input.projectId ?? assistant.projectId)
     ) {
       return Option.none<string>();
     }
@@ -79,8 +80,12 @@ export const projectScopeRefusal = Effect.fn("AssistantSandboxPolicy.projectScop
 );
 
 const PROJECT_SCOPE_REFUSAL =
-  "You are a project assistant: you may only launch, delegate and message work inside your own project. Omit the project, or ask the user to do this from another conversation.";
+  "You are a project assistant: you may only launch, delegate and message work inside the projects on your list. Omit the project for your home project, or ask the user to do this from another conversation.";
 
 /** The note line for a project assistant. */
-export const PROJECT_SCOPE_NOTE_LINE =
-  "You belong to one project. Launch, delegate and message work only inside it; other projects are out of reach.";
+export const projectScopeNoteLine = (projectIds: ReadonlyArray<string>): string =>
+  `You belong to ${projectIds.length === 1 ? "one project" : "these projects"} (projectId ${projectIds.join(", ")}). Launch, delegate and message work only inside ${projectIds.length === 1 ? "it" : "them"}; other projects are out of reach.`;
+
+/** The note line for an assistant that works on this Mac, which may send one task to the container. */
+export const HOST_CONTAINER_NOTE_LINE =
+  "You work on this Mac. Only when the user asks for the container, send that one task there with t3_assistant container_task; everything else runs here.";

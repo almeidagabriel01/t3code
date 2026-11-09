@@ -23,6 +23,13 @@ import {
   connectorsEqual,
   type ConnectorDraft,
 } from "@t3tools/client-runtime/assistantConnectors";
+import {
+  assistantProjectFields,
+  assistantProjectSelection,
+  homeAfterPick,
+  sameProjects,
+  toggleAssistantProject,
+} from "@t3tools/client-runtime/assistantSections";
 import { sameAssistantAutonomy } from "@t3tools/client-runtime/autonomy";
 import { createModelSelection } from "@t3tools/shared/model";
 import { Link, useRouter } from "@tanstack/react-router";
@@ -279,8 +286,12 @@ function AssistantDialog(props: {
   const [connectors, setConnectors] = useState<ReadonlyArray<ConnectorDraft>>(() =>
     connectorDraftsFrom(assistant?.mcpServers ?? []),
   );
-  const [projectId, setProjectId] = useState<ProjectId | null>(
-    assistant?.projectId ?? props.target.preset?.projectId ?? null,
+  const [picked, setPicked] = useState<ReadonlyArray<ProjectId> | null>(() =>
+    assistant
+      ? assistantProjectSelection(assistant)
+      : props.target.preset?.projectId
+        ? [props.target.preset.projectId]
+        : null,
   );
   const [pickedModel, setPickedModel] = useState<ModelSelection | null>(null);
   const [role, setRole] = useState(assistant?.role ?? "");
@@ -311,9 +322,18 @@ function AssistantDialog(props: {
         (member) => member.environmentId === candidate.environmentId && member.id === candidate.id,
       ),
     )?.displayName ?? candidate.title;
-  const effectiveProjectId =
-    projectId ?? projects.find((project) => project.isScratch)?.id ?? projects[0]?.id ?? null;
+  const scratchId = projects.find((project) => project.isScratch)?.id ?? null;
+  const fallbackId = scratchId ?? projects[0]?.id;
+  const effectivePicked: ReadonlyArray<ProjectId> =
+    picked ?? (fallbackId === undefined ? [] : [fallbackId]);
+  const effectiveProjectId = homeAfterPick(assistant?.projectId ?? null, effectivePicked);
   const effectiveProject = projects.find((project) => project.id === effectiveProjectId) ?? null;
+  const pickedLabel = effectivePicked
+    .flatMap((id) => projects.find((project) => project.id === id) ?? [])
+    .map((project) => (project.isScratch ? "All projects" : projectName(project)))
+    .join(", ");
+  const projectsChanged =
+    assistant !== null && !sameProjects(effectivePicked, assistantProjectSelection(assistant));
   const projectOptions = projects.map((project) => ({
     id: project.id,
     label: project.isScratch ? "All projects" : projectName(project),
@@ -375,7 +395,8 @@ function AssistantDialog(props: {
     actions.canAct &&
     name.trim().length > 0 &&
     handleValid &&
-    effectiveProjectId !== null;
+    effectiveProjectId !== null &&
+    effectivePicked.length > 0;
 
   const save = async () => {
     if (!canSave || effectiveProjectId === null) return;
@@ -397,7 +418,7 @@ function AssistantDialog(props: {
           assistantId: assistant.id,
           ...(trimmedName !== assistant.name ? { name: trimmedName } : {}),
           ...(handle !== assistant.handle ? { handle } : {}),
-          ...(projectChanged ? { projectId: effectiveProjectId } : {}),
+          ...(projectsChanged ? assistantProjectFields(effectivePicked) : {}),
           ...(pickedModel ? { modelSelection: pickedModel } : {}),
           ...(instructions !== assistant.instructions ? { instructions } : {}),
           ...(toolAccess !== assistant.toolAccess ? { toolAccess } : {}),
@@ -412,7 +433,7 @@ function AssistantDialog(props: {
       : await actions.create({
           name: trimmedName,
           handle,
-          projectId: effectiveProjectId,
+          ...assistantProjectFields(effectivePicked),
           ...(pickedModel ? { modelSelection: pickedModel } : {}),
           instructions,
           toolAccess,
@@ -500,7 +521,7 @@ function AssistantDialog(props: {
                   value={environmentId}
                   onValueChange={(next) => {
                     setPickedEnvironmentId(next as EnvironmentId);
-                    setProjectId(null);
+                    setPicked(null);
                     setPickedModel(null);
                   }}
                 >
@@ -644,33 +665,37 @@ function AssistantDialog(props: {
                 onChange={(event) => setRole(event.target.value)}
               />
             </div>
-            <div className="flex flex-col gap-1.5">
-              <FieldLabel
-                htmlFor="assistant-project"
-                label="Project"
-                description="All projects, or the one project it works in and shares memory with."
-              />
-              <Select
-                value={effectiveProjectId}
-                onValueChange={(next) => setProjectId(next as ProjectId)}
-              >
-                <SelectTrigger id="assistant-project" aria-label="Project">
-                  <SelectValue>
-                    {effectiveProject
-                      ? effectiveProject.isScratch
-                        ? "All projects"
-                        : projectName(effectiveProject)
-                      : "No projects available"}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectPopup alignItemWithTrigger={false}>
-                  {projects.map((project) => (
-                    <SelectItem hideIndicator key={project.id} value={project.id}>
-                      {project.isScratch ? "All projects" : projectName(project)}
-                    </SelectItem>
-                  ))}
-                </SelectPopup>
-              </Select>
+            <fieldset className="flex flex-col gap-1.5">
+              <legend className="text-sm font-medium">Projects</legend>
+              <p className="text-xs text-muted-foreground">
+                All projects, or the projects it works in. Work in any other project is refused.
+              </p>
+              {projects.length === 0 ? (
+                <p className="text-xs text-muted-foreground">No projects available</p>
+              ) : (
+                <ul className="flex max-h-48 flex-col gap-0.5 overflow-y-auto">
+                  {[...projects]
+                    .toSorted((x, y) => Number(y.isScratch) - Number(x.isScratch))
+                    .map((project) => (
+                      <li key={project.id}>
+                        <label className="flex cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-sm hover:bg-foreground/8">
+                          <Checkbox
+                            aria-label={project.isScratch ? "All projects" : projectName(project)}
+                            checked={effectivePicked.includes(project.id)}
+                            onCheckedChange={() =>
+                              setPicked(
+                                toggleAssistantProject(effectivePicked, scratchId, project.id),
+                              )
+                            }
+                          />
+                          <span className="truncate">
+                            {project.isScratch ? "All projects" : projectName(project)}
+                          </span>
+                        </label>
+                      </li>
+                    ))}
+                </ul>
+              )}
               {projectChanged ? (
                 <Alert variant="warning">
                   <AlertDescription>
@@ -679,7 +704,7 @@ function AssistantDialog(props: {
                   </AlertDescription>
                 </Alert>
               ) : null}
-            </div>
+            </fieldset>
             <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
               <CollapsibleSectionHeader
                 expanded={advancedOpen}
@@ -812,7 +837,7 @@ function AssistantDialog(props: {
                     <span className="text-sm font-medium">Memory</span>
                     <p className="text-xs text-muted-foreground">
                       {effectiveProject
-                        ? `Shared with ${effectiveProject.isScratch ? "All projects" : projectName(effectiveProject)}. Give the assistant its own project to keep its memory apart.`
+                        ? `Shared with ${effectiveProject.isScratch ? "All projects" : projectName(effectiveProject)}${effectivePicked.length > 1 ? ` as its home project. It works in ${pickedLabel}` : ""}. Give the assistant its own project to keep its memory apart.`
                         : "Memory follows the assistant's project."}
                     </p>
                     <Link

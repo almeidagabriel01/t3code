@@ -45,6 +45,8 @@ export interface AssistantRow {
   /** "project" when it lives in a real project; null until the service has worked it out. */
   readonly scope: string | null;
   readonly mcp_servers_json: string | null;
+  /** JSON array of the project ids a project assistant may work in; null reads as just `project_id`. */
+  readonly project_ids_json?: string | null;
   readonly created_at: string;
   readonly updated_at: string;
 }
@@ -78,11 +80,26 @@ export const encodeMcpServers = Schema.encodeSync(
   Schema.fromJsonString(Schema.Array(AssistantMcpServer)),
 );
 
+const ProjectIdsJson = Schema.fromJsonString(Schema.Array(Schema.String));
+const decodeProjectIds = Schema.decodeOption(ProjectIdsJson);
+export const encodeProjectIds = Schema.encodeSync(ProjectIdsJson);
+
+/** The projects a row may work in: empty for "all", else its saved list or its one project. */
+const projectIdsOf = (row: AssistantRow): ReadonlyArray<ProjectId> => {
+  if (row.scope !== "project") return [];
+  const saved =
+    row.project_ids_json == null
+      ? []
+      : Option.getOrElse(decodeProjectIds(row.project_ids_json), () => []);
+  return (saved.length === 0 ? [row.project_id] : saved) as ReadonlyArray<ProjectId>;
+};
+
 export const toAssistant = (row: AssistantRow): Assistant => ({
   id: row.assistant_id as AssistantId,
   handle: row.handle,
   name: row.name,
   projectId: row.project_id as ProjectId,
+  projectIds: projectIdsOf(row),
   instructions: row.instructions,
   toolAccess: row.tool_access as AssistantToolAccess,
   isDefault: row.is_default === 1,

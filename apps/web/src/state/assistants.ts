@@ -26,6 +26,7 @@ import {
   type AssistantGroupsTaskActionInput,
   type AssistantGroupTask,
   type AssistantsCreateInput,
+  type AssistantSandboxConfigureInput,
   type AssistantSandboxStatus,
   type AssistantsResetInput,
   type AssistantsSetAvatarImageInput,
@@ -241,6 +242,9 @@ export function useAssistantSandboxActions(environmentId: EnvironmentId) {
   const start = useAtomCommand(assistantsEnvironment.startSandbox, { reportFailure: false });
   const stop = useAtomCommand(assistantsEnvironment.stopSandbox, { reportFailure: false });
   const remove = useAtomCommand(assistantsEnvironment.removeSandbox, { reportFailure: false });
+  const configure = useAtomCommand(assistantsEnvironment.configureSandbox, {
+    reportFailure: false,
+  });
   const pairing = useAtomCommand(assistantsEnvironment.sandboxPairing, { reportFailure: false });
   const reply = <A>(
     result:
@@ -256,6 +260,8 @@ export function useAssistantSandboxActions(environmentId: EnvironmentId) {
     stop: async () => reply(await stop({ environmentId, input: {} })),
     remove: async (deleteVolumes: boolean) =>
       reply(await remove({ environmentId, input: { deleteVolumes } })),
+    configure: async (input: AssistantSandboxConfigureInput) =>
+      reply(await configure({ environmentId, input })),
     pairingUrl: async () => reply(await pairing({ environmentId, input: {} })),
   };
 }
@@ -270,6 +276,13 @@ export function useAssistantSpend(
       ? null
       : assistantsEnvironment.spend({ environmentId, input: { assistantId } }),
   ).data;
+}
+
+/** Files it handed over or received through the shared folder. */
+export function useAssistantLibrary(environmentId: EnvironmentId, assistantId: Assistant["id"]) {
+  return useEnvironmentQuery(
+    assistantsEnvironment.library({ environmentId, input: { assistantId } }),
+  );
 }
 
 /** Each change settles into a reply; the dialog shows a refusal where it happened. */

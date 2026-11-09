@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 
 import { assistantNoteFor } from "./assistantNote.ts";
+import { HOST_CONTAINER_NOTE_LINE } from "./AssistantSandboxPolicy.ts";
 
 const assistant = {
   name: 'Sam "the" <helper>',
@@ -20,9 +21,10 @@ it("wraps the instructions, escapes the markup and skips slash commands", () => 
   assert.strictEqual(note.match(/<\/t3_assistant>/g)?.length, 1);
   assert.ok(note.endsWith("</t3_assistant>"));
   assert.strictEqual(assistantNoteFor(assistant, "  /compact"), "");
-  // Blank instructions leave only the standing task guidance in the block.
+  // Blank instructions leave only the standing guidance in the block.
   const blank = assistantNoteFor({ ...assistant, instructions: " " }, "hi");
   assert.ok(blank.includes("t3_thread_launch"));
+  assert.ok(blank.includes(HOST_CONTAINER_NOTE_LINE));
   assert.ok(blank.endsWith("\n</t3_assistant>"));
 });
 
@@ -61,6 +63,16 @@ it("lists each group's teammates with their roles and names the lead only as the
   assert.ok(!assistantNoteFor(assistant, "hi").includes("Group "));
 });
 
+it("names the projects a project assistant may work in", () => {
+  const one = assistantNoteFor({ ...assistant, scope: "project", projectIds: ["p1"] }, "hi");
+  assert.ok(one.includes("one project (projectId p1)"));
+  const many = assistantNoteFor({ ...assistant, scope: "project", projectIds: ["p1", "p2"] }, "hi");
+  assert.ok(many.includes("these projects (projectId p1, p2)"));
+  assert.ok(
+    !assistantNoteFor({ ...assistant, scope: "all", projectIds: [] }, "hi").includes("projectId"),
+  );
+});
+
 it("tells a sandboxed assistant where its work runs, or that the sandbox is not linked yet", () => {
   const boxed = { ...assistant, workspace: "sandbox" } as const;
   const linked = assistantNoteFor(boxed, "hi", [], "environment-sandbox");
@@ -68,5 +80,9 @@ it("tells a sandboxed assistant where its work runs, or that the sandbox is not 
   assert.ok(linked.includes("On this Mac you only read"));
   assert.ok(linked.includes(`access="read-only" sandbox_access="${assistant.toolAccess}"`));
   assert.ok(assistantNoteFor(boxed, "hi").includes("not linked yet"));
-  assert.ok(!assistantNoteFor(assistant, "hi", [], "environment-sandbox").includes("sandbox"));
+  const host = assistantNoteFor(assistant, "hi", [], "environment-sandbox");
+  assert.ok(!host.includes("sandbox"));
+  // An assistant on this Mac may send one task to the container; a sandboxed one already works there.
+  assert.ok(host.includes("container_task"));
+  assert.ok(!linked.includes("container_task"));
 });

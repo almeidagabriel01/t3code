@@ -239,7 +239,10 @@ export const Assistant = Schema.Struct({
   id: AssistantId,
   handle: AssistantHandle,
   name: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSISTANT_NAME_MAX_LENGTH)),
+  /** Home project: where its conversation lives. */
   projectId: ProjectId,
+  /** Projects it may work in (the home one first); empty when its scope is "all". */
+  projectIds: Schema.Array(ProjectId).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   instructions: Schema.String.check(Schema.isMaxLength(ASSISTANT_INSTRUCTIONS_MAX_CHARS)),
   toolAccess: AssistantToolAccess,
   /** Jarvis: made on first use, then archived, deleted and restored like any other. */
@@ -373,6 +376,8 @@ export const AssistantsCreateInput = Schema.Struct({
   /** Derived from the name when absent. */
   handle: Schema.optional(AssistantHandle),
   projectId: ProjectId,
+  /** Projects it may work in; the first is its home and replaces `projectId`. Empty is ignored. */
+  projectIds: Schema.optional(Schema.Array(ProjectId)),
   /** The default new-thread model when absent. */
   modelSelection: Schema.optional(ModelSelection),
   instructions: Schema.String.check(Schema.isMaxLength(ASSISTANT_INSTRUCTIONS_MAX_CHARS)),
@@ -400,12 +405,17 @@ export const ASSISTANTS_RESTORE_DEFAULT_INPUT: AssistantsCreateInput = {
   restoreDefault: true,
 };
 
-/** Changing `projectId` starts a new generation: a thread can't move between projects. */
+/**
+ * Changing the home project starts a new generation: a thread can't move between projects.
+ * `projectIds` keeps the current home when it is still listed, so adding projects does not.
+ */
 export const AssistantsUpdateInput = Schema.Struct({
   assistantId: AssistantId,
   name: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(ASSISTANT_NAME_MAX_LENGTH))),
   handle: Schema.optional(AssistantHandle),
   projectId: Schema.optional(ProjectId),
+  /** A non-empty list makes it a project assistant over exactly these projects. */
+  projectIds: Schema.optional(Schema.Array(ProjectId)),
   modelSelection: Schema.optional(ModelSelection),
   instructions: Schema.optional(
     Schema.String.check(Schema.isMaxLength(ASSISTANT_INSTRUCTIONS_MAX_CHARS)),
@@ -441,6 +451,10 @@ export const AssistantSandboxState = Schema.Literals([
 ]);
 export type AssistantSandboxState = typeof AssistantSandboxState.Type;
 
+/** What happens to a container started only for one task once that task ends. */
+export const AssistantSandboxWhenDone = Schema.Literals(["discard", "keep"]);
+export type AssistantSandboxWhenDone = typeof AssistantSandboxWhenDone.Type;
+
 export const AssistantSandboxStatus = Schema.Struct({
   state: AssistantSandboxState,
   /** What a start is doing now; null when nothing is in progress. */
@@ -452,6 +466,9 @@ export const AssistantSandboxStatus = Schema.Struct({
   url: Schema.NullOr(Schema.String),
   /** Linked environments (Settings → Labs) must be on here for the sandbox link; Start turns it on. */
   linkedEnvironmentsEnabled: Schema.Boolean,
+  /** The most CPU cores the container may use; null means no limit. */
+  cpus: Schema.NullOr(Schema.Number),
+  whenDone: AssistantSandboxWhenDone,
 });
 export type AssistantSandboxStatus = typeof AssistantSandboxStatus.Type;
 
@@ -466,6 +483,15 @@ export const AssistantSandboxRemoveInput = Schema.Struct({
   deleteVolumes: Schema.Boolean,
 });
 export type AssistantSandboxRemoveInput = typeof AssistantSandboxRemoveInput.Type;
+
+export const AssistantSandboxConfigureInput = Schema.Struct({
+  /** Whole cores, or null for no limit. Applies to a container that exists, at once. */
+  cpus: Schema.optional(
+    Schema.NullOr(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 256 }))),
+  ),
+  whenDone: Schema.optional(AssistantSandboxWhenDone),
+});
+export type AssistantSandboxConfigureInput = typeof AssistantSandboxConfigureInput.Type;
 
 export const AssistantSandboxPairingInput = Schema.Struct({});
 export type AssistantSandboxPairingInput = typeof AssistantSandboxPairingInput.Type;
@@ -507,6 +533,29 @@ export const AssistantSpend = Schema.Struct({
   budget: Schema.optionalKey(InstanceBudgetStatus),
 });
 export type AssistantSpend = typeof AssistantSpend.Type;
+
+export const AssistantsLibraryInput = Schema.Struct({ assistantId: AssistantId });
+export type AssistantsLibraryInput = typeof AssistantsLibraryInput.Type;
+
+/** A file the assistant handed to another assistant, or received from one, in the shared folder. */
+export const AssistantLibraryFile = Schema.Struct({
+  name: Schema.String,
+  /** Absolute path on the server, the same link the conversation shows. */
+  path: Schema.String,
+  size: Schema.Number,
+  direction: Schema.Literals(["sent", "received"]),
+  /** Who sent it, for a received file. */
+  from: Schema.NullOr(Schema.String),
+  savedAt: IsoDateTime,
+});
+export type AssistantLibraryFile = typeof AssistantLibraryFile.Type;
+
+/** Newest first; capped, so `truncated` says a longer list exists. */
+export const AssistantLibrary = Schema.Struct({
+  files: Schema.Array(AssistantLibraryFile),
+  truncated: Schema.Boolean,
+});
+export type AssistantLibrary = typeof AssistantLibrary.Type;
 
 export const AssistantTeamsCreateInput = Schema.Struct({
   name: AssistantTeamName,
