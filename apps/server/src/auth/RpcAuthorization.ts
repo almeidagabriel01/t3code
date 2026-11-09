@@ -179,6 +179,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.computerUseOpenSettings]: AuthSettingsWriteScope,
   [WS_METHODS.assistantsSubscribe]: AuthOrchestrationReadScope,
   [WS_METHODS.assistantsSpend]: AuthOrchestrationReadScope,
+  [WS_METHODS.assistantsLibrary]: AuthOrchestrationReadScope,
   [WS_METHODS.assistantSandboxSubscribe]: AuthOrchestrationReadScope,
   [WS_METHODS.assistantSandboxStart]: AuthOrchestrationOperateScope,
   [WS_METHODS.assistantSandboxStop]: AuthOrchestrationOperateScope,

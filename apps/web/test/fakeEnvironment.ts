@@ -31,6 +31,7 @@ import {
   type AutonomyWatch,
   type AutonomyWatchUpsertInput,
   type AssistantSandboxStatus,
+  type AssistantLibrary,
   type AssistantSpend,
   type ForkUpdateStatus,
   type MacPermissions,
@@ -754,6 +755,7 @@ handlers[WS_METHODS.assistantSandboxPairing] = (input: unknown) =>
 /** Spend the fake serves for any assistant, and the update calls it received. */
 export const fakeAssistantEdits = {
   spend: null as AssistantSpend | null,
+  library: null as AssistantLibrary | null,
   updates: [] as unknown[],
   creates: [] as unknown[],
   avatarImages: [] as unknown[],
@@ -762,6 +764,8 @@ export const fakeAssistantEdits = {
 };
 handlers[WS_METHODS.assistantsSpend] = () =>
   fakeAssistantEdits.spend ? Effect.succeed(fakeAssistantEdits.spend) : Effect.never;
+handlers[WS_METHODS.assistantsLibrary] = () =>
+  Effect.succeed(fakeAssistantEdits.library ?? { files: [], truncated: false });
 handlers[WS_METHODS.assistantsUpdate] = (input: { readonly assistantId: string }) => {
   fakeAssistantEdits.updates.push(input);
   const found = fakeAssistants.items.find((item) => item.id === input.assistantId);

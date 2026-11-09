@@ -2570,6 +2570,7 @@ export const layerWsRpc = (
         [WS_METHODS.assistantsReset]: (input) => assistants.reset(input),
         [WS_METHODS.assistantsSetAvatarImage]: (input) => assistants.setAvatarImage(input),
         [WS_METHODS.assistantsSpend]: (input) => assistantSpend.read(input.assistantId),
+        [WS_METHODS.assistantsLibrary]: (input) => assistants.library(input.assistantId),
         [WS_METHODS.assistantSandboxSubscribe]: (_input) => sandboxControl.streamStatus,
         [WS_METHODS.assistantSandboxStart]: (_input) => sandboxControl.start,
         [WS_METHODS.assistantSandboxStop]: (_input) => sandboxControl.stop,
