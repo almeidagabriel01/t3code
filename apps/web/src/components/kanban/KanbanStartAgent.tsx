@@ -220,7 +220,7 @@ function LaunchForm(props: {
                 model={selection.model}
                 modelOptions={selection.options ?? []}
                 allowPromptInjectedEffort={false}
-                planModeEnabled={false}
+                includePlanAgent={false}
                 disabled={launching}
                 triggerClassName={FIELD_PICKER_CLASSNAME}
                 onModelOptionsChange={(options) =>

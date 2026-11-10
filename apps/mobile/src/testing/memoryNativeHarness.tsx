@@ -21,6 +21,7 @@ import {
 import { createEnvironmentRpcCommand } from "@t3tools/client-runtime/state/runtime";
 import { createMemoryEnvironmentAtoms } from "@t3tools/client-runtime/state/memory";
 import {
+  BearerConnectionTarget,
   EnvironmentRegistry,
   EnvironmentSupervisor,
   type ConnectionCatalogEntry,
@@ -155,7 +156,10 @@ vi.mock("../persistence/mobile-secure-storage", async () => {
     },
   };
 });
-vi.mock("expo-crypto", () => ({ randomUUID: () => globalThis.crypto.randomUUID() }));
+vi.mock("expo-crypto", () => {
+  let count = 0;
+  return { randomUUID: () => `10000000-0000-4000-8000-${String(++count).padStart(12, "0")}` };
+});
 vi.mock("@react-navigation/native", async () => ({
   useFocusEffect: (callback: () => void | (() => void)) => {
     const { useEffect } = React;
@@ -349,6 +353,9 @@ vi.mock("../features/settings/components/SettingsRow", () => ({
   ),
 }));
 
+const isHarnessEffect = (value: unknown): value is Effect.Effect<unknown, object> =>
+  Effect.isEffect(value);
+
 const decodeImportInput = Schema.decodeUnknownSync(MemoryImportProviderInput);
 const decodeImportResult = Schema.decodeUnknownSync(MemoryImportProviderResult);
 
@@ -356,7 +363,7 @@ export const nativeDevice = EnvironmentId.make("synthetic-device");
 export const nativeEnv = EnvironmentId.make("synthetic-selected-tunnel");
 export const nativeSpace = MemorySpaceId.make("00000000-0000-4000-8000-000000000001");
 export const nativeId = MemoryId.make("00000000-0000-4000-8000-000000000002");
-export const nativeItem = Schema.decodeUnknownSync(MemoryItem)({
+export const nativeItem = Schema.decodeSync(MemoryItem)({
   memorySpaceId: nativeSpace,
   memoryId: nativeId,
   status: "active",
@@ -381,7 +388,7 @@ export const nativeItem = Schema.decodeUnknownSync(MemoryItem)({
     derivedFromMemoryRevisions: [],
   },
 });
-export const nativeOwnerPolicy = Schema.decodeUnknownSync(MemoryOwnerSourceReadPolicyView)({
+export const nativeOwnerPolicy = Schema.decodeSync(MemoryOwnerSourceReadPolicyView)({
   version: 3,
   revocationPropagation: "pending",
   policy: {
@@ -595,7 +602,7 @@ export function createNativeMemoryHarness() {
               )
               .forEach((waiter) => waiter.resolve());
             const response = responses.get(String(method))?.(input);
-            const effect = Effect.isEffect(response) ? response : Effect.succeed(response);
+            const effect = isHarnessEffect(response) ? response : Effect.succeed(response);
             return method === WS_METHODS.memoryImportProvider
               ? Effect.map(effect, decodeImportResult)
               : effect;
@@ -612,7 +619,11 @@ export function createNativeMemoryHarness() {
     ),
   );
   const supervisor = {
-    target: { environmentId: nativeEnv, label: "Synthetic tunnel" },
+    target: new BearerConnectionTarget({
+      environmentId: nativeEnv,
+      label: "Synthetic tunnel",
+      connectionId: "synthetic-tunnel",
+    }),
     session: active,
   } as EnvironmentSupervisor.EnvironmentSupervisor["Service"];
   const deviceSession = Effect.runSync(
@@ -675,7 +686,7 @@ export function createNativeMemoryHarness() {
     calls,
     responses,
     deferred: <A,>() => {
-      const value = Effect.runSync(Deferred.make<A, Error>());
+      const value = Deferred.makeUnsafe<A, Error>();
       return {
         response: Deferred.await(value),
         succeed: (result: A) => Effect.runPromise(Deferred.succeed(value, result)),

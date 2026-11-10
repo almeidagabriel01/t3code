@@ -13,7 +13,7 @@ import { ITEM_ROW_CLASSNAME } from "./itemRows";
 import { SettingsGroup } from "./SettingsGroup";
 import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
 import { useSettingsScope } from "./SettingsScopeContext";
-import type { SettingsScopeSearch } from "./settingsScope";
+import { settingsScopeProjectKeys, type SettingsScopeSearch } from "./settingsScope";
 import {
   settingsScopeEnvironmentAddress,
   settingsScopeEnvironmentLabels,
@@ -53,9 +53,10 @@ export function SettingsScopeNotice({
         className="size-4 shrink-0 text-muted-foreground"
       />
     ) : null;
+  const projectKeys = settingsScopeProjectKeys(search);
   const choiceGroups =
     target === "checkout"
-      ? groups.filter((group) => !search.project || group.projectKey === search.project)
+      ? groups.filter((group) => projectKeys.length === 0 || projectKeys.includes(group.projectKey))
       : [null];
   const renderChoices = (group: SidebarProjectSnapshot | null) => {
     const choices: ScopeChoice[] = group

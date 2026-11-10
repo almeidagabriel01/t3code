@@ -58,7 +58,7 @@ vi.mock("../assistants/openAssistantEditor", () => ({ useOpenAssistantEditor: ()
 vi.mock("../assistants/assistantWorkTarget", () => ({ useOpenAssistantWork: () => vi.fn() }));
 vi.mock("../home/useThreadListActions", () => ({ useThreadListActions: () => ({}) }));
 vi.mock("../home/threadArchive", () => ({ threadCanArchive: () => false }));
-vi.mock("../workspace/useSelectWorkspaceDetail", () => ({
+vi.mock("../layout/workspace/useSelectWorkspaceDetail", () => ({
   useSelectWorkspaceDetail: () => vi.fn(),
 }));
 vi.mock("./CustomSnoozeSheet", () => ({ CustomSnoozeSheet: () => null }));

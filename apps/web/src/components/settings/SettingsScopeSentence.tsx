@@ -19,6 +19,7 @@ import {
 } from "../ui/combobox";
 import {
   Menu,
+  MenuCheckboxItem,
   MenuPopup,
   MenuRadioGroup,
   MenuRadioItem,
@@ -27,15 +28,19 @@ import {
   MenuTrigger,
 } from "../ui/menu";
 import { useOptionalSettingsScope } from "./SettingsScopeContext";
-import { resolveSettingsScope, type SettingsScopeSearch } from "./settingsScope";
+import {
+  resolveSettingsScope,
+  settingsScopeProjectKeys,
+  type SettingsScopeSearch,
+} from "./settingsScope";
 import {
   ALL_ENVIRONMENTS_VALUE,
   ALL_PROJECTS_VALUE,
   environmentAxisValue,
-  projectAxisValue,
+  projectAxisValues,
   projectScopeMenuGroups,
   selectEnvironmentAxis,
-  selectProjectAxis,
+  toggleProjectAxis,
   settingsScopeEnvironmentAddress,
   settingsScopeEnvironmentLabel,
   settingsScopeEnvironmentLabels,
@@ -49,7 +54,7 @@ export const SETTINGS_DEVICE_ONLY_PATHS: ReadonlySet<string> = new Set([
   "/settings/diffs",
   "/settings/snap-shot",
   "/settings/connections",
-  // Network access and authorized clients belong to the environment serving this app.
+  // Access picks its environment on the page itself.
   "/settings/access",
   "/settings/about",
 ]);
@@ -119,26 +124,33 @@ function ScopeMenu({
   ariaLabel,
   icon,
   label,
-  value,
+  ariaDetail = label,
+  values,
+  multiple = false,
   options,
   allOption,
   searchLabel,
   onChange,
+  onClose,
 }: {
   ariaLabel: string;
   icon: ReactNode;
   label: string;
-  value: string;
+  ariaDetail?: string | undefined;
+  values: readonly string[];
+  /** Multiple: onChange toggles the picked value, and the menu stays open. */
+  multiple?: boolean;
   options: ScopeOption[];
   allOption: ScopeOption | null;
   searchLabel: string;
   onChange: (next: string) => void;
+  onClose?: () => void;
 }) {
   const [query, setQuery] = useState("");
   const Trigger = options.length > 6 ? ComboboxTrigger : MenuTrigger;
   const trigger = (
     <Trigger
-      aria-label={`${ariaLabel}: ${label}`}
+      aria-label={`${ariaLabel}: ${ariaDetail}`}
       render={<Button variant="outline" size="sm" />}
       className="min-w-0 max-w-72"
     >
@@ -151,7 +163,9 @@ function ScopeMenu({
       />
     </Trigger>
   );
+  const isSelected = (optionValue: string) => values.includes(optionValue);
   const choices = allOption ? [allOption, ...options] : options;
+  const selectedChoices = choices.filter((option) => isSelected(option.value));
   if (options.length > 6) {
     const needle = query.trim().toLowerCase();
     const filteredItems = choices.filter((option) =>
@@ -159,18 +173,27 @@ function ScopeMenu({
     );
     return (
       <Combobox
+        multiple={multiple}
         items={choices}
         filteredItems={filteredItems}
         filter={null}
         autoHighlight
         itemToStringLabel={(option) => option.label}
         isItemEqualToValue={(a, b) => a.value === b.value}
-        value={choices.find((option) => option.value === value) ?? null}
+        value={multiple ? selectedChoices : (selectedChoices[0] ?? null)}
         onOpenChange={(open) => {
-          if (!open) setQuery("");
+          if (open) return;
+          setQuery("");
+          onClose?.();
         }}
-        onValueChange={(option) => {
-          if (option) onChange(option.value);
+        onValueChange={(next) => {
+          if (Array.isArray(next)) {
+            const changed = [...next.map((option) => option.value), ...values].filter(
+              (candidate) =>
+                next.some((option) => option.value === candidate) !== values.includes(candidate),
+            )[0];
+            if (changed !== undefined) onChange(changed);
+          } else if (next) onChange(next.value);
         }}
       >
         {trigger}
@@ -186,7 +209,7 @@ function ScopeMenu({
             {(option: ScopeOption) => (
               <ComboboxItem key={option.value} value={option}>
                 <ScopeOptionLabel option={option} />
-                {option.value === value ? (
+                {isSelected(option.value) ? (
                   <CheckIcon aria-hidden className="size-3.5 shrink-0" />
                 ) : null}
               </ComboboxItem>
@@ -197,35 +220,55 @@ function ScopeMenu({
     );
   }
   return (
-    <Menu>
+    <Menu
+      onOpenChange={(open) => {
+        if (!open) onClose?.();
+      }}
+    >
       {trigger}
       <MenuPopup align="start">
         <div className="w-72 max-w-full">
-          <MenuRadioGroup
-            value={value}
-            onValueChange={(next) => {
-              if (typeof next === "string") onChange(next);
-            }}
-          >
-            {choices.map((option, index) => (
+          {multiple ? (
+            choices.map((option, index) => (
               <Fragment key={option.value}>
-                <MenuRadioItem value={option.value} closeOnClick>
+                <MenuCheckboxItem
+                  checked={isSelected(option.value)}
+                  onCheckedChange={() => onChange(option.value)}
+                >
                   <span className="flex min-w-0 items-center gap-2">
                     <ScopeOptionLabel option={option} />
-                    <MenuRadioItemIndicator />
                   </span>
-                </MenuRadioItem>
+                </MenuCheckboxItem>
                 {index === 0 && allOption ? <MenuSeparator /> : null}
               </Fragment>
-            ))}
-          </MenuRadioGroup>
+            ))
+          ) : (
+            <MenuRadioGroup
+              value={values[0]}
+              onValueChange={(next) => {
+                if (typeof next === "string") onChange(next);
+              }}
+            >
+              {choices.map((option, index) => (
+                <Fragment key={option.value}>
+                  <MenuRadioItem value={option.value} closeOnClick>
+                    <span className="flex min-w-0 items-center gap-2">
+                      <ScopeOptionLabel option={option} />
+                      <MenuRadioItemIndicator />
+                    </span>
+                  </MenuRadioItem>
+                  {index === 0 && allOption ? <MenuSeparator /> : null}
+                </Fragment>
+              ))}
+            </MenuRadioGroup>
+          )}
         </div>
       </MenuPopup>
     </Menu>
   );
 }
 
-function EnvironmentScopeMenu({
+export function EnvironmentScopeMenu({
   value,
   groups,
   environments,
@@ -240,10 +283,15 @@ function EnvironmentScopeMenu({
   const selected = environments.find(
     (environment) => environment.environmentId === environmentValue,
   );
-  const project = groups.find((group) => group.projectKey === value.project);
-  const memberEnvironmentIds = project
-    ? new Set(project.memberProjects.map((member) => member.environmentId))
-    : null;
+  const projects = selectedProjectGroups(value, groups);
+  const memberEnvironmentIds =
+    projects.length > 0
+      ? new Set(
+          projects.flatMap((project) =>
+            project.memberProjects.map((member) => member.environmentId),
+          ),
+        )
+      : null;
   const options = memberEnvironmentIds
     ? environments.filter((environment) => memberEnvironmentIds.has(environment.environmentId))
     : environments;
@@ -268,7 +316,7 @@ function EnvironmentScopeMenu({
               ? "No environments"
               : "All environments"
       }
-      value={environmentValue}
+      values={[environmentValue]}
       onChange={(next) => onChange(selectEnvironmentAxis(value, next))}
       searchLabel="Search environments"
       allOption={
@@ -303,8 +351,28 @@ function EnvironmentScopeMenu({
   );
 }
 
-function ProjectScopeMenu({ value, groups, environments, onChange }: SettingsScopeMenuProps) {
-  const selected = groups.find((group) => group.projectKey === value.project);
+function selectedProjectGroups(
+  value: SettingsScopeSearch,
+  groups: readonly SidebarProjectSnapshot[],
+) {
+  return settingsScopeProjectKeys(value).flatMap((key) => {
+    const group = groups.find((candidate) => candidate.projectKey === key);
+    return group ? [group] : [];
+  });
+}
+
+export function ProjectScopeMenu({
+  value,
+  groups,
+  environments,
+  onChange,
+}: SettingsScopeMenuProps) {
+  // Applied on close: a scope change remounts the settings content, which would
+  // shut the menu after the first pick.
+  const [draft, setDraft] = useState<SettingsScopeSearch | null>(null);
+  const current = draft ?? value;
+  const selected = selectedProjectGroups(current, groups);
+  const names = selected.map((group) => group.displayName);
   const projects = projectScopeMenuGroups(groups, value).map((group) => ({
     group,
     machines: settingsScopeProjectMachines(group, environments, true).join(", "),
@@ -312,10 +380,28 @@ function ProjectScopeMenu({ value, groups, environments, onChange }: SettingsSco
   return (
     <ScopeMenu
       ariaLabel="Project scope"
-      icon={selected ? <ProjectFavicon project={selected} className="size-3.5 shrink-0" /> : null}
-      label={selected?.displayName ?? (value.project ? "Unavailable project" : "All projects")}
-      value={projectAxisValue(value)}
-      onChange={(next) => onChange(selectProjectAxis(value, next))}
+      icon={
+        selected.length === 1 ? (
+          <ProjectFavicon project={selected[0]!} className="size-3.5 shrink-0" />
+        ) : null
+      }
+      label={
+        selected.length === 1
+          ? names[0]!
+          : selected.length > 1
+            ? `${selected.length} projects`
+            : current.project
+              ? "Unavailable project"
+              : "All projects"
+      }
+      ariaDetail={selected.length > 1 ? names.join(", ") : undefined}
+      values={projectAxisValues(current)}
+      multiple
+      onChange={(next) => setDraft(toggleProjectAxis(current, next))}
+      onClose={() => {
+        if (draft !== null && draft.project !== value.project) onChange(draft);
+        setDraft(null);
+      }}
       searchLabel="Search projects"
       allOption={{ value: ALL_PROJECTS_VALUE, label: "All projects" }}
       options={projects.map(({ group, machines }) => {

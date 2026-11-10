@@ -5,7 +5,7 @@ import { Pressable, View } from "react-native";
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { useDecisionEntries } from "../../state/decisions";
-import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
+import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 import { DecisionCard } from "./DecisionCard";
 
 /** Open decisions as cards, most urgent first, then a folded list of how recent ones ended. */

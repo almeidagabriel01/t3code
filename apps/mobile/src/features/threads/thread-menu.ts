@@ -139,12 +139,12 @@ function buildBaseThreadMenuActions(input: ThreadMenuInput): MenuAction[] {
           subactions: [
             {
               id: "auto-settle:enabled",
-              title: "Enabled",
+              title: "Follow settings",
               state: input.autoSettle.enabled ? "on" : "off",
             },
             {
               id: "auto-settle:disabled",
-              title: "Disabled",
+              title: "Never",
               state: input.autoSettle.enabled ? "off" : "on",
             },
           ],

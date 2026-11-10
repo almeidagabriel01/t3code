@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - Free disk space and load average have no Effect API.
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -24,7 +25,10 @@ const STATUS_WINDOW_MINUTES = 15;
 const HISTORY_BUCKETS = 30;
 
 const freeDisk = (path: string) =>
-  Effect.tryPromise(() => NodeFSP.statfs(path)).pipe(
+  Effect.tryPromise({
+    try: () => NodeFSP.statfs(path),
+    catch: (cause) => new Cause.UnknownError(cause),
+  }).pipe(
     Effect.map((stats) => ({
       freeBytes: stats.bavail * stats.bsize,
       totalBytes: stats.blocks * stats.bsize,

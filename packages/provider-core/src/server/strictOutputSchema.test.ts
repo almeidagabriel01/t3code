@@ -5,7 +5,7 @@ import type * as Schema from "effect/Schema";
 
 import { buildMemoryConflictPrompt, buildMemorySummaryPrompt } from "./memoryGenerationPrompts.ts";
 import { strictOutputSchemaViolations } from "./strictOutputSchema.ts";
-import type { Operation } from "./textGenerationOperations.ts";
+import { TranscriptionPostProcessingOutput, type Operation } from "./textGenerationOperations.ts";
 import {
   buildAssistantGroupRoutingPrompt,
   buildAssistantGroupSummaryPrompt,
@@ -115,6 +115,7 @@ const operationSchemas = Effect.gen(function* () {
       buildAssistantGroupSummaryPrompt({ groupName: "Team", previousSummary: null, messages: [] })
         .outputSchema,
     ],
+    generateTranscriptionPostProcessing: [TranscriptionPostProcessingOutput],
     generateMemorySummary: [(yield* buildMemorySummaryPrompt(summaryInput)).outputSchema],
     resolveMemoryConflict: [(yield* buildMemoryConflictPrompt(conflictInput)).outputSchema],
   };

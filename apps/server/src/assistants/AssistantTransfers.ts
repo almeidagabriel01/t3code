@@ -10,15 +10,18 @@ import {
   type AssistantLibrary,
   type AssistantLibraryFile,
 } from "@t3tools/contracts";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 
 export const TRANSFER_MAX_FILE_BYTES = 100 * 1024 * 1024;
 const TRANSFER_MAX_TOTAL_BYTES = 250 * 1024 * 1024;
 
-export class AssistantTransferError extends Data.TaggedError("AssistantTransferError")<{
-  readonly message: string;
-}> {}
+export class AssistantTransferError extends Schema.TaggedError<AssistantTransferError>()(
+  "AssistantTransferError",
+  { message: Schema.String },
+) {}
+
+const isAssistantTransferError = Schema.is(AssistantTransferError);
 
 interface ManifestFile {
   readonly name: string;
@@ -62,6 +65,7 @@ export const copyTransfer = (input: {
       const manifestPath = NodePath.join(dir, "manifest.json");
       const existing = await NodeFSP.readFile(manifestPath, "utf8").catch(() => null);
       if (existing !== null) {
+        // @effect-diagnostics-next-line globalJsonInEffect:off -- runs inside tryPromise, whose catch maps a parse failure.
         const manifest = JSON.parse(existing) as { readonly files: ReadonlyArray<ManifestFile> };
         return manifest.files.map((file) => file.path);
       }
@@ -107,11 +111,12 @@ export const copyTransfer = (input: {
         recipients: input.recipients,
         files,
       };
+      // @effect-diagnostics-next-line globalJsonInEffect:off -- runs inside tryPromise, whose catch maps failures.
       await NodeFSP.writeFile(manifestPath, JSON.stringify(manifest, null, 2));
       return files.map((file) => file.path);
     },
     catch: (cause) =>
-      cause instanceof AssistantTransferError
+      isAssistantTransferError(cause)
         ? cause
         : fail(
             `The files could not be copied: ${cause instanceof Error ? cause.message : String(cause)}`,

@@ -30,6 +30,10 @@ import { SettingsMemoryRouteScreen, MemoryEnvironmentEntry } from "./SettingsMem
 import { LearnedRuleNotice } from "../threads/LearnedRuleNotice";
 import { LEARNED_RULE_VISIBLE_MS } from "@t3tools/client-runtime/memory-browsing";
 
+class SyntheticFailure extends Schema.TaggedError<SyntheticFailure>()("SyntheticFailure", {
+  message: Schema.String,
+}) {}
+
 vi.mock("../../state/preferences", async () => {
   const { Atom, AsyncResult } = await import("effect/reactivity");
   type Preferences = { readonly acknowledgedMemoryRules?: readonly string[] };
@@ -810,7 +814,7 @@ describe("native sharing workflow", () => {
         h.registry.set(h.configs(nativeEnv), {
           ...config,
           // A real config always carries provider instances; the harness one is partial.
-          settings: { ...config.settings, providerInstances: {}, ...settings },
+          settings: { ...config.settings, providerInstances: {}, textGenerators: {}, ...settings },
         });
       });
     // A pause belongs to the old model, so either change must replace the shown status.
@@ -842,6 +846,7 @@ describe("native sharing workflow", () => {
         settings: {
           ...config.settings,
           providerInstances: {},
+          textGenerators: {},
           memoryModelSelection: { instanceId: "codex", model: "claude-haiku-5-5" } as never,
         },
       });
@@ -1623,7 +1628,7 @@ describe("native WP6 Settings commands", () => {
     await show();
     await select();
     h.responses.set(WS_METHODS.memoryImportProvider, () =>
-      Effect.fail(new Error("synthetic response lost")),
+      Effect.fail(new SyntheticFailure({ message: "synthetic response lost" })),
     );
     await view.click(`Import ${importCount} selected`);
     expect(h.secureValues.size).toBe(1);
@@ -1887,7 +1892,7 @@ describe("native WP6 Settings commands", () => {
     await act(async () => h.registry.set(h.prepared(nativeEnv), Option.none()));
     expect([...h.secureValues.values()]).toEqual([handle]);
     h.responses.set(WS_METHODS.memoryImportProvider, () =>
-      Effect.fail(new Error("synthetic offline")),
+      Effect.fail(new SyntheticFailure({ message: "synthetic offline" })),
     );
     await act(async () => h.registry.set(h.prepared(nativeEnv), Option.some({} as never)));
     expect(importCalls().at(-1)!.input).toMatchObject({
@@ -1949,7 +1954,7 @@ describe("native WP6 Settings commands", () => {
       await show();
       await select();
       h.responses.set(WS_METHODS.memoryImportProvider, () =>
-        Effect.fail(new Error("synthetic lost")),
+        Effect.fail(new SyntheticFailure({ message: "synthetic lost" })),
       );
       await view.click(`Import ${importCount} selected`);
       await view.unmount();
@@ -1980,7 +1985,7 @@ describe("native WP6 Settings commands", () => {
     await show({ environmentId: nativeEnv, project });
     await select();
     h.responses.set(WS_METHODS.memoryImportProvider, () =>
-      Effect.fail(new Error("synthetic lost")),
+      Effect.fail(new SyntheticFailure({ message: "synthetic lost" })),
     );
     await view.click(`Import ${importCount} selected`);
     await view.unmount();
@@ -2069,7 +2074,7 @@ describe("native WP6 Settings commands", () => {
     await show(params);
     await select();
     h.responses.set(WS_METHODS.memoryImportProvider, () =>
-      Effect.fail(new Error("synthetic lost")),
+      Effect.fail(new SyntheticFailure({ message: "synthetic lost" })),
     );
     await view.click(`Import ${importCount} selected`);
     expect(h.secureValues.size).toBe(1);
@@ -2177,7 +2182,7 @@ describe("native WP6 Settings commands", () => {
         repositoryKey: null,
       }));
       h.responses.set(WS_METHODS.memoryUpsert, () =>
-        Effect.fail(new Error("synthetic request refused")),
+        Effect.fail(new SyntheticFailure({ message: "synthetic request refused" })),
       );
       if (kind === "project") {
         h.projects.push({
@@ -2226,7 +2231,7 @@ describe("native WP6 Settings commands", () => {
       await show();
       await select();
       h.responses.set(WS_METHODS.memoryImportProvider, () =>
-        Effect.fail(new Error("synthetic lost")),
+        Effect.fail(new SyntheticFailure({ message: "synthetic lost" })),
       );
       await view.click(`Import ${importCount} selected`);
       const handle = [...h.secureValues.values()][0]!;

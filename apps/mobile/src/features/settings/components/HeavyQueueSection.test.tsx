@@ -44,7 +44,7 @@ vi.mock("../../../state/heavyQueue", () => {
 vi.mock("../../../state/use-atom-command", () => ({
   useAtomCommand: (command: { id: string }) => (mocks.commands[command.id] ??= vi.fn()),
 }));
-vi.mock("../../workspace/useSelectWorkspaceDetail", () => ({
+vi.mock("../../layout/workspace/useSelectWorkspaceDetail", () => ({
   useSelectWorkspaceDetail: () => mocks.selectDetail,
 }));
 vi.mock("./SettingsSection", () => ({

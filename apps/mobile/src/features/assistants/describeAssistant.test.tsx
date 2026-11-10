@@ -31,7 +31,7 @@ vi.mock("../../state/use-composer-drafts", () => ({
   setComposerDraftText: (...args: unknown[]) => mocks.setText(...args),
   waitForComposerDraftsLoaded: () => mocks.loaded(),
 }));
-vi.mock("../workspace/useSelectWorkspaceDetail", () => ({
+vi.mock("../layout/workspace/useSelectWorkspaceDetail", () => ({
   useSelectWorkspaceDetail: () => mocks.select,
 }));
 

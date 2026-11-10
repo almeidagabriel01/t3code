@@ -318,6 +318,11 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
           routeAssistantGroup: (value) =>
             protect("routeAssistantGroup", nativeGeneration.routeAssistantGroup!(value)),
         }),
+    generateTranscriptionPostProcessing: (value) =>
+      protect(
+        "generateTranscriptionPostProcessing",
+        nativeGeneration.generateTranscriptionPostProcessing(value),
+      ),
   };
   return {
     instanceId,

@@ -15,6 +15,7 @@ import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as ProviderRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as SourceControl from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as Generation from "../textGeneration/TextGeneration.ts";
+import * as TextGenerators from "../textGeneration/TextGenerators.ts";
 import * as Store from "./MemoryStore.ts";
 import * as Service from "./MemoryService.ts";
 import * as Quota from "./MemoryQuotaService.ts";
@@ -213,6 +214,7 @@ export const realGeneration = (overrides: Partial<Generation.TextGeneration["Ser
     generateBranchName: () => Effect.die("unexpected fixture operation"),
     generateThreadTitle: () => Effect.die("unexpected fixture operation"),
     generateReviewGuide: () => Effect.die("unexpected fixture operation"),
+    generateTranscriptionPostProcessing: () => Effect.die("unexpected fixture operation"),
     ...overrides,
   });
   return Layer.effect(Generation.TextGeneration, Generation.make).pipe(
@@ -239,6 +241,7 @@ export const realGeneration = (overrides: Partial<Generation.TextGeneration["Ser
         resolveLink: () => Effect.die("memory resolution does not read source control"),
       }),
     ),
+    Layer.provide(Layer.mock(TextGenerators.TextGenerators)({ runner: () => Effect.undefined })),
   );
 };
 // Preserve real settings CAS/normalization, adding the production-style subscribed stream.

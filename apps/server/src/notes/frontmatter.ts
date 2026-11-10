@@ -25,6 +25,7 @@ export interface NoteContents {
 }
 
 /** The header exists but cannot be understood, so a write could not preserve it. */
+// @effect-diagnostics-next-line extendsNativeError:off -- thrown synchronously by the pure parser, outside any Effect.
 export class InvalidFrontmatterError extends Error {
   override readonly name = "InvalidFrontmatterError";
 }

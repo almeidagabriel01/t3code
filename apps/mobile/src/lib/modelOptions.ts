@@ -507,7 +507,6 @@ export function modelWithEffortLabel(
   if (descriptors.length === 0) return label;
   const traits = getPromptControlledTraits(descriptors, "");
   const summary = buildTraitsTriggerDisplay({
-    provider: option.providerDriver,
     descriptors,
     primarySelectDescriptorId: traits.primarySelectDescriptor?.id ?? null,
     ultrathinkPromptControlled: false,

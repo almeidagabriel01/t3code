@@ -3,7 +3,7 @@ import type { AssistantTeamId, EnvironmentId } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 
 import { appAtomRegistry } from "../../state/atom-registry";
-import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
+import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 
 export interface AssistantTeamTarget {
   readonly environmentId: EnvironmentId;

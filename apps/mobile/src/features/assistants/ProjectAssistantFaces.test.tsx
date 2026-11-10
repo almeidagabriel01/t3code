@@ -69,7 +69,7 @@ vi.mock("../../state/entities", () => ({
   useThreadShell: () => null,
   useQuietThreadShells: () => [],
 }));
-vi.mock("../workspace/useSelectWorkspaceDetail", () => ({
+vi.mock("../layout/workspace/useSelectWorkspaceDetail", () => ({
   useSelectWorkspaceDetail: () => mocks.select,
 }));
 vi.mock("./assistantPresentation", () => ({

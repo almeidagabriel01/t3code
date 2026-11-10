@@ -12,7 +12,7 @@ import {
   type ModelSelection,
   type OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
-import * as Data from "effect/Data";
+import * as Schema from "effect/Schema";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -39,7 +39,7 @@ import * as Groups from "./AssistantGroups.ts";
 import { groupThreadId } from "./AssistantGroups.ts";
 import { AssistantService } from "./AssistantService.ts";
 
-class Boom extends Data.TaggedError("Boom") {}
+class Boom extends Schema.TaggedError<Boom>()("Boom", {}) {}
 
 const refusalError = (effect: Effect.Effect<object, AssistantError>) => Effect.flip(effect);
 
@@ -248,7 +248,7 @@ const harness = (options: Options = {}) => {
             }) as never,
           }),
     }),
-    Layer.mock(DocumentText.DocumentText)({ ensure: () => Effect.sync(() => undefined) }),
+    Layer.mock(DocumentText.DocumentText)({ ensure: () => Effect.undefined }),
     Layer.succeed(ResourceCleanupService.ResourceCleanupService, {
       cleanupScheduledTasks: () => Effect.void,
       cleanupTerminals: () => Effect.void,

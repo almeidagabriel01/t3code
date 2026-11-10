@@ -69,7 +69,7 @@ vi.mock("../settings/components/SettingsScreen", () => ({
     return children;
   },
 }));
-vi.mock("../../components/FilePreviewModal", () => ({ FilePreviewModal: () => null }));
+vi.mock("../../components/ui/FilePreviewModal", () => ({ FilePreviewModal: () => null }));
 vi.mock("../../components/ui/AppText", () => ({ AppText: Children }));
 vi.mock("../../components/ui/Dialog", () => ({ alert: vi.fn(), confirm: vi.fn() }));
 vi.mock("../../components/ui/Button", () => ({

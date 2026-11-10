@@ -160,6 +160,7 @@ export const makePullRequestWriteHandlers = Effect.fn("PullRequestsToolkit.makeW
                     number: ref.number,
                   }),
                 ),
+                Effect.asVoid,
               ),
           };
         }

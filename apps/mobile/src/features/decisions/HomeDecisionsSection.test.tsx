@@ -19,7 +19,7 @@ vi.mock("react-native", () => ({
 vi.mock("../../components/ui/AppText", () => ({ AppText: Children }));
 vi.mock("../../components/ui/AppSymbol", () => ({ SymbolView: () => null }));
 vi.mock("../../state/decisions", () => ({ useDecisionEntries: () => mocks.entries }));
-vi.mock("../workspace/useSelectWorkspaceDetail", () => ({
+vi.mock("../layout/workspace/useSelectWorkspaceDetail", () => ({
   useSelectWorkspaceDetail: () => mocks.selectDetail,
 }));
 vi.mock("./DecisionCard", () => ({

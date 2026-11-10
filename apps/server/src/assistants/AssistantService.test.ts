@@ -82,12 +82,8 @@ const harness = () => {
             Effect.gen(function* () {
               const row = yield* sql<{
                 thread_id: string | null;
-              }>`SELECT thread_id FROM assistants WHERE thread_id = ${command.threadId}`.pipe(
-                Effect.orDie,
-              );
-              const all = yield* sql<{ n: number }>`SELECT count(*) AS n FROM assistants`.pipe(
-                Effect.orDie,
-              );
+              }>`SELECT thread_id FROM assistants WHERE thread_id = ${command.threadId}`;
+              const all = yield* sql<{ n: number }>`SELECT count(*) AS n FROM assistants`;
               dispatched.push(command);
               pointers.push({
                 type: command.type,
@@ -102,7 +98,7 @@ const harness = () => {
                 if (command.type === "thread.delete") thread.deletedAt = "now";
               }
               return {} as never;
-            }),
+            }).pipe(Effect.orDie),
         } as never;
       }),
     ),

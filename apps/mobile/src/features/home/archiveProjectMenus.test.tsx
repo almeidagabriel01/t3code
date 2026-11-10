@@ -9,10 +9,6 @@ const captured = vi.hoisted(() => ({
     actions: Action[];
     onSelect: (id: string) => void;
   }>,
-  toolbar: null as null | {
-    filterActions: Action[];
-    onFilterAction: (event: { nativeEvent: { event: string } }) => void;
-  },
 }));
 
 vi.mock("react-native", () => ({
@@ -21,20 +17,13 @@ vi.mock("react-native", () => ({
 }));
 vi.mock("../../components/ui/AppSymbol", () => ({ SymbolView: () => null }));
 vi.mock("../../native/StackHeader", () => ({ NativeStackScreenOptions: () => null }));
-vi.mock("../workspace/ListFilterMenu", () => ({
+vi.mock("../layout/workspace/ListFilterMenu", () => ({
   ListFilterMenu: (props: { label: string; actions: Action[]; onSelect: (id: string) => void }) => {
     captured.filterMenus.push(props);
     return null;
   },
 }));
-vi.mock("./ThreadListToolbar", () => ({
-  ThreadListToolbar: (props: NonNullable<typeof captured.toolbar>) => {
-    captured.toolbar = props;
-    return null;
-  },
-}));
 
-import { HomeHeader } from "./HomeHeader.android";
 import { ThreadListFilters } from "./ThreadListFilters";
 
 const projects = [
@@ -52,13 +41,10 @@ const base = {
 async function mount(node: ReactNode) {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   captured.filterMenus.length = 0;
-  captured.toolbar = null;
   const root = createRoot(window.document.createElement("div"));
   await act(() => root.render(node));
   return () => act(() => root.unmount());
 }
-const flat = (actions: Action[]): Action[] =>
-  actions.flatMap((action) => (action.subactions ? flat(action.subactions) : [action]));
 
 describe("ThreadListFilters archive action", () => {
   it.each([
@@ -108,44 +94,6 @@ describe("ThreadListFilters project selection", () => {
     menu.onSelect(JSON.stringify("p2"));
     menu.onSelect("all");
     expect(onProjectChange.mock.calls).toEqual([["p2"], [null]]);
-    await unmount();
-  });
-});
-
-describe("HomeHeader (Android) archive action", () => {
-  const props = {
-    ...base,
-    searchQuery: "",
-    onSearchQueryChange: vi.fn(),
-    onOpenEnvironments: vi.fn(),
-    onOpenSettings: vi.fn(),
-    onStartNewTask: vi.fn(),
-  };
-
-  it("offers Archive project for the selected project and runs it", async () => {
-    const onArchiveProject = vi.fn();
-    const unmount = await mount(
-      <HomeHeader {...props} selectedProjectKey="p2" onArchiveProject={onArchiveProject} />,
-    );
-    const archive = captured.toolbar!.filterActions.find(
-      (action) => action.id === "archive-project",
-    );
-    expect(archive).toMatchObject({ title: "Archive project", subtitle: "Beta" });
-    captured.toolbar!.onFilterAction({ nativeEvent: { event: "archive-project" } });
-    expect(onArchiveProject).toHaveBeenCalledOnce();
-    await unmount();
-  });
-
-  it.each([
-    { selected: null, handler: vi.fn() },
-    { selected: "p1", handler: undefined },
-  ])("offers nothing to archive: selected=$selected", async ({ selected, handler }) => {
-    const unmount = await mount(
-      <HomeHeader {...props} selectedProjectKey={selected} onArchiveProject={handler} />,
-    );
-    expect(flat(captured.toolbar!.filterActions).some((a) => a.id === "archive-project")).toBe(
-      false,
-    );
     await unmount();
   });
 });

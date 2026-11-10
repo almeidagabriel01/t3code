@@ -25,6 +25,7 @@ export type ResolvedSettingsScope = ScopeTargets &
     | {
         kind: "project";
         group: SidebarProjectSnapshot;
+        groups: readonly SidebarProjectSnapshot[];
         environmentId: EnvironmentId | null;
       }
     | {
@@ -40,11 +41,44 @@ export type ResolvedSettingsScope = ScopeTargets &
       }
   );
 
+/** One key stays a bare string so old links work; several are a JSON array in the same field. */
+export function settingsScopeProjectKeys(
+  search: Pick<SettingsScopeSearch, "project">,
+): readonly string[] {
+  const { project } = search;
+  if (!project) return [];
+  if (project.startsWith("[")) {
+    try {
+      const parsed: unknown = JSON.parse(project);
+      if (
+        Array.isArray(parsed) &&
+        parsed.length > 0 &&
+        parsed.every((key) => typeof key === "string" && key.length > 0)
+      ) {
+        return [...new Set<string>(parsed)];
+      }
+    } catch {
+      // A key that merely starts with "[" is a single key.
+    }
+  }
+  return [project];
+}
+
+export function settingsScopeProjectValue(keys: readonly string[]): string | undefined {
+  const unique = [...new Set(keys)];
+  return unique.length === 0 ? undefined : unique.length === 1 ? unique[0] : JSON.stringify(unique);
+}
+
 /** Stale IDs remain visible to the resolver so a removed target reads as unavailable, not as "all". */
 export function validateSettingsScopeSearch(raw: Record<string, unknown>): SettingsScopeSearch {
   const stringValue = (value: unknown) =>
     typeof value === "string" && value.trim().length > 0 ? value : undefined;
-  const project = stringValue(raw.project);
+  // A hand-written `?project=["a","b"]` reaches here already parsed as an array.
+  const project = Array.isArray(raw.project)
+    ? settingsScopeProjectValue(
+        raw.project.filter((key): key is string => stringValue(key) !== undefined),
+      )
+    : stringValue(raw.project);
   const machine = stringValue(raw.machine);
   const checkout = stringValue(raw.checkout);
   return {
@@ -72,7 +106,7 @@ export function resolveSettingsScope(
     environmentIds: [],
   });
 
-  if (search.checkout && !search.project) {
+  if (search.checkout && settingsScopeProjectKeys(search).length === 0) {
     return unavailable("project-required", "Select a project to choose one of its checkouts.");
   }
 
@@ -81,23 +115,41 @@ export function resolveSettingsScope(
     return unavailable("environment-missing", "This environment is no longer available.");
   }
 
-  if (search.project) {
-    const group = groups.find((candidate) => candidate.projectKey === search.project);
-    if (!group) return unavailable("project-missing", "This project is no longer available.");
-    const members = group.memberProjects.filter(
-      (member) =>
-        (search.machine === undefined || member.environmentId === search.machine) &&
-        (search.checkout === undefined || member.physicalProjectKey === search.checkout),
-    );
+  const projectKeys = settingsScopeProjectKeys(search);
+  if (projectKeys.length > 0) {
+    const selected = projectKeys.flatMap((key) => {
+      const found = groups.find((candidate) => candidate.projectKey === key);
+      return found ? [found] : [];
+    });
+    const group = selected[0];
+    if (!group) {
+      return unavailable(
+        "project-missing",
+        projectKeys.length > 1
+          ? "These projects are no longer available."
+          : "This project is no longer available.",
+      );
+    }
+    const several = projectKeys.length > 1;
+    const checkoutKey = several ? undefined : search.checkout;
+    const members = selected
+      .flatMap((candidate) => candidate.memberProjects)
+      .filter(
+        (member) =>
+          (search.machine === undefined || member.environmentId === search.machine) &&
+          (checkoutKey === undefined || member.physicalProjectKey === checkoutKey),
+      );
     if (members.length === 0) {
       return unavailable(
         "checkout-missing",
-        search.checkout
+        checkoutKey
           ? "This checkout is no longer available in the selected project and environment."
-          : "This project has no checkout on this environment.",
+          : several
+            ? "These projects have no checkout on this environment."
+            : "This project has no checkout on this environment.",
       );
     }
-    if (search.checkout) {
+    if (checkoutKey) {
       const checkout = members[0]!;
       const checkoutEnvironment = environments.find(
         (candidate) => candidate.environmentId === checkout.environmentId,
@@ -123,11 +175,13 @@ export function resolveSettingsScope(
         environmentIds: [checkout.environmentId],
       };
     }
+    const names = selected.map((candidate) => candidate.displayName);
     return {
       kind: "project",
       group,
+      groups: selected,
       environmentId: environment?.environmentId ?? null,
-      label: `${group.displayName} / ${environment?.label ?? "All checkouts"}`,
+      label: `${names.length > 2 ? `${names.length} projects` : names.join(", ")} / ${environment?.label ?? "All checkouts"}`,
       members,
       environmentIds: [...new Set(members.map((member) => member.environmentId))],
     };

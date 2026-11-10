@@ -95,7 +95,7 @@ const harness = (language: "en" | "pt-BR" = "en") => {
     Effect.gen(function* () {
       queues.events = yield* Queue.unbounded<{ type: "snapshot" }>();
       return AssistantService.AssistantService.of({
-        list: Effect.sync(() => assistants),
+        list: Effect.succeed(assistants),
         subscribe: Stream.fromQueue(queues.events),
       } as never);
     }),

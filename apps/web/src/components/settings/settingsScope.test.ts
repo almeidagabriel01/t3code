@@ -5,7 +5,12 @@ import type {
   SidebarProjectGroupMember,
   SidebarProjectSnapshot,
 } from "../../sidebarProjectGrouping";
-import { resolveSettingsScope, validateSettingsScopeSearch } from "./settingsScope";
+import {
+  resolveSettingsScope,
+  settingsScopeProjectKeys,
+  settingsScopeProjectValue,
+  validateSettingsScopeSearch,
+} from "./settingsScope";
 
 const laptopId = EnvironmentId.make("laptop");
 const serverId = EnvironmentId.make("server");
@@ -62,6 +67,14 @@ function group(
 const groups = [group("t3code", [first, second, third]), group("other", [other])];
 
 describe("settings scope search", () => {
+  it.each([
+    [["a", "b"], '["a","b"]'],
+    [["a", 3, " ", "a"], "a"],
+    [[], undefined],
+  ])("reads a project list the router already parsed (%j)", (project, expected) => {
+    expect(validateSettingsScopeSearch({ project }).project).toBe(expected);
+  });
+
   it("retains an orphan checkout so it cannot turn into all environments", () => {
     const search = validateSettingsScopeSearch({ checkout: first.physicalProjectKey });
     expect(search).toEqual({ checkout: first.physicalProjectKey });
@@ -158,5 +171,95 @@ describe("settings scope resolution", () => {
       members: [],
       environmentIds: [],
     });
+  });
+});
+
+describe("several projects in one scope", () => {
+  it.each([
+    [undefined, []],
+    ["t3code", ["t3code"]],
+    ['["a","b"]', ["a", "b"]],
+    ['["a","a"]', ["a"]],
+    ["[broken", ["[broken"]],
+    ['["a",1]', ['["a",1]']],
+    ["[]", ["[]"]],
+    ["[team] app", ["[team] app"]],
+  ])("reads project keys from %j", (project, keys) => {
+    expect(settingsScopeProjectKeys({ project })).toEqual(keys);
+  });
+
+  it.each([
+    [[], undefined],
+    [["a"], "a"],
+    [["a", "b"], '["a","b"]'],
+    [["a", "b", "a"], '["a","b"]'],
+  ])("writes project keys %j", (keys, value) => {
+    expect(settingsScopeProjectValue(keys)).toBe(value);
+  });
+
+  it("joins the members of every project, ignoring a checkout", () => {
+    const search = {
+      project: settingsScopeProjectValue(["t3code", "other"]),
+      checkout: first.physicalProjectKey,
+    };
+    expect(resolveSettingsScope(search, groups, environments)).toMatchObject({
+      kind: "project",
+      group: { projectKey: "t3code" },
+      groups: [{ projectKey: "t3code" }, { projectKey: "other" }],
+      label: "t3code, other / All checkouts",
+      members: [first, second, third, other],
+      environmentIds: [laptopId, serverId],
+    });
+  });
+
+  it("filters by environment and drops projects that no longer exist", () => {
+    const search = {
+      project: settingsScopeProjectValue(["t3code", "gone", "other"]),
+      machine: serverId,
+    };
+    expect(resolveSettingsScope(search, groups, environments)).toMatchObject({
+      kind: "project",
+      label: "t3code, other / Server",
+      members: [third, other],
+      environmentIds: [serverId],
+    });
+  });
+
+  it("counts projects past two and keeps one project's group list", () => {
+    const three = [group("a", [first]), group("b", [second]), group("c", [third])];
+    expect(
+      resolveSettingsScope(
+        { project: settingsScopeProjectValue(["a", "b", "c"]) },
+        three,
+        environments,
+      ),
+    ).toMatchObject({ label: "3 projects / All checkouts" });
+    expect(resolveSettingsScope({ project: "a" }, three, environments)).toMatchObject({
+      groups: [{ projectKey: "a" }],
+    });
+  });
+
+  it("is unavailable when every project is gone or none has a checkout there", () => {
+    expect(
+      resolveSettingsScope(
+        { project: settingsScopeProjectValue(["x", "y"]) },
+        groups,
+        environments,
+      ),
+    ).toMatchObject({ kind: "unavailable", reason: "project-missing", members: [] });
+    expect(
+      resolveSettingsScope(
+        { project: settingsScopeProjectValue(["other", "gone"]), machine: laptopId },
+        groups,
+        environments,
+      ),
+    ).toMatchObject({ kind: "unavailable", reason: "checkout-missing", members: [] });
+    expect(
+      resolveSettingsScope(
+        { project: settingsScopeProjectValue(["other", "t3code"]), machine: "none" },
+        groups,
+        environments,
+      ),
+    ).toMatchObject({ kind: "unavailable", reason: "environment-missing" });
   });
 });

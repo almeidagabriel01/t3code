@@ -68,8 +68,7 @@ export const requireGrokMemoryIsolation = Effect.fn("requireGrokMemoryIsolation"
     const cwd = path.join(root, "workspace");
     yield* fs.makeDirectory(home);
     yield* fs.makeDirectory(cwd);
-    const sourceHome =
-      environment.GROK_HOME ?? path.join(environment.HOME ?? process.env.HOME ?? "", ".grok");
+    const sourceHome = environment.GROK_HOME ?? path.join(environment.HOME ?? "", ".grok");
     const auth = path.join(sourceHome, "auth.json");
     if (yield* fs.exists(auth)) {
       yield* fs.copyFile(auth, path.join(home, "auth.json"));

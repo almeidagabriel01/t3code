@@ -20,7 +20,7 @@ import { ListRowLayout } from "../../../components/ui/ListRowLayout";
 import { useProjects, useThreadShell } from "../../../state/entities";
 import { heavyQueueEnvironment, useHeavyQueueState } from "../../../state/heavyQueue";
 import { useAtomCommand } from "../../../state/use-atom-command";
-import { useSelectWorkspaceDetail } from "../../workspace/useSelectWorkspaceDetail";
+import { useSelectWorkspaceDetail } from "../../layout/workspace/useSelectWorkspaceDetail";
 import { SettingsActionRow } from "./SettingsActionRow";
 import { SettingsSection } from "./SettingsSection";
 import { SettingsSwitchRow } from "./SettingsSwitchRow";

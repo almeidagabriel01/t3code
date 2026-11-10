@@ -264,7 +264,9 @@ it.live("isolates repository, config, index and both identities from inherited G
       () =>
         Effect.sync(() => {
           for (const [key, value] of previous) {
+            // @effect-diagnostics-next-line processEnvInEffect:off -- restores the scoped real-env override the git child reads.
             if (value === undefined) delete process.env[key];
+            // @effect-diagnostics-next-line processEnvInEffect:off -- same restore.
             else process.env[key] = value;
           }
         }),

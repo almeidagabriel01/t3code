@@ -8,6 +8,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import {
   AuthOrchestrationOperateScope,
+  DEFAULT_RUNTIME_MODE,
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -15,8 +16,10 @@ import { useNavigate } from "@tanstack/react-router";
 import { MessageSquarePlusIcon, RotateCcwIcon, Trash2Icon, XIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
+import { useComposerDraftStore } from "../../composerDraftStore";
 import { ComposerHandleContext } from "../../composerHandleContext";
 import { useClientSettings } from "../../hooks/useSettings";
+import { releaseComposerDraftUploads } from "../../lib/composerDraftUploads";
 import type { SideChatParentPanel } from "../../lib/sideChatPane";
 import { readLocalApi } from "../../localApi";
 import { hostRightPanel, useRightPanelStore } from "../../rightPanelStore";
@@ -75,6 +78,10 @@ export default function SideChatPane(props: {
   const [restarting, setRestarting] = useState(false);
   const sideChat = useSideChat({
     threadRef: parentRef,
+    readSettings: () => ({
+      runtimeMode: parent?.runtimeMode ?? DEFAULT_RUNTIME_MODE,
+      modelSelection: parent?.modelSelection,
+    }),
     onError: (description) =>
       toastManager.add({ type: "error", title: "Could not start over", description }),
   });
@@ -155,6 +162,8 @@ export default function SideChatPane(props: {
     });
     setDeleting(false);
     if (result._tag === "Success") {
+      releaseComposerDraftUploads(threadRef);
+      useComposerDraftStore.getState().clearDraftThread(threadRef);
       useRightPanelStore.getState().closeSurface(parentRef, `side-chat:${threadId}`);
     } else if (!isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);

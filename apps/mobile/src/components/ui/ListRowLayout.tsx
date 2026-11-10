@@ -7,11 +7,13 @@ import { SymbolView, type AppSymbolName } from "./AppSymbol";
 
 export interface ListRowContentProps {
   readonly icon?: AppSymbolName;
+  /** Drawn in the icon column for marks a single symbol can't express. */
+  readonly leading?: ReactNode;
   readonly label: string;
   readonly description?: string;
   readonly detail?: string;
-  /** Drawn in place of the icon, for an avatar. */
-  readonly leading?: ReactNode;
+  /** Rich secondary content under the description, such as scores with emphasized values. */
+  readonly meta?: ReactNode;
   readonly disabled?: boolean;
   /** Paths keep their meaningful end visible on one line. */
   readonly labelTruncatesStart?: boolean;
@@ -20,10 +22,11 @@ export interface ListRowContentProps {
 
 export function ListRowLayout({
   icon,
+  leading,
   label,
   description,
   detail,
-  leading,
+  meta,
   disabled,
   labelTruncatesStart,
   descriptionTruncatesStart,
@@ -72,6 +75,7 @@ export function ListRowLayout({
             {description}
           </AppText>
         ) : null}
+        {meta}
         {detail && stackDetail ? (
           <AppText textRole="footnote" className="text-foreground-muted">
             {detail}

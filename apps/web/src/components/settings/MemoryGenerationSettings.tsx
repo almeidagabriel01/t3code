@@ -102,9 +102,7 @@ export function MemoryGenerationSettings({
                     model={selection.model}
                     modelOptions={selection.options ?? []}
                     allowPromptInjectedEffort={false}
-                    planModeEnabled={
-                      settings.planModeEnabled || selectsPlanAgent(selection.options)
-                    }
+                    includePlanAgent={selectsPlanAgent(selection.options)}
                     triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
                     disabled={!allowed}
                     onModelOptionsChange={(modelOptions) =>

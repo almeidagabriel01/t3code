@@ -13,6 +13,8 @@ const { mocks, Children } = vi.hoisted(() => ({
     navigate: vi.fn(),
     upsert: vi.fn(),
     teams: [] as unknown[],
+    selectedProjects: null as null | { id: string; environmentId: string }[],
+    tasksByEnvironment: {} as Record<string, unknown[]>,
   },
 }));
 vi.mock("react-native", () => ({
@@ -97,6 +99,9 @@ vi.mock("../../components/ui/SegmentedControl", () => ({ SegmentedControl: () =>
 vi.mock("../../components/ui/ThemedSwitch", () => ({ ThemedSwitch: () => null }));
 vi.mock("../../lib/copyTextWithHaptic", () => ({ tryCopyTextWithHaptic: vi.fn() }));
 vi.mock("../../native/StackHeader", () => ({ NativeStackScreenOptions: () => null }));
+vi.mock("../layout/workspace/useSelectWorkspaceDetail", () => ({
+  useSelectWorkspaceDetail: () => vi.fn(),
+}));
 vi.mock("../layout/native-glass-header-items", () => ({ withNativeGlassHeaderItem: vi.fn() }));
 vi.mock("../threads/new-task-context-presentation", () => ({
   resolveNewTaskBranchLabel: () => "main",
@@ -106,8 +111,7 @@ vi.mock("../voice-input/useVoiceInputController", () => ({
 }));
 vi.mock("./components/ScheduledTaskPromptField", () => ({ ScheduledTaskPromptField: () => null }));
 vi.mock("./components/SettingsEnvironmentFilterHeader", () => ({
-  AndroidSettingsEnvironmentFilter: () => null,
-  SettingsEnvironmentFilterHeader: () => null,
+  useSettingsEnvironmentMenu: () => ({ id: "environment", items: [] }),
 }));
 vi.mock("./components/SettingsScreen", () => ({ SettingsScreen: Children }));
 vi.mock("./components/SettingsSection", () => ({
@@ -115,12 +119,19 @@ vi.mock("./components/SettingsSection", () => ({
     <section aria-label={props.title}>{props.children}</section>
   ),
 }));
+const hubAndLab = [
+  { environmentId: "hub", label: "Hub", serverConfig: null },
+  { environmentId: "lab", label: "Lab", serverConfig: null },
+];
 vi.mock("./settings-environment-filter", () => ({
   useSettingsEnvironmentFilter: () => ({
-    availableTargets: [{ environmentId: "hub", label: "Hub", serverConfig: null }],
+    availableTargets: hubAndLab,
+    selectedTargets: hubAndLab,
+    selectedProjects: mocks.selectedProjects,
   }),
 }));
 vi.mock("./scheduled-task-editor", () => ({
+  useScheduledTaskDestinationLabel: () => "this conversation",
   useScheduledTaskEditor: () => {
     const [editor, setEditor] = useState(mocks.editor);
     return {
@@ -157,16 +168,24 @@ vi.mock("../../state/entities", () => ({
   ],
   useEnvironmentServerConfig: () => null,
 }));
-vi.mock("../../state/query", () => ({ useEnvironmentQuery: () => ({ data: null }) }));
+vi.mock("../../state/query", () => ({
+  useEnvironmentQuery: (query?: { environmentId?: string }) => {
+    const tasks = mocks.tasksByEnvironment[query?.environmentId ?? ""];
+    return { data: tasks ? { tasks } : null };
+  },
+}));
 vi.mock("../../state/server", () => ({
   serverEnvironment: {
-    scheduledTasksLive: () => ({}),
+    scheduledTasksLive: (query: unknown) => query,
     upsertScheduledTask: { permissionAtom: () => ({}) },
   },
 }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => mocks.upsert }));
 
-import { SettingsScheduledTaskEditRouteScreen } from "./SettingsScheduledTasksRouteScreen";
+import {
+  SettingsScheduledTaskEditRouteScreen,
+  SettingsScheduledTasksRouteScreen,
+} from "./SettingsScheduledTasksRouteScreen";
 
 const model = { instanceId: "codex", model: "gpt" };
 const task = (threadId: string | null) =>
@@ -209,6 +228,8 @@ beforeEach(() => {
   container = window.document.createElement("div");
   root = createRoot(container);
   mocks.assistant = null;
+  mocks.selectedProjects = null;
+  mocks.tasksByEnvironment = {};
   mocks.navigate.mockReset();
   mocks.upsert.mockReset().mockResolvedValue({ _tag: "Success" });
 });
@@ -228,13 +249,13 @@ describe("scheduled task bound to a conversation", () => {
     expect(mocks.upsert.mock.calls[0]?.[0].input).toMatchObject({ id: "t1", threadId: "thread-1" });
   });
 
-  it("falls back to a generic label and clearing the binding restores the run settings and saves unbound", async () => {
+  it("keeps the run settings and the thread picker for a thread that is not an assistant's", async () => {
     open(editDraft(task("thread-1")));
-    press("Runs in an existing conversation");
-    expect(find("Runs in an existing conversation")).toBeUndefined();
+    expect(find(/^Runs in .* conversation$/)).toBeUndefined();
     expect(find(/^Project,/)).toBeDefined();
+    expect(find(/^Thread,/)).toBeDefined();
     await act(async () => find("Save changes")!.click());
-    expect(mocks.upsert.mock.calls[0]?.[0].input.threadId).toBeNull();
+    expect(mocks.upsert.mock.calls[0]?.[0].input.threadId).toBe("thread-1");
   });
 });
 
@@ -302,5 +323,31 @@ describe("scheduled task without a conversation", () => {
     open(createDraft("p1" as never, model as never));
     press("Beta");
     expect(find("Project, Beta")).toBeDefined();
+  });
+});
+
+describe("scheduled tasks screen with several projects selected", () => {
+  it("lists the tasks of the union of the selected projects, on the environments that have one", () => {
+    const titled = (id: string, projectId: string) => ({
+      ...task(null),
+      id,
+      projectId,
+      title: `Task ${id}`,
+    });
+    mocks.tasksByEnvironment = {
+      hub: [titled("one", "p1"), titled("two", "p2"), titled("three", "p3")],
+      lab: [titled("four", "q1")],
+    };
+    mocks.selectedProjects = [
+      { environmentId: "hub", id: "p1" },
+      { environmentId: "hub", id: "p2" },
+    ];
+    act(() => root.render(<SettingsScheduledTasksRouteScreen />));
+
+    expect(find("Edit Task one")).toBeDefined();
+    expect(find("Edit Task two")).toBeDefined();
+    expect(find("Edit Task three")).toBeUndefined();
+    expect(container.querySelector('section[aria-label="Lab"]')).toBeNull();
+    expect(find("Edit Task four")).toBeUndefined();
   });
 });

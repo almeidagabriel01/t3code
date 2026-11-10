@@ -5,7 +5,6 @@ import {
   type DesktopWindowMaterialReason,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -31,9 +30,10 @@ export class WindowMaterialSenderError extends Schema.TaggedError<WindowMaterial
   { senderId: Schema.Number },
 ) {}
 
-class WindowMaterialNativeError extends Data.TaggedError("WindowMaterialNativeError")<{
-  readonly cause: unknown;
-}> {}
+class WindowMaterialNativeError extends Schema.TaggedError<WindowMaterialNativeError>()(
+  "WindowMaterialNativeError",
+  { cause: Schema.Defect() },
+) {}
 
 export class DesktopWindowMaterial extends Context.Service<
   DesktopWindowMaterial,

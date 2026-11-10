@@ -22,6 +22,12 @@ it.effect("pausing and resuming an assistant's routine leaves a line in its conv
           ManagedPolicy.layerTest(),
           Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
           Layer.mock(ThreadManagementService.ThreadManagementService)({
+            getThreadShell: () =>
+              Effect.succeed({
+                projectId: ProjectId.make("project:test"),
+                archivedAt: null,
+                deletedAt: null,
+              } as never),
             dispatch: (command) =>
               Effect.sync(() => void notices.push(command as (typeof notices)[number])) as never,
           }),

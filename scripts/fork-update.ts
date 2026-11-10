@@ -10,6 +10,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
+import * as Schema from "effect/Schema";
 
 import {
   findAppBundle,
@@ -96,13 +97,12 @@ export function findDmg(
   return matches[0]?.name ?? null;
 }
 
-class Stop extends Error {
-  readonly code: number;
-  constructor(message: string, code = 1) {
-    super(message);
-    this.code = code;
-  }
-}
+class Stop extends Schema.TaggedError<Stop>()("Stop", {
+  message: Schema.String,
+  code: Schema.Number,
+}) {}
+
+const stop = (message: string, code = 1) => new Stop({ message, code });
 
 const log = (message: string) => console.log(`[fork-update] ${message}`);
 
@@ -121,12 +121,12 @@ const git = (...args: ReadonlyArray<string>) => capture("git", args);
 function mustRun(description: string, command: string, args: ReadonlyArray<string>) {
   log(description);
   const result = NodeChildProcess.spawnSync(command, args, { stdio: "inherit", env: buildEnv });
-  if (result.status !== 0) throw new Stop(`${description} failed (exit ${result.status ?? "?"}).`);
+  if (result.status !== 0) throw stop(`${description} failed (exit ${result.status ?? "?"}).`);
 }
 
 function mustGit(description: string, ...args: ReadonlyArray<string>) {
   const result = git(...args);
-  if (result.status !== 0) throw new Stop(`${description}: ${result.stderr.trim()}`);
+  if (result.status !== 0) throw stop(`${description}: ${result.stderr.trim()}`);
   return result.stdout;
 }
 
@@ -150,10 +150,10 @@ echo "Installed $1"
 function readAppName(dmgPath: string): string {
   const attach = capture("hdiutil", ["attach", "-nobrowse", "-readonly", dmgPath]);
   const mount = parseMountPoint(attach.stdout);
-  if (attach.status !== 0 || mount === null) throw new Stop(`Cannot mount ${dmgPath}.`);
+  if (attach.status !== 0 || mount === null) throw stop(`Cannot mount ${dmgPath}.`);
   try {
     const bundle = findAppBundle(NodeFS.readdirSync(mount));
-    if (bundle === null) throw new Stop(`Expected exactly one .app inside ${dmgPath}.`);
+    if (bundle === null) throw stop(`Expected exactly one .app inside ${dmgPath}.`);
     return bundle.slice(0, -".app".length);
   } finally {
     capture("hdiutil", ["detach", mount, "-quiet"]);
@@ -177,15 +177,15 @@ function installDmg(dmgPath: string) {
 function run(options: ForkUpdateOptions) {
   log("Checking preconditions");
   const branch = mustGit("Cannot read branch", "rev-parse", "--abbrev-ref", "HEAD").trim();
-  if (branch !== "main") throw new Stop(`Expected branch main, found '${branch}'.`);
+  if (branch !== "main") throw stop(`Expected branch main, found '${branch}'.`);
   if (
     mustGit("Cannot read status", "status", "--porcelain", "--untracked-files=no").trim() !== ""
   ) {
-    throw new Stop("Worktree has uncommitted changes. Commit or stash them first.");
+    throw stop("Worktree has uncommitted changes. Commit or stash them first.");
   }
   const remotes = mustGit("Cannot list remotes", "remote").split("\n");
   for (const remote of ["origin", "upstream"]) {
-    if (!remotes.includes(remote)) throw new Stop(`Remote '${remote}' is missing.`);
+    if (!remotes.includes(remote)) throw stop(`Remote '${remote}' is missing.`);
   }
 
   log("Fetching upstream and origin");
@@ -202,7 +202,7 @@ function run(options: ForkUpdateOptions) {
       mustGit("Cannot list tags", "tag", "--list", "v*").split("\n"),
       channel,
     );
-    if (tag === null) throw new Stop(`No ${channel} tag found upstream.`);
+    if (tag === null) throw stop(`No ${channel} tag found upstream.`);
     log(`Channel ${channel}${options.channel ? "" : ` (inferred from ${version})`}: target ${tag}`);
     ref = tag;
   }
@@ -240,9 +240,9 @@ function run(options: ForkUpdateOptions) {
     if (git("merge", "--no-edit", ref).status !== 0) {
       const files = parseConflictFiles(git("diff", "--name-only", "--diff-filter=U").stdout);
       git("merge", "--abort");
-      if (files.length === 0) throw new Stop("Merge failed; it was aborted. Repo is clean.");
+      if (files.length === 0) throw stop("Merge failed; it was aborted. Repo is clean.");
       console.error(`Conflicting files:\n${files.map((file) => `  ${file}`).join("\n")}`);
-      throw new Stop(
+      throw stop(
         "Merge aborted, repo is clean. Resolve with an agent: use 'Resolve with agent' in Settings -> Fork updates.",
         2,
       );
@@ -251,7 +251,7 @@ function run(options: ForkUpdateOptions) {
 
   const hostArch = capture("uname", ["-m"]).stdout.trim();
   const arch = hostArch === "arm64" ? "arm64" : hostArch === "x86_64" ? "x64" : null;
-  if (arch === null) throw new Stop(`Unsupported architecture ${hostArch}.`);
+  if (arch === null) throw stop(`Unsupported architecture ${hostArch}.`);
   mustRun("Installing dependencies", "vp", ["i"]);
   mustRun(`Building the ${arch} DMG (the merge stays local if this fails)`, "vp", [
     "run",
@@ -265,7 +265,7 @@ function run(options: ForkUpdateOptions) {
     mtimeMs: NodeFS.statSync(NodePath.join("release", name)).mtimeMs,
   }));
   const dmg = findDmg(entries, arch);
-  if (dmg === null) throw new Stop(`No *-${arch}.dmg found in release/.`);
+  if (dmg === null) throw stop(`No *-${arch}.dmg found in release/.`);
   const dmgPath = NodePath.join(process.cwd(), "release", dmg);
   log(`Built ${dmgPath}`);
 
@@ -277,7 +277,7 @@ if (process.argv[1] === NodeURL.fileURLToPath(import.meta.url)) {
   try {
     run(parseArgs(process.argv.slice(2)));
   } catch (error) {
-    if (error instanceof Stop) {
+    if (Schema.is(Stop)(error)) {
       console.error(`[fork-update] ${error.message}`);
       process.exit(error.code);
     }

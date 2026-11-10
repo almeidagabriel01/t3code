@@ -14,6 +14,7 @@ const { Children, mocks } = vi.hoisted(() => ({
     targets: [] as ReturnType<typeof environment>[],
     readOnly: new Set<string>(),
     projectSelected: false,
+    projectIds: ["project"],
   },
 }));
 
@@ -88,8 +89,11 @@ vi.mock("../../components/ui/Button", () => ({
 }));
 vi.mock("./components/SettingsScreen", () => ({ SettingsScreen: Children }));
 vi.mock("./components/SettingsEnvironmentFilterHeader", () => ({
-  AndroidSettingsEnvironmentFilter: () => null,
-  SettingsEnvironmentFilterHeader: () => null,
+  useSettingsEnvironmentMenu: () => ({
+    title: "Filter",
+    icon: "line.3.horizontal.decrease.circle",
+    items: [],
+  }),
 }));
 vi.mock("./components/DatabaseStorageNotice", () => ({ DatabaseStorageNotice: () => null }));
 vi.mock("./components/SettingsSection", () => ({ SettingsSection: Children }));
@@ -154,16 +158,24 @@ vi.mock("./components/BranchNamingSettings", () => ({
 vi.mock("./settings-environment-filter", () => ({
   useSettingsEnvironmentFilter: () => ({
     selectedTargets: mocks.targets,
-    projectGroups: [
-      {
-        key: "project",
-        label: "Project",
-        members: mocks.targets.map((target) => ({
-          project: { environmentId: target.environmentId, id: "project" },
-        })),
-      },
-    ],
-    selectedProjectKey: mocks.projectSelected ? "project" : null,
+    selectedProjectGroups: mocks.projectSelected
+      ? [
+          {
+            key: "project",
+            label: "Project",
+            members: mocks.targets.flatMap((target) =>
+              mocks.projectIds.map((id) => ({
+                project: { environmentId: target.environmentId, id },
+              })),
+            ),
+          },
+        ]
+      : null,
+    selectedProjects: mocks.projectSelected
+      ? mocks.targets.flatMap((target) =>
+          mocks.projectIds.map((id) => ({ environmentId: target.environmentId, id })),
+        )
+      : null,
   }),
 }));
 
@@ -200,6 +212,7 @@ beforeEach(() => {
   root = createRoot(container);
   mocks.targets = [environment("local", "Local")];
   mocks.projectSelected = false;
+  mocks.projectIds = ["project"];
   mocks.readOnly = new Set();
   mocks.alert.mockReset();
   mocks.updateSettings.mockReset();
@@ -247,6 +260,20 @@ describe("SettingsServerControlsRouteScreen", () => {
     // Both rewrite the whole project override, so a second write planned now would drop the first.
     expect(mocks.updateSettings).toHaveBeenCalledOnce();
     await act(async () => pending.resolve(AsyncResult.success(undefined)));
+  });
+
+  it("writes a project override to every selected project", async () => {
+    mocks.projectSelected = true;
+    mocks.projectIds = ["a", "b"];
+    act(() => root.render(<SettingsThreadsRouteScreen />));
+    const toggle = [...container.querySelectorAll<HTMLButtonElement>('[role="switch"]')].find(
+      (button) => button.textContent === "Agent browser access",
+    )!;
+
+    await act(async () => toggle.click());
+
+    expect(mocks.updateSettings.mock.calls.map(([call]) => call.environmentId)).toEqual(["local"]);
+    expect(JSON.stringify(mocks.updateSettings.mock.calls[0])).toMatch(/"a".*"b"|"b".*"a"/);
   });
 
   it("shows the heavy-work queue of the selected environment on the Maintenance page", () => {

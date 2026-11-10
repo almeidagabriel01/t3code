@@ -1,5 +1,6 @@
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Hash from "effect/Hash";
 import * as FileSystem from "effect/FileSystem";
@@ -185,9 +186,10 @@ export const bundleSourceLayer = (distDir: string) =>
           const require = NodeModule.createRequire(path.join(distDir, "bin.mjs"));
           const dependencies: Record<string, string> = {};
           for (const name of RUNTIME_PACKAGES) {
-            const version = yield* Effect.try(
-              () => (require(`${name}/package.json`) as { version: string }).version,
-            ).pipe(Effect.option);
+            const version = yield* Effect.try({
+              try: () => (require(`${name}/package.json`) as { version: string }).version,
+              catch: (cause) => new Cause.UnknownError(cause),
+            }).pipe(Effect.option);
             if (version._tag === "Some") dependencies[name] = version.value;
           }
           return { distDir, dependencies };

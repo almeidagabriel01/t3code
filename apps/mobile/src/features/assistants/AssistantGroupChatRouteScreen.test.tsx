@@ -72,7 +72,7 @@ vi.mock("../../lib/assetImageSource", () => ({
   assetImageSource: (_environmentId: string, _resource: unknown, url: string) => ({ uri: url }),
 }));
 vi.mock("expo-image", () => ({ Image: () => <i>thumb</i> }));
-vi.mock("../../components/FilePreviewModal", () => ({
+vi.mock("../../components/ui/FilePreviewModal", () => ({
   FilePreviewModal: (props: { source: { name: string; kind: string } | null }) => (
     <div data-testid="preview">{props.source && `${props.source.kind}:${props.source.name}`}</div>
   ),
@@ -219,7 +219,7 @@ vi.mock("../../native/SelectableMarkdownText", () => ({
 vi.mock("../files/FileMarkdownPreview", () => ({
   useMarkdownPreviewStyles: () => ({ nativeTextStyle: {} }),
 }));
-vi.mock("../workspace/useSelectWorkspaceDetail", () => ({
+vi.mock("../layout/workspace/useSelectWorkspaceDetail", () => ({
   useSelectWorkspaceDetail: () => mocks.selectDetail,
 }));
 vi.mock("../../state/entities", () => ({

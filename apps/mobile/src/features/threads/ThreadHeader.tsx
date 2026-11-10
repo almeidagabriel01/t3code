@@ -1,39 +1,35 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import { useNavigation } from "@react-navigation/native";
-import { useMemo } from "react";
-import { Platform } from "react-native";
 import { AppBar } from "../../components/ui/AppBar";
-import { ScreenHeaderButton } from "../../components/ui/ScreenHeaderButton";
 import type { AppBarAction, AppBarMenu, AppBarMenuItem } from "../../components/ui/AppBar.types";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
-import type { ThreadInspectorMode } from "./thread-inspector-content-stack";
-import { useThreadHeaderOptions } from "./useThreadHeaderOptions";
-import { useWorkspaceBackNavigation } from "../workspace/useAndroidWorkspaceNavigation";
+import type { ThreadInspectorMode } from "./thread-inspector-navigation";
+import { useWorkspaceBackNavigation } from "../layout/workspace/useAndroidWorkspaceNavigation";
 import { isDuoDevice } from "../../lib/device-type";
 import { useDeviceType } from "../../native/native-layout-metrics";
 import { useNativeWorkspaceColumnsSupported } from "../../native/NativeWorkspaceColumns";
 import { useThreadAssistant } from "../../state/assistants";
+import {
+  threadTerminalMenu,
+  useThreadGitMenuDefinition,
+  type ThreadGitControlsProps,
+} from "./ThreadGitControls";
 import { useThreadMenu } from "./useThreadMenu";
-import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 
-export function ThreadHeader(
-  props: Parameters<typeof useThreadHeaderOptions>[0] & {
-    /** The open thread; the actions menu is absent for drafts. */
-    readonly thread?: EnvironmentThreadShell;
-    readonly hasThreadCwd: boolean;
-    readonly hasWorkspaceRoot: boolean;
-    readonly fileInspectorSupported: boolean;
-    readonly inspectorMode: ThreadInspectorMode | null;
-    readonly onToggleInspector: () => void;
-    readonly onOpenGitInspector: () => void;
-    readonly onOpenFilesInspector: () => void;
-  },
-) {
+export function ThreadHeader(props: {
+  /** The open thread; the actions menu is absent for drafts. */
+  readonly thread?: EnvironmentThreadShell;
+  readonly title: string;
+  readonly subtitle: string;
+  readonly gitControls: ThreadGitControlsProps;
+  readonly onReturnToThread?: () => void;
+  readonly draft?: boolean;
+  readonly hasThreadCwd: boolean;
+  readonly inspectorMode: ThreadInspectorMode | null;
+  readonly onOpenFilesInspector: () => void;
+}) {
   const goBack = useWorkspaceBackNavigation("threads");
-  const { layout, panes, toggleAuxiliaryPane, composerKeyboardActive } =
+  const { layout, panes, toggleAuxiliaryPane, composerKeyboardActive, startNewTask } =
     useAdaptiveWorkspaceLayout();
-  const { onOpenTerminal, onMergeBack } = props.gitControls;
-  const navigation = useNavigation();
   const usesNativeWorkspaceColumns = useNativeWorkspaceColumnsSupported();
   const deviceType = useDeviceType();
   const assistant = useThreadAssistant(
@@ -50,16 +46,30 @@ export function ThreadHeader(
     props.thread !== undefined &&
     !layout.usesSplitView &&
     !(usesNativeWorkspaceColumns && isDuoDevice(deviceType));
-  const { gitControls } = props;
-  const menuItems: AppBarMenuItem[] = [
-    // iOS adds the Git submenu itself (it needs the Git controls' state); Android has no such menu.
-    ...(toolsInMenu && Platform.OS === "android"
+  const gitMenu = useThreadGitMenuDefinition(props.gitControls);
+  const terminalMenu = threadTerminalMenu(props.gitControls);
+  const filesVisible = props.inspectorMode === "files" && panes.auxiliaryPaneVisible;
+  const actions: AppBarAction[] =
+    props.hasThreadCwd && !toolsInMenu
+      ? [
+          {
+            accessibilityLabel: filesVisible ? "Close files" : "Open files",
+            icon: "folder",
+            selected: filesVisible,
+            disabled: !props.gitControls.canOpenFiles,
+            separateBackground: false,
+            onPress: filesVisible ? toggleAuxiliaryPane : props.onOpenFilesInspector,
+          },
+        ]
+      : [];
+  const threadMenuItems: AppBarMenuItem[] = [
+    ...(toolsInMenu && gitMenu
       ? [
           {
             id: "git",
             title: "Git",
-            icon: "point.topleft.down.curvedto.point.bottomright.up",
-            onPress: props.onOpenGitInspector,
+            icon: typeof gitMenu.icon === "string" ? gitMenu.icon : gitMenu.icon.ios,
+            items: gitMenu.items,
           },
         ]
       : []),
@@ -69,86 +79,19 @@ export function ThreadHeader(
             id: "files",
             title: "Files",
             icon: "folder",
-            disabled: !gitControls.canOpenFiles,
-            onPress:
-              gitControls.onOpenFilesInspector ??
-              (() =>
-                navigation.navigate("ThreadFiles", {
-                  environmentId: String(gitControls.environmentId),
-                  threadId: String(gitControls.threadId),
-                })),
+            disabled: !props.gitControls.canOpenFiles,
+            onPress: props.onOpenFilesInspector,
           },
         ]
       : []),
     ...(actionItems ? [{ id: "thread-actions", inline: true, items: actionItems }] : []),
   ];
   const threadMenu: AppBarMenu | null =
-    menuItems.length === 0
+    threadMenuItems.length === 0
       ? null
-      : { title: "Thread", icon: "ellipsis", separateBackground: false, items: menuItems };
-  const native = useThreadHeaderOptions({
-    ...props,
-    title,
-    gitControls: { ...gitControls, threadMenu, toolsInMenu },
-  });
-  const androidHeaderActions = useMemo<ReadonlyArray<AppBarAction>>(() => {
-    const actions: AppBarAction[] = [];
-    if (props.onReturnToThread) {
-      actions.push({
-        accessibilityLabel: "Return to chat",
-        icon: "chevron.left",
-        onPress: props.onReturnToThread,
-      });
-    }
-    if (!toolsInMenu && props.hasThreadCwd) {
-      const filesVisible = props.inspectorMode === "files" && panes.auxiliaryPaneVisible;
-      actions.push({
-        accessibilityLabel: filesVisible ? "Close files" : "Open files",
-        selected: filesVisible,
-        icon: "folder",
-        onPress: filesVisible ? toggleAuxiliaryPane : props.onOpenFilesInspector,
-      });
-    }
-    if (props.hasWorkspaceRoot && props.gitControls.canOpenTerminal) {
-      actions.push({
-        accessibilityLabel: "Open terminal",
-        icon: "terminal",
-        onPress: () => onOpenTerminal(null),
-      });
-    }
-    if (!toolsInMenu) {
-      actions.push({
-        accessibilityLabel: "Open git controls",
-        icon: "point.topleft.down.curvedto.point.bottomright.up",
-        onPress: props.onOpenGitInspector,
-      });
-    }
-    if (onMergeBack) {
-      actions.push({
-        accessibilityLabel: "Merge back to source",
-        icon: PullRequestGlyph.merged,
-        onPress: onMergeBack,
-      });
-    }
-    return actions;
-  }, [
-    props.inspectorMode,
-    panes.auxiliaryPaneVisible,
-    props.onOpenFilesInspector,
-    onOpenTerminal,
-    onMergeBack,
-    props.onOpenGitInspector,
-    toggleAuxiliaryPane,
-    props.onReturnToThread,
-    props.hasThreadCwd,
-    props.hasWorkspaceRoot,
-    props.gitControls.canOpenTerminal,
-    toolsInMenu,
-  ]);
-  // iOS shows the menu as a native header item (see ThreadGitControls); AppBar menus would duplicate it.
-  const menus = useMemo(
-    () => (Platform.OS === "android" && threadMenu ? [threadMenu] : []),
-    [threadMenu],
+      : { title: "Thread", icon: "ellipsis", separateBackground: false, items: threadMenuItems };
+  const menus = [threadMenu, toolsInMenu ? null : gitMenu, terminalMenu].filter(
+    (menu): menu is AppBarMenu => menu !== null,
   );
 
   return (
@@ -156,30 +99,22 @@ export function ThreadHeader(
       <AppBar
         title={title}
         subtitle={props.subtitle}
-        sidebar={native.sidebar}
-        options={native.options}
-        optionsVersion={native.optionsVersion}
-        trailing={
-          props.fileInspectorSupported && props.hasThreadCwd ? (
-            <ScreenHeaderButton
-              accessibilityLabel={
-                props.inspectorMode !== null && panes.auxiliaryPaneVisible
-                  ? "Hide inspector"
-                  : "Show inspector"
+        onBackToList={goBack}
+        onCompose={props.draft ? undefined : startNewTask}
+        backInSplitView={
+          props.onReturnToThread
+            ? {
+                accessibilityLabel: "Return to chat",
+                icon: "chevron.left",
+                onPress: props.onReturnToThread,
               }
-              icon="sidebar.right"
-              selected={props.inspectorMode !== null && panes.auxiliaryPaneVisible}
-              onPress={props.onToggleInspector}
-            />
-          ) : null
+            : undefined
         }
-        onBack={layout.usesSplitView ? undefined : goBack}
-        actions={androidHeaderActions}
+        actions={actions}
         menus={menus}
         hideBottomBorder
         compact={composerKeyboardActive}
       />
-      {native.fallback}
       {customSnoozeSheet}
     </>
   );

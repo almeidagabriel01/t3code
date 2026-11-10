@@ -136,7 +136,21 @@ export interface AssistantGroupSummaryResult {
   readonly summary: string;
 }
 
+export interface TranscriptionPostProcessingInput {
+  cwd: string;
+  prompt: string;
+  modelSelection: ModelSelection;
+}
+
+export interface TranscriptionPostProcessingResult {
+  transcription: string;
+}
+
 export interface ProviderTextGeneration {
+  readonly generateTranscriptionPostProcessing: (
+    input: TranscriptionPostProcessingInput,
+  ) => Effect.Effect<TranscriptionPostProcessingResult, TextGenerationError>;
+
   /** Folds new group chat into a rolling summary; offered with `routeAssistantGroup`. */
   readonly summarizeAssistantGroup?: (
     input: AssistantGroupSummaryInput,

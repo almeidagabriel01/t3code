@@ -97,12 +97,12 @@ function withFakeClaudeEnv<A, E, R>(
     const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-claude-text-" });
     const binDir = yield* makeFakeClaudeBinary(tempDir, input.lifecyclePort);
     const pathDelimiter = (yield* HostProcess.isWindows) ? ";" : ":";
-    const updates = {
-      PATH: `${binDir}${pathDelimiter}${process.env.PATH ?? ""}`,
+    const hostEnv = yield* HostProcess.Environment;
+    const fakeClaudeEnv: Record<string, string | undefined> = {
+      T3_FAKE_CLAUDE_OUTPUT: input.output,
       T3_FAKE_CLAUDE_REJECTS_NO_SESSION_PERSISTENCE: input.rejectsNoSessionPersistence
         ? "1"
         : undefined,
-      T3_FAKE_CLAUDE_OUTPUT: input.output,
       T3_FAKE_CLAUDE_EXIT_CODE: input.exitCode === undefined ? undefined : String(input.exitCode),
       T3_FAKE_CLAUDE_STDERR: input.stderr,
       T3_FAKE_CLAUDE_ARGS_MUST_CONTAIN: input.argsMustContain,
@@ -111,17 +111,15 @@ function withFakeClaudeEnv<A, E, R>(
       T3_FAKE_CLAUDE_CWD_MUST_NOT_BE: input.cwdMustNotBe,
       T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE: input.configDirMustBe,
     };
-    const previous = Object.fromEntries(Object.keys(updates).map((key) => [key, process.env[key]]));
-    const apply = (values: Readonly<Record<string, string | undefined>>) => {
-      for (const [key, value] of Object.entries(values)) {
-        if (value === undefined) delete process.env[key];
-        else process.env[key] = value;
-      }
+    const environment: NodeJS.ProcessEnv = {
+      ...Object.fromEntries(
+        Object.entries(hostEnv).filter(([name]) => !name.startsWith("T3_FAKE_CLAUDE_")),
+      ),
+      ...Object.fromEntries(
+        Object.entries(fakeClaudeEnv).filter(([, value]) => value !== undefined),
+      ),
+      PATH: `${binDir}${pathDelimiter}${hostEnv.PATH ?? ""}`,
     };
-    yield* Effect.acquireRelease(
-      Effect.sync(() => apply(updates)),
-      () => Effect.sync(() => apply(previous)),
-    );
 
     const config = decodeClaudeSettings({
       ...(input.memoryRunnerContext ? { homePath: tempDir } : {}),
@@ -130,9 +128,9 @@ function withFakeClaudeEnv<A, E, R>(
     const textGeneration = yield* makeClaudeTextGeneration(
       config,
       input.memoryRunnerContext === undefined
-        ? undefined
+        ? environment
         : {
-            ...process.env,
+            ...environment,
             ANTHROPIC_API_KEY: input.subscription ? "" : "synthetic-api-key",
             ANTHROPIC_AUTH_TOKEN: "",
             ANTHROPIC_BASE_URL: input.defaultEndpoint
@@ -1021,7 +1019,33 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
 
   const apiError = "API Error: 400 Model blocked by guardrail: 4 endpoints excluded";
   const wrapperNotice = "Using the OpenRouter credential from the global credential file.";
+  const structuredOutputError = "Failed to provide valid structured output after 5 attempts";
+  const structuredOutputFailure = {
+    type: "result",
+    subtype: "error_max_structured_output_retries",
+    is_error: true,
+    errors: [structuredOutputError],
+  };
   it.effect.each([
+    [
+      "the errors list of a result with no result text",
+      JSON.stringify(structuredOutputFailure),
+      structuredOutputError,
+    ],
+    [
+      "the errors list from verbose output",
+      JSON.stringify([{ type: "system", subtype: "init" }, structuredOutputFailure]),
+      structuredOutputError,
+    ],
+    [
+      "the errors list without CLI telemetry",
+      JSON.stringify({
+        ...structuredOutputFailure,
+        subtype: "error_during_execution",
+        errors: ["[ede_diagnostic] result_type=user last_content_type=n/a", apiError],
+      }),
+      apiError,
+    ],
     [
       "the stdout error over a stderr notice",
       JSON.stringify({ is_error: true, api_error_status: 400, result: apiError }),
@@ -1061,6 +1085,27 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
 
         expect(error.detail).toBe(`Claude CLI command failed: ${expected}`);
       }),
+    ),
+  );
+
+  it.effect("does not report the raw result JSON when a failed run writes nothing to stderr", () =>
+    withFakeClaudeEnv(
+      { output: JSON.stringify(structuredOutputFailure), exitCode: 1 },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const error = yield* Effect.flip(
+            textGeneration.generateThreadTitle({
+              cwd: process.cwd(),
+              message: "Name this thread",
+              modelSelection: {
+                instanceId: ProviderInstanceId.make("claudeAgent"),
+                model: SYNTHETIC_CLAUDE_STANDARD_MODEL,
+              },
+            }),
+          );
+
+          expect(error.detail).toBe(`Claude CLI command failed: ${structuredOutputError}`);
+        }),
     ),
   );
 });

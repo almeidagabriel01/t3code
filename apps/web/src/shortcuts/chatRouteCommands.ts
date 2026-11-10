@@ -130,9 +130,8 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
         void scratch.startScratchThread(environmentId);
       },
       "chat.new": (event) => {
-        const { legacySidebarEnabled } = getClientSettings();
         const groups = readProjectGroups();
-        if (!legacySidebarEnabled && !shouldCreateNewThreadInCurrentProject(false, groups.length)) {
+        if (!shouldCreateNewThreadInCurrentProject(false, groups.length)) {
           claim(event);
           openCommandPalette({ open: "new-thread-in" });
           return;

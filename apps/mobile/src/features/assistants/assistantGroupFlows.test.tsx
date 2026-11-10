@@ -25,7 +25,7 @@ vi.mock("../../components/ui/Dialog", () => ({
   confirm: (request: { onConfirm: () => void }) => request.onConfirm(),
   alert: (...args: unknown[]) => mocks.alert(...args),
 }));
-vi.mock("../workspace/useSelectWorkspaceDetail", () => ({
+vi.mock("../layout/workspace/useSelectWorkspaceDetail", () => ({
   useSelectWorkspaceDetail: () => mocks.select,
 }));
 vi.mock("../../state/atom-registry", () => ({ appAtomRegistry: { set: mocks.set } }));

@@ -1,6 +1,6 @@
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { Pressable, ScrollView, View } from "react-native";
+import { Platform, Pressable, ScrollView, View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
@@ -43,7 +43,12 @@ export function ThreadSideChatsRow(props: {
   };
   if (sideChats.length === 0 && !props.canOperate) return null;
   return (
-    <View className="flex-row items-center gap-2 pb-2 pl-4">
+    <View
+      className={cn(
+        "flex-row items-center gap-2 py-2 pl-4",
+        Platform.OS === "android" ? "bg-thread-canvas" : "bg-screen",
+      )}
+    >
       <SymbolView
         name="bubble.left.and.bubble.right"
         size={12}

@@ -15,7 +15,10 @@ function sourceFiles(dir: string): string[] {
 describe("menu symbols", () => {
   // Android renders menu `image` names through this map; a missing name shows no icon at all.
   it("every menu image has an Android icon", () => {
-    const map = NodeFS.readFileSync(NodePath.join(SRC, "components/ui/AppSymbol.tsx"), "utf8");
+    const map = NodeFS.readFileSync(
+      NodePath.join(SRC, "components/ui/AppSymbol.android.tsx"),
+      "utf8",
+    );
     const mapped = new Set(
       [...map.matchAll(/^\s+"?([a-z0-9._]+)"?:\s*Icon\w+,$/gm)].map((match) => match[1]),
     );

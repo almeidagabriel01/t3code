@@ -89,7 +89,7 @@ export const parseClaudeMemory: MemoryImportParser = Effect.fn("parseClaudeMemor
         candidate: {
           sourceItemKey: key,
           sourceFingerprint: hash(
-            // @effect-diagnostics-next-line preferSchemaOverJson:off -- deterministic tuple framing for hashing, not a JSON wire codec.
+            // @effect-diagnostics-next-line preferSchemaOverJson:off globalJsonInEffect:off -- deterministic tuple framing for hashing, not a JSON wire codec.
             JSON.stringify([input.parserVersion, name, description, type, body]),
           ),
           contentFingerprint: hash(body),

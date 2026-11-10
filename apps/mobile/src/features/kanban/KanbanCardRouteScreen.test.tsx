@@ -42,7 +42,7 @@ vi.mock("../../components/ui/Dialog", () => ({
   alert: mocks.alert,
   confirm: vi.fn(),
 }));
-vi.mock("../../components/FilePreviewModal", () => ({ FilePreviewModal: () => null }));
+vi.mock("../../components/ui/FilePreviewModal", () => ({ FilePreviewModal: () => null }));
 vi.mock("../../native/SelectableMarkdownText", () => ({ SelectableMarkdownText: () => null }));
 vi.mock("../threads/ThreadMarkdownImage", () => ({ ThreadMarkdownImage: () => null }));
 vi.mock("../files/FileMarkdownPreview", () => ({

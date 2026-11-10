@@ -6,12 +6,14 @@ import {
   type ServerProviderSkill,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as Data from "effect/Data";
+import * as Schema from "effect/Schema";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import { parseSkillFrontmatter } from "./SkillFrontmatter.ts";
 
-class GlobalSkillError extends Data.TaggedError("GlobalSkillError")<{ readonly cause: unknown }> {}
+class GlobalSkillError extends Schema.TaggedError<GlobalSkillError>()("GlobalSkillError", {
+  cause: Schema.Defect(),
+}) {}
 
 const FOLDER = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const MAX_SCAN = 200;

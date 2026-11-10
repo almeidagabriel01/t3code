@@ -65,7 +65,7 @@
     "fork": {
       "extends": "production",
       "env": {
-        "T3CODE_MOBILE_VERSION": "0.1.7"
+        "T3CODE_MOBILE_VERSION": "0.1.8"
       }
     },
     "production": {

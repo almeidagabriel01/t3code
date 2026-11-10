@@ -14,7 +14,11 @@ import {
 import { useEnvironments, type EnvironmentPresentation } from "../../state/environments";
 import { useProjects } from "../../state/entities";
 import { useMobileProjectGroupingSettings } from "../../state/project-grouping";
-import { toggleSettingsEnvironment } from "./settings-environment-filter.logic";
+import {
+  selectedProjectGroupsOf,
+  toggleSettingsEnvironment,
+  toggleSettingsProject,
+} from "./settings-environment-filter.logic";
 
 export type SettingsTarget = EnvironmentPresentation & {
   readonly serverConfig: NonNullable<EnvironmentPresentation["serverConfig"]>;
@@ -56,11 +60,13 @@ function settingsProjectGroups(
 
 interface SettingsEnvironmentSelection {
   readonly selectedIds: ReadonlySet<EnvironmentId> | null;
-  readonly selectedProjectKey: string | null;
+  /** `null` selects every project. */
+  readonly selectedProjectKeys: ReadonlySet<string> | null;
   readonly setSelectedIds: Dispatch<SetStateAction<ReadonlySet<EnvironmentId> | null>>;
-  readonly selectProject: (projectKey: string | null) => void;
+  readonly toggleProject: (projectKey: string) => void;
+  readonly selectAllProjects: () => void;
   /** The selection as of now, for async work that outlives the render it started in. */
-  readonly getSelectedProjectKey: () => string | null;
+  readonly getSelectedProjectKeys: () => ReadonlySet<string> | null;
 }
 
 const SettingsEnvironmentSelectionContext = createContext<SettingsEnvironmentSelection | null>(
@@ -78,26 +84,27 @@ export function SettingsEnvironmentFilterProvider(props: {
   readonly children: ReactNode;
 }) {
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<EnvironmentId> | null>(null);
-  const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null);
-  // Written only by selectProject, so it can keep a key that the close reset below cleared.
+  const [selectedProjectKeys, setSelectedProjectKeys] = useState<ReadonlySet<string> | null>(null);
+  // Written only by the project setters, so it can keep keys that the close reset below cleared.
   // Its one reader, a project removal that finishes after Settings closed, then clears an
   // already empty selection, which is harmless.
-  const currentProjectKey = useRef<string | null>(null);
-  if (!props.open && (selectedIds !== null || selectedProjectKey !== null)) {
+  const currentProjectKeys = useRef<ReadonlySet<string> | null>(null);
+  if (!props.open && (selectedIds !== null || selectedProjectKeys !== null)) {
     setSelectedIds(null);
-    setSelectedProjectKey(null);
+    setSelectedProjectKeys(null);
   }
-  const selectProject = (projectKey: string | null) => {
-    currentProjectKey.current = projectKey;
-    setSelectedProjectKey(projectKey);
+  const writeProjectKeys = (next: ReadonlySet<string> | null) => {
+    currentProjectKeys.current = next;
+    setSelectedProjectKeys(next);
   };
-  const getSelectedProjectKey = () => currentProjectKey.current;
   const value = {
     selectedIds,
-    selectedProjectKey,
+    selectedProjectKeys,
     setSelectedIds,
-    selectProject,
-    getSelectedProjectKey,
+    toggleProject: (projectKey: string) =>
+      writeProjectKeys(toggleSettingsProject(currentProjectKeys.current, projectKey)),
+    selectAllProjects: () => writeProjectKeys(null),
+    getSelectedProjectKeys: () => currentProjectKeys.current,
   };
   return (
     <SettingsEnvironmentSelectionContext value={value}>
@@ -109,8 +116,14 @@ export function SettingsEnvironmentFilterProvider(props: {
 export function useSettingsEnvironmentFilter() {
   const selection = useContext(SettingsEnvironmentSelectionContext);
   if (selection === null) throw new Error("Settings environment filter provider is missing.");
-  const { selectedIds, selectedProjectKey, setSelectedIds, selectProject, getSelectedProjectKey } =
-    selection;
+  const {
+    selectedIds,
+    selectedProjectKeys,
+    setSelectedIds,
+    toggleProject,
+    selectAllProjects,
+    getSelectedProjectKeys,
+  } = selection;
   const { environments } = useEnvironments();
   const projects = useProjects();
   const groupingSettings = useMobileProjectGroupingSettings();
@@ -133,6 +146,14 @@ export function useSettingsEnvironmentFilter() {
       ),
     [projectGroups, selectedTargets],
   );
+  const selectedProjectGroups = selectedProjectGroupsOf(projectGroups, selectedProjectKeys);
+  const selectedProjects = useMemo(
+    () =>
+      selectedProjectGroups === null
+        ? null
+        : selectedProjectGroups.flatMap((group) => group.members.map((member) => member.project)),
+    [selectedProjectGroups],
+  );
   return useMemo(
     () => ({
       availableTargets,
@@ -140,9 +161,12 @@ export function useSettingsEnvironmentFilter() {
       selectedIds,
       projectGroups,
       selectableProjectGroups,
-      selectedProjectKey,
-      selectProject,
-      getSelectedProjectKey,
+      selectedProjectKeys,
+      selectedProjectGroups,
+      selectedProjects,
+      toggleProject,
+      selectAllProjects,
+      getSelectedProjectKeys,
       selectAll: () => setSelectedIds(null),
       toggleEnvironment: (environmentId: EnvironmentId) =>
         setSelectedIds((current) =>
@@ -155,10 +179,13 @@ export function useSettingsEnvironmentFilter() {
       selectedIds,
       projectGroups,
       selectableProjectGroups,
-      selectedProjectKey,
+      selectedProjectKeys,
+      selectedProjectGroups,
+      selectedProjects,
       setSelectedIds,
-      selectProject,
-      getSelectedProjectKey,
+      toggleProject,
+      selectAllProjects,
+      getSelectedProjectKeys,
     ],
   );
 }

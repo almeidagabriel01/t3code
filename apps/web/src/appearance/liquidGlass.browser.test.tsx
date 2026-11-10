@@ -84,7 +84,7 @@ it("leaves panes opaque with the Default style", async () => {
   });
 });
 
-it("lets native material show through the root and rail while restoring floating glass", async () => {
+it("lets native material show through the root and rail while floating surfaces stay solid", async () => {
   using _attributes = fixtureAttributes({
     "data-appearance-preset": "liquid-glass",
     "data-desktop-client": "",
@@ -105,10 +105,16 @@ it("lets native material show through the root and rail while restoring floating
     expect(
       getComputedStyle(element(screen.container, '[data-glass-pane="pane"]')).backgroundImage,
     ).toContain("linear-gradient");
-    for (const selector of [".dialog-glass", ".dialog-backdrop", ".dropdown-glass"]) {
+    // Native glass floats solid (see windowMaterial.css); only the modal dim stays translucent.
+    for (const [selector, opaque] of [
+      [".dialog-glass", true],
+      [".dialog-backdrop", false],
+      [".dropdown-glass", true],
+    ] as const) {
       const node = element(screen.container, selector);
-      expect(alpha(node)).toBeLessThan(255);
-      expect(getComputedStyle(node).backdropFilter).not.toBe("none");
+      if (opaque) expect(alpha(node)).toBe(255);
+      else expect(alpha(node)).toBeLessThan(255);
+      expect(getComputedStyle(node).backdropFilter).toBe("none");
     }
   });
 });

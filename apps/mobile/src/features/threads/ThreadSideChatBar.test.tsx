@@ -44,7 +44,7 @@ vi.mock("../../state/threads", () => ({
 }));
 vi.mock("../../state/atom-registry", () => ({ appAtomRegistry: { get: () => null } }));
 vi.mock("./threadForkNavigation", () => ({
-  waitForThreadShellReady: async () => mocks.ready,
+  waitForThreadShell: async () => mocks.ready,
 }));
 vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: (command: string) => mocks.commands[command],

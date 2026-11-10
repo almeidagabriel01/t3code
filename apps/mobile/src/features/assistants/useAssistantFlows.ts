@@ -13,7 +13,7 @@ import {
   useAssistantTeamActions,
   type AssistantReply,
 } from "../../state/assistants";
-import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
+import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 
 function failed(title: string, reply: AssistantReply<unknown>) {
   if (!reply.ok) Dialog.alert(title, reply.message);

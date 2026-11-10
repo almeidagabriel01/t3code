@@ -5,7 +5,6 @@ import type {
   ProviderInstanceEnvironment,
   ProviderInstanceId,
 } from "@t3tools/contracts";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -86,9 +85,10 @@ export const readClaudeChromeConfig = (text: string | null) => {
   };
 };
 
-export class ClaudeChromeConfigError extends Data.TaggedError("ClaudeChromeConfigError")<{
-  readonly detail: string;
-}> {}
+export class ClaudeChromeConfigError extends Schema.TaggedError<ClaudeChromeConfigError>()(
+  "ClaudeChromeConfigError",
+  { detail: Schema.String },
+) {}
 
 type ClaudeChromeTarget = {
   readonly instanceId: ProviderInstanceId;
@@ -148,7 +148,7 @@ export const writeClaudeChromeDefault = Effect.fn("writeClaudeChromeDefault")(fu
       detail: `${file} is not a JSON object. Fix or remove it, then try again.`,
     });
   }
-  // @effect-diagnostics-next-line preferSchemaOverJson:off -- keeps the CLI's two-space layout; no wire codec.
+  // @effect-diagnostics-next-line preferSchemaOverJson:off globalJsonInEffect:off -- keeps the CLI's two-space layout; no wire codec.
   const next = JSON.stringify({ ...existing, claudeInChromeDefaultEnabled: enabled }, null, 2);
   // ponytail: the CLI also rewrites this file; a change it lands between the read above and the rename is lost. Add a lock only if the CLI ever exposes one.
   yield* writeFileStringAtomically({ filePath: file, contents: next }).pipe(

@@ -1,7 +1,7 @@
 import { isMemoryEnvironmentAvailable } from "./MemorySettings.logic";
 import { AuthEnvironmentMaintainScope } from "@t3tools/contracts";
 
-import { usePrimaryCloudLinkState } from "~/cloud/primaryCloudLinkState";
+import { usePrimaryCloudLinkState } from "~/cloud/cloudLinkState";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { isElectron } from "~/env";
 import { isLocalEnvironmentDisabled } from "~/localEnvironment";
@@ -39,6 +39,19 @@ export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch
           connectionPhase: environment.connection.phase,
           hasServerConfig: true,
         }),
+    ) === true;
+  // Any machine that offers it; the row then shows for a settings scope where all selected ones do.
+  const hasFastWorktreeCheckoutEnvironment =
+    environments.some(
+      (environment) =>
+        environment.connection.phase === "connected" &&
+        environment.serverConfig?.environment.capabilities.fastWorktreeCheckout === true,
+    ) === true;
+  const hasTextGeneratorsEnvironment =
+    environments.some(
+      (environment) =>
+        environment.serverConfig !== null &&
+        environment.serverConfig.managedPolicy?.limits?.providers?.allowedDrivers === undefined,
     ) === true;
   const hasMemory =
     environments.some(
@@ -82,7 +95,6 @@ export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch
     hasCloudPublicConfig: cloudPublicConfig,
     hasEnvironment,
     hasProviderSettingsEnvironment,
-    hasMacProviderSettingsEnvironment,
     canManageLocalBackend,
     isWslSettingsRowVisible: wslSettingsRowVisible,
     hasThreadAutoSettlement,
@@ -91,5 +103,9 @@ export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch
     hasMemory,
     hasImessage,
     hasTelegram,
+    hasMacProviderSettingsEnvironment,
+    hasFastWorktreeCheckoutEnvironment,
+    hasTextGeneratorsEnvironment,
+    hasPrimaryEnvironment: primaryEnvironmentId !== null,
   });
 }

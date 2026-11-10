@@ -1,4 +1,5 @@
 import * as Context from "effect/Context";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
@@ -83,9 +84,10 @@ const make = Effect.gen(function* () {
         const staged = yield* run(["show", `:${name}`]);
         const author =
           staged.code === 0
-            ? yield* Effect.try(() => parseNote(staged.stdout).updatedBy).pipe(
-                Effect.orElseSucceed(() => null),
-              )
+            ? yield* Effect.try({
+                try: () => parseNote(staged.stdout).updatedBy,
+                catch: (cause) => new Cause.UnknownError(cause),
+              }).pipe(Effect.orElseSucceed(() => null))
             : null;
         message = `notes: ${staged.code === 0 ? "update" : "delete"} ${name.replace(/[\r\n]/gu, " ")}${author ? ` (${author})` : ""}`;
       }

@@ -4,7 +4,12 @@ import * as Stream from "effect/Stream";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import { NonNegativeInt, ProviderDriverKind, TextGenerationError } from "@t3tools/contracts";
+import {
+  NonNegativeInt,
+  ProviderDriverKind,
+  settingsSecretLiteral,
+  TextGenerationError,
+} from "@t3tools/contracts";
 import {
   MemoryGenerationRunnerError,
   withMemoryExecution,
@@ -45,6 +50,7 @@ const OpenCodeTextGenerationOperation = Schema.Literals([
   "generateReviewGuide",
   "routeAssistantGroup",
   "summarizeAssistantGroup",
+  "generateTranscriptionPostProcessing",
 ]);
 
 const openCodeTextGenerationErrorContext = {
@@ -542,8 +548,8 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
                 binaryPath: openCodeSettings.binaryPath,
                 directory: input.cwd,
                 serverUrl: openCodeSettings.serverUrl,
-                ...(openCodeSettings.serverPassword
-                  ? { serverPassword: openCodeSettings.serverPassword }
+                ...(settingsSecretLiteral(openCodeSettings.serverPassword)
+                  ? { serverPassword: settingsSecretLiteral(openCodeSettings.serverPassword) }
                   : {}),
               })
               .pipe(Effect.flatMap(runAgainstServer), Effect.scoped)

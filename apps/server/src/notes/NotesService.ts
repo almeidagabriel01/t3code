@@ -30,6 +30,7 @@ import {
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -494,9 +495,10 @@ const make = Effect.gen(function* () {
             if (revision === expected && verified) return (captured = false);
             // link(2) never replaces a file created at the path meanwhile, and unlike a copy the
             // restored note is complete the moment it is visible.
-            captured = yield* Effect.tryPromise(() =>
-              NodeFSP.link(removed, directory.absolute),
-            ).pipe(
+            captured = yield* Effect.tryPromise({
+              try: () => NodeFSP.link(removed, directory.absolute),
+              catch: (cause) => new Cause.UnknownError(cause),
+            }).pipe(
               Effect.as(false),
               Effect.orElseSucceed(() => true),
             );

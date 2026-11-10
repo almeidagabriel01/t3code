@@ -2434,7 +2434,7 @@ it.effect("ticketless definitive refusal rotates the frozen attempt but uncertai
       claim: (_c, input) =>
         Effect.sync(() => {
           claims.push(input);
-        }).pipe(Effect.andThen(Effect.suspend(() => Effect.fail(new M.MemoryHubError({ code }))))),
+        }).pipe(Effect.andThen(Effect.failSync(() => new M.MemoryHubError({ code })))),
     });
     yield* Effect.scoped(
       Effect.gen(function* () {

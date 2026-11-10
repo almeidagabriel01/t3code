@@ -41,7 +41,7 @@ import {
 import { Label } from "../ui/label";
 import { Textarea } from "../ui/textarea";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { resolveContextWindowModelDisplayName } from "./ContextWindowMeter.logic";
+import { getDisplayModelName } from "./providerIconUtils";
 import { ProviderModelPicker } from "./ProviderModelPicker";
 import { openThreadHandoffDialog, threadHandoffDialogAtom } from "./threadHandoffDialogState";
 
@@ -155,6 +155,15 @@ function ThreadHandoffDialog({
   // A summary that became unavailable after it was picked is not sent.
   const effectiveMode = mode === "summary" && !summary.available ? "focused" : mode;
   const sourceEntry = entries.find((entry) => entry.instanceId === thread?.providerInstanceId);
+  const sourceModel = thread?.modelSelection;
+  const modelDisplayName = sourceModel
+    ? (() => {
+        const option = modelOptionsByInstance
+          .get(sourceModel.instanceId)
+          ?.find((model) => model.slug === sourceModel.model);
+        return option ? getDisplayModelName(option) : sourceModel.model;
+      })()
+    : null;
   const startsIn = thread === null ? null : (thread.worktreePath ?? project?.workspaceRoot ?? null);
 
   const start = async () => {
@@ -214,9 +223,7 @@ function ThreadHandoffDialog({
               </div>
               <div className="mt-0.5 truncate text-muted-foreground text-xs">
                 Agent: {sourceEntry?.displayName ?? thread?.providerInstanceId ?? "Unknown"}
-                {thread === null
-                  ? ""
-                  : ` · ${resolveContextWindowModelDisplayName(thread.modelSelection, modelOptionsByInstance)}`}
+                {thread === null ? "" : ` · ${modelDisplayName}`}
               </div>
             </div>
             <div className="grid min-w-0 gap-1.5">

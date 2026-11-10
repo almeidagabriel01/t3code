@@ -1,7 +1,7 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { buildHomeListFilterMenu } from "./home-list-filter-menu";
+import { buildHomeListFilterMenuItems } from "./home-list-filter-menu";
 
 const base = {
   environments: [],
@@ -11,27 +11,27 @@ const base = {
   onProjectChange: () => undefined,
 };
 
-describe("buildHomeListFilterMenu archive action", () => {
+describe("buildHomeListFilterMenuItems archive action", () => {
   it("adds Archive project only for a selected project that can be archived", () => {
     const onArchiveProject = vi.fn();
     const titles = (
       selectedProjectKey: string | null,
       archive: typeof onArchiveProject | undefined,
     ) =>
-      buildHomeListFilterMenu({ ...base, selectedProjectKey, onArchiveProject: archive }).items.map(
+      buildHomeListFilterMenuItems({ ...base, selectedProjectKey, onArchiveProject: archive }).map(
         (item) => item.title,
       );
     expect(titles("p", onArchiveProject)).toEqual(["Environment", "Project", "Archive project"]);
     expect(titles(null, onArchiveProject)).toEqual(["Environment", "Project"]);
     expect(titles("p", undefined)).toEqual(["Environment", "Project"]);
 
-    const menu = buildHomeListFilterMenu({
+    const items = buildHomeListFilterMenuItems({
       ...base,
       selectedProjectKey: "p",
       onArchiveProject,
     });
-    const action = menu.items.at(-1);
-    if (action?.type !== "action") throw new Error("expected an action");
+    const action = items.at(-1);
+    if (!action || !("onPress" in action)) throw new Error("expected an action");
     action.onPress();
     expect(onArchiveProject).toHaveBeenCalledOnce();
   });

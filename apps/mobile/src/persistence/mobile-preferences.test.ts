@@ -1,7 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import { vi } from "vite-plus/test";
 
 vi.mock("expo-secure-store", () => ({ getItemAsync: vi.fn(), setItemAsync: vi.fn() }));
@@ -20,9 +19,10 @@ const loadFrom = (payload: object) =>
           Layer.succeed(
             MobileDatabase.MobileDatabase,
             MobileDatabase.MobileDatabase.of({
-              loadPreferencesJson: Effect.succeed(
-                Option.some({ payload: JSON.stringify(payload), updatedAt: 1 }),
-              ),
+              loadPreferencesJson: Effect.succeedSome({
+                payload: JSON.stringify(payload),
+                updatedAt: 1,
+              }),
               savePreferencesJson: () => Effect.void,
             } as never),
           ),

@@ -13,6 +13,8 @@ import {
   MAX_FOLDER_MODEL_DEFAULTS,
   resolveProjectProviderInstanceEnabled,
   resolveProviderInstanceEnabled,
+  resolveTextGenerationSelectionEnabled,
+  textGeneratorForSelection,
   isProviderTextGenerationCapable,
   type ModelSelection,
   type ProjectId,
@@ -52,6 +54,8 @@ export function isModelSelectionProviderEnabled(
   settings: ServerSettings,
   selection: ModelSelection,
 ): boolean {
+  const generator = textGeneratorForSelection(settings, selection.instanceId);
+  if (generator !== undefined) return generator.enabled;
   const instanceConfig = settings.providerInstances[selection.instanceId];
   if (instanceConfig !== undefined) {
     return resolveProviderInstanceEnabled(instanceConfig);
@@ -114,26 +118,32 @@ export function defaultTextGenerationModel(driver: ProviderDriverKind): string {
   );
 }
 
+/** A text generator, or a provider whose snapshot can generate text; no snapshots trusts settings. */
+function isTextGenerationTargetUsable(
+  settings: ServerSettings,
+  providers: ReadonlyArray<ServerProvider> | undefined,
+  instanceId: ProviderInstanceId,
+): boolean {
+  if (providers === undefined || textGeneratorForSelection(settings, instanceId) !== undefined) {
+    return true;
+  }
+  const provider = providers.find((candidate) => candidate.instanceId === instanceId);
+  return (
+    provider?.enabled === true &&
+    isProviderAvailable(provider) &&
+    isProviderTextGenerationCapable(provider)
+  );
+}
+
 export function resolveSourceControlWriterModelSelection(
   settings: ServerSettings,
   providers: ReadonlyArray<ServerProvider> | undefined,
   projectId: ProjectId | null,
 ): ModelSelection {
   const selection = settings.sourceControlWriterModelSelection;
-  if (
-    !selection ||
-    !resolveProjectProviderInstanceEnabled(settings, projectId, selection.instanceId)
-  ) {
-    return settings.textGenerationModelSelection;
-  }
-  if (providers === undefined) {
-    return selection;
-  }
-
-  const provider = providers.find((candidate) => candidate.instanceId === selection.instanceId);
-  return provider?.enabled === true &&
-    isProviderAvailable(provider) &&
-    isProviderTextGenerationCapable(provider)
+  return selection &&
+    resolveTextGenerationSelectionEnabled(settings, projectId, selection.instanceId) &&
+    isTextGenerationTargetUsable(settings, providers, selection.instanceId)
     ? selection
     : settings.textGenerationModelSelection;
 }
@@ -179,21 +189,26 @@ export function resolveReviewGuideModelSelection(
   projectId: ProjectId | null,
 ): ModelSelection {
   const selection = settings.reviewGuideModelSelection;
-  if (
-    selection &&
-    resolveProjectProviderInstanceEnabled(settings, projectId, selection.instanceId)
-  ) {
-    const provider = providers?.find((candidate) => candidate.instanceId === selection.instanceId);
-    if (
-      providers === undefined ||
-      (provider?.enabled === true &&
-        isProviderAvailable(provider) &&
-        isProviderTextGenerationCapable(provider))
-    ) {
-      return selection;
-    }
-  }
-  return resolveSourceControlWriterModelSelection(settings, providers, projectId);
+  // Text generators cannot investigate a checkout, so they never write review guides.
+  return selection &&
+    textGeneratorForSelection(settings, selection.instanceId) === undefined &&
+    resolveProjectProviderInstanceEnabled(settings, projectId, selection.instanceId) &&
+    isTextGenerationTargetUsable(settings, providers, selection.instanceId)
+    ? selection
+    : resolveSourceControlWriterModelSelection(settings, providers, projectId);
+}
+
+/** Transcript cleanup follows the text generation model unless its own usable model is set. */
+export function resolveSpeechPostProcessingModelSelection(
+  settings: ServerSettings,
+  providers?: ReadonlyArray<ServerProvider>,
+): ModelSelection {
+  const selection = settings.speechPostProcessingModelSelection;
+  return selection &&
+    isModelSelectionProviderEnabled(settings, selection) &&
+    isTextGenerationTargetUsable(settings, providers, selection.instanceId)
+    ? selection
+    : settings.textGenerationModelSelection;
 }
 
 export interface PersistedServerObservabilitySettings {
@@ -520,6 +535,7 @@ function applyServerSettingsPatchFields(
     usageLimitSources: usageLimitSourcesPatch,
     providerBudgets: providerBudgetsPatch,
     folderProjects: folderProjectsPatch,
+    textGenerators: textGeneratorsPatch,
     secretProviders: secretProvidersPatch,
     sourceControlHosts: sourceControlHostsPatch,
     usagePriceOverrides: usagePriceOverridesPatch,
@@ -728,6 +744,9 @@ function applyServerSettingsPatchFields(
     ...(patch.folderModelDefaults !== undefined
       ? { folderModelDefaults: patch.folderModelDefaults }
       : {}),
+    ...(patch.speechPostProcessingModelSelection !== undefined
+      ? { speechPostProcessingModelSelection: patch.speechPostProcessingModelSelection }
+      : {}),
     ...(patch.defaultProjectScripts !== undefined
       ? { defaultProjectScripts: patch.defaultProjectScripts }
       : {}),
@@ -755,6 +774,9 @@ function applyServerSettingsPatchFields(
       : {}),
     ...(folderProjectsPatch !== undefined
       ? { folderProjects: mergeSettingsEntries(current.folderProjects, folderProjectsPatch) }
+      : {}),
+    ...(textGeneratorsPatch !== undefined
+      ? { textGenerators: mergeSettingsEntries(current.textGenerators, textGeneratorsPatch) }
       : {}),
     ...(secretProvidersPatch !== undefined
       ? { secretProviders: mergeSettingsEntries(current.secretProviders, secretProvidersPatch) }

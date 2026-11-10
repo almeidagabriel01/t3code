@@ -9,7 +9,7 @@ import { Image } from "expo-image";
 import { useState } from "react";
 import { Pressable, View } from "react-native";
 
-import type { FilePreviewSource } from "../../components/FilePreviewModal";
+import type { FilePreviewSource } from "../../components/ui/FilePreviewModal";
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { assetImageSource } from "../../lib/assetImageSource";

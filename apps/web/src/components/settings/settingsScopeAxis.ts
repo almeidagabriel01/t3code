@@ -1,6 +1,11 @@
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import type { EnvironmentPresentation } from "../../state/environments";
-import type { ResolvedSettingsScope, SettingsScopeSearch } from "./settingsScope";
+import {
+  settingsScopeProjectKeys,
+  settingsScopeProjectValue,
+  type ResolvedSettingsScope,
+  type SettingsScopeSearch,
+} from "./settingsScope";
 
 type ScopeEnvironment = Pick<EnvironmentPresentation, "environmentId" | "label" | "displayUrl">;
 
@@ -65,8 +70,9 @@ export function environmentAxisValue(
   return search.machine ?? resolvedEnvironmentId ?? ALL_ENVIRONMENTS_VALUE;
 }
 
-export function projectAxisValue(search: SettingsScopeSearch): string {
-  return search.project ?? ALL_PROJECTS_VALUE;
+export function projectAxisValues(search: SettingsScopeSearch): readonly string[] {
+  const keys = settingsScopeProjectKeys(search);
+  return keys.length > 0 ? keys : [ALL_PROJECTS_VALUE];
 }
 
 export function projectScopeMenuGroups(
@@ -93,6 +99,27 @@ export function selectEnvironmentAxis(
 export function selectProjectAxis(search: SettingsScopeSearch, value: string): SettingsScopeSearch {
   const next: SettingsScopeSearch = {};
   if (value !== ALL_PROJECTS_VALUE) next.project = value;
+  if (search.machine) next.machine = search.machine;
+  return next;
+}
+
+/** Adds or removes one project from the selection; "all" clears it. */
+export function toggleProjectAxis(search: SettingsScopeSearch, value: string): SettingsScopeSearch {
+  const keys = settingsScopeProjectKeys(search);
+  return selectProjectKeys(
+    search,
+    value === ALL_PROJECTS_VALUE
+      ? []
+      : keys.includes(value)
+        ? keys.filter((key) => key !== value)
+        : [...keys, value],
+  );
+}
+
+function selectProjectKeys(search: SettingsScopeSearch, keys: readonly string[]) {
+  const next: SettingsScopeSearch = {};
+  const project = settingsScopeProjectValue(keys);
+  if (project !== undefined) next.project = project;
   if (search.machine) next.machine = search.machine;
   return next;
 }

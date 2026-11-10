@@ -181,6 +181,7 @@ const environment = (label: "H" | "A" | "B", resolve?: Resolve) =>
             generateBranchName: () => Effect.die("unexpected provider operation"),
             generateThreadTitle: () => Effect.die("unexpected provider operation"),
             generateReviewGuide: () => Effect.die("unexpected provider operation"),
+            generateTranscriptionPostProcessing: () => Effect.die("unexpected provider operation"),
             resolveMemoryConflict: (request) =>
               Effect.gen(function* () {
                 generated++;

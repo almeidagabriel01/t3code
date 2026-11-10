@@ -20,6 +20,12 @@ import * as Decisions from "./DecisionService.ts";
 
 const thread = ThreadId.make("thread-1");
 const project = ProjectId.make("project-1");
+const loadError = () =>
+  new ThreadManagement.ThreadManagementProjectionLoadError({
+    projectId: project,
+    threadId: thread,
+    cause: new Error("projection unavailable"),
+  });
 const isDecisionError = Schema.is(DecisionError);
 
 type Send = Parameters<ThreadManagement.ThreadManagementService["Service"]["sendToThread"]>[0];
@@ -141,11 +147,7 @@ it.effect("a request that cannot be answered is refused", () => {
 
 it.effect("an answer reaches the thread as one queued message, however often delivery runs", () => {
   // The first send fails after the answer is stored, as a crash before the receipt would.
-  const { layer, sends } = harness((call) =>
-    call === 1
-      ? ({ _tag: "ThreadManagementProjectionLoadError" } as ThreadManagement.ThreadManagementError)
-      : undefined,
-  );
+  const { layer, sends } = harness((call) => (call === 1 ? loadError() : undefined));
   return Effect.gen(function* () {
     const decisions = yield* Decisions.DecisionService;
     const decision = yield* ask(decisions);
@@ -244,9 +246,10 @@ it.effect("an unanswered decision expires and the agent is told not to assume ap
 it.effect("a thread that is gone is skipped once and never retried", () => {
   const { layer, sends } = harness(
     () =>
-      ({
-        _tag: "ThreadManagementThreadNotFoundError",
-      }) as ThreadManagement.ThreadManagementError,
+      new ThreadManagement.ThreadManagementThreadNotFoundError({
+        projectId: project,
+        threadId: thread,
+      }),
   );
   return Effect.gen(function* () {
     const decisions = yield* Decisions.DecisionService;
@@ -381,12 +384,8 @@ it.effect(
   () => {
     const { layer, sends } = harness((call) =>
       call === 1
-        ? ({
-            _tag: "ThreadManagementThreadArchivedError",
-          } as ThreadManagement.ThreadManagementError)
-        : ({
-            _tag: "ThreadManagementProjectionLoadError",
-          } as ThreadManagement.ThreadManagementError),
+        ? new ThreadManagement.ThreadManagementThreadArchivedError({ threadId: thread })
+        : loadError(),
     );
     return Effect.gen(function* () {
       const decisions = yield* Decisions.DecisionService;

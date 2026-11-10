@@ -17,7 +17,7 @@ import { ScreenStack } from "react-native-screens";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { ProviderIcon } from "../../components/ProviderIcon";
-import { AndroidSheetHeader } from "../../components/ui/AndroidScreenHeader";
+import { SheetHeader } from "../../components/ui/SheetHeader";
 import { AppText as Text } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
 import { ErrorBanner } from "../../components/ui/ErrorBanner";
@@ -34,7 +34,6 @@ import { NativeHeader, NativeScreen } from "../../native/ThemedScreenStack";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { useEnvironmentServerConfig, useProjects, useQuietThreadShell } from "../../state/entities";
 import { orchestrationEnvironment } from "../../state/orchestration";
-import { environmentThreadShells } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import {
@@ -46,7 +45,7 @@ import {
   resolveHandoffAgents,
   resolveHandoffContextChoices,
 } from "./thread-handoff";
-import { waitForThreadShellReady } from "./threadForkNavigation";
+import { waitForThreadShell } from "./threadForkNavigation";
 import { ThreadSettingsPickerScreen } from "./ThreadSettingsSheet";
 
 const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
@@ -141,9 +140,7 @@ export function ThreadHandoffSheet({ route }: StaticScreenProps<ThreadHandoffPar
       return;
     }
     const nextRef = scopeThreadRef(target.environmentId, result.value.threadId);
-    const ready = await waitForThreadShellReady({
-      read: () => appAtomRegistry.get(environmentThreadShells.threadShellAtom(nextRef)) !== null,
-    });
+    const ready = await waitForThreadShell(nextRef);
     setStarting(false);
     if (!ready) {
       setError(
@@ -290,7 +287,7 @@ export function ThreadHandoffSheet({ route }: StaticScreenProps<ThreadHandoffPar
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
       <NativeStackScreenOptions options={{ sheetCornerRadius: 28 }} />
-      <AndroidSheetHeader title={HANDOFF_LABEL} onBack={() => navigation.goBack()} />
+      <SheetHeader title={HANDOFF_LABEL} onClose={() => navigation.goBack()} />
       <ScreenContent insetHorizontal={layout.usesSplitView}>{content}</ScreenContent>
     </View>
   );

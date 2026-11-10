@@ -98,7 +98,7 @@ vi.mock("../../state/use-atom-command", () => ({
         ? mocks.getSync
         : mocks.getBinding,
 }));
-vi.mock("../workspace/useSelectWorkspaceDetail", () => ({
+vi.mock("../layout/workspace/useSelectWorkspaceDetail", () => ({
   useSelectWorkspaceDetail: () => mocks.selectDetail,
 }));
 

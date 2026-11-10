@@ -12,6 +12,7 @@ import { createModelSelection } from "@t3tools/shared/model";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as TextGeneration from "./TextGeneration.ts";
+import * as TextGenerators from "./TextGenerators.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as Layer from "effect/Layer";
 import * as ServerSettings from "../serverSettings.ts";
@@ -26,6 +27,8 @@ const makeStubTextGeneration = (
     generateBranchName: () => Effect.die("generateBranchName stub not configured for this test"),
     generateThreadTitle: () => Effect.die("generateThreadTitle stub not configured for this test"),
     generateReviewGuide: () => Effect.die("generateReviewGuide stub not configured for this test"),
+    generateTranscriptionPostProcessing: () =>
+      Effect.die("generateTranscriptionPostProcessing stub not configured for this test"),
     ...overrides,
   });
 
@@ -162,6 +165,7 @@ describe("TextGeneration memory routing", () => {
         Effect.provide(
           Layer.mergeAll(
             ServerSettings.layerTest(),
+            Layer.mock(TextGenerators.TextGenerators)({ runner: () => Effect.undefined }),
             Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
               resolveLink: () => Effect.die("Memory routing must not resolve links"),
             }),
@@ -222,6 +226,7 @@ describe("TextGeneration memory routing", () => {
         Effect.provide(
           Layer.mergeAll(
             ServerSettings.layerTest(),
+            Layer.mock(TextGenerators.TextGenerators)({ runner: () => Effect.undefined }),
             Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
               resolveLink: () => Effect.die("Memory routing must not resolve links"),
             }),
@@ -286,6 +291,7 @@ describe("TextGeneration group routing", () => {
         Effect.provide(
           Layer.mergeAll(
             ServerSettings.layerTest(),
+            Layer.mock(TextGenerators.TextGenerators)({ runner: () => Effect.undefined }),
             Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
               resolveLink: () => Effect.die("Routing must not resolve links"),
             }),

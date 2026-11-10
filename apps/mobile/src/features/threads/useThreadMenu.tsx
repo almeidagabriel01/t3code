@@ -26,7 +26,7 @@ import { useOpenAssistantEditor } from "../assistants/openAssistantEditor";
 import { useOpenAssistantWork } from "../assistants/assistantWorkTarget";
 import { useThreadListActions } from "../home/useThreadListActions";
 import { threadCanArchive } from "../home/threadArchive";
-import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
+import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 import { CustomSnoozeSheet } from "./CustomSnoozeSheet";
 import { openThreadHandoff } from "./openThreadHandoff";
 import { useRestartAgentSession } from "./useRestartAgentSession";

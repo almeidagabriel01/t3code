@@ -68,7 +68,7 @@ exit 7
   yield* fs.chmod(path.join(root, "release", stem, "t3"), 0o755);
   const tar = yield* run("tar", ["-czf", archiveName, stem], {
     cwd: path.join(root, "release"),
-    env: { PATH: process.env.PATH },
+    env: { PATH: (yield* HostProcess.Environment).PATH },
   });
   assert.equal(tar.exitCode, 0, tar.stderr);
   const archive = yield* fs.readFile(path.join(root, "release", archiveName));
@@ -131,7 +131,7 @@ it.layer(NodeServices.layer)("build-npm-launcher", (it) => {
         yield* fs.makeDirectory(installed);
         const unpack = yield* run("tar", ["-xzf", output.tarball, "-C", installed], {
           cwd: root,
-          env: { PATH: process.env.PATH },
+          env: { PATH: (yield* HostProcess.Environment).PATH },
         });
         assert.equal(unpack.exitCode, 0, unpack.stderr);
         const packageDir = path.join(installed, "package");
@@ -139,7 +139,7 @@ it.layer(NodeServices.layer)("build-npm-launcher", (it) => {
         const release = yield* serveFakeRelease(root);
         const home = path.join(root, "home");
         const env = {
-          PATH: process.env.PATH,
+          PATH: (yield* HostProcess.Environment).PATH,
           T3CODE_HOME: home,
           T3CODE_TEST_CALLS: path.join(root, "calls"),
           T3CODE_RELEASE_BASE_URL: release.baseUrl,
@@ -155,7 +155,7 @@ it.layer(NodeServices.layer)("build-npm-launcher", (it) => {
         assert.equal(first.exitCode, 7);
         assert.deepStrictEqual(
           (yield* fs.readFileString(env.T3CODE_TEST_CALLS)).trim().split("\n"),
-          ["--version|", `serve a b|${launcher}`],
+          ["--version|", `serve a b|${realLauncher}`],
         );
         const versionDir = path.join(home, "runtime/versions", VERSION);
         assert.equal(
@@ -174,7 +174,7 @@ it.layer(NodeServices.layer)("build-npm-launcher", (it) => {
         assert.equal(release.requests.length, requestsAfterFirst);
         assert.deepStrictEqual(
           (yield* fs.readFileString(env.T3CODE_TEST_CALLS)).trim().split("\n"),
-          ["--version|", `serve a b|${launcher}`, `--version|${launcher}`],
+          ["--version|", `serve a b|${realLauncher}`, `--version|${realLauncher}`],
         );
 
         yield* fs.writeFileString(path.join(versionDir, "t3"), "#!/t3-test-missing-loader\n");
@@ -376,7 +376,7 @@ syncBuiltinESMExports();
 `,
           );
           const env = {
-            PATH: process.env.PATH,
+            PATH: (yield* HostProcess.Environment).PATH,
             T3CODE_HOME: home,
             T3CODE_RELEASE_BASE_URL: release.baseUrl,
             T3CODE_TEST_READY: path.join(root, "probe-ready"),

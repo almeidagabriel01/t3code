@@ -317,7 +317,13 @@ function registerAppShellCommands(router: AnyRouter, shellElement: Element): () 
   };
 }
 
-function SidebarControl({ overRail }: { overRail: boolean }) {
+function SidebarControl({
+  overRail,
+  showSidebar,
+}: {
+  overRail: boolean;
+  readonly showSidebar: boolean;
+}) {
   const router = useRouter();
   const usagePageOpen = useLocation({ select: (location) => location.pathname === "/usage" });
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -334,6 +340,8 @@ function SidebarControl({ overRail }: { overRail: boolean }) {
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window keydown listener that toggles the sidebar on its shortcut
   useEffect(() => {
+    // A hidden sidebar would still save the toggle, so the shortcut does nothing without one.
+    if (!showSidebar) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
       if (
@@ -369,7 +377,7 @@ function SidebarControl({ overRail }: { overRail: boolean }) {
       window.removeEventListener("keydown", onKeyDown, true);
       unsubscribe?.();
     };
-  }, [keybindings, toggleActivity, toggleSidebar, usagePageOpen]);
+  }, [keybindings, showSidebar, toggleActivity, toggleSidebar, usagePageOpen]);
 
   // The control lives as long as the shell, so it carries the shell's commands. Created
   // once so re-renders never re-register them.
@@ -387,28 +395,36 @@ function SidebarControl({ overRail }: { overRail: boolean }) {
       )}
       data-sidebar-control=""
     >
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <SidebarTrigger
-              variant={overArtwork ? "media-navigation" : "ghost"}
-              className={cn(
-                "pointer-events-auto",
-                overArtwork && "relative top-auto translate-y-0",
-              )}
-              aria-label="Toggle main sidebar"
-            />
-          }
-        />
-        <TooltipPopup side="bottom">
-          Toggle main sidebar{shortcutLabel ? ` (${shortcutLabel})` : ""}
-        </TooltipPopup>
-      </Tooltip>
+      {showSidebar ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <SidebarTrigger
+                variant={overArtwork ? "media-navigation" : "ghost"}
+                className={cn(
+                  "pointer-events-auto",
+                  overArtwork && "relative top-auto translate-y-0",
+                )}
+                aria-label="Toggle main sidebar"
+              />
+            }
+          />
+          <TooltipPopup side="bottom">
+            Toggle main sidebar{shortcutLabel ? ` (${shortcutLabel})` : ""}
+          </TooltipPopup>
+        </Tooltip>
+      ) : null}
     </div>
   );
 }
 
-export function AppSidebarLayout({ children }: { children: ReactNode }) {
+export function AppSidebarLayout({
+  children,
+  showSidebar = true,
+}: {
+  children: ReactNode;
+  showSidebar?: boolean;
+}) {
   const sidebarArea = workspaceAreaProps("sidebar", 0, "Threads");
   const [sidebarRouteReveal] = useState<SidebarRouteReveal>(() => ({
     observedKey: null,
@@ -475,35 +491,39 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         <SidebarProvider
           className="min-h-0! flex-1"
           data-panel-animations={routePanelAnimationsActive ? "true" : "false"}
-          defaultOpen
+          storageKey="chat_thread_sidebar_open"
           style={sidebarProviderStyle}
         >
           <DestinationRailVisibleContext value={railVisible}>
-            <SidebarBrandWidthProbe isElectron={isElectron} onWidthChange={setBrandWidth} />
-            {railVisible ? <DestinationRail /> : null}
-            <Sidebar
-              side="left"
-              variant={railVisible ? "framed" : "sidebar"}
-              collapsible="offcanvas"
-              data-app-sidebar=""
-              {...sidebarArea}
-              role="navigation"
-              aria-label="Threads"
-              className="h-[calc(100dvh-var(--status-bar-height))]"
-              resizable={{
-                maxWidth: sidebarMaximumWidth,
-                minWidth: sidebarMinimumWidth,
-                shouldAcceptWidth: ({ currentWidth, nextWidth, wrapper }) =>
-                  nextWidth <= currentWidth ||
-                  wrapper.clientWidth - railWidth - nextWidth >= THREAD_MAIN_CONTENT_MIN_WIDTH,
-                storageKey: THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
-                onResize: setSidebarWidth,
-              }}
-              style={windowControlsInsetStyle}
-            >
-              <ThreadSidebar routeReveal={sidebarRouteReveal} />
-              <SidebarRail onDoubleClick={resetSidebarWidth} />
-            </Sidebar>
+            {showSidebar ? (
+              <>
+                <SidebarBrandWidthProbe isElectron={isElectron} onWidthChange={setBrandWidth} />
+                {railVisible ? <DestinationRail /> : null}
+                <Sidebar
+                  side="left"
+                  variant={railVisible ? "framed" : "sidebar"}
+                  collapsible="offcanvas"
+                  data-app-sidebar=""
+                  {...sidebarArea}
+                  role="navigation"
+                  aria-label="Threads"
+                  className="h-[calc(100dvh-var(--status-bar-height))]"
+                  resizable={{
+                    maxWidth: sidebarMaximumWidth,
+                    minWidth: sidebarMinimumWidth,
+                    shouldAcceptWidth: ({ currentWidth, nextWidth, wrapper }) =>
+                      nextWidth <= currentWidth ||
+                      wrapper.clientWidth - railWidth - nextWidth >= THREAD_MAIN_CONTENT_MIN_WIDTH,
+                    storageKey: THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
+                    onResize: setSidebarWidth,
+                  }}
+                  style={windowControlsInsetStyle}
+                >
+                  <ThreadSidebar routeReveal={sidebarRouteReveal} />
+                  <SidebarRail onDoubleClick={resetSidebarWidth} />
+                </Sidebar>
+              </>
+            ) : null}
             {children}
           </DestinationRailVisibleContext>
           {/* Both sit on the headers' own bottom border pixel, so pages that already draw one
@@ -516,7 +536,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
             />
           ) : null}
           <BackgroundThreadAnnouncer />
-          <SidebarControl overRail={railVisible} />
+          <SidebarControl overRail={railVisible} showSidebar={showSidebar} />
           {isElectron ? <HistorySwipeNavigation /> : null}
         </SidebarProvider>
         <StatusBar />

@@ -625,6 +625,7 @@ describe("null patches at project scope", () => {
     const scope = {
       kind: "project" as const,
       group: {} as never,
+      groups: [],
       environmentId: null,
       label: "fleet",
       members: [{ id: projectId, environmentId } as never],
@@ -697,6 +698,7 @@ describe("partial object patches at project scope", () => {
       {
         kind: "project",
         group: {} as never,
+        groups: [],
         environmentId: null,
         label: "fleet",
         members: [member as never],
@@ -800,5 +802,50 @@ describe("model selection patches at project scope", () => {
       optionsPlan.serverWrites[0]?.patch.projectSettingsOverrides?.[projectId]
         ?.textGenerationModelSelection,
     ).toEqual({ ...saved, options });
+  });
+});
+
+describe("several projects selected", () => {
+  it("writes an override for every selected project, never only the first", () => {
+    const environmentId = EnvironmentId.make("laptop");
+    const members = ["fleet", "t3"].map((name) => ({
+      id: ProjectId.make(name),
+      environmentId,
+      physicalProjectKey: `laptop:/${name}`,
+      environmentLabel: "Laptop",
+      title: name,
+      workspaceRoot: `/${name}`,
+      defaultModelSelection: null,
+      scripts: [],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    }));
+    const groups = members.map((m) => ({
+      projectKey: m.title,
+      displayName: m.title,
+      memberProjects: [m],
+    }));
+    const scope = resolveSettingsScope(
+      { project: JSON.stringify(["fleet", "t3"]) },
+      groups as never,
+      [{ environmentId, label: "Laptop" }],
+    );
+    const plan = planScopedSettingsPatch(
+      scope,
+      [
+        {
+          environmentId,
+          label: "Laptop",
+          connection: { phase: "connected" },
+          serverConfig: { settings: DEFAULT_SERVER_SETTINGS },
+        },
+      ],
+      { defaultThreadEnvMode: "worktree" },
+    );
+    expect(plan.serverWrites).toHaveLength(1);
+    expect(plan.serverWrites[0]?.patch.projectSettingsOverrides).toEqual({
+      fleet: { defaultThreadEnvMode: "worktree" },
+      t3: { defaultThreadEnvMode: "worktree" },
+    });
   });
 });

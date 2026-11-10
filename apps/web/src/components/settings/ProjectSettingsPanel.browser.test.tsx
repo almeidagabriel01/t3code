@@ -602,6 +602,20 @@ describe("project settings scope", () => {
     await expect.element(remoteOption()).not.toBeInTheDocument();
   });
 
+  it("asks for a single project while several are selected", async () => {
+    setup();
+    state.projects = state.projects.filter((project) => project.environmentId === primaryId);
+    await using _screen = await mountSettings({
+      // Router search values that parse as JSON travel quoted, so the key list stays a string.
+      project: JSON.stringify(JSON.stringify([projectKey(), "removed-project"])),
+    });
+
+    await expect.element(page.getByText(/^Choose a single project to manage/)).toBeVisible();
+    await expect
+      .element(page.getByRole("textbox", { name: "Project name" }))
+      .not.toBeInTheDocument();
+  });
+
   it("keeps an unknown project recoverable from any environment", async () => {
     setup();
     state.projects = state.projects.filter((project) => project.environmentId === primaryId);

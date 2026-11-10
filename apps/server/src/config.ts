@@ -43,6 +43,7 @@ export interface ServerDerivedPaths {
   readonly environmentThemesDir: string;
   readonly providerStatusCacheDir: string;
   readonly worktreesDir: string;
+  readonly worktreeCheckoutCacheDir: string;
   readonly attachmentsDir: string;
   /** Markdown notes; under stateDir so a dev server never reaches a person's notes. */
   readonly notesDir: string;
@@ -164,6 +165,7 @@ export const deriveServerPaths = Effect.fn(function* (
     environmentThemesDir: join(stateDir, "themes"),
     providerStatusCacheDir,
     worktreesDir: join(baseDir, "worktrees"),
+    worktreeCheckoutCacheDir: join(providerStatusCacheDir, "worktree-checkouts"),
     attachmentsDir,
     notesDir: join(stateDir, "notes"),
     browserArtifactsDir: join(stateDir, "browser-artifacts"),

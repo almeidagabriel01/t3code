@@ -1,4 +1,4 @@
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { DEFAULT_RUNTIME_MODE, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
@@ -17,6 +17,7 @@ vi.mock(import("../../state/entities"), () => ({
     ref.threadId === "parent" ? mocks.parent : { title: "Quick question" }) as never,
   useQuietThreadProjection: (() => null) as never,
   waitForThreadShell: (async () => true) as never,
+  readThreadShell: (() => ({ runtimeMode: DEFAULT_RUNTIME_MODE })) as never,
 }));
 vi.mock(import("../../state/session"), () => ({ useEnvironmentScope: (() => true) as never }));
 vi.mock(import("../../state/shell"), () => ({
@@ -39,6 +40,9 @@ vi.mock(import("../../state/use-orchestration-command"), () => ({
 }));
 vi.mock(import("../../hooks/useSettings"), () => ({
   useClientSettings: (() => mocks.confirmThreadDelete) as never,
+}));
+vi.mock(import("../../lib/composerDraftUploads"), () => ({
+  releaseComposerDraftUploads: (() => {}) as never,
 }));
 vi.mock(import("../../localApi"), () => ({
   readLocalApi: (() => ({ dialogs: { confirm: mocks.confirm } })) as never,

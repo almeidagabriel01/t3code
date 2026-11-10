@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import {
   conflictNote,
   markNoteInFlight,
@@ -11,6 +12,10 @@ import {
   type NotesOutboxStorage,
 } from "./outbox-controller";
 import { document, edit, row } from "./test-fixtures";
+
+class OutboxCallFailed extends Schema.TaggedError<OutboxCallFailed>()("OutboxCallFailed", {
+  cause: Schema.Defect(),
+}) {}
 
 function memoryStorage(initial: ReadonlyArray<NoteOutboxRow> = []) {
   let disk = initial;
@@ -83,7 +88,12 @@ describe("durable notes delivery", () => {
       const memory = memoryStorage();
       memory.fail(true);
       const controller = createNotesOutboxController(memory.storage);
-      const result = yield* Effect.result(Effect.tryPromise(() => controller.enqueue(edit)));
+      const result = yield* Effect.result(
+        Effect.tryPromise({
+          try: () => controller.enqueue(edit),
+          catch: (cause) => new OutboxCallFailed({ cause }),
+        }),
+      );
       expect(result._tag).toBe("Failure");
       let sent = false;
       yield* Effect.promise(() =>
@@ -223,19 +233,21 @@ describe("durable notes delivery", () => {
       const controller = createNotesOutboxController(memory.storage);
       let first = true;
       const result = yield* Effect.result(
-        Effect.tryPromise(() =>
-          controller.flush(
-            "hub",
-            async () => {
-              if (first) {
-                memory.fail(true);
-                first = false;
-              }
-              return { type: "saved", note: document() };
-            },
-            () => true,
-          ),
-        ),
+        Effect.tryPromise({
+          try: () =>
+            controller.flush(
+              "hub",
+              async () => {
+                if (first) {
+                  memory.fail(true);
+                  first = false;
+                }
+                return { type: "saved", note: document() };
+              },
+              () => true,
+            ),
+          catch: (cause) => new OutboxCallFailed({ cause }),
+        }),
       );
       expect(result._tag).toBe("Failure");
       expect(memory.disk()).toHaveLength(1);

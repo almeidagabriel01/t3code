@@ -51,7 +51,7 @@ vi.mock("./useHomeSectionPreferences", () => ({
 }));
 vi.mock("./UnreadActionsMenu", () => ({ UnreadActionsMenu: () => <i>unread-actions</i> }));
 vi.mock("../threads/SubagentStatusDot", () => ({ SubagentStatusDot: () => <u>done-dot</u> }));
-vi.mock("../workspace/useSelectWorkspaceDetail", () => ({
+vi.mock("../layout/workspace/useSelectWorkspaceDetail", () => ({
   useSelectWorkspaceDetail: () => mocks.select,
 }));
 

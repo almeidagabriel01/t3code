@@ -6,6 +6,7 @@ import { ProjectSettingsPanel } from "./ProjectSettingsPanel";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { SettingsScopeNotice } from "./SettingsScopeNotice";
 import { SettingsPageContainer } from "./settingsLayout";
+import { settingsScopeProjectKeys } from "./settingsScope";
 import { ALL_ENVIRONMENTS_VALUE, selectEnvironmentAxis } from "./settingsScopeAxis";
 
 export function ProjectsSettings() {
@@ -36,7 +37,7 @@ export function ProjectsSettings() {
       (scope.reason === "project-missing" || scope.reason === "checkout-missing"));
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {value.project && projectScope ? (
+      {value.project && projectScope && settingsScopeProjectKeys(value).length === 1 ? (
         <ProjectSettingsPanel
           projectKey={value.project}
           environmentId={value.machine ? EnvironmentId.make(value.machine) : null}
@@ -47,7 +48,9 @@ export function ProjectsSettings() {
         unavailable
       ) : (
         <SettingsScopeNotice target="project">
-          Choose a project to manage its name, icon, checkouts and actions.
+          {settingsScopeProjectKeys(value).length > 1
+            ? "Choose a single project to manage its name, icon, checkouts and actions."
+            : "Choose a project to manage its name, icon, checkouts and actions."}
         </SettingsScopeNotice>
       )}
     </div>

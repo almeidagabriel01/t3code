@@ -381,7 +381,7 @@ function AssistantDialog(props: {
           model: model.model,
           modelOptions: model.options ?? [],
           allowPromptInjectedEffort: false,
-          planModeEnabled: settings.planModeEnabled || selectsPlanAgent(model.options),
+          includePlanAgent: selectsPlanAgent(model.options),
         };
 
   const advancedSummary = [

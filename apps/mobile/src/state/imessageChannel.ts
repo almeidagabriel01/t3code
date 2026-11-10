@@ -10,6 +10,7 @@ import {
   type ImessageChannelConfigureInput,
   type ImessageChannelSettings,
 } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useState } from "react";
 
@@ -17,6 +18,8 @@ import { connectionAtomRuntime } from "../connection/runtime";
 import { useEnvironmentQuery } from "./query";
 import { environmentServerConfigsAtom } from "./server";
 import { useAtomCommand } from "./use-atom-command";
+
+const isImessageSettingsError = Schema.is(ImessageChannelSettingsError);
 
 const imessageEnvironment = createImessageChannelEnvironmentAtoms(connectionAtomRuntime);
 
@@ -72,7 +75,7 @@ export function useImessageChannel(environmentId: EnvironmentId) {
         failure instanceof Error && failure.message.trim().length > 0
           ? failure.message
           : "The request could not be completed.";
-      const detail = failure instanceof ImessageChannelSettingsError ? failure.detail : undefined;
+      const detail = isImessageSettingsError(failure) ? failure.detail : undefined;
       return { ok: false, message: detail ? `${detail}: ${base}` : base };
     },
   };

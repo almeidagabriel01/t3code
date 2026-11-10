@@ -26,8 +26,7 @@ vi.mock("./components/SettingsScreen", () => ({
   SettingsScreen: (props: { children?: ReactNode }) => <div>{props.children}</div>,
 }));
 vi.mock("./components/SettingsEnvironmentFilterHeader", () => ({
-  AndroidSettingsEnvironmentFilter: () => null,
-  SettingsEnvironmentFilterHeader: () => null,
+  useSettingsEnvironmentMenu: () => ({ id: "environment", items: [] }),
 }));
 vi.mock("./components/McpServersSection", () => ({
   McpServersSection: (props: { environmentId: string; title?: string }) => (

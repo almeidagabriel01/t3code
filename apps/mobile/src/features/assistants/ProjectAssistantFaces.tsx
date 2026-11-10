@@ -12,7 +12,7 @@ import { Menu } from "../../components/ui/Menu";
 import { cn } from "../../lib/cn";
 import { useAssistantEntries, type AssistantEntry } from "../../state/assistants";
 import { useQuietThreadShells, useThreadShell } from "../../state/entities";
-import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
+import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 import { AssistantAvatar } from "./assistantPresentation";
 
 const FACE_LIMIT = 2;

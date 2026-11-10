@@ -13,7 +13,7 @@ import { useNowMinuteMs } from "../../lib/clock";
 import { useOpenDecisionThreadKeys } from "../../state/decisions";
 import { useProjects } from "../../state/entities";
 import { SubagentStatusDot } from "../threads/SubagentStatusDot";
-import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
+import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 import { buildHomeActivityEntries } from "./homeActivityEntries";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { UnreadActionsMenu } from "./UnreadActionsMenu";

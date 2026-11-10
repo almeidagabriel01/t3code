@@ -33,7 +33,7 @@ import { EmptyState } from "../../components/ui/EmptyState";
 import { Menu } from "../../components/ui/Menu";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
-import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
+import { FilePreviewModal, type FilePreviewSource } from "../../components/ui/FilePreviewModal";
 import {
   SelectableMarkdownText,
   type MarkdownImageRenderer,

@@ -7,7 +7,9 @@ import { runtime } from "../../lib/runtime";
 import { MobileDatabase } from "../../persistence/mobile-database";
 import type { NotesOutboxStorage } from "./outbox-controller";
 
-const decodeRow = Schema.decodeUnknownOption(Schema.fromJsonString(NoteOutboxRow));
+const rowJson = Schema.fromJsonString(NoteOutboxRow);
+const encodeRow = Schema.encodeEffect(rowJson);
+const decodeRow = Schema.decodeUnknownOption(rowJson);
 
 export const notesOutboxStorage: NotesOutboxStorage = {
   load: () =>
@@ -30,7 +32,7 @@ export const notesOutboxStorage: NotesOutboxStorage = {
         yield* database.saveNoteOutbox(
           row.environmentId,
           row.path,
-          JSON.stringify(row),
+          yield* encodeRow(row),
           row.localUpdatedAt,
         );
       }),

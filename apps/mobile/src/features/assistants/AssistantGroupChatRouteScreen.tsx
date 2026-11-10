@@ -31,7 +31,7 @@ import { Fragment, useRef, useState } from "react";
 import { Linking, Platform, Pressable, View } from "react-native";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 
-import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
+import { FilePreviewModal, type FilePreviewSource } from "../../components/ui/FilePreviewModal";
 import { AppBar } from "../../components/ui/AppBar";
 import { AppText as Text } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
@@ -47,7 +47,7 @@ import {
   useAssistantGroupChat,
 } from "../../state/assistants";
 import { useMarkdownPreviewStyles } from "../files/FileMarkdownPreview";
-import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
+import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 import { GroupMessageAttachments } from "./GroupAttachments";
 import { MENTION_REQUIRED_COPY, GroupComposer, type GroupSendResult } from "./GroupComposer";
 import { GroupTaskCard } from "./GroupTaskCard";

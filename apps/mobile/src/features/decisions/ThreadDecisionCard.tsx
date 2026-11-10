@@ -9,7 +9,7 @@ import { Button } from "../../components/ui/Button";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { useNowMinuteMs } from "../../lib/clock";
 import { useThreadOpenDecisions } from "../../state/decisions";
-import { useWorkspaceBackNavigation } from "../workspace/useAndroidWorkspaceNavigation";
+import { useWorkspaceBackNavigation } from "../layout/workspace/useAndroidWorkspaceNavigation";
 import { DecisionCard } from "./DecisionCard";
 
 /** The expanded card scrolls inside this height so the thread above it keeps its room. */

@@ -12,7 +12,7 @@ import {
   setComposerDraftText,
   waitForComposerDraftsLoaded,
 } from "../../state/use-composer-drafts";
-import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
+import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 
 export function describeAssistantPrompt(description: string): string {
   return `Create this with the t3_assistant tool. If I did not say the access level, ask me whether I want the default (up to your level) or a custom setup before creating it.\n\n${description.trim()}`;
