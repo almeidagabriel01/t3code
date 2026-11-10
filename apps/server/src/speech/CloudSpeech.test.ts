@@ -5,10 +5,17 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
+import type * as Scope from "effect/Scope";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { expect, vi } from "vite-plus/test";
 import * as ServerSettings from "../serverSettings.ts";
+import * as ChatGptSpeechAuth from "./ChatGptSpeechAuth.ts";
 import * as CloudSpeech from "./CloudSpeech.ts";
+
+const signedOut = Layer.mock(ChatGptSpeechAuth.ChatGptSpeechAuth)({
+  available: Effect.succeed(false),
+  open: Effect.fail("signed-out" as const),
+});
 
 it.effect.each(["openai", "xai"] as const)("sends only to %s using its own saved key", (provider) =>
   Effect.gen(function* () {
@@ -24,6 +31,7 @@ it.effect.each(["openai", "xai"] as const)("sends only to %s using its own saved
       Effect.provide(
         CloudSpeech.layer.pipe(
           Layer.provide(FetchHttpClient.layer),
+          Layer.provide(signedOut),
           Layer.provide(ServerSettings.ServerSettingsService.layerTest()),
           Layer.provide(
             Layer.mock(SecretResolver.SecretResolver)({
@@ -49,7 +57,12 @@ it.effect.each(["openai", "xai"] as const)("sends only to %s using its own saved
     yield* service.setKey(provider === "openai" ? "xai" : "openai", Redacted.make("other"));
     expect((yield* Effect.flip(transcribe()))._tag).toBe("CloudSpeechError");
     yield* service.setKey(provider, Redacted.make("chosen"));
-    expect(yield* service.configured).toEqual({ openai: true, xai: true, openrouter: false });
+    expect(yield* service.configured).toEqual({
+      openai: true,
+      xai: true,
+      openrouter: false,
+      chatgpt: false,
+    });
     yield* Effect.flip(transcribe(new Uint8Array(3)));
     expect(upstream).not.toHaveBeenCalled();
     expect(yield* transcribe()).toBe("hello");
@@ -107,6 +120,7 @@ it.effect("uploads to OpenRouter only for a listed exact model, as zero-retentio
       Effect.provide(
         CloudSpeech.layer.pipe(
           Layer.provide(FetchHttpClient.layer),
+          Layer.provide(signedOut),
           Layer.provide(ServerSettings.ServerSettingsService.layerTest()),
           Layer.provide(Layer.mock(SecretResolver.SecretResolver)({})),
         ),
@@ -165,6 +179,7 @@ it.effect("removing a key while a catalog read is pending prevents the upload", 
       Effect.provide(
         CloudSpeech.layer.pipe(
           Layer.provide(FetchHttpClient.layer),
+          Layer.provide(signedOut),
           Layer.provide(ServerSettings.ServerSettingsService.layerTest()),
           Layer.provide(Layer.mock(SecretResolver.SecretResolver)({})),
         ),
@@ -196,5 +211,128 @@ it.effect("removing a key while a catalog read is pending prevents the upload", 
     const exit = yield* Fiber.await(job);
     expect(uploads).toEqual([]);
     expect(exit._tag).toBe("Failure");
+  }),
+);
+
+const chatgptService = Effect.fn("test.chatgpt.service")(function* (auth: {
+  available?: boolean;
+  open: Effect.Effect<
+    ChatGptSpeechAuth.ChatGptSpeechSession,
+    ChatGptSpeechAuth.ChatGptSpeechAuthFailure,
+    Scope.Scope
+  >;
+}) {
+  return yield* CloudSpeech.CloudSpeech.pipe(
+    Effect.provide(
+      CloudSpeech.layer.pipe(
+        Layer.provide(FetchHttpClient.layer),
+        Layer.provide(
+          Layer.mock(ChatGptSpeechAuth.ChatGptSpeechAuth)({
+            available: Effect.succeed(auth.available ?? true),
+            open: auth.open,
+          }),
+        ),
+        Layer.provide(ServerSettings.ServerSettingsService.layerTest()),
+        Layer.provide(Layer.mock(SecretResolver.SecretResolver)({})),
+      ),
+    ),
+  );
+});
+
+it.effect("ChatGPT account dictation sends a 24 kHz WAV with the Codex token and renews once", () =>
+  Effect.gen(function* () {
+    const tokens: boolean[] = [];
+    const service = yield* chatgptService({
+      open: Effect.succeed({
+        token: (refresh) =>
+          Effect.sync(() => {
+            tokens.push(refresh);
+            return refresh ? "renewed" : "first";
+          }),
+      }),
+    });
+    const upstream = vi.fn<typeof fetch>(async (_url, init) =>
+      new Headers(init?.headers).get("authorization") === "Bearer first"
+        ? new Response("denied", { status: 401 })
+        : Response.json({ text: " hello " }),
+    );
+    const transcribe = (model?: string) =>
+      service
+        .transcribe(
+          "chatgpt",
+          new Uint8Array(new Float32Array([0, 0.5, 0, 0.5]).buffer),
+          { ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS, speechLanguage: "pt" },
+          model,
+        )
+        .pipe(Effect.provideService(FetchHttpClient.Fetch, upstream));
+    expect((yield* service.configured).chatgpt).toBe(true);
+    expect(yield* Effect.flip(transcribe("acme/model"))).toMatchObject({
+      reason: "model-unavailable",
+    });
+    expect(upstream).not.toHaveBeenCalled();
+    expect(yield* transcribe()).toBe("hello");
+    expect(tokens).toEqual([false, true]);
+    const [url, init] = upstream.mock.calls[1]!;
+    expect(String(url)).toBe("https://chatgpt.com/backend-api/transcribe");
+    expect(init?.redirect).toBe("error");
+    const form = init?.body as FormData;
+    expect([...form.keys()]).toEqual(["file", "language"]);
+    expect(form.get("language")).toBe("pt");
+    const file = form.get("file") as Blob;
+    expect(file.type).toBe("audio/wav");
+    const wav = new DataView(yield* Effect.promise(() => file.arrayBuffer()));
+    expect(wav.getUint32(24, true)).toBe(24_000);
+    expect(wav.getUint32(28, true)).toBe(48_000);
+    expect(wav.getUint32(40, true)).toBe(12);
+    expect(wav.getInt16(46, true)).toBe(10922);
+  }),
+);
+
+it.effect.each([
+  { name: "not signed in", open: Effect.fail("signed-out" as const), reason: "missing-key" },
+  { name: "renewal refused", open: Effect.fail("rejected" as const), reason: "rejected-key" },
+  { name: "no Codex process", open: Effect.fail("failed" as const), reason: "unavailable" },
+])("ChatGPT account dictation reports $name as $reason", ({ open, reason }) =>
+  Effect.gen(function* () {
+    const service = yield* chatgptService({ open });
+    const upstream = vi.fn<typeof fetch>();
+    const exit = yield* service
+      .transcribe("chatgpt", new Uint8Array(4), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS)
+      .pipe(Effect.provideService(FetchHttpClient.Fetch, upstream), Effect.flip);
+    expect(exit).toMatchObject({ provider: "chatgpt", reason });
+    expect(upstream).not.toHaveBeenCalled();
+  }),
+);
+
+it.effect.each([
+  { name: "credentials refused twice", status: 403, reason: "rejected-key" },
+  { name: "a usage limit", status: 429, reason: "rate-limit" },
+  { name: "a server error", status: 503, reason: "unavailable" },
+])("ChatGPT account dictation maps $name to $reason", ({ status, reason }) =>
+  Effect.gen(function* () {
+    const service = yield* chatgptService({
+      open: Effect.succeed({ token: () => Effect.succeed("token") }),
+    });
+    const upstream = vi.fn<typeof fetch>(async () => new Response("diagnostic", { status }));
+    const error = yield* service
+      .transcribe("chatgpt", new Uint8Array(4), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS)
+      .pipe(Effect.provideService(FetchHttpClient.Fetch, upstream), Effect.flip);
+    expect(error).toMatchObject({ provider: "chatgpt", reason });
+    expect(upstream).toHaveBeenCalledTimes(status === 403 ? 2 : 1);
+  }),
+);
+
+it.effect("ChatGPT account dictation rejects invalid audio and unreadable replies", () =>
+  Effect.gen(function* () {
+    const service = yield* chatgptService({
+      open: Effect.succeed({ token: () => Effect.succeed("token") }),
+    });
+    const upstream = vi.fn<typeof fetch>(async () => Response.json({ nope: 1 }));
+    const run = (pcm: Uint8Array) =>
+      service
+        .transcribe("chatgpt", pcm, DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS)
+        .pipe(Effect.provideService(FetchHttpClient.Fetch, upstream), Effect.flip);
+    expect((yield* run(new Uint8Array(3)))._tag).toBe("SpeechInvalidAudioError");
+    expect(yield* run(new Uint8Array(4))).toMatchObject({ reason: "unavailable" });
   }),
 );

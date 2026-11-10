@@ -8,23 +8,26 @@ export const CloudSpeechApiKey = TrimmedNonEmptyString.check(
   Schema.isPattern(/^(?![a-z][a-z\d+.-]*:\/\/)[!-~]+$/i),
 );
 
-export const CloudSpeechProvider = Schema.Literals(["openai", "xai", "openrouter"]);
+export const CloudSpeechProvider = Schema.Literals(["openai", "xai", "openrouter", "chatgpt"]);
 export type CloudSpeechProvider = typeof CloudSpeechProvider.Type;
 export const CLOUD_SPEECH_LABELS = {
   openai: "OpenAI",
   xai: "Grok Voice Transcribe",
   openrouter: "OpenRouter",
+  chatgpt: "ChatGPT account",
 } as const;
 export const CLOUD_SPEECH_PROVIDER_NAMES = {
   openai: "OpenAI",
   xai: "xAI",
   openrouter: "OpenRouter",
+  chatgpt: "ChatGPT",
 } as const;
-/** Servers that predate OpenRouter report only the first two providers. */
+/** Servers that predate OpenRouter or ChatGPT account dictation omit those keys. */
 export const CloudSpeechKeys = Schema.Struct({
   openai: Schema.Boolean,
   xai: Schema.Boolean,
   openrouter: Schema.optionalKey(Schema.Boolean),
+  chatgpt: Schema.optionalKey(Schema.Boolean),
 });
 export type CloudSpeechKeys = typeof CloudSpeechKeys.Type;
 
@@ -60,12 +63,16 @@ export class CloudSpeechError extends Schema.TaggedError<CloudSpeechError>()(
     const name = CLOUD_SPEECH_PROVIDER_NAMES[this.provider];
     switch (this.reason) {
       case "missing-key":
+        if (this.provider === "chatgpt")
+          return "Sign in to Codex with ChatGPT on this environment to use ChatGPT account dictation.";
         return `Add your ${name} API key in Settings → Voice.`;
       case "key-changed":
         return `The ${name} key changed before your recording was sent. Try again.`;
       case "unreadable-key":
         return `Couldn’t read the ${name} API key. Unlock the vault on the selected environment or update the key in Settings → Voice. No audio was sent to ${name}.`;
       case "rejected-key":
+        if (this.provider === "chatgpt")
+          return "ChatGPT rejected the Codex sign-in. Sign in to Codex with ChatGPT again on this environment.";
         return `${name} rejected this API key. Check its permissions and billing in Settings → Voice.`;
       case "rate-limit":
         return `${name} reached a usage limit. Check the account's quota or try again later.`;

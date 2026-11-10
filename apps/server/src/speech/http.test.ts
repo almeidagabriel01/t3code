@@ -199,6 +199,12 @@ effectIt.effect(
       expect((yield* setReference(reference)).status).toBe(204);
       expect(save).toHaveBeenLastCalledWith("xai", reference);
       expect((yield* setReference(reference.reference)).status).toBe(400);
+      const chatgptKey = yield* call("chatgpt/key", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ key: "fixture" }),
+      });
+      expect(chatgptKey.status).toBe(400);
       expect(save).toHaveBeenCalledTimes(2);
       const failed = yield* call("openai/transcribe", {
         method: "POST",

@@ -108,6 +108,7 @@ export function secretProviderUses(
       uses({ settingsSchema: SimlockDeviceHostConfig }, `simlock:${host.id}`, host.label, host),
     ),
     ...CloudSpeechProvider.literals.flatMap((provider) => {
+      if (provider === "chatgpt") return [];
       const credential = settings.cloudSpeechCredentials[provider];
       return isSecretReference(credential) && credential.provider === providerId
         ? [{ id: `voice:${provider}`, label: `Voice · ${CLOUD_SPEECH_LABELS[provider]}` }]

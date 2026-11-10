@@ -225,3 +225,84 @@ it("OpenRouter needs an exact model, and changing it writes no credential", asyn
     },
   );
 });
+
+it("ChatGPT account dictation has no key field and follows the Codex sign-in on the environment", async () => {
+  const id = EnvironmentId.make("voice-host");
+  const target = new PrimaryConnectionTarget({
+    environmentId: id,
+    label: "Laptop",
+    httpBaseUrl: window.location.origin,
+    wsBaseUrl: "ws://localhost",
+  });
+  const prepared = Option.some({
+    ...target,
+    target,
+    socketUrl: target.wsBaseUrl,
+    httpAuthorization: null,
+  });
+  using cleanup = new DisposableStack();
+  cleanup.defer(() => chooseAudioDestination(null));
+  chooseAudioDestination(null);
+  let keys: Record<string, boolean> = { openai: false, xai: false };
+  const writes: string[] = [];
+  const fetch = globalThis.fetch;
+  using _network = vi.spyOn(globalThis, "fetch").mockImplementation((request, init) => {
+    const url = new URL(request instanceof Request ? request.url : request, window.location.href);
+    if (url.pathname === "/api/voice/cloud/keys") return Promise.resolve(Response.json(keys));
+    if (url.pathname.endsWith("/key")) {
+      writes.push(url.pathname);
+      return Promise.resolve(new Response(null, { status: 204 }));
+    }
+    return fetch(request, init);
+  });
+  await vi.mocked(useEnvironmentScope).withImplementation(
+    () => true,
+    async () => {
+      await vi.mocked(usePreparedConnection).withImplementation(
+        () => prepared,
+        async () => {
+          await using screen = await render(
+            <SettingsScopeProvider search={{}} onChange={() => {}}>
+              <VoiceSettingsPanel />
+            </SettingsScopeProvider>,
+          );
+          const destination = screen.getByRole("combobox", { name: "Transcribe with" });
+          const choose = async () => {
+            await destination.click();
+            await page.getByRole("option", { name: "ChatGPT account via Laptop" }).click();
+          };
+          const dialog = page.getByRole("dialog");
+          await choose();
+          await expect
+            .element(dialog.getByText("Update Laptop to use ChatGPT account dictation."))
+            .toBeVisible();
+          await dialog.getByRole("button", { name: "Cancel" }).click();
+          keys = { openai: false, xai: false, chatgpt: false };
+          await choose();
+          await expect
+            .element(dialog.getByText(/Sign in to Codex with ChatGPT on Laptop/))
+            .toBeVisible();
+          await expect.element(dialog.getByRole("textbox")).not.toBeInTheDocument();
+          await expect
+            .element(dialog.getByRole("button", { name: "Use ChatGPT account" }))
+            .not.toBeInTheDocument();
+          keys = { openai: false, xai: false, chatgpt: true };
+          await dialog.getByRole("button", { name: "Check again" }).click();
+          await expect
+            .element(dialog.getByText(/Sign in to Codex with ChatGPT on Laptop/))
+            .not.toBeInTheDocument();
+          await expect
+            .element(dialog.getByText(/After you stop, Laptop sends the recording to ChatGPT/))
+            .toBeVisible();
+          await dialog.getByRole("button", { name: "Use ChatGPT account" }).click();
+          await expect.element(dialog).not.toBeInTheDocument();
+          await expect.element(destination).toHaveTextContent("ChatGPT account via Laptop");
+          await expect
+            .element(screen.getByRole("button", { name: "Manage key" }))
+            .not.toBeInTheDocument();
+          expect(writes).toEqual([]);
+        },
+      );
+    },
+  );
+});

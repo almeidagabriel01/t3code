@@ -81,8 +81,11 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
         "setCloudKey",
         Effect.fn("environment.voice.setCloudKey")(function* (args) {
           yield* guard(args.endpoint.name, AuthSettingsWriteScope);
+          const provider = args.params.provider;
+          if (provider === "chatgpt")
+            return yield* failEnvironmentInvalidRequest("invalid_command");
           yield* cloud
-            .setKey(args.params.provider, args.payload.key)
+            .setKey(provider, args.payload.key)
             .pipe(Effect.catch((error) => failEnvironmentInternal("internal_error", error)));
         }),
       )

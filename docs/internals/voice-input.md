@@ -53,6 +53,17 @@ applies the account's safety-retention policy when choosing an endpoint. The cat
 holds no credential or consent state, which is why it may be cached while key
 presence is read fresh on every request.
 
+ChatGPT account has no stored key: `CloudSpeech` takes a token from
+[ChatGPT speech auth](../../apps/server/src/speech/ChatGptSpeechAuth.ts), which uses the
+default model's Codex instance, then `codex`, then the first enabled Codex instance, and
+posts to ChatGPT's unofficial transcribe endpoint. That endpoint only accepts 24 kHz mono
+PCM16 WAV, so the server resamples the 16 kHz recording. Clients read provider
+availability before every recording, so `configured.chatgpt` makes local reads only: an
+enabled Codex instance exists and, for managed setups, a ChatGPT sign-in is saved.
+Unmanaged setups can only prove sign-in by spawning `codex app-server`, which happens
+inside `transcribe` and closes with the request; a missing sign-in surfaces there as
+`missing-key`.
+
 ## Server side
 
 The [speech service](../../apps/server/src/speech/SpeechService.ts) runs

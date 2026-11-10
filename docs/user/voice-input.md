@@ -47,6 +47,13 @@ Vocabulary hints are not sent to OpenRouter; dictionary spellings are applied
 after transcription. If OpenRouter stops listing your model, dictation stops
 until you choose another.
 
+**ChatGPT account** needs no key. It transcribes through the Codex ChatGPT sign-in on
+the environment, so sign in to Codex with ChatGPT there first; with no sign-in the
+option stays unavailable and says so. Anyone with dictation access to the environment
+uses that account, and only this device opts in. Vocabulary hints are not sent;
+dictionary spellings are applied after transcription. This is an unofficial route
+and can stop working without notice.
+
 ## Set up a model
 
 In **Settings → Voice → Transcription**, download a model and choose **Use model** if it

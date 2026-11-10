@@ -209,6 +209,23 @@ it("keeps local as the default and never reuses consent for an offline or resele
       "/api/voice/cloud/xai/transcribe",
       "/api/voice/cloud/xai/transcribe",
     ]);
+    // ChatGPT account dictation names no model and uploads like the other fixed providers.
+    chooseVoiceDestination(host, "chatgpt");
+    mocks.fetch
+      .mockResolvedValueOnce(Response.json({ openai: false, xai: false, chatgpt: true }))
+      .mockResolvedValueOnce(Response.json({ text: "account" }));
+    const account = await appAtomRegistry.get(voiceRouteAtom)!.transcriber!.prepare(options);
+    await expect(account.transcribe("file:///voice.m4a", options)).resolves.toBe("account");
+    const accountUpload = new URL(String(mocks.fetch.mock.lastCall![0]));
+    expect(accountUpload.pathname).toBe("/api/voice/cloud/chatgpt/transcribe");
+    expect(accountUpload.searchParams.has("model")).toBe(false);
+    mocks.fetch.mockResolvedValueOnce(Response.json({ openai: false, xai: false }));
+    await expect(
+      appAtomRegistry
+        .get(voiceRouteAtom)!
+        .transcriber!.prepare(options)
+        .then((older) => older.transcribe("file:///voice.m4a", options)),
+    ).rejects.toMatchObject({ message: expect.stringContaining("Sign in to Codex with ChatGPT") });
     // OpenRouter without a model is no destination; with one, the exact id travels with the audio.
     chooseVoiceDestination(host, "openrouter");
     expect(appAtomRegistry.get(voiceRouteAtom)).toBeNull();

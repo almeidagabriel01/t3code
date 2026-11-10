@@ -181,7 +181,10 @@ function CloudChoices({ environment, active, onClose }: Props & { onClose: () =>
     }
   };
   const edit = (provider: CloudSpeechProvider, enable: boolean) => {
-    const stored = environment.serverConfig?.settings.cloudSpeechCredentials?.[provider];
+    const stored =
+      provider === "chatgpt"
+        ? undefined
+        : environment.serverConfig?.settings.cloudSpeechCredentials?.[provider];
     const ref =
       isSecretReference(stored) && sources.some((candidate) => candidate.id === stored.provider)
         ? stored
@@ -242,6 +245,7 @@ function CloudChoices({ environment, active, onClose }: Props & { onClose: () =>
         const label = CLOUD_SPEECH_LABELS[provider];
         const company = CLOUD_SPEECH_PROVIDER_NAMES[provider];
         const routed = provider === "openrouter";
+        const keyless = provider === "chatgpt";
         const disclosure = cloudSpeechDisclosure(provider, environment.label);
         const saved = keys.value![provider];
         const isActive = active?.provider === provider;
@@ -249,7 +253,9 @@ function CloudChoices({ environment, active, onClose }: Props & { onClose: () =>
         const modelChosen =
           isModelId(model) && (catalog?.some((entry) => entry.id === model) ?? false);
         const modelChanged = model !== (activeModel ?? "");
-        const original = environment.serverConfig?.settings.cloudSpeechCredentials?.[provider];
+        const original = keyless
+          ? undefined
+          : environment.serverConfig?.settings.cloudSpeechCredentials?.[provider];
         const keyChanged =
           credential !== undefined &&
           !(
@@ -279,30 +285,39 @@ function CloudChoices({ environment, active, onClose }: Props & { onClose: () =>
                 leading={
                   <ProviderIcon
                     provider={
-                      provider === "openai" ? "codex" : provider === "xai" ? "grok" : provider
+                      provider === "openai" || provider === "chatgpt"
+                        ? "codex"
+                        : provider === "xai"
+                          ? "grok"
+                          : provider
                     }
                     size={20}
                   />
                 }
                 selected={isActive}
-                disabled={saved === undefined || (!saved && !canManage) || saving}
+                disabled={saved === undefined || (!saved && (keyless || !canManage)) || saving}
                 description={
                   saved === undefined
                     ? "Update the environment to use this provider"
-                    : isActive && routed
-                      ? `${activeModel} · Tap to change model${canManage ? " or key" : ""}`
-                      : isActive && saved && canManage
-                        ? "Tap to manage key"
-                        : saved
-                          ? routed
-                            ? "API key saved · choose a model to use it"
-                            : "API key saved on this environment"
-                          : canManage
-                            ? "Add an API key to use this provider"
-                            : "Ask an environment administrator to add an API key"
+                    : keyless
+                      ? saved
+                        ? "Uses the Codex ChatGPT sign-in on this environment"
+                        : "Sign in to Codex with ChatGPT on this environment to use it"
+                      : isActive && routed
+                        ? `${activeModel} · Tap to change model${canManage ? " or key" : ""}`
+                        : isActive && saved && canManage
+                          ? "Tap to manage key"
+                          : saved
+                            ? routed
+                              ? "API key saved · choose a model to use it"
+                              : "API key saved on this environment"
+                            : canManage
+                              ? "Add an API key to use this provider"
+                              : "Ask an environment administrator to add an API key"
                 }
                 onPress={() => {
                   if (routed) return edit(provider, !isActive);
+                  if (keyless && (!saved || isActive)) return;
                   if (!saved) return edit(provider, true);
                   if (isActive) {
                     if (canManage) edit(provider, false);

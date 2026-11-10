@@ -803,7 +803,7 @@ export class EnvironmentVoiceHttpApi extends HttpApiGroup.make("voice")
         ),
       }),
       success: HttpApiSchema.NoContent,
-      error: EnvironmentScopedOperationErrors,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
