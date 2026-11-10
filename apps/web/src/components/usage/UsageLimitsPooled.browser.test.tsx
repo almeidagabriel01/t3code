@@ -5,6 +5,7 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import { CHATGPT_USAGE_URL } from "@t3tools/shared/usageLimits";
+import { userEvent } from "vite-plus/test/browser";
 import { describe, expect, it } from "vite-plus/test";
 
 import { render } from "../../../test/render";
@@ -61,5 +62,44 @@ describe("UsageLimitsPooled ChatGPT usage card", () => {
     await expect
       .element(screen.getByText("View usage in ChatGPT with your connected account."))
       .toBeVisible();
+  });
+});
+
+describe("UsageLimitsPooled weekly split", () => {
+  it("names the models behind a week's spend and the allowance of a scoped window", async () => {
+    const claude: ServerProvider = {
+      ...managedChatGpt("claude_work", "Claude Work"),
+      driver: ProviderDriverKind.make("claudeAgent"),
+      auth: { status: "authenticated", email: "dev@example.com" },
+      usageLimits: {
+        checkedAt,
+        windows: [
+          { id: "weekly", kind: "weekly", label: "Weekly", usedPercent: 60 },
+          {
+            id: "weekly-opus",
+            kind: "weekly",
+            label: "Weekly Opus",
+            usedPercent: 30,
+            weekUsedSharePercent: 25,
+            weekAllowancePercent: 40,
+          },
+        ],
+      },
+    };
+    const presentations = new Map([
+      [
+        EnvironmentId.make("desk"),
+        { entry: { target: { label: "Desk" } }, serverConfig: { providers: [claude] } },
+      ],
+    ]);
+    await using screen = await render(
+      <UsageLimitsPooled presentations={presentations} now={Date.parse(checkedAt)} />,
+    );
+
+    const segments = screen.getByRole("button", { name: /% left/ });
+    await userEvent.hover(segments.first());
+    await expect.element(screen.getByText(/Opus 25%/)).toBeVisible();
+    await userEvent.hover(segments.nth(1));
+    await expect.element(screen.getByText("Up to 40% of the weekly limit")).toBeVisible();
   });
 });

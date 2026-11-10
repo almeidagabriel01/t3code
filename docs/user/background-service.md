@@ -80,6 +80,13 @@ under Settings → Maintenance.
   Settings → Maintenance → **Heavy work** lists the rules so you can remove them.
 - **Pause.** The **Pause** switch (also in Settings) stops anything new from
   starting while running jobs finish. A pause icon appears in the status bar.
+- **Off.** Settings → Maintenance → **Heavy work** → **Heavy work queue** turns
+  the queue off. Every heavy job then starts right away, jobs that were waiting
+  included, and agents stop asking whether to run now or queue. Use it when the
+  machine has power to spare, or when you would rather have everything run at
+  once than wait. The Resource Manager still lists what is running. The slot
+  limit, the pause and the priority rules keep their values and apply again
+  when you turn the queue back on; jobs already running are not stopped.
 
 Agents never reorder the queue on their own. They may move a job up only when
 you ask them to in the conversation, and the job's note says an agent did it.

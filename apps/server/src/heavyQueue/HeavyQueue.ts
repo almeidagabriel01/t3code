@@ -11,6 +11,7 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as PubSub from "effect/PubSub";
 import * as Stream from "effect/Stream";
 
 import { estimate, hasHeadroom, SAMPLE_FRESH_MS, signatureOf } from "./admission.ts";
@@ -51,6 +52,8 @@ export class HeavyQueue extends Context.Service<
     /** How many entries may run at once; 1 is strictly one at a time. */
     readonly setMaxRunning: (maxRunning: number) => Effect.Effect<void, HeavyQueueError>;
     readonly setPaused: (paused: boolean) => Effect.Effect<void, HeavyQueueError>;
+    /** Off starts every heavy job at once, waiting ones included; on restores the rules for new arrivals. */
+    readonly setEnabled: (enabled: boolean) => Effect.Effect<void, HeavyQueueError>;
     /** A null priority clears the folder's rule. */
     readonly setRule: (
       root: string,
@@ -84,7 +87,7 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string) {
   const state = Effect.gen(function* () {
     const now = DateTime.toEpochMillis(yield* DateTime.now);
     const { doc, plan } = QueueFile.readPlan(dir, now);
-    const { entries, paused, rules, maxRunning, sample } = doc;
+    const { entries, enabled, paused, rules, maxRunning, sample } = doc;
     const fresh = sample !== null && now - sample.at <= SAMPLE_FRESH_MS;
     const estimates: Record<string, { cpu: number; memoryBytes: number; durationMs: number }> = {};
     for (const entry of entries) {
@@ -98,6 +101,7 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string) {
     return {
       entries,
       estimates,
+      enabled,
       paused,
       rules,
       maxRunning,
@@ -115,11 +119,16 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string) {
     };
   });
 
+  // A change made here reaches clients at once instead of on the next two-second poll.
+  const changed = yield* PubSub.sliding<void>(1);
+  const announce = PubSub.publish(changed, undefined);
   const act = (action: string, run: () => QueueFile.MoveResult) =>
     Effect.try({ try: run, catch: unavailable }).pipe(
       Effect.flatMap((result) => moveFailure(action, result)),
+      Effect.tap(() => announce),
     );
-  const change = (run: () => void) => Effect.try({ try: run, catch: unavailable });
+  const change = (run: () => void) =>
+    Effect.try({ try: run, catch: unavailable }).pipe(Effect.tap(() => announce));
 
   const withSlot = Effect.fnUntraced(function* <A, E, R>(
     label: string,
@@ -165,7 +174,7 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string) {
 
   return HeavyQueue.of({
     state,
-    stream: Stream.tick(STREAM_INTERVAL).pipe(
+    stream: Stream.merge(Stream.tick(STREAM_INTERVAL), Stream.fromPubSub(changed)).pipe(
       Stream.mapEffect(() => state),
       Stream.changesWith((a, b) => JSON.stringify(a) === JSON.stringify(b)),
     ),
@@ -186,6 +195,9 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string) {
     ),
     setPaused: Effect.fn("HeavyQueue.setPaused")((paused: boolean) =>
       change(() => QueueFile.setPaused(dir, paused)),
+    ),
+    setEnabled: Effect.fn("HeavyQueue.setEnabled")((enabled: boolean) =>
+      change(() => QueueFile.setEnabled(dir, enabled)),
     ),
     setRule: Effect.fn("HeavyQueue.setRule")((root: string, priority: "first" | "last" | null) =>
       change(() => QueueFile.setRule(dir, root, priority)),

@@ -109,6 +109,7 @@ const layerProjectsMock = Layer.mock(ProjectService.ProjectService)({
 const layerHeavyQueueMock = Layer.mock(HeavyQueue.HeavyQueue)({
   state: Effect.succeed({
     entries: [],
+    enabled: true,
     paused: false,
     rules: [],
     maxRunning: 1,

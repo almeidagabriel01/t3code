@@ -175,6 +175,61 @@ describe("heavy queue file", () => {
     expect(Queue.readDoc(dir).rules).toEqual([]);
   });
 
+  it("switched off, every waiter starts in any order; back on, new arrivals wait again", () => {
+    const dir = tempDir();
+    const file = NodePath.join(dir, "queue.json");
+    expect(Queue.readDoc(dir).enabled).toBe(true);
+    Queue.setRule(dir, "/last", "last");
+    Queue.setMaxRunning(dir, 1);
+    Queue.enqueue(dir, { ...entry("sim"), label: "xcrun simctl boot x" });
+    Queue.tryStart(dir, "sim");
+    for (const id of ["a", "b", "c"]) Queue.enqueue(dir, entry(id));
+    Queue.setPaused(dir, true);
+    expect(Queue.tryStart(dir, "c")).toMatchObject({ status: "waiting", position: 3 });
+
+    Queue.setEnabled(dir, false);
+    expect(Queue.readPlan(dir).plan.reasons).toEqual({});
+    expect(Queue.tryStart(dir, "c")).toEqual({ status: "started" });
+    expect(Queue.tryStart(dir, "a")).toEqual({ status: "started" });
+    Queue.enqueue(dir, { ...entry("late"), cwd: "/last" });
+    expect(Queue.tryStart(dir, "late")).toEqual({ status: "started" });
+    expect(Queue.readDoc(dir)).toMatchObject({ enabled: false, paused: true, maxRunning: 1 });
+
+    Queue.setEnabled(dir, true);
+    Queue.setPaused(dir, false);
+    Queue.enqueue(dir, entry("d"));
+    expect(Queue.tryStart(dir, "b")).toMatchObject({ status: "waiting", position: 1 });
+    expect(Queue.tryStart(dir, "d")).toMatchObject({ status: "waiting", position: 2 });
+    expect(
+      Queue.read(dir)
+        .filter((e) => e.startedAt !== null)
+        .map((e) => e.id),
+    ).toEqual(["sim", "c", "a", "late"]);
+    expect(JSON.parse(NodeFS.readFileSync(file, "utf8")).enabled).toBe(true);
+  });
+
+  it.each([
+    { body: '{"entries":[]}', enabled: true },
+    { body: '{"enabled":"no"}', enabled: true },
+    { body: '{"enabled":null}', enabled: true },
+    { body: '{"enabled":false}', enabled: false },
+    { body: "[1]", enabled: true },
+  ])("reads $body as enabled $enabled, and keeps keys it does not know", ({ body, enabled }) => {
+    const dir = tempDir();
+    const file = NodePath.join(dir, "queue.json");
+    NodeFS.writeFileSync(file, body);
+    expect(Queue.readDoc(dir).enabled).toBe(enabled);
+    NodeFS.writeFileSync(file, JSON.stringify({ enabled, later: { kept: 1 } }));
+    Queue.setPaused(dir, true);
+    Queue.enqueue(dir, entry("a"));
+    expect(JSON.parse(NodeFS.readFileSync(file, "utf8"))).toMatchObject({
+      enabled,
+      paused: true,
+      later: { kept: 1 },
+      entries: [{ id: "a" }],
+    });
+  });
+
   it("moves a waiter before another or to the end, and refuses the running entry", () => {
     const dir = tempDir();
     for (const id of ["a", "b", "c", "d"]) Queue.enqueue(dir, entry(id));

@@ -35,6 +35,10 @@ export function createHeavyQueueEnvironmentAtoms<R, E>(
       label: "environment-data:heavy-queue:set-paused",
       tag: WS_METHODS.heavyQueueSetPaused,
     }),
+    setEnabled: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:heavy-queue:set-enabled",
+      tag: WS_METHODS.heavyQueueSetEnabled,
+    }),
     setRule: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:heavy-queue:set-rule",
       tag: WS_METHODS.heavyQueueSetRule,

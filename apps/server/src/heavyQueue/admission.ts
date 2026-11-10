@@ -103,6 +103,8 @@ export const estimate = (
 export interface PlanInput {
   readonly entries: ReadonlyArray<HeavyQueueEntry>;
   readonly maxRunning: number;
+  /** False: the queue is off and every waiter starts, so nothing below applies. */
+  readonly enabled: boolean;
   readonly paused: boolean;
   readonly history: History;
   readonly sample: Sample | null;
@@ -129,7 +131,9 @@ export const plan = (input: PlanInput): Plan => {
   const running = entries.filter((entry) => entry.startedAt !== null);
   const waiting = entries.filter((entry) => entry.startedAt === null);
   const head = waiting[0];
-  if (head === undefined) return { admit: null, reasons: {}, room: true, holding: false };
+  if (head === undefined || !input.enabled) {
+    return { admit: head?.id ?? null, reasons: {}, room: true, holding: false };
+  }
 
   const finish = (
     admit: string | null,

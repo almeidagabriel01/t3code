@@ -785,6 +785,7 @@ export const makeDeviceTools = Effect.fn("evaluateMcpToolUse.makeDeviceTools")(f
           Layer.mock(HeavyQueue.HeavyQueue)({
             state: Effect.succeed({
               entries: [],
+              enabled: true,
               paused: false,
               rules: [],
               maxRunning: 3,

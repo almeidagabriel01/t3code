@@ -25,7 +25,13 @@ const state = vi.hoisted(() => ({
     environmentId: string;
     team: { id: string; name: string; memberIds: string[] };
   }>,
-  tasks: [] as Array<{ threadId: string; title: string; createdAt: string }>,
+  tasks: [] as Array<{
+    threadId: string;
+    title: string;
+    createdAt: string;
+    dismissedAt?: string | null;
+  }>,
+  dismissTask: vi.fn(),
   update: vi.fn(),
   openTeam: vi.fn(),
   openTeamDialog: vi.fn(),
@@ -124,7 +130,12 @@ vi.mock("../../hooks/useSettings", () => ({
   updateClientSettings: state.update,
 }));
 vi.mock("./useAssistantFlows", () => ({
-  useAssistantFlows: () => ({ canAct: true, reset: vi.fn(), archive: vi.fn() }),
+  useAssistantFlows: () => ({
+    canAct: true,
+    reset: vi.fn(),
+    archive: vi.fn(),
+    dismissTask: state.dismissTask,
+  }),
   useAssistantTeamFlows: () => ({ canAct: true, archive: state.archiveTeam, restore: vi.fn() }),
 }));
 
@@ -157,6 +168,7 @@ function setup(
   state.openDialog.mockClear();
   state.archiveTeam.mockClear();
   state.tasks = [];
+  state.dismissTask.mockClear();
 }
 
 const element = (
@@ -198,6 +210,12 @@ describe("AssistantSidebarSection", () => {
       { threadId: "task-1", title: "Add retry", createdAt: "2026-11-01T00:00:00.000Z" },
       { threadId: "task-2", title: "Fix flaky test", createdAt: "2026-11-02T00:00:00.000Z" },
       { threadId: "task-3", title: "Old chore", createdAt: "2026-10-01T00:00:00.000Z" },
+      {
+        threadId: "task-4",
+        title: "Dismissed chore",
+        createdAt: "2026-10-02T00:00:00.000Z",
+        dismissedAt: "2026-11-03T00:00:00.000Z",
+      },
     ];
     const onOpen = vi.fn();
     await using screen = await render(element(onOpen, "env:task-3"));
@@ -210,6 +228,10 @@ describe("AssistantSidebarSection", () => {
       ["Old chore, Done", "done"],
     ]);
     expect(tasks[2]?.getAttribute("aria-current")).toBe("page");
+    // A running task offers no dismiss; a finished one does, and a dismissed one is gone.
+    expect(screen.container.querySelector('[aria-label="Dismiss Add retry"]')).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Dismiss Fix flaky test" }));
+    expect(state.dismissTask).toHaveBeenCalledWith("task-2");
     await userEvent.click(screen.getByRole("button", { name: "Add retry, Running" }));
     expect(onOpen).toHaveBeenCalledWith({
       environmentId: EnvironmentId.make("env"),

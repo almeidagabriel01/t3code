@@ -75,6 +75,23 @@ it.effect("a launch from an assistant links its thread, and a repeat keeps the f
   }).pipe(Effect.provide(layer)),
 );
 
+it.effect("rows written before dismissing existed read as not dismissed", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const tasks = yield* Tasks.AssistantTasks;
+    yield* sql`
+      INSERT INTO assistant_tasks (thread_id, assistant_id, project_id, title, created_at)
+      VALUES ('old', 'a', 'p1', 'Old', '2026-01-01T00:00:00.000Z')`;
+    const old = Option.getOrNull(yield* tasks.forThread(ThreadId.make("old")));
+    assert.isNull(old?.dismissedAt);
+    const subscription = yield* PubSub.subscribe(tasks.changes);
+    const dismissed = yield* tasks.setDismissed(ThreadId.make("old"), "2026-02-01T00:00:00.000Z");
+    assert.strictEqual(Option.getOrNull(dismissed)?.dismissedAt, "2026-02-01T00:00:00.000Z");
+    assert.strictEqual((yield* PubSub.take(subscription)).dismissedAt, "2026-02-01T00:00:00.000Z");
+    assert.isTrue(Option.isNone(yield* tasks.setDismissed(ThreadId.make("none"), null)));
+  }).pipe(Effect.provide(layer)),
+);
+
 it.effect("tasks are per assistant, and deleting an assistant removes its links only", () =>
   Effect.gen(function* () {
     const tasks = yield* Tasks.AssistantTasks;

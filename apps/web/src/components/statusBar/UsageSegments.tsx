@@ -22,6 +22,8 @@ import {
   BAND_TEXT,
   pacePresentation,
   selectUsagePaceSettings,
+  weekAllowanceText,
+  weekBarSplit,
   windowBand,
   paceTextClass,
 } from "@t3tools/shared/usagePace";
@@ -177,8 +179,16 @@ function ItemIconWithActivity({ item }: { readonly item: UsageItem }) {
   );
 }
 
-const BUDGET_TEXT = { ok: "", warn: "text-warning", exceeded: "text-destructive" } as const;
-const BUDGET_FILL = { ok: "bg-primary", warn: "bg-warning", exceeded: "bg-destructive" } as const;
+const BUDGET_TEXT = {
+  ok: "",
+  warn: "text-warning-foreground",
+  exceeded: "text-destructive-foreground",
+} as const;
+const BUDGET_FILL = {
+  ok: "bg-primary",
+  warn: "bg-warning-foreground",
+  exceeded: "bg-destructive-foreground",
+} as const;
 
 function ApiKeyChipValue({ item }: { readonly item: UsageItem }) {
   const spend = useInstanceSpend(item);
@@ -305,12 +315,12 @@ function UsageChip({
           <ApiKeyChipValue item={item} />
         </>
       ) : status.kind === "none" ? (
-        <span className="text-muted-foreground/50">--</span>
+        <span className="text-muted-foreground">--</span>
       ) : (
         <span
           className={cn(
             "inline-flex items-center gap-1.5",
-            status.kind === "stale" && "opacity-60",
+            status.kind === "stale" && "opacity-80",
           )}
         >
           <ChipSummary
@@ -326,16 +336,20 @@ function UsageChip({
 
 function RosterMetric({
   window,
+  windows,
   now,
   display,
 }: {
   readonly window: ServerProviderUsageWindow;
+  readonly windows: ReadonlyArray<ServerProviderUsageWindow>;
   readonly now: number;
   readonly display: StatusBarUsagePercentage;
 }) {
   const { settings, view } = useWindowPace(window, now, display);
   const resetMode = useClientSettings((settings) => settings.usageResetDisplay);
   const timestampFormat = usePrimarySettings((s) => s.timestampFormat);
+  const split = weekBarSplit(window, windows, display);
+  const allowance = weekAllowanceText(window);
   const details =
     view === null ? [] : [view.projectionText, view.dailyText].filter((line) => line !== null);
   return (
@@ -347,6 +361,7 @@ function RosterMetric({
           usedPercent={displayedPercent(window.usedPercent, display)}
           fillClass={BAND_FILL[windowBand(window, settings)]}
           tickPercent={view?.tickPercent ?? null}
+          split={split && { ...split, remaining: display === "remaining" }}
           className="min-w-0 flex-1"
         />
         <span
@@ -364,6 +379,9 @@ function RosterMetric({
           hour12={timestampFormat === "locale" ? undefined : timestampFormat === "12-hour"}
         />
       </span>
+      {allowance === null ? null : (
+        <span className="pl-15.5 text-3xs text-muted-foreground">{allowance}</span>
+      )}
       {view === null ? null : (
         <span className="pl-15.5 text-3xs text-muted-foreground tabular-nums">
           {view.expectedText} · <span className={paceTextClass(view)}>{view.paceText}</span>
@@ -438,10 +456,16 @@ function RosterRow({
         </div>
       ) : (
         <div
-          className={cn("flex flex-col gap-1.5 pl-7.5", status.kind === "stale" && "opacity-60")}
+          className={cn("flex flex-col gap-1.5 pl-7.5", status.kind === "stale" && "opacity-80")}
         >
           {status.windows.map((window) => (
-            <RosterMetric key={window.id} window={window} now={now} display={display} />
+            <RosterMetric
+              key={window.id}
+              window={window}
+              windows={status.windows}
+              now={now}
+              display={display}
+            />
           ))}
         </div>
       )}

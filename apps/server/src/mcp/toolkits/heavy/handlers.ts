@@ -44,6 +44,7 @@ export const layer = McpToolAccess.toLayer(HeavyToolkit, {
       return heavyStatus({
         entries: state.entries,
         maxRunning: state.maxRunning,
+        enabled: state.enabled,
         room: state.room,
         reasons: state.reasons,
         machine: state.machine,

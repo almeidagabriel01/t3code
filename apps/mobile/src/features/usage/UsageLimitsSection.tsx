@@ -16,6 +16,7 @@ import {
   paceRemainingPercent,
   remainingPercent,
 } from "@t3tools/shared/usageLimits";
+import { weekAllowanceText, weekBarSplit } from "@t3tools/shared/usagePace";
 import { formatResetLabel } from "@t3tools/client-runtime/state/usageReset";
 import { type ReactNode, useContext, useRef, useState } from "react";
 import { Atom } from "effect/reactivity";
@@ -35,6 +36,7 @@ import {
   refreshEnvironmentLimits,
 } from "./usageLimitsRefresh";
 import { PaceDetail, useUsagePaceSettings } from "./usagePaceSettings";
+import { WeekSplitOverlay } from "./WeekSplitOverlay";
 import { usageProviderKind, useProviderColors } from "./usageProviders";
 
 type Driver = ServerProvider["driver"];
@@ -47,6 +49,7 @@ function useBarColor(driver: Driver): string | null {
 
 function WindowRow(props: {
   readonly window: ServerProviderUsageWindow;
+  readonly windows: ReadonlyArray<ServerProviderUsageWindow>;
   readonly color: string | null;
   readonly now: number;
 }) {
@@ -55,6 +58,11 @@ function WindowRow(props: {
   const paceSettings = useUsagePaceSettings();
   const timeLeft = paceSettings.pace ? paceRemainingPercent(window, now) : null;
   const reset = formatResetLabel({ window, mode: paceSettings.resetDisplay, now });
+  const split = weekBarSplit(window, props.windows, "remaining");
+  const allowance = weekAllowanceText(window);
+  const fillClass =
+    remaining <= 10 ? "bg-red-500" : remaining <= 30 ? "bg-amber-500" : "bg-foreground";
+  const fillColor = remaining > 30 ? props.color : null;
   const [barWidth, setBarWidth] = useState(0);
   const tickX =
     timeLeft === null || barWidth < 6
@@ -66,19 +74,11 @@ function WindowRow(props: {
       style={barWidth > 0 ? { width: barWidth } : undefined}
     >
       <View
-        className={
-          remaining <= 10
-            ? "h-full rounded-full bg-red-500"
-            : remaining <= 30
-              ? "h-full rounded-full bg-amber-500"
-              : "h-full rounded-full bg-foreground"
-        }
-        style={[
-          { flex: remaining },
-          remaining > 30 && props.color ? { backgroundColor: props.color } : null,
-        ]}
+        className={`h-full rounded-full ${fillClass}`}
+        style={[{ flex: remaining }, fillColor ? { backgroundColor: fillColor } : null]}
       />
       <View style={{ flex: 100 - remaining }} />
+      {split ? <WeekSplitOverlay split={split} className={fillClass} color={fillColor} /> : null}
     </View>
   );
   return (
@@ -91,6 +91,7 @@ function WindowRow(props: {
       </View>
       <View
         className="h-3 justify-center"
+        {...(split ? { accessible: true, accessibilityLabel: split.label } : {})}
         onLayout={(event) => setBarWidth(event.nativeEvent.layout.width)}
       >
         {tickX === null ? (
@@ -121,6 +122,7 @@ function WindowRow(props: {
           />
         ) : null}
       </View>
+      {allowance ? <Text className="text-xs text-foreground-tertiary">{allowance}</Text> : null}
       <View className="flex-row justify-between gap-3">
         <PaceDetail window={window} now={now} settings={paceSettings} />
         <Text
@@ -203,7 +205,13 @@ export function AccountLimits(props: {
       ) : (
         <View className="gap-3">
           {limits.windows.map((window) => (
-            <WindowRow key={window.id} window={window} color={color} now={now} />
+            <WindowRow
+              key={window.id}
+              window={window}
+              windows={limits.windows}
+              color={color}
+              now={now}
+            />
           ))}
         </View>
       )}

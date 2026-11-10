@@ -15,6 +15,9 @@ const { mocks } = vi.hoisted(() => ({
     stopSession: vi.fn(),
     refreshProviders: vi.fn(),
     alert: vi.fn(),
+    task: null as unknown,
+    dismissTask: vi.fn(),
+    restoreTask: vi.fn(),
   },
 }));
 
@@ -33,7 +36,14 @@ vi.mock("../../lib/copyTextWithHaptic", () => ({ copyTextWithHaptic: vi.fn() }))
 vi.mock("../../lib/uuid", () => ({ uuidv4: () => "id" }));
 vi.mock("../../state/entities", () => ({ useProjects: () => mocks.projects }));
 vi.mock("../../state/notes", () => ({ useNotesEnvironmentIds: () => mocks.notesEnvironmentIds }));
-vi.mock("../../state/assistants", () => ({ useThreadAssistant: () => null }));
+vi.mock("../../state/assistants", () => ({
+  useThreadAssistant: () => null,
+  useAssistantTask: () => mocks.task,
+}));
+vi.mock("@t3tools/client-runtime/assistantTasks", () => ({
+  assistantTaskMenuState: (task: { dismissedAt: string | null } | null) =>
+    task === null ? null : { dismissed: task.dismissedAt !== null, canDismiss: true },
+}));
 vi.mock("../../state/kanban", () => ({
   useKanbanEnvironmentIds: () => mocks.kanbanEnvironmentIds,
   useThreadKanbanCard: () => mocks.linkedCard,
@@ -52,7 +62,12 @@ vi.mock("../../lib/rootNavigation", () => ({
   whenRootNavigationReady: (run: () => void) => run(),
 }));
 vi.mock("../assistants/useAssistantFlows", () => ({
-  useAssistantFlows: () => ({ canAct: false, reset: vi.fn() }),
+  useAssistantFlows: () => ({
+    canAct: false,
+    reset: vi.fn(),
+    dismissTask: mocks.dismissTask,
+    restoreTask: mocks.restoreTask,
+  }),
 }));
 vi.mock("../assistants/openAssistantEditor", () => ({ useOpenAssistantEditor: () => vi.fn() }));
 vi.mock("../assistants/assistantWorkTarget", () => ({ useOpenAssistantWork: () => vi.fn() }));
@@ -105,6 +120,9 @@ beforeEach(() => {
   mocks.navigate.mockReset();
   seen.mockReset();
   mocks.alert.mockReset();
+  mocks.task = null;
+  mocks.dismissTask.mockReset();
+  mocks.restoreTask.mockReset();
   mocks.stopSession.mockReset();
   mocks.refreshProviders.mockReset();
   probed = thread;
@@ -224,5 +242,21 @@ describe("useThreadMenu Restart agent session", () => {
     await press();
     expect(mocks.refreshProviders).not.toHaveBeenCalled();
     expect(mocks.alert).toHaveBeenCalledWith("Could not restart the agent session", "Try again.");
+  });
+});
+
+describe("useThreadMenu assistant task", () => {
+  const item = (id: string) => seen.mock.lastCall?.[0]?.find((entry) => entry.id === id);
+
+  it("dismisses a task that finished and restores one that was dismissed", async () => {
+    mocks.task = { dismissedAt: null };
+    await mount();
+    act(() => (item("dismiss-task") as { onPress: () => void }).onPress());
+    expect(mocks.dismissTask).toHaveBeenCalledWith("t1");
+
+    mocks.task = { dismissedAt: "2026-11-06T00:00:00.000Z" };
+    await mount();
+    act(() => (item("restore-task") as { onPress: () => void }).onPress());
+    expect(mocks.restoreTask).toHaveBeenCalledWith("t1");
   });
 });

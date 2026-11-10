@@ -82,9 +82,21 @@ export const projectScopeRefusal = Effect.fn("AssistantSandboxPolicy.projectScop
 const PROJECT_SCOPE_REFUSAL =
   "You are a project assistant: you may only launch, delegate and message work inside the projects on your list. Omit the project for your home project, or ask the user to do this from another conversation.";
 
-/** The note line for a project assistant. */
-export const projectScopeNoteLine = (projectIds: ReadonlyArray<string>): string =>
-  `You belong to ${projectIds.length === 1 ? "one project" : "these projects"} (projectId ${projectIds.join(", ")}). Launch, delegate and message work only inside ${projectIds.length === 1 ? "it" : "them"}; other projects are out of reach.`;
+const MAX_PROJECT_TITLE = 80;
+
+/** "title (id: x)" on one line; the bare id when the title is missing or blank. */
+const projectLabel = (id: string, title: string | undefined) => {
+  const line = title?.replace(/\s+/g, " ").trim() ?? "";
+  if (line === "") return id;
+  return `${line.length > MAX_PROJECT_TITLE ? `${line.slice(0, MAX_PROJECT_TITLE - 1)}…` : line} (id: ${id})`;
+};
+
+/** The note line for a project assistant; `titles` maps project id to title, and may miss any id. */
+export const projectScopeNoteLine = (
+  projectIds: ReadonlyArray<string>,
+  titles: Readonly<Record<string, string>> = {},
+): string =>
+  `You belong to ${projectIds.length === 1 ? "one project" : "these projects"}: ${projectIds.map((id) => projectLabel(id, titles[id])).join(", ")}. Pass the id as projectId. Launch, delegate and message work only inside ${projectIds.length === 1 ? "it" : "them"}; other projects are out of reach.`;
 
 /** The note line for an assistant that works on this Mac, which may send one task to the container. */
 export const HOST_CONTAINER_NOTE_LINE =

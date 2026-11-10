@@ -347,6 +347,10 @@ export const McpToolUseCase = Schema.Struct({
         /** "sandbox" puts the sandbox line in its note, with `sandboxEnvironmentId`. */
         workspace: Schema.optional(Schema.Literals(["host", "sandbox"])),
         sandboxEnvironmentId: Schema.optional(Schema.NullOr(Schema.String)),
+        /** "project" puts its project list in the note; `projectTitles` maps ids to titles. */
+        scope: Schema.optional(Schema.Literals(["all", "project"])),
+        projectIds: Schema.optional(Schema.Array(Schema.String)),
+        projectTitles: Schema.optional(Schema.Record(Schema.String, Schema.String)),
         instructions: Schema.String,
         /** The groups it is in, as `AssistantDirectory.teamsOf` gives them to the note. */
         teams: Schema.optional(
@@ -1203,6 +1207,7 @@ export const buildMessages = (sample: Sample) => {
             })),
           })),
           assistant.sandboxEnvironmentId ?? null,
+          assistant.projectTitles,
         );
   const notedText = note === "" ? userText : `${note}\n\n${userText}`;
   const prompt =

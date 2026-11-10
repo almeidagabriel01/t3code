@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 const { mocks } = vi.hoisted(() => ({
   mocks: {
     update: vi.fn(),
+    setDismissed: vi.fn(),
     markRead: vi.fn(),
     alert: vi.fn(),
     navigate: vi.fn(),
@@ -33,6 +34,7 @@ vi.mock("../../state/assistants", () => ({
   useAssistantActions: () => ({ canAct: true }),
   useAssistantTeamActions: () => ({ canAct: true, update: mocks.update }),
   useAssistantGroupActions: () => ({ canMarkRead: true, markRead: mocks.markRead }),
+  setAssistantTaskDismissed: mocks.setDismissed,
 }));
 vi.mock("../settings/scheduled-task-editor", () => ({
   useScheduledTaskEditor: () => ({
@@ -45,7 +47,7 @@ vi.mock("../settings/settings-environment-filter", () => ({
 }));
 
 import { useOpenAssistantTeam } from "./assistantTeamTarget";
-import { useAssistantTeamFlows } from "./useAssistantFlows";
+import { useAssistantFlows, useAssistantTeamFlows } from "./useAssistantFlows";
 import { useScheduleInGroup } from "./useScheduleInGroup";
 
 let root: Root;
@@ -64,6 +66,7 @@ beforeEach(() => {
   root = createRoot(window.document.createElement("div"));
   for (const fn of [
     mocks.update,
+    mocks.setDismissed,
     mocks.markRead,
     mocks.alert,
     mocks.navigate,
@@ -141,5 +144,25 @@ describe("opening a group", () => {
     expect(mocks.startEditor).toHaveBeenLastCalledWith(
       expect.objectContaining({ environmentLabel: "" }),
     );
+  });
+});
+
+describe("task dismissal flows", () => {
+  it.each([
+    ["dismissTask", true, "Could not dismiss the task"],
+    ["restoreTask", false, "Could not restore the task"],
+  ] as const)("%s alerts a refusal and passes the choice on", async (action, dismissed, title) => {
+    mocks.setDismissed.mockResolvedValue({ ok: false, message: "Task is still running" });
+    const flows = run(() => useAssistantFlows("env" as never));
+    await act(async () => flows[action]("t1" as never));
+    expect(mocks.setDismissed).toHaveBeenCalledWith("env", "t1", dismissed);
+    expect(mocks.alert).toHaveBeenCalledWith(title, "Task is still running");
+  });
+
+  it("stays quiet when the server accepts", async () => {
+    mocks.setDismissed.mockResolvedValue({ ok: true, value: undefined });
+    const flows = run(() => useAssistantFlows("env" as never));
+    await act(async () => flows.dismissTask("t1" as never));
+    expect(mocks.alert).not.toHaveBeenCalled();
   });
 });

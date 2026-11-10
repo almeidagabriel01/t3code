@@ -10,10 +10,23 @@ import * as Dialog from "../../components/ui/Dialog";
 import {
   useAssistantActions,
   useAssistantGroupActions,
+  setAssistantTaskDismissed,
   useAssistantTeamActions,
   type AssistantReply,
 } from "../../state/assistants";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
+
+/** Dismisses or restores a task from any environment, alerting on a refusal. */
+export async function setTaskDismissed(
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+  dismissed: boolean,
+) {
+  failed(
+    dismissed ? "Could not dismiss the task" : "Could not restore the task",
+    await setAssistantTaskDismissed(environmentId, threadId, dismissed),
+  );
+}
 
 function failed(title: string, reply: AssistantReply<unknown>) {
   if (!reply.ok) Dialog.alert(title, reply.message);
@@ -88,6 +101,8 @@ export function useAssistantFlows(environmentId: EnvironmentId) {
         },
       });
     },
+    dismissTask: (threadId: ThreadId) => setTaskDismissed(environmentId, threadId, true),
+    restoreTask: (threadId: ThreadId) => setTaskDismissed(environmentId, threadId, false),
     async restore(assistant: Assistant, threadId: ThreadId) {
       const reply = await actions.reset({ assistantId: assistant.id, restoreThreadId: threadId });
       failed("Could not restore the conversation", reply);

@@ -40,7 +40,8 @@ import {
 } from "../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { readPullRequestListPreferences } from "../pullRequest/pullRequestListPreferences";
-import { isSidebarUtilityPage, useNavigateToMainApp } from "./mainAppLocation";
+import { resolveActiveDestination } from "./destinationRail.logic";
+import { isSidebarUtilityPage, useHomeLinkClick, useNavigateToMainApp } from "./mainAppLocation";
 import { SidebarThreadUndoNotice } from "./SidebarThreadUndoNotice";
 import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
 import { SidebarForkUpdatePill } from "./SidebarForkUpdatePill";
@@ -181,6 +182,8 @@ function HistoryNavigationButton({
 }
 
 function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
+  const pathname = useLocation({ select: (location) => location.pathname });
+  const onHomeClick = useHomeLinkClick(resolveActiveDestination(pathname) === "home");
   return (
     <Link
       aria-label="T3 Code home"
@@ -189,6 +192,7 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
         onBackdrop ? "text-white" : "text-foreground",
       )}
       to="/"
+      onClick={onHomeClick}
     >
       <SidebarBrandMark onBackdrop={onBackdrop} />
     </Link>

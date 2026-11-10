@@ -55,6 +55,7 @@ function scopedWindow(
   displayName: string,
   usedPercent: number,
   resetsAt: string | undefined,
+  share?: ModelWeekShare,
 ): ServerProviderUsageWindow {
   return {
     id: scopedWindowId(displayName),
@@ -63,6 +64,7 @@ function scopedWindow(
     windowDurationMins: WEEK_MINS,
     usedPercent: clampPercent(usedPercent),
     ...(resetsAt ? { resetsAt } : {}),
+    ...share,
   };
 }
 
@@ -123,6 +125,48 @@ function readModelScoped(rateLimits: object): ReadonlyArray<ModelScopedWindow> {
       entry !== null &&
       typeof (entry as ModelScopedWindow).display_name === "string",
   );
+}
+
+interface ModelWeekShare {
+  readonly weekUsedSharePercent: number;
+  readonly weekAllowancePercent?: number;
+}
+
+const finite = (value: unknown): value is number =>
+  typeof value === "number" && Number.isFinite(value);
+
+/**
+ * `weekly_scoped_shares` points into `limits[]`, whose scoped entry names the model. Entries
+ * that cannot be resolved or carry no finite used share are dropped alone.
+ */
+function readWeeklyScopedShares(rateLimits: object): ReadonlyMap<string, ModelWeekShare> {
+  const { limits, weekly_scoped_shares: raw } = rateLimits as {
+    readonly limits?: unknown;
+    readonly weekly_scoped_shares?: unknown;
+  };
+  const shares = new Map<string, ModelWeekShare>();
+  if (!Array.isArray(raw) || !Array.isArray(limits)) return shares;
+  for (const entry of raw as ReadonlyArray<unknown>) {
+    const share = (typeof entry === "object" && entry !== null ? entry : {}) as {
+      readonly limit_index?: unknown;
+      readonly used_percent_of_weekly?: unknown;
+      readonly allowance_percent_of_weekly?: unknown;
+    };
+    if (!Number.isInteger(share.limit_index) || !finite(share.used_percent_of_weekly)) continue;
+    const limit = (limits as ReadonlyArray<unknown>)[share.limit_index as number] as
+      | { readonly scope?: { readonly model?: { readonly display_name?: unknown } | null } | null }
+      | null
+      | undefined;
+    const name = limit?.scope?.model?.display_name;
+    if (typeof name !== "string" || name.length === 0) continue;
+    shares.set(name, {
+      weekUsedSharePercent: clampPercent(share.used_percent_of_weekly),
+      ...(finite(share.allowance_percent_of_weekly)
+        ? { weekAllowancePercent: clampPercent(share.allowance_percent_of_weekly) }
+        : {}),
+    });
+  }
+  return shares;
 }
 
 function isoFromEpochSeconds(value: number | undefined): string | undefined {
@@ -194,10 +238,16 @@ export function claudeUsageResponseToLimits(input: {
   }
   // The CLI's overage allowlist currently has one model; events refer to its first entry.
   let overageIncluded: string | undefined;
+  const shares = readWeeklyScopedShares(response.rate_limits);
   for (const entry of readModelScoped(response.rate_limits)) {
     if (typeof entry.utilization !== "number") continue;
     windows.push(
-      scopedWindow(entry.display_name, entry.utilization, isoFromString(entry.resets_at)),
+      scopedWindow(
+        entry.display_name,
+        entry.utilization,
+        isoFromString(entry.resets_at),
+        shares.get(entry.display_name),
+      ),
     );
     overageIncluded ??= entry.display_name;
   }

@@ -88,6 +88,84 @@ describe("claudeUsageResponseToLimits", () => {
     ).toEqual({ overageIncluded: "Fable" });
   });
 
+  const scopedLimit = (name: string | null) => ({
+    kind: "weekly_scoped",
+    scope: name === null ? null : { model: { id: null, display_name: name }, surface: null },
+  });
+  const sharesOf = (rateLimits: object) =>
+    claudeUsageResponseToLimits({
+      checkedAt,
+      response: { rate_limits_available: true, rate_limits: rateLimits },
+    }).limits.windows.filter((window) => window.id !== "seven_day");
+  const fableScoped = { display_name: "Fable", utilization: 40, resets_at: null };
+  const share = (limit_index: unknown, used: unknown, allowance: unknown = 50) => ({
+    limit_index,
+    used_percent_of_weekly: used,
+    allowance_percent_of_weekly: allowance,
+  });
+
+  it.each([
+    [
+      "shares present",
+      { limits: [{}, {}, scopedLimit("Fable")], weekly_scoped_shares: [share(2, 20)] },
+      [{ weekUsedSharePercent: 20, weekAllowancePercent: 50 }],
+    ],
+    ["shares absent", { limits: [{}, {}, scopedLimit("Fable")] }, [{}]],
+    [
+      "limit_index out of range",
+      { limits: [{}], weekly_scoped_shares: [share(2, 20), share(-1, 20), share(null, 20)] },
+      [{}],
+    ],
+    [
+      "limit that names no model",
+      { limits: [scopedLimit(null)], weekly_scoped_shares: [share(0, 20)] },
+      [{}],
+    ],
+    [
+      "non-numeric used drops the share",
+      { limits: [scopedLimit("Fable")], weekly_scoped_shares: [share(0, "20"), share(0, null)] },
+      [{}],
+    ],
+    [
+      "non-numeric allowance keeps the used share",
+      { limits: [scopedLimit("Fable")], weekly_scoped_shares: [share(0, 20, "50")] },
+      [{ weekUsedSharePercent: 20 }],
+    ],
+    [
+      "values clamp to 0..100",
+      { limits: [scopedLimit("Fable")], weekly_scoped_shares: [share(0, 140, -5)] },
+      [{ weekUsedSharePercent: 100, weekAllowancePercent: 0 }],
+    ],
+    [
+      "a malformed entry does not drop the others",
+      {
+        limits: [scopedLimit("Fable")],
+        weekly_scoped_shares: [null, "x", share(0, 20, 50)],
+      },
+      [{ weekUsedSharePercent: 20, weekAllowancePercent: 50 }],
+    ],
+  ])("scoped shares: %s", (_name, extra, expected) => {
+    const windows = sharesOf({ model_scoped: [fableScoped], ...extra });
+    expect(windows).toHaveLength(1);
+    expect(windows[0]).toMatchObject({ id: "seven_day_fable", usedPercent: 40, ...expected[0] });
+    if (Object.keys(expected[0]!).length === 0) {
+      expect(windows[0]).not.toHaveProperty("weekUsedSharePercent");
+      expect(windows[0]).not.toHaveProperty("weekAllowancePercent");
+    }
+  });
+
+  it("scoped shares: two scoped models each get their own share", () => {
+    const windows = sharesOf({
+      model_scoped: [fableScoped, { display_name: "Opus", utilization: 10, resets_at: null }],
+      limits: [scopedLimit("Opus"), scopedLimit("Fable")],
+      weekly_scoped_shares: [share(1, 20, 50), share(0, 5, 30)],
+    });
+    expect(windows.map((w) => [w.id, w.weekUsedSharePercent, w.weekAllowancePercent])).toEqual([
+      ["seven_day_fable", 20, 50],
+      ["seven_day_opus", 5, 30],
+    ]);
+  });
+
   it("skips a window the endpoint reports without a utilization", () => {
     expect(
       claudeUsageResponseToLimits({

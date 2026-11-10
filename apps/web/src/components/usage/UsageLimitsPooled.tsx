@@ -39,6 +39,8 @@ import {
   selectUsagePaceSettings,
   windowBand,
   paceTextClass,
+  weekAllowanceText,
+  weekBarSplit,
 } from "@t3tools/shared/usagePace";
 import { cn } from "../../lib/utils";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
@@ -176,6 +178,8 @@ function SegmentPopover({
       : account.sourceLabel;
   const credits =
     redeem && account.limits.resetCredits?.availableCount ? account.limits.resetCredits : null;
+  const split = weekBarSplit(window, account.limits.windows, "remaining");
+  const allowance = weekAllowanceText(window);
   return (
     <div className="flex w-72 max-w-[calc(100vw-3rem)] flex-col gap-2.5 text-xs">
       <div className="flex min-w-0 flex-col gap-0.5">
@@ -203,6 +207,15 @@ function SegmentPopover({
       </div>
       <div className="flex flex-col gap-1 border-t border-border/60 pt-2.5">
         <Row label="Left">{remaining}%</Row>
+        {split ? (
+          <Row label="Used by">
+            {[
+              ...split.models.map((model) => `${model.name} ${model.percent}%`),
+              `other models ${split.otherPercent}%`,
+            ].join(" · ")}
+          </Row>
+        ) : null}
+        {allowance ? <Row label="Allowance">{allowance}</Row> : null}
         {window.resetsAt ? (
           <Row label="Resets">
             {formatUpcomingTimestamp(window.resetsAt, timestampFormat, now)}
@@ -374,6 +387,8 @@ function SegmentTriggers({
   const band = windowBand(window, paceSettings);
   const resetsIn = formatResetsIn(window, now);
   const credits = account.limits.resetCredits?.availableCount ?? 0;
+  const split = weekBarSplit(window, account.limits.windows, "remaining");
+  const modelTotal = split?.models.reduce((sum, model) => sum + model.percent, 0) ?? 0;
   return (
     <>
       <PopoverTrigger
@@ -385,7 +400,7 @@ function SegmentTriggers({
             ref={segmentRef}
             type="button"
             style={{ gridColumn: index, gridRow: 1, ...paceMark?.gappedTrack }}
-            aria-label={`${account.displayName ?? (account.email ? accountInitials(account.email) : account.driver)}: ${remaining}% left${resetsIn ? `, ${resetsIn}` : ""}${timeLeft === null ? "" : `, ${timeLeft}% of the window left`}${credits ? `, ${credits} reset ${credits === 1 ? "credit" : "credits"} banked` : ""}`}
+            aria-label={`${account.displayName ?? (account.email ? accountInitials(account.email) : account.driver)}: ${remaining}% left${resetsIn ? `, ${resetsIn}` : ""}${timeLeft === null ? "" : `, ${timeLeft}% of the window left`}${credits ? `, ${credits} reset ${credits === 1 ? "credit" : "credits"} banked` : ""}${split ? `. ${split.label}` : ""}`}
             className="relative h-5 min-w-0 cursor-pointer rounded-md bg-muted text-start outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background data-[popup-open]:ring-1 data-[popup-open]:ring-inset data-[popup-open]:ring-border @2xl/pool:h-8"
           />
         }
@@ -411,6 +426,20 @@ function SegmentTriggers({
                 style={{
                   width: `${Math.min(100 - remaining, refillPercent)}%`,
                   backgroundImage: `repeating-linear-gradient(135deg, ${color} 0 1px, transparent 1px 5px)`,
+                }}
+              />
+            ) : null}
+            {modelTotal > 0 ? (
+              <div
+                aria-hidden
+                data-week-split="model"
+                className={cn(
+                  "absolute inset-y-0 right-0 opacity-25",
+                  band !== "ok" && BAND_FILL[band],
+                )}
+                style={{
+                  width: `${modelTotal}%`,
+                  ...(band === "ok" ? { backgroundColor: color } : {}),
                 }}
               />
             ) : null}

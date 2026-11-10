@@ -17,6 +17,14 @@ export const ServerProviderUsageWindow = Schema.Struct({
   usedPercent: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
   resetsAt: Schema.optional(IsoDateTime),
   windowDurationMins: Schema.optional(NonNegativeInt),
+  /** Scoped weekly windows only: the model's own spend as a percent of the whole week, as the provider reports it. */
+  weekUsedSharePercent: Schema.optional(
+    Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
+  ),
+  /** Scoped weekly windows only: the most of the whole week this model may use, in percent. */
+  weekAllowancePercent: Schema.optional(
+    Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
+  ),
 });
 export type ServerProviderUsageWindow = typeof ServerProviderUsageWindow.Type;
 

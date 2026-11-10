@@ -16,6 +16,7 @@ interface TaskRow {
   readonly project_id: string;
   readonly title: string;
   readonly created_at: string;
+  readonly dismissed_at?: string | null;
 }
 
 const toTask = (row: TaskRow): AssistantTask => ({
@@ -24,6 +25,7 @@ const toTask = (row: TaskRow): AssistantTask => ({
   projectId: row.project_id as ProjectId,
   title: row.title,
   createdAt: row.created_at,
+  dismissedAt: row.dismissed_at ?? null,
 });
 
 /**
@@ -38,6 +40,11 @@ export class AssistantTasks extends Context.Service<
     /** Undoes a link whose launch then failed. */
     readonly unlink: (threadId: ThreadId) => Effect.Effect<void>;
     readonly forThread: (threadId: ThreadId) => Effect.Effect<Option.Option<AssistantTask>>;
+    /** Dismissing keeps the first time; restoring clears it. None when the thread is no task. */
+    readonly setDismissed: (
+      threadId: ThreadId,
+      dismissedAt: string | null,
+    ) => Effect.Effect<Option.Option<AssistantTask>>;
     readonly list: Effect.Effect<ReadonlyArray<AssistantTask>>;
     readonly removeFor: (assistantId: string) => Effect.Effect<void>;
     /** Link events from now on, for the assistants stream. */
@@ -70,6 +77,16 @@ const make = Effect.gen(function* () {
       yield* sql`DELETE FROM assistant_tasks WHERE thread_id = ${threadId}`;
     }, Effect.orDie),
     forThread,
+    setDismissed: Effect.fn("AssistantTasks.setDismissed")(function* (threadId, dismissedAt) {
+      yield* dismissedAt === null
+        ? sql`UPDATE assistant_tasks SET dismissed_at = NULL WHERE thread_id = ${threadId}`
+        : sql`
+            UPDATE assistant_tasks SET dismissed_at = COALESCE(dismissed_at, ${dismissedAt})
+            WHERE thread_id = ${threadId}`;
+      const stored = yield* forThread(threadId);
+      if (Option.isSome(stored)) yield* PubSub.publish(changes, stored.value);
+      return stored;
+    }, Effect.orDie),
     list: sql<TaskRow>`SELECT * FROM assistant_tasks ORDER BY created_at ASC, thread_id ASC`.pipe(
       Effect.map((rows) => rows.map(toTask)),
       Effect.orDie,

@@ -139,6 +139,10 @@ export interface AssistantDirectoryShape {
   ) => Effect.Effect<Option.Option<{ readonly assistant: Assistant; readonly current: boolean }>>;
   /** The assistant that launched this thread as a task. Task threads are ordinary threads. */
   readonly taskOwner: (threadId: ThreadId) => Effect.Effect<Option.Option<Assistant>>;
+  /** Titles of the projects that still exist; a missing or unreadable one is simply absent. */
+  readonly projectTitles?: (
+    projectIds: ReadonlyArray<string>,
+  ) => Effect.Effect<Readonly<Record<string, string>>>;
 }
 
 export class AssistantDirectory extends Context.Service<
@@ -171,6 +175,17 @@ const make = Effect.gen(function* () {
       // A failed read must not look like "not linked": the refusal would then send the work nowhere.
       Effect.orDie,
     ),
+    projectTitles: (projectIds) =>
+      projectIds.length === 0
+        ? Effect.succeed({})
+        : sql<{ readonly project_id: string; readonly title: string }>`
+            SELECT project_id, title FROM projection_projects
+            WHERE project_id IN ${sql.in(projectIds)} AND deleted_at IS NULL`.pipe(
+            Effect.map((rows) =>
+              Object.fromEntries(rows.map((row) => [row.project_id, row.title])),
+            ),
+            Effect.orElseSucceed(() => ({})),
+          ),
     taskOwner: Effect.fn("AssistantDirectory.taskOwner")(function* (threadId) {
       if (isAssistantThreadId(threadId)) return Option.none();
       const rows = yield* sql<AssistantRow>`

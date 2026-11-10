@@ -115,6 +115,14 @@ const ICON_PATHS: Record<string, ReadonlyArray<{ tag: string; attrs: Record<stri
     { tag: "path", attrs: { d: "M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" } },
     { tag: "path", attrs: { d: "M8 16H3v5" } },
   ],
+  x: [
+    { tag: "path", attrs: { d: "M18 6 6 18" } },
+    { tag: "path", attrs: { d: "m6 6 12 12" } },
+  ],
+  "rotate-ccw": [
+    { tag: "path", attrs: { d: "M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" } },
+    { tag: "path", attrs: { d: "M3 3v5h5" } },
+  ],
   settings: [
     {
       tag: "path",

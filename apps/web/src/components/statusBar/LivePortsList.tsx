@@ -96,7 +96,7 @@ export function PortRow({
             </PortAction>
           </div>
         </div>
-        <div className="select-text truncate text-3xs text-muted-foreground/70">
+        <div className="select-text truncate text-3xs text-muted-foreground">
           {detail ?? address}
         </div>
       </div>

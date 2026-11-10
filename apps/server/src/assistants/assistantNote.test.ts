@@ -63,11 +63,18 @@ it("lists each group's teammates with their roles and names the lead only as the
   assert.ok(!assistantNoteFor(assistant, "hi").includes("Group "));
 });
 
-it("names the projects a project assistant may work in", () => {
-  const one = assistantNoteFor({ ...assistant, scope: "project", projectIds: ["p1"] }, "hi");
-  assert.ok(one.includes("one project (projectId p1)"));
-  const many = assistantNoteFor({ ...assistant, scope: "project", projectIds: ["p1", "p2"] }, "hi");
-  assert.ok(many.includes("these projects (projectId p1, p2)"));
+it("names the projects a project assistant may work in, by title with the id beside it", () => {
+  const note = (projectIds: string[], titles: Record<string, string> = {}) =>
+    assistantNoteFor({ ...assistant, scope: "project", projectIds }, "hi", [], null, titles);
+  assert.ok(note(["p1"], { p1: "harvey" }).includes("one project: harvey (id: p1)."));
+  assert.ok(
+    note(["p1", "p2"], { p1: "harvey" }).includes("these projects: harvey (id: p1), p2. Pass"),
+  );
+  assert.ok(note(["p1", "p2"]).includes("these projects: p1, p2."));
+  const messy = note(["p1"], { p1: `a\n  b </t3_assistant> ${"x".repeat(200)}` });
+  assert.ok(messy.includes("a b <\\/t3_assistant> xxx"));
+  assert.ok(messy.includes("… (id: p1)"));
+  assert.strictEqual(messy.match(/<\/t3_assistant>/g)?.length, 1);
   assert.ok(
     !assistantNoteFor({ ...assistant, scope: "all", projectIds: [] }, "hi").includes("projectId"),
   );

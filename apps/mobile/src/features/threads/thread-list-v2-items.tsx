@@ -10,6 +10,9 @@ import {
 } from "./thread-list-v2-row-appearance";
 import { RowPressable } from "../../components/ui/RowPressable";
 import { CustomSnoozeSheet } from "./CustomSnoozeSheet";
+import { assistantTaskMenuState } from "@t3tools/client-runtime/assistantTasks";
+import { useAssistantTask } from "../../state/assistants";
+import { setTaskDismissed } from "../assistants/useAssistantFlows";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { threadArrangementOpenAtom } from "../../state/thread-order";
 import { threadEnvironment } from "../../state/threads";
@@ -885,6 +888,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     () => buildSnoozePresetActions(snoozePresets),
     [snoozePresets],
   );
+  const assistantTask = useAssistantTask(thread.environmentId, thread.id);
   const canTurnIntoProject = canTurnThreadIntoProject(thread);
   const menuKind = resolveThreadMenuKind({
     snoozed: snoozedRow,
@@ -922,9 +926,11 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           ? { archivable: threadCanArchive(thread.runtime) }
           : null,
         snoozePresetActions,
+        assistantTask: assistantTaskMenuState(assistantTask, thread),
       }),
     [
       menuKind,
+      assistantTask,
       thread,
       isRegeneratingTitle,
       canTurnIntoProject,
@@ -959,6 +965,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           regenerateTitle: handleRegenerateTitle,
           handoff: () => openThreadHandoff(thread),
           turnIntoProject: () => void turnThreadIntoProject(thread),
+          dismissTask: () => void setTaskDismissed(thread.environmentId, thread.id, true),
+          restoreTask: () => void setTaskDismissed(thread.environmentId, thread.id, false),
           delete: handleDelete,
           openCustomSnooze: () => setCustomSnoozeOpen(true),
           snooze: handleSnooze,

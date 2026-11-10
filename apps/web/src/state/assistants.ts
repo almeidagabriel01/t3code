@@ -14,7 +14,7 @@ import {
   oldestAssistantGroupSeq,
   type AssistantGroupChatState,
 } from "@t3tools/client-runtime/assistantGroupChat";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   AuthOrchestrationReadScope,
   type Assistant,
@@ -43,6 +43,7 @@ import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 
 import { connectionAtomRuntime } from "../connection/runtime";
+import { appAtomRegistry } from "../rpc/atomRegistry";
 import { useEnvironmentQuery } from "./query";
 import { environmentAtomList, environmentIdsKey } from "./environmentAtomList";
 import { environmentServerConfigsAtom } from "./server";
@@ -165,6 +166,44 @@ export function useTaskAssistant(
   threadId: ThreadId,
 ): AssistantEntry | null {
   return useAtomValue(taskAssistantAtom(`${environmentId}\u0000${threadId}`));
+}
+
+const assistantTaskAtom = Atom.family((key: string) =>
+  Atom.make((get) => {
+    const [environmentId, threadId] = key.split("\u0000") as [EnvironmentId, ThreadId];
+    for (const [, state] of get(assistantStatesAtom(environmentId))) {
+      const task = state.tasks.get(threadId);
+      if (task) return task;
+    }
+    return null;
+  }).pipe(Atom.withLabel(`web-assistant-task:${key}`)),
+);
+
+/** One read, for menus built on demand. */
+export function readAssistantTask(environmentId: EnvironmentId, threadId: ThreadId) {
+  return appAtomRegistry.get(assistantTaskAtom(`${environmentId}\u0000${threadId}`));
+}
+
+/** Takes the environment instead of a hook: thread menus act on threads of any environment. */
+export async function setAssistantTaskDismissed(
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+  dismissed: boolean,
+): Promise<AssistantReply> {
+  const result = await runAtomCommand(
+    appAtomRegistry,
+    assistantsEnvironment.setTaskDismissed,
+    { environmentId, input: { threadId, dismissed } },
+    { label: "assistant task dismiss", reportFailure: false, reportDefect: true },
+  );
+  return result._tag === "Success"
+    ? { ok: true, value: undefined }
+    : { ok: false, message: assistantErrorMessage(squashAtomCommandFailure(result)) };
+}
+
+/** The link of this thread to the assistant that launched it, dismissed or not. */
+export function useAssistantTask(environmentId: EnvironmentId, threadId: ThreadId) {
+  return useAtomValue(assistantTaskAtom(`${environmentId}\u0000${threadId}`));
 }
 
 /** Active and archived assistants of every loaded environment, listed even when it has none. `teams` holds every group; the sidebar lists `activeTeams` and the pages add `archivedTeams`. */

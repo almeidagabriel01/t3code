@@ -99,4 +99,22 @@ describe("buildThreadActionMenuItems", () => {
     expect(readOnly.find((item) => item.id === "reset-assistant")?.disabled).toBe(true);
     expect(readOnly.find((item) => item.id === "assistant-settings")?.disabled).toBeUndefined();
   });
+
+  it.each([
+    ["not a task", null, []],
+    ["a task that can be dismissed", { dismissed: false, canDismiss: true }, ["dismiss-task"]],
+    ["a dismissed task", { dismissed: true, canDismiss: false }, ["restore-task"]],
+  ] as const)("offers the task item for %s", (_name, assistantTask, expected) => {
+    const items = buildThreadActionMenuItems({ ...baseState, assistantTask });
+    const ids = items.map((item) => item.id).filter((id) => id.endsWith("-task"));
+    expect(ids).toEqual(expected);
+  });
+
+  it("disables dismiss while the task runs and keeps restore available", () => {
+    const running = buildThreadActionMenuItems({
+      ...baseState,
+      assistantTask: { dismissed: false, canDismiss: false },
+    });
+    expect(running.find((item) => item.id === "dismiss-task")?.disabled).toBe(true);
+  });
 });

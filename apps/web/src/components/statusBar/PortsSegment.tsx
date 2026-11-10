@@ -55,7 +55,7 @@ function EnvironmentPorts({
             <span className="min-w-0 truncate text-xs font-medium text-foreground">
               {projectTitleById.get(projectId) ?? "Project"}
             </span>
-            <span className="font-mono text-3xs text-muted-foreground/70">{group.length}</span>
+            <span className="font-mono text-3xs text-muted-foreground">{group.length}</span>
           </div>
           <div className="px-1 pb-1">
             {group.map((port) => (

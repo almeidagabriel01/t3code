@@ -2644,6 +2644,10 @@ export const layerWsRpc = (
           assistants.remove(input.assistantId).pipe(Effect.as({ assistantId: input.assistantId })),
         [WS_METHODS.assistantsReset]: (input) => assistants.reset(input),
         [WS_METHODS.assistantsSetAvatarImage]: (input) => assistants.setAvatarImage(input),
+        [WS_METHODS.assistantsSetTaskDismissed]: (input) =>
+          input.dismissed
+            ? assistants.dismissTask(input.threadId)
+            : assistants.restoreTask(input.threadId),
         [WS_METHODS.assistantsSpend]: (input) => assistantSpend.read(input.assistantId),
         [WS_METHODS.assistantsLibrary]: (input) => assistants.library(input.assistantId),
         [WS_METHODS.assistantSandboxSubscribe]: (_input) => sandboxControl.streamStatus,
@@ -2678,6 +2682,7 @@ export const layerWsRpc = (
         [WS_METHODS.heavyQueueCancel]: ({ id }) => heavyQueue.cancel(id),
         [WS_METHODS.heavyQueueMove]: ({ id, beforeId }) => heavyQueue.move(id, beforeId),
         [WS_METHODS.heavyQueueSetPaused]: ({ paused }) => heavyQueue.setPaused(paused),
+        [WS_METHODS.heavyQueueSetEnabled]: ({ enabled }) => heavyQueue.setEnabled(enabled),
         [WS_METHODS.heavyQueueSetMaxRunning]: ({ maxRunning }) =>
           heavyQueue.setMaxRunning(maxRunning),
         [WS_METHODS.heavyQueueSetRule]: ({ root, priority }) => heavyQueue.setRule(root, priority),

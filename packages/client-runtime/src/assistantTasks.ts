@@ -37,6 +37,22 @@ export function assistantTaskState(shell: TaskShell): AssistantTaskState {
   return STATE_OF_MOOD[assistantPresence(shell).mood];
 }
 
+/** A task whose thread still runs or waits on the user keeps its row; the server refuses it too. */
+export const canDismissAssistantTask = (state: AssistantTaskState) =>
+  state === "done" || state === "failed";
+
+/** What a thread menu needs of a thread's task link; null when the thread is no task. */
+export function assistantTaskMenuState(
+  task: AssistantTask | null | undefined,
+  shell: TaskShell | null | undefined,
+): { readonly dismissed: boolean; readonly canDismiss: boolean } | null {
+  if (task == null) return null;
+  return {
+    dismissed: task.dismissedAt != null,
+    canDismiss: shell != null && canDismissAssistantTask(assistantTaskState(shell)),
+  };
+}
+
 export interface AssistantTaskRow<S extends TaskShell> {
   readonly task: AssistantTask;
   readonly shell: S;
@@ -46,7 +62,7 @@ export interface AssistantTaskRow<S extends TaskShell> {
 const ORDER: Record<AssistantTaskState, number> = { waiting: 0, running: 1, failed: 2, done: 3 };
 
 /**
- * An assistant's tasks that still have a thread, waiting first, then running, failed and done,
+ * An assistant's tasks that still have a thread and were not dismissed, waiting first, then running, failed and done,
  * each newest first. A deleted thread drops out; an archived one stays hidden once it is done.
  */
 export function assistantTaskRows<S extends TaskShell>(
@@ -55,6 +71,7 @@ export function assistantTaskRows<S extends TaskShell>(
 ): Array<AssistantTaskRow<S>> {
   const rows: Array<AssistantTaskRow<S>> = [];
   for (const task of tasks) {
+    if (task.dismissedAt != null) continue;
     const shell = shellOf(task.threadId);
     if (shell === null || shell === undefined) continue;
     rows.push({ task, shell, state: assistantTaskState(shell) });

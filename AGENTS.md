@@ -224,6 +224,7 @@ This checkout is a personal fork that adds features (notes, kanban, memory, dest
 - Before telling the developer to install a desktop release, download its DMG from the release page and run `scripts/verify-mac-desktop-artifact.sh` on it: a local build skips the quarantine checks a download gets.
 - The packaged desktop app shares the Electron profile of the developer's installed app, so never launch a local packaged copy to test: use `vp run dev:desktop` or the web dev app, both isolated.
 - CI does not run on this fork (every run is cancelled for lack of runners). `vp run check:changed` plus the test files you ran are the only gate before a release, so say exactly what you ran.
+- On a busy Mac, browser tests that boot the whole app (`AssistantDialog.browser.test.tsx`) time out in the full gate and every later test in the file fails with them. Rerun as `VITEST_MAX_WORKERS=2 vp run check:changed` before suspecting the code.
 - `vp run mobile:install android` needs `ANDROID_HOME` (usually `~/Library/Android/sdk`) when the shell does not set it.
 - Save captures you will show the developer, and the scripts that make them, outside `/tmp`: macOS empties it on restart, and a report's images then show as unavailable.
 - Never drive the command palette or type into the app from a script: keystrokes land in whatever editor has focus and change user data or settings. Toggle appearance by setting the attribute on the test page only, and restore anything you changed in `<worktree>/.t3/userdata`.
@@ -238,6 +239,7 @@ This checkout is a personal fork that adds features (notes, kanban, memory, dest
 - An iOS native menu item below the fold cannot be pressed by ref or coordinates; the tap dismisses the menu. Swipe inside the menu first.
 - An Android system dialog ("… isn't responding") refuses every tap: close it with `agent-device alert dismiss`. A popup menu closes with a tap outside it; `back` can leave the app instead.
 - The Devices panel in an isolated home needs `enableDeviceSupport` and `deviceOnboardingCompleted` in its `settings.json`, then a dev server restart: the device service reads them at startup.
+- A dev server shares the machine-wide heavy queue (`~/.t3/heavy-queue`), so switching it off or pausing it there releases or holds every other project's jobs. Start dev with `T3CODE_HEAVY_QUEUE_DIR=<worktree>/.t3/heavy-queue-dev` before testing queue controls.
 - During an unfinished merge, `git add` the resolved files before starting `vp run dev`: git re-reads unmerged files on every status poll, and that makes the server's `node --watch` restart in a loop.
 
 ### Layout and design

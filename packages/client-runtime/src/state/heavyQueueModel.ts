@@ -108,10 +108,16 @@ export function usageLine(
   return parts.length === 0 ? null : parts.join(" · ");
 }
 
+const QUEUE_OFF_SUMMARY = "Queue off: heavy jobs start right away";
+
 /** "2 of 3 running · Mac has room": what the queue is doing at a glance. */
 export function queueSummary(
-  state: Pick<HeavyQueueState, "entries" | "paused" | "maxRunning" | "room" | "machine">,
+  state: Pick<
+    HeavyQueueState,
+    "entries" | "enabled" | "paused" | "maxRunning" | "room" | "machine"
+  >,
 ): string {
+  if (!state.enabled) return QUEUE_OFF_SUMMARY;
   const running = state.entries.filter((entry) => entry.startedAt !== null).length;
   const head = `${running} of ${state.maxRunning} running`;
   const { machine } = state;

@@ -348,6 +348,8 @@ export const AssistantTask = Schema.Struct({
   projectId: ProjectId,
   title: Schema.String,
   createdAt: IsoDateTime,
+  /** Hidden from the lists once set; the thread itself is untouched. Absent from older servers. */
+  dismissedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
 });
 export type AssistantTask = typeof AssistantTask.Type;
 
@@ -513,6 +515,13 @@ export const AssistantsSetAvatarImageInput = Schema.Struct({
   attachmentId: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
 });
 export type AssistantsSetAvatarImageInput = typeof AssistantsSetAvatarImageInput.Type;
+
+/** `dismissed: false` brings a dismissed task back; a task whose thread is running cannot be dismissed. */
+export const AssistantsSetTaskDismissedInput = Schema.Struct({
+  threadId: ThreadId,
+  dismissed: Schema.Boolean,
+});
+export type AssistantsSetTaskDismissedInput = typeof AssistantsSetTaskDismissedInput.Type;
 
 export const AssistantsDeleteInput = Schema.Struct({ assistantId: AssistantId });
 export type AssistantsDeleteInput = typeof AssistantsDeleteInput.Type;

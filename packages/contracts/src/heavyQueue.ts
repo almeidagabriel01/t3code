@@ -57,6 +57,8 @@ export const HeavyQueueState = Schema.Struct({
   /** Usual usage of each waiting entry that has history, by entry id. */
   estimates: Schema.optionalKey(Schema.Record(Schema.String, HeavyQueueEstimate)),
   entries: Schema.Array(HeavyQueueEntry),
+  /** False switches the queue off: every heavy job starts at once and agents are not asked first. */
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /** While true nothing new starts; the running entry continues. */
   paused: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   rules: Schema.Array(HeavyQueueRule).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
@@ -85,6 +87,9 @@ export type HeavyQueueMoveInput = typeof HeavyQueueMoveInput.Type;
 
 export const HeavyQueueSetPausedInput = Schema.Struct({ paused: Schema.Boolean });
 export type HeavyQueueSetPausedInput = typeof HeavyQueueSetPausedInput.Type;
+
+export const HeavyQueueSetEnabledInput = Schema.Struct({ enabled: Schema.Boolean });
+export type HeavyQueueSetEnabledInput = typeof HeavyQueueSetEnabledInput.Type;
 
 export const HeavyQueueSetMaxRunningInput = Schema.Struct({ maxRunning: Schema.Int });
 export type HeavyQueueSetMaxRunningInput = typeof HeavyQueueSetMaxRunningInput.Type;

@@ -30,7 +30,13 @@ const { mocks } = vi.hoisted(() => ({
     }>,
     collapsed: false,
     showAll: false,
-    tasks: [] as Array<{ threadId: string; title: string; createdAt: string }>,
+    tasks: [] as Array<{
+      threadId: string;
+      title: string;
+      createdAt: string;
+      dismissedAt?: string | null;
+    }>,
+    dismissTask: vi.fn(),
     toggleShowAll: vi.fn(),
     presence: {} as Record<string, Presence>,
     notified: new Set<string>(),
@@ -162,6 +168,7 @@ vi.mock("./useAssistantFlows", () => ({
     openConversation: mocks.open,
     reset: mocks.reset,
     archive: mocks.archive,
+    dismissTask: mocks.dismissTask,
   }),
   useAssistantTeamFlows: () => ({
     canAct: true,
@@ -240,6 +247,7 @@ beforeEach(() => {
   });
   for (const fn of [
     mocks.open,
+    mocks.dismissTask,
     mocks.toggle,
     mocks.editor,
     mocks.work,
@@ -321,13 +329,19 @@ describe("HomeAssistantsSection", () => {
       { threadId: "w1", title: "Add retry", createdAt: "2026-11-01T00:00:00.000Z" },
       { threadId: "w2", title: "Fix flaky test", createdAt: "2026-11-02T00:00:00.000Z" },
       { threadId: "w3", title: "Old chore", createdAt: "2026-10-01T00:00:00.000Z" },
+      {
+        threadId: "w4",
+        title: "Dismissed chore",
+        createdAt: "2026-10-02T00:00:00.000Z",
+        dismissedAt: "2026-11-03T00:00:00.000Z",
+      },
     ];
     mocks.presence.w1 = { mood: "working", detail: "Working", since: null };
     mocks.presence.w2 = { mood: "failed", detail: "Last run failed", since: null };
     render(false);
     const rows = Array.from(
       container.querySelectorAll('[data-testid="assistant-task-list"] button'),
-    );
+    ).filter((row) => row.getAttribute("aria-label")?.includes(", "));
     expect(rows.map((row) => row.getAttribute("aria-label"))).toEqual([
       "Add retry, Running",
       "Fix flaky test, Failed",
@@ -336,6 +350,13 @@ describe("HomeAssistantsSection", () => {
     expect(container.textContent).toContain("av:Bot0:working");
     await click("Fix flaky test, Failed");
     expect(mocks.open).toHaveBeenCalledWith({ threadId: "w2" });
+    // Only finished and failed tasks can be dismissed: the running one has no menu.
+    const dismiss = container.querySelectorAll<HTMLButtonElement>(
+      '[aria-label="menu:Dismiss task"]',
+    );
+    expect(dismiss).toHaveLength(2);
+    await act(async () => dismiss[0]?.click());
+    expect(mocks.dismissTask).toHaveBeenCalledWith("w2");
     mocks.tasks = [];
     render(true);
     expect(container.querySelector('[data-testid="assistant-task-list"]')).toBeNull();

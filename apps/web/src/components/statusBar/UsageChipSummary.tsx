@@ -9,6 +9,7 @@ import {
   pacePresentation,
   paceTextClass,
   selectUsagePaceSettings,
+  weekBarSplit,
   windowBand,
 } from "@t3tools/shared/usagePace";
 
@@ -39,6 +40,7 @@ export function ChipSummary({
           ? pacePresentation({ window, now, display, settings, formatAt: () => "" })
           : null;
         const band = windowBand(window, settings);
+        const split = entry.bar ? weekBarSplit(window, limits.windows, display) : null;
         return (
           <UsageBarChip
             key={window.id}
@@ -51,6 +53,7 @@ export function ChipSummary({
             fillClass={BAND_FILL[band]}
             textClass={BAND_TEXT[band]}
             tickPercent={view?.tickPercent ?? null}
+            split={split && { ...split, remaining: display === "remaining" }}
             delta={
               view === null
                 ? null

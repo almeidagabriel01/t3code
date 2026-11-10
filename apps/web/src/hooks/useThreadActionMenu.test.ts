@@ -35,8 +35,16 @@ function recordEffect(action: string) {
 }
 
 vi.mock("../components/CustomSnoozeDialog", () => ({ requestCustomSnooze: vi.fn() }));
-vi.mock("../state/assistants", () => ({ useThreadAssistant: () => null }));
-vi.mock("../components/assistants/useAssistantFlows", () => ({ useAssistantFlows: () => ({}) }));
+vi.mock("../state/assistants", () => ({
+  useThreadAssistant: () => null,
+  readAssistantTask: () => null,
+}));
+vi.mock("../components/assistants/useAssistantFlows", () => ({
+  useAssistantFlows: () => ({
+    dismissTask: async () => recordEffect("dismiss-task"),
+    restoreTask: async () => recordEffect("restore-task"),
+  }),
+}));
 vi.mock("../components/assistants/assistantDialogState", () => ({ openAssistantDialog: vi.fn() }));
 vi.mock("react", () => ({
   useCallback: (callback: unknown) => callback,
@@ -180,6 +188,17 @@ describe("thread menu permissions", () => {
       choice.resolve(action);
       await state.completed.promise;
       expect(state.effects).toEqual([]);
+    },
+  );
+
+  it.each(["dismiss-task", "restore-task"] as const)(
+    "%s reaches the assistant flows",
+    async (action) => {
+      state.granted.add("secondary");
+      state.show.mockResolvedValue(action);
+      createMenu().openMenu(position);
+      await state.completed.promise;
+      expect(state.effects).toEqual([action]);
     },
   );
 

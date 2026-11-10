@@ -18,8 +18,21 @@ function Controls({ environmentId }: { readonly environmentId: EnvironmentId }) 
   const state = useHeavyQueue(environmentId);
   const actions = useHeavyQueueActions(environmentId);
   const projects = useProjects().filter((project) => project.environmentId === environmentId);
+  const locked = !actions.canChange || !state.enabled;
   return (
     <>
+      <SettingsRow
+        {...searchableSetting("heavy-work-enabled")}
+        description="On: tests, builds and simulators take turns, and agents ask before adding to a busy machine. Off: heavy jobs start right away and agents do not ask first."
+        control={
+          <Switch
+            checked={state.enabled}
+            disabled={!actions.canChange}
+            onCheckedChange={(checked) => void actions.setEnabled(Boolean(checked))}
+            aria-label="Use the heavy work queue"
+          />
+        }
+      />
       <SettingsRow
         {...searchableSetting("heavy-work-max")}
         description="Tests, builds and simulators wait here. With 1, they run strictly one at a time. With more, the next one starts only when the machine has room for it."
@@ -34,7 +47,7 @@ function Controls({ environmentId }: { readonly environmentId: EnvironmentId }) 
               size="sm"
               className="w-full sm:w-24"
               aria-label="Run up to this many heavy jobs at once"
-              disabled={!actions.canChange}
+              disabled={locked}
             >
               <SelectValue>{String(state.maxRunning)}</SelectValue>
             </SelectTrigger>
@@ -54,7 +67,7 @@ function Controls({ environmentId }: { readonly environmentId: EnvironmentId }) 
         control={
           <Switch
             checked={state.paused}
-            disabled={!actions.canChange}
+            disabled={locked}
             onCheckedChange={(checked) => void actions.setPaused(Boolean(checked))}
             aria-label="Pause the heavy work queue"
           />
@@ -81,7 +94,7 @@ function Controls({ environmentId }: { readonly environmentId: EnvironmentId }) 
                   variant="ghost-muted"
                   size="icon-micro"
                   aria-label={`Remove the priority rule for ${project?.title ?? rule.root}`}
-                  disabled={!actions.canChange}
+                  disabled={locked}
                   onClick={() => void actions.setRule(rule.root, null)}
                 >
                   <XIcon aria-hidden />

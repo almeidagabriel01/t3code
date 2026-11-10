@@ -46,7 +46,7 @@ import { SidebarBrandWidthProbe } from "./sidebar/SidebarChrome";
 import { DestinationRail, DestinationRailVisibleContext } from "./sidebar/DestinationRail";
 import { DESTINATION_RAIL_WIDTH_PX } from "./sidebar/destinationRail.logic";
 import { STATUS_BAR_HEIGHT, StatusBar } from "./statusBar/StatusBar";
-import { isAppModalPage } from "./sidebar/mainAppLocation";
+import { getMainAppHref, isAppModalPage } from "./sidebar/mainAppLocation";
 import type { SidebarRouteReveal } from "./sidebar/routeReveal";
 import { useSidebarStageBackdropVariant } from "./SidebarStageBackdrop";
 import {
@@ -219,7 +219,7 @@ function registerPullRequestsEscapeCommand(router: AnyRouter): () => void {
           window.history.back();
           return;
         }
-        void router.navigate({ to: "/" });
+        void router.navigate({ href: getMainAppHref() });
       },
     },
   );

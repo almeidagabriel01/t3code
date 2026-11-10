@@ -727,7 +727,7 @@ function AssistantDialog(props: {
                 onClick={() => setAdvancedOpen((open) => !open)}
                 accessory={
                   advancedOpen ? null : (
-                    <span className="min-w-0 truncate font-normal text-muted-foreground">
+                    <span className="min-w-0 shrink-[999] truncate font-normal text-muted-foreground">
                       {advancedSummary}
                     </span>
                   )

@@ -17,6 +17,8 @@ export const heavyStatus = (input: {
   readonly totalMemoryBytes: number;
   readonly workingAgents: number;
   readonly maxRunning: number;
+  /** False: the queue is off, so nothing waits and there is nothing to ask the user about. */
+  readonly enabled: boolean;
   /** The queue sees room to start more work now. */
   readonly room: boolean;
   readonly reasons: Readonly<Record<string, string>>;
@@ -43,8 +45,10 @@ export const heavyStatus = (input: {
   return {
     // Ask only when work would wait: pressure is high, or others queue and no slot is free soon.
     askUser:
-      high ||
-      (input.entries.length > active.length && (active.length >= input.maxRunning || !input.room)),
+      input.enabled &&
+      (high ||
+        (input.entries.length > active.length &&
+          (active.length >= input.maxRunning || !input.room))),
     pressure: {
       high,
       loadPerCore: round(loadPerCore),

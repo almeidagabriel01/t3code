@@ -63,6 +63,36 @@ describe("HeavyQueue", () => {
     ),
   );
 
+  it.effect(
+    "switched off, withSlot runs at once beside the running entry and is shown running",
+    () =>
+      withQueue((dir, queue) =>
+        Effect.gen(function* () {
+          Queue.enqueue(dir, { ...holder, id: "waiter" });
+          yield* queue.setPaused(true);
+          yield* queue.setEnabled(false);
+          const seen = yield* queue.withSlot(
+            "Open iPhone",
+            "thread-1",
+            Effect.sync(() => Queue.read(dir).find((e) => e.label === "Open iPhone")),
+          );
+          expect(seen).toMatchObject({ server: true, threadId: "thread-1" });
+          expect(seen?.startedAt).not.toBeNull();
+          expect(yield* queue.state).toMatchObject({
+            enabled: false,
+            paused: true,
+            reasons: {},
+            entries: [{ id: holder.id }, { id: "waiter", startedAt: null }],
+          });
+          yield* queue.setEnabled(true);
+          expect(yield* queue.state).toMatchObject({
+            enabled: true,
+            reasons: { waiter: "paused" },
+          });
+        }),
+      ),
+  );
+
   it.effect("withSlot frees its place when interrupted, waiting or running", () =>
     withQueue((dir, queue) =>
       Effect.gen(function* () {
@@ -188,6 +218,18 @@ describe("HeavyQueue", () => {
         yield* TestClock.adjust("2 seconds");
         const states = yield* Fiber.join(fiber);
         expect(states.map((s) => s.entries.length)).toEqual([1, 2]);
+      }),
+    ),
+  );
+
+  it.effect("streams a change made here without waiting for the poll", () =>
+    withQueue((_dir, queue) =>
+      Effect.gen(function* () {
+        const fiber = yield* Effect.forkChild(queue.stream.pipe(Stream.take(2), Stream.runCollect));
+        yield* TestClock.adjust("2 seconds");
+        yield* queue.setEnabled(false);
+        const states = yield* Fiber.join(fiber);
+        expect(states.map((s) => s.enabled)).toEqual([true, false]);
       }),
     ),
   );

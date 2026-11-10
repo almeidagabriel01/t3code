@@ -1,7 +1,10 @@
-import { useNavigate, type AnyRouter } from "@tanstack/react-router";
+import type { ScopedThreadRef } from "@t3tools/contracts";
+import { useNavigate, useRouter, type AnyRouter } from "@tanstack/react-router";
+import type { MouseEvent } from "react";
 
 import { GUEST_PAGE_PATH } from "../../guestPage";
 import { withoutAssistantCitationHash } from "../../lib/assistantCitationNavigation";
+import { buildThreadRouteParams } from "../../threadRoutes";
 
 /** Settings and Usage are not main-app views: closing them returns to the last one. */
 export function isAppModalPage(pathname: string) {
@@ -43,9 +46,36 @@ export function startMainAppLocationTracking(router: AnyRouter): () => void {
   return router.subscribe("onResolved", record);
 }
 
+export function getMainAppHref() {
+  return mainAppHref ?? "/";
+}
+
 export function useNavigateToMainApp() {
   const navigate = useNavigate();
-  return () => navigate({ href: mainAppHref ?? "/" });
+  return () => navigate({ href: getMainAppHref() });
+}
+
+/** A conversation shown inside another page (Activity) is the one Home and Back return to. */
+export function useRememberThreadAsMainApp() {
+  const router = useRouter();
+  return (threadRef: ScopedThreadRef) => {
+    mainAppHref = router.buildLocation({
+      to: "/$environmentId/$threadId",
+      params: buildThreadRouteParams(threadRef),
+    }).href;
+  };
+}
+
+/** Home returns to the remembered conversation; with none remembered, or already home, the link's own `/` applies. */
+export function useHomeLinkClick(atHome: boolean) {
+  const navigateToMainApp = useNavigateToMainApp();
+  return (event: MouseEvent) => {
+    if (atHome || mainAppHref === null) return;
+    if (event.defaultPrevented || event.button !== 0) return;
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    void navigateToMainApp();
+  };
 }
 
 /** Leaves Settings or Usage for the page that opened it. */

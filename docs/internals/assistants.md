@@ -191,6 +191,9 @@ Three things follow the row, none of them a new mechanism:
   thread as `senderThreadId`, which makes the turn's origin "assistant", never the user.
 - The assistants stream carries the links (`tasks` in the snapshot, `taskUpserted`). The state is not
   stored: clients read it from the thread's own shell (`assistantTaskState`), so it cannot go stale.
+- Dismissing a task only sets `dismissed_at` on the row (`AssistantService.dismissTask`, refused while
+  the thread has an active run); lists drop dismissed rows in `assistantTaskRows`, while the task
+  badge on the thread still reads the row, which is where a dismissed task is restored.
 
 The project check is the existing `projectScopeRefusal` at `t3_thread_launch`; a refused launch never
 reaches the link.

@@ -148,6 +148,25 @@ describe("thread menu", () => {
     expect(ids()).not.toContain("reset-assistant");
   });
 
+  it.each([
+    ["not a task", null, []],
+    ["a task that can be dismissed", { dismissed: false, canDismiss: true }, ["dismiss-task"]],
+    ["a dismissed task", { dismissed: true, canDismiss: false }, ["restore-task"]],
+  ] as const)("offers the task item for %s and routes it", (_name, assistantTask, expected) => {
+    expect(ids({ assistantTask }).filter((id) => id?.endsWith("-task"))).toEqual(expected);
+    const running = buildThreadMenuActions({
+      ...input,
+      assistantTask: { dismissed: false, canDismiss: false },
+    });
+    expect(running.find((action) => action.id === "dismiss-task")?.attributes?.disabled).toBe(true);
+    const dismissTask = vi.fn();
+    const restoreTask = vi.fn();
+    const snooze = { displayedPresets: [], presets: undefined, now: new Date(0) };
+    runThreadMenuEvent("dismiss-task", { dismissTask } as unknown as ThreadMenuHandlers, snooze);
+    runThreadMenuEvent("restore-task", { restoreTask } as unknown as ThreadMenuHandlers, snooze);
+    expect([dismissTask.mock.calls.length, restoreTask.mock.calls.length]).toEqual([1, 1]);
+  });
+
   it("routes events to handlers, including snooze presets", () => {
     const handlers = Object.fromEntries(
       [

@@ -10,6 +10,7 @@ export const heavyQueueEnvironment = createHeavyQueueEnvironmentAtoms(connection
 
 const EMPTY: HeavyQueueState = {
   entries: [],
+  enabled: true,
   paused: false,
   rules: [],
   maxRunning: 1,

@@ -4,6 +4,7 @@ import {
   type AssistantId,
   type AssistantLibrary,
   type AssistantsCreateInput,
+  type AssistantTask,
   type AssistantTeam,
   type AssistantTeamId,
   type AssistantTeamsCreateInput,
@@ -111,6 +112,9 @@ export class AssistantService extends Context.Service<
     readonly setAvatarImage: (
       input: AssistantsSetAvatarImageInput,
     ) => Effect.Effect<Assistant, AssistantError>;
+    /** Hides a finished task from the lists; refused while its thread runs. A repeat changes nothing more. */
+    readonly dismissTask: (threadId: ThreadId) => Effect.Effect<AssistantTask, AssistantError>;
+    readonly restoreTask: (threadId: ThreadId) => Effect.Effect<AssistantTask, AssistantError>;
     readonly remove: (assistantId: AssistantId) => Effect.Effect<void, AssistantError>;
     readonly reset: (input: AssistantsResetInput) => Effect.Effect<Assistant, AssistantError>;
     readonly teams: Effect.Effect<ReadonlyArray<AssistantTeam>, AssistantError>;
@@ -486,6 +490,23 @@ const make = Effect.gen(function* () {
       )
       .pipe(storage),
   );
+
+  const setTaskDismissed = Effect.fn("AssistantService.setTaskDismissed")(function* (
+    threadId: ThreadId,
+    dismissed: boolean,
+  ) {
+    const current = yield* tasks.forThread(threadId);
+    if (Option.isNone(current)) return yield* assistantError("not_found", "No such task.");
+    if ((current.value.dismissedAt != null) === dismissed) return current.value;
+    if (dismissed) {
+      const shell = yield* threads.getThreadShell(threadId).pipe(Effect.orElseSucceed(() => null));
+      if (shell !== null && shell.activeRunId !== null) {
+        return yield* invalid("A running task cannot be dismissed. Stop it first.");
+      }
+    }
+    const stored = yield* tasks.setDismissed(threadId, dismissed ? yield* nowIso : null);
+    return Option.getOrElse(stored, () => current.value);
+  });
 
   const requireProject = (projectId: ProjectId) =>
     projects.getById(projectId).pipe(
@@ -1055,6 +1076,12 @@ const make = Effect.gen(function* () {
     create,
     update,
     setAvatarImage,
+    dismissTask: Effect.fn("AssistantService.dismissTask")((threadId) =>
+      setTaskDismissed(threadId, true),
+    ),
+    restoreTask: Effect.fn("AssistantService.restoreTask")((threadId) =>
+      setTaskDismissed(threadId, false),
+    ),
     remove,
     reset,
     teams,

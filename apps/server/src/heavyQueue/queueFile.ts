@@ -25,8 +25,9 @@ const LOCK_STALE_MS = 10_000;
 /** A longer silence between readings restarts the steady-headroom window. */
 const SAMPLE_GAP_MS = 10_000;
 
-/** Machine-wide on purpose, so it is outside any server's userdata. */
-export const defaultQueueDir = () => NodePath.join(NodeOS.homedir(), ".t3", "heavy-queue");
+/** Machine-wide on purpose, so it is outside any server's userdata. The env override isolates a dev server under test. */
+export const defaultQueueDir = () =>
+  process.env.T3CODE_HEAVY_QUEUE_DIR ?? NodePath.join(NodeOS.homedir(), ".t3", "heavy-queue");
 
 export const isAlive = (pid: number) => {
   try {
@@ -71,6 +72,8 @@ const queuePath = (dir: string) => NodePath.join(dir, "queue.json");
 
 interface QueueDoc {
   readonly entries: ReadonlyArray<HeavyQueueEntry>;
+  /** False: every waiter starts at once. Absent in older files, which read as on. */
+  readonly enabled: boolean;
   readonly paused: boolean;
   readonly rules: ReadonlyArray<HeavyQueueRule>;
   readonly maxRunning: number;
@@ -83,6 +86,7 @@ interface QueueDoc {
 
 const EMPTY_DOC: QueueDoc = {
   entries: [],
+  enabled: true,
   paused: false,
   rules: [],
   maxRunning: DEFAULT_MAX_RUNNING,
@@ -96,6 +100,7 @@ const loadDoc = (dir: string): QueueDoc => {
   try {
     const parsed = JSON.parse(NodeFS.readFileSync(queuePath(dir), "utf8")) as {
       entries?: unknown;
+      enabled?: unknown;
       paused?: unknown;
       rules?: unknown;
       maxRunning?: unknown;
@@ -105,7 +110,10 @@ const loadDoc = (dir: string): QueueDoc => {
       holding?: unknown;
     } | null;
     return {
+      // Keys this version does not know stay in the file for the versions that do.
+      ...(parsed !== null && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {}),
       entries: Array.isArray(parsed?.entries) ? (parsed.entries as HeavyQueueEntry[]) : [],
+      enabled: parsed?.enabled !== false,
       paused: parsed?.paused === true,
       rules: Array.isArray(parsed?.rules) ? (parsed.rules as HeavyQueueRule[]) : [],
       maxRunning:
@@ -158,6 +166,7 @@ const planOf = (doc: QueueDoc, now: number): Plan =>
   plan({
     entries: doc.entries,
     maxRunning: doc.maxRunning,
+    enabled: doc.enabled,
     paused: doc.paused,
     history: doc.history,
     sample: doc.sample,
@@ -174,7 +183,7 @@ const decideStart = (doc: QueueDoc, id: string, now: number): Decided<StartResul
   if (entries[index]!.startedAt !== null) return { doc, result: { status: "started" } };
   const decision = planOf(doc, now);
   const active = runningOf(entries);
-  if (decision.admit === id) {
+  if (!doc.enabled || decision.admit === id) {
     const started = { ...entries[index]!, startedAt: new Date(now).toISOString() };
     return {
       doc: {
@@ -421,6 +430,10 @@ export const cancel = (dir: string, id: string) => mutate(dir, (doc) => decideCa
 
 export const setPaused = (dir: string, paused: boolean) =>
   mutate(dir, (doc) => ({ doc: { ...doc, paused }, result: undefined }));
+
+/** Off starts every waiter on its next poll; back on, running entries stay and new ones wait as usual. */
+export const setEnabled = (dir: string, enabled: boolean) =>
+  mutate(dir, (doc) => ({ doc: { ...doc, enabled }, result: undefined }));
 
 /** `priority` null clears the rule. */
 export const setRule = (dir: string, root: string, priority: HeavyQueueRule["priority"] | null) =>

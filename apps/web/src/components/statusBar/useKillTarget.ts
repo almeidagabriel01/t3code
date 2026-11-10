@@ -87,6 +87,7 @@ export function useHeavyQueueActions(environmentId: EnvironmentId) {
   const startNowCommand = useAtomCommand(heavyQueueEnvironment.startNow, { reportFailure: false });
   const cancelCommand = useAtomCommand(heavyQueueEnvironment.cancel, { reportFailure: false });
   const pausedCommand = useAtomCommand(heavyQueueEnvironment.setPaused, { reportFailure: false });
+  const enabledCommand = useAtomCommand(heavyQueueEnvironment.setEnabled, { reportFailure: false });
   const ruleCommand = useAtomCommand(heavyQueueEnvironment.setRule, { reportFailure: false });
   const maxCommand = useAtomCommand(heavyQueueEnvironment.setMaxRunning, { reportFailure: false });
   const report = (title: string, result: { readonly _tag: string }) => {
@@ -114,6 +115,11 @@ export function useHeavyQueueActions(environmentId: EnvironmentId) {
       report(
         "Could not change the queue",
         await pausedCommand({ environmentId, input: { paused } }),
+      ),
+    setEnabled: async (enabled: boolean) =>
+      report(
+        "Could not change the queue",
+        await enabledCommand({ environmentId, input: { enabled } }),
       ),
     setRule: async (root: string, priority: "first" | "last" | null) =>
       report(

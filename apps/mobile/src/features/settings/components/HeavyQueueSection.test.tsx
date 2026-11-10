@@ -34,6 +34,7 @@ vi.mock("../../../state/heavyQueue", () => {
       move: command("move"),
       startNow: command("startNow"),
       cancel: command("cancel"),
+      setEnabled: command("setEnabled"),
       setPaused: command("setPaused"),
       setRule: command("setRule"),
       setMaxRunning: command("setMaxRunning"),
@@ -98,6 +99,7 @@ const entry = (id: string, extra: Partial<HeavyQueueEntry> = {}): HeavyQueueEntr
 const setup = (entries: HeavyQueueEntry[], over: Partial<HeavyQueueState> = {}) => {
   mocks.state = {
     entries,
+    enabled: true,
     paused: false,
     rules: [],
     maxRunning: 3,
@@ -116,7 +118,9 @@ async function mount() {
   });
   const button = (name: string, nth = 0) =>
     [...host.querySelectorAll("button")].filter((b) => b.textContent === name)[nth]!;
-  return { host, button, unmount: () => act(() => root.unmount()) };
+  const toggle = (name: string) =>
+    host.querySelector<HTMLInputElement>(`input[aria-label="${name}"]`)!;
+  return { host, button, toggle, unmount: () => act(() => root.unmount()) };
 }
 
 afterEach(() => {
@@ -271,7 +275,7 @@ describe("HeavyQueueSection", () => {
     setup([], { maxRunning: 1 });
     const view = await mount();
     expect(view.button("Allow one fewer").disabled).toBe(true);
-    await act(async () => view.host.querySelector<HTMLInputElement>("input")!.click());
+    await act(async () => view.toggle("Pause queue").click());
     expect(mocks.commands.setPaused).toHaveBeenCalledWith({
       environmentId: "env",
       input: { paused: true },
@@ -291,6 +295,42 @@ describe("HeavyQueueSection", () => {
       input: { maxRunning: 7 },
     });
     await full.unmount();
+  });
+
+  it("switches the queue off and on, and locks pause, slots and rules while it is off", async () => {
+    setup([]);
+    const on = await mount();
+    expect(on.toggle("Heavy work queue").checked).toBe(true);
+    expect(on.toggle("Pause queue").disabled).toBe(false);
+    await act(async () => on.toggle("Heavy work queue").click());
+    expect(mocks.commands.setEnabled).toHaveBeenCalledWith({
+      environmentId: "env",
+      input: { enabled: false },
+    });
+    await on.unmount();
+
+    setup([entry("a", { startedAt: NOW })], {
+      enabled: false,
+      paused: true,
+      maxRunning: 4,
+      rules: [{ root: "/work/app", priority: "last" }],
+    });
+    const off = await mount();
+    expect(off.host.textContent).toContain("Queue off: heavy jobs start right away");
+    expect(off.host.textContent).not.toContain("1 of 4 running");
+    expect(off.host.textContent).toContain("Run up to 4 at once");
+    expect(off.toggle("Pause queue")).toMatchObject({ disabled: true, checked: true });
+    for (const name of ["Allow one more", "Allow one fewer", "App Project: Last"]) {
+      expect(off.button(name).disabled).toBe(true);
+    }
+    expect(off.button("Stop").disabled).toBe(false);
+    expect(off.toggle("Heavy work queue")).toMatchObject({ disabled: false, checked: false });
+    await act(async () => off.toggle("Heavy work queue").click());
+    expect(mocks.commands.setEnabled).toHaveBeenLastCalledWith({
+      environmentId: "env",
+      input: { enabled: true },
+    });
+    await off.unmount();
   });
 
   it("disables the actions without permission", async () => {

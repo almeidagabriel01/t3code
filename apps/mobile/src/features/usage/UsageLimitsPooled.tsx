@@ -37,7 +37,12 @@ import {
   useUsagePaceSettings,
 } from "./usagePaceSettings";
 import { collectAccountSessions } from "@t3tools/client-runtime/state/usageSessions";
-import { poolPacePresentation } from "@t3tools/shared/usagePace";
+import {
+  poolPacePresentation,
+  weekAllowanceText,
+  weekBarSplit,
+  type WeekBarSplit,
+} from "@t3tools/shared/usagePace";
 import { useProjects, useThreadShells } from "../../state/entities";
 import { useOpenLinkedThread } from "../threads/useOpenLinkedThread";
 import { usageProviderKind, useProviderColors } from "./usageProviders";
@@ -134,11 +139,14 @@ function AccountSegment({
   remaining,
   color,
   refillPercent,
+  models,
 }: {
   readonly remaining: number;
   readonly color: string;
   readonly refillPercent: number;
+  readonly models: WeekBarSplit["models"];
 }) {
+  const modelTotal = models.reduce((sum, model) => sum + model.percent, 0);
   const patternId = useId().replace(/:/g, "");
   const [size, setSize] = useState({ width: 0, height: 0 });
   return (
@@ -169,6 +177,16 @@ function AccountSegment({
             />
           ) : null}
           <Rect width={`${remaining}%`} height="100%" fill={color} opacity={0.35} />
+          {models.map((model, index) => (
+            <Rect
+              key={model.name}
+              x={`${100 - modelTotal + models.slice(0, index).reduce((sum, m) => sum + m.percent, 0)}%`}
+              width={`${model.percent}%`}
+              height="100%"
+              fill={color}
+              opacity={0.18}
+            />
+          ))}
         </Svg>
       ) : null}
     </View>
@@ -259,11 +277,12 @@ function PoolWindowCard({
         const timeLeft = paceRemainingPercent(window, now);
         const credits = account.limits.resetCredits?.availableCount ?? 0;
         const resetsIn = formatResetsIn(window, now)?.replace("resets in ", "");
+        const split = weekBarSplit(window, account.limits.windows, "remaining");
         return (
           <Pressable
             key={account.key}
             accessibilityRole="button"
-            accessibilityLabel={`Segment ${index + 1}, ${accountName(account)}, ${remainingPercent(window)}% left${timeLeft === null ? "" : `, ${timeLeft}% of the window left`}`}
+            accessibilityLabel={`Segment ${index + 1}, ${accountName(account)}, ${remainingPercent(window)}% left${timeLeft === null ? "" : `, ${timeLeft}% of the window left`}${split ? `. ${split.label}` : ""}`}
             accessibilityHint="Show account details"
             onPress={() => openAccount(account)}
             className={wide ? "h-9 min-w-0 flex-1 rounded-md" : "h-7 min-w-0 flex-1 rounded-md"}
@@ -275,6 +294,7 @@ function PoolWindowCard({
                   remaining={remainingPercent(window)}
                   color={normalizeProviderAccentColor(account.accentColor) ?? color}
                   refillPercent={window.resetsAt ? member.refillPercent : 0}
+                  models={split?.models ?? []}
                 />
               </View>
             </PaceGap>
@@ -572,6 +592,9 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
     ?.windows.find((candidate) => candidate.id === windowId && candidate.kind === windowKind);
   const window = pool?.members.find((member) => member.account.key === accountKey)?.window;
   const evenPace = window ? paceRemainingPercent(window, now) : null;
+  const split =
+    account && window ? weekBarSplit(window, account.limits.windows, "remaining") : null;
+  const allowance = window ? weekAllowanceText(window) : null;
   const reset = pool?.resets.find((candidate) => candidate.member.account.key === accountKey);
   const [revealed, setRevealed] = useState(false);
   const paceSettings = useUsagePaceSettings();
@@ -654,6 +677,10 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
                 <Text className="text-sm text-foreground-muted">
                   Even pace: {evenPace}% left by now
                 </Text>
+              ) : null}
+              {split ? <Text className="text-sm text-foreground-muted">{split.label}</Text> : null}
+              {allowance ? (
+                <Text className="text-sm text-foreground-muted">{allowance}</Text>
               ) : null}
               <PaceDetail window={window} now={now} settings={paceSettings} />
               {reset && reset.restoresPercent > 0 ? (

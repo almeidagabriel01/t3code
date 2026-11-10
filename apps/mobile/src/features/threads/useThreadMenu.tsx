@@ -14,7 +14,8 @@ import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { uuidv4 } from "../../lib/uuid";
 import { useProjects } from "../../state/entities";
 import { useNotesEnvironmentIds } from "../../state/notes";
-import { useThreadAssistant } from "../../state/assistants";
+import { assistantTaskMenuState } from "@t3tools/client-runtime/assistantTasks";
+import { useAssistantTask, useThreadAssistant } from "../../state/assistants";
 import { useKanbanEnvironmentIds, useThreadKanbanCard } from "../../state/kanban";
 import { useKanbanActions } from "../kanban/useKanbanActions";
 import { threadListEnvironmentsAtom } from "../../state/presentation";
@@ -66,6 +67,10 @@ export function useThreadMenu(
   const assistantFlows = useAssistantFlows(
     assistantEntry?.environmentId ?? thread?.environmentId ?? ("" as EnvironmentId),
   );
+  const assistantTask = useAssistantTask(
+    thread?.environmentId ?? ("" as EnvironmentId),
+    thread?.id ?? ("" as ThreadId),
+  );
   const openAssistantEditor = useOpenAssistantEditor();
   const openAssistantWork = useOpenAssistantWork();
   const restartAgentSession = useRestartAgentSession();
@@ -114,6 +119,7 @@ export function useThreadMenu(
     notes: canOpenThreadNotes(thread, notesEnvironmentIds, projects),
     turnIntoProject: canTurnIntoProject ? { archivable: threadCanArchive(thread.runtime) } : null,
     snoozePresetActions: buildSnoozePresetActions(snoozePresets),
+    assistantTask: assistantTaskMenuState(assistantTask, thread),
     assistant: assistantEntry
       ? {
           name: assistantEntry.assistant.name,
@@ -167,6 +173,8 @@ export function useThreadMenu(
             }),
           ),
         turnIntoProject: () => void turnThreadIntoProject(thread),
+        dismissTask: () => void assistantFlows.dismissTask(thread.id),
+        restoreTask: () => void assistantFlows.restoreTask(thread.id),
         resetAssistant: () => {
           if (assistantEntry) {
             assistantFlows.reset(assistantEntry.assistant, { openAfter: true });

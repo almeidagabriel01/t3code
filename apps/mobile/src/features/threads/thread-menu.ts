@@ -76,6 +76,8 @@ export interface ThreadMenuInput {
   readonly snoozePresetActions: ReadonlyArray<MenuAction>;
   /** The assistant whose current conversation this is; it can't be renamed, archived or deleted. */
   readonly assistant?: { readonly name: string; readonly resetDisabled?: boolean } | null;
+  /** Set when an assistant launched this thread as a task. */
+  readonly assistantTask?: { readonly dismissed: boolean; readonly canDismiss: boolean } | null;
 }
 
 const ASSISTANT_HIDDEN_IDS = new Set([
@@ -186,6 +188,18 @@ function buildBaseThreadMenuActions(input: ThreadMenuInput): MenuAction[] {
     ...(input.notes ? [{ id: "notes", title: "Notes", image: "note.text" }] : []),
     { id: "copy-thread", title: "Copy thread", image: "text.bubble" },
     { id: "copy-thread-id", title: "Copy thread ID", image: "doc.on.doc" },
+    ...(input.assistantTask
+      ? [
+          input.assistantTask.dismissed
+            ? { id: "restore-task", title: "Restore task", image: "arrow.uturn.backward" }
+            : {
+                id: "dismiss-task",
+                title: "Dismiss task",
+                image: "xmark",
+                attributes: { disabled: !input.assistantTask.canDismiss },
+              },
+        ]
+      : []),
   ];
   const settle: MenuAction = { id: "settle", title: "Settle", image: "checkmark" };
   const body: MenuAction[] = (() => {
@@ -252,6 +266,8 @@ export interface ThreadMenuHandlers {
   readonly restartSession?: () => void;
   readonly openNotes?: () => void;
   readonly turnIntoProject: () => void;
+  readonly dismissTask?: () => void;
+  readonly restoreTask?: () => void;
   readonly resetAssistant?: () => void;
   readonly assistantWork?: () => void;
   readonly assistantSettings?: () => void;
@@ -314,6 +330,10 @@ export function runThreadMenuEvent(
       return handlers.openNotes?.();
     case "turn-into-project":
       return handlers.turnIntoProject();
+    case "dismiss-task":
+      return handlers.dismissTask?.();
+    case "restore-task":
+      return handlers.restoreTask?.();
     case "reset-assistant":
       return handlers.resetAssistant?.();
     case "assistant-work":

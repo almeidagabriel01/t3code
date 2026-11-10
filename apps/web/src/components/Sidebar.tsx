@@ -265,6 +265,9 @@ import {
   type SidebarSweepAction,
 } from "./sidebar/SidebarThreadRow";
 import { AssistantSidebarSection } from "./assistants/AssistantSidebarSection";
+import { setTaskDismissed } from "./assistants/useAssistantFlows";
+import { readAssistantTask } from "../state/assistants";
+import { assistantTaskMenuState } from "@t3tools/client-runtime/assistantTasks";
 import { AgentsSidebarSection } from "./sidebar/AgentsSidebarSection";
 import { SidebarDraftBlock } from "./sidebar/SidebarDraftBlock";
 import { SidebarProjectGroups } from "./sidebar/SidebarProjectGroups";
@@ -2568,6 +2571,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 titleRegeneration: configLoaded,
               },
               snoozePresets,
+              assistantTask: assistantTaskMenuState(
+                readAssistantTask(threadRef.environmentId, threadRef.threadId),
+                thread,
+              ),
             }),
             position,
           ),
@@ -2625,6 +2632,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             }
             return;
           }
+          case "dismiss-task":
+            void setTaskDismissed(threadRef.environmentId, threadRef.threadId, true);
+            return;
+          case "restore-task":
+            void setTaskDismissed(threadRef.environmentId, threadRef.threadId, false);
+            return;
           case "settle":
             attemptSettle(threadRef);
             return;

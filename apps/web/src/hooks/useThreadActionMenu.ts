@@ -19,7 +19,8 @@ import { useRouter } from "@tanstack/react-router";
 import { openAssistantDialog } from "../components/assistants/assistantDialogState";
 import { openAssistantWork } from "../components/assistants/assistantWorkState";
 import { useAssistantFlows } from "../components/assistants/useAssistantFlows";
-import { useThreadAssistant } from "../state/assistants";
+import { readAssistantTask, useThreadAssistant } from "../state/assistants";
+import { assistantTaskMenuState } from "@t3tools/client-runtime/assistantTasks";
 
 import { pickSnoozePreset, resolveSnoozePresets } from "../components/Sidebar.snooze";
 import {
@@ -172,6 +173,10 @@ export function useThreadActionMenu(input: {
         canLinkCard,
         canTurnIntoProject: canTurnThreadIntoProject(threadRef),
         assistant: assistantEntry ? { name: assistantEntry.assistant.name } : null,
+        assistantTask: assistantTaskMenuState(
+          readAssistantTask(threadRef.environmentId, threadRef.threadId),
+          thread,
+        ),
       });
       const clicked = await settlePromise(() => api.contextMenu.show(items, position));
       if (clicked._tag === "Failure" || clicked.value === null) return;
@@ -331,6 +336,12 @@ export function useThreadActionMenu(input: {
           return;
         case "copy-thread-id":
           copyThreadIdToClipboard(thread.id, { threadId: thread.id });
+          return;
+        case "dismiss-task":
+          await assistantFlows.dismissTask(threadRef.threadId);
+          return;
+        case "restore-task":
+          await assistantFlows.restoreTask(threadRef.threadId);
           return;
         case "reset-assistant":
           if (assistantEntry) {

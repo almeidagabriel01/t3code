@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
     move: vi.fn(),
     startNow: vi.fn(),
     cancel: vi.fn(),
+    setEnabled: vi.fn(),
     setPaused: vi.fn(),
     setRule: vi.fn(),
     setMaxRunning: vi.fn(),
@@ -61,6 +62,7 @@ function setup(entries: ReadonlyArray<HeavyQueueEntry>, over: Partial<HeavyQueue
     "move",
     "startNow",
     "cancel",
+    "setEnabled",
     "setPaused",
     "setRule",
     "setMaxRunning",
@@ -71,6 +73,7 @@ function setup(entries: ReadonlyArray<HeavyQueueEntry>, over: Partial<HeavyQueue
   mocks.actions.canChange = true;
   mocks.state = {
     entries,
+    enabled: true,
     paused: false,
     rules: [],
     maxRunning: 3,
@@ -239,6 +242,15 @@ describe("HeavyQueueGroup", () => {
     await using paused = await render(group());
     await expect.element(paused.getByText("0 of 3 running · paused")).toBeVisible();
   });
+
+  it("says the queue is off instead of looking idle, and offers to turn it back on", async () => {
+    setup([], { enabled: false, paused: true });
+    await using screen = await render(group());
+    await expect.element(screen.getByText("Queue off: heavy jobs start right away")).toBeVisible();
+    expect(screen.container.querySelector('[role="switch"]')).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Turn on" }));
+    expect(mocks.actions.setEnabled).toHaveBeenCalledWith(true);
+  });
 });
 
 describe("ResourceSegment", () => {
@@ -252,5 +264,15 @@ describe("ResourceSegment", () => {
     setup([], { paused: true });
     await using screen = await render(<ResourceSegment />);
     await expect.element(screen.getByLabelText("Heavy work queue paused")).toBeVisible();
+  });
+
+  it("counts running jobs while the queue is off, without the pause mark", async () => {
+    setup([entry("a", { startedAt: "2026-01-01T00:00:00.000Z" })], {
+      enabled: false,
+      paused: true,
+    });
+    await using screen = await render(<ResourceSegment />);
+    await expect.element(screen.getByLabelText("1 in heavy work queue")).toBeVisible();
+    await expect.element(screen.getByLabelText("Heavy work queue paused")).not.toBeInTheDocument();
   });
 });

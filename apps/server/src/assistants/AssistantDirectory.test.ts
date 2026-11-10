@@ -41,6 +41,20 @@ it.effect("the turn's note carries the groups, except in front of a slash comman
   }).pipe(Effect.provide(directoryLayer)),
 );
 
+it.effect("the note titles the projects that exist and keeps a gone one as its id", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* seed("pro");
+    yield* sql`UPDATE assistants SET scope = 'project', project_ids_json = '["p1","gone"]' WHERE assistant_id = 'pro'`;
+    yield* sql`
+      INSERT INTO projection_projects (project_id, title, workspace_root, scripts_json, created_at, updated_at)
+      VALUES ('p1', 'harvey', '/w', '[]', '2026-01-01', '2026-01-01')`;
+    const directory = yield* Directory.AssistantDirectory;
+    const note = yield* assistantNote(Option.some(directory), thread("pro"), "hello");
+    assert.include(note, "these projects: harvey (id: p1), gone.");
+  }).pipe(Effect.provide(directoryLayer)),
+);
+
 it("a damaged connector list loses only the bad entries", () => {
   const good = { name: "docs", transport: "http", url: "https://x.test", future: true };
   assert.deepEqual(Directory.decodeMcpServers(null), []);

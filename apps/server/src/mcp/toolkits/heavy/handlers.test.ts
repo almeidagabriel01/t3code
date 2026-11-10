@@ -36,6 +36,7 @@ const base = {
   totalMemoryBytes: 100,
   workingAgents: 3,
   maxRunning: 3,
+  enabled: true,
   room: true,
   reasons: {},
   machine: null,
@@ -74,6 +75,23 @@ describe("heavyStatus", () => {
       name: "calm, free slot, but the queue sees no room",
       change: { entries: [entry("a", null, "t"), entry("b", null, null)], room: false },
       askUser: true,
+      high: false,
+    },
+    {
+      name: "queue off: load high, agents busy",
+      change: { enabled: false, busyCores: 6 },
+      askUser: false,
+      high: true,
+    },
+    {
+      name: "queue off: every slot busy, no room, another entry not started yet",
+      change: {
+        enabled: false,
+        entries: [entry("a", null, "t"), entry("b", null, null)],
+        maxRunning: 1,
+        room: false,
+      },
+      askUser: false,
       high: false,
     },
   ])("$name", ({ change, askUser, high }) => {
@@ -138,6 +156,7 @@ const callTool = (params: { action: "status" | "promote"; id?: string }, access?
         Layer.mock(HeavyQueue.HeavyQueue)({
           state: Effect.succeed({
             entries: [entry("run", "other", "t"), entry("w", "me", null)],
+            enabled: true,
             paused: false,
             rules: [],
             maxRunning: 3,

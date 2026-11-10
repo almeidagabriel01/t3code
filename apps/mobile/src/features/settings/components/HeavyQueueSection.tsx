@@ -176,6 +176,7 @@ export function HeavyQueueSection(props: { readonly environmentId: EnvironmentId
   const move = useAtomCommand(heavyQueueEnvironment.move);
   const startNow = useAtomCommand(heavyQueueEnvironment.startNow);
   const cancel = useAtomCommand(heavyQueueEnvironment.cancel);
+  const setEnabled = useAtomCommand(heavyQueueEnvironment.setEnabled);
   const setPaused = useAtomCommand(heavyQueueEnvironment.setPaused);
   const setRule = useAtomCommand(heavyQueueEnvironment.setRule);
   const setMaxRunning = useAtomCommand(heavyQueueEnvironment.setMaxRunning);
@@ -206,6 +207,7 @@ export function HeavyQueueSection(props: { readonly environmentId: EnvironmentId
       ),
   };
   const { entries } = state;
+  const canTune = canChange && state.enabled;
   const [now, setNow] = useState(() => Date.now());
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- coarse timer for the elapsed times
   useEffect(() => {
@@ -217,20 +219,32 @@ export function HeavyQueueSection(props: { readonly environmentId: EnvironmentId
       title="Heavy work queue"
       footer="Agents queue tests, builds and simulators here. Up to the limit run at once, and the next one starts only when the machine has room."
     >
+      <SettingsSwitchRow
+        icon="list.number"
+        label="Heavy work queue"
+        subtitle="Off: heavy jobs start right away and agents do not ask first."
+        value={state.enabled}
+        disabled={!canChange}
+        onValueChange={(enabled) => void setEnabled({ environmentId, input: { enabled } })}
+      />
       <ListRowLayout icon="timer" label={queueSummary(state)} />
       <SettingsSwitchRow
         icon="pause"
         label="Pause queue"
         subtitle="Nothing new starts while paused. Running jobs continue."
         value={state.paused}
-        disabled={!canChange}
+        disabled={!canTune}
         onValueChange={(paused) => void setPaused({ environmentId, input: { paused } })}
       />
-      <ListRowLayout icon="checklist.unchecked" label={`Run up to ${state.maxRunning} at once`} />
+      <ListRowLayout
+        icon="checklist.unchecked"
+        label={`Run up to ${state.maxRunning} at once`}
+        disabled={!state.enabled}
+      />
       <SettingsActionRow
         icon="plus"
         label="Allow one more"
-        disabled={!canChange || state.maxRunning >= MAX_LIMIT}
+        disabled={!canTune || state.maxRunning >= MAX_LIMIT}
         onPress={() =>
           void setMaxRunning({ environmentId, input: { maxRunning: state.maxRunning + 1 } })
         }
@@ -238,7 +252,7 @@ export function HeavyQueueSection(props: { readonly environmentId: EnvironmentId
       <SettingsActionRow
         icon="minus"
         label="Allow one fewer"
-        disabled={!canChange || state.maxRunning <= 1}
+        disabled={!canTune || state.maxRunning <= 1}
         onPress={() =>
           void setMaxRunning({ environmentId, input: { maxRunning: state.maxRunning - 1 } })
         }
@@ -251,7 +265,7 @@ export function HeavyQueueSection(props: { readonly environmentId: EnvironmentId
             icon="xmark"
             label={`${project?.title ?? rule.root}: ${PRIORITY_LABEL[rule.priority]}`}
             description="Remove this priority rule"
-            disabled={!canChange}
+            disabled={!canTune}
             onPress={() => commands.setRule(rule.root, null)}
           />
         );

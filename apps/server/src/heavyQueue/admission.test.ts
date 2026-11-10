@@ -29,6 +29,7 @@ const calm = {
 };
 const base: Omit<PlanInput, "entries"> = {
   maxRunning: 3,
+  enabled: true,
   paused: false,
   history: {},
   sample: calm,
@@ -286,6 +287,34 @@ describe("admission plan", () => {
     entry("r2", "vp run build", 60_000),
     entry("r3", "vp run build", 60_000),
   ];
+
+  it.each([
+    { name: "paused", change: { paused: true }, entries: [] },
+    { name: "every slot busy", change: {}, entries: full },
+    {
+      name: "no headroom",
+      change: { sample: { ...calm, headroomSince: null, availableMemoryBytes: GIB } },
+      entries: [entry("r1", "vp run build", 60_000)],
+    },
+    { name: "no load reading", change: { sample: null }, entries: full },
+    {
+      name: "an exclusive job running",
+      change: {},
+      entries: [entry("r1", "xcrun simctl boot x", 60_000)],
+    },
+    {
+      name: "a start moments ago",
+      change: { lastStartAt: NOW - 1_000, holding: true },
+      entries: [entry("r1", "vp run build", 1_000)],
+    },
+  ])("switched off, holds no waiter despite $name", ({ change, entries }) => {
+    const waiters = [entry("a", "xcrun simctl boot y"), entry("b", "vp run build")];
+    const off = plan({ ...base, ...change, enabled: false, entries: [...entries, ...waiters] });
+    expect(off).toEqual({ admit: "a", reasons: {}, room: true, holding: false });
+    const on = plan({ ...base, ...change, entries: [...entries, ...waiters] });
+    expect(on.admit).toBeNull();
+    expect(Object.keys(on.reasons)).toEqual(["a", "b"]);
+  });
   it.each([
     { name: "paused", change: { paused: true }, entries: [] },
     { name: "every slot busy", change: {}, entries: full },

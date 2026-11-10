@@ -183,6 +183,15 @@ export function useTaskAssistant(
   return assistant ? { environmentId, assistant } : null;
 }
 
+/** The link of this thread to the assistant that launched it, dismissed or not. */
+export function useAssistantTask(
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+): AssistantTask | null {
+  const states = useAtomValue(assistantStatesAtom);
+  return states.find(([id]) => id === environmentId)?.[1].tasks.get(threadId) ?? null;
+}
+
 export type AssistantReply<A = void> =
   | { readonly ok: true; readonly value: A }
   | { readonly ok: false; readonly message: string };
@@ -215,6 +224,23 @@ export function useAssistantActions(environmentId: EnvironmentId) {
     setAvatarImage: async (input: AssistantsSetAvatarImageInput) =>
       reply(await setAvatarImage({ environmentId, input })),
   };
+}
+
+/** Takes the environment instead of a hook: thread rows act on threads of any environment. */
+export async function setAssistantTaskDismissed(
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+  dismissed: boolean,
+): Promise<AssistantReply> {
+  const result = await runAtomCommand(
+    appAtomRegistry,
+    assistantsEnvironment.setTaskDismissed,
+    { environmentId, input: { threadId, dismissed } },
+    { label: "assistant task dismiss", reportFailure: false, reportDefect: true },
+  );
+  return result._tag === "Success"
+    ? { ok: true, value: undefined }
+    : { ok: false, message: assistantErrorMessage(squashAtomCommandFailure(result)) };
 }
 
 /** Brings an old conversation back as the assistant's current one; the archive lists many environments, so this takes the environment instead of using a hook. */

@@ -18,6 +18,7 @@ import {
   paceRemainingPercent,
   remainingPercent,
 } from "@t3tools/shared/usageLimits";
+import { weekAllowanceText, weekBarSplit } from "@t3tools/shared/usagePace";
 import { GaugeIcon, TrendingDownIcon, TrendingUpIcon } from "lucide-react";
 import { Fragment, useLayoutEffect, useState } from "react";
 
@@ -116,10 +117,12 @@ export function usePaceMark(timeLeft: number | null) {
 function WindowBar({
   color,
   window,
+  windows,
   now,
 }: {
   readonly color: string;
   readonly window: ServerProviderUsageWindow;
+  readonly windows: ReadonlyArray<ServerProviderUsageWindow>;
   readonly now: number;
 }) {
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
@@ -130,9 +133,12 @@ function WindowBar({
   const resetsAt = window.resetsAt
     ? formatUpcomingTimestamp(window.resetsAt, timestampFormat, now)
     : null;
+  const split = weekBarSplit(window, windows, "remaining");
+  const modelTotal = split?.models.reduce((sum, model) => sum + model.percent, 0) ?? 0;
+  const allowance = weekAllowanceText(window);
   const summary = `${window.label}: ${remaining}% left${
     timeLeft === null ? "" : `, ${timeLeft}% of the window left`
-  }${resetsIn ? `, ${resetsIn}` : ""}`;
+  }${resetsIn ? `, ${resetsIn}` : ""}${split ? `. ${split.label}` : ""}${allowance ? `. ${allowance}` : ""}`;
 
   return (
     <Tooltip>
@@ -156,6 +162,21 @@ function WindowBar({
               style={{ width: `${remaining}%`, backgroundColor: color }}
             />
           ) : null}
+          {split && modelTotal > 0 ? (
+            <div
+              className="absolute inset-y-1.5 right-0 flex overflow-hidden rounded-full"
+              style={{ width: `${modelTotal}%` }}
+            >
+              {split.models.map(({ name, percent }) => (
+                <div
+                  key={name}
+                  data-week-split="model"
+                  className="h-full shrink-0 opacity-50"
+                  style={{ width: `${(percent / modelTotal) * 100}%`, backgroundColor: color }}
+                />
+              ))}
+            </div>
+          ) : null}
         </div>
         {paceMark ? (
           <span
@@ -170,6 +191,8 @@ function WindowBar({
           <span className="text-foreground">
             {remaining}% left{timeLeft !== null ? ` · ${timeLeft}% of the window left` : ""}
           </span>
+          {split ? <span className="text-muted-foreground">{split.label}</span> : null}
+          {allowance ? <span className="text-muted-foreground">{allowance}</span> : null}
           {timeLeft !== null ? (
             <span className="text-muted-foreground">The line is where even spending would be.</span>
           ) : null}
@@ -218,7 +241,7 @@ export function LimitWindows({
                 {remainingPercent(window)}% left
               </span>
             </span>
-            <WindowBar color={color} window={window} now={now} />
+            <WindowBar color={color} window={window} windows={windows} now={now} />
             <span className="flex items-center gap-2 text-xs whitespace-nowrap text-muted-foreground tabular-nums">
               {pace ? <PaceIcon pace={pace} /> : null}
               <span className="ms-auto shrink-0">{resetsIn ?? ""}</span>

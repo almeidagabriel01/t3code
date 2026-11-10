@@ -281,7 +281,7 @@ function ProcessList({
                     data-heavy={heavy ? "" : undefined}
                     className={cn(
                       "flex min-w-0 flex-1 cursor-default items-baseline gap-2 text-2xs",
-                      heavy ? "text-warning" : "text-muted-foreground",
+                      heavy ? "text-warning-foreground" : "text-muted-foreground",
                     )}
                   />
                 }
@@ -491,7 +491,7 @@ function DeviceGroup({
   );
 }
 
-/** Renders nothing while the machine-wide heavy-work queue is empty and running. */
+/** Renders nothing while the machine-wide heavy-work queue is on, empty and not paused. */
 export function HeavyQueueGroup({
   environmentId,
   threadTitle,
@@ -501,8 +501,8 @@ export function HeavyQueueGroup({
   readonly threadTitle: (threadId: string) => string | undefined;
   readonly onOpenThread: (threadId: string) => void;
 }) {
-  const { entries, paused } = useHeavyQueue(environmentId);
-  if (entries.length === 0 && !paused) return null;
+  const { entries, paused, enabled } = useHeavyQueue(environmentId);
+  if (entries.length === 0 && !paused && enabled) return null;
   return (
     <ProjectGroup title="Heavy work queue" count={entries.length}>
       <HeavyQueueBody
@@ -798,8 +798,10 @@ function PrimaryMemory() {
 }
 
 function QueueCount({ environmentId }: { readonly environmentId: EnvironmentId | null }) {
-  const { entries, paused } = useHeavyQueue(environmentId);
-  const count = entries.length;
+  const queue = useHeavyQueue(environmentId);
+  // Switched off, a pause holds nothing back, so it is not worth a warning.
+  const paused = queue.paused && queue.enabled;
+  const count = queue.entries.length;
   return count === 0 && !paused ? null : (
     <>
       <span className="text-muted-foreground/50">·</span>

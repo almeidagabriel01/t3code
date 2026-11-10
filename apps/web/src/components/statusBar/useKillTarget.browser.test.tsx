@@ -21,6 +21,7 @@ vi.mock("../../state/heavyQueue", async () => {
       move: { permissionAtom: () => allowed, name: "move" },
       cancel: { permissionAtom: () => allowed, name: "cancel" },
       setPaused: { permissionAtom: () => allowed, name: "setPaused" },
+      setEnabled: { permissionAtom: () => allowed, name: "setEnabled" },
       setRule: { permissionAtom: () => allowed, name: "setRule" },
       setMaxRunning: { permissionAtom: () => allowed, name: "setMaxRunning" },
     },
@@ -58,6 +59,7 @@ function Probe() {
       <button onClick={() => void actions.cancel("b", false)}>cancel</button>
       <button onClick={() => void actions.cancel("c", true)}>stop</button>
       <button onClick={() => void actions.setPaused(true)}>pause</button>
+      <button onClick={() => void actions.setEnabled(false)}>off</button>
       <button onClick={() => void actions.setRule("/p", "first")}>rule</button>
       <button onClick={() => void actions.setMaxRunning(2)}>max</button>
     </>
@@ -81,12 +83,13 @@ describe("useHeavyQueueActions", () => {
   it("sends each change straight away, and removes or stops only after confirmation", async () => {
     await using screen = await setup();
     await expect.element(screen.getByRole("status")).toHaveTextContent("true");
-    for (const name of ["move", "pause", "rule", "max", "cancel", "stop"]) {
+    for (const name of ["move", "pause", "off", "rule", "max", "cancel", "stop"]) {
       await userEvent.click(screen.getByRole("button", { name }));
     }
     expect(mocks.calls.mock.calls).toEqual([
       ["move", { environmentId, input: { id: "a", beforeId: "b" } }],
       ["setPaused", { environmentId, input: { paused: true } }],
+      ["setEnabled", { environmentId, input: { enabled: false } }],
       ["setRule", { environmentId, input: { root: "/p", priority: "first" } }],
       ["setMaxRunning", { environmentId, input: { maxRunning: 2 } }],
       ["cancel", { environmentId, input: { id: "b" } }],

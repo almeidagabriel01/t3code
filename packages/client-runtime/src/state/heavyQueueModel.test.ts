@@ -123,11 +123,14 @@ describe("usageLine", () => {
 });
 
 describe("summary and formatting", () => {
-  const base = { entries, paused: false, maxRunning: 3, room: true, machine: null };
+  const base = { entries, enabled: true, paused: false, maxRunning: 3, room: true, machine: null };
   it("reads the slots, pause and headroom", () => {
     expect(queueSummary(base)).toBe("1 of 3 running");
     expect(queueSummary({ ...base, room: false })).toBe("1 of 3 running · waiting for headroom");
     expect(queueSummary({ ...base, paused: true })).toBe("1 of 3 running · paused");
+    expect(queueSummary({ ...base, enabled: false, paused: true, room: false })).toBe(
+      "Queue off: heavy jobs start right away",
+    );
     expect(
       queueSummary({
         ...base,

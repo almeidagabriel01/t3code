@@ -35,6 +35,33 @@ describe("applyUsageLimitsUpdate", () => {
     expect(next).toBe(published);
   });
 
+  it("keeps a model's week share only while its own percent is unchanged", () => {
+    const fable = {
+      id: "seven_day_fable",
+      kind: "weekly",
+      label: "Weekly · Fable",
+      usedPercent: 40,
+      weekUsedSharePercent: 20,
+      weekAllowancePercent: 50,
+    } as const;
+    const previous = { checkedAt, windows: [weekly, fable] };
+    const update = (usedPercent: number) => ({
+      previous,
+      checkedAt: "2026-09-03T12:00:05.000Z",
+      update: {
+        windows: [{ id: fable.id, kind: fable.kind, label: fable.label, usedPercent }],
+      },
+    });
+    expect(applyUsageLimitsUpdate(update(40))).toBe(previous);
+    const moved = applyUsageLimitsUpdate(update(45))!.windows.find((w) => w.id === fable.id);
+    expect(moved).toEqual({ id: fable.id, kind: fable.kind, label: fable.label, usedPercent: 45 });
+    const reprobed = applyUsageLimitsUpdate({
+      ...update(40),
+      update: { windows: [{ ...fable, weekUsedSharePercent: 22 }] },
+    })!.windows.find((w) => w.id === fable.id);
+    expect(reprobed?.weekUsedSharePercent).toBe(22);
+  });
+
   it("upserts by id and keeps the reset a percent-only update omits", () => {
     const next = applyUsageLimitsUpdate({
       previous: published,

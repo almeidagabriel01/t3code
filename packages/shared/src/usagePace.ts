@@ -22,15 +22,66 @@ export const selectUsagePaceSettings = (settings: ClientSettings) => ({
 export type UsagePaceSettings = ReturnType<typeof selectUsagePaceSettings>;
 
 export const BAND_TEXT: Record<UsageBand, string> = {
-  critical: "text-destructive",
-  watch: "text-warning",
+  critical: "text-destructive-foreground",
+  watch: "text-warning-foreground",
   ok: "",
 };
 export const BAND_FILL: Record<UsageBand, string> = {
-  critical: "bg-destructive",
-  watch: "bg-warning",
+  critical: "bg-destructive-foreground",
+  watch: "bg-warning-foreground",
   ok: "bg-muted-foreground",
 };
+
+export interface WeekBarSplit {
+  /** Each scoped model's reported share of the week, in report order, capped to what the week used. */
+  readonly models: ReadonlyArray<{ readonly name: string; readonly percent: number }>;
+  readonly otherPercent: number;
+  readonly label: string;
+}
+
+const scopedName = (window: ServerProviderUsageWindow) =>
+  window.label.replace(/^weekly\s*·\s*/i, "");
+
+/**
+ * Splits the account's own weekly bar into each scoped model's reported share and the rest. Null
+ * unless a scoped window of the same account carries the share. Bars that fill with the used share
+ * draw the model parts at the end of the fill; bars that fill with what is left draw them at the
+ * right end of the track, which is the used region.
+ */
+export function weekBarSplit(
+  window: ServerProviderUsageWindow,
+  windows: ReadonlyArray<ServerProviderUsageWindow>,
+  display: StatusBarUsagePercentage,
+): WeekBarSplit | null {
+  if (window.kind !== "weekly" || window.weekUsedSharePercent !== undefined) return null;
+  const scoped = windows.filter(
+    (other) =>
+      other !== window && other.kind === "weekly" && other.weekUsedSharePercent !== undefined,
+  );
+  if (scoped.length === 0) return null;
+  const used = Math.round(Math.min(100, Math.max(0, window.usedPercent)));
+  let room = used;
+  const models = scoped.map((other) => {
+    const percent = Math.min(room, Math.round(other.weekUsedSharePercent ?? 0));
+    room -= percent;
+    return { name: scopedName(other), percent };
+  });
+  const name = window.label === "Weekly" ? "Week" : window.label;
+  const parts = [...models.map((m) => `${m.name} ${m.percent}%`), `other models ${room}%`];
+  return {
+    models,
+    otherPercent: room,
+    label:
+      display === "remaining"
+        ? `${name} ${100 - used}% left, used ${parts.join(", ")}`
+        : `${name} ${used}% used: ${parts.join(", ")}`,
+  };
+}
+
+export const weekAllowanceText = (window: ServerProviderUsageWindow) =>
+  window.weekAllowancePercent === undefined
+    ? null
+    : `Up to ${Math.round(window.weekAllowancePercent)}% of the weekly limit`;
 
 export function windowBand(window: ServerProviderUsageWindow, settings: UsagePaceSettings) {
   return usageBand(window.usedPercent, settings.watch, settings.critical);
@@ -45,7 +96,7 @@ const underPace = (deltaPoints: number) => deltaPoints <= -PACE_TOLERANCE_POINTS
 
 /** Spending faster than the window elapses is red, slower is green, dead even stays neutral. */
 export const paceTextClass = (view: Pick<PaceView, "deficit" | "reserve">) =>
-  view.deficit ? "text-destructive" : view.reserve ? "text-success" : "";
+  view.deficit ? "text-destructive-foreground" : view.reserve ? "text-success-foreground" : "";
 const paceText = (deltaPoints: number) =>
   Math.abs(deltaPoints) < PACE_TOLERANCE_POINTS
     ? "on pace"

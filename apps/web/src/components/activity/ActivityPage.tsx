@@ -14,7 +14,7 @@ import { DecisionsSection } from "../decisions/DecisionsSection";
 import { type SidebarPriorityHolds } from "../Sidebar.logic";
 import { BackgroundThreadContext } from "../chat/backgroundThread";
 import { RelativeTime } from "../RelativeTime";
-import { useNavigateToMainApp } from "../sidebar/mainAppLocation";
+import { useNavigateToMainApp, useRememberThreadAsMainApp } from "../sidebar/mainAppLocation";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { SidebarInset } from "../ui/sidebar";
@@ -79,6 +79,7 @@ function ActivityRow(props: {
 export function ActivityPage() {
   const navigate = useNavigate();
   const navigateToMainApp = useNavigateToMainApp();
+  const rememberThread = useRememberThreadAsMainApp();
   const threads = useThreadShells();
   const projects = useProjects();
   const delegatedUnderParent = useDelegatedUnderParent();
@@ -210,7 +211,12 @@ export function ActivityPage() {
                         }
                         selected={entry.key === selected?.key}
                         dot={dot}
-                        onSelect={() => setSelectedKey(entry.key)}
+                        onSelect={() => {
+                          rememberThread(
+                            scopeThreadRef(entry.thread.environmentId, entry.thread.id),
+                          );
+                          setSelectedKey(entry.key);
+                        }}
                       />
                     ))}
                   </ul>

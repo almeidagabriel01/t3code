@@ -459,6 +459,7 @@ import {
 } from "./decisions.ts";
 import {
   Assistant,
+  AssistantTask,
   AssistantError,
   AssistantsCreateInput,
   AssistantTeam,
@@ -471,6 +472,7 @@ import {
   AssistantsEvent,
   AssistantsResetInput,
   AssistantsSetAvatarImageInput,
+  AssistantsSetTaskDismissedInput,
   AssistantLibrary,
   AssistantsLibraryInput,
   AssistantSpend,
@@ -533,6 +535,7 @@ import {
   HeavyQueueEntryInput,
   HeavyQueueError,
   HeavyQueueMoveInput,
+  HeavyQueueSetEnabledInput,
   HeavyQueueSetMaxRunningInput,
   HeavyQueueSetPausedInput,
   HeavyQueueSetRuleInput,
@@ -791,6 +794,7 @@ export const WS_METHODS = {
   assistantsDelete: "assistants.delete",
   assistantsReset: "assistants.reset",
   assistantsSetAvatarImage: "assistants.setAvatarImage",
+  assistantsSetTaskDismissed: "assistants.setTaskDismissed",
   assistantsSpend: "assistants.spend",
   assistantsLibrary: "assistants.library",
   assistantSandboxSubscribe: "assistantSandbox.subscribe",
@@ -823,6 +827,7 @@ export const WS_METHODS = {
   heavyQueueCancel: "heavyQueue.cancel",
   heavyQueueMove: "heavyQueue.move",
   heavyQueueSetPaused: "heavyQueue.setPaused",
+  heavyQueueSetEnabled: "heavyQueue.setEnabled",
   heavyQueueSetRule: "heavyQueue.setRule",
   heavyQueueSetMaxRunning: "heavyQueue.setMaxRunning",
   telegramChannelGetSettings: "telegramChannel.getSettings",
@@ -2409,6 +2414,11 @@ const WsAssistantsSetAvatarImageRpc = Rpc.make(WS_METHODS.assistantsSetAvatarIma
   success: Assistant,
   error: AssistantRpcErrors,
 });
+const WsAssistantsSetTaskDismissedRpc = Rpc.make(WS_METHODS.assistantsSetTaskDismissed, {
+  payload: AssistantsSetTaskDismissedInput,
+  success: AssistantTask,
+  error: AssistantRpcErrors,
+});
 const WsAssistantsSpendRpc = Rpc.make(WS_METHODS.assistantsSpend, {
   payload: AssistantsSpendInput,
   success: AssistantSpend,
@@ -2576,6 +2586,11 @@ const WsHeavyQueueMoveRpc = Rpc.make(WS_METHODS.heavyQueueMove, {
 
 const WsHeavyQueueSetPausedRpc = Rpc.make(WS_METHODS.heavyQueueSetPaused, {
   payload: HeavyQueueSetPausedInput,
+  error: Schema.Union([HeavyQueueError, EnvironmentAuthorizationError]),
+});
+
+const WsHeavyQueueSetEnabledRpc = Rpc.make(WS_METHODS.heavyQueueSetEnabled, {
+  payload: HeavyQueueSetEnabledInput,
   error: Schema.Union([HeavyQueueError, EnvironmentAuthorizationError]),
 });
 
@@ -2959,6 +2974,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsAssistantsDeleteRpc,
   WsAssistantsResetRpc,
   WsAssistantsSetAvatarImageRpc,
+  WsAssistantsSetTaskDismissedRpc,
   WsAssistantsSpendRpc,
   WsAssistantsLibraryRpc,
   WsAssistantSandboxSubscribeRpc,
@@ -2991,6 +3007,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsHeavyQueueCancelRpc,
   WsHeavyQueueMoveRpc,
   WsHeavyQueueSetPausedRpc,
+  WsHeavyQueueSetEnabledRpc,
   WsHeavyQueueSetRuleRpc,
   WsHeavyQueueSetMaxRunningRpc,
   WsTelegramChannelGetSettingsRpc,

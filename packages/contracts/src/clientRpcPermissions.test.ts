@@ -86,6 +86,7 @@ describe("assistant client guards", () => {
       WS_METHODS.assistantsDelete,
       WS_METHODS.assistantsReset,
       WS_METHODS.assistantsSetAvatarImage,
+      WS_METHODS.assistantsSetTaskDismissed,
       WS_METHODS.assistantTeamsCreate,
       WS_METHODS.assistantTeamsUpdate,
       WS_METHODS.assistantTeamsDelete,
@@ -135,5 +136,22 @@ describe("Claude in Chrome client guards", () => {
     expect(Object.hasOwn(CLIENT_GUARDED_RPC_SCOPES, WS_METHODS.providerClaudeChromeStatus)).toBe(
       false,
     );
+  });
+});
+
+describe("heavy queue client guards", () => {
+  it("guards every queue change, switching it off included, and leaves the subscription open", () => {
+    for (const method of [
+      WS_METHODS.heavyQueuePromote,
+      WS_METHODS.heavyQueueStartNow,
+      WS_METHODS.heavyQueueCancel,
+      WS_METHODS.heavyQueueMove,
+      WS_METHODS.heavyQueueSetPaused,
+      WS_METHODS.heavyQueueSetEnabled,
+      WS_METHODS.heavyQueueSetRule,
+      WS_METHODS.heavyQueueSetMaxRunning,
+    ])
+      expect(clientRpcRequiredScopes(method, {})).toEqual(["terminal:operate"]);
+    expect(Object.hasOwn(CLIENT_GUARDED_RPC_SCOPES, WS_METHODS.heavyQueueSubscribe)).toBe(false);
   });
 });

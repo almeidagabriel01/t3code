@@ -1206,6 +1206,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["OTel OTLP telemetry export endpoints logs traces metrics Grafana"],
   },
   {
+    id: "heavy-work-enabled",
+    title: "Heavy work queue",
+    to: "/settings/maintenance",
+    searchTerms: ["heavy work queue turn on off disable enable start right away without asking"],
+  },
+  {
     id: "heavy-work-max",
     title: "Run up to N heavy jobs at once",
     to: "/settings/maintenance",

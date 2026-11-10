@@ -68,7 +68,12 @@ import {
   type RailPreferences,
   type ResolvedRailItem,
 } from "./destinationRail.logic";
-import { isAppModalPage, useCloseAppModal, useNavigateToMainApp } from "./mainAppLocation";
+import {
+  isAppModalPage,
+  useCloseAppModal,
+  useHomeLinkClick,
+  useNavigateToMainApp,
+} from "./mainAppLocation";
 import { SidebarForkUpdatePill } from "./SidebarForkUpdatePill";
 import { SidebarUpdatePill } from "./SidebarUpdatePill";
 
@@ -458,6 +463,7 @@ export const DestinationRail = memo(function DestinationRail() {
   const pathname = useLocation({ select: (location) => location.pathname });
   const active = resolveActiveDestination(pathname);
   const toggleBack = useToggleBack(active);
+  const onHomeClick = useHomeLinkClick(active === "home");
   const pullRequestsSupported = usePullRequestsSupported();
   const assistantsAvailable = useAssistantsEnvironmentIds().length > 0;
   const boardAvailable = useKanbanEnvironmentIds().length > 0;
@@ -524,6 +530,7 @@ export const DestinationRail = memo(function DestinationRail() {
             activeOptions={EXACT_MATCH}
             aria-current={active === "home" ? "page" : undefined}
             className={railItemClassName(active === "home")}
+            onClick={onHomeClick}
           >
             <HouseIcon aria-hidden />
           </Link>

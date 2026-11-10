@@ -66,6 +66,7 @@ export function assistantNoteFor(
   teams: ReadonlyArray<TeamMembership> = [],
   /** The sandbox's environment id; null while it is not linked. Read only for a sandboxed assistant. */
   sandboxEnvironmentId: string | null = null,
+  projectTitles: Readonly<Record<string, string>> = {},
 ): string {
   // Provider-native slash commands must stay at the start of the prompt.
   if (userText.trimStart().startsWith("/")) return "";
@@ -81,7 +82,9 @@ export function assistantNoteFor(
     assistant.workspace === "sandbox"
       ? sandboxNoteLine(sandboxEnvironmentId)
       : HOST_CONTAINER_NOTE_LINE,
-    assistant.scope === "project" ? projectScopeNoteLine(assistant.projectIds ?? []) : "",
+    assistant.scope === "project"
+      ? escapeBody(projectScopeNoteLine(assistant.projectIds ?? [], projectTitles))
+      : "",
     assistant.workspace === "sandbox" ? TASKS_SANDBOX : TASKS_HOST,
     assistant.askBeforeActing === true ? ASK_BEFORE_ACTING_LINE : "",
     escapeBody(assistant.instructions.trim()),
@@ -130,5 +133,9 @@ export const assistantNote = Effect.fn("AssistantNote.forTurn")(function* (
     assistant.workspace === "sandbox"
       ? Option.getOrNull(yield* directory.value.sandboxEnvironmentId)
       : null;
-  return assistantNoteFor(assistant, userText, teams, sandbox);
+  const titles =
+    assistant.scope === "project" && directory.value.projectTitles !== undefined
+      ? yield* directory.value.projectTitles(assistant.projectIds)
+      : {};
+  return assistantNoteFor(assistant, userText, teams, sandbox, titles);
 });

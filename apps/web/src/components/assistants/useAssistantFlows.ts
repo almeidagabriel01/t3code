@@ -5,6 +5,7 @@ import {
   type AssistantTeam,
   type EnvironmentId,
   type ScopedThreadRef,
+  type ThreadId,
 } from "@t3tools/contracts";
 import { useRouter } from "@tanstack/react-router";
 
@@ -12,11 +13,24 @@ import { requestConfirmDialog } from "../../confirmDialog";
 import {
   useAssistantActions,
   useAssistantGroupActions,
+  setAssistantTaskDismissed,
   useAssistantTeamActions,
   type AssistantReply,
 } from "../../state/assistants";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { toastManager } from "../ui/toast";
+
+/** Dismisses or restores a task from any environment, toasting a refusal. */
+export async function setTaskDismissed(
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+  dismissed: boolean,
+) {
+  failed(
+    dismissed ? "Could not dismiss the task" : "Could not restore the task",
+    await setAssistantTaskDismissed(environmentId, threadId, dismissed),
+  );
+}
 
 function failed(title: string, reply: AssistantReply<unknown>) {
   if (reply.ok) return;
@@ -72,6 +86,8 @@ export function useAssistantFlows(environmentId: EnvironmentId) {
         await actions.update({ assistantId: assistant.id, archived: false }),
       );
     },
+    dismissTask: (threadId: ThreadId) => setTaskDismissed(environmentId, threadId, true),
+    restoreTask: (threadId: ThreadId) => setTaskDismissed(environmentId, threadId, false),
     async restoreDefault() {
       failed("Could not restore Jarvis", await actions.create(ASSISTANTS_RESTORE_DEFAULT_INPUT));
     },

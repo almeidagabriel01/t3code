@@ -30,6 +30,8 @@ export type ThreadActionMenuId =
   | "copy-thread-id"
   | "archive"
   | "delete"
+  | "dismiss-task"
+  | "restore-task"
   | "reset-assistant"
   | "assistant-work"
   | "assistant-settings";
@@ -104,6 +106,11 @@ export interface ThreadActionMenuState {
   readonly canLinkCard?: boolean | undefined;
   /** The assistant whose current conversation this is; it can't be renamed, archived or deleted here. */
   readonly assistant?: { readonly name: string } | null | undefined;
+  /** Set when an assistant launched this thread as a task. */
+  readonly assistantTask?:
+    | { readonly dismissed: boolean; readonly canDismiss: boolean }
+    | null
+    | undefined;
 }
 
 /** Local navigation, read markers, and copying remain available to read-only clients. */
@@ -195,6 +202,18 @@ export function buildThreadActionMenuItems(
     { id: "mark-unread", label: "Mark unread", icon: "mail-open" },
     ...(state.canShareWithGuest
       ? [{ id: "share-guest" as const, label: "Share with guest", icon: "user-plus" }]
+      : []),
+    ...(state.assistantTask
+      ? [
+          state.assistantTask.dismissed
+            ? { id: "restore-task" as const, label: "Restore task", icon: "rotate-ccw" }
+            : {
+                id: "dismiss-task" as const,
+                label: "Dismiss task",
+                icon: "x",
+                disabled: !state.assistantTask.canDismiss,
+              },
+        ]
       : []),
     { id: "handoff", label: "Hand off to another agent", icon: "arrow-right-left" },
     ...(state.canLinkCard

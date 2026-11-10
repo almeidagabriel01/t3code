@@ -7,7 +7,10 @@ const { mocks } = vi.hoisted(() => ({
   mocks: {
     owner: null as null | { assistant: { id: string; name: string; threadId: string | null } },
     shell: null as null | Record<string, unknown>,
+    task: null as null | { dismissedAt: string | null },
     open: vi.fn(),
+    dismiss: vi.fn(),
+    restore: vi.fn(),
   },
 }));
 
@@ -27,13 +30,40 @@ vi.mock("react-native", () => ({
 vi.mock("../../components/ui/AppText", () => ({
   AppText: (props: { children?: ReactNode }) => <span>{props.children}</span>,
 }));
-vi.mock("../../state/assistants", () => ({ useTaskAssistant: () => mocks.owner }));
+vi.mock("../../components/ui/Menu", () => ({
+  Menu: (props: {
+    actions: Array<{ id: string; title: string; attributes?: { disabled?: boolean } }>;
+    onPressAction: (event: { nativeEvent: { event: string } }) => void;
+    children?: ReactNode;
+  }) => (
+    <>
+      {props.children}
+      {props.actions.map((action) => (
+        <button
+          key={action.id}
+          aria-label={`menu:${action.title}`}
+          disabled={action.attributes?.disabled}
+          onClick={() => props.onPressAction({ nativeEvent: { event: action.id } })}
+        />
+      ))}
+    </>
+  ),
+}));
+vi.mock("../../state/assistants", () => ({
+  useTaskAssistant: () => mocks.owner,
+  useAssistantTask: () => mocks.task,
+}));
 vi.mock("../../state/entities", () => ({ useThreadShell: () => mocks.shell }));
 vi.mock("./assistantPresentation", () => ({
   AssistantAvatar: (props: { mood?: string }) => <i>{`face:${props.mood}`}</i>,
 }));
 vi.mock("./useAssistantFlows", () => ({
-  useAssistantFlows: () => ({ openConversation: mocks.open }),
+  useAssistantFlows: () => ({
+    canAct: true,
+    openConversation: mocks.open,
+    dismissTask: mocks.dismiss,
+    restoreTask: mocks.restore,
+  }),
 }));
 
 import { AssistantTaskChip } from "./AssistantTaskChip";
@@ -51,6 +81,9 @@ const failedShell = {
   source: { latestVisibleMessage: null },
 };
 
+const byLabel = (label: string) =>
+  container.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`);
+
 let root: Root;
 let container: HTMLDivElement;
 const render = () =>
@@ -64,7 +97,8 @@ beforeEach(() => {
   root = createRoot(container);
   mocks.owner = null;
   mocks.shell = null;
-  mocks.open.mockReset();
+  mocks.task = { dismissedAt: null };
+  for (const fn of [mocks.open, mocks.dismiss, mocks.restore]) fn.mockReset();
 });
 afterEach(() => act(() => root.unmount()));
 
@@ -74,17 +108,34 @@ describe("AssistantTaskChip", () => {
     expect(container.textContent).toBe("");
   });
 
-  it("wears the assistant's face in the task's mood and opens the assistant on tap", async () => {
+  it("wears the assistant's face in the task's mood and opens the assistant from its menu", async () => {
     mocks.owner = { assistant: jarvis };
     render();
     expect(container.textContent).toContain("Task of Jarvis, running");
     expect(container.textContent).toContain("face:working");
-    await act(async () => container.querySelector("button")?.click());
+    await act(async () => byLabel("menu:Open Jarvis")?.click());
     expect(mocks.open).toHaveBeenCalledWith(jarvis);
 
     mocks.shell = failedShell;
     render();
     expect(container.textContent).toContain("Task of Jarvis, failed");
     expect(container.textContent).toContain("face:failed");
+  });
+
+  it("dismisses a finished task, refuses a running one, and restores a dismissed one", async () => {
+    mocks.owner = { assistant: jarvis };
+    render();
+    expect(byLabel("menu:Dismiss task")?.disabled).toBe(true);
+
+    mocks.shell = failedShell;
+    render();
+    await act(async () => byLabel("menu:Dismiss task")?.click());
+    expect(mocks.dismiss).toHaveBeenCalledWith("t1");
+
+    mocks.task = { dismissedAt: "2026-11-06T00:00:00.000Z" };
+    render();
+    expect(byLabel("menu:Dismiss task")).toBeNull();
+    await act(async () => byLabel("menu:Restore task")?.click());
+    expect(mocks.restore).toHaveBeenCalledWith("t1");
   });
 });

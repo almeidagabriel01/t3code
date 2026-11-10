@@ -485,6 +485,12 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
     )
   `;
   yield* sql`CREATE INDEX IF NOT EXISTS assistant_tasks_assistant_idx ON assistant_tasks(assistant_id)`;
+  const assistantTaskColumns = yield* sql<{
+    readonly name: string;
+  }>`PRAGMA table_info(assistant_tasks)`;
+  if (!assistantTaskColumns.some((column) => column.name === "dismissed_at")) {
+    yield* sql`ALTER TABLE assistant_tasks ADD COLUMN dismissed_at TEXT`;
+  }
 
   // A group's shared chat: messages, one task per recipient, and each member's hidden thread.
   if (!teamColumns.some((column) => column.name === "archived_at")) {

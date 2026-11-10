@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   state: null as unknown as HeavyQueueState,
   actions: {
     canChange: true,
+    setEnabled: vi.fn(),
     setPaused: vi.fn(),
     setRule: vi.fn(),
     setMaxRunning: vi.fn(),
@@ -52,6 +53,7 @@ vi.mock("./settingsLayout", () => ({
 import { HeavyWorkSettingsSection } from "./HeavyWorkSettings";
 
 const setup = (over: Partial<HeavyQueueState> = {}) => {
+  mocks.actions.setEnabled.mockReset();
   mocks.actions.setPaused.mockReset();
   mocks.actions.setRule.mockReset();
   mocks.actions.setMaxRunning.mockReset();
@@ -59,6 +61,7 @@ const setup = (over: Partial<HeavyQueueState> = {}) => {
   mocks.scope = { environmentIds: ["env"] };
   mocks.state = {
     entries: [],
+    enabled: true,
     paused: false,
     rules: [],
     maxRunning: 3,
@@ -79,6 +82,39 @@ it("changes the slot limit and the pause from the settings rows", async () => {
   );
   await userEvent.click(screen.getByRole("option", { name: "6" }));
   expect(mocks.actions.setMaxRunning).toHaveBeenCalledWith(6);
+});
+
+it("switches the queue off and on, and locks the other rows while it is off without changing them", async () => {
+  setup();
+  await using on = await render(<HeavyWorkSettingsSection />, { router: false }); // rows are mocked
+  await expect.element(on.getByRole("heading", { name: "Heavy work queue" })).toBeVisible();
+  await expect
+    .element(on.getByText(/Off: heavy jobs start right away and agents do not ask first\./))
+    .toBeVisible();
+  await userEvent.click(on.getByRole("switch", { name: "Use the heavy work queue" }));
+  expect(mocks.actions.setEnabled).toHaveBeenCalledWith(false);
+
+  setup({
+    enabled: false,
+    paused: true,
+    maxRunning: 6,
+    rules: [{ root: "/work/app", priority: "first" }],
+  });
+  await using off = await render(<HeavyWorkSettingsSection />, { router: false }); // rows are mocked
+  const pause = off.getByRole("switch", { name: "Pause the heavy work queue" });
+  await expect.element(pause).toBeDisabled();
+  await expect.element(pause).toBeChecked();
+  const limit = off.getByRole("combobox", { name: "Run up to this many heavy jobs at once" });
+  await expect.element(limit).toBeDisabled();
+  await expect.element(limit).toHaveTextContent("6");
+  await expect.element(off.getByText("Always first")).toBeVisible();
+  await expect
+    .element(off.getByRole("button", { name: "Remove the priority rule for App Project" }))
+    .toBeDisabled();
+  const queue = off.getByRole("switch", { name: "Use the heavy work queue" });
+  await expect.element(queue).not.toBeChecked();
+  await userEvent.click(queue);
+  expect(mocks.actions.setEnabled).toHaveBeenCalledWith(true);
 });
 
 it("lists the project rules and removes one", async () => {
@@ -109,5 +145,8 @@ it("points at the missing choice when no single environment is selected, and loc
   await using locked = await render(<HeavyWorkSettingsSection />, { router: false }); // rows are mocked
   await expect
     .element(locked.getByRole("switch", { name: "Pause the heavy work queue" }))
+    .toBeDisabled();
+  await expect
+    .element(locked.getByRole("switch", { name: "Use the heavy work queue" }))
     .toBeDisabled();
 });

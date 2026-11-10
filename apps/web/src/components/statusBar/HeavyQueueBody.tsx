@@ -369,16 +369,27 @@ export function HeavyQueueBody({
         <span className="min-w-0 flex-1 truncate text-3xs text-muted-foreground">
           {queueSummary(state)}
         </span>
-        <label className="flex shrink-0 cursor-pointer items-center gap-1.5 text-3xs text-muted-foreground">
-          Pause
-          <Switch
-            size="sm"
-            checked={state.paused}
+        {state.enabled ? (
+          <label className="flex shrink-0 cursor-pointer items-center gap-1.5 text-3xs text-muted-foreground">
+            Pause
+            <Switch
+              size="sm"
+              checked={state.paused}
+              disabled={!actions.canChange}
+              onCheckedChange={(checked) => void actions.setPaused(Boolean(checked))}
+              aria-label="Pause the heavy work queue"
+            />
+          </label>
+        ) : (
+          <Button
+            size="xs"
+            variant="outline"
             disabled={!actions.canChange}
-            onCheckedChange={(checked) => void actions.setPaused(Boolean(checked))}
-            aria-label="Pause the heavy work queue"
-          />
-        </label>
+            onClick={() => void actions.setEnabled(true)}
+          >
+            Turn on
+          </Button>
+        )}
       </div>
       <DndContext
         sensors={sensors}

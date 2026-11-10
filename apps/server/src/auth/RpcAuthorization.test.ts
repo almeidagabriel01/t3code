@@ -85,6 +85,7 @@ describe("RPC authorization scopes", () => {
       WS_METHODS.heavyQueueCancel,
       WS_METHODS.heavyQueueMove,
       WS_METHODS.heavyQueueSetPaused,
+      WS_METHODS.heavyQueueSetEnabled,
       WS_METHODS.heavyQueueSetRule,
       WS_METHODS.heavyQueueSetMaxRunning,
     ]) {

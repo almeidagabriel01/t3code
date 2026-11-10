@@ -70,6 +70,17 @@ export function applyUsageLimitsUpdate(input: {
       ...(window.windowDurationMins === undefined && existing?.windowDurationMins !== undefined
         ? { windowDurationMins: existing.windowDurationMins }
         : {}),
+      // A streamed update carries no shares; they stay valid only while the model's own percent is unchanged.
+      ...(window.weekUsedSharePercent === undefined &&
+      existing?.weekUsedSharePercent !== undefined &&
+      existing.usedPercent === window.usedPercent
+        ? {
+            weekUsedSharePercent: existing.weekUsedSharePercent,
+            ...(existing.weekAllowancePercent !== undefined
+              ? { weekAllowancePercent: existing.weekAllowancePercent }
+              : {}),
+          }
+        : {}),
     };
     if (existing === undefined || !usageWindowEquals(existing, next)) {
       merged.set(window.id, next);
@@ -95,7 +106,9 @@ function usageWindowEquals(a: ServerProviderUsageWindow, b: ServerProviderUsageW
     a.label === b.label &&
     a.usedPercent === b.usedPercent &&
     a.resetsAt === b.resetsAt &&
-    a.windowDurationMins === b.windowDurationMins
+    a.windowDurationMins === b.windowDurationMins &&
+    a.weekUsedSharePercent === b.weekUsedSharePercent &&
+    a.weekAllowancePercent === b.weekAllowancePercent
   );
 }
 

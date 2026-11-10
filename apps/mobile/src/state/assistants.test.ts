@@ -26,6 +26,8 @@ import {
   useAssistantSandbox,
   useAssistantSandboxActions,
   useAssistantSpend,
+  useAssistantTask,
+  setAssistantTaskDismissed,
 } from "./assistants";
 
 describe("useAssistantSpend", () => {
@@ -184,5 +186,23 @@ describe("group chat hooks", () => {
       ok: false,
       message: "gone",
     });
+  });
+});
+
+describe("assistant task link", () => {
+  const task = { dismissedAt: null };
+  const states = [["hub", { tasks: new Map([["t1", task]]) }]];
+
+  it("finds a task by environment and thread, and none for a thread no assistant launched", () => {
+    vi.mocked(useAtomValue).mockReturnValue(states);
+    expect(useAssistantTask("hub" as never, "t1" as never)).toBe(task);
+    expect(useAssistantTask("hub" as never, "other" as never)).toBeNull();
+    expect(useAssistantTask("elsewhere" as never, "t1" as never)).toBeNull();
+  });
+
+  it("answers a reply instead of throwing when the environment cannot be reached", async () => {
+    using _log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const reply = await setAssistantTaskDismissed("hub" as never, "t1" as never, true);
+    expect(reply.ok).toBe(false);
   });
 });

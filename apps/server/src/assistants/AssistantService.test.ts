@@ -2,6 +2,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
+  AssistantId,
   type AssistantError,
   type AssistantsCreateInput,
   DEFAULT_ASSISTANT_ID,
@@ -52,6 +53,7 @@ interface FakeThread {
   deletedAt: string | null;
   archivedAt: string | null;
   modelSelection: ModelSelection;
+  activeRunId?: string | null;
 }
 
 /** The thread side of the world, with the pointer each archive or delete saw recorded. */
@@ -78,6 +80,8 @@ const harness = () => {
               ? Effect.fail(new Error("missing") as never)
               : Effect.succeed({ thread } as never);
           },
+          getThreadShell: (threadId: string) =>
+            Effect.succeed({ activeRunId: threads.get(threadId)?.activeRunId ?? null } as never),
           dispatch: (command: { type: string; threadId: string }) =>
             Effect.gen(function* () {
               const row = yield* sql<{
@@ -1230,3 +1234,47 @@ it.effect("a chat counter refresh reaches the stream but not services reacting t
     assert.isFalse((yield* PubSub.takeAll(changes)).some((seen) => seen.type === "teamUpserted"));
   }).pipe(Effect.provide(layer), Effect.scoped);
 });
+
+it.effect(
+  "a task is dismissed and restored, both repeat-safe, and a running one is refused",
+  () => {
+    const { layer, threads } = harness();
+    return Effect.gen(function* () {
+      const assistants = yield* Assistants.AssistantService;
+      const links = yield* AssistantTaskLinks.AssistantTasks;
+      yield* links.link({
+        threadId: ThreadId.make("task-1"),
+        assistantId: AssistantId.make(DEFAULT_ASSISTANT_ID),
+        projectId: repo,
+        title: "Add retry",
+        createdAt: "2026-01-02T00:00:00.000Z",
+      });
+      threads.set("task-1", {
+        projectId: repo,
+        deletedAt: null,
+        archivedAt: null,
+        modelSelection: model("m"),
+        activeRunId: "run-1",
+      });
+      const task = ThreadId.make("task-1");
+
+      const refused = yield* assistants.dismissTask(task).pipe(Effect.flip);
+      assert.equal(refused.reason, "invalid");
+      assert.isNull((yield* links.list)[0]?.dismissedAt);
+
+      threads.get("task-1")!.activeRunId = null;
+      const first = yield* assistants.dismissTask(task);
+      assert.isString(first.dismissedAt);
+      assert.equal((yield* assistants.dismissTask(task)).dismissedAt, first.dismissedAt);
+      assert.equal((yield* links.list)[0]?.dismissedAt, first.dismissedAt);
+
+      // Restoring needs no idle thread, and a repeat lands on the same result.
+      threads.get("task-1")!.activeRunId = "run-2";
+      assert.isNull((yield* assistants.restoreTask(task)).dismissedAt);
+      assert.isNull((yield* assistants.restoreTask(task)).dismissedAt);
+
+      const missing = yield* assistants.restoreTask(ThreadId.make("nope")).pipe(Effect.flip);
+      assert.equal(missing.reason, "not_found");
+    }).pipe(Effect.provide(layer));
+  },
+);
