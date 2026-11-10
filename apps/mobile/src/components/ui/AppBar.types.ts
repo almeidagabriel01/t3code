@@ -30,6 +30,8 @@ export type AppBarMenuItem =
       readonly disabled?: boolean;
       readonly selected?: boolean;
       readonly destructive?: boolean;
+      /** A multi-select row: the menu stays open after it is picked. Android honors it too. */
+      readonly keepsMenuPresented?: boolean;
       readonly onPress: () => void;
     }
   | {

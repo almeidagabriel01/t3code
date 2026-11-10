@@ -85,7 +85,12 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
     return true;
   });
 
-  const parent = path[path.length - 1] ?? null;
+  // Re-resolved by id so a kept-open submenu shows the latest checkmarks, not the pressed snapshot.
+  const parent = path.reduce<MenuAction | null>(
+    (level, step) =>
+      (level?.subactions ?? props.actions).find((action) => action.id === step.id) ?? step,
+    null,
+  );
   const levelActions = (parent?.subactions ?? props.actions).filter(
     (action) => !(action.attributes?.hidden ?? false),
   );
@@ -127,7 +132,7 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
       setPath((current) => [...current, action]);
       return;
     }
-    close();
+    if (!action.attributes?.keepsMenuPresented) close();
     if (action.id !== undefined) {
       props.onPressAction?.({
         nativeEvent: { event: action.id },

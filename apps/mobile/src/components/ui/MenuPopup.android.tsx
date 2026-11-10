@@ -90,7 +90,8 @@ export function MenuPopupItems(
       ) : null}
       {props.actions.map((action, index) => (
         <DropdownMenuItem
-          key={action.id ?? `${index}-${action.title}`}
+          // Compose keeps a mounted item's trailing slot, so a checkmark toggled in a kept-open menu needs a remount.
+          key={`${action.id ?? `${index}-${action.title}`}:${action.state ?? ""}`}
           enabled={!action.attributes?.disabled}
           modifiers={itemModifiers}
           onClick={() => props.onPress(action)}

@@ -278,6 +278,7 @@ This checkout is a personal fork that adds features (notes, kanban, memory, dest
 - Mobile tablets (iPad, Android tablets) render `ThreadNavigationSidebar`, not `HomeScreen`: a Home section goes in both. That sidebar sits outside any navigator screen, so nothing it renders may call `useRoute`; open things by id with `useSelectWorkspaceDetail` or `useNavigateToPullRequest`.
 - On Android, `Menu shouldOpenOnLongPress` injects `onLongPress` into its direct child: that child must pass it to its `Pressable`, or a long press just taps.
 - The mobile `Menu` ignores layout classes on itself (`self-start`, margins): put them on a wrapping `View`.
+- A mobile multi-pick menu sets `keepsMenuPresented` on its items, and `inline` on its sections for iOS (a nested iOS submenu collapses after each pick). On Android a mounted Compose `DropdownMenuItem` keeps its old trailing slot, so its key includes the checked state.
 - On mobile, close the keyboard before showing a leave or discard prompt: a prompt over an open keyboard leaves a stale keyboard height on the next screen.
 - Every user action has its reverse and its entry points (header, menus, palette, settings), and agents can reach it through MCP tools when that makes sense.
 - Do not report "done" with known pending items. Finish them, or name them as explicit decisions.

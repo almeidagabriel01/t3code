@@ -98,6 +98,11 @@ afterEach(() => act(() => root.unmount()));
 describe("settings project filter", () => {
   it("selects several projects and clears them with All projects", () => {
     render(true);
+    const sections = latest.menu.items!.flatMap((item) => ("items" in item ? item.items : []));
+    expect(sections.length).toBeGreaterThan(2);
+    expect(sections.every((item) => "keepsMenuPresented" in item && item.keepsMenuPresented)).toBe(
+      true,
+    );
     expect(projectsSection().title).toBe("All projects");
     expect(latest.menu.icon).toBe("line.3.horizontal.decrease");
 

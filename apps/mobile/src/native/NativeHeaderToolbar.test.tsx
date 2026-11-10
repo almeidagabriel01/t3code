@@ -131,7 +131,10 @@ it.each(["left", "right", "bottom"] as const)(
           <NativeHeaderToolbar placement={placement}>
             <NativeHeaderToolbar.Button label="Open" onPress={() => onPress("button", path)} />
             <NativeHeaderToolbar.Menu title="File">
-              <NativeHeaderToolbar.MenuAction onPress={() => onPress("menu", path)}>
+              <NativeHeaderToolbar.MenuAction
+                keepsMenuPresented
+                onPress={() => onPress("menu", path)}
+              >
                 Open
               </NativeHeaderToolbar.MenuAction>
               <NativeHeaderToolbar.Menu title="More">
@@ -155,6 +158,8 @@ it.each(["left", "right", "bottom"] as const)(
     }
     const nested = submenu.items[0];
     if (nested?.type !== "action") throw new Error("Expected the nested action");
+    expect(action.keepsMenuPresented).toBe(true);
+    expect(nested.keepsMenuPresented).toBeUndefined();
     const press = () => {
       button.onPress?.();
       action.onPress?.();

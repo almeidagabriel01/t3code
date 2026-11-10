@@ -37,6 +37,7 @@ function mailMenuItems(items: ReadonlyArray<AppBarMenuItem>): MailMenu["items"] 
           title: item.title,
           state: item.selected ? "on" : "off",
           disabled: item.disabled,
+          keepsMenuPresented: item.keepsMenuPresented,
           onPress: item.onPress,
         },
   );

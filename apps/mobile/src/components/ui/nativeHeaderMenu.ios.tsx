@@ -15,6 +15,7 @@ function renderMenuItems(items: ReadonlyArray<AppBarMenuItem>) {
         subtitle={item.subtitle}
         disabled={item.disabled}
         destructive={item.destructive}
+        keepsMenuPresented={item.keepsMenuPresented}
         isOn={item.selected}
         onPress={item.onPress}
       >

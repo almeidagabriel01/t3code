@@ -89,6 +89,7 @@ function convertMenuAction(
       onPress: register(element.props.onPress),
       state: element.props.isOn === true ? "on" : undefined,
       destructive: Boolean(element.props.destructive),
+      keepsMenuPresented: element.props.keepsMenuPresented === true ? true : undefined,
       discoverabilityLabel:
         typeof element.props.discoverabilityLabel === "string"
           ? element.props.discoverabilityLabel
@@ -328,6 +329,7 @@ function NativeHeaderToolbarMenuAction(_props: {
   readonly discoverabilityLabel?: string;
   readonly icon?: string;
   readonly isOn?: boolean;
+  readonly keepsMenuPresented?: boolean;
   readonly onPress?: () => void;
   readonly subtitle?: string;
 }) {

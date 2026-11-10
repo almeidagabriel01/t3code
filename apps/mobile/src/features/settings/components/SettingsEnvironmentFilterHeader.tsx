@@ -28,6 +28,7 @@ export function useSettingsEnvironmentMenu(): AppBarMenu {
     items: [
       {
         id: "environments",
+        inline: true,
         title:
           selectedIds === null
             ? "All environments"
@@ -37,6 +38,7 @@ export function useSettingsEnvironmentMenu(): AppBarMenu {
             id: "all",
             title: "All connected environments",
             selected: selectedIds === null,
+            keepsMenuPresented: true,
             onPress: selectAll,
           },
           ...availableTargets.map((entry) => ({
@@ -45,24 +47,28 @@ export function useSettingsEnvironmentMenu(): AppBarMenu {
             icon: ENVIRONMENT_MACHINE_SYMBOLS[resolveEnvironmentMachineKind(entry.serverConfig)],
             subtitle: entry.displayUrl ?? undefined,
             selected: selectedIds === null || selectedIds.has(entry.environmentId),
+            keepsMenuPresented: true,
             onPress: () => toggleEnvironment(entry.environmentId),
           })),
         ],
       },
       {
         id: "projects",
+        inline: true,
         title: settingsProjectsLabel(selectedProjectGroups),
         items: [
           {
             id: "project:all",
             title: "All projects",
             selected: selectedProjectKeys === null,
+            keepsMenuPresented: true,
             onPress: selectAllProjects,
           },
           ...selectableProjectGroups.map((group) => ({
             id: `project:${group.key}`,
             title: projectMenuLabel(group),
             selected: selectedProjectKeys?.has(group.key) ?? false,
+            keepsMenuPresented: true,
             onPress: () => toggleProject(group.key),
           })),
         ],
