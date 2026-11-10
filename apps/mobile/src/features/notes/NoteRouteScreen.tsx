@@ -9,7 +9,7 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
-import { Linking, Pressable, TextInput as RNTextInput, View } from "react-native";
+import { Keyboard, Linking, Pressable, TextInput as RNTextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
@@ -102,6 +102,7 @@ function NoteContent(props: NoteParams) {
 
   usePreventRemove(dirty || saving || uploading, ({ data }) => {
     if (saving || uploading) return;
+    Keyboard.dismiss();
     Dialog.confirm({
       title: "Unsaved note",
       message: "Save your edits on this device before leaving, or discard them.",

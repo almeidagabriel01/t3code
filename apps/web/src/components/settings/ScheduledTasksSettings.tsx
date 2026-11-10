@@ -78,7 +78,10 @@ import { resolvePastedPath } from "@t3tools/shared/path";
 import { useManagedPolicy } from "~/state/managedPolicy";
 import { ManagedNotice } from "../ManagedPolicy";
 import { readEnvironmentScope } from "~/state/session";
-import { scheduledTaskWording } from "@t3tools/client-runtime/scheduledTaskWording";
+import {
+  isRoutineTarget,
+  scheduledTaskWording,
+} from "@t3tools/client-runtime/scheduledTaskWording";
 import { SettingsScopeProvider, useSettingsScope } from "./SettingsScopeContext";
 import { EnvironmentRow, useEnvironmentTransportLabel } from "./EnvironmentRow";
 import { SettingsGroup } from "./SettingsGroup";
@@ -1315,7 +1318,7 @@ function ScheduledTaskEditorForm({
               projectId: defaultScheduledTaskProjectId(scopedProjects, scope),
             },
   );
-  const words = scheduledTaskWording(draft.assistantTeamId !== "");
+  const words = scheduledTaskWording(isRoutineTarget(draft));
   const boundName = useBoundThreadName(environmentId, draft.threadId as ThreadId | "");
   // A task that posts in a group chat has no project, workspace or model choice of its own.
   const targeted = draft.threadId !== "" || draft.assistantTeamId !== "";

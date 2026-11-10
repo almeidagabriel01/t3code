@@ -239,11 +239,12 @@ describe("ScheduledTasksSettings", () => {
       <ScheduledTasksSettings threadId={ThreadId.make("assistant:jarvis:1")} />,
     );
     const dialog = page.getByRole("dialog");
-    await expect.element(dialog.getByRole("heading", { name: "New task" })).toBeVisible();
+    await expect.element(dialog.getByRole("heading", { name: "New routine" })).toBeVisible();
     await expect.element(dialog.getByText("Brief thread's conversation")).toBeVisible();
     expect(dialog.getByLabelText("Project").query()).toBeNull();
 
     await userEvent.click(dialog.getByRole("button", { name: "Run in a new thread" }));
+    await expect.element(dialog.getByRole("heading", { name: "New task" })).toBeVisible();
     await expect.element(dialog.getByLabelText("Project")).toBeVisible();
     await userEvent.click(dialog.getByLabelText("Workspace"));
     await userEvent.click(page.getByRole("option", { name: "Use the project checkout" }));

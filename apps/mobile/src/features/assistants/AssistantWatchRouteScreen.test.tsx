@@ -14,6 +14,7 @@ const { mocks, Children } = vi.hoisted(() => ({
     dispatch: vi.fn(),
     alert: vi.fn(),
     confirm: vi.fn(),
+    dismissKeyboard: vi.fn(),
     guard: null as null | { prevent: boolean; run: (event: unknown) => void },
   },
 }));
@@ -41,6 +42,7 @@ vi.mock("react-native", () => ({
   ),
   // Babel inlines Platform.OS as ios for these tests, so the Android branches cannot run here.
   Platform: { OS: "ios" },
+  Keyboard: { dismiss: mocks.dismissKeyboard },
 }));
 vi.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ bottom: 0 }) }));
 vi.mock("@react-navigation/native", () => ({
@@ -213,7 +215,14 @@ beforeEach(() => {
   root = createRoot(container);
   mocks.canAct = true;
   mocks.guard = null;
-  for (const mock of [mocks.goBack, mocks.dispatch, mocks.alert, mocks.confirm]) mock.mockReset();
+  for (const mock of [
+    mocks.goBack,
+    mocks.dispatch,
+    mocks.alert,
+    mocks.confirm,
+    mocks.dismissKeyboard,
+  ])
+    mock.mockReset();
   mocks.save.mockReset().mockResolvedValue({ ok: true });
   mocks.remove.mockReset().mockResolvedValue({ ok: true });
   appAtomRegistry.set(assistantWatchEditorAtom, null);
@@ -356,6 +365,10 @@ describe("watch form", () => {
     act(() => mocks.guard!.run(event));
     const [title, , buttons] = mocks.alert.mock.calls.at(-1)!;
     expect(title).toBe("Discard changes?");
+    // An open keyboard under the prompt leaves the next screen's composer floating at its height.
+    expect(mocks.dismissKeyboard.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.alert.mock.invocationCallOrder.at(-1)!,
+    );
     act(() => buttons[1].onPress());
     expect(mocks.dispatch).toHaveBeenCalledWith("pop");
     expect(appAtomRegistry.get(assistantWatchEditorAtom)).toBeNull();

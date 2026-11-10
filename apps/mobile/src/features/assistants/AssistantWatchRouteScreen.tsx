@@ -16,7 +16,7 @@ import {
 import { useAtomValue } from "@effect/atom-react";
 import type { MenuAction } from "@react-native-menu/menu";
 import { useRef, useState } from "react";
-import { Platform, Pressable, View } from "react-native";
+import { Keyboard, Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/ui/AppText";
@@ -111,6 +111,7 @@ function WatchForm(props: { readonly editor: AssistantWatchEditor }) {
       Dialog.alert("Saving", "Wait for the watch to finish saving before leaving.");
       return;
     }
+    Keyboard.dismiss();
     Dialog.alert("Discard changes?", "Your unsaved changes will be lost.", [
       { text: "Keep editing", style: "cancel" },
       {

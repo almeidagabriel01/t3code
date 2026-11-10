@@ -11,7 +11,7 @@ import {
 import { ALL_PROJECTS, toggleAssistantProject } from "@t3tools/client-runtime/assistantSections";
 import { assistantSandboxView } from "@t3tools/client-runtime/state/assistants";
 import { useRef, useState } from "react";
-import { Platform, Pressable, View } from "react-native";
+import { Keyboard, Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/ui/AppText";
@@ -155,6 +155,7 @@ function AssistantForm(props: { readonly editor: AssistantEditor }) {
       Dialog.alert("Saving", "Wait for the assistant to finish saving before leaving.");
       return;
     }
+    Keyboard.dismiss();
     Dialog.alert("Discard changes?", "Your unsaved changes will be lost.", [
       { text: "Keep editing", style: "cancel" },
       {

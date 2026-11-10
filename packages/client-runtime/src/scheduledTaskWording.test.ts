@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { scheduledTaskWording } from "./scheduledTaskWording.ts";
+import { isRoutineTarget, scheduledTaskWording } from "./scheduledTaskWording.ts";
 
 describe("scheduledTaskWording", () => {
   it.each([
@@ -13,6 +13,15 @@ describe("scheduledTaskWording", () => {
     expect(wording.runLimitHint).toBe(
       `The ${noun} turns itself off after this many runs. Empty means no limit.`,
     );
+  });
+
+  it.each([
+    { assistantTeamId: "team-1", threadId: null, routine: true },
+    { assistantTeamId: null, threadId: "assistant:atlas", routine: true },
+    { assistantTeamId: "", threadId: "thread-1", routine: false },
+    { assistantTeamId: null, threadId: null, routine: false },
+  ])("group=$assistantTeamId thread=$threadId is a routine: $routine", ({ routine, ...target }) => {
+    expect(isRoutineTarget(target)).toBe(routine);
   });
 
   it.each([

@@ -1,4 +1,7 @@
-import { scheduledTaskWording } from "@t3tools/client-runtime/scheduledTaskWording";
+import {
+  isRoutineTarget,
+  scheduledTaskWording,
+} from "@t3tools/client-runtime/scheduledTaskWording";
 import * as Dialog from "../../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -39,7 +42,14 @@ import {
 import { useRef, useState, type ReactNode } from "react";
 import { useFocusEffect, useNavigation, usePreventRemove } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
-import { AppState, Platform, Pressable, TextInput as RNTextInput, View } from "react-native";
+import {
+  AppState,
+  Keyboard,
+  Platform,
+  Pressable,
+  TextInput as RNTextInput,
+  View,
+} from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { Button } from "../../components/ui/Button";
@@ -485,8 +495,8 @@ export function SettingsScheduledTaskEditRouteScreen() {
 function SettingsScheduledTaskEditorScreen({ title: pageTitle }: { readonly title: string }) {
   const { editor, voiceOwnerKey, readEditor, setEditor, hasChanges, draftForEnvironment } =
     useScheduledTaskEditor();
-  const inGroup = (editor?.draft.assistantTeamId ?? null) !== null;
-  const title = inGroup ? scheduledTaskWording(true).edit(editor?.draft.task != null) : pageTitle;
+  const words = scheduledTaskWording(editor ? isRoutineTarget(editor.draft) : false);
+  const title = words.noun === "routine" ? words.edit(editor?.draft.task != null) : pageTitle;
   const { availableTargets } = useSettingsEnvironmentFilter();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
@@ -538,9 +548,13 @@ function SettingsScheduledTaskEditorScreen({ title: pageTitle }: { readonly titl
       return;
     }
     if (saving) {
-      Dialog.alert("Saving task", "Wait for the task to finish saving before leaving.");
+      Dialog.alert(
+        `Saving ${words.noun}`,
+        `Wait for the ${words.noun} to finish saving before leaving.`,
+      );
       return;
     }
+    Keyboard.dismiss();
     Dialog.alert("Discard changes?", "Your unsaved changes will be lost.", [
       { text: "Keep editing", style: "cancel" },
       {
@@ -872,7 +886,7 @@ function TaskForm({
             }}
           />
         </SettingsSection>
-        <SettingsSection title={scheduledTaskWording(draft.assistantTeamId !== null).section}>
+        <SettingsSection title={scheduledTaskWording(isRoutineTarget(draft)).section}>
           <FormField
             label="Name"
             disabled={saving}
@@ -1311,8 +1325,8 @@ function TaskForm({
           {draft.schedule.mode === "webhook" ? null : (
             <FormField
               label="Run limit"
-              hint={scheduledTaskWording(draft.assistantTeamId !== null).runLimitHint}
-              suffix={scheduledTaskWording(draft.assistantTeamId !== null).runsUnit(draft.maxRuns)}
+              hint={scheduledTaskWording(isRoutineTarget(draft)).runLimitHint}
+              suffix={scheduledTaskWording(isRoutineTarget(draft)).runsUnit(draft.maxRuns)}
               value={draft.maxRuns}
               placeholder="No limit"
               keyboardType="number-pad"
@@ -1354,7 +1368,7 @@ function TaskForm({
         label={
           saving
             ? "Saving…"
-            : draft.assistantTeamId !== null
+            : isRoutineTarget(draft)
               ? scheduledTaskWording(true).submit(draft.task != null)
               : draft.task
                 ? "Save changes"
