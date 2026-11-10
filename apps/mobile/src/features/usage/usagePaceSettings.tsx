@@ -139,6 +139,6 @@ export function paceTone(view: { readonly deficit: boolean; readonly reserve: bo
   return view.deficit
     ? "text-danger-foreground"
     : view.reserve
-      ? "text-adaptive-emerald-600"
+      ? "text-adaptive-emerald-600-400"
       : "text-foreground-tertiary";
 }
