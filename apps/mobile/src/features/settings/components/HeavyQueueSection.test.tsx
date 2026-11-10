@@ -130,7 +130,7 @@ describe("HeavyQueueSection", () => {
   it("says so when nothing is queued, with the slot summary", async () => {
     setup([]);
     const view = await mount();
-    expect(view.host.textContent).toContain("0 of 3 running · Mac has room");
+    expect(view.host.textContent).toContain("0 of 3 running");
     expect(view.host.textContent).toContain("Nothing queued.");
     await view.unmount();
   });

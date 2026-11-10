@@ -627,11 +627,9 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
     ON orchestration_events(stream_id, event_type, sequence)
     WHERE application_event_version = 2 AND aggregate_kind = 'thread'
   `;
-    yield* sql`
-    CREATE INDEX IF NOT EXISTS orchestration_events_v2_created_lineage_idx
-    ON orchestration_events(stream_id, (json_extract(payload_json, '$.lineage.relationshipToParent')))
-    WHERE application_event_version = 2 AND aggregate_kind = 'thread' AND event_type = 'thread.created'
-  `;
+    // Its JSON expression rejected any write of an unreadable payload; upstream's
+    // created_threads index already finds a thread's one `thread.created` row.
+    yield* sql`DROP INDEX IF EXISTS orchestration_events_v2_created_lineage_idx`;
   }
 
   yield* ensureMemorySchema();

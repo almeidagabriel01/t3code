@@ -57,7 +57,7 @@ it.effect("the scan's per-thread lookups use the thread event indexes", () =>
         yield* plan(
           `SELECT 1 FROM orchestration_v2_projection_threads t WHERE ${delegatedChildThreadSql("t.thread_id")}`,
         ),
-        "orchestration_events_v2_created_lineage_idx",
+        "SEARCH c EXISTS USING INDEX orchestration_events_v2_",
       );
       assert.include(
         yield* plan(

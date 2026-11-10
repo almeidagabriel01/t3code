@@ -13,7 +13,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
-import { estimate, SAMPLE_FRESH_MS, signatureOf } from "./admission.ts";
+import { estimate, hasHeadroom, SAMPLE_FRESH_MS, signatureOf } from "./admission.ts";
 import * as QueueFile from "./queueFile.ts";
 
 const POLL_INTERVAL = "1 second";
@@ -102,7 +102,8 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string) {
       rules,
       maxRunning,
       reasons: plan.reasons,
-      room: plan.room,
+      // The label sits beside the CPU reading, so it never says "room" over a busy one.
+      room: plan.room && (!fresh || hasHeadroom(sample)),
       machine: fresh
         ? {
             busyCores: sample.busyCores,

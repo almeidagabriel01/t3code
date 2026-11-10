@@ -222,6 +222,9 @@ This checkout is a personal fork that adds features (notes, kanban, memory, dest
 - A UI change is not done until you have looked at it in a running client: dark, light and liquid glass; right-panel width (~360–540px) and full-page width; and the mobile simulator when mobile changed (`test-t3-mobile`). Tests and typecheck do not count as seeing it.
 - If the Browser panel's screenshots time out, drive the dev app with Playwright from `node_modules/.pnpm/playwright@*` (pair with `node apps/server/src/bin.ts pair --base-dir <worktree>/.t3`) and read the PNGs. Keep scripted steps in a JSON file. Pair and browse on the same host the web port answers on (Vite may bind only `[::1]`, so use `localhost` there): the pairing cookie does not carry across hosts.
 - Before telling the developer to install a desktop release, download its DMG from the release page and run `scripts/verify-mac-desktop-artifact.sh` on it: a local build skips the quarantine checks a download gets.
+- The packaged desktop app shares the Electron profile of the developer's installed app, so never launch a local packaged copy to test: use `vp run dev:desktop` or the web dev app, both isolated.
+- CI does not run on this fork (every run is cancelled for lack of runners). `vp run check:changed` plus the test files you ran are the only gate before a release, so say exactly what you ran.
+- `vp run mobile:install android` needs `ANDROID_HOME` (usually `~/Library/Android/sdk`) when the shell does not set it.
 - Save captures you will show the developer, and the scripts that make them, outside `/tmp`: macOS empties it on restart, and a report's images then show as unavailable.
 - Never drive the command palette or type into the app from a script: keystrokes land in whatever editor has focus and change user data or settings. Toggle appearance by setting the attribute on the test page only, and restore anything you changed in `<worktree>/.t3/userdata`.
 - Subagents do not verify visually. The session that integrates their work captures and reads the screenshots before reporting.
@@ -233,6 +236,7 @@ This checkout is a personal fork that adds features (notes, kanban, memory, dest
 - The Android Files picker ignores a scripted tap on a file row: long-press the row to select it, then tap "Select" in the top bar.
 - Android drops the app's websocket while a system picker is open, so work started on return must wait for the reconnect (`prepareTurnAttachments` does).
 - An iOS native menu item below the fold cannot be pressed by ref or coordinates; the tap dismisses the menu. Swipe inside the menu first.
+- An Android system dialog ("… isn't responding") refuses every tap: close it with `agent-device alert dismiss`. A popup menu closes with a tap outside it; `back` can leave the app instead.
 - The Devices panel in an isolated home needs `enableDeviceSupport` and `deviceOnboardingCompleted` in its `settings.json`, then a dev server restart: the device service reads them at startup.
 
 ### Layout and design
@@ -259,6 +263,7 @@ This checkout is a personal fork that adds features (notes, kanban, memory, dest
 
 ### Robust logic
 
+- A status label shown beside a live reading is derived from that same reading: "Mac has room" next to "CPU 100%" is a bug.
 - Never allowlist fields of external or user-edited data (frontmatter, provider memory files, CLI output). Parse tolerantly, ignore unknown keys and preserve them on write; only reject what is truly unusable.
 - One bad item never hides the others. Process per item, report skipped items with an enumerable reason, and keep the UI able to tell "nothing found" from "failed".
 - Compare versions as semver, not as strings. Validate every item before mutating any of them.
@@ -272,6 +277,7 @@ This checkout is a personal fork that adds features (notes, kanban, memory, dest
 - Mobile tablets (iPad, Android tablets) render `ThreadNavigationSidebar`, not `HomeScreen`: a Home section goes in both. That sidebar sits outside any navigator screen, so nothing it renders may call `useRoute`; open things by id with `useSelectWorkspaceDetail` or `useNavigateToPullRequest`.
 - On Android, `Menu shouldOpenOnLongPress` injects `onLongPress` into its direct child: that child must pass it to its `Pressable`, or a long press just taps.
 - The mobile `Menu` ignores layout classes on itself (`self-start`, margins): put them on a wrapping `View`.
+- On mobile, close the keyboard before showing a leave or discard prompt: a prompt over an open keyboard leaves a stale keyboard height on the next screen.
 - Every user action has its reverse and its entry points (header, menus, palette, settings), and agents can reach it through MCP tools when that makes sense.
 - Do not report "done" with known pending items. Finish them, or name them as explicit decisions.
 - A fork phase closes only when tests execute at least 90% of the lines it added on each of server, web and mobile, screens included (the developer's call; it overrides "leave out tests for rendered markup" for fork work, but tests still assert behavior). Measure with v8 coverage installed for the run only: `@vitest/coverage-v8` as a committed devDependency fails knip.

@@ -120,6 +120,8 @@ export function queueSummary(
       ? ""
       : ` · CPU ${Math.round((machine.busyCores / Math.max(1, machine.cpuCount)) * 100)}% · ${(machine.availableMemoryBytes / 1024 ** 3).toFixed(1)} GB free`;
   if (state.paused) return `${head} · paused${reading}`;
+  // Without a reading there is nothing to back a claim about the Mac.
+  if (state.room && machine === null) return head;
   return `${head} · ${state.room ? "Mac has room" : "waiting for headroom"}${reading}`;
 }
 

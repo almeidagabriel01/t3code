@@ -51,9 +51,14 @@ export const layer: Layer.Layer<TurnItemPositionStoreV2, never, SqlClient.SqlCli
         `;
           if (existing[0] !== undefined) return existing[0].ordinal;
 
+          // A runless item joins the latest run's band, so it sorts after the turns already shown.
           const runRows =
             runId === null
-              ? []
+              ? yield* sql<{ readonly ordinal: number | null }>`
+                SELECT MAX(ordinal) AS ordinal
+                FROM orchestration_v2_projection_runs
+                WHERE thread_id = ${threadId}
+              `
               : yield* sql<{ readonly ordinal: number }>`
                 SELECT ordinal
                 FROM orchestration_v2_projection_runs

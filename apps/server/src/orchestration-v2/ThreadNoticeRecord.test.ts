@@ -135,7 +135,9 @@ it.layer(layerTest)("thread.notice.record", (it) => {
       );
       assert.equal(projection.runs[0]!.id, run.id);
       assert.equal(projection.runs[0]!.status, run.status);
-      // Runless items take the band below every run's, so the run in flight never moves them.
+      // A notice sorts after what the thread already shows, never above its first turn.
+      assert.isAbove(notice.ordinal, run.ordinal * 1_000_000);
+      for (const item of before.turnItems) assert.isBelow(item.ordinal, notice.ordinal);
       yield* orchestrator.dispatch({
         type: "thread.notice.record",
         commandId: CommandId.make("notice:in-flight-2"),
@@ -150,7 +152,6 @@ it.layer(layerTest)("thread.notice.record", (it) => {
       );
       assert.equal(notices[0]!.ordinal, notice.ordinal);
       assert.isBelow(notices[0]!.ordinal, notices[1]!.ordinal);
-      assert.isBelow(notices[1]!.ordinal, 1_000_000);
     }),
   );
 });

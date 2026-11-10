@@ -1340,7 +1340,7 @@ function TaskForm({
               Enabled
             </Text>
             <ThemedSwitch
-              accessibilityLabel="Task enabled"
+              accessibilityLabel={isRoutineTarget(draft) ? "Routine enabled" : "Task enabled"}
               value={draft.enabled}
               onValueChange={(enabled) => setDraft({ ...draft, enabled })}
             />

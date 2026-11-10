@@ -116,7 +116,7 @@ describe("HeavyQueueGroup", () => {
     await expect
       .element(screen.getByText(/waiting for room: needs ~4.0 GB, 1.2 GB free · Moved by the user/))
       .toBeVisible();
-    await expect.element(screen.getByText("1 of 3 running · Mac has room")).toBeVisible();
+    await expect.element(screen.getByText("1 of 3 running")).toBeVisible();
     expect(screen.container.querySelectorAll('[data-testid="favicon"]')).toHaveLength(3);
   });
 

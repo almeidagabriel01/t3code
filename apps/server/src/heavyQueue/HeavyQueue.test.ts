@@ -141,6 +141,13 @@ describe("HeavyQueue", () => {
         const { estimates } = yield* queue.state;
         expect(estimates?.["new"]).toMatchObject({ cpu: 3, memoryBytes: 1000 });
         expect(estimates?.["other"]).toBeUndefined();
+        expect((yield* queue.state).room).toBe(true);
+        Queue.recordSample(
+          dir,
+          { at: 2, busyCores: 8, cpuCount: 8, availableMemoryBytes: 5, totalMemoryBytes: 10 },
+          {},
+        );
+        expect(yield* queue.state).toMatchObject({ room: false, machine: { busyCores: 8 } });
       }),
     ),
   );
