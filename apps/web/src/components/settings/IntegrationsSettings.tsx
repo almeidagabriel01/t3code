@@ -5,6 +5,7 @@ import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings"
 import { ScopedSwitch } from "./ScopedSwitch";
 import { WifiPairingButton } from "../device/WifiPairingDialog";
 import { DeviceAccessSettings } from "./DeviceAccessSettings";
+import { DeviceSigningSettings } from "./DeviceSigningSettings";
 import { DeviceSourcesSettings } from "./DeviceSourcesSettings";
 import {
   AuthSettingsWriteScope,
@@ -847,6 +848,7 @@ function DeviceIntegrationSettings() {
         ) : null}
       </SettingsSection>
       {environmentId ? <DeviceAccessSettings environmentId={environmentId} state={state} /> : null}
+      <DeviceSigningSettings />
       <DeviceSourcesSettings
         supportsEas={state.supportsEasHosts === true}
         supportsSimlock={state.supportsSimlockHosts === true}

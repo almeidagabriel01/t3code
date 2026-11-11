@@ -34,6 +34,7 @@ import { horizontalListSortingStrategy, SortableContext, useSortable } from "@dn
 import { CSS } from "@dnd-kit/utilities";
 import {
   Smartphone,
+  Monitor,
   FileDiff,
   Files,
   Globe2,
@@ -164,6 +165,8 @@ function SurfaceIcon({
         <AppleIcon className="size-3 shrink-0" />
       ) : surface.target?.platform === "android" ? (
         <AndroidIcon className="size-3 shrink-0" />
+      ) : surface.target?.platform === "desktop" ? (
+        <Monitor className="size-3 shrink-0" />
       ) : (
         <Smartphone className="size-3 shrink-0" />
       );
@@ -591,7 +594,12 @@ function DeviceTabTooltip(props: {
       {target ? (
         <span className="text-muted-foreground">
           {host?.label ?? "Device host"} ·{" "}
-          {device?.version ?? (target.platform === "ios" ? "iOS" : "Android")}
+          {device?.version ??
+            (target.platform === "ios"
+              ? "iOS"
+              : target.platform === "android"
+                ? "Android"
+                : "Computer")}
         </span>
       ) : null}
     </div>

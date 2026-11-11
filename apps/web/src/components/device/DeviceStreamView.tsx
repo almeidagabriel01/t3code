@@ -35,7 +35,7 @@ const NO_AX_ATOM = Atom.make(AsyncResult.initial<ReadonlyArray<DeviceAxElement>,
 const CONTROLS_RAIL_WIDTH = 56;
 
 function screenAspect(platform: DevicePlatform, screen: DeviceScreenSize | null): number {
-  if (!screen) return platform === "ios" ? 9 / 19.5 : 9 / 20;
+  if (!screen) return platform === "desktop" ? 16 / 10 : platform === "ios" ? 9 / 19.5 : 9 / 20;
   const landscape =
     screen.orientation === "landscape_left" || screen.orientation === "landscape_right";
   const w = landscape
@@ -95,7 +95,10 @@ export function DeviceStreamView(props: {
   readonly viewId?: string;
   /** The host serves only serve-sim's stream and input socket (Simlock). */
   readonly serveSimOnly?: boolean;
+  /** A capture source (USB iPhone, this computer): view only, no input of any kind. */
+  readonly captureSource?: boolean;
 }) {
+  const captureSource = props.captureSource === true;
   const model = deviceModel(props.platform, props.deviceName ?? "");
   const isDuo = model?.id === "iphone-duo";
   const [presentation, setPresentation] = useState<"phone" | "flat">("phone");
@@ -121,6 +124,7 @@ export function DeviceStreamView(props: {
           deviceId: props.deviceId,
           access,
           serveSimOnly: props.serveSimOnly === true,
+          capture: captureSource,
           viewId,
         })
       : NO_SESSION_ATOM,
@@ -151,6 +155,7 @@ export function DeviceStreamView(props: {
     status === "connecting" && hasFrame && inputState.connected && screen !== null;
   const showPhone =
     props.allowPhoneView &&
+    !captureSource &&
     (status === "streaming" || retainingFrame) &&
     props.visible &&
     presentation === "phone" &&
@@ -321,11 +326,17 @@ export function DeviceStreamView(props: {
           "after:pointer-events-none after:absolute after:inset-0 after:z-10 focus-visible:after:ring-2 focus-visible:after:ring-inset focus-visible:after:ring-ring",
           controlsInset && "pr-14",
         )}
-        tabIndex={0}
-        role="application"
-        aria-label={`${props.platform === "ios" ? "iOS Simulator" : "Android Emulator"} screen`}
+        tabIndex={captureSource ? undefined : 0}
+        role={captureSource ? "group" : "application"}
+        aria-label={
+          props.platform === "desktop"
+            ? "Computer screen"
+            : captureSource
+              ? "Device screen"
+              : `${props.platform === "ios" ? "iOS Simulator" : "Android Emulator"} screen`
+        }
         onKeyDown={(event) => {
-          if (event.target !== event.currentTarget) return;
+          if (captureSource || event.target !== event.currentTarget) return;
           if (event.metaKey && !["r", "R"].includes(event.key)) return;
           // Let browser paste chords fire the paste event.
           if (
@@ -338,12 +349,12 @@ export function DeviceStreamView(props: {
           client?.sendKey(event.nativeEvent, "down");
         }}
         onPaste={(event) => {
-          if (event.target !== event.currentTarget) return;
+          if (captureSource || event.target !== event.currentTarget) return;
           event.preventDefault();
           client?.sendText(event.clipboardData.getData("text/plain"));
         }}
         onKeyUp={(event) => {
-          if (event.target !== event.currentTarget) return;
+          if (captureSource || event.target !== event.currentTarget) return;
           client?.sendKey(event.nativeEvent, "up");
         }}
       >
@@ -459,7 +470,7 @@ export function DeviceStreamView(props: {
             </Button>
           </div>
         ) : null}
-        {status === "streaming" && !inputState.connected ? (
+        {status === "streaming" && !inputState.connected && !captureSource ? (
           <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center p-2">
             <span className="rounded-md bg-background/85 px-2 py-1 text-xs text-muted-foreground">
               Input disconnected{inputState.detail ? ` (${inputState.detail})` : ""}, reconnecting…

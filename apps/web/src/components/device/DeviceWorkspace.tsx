@@ -1,5 +1,10 @@
 import * as Schema from "effect/Schema";
-import type { DeviceHostSummary, DeviceSummary, EnvironmentId } from "@t3tools/contracts";
+import {
+  isCaptureDevice,
+  type DeviceHostSummary,
+  type DeviceSummary,
+  type EnvironmentId,
+} from "@t3tools/contracts";
 import { useRef, useState } from "react";
 import {
   captureDeviceScreenshot,
@@ -34,7 +39,9 @@ export function DeviceWorkspace(props: {
   const capturing = useRef(false);
   const access = useDeviceHubAccess(props.environmentId, props.device.hostId);
   // Settings and tools run commands on the device's own machine, which EAS and Simlock do not expose.
-  const runsHostCommands = props.hostKind === "local" || props.hostKind === "ssh";
+  const captureSource = isCaptureDevice(props.device);
+  const runsHostCommands =
+    !captureSource && (props.hostKind === "local" || props.hostKind === "ssh");
   const controls = useDeviceControls({
     ...props,
     access,
@@ -81,6 +88,13 @@ export function DeviceWorkspace(props: {
             {screenshotError ?? controls.error}
           </p>
         ) : null}
+        {captureSource ? (
+          <p role="status" className="px-3 py-1.5 text-xs text-muted-foreground">
+            {props.device.platform === "desktop"
+              ? "View only. Agents use computer tools on this computer."
+              : "View only. Use the phone to control it."}
+          </p>
+        ) : null}
         <div className="min-h-0 flex-1">
           <DeviceStreamView
             environmentId={props.environmentId}
@@ -91,6 +105,7 @@ export function DeviceWorkspace(props: {
             hostId={props.device.hostId}
             visible={props.visible}
             serveSimOnly={props.hostKind === "simlock"}
+            captureSource={captureSource}
             axOverlay={axOverlay}
             allowPhoneView
             renderControls={(view) => (
@@ -106,6 +121,7 @@ export function DeviceWorkspace(props: {
                 onTools={() => setToolsOpen(!toolsOpen)}
                 onFloat={props.onFloat}
                 onClose={props.onClose}
+                viewOnly={captureSource}
                 onPowerOff={props.onPowerOff}
               />
             )}

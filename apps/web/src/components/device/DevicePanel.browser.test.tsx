@@ -390,3 +390,101 @@ describe("DevicePanel takeover and physical devices", () => {
     if (action) await expect.element(screen.getByRole("button", { name: action })).toBeDisabled();
   });
 });
+
+describe("DevicePanel capture devices", () => {
+  const desktop = {
+    hostId: "local",
+    id: "desktop",
+    name: "Ana's Mac (desktop)",
+    platform: "desktop",
+    version: "macOS",
+    booted: true,
+    physical: true,
+  } as const;
+  const usbPhone = {
+    hostId: "local",
+    id: "UDID-1",
+    name: "Ana's iPhone",
+    platform: "ios",
+    version: "iOS 19",
+    booted: true,
+    physical: true,
+    connection: "usb",
+  } as const;
+  const withDevices = (...devices: DeviceServiceState["devices"]): DeviceServiceState => ({
+    ...deviceState,
+    supportsDeviceControl: true,
+    devices,
+  });
+
+  it("groups this computer apart and lists every issue with its fix", async () => {
+    setup();
+    currentState = withDevices(
+      { ...desktop, issues: [{ reason: "screen_recording_permission" }] },
+      {
+        ...usbPhone,
+        issues: [{ reason: "camera_permission" }, { reason: "signing_missing", detail: "no team" }],
+      },
+      phone,
+    );
+    await using screen = await render(devicePanel(threadA), { container });
+
+    expect([...container.querySelectorAll("h3")].map((h) => h.textContent)).toEqual([
+      "This computer",
+      "Physical devices",
+      "iOS Simulators",
+    ]);
+    await expect.element(screen.getByText("Screen Recording permission is off")).toBeVisible();
+    await expect.element(screen.getByText("Camera permission is off")).toBeVisible();
+    await expect.element(screen.getByText("iPhone signing is not set up")).toBeVisible();
+    await expect.element(screen.getByText("no team")).toBeVisible();
+    await expect.element(screen.getByText("This Mac · macOS · Available")).toBeVisible();
+    const links = screen.getByRole("link", { name: "Open Mac permissions" });
+    await expect.element(links).toHaveAttribute("href", "/settings/mac-permissions");
+    expect(container.querySelectorAll("a")).toHaveLength(1);
+  });
+
+  it("cannot open a device whose view is blocked, but can open one blocked only for control", async () => {
+    setup();
+    mocks.open.mockResolvedValue({
+      _tag: "Success",
+      value: { hostId: "local", deviceId: "desktop" },
+    });
+    currentState = withDevices(
+      { ...desktop, issues: [{ reason: "screen_recording_permission" }] },
+      { ...usbPhone, issues: [{ reason: "signing_missing" }] },
+    );
+    await using screen = await render(devicePanel(threadA), { container });
+
+    await expect
+      .element(screen.getByRole("button", { name: "Open Ana's Mac (desktop)" }))
+      .toBeDisabled();
+    await screen.getByRole("button", { name: "Open Ana's iPhone" }).click();
+
+    expect(mocks.open.mock.calls).toHaveLength(1);
+    expect(mocks.open.mock.calls[0]).toEqual([
+      expect.objectContaining({
+        input: expect.objectContaining({ deviceId: "UDID-1", platform: "ios" }),
+      }),
+    ]);
+  });
+
+  it("offers Take over and Hand back for a capture device", async () => {
+    setup();
+    const surface: Extract<RightPanelSurface, { kind: "device" }> = {
+      id: "device",
+      kind: "device",
+      target: { hostId: "local", deviceId: "desktop", platform: "desktop", name: desktop.name },
+    };
+    currentState = {
+      ...withDevices(desktop),
+      sessions: [{ ...deviceState.sessions[0]!, deviceId: "desktop", platform: "desktop" }],
+    };
+    await using screen = await render(devicePanel(threadA, surface), { container });
+
+    await screen.getByRole("button", { name: "Take over" }).click();
+    expect(mocks.setHold.mock.calls[0]![0]).toMatchObject({
+      input: { deviceId: "desktop", held: true },
+    });
+  });
+});
