@@ -269,7 +269,10 @@ function CloudChoices({ environment, active, onClose }: Props & { onClose: () =>
     }
   };
   const edit = (provider: CloudSpeechProvider, enable: boolean) => {
-    const stored = environment.serverConfig?.settings.cloudSpeechCredentials?.[provider];
+    const stored =
+      provider === "chatgpt"
+        ? undefined
+        : environment.serverConfig?.settings.cloudSpeechCredentials?.[provider];
     const ref =
       isSecretReference(stored) && sources.some((candidate) => candidate.id === stored.provider)
         ? stored
