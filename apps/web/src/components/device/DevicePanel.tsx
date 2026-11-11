@@ -193,6 +193,8 @@ export function DevicePanel(props: {
   const bootingDevices =
     state.bootingDevices?.filter((device) => device.threadId === threadId) ?? [];
   const { ready: hostReady, busy: hostBusy } = deviceHubReadiness(state);
+  // A linked environment carries its own state, so it shows whatever this machine's hub is doing.
+  const listed = sources.filter((source) => source.linked !== null || hostReady);
   const loading = !activeDevice && (pendingDevice !== null || hostBusy || !loaded);
   // Without a first snapshot a failed subscription never settles on its own.
   const loadError = loaded ? null : stateError;
@@ -319,12 +321,12 @@ export function DevicePanel(props: {
               <div
                 className={cn(
                   "mx-auto flex w-full max-w-xl flex-col gap-6",
-                  sources.length === 0 && "my-auto items-center text-center",
+                  listed.length === 0 && "my-auto items-center text-center",
                 )}
               >
-                {sources.length === 0 ? (
+                {ownDevices === undefined ? (
                   <>
-                    <Smartphone className="size-6 opacity-60" />
+                    {listed.length === 0 ? <Smartphone className="size-6 opacity-60" /> : null}
                     <p
                       className="max-h-32 w-full max-w-sm overflow-y-auto whitespace-pre-line break-words"
                       tabIndex={state.hostStatus === "failed" ? 0 : undefined}
@@ -335,9 +337,9 @@ export function DevicePanel(props: {
                     </p>
                   </>
                 ) : null}
-                {hostReady && sources.length > 0 ? (
+                {listed.length > 0 ? (
                   <div className="w-full space-y-6 text-left">
-                    {sources.map((source) => (
+                    {listed.map((source) => (
                       <DeviceSource
                         key={source.key}
                         source={source}
@@ -427,7 +429,7 @@ export function DevicePanel(props: {
                   <div
                     className={cn(
                       "flex flex-wrap gap-2",
-                      sources.length > 0 ? "self-start" : "self-center",
+                      listed.length > 0 ? "self-start" : "self-center",
                     )}
                   >
                     <Button

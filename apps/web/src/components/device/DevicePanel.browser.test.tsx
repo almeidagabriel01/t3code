@@ -468,9 +468,15 @@ describe("DevicePanel linked environments", () => {
 
   it("lists each linked environment's devices under its name and state", async () => {
     setup();
+    // As the server emits a dead link: only that host failed, and its last devices stay listed.
     currentState = {
       ...deviceState,
       hosts: [...deviceState.hosts, attic, studio],
+      hostStatuses: {
+        ...deviceState.hostStatuses,
+        [studio.id]: { status: "ready" },
+        [attic.id]: { status: "failed", detail: attic.linkDetail },
+      },
       devices: [phone, galaxy, atticPhone],
     };
     await using screen = await render(devicePanel(threadA), { container });
@@ -483,6 +489,22 @@ describe("DevicePanel linked environments", () => {
     await expect.element(screen.getByRole("button", { name: "Open Galaxy" })).toBeEnabled();
     await expect.element(screen.getByRole("button", { name: "Open Old Pixel" })).toBeDisabled();
     await expect.element(screen.getByText("Physical", { exact: true }).first()).toBeInTheDocument();
+  });
+
+  it("lists a linked environment while this machine's hub failed, and says why", async () => {
+    setup();
+    currentState = {
+      ...deviceState,
+      hostStatus: "failed",
+      hostStatusDetail: "Xcode is not installed.",
+      hostStatuses: { local: { status: "failed" }, [studio.id]: { status: "ready" } },
+      hosts: [...deviceState.hosts, studio],
+      devices: [galaxy],
+    };
+    await using screen = await render(devicePanel(threadA), { container });
+
+    await expect.element(screen.getByText("Xcode is not installed.")).toBeInTheDocument();
+    await expect.element(screen.getByRole("button", { name: "Open Galaxy" })).toBeEnabled();
   });
 
   it("says a connected linked environment has no devices, and shows nothing without links", async () => {

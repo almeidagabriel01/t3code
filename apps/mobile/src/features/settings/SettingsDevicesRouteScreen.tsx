@@ -1,5 +1,9 @@
 import { useAtomValue } from "@effect/atom-react";
-import { groupDevicesBySource, linkedDeviceSources } from "@t3tools/client-runtime/state/device";
+import {
+  deviceLinkedUse,
+  groupDevicesBySource,
+  linkedDeviceSources,
+} from "@t3tools/client-runtime/state/device";
 import {
   DEVICE_ACCESS_POLICY_LABELS,
   DEVICE_CONNECTION_LABELS,
@@ -99,6 +103,7 @@ function DeviceEnvironment(props: {
     <View className="gap-5">
       {devices.map((device) => {
         const policy = deviceAccessPolicy(state.access, device);
+        const hold = findDeviceHold(state.holds, device);
         const host = state.hosts.find((candidate) => candidate.id === device.hostId);
         const save = (next: DeviceAccessPolicy | null) =>
           void setAccess({
@@ -109,7 +114,15 @@ function DeviceEnvironment(props: {
           <ListSection
             key={`${device.hostId}:${device.id}`}
             title={`${device.name}${device.physical ? " · Physical" : ""}${suffix}`}
-            footer={`${host?.label ?? "Device host"} · ${device.version}${device.connection ? ` · ${DEVICE_CONNECTION_LABELS[device.connection]}` : ""}`}
+            footer={[
+              host?.label ?? "Device host",
+              device.version,
+              device.connection ? DEVICE_CONNECTION_LABELS[device.connection] : null,
+              hold?.linked ? `${hold.linked.label} is in control` : null,
+              deviceLinkedUse(state, device),
+            ]
+              .filter(Boolean)
+              .join(" · ")}
           >
             {POLICIES.map((option, index) => (
               <ListChoiceRow
@@ -130,10 +143,14 @@ function DeviceEnvironment(props: {
                 onPress={() => save(null)}
               />
             ) : null}
-            {findDeviceHold(state.holds, device) ? (
+            {hold ? (
               <SettingsActionRow
                 icon="arrow.uturn.backward"
-                label={`Hand ${device.name} back to the agent`}
+                label={
+                  hold.linked
+                    ? `End ${hold.linked.label}'s control of ${device.name}`
+                    : `Hand ${device.name} back to the agent`
+                }
                 disabled={!canHold}
                 onPress={() =>
                   void setHold({

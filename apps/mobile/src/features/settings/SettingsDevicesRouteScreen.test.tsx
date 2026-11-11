@@ -147,6 +147,7 @@ const state = {
   supportsDeviceControl: true,
   access: { "local:emu": "deny", "local:gone": "ask", "local:pixel": "sometimes" },
   holds: [{ hostId: "local", deviceId: "pixel", since: "2026-01-01T00:00:00.000Z" }],
+  sessions: [] as ReadonlyArray<object>,
 };
 
 async function setup(next: Partial<typeof mocks> = {}, element = <SettingsDevicesRouteScreen />) {
@@ -282,6 +283,17 @@ describe("Devices settings", () => {
           },
         ],
         linkClients: [{ linkId: "link-1", label: "Laptop", blocked: false }],
+        holds: [{ ...state.holds[0]!, linked: { label: "Laptop" } }],
+        sessions: [
+          {
+            threadId: "linked:link-1:thread-9",
+            hostId: "local",
+            deviceId: "pixel",
+            platform: "android",
+            openedAt: "2026-01-01T00:00:00.000Z",
+            linked: { label: "Laptop", threadTitle: "Fix login" },
+          },
+        ],
       },
     });
     const titles = [...screen.container.querySelectorAll("h3")].map((title) => title.textContent);
@@ -296,6 +308,13 @@ describe("Devices settings", () => {
     const studio = screen.container.querySelector('section[aria-label="Devices on Studio"]');
     expect(studio?.textContent).toContain("Galaxy · PhysicalAndroid 16");
     expect(studio?.textContent).toContain("1 device");
+    expect(
+      screen.container.querySelector('section[aria-label="Pixel · Physical"]')?.textContent,
+    ).toContain("Laptop is in control · Used by “Fix login” on Laptop");
+    await screen.press("Pixel · Physical", "End Laptop's control of Pixel");
+    expect(mocks.setHold.mock.calls).toEqual([
+      [{ environmentId: "env-a", input: { hostId: "local", deviceId: "pixel", held: false } }],
+    ]);
     expect(
       screen.container.querySelector('section[aria-label="Devices on Attic"]')?.textContent,
     ).toContain("Hidden");

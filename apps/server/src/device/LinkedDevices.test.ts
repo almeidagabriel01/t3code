@@ -498,7 +498,7 @@ describe("linked devices", () => {
   it.effect("shows the link down, and connected again once it answers", () =>
     Effect.gen(function* () {
       const { linkingDevices, linkUp } = yield* linkedPair();
-      yield* linkingDevices.list;
+      const up = yield* linkingDevices.list;
       yield* Ref.set(linkUp, false);
       // The resolved address is reused for a minute; past it, the link is asked again.
       yield* TestClock.adjust("61 seconds");
@@ -509,6 +509,8 @@ describe("linked devices", () => {
         linkDetail: expect.stringContaining("No address answered"),
       });
       expect(down.hostStatuses[LINKED_HOST]).toMatchObject({ status: "failed" });
+      // A dead link fails only its own host: this environment's hub status stays as it was.
+      expect(down.hostStatus).toBe(up.hostStatus);
       yield* Ref.set(linkUp, true);
       yield* linkingDevices.list;
       expect(
