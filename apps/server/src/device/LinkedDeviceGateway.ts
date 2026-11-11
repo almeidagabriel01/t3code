@@ -294,7 +294,10 @@ const listRoute = HttpRouter.add(
           platforms: state.hosts.find((host) => host.id === hostId)?.platforms ?? [],
           agentAccessEnabled: state.agentAccessEnabled,
           agentDeviceVersion: AGENT_DEVICE_VERSION,
-          devices: state.devices.filter((device) => device.hostId === hostId),
+          // This screen stays with its owner; a linking server from before it cannot decode it.
+          devices: state.devices.filter(
+            (device) => device.hostId === hostId && device.platform !== "desktop",
+          ),
           holds,
         }),
       );

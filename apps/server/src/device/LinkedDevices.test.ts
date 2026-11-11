@@ -95,6 +95,14 @@ const peerHost = (shutdowns: Array<string> = []): DeviceHost.DeviceHost["Service
             booted: true,
             physical: true,
           },
+          {
+            id: "desktop",
+            name: "Studio Mac (desktop)",
+            platform: "desktop",
+            version: "macOS",
+            booted: true,
+            physical: false,
+          },
         ],
         detail: undefined,
       }),
@@ -420,6 +428,8 @@ describe("linked devices", () => {
           [LINKED_HOST, PHONE, true],
         ]),
       );
+      // The owner's own screen stays with the owner: agents there use computer tools on it.
+      expect(state.devices.some((device) => device.platform === "desktop")).toBe(false);
     }).pipe(Effect.scoped),
   );
 
