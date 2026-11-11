@@ -49,6 +49,7 @@ const emulator = {
   platform: "android" as const,
   booted: true,
   physical: false,
+  identity: "Pixel_9_API_36",
 };
 const wifiPhone = {
   ...phone,
@@ -69,6 +70,7 @@ const on = (deviceId: string, threadId = threadA) => ({
 const harness = Effect.fn("harness")(function* (
   run: DeviceHost.DeviceHostReady["run"] = () =>
     Effect.succeed({ code: 0, stdout: "", stderr: "" }),
+  kind: "local" | "eas" | "simlock" = "local",
 ) {
   const calls = {
     boots: [] as Array<string>,
@@ -104,7 +106,7 @@ const harness = Effect.fn("harness")(function* (
     label: "This machine",
     summary: Effect.succeed({
       id: LOCAL_DEVICE_HOST_ID,
-      kind: "local",
+      kind,
       label: "This machine",
       platforms: [
         { platform: "ios", available: true },
@@ -653,6 +655,45 @@ describe("Wi-Fi pairing and forgetting", () => {
       expect(next.attemptId).not.toBe(started.attemptId);
       expect(commands.some((args) => args.join(" ").includes(password))).toBe(false);
     }).pipe(withSettings(), Effect.scoped),
+  );
+
+  it.effect.each([{ ending: "device support is turned off" }, { ending: "its host is removed" }])(
+    "ends a running attempt when $ending",
+    ({ ending }) =>
+      Effect.gen(function* () {
+        const commands: Array<ReadonlyArray<string>> = [];
+        const { service, hosts } = yield* harness(adbWaiting(commands));
+        const kept = new Map(hosts);
+        yield* service.startWifiPairing({ requestId: "web-1" });
+        if (ending === "its host is removed") {
+          hosts.clear();
+          yield* service.refreshHosts;
+          for (const [id, host] of kept) hosts.set(id, host);
+          yield* service.refreshHosts;
+        } else {
+          yield* service.configure({ enabled: false });
+          yield* service.configure({ enabled: true });
+        }
+        expect((yield* service.state).wifiPairing).toBeUndefined();
+        // The slot is free: another client starts its own attempt instead of being told to wait.
+        const next = yield* service.startWifiPairing({ requestId: "mobile-1" });
+        expect(next.state.wifiPairing).toMatchObject({ status: "waiting" });
+      }).pipe(withSettings(), Effect.scoped),
+  );
+
+  it.effect.each([{ kind: "eas" }, { kind: "simlock" }] as const)(
+    "refuses to pair on a $kind host, which has no machine running adb",
+    ({ kind }) =>
+      Effect.gen(function* () {
+        const commands: Array<ReadonlyArray<string>> = [];
+        const { service } = yield* harness(adbWaiting(commands), kind);
+        expect(yield* Effect.flip(service.startWifiPairing({ requestId: "web-1" }))).toMatchObject({
+          _tag: "DevicePlatformUnavailableError",
+          platform: "android",
+        });
+        expect((yield* service.state).wifiPairing).toBeUndefined();
+        expect(commands).toEqual([]);
+      }).pipe(withSettings(), Effect.scoped),
   );
 
   it.effect("publishes each step to every client and frees the slot once connected", () =>

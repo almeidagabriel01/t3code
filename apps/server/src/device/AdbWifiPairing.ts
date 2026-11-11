@@ -128,7 +128,11 @@ export const pairOverWifi = Effect.fn("AdbWifiPairing.pairOverWifi")(function* (
   });
   const pairText = said(paired);
   if (!/successfully paired/i.test(pairText)) {
-    return yield* failed(UNREACHABLE.test(pairText) ? "wrong_network" : "pair_refused", pairText);
+    // A pair that hangs (exit 124) saw the phone over mDNS and could not reach it.
+    return yield* failed(
+      paired.code === 124 || UNREACHABLE.test(pairText) ? "wrong_network" : "pair_refused",
+      pairText,
+    );
   }
   const guid = /\[guid=([^\]\s]+)\]/.exec(pairText)?.[1];
   const phoneHost = hostOf(pairing.address);
@@ -153,7 +157,7 @@ export const pairOverWifi = Effect.fn("AdbWifiPairing.pairOverWifi")(function* (
       );
       if (Option.isSome(connect)) {
         const connected = yield* adb(["connect", connect.value.address]);
-        lastConnect = said(connected);
+        lastConnect = said(connected) || (connected.code === 124 ? "adb connect timed out" : "");
         if (/connected to/i.test(lastConnect) && !/failed|unable|cannot/i.test(lastConnect))
           return Option.some(connect.value.address);
       }

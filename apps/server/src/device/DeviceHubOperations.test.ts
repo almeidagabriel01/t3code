@@ -82,7 +82,8 @@ describe("Android phone identity", () => {
 
       expect(yield* identities).toEqual([
         ["SIM-1", undefined, undefined],
-        ["emulator-5554", undefined, undefined],
+        // A booted emulator goes by its AVD name, which is its id again once it is off.
+        ["emulator-5554", undefined, "Pixel_9_API_36"],
         ["R5CT111", "usb", undefined],
         ["192.168.1.20:41233", "wifi", "R5CT900"],
         // A phone whose serial cannot be read is still listed, under its id.

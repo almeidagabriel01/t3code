@@ -23,6 +23,8 @@ const fakeAdb = (script: {
   readonly check?: string;
   readonly services?: ReadonlyArray<string>;
   readonly pair?: string;
+  /** Exit codes for `pair` and `connect`; 124 is a command that hung. */
+  readonly codes?: Readonly<Record<string, number>>;
   readonly devices?: ReadonlyArray<string>;
   readonly connect?: string;
 }) => {
@@ -47,7 +49,7 @@ const fakeAdb = (script: {
         connect: () => script.connect ?? "",
       };
       const stdout = answers[args[0] === "mdns" ? args.join(" ") : (args[0] ?? "")]?.() ?? "";
-      return { code: 0, stdout, stderr: "" };
+      return { code: script.codes?.[args[0] ?? ""] ?? 0, stdout, stderr: "" };
     });
   return { run, calls };
 };
@@ -143,6 +145,20 @@ describe("Wi-Fi pairing", () => {
         services: [PAIRING_LINE],
         pair: "Failed: Wrong password or connection was dropped.",
       },
+    },
+    // The phone answers mDNS but not TCP, so adb pair hangs and says nothing.
+    {
+      failure: "wrong_network",
+      script: { services: [PAIRING_LINE], pair: "", codes: { pair: 124 } },
+    },
+    {
+      failure: "wrong_network",
+      script: {
+        services: [`${PAIRING_LINE}\n${CONNECT_LINE}`],
+        connect: "",
+        codes: { connect: 124 },
+      },
+      advance: "1 minute",
     },
     // Paired, but the phone's connect address cannot be reached.
     {

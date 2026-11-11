@@ -162,12 +162,14 @@ would refuse a child with its own. That session ends when the lineage's last
 thread closes. Any other thread is refused while one is open. Simlock sessions
 are shared by design and exempt.
 
-Access policies are keyed by an identity that survives boots and reconnects
-(`deviceIdentity` in contracts): an emulator's AVD name, since its id becomes
-`emulator-NNNN` once booted; a Wi-Fi phone's `ro.serialno`, since its id is an
-address or mDNS name that changes; the id for everything else (iOS UDIDs, USB
-serials). The hub reports only adb serials, so `DeviceHubOperations` reads the
-serial once per Wi-Fi connection. A policy stored under a plain id still
+Access policies are keyed by an identity that survives boots and reconnects.
+The host sets it (`DeviceSummary.identity`), because only the host knows what
+lasts: hub-backed hosts name an emulator by its AVD, since its id becomes
+`emulator-NNNN` once booted, and a Wi-Fi phone by its `ro.serialno`, since its
+id is an address or mDNS name that changes. Everything else keeps its id (iOS
+UDIDs, USB serials, cloud and leased devices, whose names can repeat). The hub
+reports only adb serials, so `DeviceHubOperations` reads the serial once per
+Wi-Fi connection. A policy stored under a plain id still
 applies and moves to the stable key on the next change. Holds and in-use checks
 stay keyed by the id the stream and launchers use.
 
@@ -204,7 +206,9 @@ paired phones by mDNS name, so `forgetDevice`'s `adb disconnect` may be undone
 while the phone keeps Wireless debugging on.
 
 One attempt runs per environment, held in memory; a repeat with the same
-request id returns it, and another is refused. Live status travels in
+request id returns it, and another is refused. Turning device support off or
+removing the host ends it. EAS and Simlock hosts have no machine running adb,
+so they refuse to pair. Live status travels in
 `DeviceServiceState.wifiPairing` without the password, so every client sees an
 attempt but only the one that started it can show the code.
 

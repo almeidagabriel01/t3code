@@ -529,6 +529,30 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       Effect.uninterruptible,
     );
 
+  const pairingScope = yield* Scope.Scope;
+  /** The environment's one Wi-Fi pairing attempt; the password stays here, never in state. */
+  let pairing: {
+    readonly requestId: string;
+    readonly attemptId: string;
+    readonly hostId: DeviceHostId;
+    readonly qrPayload: string;
+    fiber?: Fiber.Fiber<void>;
+    done?: boolean;
+  } | null = null;
+  const publishPairing = (wifiPairing: DeviceServiceState["wifiPairing"]) =>
+    publish(({ wifiPairing: _previous, ...state }) =>
+      wifiPairing ? { ...state, wifiPairing } : state,
+    );
+
+  /** Stops the running attempt, if any; what it last published is left for the caller to clear. */
+  const endWifiPairing = () =>
+    Effect.suspend(() => {
+      const attempt = pairing;
+      pairing = null;
+      return attempt?.fiber ? Fiber.interrupt(attempt.fiber) : Effect.void;
+    });
+  const wifiPairingHost = () => pairing?.hostId;
+
   const resolveHost = Effect.fn("DeviceService.resolveHost")(function* (
     hostId: DeviceHostId | undefined,
   ) {
@@ -866,6 +890,8 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
               ),
             );
           if (!nextEnabled) {
+            yield* endWifiPairing();
+            yield* publishPairing(undefined);
             yield* Effect.forEach(hosts.values(), (host) => host.stop, { discard: true });
           } else if (input.agentAccessEnabled === false) {
             yield* Effect.forEach(hosts.values(), (host) => host.stopAgent, { discard: true });
@@ -1404,25 +1430,19 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     );
   });
 
-  const pairingScope = yield* Scope.Scope;
-  /** The environment's one Wi-Fi pairing attempt; the password stays here, never in state. */
-  let pairing: {
-    readonly requestId: string;
-    readonly attemptId: string;
-    readonly hostId: DeviceHostId;
-    readonly qrPayload: string;
-    fiber?: Fiber.Fiber<void>;
-    done?: boolean;
-  } | null = null;
-  const publishPairing = (wifiPairing: DeviceServiceState["wifiPairing"]) =>
-    publish(({ wifiPairing: _previous, ...state }) =>
-      wifiPairing ? { ...state, wifiPairing } : state,
-    );
-
   const startWifiPairing: DeviceService["Service"]["startWifiPairing"] = Effect.fn(
     "DeviceService.startWifiPairing",
   )(function* (input) {
-    const ready = yield* readiness(input.hostId);
+    const host = yield* resolveHost(input.hostId);
+    const { kind } = yield* host.summary;
+    // Pairing runs the host machine's adb; cloud sessions and leased pools have no machine to pair with.
+    if (kind !== "local" && kind !== "ssh")
+      return yield* new DevicePlatformUnavailableError({
+        hostId: host.id,
+        platform: "android",
+        reason: "Phones pair over Wi-Fi only with this machine or an SSH device host.",
+      });
+    const ready = yield* readiness(host.id);
     // Checked and claimed without yielding between, so two clients never start two attempts.
     if (pairing && !pairing.done) {
       if (pairing.requestId === input.requestId)
@@ -1480,12 +1500,8 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
   const cancelWifiPairing: DeviceService["Service"]["cancelWifiPairing"] = Effect.fn(
     "DeviceService.cancelWifiPairing",
   )(function* (input) {
-    const attempt = pairing;
     const { state } = yield* SynchronizedRef.get(stateRef);
-    if (attempt?.attemptId === input.attemptId) {
-      pairing = null;
-      if (attempt.fiber) yield* Fiber.interrupt(attempt.fiber);
-    }
+    if (pairing?.attemptId === input.attemptId) yield* endWifiPairing();
     return state.wifiPairing?.attemptId === input.attemptId
       ? yield* publishPairing(undefined)
       : state;
@@ -1687,6 +1703,12 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       const summaries = yield* Effect.forEach(hosts.values(), (host) => host.summary);
       const unchanged = (id: DeviceHostId) =>
         hosts.has(id) && hosts.get(id) === publishedHosts.get(id);
+      // An attempt on a host that was removed or replaced has no adb left to finish with.
+      const pairingHost = wifiPairingHost();
+      if (pairingHost !== undefined && !unchanged(pairingHost)) {
+        yield* endWifiPairing();
+        yield* publishPairing(undefined);
+      }
       for (const [key, hold] of holds) {
         if (unchanged(hold.hostId)) continue;
         holds.delete(key);

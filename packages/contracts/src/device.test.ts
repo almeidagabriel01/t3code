@@ -147,6 +147,8 @@ describe("device access policies", () => {
     platform: "android" as const,
     physical: false,
     name: "Pixel_9_API_36",
+    // The host names a booted emulator by its AVD.
+    identity: "Pixel_9_API_36",
   };
   it.each([
     // An emulator's id is its AVD name until it boots and a serial after; the name is the key.
@@ -193,6 +195,11 @@ describe("device access policies", () => {
         identity: "R5CT900",
       },
       key: "mac:R5CT900",
+    },
+    // Only the host decides an identity: two leased devices with one name stay apart.
+    {
+      device: { hostId: "pool", platform: "android", physical: false, name: "Pixel 9", id: "a1" },
+      key: "pool:a1",
     },
     // A caller that knows only the id falls back to it.
     { device: { hostId: "local", id: "emulator-5554" }, key: "local:emulator-5554" },
