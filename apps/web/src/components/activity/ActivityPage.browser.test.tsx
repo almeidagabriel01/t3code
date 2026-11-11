@@ -20,6 +20,7 @@ vi.mock("../../state/entities", () => ({
   useThreadShells: () => [needsYou],
   useProjects: () => [],
   useDelegatedUnderParent: () => new Set(),
+  useQuietThreadShell: () => null,
 }));
 vi.mock("../../state/decisions", () => ({
   useDecisionEntries: () => ({ open: [] }),
