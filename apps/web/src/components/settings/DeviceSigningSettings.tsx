@@ -68,7 +68,7 @@ export function DeviceSigningSettings() {
         title="Apple Team ID"
         description="Agents need your team id to sign the runner they install on a USB iPhone. Find it under Membership in your Apple Developer account."
         placeholder="ABCDE12345"
-        invalidMessage="A Team ID is 10 uppercase letters and digits."
+        invalidMessage="A Team ID is 10 uppercase letters and digits, such as ABCDE12345."
         isValid={isAppleTeamId}
         normalize={(value) => value.toUpperCase()}
         value={settings.appleTeamId}

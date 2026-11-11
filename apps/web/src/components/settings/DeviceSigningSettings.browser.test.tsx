@@ -51,7 +51,11 @@ describe("DeviceSigningSettings", () => {
   });
 
   it.each([
-    ["Apple Team ID", "TOOSHORT", "A Team ID is 10 uppercase letters and digits."],
+    [
+      "Apple Team ID",
+      "TOOSHORT",
+      "A Team ID is 10 uppercase letters and digits, such as ABCDE12345.",
+    ],
     ["Runner bundle id (optional)", "nodots", "A bundle id is reverse-DNS"],
   ])("rejects an invalid %s inline and does not save", async (label, value, message) => {
     setup();
