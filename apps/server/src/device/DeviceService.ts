@@ -1593,6 +1593,30 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
           platform: input.platform,
           reason: "physical_device",
         });
+      // A linked environment powers its device off through a session open on it, which it checks.
+      if (isLinkedDeviceHostId(host.id)) {
+        const open = state.sessions.filter(
+          (session) => session.hostId === host.id && session.deviceId === input.deviceId,
+        );
+        if (open.length === 0)
+          return yield* new DeviceHostUnavailableError({
+            hostId: host.id,
+            hostLabel: host.label,
+            reason: "open the device before powering it off from here.",
+          });
+        yield* Effect.forEach(
+          open,
+          (session) =>
+            close({
+              threadId: session.threadId,
+              hostId: host.id,
+              deviceId: input.deviceId,
+              shutdown: true,
+            }),
+          { discard: true },
+        );
+        return;
+      }
       yield* publish((current) => ({
         ...current,
         sessions: current.sessions.filter(

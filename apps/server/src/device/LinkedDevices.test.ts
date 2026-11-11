@@ -72,7 +72,7 @@ const settingsService = (settings: Ref.Ref<Settings>) =>
   });
 
 /** The device owner's machine: one simulator and one physical phone, and an agent-device daemon. */
-const peerHost = (): DeviceHost.DeviceHost["Service"] => {
+const peerHost = (shutdowns: Array<string> = []): DeviceHost.DeviceHost["Service"] => {
   const ready: DeviceHost.DeviceHostReady = {
     nodePath: process.execPath,
     hub: { origin: "http://hub.test" },
@@ -100,7 +100,7 @@ const peerHost = (): DeviceHost.DeviceHost["Service"] => {
       }),
       boot: (device) => Effect.succeed(device.id),
       attach: () => Effect.void,
-      shutdown: () => Effect.void,
+      shutdown: (device) => Effect.sync(() => void shutdowns.push(device.id)),
       screenshot: () => Effect.succeed(new Uint8Array([137, 80, 78, 71])),
     },
     helpers: { serveSimAxSettings: null, serveSimCli: null },
@@ -166,8 +166,9 @@ const linkedPair = Effect.fn("linkedPair")(function* () {
     deviceOnboardingCompleted: true,
     linkedEnvironmentsEnabled: true,
   });
+  const peerShutdowns: Array<string> = [];
   const peerDevices = yield* DeviceService.makeWithHosts(
-    new Map([[LOCAL_DEVICE_HOST_ID, peerHost()]]),
+    new Map([[LOCAL_DEVICE_HOST_ID, peerHost(peerShutdowns)]]),
   ).pipe(
     Effect.provide(NodeCrypto.layer),
     Effect.provideService(ServerSettings.ServerSettingsService, settingsService(peerSettings)),
@@ -379,6 +380,7 @@ const linkedPair = Effect.fn("linkedPair")(function* () {
     hubCalls,
     hubBody,
     peerDevices,
+    peerShutdowns,
     peerSettings,
     linkingDevices,
     linkedHost,
@@ -440,12 +442,33 @@ describe("linked devices", () => {
           linked: { label: "Laptop" },
         }),
       ]);
+      const shot = yield* linkingDevices.screenshot({
+        threadId: ThreadId.make("thread-a"),
+        hostId: LINKED_HOST,
+        deviceId: SIM,
+      });
+      expect([...shot.png]).toEqual([137, 80, 78, 71]);
       yield* linkingDevices.close({
         threadId: ThreadId.make("thread-a"),
         hostId: LINKED_HOST,
         deviceId: SIM,
       });
       expect((yield* peerDevices.state).sessions).toEqual([]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("powers a linked device off through the session open on it, and only then", () =>
+    Effect.gen(function* () {
+      const { linkingDevices, peerDevices, peerShutdowns } = yield* linkedPair();
+      yield* linkingDevices.list;
+      const target = { hostId: LINKED_HOST, deviceId: SIM, platform: "ios" } as const;
+      const refused = yield* Effect.flip(linkingDevices.shutdown(target));
+      expect(refused.message).toContain("open the device before powering it off");
+      yield* linkingDevices.open({ ...target, threadId: ThreadId.make("thread-a") });
+      yield* linkingDevices.shutdown(target);
+      expect((yield* linkingDevices.state).sessions).toEqual([]);
+      expect((yield* peerDevices.state).sessions).toEqual([]);
+      expect(peerShutdowns).toEqual([SIM]);
     }).pipe(Effect.scoped),
   );
 
@@ -533,12 +556,33 @@ describe("linked devices", () => {
     },
   ])("refuses a link while the owner has $name", ({ patch, status, state }) =>
     Effect.gen(function* () {
-      const { gateway, peerSettings } = yield* linkedPair();
+      const { gateway, peerSettings, linkedHost } = yield* linkedPair();
       yield* Ref.update(peerSettings, (current) => ({ ...current, ...patch }) as Settings);
       const response = yield* gateway("/list", {});
       expect(response.status).toBe(status);
       expect(yield* json(response)).toMatchObject({ state });
+      // The linking side shows the owner's reason as the link's state.
+      const listed = yield* Effect.flip((yield* linkedHost.current)!.devices.list);
+      expect(listed._tag).toBe("DeviceHostUnavailableError");
+      expect(yield* linkedHost.summary).toMatchObject({ linkState: state });
     }).pipe(Effect.scoped),
+  );
+
+  it.effect.each(["/open", "/close", "/hold", "/screenshot"])(
+    "refuses a request to %s it cannot read",
+    (path) =>
+      Effect.gen(function* () {
+        const { call, gateway } = yield* linkedPair();
+        const raw = yield* call(
+          new Request(`http://peer.test${LINKED_DEVICE_ROUTE_PREFIX}${path}`, {
+            method: "POST",
+            headers: { authorization: `Bearer ${LINK_TOKEN}`, "content-type": "application/json" },
+            body: "{",
+          }),
+        );
+        expect(raw.status).toBe(400);
+        expect((yield* gateway(path, { unexpected: true })).status).toBe(400);
+      }).pipe(Effect.scoped),
   );
 
   it.effect("proxies an agent's command to the daemon pinned to the thread's session", () =>
@@ -580,6 +624,13 @@ describe("linked devices", () => {
       // Reading the screen still works while held.
       const look = yield* agentRpc(SIM, "thread-a", command("snapshot"));
       expect(yield* json(look)).toMatchObject({ result: { ok: true } });
+      expect(daemonCalls).toHaveLength(2);
+
+      // Closing there ends what the agent's launcher can reach.
+      yield* gateway("/close", { threadId: "thread-a", deviceId: SIM });
+      expect(yield* json(yield* agentRpc(SIM, "thread-a", command("snapshot")))).toMatchObject({
+        error: { message: expect.stringContaining("Call device_open again") },
+      });
       expect(daemonCalls).toHaveLength(2);
     }).pipe(Effect.scoped),
   );
@@ -826,6 +877,96 @@ describe("linked devices", () => {
         });
         expect(daemonCalls).toHaveLength(1);
       }).pipe(Effect.scoped),
+  );
+});
+
+describe("a linked host reads the owner's answer", () => {
+  const hostAnswering = (answer: () => Response) =>
+    LinkedDeviceHost.make({
+      link: {
+        environmentId: PEER_ENV,
+        label: "Studio",
+        resolve: Effect.succeed({ url: "http://peer.test", token: LINK_TOKEN }),
+        recordOutcome: () => Effect.void,
+      },
+      localOrigin: "http://127.0.0.1:3773",
+    }).pipe(
+      Effect.provide(NodeCrypto.layer),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Effect.sync(() => HttpClientResponse.fromWeb(request, answer())),
+        ),
+      ),
+    );
+
+  it.effect.each([
+    {
+      name: "an owner without linked devices",
+      answer: () => new Response("Not found", { status: 404 }),
+      error: "DeviceHostUnavailableError",
+      linkState: "needs_update",
+    },
+    {
+      name: "the owner's own device error",
+      answer: () =>
+        Response.json(
+          {
+            error: {
+              _tag: "DeviceActionUnavailableError",
+              operation: "boot",
+              platform: "ios",
+              reason: "unsupported",
+            },
+          },
+          { status: 409 },
+        ),
+      error: "DeviceActionUnavailableError",
+      linkState: "connected",
+    },
+    {
+      name: "an answer it cannot read",
+      answer: () => new Response("<html>", { status: 502 }),
+      error: "DeviceOperationError",
+      linkState: "connected",
+    },
+  ])("from $name", ({ answer, error, linkState }) =>
+    Effect.gen(function* () {
+      const host = yield* hostAnswering(answer);
+      const ready = (yield* host.current)!;
+      const failed = yield* Effect.flip(
+        ready.devices.boot(
+          {
+            id: SIM,
+            platform: "ios",
+            name: "iPhone 17",
+            version: "iOS 26",
+            booted: true,
+            physical: false,
+          },
+          { thread: { threadId: ThreadId.make("thread-a"), agent: true } },
+        ),
+      );
+      expect(failed._tag).toBe(error);
+      expect(yield* host.summary).toMatchObject({ linkState });
+    }),
+  );
+
+  it.effect("runs nothing on this machine and refuses what only the owner can do", () =>
+    Effect.gen(function* () {
+      const host = yield* hostAnswering(() => new Response("", { status: 404 }));
+      const ready = (yield* host.current)!;
+      expect((yield* ready.run("simctl", [])).stderr).toContain("changed on Studio");
+      expect(
+        (yield* Effect.flip(ready.devices.shutdown({ id: SIM, platform: "ios" }))).message,
+      ).toContain("open the device before powering it off");
+      expect((yield* Effect.flip(ready.devices.agentEndpoint!(SIM, undefined)))._tag).toBe(
+        "DeviceHostUnavailableError",
+      );
+      expect(yield* ready.upstream!("/x", new URLSearchParams("a=1"))).toMatchObject({
+        url: `http://peer.test${LINKED_DEVICE_ROUTE_PREFIX}/hub/x?a=1`,
+      });
+    }),
   );
 });
 

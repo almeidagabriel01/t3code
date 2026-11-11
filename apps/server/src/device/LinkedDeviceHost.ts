@@ -229,13 +229,13 @@ export const make = Effect.fn("LinkedDeviceHost.make")(function* (input: {
     }),
     boot: (device, context) => openThere(device, context, true),
     attach: (device, context) => openThere(device, context, false).pipe(Effect.asVoid),
-    // Powering a device off happens there, through a close that asks for it.
+    // DeviceService powers a linked device off through a session's close, which that side checks.
     shutdown: () =>
       Effect.fail(
-        new DeviceOperationError({
-          operation: "shutdown",
-          reason: "hub_rejected",
-          cause: new Error("A linked environment's device powers off from that environment."),
+        new DeviceHostUnavailableError({
+          hostId,
+          hostLabel: label,
+          reason: "open the device before powering it off from here.",
         }),
       ),
     screenshot: Effect.fn("LinkedDeviceHost.screenshot")(function* (device, context) {
