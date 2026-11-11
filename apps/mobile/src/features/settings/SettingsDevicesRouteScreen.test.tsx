@@ -15,6 +15,7 @@ const { mocks, Children } = vi.hoisted(() => ({
     setAccess: vi.fn(),
     setHold: vi.fn(),
     forget: vi.fn(),
+    navigate: vi.fn(),
   },
 }));
 vi.mock("react-native", () => ({ View: Children, Keyboard: { dismiss: vi.fn() } }));
@@ -63,6 +64,17 @@ vi.mock("../../components/ui/ListSection", () => ({
       {props.children}
       <footer>{props.footer}</footer>
     </section>
+  ),
+}));
+vi.mock("@react-navigation/native", () => ({
+  useNavigation: () => ({ navigate: mocks.navigate }),
+}));
+vi.mock("../../components/ui/ListRow", () => ({
+  ListRow: (props: { label: string; description?: string; onPress: () => void }) => (
+    <button aria-label={props.label} onClick={props.onPress}>
+      {props.label}
+      {props.description}
+    </button>
   ),
 }));
 vi.mock("../../components/ui/ListChoiceRow", () => ({
@@ -237,6 +249,17 @@ describe("Devices settings", () => {
     expect(section.textContent).toContain("turn on Settings > Privacy & Security > Developer Mode");
     expect(section.textContent).toContain("Locked");
     expect(section.textContent).toContain("This Mac · iOS 19 · USB");
+  });
+
+  it("takes a missing Screen Recording permission to Mac permissions", async () => {
+    using screen = await setup({
+      data: {
+        ...state,
+        devices: [{ ...desktop, issues: [{ reason: "screen_recording_permission" }] }],
+      },
+    });
+    await screen.press("Ana's Mac (desktop)", "Screen Recording permission is off");
+    expect(mocks.navigate).toHaveBeenCalledWith("SettingsMacPermissions");
   });
 
   it("validates the iPhone signing fields and saves only what changed", async () => {

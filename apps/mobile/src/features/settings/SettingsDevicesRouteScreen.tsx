@@ -1,7 +1,9 @@
 import { useAtomValue } from "@effect/atom-react";
+import { useNavigation } from "@react-navigation/native";
 import {
   DEVICE_ACCESS_POLICY_LABELS,
   DEVICE_CONNECTION_LABELS,
+  DEVICE_ISSUES,
   deviceAccessPolicy,
   findDeviceHold,
   storedDeviceAccessPolicy,
@@ -15,6 +17,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppText as Text } from "../../components/ui/AppText";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { ListChoiceRow } from "../../components/ui/ListChoiceRow";
+import { ListRow } from "../../components/ui/ListRow";
 import { ListRowLayout } from "../../components/ui/ListRowLayout";
 import { ListSection } from "../../components/ui/ListSection";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
@@ -43,6 +46,7 @@ function DeviceEnvironment(props: {
   const canEdit = useAtomValue(deviceEnvironment.setAccess.permissionAtom(environmentId));
   const canHold = useAtomValue(deviceEnvironment.setHold.permissionAtom(environmentId));
   const setAccess = useAtomCommand(deviceEnvironment.setAccess);
+  const navigation = useNavigation();
   const setHold = useAtomCommand(deviceEnvironment.setHold);
   const canForget = useAtomValue(deviceEnvironment.forget.permissionAtom(environmentId));
   const forget = useAtomCommand(deviceEnvironment.forget);
@@ -105,14 +109,24 @@ function DeviceEnvironment(props: {
             title={`${device.name}${device.physical && device.platform !== "desktop" ? " · Physical" : ""}${suffix}`}
             footer={`${host?.label ?? "Device host"} · ${device.version}${device.connection ? ` · ${DEVICE_CONNECTION_LABELS[device.connection]}` : ""}`}
           >
-            {issues.map((issue) => (
-              <ListRowLayout
-                key={issue.reason}
-                icon="exclamationmark.triangle"
-                label={issue.title}
-                description={issue.action}
-              />
-            ))}
+            {issues.map((issue) =>
+              DEVICE_ISSUES[issue.reason].macPermission === "screen-recording" ? (
+                <ListRow
+                  key={issue.reason}
+                  icon="exclamationmark.triangle"
+                  label={issue.title}
+                  description={issue.action}
+                  onPress={() => navigation.navigate("SettingsMacPermissions")}
+                />
+              ) : (
+                <ListRowLayout
+                  key={issue.reason}
+                  icon="exclamationmark.triangle"
+                  label={issue.title}
+                  description={issue.action}
+                />
+              ),
+            )}
             {POLICIES.map((option, index) => (
               <ListChoiceRow
                 key={option}
