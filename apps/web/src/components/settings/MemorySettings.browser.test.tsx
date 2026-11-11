@@ -196,6 +196,7 @@ vi.mock("../../hooks/useSettings", () => ({
       memoryEnabled: state.memoryEnabled,
       memoryModelSelection: state.memoryModel,
       providerInstances: {},
+      textGenerators: {},
     });
   },
 }));
