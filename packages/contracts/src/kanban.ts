@@ -149,7 +149,7 @@ export const BUILT_IN_KANBAN_TEMPLATE: KanbanDefaultTemplate = {
     },
     {
       name: "Feature",
-      icon: "sparkles",
+      icon: "lightbulb",
       color: "blue",
       priority: "medium",
       checklist: ["Clarify the behavior", "Implement", "Add tests", "Update docs if needed"],

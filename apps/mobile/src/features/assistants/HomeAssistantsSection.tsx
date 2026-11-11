@@ -441,7 +441,7 @@ export function HomeAssistantsSection(props: {
   const addActions: MenuAction[] = [
     { id: "assistant", title: "New assistant", image: "person.badge.plus" },
     { id: "group", title: "New group", image: "person.2" },
-    { id: "describe", title: "Describe one and let T3 build it", image: "sparkles" },
+    { id: "describe", title: "Describe one and let T3 build it", image: "text.bubble" },
   ];
 
   return (

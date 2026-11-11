@@ -201,7 +201,7 @@ export function NoteStartWorkRouteScreen({
         ) : null}
         <Button
           label={attempted && !busy ? "Try again" : another ? "Create card" : "Start work"}
-          icon="sparkles"
+          icon="hammer"
           tone="primary"
           loading={busy}
           disabled={projectId === null || !canAct}

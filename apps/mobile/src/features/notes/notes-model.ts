@@ -133,7 +133,7 @@ export function noteRowMenuActions(
     actions.push({
       id: "start",
       title: note.card === null ? "Start work" : "Start another card",
-      image: "sparkles",
+      image: "hammer",
     });
   if (can.write && !note.issue) actions.push({ id: "rename", title: "Rename", image: "pencil" });
   if (can.move) actions.push({ id: "move", title: "Move or rename file", image: "folder" });

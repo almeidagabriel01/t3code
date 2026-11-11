@@ -590,7 +590,7 @@ function NoteContent(props: NoteParams) {
           ) : (
             <Button
               label="Start work"
-              icon="sparkles"
+              icon="hammer"
               tone="secondary"
               disabled={!canChangeHeader || busy}
               onPress={() =>

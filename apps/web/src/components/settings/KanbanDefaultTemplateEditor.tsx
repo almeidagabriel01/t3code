@@ -32,7 +32,7 @@ import { Textarea } from "../ui/textarea";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 
-const TEMPLATE_ICONS = ["bug", "sparkles", "wrench", "broom", "tag"].map((value) => ({
+const TEMPLATE_ICONS = ["bug", "lightbulb", "wrench", "broom", "tag"].map((value) => ({
   value,
   label: value,
 }));

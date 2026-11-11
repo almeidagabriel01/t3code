@@ -126,7 +126,7 @@ function StartAgentButton(props: {
   return (
     <Button
       label="Start agent"
-      icon="sparkles"
+      icon="robot"
       tone="secondary"
       loading={agent.starting}
       disabled={!agent.ready}

@@ -87,7 +87,7 @@ export function GlobalSkillsSection(props: {
           <View key={skill.name} className="flex-row items-center bg-grouped-card">
             <View className="min-w-0 flex-1">
               <ListRowLayout
-                icon="sparkles"
+                icon="wrench.and.screwdriver"
                 label={skill.displayName ? `${skill.displayName} (${skill.name})` : skill.name}
                 description={skill.description}
               />

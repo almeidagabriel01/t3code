@@ -222,7 +222,7 @@ function SubtaskRow(props: {
               onPress={() => void agent.start()}
               className="px-3 py-3 active:opacity-70"
             >
-              <SymbolView name="sparkles" size={16} tintColorClassName="accent-icon-muted" />
+              <SymbolView name="robot" size={16} tintColorClassName="accent-icon-muted" />
             </Pressable>
           ) : null}
           <Pressable
@@ -727,7 +727,7 @@ function KanbanCardDetail(props: {
               <View className="flex-row flex-wrap gap-2">
                 <Button
                   label="Start with agent"
-                  icon="sparkles"
+                  icon="robot"
                   tone="secondary"
                   loading={agent.starting}
                   disabled={!agent.ready}

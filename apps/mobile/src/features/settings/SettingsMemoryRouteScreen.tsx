@@ -2000,7 +2000,7 @@ function MemoryGeneration({ environmentId }: { environmentId: EnvironmentId }) {
       />
       {separate ? (
         <SettingsRow
-          icon="sparkles"
+          icon="brain"
           label="Memory model"
           value={modelName}
           disabled={!allowed || busy}

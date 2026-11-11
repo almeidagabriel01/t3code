@@ -28,7 +28,7 @@ import {
   PlusIcon,
   RefreshCwIcon,
   SettingsIcon,
-  SparklesIcon,
+  MessageSquareTextIcon,
   UserRoundIcon,
   UsersIcon,
 } from "lucide-react";
@@ -658,7 +658,7 @@ export const AssistantSidebarSection = memo(function AssistantSidebarSection(pro
                 New group
               </MenuItem>
               <MenuItem onClick={() => setDescribing(true)}>
-                <SparklesIcon />
+                <MessageSquareTextIcon />
                 Describe one and let T3 build it
               </MenuItem>
             </MenuPopup>

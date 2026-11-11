@@ -11,7 +11,7 @@ import {
   SignalHighIcon,
   SignalLowIcon,
   SignalMediumIcon,
-  SparklesIcon,
+  LightbulbIcon,
   TagIcon,
   WrenchIcon,
 } from "lucide-react";
@@ -56,7 +56,9 @@ export function PriorityIcon({ priority }: { readonly priority: KanbanPriority }
 
 const TEMPLATE_ICONS: Record<string, ComponentType<{ className?: string }>> = {
   bug: BugIcon,
-  sparkles: SparklesIcon,
+  lightbulb: LightbulbIcon,
+  // Templates saved before the sparkles ban keep their icon.
+  sparkles: LightbulbIcon,
   wrench: WrenchIcon,
   broom: BrushCleaningIcon,
 };

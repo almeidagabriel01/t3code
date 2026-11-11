@@ -138,7 +138,7 @@ export function KanbanCardTile(props: {
           ) : null}
           {card.linkedThreadIds.length > 0 ? (
             <View className="ml-auto flex-row items-center gap-1">
-              <SymbolView name="sparkles" size={14} tintColorClassName="accent-icon-muted" />
+              <SymbolView name="robot" size={14} tintColorClassName="accent-icon-muted" />
               <Text textRole="caption" className="text-foreground-muted">
                 {card.linkedThreadIds.length}
               </Text>
