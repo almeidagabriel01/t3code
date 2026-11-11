@@ -216,6 +216,29 @@ describe("groupDevicesBySource", () => {
       ],
     },
     {
+      name: "this computer first, before a USB iPhone",
+      state: {
+        ...sources,
+        hosts: sources.hosts.slice(0, 1),
+        devices: [
+          device("local", "iPhone 17"),
+          device("local", "Ana's iPhone", { physical: true, booted: true }),
+          device("local", "Ana's Mac", { platform: "desktop", booted: true }),
+        ],
+      },
+      expected: [
+        {
+          key: "own",
+          linked: null,
+          kinds: [
+            ["desktop", ["Ana's Mac"]],
+            ["physical", ["Ana's iPhone"]],
+            ["ios", ["iPhone 17"]],
+          ],
+        },
+      ],
+    },
+    {
       name: "only linked devices",
       state: { ...sources, devices: sources.devices.slice(2, 3) },
       expected: [
