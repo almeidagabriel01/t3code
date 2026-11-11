@@ -41,6 +41,7 @@ const reactTests = [
   "src/features/settings/SettingsDevicesRouteScreen.test.tsx",
   "src/features/devices/DeviceNotices.test.tsx",
   "src/features/devices/DeviceCollapsedChrome.test.tsx",
+  "src/features/devices/DevicePreviewRouteScreen.test.tsx",
   "src/features/devices/usePhoneInput.test.tsx",
   "src/features/settings/WifiPairingSection.test.tsx",
   "src/features/settings/SettingsComputerUseRouteScreen.test.tsx",
@@ -213,6 +214,12 @@ export default defineConfig({
             },
           },
         ],
+        resolve: {
+          alias: {
+            // Metro serves this generated script; tests that render the viewer mock it.
+            "@t3tools/mobile-device-stream": `${sourceRoot}types/mobile-device-stream.d.ts`,
+          },
+        },
         test: {
           name: "react",
           include: reactTests,
