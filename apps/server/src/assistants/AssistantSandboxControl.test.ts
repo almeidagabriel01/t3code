@@ -111,6 +111,18 @@ const harness = (
                 message: world.linkError,
               });
             }
+            // Like PeerLinks: an address alone never moves a live link to another address.
+            const current = world.links.get(sandboxId);
+            if (
+              current !== undefined &&
+              DateTime.isGreaterThan(current.expiresAt, yield* DateTime.now) &&
+              !current.urls.includes(input.url)
+            ) {
+              return yield* new PeerLinkError({
+                reason: "pairing_rejected",
+                message: "Already linked at another address.",
+              });
+            }
             world.linked.push({
               url: input.url,
               code: input.pairingCode,
@@ -210,6 +222,7 @@ it.effect("start reuses a live link to the sandbox and relinks when its address 
       world.linked.map((entry) => entry.url),
       [url, "http://127.0.0.1:50000"],
     );
+    assert.deepStrictEqual(world.unlinked, [sandboxId]);
   }).pipe(Effect.provide(layer));
 });
 

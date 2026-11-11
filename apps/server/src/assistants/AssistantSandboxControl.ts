@@ -274,6 +274,10 @@ const make = Effect.gen(function* () {
         existing.value.expiresAt,
         DateTime.add(yield* DateTime.now, RELINK_MARGIN),
       );
+    // A link by address never moves a live link, so one at the sandbox's old address goes first.
+    if (Option.isSome(existing) && !existing.value.urls.includes(url)) {
+      yield* links.unlink(existing.value.environmentId).pipe(Effect.ignore);
+    }
     // The sandbox answers on this machine's loopback, so it links by address: an expected id
     // would refuse loopback, where anything may answer as the machine picked.
     const environmentId = reusable
