@@ -3662,7 +3662,7 @@ const fleetTrace = (id: string): SampleRun => {
   const reports: Record<string, string> = {
     "DISC-01": "build-mac discovery failed. Used spare-mac. /tmp/proof/discovery-settings.png",
     "SESS-01": "Acme Settings: /tmp/proof/app-settings.png",
-    "ACC-01": "Agent device access is off. Enable Agent device access in Settings > Integrations.",
+    "ACC-01": "Agent device access is off. Enable Agents can use devices in Settings > Devices.",
     "CAP-01": "Empty image; could not visually verify Acme Settings.",
     "OWN-01": "Used Acme Spare iPhone on spare-mac. /tmp/proof/free-device-settings.png",
   };
@@ -4464,8 +4464,8 @@ it.each(["bound", "shared"])(
 );
 
 it.each([
-  "To turn it on: switch on Agent device access in Settings > Integrations > Devices.",
-  "Switch it on in Settings > Integrations > Devices.",
+  "To turn it on: switch on Agents can use devices in Settings > Devices.",
+  "Switch it on in Settings > Devices.",
 ])("R12 ACC-01 accepts the product validation enable wording: %s", (instruction) => {
   const c = deviceCases().find((c) => c.id === "ACC-01")!;
   const good = fleetTrace(c.id);

@@ -34,7 +34,7 @@ export const askDeviceAccess =
           threadTitle: thread.threadTitle,
           clientRequestId: `device-access:${question.hostId}:${question.deviceId}${attempt === 0 ? "" : `:${attempt}`}`,
           title: `Let the agent use ${question.deviceName}?`.slice(0, 120),
-          context: `The agent in this thread wants to open and drive ${question.deviceName} on ${question.hostLabel}. Your answer applies to this thread and the tasks it delegates. Change the default in Settings > Integrations > Devices > Device access.`,
+          context: `The agent in this thread wants to open and drive ${question.deviceName} on ${question.hostLabel}. Your answer applies to this thread and the tasks it delegates. Change the default in Settings > Devices > Device access.`,
           options: [
             {
               id: "allow",

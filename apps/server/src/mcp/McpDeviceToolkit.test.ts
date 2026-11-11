@@ -259,7 +259,7 @@ it.effect("registers the device tools and returns the screenshot as image conten
       expect(denied.content).toEqual([
         {
           type: "text",
-          text: "Agent device access is turned off for this environment. Ask the user to turn on Agent device access in Settings > Integrations > Devices; it applies when the agent session next starts, such as in a new thread.",
+          text: "Agent device access is turned off for this environment. Ask the user to turn on Agents can use devices in Settings > Devices; it applies when the agent session next starts, such as in a new thread.",
         },
       ]);
     }),
