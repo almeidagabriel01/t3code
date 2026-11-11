@@ -294,7 +294,10 @@ export function useFileTreeEditing(options: {
   };
 
   const duplicate = (relativePath: string) =>
-    guarded(() => apply([{ _tag: "duplicate", relativePath }]));
+    guarded(async () => {
+      await flush(relativePath);
+      await apply([{ _tag: "duplicate", relativePath }]);
+    });
 
   /** Moves dropped rows into a folder; Pierre has already shown the move. */
   const moveInto = async (paths: readonly string[], directory: string) => {
@@ -343,6 +346,8 @@ export function useFileTreeEditing(options: {
 
   const step = (direction: "undo" | "redo") =>
     guarded(async () => {
+      // A step can trash or move any file, so pending edits land before it does.
+      await flush("");
       const moved = await (direction === "undo" ? history.undo(run) : history.redo(run));
       if (moved) {
         setError(null);

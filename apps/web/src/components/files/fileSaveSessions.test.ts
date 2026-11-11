@@ -78,6 +78,10 @@ describe("file save sessions", () => {
     await h.sessions.flushUnder({ environmentId: target.environmentId, cwd: target.cwd }, "none");
     await vi.advanceTimersByTimeAsync(500);
     expect(h.writes().at(-1)).toEqual([at("srcx/c.ts"), "srcx/c.ts"]);
+    // The project root covers every open file, as undo needs before it moves anything.
+    h.sessions.change(at("srcx/c.ts"), "again");
+    await h.sessions.flushUnder({ environmentId: target.environmentId, cwd: target.cwd }, "");
+    expect(h.writes().at(-1)).toEqual([at("srcx/c.ts"), "again"]);
   });
 
   it("flushes on the last release and drops edits from retired editors", async () => {

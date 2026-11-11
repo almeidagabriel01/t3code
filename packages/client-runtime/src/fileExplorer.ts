@@ -98,18 +98,27 @@ export class FileChangeHistory {
     return this.#step(run, "redo");
   }
 
-  /** A failed step is dropped: the files no longer match what it would put back. */
+  /**
+   * A failed step is dropped: the files no longer match what it would put back. What it changed
+   * before failing still goes on the other stack, and an item the server could not change fails it.
+   */
   async #step(run: RunEntryChange, direction: "undo" | "redo"): Promise<boolean> {
     const from = direction === "undo" ? this.#undo : this.#redo;
     const step = from.at(-1);
     if (step === undefined) return false;
     from.pop();
     const inverses: ProjectEntryChange[] = [];
-    for (const change of step) {
-      const inverse = inverseEntryChange(change, await run(change));
-      if (inverse !== null) inverses.unshift(inverse);
+    try {
+      for (const change of step) {
+        const result = await run(change);
+        const inverse = inverseEntryChange(change, result);
+        if (inverse !== null) inverses.unshift(inverse);
+        const failure = result.failures[0];
+        if (failure !== undefined) throw new Error(`${failure.relativePath}: ${failure.message}`);
+      }
+    } finally {
+      if (inverses.length > 0) (direction === "undo" ? this.#redo : this.#undo).push(inverses);
     }
-    if (inverses.length > 0) (direction === "undo" ? this.#redo : this.#undo).push(inverses);
     return true;
   }
 }

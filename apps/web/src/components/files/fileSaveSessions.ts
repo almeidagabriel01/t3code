@@ -131,7 +131,7 @@ export function createFileSaveSessions(deps: FileSaveSessionDeps) {
         [...sessions].flatMap(([key, session]) => {
           const path = key.slice(prefix.length);
           return key.startsWith(prefix) &&
-            (path === relativePath || path.startsWith(`${relativePath}/`))
+            (relativePath === "" || path === relativePath || path.startsWith(`${relativePath}/`))
             ? [session.coordinator.flushAndWait()]
             : [];
         }),

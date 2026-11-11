@@ -196,6 +196,41 @@ describe("FileChangeHistory", () => {
     ).rejects.toThrow("gone");
     expect(history.canUndo).toBe(false);
     expect(history.canRedo).toBe(false);
+
+    // A restore whose trashed item is gone reports a failure, not an error: the undo must say so.
+    history.record([
+      {
+        change: { _tag: "delete", relativePaths: ["t"], mode: "trash" },
+        result: { entries: [{ relativePath: "t", restoreToken: "r1" }], failures: [] },
+      },
+    ]);
+    await expect(
+      history.undo(async () => ({
+        entries: [],
+        failures: [{ relativePath: "t", message: "It is no longer in the Trash." }],
+      })),
+    ).rejects.toThrow("t: It is no longer in the Trash.");
+    expect(history.canRedo).toBe(false);
+
+    // What a step changed before it failed can still be redone.
+    history.record([
+      { change: { _tag: "move", relativePath: "a", newRelativePath: "d/a" }, result: ok("d/a") },
+      { change: { _tag: "move", relativePath: "b", newRelativePath: "d/b" }, result: ok("d/b") },
+    ]);
+    await expect(
+      history.undo(async (change) => {
+        if (change._tag === "move" && change.relativePath === "d/a") throw new Error("busy");
+        return ok("b");
+      }),
+    ).rejects.toThrow("busy");
+    const redone: ProjectEntryChange[] = [];
+    expect(
+      await history.redo(async (change) => {
+        redone.push(change);
+        return ok("d/b");
+      }),
+    ).toBe(true);
+    expect(redone).toEqual([{ _tag: "move", relativePath: "b", newRelativePath: "d/b" }]);
   });
 });
 
