@@ -9,7 +9,10 @@ import {
   DeviceError,
   DeviceHeldError,
   DeviceInUseError,
+  deviceIssueBlocks,
+  DeviceNotReadyError,
   DeviceServiceState,
+  isCaptureDevice,
   findDeviceHold,
   storedDeviceAccessPolicy,
   EasDeviceHostConfig,
@@ -17,7 +20,13 @@ import {
   EasDeviceHostConfigs,
   SshDeviceHostConfigs,
 } from "./device.ts";
-import { secretSettingsFields, ServerSettings } from "./settings.ts";
+import {
+  AppleBundleIdInput,
+  AppleTeamIdInput,
+  isAppleTeamId,
+  secretSettingsFields,
+  ServerSettings,
+} from "./settings.ts";
 import { ThreadId } from "./baseSchemas.ts";
 
 const decodeSshHosts = Schema.decodeUnknownSync(SshDeviceHostConfigs);
@@ -25,6 +34,21 @@ const decodeEas = Schema.decodeUnknownSync(EasDeviceHostConfigs);
 const encodeState = Schema.encodeSync(DeviceServiceState);
 const encodeError = Schema.encodeSync(DeviceError);
 const decodeState = Schema.decodeUnknownSync(DeviceServiceState);
+// Devices and sessions as clients decoded them before desktops existed.
+const decodeStateBeforeDesktops = Schema.decodeUnknownSync(
+  Schema.Struct({
+    devices: Schema.Array(
+      Schema.Struct({ id: Schema.String, platform: Schema.Literals(["ios", "android"]) }),
+    ),
+    sessions: Schema.Array(
+      Schema.Struct({ deviceId: Schema.String, platform: Schema.Literals(["ios", "android"]) }),
+    ),
+  }),
+);
+const decodeTeamId = Schema.decodeUnknownExit(AppleTeamIdInput);
+const decodeBundleId = Schema.decodeUnknownExit(AppleBundleIdInput);
+const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
+const decodeError = Schema.decodeUnknownSync(DeviceError);
 // The host summary as clients decoded it before EAS hosts existed.
 const decodeOlderState = Schema.decodeUnknownSync(
   Schema.Struct({
@@ -92,6 +116,115 @@ describe("device state for clients from before EAS hosts", () => {
     const wire = encodeState(state);
     expect(decodeOlderState(wire).hosts.map((host) => host.id)).toEqual(["local"]);
     expect(decodeState(wire).hosts).toEqual(state.hosts);
+  });
+  it("sends desktops where a client from before them does not look, and reads them back", () => {
+    const phone = {
+      hostId: "local",
+      id: "00008030-001C",
+      platform: "ios" as const,
+      name: "Ana's iPhone",
+      version: "iOS 26.1",
+      booted: true,
+      physical: true,
+      issues: [{ reason: "developer_mode_off" as const }],
+    };
+    const desktop = { ...phone, id: "desktop", platform: "desktop" as const, issues: [] };
+    const session = (device: typeof phone | typeof desktop) => ({
+      threadId: ThreadId.make("thread-a"),
+      hostId: device.hostId,
+      deviceId: device.id,
+      platform: device.platform,
+      openedAt: "2026-11-11T10:00:00.000Z",
+    });
+    const withDesktop = {
+      ...state,
+      devices: [phone, desktop],
+      sessions: [session(phone), session(desktop)],
+    };
+    const wire = encodeState(withDesktop);
+    const older = decodeStateBeforeDesktops(wire);
+    expect(older.devices.map((device) => device.id)).toEqual([phone.id]);
+    expect(older.sessions.map((entry) => entry.deviceId)).toEqual([phone.id]);
+    const decoded = decodeState(wire);
+    expect(decoded.devices).toEqual(withDesktop.devices);
+    expect(decoded.sessions).toEqual(withDesktop.sessions);
+  });
+});
+
+describe("device issues", () => {
+  it.each([
+    ["not_paired", true, true],
+    ["not_trusted", true, true],
+    ["locked", true, false],
+    ["developer_mode_off", false, true],
+    ["xcode_missing", false, true],
+    ["signing_missing", false, true],
+    ["camera_permission", true, false],
+    ["screen_recording_permission", true, false],
+    ["capture_helper_missing", true, false],
+    ["ffmpeg_missing", true, false],
+    ["wayland_unsupported", true, false],
+    ["capture_failed", true, false],
+  ] as const)("%s blocks watching: %s, driving: %s", (reason, view, control) => {
+    const issues = [{ reason }];
+    expect(deviceIssueBlocks(issues, "view") !== undefined).toBe(view);
+    expect(deviceIssueBlocks(issues, "control") !== undefined).toBe(control);
+  });
+
+  it("tells capture devices apart from hub devices", () => {
+    const device = { hostId: "local", platform: "ios" as const, physical: true };
+    expect(isCaptureDevice(device)).toBe(true);
+    expect(isCaptureDevice({ ...device, physical: false })).toBe(false);
+    expect(isCaptureDevice({ ...device, platform: "android" })).toBe(false);
+    expect(isCaptureDevice({ ...device, hostId: "mac-mini" })).toBe(false);
+    expect(isCaptureDevice({ ...device, platform: "desktop" })).toBe(true);
+  });
+
+  it("tells the agent what the user must do and not to retry", () => {
+    const error = new DeviceNotReadyError({
+      hostId: "local",
+      deviceId: "00008030-001C",
+      deviceName: "Ana's iPhone",
+      reason: "signing_missing",
+    });
+    expect(error.message).toBe(
+      "Ana's iPhone is not ready: iPhone signing is not set up. Add your Apple Team ID in Settings > Devices > iPhone signing. Only the user can fix this: tell them exactly what to do, and do not retry until they say it is done. Do not drive it another way, such as adb, simctl, idb or ssh.",
+    );
+    expect(decodeError(encodeError(error))).toMatchObject({
+      _tag: "DeviceNotReadyError",
+      reason: "signing_missing",
+    });
+    expect(
+      new DeviceHeldError({ hostId: "local", deviceId: "desktop", since: "now" }).message,
+    ).toContain("computer_screenshot still works");
+  });
+});
+
+describe("iPhone signing settings", () => {
+  it.each([
+    ["", true],
+    ["ABCDE12345", true],
+    [" ABCDE12345 ", true],
+    ["abcde12345", false],
+    ["ABCDE1234", false],
+    ["ABCDE123456", false],
+  ])("team id %j accepted: %s", (value, valid) => {
+    expect(decodeTeamId(value)._tag).toBe(valid ? "Success" : "Failure");
+  });
+
+  it.each([
+    ["", true],
+    ["com.acme.runner", true],
+    ["runner", false],
+    ["com.acme runner", false],
+  ])("runner bundle id %j accepted: %s", (value, valid) => {
+    expect(decodeBundleId(value)._tag).toBe(valid ? "Success" : "Failure");
+  });
+
+  it("reads a hand-edited team id without failing the settings file", () => {
+    const settings = decodeServerSettings({ appleTeamId: "not-a-team" });
+    expect(settings.appleTeamId).toBe("not-a-team");
+    expect(isAppleTeamId(settings.appleTeamId)).toBe(false);
   });
 });
 
@@ -277,7 +410,6 @@ describe("device access policies", () => {
   });
 
   it("tells the agent to wait, not to work around a refusal", () => {
-    const decodeError = Schema.decodeUnknownSync(DeviceError);
     const held = new DeviceHeldError({
       hostId: "local",
       deviceId: "SIM-1",

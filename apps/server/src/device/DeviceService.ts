@@ -18,7 +18,12 @@ import {
   DeviceId,
   DeviceHostUnavailableError,
   DeviceInUseError,
+  deviceIssueBlocks,
   DeviceNotFoundError,
+  DeviceNotReadyError,
+  isAppleTeamId,
+  isCaptureDevice,
+  isDesktopDevice,
   DeviceOperationError,
   type DeviceOpenInput,
   type DevicePlatform,
@@ -103,6 +108,8 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { makeExpoApi } from "./ExpoApi.ts";
 import * as Exit from "effect/Exit";
 import * as LocalDeviceHost from "./LocalDeviceHost.ts";
+import * as CaptureDevices from "./CaptureDevices.ts";
+import * as MacVideoCapture from "./MacVideoCapture.ts";
 
 export const DEVICE_HUB_ROUTE_PREFIX = "/api/device-hub";
 
@@ -317,6 +324,15 @@ export class DeviceService extends Context.Service<
       hostId?: DeviceHostId,
     ) => Effect.Effect<DeviceAgentReadiness | null, DeviceError>;
     readonly currentReadiness: (hostId?: DeviceHostId) => Effect.Effect<DeviceReadiness | null>;
+    /**
+     * Routes a proxied path to a capture device's stream; null when it is not one. Capture devices
+     * stream without the hub, so the proxy asks this first.
+     */
+    readonly captureRoute: (
+      hostId: DeviceHostId | undefined,
+      hubPath: string,
+      search: URLSearchParams,
+    ) => Effect.Effect<CaptureDevices.CaptureRoute | "unavailable" | null>;
     readonly sessionsForThread: (threadId: ThreadId) => Effect.Effect<ReadonlyArray<DeviceSession>>;
   }
 >()("t3/device/DeviceService") {}
@@ -368,6 +384,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     ),
   installTool?: (tool: "hub" | "agent") => Effect.Effect<unknown, DeviceError>,
   launchers?: AgentDeviceLaunchers,
+  captures?: CaptureDevices.CaptureDevices["Service"],
 ) {
   const settings = yield* ServerSettings.ServerSettingsService;
   const digest = yield* Digest.Digest;
@@ -378,6 +395,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       agentAccessEnabled: value.enableAgentDeviceAccess,
       onboardingCompleted: value.deviceOnboardingCompleted,
       access: value.deviceAccess,
+      signingReady: isAppleTeamId(value.appleTeamId.trim()),
     })),
     Effect.mapError(
       (cause) =>
@@ -604,6 +622,23 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
           }),
     );
 
+  const isLocalCapture = (device: DeviceSummary) =>
+    device.hostId === LOCAL_DEVICE_HOST_ID && isCaptureDevice(device);
+
+  /** Lists capture devices on their own: they need no hub, so a host without one still has them. */
+  const refreshCaptures = Effect.gen(function* () {
+    if (!captures || !(yield* readDeviceSettings).enabled)
+      return (yield* SynchronizedRef.get(stateRef)).state;
+    const listed = yield* captures.list;
+    return yield* publish((state) => ({
+      ...state,
+      devices: [
+        ...state.devices.filter((device) => !isLocalCapture(device)),
+        ...listed.map((device): DeviceSummary => ({ ...device, hostId: LOCAL_DEVICE_HOST_ID })),
+      ],
+    }));
+  }).pipe(Effect.withSpan("DeviceService.refreshCaptures"));
+
   const readiness: DeviceService["Service"]["readiness"] = Effect.fn("DeviceService.readiness")(
     function* (hostId) {
       const host = yield* resolveHost(hostId);
@@ -760,9 +795,15 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
           devices: [
             ...state.devices.filter(
               (device) =>
-                device.hostId !== ready.hostId || incompletePlatforms.includes(device.platform),
+                device.hostId !== ready.hostId ||
+                incompletePlatforms.includes(device.platform) ||
+                isLocalCapture(device),
             ),
-            ...devices.filter((device) => !incompletePlatforms.includes(device.platform)),
+            ...devices.filter(
+              (device) =>
+                !incompletePlatforms.includes(device.platform) &&
+                !(captures && isLocalCapture(device)),
+            ),
           ],
           // A host that ends devices itself (EAS stops sessions at their limits)
           // leaves sessions on devices it no longer lists with nothing to stream.
@@ -791,7 +832,12 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
 
   const list: DeviceService["Service"]["list"] = Effect.gen(function* () {
     if (!(yield* readDeviceSettings).enabled) return (yield* SynchronizedRef.get(stateRef)).state;
-    yield* Effect.forEach(
+    yield* Effect.all([refreshCaptures, listHosts], { concurrency: 2, discard: true });
+    return (yield* SynchronizedRef.get(stateRef)).state;
+  }).pipe(Effect.withSpan("DeviceService.list"));
+
+  const listHosts = Effect.suspend(() =>
+    Effect.forEach(
       hosts.values(),
       (host) =>
         Effect.gen(function* () {
@@ -805,10 +851,9 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
             }),
           ),
         ),
-      { concurrency: 4 },
-    );
-    return (yield* SynchronizedRef.get(stateRef)).state;
-  }).pipe(Effect.withSpan("DeviceService.list"));
+      { concurrency: 4, discard: true },
+    ),
+  );
 
   const inspect = Effect.gen(function* () {
     yield* Effect.forEach(
@@ -893,6 +938,14 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
             yield* endWifiPairing();
             yield* publishPairing(undefined);
             yield* Effect.forEach(hosts.values(), (host) => host.stop, { discard: true });
+            if (captures) {
+              const { state } = yield* SynchronizedRef.get(stateRef);
+              yield* Effect.forEach(
+                state.devices.filter(isLocalCapture),
+                (device) => captures.stop(device.id),
+                { discard: true },
+              );
+            }
           } else if (input.agentAccessEnabled === false) {
             yield* Effect.forEach(hosts.values(), (host) => host.stopAgent, { discard: true });
           }
@@ -1025,9 +1078,15 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       ...(device ? { deviceName: device.name } : {}),
     };
     // Ending a session is not using the device, so a policy never keeps one open.
+    const deviceSettings = yield* readDeviceSettings;
     if (input.intent !== "close") {
-      const subject = device ?? { hostId: input.hostId, id: input.deviceId, physical: false };
-      const policy = deviceAccessPolicy((yield* readDeviceSettings).access, subject);
+      // Computer use reaches the desktop with device support off too, when it is not listed.
+      const subject = device ?? {
+        hostId: input.hostId,
+        id: input.deviceId,
+        physical: isDesktopDevice({ hostId: input.hostId, id: input.deviceId }),
+      };
+      const policy = deviceAccessPolicy(deviceSettings.access, subject);
       if (policy === "deny") {
         return yield* new DeviceAccessDeniedError({ ...refused, reason: "policy" });
       }
@@ -1074,10 +1133,99 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     if (hold && input.intent !== "read") {
       return yield* new DeviceHeldError({ ...refused, since: hold.since });
     }
+    if (input.intent === "open" && device && isLocalCapture(device)) {
+      // Signing is read now: the listing's answer is stale once the user saves a Team ID.
+      const issues = [
+        ...(device.issues ?? []).filter((issue) => issue.reason !== "signing_missing"),
+        ...(device.platform === "ios" && !deviceSettings.signingReady
+          ? [{ reason: "signing_missing" as const }]
+          : []),
+      ];
+      const blocking = deviceIssueBlocks(issues, "control");
+      if (blocking) return yield* new DeviceNotReadyError({ ...refused, ...blocking });
+    }
+  });
+
+  /** Agents drive this computer with computer use, never through device tools. */
+  const refuseDesktop = (
+    operation: string,
+    device: { readonly hostId: string; readonly id: string },
+  ) =>
+    isDesktopDevice(device)
+      ? Effect.fail(
+          new DeviceActionUnavailableError({
+            operation,
+            platform: "desktop",
+            reason: "capture_device",
+          }),
+        )
+      : Effect.void;
+
+  const openCapture = Effect.fn("DeviceService.openCapture")(function* (
+    input: DeviceOpenInput,
+    device: DeviceSummary,
+    context: { readonly agent?: DeviceAgentCaller | undefined } | undefined,
+  ) {
+    if (!(yield* readDeviceSettings).enabled)
+      return yield* new DeviceHostUnavailableError({
+        hostId: LOCAL_DEVICE_HOST_ID,
+        hostLabel: LOCAL_DEVICE_HOST_LABEL,
+        reason:
+          "Device support is off. Enable it in the Device panel before installing or starting device tools.",
+      });
+    if (context?.agent) {
+      yield* refuseDesktop("open", device);
+      yield* authorizeAgent({
+        threadId: input.threadId,
+        hostId: LOCAL_DEVICE_HOST_ID,
+        deviceId: device.id,
+        intent: "open",
+        agent: context.agent,
+      });
+    } else if (captures) {
+      // The user's own open starts the video, so a missing permission or a locked phone shows now.
+      yield* captures.start(device).pipe(Effect.tapError(() => refreshCaptures));
+    }
+    const session: DeviceSession = {
+      threadId: input.threadId,
+      hostId: LOCAL_DEVICE_HOST_ID,
+      deviceId: device.id,
+      platform: device.platform,
+      openedAt: DateTime.formatIso(yield* DateTime.now),
+    };
+    yield* lifecycleLock.withPermit(
+      publish((current) => ({
+        ...current,
+        sessions: [
+          ...current.sessions.filter((existing) => !isSession(session)(existing)),
+          session,
+        ],
+      })),
+    );
+    return session;
   });
 
   const open: DeviceService["Service"]["open"] = Effect.fn("DeviceService.open")(
     function* (input, context) {
+      if (captures && (input.hostId ?? LOCAL_DEVICE_HOST_ID) === LOCAL_DEVICE_HOST_ID) {
+        const listed = findDevice(
+          (yield* SynchronizedRef.get(stateRef)).state,
+          LOCAL_DEVICE_HOST_ID,
+          input.deviceId,
+        );
+        const capture =
+          listed && isLocalCapture(listed)
+            ? listed
+            : !listed && (input.platform === "desktop" || input.platform === "ios")
+              ? findDevice(yield* refreshCaptures, LOCAL_DEVICE_HOST_ID, input.deviceId)
+              : undefined;
+        if (capture && isLocalCapture(capture)) return yield* openCapture(input, capture, context);
+        if (input.platform === "desktop")
+          return yield* new DeviceNotFoundError({
+            hostId: LOCAL_DEVICE_HOST_ID,
+            deviceId: input.deviceId,
+          });
+      }
       const host = yield* resolveHost(input.hostId);
       yield* ensurePlatform(host, input.platform);
       const ready = yield* readiness(host.id);
@@ -1285,10 +1433,25 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
               yield* shutdownDevice(ready, session.deviceId, session.platform);
             }
           }
-          yield* publish((current) => ({
+          const next = yield* publish((current) => ({
             ...current,
             sessions: current.sessions.filter((session) => !ending.includes(session)),
           }));
+          if (captures)
+            yield* Effect.forEach(
+              ending.filter(
+                (session) =>
+                  session.hostId === LOCAL_DEVICE_HOST_ID &&
+                  !next.sessions.some(
+                    (open) => open.hostId === session.hostId && open.deviceId === session.deviceId,
+                  ) &&
+                  next.devices.some(
+                    (device) => device.id === session.deviceId && isLocalCapture(device),
+                  ),
+              ),
+              (session) => captures.stop(session.deviceId),
+              { discard: true },
+            );
           return closing;
         }),
       );
@@ -1330,7 +1493,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
 
   const screenshot: DeviceService["Service"]["screenshot"] = Effect.fn("DeviceService.screenshot")(
     function* (input) {
-      const { ready, device } = yield* resolveDevice(input.hostId, input.deviceId);
+      const { ready, device } = yield* resolveDevice(input.hostId, input.deviceId, "screenshot");
       return { device, png: yield* ready.devices.screenshot(device) };
     },
   );
@@ -1338,7 +1501,19 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
   const resolveDevice = Effect.fn("DeviceService.resolveDevice")(function* (
     hostId: DeviceHostId | undefined,
     deviceId: DeviceId,
+    operation: string,
   ) {
+    const listed = findDevice(
+      (yield* SynchronizedRef.get(stateRef)).state,
+      hostId ?? LOCAL_DEVICE_HOST_ID,
+      deviceId,
+    );
+    if (listed && isLocalCapture(listed))
+      return yield* new DeviceActionUnavailableError({
+        operation,
+        platform: listed.platform,
+        reason: "capture_device",
+      });
     const host = yield* resolveHost(hostId);
     const ready = yield* readiness(host.id);
     const { state } = yield* SynchronizedRef.get(stateRef);
@@ -1350,7 +1525,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
 
   const detail: DeviceService["Service"]["detail"] = Effect.fn("DeviceService.detail")(
     function* (input) {
-      const { ready, device } = yield* resolveDevice(input.hostId, input.deviceId);
+      const { ready, device } = yield* resolveDevice(input.hostId, input.deviceId, "settings");
       const read = yield* readDeviceDetail(ready, device.platform, device.id);
       return {
         hostId: ready.hostId,
@@ -1364,7 +1539,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
 
   const action: DeviceService["Service"]["action"] = Effect.fn("DeviceService.action")(
     function* (input) {
-      const { ready, device } = yield* resolveDevice(input.hostId, input.deviceId);
+      const { ready, device } = yield* resolveDevice(input.hostId, input.deviceId, "settings");
       yield* runDeviceAction(ready, device.platform, input);
       return yield* detail({ hostId: ready.hostId, deviceId: device.id });
     },
@@ -1541,6 +1716,17 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     return yield* refresh(ready);
   });
 
+  if (captures) {
+    // An unplugged phone or a display that went away ends its capture; list again so it shows.
+    const ended = yield* captures.ended;
+    yield* PubSub.take(ended).pipe(
+      Effect.andThen(refreshCaptures),
+      Effect.ignore,
+      Effect.forever,
+      Effect.forkIn(pairingScope),
+    );
+  }
+
   // Sessions live in memory, so this removes every launcher a previous run left behind.
   yield* pruneLaunchers;
   // Holds live in memory too: a marker left behind would block agents with nothing to hand back.
@@ -1581,6 +1767,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       }),
       agentTarget: Effect.fn("DeviceService.agentTarget")(function* (input) {
         const host = yield* resolveHost(input.hostId);
+        yield* refuseDesktop("open", { hostId: host.id, id: input.deviceId });
         yield* authorizeAgent({ ...input, intent: "open" });
         const ready = yield* agentReadinessIfSupported(input.hostId);
         if (!ready)
@@ -1686,6 +1873,12 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       readinessIfSupported,
       agentReadinessIfSupported,
       currentReadiness,
+      // Runs for every proxied device request; the capture route is the span that matters.
+      captureRoute: Effect.fnUntraced(function* (hostId, hubPath, search) {
+        return captures && (hostId ?? LOCAL_DEVICE_HOST_ID) === LOCAL_DEVICE_HOST_ID
+          ? yield* captures.route(hubPath, search)
+          : null;
+      }),
       sessionsForThread,
     }),
     setHostStatus,
@@ -1733,6 +1926,10 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
 /** @public */
 export const make = Effect.gen(function* () {
   const localHost = yield* DeviceHost.DeviceHost;
+  // Optional so hosts-only tests need no capture source; `layer` always provides it.
+  const captures = Option.getOrUndefined(
+    yield* Effect.serviceOption(CaptureDevices.CaptureDevices),
+  );
   const config = yield* ServerConfig.ServerConfig;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -1928,6 +2125,7 @@ export const make = Effect.gen(function* () {
         ),
       ),
     launchers,
+    captures,
   );
   const hostContext =
     yield* Effect.context<Effect.Services<ReturnType<typeof SshDeviceHost.make>>>();
@@ -2069,12 +2267,25 @@ export const make = Effect.gen(function* () {
     }
     return hosts;
   };
-  yield* reconcile(configuredHosts(yield* settings.getSettings));
+  const startingSettings = yield* settings.getSettings;
+  yield* reconcile(configuredHosts(startingSettings));
+  // The agent-device daemon reads its iOS signing from its own environment when it starts.
+  const signingKey = (value: {
+    readonly appleTeamId: string;
+    readonly appleRunnerBundleId: string;
+  }) => JSON.stringify(LocalDeviceHost.appleSigningEnvironment(value));
+  let signing = signingKey(startingSettings);
   yield* changes.pipe(
     Stream.runForEach((value) =>
-      reconcile(configuredHosts(value)).pipe(
-        Effect.andThen(service.refreshAccess(value.deviceAccess)),
-      ),
+      Effect.gen(function* () {
+        yield* reconcile(configuredHosts(value));
+        yield* service.refreshAccess(value.deviceAccess);
+        const next = signingKey(value);
+        if (next === signing) return;
+        signing = next;
+        yield* localHost.stopAgent;
+        yield* service.list.pipe(Effect.ignore);
+      }),
     ),
     Effect.forkIn(scope),
   );
@@ -2182,6 +2393,7 @@ export const make = Effect.gen(function* () {
 
 export const layer = Layer.effect(DeviceService, make).pipe(
   Layer.provide(LocalDeviceHost.layer),
+  Layer.provide(CaptureDevices.layer.pipe(Layer.provide(MacVideoCapture.layer))),
   Layer.provide(SecretResolverLayer.layer),
 );
 

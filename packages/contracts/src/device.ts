@@ -5,8 +5,11 @@ import * as SchemaTransformation from "effect/SchemaTransformation";
 import { ThreadId, TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
 import { SettingsSecretValue } from "./settingsSecretValue.ts";
 
-export const DevicePlatform = Schema.Literals(["ios", "android"]);
+export const DevicePlatform = Schema.Literals(["ios", "android", "desktop"]);
 export type DevicePlatform = typeof DevicePlatform.Type;
+
+/** The platforms clients from before desktop streams decode; desktops travel apart on the wire. */
+const MobileDevicePlatform = Schema.Literals(["ios", "android"]);
 
 export const DeviceHostId = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
 export type DeviceHostId = typeof DeviceHostId.Type;
@@ -169,6 +172,114 @@ export class DeviceEasAccountError extends Schema.TaggedError<DeviceEasAccountEr
   }
 }
 
+/** Why a device cannot be watched or driven yet, each one something the user can fix. */
+export const DeviceIssueReason = Schema.Literals([
+  "not_paired",
+  "not_trusted",
+  "locked",
+  "developer_mode_off",
+  "xcode_missing",
+  "signing_missing",
+  "camera_permission",
+  "screen_recording_permission",
+  "capture_helper_missing",
+  "ffmpeg_missing",
+  "wayland_unsupported",
+  "capture_failed",
+]);
+export type DeviceIssueReason = typeof DeviceIssueReason.Type;
+
+export const DeviceIssue = Schema.Struct({
+  reason: DeviceIssueReason,
+  /** The tool's own words, when it gave any. */
+  detail: Schema.optional(Schema.String),
+});
+export type DeviceIssue = typeof DeviceIssue.Type;
+
+export const DEVICE_ISSUES: Record<
+  DeviceIssueReason,
+  {
+    readonly title: string;
+    /** What the user does to fix it. */
+    readonly action: string;
+    /** `view`: the live screen. `control`: agents driving it. */
+    readonly blocks: ReadonlyArray<"view" | "control">;
+    /** Settings > Mac permissions can grant it. */
+    readonly macPermission?: "camera" | "screen-recording";
+  }
+> = {
+  not_paired: {
+    title: "Not paired with this computer",
+    action:
+      "Connect it with a USB cable, unlock it, tap Trust when it asks about this computer, and enter its passcode. Then refresh devices.",
+    blocks: ["view", "control"],
+  },
+  not_trusted: {
+    title: "Does not trust this computer",
+    action:
+      "Unlock it and tap Trust when it asks about this computer. If it never asks, unplug it and plug it in again. Then refresh devices.",
+    blocks: ["view", "control"],
+  },
+  locked: {
+    title: "Locked",
+    action: "Unlock it and keep it unlocked, then open it again.",
+    blocks: ["view"],
+  },
+  developer_mode_off: {
+    title: "Developer Mode is off",
+    action:
+      "On the device, turn on Settings > Privacy & Security > Developer Mode, restart it, and confirm Turn On after it restarts.",
+    blocks: ["control"],
+  },
+  xcode_missing: {
+    title: "Xcode is not installed",
+    action:
+      "Install Xcode from the App Store on this computer and open it once to finish setup. Then refresh devices.",
+    blocks: ["control"],
+  },
+  signing_missing: {
+    title: "iPhone signing is not set up",
+    action: "Add your Apple Team ID in Settings > Devices > iPhone signing.",
+    blocks: ["control"],
+  },
+  camera_permission: {
+    title: "Camera permission is off",
+    action:
+      "macOS treats an iPhone screen as a camera. Allow T3 Code in Settings > Mac permissions (System Settings > Privacy & Security > Camera), then open the device again.",
+    blocks: ["view"],
+    macPermission: "camera",
+  },
+  screen_recording_permission: {
+    title: "Screen Recording permission is off",
+    action:
+      "Allow T3 Code in Settings > Mac permissions (System Settings > Privacy & Security > Screen & System Audio Recording), then open it again.",
+    blocks: ["view"],
+    macPermission: "screen-recording",
+  },
+  capture_helper_missing: {
+    title: "The video capture helper is missing",
+    action: "Reinstall T3 Code. In a source checkout, run vp run build:device-capture.",
+    blocks: ["view"],
+  },
+  ffmpeg_missing: {
+    title: "ffmpeg is missing",
+    action:
+      "Install ffmpeg with the libx264 encoder on this computer's PATH, or point SERVE_EMU_FFMPEG at one, then restart T3 Code.",
+    blocks: ["view"],
+  },
+  wayland_unsupported: {
+    title: "Live video is not available on Wayland",
+    action:
+      "Sign in to an X11 session to watch this desktop. Agents can still read and drive it by element.",
+    blocks: ["view"],
+  },
+  capture_failed: {
+    title: "Live video failed",
+    action: "Open it again. If it keeps failing, restart T3 Code.",
+    blocks: ["view"],
+  },
+};
+
 export const DeviceId = TrimmedNonEmptyString.check(Schema.isMaxLength(256));
 export type DeviceId = typeof DeviceId.Type;
 
@@ -180,15 +291,43 @@ export const DeviceSummary = Schema.Struct({
   version: Schema.String,
   booted: Schema.Boolean,
   physical: Schema.Boolean,
-  /** How a physical Android phone reaches adb. Absent for everything else. */
+  /** How a physical phone reaches this computer. Absent for everything else. */
   connection: Schema.optional(Schema.Literals(["usb", "wifi"])),
   /**
    * What names this device when its id does not last: an emulator's AVD name (its id becomes a
    * serial once booted) and a Wi-Fi phone's hardware serial (its id is an address).
    */
   identity: Schema.optional(Schema.String),
+  /** What stops watching or driving this device until the user fixes it. */
+  issues: Schema.optional(Schema.Array(DeviceIssue)),
 });
 export type DeviceSummary = typeof DeviceSummary.Type;
+
+/** The server's own computer, streamed live in the Device panel and driven through computer use. */
+export const DESKTOP_DEVICE_ID = "desktop" as DeviceId;
+
+export const isDesktopDevice = (device: {
+  readonly hostId: string;
+  readonly id: string;
+}): boolean => device.hostId === LOCAL_DEVICE_HOST_ID && device.id === DESKTOP_DEVICE_ID;
+
+/**
+ * Devices the server streams itself with a capture helper (a USB iPhone or iPad, or this
+ * computer's screen) instead of through a device hub. They have no input socket.
+ */
+export const isCaptureDevice = (device: {
+  readonly hostId: string;
+  readonly platform: DevicePlatform;
+  readonly physical: boolean;
+}): boolean =>
+  device.hostId === LOCAL_DEVICE_HOST_ID &&
+  (device.platform === "desktop" || (device.platform === "ios" && device.physical));
+
+export const deviceIssueBlocks = (
+  issues: ReadonlyArray<DeviceIssue> | undefined,
+  use: "view" | "control",
+): DeviceIssue | undefined =>
+  issues?.find((issue) => DEVICE_ISSUES[issue.reason].blocks.includes(use));
 
 export const DEVICE_CONNECTION_LABELS: Record<NonNullable<DeviceSummary["connection"]>, string> = {
   usb: "USB",
@@ -383,6 +522,23 @@ export const DeviceWifiPairing = Schema.Struct({
 });
 export type DeviceWifiPairing = typeof DeviceWifiPairing.Type;
 
+const MobileDeviceSummary = Schema.Struct({
+  ...DeviceSummary.fields,
+  platform: MobileDevicePlatform,
+});
+const MobileDeviceSession = Schema.Struct({
+  ...DeviceSession.fields,
+  platform: MobileDevicePlatform,
+});
+const DesktopDeviceSummary = Schema.Struct({
+  ...DeviceSummary.fields,
+  platform: Schema.Literal("desktop"),
+});
+const DesktopDeviceSession = Schema.Struct({
+  ...DeviceSession.fields,
+  platform: Schema.Literal("desktop"),
+});
+
 const deviceServiceStateFields = {
   supportsHostRetry: Schema.optional(Schema.Boolean),
   supportsToolUpdate: Schema.optional(Schema.Boolean),
@@ -402,11 +558,6 @@ const deviceServiceStateFields = {
   hostStatus: DeviceHostStatus,
   hostStatusDetail: Schema.optional(Schema.String),
   hostStatuses: DeviceHostStatuses,
-  devices: Schema.Array(DeviceSummary),
-  sessions: Schema.Array(DeviceSession),
-  bootingDevices: Schema.optional(
-    Schema.Array(Schema.Struct({ ...DeviceSummary.fields, threadId: ThreadId })),
-  ),
   onboardingCompleted: Schema.Boolean,
   agentAccessEnabled: Schema.Boolean,
   hubBasePath: Schema.String,
@@ -416,18 +567,37 @@ const deviceServiceStateFields = {
 /**
  * EAS host summaries travel as `easHosts`: clients from before EAS hosts
  * decode `hosts` with a `local | ssh` kind and would reject the whole state.
- * Decoded, every host is in `hosts`.
+ * Desktops and their sessions travel as `desktops` and `desktopSessions` for the same reason.
+ * Decoded, every host is in `hosts`, every device in `devices`, every session in `sessions`.
  */
 const DeviceServiceStateWire = Schema.Struct({
   ...deviceServiceStateFields,
   hosts: Schema.Array(MachineDeviceHostSummary),
   easHosts: Schema.optional(Schema.Array(EasDeviceHostSummary)),
   simlockHosts: Schema.optional(Schema.Array(SimlockDeviceHostSummary)),
+  devices: Schema.Array(MobileDeviceSummary),
+  sessions: Schema.Array(MobileDeviceSession),
+  desktops: Schema.optional(Schema.Array(DesktopDeviceSummary)),
+  desktopSessions: Schema.optional(Schema.Array(DesktopDeviceSession)),
+  bootingDevices: Schema.optional(
+    Schema.Array(Schema.Struct({ ...MobileDeviceSummary.fields, threadId: ThreadId })),
+  ),
 });
 const DeviceServiceStateDecoded = Schema.Struct({
   ...deviceServiceStateFields,
   hosts: Schema.Array(DeviceHostSummary),
+  devices: Schema.Array(DeviceSummary),
+  sessions: Schema.Array(DeviceSession),
+  bootingDevices: Schema.optional(
+    Schema.Array(Schema.Struct({ ...DeviceSummary.fields, threadId: ThreadId })),
+  ),
 });
+const isDesktop = <T extends { readonly platform: DevicePlatform }>(
+  entry: T,
+): entry is T & { readonly platform: "desktop" } => entry.platform === "desktop";
+const isMobile = <T extends { readonly platform: DevicePlatform }>(
+  entry: T,
+): entry is T & { readonly platform: "ios" | "android" } => entry.platform !== "desktop";
 
 export const DeviceServiceState = DeviceServiceStateWire.pipe(
   Schema.decodeTo(
@@ -436,12 +606,19 @@ export const DeviceServiceState = DeviceServiceStateWire.pipe(
       typeof DeviceServiceStateDecoded.Type,
       typeof DeviceServiceStateWire.Type
     >({
-      decode: ({ easHosts, simlockHosts, ...state }) => ({
+      decode: ({ easHosts, simlockHosts, desktops, desktopSessions, ...state }) => ({
         ...state,
         hosts: [...state.hosts, ...(easHosts ?? []), ...(simlockHosts ?? [])],
+        devices: [...state.devices, ...(desktops ?? [])],
+        sessions: [...state.sessions, ...(desktopSessions ?? [])],
       }),
-      encode: (state) => ({
+      encode: ({ bootingDevices, ...state }) => ({
         ...state,
+        devices: state.devices.filter(isMobile),
+        sessions: state.sessions.filter(isMobile),
+        desktops: state.devices.filter(isDesktop),
+        desktopSessions: state.sessions.filter(isDesktop),
+        ...(bootingDevices ? { bootingDevices: bootingDevices.filter(isMobile) } : {}),
         hosts: state.hosts.filter(
           (host): host is typeof MachineDeviceHostSummary.Type =>
             host.kind === "local" || host.kind === "ssh",
@@ -782,10 +959,20 @@ export class DeviceActionUnavailableError extends Schema.TaggedError<DeviceActio
   {
     operation: Schema.String,
     platform: DevicePlatform,
-    reason: Schema.Literals(["unsupported", "helper_missing", "physical_device", "not_wifi"]),
+    reason: Schema.Literals([
+      "unsupported",
+      "helper_missing",
+      "physical_device",
+      "not_wifi",
+      "capture_device",
+    ]),
   },
 ) {
   override get message(): string {
+    if (this.reason === "capture_device")
+      return this.platform === "desktop"
+        ? `Device ${this.operation} is not available for this computer. Drive it with t3_computer and look at it with computer_screenshot.`
+        : `Device ${this.operation} is not available for a physical iPhone or iPad. Use the agent-device command device_open returned, such as its screenshot command.`;
     if (this.reason === "not_wifi")
       return `Device ${this.operation} applies only to a phone connected over Wi-Fi.`;
     return this.reason === "helper_missing"
@@ -814,7 +1001,25 @@ export class DeviceHeldError extends Schema.TaggedError<DeviceHeldError>()("Devi
   since: Schema.String,
 }) {
   override get message(): string {
+    if (isDesktopDevice({ hostId: this.hostId, id: this.deviceId }))
+      return `The user is holding this computer: ${refusedDevice(this)} is under their control since ${this.since}. Wait for them to hand it back in the Device panel, and do not retry in a loop or act on it another way. computer_screenshot still works. Tell the user you are waiting.`;
     return `The user is holding this device: ${refusedDevice(this)} is under their control since ${this.since}. Wait for them to hand it back in the Device panel, and do not retry in a loop. ${NO_WORKAROUND} device_screenshot still works. Tell the user you are waiting.`;
+  }
+}
+
+/** The device needs something only the user can do, such as unlocking it or a missing setting. */
+export class DeviceNotReadyError extends Schema.TaggedError<DeviceNotReadyError>()(
+  "DeviceNotReadyError",
+  {
+    ...deviceRefusalFields,
+    reason: DeviceIssueReason,
+    detail: Schema.optional(Schema.String),
+  },
+) {
+  override get message(): string {
+    const issue = DEVICE_ISSUES[this.reason];
+    const detail = this.detail ? ` (${this.detail})` : "";
+    return `${refusedDevice(this)} is not ready: ${issue.title}${detail}. ${issue.action} Only the user can fix this: tell them exactly what to do, and do not retry until they say it is done. ${NO_WORKAROUND}`;
   }
 }
 
@@ -879,6 +1084,7 @@ export const DeviceError = Schema.Union([
   DeviceAccessDeniedError,
   DeviceAccessPendingError,
   DeviceInUseError,
+  DeviceNotReadyError,
 ]);
 export type DeviceError = typeof DeviceError.Type;
 
@@ -980,6 +1186,7 @@ export const DeviceToolError = Schema.Union([
   DeviceAccessDeniedError,
   DeviceAccessPendingError,
   DeviceInUseError,
+  DeviceNotReadyError,
 ]);
 export type DeviceToolError = typeof DeviceToolError.Type;
 

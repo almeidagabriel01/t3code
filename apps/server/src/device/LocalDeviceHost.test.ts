@@ -18,6 +18,7 @@ import { HttpClient, HttpClientResponse } from "effect/http";
 import * as NetService from "@t3tools/shared/Net";
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import {
   AGENT_DEVICE_VERSION,
   DEVICE_HUB_VERSION,
@@ -38,8 +39,10 @@ const processOutput = (code: number, stdout = "", stderr = "", timedOut = false)
 const agentFixture = Effect.fn("agentFixture")(function* (
   startup: (
     stateDir: string,
+    env: NodeJS.ProcessEnv | undefined,
   ) => Effect.Effect<ProcessRunner.ProcessRunOutput, ProcessRunner.ProcessRunError>,
   avdOutput: ProcessRunner.ProcessRunOutput = processOutput(0),
+  settings?: { readonly appleTeamId: string; readonly appleRunnerBundleId: string },
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -58,7 +61,13 @@ const agentFixture = Effect.fn("agentFixture")(function* (
     yield* fs.writeFileString(path.join(installDir, ".install-complete"), version!);
   }
   const host = yield* LocalDeviceHost.make().pipe(
-    Effect.provide(Layer.mergeAll(ServerConfig.layerTest(baseDir, baseDir), NetService.layer)),
+    Effect.provide(
+      Layer.mergeAll(
+        ServerConfig.layerTest(baseDir, baseDir),
+        NetService.layer,
+        settings ? ServerSettings.ServerSettingsService.layerTest(settings) : Layer.empty,
+      ),
+    ),
     Effect.provideService(HostProcess.Environment, { HOME: baseDir, PATH: "" }),
     Effect.provideService(HostProcess.IsExecutable, false),
     Effect.provideService(HostProcess.Platform, "darwin"),
@@ -94,7 +103,7 @@ const agentFixture = Effect.fn("agentFixture")(function* (
     Effect.provideService(ProcessRunner.ProcessRunner, {
       run: (input) =>
         input.args.includes("devices")
-          ? startup(stateDir)
+          ? startup(stateDir, input.env)
           : Effect.succeed(input.args.includes("-list-avds") ? avdOutput : processOutput(0)),
     }),
     Effect.provideService(
@@ -118,6 +127,43 @@ const agentFixture = Effect.fn("agentFixture")(function* (
 });
 
 describe("AgentDevice startup", () => {
+  it.effect(
+    "starts the daemon with the iPhone signing the settings hold, and only a valid one",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const started = (settings: { appleTeamId: string; appleRunnerBundleId: string }) =>
+          Effect.gen(function* () {
+            let environment: NodeJS.ProcessEnv | undefined;
+            const { host } = yield* agentFixture(
+              (stateDir, env) => {
+                environment = env;
+                return fs
+                  .writeFileString(
+                    `${stateDir}/daemon.json`,
+                    JSON.stringify({ httpPort: 12345, token: "token" }),
+                  )
+                  .pipe(Effect.orDie, Effect.as(processOutput(0)));
+              },
+              processOutput(0),
+              settings,
+            );
+            yield* host.ensureAgentReady(() => Effect.void);
+            return [environment?.AGENT_DEVICE_IOS_TEAM_ID, environment?.AGENT_DEVICE_IOS_BUNDLE_ID];
+          }).pipe(Effect.scoped);
+        expect(
+          yield* started({ appleTeamId: " ABCDE12345 ", appleRunnerBundleId: "dev.t3.runner" }),
+        ).toEqual(["ABCDE12345", "dev.t3.runner"]);
+        expect(yield* started({ appleTeamId: "ABCDE12345", appleRunnerBundleId: "" })).toEqual([
+          "ABCDE12345",
+          undefined,
+        ]);
+        expect(
+          yield* started({ appleTeamId: "abc", appleRunnerBundleId: "dev.t3.runner" }),
+        ).toEqual([undefined, undefined]);
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("restarts a cached daemon that no longer answers its health check", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

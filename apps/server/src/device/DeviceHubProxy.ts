@@ -13,6 +13,7 @@ import {
   HttpServerRequest,
   HttpServerResponse,
 } from "effect/http";
+import * as Stream from "effect/Stream";
 import * as Socket from "effect/socket/Socket";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 
@@ -152,6 +153,8 @@ const proxyHttp = Effect.fn("DeviceHubProxy.proxyHttp")(function* (
   request: HttpServerRequest.HttpServerRequest,
   upstreamUrl: string,
   extraHeaders: Readonly<Record<string, string>> = {},
+  /** Runs once the response body ends, however it ends. */
+  release?: Effect.Effect<void>,
 ) {
   const httpClient = HttpClient.withScope(yield* HttpClient.HttpClient);
   const method = request.method;
@@ -187,9 +190,10 @@ const proxyHttp = Effect.fn("DeviceHubProxy.proxyHttp")(function* (
   }
   // Long-lived MJPEG and AVCC responses must not be buffered by compression.
   headers["cache-control"] = "no-store, no-transform";
-  const body = headers["content-type"]?.startsWith("multipart/x-mixed-replace")
+  const stream = headers["content-type"]?.startsWith("multipart/x-mixed-replace")
     ? repeatStillFrame(response.stream)
     : response.stream;
+  const body = release ? stream.pipe(Stream.ensuring(release)) : stream;
   return HttpServerResponse.stream(body, {
     status: response.status,
     headers,
@@ -224,14 +228,24 @@ const handler = Effect.gen(function* () {
   );
   const devices = yield* DeviceService.DeviceService;
   const hostId = url.value.searchParams.get("hostId") ?? undefined;
-  const ready = yield* devices.currentReadiness(hostId);
-  if (!ready) {
-    return HttpServerResponse.text("Device hub is not running", { status: 503 });
-  }
   // Consume the auth ticket here; never forward it to the hub.
   const upstreamSearch = new URLSearchParams(url.value.search);
   upstreamSearch.delete("wsTicket");
   upstreamSearch.delete("hostId");
+  // Physical iPhones and this computer stream from their own capture, with no hub behind them.
+  const capture = upgrade ? null : yield* devices.captureRoute(hostId, hubPath, upstreamSearch);
+  if (capture === "unavailable") {
+    return HttpServerResponse.text("Device capture is not running", { status: 503 });
+  }
+  if (capture) {
+    return yield* proxyHttp(request, capture.url, {}, capture.release).pipe(
+      Effect.onError(() => capture.release),
+    );
+  }
+  const ready = yield* devices.currentReadiness(hostId);
+  if (!ready) {
+    return HttpServerResponse.text("Device hub is not running", { status: 503 });
+  }
   const search = upstreamSearch.size > 0 ? `?${upstreamSearch.toString()}` : "";
   // Hosts with several upstreams (one per cloud session) route and authenticate requests themselves.
   const routed = ready.upstream ? yield* ready.upstream(hubPath, upstreamSearch) : undefined;

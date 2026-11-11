@@ -1307,6 +1307,28 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
 ] as const;
 export type ProjectScopedServerSettingKey = (typeof PROJECT_SCOPED_SERVER_SETTING_KEYS)[number];
 
+/** An Apple Developer Team ID: ten uppercase letters and digits. */
+export const isAppleTeamId = (value: string): boolean => /^[A-Z0-9]{10}$/.test(value);
+/** Empty clears it. */
+export const AppleTeamIdInput = TrimmedString.check(
+  Schema.makeFilter(
+    (value: string) =>
+      value === "" ||
+      isAppleTeamId(value) ||
+      "A Team ID is 10 uppercase letters and digits, such as ABCDE12345.",
+  ),
+);
+export const isAppleBundleId = (value: string): boolean =>
+  /^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$/.test(value) && value.length <= 155;
+export const AppleBundleIdInput = TrimmedString.check(
+  Schema.makeFilter(
+    (value: string) =>
+      value === "" ||
+      isAppleBundleId(value) ||
+      "A bundle id is reverse-DNS, such as com.yourname.agentdevice.runner.",
+  ),
+);
+
 export const ProjectProviderInstanceOverride = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),
 });
@@ -1623,6 +1645,13 @@ export const ServerSettings = Schema.Struct({
   simlockDeviceHostsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** Agent access per device; a device without an entry uses its default. */
   deviceAccess: DeviceAccessMap.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  /**
+   * Signs the test runner agents use to drive a physical iPhone. Loose here so a hand-edited
+   * value never fails the file; `isAppleTeamId` decides whether it is used.
+   */
+  appleTeamId: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  /** Empty uses agent-device's own runner bundle id. */
+  appleRunnerBundleId: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   sidebarAutoSettleAfterDays: Schema.NullOr(SidebarAutoSettleAfterDays).pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS)),
   ),
@@ -2090,6 +2119,8 @@ const ServerSettingsPatchFields = Schema.Struct({
   simlockDeviceHostsEnabled: Schema.optionalKey(Schema.Boolean),
   /** Replaces the whole map, so a missing key is a removed policy. */
   deviceAccess: Schema.optionalKey(DeviceAccessMap),
+  appleTeamId: Schema.optionalKey(AppleTeamIdInput),
+  appleRunnerBundleId: Schema.optionalKey(AppleBundleIdInput),
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
   compactIdleThreads: Schema.optionalKey(LegacyCompactIdleThreads),
   idleCompaction: Schema.optionalKey(IdleCompactionMode),

@@ -40,6 +40,8 @@ import * as DeviceHost from "./DeviceHost.ts";
 import { findEasProjectId } from "./easProjectId.ts";
 import { type ExpoApi, makeExpoApi, resolveExpoCredential } from "./ExpoApi.ts";
 
+/** EAS Simulator runs iOS and Android only. */
+type CloudPlatform = Exclude<DevicePlatform, "desktop">;
 const POLL_INTERVAL = Duration.seconds(5);
 // How stale a running session's status may get before listing rechecks it.
 const STATUS_TTL_MS = 15_000;
@@ -97,7 +99,7 @@ const CATALOG: ReadonlyArray<DeviceHost.HostDevice> = [
 interface RunningSession {
   readonly sessionId: string;
   readonly name: string;
-  readonly platform: DevicePlatform;
+  readonly platform: CloudPlatform;
   readonly remoteDeviceId: string;
   readonly preview: { readonly origin: string; readonly token: Redacted.Redacted<string> };
   readonly agent: DeviceHost.AgentDaemonEndpoint;
@@ -410,7 +412,7 @@ export const make = Effect.fn("EasDeviceHost.make")(function* (config: EasDevice
   const previewDevice = (
     origin: string,
     token: Redacted.Redacted<string>,
-    platform: DevicePlatform,
+    platform: CloudPlatform,
   ) =>
     http
       .execute(
@@ -487,6 +489,8 @@ export const make = Effect.fn("EasDeviceHost.make")(function* (config: EasDevice
     context: DeviceHost.DeviceOpenContext | undefined,
     startedIn: number,
   ) {
+    const platform = device.platform;
+    if (platform === "desktop") return yield* unavailable("EAS Simulator has no desktops.");
     const name = `T3 Code · ${config.label} · ${(yield* Random.nextIntBetween(0, 0xffffff)).toString(16).padStart(6, "0")}`;
     // The credential comes first: without one, the answer is how to sign in,
     // not that the limit is reached.
@@ -530,7 +534,7 @@ export const make = Effect.fn("EasDeviceHost.make")(function* (config: EasDevice
               const sessionId = yield* expo
                 .create({
                   appId,
-                  platform: device.platform,
+                  platform,
                   name,
                   maxRunTimeMinutes: config.maxSessionMinutes,
                   maxIdleTimeMinutes: config.idleMinutes,
@@ -562,9 +566,7 @@ export const make = Effect.fn("EasDeviceHost.make")(function* (config: EasDevice
                   ),
                   Effect.mapError((error) => unavailable(error.message, error)),
                 );
-              return yield* restore(
-                trackSession(expo, sessionId, name, device.platform, startedIn),
-              ).pipe(
+              return yield* restore(trackSession(expo, sessionId, name, platform, startedIn)).pipe(
                 Effect.onError(() =>
                   stopSession(expo, sessionId, name).pipe(
                     // Still running and billed: owned, counted, and retried by listing.
@@ -584,7 +586,7 @@ export const make = Effect.fn("EasDeviceHost.make")(function* (config: EasDevice
     expo: ExpoApi,
     sessionId: string,
     name: string,
-    platform: DevicePlatform,
+    platform: CloudPlatform,
     startedIn: number,
   ) {
     const endpoints = yield* awaitRunning(expo, sessionId);
