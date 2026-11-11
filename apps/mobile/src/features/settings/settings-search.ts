@@ -120,6 +120,16 @@ const SETTINGS_SEARCH_TERMS = {
     "click",
     "privacy",
   ],
+  SettingsComputerUse: [
+    "computer use",
+    "windows",
+    "linux",
+    "wayland",
+    "x11",
+    "screenshot",
+    "click",
+    "keys",
+  ],
   SettingsNotes: ["notes", "markdown", "ideas", "capture", "start work"],
   SettingsArchive: ["archive", "archived", "restore", "unarchive"],
   SettingsProviderAccounts: [

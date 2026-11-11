@@ -1,4 +1,5 @@
 import { isMemoryEnvironmentAvailable } from "./MemorySettings.logic";
+import { isComputerUseHostOs } from "@t3tools/client-runtime/state/mac-permissions";
 import { AuthEnvironmentMaintainScope } from "@t3tools/contracts";
 
 import { usePrimaryCloudLinkState } from "~/cloud/cloudLinkState";
@@ -40,6 +41,12 @@ export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch
           hasServerConfig: true,
         }),
     ) === true;
+  const hasComputerUseHostEnvironment = environments.some(
+    (environment) =>
+      (scopeSearch.machine === undefined || environment.environmentId === scopeSearch.machine) &&
+      isComputerUseHostOs(environment.serverConfig?.environment.platform.os) &&
+      environment.connection.phase === "connected",
+  );
   // Any machine that offers it; the row then shows for a settings scope where all selected ones do.
   const hasFastWorktreeCheckoutEnvironment =
     environments.some(
@@ -104,6 +111,7 @@ export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch
     hasImessage,
     hasTelegram,
     hasMacProviderSettingsEnvironment,
+    hasComputerUseHostEnvironment,
     hasFastWorktreeCheckoutEnvironment,
     hasTextGeneratorsEnvironment,
     hasPrimaryEnvironment: primaryEnvironmentId !== null,

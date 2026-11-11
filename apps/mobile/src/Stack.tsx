@@ -142,6 +142,7 @@ import { AssistantModelPickerRouteScreen } from "./features/assistants/Assistant
 import { DescribeAssistantRouteScreen } from "./features/assistants/DescribeAssistantRouteScreen";
 import { SettingsAssistantsRouteScreen } from "./features/assistants/SettingsAssistantsRouteScreen";
 import { SettingsDevicesRouteScreen } from "./features/settings/SettingsDevicesRouteScreen";
+import { SettingsComputerUseRouteScreen } from "./features/settings/SettingsComputerUseRouteScreen";
 import { SettingsMacPermissionsRouteScreen } from "./features/settings/SettingsMacPermissionsRouteScreen";
 import { SettingsImessageRouteScreen } from "./features/imessage/SettingsImessageRouteScreen";
 import { SettingsTelegramRouteScreen } from "./features/telegram/SettingsTelegramRouteScreen";
@@ -362,6 +363,11 @@ const SETTINGS_SCREENS = {
     screen: SettingsDevicesRouteScreen,
     linking: "settings/devices",
     options: settingsPage("Devices"),
+  }),
+  SettingsComputerUse: createNativeStackScreen({
+    screen: SettingsComputerUseRouteScreen,
+    linking: "settings/computer-use",
+    options: settingsPage("Computer use"),
   }),
   SettingsAssistants: createNativeStackScreen({
     screen: SettingsAssistantsRouteScreen,

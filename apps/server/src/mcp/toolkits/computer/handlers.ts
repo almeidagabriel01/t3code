@@ -39,7 +39,19 @@ const run = Effect.fn("mcp.computer.run")(
   function* (input: ComputerParameters) {
     const computer = yield* ComputerUse.ComputerUse;
     if (input.action === "permissions") {
-      return { ...(yield* computer.permissions({ automation: true })) } satisfies Out;
+      const { host, ...permissions } = yield* computer.permissions({ automation: true });
+      return {
+        ...permissions,
+        ...(host === undefined
+          ? {}
+          : {
+              host: {
+                os: host.os,
+                ...(host.display === undefined ? {} : { display: host.display }),
+                capabilities: host.capabilities.map((capability) => ({ ...capability })),
+              },
+            }),
+      } satisfies Out;
     }
     const context = yield* loadCaller();
     const caller = {

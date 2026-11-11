@@ -217,6 +217,31 @@ describe("searchSettings", () => {
     expect(ids(true)).toContain("welcome-page");
   });
 
+  it("offers each computer-use page only where a host of its kind is connected", () => {
+    const availability = {
+      hasCloudPublicConfig: true,
+      hasEnvironment: true,
+      hasProviderSettingsEnvironment: true,
+      canManageLocalBackend: false,
+      isWslSettingsRowVisible: false,
+      hasThreadAutoSettlement: false,
+    };
+    for (const [hosts, pages] of [
+      [{}, []],
+      [{ hasMacProviderSettingsEnvironment: true }, ["mac-permissions"]],
+      [{ hasComputerUseHostEnvironment: true }, ["computer-use"]],
+      [
+        { hasMacProviderSettingsEnvironment: true, hasComputerUseHostEnvironment: true },
+        ["mac-permissions", "computer-use"],
+      ],
+    ] as const) {
+      const ids = filterAvailableSettingsSearchItems({ ...availability, ...hosts })
+        .map((item) => item.id)
+        .filter((id) => id === "mac-permissions" || id === "computer-use");
+      expect(ids).toEqual(pages);
+    }
+  });
+
   it("finds keybinding commands by label, command id, and default key", () => {
     expect(searchSettings("toggle sidebar")[0]?.id).toBe("keybinding-sidebar.toggle");
     expect(searchSettings("sidebar.toggle")[0]?.id).toBe("keybinding-sidebar.toggle");

@@ -60,7 +60,7 @@ import { useHasKanbanEnvironments } from "../../state/kanban";
 import { useImessageEnvironmentIds } from "../../state/imessageChannel";
 import { useTelegramEnvironmentIds } from "../../state/telegramChannel";
 import { useDeviceEnvironmentIds } from "../../state/device";
-import { useMacEnvironmentIds } from "../../state/macPermissions";
+import { useComputerUseHostEnvironmentIds, useMacEnvironmentIds } from "../../state/macPermissions";
 import { useHasMemoryEnvironments } from "../../state/memory";
 import { useHasNotesEnvironments } from "../../state/notes";
 import { useThreadSearch } from "../../state/queries";
@@ -250,6 +250,7 @@ export function CommandPalette(props: {
   const hasTelegram = useTelegramEnvironmentIds().length > 0;
   const hasMac = useMacEnvironmentIds().length > 0;
   const hasDevices = useDeviceEnvironmentIds().length > 0;
+  const hasComputerUseHost = useComputerUseHostEnvironmentIds().length > 0;
   const assistants = useAssistantEntries().active;
   const hasAssistantsEnvironment = useAssistantsEnvironmentIds().length > 0;
   const autonomyPause = useAutonomyPause();
@@ -420,6 +421,17 @@ export function CommandPalette(props: {
               title: "Device access",
               searchTerms: ["devices", "simulator", "emulator", "physical device", "take over"],
               run: () => openSettings(navigation, "SettingsDevices"),
+            },
+          ]
+        : []),
+      ...(hasComputerUseHost
+        ? [
+            {
+              key: "computer-use",
+              kind: "action" as const,
+              title: "Computer use",
+              searchTerms: ["windows", "linux", "wayland", "screenshot", "click", "keys"],
+              run: () => openSettings(navigation, "SettingsComputerUse"),
             },
           ]
         : []),
@@ -638,6 +650,7 @@ export function CommandPalette(props: {
     hasTelegram,
     hasMac,
     hasDevices,
+    hasComputerUseHost,
     assistants,
     hasAssistantsEnvironment,
     openAssistantTeam,

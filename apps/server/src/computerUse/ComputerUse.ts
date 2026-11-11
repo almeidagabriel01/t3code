@@ -1,5 +1,6 @@
 import {
   ComputerUseError,
+  type ComputerUseHostReport,
   type ComputerUseOpenSettingsInput,
   type DecisionId,
   type MacPermissionStatus,
@@ -137,6 +138,182 @@ const KEY_CODES: Readonly<Record<string, number>> = {
 };
 const MODIFIERS: ReadonlyArray<string> = ["command", "shift", "option", "control"];
 
+/** macOS keeps its own scripts; every other host goes through agent-desktop. */
+type ComputerHost = "mac" | "windows" | "x11" | "wayland" | "headless" | "unsupported";
+type Need = "elements" | "screenshot" | "pointer" | "keyboard" | "focusedText";
+
+/** agent-desktop reads the same variables; ponytail: a stale WAYLAND_DISPLAY socket is not probed. */
+export const detectHost = (platform: NodeJS.Platform, env: NodeJS.ProcessEnv): ComputerHost =>
+  platform === "darwin"
+    ? "mac"
+    : platform === "win32"
+      ? "windows"
+      : platform !== "linux"
+        ? "unsupported"
+        : env.WAYLAND_DISPLAY
+          ? "wayland"
+          : env.DISPLAY
+            ? "x11"
+            : "headless";
+
+const HEADLESS =
+  "The T3 Code server has no graphical session (DISPLAY and WAYLAND_DISPLAY are unset). The user must start it inside their desktop session; you cannot fix this.";
+const TYPE_NEEDS_REF =
+  "On Windows and Linux `type` needs a `ref`: take a snapshot and pass the text field's ref.";
+const WAYLAND_CONSENT =
+  "On Wayland the desktop asks the user to allow screenshots. Ask the user to answer that dialog on the computer, and do not retry in a loop.";
+const SESSION =
+  "Needs T3 Code running inside your signed-in desktop session, not as a service or over plain SSH.";
+
+/** Why a host cannot do something, said before anyone is asked to approve. A missing key works. */
+const LIMITS: Record<
+  Exclude<ComputerHost, "mac" | "unsupported">,
+  Partial<Record<Need, string>>
+> = {
+  windows: { focusedText: TYPE_NEEDS_REF },
+  x11: { focusedText: TYPE_NEEDS_REF },
+  wayland: {
+    focusedText: TYPE_NEEDS_REF,
+    pointer:
+      "Clicking by coordinates is not available on a Linux Wayland session, which does not let apps aim the pointer. Take a snapshot and click the element's ref instead.",
+  },
+  headless: {
+    elements: HEADLESS,
+    screenshot: HEADLESS,
+    pointer: HEADLESS,
+    keyboard: HEADLESS,
+    focusedText: HEADLESS,
+  },
+};
+
+const capability = (
+  key: ComputerUseHostReport["capabilities"][number]["key"],
+  state: ComputerUseHostReport["capabilities"][number]["state"],
+  detail: string,
+) => ({ key, state, detail });
+
+/** Static platform limits, built without running anything: the settings page reads this on open. */
+const hostReport = (host: ComputerHost): ComputerUseHostReport | undefined => {
+  switch (host) {
+    case "mac":
+    case "unsupported":
+      return undefined;
+    case "windows":
+      return {
+        os: "win32",
+        capabilities: [
+          capability(
+            "elements",
+            "available",
+            `Agents read an app's controls and click or type into them. ${SESSION} Administrator windows, UAC prompts and the lock screen are out of reach.`,
+          ),
+          capability("screenshot", "available", "Captures the main display."),
+          capability("pointer", "available", "Clicks by screen coordinates move your real cursor."),
+          capability(
+            "keyboard",
+            "available",
+            "Key presses go to the window in front. Shortcuts that lock or switch the session are refused.",
+          ),
+        ],
+      };
+    case "x11":
+      return {
+        os: "linux",
+        display: "x11",
+        capabilities: [
+          capability(
+            "elements",
+            "available",
+            `Agents read an app's controls and click or type into them through the accessibility (AT-SPI) bus. ${SESSION}`,
+          ),
+          capability(
+            "screenshot",
+            "limited",
+            "Whole-screen capture works only without a compositing window manager; GNOME and similar desktops refuse it on X11.",
+          ),
+          capability(
+            "pointer",
+            "limited",
+            "Clicks by screen coordinates move your real cursor and need a screenshot to aim.",
+          ),
+          capability("keyboard", "available", "Key presses go to the focused window."),
+        ],
+      };
+    case "wayland":
+      return {
+        os: "linux",
+        display: "wayland",
+        capabilities: [
+          capability(
+            "elements",
+            "available",
+            `Agents read an app's controls and click or type into them through the accessibility (AT-SPI) bus. ${SESSION}`,
+          ),
+          capability(
+            "screenshot",
+            "consent",
+            "Your desktop asks you to allow screenshots the first time. Answer that dialog on the computer.",
+          ),
+          capability(
+            "pointer",
+            "unavailable",
+            "Wayland does not let apps aim the pointer, so agents cannot click by coordinates.",
+          ),
+          capability(
+            "keyboard",
+            "limited",
+            "Key presses work on GNOME sessions only, with plain ASCII characters.",
+          ),
+        ],
+      };
+    case "headless": {
+      const detail =
+        "The T3 Code server has no graphical session. Start it inside your desktop session.";
+      return {
+        os: "linux",
+        display: "none",
+        capabilities: (["elements", "screenshot", "pointer", "keyboard"] as const).map((key) =>
+          capability(key, "unavailable", detail),
+        ),
+      };
+    }
+  }
+};
+
+/** The key names agent-desktop documents; macOS-only names are refused rather than guessed. */
+const DESKTOP_KEYS = new Set([
+  "return",
+  "escape",
+  "tab",
+  "space",
+  "delete",
+  "left",
+  "right",
+  "up",
+  "down",
+  ...Array.from({ length: 12 }, (_, index) => `f${index + 1}`),
+]);
+const DESKTOP_MODIFIERS: Readonly<Record<string, string>> = {
+  command: "cmd",
+  shift: "shift",
+  option: "alt",
+  control: "ctrl",
+};
+const NO_MAC_PERMISSIONS = {
+  supported: false,
+  screenRecording: "unknown",
+  accessibility: "unknown",
+  automation: "unknown",
+} as const;
+
+/** Width and height from a PNG's IHDR, or undefined when the bytes are not a PNG. */
+const pngSize = (png: Uint8Array) => {
+  if (png.byteLength < 24 || png[1] !== 0x50 || png[2] !== 0x4e || png[3] !== 0x47)
+    return undefined;
+  const view = new DataView(png.buffer, png.byteOffset, png.byteLength);
+  return { width: view.getUint32(16), height: view.getUint32(20) };
+};
+
 export interface ComputerUseCaller {
   readonly threadId: ThreadId;
   readonly projectId: ProjectId;
@@ -199,8 +376,8 @@ export class ComputerUse extends Context.Service<
   ComputerUse,
   {
     /**
-     * Never fails: off macOS it reports `supported: false`. Reading Automation can make macOS
-     * prompt, so it is only read when asked; otherwise it is `unknown`.
+     * Never fails: off macOS it reports `supported: false`, with the `host` report on Windows and
+     * Linux. Reading Automation can make macOS prompt, so it is only read when asked.
      */
     readonly permissions: (options: {
       readonly automation: boolean;
@@ -298,6 +475,9 @@ const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const crypto = yield* Digest.Digest;
   const decisions = yield* DecisionService.DecisionService;
+  const host = detectHost(platform, yield* HostProcess.Environment);
+  const architecture = yield* HostProcess.Architecture;
+  const machine = host === "mac" ? "your Mac" : "this computer";
 
   /** A repeat of the same action derives the same id, so it lands on the same decision. */
   const idFor = Effect.fn("ComputerUse.idFor")(function* (
@@ -313,6 +493,13 @@ const make = Effect.gen(function* () {
 
   const requireMac =
     platform === "darwin" ? Effect.void : Effect.fail(fail("unsupported_platform"));
+  /** Fails with the host's limit for `need`; on macOS the permission checks decide instead. */
+  const check = (need: Need) => {
+    if (host === "mac") return Effect.void;
+    if (host === "unsupported") return Effect.fail(fail("unsupported_platform"));
+    const limit = LIMITS[host][need];
+    return limit === undefined ? Effect.void : Effect.fail(fail("unsupported_platform", limit));
+  };
 
   const run = (command: string, args: ReadonlyArray<string>) =>
     runner.run({ command, args, timeout: COMMAND_TIMEOUT }).pipe(
@@ -331,12 +518,8 @@ const make = Effect.gen(function* () {
   const permissions: ComputerUse["Service"]["permissions"] = Effect.fn("ComputerUse.permissions")(
     function* (options) {
       if (platform !== "darwin") {
-        return {
-          supported: false,
-          screenRecording: "unknown",
-          accessibility: "unknown",
-          automation: "unknown",
-        } as const;
+        const report = hostReport(host);
+        return report === undefined ? NO_MAC_PERMISSIONS : { ...NO_MAC_PERMISSIONS, host: report };
       }
       return yield* jxa(PERMISSIONS_SCRIPT, options.automation ? ["automation"] : []).pipe(
         Effect.map(parsePermissions),
@@ -353,27 +536,14 @@ const make = Effect.gen(function* () {
   });
 
   const screenshot: ComputerUse["Service"]["screenshot"] = Effect.gen(function* () {
-    yield* requireMac;
+    yield* check("screenshot");
     return yield* Effect.scoped(
       Effect.gen(function* () {
         const directory = yield* fs
           .makeTempDirectoryScoped({ prefix: "t3-computer-" })
           .pipe(Effect.mapError(failed));
         const file = `${directory}/screen.png`;
-        yield* run("/usr/sbin/screencapture", ["-x", "-t", "png", file]);
-        const [width, height] = (yield* jxa(SCREEN_SIZE_SCRIPT)).trim().split(" ").map(Number);
-        if (!width || !height || !Number.isInteger(width) || !Number.isInteger(height)) {
-          return yield* fail("failed", "Could not read the screen size.");
-        }
-        yield* run("/usr/bin/sips", ["-z", String(height), String(width), file]);
-        const png = yield* fs.readFile(file).pipe(Effect.mapError(failed));
-        // Without the permission macOS can hand back an empty or wallpaper-only capture, however
-        // large, so the permission decides; a tiny file is blank whatever macOS says.
-        const { screenRecording } = yield* permissions({ automation: false });
-        if (screenRecording === "denied" || png.byteLength < MIN_PNG_BYTES) {
-          return yield* fail("screen_recording_missing");
-        }
-        return { png, width, height };
+        return yield* seam.capture(file);
       }),
     );
   }).pipe(Effect.withSpan("ComputerUse.screenshot"));
@@ -390,7 +560,7 @@ const make = Effect.gen(function* () {
    * CLI's own advice, and an action it cannot prove did nothing is never repeated.
    */
   const desktop = Effect.fn("ComputerUse.desktop")(function* (
-    threadId: string,
+    threadId: string | undefined,
     args: ReadonlyArray<string>,
     options: { readonly stdin?: string; readonly acts: boolean },
   ) {
@@ -401,16 +571,27 @@ const make = Effect.gen(function* () {
       Effect.mapError(() =>
         fail(
           "failed",
-          "The accessibility tool (agent-desktop) could not be installed, which needs npm and network access. Use computer_screenshot with x and y instead.",
+          host === "mac"
+            ? "The accessibility tool (agent-desktop) could not be installed, which needs npm and network access. Use computer_screenshot with x and y instead."
+            : "The desktop tool (agent-desktop) could not be installed, which needs npm and network access. Tell the user; nothing else can operate this computer.",
         ),
       ),
     );
     const home = path.join(config.baseDir, "tools", "agent-desktop", "state");
     yield* fs.makeDirectory(home, { recursive: true }).pipe(Effect.mapError(failed));
+    // On Linux agent-desktop refuses a state directory other users can read.
+    if (host !== "mac") yield* fs.chmod(home, 0o700).pipe(Effect.mapError(failed));
     const output = yield* runner
       .run({
-        command: tool.entryPath,
-        args: [...args, "--session", sessionFor(threadId)],
+        // The package's `bin/agent-desktop` is a native link on macOS and Linux only.
+        command:
+          host === "windows"
+            ? path.join(
+                path.dirname(tool.entryPath),
+                `agent-desktop-win32-${architecture === "arm64" ? "arm64" : "x64"}.exe`,
+              )
+            : tool.entryPath,
+        args: threadId === undefined ? args : [...args, "--session", sessionFor(threadId)],
         env: { AGENT_DESKTOP_HOME: home },
         timeout: DESKTOP_TIMEOUT,
         ...(options.stdin === undefined ? {} : { stdin: options.stdin }),
@@ -430,7 +611,14 @@ const make = Effect.gen(function* () {
     const advice = [asString(error.message), asString(error.suggestion)].filter(Boolean).join(" ");
     const retry = asString(asRecord(error.disposition).retry);
     const mayHaveActed = options.acts && retry !== "safe" && !NOTHING_RAN.has(code);
-    if (code === "PERM_DENIED") return yield* fail("accessibility_missing");
+    if (code === "PERM_DENIED") {
+      return yield* fail(
+        "accessibility_missing",
+        host === "mac"
+          ? undefined
+          : `${advice || "The desktop refused access."} Tell the user; do not retry in a loop.`,
+      );
+    }
     if (code === "STALE_REF") {
       return yield* fail(
         "invalid",
@@ -445,6 +633,108 @@ const make = Effect.gen(function* () {
       ...(mayHaveActed ? { cause: NOT_RETRYABLE } : {}),
     });
   });
+
+  /**
+   * The one place the platforms differ: what captures the screen and what delivers raw input.
+   * macOS runs its own scripts; Windows and Linux hand the same four jobs to agent-desktop.
+   */
+  const seam: {
+    /** Flags for ref input the host only delivers physically: Windows types and right-clicks so. */
+    readonly physical: ReadonlyArray<string>;
+    readonly capture: (file: string) => Effect.Effect<ScreenshotResult, ComputerUseError>;
+    readonly clickAt: (
+      threadId: string,
+      point: { readonly x: number; readonly y: number },
+      button: "left" | "right",
+      count: number,
+    ) => Effect.Effect<void, ComputerUseError>;
+    readonly typeFocused: (text: string) => Effect.Effect<void, ComputerUseError>;
+    readonly press: (
+      threadId: string,
+      key: { readonly name: string; readonly code: number | undefined },
+      modifiers: ReadonlyArray<string>,
+    ) => Effect.Effect<void, ComputerUseError>;
+  } =
+    host === "mac"
+      ? {
+          physical: [],
+          capture: Effect.fn("ComputerUse.capture")(function* (file) {
+            yield* run("/usr/sbin/screencapture", ["-x", "-t", "png", file]);
+            const [width, height] = (yield* jxa(SCREEN_SIZE_SCRIPT)).trim().split(" ").map(Number);
+            if (!width || !height || !Number.isInteger(width) || !Number.isInteger(height)) {
+              return yield* fail("failed", "Could not read the screen size.");
+            }
+            yield* run("/usr/bin/sips", ["-z", String(height), String(width), file]);
+            const png = yield* fs.readFile(file).pipe(Effect.mapError(failed));
+            // Without the permission macOS can hand back an empty or wallpaper-only capture, however
+            // large, so the permission decides; a tiny file is blank whatever macOS says.
+            const { screenRecording } = yield* permissions({ automation: false });
+            if (screenRecording === "denied" || png.byteLength < MIN_PNG_BYTES) {
+              return yield* fail("screen_recording_missing");
+            }
+            return { png, width, height };
+          }),
+          clickAt: (_threadId, point, button, count) =>
+            jxa(CLICK_SCRIPT, [String(point.x), String(point.y), button, String(count)]).pipe(
+              Effect.asVoid,
+            ),
+          typeFocused: (text) => jxa(KEY_SCRIPT, ["text", text]).pipe(Effect.asVoid),
+          press: (_threadId, key, modifiers) =>
+            jxa(
+              KEY_SCRIPT,
+              key.code === undefined
+                ? ["text", key.name, ...modifiers]
+                : ["code", String(key.code), ...modifiers],
+            ).pipe(Effect.asVoid),
+        }
+      : {
+          physical: host === "windows" ? ["--headed"] : [],
+          capture: Effect.fn("ComputerUse.capture")(function* (file) {
+            // Pixels of the main display are the coordinates mouse-click takes, so nothing is resized.
+            yield* desktop(undefined, ["screenshot", "--screen", "0", file], { acts: false }).pipe(
+              Effect.mapError((error) =>
+                host !== "wayland"
+                  ? error
+                  : error.reason === "accessibility_missing"
+                    ? fail("screen_recording_missing", WAYLAND_CONSENT)
+                    : new ComputerUseError({
+                        reason: error.reason,
+                        detail: `${error.message} ${WAYLAND_CONSENT}`,
+                      }),
+              ),
+            );
+            const png = yield* fs.readFile(file).pipe(Effect.mapError(failed));
+            const size = pngSize(png);
+            if (size === undefined)
+              return yield* fail("failed", "The screenshot was not an image.");
+            return { png, ...size };
+          }),
+          clickAt: (threadId, point, button, count) =>
+            desktop(
+              threadId,
+              [
+                "mouse-click",
+                "--xy",
+                `${point.x},${point.y}`,
+                "--button",
+                button,
+                "--count",
+                String(count),
+                "--headed",
+              ],
+              { acts: true },
+            ).pipe(Effect.asVoid),
+          typeFocused: () => Effect.fail(fail("unsupported_platform", TYPE_NEEDS_REF)),
+          press: (threadId, key, modifiers) =>
+            desktop(
+              threadId,
+              [
+                "press",
+                [...modifiers.map((modifier) => DESKTOP_MODIFIERS[modifier]), key.name].join("+"),
+              ],
+              { acts: true },
+            ).pipe(Effect.asVoid),
+        };
 
   /** The settled decision, or undefined when the user has not answered within the wait. */
   const waitForAnswer = Effect.fn("ComputerUse.waitForAnswer")(function* (decisionId: DecisionId) {
@@ -484,7 +774,7 @@ const make = Effect.gen(function* () {
         title: clip(request.title, 120),
         context: request.context,
         options: [
-          { id: "accept", label: "Approve", consequence: "The agent acts on your Mac once" },
+          { id: "accept", label: "Approve", consequence: `The agent acts on ${machine} once` },
           { id: "deny", label: "Deny", consequence: "Nothing happens" },
         ],
         recommended: "deny",
@@ -521,8 +811,11 @@ const make = Effect.gen(function* () {
   });
 
   /** Checks the permissions the action needs and returns them. Automation is read for every action. */
-  const ready = Effect.fn("ComputerUse.ready")(function* (needAutomation: boolean) {
-    yield* requireMac;
+  const ready = Effect.fn("ComputerUse.ready")(function* (needAutomation: boolean, need: Need) {
+    if (host !== "mac") {
+      yield* check(need);
+      return NO_MAC_PERMISSIONS;
+    }
     const current = yield* permissions({ automation: true });
     if (current.accessibility === "denied") return yield* fail("accessibility_missing");
     if (needAutomation && current.automation === "denied") {
@@ -583,7 +876,7 @@ const make = Effect.gen(function* () {
 
   const snapshot: ComputerUse["Service"]["snapshot"] = Effect.fn("ComputerUse.snapshot")(
     function* (caller, input) {
-      yield* requireMac;
+      yield* check("elements");
       const app = input.app?.trim();
       if (app !== undefined && (app === "" || app.startsWith("-") || app.length > 200)) {
         return yield* fail("invalid", "app must be an application name such as Safari.");
@@ -639,7 +932,7 @@ const make = Effect.gen(function* () {
             "double is only for x and y clicks: click the ref twice instead.",
           );
         }
-        const current = yield* ready(false);
+        const current = yield* ready(false, "elements");
         const label = labelFor(caller.threadId, ref);
         return yield* approved(
           caller,
@@ -653,9 +946,11 @@ const make = Effect.gen(function* () {
               `${button}-click the element **${label}**.`,
             )),
           },
-          desktop(caller.threadId, [button === "right" ? "right-click" : "click", ref], {
-            acts: true,
-          }).pipe(Effect.asVoid),
+          desktop(
+            caller.threadId,
+            button === "right" ? ["right-click", ref, ...seam.physical] : ["click", ref],
+            { acts: true },
+          ).pipe(Effect.asVoid),
         );
       }
       if (
@@ -675,7 +970,7 @@ const make = Effect.gen(function* () {
       }
       const point = { x: Math.round(x), y: Math.round(y) };
       const count = input.double === true ? 2 : 1;
-      const current = yield* ready(false);
+      const current = yield* ready(false, "pointer");
       const verb = count === 2 ? "double-click" : "click";
       const summary = `${verb} at (${point.x}, ${point.y})`;
       return yield* approved(
@@ -688,12 +983,10 @@ const make = Effect.gen(function* () {
             current,
             target,
             summary,
-            `${button}-${verb} at **(${point.x}, ${point.y})** on your Mac's main screen.`,
+            `${button}-${verb} at **(${point.x}, ${point.y})** on ${machine}'s main screen.`,
           )),
         },
-        jxa(CLICK_SCRIPT, [String(point.x), String(point.y), button, String(count)]).pipe(
-          Effect.asVoid,
-        ),
+        seam.clickAt(caller.threadId, point, button, count),
       );
     },
   );
@@ -705,7 +998,10 @@ const make = Effect.gen(function* () {
         return yield* fail("invalid", `text must be 1-${MAX_TYPED_CHARS} characters.`);
       }
       const ref = input.ref === undefined ? undefined : yield* checkRef(input.ref);
-      const current = yield* ready(ref === undefined);
+      const current = yield* ready(
+        ref === undefined,
+        ref === undefined ? "focusedText" : "elements",
+      );
       const label = ref === undefined ? undefined : labelFor(caller.threadId, ref);
       return yield* approved(
         caller,
@@ -722,8 +1018,8 @@ const make = Effect.gen(function* () {
           )),
         },
         ref === undefined
-          ? jxa(KEY_SCRIPT, ["text", input.text]).pipe(Effect.asVoid)
-          : desktop(caller.threadId, ["type", ref, "--stdin"], {
+          ? seam.typeFocused(input.text)
+          : desktop(caller.threadId, ["type", ref, "--stdin", ...seam.physical], {
               stdin: input.text,
               acts: true,
             }).pipe(Effect.asVoid),
@@ -751,7 +1047,14 @@ const make = Effect.gen(function* () {
       const sorted = [...new Set(modifiers)].sort();
       const keyName = code === undefined ? name : lower;
       const label = [...sorted, keyName].join("+");
-      const current = yield* ready(true);
+      const current = yield* ready(true, "keyboard");
+      // A combo is one `+`-joined argument, so `+` cannot be a key and `-` would read as a flag.
+      if (host !== "mac" && (code === undefined ? "+-".includes(name) : !DESKTOP_KEYS.has(lower))) {
+        return yield* fail(
+          "invalid",
+          `On Windows and Linux key must be one character other than + and -, or one of: ${[...DESKTOP_KEYS].join(", ")}.`,
+        );
+      }
       return yield* approved(
         caller,
         {
@@ -759,10 +1062,7 @@ const make = Effect.gen(function* () {
             input.clientRequestId?.trim() || (yield* idFor("key", [keyName, ...sorted])),
           ...(yield* describe(current, target, `press ${label}`, `press **${label}**.`)),
         },
-        jxa(
-          KEY_SCRIPT,
-          code === undefined ? ["text", name, ...sorted] : ["code", String(code), ...sorted],
-        ).pipe(Effect.asVoid),
+        seam.press(caller.threadId, { name: keyName, code }, sorted),
       );
     },
   );

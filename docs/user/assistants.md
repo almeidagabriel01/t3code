@@ -87,17 +87,20 @@ conversation. **Approve** lets it run; **Deny**, **Dismiss** or letting it expir
 Answering in the conversation clears the decision. Only **Edit files** produces approvals: Full
 access never asks, and Read only can't run those actions at all.
 
-## Let assistants use your Mac
+## Let assistants use your computer
 
-On a Mac, any agent or assistant can look at your screen and, with your approval, click and type.
-Ask for it in plain words, for example "open System Settings and turn on Dark mode".
+On the computer that runs T3 Code (macOS, Windows or Linux), any agent or assistant can read an
+app's controls and, with your approval, click and type. Ask for it in plain words, for example
+"open System Settings and turn on Dark mode".
 
-- **Screenshots** are read-only and need no approval.
+- **Looking** (screenshots and the list of an app's controls) is read-only and needs no approval.
 - **Every click, typed text and key press needs your approval first.** Each one appears as a
   decision in **Activity** and on the mobile Home screen, so you can approve it from your phone.
   Nothing happens until you choose **Approve**; **Deny**, dismissing it or letting it expire does
   nothing. This applies even to Full access assistants.
-- It uses the main screen of the Mac that runs T3 Code.
+- It uses the main screen of the computer that runs T3 Code.
+
+### On a Mac
 
 Grant the permissions in **Settings > Mac permissions**, where each one shows whether it is granted
 and opens its pane in System Settings on that Mac:
@@ -108,6 +111,22 @@ and opens its pane in System Settings on that Mac:
 
 Use **Check again** after granting one. macOS may ask you to reopen T3 Code before a new permission
 takes effect.
+
+### On Windows and Linux
+
+There are no permissions to grant. **Settings > Computer use** shows what agents can do on that
+computer and where the platform stops them:
+
+- **Windows:** everything works when T3 Code runs in your signed-in desktop session. It cannot
+  reach a service session, the lock screen, UAC prompts or administrator windows.
+- **Linux on X11:** controls, clicks and keys work. Whole-screen screenshots work only without a
+  compositing window manager, so on desktops such as GNOME agents work from the list of controls.
+- **Linux on Wayland:** controls work. The desktop asks you to allow screenshots the first time;
+  answer that dialog on the computer. Agents cannot click by screen position, and key presses work
+  on GNOME only.
+
+On Linux, start T3 Code inside your desktop session. A server started from a plain SSH shell or a
+system service has no screen to use, and the page says so.
 
 ## Tasks
 

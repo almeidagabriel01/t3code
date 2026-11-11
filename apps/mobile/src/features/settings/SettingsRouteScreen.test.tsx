@@ -67,6 +67,10 @@ vi.mock("../../state/imessageChannel", () => ({ useImessageEnvironmentIds: () =>
 vi.mock("../../state/telegramChannel", () => ({ useTelegramEnvironmentIds: () => [] }));
 vi.mock("../../state/macPermissions", () => ({ useMacEnvironmentIds: () => [] }));
 vi.mock("../../state/device", () => ({ useDeviceEnvironmentIds: () => [] }));
+vi.mock("../../state/macPermissions", () => ({
+  useMacEnvironmentIds: () => [],
+  useComputerUseHostEnvironmentIds: () => [],
+}));
 vi.mock("../../state/memory", () => ({ useHasMemoryEnvironments: () => false }));
 vi.mock("../../state/notes", () => ({ useHasNotesEnvironments: () => false }));
 vi.mock("./components/SettingsScreen", () => ({ SettingsScreen: Children }));

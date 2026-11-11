@@ -32,6 +32,7 @@ export const SETTINGS_PAGE_TARGETS = [
   "SettingsTelegram",
   "SettingsMacPermissions",
   "SettingsDevices",
+  "SettingsComputerUse",
 ] as const;
 
 export type SettingsPageTarget = (typeof SETTINGS_PAGE_TARGETS)[number];

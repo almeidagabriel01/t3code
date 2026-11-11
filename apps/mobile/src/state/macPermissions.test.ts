@@ -5,7 +5,7 @@ vi.mock("./server", () => ({
   environmentServerConfigsAtom: Atom.make(new Map<string, unknown>()),
 }));
 
-import { macEnvironmentIdsAtom } from "./macPermissions";
+import { computerUseHostEnvironmentIdsAtom, macEnvironmentIdsAtom } from "./macPermissions";
 import { environmentServerConfigsAtom } from "./server";
 
 const config = (os: string) => ({ environment: { platform: { os } } });
@@ -24,6 +24,8 @@ describe("macEnvironmentIdsAtom", () => {
     );
     const first = registry.get(macEnvironmentIdsAtom);
     expect(first).toEqual(["mac"]);
+    // A Windows or Linux host goes to the Computer use page, never to both.
+    expect(registry.get(computerUseHostEnvironmentIdsAtom)).toEqual(["box"]);
     registry.set(
       configs,
       new Map([

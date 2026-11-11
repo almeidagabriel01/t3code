@@ -2,7 +2,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as CryptoLayer from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import { ProjectId, ThreadId } from "@t3tools/contracts";
+import { type ComputerUseError, ProjectId, ThreadId } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -52,8 +52,19 @@ const node = (ref: string, role: string, name: string, children: unknown[] = [])
   children,
 });
 
+/** A 1920x1080 PNG header: all the service reads of a capture it did not resize. */
+const PNG_1920_1080 = Uint8Array.from([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 7, 128, 0, 0,
+  4, 56,
+]);
+const isDesktop = (command: string) =>
+  command.endsWith("/agent-desktop") || command.endsWith(".exe");
+
 const harness = (options: {
   readonly platform?: NodeJS.Platform;
+  /** What the server process sees; decides the Linux session. */
+  readonly env?: NodeJS.ProcessEnv;
+  readonly arch?: NodeJS.Architecture;
   readonly permissions?: string;
   readonly png?: Uint8Array;
   /** A database shared by several instances, as a restarted server finds it. */
@@ -66,7 +77,7 @@ const harness = (options: {
   const calls: Call[] = [];
   /** The mock runner is the only way anything could touch the Mac. */
   const scripted = (marker: string) => calls.filter((call) => call.args[3]?.includes(marker));
-  const desktopCalls = () => calls.filter((call) => call.command.endsWith("/agent-desktop"));
+  const desktopCalls = () => calls.filter((call) => isDesktop(call.command));
   const runner = Layer.effect(
     ProcessRunner.ProcessRunner,
     Effect.gen(function* () {
@@ -91,8 +102,11 @@ const harness = (options: {
                 yield* fs.makeDirectory(bin, { recursive: true });
                 yield* fs.writeFileString(`${bin}/agent-desktop`, "");
               }
-            } else if (input.command.endsWith("/agent-desktop")) {
+            } else if (isDesktop(input.command)) {
               stdout = (options.desktop ?? ((args) => envelope(args[0]!, {})))(input.args);
+              if (input.args[0] === "screenshot" && stdout.includes('"ok":true')) {
+                yield* fs.writeFile(input.args[3]!, options.png ?? PNG_1920_1080);
+              }
             } else if (script.includes("CGPreflight")) stdout = options.permissions ?? GRANTED;
             else if (script.includes("NSScreen")) stdout = "100 50\n";
             else if (script.includes("frontmost")) stdout = "System Settings\n";
@@ -125,6 +139,12 @@ const harness = (options: {
     ),
   );
   const layer = ComputerUse.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.succeed(HostProcess.Environment, options.env ?? {}),
+        Layer.succeed(HostProcess.Architecture, options.arch ?? "x64"),
+      ),
+    ),
     Layer.provideMerge(
       Layer.mergeAll(
         runner,
@@ -156,6 +176,13 @@ const openDecision = Effect.gen(function* () {
   );
   const open = (yield* decisions.list({})).find((decision) => decision.status === "open")!;
   return open;
+});
+
+const approve = Effect.gen(function* () {
+  const decisions = yield* DecisionService.DecisionService;
+  const pending = yield* openDecision;
+  yield* decisions.answer({ decisionId: pending.id, optionId: "accept" });
+  return pending;
 });
 
 describe("parsePermissions", () => {
@@ -546,13 +573,6 @@ describe("ComputerUse", () => {
       ]),
     };
     const snapshotOnly = () => envelope("snapshot", tree);
-    const approve = Effect.gen(function* () {
-      const decisions = yield* DecisionService.DecisionService;
-      const pending = yield* openDecision;
-      yield* decisions.answer({ decisionId: pending.id, optionId: "accept" });
-      return pending;
-    });
-
     it.effect("a snapshot lists the elements with refs, installs once and asks nobody", () => {
       const { desktopCalls, calls, layer } = harness({ desktop: snapshotOnly });
       return Effect.gen(function* () {
@@ -787,5 +807,287 @@ describe("ComputerUse", () => {
         assert.equal(scripted("CGEventPost").length, 1);
       }).pipe(Effect.provide(layer));
     });
+  });
+});
+
+describe("detectHost", () => {
+  it.each([
+    ["darwin", {}, "mac"],
+    ["win32", {}, "windows"],
+    ["linux", { DISPLAY: ":0" }, "x11"],
+    ["linux", { DISPLAY: ":0", WAYLAND_DISPLAY: "wayland-0" }, "wayland"],
+    ["linux", { WAYLAND_DISPLAY: "" }, "headless"],
+    ["freebsd", { DISPLAY: ":0" }, "unsupported"],
+  ] as const)("%s with %o is %s", (platform, env, host) => {
+    assert.equal(ComputerUse.detectHost(platform, env), host);
+  });
+});
+
+describe("ComputerUse on Windows and Linux", () => {
+  const SESSION = ["--session", "t3-thread-1"];
+  const hosts = [
+    {
+      name: "win32",
+      platform: "win32",
+      env: {},
+      arch: "arm64",
+      binary: "/bin/agent-desktop-win32-arm64.exe",
+      headed: ["--headed"],
+      pointer: true,
+      report: {
+        os: "win32",
+        display: undefined,
+        states: "available available available available",
+      },
+    },
+    {
+      name: "linux-x11",
+      platform: "linux",
+      env: { DISPLAY: ":0" },
+      arch: "x64",
+      binary: "/bin/agent-desktop",
+      headed: [],
+      pointer: true,
+      report: { os: "linux", display: "x11", states: "available limited limited available" },
+    },
+    {
+      name: "linux-wayland",
+      platform: "linux",
+      env: { DISPLAY: ":0", WAYLAND_DISPLAY: "wayland-0" },
+      arch: "x64",
+      binary: "/bin/agent-desktop",
+      headed: [],
+      pointer: false,
+      report: { os: "linux", display: "wayland", states: "available consent unavailable limited" },
+    },
+  ] as const;
+
+  it.effect.each(hosts)(
+    "$name: every action is one agent-desktop command, or a named limit",
+    (host) => {
+      const { calls, desktopCalls, layer } = harness(host);
+      return Effect.gen(function* () {
+        const computer = yield* ComputerUse.ComputerUse;
+        const decisions = yield* DecisionService.DecisionService;
+        const act = (action: Effect.Effect<void, ComputerUseError>) =>
+          Effect.gen(function* () {
+            const fiber = yield* Effect.forkChild(action);
+            const pending = yield* approve;
+            yield* Fiber.join(fiber);
+            return pending;
+          });
+
+        const report = yield* computer.permissions({ automation: true });
+        assert.isFalse(report.supported);
+        assert.equal(report.host?.os, host.report.os);
+        assert.equal(report.host?.display, host.report.display);
+        assert.equal(
+          report.host?.capabilities.map((capability) => capability.state).join(" "),
+          host.report.states,
+        );
+        assert.deepEqual(
+          report.host?.capabilities.map((capability) => capability.key),
+          ["elements", "screenshot", "pointer", "keyboard"],
+        );
+        // The report is static: reading it runs and installs nothing.
+        assert.equal(calls.length, 0);
+
+        const shot = yield* computer.screenshot;
+        assert.deepEqual([shot.width, shot.height], [1920, 1080]);
+        const capture = desktopCalls().at(-1)!;
+        assert.isTrue(capture.command.endsWith(host.binary));
+        assert.deepEqual(capture.args.slice(0, 3), ["screenshot", "--screen", "0"]);
+        assert.equal(capture.args.length, 4);
+
+        const click = computer.click(caller, {
+          target: "the Save button",
+          x: 10.4,
+          y: 20,
+          button: "right",
+          double: true,
+        });
+        if (host.pointer) {
+          const pending = yield* act(click);
+          assert.include(pending.context, "on this computer's main screen");
+          assert.equal(pending.options[0]!.consequence, "The agent acts on this computer once");
+          assert.deepEqual(desktopCalls().at(-1)!.args, [
+            "mouse-click",
+            "--xy",
+            "10,20",
+            "--button",
+            "right",
+            "--count",
+            "2",
+            "--headed",
+            ...SESSION,
+          ]);
+        } else {
+          const error = yield* Effect.flip(click);
+          assert.equal(error.reason, "unsupported_platform");
+          assert.include(error.message, "Wayland");
+          assert.include(error.message, "ref");
+        }
+
+        yield* act(
+          computer.click(caller, { target: "the Save button", ref: "@s1:e2", button: "right" }),
+        );
+        assert.deepEqual(desktopCalls().at(-1)!.args, [
+          "right-click",
+          "@s1:e2",
+          ...host.headed,
+          ...SESSION,
+        ]);
+        yield* act(computer.click(caller, { target: "the Save button", ref: "@s1:e2" }));
+        assert.deepEqual(desktopCalls().at(-1)!.args, ["click", "@s1:e2", ...SESSION]);
+
+        yield* act(computer.type(caller, { target: "the title field", ref: "@s1:e1", text: "hi" }));
+        assert.deepEqual(desktopCalls().at(-1)!.args, [
+          "type",
+          "@s1:e1",
+          "--stdin",
+          ...host.headed,
+          ...SESSION,
+        ]);
+        assert.equal(desktopCalls().at(-1)!.stdin, "hi");
+
+        yield* act(
+          computer.key(caller, { target: "the editor", key: "s", modifiers: ["shift", "command"] }),
+        );
+        assert.deepEqual(desktopCalls().at(-1)!.args, ["press", "cmd+shift+s", ...SESSION]);
+        yield* act(computer.key(caller, { target: "the editor", key: "Return" }));
+        assert.deepEqual(desktopCalls().at(-1)!.args, ["press", "return", ...SESSION]);
+
+        // Refused before anyone is asked: nothing ran and no decision was opened for them.
+        const ran = desktopCalls().length;
+        const asked = (yield* decisions.list({})).length;
+        const typed = yield* Effect.flip(computer.type(caller, { target: "the field", text: "a" }));
+        assert.equal(typed.reason, "unsupported_platform");
+        assert.include(typed.message, "needs a `ref`");
+        for (const key of ["home", "enter", "+", "-"]) {
+          const error = yield* Effect.flip(computer.key(caller, { target: "the editor", key }));
+          assert.equal(error.reason, "invalid");
+          assert.include(error.message, "On Windows and Linux key must be");
+        }
+        const settings = yield* Effect.flip(computer.openSettings({ pane: "accessibility" }));
+        assert.equal(settings.reason, "unsupported_platform");
+        assert.equal(desktopCalls().length, ran);
+        assert.equal((yield* decisions.list({})).length, asked);
+        // Nothing but the installer and agent-desktop ever ran: no macOS script reached this host.
+        assert.isTrue(calls.every((call) => call.command === "npm" || isDesktop(call.command)));
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect("a Linux server without a graphical session refuses everything and says why", () => {
+    const { calls, layer } = harness({ platform: "linux", env: { DISPLAY: "" } });
+    return Effect.gen(function* () {
+      const computer = yield* ComputerUse.ComputerUse;
+      const report = yield* computer.permissions({ automation: false });
+      assert.equal(report.host?.display, "none");
+      assert.isTrue(report.host?.capabilities.every((entry) => entry.state === "unavailable"));
+      const errors = [
+        yield* Effect.flip(computer.screenshot),
+        yield* Effect.flip(computer.snapshot(caller, {})),
+        yield* Effect.flip(computer.click(caller, { target: "the Save button", ref: "@s1:e2" })),
+        yield* Effect.flip(computer.key(caller, { target: "the editor", key: "a" })),
+      ];
+      for (const error of errors) {
+        assert.equal(error.reason, "unsupported_platform");
+        assert.include(error.message, "no graphical session");
+      }
+      assert.equal(calls.length, 0);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("an unknown platform reports no host and names no limit", () => {
+    const { layer } = harness({ platform: "freebsd", env: { DISPLAY: ":0" } });
+    return Effect.gen(function* () {
+      const computer = yield* ComputerUse.ComputerUse;
+      assert.isUndefined((yield* computer.permissions({ automation: false })).host);
+      const error = yield* Effect.flip(computer.snapshot(caller, {}));
+      assert.equal(
+        error.message,
+        "Computer use is not available on the computer that runs T3 Code.",
+      );
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect.each([
+    {
+      name: "Wayland consent denied is a missing screenshot permission the user must answer",
+      env: { WAYLAND_DISPLAY: "wayland-0" },
+      output: failure("screenshot", "PERM_DENIED", "safe"),
+      reason: "screen_recording_missing",
+      says: ["answer that dialog", "do not retry in a loop"],
+    },
+    {
+      name: "Wayland consent nobody answered keeps the tool's advice and says not to loop",
+      env: { WAYLAND_DISPLAY: "wayland-0" },
+      output: failure("screenshot", "TIMEOUT", "safe", "Answer the screenshot dialog."),
+      reason: "failed",
+      says: ["Answer the screenshot dialog.", "do not retry in a loop"],
+    },
+    {
+      name: "an X11 compositing desktop refuses the capture with the tool's own advice",
+      env: { DISPLAY: ":0" },
+      output: failure("screenshot", "PLATFORM_NOT_SUPPORTED", "safe", "Capture one window."),
+      reason: "failed",
+      says: ["Capture one window."],
+    },
+  ] as const)("$name", ({ env, output, reason, says }) => {
+    const { layer } = harness({ platform: "linux", env, desktop: () => output });
+    return Effect.gen(function* () {
+      const computer = yield* ComputerUse.ComputerUse;
+      const error = yield* Effect.flip(computer.screenshot);
+      assert.equal(error.reason, reason);
+      for (const text of says) assert.include(error.message, text);
+      assert.notInclude(error.message, "Mac permissions");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("a capture that is not an image is a failure, never a blank screenshot", () => {
+    const { layer } = harness({ platform: "win32", png: new Uint8Array(64) });
+    return Effect.gen(function* () {
+      const computer = yield* ComputerUse.ComputerUse;
+      const error = yield* Effect.flip(computer.screenshot);
+      assert.equal(error.reason, "failed");
+      assert.include(error.message, "not an image");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("a refused snapshot carries the tool's advice, not the Mac permission wording", () => {
+    const { layer } = harness({
+      platform: "linux",
+      env: { DISPLAY: ":0" },
+      desktop: () => failure("snapshot", "PERM_DENIED", "safe", "Start the accessibility bus."),
+    });
+    return Effect.gen(function* () {
+      const computer = yield* ComputerUse.ComputerUse;
+      const error = yield* Effect.flip(computer.snapshot(caller, {}));
+      assert.equal(error.reason, "accessibility_missing");
+      assert.include(error.message, "Start the accessibility bus.");
+      assert.notInclude(error.message, "Mac permissions");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("the state directory is private to the user, as agent-desktop demands on Linux", () => {
+    const { desktopCalls, layer } = harness({ platform: "linux", env: { DISPLAY: ":0" } });
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const computer = yield* ComputerUse.ComputerUse;
+      yield* computer.snapshot(caller, {});
+      const home = desktopCalls().at(-1)!.env!.AGENT_DESKTOP_HOME!;
+      assert.equal((yield* fs.stat(home)).mode & 0o777, 0o700);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("a failed install names no Mac fallback", () => {
+    const { layer } = harness({ platform: "win32", installFails: true });
+    return Effect.gen(function* () {
+      const computer = yield* ComputerUse.ComputerUse;
+      const error = yield* Effect.flip(computer.snapshot(caller, {}));
+      assert.include(error.message, "could not be installed");
+      assert.notInclude(error.message, "computer_screenshot");
+    }).pipe(Effect.provide(layer));
   });
 });
