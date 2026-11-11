@@ -25,7 +25,11 @@ const base: DeviceServiceState = {
   hubBasePath: "/api/device-hub",
   revision: 1,
 };
-const attempt = { attemptId: "ADB_WIFI_A", qrPayload: "WIFI:T:ADB;S:ADB_WIFI_A;P:X;;" };
+const attempt = {
+  attemptId: "ADB_WIFI_A",
+  qrPayload: "WIFI:T:ADB;S:ADB_WIFI_A;P:X;;",
+  revision: 1,
+};
 const live = (
   wifiPairing: Omit<NonNullable<DeviceServiceState["wifiPairing"]>, "hostId">,
 ): DeviceServiceState => ({ ...base, wifiPairing: { hostId: "local", ...wifiPairing } });
@@ -42,7 +46,7 @@ describe("wifiPairingView", () => {
     // The state stream can lag the start answer.
     {
       name: "the start answer ahead of the state",
-      state: base,
+      state: { ...base, revision: 0 },
       mine: attempt,
       error: null,
       view: { kind: "waiting", qrPayload: attempt.qrPayload },
@@ -88,13 +92,20 @@ describe("wifiPairingView", () => {
       error: "busy",
       view: { kind: "elsewhere", attemptId: "ADB_WIFI_B" },
     },
-    // Busy, but that attempt ended before the state arrived: start again.
+    // Busy, but that attempt has ended since: offer a retry, not a spinner.
     {
       name: "a busy answer for an attempt that already ended",
       state: live({ attemptId: "ADB_WIFI_B", status: "failed", reason: "timeout" }),
       mine: null,
       error: "busy",
-      view: { kind: "starting" },
+      view: { kind: "failed", label: "The other pairing attempt ended. Try again." },
+    },
+    {
+      name: "an attempt another client cancelled",
+      state: { ...base, revision: 2 },
+      mine: attempt,
+      error: null,
+      view: { kind: "failed", label: "Pairing was cancelled on another device." },
     },
     {
       name: "a start that failed",

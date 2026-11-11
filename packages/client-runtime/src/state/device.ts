@@ -168,24 +168,28 @@ const WIFI_PAIRING_STEP_LABELS = {
 
 export function wifiPairingView(input: {
   readonly state: DeviceServiceState;
-  /** The attempt this client started, once the server answered. */
-  readonly attempt: { readonly attemptId: string; readonly qrPayload: string } | null;
+  /** The attempt this client started, with the state revision the start answered with. */
+  readonly attempt: {
+    readonly attemptId: string;
+    readonly qrPayload: string;
+    readonly revision: number;
+  } | null;
   /** Why starting failed: another client's attempt, or a message to show. */
   readonly startError: "busy" | string | null;
 }): WifiPairingView {
   const live = input.state.wifiPairing;
-  if (
-    input.startError === "busy" &&
-    live &&
-    live.status !== "connected" &&
-    live.status !== "failed"
-  )
-    return { kind: "elsewhere", attemptId: live.attemptId };
+  if (input.startError === "busy")
+    return live && live.status !== "connected" && live.status !== "failed"
+      ? { kind: "elsewhere", attemptId: live.attemptId }
+      : { kind: "failed", label: "The other pairing attempt ended. Try again." };
   if (input.startError !== null && input.startError !== "busy")
     return { kind: "failed", label: input.startError };
   if (!input.attempt) return { kind: "starting" };
-  // Until the state stream catches up with the start answer, the attempt is waiting.
   const mine = live?.attemptId === input.attempt.attemptId ? live : undefined;
+  // A state as new as the start answer that lacks the attempt means someone cancelled it;
+  // an older one has not caught up yet.
+  if (!mine && input.state.revision >= input.attempt.revision)
+    return { kind: "failed", label: "Pairing was cancelled on another device." };
   if (mine?.status === "connected") {
     const device = input.state.devices.find((candidate) => candidate.id === mine.deviceId);
     return { kind: "connected", label: `Connected to ${device?.name ?? "your phone"}.` };

@@ -9,7 +9,7 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { CircleAlert, CircleCheck, Wifi, WifiOff } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
 import { Button } from "~/components/ui/button";
@@ -50,7 +50,13 @@ export function WifiPairingButton(props: {
   const start = useAtomCommand(deviceEnvironment.wifiPairStart, { reportFailure: false });
   const cancel = useAtomCommand(deviceEnvironment.wifiPairCancel);
   const [open, setOpen] = useState(false);
-  const [attempt, setAttempt] = useState<{ attemptId: string; qrPayload: string } | null>(null);
+  const [attempt, setAttempt] = useState<{
+    attemptId: string;
+    qrPayload: string;
+    revision: number;
+  } | null>(null);
+  // Closing before the start answers must still release the environment's one attempt.
+  const closed = useRef(false);
   const [startError, setStartError] = useState<string | null>(null);
   if (state.supportsWifiPairing !== true) return null;
 
@@ -64,14 +70,22 @@ export function WifiPairingButton(props: {
     setAttempt(null);
     setStartError(null);
     setOpen(true);
+    closed.current = false;
     const result = await start({ environmentId, input: { requestId: randomUUID() } });
     if (result._tag === "Failure")
       setStartError(isBusy(result.cause) ? "busy" : formatEnvironmentQueryError(result.cause));
-    else setAttempt({ attemptId: result.value.attemptId, qrPayload: result.value.qrPayload });
+    else if (closed.current) void dismiss(result.value.attemptId);
+    else
+      setAttempt({
+        attemptId: result.value.attemptId,
+        qrPayload: result.value.qrPayload,
+        revision: result.value.state.revision,
+      });
   };
   // Closing stops a running attempt and clears a finished one for every client.
   const close = () => {
     setOpen(false);
+    closed.current = true;
     void dismiss(attempt?.attemptId);
   };
 

@@ -7,7 +7,7 @@ import {
   LOCAL_DEVICE_HOST_ID,
 } from "@t3tools/contracts";
 import { qrCodePath } from "@t3tools/shared/qrCodePath";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { View } from "react-native";
 import Svg, { Path, Rect } from "react-native-svg";
 
@@ -49,7 +49,13 @@ export function WifiPairingSection(props: {
   const start = useAtomCommand(deviceEnvironment.wifiPairStart, { reportFailure: false });
   const cancel = useAtomCommand(deviceEnvironment.wifiPairCancel);
   const [open, setOpen] = useState(false);
-  const [attempt, setAttempt] = useState<{ attemptId: string; qrPayload: string } | null>(null);
+  const [attempt, setAttempt] = useState<{
+    attemptId: string;
+    qrPayload: string;
+    revision: number;
+  } | null>(null);
+  // Closing before the start answers must still release the environment's one attempt.
+  const closed = useRef(false);
   const [startError, setStartError] = useState<string | null>(null);
   if (state.supportsWifiPairing !== true) return null;
 
@@ -62,9 +68,16 @@ export function WifiPairingSection(props: {
     setAttempt(null);
     setStartError(null);
     setOpen(true);
+    closed.current = false;
     const result = await start({ environmentId, input: { requestId: uuidv4() } });
     if (result._tag === "Success") {
-      setAttempt({ attemptId: result.value.attemptId, qrPayload: result.value.qrPayload });
+      if (closed.current) void dismiss(result.value.attemptId);
+      else
+        setAttempt({
+          attemptId: result.value.attemptId,
+          qrPayload: result.value.qrPayload,
+          revision: result.value.state.revision,
+        });
       return;
     }
     const failure = squashAtomCommandFailure(result);
@@ -82,6 +95,7 @@ export function WifiPairingSection(props: {
   // Closing stops a running attempt and clears a finished one for every client.
   const close = () => {
     setOpen(false);
+    closed.current = true;
     void dismiss(attempt?.attemptId);
   };
 

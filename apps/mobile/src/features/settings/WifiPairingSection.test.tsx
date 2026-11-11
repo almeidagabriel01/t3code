@@ -65,8 +65,13 @@ const base = {
   hosts: [{ id: "local", label: "Studio Mac" }],
   devices: [],
   supportsWifiPairing: true,
+  revision: 0,
 } as unknown as DeviceServiceState;
-const attempt = { attemptId: "ADB_WIFI_A", qrPayload: "WIFI:T:ADB;S:ADB_WIFI_A;P:X;;" };
+const attempt = {
+  attemptId: "ADB_WIFI_A",
+  qrPayload: "WIFI:T:ADB;S:ADB_WIFI_A;P:X;;",
+  state: { revision: 1 },
+};
 const withPairing = (wifiPairing: object, attemptId = "ADB_WIFI_A") =>
   ({ ...base, wifiPairing: { hostId: "local", attemptId, ...wifiPairing } }) as DeviceServiceState;
 

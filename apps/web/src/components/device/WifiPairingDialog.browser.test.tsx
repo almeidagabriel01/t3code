@@ -63,12 +63,14 @@ const base: DeviceServiceState = {
   revision: 1,
 };
 const attempt = { attemptId: "ADB_WIFI_A", qrPayload: "WIFI:T:ADB;S:ADB_WIFI_A;P:SECRET;;" };
+// The start answers with a state newer than the one rendered, as the stream lags it.
+const started = { ...attempt, state: { revision: 2 } };
 const withPairing = (
   wifiPairing: Omit<NonNullable<DeviceServiceState["wifiPairing"]>, "hostId" | "attemptId">,
   attemptId = attempt.attemptId,
 ): DeviceServiceState => ({ ...base, wifiPairing: { hostId: "local", attemptId, ...wifiPairing } });
 
-function setup(start: () => unknown = () => ({ _tag: "Success", value: attempt }), allowed = true) {
+function setup(start: () => unknown = () => ({ _tag: "Success", value: started }), allowed = true) {
   vi.resetAllMocks();
   mocks.allowed = allowed;
   mocks.start.mockImplementation(async () => start());
@@ -155,6 +157,32 @@ describe("Connect a phone over Wi-Fi", () => {
       { environmentId, input: { attemptId: "ADB_WIFI_B" } },
     ]);
     await vi.waitFor(() => expect(mocks.start).toHaveBeenCalledTimes(2));
+  });
+
+  it("releases an attempt whose start answers after the dialog closed", async () => {
+    let answer: (value: unknown) => void = () => undefined;
+    setup(() => new Promise((resolve) => (answer = resolve)));
+    await using screen = await render(pairingButton(base));
+    await screen.getByRole("button", { name: "Connect a phone over Wi-Fi" }).click();
+    await screen.getByRole("button", { name: "Cancel" }).click();
+    expect(mocks.cancel).not.toHaveBeenCalled();
+
+    answer({ _tag: "Success", value: started });
+    await vi.waitFor(() =>
+      expect(mocks.cancel.mock.calls).toEqual([
+        [{ environmentId, input: { attemptId: attempt.attemptId } }],
+      ]),
+    );
+  });
+
+  it("offers a retry when another client cancels this attempt", async () => {
+    setup();
+    await using screen = await render(pairingButton({ ...base, revision: 2 }));
+    await screen.getByRole("button", { name: "Connect a phone over Wi-Fi" }).click();
+    await expect
+      .element(screen.getByText("Pairing was cancelled on another device."))
+      .toBeInTheDocument();
+    await expect.element(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
   });
 
   it("is locked without permission and absent on servers without Wi-Fi pairing", async () => {
