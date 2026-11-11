@@ -213,8 +213,11 @@ export interface DeviceLink {
 export const linkedThreadId = (link: Pick<DeviceLink, "linkId">, threadId: string) =>
   `linked:${link.linkId}:${threadId}` as ThreadId;
 
-/** How long a linked agent's "Ask first" call waits for an answer before reporting it pending. */
-const LINK_ANSWER_WAIT = "2 minutes";
+/**
+ * How long a linked agent's "Ask first" call waits for an answer before reporting it pending.
+ * Under T3 Connect's ~100 s idle cut; the request stays answerable after it.
+ */
+const LINK_ANSWER_WAIT = "60 seconds";
 
 /** `open` starts driving a device, `close` ends it, `read` only looks. */
 export type DeviceAgentIntent = "open" | "close" | "read";
@@ -2309,11 +2312,24 @@ export const make = Effect.gen(function* () {
     const wantedIds = new Set(wanted.map((link) => linkedDeviceHostId(link.environmentId)));
     if (wantedIds.size === linkedHosts.size && [...wantedIds].every((id) => linkedHosts.has(id)))
       return;
-    yield* service.withLifecycleLock(
+    const sessions = (yield* service.state).sessions;
+    const ending = yield* service.withLifecycleLock(
       Effect.gen(function* () {
-        for (const id of linkedHosts.keys()) {
+        const ending: Array<Effect.Effect<void, DeviceError>> = [];
+        for (const [id, host] of linkedHosts) {
           if (wantedIds.has(id)) continue;
-          yield* linkedHosts.get(id)!.stop;
+          // Its sessions there would otherwise stay open in the owner's panel.
+          const closeSession = (yield* host.current)?.devices.closeSession;
+          for (const session of sessions)
+            if (session.hostId === id && closeSession)
+              ending.push(
+                closeSession({
+                  threadId: session.threadId,
+                  deviceId: session.deviceId,
+                  shutdown: false,
+                }),
+              );
+          yield* host.stop;
           linkedHosts.delete(id);
           hosts.delete(id);
         }
@@ -2334,7 +2350,13 @@ export const make = Effect.gen(function* () {
           hosts.set(id, host);
         }
         yield* service.refreshHosts;
+        return ending;
       }),
+    );
+    yield* Effect.forEach(
+      ending,
+      (close) => close.pipe(Effect.timeout("10 seconds"), Effect.ignore),
+      { concurrency: "unbounded", discard: true },
     );
   });
   const probeContext =

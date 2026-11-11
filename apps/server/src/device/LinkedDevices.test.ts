@@ -8,11 +8,17 @@ import {
   LOCAL_DEVICE_HOST_ID,
   linkedDeviceHostId,
   PeerLinkError,
+  type PeerLink,
   ThreadId,
   type DeviceServiceState,
   type ServerSettings as Settings,
 } from "@t3tools/contracts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
+import * as NetService from "@t3tools/shared/Net";
+import * as DateTime from "effect/DateTime";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -22,9 +28,20 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import { HttpClient, HttpClientResponse, HttpRouter, type HttpClientRequest } from "effect/http";
+import {
+  HttpClient,
+  HttpClientError,
+  HttpClientResponse,
+  HttpRouter,
+  type HttpClientRequest,
+} from "effect/http";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import * as ServerConfig from "../config.ts";
+import * as PeerLinks from "../peer/PeerLinks.ts";
+import type { ResolvedPeerLink } from "../peer/PeerLinks.ts";
+import * as ProcessRunner from "../processRunner.ts";
+import { AGENT_DEVICE_VERSION } from "./DeviceToolchain.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as DeviceHost from "./DeviceHost.ts";
@@ -116,12 +133,26 @@ const peerHost = (): DeviceHost.DeviceHost["Service"] => {
   };
 };
 
-const webRequest = (request: HttpClientRequest.HttpClientRequest) =>
-  new Request(request.url, {
+/** A client request as the server it calls receives it, streamed bodies included. */
+const webRequest = Effect.fn("webRequest")(function* (
+  request: HttpClientRequest.HttpClientRequest,
+) {
+  const body =
+    request.body._tag === "Uint8Array"
+      ? request.body.body
+      : request.body._tag === "Stream"
+        ? new Uint8Array(
+            (yield* Stream.runCollect(Stream.orDie(request.body.stream))).flatMap((chunk) => [
+              ...chunk,
+            ]),
+          )
+        : undefined;
+  return new Request(request.url, {
     method: request.method,
     headers: request.headers,
-    ...(request.body._tag === "Uint8Array" ? { body: request.body.body } : {}),
+    ...(body === undefined ? {} : { body }),
   });
+});
 
 /**
  * Two environments in one process: the owner's DeviceService behind the real gateway routes,
@@ -142,8 +173,20 @@ const linkedPair = Effect.fn("linkedPair")(function* () {
     Effect.provideService(ServerSettings.ServerSettingsService, settingsService(peerSettings)),
   );
   const daemonCalls: Array<{ url: string; authorization: string | undefined; body: unknown }> = [];
+  const hubCalls: Array<string> = [];
+  /** What the owner's hub streams back; a test swaps in one that never ends. */
+  const hubBody: { make: () => Uint8Array | ReadableStream<Uint8Array> } = {
+    make: () => new Uint8Array([1, 2, 3]),
+  };
   const daemon = HttpClient.make((request) =>
     Effect.sync(() => {
+      if (request.url.startsWith("http://hub.test")) {
+        hubCalls.push(request.url);
+        return HttpClientResponse.fromWeb(
+          request,
+          new Response(hubBody.make(), { headers: { "content-type": "video/avcc" } }),
+        );
+      }
       const body =
         request.body._tag === "Uint8Array"
           ? JSON.parse(new TextDecoder().decode(request.body.body))
@@ -212,10 +255,15 @@ const linkedPair = Effect.fn("linkedPair")(function* () {
   const toPeer = HttpClient.make((request) =>
     Effect.flatMap(Ref.get(linkUp), (up) =>
       up
-        ? call(webRequest(request)).pipe(
+        ? webRequest(request).pipe(
+            Effect.flatMap(call),
             Effect.map((response) => HttpClientResponse.fromWeb(request, response)),
           )
-        : Effect.die("unreachable: the host checks the link before calling"),
+        : Effect.fail(
+            new HttpClientError.HttpClientError({
+              reason: new HttpClientError.TransportError({ request, description: "link down" }),
+            }),
+          ),
     ),
   );
   const linkedHost = yield* LinkedDeviceHost.make({
@@ -240,12 +288,54 @@ const linkedPair = Effect.fn("linkedPair")(function* () {
     deviceOnboardingCompleted: true,
     linkedEnvironmentsEnabled: true,
   });
+  /** The daemon each agent launcher here was configured with, as agent-device reads it. */
+  const configured: Array<{ readonly baseUrl: string; readonly token: string }> = [];
   const linkingDevices = yield* DeviceService.makeWithHosts(
     new Map([[LINKED_HOST, linkedHost]]),
+    undefined,
+    (_hostId, endpoint) =>
+      Effect.sync(() => {
+        configured.push({ baseUrl: endpoint.baseUrl, token: endpoint.token });
+        return "/state/agent-device.json";
+      }),
   ).pipe(
     Effect.provide(NodeCrypto.layer),
     Effect.provideService(ServerSettings.ServerSettingsService, settingsService(linkingSettings)),
   );
+
+  // This server's tunnel, routing launcher calls the way DeviceService.make does.
+  const tunnelApp = HttpRouter.toWebHandler(
+    LinkedDeviceTunnel.layer.pipe(
+      Layer.provideMerge(
+        Layer.mergeAll(
+          Layer.mock(DeviceService.DeviceService)({
+            linkedAgentUpstream: (hostId, token, path) =>
+              hostId === LINKED_HOST ? linkedHost.agentUpstream(token, path) : Effect.succeedNone,
+          }),
+          Layer.succeed(HttpClient.HttpClient, toPeer),
+        ),
+      ),
+    ),
+    { disableLogger: true },
+  );
+  yield* Effect.addFinalizer(() => Effect.promise(tunnelApp.dispose));
+  /** One `/rpc` call as agent-device's CLI sends it to the daemon its launcher names. */
+  const launch = (body: unknown) =>
+    Effect.promise(() => {
+      const endpoint = configured.at(-1)!;
+      return tunnelApp.handler(
+        new Request(`${endpoint.baseUrl}/rpc`, {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${endpoint.token}`,
+            "x-agent-device-token": endpoint.token,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify(body),
+        }),
+        Context.empty(),
+      );
+    }).pipe(Effect.flatMap((response) => Effect.promise(() => response.json())));
 
   /** A raw call to the gateway, as a linked environment's server makes it. */
   const gateway = (path: string, body: unknown, token = LINK_TOKEN) =>
@@ -268,7 +358,18 @@ const linkedPair = Effect.fn("linkedPair")(function* () {
         body: JSON.stringify(body),
       }),
     );
+  const hub = (path: string, token = LINK_TOKEN) =>
+    call(
+      new Request(`http://peer.test${LINKED_DEVICE_ROUTE_PREFIX}/hub${path}`, {
+        headers: { authorization: `Bearer ${token}` },
+      }),
+    );
   return {
+    configured,
+    launch,
+    hub,
+    hubCalls,
+    hubBody,
     peerDevices,
     peerSettings,
     linkingDevices,
@@ -516,17 +617,20 @@ describe("linked devices", () => {
       expect((yield* open({ id: "thread-a", title: "Fix login" })).status).toBe(200);
       // A task thread-a delegated shares the device.
       expect((yield* open({ id: "task-1", ancestors: ["thread-a"] })).status).toBe(200);
-      // An unrelated thread of the same link, and another link's thread, are told who has it.
-      for (const [thread, token] of [
-        [{ id: "thread-b" }, LINK_TOKEN],
-        [{ id: "thread-a" }, OTHER_LINK_TOKEN],
-      ] as const) {
-        const busy = yield* open(thread, token);
-        expect(busy.status).toBe(409);
-        expect(yield* json(busy)).toMatchObject({
-          error: { _tag: "DeviceInUseError", threadTitle: "Fix login" },
-        });
-      }
+      // An unrelated thread of the same link hears which of its own threads has it.
+      const sameLink = yield* open({ id: "thread-b" });
+      expect(sameLink.status).toBe(409);
+      expect(yield* json(sameLink)).toMatchObject({
+        error: { _tag: "DeviceInUseError", threadId: "thread-a", threadTitle: "Fix login" },
+      });
+      // Another link hears only which environment has it, never that environment's threads.
+      const otherLink = yield* open({ id: "thread-a" }, OTHER_LINK_TOKEN);
+      expect(otherLink.status).toBe(409);
+      const text = yield* Effect.promise(() => otherLink.text());
+      expect(JSON.parse(text)).toMatchObject({
+        error: { _tag: "DeviceInUseError", threadTitle: "a thread of Laptop" },
+      });
+      expect(text).not.toMatch(/Fix login|link-laptop|thread-a/);
     }).pipe(Effect.scoped),
   );
 
@@ -607,39 +711,85 @@ describe("linked devices", () => {
   );
 
   it.effect(
-    "a launcher reaches the device through this server's tunnel, and hears a dead link",
+    "a launcher drives the device through this server's tunnel and the owner's daemon",
     () =>
       Effect.gen(function* () {
-        const { linkingDevices, linkedHost, linkUp } = yield* linkedPair();
+        const { linkingDevices, configured, launch, linkUp, daemonCalls } = yield* linkedPair();
+        const opened = { threadId: ThreadId.make("thread-a"), hostId: LINKED_HOST, deviceId: SIM };
         yield* linkingDevices.list;
-        yield* linkingDevices.open(
-          {
-            threadId: ThreadId.make("thread-a"),
-            hostId: LINKED_HOST,
-            deviceId: SIM,
-            platform: "ios",
-          },
-          { agent: {} },
+        yield* linkingDevices.open({ ...opened, platform: "ios" }, { agent: {} });
+        const target = yield* linkingDevices.agentTarget({ ...opened, agent: {} });
+        expect(target.agentDeviceId).toBe(SIM);
+        // agent-device is pointed at this server, never at the owner's daemon or with its token.
+        expect(configured.at(-1)!.baseUrl).toMatch(
+          new RegExp(`^http://127\\.0\\.0\\.1:3773/api/linked-device-agent/${LINKED_HOST}/`),
         );
-        const ready = yield* linkedHost.ensureAgentReady(() => Effect.void);
-        const binding = yield* ready.devices.agentEndpoint!(SIM, {
-          threadId: "thread-a",
-          agent: true,
-        });
-        expect(binding.baseUrl).toMatch(/^http:\/\/127\.0\.0\.1:3773\/api\/linked-device-agent\//);
-        const upstream = yield* linkedHost.agentUpstream(binding.token, "/rpc");
-        expect(Option.getOrThrow(upstream)).toMatchObject({
-          url: `http://peer.test${LINKED_DEVICE_ROUTE_PREFIX}/agent/${SIM}/rpc`,
-          headers: { authorization: `Bearer ${LINK_TOKEN}`, "t3-linked-thread": "thread-a" },
-        });
-        expect(Option.isNone(yield* linkedHost.agentUpstream("never-issued", "/rpc"))).toBe(true);
+        expect(configured.at(-1)!.token).not.toBe("daemon-token");
 
+        expect(yield* launch(command("tap", { udid: SIM }))).toEqual({
+          jsonrpc: "2.0",
+          id: 1,
+          result: { ok: true },
+        });
+        expect(daemonCalls).toEqual([
+          expect.objectContaining({
+            url: "http://daemon.test/rpc",
+            authorization: "Bearer daemon-token",
+          }),
+        ]);
+
+        // A dead link reaches the agent as agent-device's own error, so it reports it. The tunnel
+        // runs on the real clock, so the host may still hold the link's address and fail the call.
         yield* Ref.set(linkUp, false);
         yield* TestClock.adjust("61 seconds");
-        const down = yield* linkedHost.agentUpstream(binding.token, "/rpc").pipe(Effect.flip);
-        expect(down).toBeInstanceOf(DeviceHostUnavailableError);
-        expect(down.message).toContain("not reachable over the link");
+        expect(yield* launch(command("tap"))).toMatchObject({
+          error: {
+            message: expect.stringMatching(/not reachable over the link|stopped answering/),
+          },
+        });
+        expect(daemonCalls).toHaveLength(1);
       }).pipe(Effect.scoped),
+  );
+});
+
+describe("linked device streams", () => {
+  it.effect("relay only devices the link opened, named in every request", () =>
+    Effect.gen(function* () {
+      const { gateway, hub, hubCalls } = yield* linkedPair();
+      const stream = `/vendor/serve-sim/helper/${SIM}/stream.avcc`;
+      expect((yield* hub(stream)).status).toBe(403);
+      yield* gateway("/open", { thread: { id: "thread-a" }, deviceId: SIM, platform: "ios" });
+      const watched = yield* hub(stream);
+      expect(watched.status).toBe(200);
+      expect(watched.headers.get("content-type")).toBe("video/avcc");
+      expect([...new Uint8Array(yield* Effect.promise(() => watched.arrayBuffer()))]).toEqual([
+        1, 2, 3,
+      ]);
+      expect(hubCalls).toEqual([`http://hub.test${stream}`]);
+      // A listing names no device, and a request naming one more device than it opened is refused.
+      expect((yield* hub("/api/devices")).status).toBe(403);
+      expect((yield* hub(`/vendor/serve-emu/api/screenshot?device=${PHONE}`)).status).toBe(403);
+      expect((yield* hub(`${stream}?udid=${PHONE}`)).status).toBe(403);
+      // Another link sees nothing of this link's open device.
+      expect((yield* hub(stream, OTHER_LINK_TOKEN)).status).toBe(403);
+      expect(hubCalls).toHaveLength(1);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("end a live stream when the owner blocks the link", () =>
+    Effect.gen(function* () {
+      const { gateway, hub, hubBody, peerDevices } = yield* linkedPair();
+      hubBody.make = () =>
+        new ReadableStream<Uint8Array>({
+          start: (controller) => controller.enqueue(new Uint8Array([9])),
+        });
+      yield* gateway("/open", { thread: { id: "thread-a" }, deviceId: SIM, platform: "ios" });
+      const watched = yield* hub(`/vendor/serve-sim/helper/${SIM}/stream.avcc`);
+      const reader = watched.body!.getReader();
+      expect((yield* Effect.promise(() => reader.read())).value).toEqual(new Uint8Array([9]));
+      yield* peerDevices.setLinkBlocked({ linkId: "link-laptop", blocked: true });
+      expect((yield* Effect.promise(() => reader.read())).done).toBe(true);
+    }).pipe(Effect.scoped),
   );
 });
 
@@ -800,13 +950,13 @@ describe("linked device gateway helpers", () => {
   });
 
   it.each([
-    ["/vendor/serve-sim/helper/SIM-9/frame", "", "SIM-9"],
-    ["/stream", "device=emulator-5554", "emulator-5554"],
-    ["/x", "udid=U", "U"],
-    ["/x", "serial=S", "S"],
-    ["/devices", "", undefined],
-  ])("reads the device a hub request names in %s?%s", (path, search, expected) => {
-    expect(LinkedDeviceGateway.hubDeviceId(path, new URLSearchParams(search))).toBe(expected);
+    ["/vendor/serve-sim/helper/SIM%2D9/frame", "", ["SIM-9"]],
+    ["/stream", "device=emulator-5554", ["emulator-5554"]],
+    ["/x", "udid=U&serial=S", ["U", "S"]],
+    ["/vendor/serve-sim/helper/A/ws", "device=B", ["A", "B"]],
+    ["/api/devices", "", []],
+  ])("reads every device a hub request names in %s?%s", (path, search, expected) => {
+    expect(LinkedDeviceGateway.hubDeviceIds(path, new URLSearchParams(search))).toEqual(expected);
   });
 
   it.effect("keeps a slow answer alive with spaces, then sends it whole", () =>
@@ -823,5 +973,128 @@ describe("linked device gateway helpers", () => {
       expect(chunks.join("")).toMatch(/^ +\{"result":1\}$/);
       expect(JSON.parse(chunks.join(""))).toEqual({ result: 1 });
     }),
+  );
+});
+
+describe("linked hosts follow the links", () => {
+  const link = (environmentId: string, label: string): PeerLink => ({
+    environmentId: EnvironmentId.make(environmentId),
+    label,
+    urls: ["http://peer.test"],
+    access: "full-access",
+    linkedAt: DateTime.makeUnsafe(0),
+    expiresAt: DateTime.makeUnsafe(Date.UTC(2100, 0)),
+    lastReachedAt: null,
+    lastError: null,
+  });
+
+  it.effect("appear, hide, come back and end their sessions there when the link goes", () =>
+    Effect.gen(function* () {
+      const links = yield* Ref.make<ReadonlyArray<PeerLink>>([link("env-studio", "Studio")]);
+      const peerCalls: Array<string> = [];
+      // The linked environment's gateway, answering the calls a linked host makes.
+      const peer = HttpClient.make((request) =>
+        Effect.sync(() => {
+          const path = new URL(request.url).pathname.slice(LINKED_DEVICE_ROUTE_PREFIX.length);
+          peerCalls.push(path);
+          const device = {
+            hostId: LOCAL_DEVICE_HOST_ID,
+            id: PHONE,
+            name: "Pixel 10",
+            platform: "android",
+            version: "Android 16",
+            booted: true,
+            physical: true,
+          };
+          return HttpClientResponse.fromWeb(
+            request,
+            Response.json(
+              path === "/list"
+                ? {
+                    environmentLabel: "Studio Mac",
+                    platforms: [{ platform: "android", available: true }],
+                    agentAccessEnabled: true,
+                    agentDeviceVersion: AGENT_DEVICE_VERSION,
+                    devices: [device],
+                    holds: [],
+                  }
+                : path === "/open"
+                  ? { device, agentDeviceId: null }
+                  : {},
+            ),
+          );
+        }),
+      );
+      const service = yield* DeviceService.make.pipe(
+        Effect.provideService(DeviceHost.DeviceHost, peerHost()),
+        Effect.provideService(ProcessRunner.ProcessRunner, {
+          run: () => Effect.die("Linked hosts install nothing here"),
+        }),
+        Effect.provideService(HttpClient.HttpClient, peer),
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() => Effect.die("Linked hosts run nothing here")),
+        ),
+        Effect.provide(
+          Layer.mock(PeerLinks.PeerLinks)({
+            stored: Ref.get(links),
+            resolve: () =>
+              Effect.succeed({ url: "http://peer.test", token: LINK_TOKEN } as ResolvedPeerLink),
+            recordOutcome: () => Effect.void,
+          }),
+        ),
+      );
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const linkedHosts = (state: DeviceServiceState) =>
+        state.hosts.filter((host) => host.kind === "linked").map((host) => host.id);
+
+      // The beta off (the default) lists no linked environment.
+      yield* settings.updateSettings({
+        enableDeviceSupport: true,
+        deviceOnboardingCompleted: true,
+      });
+      expect(linkedHosts(yield* service.list)).toEqual([]);
+
+      yield* settings.updateSettings({ linkedEnvironmentsEnabled: true });
+      const listed = yield* service.list;
+      expect(linkedHosts(listed)).toEqual([LINKED_HOST]);
+      expect(listed.devices).toContainEqual(
+        expect.objectContaining({ hostId: LINKED_HOST, id: PHONE }),
+      );
+
+      yield* settings.updateSettings({ hiddenLinkedDeviceSources: [PEER_ENV] });
+      expect(linkedHosts(yield* service.list)).toEqual([]);
+      yield* settings.updateSettings({ hiddenLinkedDeviceSources: [] });
+      expect(linkedHosts(yield* service.list)).toEqual([LINKED_HOST]);
+
+      yield* service.open({
+        threadId: ThreadId.make("thread-a"),
+        hostId: LINKED_HOST,
+        deviceId: PHONE,
+        platform: "android",
+      });
+      expect((yield* service.state).sessions).toHaveLength(1);
+      peerCalls.length = 0;
+      yield* Ref.set(links, []);
+      const after = yield* service.list;
+      expect(linkedHosts(after)).toEqual([]);
+      expect(after.sessions).toEqual([]);
+      expect(peerCalls).toContain("/close");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          ServerSettings.layerTest(),
+          Layer.succeed(SecretResolver.SecretResolver, {
+            label: (provider) => Effect.succeed(provider),
+            read: (references) => Effect.succeed(references.map(() => undefined)),
+            invalidate: () => Effect.void,
+          }),
+          ServerConfig.layerTest(process.cwd(), { prefix: "t3-linked-hosts-" }),
+          NodeCrypto.layer,
+          NetService.layer,
+        ).pipe(Layer.provideMerge(NodeServices.layer)),
+      ),
+      Effect.scoped,
+    ),
   );
 });

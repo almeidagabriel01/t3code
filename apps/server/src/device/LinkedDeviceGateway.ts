@@ -1,6 +1,8 @@
 import {
   DeviceError,
   type DeviceId,
+  DeviceInUseError,
+  type DeviceServiceState,
   DeviceNotFoundError,
   LINKED_DEVICE_ROUTE_PREFIX,
   LINKED_DEVICE_THREAD_HEADER,
@@ -22,6 +24,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import {
+  HttpBody,
   HttpClient,
   HttpClientRequest,
   HttpRouter,
@@ -145,6 +148,46 @@ const authenticateLink = Effect.gen(function* () {
 });
 
 type Link = Effect.Success<typeof authenticateLink>;
+
+const isInUse = Schema.is(DeviceInUseError);
+
+/**
+ * An in-use refusal as one link may read it: its own threads by their own ids, another link's
+ * only by that link's label, so links never learn each other's threads.
+ */
+const scopeToLink =
+  (link: Link) =>
+  <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    effect.pipe(
+      Effect.catch((error: E) =>
+        Effect.gen(function* () {
+          if (!isInUse(error)) return yield* Effect.fail(error);
+          const own = DeviceService.linkedThreadId(link, "");
+          const refusedFields = {
+            hostId: error.hostId,
+            deviceId: error.deviceId,
+            ...(error.deviceName === undefined ? {} : { deviceName: error.deviceName }),
+          };
+          if (error.threadId.startsWith(own))
+            return yield* new DeviceInUseError({
+              ...refusedFields,
+              threadId: error.threadId.slice(own.length) as ThreadId,
+              ...(error.threadTitle === undefined ? {} : { threadTitle: error.threadTitle }),
+            });
+          if (!error.threadId.startsWith("linked:")) return yield* error;
+          const otherId = error.threadId.split(":")[1];
+          const label =
+            (yield* (yield* DeviceService.DeviceService).state).linkClients?.find(
+              (client) => client.linkId === otherId,
+            )?.label ?? "another linked environment";
+          return yield* new DeviceInUseError({
+            ...refusedFields,
+            threadId: "another-environment" as ThreadId,
+            threadTitle: `a thread of ${label}`,
+          });
+        }),
+      ),
+    );
 
 /** A linked thread as this environment names it, with its ancestors named the same way. */
 const linkedCaller = (link: Link, thread: LinkedDeviceThread) => ({
@@ -292,27 +335,31 @@ const make = Effect.sync(() => {
         // so an existing link never gains a view of a device its owner closed to agents.
         if (!input.agent)
           yield* devices.authorizeAgent({ ...target, intent: "read", agent: caller.agent });
-        const session = yield* devices.open(
-          {
-            threadId: caller.threadId,
-            hostId,
-            deviceId: input.deviceId,
-            platform: input.platform,
-            ...(input.boot === undefined ? {} : { boot: input.boot }),
-          },
-          {
-            ...(input.agent ? { agent: caller.agent } : {}),
-            link: { ...link, threadTitle: input.thread.title },
-          },
-        );
+        const session = yield* devices
+          .open(
+            {
+              threadId: caller.threadId,
+              hostId,
+              deviceId: input.deviceId,
+              platform: input.platform,
+              ...(input.boot === undefined ? {} : { boot: input.boot }),
+            },
+            {
+              ...(input.agent ? { agent: caller.agent } : {}),
+              link: { ...link, threadTitle: input.thread.title },
+            },
+          )
+          .pipe(scopeToLink(link));
         let agentDeviceId: string | null = null;
         if (input.agent) {
-          const bound = yield* devices.bindLinkedAgent({
-            threadId: caller.threadId,
-            hostId,
-            deviceId: session.deviceId,
-            agent: caller.agent,
-          });
+          const bound = yield* devices
+            .bindLinkedAgent({
+              threadId: caller.threadId,
+              hostId,
+              deviceId: session.deviceId,
+              agent: caller.agent,
+            })
+            .pipe(scopeToLink(link));
           bindings.set(bindingKey(caller.threadId, session.deviceId), {
             threadId: caller.threadId,
             deviceId: session.deviceId,
@@ -451,13 +498,15 @@ const make = Effect.sync(() => {
         const rewritten = rewriteRpc(body, binding);
         if (rewritten._tag === "Refused")
           return yield* refused(400, { state: "connected", message: rewritten.message });
-        yield* devices.authorizeAgent({
-          threadId,
-          hostId,
-          deviceId,
-          intent: AGENT_DEVICE_READ_ONLY_COMMANDS.includes(rewritten.command) ? "read" : "open",
-          agent: { link },
-        });
+        yield* devices
+          .authorizeAgent({
+            threadId,
+            hostId,
+            deviceId,
+            intent: AGENT_DEVICE_READ_ONLY_COMMANDS.includes(rewritten.command) ? "read" : "open",
+            agent: { link },
+          })
+          .pipe(scopeToLink(link));
         return yield* forward(request, binding, path, "", rewritten.body, rewritten.streams);
       }),
     ),
@@ -478,28 +527,39 @@ const make = Effect.sync(() => {
         const linkSessions = (yield* devices.state).sessions.filter(
           (session) => session.hostId === hostId && session.threadId.startsWith(prefix),
         );
-        const named = hubDeviceId(hubPath, url.value.searchParams);
-        return yield* proxyHubRequest({
-          request,
-          url: url.value,
-          hubPath,
-          hostId,
-          // A link watches only a device it opened here, and any listing once it has one open.
-          authorize: () =>
-            (
-              named === undefined
-                ? linkSessions.length > 0
-                : linkSessions.some((session) => session.deviceId === named)
+        const named = hubDeviceIds(hubPath, url.value.searchParams);
+        // A link reaches only devices it opened here, so every request must name one.
+        if (
+          named.length === 0 ||
+          !named.every((id) => linkSessions.some((session) => session.deviceId === id))
+        )
+          return yield* refused(403, {
+            state: "connected",
+            message: "Open the device before watching it.",
+          });
+        // A stream ends with the link's session on its device: a close, or the owner blocking it.
+        const ended = linkSessionsEnded(devices, prefix, named);
+        const response = yield* Effect.raceFirst(
+          proxyHubRequest({
+            request,
+            url: url.value,
+            hubPath,
+            hostId,
+            authorize: () => Effect.void,
+            onUserInput: (deviceId) => devices.holdOnInput(hostId, deviceId as DeviceId, link),
+          }),
+          ended.pipe(Effect.as(HttpServerResponse.empty({ status: 410 }))),
+        );
+        return response.body._tag === "Stream"
+          ? HttpServerResponse.setBody(
+              response,
+              HttpBody.stream(
+                Stream.interruptWhen(response.body.stream, ended),
+                response.body.contentType,
+                response.body.contentLength,
+              ),
             )
-              ? Effect.void
-              : Effect.fail(
-                  refused(403, {
-                    state: "connected",
-                    message: "Open the device before watching it.",
-                  }),
-                ),
-          onUserInput: (deviceId) => devices.holdOnInput(hostId, deviceId as DeviceId, link),
-        });
+          : response;
       }),
     ),
   );
@@ -515,13 +575,47 @@ const make = Effect.sync(() => {
   );
 });
 
-/** The device a hub request names, in a serve-sim helper path or a `device` parameter. */
-export const hubDeviceId = (hubPath: string, search: URLSearchParams) =>
-  /^\/vendor\/serve-sim\/helper\/([^/]+)\//.exec(hubPath)?.[1] ??
-  search.get("device") ??
-  search.get("udid") ??
-  search.get("serial") ??
-  undefined;
+/** Waits until the link has no session left on one of `deviceIds` here. */
+const linkSessionsEnded = (
+  devices: DeviceService.DeviceService["Service"],
+  prefix: string,
+  deviceIds: ReadonlyArray<string>,
+) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const open = (state: DeviceServiceState) =>
+        deviceIds.every((id) =>
+          state.sessions.some(
+            (session) =>
+              session.hostId === hostId &&
+              session.deviceId === id &&
+              session.threadId.startsWith(prefix),
+          ),
+        );
+      // Subscribe before reading so no change is lost.
+      const changes = yield* devices.subscribe;
+      if (!open(yield* devices.state)) return;
+      yield* Stream.fromSubscription(changes).pipe(
+        Stream.filter((state) => !open(state)),
+        Stream.runHead,
+      );
+    }),
+  );
+
+/** Every device a hub request names, in a serve-sim helper path or a selector parameter. */
+export const hubDeviceIds = (hubPath: string, search: URLSearchParams): ReadonlyArray<string> => {
+  const helper = /^\/vendor\/serve-sim\/helper\/([^/]+)\//.exec(hubPath)?.[1];
+  let fromPath: string | undefined;
+  try {
+    fromPath = helper === undefined ? undefined : decodeURIComponent(helper);
+  } catch {
+    fromPath = helper;
+  }
+  return [
+    ...(fromPath === undefined ? [] : [fromPath]),
+    ...["device", "udid", "serial"].flatMap((name) => search.getAll(name)),
+  ];
+};
 
 /**
  * A forwarded `/rpc` body, default-deny: one `agent_device.command` whose session this side
@@ -578,7 +672,17 @@ export const rewriteRpc = (
   };
 };
 
-const FORWARDED_AGENT_HEADERS = ["content-type", "accept", "x-request-id", "content-length"];
+/** What agent-device's CLI sends that its daemon reads, uploads' artifact description included. */
+const FORWARDED_AGENT_HEADERS = [
+  "content-type",
+  "accept",
+  "x-request-id",
+  "content-length",
+  "x-artifact-type",
+  "x-artifact-filename",
+  "x-artifact-hash",
+  "x-artifact-hash-algorithm",
+];
 
 const forward = Effect.fn("LinkedDeviceGateway.forward")(function* (
   request: HttpServerRequest.HttpServerRequest,
