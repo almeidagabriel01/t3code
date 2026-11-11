@@ -11,13 +11,23 @@ import * as Option from "effect/Option";
 import { vi } from "vite-plus/test";
 import type * as Electron from "electron";
 
-const { focusedWebContents, ownerWindow, mediaStatus, askForMedia } = vi.hoisted(() => ({
-  focusedWebContents: vi.fn(),
-  ownerWindow: vi.fn(),
-  mediaStatus: vi.fn(),
-  askForMedia: vi.fn(),
-}));
+const { focusedWebContents, ownerWindow, mediaStatus, askForMedia, clipboardWrite } = vi.hoisted(
+  () => ({
+    focusedWebContents: vi.fn(),
+    ownerWindow: vi.fn(),
+    mediaStatus: vi.fn(),
+    askForMedia: vi.fn(),
+    clipboardWrite: vi.fn(),
+  }),
+);
 vi.mock("electron", () => ({
+  clipboard: { write: clipboardWrite },
+  ClipboardItem: class {
+    items: Record<string, string>;
+    constructor(items: Record<string, string>) {
+      this.items = items;
+    }
+  },
   webContents: { getFocusedWebContents: focusedWebContents },
   BrowserWindow: { fromWebContents: ownerWindow, getFocusedWindow: () => null },
   systemPreferences: { getMediaAccessStatus: mediaStatus, askForMediaAccess: askForMedia },
@@ -36,6 +46,7 @@ import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
 import {
+  copyFilesToClipboard,
   getLocalEnvironmentBootstraps,
   installRelayTelemetryEnabled,
   pickProjectFavicon,
@@ -549,3 +560,47 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       assert.include(editors, "webstorm");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+
+describe("copyFilesToClipboard", () => {
+  it.effect("puts escaped absolute paths on the macOS file pasteboard", () =>
+    Effect.gen(function* () {
+      clipboardWrite.mockReset().mockResolvedValue(undefined);
+      const copied = yield* copyFilesToClipboard
+        .handler(["/repo/a&b.ts", "/repo/<dir>"])
+        .pipe(Effect.provideService(HostProcess.Platform, "darwin"));
+      assert.strictEqual(copied, true);
+      const [[items]] = clipboardWrite.mock.calls as [[{ items: Record<string, string> }[]]];
+      const plist = Object.values(items[0]!.items)[0]!;
+      assert.include(
+        plist,
+        "<string>/repo/a&#38;b.ts</string><string>/repo/&#60;dir&#62;</string>",
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect.each([
+    ["linux", ["/repo/a.ts"]],
+    ["darwin", []],
+    ["darwin", ["relative/a.ts"]],
+    ["darwin", ["/repo/a\0b"]],
+  ] as const)("refuses %s with %j", ([platform, paths]) =>
+    Effect.gen(function* () {
+      clipboardWrite.mockReset();
+      const copied = yield* copyFilesToClipboard
+        .handler(paths)
+        .pipe(Effect.provideService(HostProcess.Platform, platform));
+      assert.strictEqual(copied, false);
+      assert.strictEqual(clipboardWrite.mock.calls.length, 0);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("reports a clipboard write that fails", () =>
+    Effect.gen(function* () {
+      clipboardWrite.mockReset().mockRejectedValue(new Error("denied"));
+      const copied = yield* copyFilesToClipboard
+        .handler(["/repo/a.ts"])
+        .pipe(Effect.provideService(HostProcess.Platform, "darwin"));
+      assert.strictEqual(copied, false);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+});

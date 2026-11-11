@@ -62,6 +62,24 @@ describe("file save sessions", () => {
     expect(h.onPendingChange).toHaveBeenLastCalledWith("file.txt", false);
   });
 
+  it("flushUnder writes drafts at or under a path before resolving and leaves others debouncing", async () => {
+    using h = setup();
+    const at = (relativePath: string) => ({ ...target, relativePath });
+    for (const path of ["src/a.ts", "src/deep/b.ts", "srcx/c.ts", "src"]) {
+      h.sessions.acquire(at(path), h.onPendingChange);
+      h.sessions.change(at(path), path);
+    }
+    await h.sessions.flushUnder({ environmentId: target.environmentId, cwd: target.cwd }, "src");
+    expect(h.writes()).toEqual([
+      [at("src/a.ts"), "src/a.ts"],
+      [at("src/deep/b.ts"), "src/deep/b.ts"],
+      [at("src"), "src"],
+    ]);
+    await h.sessions.flushUnder({ environmentId: target.environmentId, cwd: target.cwd }, "none");
+    await vi.advanceTimersByTimeAsync(500);
+    expect(h.writes().at(-1)).toEqual([at("srcx/c.ts"), "srcx/c.ts"]);
+  });
+
   it("flushes on the last release and drops edits from retired editors", async () => {
     using h = setup();
     const releaseFirst = h.sessions.acquire(target, h.onPendingChange);

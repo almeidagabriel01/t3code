@@ -1163,6 +1163,8 @@ export interface DesktopBridge extends DesktopWindowMaterialBridge {
   checkSystemPermission: (pane: SystemSettingsPane) => Promise<boolean>;
   probeRemoteEditors: () => Promise<readonly EditorId[]>;
   pasteAsText: () => Promise<void>;
+  /** Puts the files themselves on the OS clipboard; false where the platform is unsupported. */
+  copyFilesToClipboard: (absolutePaths: readonly string[]) => Promise<boolean>;
   onMenuAction: (listener: (action: string) => void) => () => void;
   onSnapShotEvent: (listener: (event: DesktopSnapShotEvent) => void) => () => void;
   onQuitShortcut: (listener: (event: QuitShortcutHintEvent) => void) => () => void;

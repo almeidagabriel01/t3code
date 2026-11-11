@@ -38,6 +38,81 @@ const ICON_PATHS: Record<string, ReadonlyArray<{ tag: string; attrs: Record<stri
     },
     { tag: "path", attrs: { d: "m15 5 4 4" } },
   ],
+  "file-plus": [
+    {
+      tag: "path",
+      attrs: {
+        d: "M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z",
+      },
+    },
+    { tag: "path", attrs: { d: "M14 2v5a1 1 0 0 0 1 1h5" } },
+    { tag: "path", attrs: { d: "M9 15h6" } },
+    { tag: "path", attrs: { d: "M12 18v-6" } },
+  ],
+  clipboard: [
+    { tag: "rect", attrs: { width: "8", height: "4", x: "8", y: "2", rx: "1", ry: "1" } },
+    {
+      tag: "path",
+      attrs: { d: "M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" },
+    },
+  ],
+  files: [
+    { tag: "path", attrs: { d: "M15 2h-4a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V8" } },
+    {
+      tag: "path",
+      attrs: { d: "M16.706 2.706A2.4 2.4 0 0 0 15 2v5a1 1 0 0 0 1 1h5a2.4 2.4 0 0 0-.706-1.706z" },
+    },
+    { tag: "path", attrs: { d: "M5 7a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h8a2 2 0 0 0 1.732-1" } },
+  ],
+  "square-terminal": [
+    { tag: "path", attrs: { d: "m7 11 2-2-2-2" } },
+    { tag: "path", attrs: { d: "M11 13h4" } },
+    { tag: "rect", attrs: { width: "18", height: "18", x: "3", y: "3", rx: "2", ry: "2" } },
+  ],
+  file: [
+    {
+      tag: "path",
+      attrs: {
+        d: "M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z",
+      },
+    },
+    { tag: "path", attrs: { d: "M14 2v5a1 1 0 0 0 1 1h5" } },
+  ],
+  globe: [
+    { tag: "circle", attrs: { cx: "12", cy: "12", r: "10" } },
+    { tag: "path", attrs: { d: "M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" } },
+    { tag: "path", attrs: { d: "M2 12h20" } },
+  ],
+  eye: [
+    {
+      tag: "path",
+      attrs: {
+        d: "M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0",
+      },
+    },
+    { tag: "circle", attrs: { cx: "12", cy: "12", r: "3" } },
+  ],
+  download: [
+    { tag: "path", attrs: { d: "M12 15V3" } },
+    { tag: "path", attrs: { d: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" } },
+    { tag: "path", attrs: { d: "m7 10 5 5 5-5" } },
+  ],
+  "list-collapse": [
+    { tag: "path", attrs: { d: "M10 5h11" } },
+    { tag: "path", attrs: { d: "M10 12h11" } },
+    { tag: "path", attrs: { d: "M10 19h11" } },
+    { tag: "path", attrs: { d: "m3 10 3-3-3-3" } },
+    { tag: "path", attrs: { d: "m3 20 3-3-3-3" } },
+  ],
+  "external-link": [
+    { tag: "path", attrs: { d: "M15 3h6v6" } },
+    { tag: "path", attrs: { d: "M10 14 21 3" } },
+    { tag: "path", attrs: { d: "M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" } },
+  ],
+  "chevrons-down-up": [
+    { tag: "path", attrs: { d: "m7 20 5-5 5 5" } },
+    { tag: "path", attrs: { d: "m7 4 5 5 5-5" } },
+  ],
   copy: [
     { tag: "rect", attrs: { width: "14", height: "14", x: "8", y: "8", rx: "2", ry: "2" } },
     { tag: "path", attrs: { d: "M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" } },

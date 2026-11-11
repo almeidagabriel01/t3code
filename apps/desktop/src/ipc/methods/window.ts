@@ -436,6 +436,40 @@ export const pasteAsText = DesktopIpc.makeIpcMethod({
   }),
 });
 
+const escapeXml = (value: string) =>
+  value.replace(/[<>&"']/g, (char) => `&#${char.charCodeAt(0)};`);
+
+/** The macOS pasteboard's file list, which Finder pastes as copies of the files. */
+const macFilenamesPlist = (paths: readonly string[]) =>
+  `<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><array>${paths.map((path) => `<string>${escapeXml(path)}</string>`).join("")}</array></plist>`;
+
+// ponytail: macOS only; Linux file managers disagree on the clipboard format and Windows needs CF_HDROP.
+export const copyFilesToClipboard = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.COPY_FILES_TO_CLIPBOARD_CHANNEL,
+  payload: Schema.Array(Schema.String),
+  result: Schema.Boolean,
+  handler: Effect.fn("desktop.ipc.window.copyFilesToClipboard")(function* (paths) {
+    const path = yield* Path.Path;
+    if ((yield* HostProcess.Platform) !== "darwin") return false;
+    if (
+      paths.length === 0 ||
+      paths.length > 500 ||
+      paths.some((entry) => !path.isAbsolute(entry) || entry.includes("\0"))
+    ) {
+      return false;
+    }
+    const item = new Electron.ClipboardItem({
+      'electron application/osclipboard;format="NSFilenamesPboardType"': macFilenamesPlist(paths),
+    });
+    return yield* Effect.promise(() =>
+      Electron.clipboard.write([item]).then(
+        () => true,
+        () => false,
+      ),
+    );
+  }),
+});
+
 export const revealWindow = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.REVEAL_WINDOW_CHANNEL,
   payload: Schema.Undefined,
