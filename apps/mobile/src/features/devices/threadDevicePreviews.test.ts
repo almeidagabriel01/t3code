@@ -140,7 +140,7 @@ describe("thread device previews", () => {
       booted: true,
       physical: true,
       connection: "usb" as const,
-      issues: [{ reason: "developer_mode_off" as const }],
+      issues: [{ reason: "developer_mode_off" as const }, { reason: "capture_failed" as const }],
     };
     const session = (deviceId: string, platform: "ios" | "desktop") => ({
       threadId,
@@ -178,8 +178,10 @@ describe("thread device previews", () => {
       viewOnlyNotice: "View only. Use the phone to control it.",
       blocked: null,
     });
+    // A failed start does not block: opening again is how the user retries it.
     expect(previews[1]!.issues).toMatchObject([
       { title: "Developer Mode is off", blocksView: false, action: expect.any(String) },
+      { title: "Live video failed", blocksView: true },
     ]);
     expect(previews[2]).toMatchObject({ capture: false, viewOnlyNotice: null, issues: [] });
     expect(deviceViewOnlyNotice("ios")).not.toContain("—");

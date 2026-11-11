@@ -1,9 +1,13 @@
 import {
+  DeviceHostId,
+  DeviceId,
+  DeviceNotReadyError,
   EnvironmentId,
   ThreadId,
   type DeviceServiceState,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 
@@ -138,7 +142,7 @@ const threadB = switches[0][1];
 const picker: Extract<RightPanelSurface, { kind: "device" }> = { id: "device", kind: "device" };
 const phoneTarget = { hostId: "local", deviceId: "phone", platform: "ios", name: "Phone" };
 const opened = { _tag: "Success", value: { hostId: "local", deviceId: "phone" } } as const;
-const failed = { _tag: "Failure", cause: new Error("boom") } as const;
+const failed = { _tag: "Failure", cause: Cause.fail(new Error("boom")) } as const;
 
 const deferred = () => {
   let settle!: (result: CommandResult) => void;
@@ -439,9 +443,34 @@ describe("DevicePanel capture devices", () => {
     await expect.element(screen.getByText("iPhone signing is not set up")).toBeVisible();
     await expect.element(screen.getByText("no team")).toBeVisible();
     await expect.element(screen.getByText("This Mac · macOS · Not ready")).toBeVisible();
+    await expect.element(screen.getByText("This Mac · iOS 19 · USB · Not ready")).toBeVisible();
     const links = screen.getByRole("link", { name: "Open Mac permissions" });
     await expect.element(links).toHaveAttribute("href", "/settings/mac-permissions");
     expect(container.querySelectorAll("a")).toHaveLength(1);
+  });
+
+  it("opens a device again after its video failed, without showing the agent's refusal", async () => {
+    setup();
+    mocks.open.mockResolvedValue({
+      _tag: "Failure",
+      cause: Cause.fail(
+        new DeviceNotReadyError({
+          hostId: DeviceHostId.make("local"),
+          deviceId: DeviceId.make("desktop"),
+          deviceName: "Ana's Mac (desktop)",
+          reason: "capture_failed",
+        }),
+      ),
+    });
+    currentState = withDevices({ ...desktop, issues: [{ reason: "capture_failed" }] });
+    await using screen = await render(devicePanel(threadA), { container });
+
+    await expect.element(screen.getByText("This Mac · macOS · Not ready")).toBeVisible();
+    await screen.getByRole("button", { name: "Open Ana's Mac (desktop)" }).click();
+
+    expect(mocks.open.mock.calls).toHaveLength(1);
+    await expect.element(screen.getByText("Live video failed")).toBeVisible();
+    expect(container.textContent).not.toContain("Only the user can fix this");
   });
 
   it("cannot open a device whose view is blocked, but can open one blocked only for control", async () => {

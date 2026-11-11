@@ -206,6 +206,8 @@ export const DEVICE_ISSUES: Record<
     readonly blocks: ReadonlyArray<"view" | "control">;
     /** Settings > Mac permissions can grant it. */
     readonly macPermission?: "camera" | "screen-recording";
+    /** Known from a failed start, which only a later start clears: opening again must stay possible. */
+    readonly retryable?: true;
   }
 > = {
   not_paired: {
@@ -219,11 +221,13 @@ export const DEVICE_ISSUES: Record<
     action:
       "Unlock it and tap Trust when it asks about this computer. If it never asks, unplug it and plug it in again. Then refresh devices.",
     blocks: ["view", "control"],
+    retryable: true,
   },
   locked: {
     title: "Locked",
     action: "Unlock it and keep it unlocked, then open it again.",
     blocks: ["view", "control"],
+    retryable: true,
   },
   developer_mode_off: {
     title: "Developer Mode is off",
@@ -277,6 +281,7 @@ export const DEVICE_ISSUES: Record<
     title: "Live video failed",
     action: "Open it again. If it keeps failing, restart T3 Code.",
     blocks: ["view"],
+    retryable: true,
   },
 };
 
@@ -328,6 +333,15 @@ export const deviceIssueBlocks = (
   use: "view" | "control",
 ): DeviceIssue | undefined =>
   issues?.find((issue) => DEVICE_ISSUES[issue.reason].blocks.includes(use));
+
+/** The issue that keeps the live screen from opening at all; a retryable one never does. */
+export const deviceOpenBlocker = (
+  issues: ReadonlyArray<DeviceIssue> | undefined,
+): DeviceIssue | undefined =>
+  issues?.find(
+    (issue) =>
+      DEVICE_ISSUES[issue.reason].blocks.includes("view") && !DEVICE_ISSUES[issue.reason].retryable,
+  );
 
 export const DEVICE_CONNECTION_LABELS: Record<NonNullable<DeviceSummary["connection"]>, string> = {
   usb: "USB",

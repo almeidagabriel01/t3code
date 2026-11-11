@@ -2,6 +2,7 @@ import { DeviceHostUpdates } from "./DeviceHostUpdates";
 import {
   DEVICE_ISSUES,
   deviceIssueBlocks,
+  deviceOpenBlocker,
   findDeviceHold,
   type DeviceIssue,
   type DevicePlatform,
@@ -12,6 +13,8 @@ import {
 import { Link } from "@tanstack/react-router";
 import { ArrowUpRight, CircleAlert, Monitor, Play, Smartphone, Undo2, X } from "lucide-react";
 import { useAtomMount } from "@effect/atom-react";
+import * as Cause from "effect/Cause";
+import * as Predicate from "effect/Predicate";
 import { type ReactNode, useState } from "react";
 
 import { usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
@@ -131,7 +134,7 @@ export function DevicePanel(props: {
 
   const selectDevice = async (value: string) => {
     const device = state.devices.find((candidate) => deviceKey(candidate) === value);
-    if (!device || deviceIssueBlocks(device.issues, "view")) return;
+    if (!device || deviceOpenBlocker(device.issues)) return;
     const settleOperation = startOperation(device);
     const result = await open({
       environmentId,
@@ -142,7 +145,13 @@ export function DevicePanel(props: {
         platform: device.platform,
       },
     });
-    if (result._tag === "Failure") settleOperation(formatEnvironmentQueryError(result.cause));
+    if (result._tag === "Failure")
+      // A not-ready refusal names an issue the device row already shows in the user's words.
+      settleOperation(
+        Predicate.isTagged(Cause.squash(result.cause), "DeviceNotReadyError")
+          ? null
+          : formatEnvironmentQueryError(result.cause),
+      );
     else {
       // The server opened the device for the starting thread, so its tab opens there.
       useRightPanelStore.getState().openDevice(props.threadRef, {
@@ -355,6 +364,7 @@ export function DevicePanel(props: {
                           {group.devices.map((device) => {
                             const opens = device.booted || device.physical;
                             const viewBlocked = deviceIssueBlocks(device.issues, "view");
+                            const openBlocked = deviceOpenBlocker(device.issues);
                             return (
                               <div key={deviceKey(device)}>
                                 <div className="flex items-center gap-3 px-3 py-3">
@@ -377,7 +387,7 @@ export function DevicePanel(props: {
                                       ) : null}
                                     </span>
                                     <span className="truncate text-xs text-muted-foreground">
-                                      {`${state.hosts.find((host) => host.id === device.hostId)?.label} · ${device.version}${deviceConnectionLabel(device)} · ${device.platform === "desktop" ? (device.booted && !viewBlocked ? "Available" : "Not ready") : device.physical ? (device.booted ? "Connected" : "Not ready") : device.booted ? "Running" : "Stopped"}${findDeviceHold(state.holds, device) ? " · You are in control" : ""}`}
+                                      {`${state.hosts.find((host) => host.id === device.hostId)?.label} · ${device.version}${deviceConnectionLabel(device)} · ${device.platform === "desktop" ? (device.booted && !viewBlocked ? "Available" : "Not ready") : device.physical ? (device.booted && !viewBlocked ? "Connected" : "Not ready") : device.booted ? "Running" : "Stopped"}${findDeviceHold(state.holds, device) ? " · You are in control" : ""}`}
                                     </span>
                                   </div>
                                   {findDeviceHold(state.holds, device) ? (
@@ -402,7 +412,7 @@ export function DevicePanel(props: {
                                     variant="outline"
                                     size="sm"
                                     disabled={
-                                      pendingDeviceKey !== null || viewBlocked !== undefined
+                                      pendingDeviceKey !== null || openBlocked !== undefined
                                     }
                                     aria-label={`${opens ? "Open" : "Start"} ${device.name}`}
                                     onClick={() => void selectDevice(deviceKey(device))}

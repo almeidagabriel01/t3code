@@ -1,7 +1,7 @@
 import {
   DEVICE_CONNECTION_LABELS,
   DEVICE_ISSUES,
-  deviceIssueBlocks,
+  deviceOpenBlocker,
   findDeviceHold,
   isCaptureDevice,
   type DevicePlatform,
@@ -43,7 +43,7 @@ export function threadDevicePreviews(state: DeviceServiceState | null, threadId:
         (device) => device.hostId === session.hostId && device.id === session.deviceId,
       );
       const host = state?.hosts.find((host) => host.id === session.hostId);
-      const blocking = deviceIssueBlocks(device?.issues, "view");
+      const blocking = deviceOpenBlocker(device?.issues);
       const capture = device !== undefined && isCaptureDevice(device);
       return {
         key: JSON.stringify([session.hostId, session.deviceId]),
