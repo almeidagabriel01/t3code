@@ -240,7 +240,11 @@ export function HeavyQueueSection(props: { readonly environmentId: EnvironmentId
       <SettingsSwitchRow
         icon="list.number"
         label="Heavy work queue"
-        subtitle="Off: heavy jobs start right away and agents do not ask first."
+        subtitle={
+          state.enabled
+            ? "On: heavy jobs take turns, and agents ask before adding to a busy machine."
+            : "Off: heavy jobs start right away and agents do not ask first."
+        }
         value={state.enabled}
         disabled={!canChange}
         onValueChange={(enabled) => void setEnabled({ environmentId, input: { enabled } })}
