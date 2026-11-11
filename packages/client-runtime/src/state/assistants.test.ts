@@ -175,6 +175,8 @@ describe("assistantSandboxView", () => {
       false,
       false,
     ],
+    // Discarded after a task: no container, but its files can still be deleted.
+    [status({ state: "not_created" }), "Not created", true, false, true, false],
     [status({ state: "starting", step: "Linking" }), "Starting", false, false, false, false],
     [status({}), "Running", false, true, true, true],
     [status({ state: "stopped" }), "Stopped", true, false, true, false],

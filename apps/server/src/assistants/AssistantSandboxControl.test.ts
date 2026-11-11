@@ -45,6 +45,8 @@ interface World {
   /** How `gh auth login` ends after it showed its code. */
   githubLogin: Effect.Effect<string, AssistantSandbox.AssistantSandboxError>;
   githubAccountReads: number;
+  /** What `setCpus` waits on after `docker update` ran, standing for a slow reply on a loaded machine. */
+  afterCpus: Effect.Effect<void>;
 }
 
 const harness = (
@@ -66,6 +68,7 @@ const harness = (
     github: null,
     githubLogin: Effect.succeed("octo"),
     githubAccountReads: 0,
+    afterCpus: Effect.void,
     ...initial,
   };
   const status = () =>
@@ -96,7 +99,10 @@ const harness = (
           }),
         ),
       ),
-    setCpus: (cpus) => Effect.sync(() => void world.limits.push(cpus)),
+    setCpus: (cpus) =>
+      Effect.sync(() => void world.limits.push(cpus)).pipe(
+        Effect.andThen(Effect.suspend(() => world.afterCpus)),
+      ),
     stop: Effect.sync(() => {
       world.container = "stopped";
       return status();
@@ -356,6 +362,26 @@ it.effect("configure stores the CPU limit, applies it to the container and shows
     assert.deepStrictEqual(world.limits, [4]);
     assert.deepInclude(yield* control.configure({ cpus: null }), { cpus: null });
     assert.deepStrictEqual(world.limits, [4, null]);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("a CPU limit the caller stops waiting for is still stored with the container's", () => {
+  const { world, layer } = harness();
+  return Effect.gen(function* () {
+    const control = yield* Control.AssistantSandboxControl;
+    const applied = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    world.afterCpus = Deferred.succeed(applied, undefined).pipe(
+      Effect.andThen(Deferred.await(release)),
+    );
+    const call = yield* control.configure({ cpus: 2 }).pipe(Effect.forkChild);
+    yield* Deferred.await(applied);
+    // The client disconnects while the container already has the new limit.
+    const leaving = yield* Fiber.interrupt(call).pipe(Effect.forkChild({ startImmediately: true }));
+    yield* Deferred.succeed(release, undefined);
+    yield* Fiber.join(leaving);
+    assert.deepStrictEqual(world.limits, [2]);
+    assert.deepInclude(yield* control.config, { cpus: 2, chosen: true });
   }).pipe(Effect.provide(layer));
 });
 

@@ -70,6 +70,15 @@ export function AssistantSandboxSection(props: {
   };
 
   const remove = async () => {
+    if (view.onlyFilesLeft) {
+      const confirmed = await requestConfirmDialog(
+        "Delete the sandbox files?\nThere is no container now. This erases the provider sign-ins and everything assistants wrote in the sandbox.",
+        { variant: "destructive" },
+      );
+      if (confirmed === false) return;
+      await run("Could not delete the sandbox files", () => actions.remove(true));
+      return;
+    }
     const confirmed = await requestConfirmDialog(
       "Remove the sandbox container?\nAssistants set to the sandbox cannot run work until you start it again.",
       { variant: "destructive" },
@@ -144,7 +153,7 @@ export function AssistantSandboxSection(props: {
               onClick={() => void remove()}
             >
               <Trash2Icon />
-              Remove
+              {view.onlyFilesLeft ? "Delete files" : "Remove"}
             </Button>
           </span>
         }

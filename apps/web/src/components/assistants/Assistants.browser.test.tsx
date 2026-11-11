@@ -605,6 +605,17 @@ it("stops a running sandbox, offers the provider sign-in, and removes it keeping
   await eventually(() =>
     expect(fakeSandbox.calls.at(-1)).toMatchObject({ input: { deleteVolumes: true } }),
   );
+  // A container discarded after a task leaves its files: one question deletes them.
+  fakeSandbox.calls = [];
+  publishSandbox({ ...fakeSandbox.status, state: "not_created" });
+  await userEvent.click(page.getByRole("button", { name: "Delete files" }));
+  await expect.element(page.getByText("Delete the sandbox files?")).toBeVisible();
+  await confirmStep();
+  await eventually(() =>
+    expect(fakeSandbox.calls).toMatchObject([
+      { tag: "assistantSandbox.remove", input: { deleteVolumes: true } },
+    ]),
+  );
 });
 
 it("shows the sandbox CPU limit and what happens when a task is done, and saves a change", async () => {

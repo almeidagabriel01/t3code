@@ -124,6 +124,8 @@ export interface AssistantSandboxView {
   readonly canStop: boolean;
   /** There is a container or files to remove. */
   readonly canRemove: boolean;
+  /** No container, but a discarded one left its files and sign-ins: removing only deletes those. */
+  readonly onlyFilesLeft: boolean;
   /** Choosing the sandbox for an assistant needs Docker; this says why it cannot be chosen. */
   readonly unavailableReason: string | null;
   /** The provider sign-in link makes sense once the sandbox runs and is linked. */
@@ -148,17 +150,23 @@ export function assistantSandboxView(status: AssistantSandboxStatus | null): Ass
       canStart: false,
       canStop: false,
       canRemove: false,
+      onlyFilesLeft: false,
       unavailableReason: null,
       canSignIn: false,
     };
   }
   const dockerMissing = status.state === "docker_unavailable";
+  const onlyFilesLeft = status.state === "not_created" && status.environmentId !== null;
   return {
     label: SANDBOX_STATE_LABEL[status.state],
     detail: status.state === "starting" ? status.step : status.error,
     canStart: status.state !== "starting" && !dockerMissing && status.state !== "running",
     canStop: status.state === "running",
-    canRemove: status.state !== "not_created" && status.state !== "starting" && !dockerMissing,
+    canRemove:
+      (status.state !== "not_created" || onlyFilesLeft) &&
+      status.state !== "starting" &&
+      !dockerMissing,
+    onlyFilesLeft,
     unavailableReason: dockerMissing ? "Docker is not running on that machine." : null,
     canSignIn: status.state === "running" && status.environmentId !== null,
   };

@@ -150,7 +150,7 @@ describe("AssistantSandboxSection", () => {
   });
 
   it("enables only the actions the state allows and tells when one fails", async () => {
-    mocks.status = status("not_created");
+    mocks.status = status("not_created", { environmentId: null });
     render();
     expect(button("Start").disabled).toBe(false);
     expect(button("Stop").disabled).toBe(true);
@@ -210,6 +210,15 @@ describe("AssistantSandboxSection", () => {
     mocks.remove.mockResolvedValue({ ok: false, message: "Busy" });
     await act(async () => mocks.confirms[1]!.onConfirm());
     expect(mocks.alert).toHaveBeenCalledWith("Could not remove the sandbox", "Busy");
+  });
+
+  it("deletes the files a discarded container left, with one question", async () => {
+    mocks.status = status("not_created");
+    render();
+    act(() => button("Delete files").click());
+    expect(mocks.confirms.map((entry) => entry.title)).toEqual(["Delete the sandbox files?"]);
+    await act(async () => mocks.confirms[0]!.onConfirm());
+    expect(mocks.remove).toHaveBeenLastCalledWith(true);
   });
 
   it("signs the sandbox in to GitHub with a code to copy and open, cancels, and signs out", async () => {

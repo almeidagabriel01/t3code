@@ -37,24 +37,36 @@ export function AssistantSandboxSection(props: {
     if (!reply.ok) Dialog.alert(title, reply.message ?? "Try again.");
   };
 
-  const remove = () =>
+  const removeFiles = () =>
     Dialog.confirm({
-      title: "Remove the sandbox container?",
-      message: "Assistants set to the sandbox cannot run work until you start it again.",
-      confirmText: "Remove",
+      title: "Delete the sandbox files?",
+      message:
+        "There is no container now. This erases the provider sign-ins and everything assistants wrote in the sandbox.",
+      confirmText: "Delete files",
       destructive: true,
-      onConfirm: () =>
-        Dialog.confirm({
-          title: "Also delete its files?",
-          message:
-            "This erases the provider sign-ins and everything assistants wrote in the sandbox.",
-          confirmText: "Delete files",
-          cancelText: "Keep files",
-          destructive: true,
-          onConfirm: () => void run("Could not remove the sandbox", () => actions.remove(true)),
-          onCancel: () => void run("Could not remove the sandbox", () => actions.remove(false)),
-        }),
+      onConfirm: () => void run("Could not delete the sandbox files", () => actions.remove(true)),
     });
+
+  const remove = () =>
+    view.onlyFilesLeft
+      ? removeFiles()
+      : Dialog.confirm({
+          title: "Remove the sandbox container?",
+          message: "Assistants set to the sandbox cannot run work until you start it again.",
+          confirmText: "Remove",
+          destructive: true,
+          onConfirm: () =>
+            Dialog.confirm({
+              title: "Also delete its files?",
+              message:
+                "This erases the provider sign-ins and everything assistants wrote in the sandbox.",
+              confirmText: "Delete files",
+              cancelText: "Keep files",
+              destructive: true,
+              onConfirm: () => void run("Could not remove the sandbox", () => actions.remove(true)),
+              onCancel: () => void run("Could not remove the sandbox", () => actions.remove(false)),
+            }),
+        });
 
   const openGithub = (userCode: string, verificationUri: string) => {
     void Clipboard.setStringAsync(userCode).catch(() => undefined);
@@ -93,7 +105,7 @@ export function AssistantSandboxSection(props: {
         />
         <ListActionRow
           icon="trash"
-          label="Remove"
+          label={view.onlyFilesLeft ? "Delete files" : "Remove"}
           tone="danger"
           disabled={disabled || !view.canRemove}
           onPress={remove}

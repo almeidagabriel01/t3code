@@ -444,6 +444,7 @@ const make = Effect.gen(function* () {
 
   const stop = sandbox.stop.pipe(Effect.mapError(asAssistantError), Effect.andThen(status));
 
+  // Uninterruptible: a client that disconnects mid-call must not leave the container and the stored choice apart.
   const configure = Effect.fn("AssistantSandboxControl.configure")(function* (
     input: AssistantSandboxConfigureInput,
   ) {
@@ -459,7 +460,7 @@ const make = Effect.gen(function* () {
       whenDone: input.whenDone ?? current.whenDone,
     });
     return yield* status;
-  });
+  }, Effect.uninterruptible);
 
   const discardNow = Effect.gen(function* () {
     yield* sandbox.remove({ deleteVolumes: false });
@@ -559,7 +560,7 @@ const make = Effect.gen(function* () {
     }
     yield* SubscriptionRef.set(progress, { running: false, step: null, error: null });
     return yield* status;
-  });
+  }, Effect.uninterruptible);
 
   const pairingUrl = Effect.gen(function* () {
     const current = yield* sandbox.status;
