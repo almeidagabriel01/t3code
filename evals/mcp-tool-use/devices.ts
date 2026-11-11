@@ -9,6 +9,7 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import {
   DeviceError,
+  DeviceHostUnavailableError,
   type DeviceHostId,
   DeviceOperationError,
   type DevicePlatform,
@@ -16,6 +17,7 @@ import {
   EnvironmentId,
   LOCAL_DEVICE_HOST_ID,
   LOCAL_DEVICE_HOST_LABEL,
+  type LinkedDeviceState,
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -76,6 +78,15 @@ export interface DeviceWorld {
   readonly deviceHeld?: ReadonlyArray<string> | undefined;
   /** The user's stored agent access policy, by device id. */
   readonly deviceAccess?: Readonly<Record<string, "allow" | "ask" | "deny">> | undefined;
+  /**
+   * Hosts that are another T3 Code environment linked to this one, by id (`linked.<env>`), with
+   * their label in `deviceHosts`. A state other than `connected` fails every call with its detail.
+   */
+  readonly linkedDeviceHosts?:
+    | Readonly<
+        Record<string, { readonly linkState: LinkedDeviceState; readonly linkDetail?: string }>
+      >
+    | undefined;
 }
 
 /** A shell, file or web call and the output the agent saw. */
@@ -579,7 +590,15 @@ const fakeHost = (
   agentEntry: string,
 ): DeviceHost.DeviceHost["Service"] => {
   const devices = world.devices.filter((device) => device.hostId === id);
-  const discovery = world.deviceDiscoveryFailures?.[id];
+  const linked = world.linkedDeviceHosts?.[id];
+  const discovery =
+    linked && linked.linkState !== "connected"
+      ? new DeviceHostUnavailableError({
+          hostId: id,
+          hostLabel: label,
+          reason: linked.linkDetail ?? `${label} is not reachable over the link.`,
+        })
+      : world.deviceDiscoveryFailures?.[id];
   const booted = new Map(devices.map((device) => [device.id, device.booted]));
   const availability = (platform: DevicePlatform) =>
     devices.some((device) => device.platform === platform)
@@ -601,10 +620,12 @@ const fakeHost = (
             }))
           : Effect.fail(discovery),
       boot: (device) =>
-        Effect.sync(() => {
-          booted.set(device.id, true);
-          return device.id;
-        }),
+        discovery?._tag === "DeviceHostUnavailableError"
+          ? Effect.fail(discovery)
+          : Effect.sync(() => {
+              booted.set(device.id, true);
+              return device.id;
+            }),
       attach: () => Effect.void,
       shutdown: (device) => Effect.sync(() => void booted.set(device.id, false)),
       screenshot: (device) =>
@@ -626,14 +647,24 @@ const fakeHost = (
   return {
     id,
     label,
-    summary: Effect.sync(() => ({
-      id,
-      label,
-      kind: id === LOCAL_DEVICE_HOST_ID ? ("local" as const) : ("ssh" as const),
-      platforms: [availability("ios"), availability("android")],
-      hubInstalled: true,
-      agentDeviceInstalled: true,
-    })),
+    summary: Effect.sync(() => {
+      const base = {
+        id,
+        label,
+        platforms: [availability("ios"), availability("android")],
+        hubInstalled: true,
+        agentDeviceInstalled: true,
+      };
+      return linked
+        ? {
+            ...base,
+            kind: "linked" as const,
+            environmentId: id.replace(/^linked\./, ""),
+            linkState: linked.linkState,
+            ...(linked.linkDetail === undefined ? {} : { linkDetail: linked.linkDetail }),
+          }
+        : { ...base, kind: id === LOCAL_DEVICE_HOST_ID ? ("local" as const) : ("ssh" as const) };
+    }),
     platformAvailability: (platform) => Effect.sync(() => availability(platform)),
     ensureReady: () => Effect.succeed(ready),
     ensureAgentReady: () => Effect.succeed({ ...ready, agentDevice }),

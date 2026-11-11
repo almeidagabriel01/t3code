@@ -996,7 +996,9 @@ export const DeviceToolOpenInput = Schema.Struct({
     }),
   ),
   hostId: Schema.optional(
-    DeviceHostId.annotate({ description: "Host from `device_list`. Default local." }),
+    DeviceHostId.annotate({
+      description: "Host from `device_list`, including a linked environment's. Default local.",
+    }),
   ),
 });
 export type DeviceToolOpenInput = typeof DeviceToolOpenInput.Type;
