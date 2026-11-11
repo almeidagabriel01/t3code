@@ -148,7 +148,7 @@ const pumpFrames =
     }
   });
 
-const proxyHttp = Effect.fn("DeviceHubProxy.proxyHttp")(function* (
+export const proxyHttp = Effect.fn("DeviceHubProxy.proxyHttp")(function* (
   request: HttpServerRequest.HttpServerRequest,
   upstreamUrl: string,
   extraHeaders: Readonly<Record<string, string>> = {},
@@ -197,13 +197,24 @@ const proxyHttp = Effect.fn("DeviceHubProxy.proxyHttp")(function* (
   });
 });
 
-const handler = Effect.gen(function* () {
-  const request = yield* HttpServerRequest.HttpServerRequest;
-  const url = requestUrl(request);
-  if (Option.isNone(url)) {
-    return HttpServerResponse.text("Bad Request", { status: 400 });
-  }
-  const hubPath = url.value.pathname.slice(DeviceService.DEVICE_HUB_ROUTE_PREFIX.length) || "/";
+/** Whether a hub request takes input or changes the stream, rather than only watching. */
+const hubRequestControlsDevice = (hubPath: string, method: string, upgrade: boolean) =>
+  (upgrade && hubPath !== "/api/devices/ws") ||
+  (method !== "GET" && method !== "HEAD" && /\/api\/(stream-(mode|settings)|fold)$/.test(hubPath));
+
+/**
+ * Proxies one allowlisted hub request to a host's hub. `authorize` runs once the route is known
+ * to be allowed and is told whether it controls the device; `onUserInput` runs for input frames.
+ */
+export const proxyHubRequest = Effect.fn("DeviceHubProxy.proxyHubRequest")(function* <E, R>(input: {
+  readonly request: HttpServerRequest.HttpServerRequest;
+  readonly url: URL;
+  readonly hubPath: string;
+  readonly hostId: string | undefined;
+  readonly authorize: (controlsDevice: boolean) => Effect.Effect<void, E, R>;
+  readonly onUserInput?: (deviceId: string) => Effect.Effect<void>;
+}) {
+  const { request, url, hubPath, hostId } = input;
   const upgrade = isWebSocketUpgrade(request);
   const matches = (paths: ReadonlyArray<RegExp>) => paths.some((pattern) => pattern.test(hubPath));
   const allowed = upgrade
@@ -216,20 +227,15 @@ const handler = Effect.gen(function* () {
   if (!upgrade && !matches(readOnly ? ALLOWED_PATHS : MUTABLE_PATHS)) {
     return HttpServerResponse.text("Method Not Allowed", { status: 405 });
   }
-  const controlsDevice =
-    (upgrade && hubPath !== "/api/devices/ws") ||
-    (!readOnly && /\/api\/(stream-(mode|settings)|fold)$/.test(hubPath));
-  yield* authenticateMediaRequest(
-    controlsDevice ? AuthOrchestrationOperateScope : AuthOrchestrationReadScope,
-  );
+  const controlsDevice = hubRequestControlsDevice(hubPath, request.method, upgrade);
+  yield* input.authorize(controlsDevice);
   const devices = yield* DeviceService.DeviceService;
-  const hostId = url.value.searchParams.get("hostId") ?? undefined;
   const ready = yield* devices.currentReadiness(hostId);
   if (!ready) {
     return HttpServerResponse.text("Device hub is not running", { status: 503 });
   }
   // Consume the auth ticket here; never forward it to the hub.
-  const upstreamSearch = new URLSearchParams(url.value.search);
+  const upstreamSearch = new URLSearchParams(url.search);
   upstreamSearch.delete("wsTicket");
   upstreamSearch.delete("hostId");
   const search = upstreamSearch.size > 0 ? `?${upstreamSearch.toString()}` : "";
@@ -241,16 +247,37 @@ const handler = Effect.gen(function* () {
   const upstreamUrl = routed?.url ?? `${ready.hub.origin}${hubPath}${search}`;
   if (upgrade) {
     // The user driving a device through the stream takes it over from the agent.
-    const inputDevice = controlsDevice ? url.value.searchParams.get("device") : null;
+    const inputDevice = controlsDevice ? url.searchParams.get("device") : null;
     return yield* proxyWebSocket(
       request,
       upstreamUrl.replace(/^http/, "ws"),
       routed?.protocols,
       routed?.headers,
-      inputDevice ? devices.holdOnInput(hostId, inputDevice) : undefined,
+      inputDevice && input.onUserInput ? input.onUserInput(inputDevice) : undefined,
     );
   }
   return yield* proxyHttp(request, upstreamUrl, routed?.headers);
+});
+
+const handler = Effect.gen(function* () {
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  const url = requestUrl(request);
+  if (Option.isNone(url)) {
+    return HttpServerResponse.text("Bad Request", { status: 400 });
+  }
+  const devices = yield* DeviceService.DeviceService;
+  const hostId = url.value.searchParams.get("hostId") ?? undefined;
+  return yield* proxyHubRequest({
+    request,
+    url: url.value,
+    hubPath: url.value.pathname.slice(DeviceService.DEVICE_HUB_ROUTE_PREFIX.length) || "/",
+    hostId,
+    authorize: (controlsDevice) =>
+      authenticateMediaRequest(
+        controlsDevice ? AuthOrchestrationOperateScope : AuthOrchestrationReadScope,
+      ),
+    onUserInput: (deviceId) => devices.holdOnInput(hostId, deviceId),
+  });
 });
 
 export const layer = HttpRouter.add("*", `${DeviceService.DEVICE_HUB_ROUTE_PREFIX}/*`, handler);
