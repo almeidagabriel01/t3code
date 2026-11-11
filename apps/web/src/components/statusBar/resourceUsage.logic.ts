@@ -6,6 +6,7 @@ import type {
   ResourceTelemetrySnapshot,
 } from "@t3tools/contracts";
 
+import { keepOrder } from "../../hooks/useOrderWhileOpen";
 import { processLabel } from "./processLabel.logic";
 
 export interface ResourceUsage {
@@ -208,6 +209,51 @@ export interface ResourceTree {
   readonly projects: ReadonlyArray<ProjectNode>;
   readonly devices: ReadonlyArray<DeviceRow>;
   readonly app: ReadonlyArray<AppGroupRow>;
+}
+
+const processKey = (owner: string) => (process: ResourceTelemetryProcess) =>
+  `process:${owner}:${process.identity.pid}`;
+const projectKey = (project: ProjectNode) => `project:${project.projectKey}`;
+const rowKey = (row: ProjectRow) => `row:${row.key}`;
+const deviceKey = (device: DeviceRow) => `device:${device.key}`;
+const appKey = (row: AppGroupRow) => `app:${row.group}`;
+
+/** Every list entry of the tree, keyed by kind and owner, so one order can hold them all. */
+export function resourceTreeKeys(tree: ResourceTree): string[] {
+  return [
+    ...tree.projects.flatMap((project) => [
+      projectKey(project),
+      ...project.rows.flatMap((row) => [
+        rowKey(row),
+        ...row.processes.map(processKey(rowKey(row))),
+      ]),
+    ]),
+    ...tree.devices.flatMap((device) => [
+      deviceKey(device),
+      ...device.processes.map(processKey(deviceKey(device))),
+    ]),
+    ...tree.app.flatMap((row) => [appKey(row), ...row.processes.map(processKey(appKey(row)))]),
+  ];
+}
+
+/** `tree` with every list in `order`; entries `order` lacks follow in their sorted place. */
+export function orderResourceTree(tree: ResourceTree, order: ReadonlyArray<string>): ResourceTree {
+  const ordered = <T>(items: ReadonlyArray<T>, key: (item: T) => string) =>
+    keepOrder(items, order, key);
+  const withProcesses = <T extends { readonly processes: ReadonlyArray<ResourceTelemetryProcess> }>(
+    item: T,
+    owner: string,
+  ): T => ({ ...item, processes: ordered(item.processes, processKey(owner)) });
+  return {
+    projects: ordered(tree.projects, projectKey).map((project) => ({
+      ...project,
+      rows: ordered(project.rows, rowKey).map((row) => withProcesses(row, rowKey(row))),
+    })),
+    devices: ordered(tree.devices, deviceKey).map((device) =>
+      withProcesses(device, deviceKey(device)),
+    ),
+    app: ordered(tree.app, appKey).map((row) => withProcesses(row, appKey(row))),
+  };
 }
 
 const EMULATOR_AVD = /(?:^|\s)-avd[ =](\S+)/;

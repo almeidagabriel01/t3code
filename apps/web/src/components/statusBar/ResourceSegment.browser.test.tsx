@@ -5,9 +5,11 @@ import type {
   ResourceTelemetrySnapshot,
 } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
-import { render } from "../../../test/render";
+import { act, render } from "../../../test/render";
+// The scroll behavior under test comes from the real layout classes.
+import "../../index.css";
 
 const closeTerminal = vi.hoisted(() => vi.fn());
 const HOST_QUERY = "host-query";
@@ -24,6 +26,33 @@ vi.mock("./useKillTarget", () => ({
   }),
 }));
 vi.mock("../../state/heavyQueue", () => ({ useHeavyQueue: () => ({ entries: [] }) }));
+const live = vi.hoisted(() => ({
+  snapshot: null as unknown,
+  threads: Array.from({ length: 40 }, (_, index) => ({
+    environmentId: "env",
+    id: `t${index}`,
+    projectId: "p1",
+    title: `Thread ${index}`,
+  })),
+}));
+vi.mock("./useEnvironmentResources", () => ({
+  useEnvironmentResources: () => [{ environmentId: "env", label: "Local", terminals: [] }],
+  useEnvironmentSnapshots: () => new Map([["env", live.snapshot]]),
+}));
+vi.mock("../../state/entities", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../state/entities")>()),
+  useProjects: () => [{ environmentId: "env", id: "p1", title: "My project" }],
+  useThreadShells: () => live.threads,
+}));
+vi.mock("../../state/environments", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../state/environments")>()),
+  usePrimaryEnvironmentId: () => "env",
+}));
+vi.mock("../../hooks/useSettings", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../hooks/useSettings")>()),
+  useClientSettings: (select: (settings: unknown) => unknown) =>
+    select({ statusBarHiddenItems: [], statusBarResourceSort: "cpu" }),
+}));
 vi.mock("../../state/session", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../state/session")>()),
   useEnvironmentScope: () => true,
@@ -41,9 +70,10 @@ vi.mock("../../state/query", async (importOriginal) => ({
     data: query === HOST_QUERY ? hostResources.current : null,
     refresh: () => undefined,
   }),
+  useEnvironmentQuerySelector: () => null,
 }));
 
-import { EnvironmentSection } from "./ResourceSegment";
+import { EnvironmentSection, ResourceSegment } from "./ResourceSegment";
 
 const environmentId = "env" as EnvironmentId;
 const projectId = "p1" as ProjectId;
@@ -197,4 +227,87 @@ describe("EnvironmentSection", () => {
     expect(text).not.toContain("Host");
     expect(text).not.toContain("free of");
   });
+});
+
+const AGENTS = live.threads.length;
+/** One agent per thread; the first can own an extra child process. */
+const agentSnapshot = (cpuOf: (index: number) => number, firstChild = false) =>
+  ({
+    cpuCount: 1,
+    groups: { allT3: { currentCpuPercent: 1, currentRssBytes: 1_000_000, processCount: AGENTS } },
+    processes: [
+      ...Array.from({ length: AGENTS }, (_, index) => ({
+        ...proc(100 + index, index === 0 && firstChild ? [999] : [], 1_000_000),
+        cpuPercent: cpuOf(index),
+      })),
+      ...(firstChild ? [{ ...proc(999, [], 1_000_000, "child"), cpuPercent: 1 }] : []),
+    ],
+    owners: Array.from({ length: AGENTS }, (_, index) => ({
+      kind: "agent",
+      pid: 100 + index,
+      threadId: `t${index}`,
+    })),
+  }) as unknown as ResourceTelemetrySnapshot;
+const byRank = (index: number) => 60 - index;
+
+function scrollerOf(element: Element): HTMLElement {
+  let node = element.parentElement;
+  while (node !== null && getComputedStyle(node).overflowY !== "auto") node = node.parentElement;
+  if (node === null) throw new Error("no scroll container");
+  return node;
+}
+
+describe("ResourceManager scroll", () => {
+  it.each([
+    {
+      name: "a row in view climbs to the top",
+      next: agentSnapshot((index) => (index === 15 ? 99 : byRank(index))),
+      painted: "99%",
+    },
+    {
+      name: "a focused row in view drops to the bottom",
+      focusRow: true,
+      next: agentSnapshot((index) => (index === 15 ? 0.5 : byRank(index))),
+      painted: "0.5%",
+    },
+    {
+      name: "an expanded process list above grows",
+      expandFirst: true,
+      next: agentSnapshot(byRank, true),
+      painted: "child",
+    },
+  ])(
+    "keeps the rows in view still when $name",
+    async ({ next, painted, focusRow, expandFirst }) => {
+      live.snapshot = agentSnapshot(byRank);
+      await using screen = await render(<ResourceSegment />, { router: "/" });
+      await userEvent.click(screen.getByRole("button", { name: "Resource Manager" }));
+      if (expandFirst)
+        await userEvent.click(page.getByRole("button", { name: /processes of Thread 0$/ }));
+      const row = page.getByRole("button", { name: "Thread 15", exact: true });
+      await expect.element(row).toBeVisible();
+      const scroller = scrollerOf(row.element());
+      const offset = () =>
+        row.element().getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+      await act(async () => {
+        const scrolled = new Promise((resolve) =>
+          scroller.addEventListener("scroll", resolve, { once: true }),
+        );
+        scroller.scrollTop += offset();
+        await scrolled;
+      });
+      expect(scroller.scrollTop).toBeGreaterThan(0);
+      const toggle = page.getByRole("button", { name: /processes of Thread 15$/ });
+      if (focusRow) toggle.element().focus();
+      const before = { offset: offset(), scrollTop: scroller.scrollTop };
+
+      live.snapshot = next;
+      await screen.rerender(<ResourceSegment />);
+      await expect.element(page.getByText(painted, { exact: true }).first()).toBeInTheDocument();
+
+      expect(Math.round(offset())).toBe(Math.round(before.offset));
+      if (!expandFirst) expect(scroller.scrollTop).toBe(before.scrollTop);
+      if (focusRow) expect(document.activeElement).toBe(toggle.element());
+    },
+  );
 });
