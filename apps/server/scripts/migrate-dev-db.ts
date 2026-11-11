@@ -392,9 +392,10 @@ const pruneSnapshot = Effect.fn("pruneDevDbSnapshot")(function* (input: RunMigra
            OR (aggregate_kind = 'project'
             AND stream_id NOT IN (SELECT project_id FROM kept_projects))`;
       yield* sql`UPDATE orchestration_v2_projection_threads
-        SET payload_json = json_set(payload_json, '$.pullRequests', (
+        -- A subquery drops the JSON subtype, so json() keeps the array from being stored as text.
+        SET payload_json = json_set(payload_json, '$.pullRequests', json((
           SELECT json_group_array(json_remove(link.value, '$.watch') ORDER BY link.key)
-          FROM json_each(payload_json, '$.pullRequests') AS link))
+          FROM json_each(payload_json, '$.pullRequests') AS link)))
         WHERE EXISTS (
           SELECT 1 FROM json_each(payload_json, '$.pullRequests') AS link
           WHERE json_extract(link.value, '$.watch') IS NOT NULL)`;
