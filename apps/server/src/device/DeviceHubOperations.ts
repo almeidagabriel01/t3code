@@ -128,7 +128,10 @@ export const makeDeviceHubOperations = (options: {
     const described = yield* Effect.forEach(
       devices,
       Effect.fnUntraced(function* (device) {
-        if (device.platform !== "android" || !device.physical) return device;
+        if (device.platform !== "android") return device;
+        // A booted emulator's id is its serial; its AVD name is what it keeps.
+        if (!device.physical)
+          return device.name === device.id ? device : { ...device, identity: device.name };
         if (!isWifiAdbSerial(device.id)) return { ...device, connection: "usb" as const };
         let serial = wifiSerials.get(device.id);
         if (serial === undefined) {

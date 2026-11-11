@@ -1461,6 +1461,7 @@ it.effect.each([LOCAL_DEVICE_HOST_ID, "ssh-fixture"])(
         ...device,
         hostId,
         ...(device.physical ? { connection: "usb" } : {}),
+        ...(device.name === "Running_AVD" ? { identity: device.name } : {}),
       }));
       expect(incomplete.devices).toEqual(listed);
       expect(incomplete.hostStatuses[hostId]).toEqual({

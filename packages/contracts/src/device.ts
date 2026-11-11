@@ -183,8 +183,8 @@ export const DeviceSummary = Schema.Struct({
   /** How a physical Android phone reaches adb. Absent for everything else. */
   connection: Schema.optional(Schema.Literals(["usb", "wifi"])),
   /**
-   * What names this device when its id does not: a phone paired over Wi-Fi has an
-   * `ip:port` id that changes, so the server reads its hardware serial here.
+   * What names this device when its id does not last: an emulator's AVD name (its id becomes a
+   * serial once booted) and a Wi-Fi phone's hardware serial (its id is an address).
    */
   identity: Schema.optional(Schema.String),
 });
@@ -195,18 +195,11 @@ export const DEVICE_CONNECTION_LABELS: Record<NonNullable<DeviceSummary["connect
   wifi: "Wi-Fi",
 };
 
-type DeviceIdentityFields = Pick<DeviceSummary, "id"> &
-  Partial<Pick<DeviceSummary, "platform" | "physical" | "name" | "identity">>;
+type DeviceIdentityFields = Pick<DeviceSummary, "id"> & Partial<Pick<DeviceSummary, "identity">>;
 
-/**
- * The name a device keeps across boots and reconnects: an emulator's AVD name (its id becomes a
- * serial once booted), a Wi-Fi phone's hardware serial, and the id for everything else.
- */
+/** The name a device keeps across boots and reconnects: its host's `identity`, or else its id. */
 export const deviceIdentity = (device: DeviceIdentityFields): string =>
-  device.identity ??
-  (device.platform === "android" && device.physical === false && device.name
-    ? device.name
-    : device.id);
+  device.identity ?? device.id;
 
 /** What agents may do with one device. The user's own Device panel is never gated. */
 export const DeviceAccessPolicy = Schema.Literals(["allow", "ask", "deny"]);
