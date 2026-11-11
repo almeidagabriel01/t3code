@@ -9,6 +9,7 @@ const { mocks, Children } = vi.hoisted(() => ({
     data: null as unknown,
     error: null as string | null,
     can: true,
+    probe: { _tag: "Success" } as unknown,
     setAccess: vi.fn(),
     setHold: vi.fn(),
     forget: vi.fn(),
@@ -16,7 +17,9 @@ const { mocks, Children } = vi.hoisted(() => ({
 }));
 vi.mock("react-native", () => ({ View: Children }));
 vi.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ bottom: 0 }) }));
-vi.mock("@effect/atom-react", () => ({ useAtomValue: () => mocks.can }));
+vi.mock("@effect/atom-react", () => ({
+  useAtomValue: (atom: unknown) => (atom === "probe-atom" ? mocks.probe : mocks.can),
+}));
 vi.mock("../../components/ui/AppText", () => ({ AppText: Children }));
 vi.mock("../../components/ui/Button", () => ({
   Button: (props: { label: string; disabled?: boolean; onPress: () => void }) => (
@@ -80,6 +83,7 @@ vi.mock("../../state/query", () => ({
 }));
 vi.mock("../../state/device", () => ({
   useDeviceEnvironmentIds: () => mocks.ids,
+  deviceHostProbeAtom: () => "probe-atom",
   deviceEnvironment: {
     state: () => "state-atom",
     setAccess: { permissionAtom: () => "access-permission" },
@@ -119,7 +123,11 @@ const state = {
 async function setup(next: Partial<typeof mocks> = {}, element = <SettingsDevicesRouteScreen />) {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   vi.clearAllMocks();
-  Object.assign(mocks, { ids: ["env-a"], data: state, error: null, can: true }, next);
+  Object.assign(
+    mocks,
+    { ids: ["env-a"], data: state, error: null, can: true, probe: { _tag: "Success" } },
+    next,
+  );
   const container = window.document.createElement("div");
   const root = createRoot(container);
   await act(async () => root.render(element));
@@ -177,6 +185,11 @@ describe("Devices settings", () => {
     ["the state is loading", { data: null }, "Finding devices..."],
     ["the state failed", { data: null, error: "Offline" }, "Could not load the devicesOffline"],
     ["no device is known", { data: { ...state, devices: [] } }, "No devices foundWi-Fi pairing"],
+    [
+      "discovery has not answered yet",
+      { data: { ...state, devices: [] }, probe: { _tag: "Initial" } },
+      "Finding devices...Wi-Fi pairing",
+    ],
     [
       "the server is older",
       { data: { ...state, supportsDeviceControl: false } },

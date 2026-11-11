@@ -8,6 +8,7 @@ import {
   type DeviceAccessPolicy,
   type EnvironmentId,
 } from "@t3tools/contracts";
+import { AsyncResult } from "effect/reactivity";
 import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -17,7 +18,11 @@ import { ListChoiceRow } from "../../components/ui/ListChoiceRow";
 import { ListRowLayout } from "../../components/ui/ListRowLayout";
 import { ListSection } from "../../components/ui/ListSection";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
-import { deviceEnvironment, useDeviceEnvironmentIds } from "../../state/device";
+import {
+  deviceEnvironment,
+  deviceHostProbeAtom,
+  useDeviceEnvironmentIds,
+} from "../../state/device";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
@@ -39,6 +44,7 @@ function DeviceEnvironment(props: {
   const setHold = useAtomCommand(deviceEnvironment.setHold);
   const canForget = useAtomValue(deviceEnvironment.forget.permissionAtom(environmentId));
   const forget = useAtomCommand(deviceEnvironment.forget);
+  const probing = AsyncResult.isInitial(useAtomValue(deviceHostProbeAtom(environmentId)));
   const state = query.data;
   const suffix = props.title ? ` · ${props.title}` : "";
   if (state === null) {
@@ -63,7 +69,9 @@ function DeviceEnvironment(props: {
             icon="iphone"
             label={
               state.supportsDeviceControl === true
-                ? "No devices found"
+                ? probing
+                  ? "Finding devices..."
+                  : "No devices found"
                 : "Update T3 Code on this environment to set device access"
             }
           />

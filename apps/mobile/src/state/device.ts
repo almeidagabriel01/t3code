@@ -1,4 +1,7 @@
-import { createDeviceEnvironmentAtoms } from "@t3tools/client-runtime/state/device";
+import {
+  createDeviceEnvironmentAtoms,
+  createDeviceHostProbeAtom,
+} from "@t3tools/client-runtime/state/device";
 import { resolveDeviceHubAccess } from "@t3tools/client-runtime/state/deviceHubAccess";
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -12,6 +15,7 @@ import { environmentServerConfigsAtom } from "./server";
 import { environmentSession, usePreparedConnection } from "./session";
 
 export const deviceEnvironment = createDeviceEnvironmentAtoms(connectionAtomRuntime);
+export const deviceHostProbeAtom = createDeviceHostProbeAtom(deviceEnvironment.list);
 
 /** Environments with device support on, the only ones with devices to set access for. */
 const deviceEnvironmentIdsAtom = Atom.make((get): ReadonlyArray<EnvironmentId> => {

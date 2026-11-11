@@ -1,5 +1,9 @@
 import { useAtomValue } from "@effect/atom-react";
-import { createDeviceEnvironmentAtoms } from "@t3tools/client-runtime/state/device";
+import {
+  createDeviceEnvironmentAtoms,
+  createDeviceHostProbeAtom,
+  NO_DEVICE_PROBE_ATOM,
+} from "@t3tools/client-runtime/state/device";
 import {
   type DeviceHubAccess,
   resolveDeviceHubAccess,
@@ -147,26 +151,8 @@ export const deviceDetailReadAtom = Atom.family((key: DeviceDetailKey) =>
   ).pipe(Atom.withLabel(`device-detail-read:${key.hostId}:${key.deviceId}`)),
 );
 
-/**
- * Probes the environment's device hosts while mounted. Remote hosts report
- * their platforms only after a probe. Probing never installs or starts helpers.
- */
-export const deviceHostProbeAtom = Atom.family((environmentId: EnvironmentId) =>
-  Atom.make((get) =>
-    Effect.promise(() =>
-      runAtomCommand(
-        get.registry,
-        deviceEnvironment.list,
-        { environmentId, input: {} },
-        { reportFailure: false },
-      ),
-    ).pipe(Effect.asVoid),
-  ).pipe(Atom.withLabel(`device-host-probe:${environmentId}`)),
-);
-
-export const NO_DEVICE_PROBE_ATOM = Atom.make(AsyncResult.initial<void, never>()).pipe(
-  Atom.withLabel("device-host-probe:none"),
-);
+export const deviceHostProbeAtom = createDeviceHostProbeAtom(deviceEnvironment.list);
+export { NO_DEVICE_PROBE_ATOM };
 
 /**
  * The Expo account an EAS host editor shows as it opens, for the saved

@@ -1,3 +1,4 @@
+import { useAtomMount } from "@effect/atom-react";
 import { DeviceHostUpdates } from "../device/DeviceHostUpdates";
 import { DeviceToolVersions } from "../device/DeviceToolVersions";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
@@ -50,7 +51,12 @@ import { resolveEnvironmentOptionLabel } from "~/components/BranchToolbar.logic"
 import { previewBridge } from "~/components/preview/previewBridge";
 import { cn, randomUUID } from "~/lib/utils";
 import { useEnvironments, usePrimaryEnvironment } from "~/state/environments";
-import { deviceEnvironment, useDeviceState } from "~/state/device";
+import {
+  deviceEnvironment,
+  deviceHostProbeAtom,
+  NO_DEVICE_PROBE_ATOM,
+  useDeviceState,
+} from "~/state/device";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { formatEnvironmentQueryError } from "~/state/query";
@@ -816,6 +822,11 @@ function DeviceIntegrationSettings() {
   const environmentId = connected ? selected.environmentId : null;
 
   const { state } = useDeviceState(environmentId);
+  useAtomMount(
+    environmentId && settings.enableDeviceSupport
+      ? deviceHostProbeAtom(environmentId)
+      : NO_DEVICE_PROBE_ATOM,
+  );
 
   return (
     <>

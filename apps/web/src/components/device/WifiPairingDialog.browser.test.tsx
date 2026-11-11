@@ -94,7 +94,9 @@ describe("Connect a phone over Wi-Fi", () => {
     await expect
       .element(screen.getByText("Tap Pair device with QR code and scan this code."))
       .toBeInTheDocument();
-    await expect.element(screen.getByText(/same Wi-Fi network as Studio Mac/)).toBeInTheDocument();
+    await expect
+      .element(screen.getByText(/same Wi-Fi network as the computer running T3 Code/))
+      .toBeInTheDocument();
     await expect
       .element(screen.getByText("Waiting for your phone to scan the code…"))
       .toBeInTheDocument();

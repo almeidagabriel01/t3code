@@ -104,7 +104,9 @@ async function setup(
 describe("Wi-Fi pairing on mobile", () => {
   it("shows the code to scan from the phone, follows each step and cancels", async () => {
     using screen = await setup(base);
-    expect(screen.container.textContent).toContain("same Wi-Fi network as Studio Mac");
+    expect(screen.container.textContent).toContain(
+      "same Wi-Fi network as the computer running T3 Code",
+    );
     await screen.press("Connect a phone over Wi-Fi");
 
     expect(mocks.start).toHaveBeenCalledWith({ environmentId, input: { requestId: "request-1" } });

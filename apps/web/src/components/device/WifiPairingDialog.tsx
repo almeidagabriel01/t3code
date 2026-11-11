@@ -5,7 +5,6 @@ import {
   type DeviceServiceState,
   type DeviceSummary,
   type EnvironmentId,
-  LOCAL_DEVICE_HOST_ID,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { CircleAlert, CircleCheck, Wifi, WifiOff } from "lucide-react";
@@ -61,8 +60,6 @@ export function WifiPairingButton(props: {
   if (state.supportsWifiPairing !== true) return null;
 
   const view = wifiPairingView({ state, attempt, startError });
-  const hostLabel =
-    state.hosts.find((host) => host.id === LOCAL_DEVICE_HOST_ID)?.label ?? "this environment";
   const dismiss = (attemptId: string | undefined) =>
     attemptId ? cancel({ environmentId, input: { attemptId } }) : Promise.resolve();
 
@@ -105,7 +102,7 @@ export function WifiPairingButton(props: {
         <DialogHeader>
           <DialogTitle>Connect a phone over Wi-Fi</DialogTitle>
           <DialogDescription>
-            {`Android 11 or later. The phone must be on the same Wi-Fi network as ${hostLabel}.`}
+            {`Android 11 or later. The phone must be on the same Wi-Fi network as the computer running T3 Code.`}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>

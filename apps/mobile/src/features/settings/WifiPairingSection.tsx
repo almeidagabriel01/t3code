@@ -1,11 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { WIFI_PAIRING_PHONE_STEPS, wifiPairingView } from "@t3tools/client-runtime/state/device";
-import {
-  type DeviceServiceState,
-  type EnvironmentId,
-  LOCAL_DEVICE_HOST_ID,
-} from "@t3tools/contracts";
+import { type DeviceServiceState, type EnvironmentId } from "@t3tools/contracts";
 import { qrCodePath } from "@t3tools/shared/qrCodePath";
 import { useRef, useState } from "react";
 import { View } from "react-native";
@@ -59,8 +55,6 @@ export function WifiPairingSection(props: {
   const [startError, setStartError] = useState<string | null>(null);
   if (state.supportsWifiPairing !== true) return null;
 
-  const hostLabel =
-    state.hosts.find((host) => host.id === LOCAL_DEVICE_HOST_ID)?.label ?? "this environment";
   const view = wifiPairingView({ state, attempt, startError });
   const dismiss = (attemptId: string | undefined) =>
     attemptId ? cancel({ environmentId, input: { attemptId } }) : Promise.resolve();
@@ -104,7 +98,7 @@ export function WifiPairingSection(props: {
     return (
       <ListSection
         title={title}
-        footer={`Pair an Android phone on the same Wi-Fi network as ${hostLabel}.`}
+        footer={`Pair an Android phone on the same Wi-Fi network as the computer running T3 Code.`}
       >
         <SettingsActionRow
           icon="wifi"
@@ -121,7 +115,7 @@ export function WifiPairingSection(props: {
         {view.kind === "waiting" || view.kind === "pairing" || view.kind === "connecting" ? (
           <>
             <Text textRole="footnote" className="text-foreground-muted">
-              {`Scan this code with the Android phone you want to connect. It must be on the same Wi-Fi network as ${hostLabel}. To connect the phone you are holding, open this screen on another device.`}
+              {`Scan this code with the Android phone you want to connect. It must be on the same Wi-Fi network as the computer running T3 Code. To connect the phone you are holding, open this screen on another device.`}
             </Text>
             <PairingCode value={view.qrPayload} />
             <View className="gap-2">

@@ -2,16 +2,40 @@ import {
   DEVICE_WIFI_PAIRING_FAILURE_LABELS,
   type DeviceServiceState,
   type DeviceToolVersions,
+  type EnvironmentId,
   WS_METHODS,
 } from "@t3tools/contracts";
-import { Atom } from "effect/reactivity";
+import * as Effect from "effect/Effect";
+import { AsyncResult, Atom } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import {
+  type AtomCommand,
   createAtomCommandScheduler,
   createEnvironmentRpcCommand,
   createEnvironmentRpcSubscriptionAtomFamily,
+  runAtomCommand,
 } from "./runtime.ts";
+
+/**
+ * Lists the environment's devices while mounted: the server discovers devices
+ * only when a client asks. Probing never installs or starts helpers.
+ */
+export function createDeviceHostProbeAtom<A, E>(
+  list: AtomCommand<{ environmentId: EnvironmentId; input: {} }, A, E>,
+) {
+  return Atom.family((environmentId: EnvironmentId) =>
+    Atom.make((get) =>
+      Effect.promise(() =>
+        runAtomCommand(get.registry, list, { environmentId, input: {} }, { reportFailure: false }),
+      ).pipe(Effect.asVoid),
+    ).pipe(Atom.withLabel(`device-host-probe:${environmentId}`)),
+  );
+}
+
+export const NO_DEVICE_PROBE_ATOM = Atom.make(AsyncResult.initial<void, never>()).pipe(
+  Atom.withLabel("device-host-probe:none"),
+);
 
 export function createDeviceEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
