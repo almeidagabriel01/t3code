@@ -60,6 +60,10 @@ const errorHead = (error: string) => {
     .join(" ");
 };
 
+/** adb names a phone on Wi-Fi by its address or its mDNS instance; both change between sessions. */
+export const isWifiAdbSerial = (serial: string) =>
+  /^[^\s:]+:\d+$|^\[[^\]\s]+\]:\d+$|\._adb-tls-connect\._tcp\.?$/i.test(serial);
+
 const vendorPrefix = (platform: DevicePlatform) =>
   platform === "ios" ? "/vendor/serve-sim" : "/vendor/serve-emu";
 
@@ -115,6 +119,33 @@ export const makeDeviceHubOperations = (options: {
     postJson(`${vendorPrefix("ios")}/grid/api/start`, { udid }, operation).pipe(
       Effect.flatMap((request) => hubJson(request, HubActionResult, "attach stream", BOOT_TIMEOUT)),
     );
+
+  /** Hardware serials of the Wi-Fi phones in the last listing, by adb serial. */
+  let wifiSerials = new Map<string, string>();
+  // The hub reports a phone by its adb serial alone, so a Wi-Fi phone's lasting name is read here.
+  const describePhones = Effect.fnUntraced(function* (devices: ReadonlyArray<HostDevice>) {
+    const serials = new Map<string, string>();
+    const described = yield* Effect.forEach(
+      devices,
+      Effect.fnUntraced(function* (device) {
+        if (device.platform !== "android" || !device.physical) return device;
+        if (!isWifiAdbSerial(device.id)) return { ...device, connection: "usb" as const };
+        let serial = wifiSerials.get(device.id);
+        if (serial === undefined) {
+          const read = yield* run("adb", ["-s", device.id, "shell", "getprop", "ro.serialno"], {
+            timeoutMs: 5_000,
+          });
+          serial = read.code === 0 ? read.stdout.trim() : "";
+        }
+        // An unread serial is asked for again next time; until then the phone goes by its id.
+        if (serial) serials.set(device.id, serial);
+        return { ...device, connection: "wifi" as const, ...(serial ? { identity: serial } : {}) };
+      }),
+      { concurrency: 4 },
+    );
+    wifiSerials = serials;
+    return described;
+  });
 
   const list: DeviceOperations["list"] = Effect.gen(function* () {
     const listed = yield* fetchJson(
@@ -184,7 +215,7 @@ export const makeDeviceHubOperations = (options: {
       hubList.simulators.length === 0 &&
       (hubList.errors ?? []).some((error) => SIMULATOR_LIST_FAILED.test(error.message));
     return {
-      devices,
+      devices: yield* describePhones(devices),
       detail: details.join("\n") || undefined,
       androidDiscoveryIncomplete,
       ...(simulatorsUnlisted ? { incompletePlatforms: ["ios"] as const } : {}),

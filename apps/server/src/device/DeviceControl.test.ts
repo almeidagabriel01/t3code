@@ -41,6 +41,22 @@ const phone = {
   physical: true,
 };
 const lockedPhone = { ...phone, id: "PIXEL-OFF", name: "Pixel 8", booted: false };
+// A booted emulator's id is its serial; the AVD name is what it keeps.
+const emulator = {
+  id: "emulator-5554",
+  name: "Pixel_9_API_36",
+  version: "Android 16",
+  platform: "android" as const,
+  booted: true,
+  physical: false,
+};
+const wifiPhone = {
+  ...phone,
+  id: "192.168.1.20:41233",
+  name: "Pixel 7",
+  connection: "wifi" as const,
+  identity: "R5CT900",
+};
 
 const threadA = ThreadId.make("thread-a");
 const threadB = ThreadId.make("thread-b");
@@ -56,13 +72,19 @@ const harness = Effect.fn("harness")(function* () {
     shutdowns: [] as Array<string>,
     markers: [] as Array<readonly [string, string | null]>,
     cleared: 0,
+    endedSessions: [] as Array<string>,
+    releasedLaunchers: [] as Array<string>,
   };
   const run = () => Effect.succeed({ code: 0, stdout: "", stderr: "" });
   const ready: DeviceHost.DeviceHostReady = {
     nodePath: process.execPath,
     hub: { origin: "http://device.test" },
+    releaseAgentSession: (session) => Effect.sync(() => void calls.endedSessions.push(session)),
     devices: {
-      list: Effect.succeed({ devices: [simulator, phone, lockedPhone], detail: undefined }),
+      list: Effect.succeed({
+        devices: [simulator, phone, lockedPhone, emulator, wifiPhone],
+        detail: undefined,
+      }),
       boot: (device) =>
         Effect.sync(() => {
           calls.boots.push(device.id);
@@ -109,7 +131,7 @@ const harness = Effect.fn("harness")(function* () {
     {
       bind: ({ session }) => Effect.succeed(session),
       prune: () => Effect.void,
-      release: () => Effect.void,
+      release: (launcher) => Effect.sync(() => void calls.releasedLaunchers.push(launcher)),
       hold: (device, message) =>
         Effect.sync(() => void calls.markers.push([device.deviceId, message])),
       clearHolds: Effect.sync(() => void calls.cleared++),
@@ -308,6 +330,133 @@ describe("agent access", () => {
       yield* service.close(on(simulator.id));
       yield* service.authorizeAgent({ ...on(simulator.id, threadB), intent: "open" });
     }).pipe(withSettings(), Effect.scoped),
+  );
+
+  // root delegated to child and sibling; child delegated to grandchild; other is someone else's work.
+  const root = ThreadId.make("root");
+  const child = ThreadId.make("child");
+  const grandchild = ThreadId.make("grandchild");
+  const sibling = ThreadId.make("sibling");
+  const other = ThreadId.make("other");
+  const ancestors: Record<string, ReadonlyArray<ThreadId>> = {
+    root: [],
+    child: [root],
+    grandchild: [child, root],
+    sibling: [root],
+    other: [],
+  };
+  const drive = Effect.fn("drive")(function* (
+    service: DeviceService.DeviceService["Service"],
+    threadId: ThreadId,
+  ) {
+    const agent = { threadTitle: threadId, ancestors: ancestors[threadId] };
+    const target = on(simulator.id, threadId);
+    yield* service.open({ ...target, platform: "ios" }, { agent });
+    const { session, args } = yield* service.agentTarget({ ...target, agent });
+    yield* service.agentLauncher({ ...target, targetArgs: args, agent });
+    return session;
+  });
+
+  it.effect.each([
+    { holders: [root], opener: child, expected: "shared" },
+    { holders: [root], opener: grandchild, expected: "shared" },
+    { holders: [child], opener: root, expected: "shared" },
+    { holders: [grandchild], opener: root, expected: "shared" },
+    { holders: [child], opener: grandchild, expected: "shared" },
+    { holders: [child], opener: sibling, expected: "in use by child" },
+    { holders: [grandchild], opener: sibling, expected: "in use by grandchild" },
+    { holders: [root], opener: other, expected: "in use by root" },
+    { holders: [other], opener: child, expected: "in use by other" },
+    // The parent holding it too does not let a sibling in beside the child.
+    { holders: [child, root], opener: sibling, expected: "in use by child" },
+  ])("a device driven by $holders is $expected for $opener", ({ holders, opener, expected }) =>
+    Effect.gen(function* () {
+      const { service } = yield* harness();
+      const sessions = yield* Effect.forEach(holders, (holder) => drive(service, holder));
+      const result = yield* drive(service, opener).pipe(
+        Effect.map((session) => (sessions.every((held) => held === session) ? "shared" : "apart")),
+        Effect.catchTags({
+          DeviceInUseError: (error) => Effect.succeed(`in use by ${error.threadId}`),
+        }),
+      );
+      expect(result).toBe(expected);
+    }).pipe(withSettings(), Effect.scoped),
+  );
+
+  it.effect("ends a lineage's agent-device session only when its last thread closes", () =>
+    Effect.gen(function* () {
+      const { service, calls } = yield* harness();
+      const session = yield* drive(service, root);
+      yield* drive(service, child);
+
+      // device_close carries no caller; the lineage is the one the thread's open gave.
+      yield* service.authorizeAgent({ ...on(simulator.id, child), intent: "close" });
+      yield* service.close({ ...on(simulator.id, child), shutdown: false });
+      expect(calls.endedSessions).toEqual([]);
+      expect(calls.releasedLaunchers).toEqual([]);
+      // The parent drives on, and other work is still told who has the device.
+      yield* service.authorizeAgent({ ...on(simulator.id, root), intent: "open" });
+      expect(yield* Effect.flip(drive(service, other))).toMatchObject({ threadId: root });
+
+      yield* service.close(on(simulator.id, root));
+      expect(calls.endedSessions).toEqual([session]);
+      expect(yield* drive(service, other)).not.toBe(session);
+    }).pipe(withSettings(), Effect.scoped),
+  );
+
+  it.effect("shares one answer across a delegation tree and asks other work again", () =>
+    Effect.gen(function* () {
+      const { service } = yield* harness();
+      const asked: Array<string> = [];
+      const open = (threadId: ThreadId, answer: DeviceService.DeviceAccessAnswer) =>
+        service
+          .authorizeAgent({
+            ...on(phone.id, threadId),
+            intent: "open",
+            agent: {
+              ancestors: ancestors[threadId],
+              ask: () =>
+                Effect.sync(() => {
+                  asked.push(threadId);
+                  return answer;
+                }),
+            },
+          })
+          .pipe(
+            Effect.as("allowed"),
+            Effect.catch((error) => Effect.succeed(error._tag)),
+          );
+      expect(yield* open(child, "allowed")).toBe("allowed");
+      expect(yield* open(root, "declined")).toBe("allowed");
+      expect(yield* open(grandchild, "declined")).toBe("allowed");
+      expect(yield* open(sibling, "declined")).toBe("allowed");
+      expect(yield* open(other, "declined")).toBe("DeviceAccessDeniedError");
+      expect(asked).toEqual([child, other]);
+    }).pipe(withSettings(), Effect.scoped),
+  );
+
+  it.effect.each([
+    // Stored while the emulator was off, when its id was the AVD name.
+    { stored: `local:${emulator.name}`, device: emulator.id, stable: `local:${emulator.name}` },
+    // Stored by a build that keyed a booted emulator by its serial.
+    { stored: `local:${emulator.id}`, device: emulator.id, stable: `local:${emulator.name}` },
+    { stored: `local:${wifiPhone.identity}`, device: wifiPhone.id, stable: "local:R5CT900" },
+    { stored: `local:${wifiPhone.id}`, device: wifiPhone.id, stable: "local:R5CT900" },
+    { stored: `local:${phone.id}`, device: phone.id, stable: `local:${phone.id}` },
+    { stored: `local:${simulator.id}`, device: simulator.id, stable: `local:${simulator.id}` },
+  ])("a policy stored as $stored applies to $device and moves to its stable key", (row) =>
+    Effect.gen(function* () {
+      const { service } = yield* harness();
+      expect(
+        yield* Effect.flip(service.authorizeAgent({ ...on(row.device), intent: "open" })),
+      ).toMatchObject({ _tag: "DeviceAccessDeniedError", reason: "policy" });
+      const set = yield* service.setAccess({
+        deviceId: DeviceId.make(row.device),
+        policy: "allow",
+      });
+      expect(set.access).toEqual({ [row.stable]: "allow" });
+      yield* service.authorizeAgent({ ...on(row.device), intent: "open" });
+    }).pipe(withSettings({ [row.stored]: "deny" }), Effect.scoped),
   );
 
   it.effect("stores a policy beside entries it cannot read and resets one to its default", () =>

@@ -142,6 +142,83 @@ describe("device access policies", () => {
     expect(deviceAccessPolicy(stored, device)).toBe(policy);
   });
 
+  const avd = {
+    hostId: "local",
+    platform: "android" as const,
+    physical: false,
+    name: "Pixel_9_API_36",
+  };
+  it.each([
+    // An emulator's id is its AVD name until it boots and a serial after; the name is the key.
+    { device: { ...avd, id: "Pixel_9_API_36", booted: false }, key: "local:Pixel_9_API_36" },
+    { device: { ...avd, id: "emulator-5554", booted: true }, key: "local:Pixel_9_API_36" },
+    // A USB phone and an iOS device keep their ids.
+    {
+      device: { hostId: "local", platform: "android", physical: true, name: "Pixel 9", id: "R5C1" },
+      key: "local:R5C1",
+    },
+    {
+      device: {
+        hostId: "local",
+        platform: "ios",
+        physical: false,
+        name: "iPhone 17",
+        id: "UDID-1",
+      },
+      key: "local:UDID-1",
+    },
+    {
+      device: { hostId: "local", platform: "ios", physical: true, name: "iPhone", id: "00008140" },
+      key: "local:00008140",
+    },
+    // A Wi-Fi phone's address changes; the serial the server read does not.
+    {
+      device: {
+        hostId: "mac",
+        platform: "android",
+        physical: true,
+        name: "Pixel 7",
+        id: "192.168.1.20:41233",
+        identity: "R5CT900",
+      },
+      key: "mac:R5CT900",
+    },
+    {
+      device: {
+        hostId: "mac",
+        platform: "android",
+        physical: true,
+        name: "Pixel 7",
+        id: "192.168.1.31:37001",
+        identity: "R5CT900",
+      },
+      key: "mac:R5CT900",
+    },
+    // A caller that knows only the id falls back to it.
+    { device: { hostId: "local", id: "emulator-5554" }, key: "local:emulator-5554" },
+  ] as const)("keys $device.id as $key", ({ device, key }) => {
+    expect(deviceAccessKey(device)).toBe(key);
+    expect(storedDeviceAccessPolicy({ [key]: "deny" }, device)).toBe("deny");
+  });
+
+  it("keeps honouring a policy stored under a device's id and prefers its stable key", () => {
+    const booted = { ...avd, id: "emulator-5554" };
+    expect(storedDeviceAccessPolicy({ "local:emulator-5554": "deny" }, booted)).toBe("deny");
+    expect(
+      storedDeviceAccessPolicy(
+        { "local:emulator-5554": "deny", "local:Pixel_9_API_36": "allow" },
+        booted,
+      ),
+    ).toBe("allow");
+    // An unreadable value under the stable key does not hide the older entry.
+    expect(
+      storedDeviceAccessPolicy(
+        { "local:Pixel_9_API_36": "soon", "local:emulator-5554": "ask" },
+        booted,
+      ),
+    ).toBe("ask");
+  });
+
   it("tells a stored policy from a default one, so a row can offer a reset", () => {
     const stored = { [deviceAccessKey(simulator)]: "allow", [deviceAccessKey(phone)]: "soon" };
     expect(storedDeviceAccessPolicy(stored, simulator)).toBe("allow");

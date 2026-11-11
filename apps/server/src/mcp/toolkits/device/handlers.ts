@@ -8,6 +8,8 @@ import {
   DeviceToolUnavailableError,
   HeavyQueueError,
   type OrchestratorMcpFailure,
+  type OrchestrationV2ThreadShell,
+  type ThreadId,
   LOCAL_DEVICE_HOST_ID,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -223,14 +225,40 @@ export const gateHeavyOpen =
 const toolError = (error: DeviceError | DeviceToolUnavailableError | OrchestratorMcpFailure) =>
   error;
 
-/** Who the device service gates: the calling thread, and how to ask its user. */
+/** Delegation never nests this deep; the cap only stops a damaged parent chain. */
+const MAX_LINEAGE_DEPTH = 32;
+
+/** The threads that delegated to `thread`, nearest first. Forks are separate work and end the walk. */
+export const delegationAncestors = Effect.fn("handlers.delegationAncestors")(function* <E>(
+  thread: Pick<OrchestrationV2ThreadShell, "lineage">,
+  shellOf: (
+    threadId: ThreadId,
+  ) => Effect.Effect<Pick<OrchestrationV2ThreadShell, "lineage"> | null, E>,
+) {
+  const ancestors: Array<ThreadId> = [];
+  let current: Pick<OrchestrationV2ThreadShell, "lineage"> | null = thread;
+  while (
+    current?.lineage.relationshipToParent === "subagent" &&
+    current.lineage.parentThreadId !== null &&
+    ancestors.length < MAX_LINEAGE_DEPTH &&
+    !ancestors.includes(current.lineage.parentThreadId)
+  ) {
+    const parentId: ThreadId = current.lineage.parentThreadId;
+    ancestors.push(parentId);
+    current = yield* shellOf(parentId).pipe(Effect.orElseSucceed(() => null));
+  }
+  return ancestors;
+});
+
+/** Who the device service gates: the calling thread, its delegation lineage, and how to ask its user. */
 const agentCaller = Effect.gen(function* () {
-  const { caller } = yield* loadCaller();
+  const { caller, threads } = yield* loadCaller();
   const decisions = yield* DecisionService.DecisionService;
   return caller === undefined
     ? {}
     : {
         threadTitle: caller.title,
+        ancestors: yield* delegationAncestors(caller, threads.getThreadShell),
         ask: askDeviceAccess(decisions, {
           projectId: caller.projectId,
           threadTitle: caller.title,

@@ -22,6 +22,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpToolAccessTestkit from "./McpToolAccess.testkit.ts";
+import { delegationAncestors } from "./toolkits/device/handlers.ts";
 
 const environmentId = EnvironmentId.make("environment-device-test");
 const threadId = ThreadId.make("thread-device-test");
@@ -718,5 +719,49 @@ describe("device targeting across hosts", () => {
         ]);
       }),
     ),
+  );
+});
+
+describe("delegation lineage", () => {
+  const lineage = (
+    parent: string | null,
+    relationship: "subagent" | "fork" | null = "subagent",
+  ) => ({
+    lineage: {
+      rootThreadId: ThreadId.make("top"),
+      parentThreadId: parent === null ? null : ThreadId.make(parent),
+      relationshipToParent: parent === null ? null : relationship,
+    },
+  });
+  const threads: Record<string, ReturnType<typeof lineage>> = {
+    top: lineage(null),
+    child: lineage("top"),
+    grandchild: lineage("child"),
+    sibling: lineage("top"),
+    // A fork is the user's own new thread, not delegated work.
+    fork: lineage("top", "fork"),
+    "fork-child": lineage("fork"),
+    // The parent is gone; the link itself still relates the two.
+    orphan: lineage("deleted"),
+    // A damaged chain that points back at itself ends instead of spinning.
+    "loop-a": lineage("loop-b"),
+    "loop-b": lineage("loop-a"),
+  };
+  it.effect.each([
+    { thread: "top", ancestors: [] },
+    { thread: "child", ancestors: ["top"] },
+    { thread: "grandchild", ancestors: ["child", "top"] },
+    { thread: "sibling", ancestors: ["top"] },
+    { thread: "fork", ancestors: [] },
+    { thread: "fork-child", ancestors: ["fork"] },
+    { thread: "orphan", ancestors: ["deleted"] },
+    { thread: "loop-a", ancestors: ["loop-b", "loop-a"] },
+  ])("$thread was delegated to by $ancestors", ({ thread, ancestors }) =>
+    Effect.gen(function* () {
+      const found = yield* delegationAncestors(threads[thread]!, (threadId) =>
+        threadId === "deleted" ? Effect.fail("gone") : Effect.succeed(threads[threadId] ?? null),
+      );
+      expect(found).toEqual(ancestors);
+    }),
   );
 });

@@ -16,7 +16,7 @@ const failed = (cause: unknown) =>
 
 /**
  * Asks the user, as a decision, whether a thread may use a device. The request id comes from the
- * device, so a repeat lands on the same decision, and an answer stays with the thread.
+ * device, so a repeat lands on the same decision, and an answer stays with the thread's lineage.
  */
 export const askDeviceAccess =
   (
@@ -34,9 +34,13 @@ export const askDeviceAccess =
           threadTitle: thread.threadTitle,
           clientRequestId: `device-access:${question.hostId}:${question.deviceId}${attempt === 0 ? "" : `:${attempt}`}`,
           title: `Let the agent use ${question.deviceName}?`.slice(0, 120),
-          context: `The agent in this thread wants to open and drive ${question.deviceName} on ${question.hostLabel}. Your answer applies to this thread only. Change the default in Settings > Integrations > Devices > Device access.`,
+          context: `The agent in this thread wants to open and drive ${question.deviceName} on ${question.hostLabel}. Your answer applies to this thread and the tasks it delegates. Change the default in Settings > Integrations > Devices > Device access.`,
           options: [
-            { id: "allow", label: "Allow", consequence: "This thread can drive the device" },
+            {
+              id: "allow",
+              label: "Allow",
+              consequence: "This thread and its delegated tasks can drive the device",
+            },
             { id: "deny", label: "Don't allow", consequence: "This thread cannot use the device" },
           ],
           recommended: "deny",
