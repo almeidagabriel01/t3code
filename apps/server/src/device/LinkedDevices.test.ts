@@ -174,6 +174,8 @@ const linkedPair = Effect.fn("linkedPair")(function* () {
   );
   const daemonCalls: Array<{ url: string; authorization: string | undefined; body: unknown }> = [];
   const hubCalls: Array<string> = [];
+  /** Every request the owner's daemon received, as sent. */
+  const daemonRequests: Array<HttpClientRequest.HttpClientRequest> = [];
   /** What the owner's hub streams back; a test swaps in one that never ends. */
   const hubBody: { make: () => Uint8Array | ReadableStream<Uint8Array> } = {
     make: () => new Uint8Array([1, 2, 3]),
@@ -192,9 +194,15 @@ const linkedPair = Effect.fn("linkedPair")(function* () {
           ? JSON.parse(new TextDecoder().decode(request.body.body))
           : undefined;
       daemonCalls.push({ url: request.url, authorization: request.headers.authorization, body });
+      daemonRequests.push(request);
+      const answer = JSON.stringify({ jsonrpc: "2.0", id: 1, result: { ok: true } });
       return HttpClientResponse.fromWeb(
         request,
-        Response.json({ jsonrpc: "2.0", id: 1, result: { ok: true } }),
+        body?.params?.meta?.requestProgress
+          ? new Response(`{"progress":1}\n${answer}\n`, {
+              headers: { "content-type": "application/x-ndjson" },
+            })
+          : new Response(answer, { headers: { "content-type": "application/json" } }),
       );
     }),
   );
@@ -377,6 +385,7 @@ const linkedPair = Effect.fn("linkedPair")(function* () {
     linkUp,
     outcomes,
     daemonCalls,
+    daemonRequests,
     call,
     gateway,
     agentRpc,
@@ -572,6 +581,74 @@ describe("linked devices", () => {
       const look = yield* agentRpc(SIM, "thread-a", command("snapshot"));
       expect(yield* json(look)).toMatchObject({ result: { ok: true } });
       expect(daemonCalls).toHaveLength(2);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("passes progress lines through and reaches the daemon's other routes", () =>
+    Effect.gen(function* () {
+      const { gateway, agentRpc, call, daemonCalls, daemonRequests } = yield* linkedPair();
+      yield* gateway("/open", {
+        thread: { id: "thread-a" },
+        deviceId: SIM,
+        platform: "ios",
+        agent: true,
+      });
+      const progress = yield* agentRpc(SIM, "thread-a", {
+        ...command("install"),
+        params: { ...command("install").params, meta: { requestProgress: "command" } },
+      });
+      expect(progress.headers.get("content-type")).toBe("application/x-ndjson");
+      expect(yield* Effect.promise(() => progress.text())).toBe(
+        `{"progress":1}\n{"jsonrpc":"2.0","id":1,"result":{"ok":true}}\n`,
+      );
+
+      const agentCall = (path: string, init: RequestInit = {}) =>
+        call(
+          new Request(`http://peer.test${LINKED_DEVICE_ROUTE_PREFIX}/agent/${SIM}${path}`, {
+            ...init,
+            headers: {
+              authorization: `Bearer ${LINK_TOKEN}`,
+              "t3-linked-thread": "thread-a",
+              ...init.headers,
+            },
+          }),
+        ).pipe(Effect.tap((response) => Effect.promise(() => response.text())));
+      expect((yield* agentCall("/health")).status).toBe(200);
+      expect((yield* agentCall("/artifacts/a1/shot.png?x=1")).status).toBe(200);
+      const upload = yield* agentCall("/upload", {
+        method: "POST",
+        body: new Uint8Array([9, 9]),
+        headers: {
+          "content-type": "application/octet-stream",
+          "x-artifact-type": "file",
+          "x-artifact-filename": "app.ipa",
+          "x-artifact-hash": "abc",
+          "x-artifact-hash-algorithm": "sha256",
+          cookie: "owner=1",
+        },
+      });
+      expect(upload.status).toBe(200);
+      // The preflight answers with the daemon's token, so it never leaves this machine.
+      expect((yield* agentCall("/upload/preflight", { method: "POST" })).status).toBe(404);
+      expect((yield* agentCall("/health", { method: "DELETE" })).status).toBe(404);
+
+      expect(daemonCalls.map((call) => call.url)).toEqual([
+        "http://daemon.test/rpc",
+        "http://daemon.test/health",
+        "http://daemon.test/artifacts/a1/shot.png?x=1",
+        "http://daemon.test/upload",
+      ]);
+      const sent = daemonRequests.at(-1)!;
+      expect(sent.method).toBe("POST");
+      expect(sent.headers).toMatchObject({
+        authorization: "Bearer daemon-token",
+        "x-artifact-type": "file",
+        "x-artifact-filename": "app.ipa",
+        "x-artifact-hash": "abc",
+        "x-artifact-hash-algorithm": "sha256",
+      });
+      expect(sent.headers.cookie).toBeUndefined();
+      expect(sent.headers["t3-linked-thread"]).toBeUndefined();
     }).pipe(Effect.scoped),
   );
 
