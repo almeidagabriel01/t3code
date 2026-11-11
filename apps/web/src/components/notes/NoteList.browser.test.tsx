@@ -192,6 +192,7 @@ describe("NoteList scroll", () => {
         environmentId={EnvironmentId.make("env")}
         notes={notes}
         folders={[]}
+        selectedPath={undefined}
         query=""
         onQueryChange={() => undefined}
         onSelect={() => undefined}
