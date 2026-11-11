@@ -116,10 +116,11 @@ desktop.
 
 serve-sim has a shell-exec route whose token is readable from its own
 unauthenticated `/api`, and serve-emu's action routes have no auth at all. The
-hub binds loopback and the only way in is the
+hub binds loopback and the only ways in are the
 [proxy](../../apps/server/src/device/DeviceHubProxy.ts), which allowlists the
 stream, config, and screenshot routes and authenticates every request as an
-environment session. `<img>` and `WebSocket` cannot carry headers, so the proxy
+environment session, and the linked-device gateway's hub route, which runs the
+same allowlist for a linked environment and only for devices it opened. `<img>` and `WebSocket` cannot carry headers, so the proxy
 authenticates like the `/ws` upgrade: cookie, or a short-lived `wsTicket` that
 bearer and DPoP clients mint over authenticated HTTP. The ticket is stripped
 before the request reaches the hub.
@@ -208,18 +209,50 @@ device refuses every agent action except a screenshot. The generated launcher
 enforces the same thing for the CLI: `setHold` writes a marker file, and the
 launcher's preflight prints it and exits for any command that is not read-only.
 That is the ceiling: an agent that calls `agent-device` without the launcher, or
-drives the device with `adb` or `simctl`, is not stopped. Closing that gap means
-proxying the daemon's `/rpc` instead of handing the agent its address.
+drives the device with `adb` or `simctl`, is not stopped. A linked environment's
+agents never get the daemon's address, so for them the hold is enforced at the
+daemon's door (next section).
 
 Agents choose between these tools and ssh before they open anything, so
 sessions that hold `device` get a short block from
 [`orchestrationInstructions.ts`](../../packages/provider-core/src/server/orchestrationInstructions.ts)
 through their adapter's instruction channel. It points simulator, emulator and phone UI
-work on local and SSH hosts at the tools; `simctl`, `adb` and ssh stay
+work on local, SSH and linked environments' hosts at the tools; `simctl`, `adb` and ssh stay
 available for what the tools do not cover. Pi and Muse do not send it yet.
 Claude's native subagents never see the session's system prompt, so a
 `SubagentStart` hook passes them the block, where the runtime runs hooks and the
 subagent's context is not isolated.
+
+## A linked environment's devices go through the link
+
+A linked environment's devices are one more `DeviceHost`
+([`LinkedDeviceHost`](../../apps/server/src/device/LinkedDeviceHost.ts)) that
+calls the owner's [gateway](../../apps/server/src/device/LinkedDeviceGateway.ts)
+with the link's MCP client credential. The owner's hub, daemon and tokens never
+leave its machine. The gateway is the only enforcement point: every call
+authenticates the link (a peer link above read-only, not blocked, devices and
+links on), and agent calls run the owner's `authorizeAgent`, so its policies,
+holds and lineage rule apply. The link's threads exist there as
+`linked:<link session>:<thread>`; another link's thread in an in-use refusal is
+redacted to its environment's name.
+
+The linking agent's launcher points at this server's
+[tunnel](../../apps/server/src/device/LinkedDeviceTunnel.ts), not at a daemon,
+and the tunnel forwards to the gateway. The gateway's `/rpc` is default-deny:
+one `agent_device.command`, device selectors equal to the bound device, and the
+session replaced by the binding's. `/upload/preflight` is refused because its
+answer carries the daemon's token, which makes the CLI fall back to the legacy
+`/upload`. Refusals on `/rpc` answer as JSON-RPC errors with status 200, because
+the CLI prints that body and nothing else.
+
+T3 Connect drops a request idle for about 100 seconds. A plain `/rpc` answer is
+preceded by spaces every 25 seconds, which JSON parsing ignores; progress
+requests stream on their own. For the same reason an **Ask first** request waits
+60 seconds and then reports pending, while staying answerable. Hub streams are
+relayed only for devices the link has a session on, every request must name its
+device, and a stream ends when that session does, including when the owner
+blocks the link. Removing a link closes its sessions on the owner as a best
+effort; an owner that cannot be reached then keeps them open until its user closes them or blocks the link.
 
 ## Wi-Fi pairing is adb's QR flow, driven by the server
 

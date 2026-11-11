@@ -1,5 +1,6 @@
 import type {
   DeviceBootError,
+  DeviceError,
   DeviceHostId,
   DeviceHostUnavailableError,
   DeviceHostSummary,
@@ -77,9 +78,19 @@ export interface AgentDeviceEndpoint {
 
 export type HostDevice = Omit<DeviceSummary, "hostId">;
 
+/** The thread a device call is made for, for hosts that answer to another environment. */
+export interface DeviceThreadContext {
+  readonly threadId: string;
+  readonly title?: string | undefined;
+  readonly ancestors?: ReadonlyArray<string> | undefined;
+  /** An agent acting, rather than the user watching or driving by hand. */
+  readonly agent: boolean;
+}
+
 /** Where a device is being opened from, for hosts whose devices depend on the project. */
 export interface DeviceOpenContext {
   readonly workspaceRoot?: string | undefined;
+  readonly thread?: DeviceThreadContext | undefined;
 }
 
 export type AgentDaemonEndpoint = Pick<AgentDeviceEndpoint, "baseUrl" | "token">;
@@ -113,7 +124,7 @@ export interface DeviceOperations {
       /** Platforms that could not be listed; their last known devices stay listed. */
       readonly incompletePlatforms?: ReadonlyArray<DevicePlatform>;
     },
-    DeviceOperationError
+    DeviceOperationError | DeviceError
   >;
   /**
    * Boots the device and prepares its stream. Android AVDs change id when they
@@ -122,14 +133,23 @@ export interface DeviceOperations {
   readonly boot: (
     device: HostDevice,
     context?: DeviceOpenContext,
-  ) => Effect.Effect<string, DeviceOperationError | DeviceBootError | DeviceHostUnavailableError>;
+  ) => Effect.Effect<
+    string,
+    DeviceOperationError | DeviceBootError | DeviceHostUnavailableError | DeviceError
+  >;
   /** Prepares the stream of a device that is already booted. */
-  readonly attach: (device: HostDevice) => Effect.Effect<void, DeviceOperationError>;
+  readonly attach: (
+    device: HostDevice,
+    context?: DeviceOpenContext,
+  ) => Effect.Effect<void, DeviceOperationError | DeviceError>;
   readonly shutdown: (device: {
     readonly id: string;
     readonly platform: DevicePlatform;
-  }) => Effect.Effect<void, DeviceOperationError>;
-  readonly screenshot: (device: HostDevice) => Effect.Effect<Uint8Array, DeviceOperationError>;
+  }) => Effect.Effect<void, DeviceOperationError | DeviceError>;
+  readonly screenshot: (
+    device: HostDevice,
+    context?: DeviceOpenContext,
+  ) => Effect.Effect<Uint8Array, DeviceOperationError | DeviceError>;
   /**
    * For hosts that run one agent-device daemon per device instead of one per
    * host. `agentDeviceId` is the id agent-device selects the device by, when
@@ -137,7 +157,27 @@ export interface DeviceOperations {
    */
   readonly agentEndpoint?: (
     deviceId: string,
+    thread?: DeviceThreadContext,
   ) => Effect.Effect<AgentDeviceBinding, DeviceHostUnavailableError>;
+  /**
+   * For hosts whose sessions live on another environment: a session here ended, so end its
+   * counterpart there, powering the device off when `shutdown` asks and that side allows it.
+   */
+  /** For hosts whose holds live on another environment: take a device over or hand it back there. */
+  readonly setHold?: (deviceId: string, held: boolean) => Effect.Effect<void, DeviceError>;
+  /** The holds that environment reported with its last listing, which replace this host's here. */
+  readonly holds?: Effect.Effect<
+    ReadonlyArray<{
+      readonly deviceId: string;
+      readonly since: string;
+      readonly linked?: { readonly label: string };
+    }>
+  >;
+  readonly closeSession?: (session: {
+    readonly threadId: string;
+    readonly deviceId: string;
+    readonly shutdown: boolean;
+  }) => Effect.Effect<void, DeviceError>;
   /**
    * Set by hosts that end devices on their own (EAS stops sessions at their
    * limits), so a session on a device the host stops listing is dropped.

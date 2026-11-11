@@ -33,7 +33,7 @@ const DeviceToolFailure = Schema.Union([DeviceToolError, OrchestratorMcpFailure]
 
 const DeviceListTool = Tool.make("device_list", {
   description:
-    "List iOS Simulators, Android Emulators and connected physical devices (`physical: true`; `issues` name what only the user can fix first) on every device host, what each host can run, what is open in this thread's Device panel, and `heldByUser`: devices the user is driving by hand. Call before `device_open` when you do not know a device id.",
+    'List iOS Simulators, Android Emulators and connected physical devices (`physical: true`; `issues` name what only the user can fix first) on every device host, what each host can run, what is open in this thread\'s Device panel, and `heldByUser`: devices the user is driving by hand. Call before `device_open` when you do not know a device id. A host with `kind: "linked"` is another T3 Code environment linked to this one, whose owner can refuse; if its `linkState` is not `connected`, tell the user its `linkDetail` instead of retrying.',
   // An empty struct serializes as `anyOf [object, array]`, which some
   // providers reject and then drop every tool on the server with it.
   parameters: Schema.Struct({

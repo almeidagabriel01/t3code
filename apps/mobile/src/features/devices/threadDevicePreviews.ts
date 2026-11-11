@@ -45,6 +45,7 @@ export function threadDevicePreviews(state: DeviceServiceState | null, threadId:
       const host = state?.hosts.find((host) => host.id === session.hostId);
       const blocking = deviceOpenBlocker(device?.issues);
       const capture = device !== undefined && isCaptureDevice(device);
+      const hold = findDeviceHold(state?.holds, { hostId: session.hostId, id: session.deviceId });
       return {
         key: JSON.stringify([session.hostId, session.deviceId]),
         session,
@@ -69,9 +70,11 @@ export function threadDevicePreviews(state: DeviceServiceState | null, threadId:
             }
           : null,
         canHold: state?.supportsDeviceControl === true,
-        held:
-          findDeviceHold(state?.holds, { hostId: session.hostId, id: session.deviceId }) !==
-          undefined,
+        held: hold !== undefined,
+        /** Who else holds it: a linked environment's user, or the device owner's. */
+        heldBy: hold?.linked?.label ?? null,
+        /** Held from the device's own environment, which only its user there hands back. */
+        heldThere: hold?.linked !== undefined && host?.kind === "linked",
         serveSimOnly: host?.kind === "simlock",
       };
     });
@@ -86,7 +89,7 @@ export function deviceHoldMenuItem(preview: ThreadDevicePreview | null, canHold:
     id: "hold",
     title: preview.held ? "Hand back to the agent" : "Take over",
     icon: preview.held ? "arrow.uturn.backward" : "pause",
-    disabled: !canHold,
+    disabled: !canHold || preview.heldThere,
     nextHeld: !preview.held,
   } as const;
 }

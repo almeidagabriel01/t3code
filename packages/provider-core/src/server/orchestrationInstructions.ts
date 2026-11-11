@@ -49,7 +49,7 @@ const T3_CODE_DEVICE_TOOLS = ["device_list", "device_open", "device_screenshot",
 
 const deviceToolInstructions = (loadTools: string) => `## T3 Code devices
 
-When a task needs an iOS Simulator, Android Emulator or a physical phone (USB or Wi-Fi), on this machine or on an SSH device host such as a remote Mac, use the device tools so the user can watch it in the Device panel.${loadTools}
+When a task needs an iOS Simulator, Android Emulator or a physical phone (USB or Wi-Fi), on this machine, on an SSH device host such as a remote Mac, or on a linked T3 Code environment's machine, use the device tools so the user can watch it in the Device panel.${loadTools}
 1. Call \`device_list\` unless you already have the device's \`hostId\` and \`id\`.
 2. Call \`device_open\` with both. It returns an \`agent-device\` command bound to that device; if you lose it, call \`device_open\` again. Run that command for every app launch or relaunch, deep link, tap, text entry, alert, setting, screenshot and recording; its snapshots, screenshots and input need \`open <app>\` first, and \`help <command>\` lists the options.
 3. Call \`device_screenshot\` to look at the screen.

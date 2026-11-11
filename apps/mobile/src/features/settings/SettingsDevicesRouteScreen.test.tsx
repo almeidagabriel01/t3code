@@ -16,13 +16,23 @@ const { mocks, Children } = vi.hoisted(() => ({
     setHold: vi.fn(),
     forget: vi.fn(),
     navigate: vi.fn(),
+    answer: vi.fn(),
+    block: vi.fn(),
+    links: new Map<string, string>(),
+    hidden: [] as string[],
   },
 }));
 vi.mock("react-native", () => ({ View: Children, Keyboard: { dismiss: vi.fn() } }));
 vi.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ bottom: 0 }) }));
 vi.mock("@effect/atom-react", () => ({
   useAtomValue: (atom: unknown) =>
-    atom === "probe-atom" ? mocks.probe : atom === "config-atom" ? mocks.config : mocks.can,
+    atom === "probe-atom"
+      ? mocks.probe
+      : atom === "config-atom"
+        ? mocks.config
+        : atom === "server-configs"
+          ? new Map([["env-a", { settings: { hiddenLinkedDeviceSources: mocks.hidden } }]])
+          : mocks.can,
 }));
 vi.mock("../../components/ui/AppText", () => ({
   AppText: Children,
@@ -125,22 +135,30 @@ vi.mock("../../state/device", () => ({
     setAccess: { permissionAtom: () => "access-permission" },
     setHold: { hold: true, permissionAtom: () => "hold-permission" },
     forget: { forget: true, permissionAtom: () => "forget-permission" },
+    answerLinkRequest: { name: "answer", permissionAtom: () => "answer-permission" },
+    setLinkBlocked: { name: "block", permissionAtom: () => "block-permission" },
   },
 }));
 vi.mock("../../state/server", () => ({
+  environmentServerConfigsAtom: "server-configs",
   serverEnvironment: {
     configValueAtom: () => "config-atom",
-    updateSettings: { update: true, permissionAtom: () => "update-permission" },
+    updateSettings: { name: "update", permissionAtom: () => "update-permission" },
   },
 }));
+vi.mock("../../state/peerLinks", () => ({ useLinkedEnvironments: () => mocks.links }));
 vi.mock("../../state/use-atom-command", () => ({
-  useAtomCommand: (command: { hold?: boolean; forget?: boolean; update?: boolean }) =>
-    command.hold
-      ? mocks.setHold
-      : command.forget
-        ? mocks.forget
-        : command.update
-          ? mocks.update
+  useAtomCommand: (command: {
+    hold?: boolean;
+    forget?: boolean;
+    name?: "answer" | "block" | "update";
+  }) =>
+    command.name
+      ? mocks[command.name]
+      : command.hold
+        ? mocks.setHold
+        : command.forget
+          ? mocks.forget
           : mocks.setAccess,
 }));
 vi.mock("./WifiPairingSection", () => ({ WifiPairingSection: () => <p>Wi-Fi pairing</p> }));
@@ -178,6 +196,7 @@ const state = {
   supportsDeviceControl: true,
   access: { "local:emu": "deny", "local:gone": "ask", "local:pixel": "sometimes" },
   holds: [{ hostId: "local", deviceId: "pixel", since: "2026-01-01T00:00:00.000Z" }],
+  sessions: [] as ReadonlyArray<object>,
 };
 
 async function setup(next: Partial<typeof mocks> = {}, element = <SettingsDevicesRouteScreen />) {
@@ -185,7 +204,15 @@ async function setup(next: Partial<typeof mocks> = {}, element = <SettingsDevice
   vi.clearAllMocks();
   Object.assign(
     mocks,
-    { ids: ["env-a"], data: state, error: null, can: true, probe: { _tag: "Success" } },
+    {
+      ids: ["env-a"],
+      data: state,
+      error: null,
+      can: true,
+      probe: { _tag: "Success" },
+      links: new Map(),
+      hidden: [],
+    },
     next,
   );
   const container = window.document.createElement("div");
@@ -365,6 +392,108 @@ describe("Devices settings", () => {
     const buttons = [...screen.container.querySelectorAll("button")];
     expect(buttons.length).toBeGreaterThan(0);
     expect(buttons.every((button) => button.disabled)).toBe(true);
+  });
+
+  it("lists linked environments' devices apart, hides one, and answers and blocks links", async () => {
+    using screen = await setup({
+      links: new Map([
+        ["env-studio", "Studio"],
+        ["env-attic", "Attic"],
+      ]),
+      hidden: ["env-attic"],
+      data: {
+        ...state,
+        supportsLinkedDevices: true,
+        hosts: [
+          ...state.hosts,
+          {
+            id: "linked.env-studio",
+            kind: "linked",
+            label: "Studio",
+            environmentId: "env-studio",
+            linkState: "connected",
+          },
+        ],
+        devices: [
+          ...state.devices,
+          { ...device("R5CX", "Galaxy", true), hostId: "linked.env-studio" },
+        ],
+        linkRequests: [
+          {
+            requestId: "r-1",
+            linkLabel: "Laptop",
+            threadTitle: "Fix login",
+            hostId: "local",
+            deviceId: "pixel",
+            deviceName: "Pixel",
+          },
+        ],
+        linkClients: [{ linkId: "link-1", label: "Laptop", blocked: false }],
+        holds: [{ ...state.holds[0]!, linked: { label: "Laptop" } }],
+        sessions: [
+          {
+            threadId: "linked:link-1:thread-9",
+            hostId: "local",
+            deviceId: "pixel",
+            platform: "android",
+            openedAt: "2026-01-01T00:00:00.000Z",
+            linked: { label: "Laptop", threadTitle: "Fix login" },
+          },
+        ],
+      },
+    });
+    const titles = [...screen.container.querySelectorAll("h3")].map((title) => title.textContent);
+    expect(titles).toEqual([
+      "Device access",
+      "Device requests",
+      "Linked environments using devices here",
+      "Devices on Attic",
+      "Devices on Studio",
+    ]);
+    const studio = screen.container.querySelector('section[aria-label="Devices on Studio"]');
+    expect(studio?.textContent).toContain("Galaxy · PhysicalAndroid 16");
+    expect(studio?.textContent).toContain("1 device");
+    // A linked environment's devices follow its owner's access settings, so they get no row here.
+    expect(screen.container.querySelector('[aria-label="Agents and Galaxy"]')).toBeNull();
+    expect(
+      screen.container.querySelector('[aria-label="Agents and Pixel"]')?.textContent,
+    ).toContain("Laptop is in control · Used by “Fix login” on Laptop");
+    await screen.press("End Laptop's control of Pixel");
+    expect(mocks.setHold.mock.calls).toEqual([
+      [{ environmentId: "env-a", input: { hostId: "local", deviceId: "pixel", held: false } }],
+    ]);
+    expect(
+      screen.container.querySelector('section[aria-label="Devices on Attic"]')?.textContent,
+    ).toContain("Hidden");
+
+    await screen.press("Allow Laptop to use Pixel");
+    await screen.press("Don't allow Laptop to use Pixel");
+    await screen.press("Block Laptop");
+    await screen.press("Hide devices from Studio");
+    await screen.press("Show devices from Attic");
+
+    expect(mocks.answer.mock.calls).toEqual([
+      [{ environmentId: "env-a", input: { requestId: "r-1", allow: true } }],
+      [{ environmentId: "env-a", input: { requestId: "r-1", allow: false } }],
+    ]);
+    expect(mocks.block.mock.calls).toEqual([
+      [{ environmentId: "env-a", input: { linkId: "link-1", label: "Laptop", blocked: true } }],
+    ]);
+    expect(mocks.update.mock.calls).toEqual([
+      [
+        {
+          environmentId: "env-a",
+          input: { patch: { hiddenLinkedDeviceSources: ["env-attic", "env-studio"] } },
+        },
+      ],
+      [{ environmentId: "env-a", input: { patch: { hiddenLinkedDeviceSources: [] } } }],
+    ]);
+  });
+
+  it("names who else holds a device in the preview banner, without a hand back", async () => {
+    using screen = await setup({}, <DeviceHoldBanner heldBy="Studio" />);
+    expect(screen.container.textContent).toContain("Studio is in control");
+    expect(screen.container.querySelector("button")).toBeNull();
   });
 
   it("hands back from the preview banner", async () => {

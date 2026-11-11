@@ -125,6 +125,7 @@ import {
 import { searchableSetting } from "./settingsSearch";
 import { AdvancedSettings } from "./AdvancedSettings";
 import { useSettingsScope } from "./SettingsScopeContext";
+import { DeviceLinksSettings } from "./DeviceLinksSettings";
 import { BrowserImportWizard, type WizardTarget } from "./BrowserImportWizard";
 import type { ImportOutcome } from "./browserImportWizard.logic";
 
@@ -849,6 +850,13 @@ function DeviceIntegrationSettings() {
       </SettingsSection>
       {environmentId ? <DeviceAccessSettings environmentId={environmentId} state={state} /> : null}
       <DeviceSigningSettings />
+      {environmentId && state.supportsLinkedDevices === true ? (
+        <DeviceLinksSettings
+          environmentId={environmentId}
+          state={state}
+          hiddenSources={selected?.serverConfig?.settings.hiddenLinkedDeviceSources ?? []}
+        />
+      ) : null}
       <DeviceSourcesSettings
         supportsEas={state.supportsEasHosts === true}
         supportsSimlock={state.supportsSimlockHosts === true}

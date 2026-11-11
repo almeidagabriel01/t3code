@@ -192,6 +192,37 @@ describe("thread device previews", () => {
     expect(deviceHoldMenuItem(previews[1]!, true)).toBeNull();
   });
 
+  it.each([
+    ["a linked environment's owner", "linked", { heldBy: "Studio", heldThere: true }, true],
+    ["a link's user, on this owner's device", "ssh", { heldBy: "Studio", heldThere: false }, false],
+  ] as const)("names a hold by %s", (_name, kind, expected, locked) => {
+    const [preview] = threadDevicePreviews(
+      {
+        ...state,
+        supportsDeviceControl: true,
+        hosts: state.hosts.map((host) =>
+          host.id === "remote"
+            ? kind === "linked"
+              ? { ...host, kind, environmentId: "env-studio", linkState: "connected" as const }
+              : host
+            : host,
+        ),
+        sessions: [state.sessions[1]!],
+        holds: [
+          {
+            hostId: "remote",
+            deviceId: "emulator-5554",
+            since: "2026-09-18T00:03:00Z",
+            linked: { label: "Studio" },
+          },
+        ],
+      },
+      threadId,
+    );
+    expect(preview).toMatchObject({ held: true, ...expected });
+    expect(deviceHoldMenuItem(preview!, true)?.disabled).toBe(locked);
+  });
+
   it("selects another open device when the agent closes the selected session", () => {
     const previews = threadDevicePreviews(state, threadId);
     const selectedKey = previews[1]!.key;

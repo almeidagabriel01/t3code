@@ -414,11 +414,20 @@ export const DEVICE_ACCESS_POLICY_LABELS: Record<
   deny: { label: "Never", description: "Agents cannot use this device." },
 };
 
+/** Who on another machine a device's use comes from: a linked environment and, for an agent, its thread. */
+export const DeviceLinkAttribution = Schema.Struct({
+  label: TrimmedNonEmptyString,
+  threadTitle: Schema.optional(Schema.String),
+});
+export type DeviceLinkAttribution = typeof DeviceLinkAttribution.Type;
+
 /** The user is driving this device by hand; agents wait until it is handed back. */
 export const DeviceHold = Schema.Struct({
   hostId: DeviceHostId,
   deviceId: DeviceId,
   since: Schema.String,
+  /** Set when the person driving is elsewhere: a linked environment's user, or the device owner's. */
+  linked: Schema.optional(DeviceLinkAttribution),
 });
 export type DeviceHold = typeof DeviceHold.Type;
 
@@ -469,10 +478,36 @@ const SimlockDeviceHostSummary = Schema.Struct({
   ...deviceHostSummaryFields,
   kind: Schema.Literal("simlock"),
 });
+
+/**
+ * Why a linked environment's devices can or cannot be used from here. `needs_update` is a peer
+ * whose server predates linked devices; the others are its own answers.
+ */
+export const LinkedDeviceState = Schema.Literals([
+  "connected",
+  "link_down",
+  "linked_environments_off",
+  "devices_off",
+  "not_allowed",
+  "needs_update",
+]);
+export type LinkedDeviceState = typeof LinkedDeviceState.Type;
+
+/** The devices attached to a linked environment's own machine, reached through the link. */
+const LinkedDeviceHostSummary = Schema.Struct({
+  ...deviceHostSummaryFields,
+  kind: Schema.Literal("linked"),
+  environmentId: TrimmedNonEmptyString,
+  linkState: LinkedDeviceState,
+  linkDetail: Schema.optional(Schema.String),
+});
+export type LinkedDeviceHostSummary = typeof LinkedDeviceHostSummary.Type;
+
 export const DeviceHostSummary = Schema.Union([
   MachineDeviceHostSummary,
   EasDeviceHostSummary,
   SimlockDeviceHostSummary,
+  LinkedDeviceHostSummary,
 ]);
 export type DeviceHostSummary = typeof DeviceHostSummary.Type;
 
@@ -492,6 +527,8 @@ export const DeviceSession = Schema.Struct({
   deviceId: DeviceId,
   platform: DevicePlatform,
   openedAt: Schema.String,
+  /** Set when a linked environment opened it; `threadId` is then that link's, not a thread here. */
+  linked: Schema.optional(DeviceLinkAttribution),
 });
 export type DeviceSession = typeof DeviceSession.Type;
 
@@ -553,6 +590,46 @@ const DesktopDeviceSession = Schema.Struct({
   platform: Schema.Literal("desktop"),
 });
 
+/** A linked environment's agent asking this environment's user for a device set to "Ask first". */
+export const DeviceLinkRequest = Schema.Struct({
+  requestId: Schema.String,
+  linkLabel: TrimmedNonEmptyString,
+  threadTitle: Schema.optional(Schema.String),
+  hostId: DeviceHostId,
+  deviceId: DeviceId,
+  deviceName: Schema.String,
+});
+export type DeviceLinkRequest = typeof DeviceLinkRequest.Type;
+
+/** A linked environment's session on this one, and the label it was paired with. */
+export const DeviceLinkClientRef = Schema.Struct({
+  linkId: TrimmedNonEmptyString,
+  label: TrimmedNonEmptyString,
+});
+export type DeviceLinkClientRef = typeof DeviceLinkClientRef.Type;
+
+/** A linked environment as the device owner sees it: who it is and whether it may use devices. */
+export const DeviceLinkClient = Schema.Struct({
+  ...DeviceLinkClientRef.fields,
+  blocked: Schema.Boolean,
+});
+export type DeviceLinkClient = typeof DeviceLinkClient.Type;
+
+export const DeviceAnswerLinkRequestInput = Schema.Struct({
+  requestId: Schema.String,
+  allow: Schema.Boolean,
+});
+export type DeviceAnswerLinkRequestInput = typeof DeviceAnswerLinkRequestInput.Type;
+
+export const DeviceSetLinkBlockedInput = Schema.Struct({
+  linkId: TrimmedNonEmptyString,
+  /** Kept with a block, so the row still names the link after a restart. */
+  label: Schema.optional(TrimmedNonEmptyString),
+  /** True ends what the link has open and refuses it every device; false lets it back in. */
+  blocked: Schema.Boolean,
+});
+export type DeviceSetLinkBlockedInput = typeof DeviceSetLinkBlockedInput.Type;
+
 const deviceServiceStateFields = {
   supportsHostRetry: Schema.optional(Schema.Boolean),
   supportsToolUpdate: Schema.optional(Schema.Boolean),
@@ -576,6 +653,12 @@ const deviceServiceStateFields = {
   agentAccessEnabled: Schema.Boolean,
   hubBasePath: Schema.String,
   revision: Schema.Int,
+  /** Servers from before linked devices neither list them nor take link requests. */
+  supportsLinkedDevices: Schema.optional(Schema.Boolean),
+  /** Linked environments asking to use a device set to "Ask first", waiting for this user. */
+  linkRequests: Schema.optional(Schema.Array(DeviceLinkRequest)),
+  /** Linked environments that used devices here since the server started, and the blocked ones. */
+  linkClients: Schema.optional(Schema.Array(DeviceLinkClient)),
 };
 
 /**
@@ -596,6 +679,7 @@ const DeviceServiceStateWire = Schema.Struct({
   bootingDevices: Schema.optional(
     Schema.Array(Schema.Struct({ ...MobileDeviceSummary.fields, threadId: ThreadId })),
   ),
+  linkedHosts: Schema.optional(Schema.Array(LinkedDeviceHostSummary)),
 });
 const DeviceServiceStateDecoded = Schema.Struct({
   ...deviceServiceStateFields,
@@ -620,9 +704,14 @@ export const DeviceServiceState = DeviceServiceStateWire.pipe(
       typeof DeviceServiceStateDecoded.Type,
       typeof DeviceServiceStateWire.Type
     >({
-      decode: ({ easHosts, simlockHosts, desktops, desktopSessions, ...state }) => ({
+      decode: ({ easHosts, simlockHosts, linkedHosts, desktops, desktopSessions, ...state }) => ({
         ...state,
-        hosts: [...state.hosts, ...(easHosts ?? []), ...(simlockHosts ?? [])],
+        hosts: [
+          ...state.hosts,
+          ...(easHosts ?? []),
+          ...(simlockHosts ?? []),
+          ...(linkedHosts ?? []),
+        ],
         devices: [...state.devices, ...(desktops ?? [])],
         sessions: [...state.sessions, ...(desktopSessions ?? [])],
       }),
@@ -642,6 +731,9 @@ export const DeviceServiceState = DeviceServiceStateWire.pipe(
         ),
         simlockHosts: state.hosts.filter(
           (host): host is typeof SimlockDeviceHostSummary.Type => host.kind === "simlock",
+        ),
+        linkedHosts: state.hosts.filter(
+          (host): host is LinkedDeviceHostSummary => host.kind === "linked",
         ),
       }),
     }),
@@ -1124,7 +1216,9 @@ export const DeviceToolOpenInput = Schema.Struct({
     }),
   ),
   hostId: Schema.optional(
-    DeviceHostId.annotate({ description: "Host from `device_list`. Default local." }),
+    DeviceHostId.annotate({
+      description: "Host from `device_list`, including a linked environment's. Default local.",
+    }),
   ),
 });
 export type DeviceToolOpenInput = typeof DeviceToolOpenInput.Type;

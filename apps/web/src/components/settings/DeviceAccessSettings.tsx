@@ -8,6 +8,7 @@ import {
   type EnvironmentId,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
+import { isLinkedDevice } from "@t3tools/client-runtime/state/device";
 
 import { Badge } from "~/components/ui/badge";
 import {
@@ -31,9 +32,11 @@ export function DeviceAccessSettings(props: {
 }) {
   const canEdit = useAtomValue(deviceEnvironment.setAccess.permissionAtom(props.environmentId));
   const setAccess = useAtomCommand(deviceEnvironment.setAccess);
-  if (props.state.supportsDeviceControl !== true || props.state.devices.length === 0) return null;
+  // A linked environment's devices follow its own access settings, set there.
+  const own = props.state.devices.filter((device) => !isLinkedDevice(props.state, device));
+  if (props.state.supportsDeviceControl !== true || own.length === 0) return null;
   const access = props.state.access ?? {};
-  const devices = props.state.devices.toSorted(
+  const devices = own.toSorted(
     (a, b) =>
       Number(b.physical === true) - Number(a.physical === true) || a.name.localeCompare(b.name),
   );

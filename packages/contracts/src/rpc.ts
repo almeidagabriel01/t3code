@@ -341,6 +341,8 @@ import {
   DeviceWifiPairCancelInput,
   DeviceForgetInput,
   DeviceSetHoldInput,
+  DeviceAnswerLinkRequestInput,
+  DeviceSetLinkBlockedInput,
 } from "./device.ts";
 import {
   ServerConfigStreamEvent,
@@ -700,6 +702,8 @@ export const WS_METHODS = {
   deviceWifiPairStart: "device.wifiPairStart",
   deviceWifiPairCancel: "device.wifiPairCancel",
   deviceForget: "device.forget",
+  deviceAnswerLinkRequest: "device.answerLinkRequest",
+  deviceSetLinkBlocked: "device.setLinkBlocked",
 
   serverProbe: "server.probe",
   serverGetConfig: "server.getConfig",
@@ -2127,6 +2131,18 @@ const WsDeviceForgetRpc = Rpc.make(WS_METHODS.deviceForget, {
   error: Schema.Union([DeviceError, EnvironmentAuthorizationError]),
 });
 
+const WsDeviceAnswerLinkRequestRpc = Rpc.make(WS_METHODS.deviceAnswerLinkRequest, {
+  payload: DeviceAnswerLinkRequestInput,
+  success: DeviceServiceState,
+  error: Schema.Union([DeviceError, EnvironmentAuthorizationError]),
+});
+
+const WsDeviceSetLinkBlockedRpc = Rpc.make(WS_METHODS.deviceSetLinkBlocked, {
+  payload: DeviceSetLinkBlockedInput,
+  success: DeviceServiceState,
+  error: Schema.Union([DeviceError, EnvironmentAuthorizationError]),
+});
+
 const WsSubscribeDeviceStateRpc = Rpc.make(WS_METHODS.subscribeDeviceState, {
   payload: Schema.Struct({}),
   success: DeviceServiceState,
@@ -3181,6 +3197,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsDeviceWifiPairStartRpc,
   WsDeviceWifiPairCancelRpc,
   WsDeviceForgetRpc,
+  WsDeviceAnswerLinkRequestRpc,
+  WsDeviceSetLinkBlockedRpc,
   WsDeviceDetailRpc,
   WsDeviceActionRpc,
   WsSubscribeDeviceStateRpc,

@@ -42,11 +42,16 @@ export function agentDeviceQuickStart(
   command = "agent-device",
   host?:
     | { readonly kind: "eas" }
+    | { readonly kind: "linked"; readonly label: string }
     | { readonly kind: "simlock"; readonly installDirectory?: string },
 ): string {
   const executable = shellWord(command);
   const target = targetArgs.map(shellWord).join(" ");
   const run = (args: string) => [executable, args, target].filter(Boolean).join(" ");
+  const linkedNote =
+    host?.kind === "linked"
+      ? ` It is on ${host.label}, another T3 Code environment linked to this one. Its owner can take it over or stop this environment using it; when a command says so, stop and tell the user.`
+      : "";
   const platformNotes =
     host?.kind === "simlock"
       ? [
@@ -63,7 +68,7 @@ export function agentDeviceQuickStart(
           ? "First use builds an XCTest runner and can take a couple of minutes; later commands are fast."
           : "The Android snapshot helper installs itself on first use.";
   return [
-    `The user is watching ${device.name} (${device.version}) in the Device panel.`,
+    `The user is watching ${device.name} (${device.version}) in the Device panel.${linkedNote}`,
     target === ""
       ? `Drive it with ${executable}. It is bound to this device and session, so it needs no --platform, --udid, --serial, --config or --session flags. Use this exact path; login shells may reset PATH.`
       : `Drive it with ${executable}. Use this exact path; login shells may reset PATH. Always pass ${target}.`,
@@ -391,7 +396,12 @@ const handlers = {
               }
             : hostKind === "eas"
               ? { kind: "eas" }
-              : undefined,
+              : hostKind === "linked"
+                ? {
+                    kind: "linked",
+                    label: after.hosts.find((host) => host.id === device.hostId)?.label ?? "",
+                  }
+                : undefined,
         ),
       };
     }).pipe(Effect.mapError(toolError)),

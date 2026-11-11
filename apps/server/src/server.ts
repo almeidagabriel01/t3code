@@ -92,6 +92,8 @@ import * as PeerForwarding from "./peer/PeerForwarding.ts";
 import * as RemoteDelegation from "./peer/RemoteDelegation.ts";
 import * as PeerLinkRequests from "./peer/PeerLinkRequests.ts";
 import * as PeerLinks from "./peer/PeerLinks.ts";
+import * as LinkedDeviceGateway from "./device/LinkedDeviceGateway.ts";
+import * as LinkedDeviceTunnel from "./device/LinkedDeviceTunnel.ts";
 import * as PeerMcpClient from "./peer/PeerMcpClient.ts";
 import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
@@ -569,6 +571,8 @@ const layerPreview = Layer.empty.pipe(
 );
 
 const layerDevice = DeviceService.layer.pipe(
+  // Linked environments' devices; the same instance Settings and /mcp use, by layer memoization.
+  Layer.provide(PeerLinks.layer),
   Layer.provide(layerServerSettings),
   Layer.provide(ProcessRunner.layer),
   Layer.provide(NetService.layer),
@@ -971,6 +975,8 @@ const layerMakeRoutes = Layer.mergeAll(
     ServerHttp.layerAttachmentUploadRoute,
     GuestHttp.layer,
     DeviceHubProxy.layer,
+    LinkedDeviceGateway.layer,
+    LinkedDeviceTunnel.layer,
     ServerBrowserStream.routeLayer,
     ServerHttp.layerStaticAndDevRoute,
     layerRegisteredMemoryHub,

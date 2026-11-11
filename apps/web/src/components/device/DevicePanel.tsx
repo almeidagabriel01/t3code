@@ -1,17 +1,32 @@
 import { DeviceHostUpdates } from "./DeviceHostUpdates";
 import {
+  DEVICE_KIND_LABELS,
+  deviceLinkedUse,
+  groupDevicesBySource,
+  LINKED_DEVICE_STATE_LABELS,
+  type DeviceSourceGroup,
+} from "@t3tools/client-runtime/state/device";
+import {
   DEVICE_ISSUES,
   deviceIssueBlocks,
   deviceOpenBlocker,
   findDeviceHold,
   type DeviceIssue,
   type DevicePlatform,
-  type DeviceServiceState,
   type DeviceSummary,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
-import { ArrowUpRight, CircleAlert, Monitor, Play, Smartphone, Undo2, X } from "lucide-react";
+import {
+  ArrowUpRight,
+  CircleAlert,
+  Link2,
+  Monitor,
+  Play,
+  Smartphone,
+  Undo2,
+  X,
+} from "lucide-react";
 import { useAtomMount } from "@effect/atom-react";
 import * as Cause from "effect/Cause";
 import * as Predicate from "effect/Predicate";
@@ -41,6 +56,7 @@ import {
 import { formatEnvironmentQueryError } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { DeviceHoldBar, useDeviceHold } from "./DeviceHoldBar";
+import { DeviceLinkRequests } from "./DeviceLinkRequests";
 import { DeviceLoadingView } from "./DeviceLoadingView";
 import {
   DeviceSetup,
@@ -55,17 +71,6 @@ import {
   WifiPairingButton,
 } from "./WifiPairingDialog";
 import { PreviewPanelShell, type PreviewPanelMode } from "../preview/PreviewPanelShell";
-
-type DeviceGroup = DevicePlatform | "physical";
-
-const groupLabel = (group: DeviceGroup) =>
-  group === "desktop"
-    ? "This computer"
-    : group === "physical"
-      ? "Physical devices"
-      : group === "ios"
-        ? "iOS Simulators"
-        : "Android Emulators";
 
 const deviceKey = (device: Pick<DeviceSummary, "hostId" | "id">) =>
   `${device.hostId}\u0000${device.id}`;
@@ -120,7 +125,10 @@ export function DevicePanel(props: {
     ? state.hosts.find((host) => host.id === activeDevice.hostId)
     : undefined;
 
-  const grouped = groupDevices(state);
+  const sources = groupDevicesBySource(state);
+  const ownDevices = sources
+    .find((source) => source.linked === null)
+    ?.groups.flatMap((group) => group.devices);
 
   const startOperation = (pending: DeviceSummary | null) => {
     const started = { scope, pending, error: null };
@@ -207,6 +215,8 @@ export function DevicePanel(props: {
   const bootingDevices =
     state.bootingDevices?.filter((device) => device.threadId === threadId) ?? [];
   const { ready: hostReady, busy: hostBusy } = deviceHubReadiness(state);
+  // A linked environment carries its own state, so it shows whatever this machine's hub is doing.
+  const listed = sources.filter((source) => source.linked !== null || hostReady);
   const loading = !activeDevice && (pendingDevice !== null || hostBusy || !loaded);
   // Without a first snapshot a failed subscription never settles on its own.
   const loadError = loaded ? null : stateError;
@@ -266,6 +276,7 @@ export function DevicePanel(props: {
             ))}
           </div>
           <DeviceHostUpdates state={state} environmentId={environmentId} />
+          <DeviceLinkRequests environmentId={environmentId} state={state} />
           {bootingDevices.length > 0 ? (
             <div role="status" className="border-b px-3 py-2 text-xs text-muted-foreground">
               Starting {bootingDevices.map((device) => device.name).join(", ")}… This can take a
@@ -332,12 +343,12 @@ export function DevicePanel(props: {
               <div
                 className={cn(
                   "mx-auto flex w-full max-w-xl flex-col gap-6",
-                  grouped.length === 0 && "my-auto items-center text-center",
+                  listed.length === 0 && "my-auto items-center text-center",
                 )}
               >
-                {grouped.length === 0 ? (
+                {ownDevices === undefined ? (
                   <>
-                    <Smartphone className="size-6 opacity-60" />
+                    {listed.length === 0 ? <Smartphone className="size-6 opacity-60" /> : null}
                     <p
                       className="max-h-32 w-full max-w-sm overflow-y-auto whitespace-pre-line break-words"
                       tabIndex={state.hostStatus === "failed" ? 0 : undefined}
@@ -348,97 +359,95 @@ export function DevicePanel(props: {
                     </p>
                   </>
                 ) : null}
-                {hostReady && grouped.length > 0 ? (
+                {listed.length > 0 ? (
                   <div className="w-full space-y-6 text-left">
-                    {grouped.map((group) => (
-                      <section key={group.kind} className="space-y-3">
-                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                          {group.kind === "desktop" ? (
-                            <Monitor className="size-4 shrink-0" />
-                          ) : (
-                            <Smartphone className="size-4 shrink-0" />
-                          )}
-                          <h3 className="font-medium">{groupLabel(group.kind)}</h3>
-                        </div>
-                        <DiscoveryList>
-                          {group.devices.map((device) => {
-                            const opens = device.booted || device.physical;
-                            const viewBlocked = deviceIssueBlocks(device.issues, "view");
-                            const openBlocked = deviceOpenBlocker(device.issues);
-                            return (
-                              <div key={deviceKey(device)}>
-                                <div className="flex items-center gap-3 px-3 py-3">
-                                  <span className="grid size-8 shrink-0 place-items-center rounded-md border border-border/60">
-                                    {device.platform === "desktop" ? (
-                                      <Monitor className="size-4" />
-                                    ) : (
-                                      <Smartphone className="size-4" />
-                                    )}
+                    {listed.map((source) => (
+                      <DeviceSource
+                        key={source.key}
+                        source={source}
+                        renderDevice={(device) => {
+                          const opens = device.booted || device.physical;
+                          const held = findDeviceHold(state.holds, device);
+                          const usedBy = deviceLinkedUse(state, device);
+                          const viewBlocked = deviceIssueBlocks(device.issues, "view");
+                          const openBlocked = deviceOpenBlocker(device.issues);
+                          return (
+                            <div key={deviceKey(device)}>
+                              <div className="flex items-center gap-3 px-3 py-3">
+                                <span className="grid size-8 shrink-0 place-items-center rounded-md border border-border/60">
+                                  {device.platform === "desktop" ? (
+                                    <Monitor className="size-4" />
+                                  ) : (
+                                    <Smartphone className="size-4" />
+                                  )}
+                                </span>
+                                <div className="flex min-w-0 flex-1 flex-col">
+                                  <span className="flex min-w-0 items-center gap-2">
+                                    <span className="truncate text-sm font-medium text-foreground">
+                                      {device.name}
+                                    </span>
+                                    {device.physical && device.platform !== "desktop" ? (
+                                      <Badge variant="outline" size="sm">
+                                        Physical
+                                      </Badge>
+                                    ) : null}
                                   </span>
-                                  <div className="flex min-w-0 flex-1 flex-col">
-                                    <span className="flex min-w-0 items-center gap-2">
-                                      <span className="truncate text-sm font-medium text-foreground">
-                                        {device.name}
-                                      </span>
-                                      {device.physical && device.platform !== "desktop" ? (
-                                        <Badge variant="outline" size="sm">
-                                          Physical
-                                        </Badge>
-                                      ) : null}
-                                    </span>
-                                    <span className="truncate text-xs text-muted-foreground">
-                                      {`${state.hosts.find((host) => host.id === device.hostId)?.label} · ${device.version}${deviceConnectionLabel(device)} · ${device.platform === "desktop" ? (device.booted && !viewBlocked ? "Available" : "Not ready") : device.physical ? (device.booted && !viewBlocked ? "Connected" : "Not ready") : device.booted ? "Running" : "Stopped"}${findDeviceHold(state.holds, device) ? " · You are in control" : ""}`}
-                                    </span>
-                                  </div>
-                                  {findDeviceHold(state.holds, device) ? (
-                                    <Button
-                                      variant="ghost"
-                                      size="sm"
-                                      disabled={!canHold}
-                                      aria-label={`Hand back ${device.name}`}
-                                      onClick={() => changeHold(device, false)}
-                                    >
-                                      <Undo2 />
-                                      Hand back
-                                    </Button>
-                                  ) : null}
-                                  {device.connection === "wifi" ? (
-                                    <ForgetWifiDeviceButton
-                                      environmentId={environmentId}
-                                      device={device}
-                                    />
-                                  ) : null}
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    disabled={
-                                      pendingDeviceKey !== null || openBlocked !== undefined
-                                    }
-                                    aria-label={`${opens ? "Open" : "Start"} ${device.name}`}
-                                    onClick={() => void selectDevice(deviceKey(device))}
-                                  >
-                                    {pendingDeviceKey === deviceKey(device) ? (
-                                      <Spinner size="xs" />
-                                    ) : opens ? (
-                                      <ArrowUpRight />
-                                    ) : (
-                                      <Play />
-                                    )}
-                                    {opens ? "Open" : "Start"}
-                                  </Button>
+                                  <span className="truncate text-xs text-muted-foreground">
+                                    {`${state.hosts.find((host) => host.id === device.hostId)?.label} · ${device.version}${deviceConnectionLabel(device)} · ${device.platform === "desktop" ? (device.booted && !viewBlocked ? "Available" : "Not ready") : device.physical ? (device.booted && !viewBlocked ? "Connected" : "Not ready") : device.booted ? "Running" : "Stopped"}${held ? (held.linked ? ` · ${held.linked.label} is in control` : " · You are in control") : ""}${usedBy ? ` · ${usedBy}` : ""}`}
+                                  </span>
                                 </div>
-                                <DeviceIssueRows issues={device.issues} />
+                                {held && !(held.linked && source.linked) ? (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    disabled={!canHold}
+                                    aria-label={`Hand back ${device.name}`}
+                                    onClick={() => changeHold(device, false)}
+                                  >
+                                    <Undo2 />
+                                    Hand back
+                                  </Button>
+                                ) : null}
+                                {device.connection === "wifi" && !source.linked ? (
+                                  <ForgetWifiDeviceButton
+                                    environmentId={environmentId}
+                                    device={device}
+                                  />
+                                ) : null}
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  disabled={
+                                    pendingDeviceKey !== null ||
+                                    openBlocked !== undefined ||
+                                    (source.linked !== null &&
+                                      source.linked.state !== "connected" &&
+                                      source.linked.state !== "needs_update")
+                                  }
+                                  aria-label={`${opens ? "Open" : "Start"} ${device.name}`}
+                                  onClick={() => void selectDevice(deviceKey(device))}
+                                >
+                                  {pendingDeviceKey === deviceKey(device) ? (
+                                    <Spinner size="xs" />
+                                  ) : opens ? (
+                                    <ArrowUpRight />
+                                  ) : (
+                                    <Play />
+                                  )}
+                                  {opens ? "Open" : "Start"}
+                                </Button>
                               </div>
-                            );
-                          })}
-                        </DiscoveryList>
-                      </section>
+                              <DeviceIssueRows issues={device.issues} />
+                            </div>
+                          );
+                        }}
+                      />
                     ))}
                   </div>
                 ) : null}
                 {hostReady &&
                 !isAndroidDiscoveryUncertain(state) &&
-                !state.devices.some((device) => device.platform === "android") &&
+                !ownDevices?.some((device) => device.platform === "android") &&
                 !unavailablePlatforms.some((platform) => platform.platform === "android") ? (
                   <p className="max-w-sm text-xs">
                     No Android virtual devices found. Create one in Android Studio's Device Manager,
@@ -449,7 +458,7 @@ export function DevicePanel(props: {
                   <div
                     className={cn(
                       "flex flex-wrap gap-2",
-                      grouped.length > 0 ? "self-start" : "self-center",
+                      listed.length > 0 ? "self-start" : "self-center",
                     )}
                   >
                     <Button
@@ -605,20 +614,56 @@ function DeviceDiscoveryWarning(props: {
   );
 }
 
-function groupDevices(state: DeviceServiceState) {
-  const groups: Array<{ kind: DeviceGroup; devices: DeviceSummary[] }> = [];
-  for (const kind of ["desktop", "physical", "ios", "android"] as const) {
-    const devices = state.devices
-      .filter(
-        (device) =>
-          (device.platform === "desktop"
-            ? "desktop"
-            : device.physical
-              ? "physical"
-              : device.platform) === kind,
-      )
-      .toSorted((a, b) => Number(b.booted) - Number(a.booted) || a.name.localeCompare(b.name));
-    if (devices.length > 0) groups.push({ kind, devices });
-  }
-  return groups;
+/**
+ * One source of devices. This environment's are grouped by kind; a linked environment's sit
+ * under its name with the link's state, and its devices show only while it answers.
+ */
+function DeviceSource(props: {
+  readonly source: DeviceSourceGroup;
+  readonly renderDevice: (device: DeviceSummary) => ReactNode;
+}) {
+  const { linked, groups } = props.source;
+  if (linked === null)
+    return groups.map((group) => (
+      <section key={group.kind} className="space-y-3">
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          {group.kind === "desktop" ? (
+            <Monitor className="size-4 shrink-0" />
+          ) : (
+            <Smartphone className="size-4 shrink-0" />
+          )}
+          <h3 className="font-medium">{DEVICE_KIND_LABELS[group.kind]}</h3>
+        </div>
+        <DiscoveryList>{group.devices.map(props.renderDevice)}</DiscoveryList>
+      </section>
+    ));
+  const devices = groups.flatMap((group) => group.devices);
+  return (
+    <section className="space-y-3" aria-label={`Devices on ${linked.label}`}>
+      <div className="flex min-w-0 items-center gap-2 text-sm text-muted-foreground">
+        <Link2 className="size-4 shrink-0" />
+        <h3 className="truncate font-medium">{linked.label}</h3>
+        <Badge
+          size="sm"
+          variant={
+            linked.state === "connected"
+              ? "success"
+              : linked.state === "needs_update"
+                ? "warning"
+                : "error"
+          }
+        >
+          {LINKED_DEVICE_STATE_LABELS[linked.state]}
+        </Badge>
+      </div>
+      {linked.detail ? (
+        <p className="whitespace-pre-line break-words text-xs">{linked.detail}</p>
+      ) : null}
+      {devices.length > 0 ? (
+        <DiscoveryList>{devices.map(props.renderDevice)}</DiscoveryList>
+      ) : linked.state === "connected" ? (
+        <p className="text-xs">No devices on {linked.label}.</p>
+      ) : null}
+    </section>
+  );
 }
