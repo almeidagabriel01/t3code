@@ -1,4 +1,9 @@
-import type { HeavyQueueEntry, HeavyQueueRule, HeavyQueueState } from "@t3tools/contracts";
+import type {
+  HeavyCommand,
+  HeavyQueueEntry,
+  HeavyQueueRule,
+  HeavyQueueState,
+} from "@t3tools/contracts";
 
 const trimRoot = (path: string) => path.replace(/[\\/]+$/, "");
 
@@ -83,6 +88,27 @@ const usualTime = (ms: number) => {
   return minutes < 60 ? `${minutes} min` : `${(minutes / 60).toFixed(1)} h`;
 };
 
+interface RunningUsage {
+  readonly cpu?: number | undefined;
+  readonly memory?: number | undefined;
+  readonly peakCpu?: number | undefined;
+  readonly peakMemory?: number | undefined;
+}
+
+/** "Using 1.5 cores (9%) · 2.1 GB · peak 3.0 cores · 2.4 GB"; null when nothing was sampled yet. */
+export function runningUsageLine(usage: RunningUsage, cpuCount: number | null): string | null {
+  const parts: string[] = [];
+  if (usage.cpu !== undefined && usage.memory !== undefined) {
+    const share =
+      cpuCount === null ? "" : ` (${Math.round((usage.cpu / Math.max(1, cpuCount)) * 100)}%)`;
+    parts.push(`Using ${cores(usage.cpu)}${share} · ${gb(usage.memory)}`);
+  }
+  if (usage.peakCpu !== undefined && usage.peakMemory !== undefined) {
+    parts.push(`peak ${cores(usage.peakCpu)} · ${gb(usage.peakMemory)}`);
+  }
+  return parts.length === 0 ? null : parts.join(" · ");
+}
+
 /** One muted line of usage: a running job's current and peak, or a waiter's usual cost. Null when unknown. */
 export function usageLine(
   entry: HeavyQueueEntry,
@@ -94,18 +120,31 @@ export function usageLine(
       ? null
       : `Usually ~${cores(usual.cpu)} · ${gb(usual.memoryBytes)} · ${usualTime(usual.durationMs)}`;
   }
-  const parts: string[] = [];
-  if (entry.cpu !== undefined && entry.memory !== undefined) {
-    const share =
-      state.machine === null
-        ? ""
-        : ` (${Math.round((entry.cpu / Math.max(1, state.machine.cpuCount)) * 100)}%)`;
-    parts.push(`Using ${cores(entry.cpu)}${share} · ${gb(entry.memory)}`);
-  }
-  if (entry.peakCpu !== undefined && entry.peakMemory !== undefined) {
-    parts.push(`peak ${cores(entry.peakCpu)} · ${gb(entry.peakMemory)}`);
-  }
-  return parts.length === 0 ? null : parts.join(" · ");
+  return runningUsageLine(entry, state.machine?.cpuCount ?? null);
+}
+
+export const HEAVY_COMMAND_SOURCE_LABEL: Record<HeavyCommand["source"], string> = {
+  queue: "Queued",
+  agent: "Agent",
+  terminal: "Terminal",
+};
+
+/** Stable across samples: the queue entry, else the root process's identity. */
+export const heavyCommandKey = (command: HeavyCommand) =>
+  command.entryId ?? `${command.pid}:${command.startTimeMs}`;
+
+/** Its folder's project when known (queue rows), else its thread's project. */
+export function projectForCommand<
+  P extends { readonly id: string; readonly workspaceRoot: string },
+>(
+  command: HeavyCommand,
+  projects: ReadonlyArray<P>,
+  projectIdOfThread: (threadId: string) => string | undefined,
+): P | undefined {
+  const byFolder = command.cwd === undefined ? undefined : projectForCwd(projects, command.cwd);
+  if (byFolder !== undefined) return byFolder;
+  const id = command.threadId === null ? undefined : projectIdOfThread(command.threadId);
+  return id === undefined ? undefined : projects.find((project) => project.id === id);
 }
 
 const QUEUE_OFF_SUMMARY = "Queue off: heavy jobs start right away";

@@ -1,4 +1,10 @@
-import type { EnvironmentId, HeavyQueueEntry, HeavyQueueState } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  HeavyCommand,
+  HeavyCommandsState,
+  HeavyQueueEntry,
+  HeavyQueueState,
+} from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
@@ -17,14 +23,19 @@ const mocks = vi.hoisted(() => ({
     canChange: true,
   },
   state: null as unknown as HeavyQueueState,
+  commands: { commands: [], cpuCount: 8 } as HeavyCommandsState,
+  stop: { canStop: true, stop: vi.fn() },
   openThread: vi.fn(),
 }));
 
-vi.mock("../../state/heavyQueue", () => ({ useHeavyQueue: () => mocks.state }));
+vi.mock("../../state/heavyQueue", () => ({
+  useHeavyQueue: () => mocks.state,
+  useHeavyCommands: () => mocks.commands,
+}));
 vi.mock("../../state/entities", () => ({
   useProjects: () => [
-    { environmentId: "env", workspaceRoot: "/work/app", title: "App Project" },
-    { environmentId: "env", workspaceRoot: "/work/app/pkg", title: "Package" },
+    { id: "p1", environmentId: "env", workspaceRoot: "/work/app", title: "App Project" },
+    { id: "p2", environmentId: "env", workspaceRoot: "/work/app/pkg", title: "Package" },
   ],
   useThreadShells: () => [],
 }));
@@ -41,9 +52,10 @@ vi.mock("./useKillTarget", () => ({
   useCloseTerminal: () => ({ canClose: false, close: vi.fn() }),
   useShutDownDevice: () => ({ canShutDown: false, shutDown: vi.fn() }),
   useHeavyQueueActions: () => mocks.actions,
+  useStopHeavyCommand: () => mocks.stop,
 }));
 
-import { HeavyQueueGroup, ResourceSegment } from "./ResourceSegment";
+import { HeavyCommandsGroup, HeavyQueueGroup, ResourceSegment } from "./ResourceSegment";
 
 const environmentId = "env" as EnvironmentId;
 const entry = (id: string, over: Partial<HeavyQueueEntry> = {}): HeavyQueueEntry => ({
@@ -274,5 +286,96 @@ describe("ResourceSegment", () => {
     await using screen = await render(<ResourceSegment />);
     await expect.element(screen.getByLabelText("1 in heavy work queue")).toBeVisible();
     await expect.element(screen.getByLabelText("Heavy work queue paused")).not.toBeInTheDocument();
+  });
+});
+
+const GIB = 1024 ** 3;
+const command = (over: Partial<HeavyCommand>): HeavyCommand => ({
+  source: "agent",
+  pid: 12,
+  startTimeMs: 1,
+  threadId: "t1",
+  label: "/usr/bin/node /work/app/node_modules/.bin/vp test run",
+  name: "Tests",
+  startedAt: "2026-01-01T00:00:00.000Z",
+  stoppable: true,
+  cpu: 2.5,
+  memory: GIB,
+  peakCpu: 3,
+  peakMemory: 2 * GIB,
+  ...over,
+});
+
+function setupCommands(commands: ReadonlyArray<HeavyCommand>, canStop = true) {
+  mocks.commands = { commands, cpuCount: 8 };
+  mocks.stop = { canStop, stop: vi.fn() };
+  mocks.openThread.mockReset();
+}
+
+const commandsGroup = () => (
+  <HeavyCommandsGroup
+    environmentId={environmentId}
+    threads={{
+      threadTitle: (id) => (id === "t1" ? "Fix build" : undefined),
+      projectIdOfThread: (id) => (id === "t1" ? "p2" : undefined),
+      onOpenThread: mocks.openThread,
+    }}
+  />
+);
+
+describe("HeavyCommandsGroup", () => {
+  it("renders nothing while no heavy command runs", async () => {
+    setupCommands([]);
+    await using screen = await render(commandsGroup());
+    expect(screen.container.textContent).toBe("");
+  });
+
+  it("lists queued and direct commands with their project, thread, usage and run time", async () => {
+    setupCommands([
+      command({
+        source: "queue",
+        entryId: "q1",
+        pid: 30,
+        threadId: null,
+        cwd: "/work/app/src",
+        name: "Build",
+        label: "pnpm build",
+      }),
+      command({}),
+      command({ source: "terminal", pid: 40, threadId: "t-gone", name: "cargo build" }),
+    ]);
+    await using screen = await render(commandsGroup());
+    await expect.element(screen.getByText("Heavy commands")).toBeVisible();
+    await expect.element(screen.getByText("(3)")).toBeVisible();
+    for (const text of ["Queued", "Agent", "Terminal", "App Project", "Package", "No project"]) {
+      await expect.element(screen.getByText(text, { exact: true })).toBeVisible();
+    }
+    await expect.element(screen.getByText("node vp test run")).toBeVisible();
+    await expect
+      .element(screen.getByText("Using 2.5 cores (31%) · 1.0 GB · peak 3.0 cores · 2.0 GB").first())
+      .toBeVisible();
+    expect(screen.getByText(/^Running · /).elements()).toHaveLength(3);
+    await userEvent.click(screen.getByRole("button", { name: "Fix build" }));
+    expect(mocks.openThread).toHaveBeenCalledWith("t1");
+    await userEvent.click(screen.getByRole("button", { name: "Open thread" }));
+    expect(mocks.openThread).toHaveBeenLastCalledWith("t-gone");
+  });
+
+  it("stops a command from its row, but never server-held work", async () => {
+    const server = command({ source: "queue", entryId: "s", name: "Checkpoint", stoppable: false });
+    const tests = command({});
+    setupCommands([server, tests]);
+    await using screen = await render(commandsGroup());
+    await expect.element(screen.getByRole("button", { name: "Stop Tests" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Stop Checkpoint" }).elements()).toHaveLength(0);
+    await userEvent.click(screen.getByRole("button", { name: "Stop Tests" }));
+    expect(mocks.stop.stop).toHaveBeenCalledWith(tests);
+  });
+
+  it("offers no Stop without permission", async () => {
+    setupCommands([command({})], false);
+    await using screen = await render(commandsGroup());
+    await expect.element(screen.getByText("Tests", { exact: true })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Stop Tests" }).elements()).toHaveLength(0);
   });
 });

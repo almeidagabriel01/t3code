@@ -15,6 +15,14 @@ export function createHeavyQueueEnvironmentAtoms<R, E>(
       label: "environment-data:heavy-queue:state",
       tag: WS_METHODS.heavyQueueSubscribe,
     }),
+    commands: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:heavy-queue:commands",
+      tag: WS_METHODS.heavyQueueSubscribeCommands,
+    }),
+    stopCommand: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:heavy-queue:stop-command",
+      tag: WS_METHODS.heavyQueueStopCommand,
+    }),
     promote: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:heavy-queue:promote",
       tag: WS_METHODS.heavyQueuePromote,

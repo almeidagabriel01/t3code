@@ -63,7 +63,7 @@ import { useHeavyQueueActions } from "./useKillTarget";
 const ELAPSED_REFRESH_MS = 5_000;
 const DRAG_MODIFIERS = [restrictToVerticalAxis, restrictToFirstScrollableAncestor];
 
-function Elapsed({ since, prefix }: { readonly since: string; readonly prefix: string }) {
+export function Elapsed({ since, prefix }: { readonly since: string; readonly prefix: string }) {
   const [now, setNow] = useState(() => Date.now());
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- coarse timer so the elapsed time does not repaint continuously
   useEffect(() => {

@@ -1,5 +1,5 @@
 import { RegistryProvider } from "@effect/atom-react";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, HeavyCommand } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
@@ -20,6 +20,7 @@ vi.mock("../../state/heavyQueue", async () => {
     heavyQueueEnvironment: {
       move: { permissionAtom: () => allowed, name: "move" },
       cancel: { permissionAtom: () => allowed, name: "cancel" },
+      stopCommand: { permissionAtom: () => allowed, name: "stopCommand" },
       setPaused: { permissionAtom: () => allowed, name: "setPaused" },
       setEnabled: { permissionAtom: () => allowed, name: "setEnabled" },
       setRule: { permissionAtom: () => allowed, name: "setRule" },
@@ -46,7 +47,7 @@ vi.mock("../ui/toast", () => ({
   toastManager: { add: mocks.toast },
 }));
 
-import { useHeavyQueueActions } from "./useKillTarget";
+import { useHeavyQueueActions, useStopHeavyCommand } from "./useKillTarget";
 
 const environmentId = "env" as EnvironmentId;
 
@@ -62,6 +63,32 @@ function Probe() {
       <button onClick={() => void actions.setEnabled(false)}>off</button>
       <button onClick={() => void actions.setRule("/p", "first")}>rule</button>
       <button onClick={() => void actions.setMaxRunning(2)}>max</button>
+      <StopProbe />
+    </>
+  );
+}
+
+const command = (over: Partial<HeavyCommand>): HeavyCommand => ({
+  source: "agent",
+  pid: 12,
+  startTimeMs: 34,
+  threadId: "t1",
+  label: "vp test",
+  name: "Tests",
+  startedAt: "2026-01-01T00:00:00.000Z",
+  stoppable: true,
+  ...over,
+});
+
+function StopProbe() {
+  const { canStop, stop } = useStopHeavyCommand(environmentId);
+  return (
+    <>
+      <span data-testid="can-stop">{String(canStop)}</span>
+      <button onClick={() => void stop(command({}))}>stop direct</button>
+      <button onClick={() => void stop(command({ source: "queue", entryId: "q1" }))}>
+        stop queued
+      </button>
     </>
   );
 }
@@ -100,6 +127,32 @@ describe("useHeavyQueueActions", () => {
       expect.stringContaining("Stop the running command"),
     ]);
     expect(mocks.toast).not.toHaveBeenCalled();
+  });
+
+  it("stops a direct command by its process identity and a queued one through the queue", async () => {
+    await using screen = await setup();
+    await expect.element(screen.getByTestId("can-stop")).toHaveTextContent("true");
+    await userEvent.click(screen.getByRole("button", { name: "stop direct" }));
+    await userEvent.click(screen.getByRole("button", { name: "stop queued" }));
+    expect(mocks.calls.mock.calls).toEqual([
+      ["stopCommand", { environmentId, input: { pid: 12, startTimeMs: 34 } }],
+      ["cancel", { environmentId, input: { id: "q1" } }],
+    ]);
+    expect(mocks.confirm.mock.calls.map(([message]) => message)).toEqual([
+      expect.stringContaining('Stop "Tests"?'),
+      expect.stringContaining('Stop "Tests"?'),
+    ]);
+  });
+
+  it.each([
+    { name: "declined, nothing is sent", confirm: false, failure: false, calls: 0, toasts: 0 },
+    { name: "a failed stop is reported", confirm: true, failure: true, calls: 1, toasts: 1 },
+  ])("stop: $name", async ({ confirm, failure, calls, toasts }) => {
+    await using screen = await setup({ confirm, failure });
+    await userEvent.click(screen.getByRole("button", { name: "stop direct" }));
+    await vi.waitFor(() => expect(mocks.confirm).toHaveBeenCalled());
+    await vi.waitFor(() => expect(mocks.calls).toHaveBeenCalledTimes(calls));
+    await vi.waitFor(() => expect(mocks.toast).toHaveBeenCalledTimes(toasts));
   });
 
   it("does not cancel when the confirmation is declined", async () => {

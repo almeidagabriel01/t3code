@@ -7,6 +7,7 @@ import {
   AuthTerminalOperateScope,
   type DeviceShutdownInput,
   type EnvironmentId,
+  type HeavyCommand,
   type ListeningPort,
   type TerminalCloseInput,
 } from "@t3tools/contracts";
@@ -132,4 +133,29 @@ export function useHeavyQueueActions(environmentId: EnvironmentId) {
         await maxCommand({ environmentId, input: { maxRunning } }),
       ),
   };
+}
+
+/** A queued command stops through the queue; a direct one by signalling its process tree. */
+export function useStopHeavyCommand(environmentId: EnvironmentId) {
+  const canStop = useAtomValue(heavyQueueEnvironment.stopCommand.permissionAtom(environmentId));
+  const stopCommand = useAtomCommand(heavyQueueEnvironment.stopCommand, { reportFailure: false });
+  const cancelCommand = useAtomCommand(heavyQueueEnvironment.cancel, { reportFailure: false });
+  const stop = async (command: HeavyCommand) => {
+    if (
+      !(await confirmKill(`Stop "${command.name}"? Its processes receive a termination signal.`))
+    ) {
+      return;
+    }
+    const result =
+      command.entryId === undefined
+        ? await stopCommand({
+            environmentId,
+            input: { pid: command.pid, startTimeMs: command.startTimeMs },
+          })
+        : await cancelCommand({ environmentId, input: { id: command.entryId } });
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      reportFailure("Could not stop it", squashAtomCommandFailure(result));
+    }
+  };
+  return { canStop, stop };
 }
