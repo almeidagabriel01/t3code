@@ -2,23 +2,37 @@ import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   formatDuration,
+  HEAVY_COMMAND_SOURCE_LABEL,
+  heavyCommandKey,
   moveTarget,
+  projectForCommand,
   PRIORITY_LABEL,
   projectForCwd,
   queueSummary,
   readableLabel,
   ruleForRoot,
+  runningUsageLine,
   usageLine,
   type MoveAction,
 } from "@t3tools/client-runtime/state/heavyQueueModel";
 import { heavyEntryName } from "@t3tools/shared/heavyEntryName";
-import { ThreadId, type EnvironmentId, type HeavyQueueEntry } from "@t3tools/contracts";
+import {
+  ThreadId,
+  type EnvironmentId,
+  type HeavyCommand,
+  type HeavyQueueEntry,
+} from "@t3tools/contracts";
 import { useEffect, useState } from "react";
 import { Alert } from "react-native";
 
+import type { AppSymbolName } from "../../../components/ui/AppSymbol";
 import { ListRowLayout } from "../../../components/ui/ListRowLayout";
 import { useProjects, useThreadShell } from "../../../state/entities";
-import { heavyQueueEnvironment, useHeavyQueueState } from "../../../state/heavyQueue";
+import {
+  heavyQueueEnvironment,
+  useHeavyCommandsState,
+  useHeavyQueueState,
+} from "../../../state/heavyQueue";
 import { useAtomCommand } from "../../../state/use-atom-command";
 import { useSelectWorkspaceDetail } from "../../layout/workspace/useSelectWorkspaceDetail";
 import { SettingsActionRow } from "./SettingsActionRow";
@@ -292,6 +306,120 @@ export function HeavyQueueSection(props: { readonly environmentId: EnvironmentId
           />
         );
       })}
+    </SettingsSection>
+  );
+}
+
+const COMMAND_ICON = {
+  queue: "list.number",
+  agent: "bubble.left",
+  terminal: "chevron.left.forwardslash.chevron.right",
+} as const satisfies Record<HeavyCommand["source"], AppSymbolName>;
+
+function HeavyCommandRows(props: {
+  readonly environmentId: EnvironmentId;
+  readonly command: HeavyCommand;
+  readonly cpuCount: number;
+  readonly canStop: boolean;
+  readonly now: number;
+  readonly onStop: (command: HeavyCommand) => void;
+}) {
+  const { command, environmentId } = props;
+  const { threadId } = command;
+  const thread = useThreadShell(
+    threadId === null ? null : scopeThreadRef(environmentId, ThreadId.make(threadId)),
+  );
+  const projects = useProjects().filter((p) => p.environmentId === environmentId);
+  const project = projectForCommand(command, projects, () => thread?.projectId);
+  const selectDetail = useSelectWorkspaceDetail();
+  const program = readableLabel(command.label);
+  const description = [
+    program === command.name ? undefined : program,
+    runningUsageLine(command, props.cpuCount),
+    project?.title,
+    thread?.title,
+    HEAVY_COMMAND_SOURCE_LABEL[command.source],
+    `Running ${formatDuration(command.startedAt, props.now)}`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  return (
+    <>
+      <ListRowLayout
+        icon={COMMAND_ICON[command.source]}
+        label={command.name}
+        description={description}
+      />
+      {threadId === null ? null : (
+        <SettingsActionRow
+          icon="bubble.left"
+          label="Open thread"
+          onPress={() =>
+            selectDetail({
+              name: "Thread",
+              params: { environmentId: String(environmentId), threadId },
+            })
+          }
+        />
+      )}
+      {command.stoppable ? (
+        <SettingsActionRow
+          icon="stop.fill"
+          label="Stop"
+          tone="danger"
+          disabled={!props.canStop}
+          onPress={() => props.onStop(command)}
+        />
+      ) : null}
+    </>
+  );
+}
+
+/** Every heavy command running now, queued or run directly; nothing while none runs. */
+export function HeavyCommandsSection(props: { readonly environmentId: EnvironmentId }) {
+  const { environmentId } = props;
+  const { commands, cpuCount } = useHeavyCommandsState(environmentId);
+  const canStop = useAtomValue(heavyQueueEnvironment.stopCommand.permissionAtom(environmentId));
+  const stopCommand = useAtomCommand(heavyQueueEnvironment.stopCommand);
+  const cancel = useAtomCommand(heavyQueueEnvironment.cancel);
+  const [now, setNow] = useState(() => Date.now());
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- coarse timer for the elapsed times
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 15_000);
+    return () => clearInterval(timer);
+  }, []);
+  if (commands.length === 0) return null;
+  const stop = (command: HeavyCommand) =>
+    Alert.alert("Stop this command?", `${command.name} receives a termination signal.`, [
+      { text: "Keep", style: "cancel" },
+      {
+        text: "Stop",
+        style: "destructive",
+        onPress: () =>
+          void (command.entryId === undefined
+            ? stopCommand({
+                environmentId,
+                input: { pid: command.pid, startTimeMs: command.startTimeMs },
+              })
+            : cancel({ environmentId, input: { id: command.entryId } })),
+      },
+    ]);
+  return (
+    <SettingsSection
+      title="Heavy commands"
+      footer="Commands running now that use at least half a core or 1 GB, queued or started directly by agents and terminals."
+    >
+      {commands.map((command) => (
+        <HeavyCommandRows
+          key={heavyCommandKey(command)}
+          environmentId={environmentId}
+          command={command}
+          cpuCount={cpuCount}
+          canStop={canStop}
+          now={now}
+          onStop={stop}
+        />
+      ))}
     </SettingsSection>
   );
 }
