@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import type * as Schema from "effect/Schema";
 
 import * as ComputerUse from "../../../computerUse/ComputerUse.ts";
-import { pngDimensions } from "../device/handlers.ts";
+import { delegationAncestors, pngDimensions } from "../device/handlers.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { loadCaller } from "../../threadAccess.ts";
 import {
@@ -58,6 +58,7 @@ const run = Effect.fn("mcp.computer.run")(
       threadId: context.scope.thread!.threadId,
       projectId: context.caller!.projectId,
       threadTitle: context.caller!.title,
+      ancestors: yield* delegationAncestors(context.caller!, context.threads.getThreadShell),
     };
     const clientRequestId = input.clientRequestId;
     if (input.action === "snapshot") {

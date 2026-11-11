@@ -7,6 +7,7 @@ import {
   type DeviceSummary,
   DeviceToolUnavailableError,
   HeavyQueueError,
+  isDesktopDevice,
   type OrchestratorMcpFailure,
   type OrchestrationV2ThreadShell,
   type ThreadId,
@@ -176,6 +177,7 @@ const pickDevice = Effect.fn("handlers.pickDevice")(function* (
   const candidates = state.devices.filter(
     (device) =>
       device.hostId === hostId &&
+      !isDesktopDevice(device) &&
       (input.platform === undefined || device.platform === input.platform),
   );
   if (candidates.length === 0) {
@@ -287,11 +289,16 @@ const handlers = {
           Object.entries(state.hostStatuses).filter(([id]) => !hostId || id === hostId),
         ),
         hosts: hostId ? state.hosts.filter((host) => host.id === hostId) : state.hosts,
-        devices: hostId
-          ? state.devices.filter((device) => device.hostId === hostId)
-          : state.devices,
+        // This computer is reached through computer tools, never device tools.
+        devices: state.devices.filter(
+          (device) => (!hostId || device.hostId === hostId) && !isDesktopDevice(device),
+        ),
         open,
-        heldByUser: (state.holds ?? []).filter((hold) => !hostId || hold.hostId === hostId),
+        heldByUser: (state.holds ?? []).filter(
+          (hold) =>
+            (!hostId || hold.hostId === hostId) &&
+            !isDesktopDevice({ hostId: hold.hostId, id: hold.deviceId }),
+        ),
       };
     }).pipe(Effect.mapError(toolError)),
   ),

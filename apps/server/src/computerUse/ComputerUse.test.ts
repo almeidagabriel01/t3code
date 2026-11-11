@@ -2,7 +2,14 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as CryptoLayer from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import { type ComputerUseError, ProjectId, ThreadId } from "@t3tools/contracts";
+import {
+  type ComputerUseError,
+  DeviceHeldError,
+  DeviceId,
+  LOCAL_DEVICE_HOST_ID,
+  ProjectId,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -14,6 +21,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "../config.ts";
 import * as DecisionService from "../decisions/DecisionService.ts";
+import * as DeviceService from "../device/DeviceService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProcessRunner from "../processRunner.ts";
@@ -73,8 +81,11 @@ const harness = (options: {
   readonly desktop?: (args: ReadonlyArray<string>) => string;
   /** Whether the managed `npm install` of agent-desktop works. */
   readonly installFails?: boolean;
+  /** The user holds this computer, as the device panel's Take over does. */
+  readonly held?: { current: boolean };
 }) => {
   const calls: Call[] = [];
+  const gated: Array<Parameters<DeviceService.DeviceService["Service"]["authorizeAgent"]>[0]> = [];
   /** The mock runner is the only way anything could touch the Mac. */
   const scripted = (marker: string) => calls.filter((call) => call.args[3]?.includes(marker));
   const desktopCalls = () => calls.filter((call) => isDesktop(call.command));
@@ -149,6 +160,21 @@ const harness = (options: {
       Layer.mergeAll(
         runner,
         decisions,
+        Layer.mock(DeviceService.DeviceService)({
+          authorizeAgent: (input) =>
+            Effect.suspend(() => {
+              gated.push(input);
+              return options.held?.current
+                ? Effect.fail(
+                    new DeviceHeldError({
+                      hostId: input.hostId,
+                      deviceId: input.deviceId,
+                      since: "2026-11-11T10:00:00.000Z",
+                    }),
+                  )
+                : Effect.void;
+            }),
+        }),
         ServerConfig.layerTest("/tmp", { prefix: "t3-computer-" }).pipe(
           Layer.provide(NodeServices.layer),
         ),
@@ -157,7 +183,7 @@ const harness = (options: {
     ),
     Layer.provide(Layer.succeed(HostProcess.Platform, options.platform ?? "darwin")),
   );
-  return { calls, scripted, desktopCalls, layer };
+  return { calls, scripted, desktopCalls, gated, layer };
 };
 
 /** Resolves once an open decision exists; the stream ends the moment it does, so nothing sleeps. */
@@ -412,6 +438,45 @@ describe("ComputerUse", () => {
       assert.equal(again.reason, "already_executed");
       assert.equal(scripted("CGEventPost").length, 1);
       assert.equal((yield* decisions.list({})).length, 1);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("a held computer refuses input and snapshots but still takes screenshots", () => {
+    const held = { current: true };
+    const { scripted, gated, layer } = harness({ held });
+    return Effect.gen(function* () {
+      const computer = yield* ComputerUse.ComputerUse;
+      const decisions = yield* DecisionService.DecisionService;
+      const click = { target: "the Save button", x: 10, y: 20 };
+      const refused = yield* Effect.flip(computer.click(caller, click));
+      assert.equal(refused.reason, "desktop_refused");
+      assert.include(refused.message, "computer_screenshot still works");
+      assert.equal((yield* Effect.flip(computer.snapshot(caller, {}))).reason, "desktop_refused");
+      // Nobody was asked to approve an action the hold refuses.
+      assert.equal((yield* decisions.list({})).length, 0);
+      yield* computer.screenshot;
+      const { agent, ...gate } = gated[0]!;
+      assert.deepEqual(gate, {
+        threadId: caller.threadId,
+        hostId: LOCAL_DEVICE_HOST_ID,
+        deviceId: DeviceId.make("desktop"),
+        intent: "open",
+      });
+      assert.equal(agent?.threadTitle, caller.threadTitle);
+      assert.isFunction(agent?.ask);
+      assert.equal(gated.length, 2);
+
+      // Taken over while the approval waits: nothing acts, and the approval stays usable.
+      held.current = false;
+      const pending = yield* Effect.forkChild(Effect.flip(computer.click(caller, click)));
+      const decision = yield* openDecision;
+      held.current = true;
+      yield* decisions.answer({ decisionId: decision.id, optionId: "accept" });
+      assert.equal((yield* Fiber.join(pending)).reason, "desktop_refused");
+      assert.equal(scripted("CGEventPost").length, 0);
+      held.current = false;
+      yield* computer.click(caller, click);
+      assert.equal(scripted("CGEventPost").length, 1);
     }).pipe(Effect.provide(layer));
   });
 

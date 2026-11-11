@@ -76,6 +76,8 @@ export interface DeviceWorld {
   readonly deviceHeld?: ReadonlyArray<string> | undefined;
   /** The user's stored agent access policy, by device id. */
   readonly deviceAccess?: Readonly<Record<string, "allow" | "ask" | "deny">> | undefined;
+  /** Settings → Devices → iPhone signing. Unset: no team id, so a USB iPhone on this Mac cannot be driven. */
+  readonly appleTeamId?: string | undefined;
 }
 
 /** A shell, file or web call and the output the agent saw. */
@@ -816,6 +818,7 @@ export const makeDeviceTools = Effect.fn("evaluateMcpToolUse.makeDeviceTools")(f
           Layer.mock(DecisionService.DecisionService)({}),
           ServerSettingsService.layerTest({
             enableDeviceSupport: true,
+            appleTeamId: world.appleTeamId ?? "",
             enableAgentDeviceAccess: world.deviceAgentAccess !== false,
             deviceOnboardingCompleted: true,
             // Keyed as T3 stores it; refs before access policy ignore the setting. A physical

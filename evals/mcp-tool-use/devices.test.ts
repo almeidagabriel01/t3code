@@ -682,6 +682,34 @@ it.effect("refuses a device the user holds or denied, with T3's own errors", () 
   }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
+it.effect("refuses a USB iPhone the user must fix first, with T3's own words", () =>
+  Effect.gen(function* () {
+    const phone = {
+      hostId: "local",
+      id: "00008030-001C195A0C8A802E",
+      name: "Ana's iPhone",
+      platform: "ios",
+      version: "iOS 26.1",
+      booted: true,
+      physical: true,
+      connection: "usb",
+    };
+    const unsigned = yield* deviceTools({ devices: [phone] });
+    const signing = yield* unsigned.call("device_open", { hostId: "local", deviceId: phone.id });
+    assert.isTrue(signing.isError);
+    assert.include(signing.text, "Ana's iPhone is not ready: iPhone signing is not set up");
+    assert.include(signing.text, "Only the user can fix this");
+
+    const locked = yield* deviceTools({
+      devices: [{ ...phone, issues: [{ reason: "locked" }] }],
+      appleTeamId: "ABCDE12345",
+    });
+    const unlock = yield* locked.call("device_open", { hostId: "local", deviceId: phone.id });
+    assert.isTrue(unlock.isError);
+    assert.include(unlock.text, "Ana's iPhone is not ready: Locked");
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
 it.effect("reports an unreadable capture as T3 does: a successful 0×0 screenshot", () =>
   Effect.gen(function* () {
     const tools = yield* deviceTools({ deviceInvalidCapture: true });

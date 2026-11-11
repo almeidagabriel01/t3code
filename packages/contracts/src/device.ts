@@ -223,7 +223,7 @@ export const DEVICE_ISSUES: Record<
   locked: {
     title: "Locked",
     action: "Unlock it and keep it unlocked, then open it again.",
-    blocks: ["view"],
+    blocks: ["view", "control"],
   },
   developer_mode_off: {
     title: "Developer Mode is off",
@@ -1105,7 +1105,7 @@ export const DeviceToolOpenInput = Schema.Struct({
     }),
   ),
   platform: Schema.optional(
-    DevicePlatform.annotate({
+    MobileDevicePlatform.annotate({
       description: "Needed with no `deviceId` when both platforms exist.",
     }),
   ),

@@ -3,6 +3,8 @@ import {
   type ComputerUseHostReport,
   type ComputerUseOpenSettingsInput,
   type DecisionId,
+  DESKTOP_DEVICE_ID,
+  LOCAL_DEVICE_HOST_ID,
   type MacPermissionStatus,
   type MacPermissions,
   type ProjectId,
@@ -21,6 +23,8 @@ import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../config.ts";
 import * as DecisionService from "../decisions/DecisionService.ts";
+import { askDeviceAccess } from "../device/DeviceAccessApproval.ts";
+import * as DeviceService from "../device/DeviceService.ts";
 import { ensureAgentDesktop } from "../device/DeviceToolchain.ts";
 import * as ProcessRunner from "../processRunner.ts";
 
@@ -318,6 +322,8 @@ export interface ComputerUseCaller {
   readonly threadId: ThreadId;
   readonly projectId: ProjectId;
   readonly threadTitle: string;
+  /** The threads that delegated to this one, nearest first; they share the desktop's access answer. */
+  readonly ancestors?: ReadonlyArray<ThreadId> | undefined;
 }
 
 /** `clientRequestId` makes a repeat land on the same decision; omitted, it derives from the arguments. */
@@ -475,6 +481,7 @@ const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const crypto = yield* Digest.Digest;
   const decisions = yield* DecisionService.DecisionService;
+  const devices = yield* DeviceService.DeviceService;
   const host = detectHost(platform, yield* HostProcess.Environment);
   const architecture = yield* HostProcess.Architecture;
   const machine = host === "mac" ? "your Mac" : "this computer";
@@ -755,6 +762,32 @@ const make = Effect.gen(function* () {
     return Option.flatten(settled).pipe(Option.getOrUndefined);
   }, Effect.mapError(failed));
 
+  /**
+   * This computer is also a device: its access policy and the user's hold decide here, with the
+   * same gate as device tools. Screenshots and permission reads never pass through it.
+   */
+  const desktopGate = (caller: ComputerUseCaller) =>
+    devices
+      .authorizeAgent({
+        threadId: caller.threadId,
+        hostId: LOCAL_DEVICE_HOST_ID,
+        deviceId: DESKTOP_DEVICE_ID,
+        intent: "open",
+        agent: {
+          threadTitle: caller.threadTitle,
+          ancestors: caller.ancestors,
+          ask: askDeviceAccess(decisions, {
+            projectId: caller.projectId,
+            threadTitle: caller.threadTitle,
+          }),
+        },
+      })
+      .pipe(
+        Effect.mapError(
+          (error) => new ComputerUseError({ reason: "desktop_refused", detail: error.message }),
+        ),
+      );
+
   /** Asks, waits, and runs `act` only for a decision answered "Approve" that has not run yet. */
   const approved = Effect.fn("ComputerUse.approved")(function* <A>(
     caller: ComputerUseCaller,
@@ -765,6 +798,7 @@ const make = Effect.gen(function* () {
     },
     act: Effect.Effect<A, ComputerUseError>,
   ) {
+    yield* desktopGate(caller);
     const decision = yield* decisions
       .request({
         fromThreadId: caller.threadId,
@@ -801,7 +835,9 @@ const make = Effect.gen(function* () {
     }
     // A failed action releases the approval so the same decision can be retried, unless it may
     // have already acted.
-    return yield* act.pipe(
+    // Checked again: the user can take the computer over while the approval waits.
+    return yield* desktopGate(caller).pipe(
+      Effect.andThen(act),
       Effect.tapError((error) =>
         error.cause === NOT_RETRYABLE
           ? Effect.void
@@ -882,6 +918,7 @@ const make = Effect.gen(function* () {
         return yield* fail("invalid", "app must be an application name such as Safari.");
       }
       const root = input.root === undefined ? undefined : yield* checkRef(input.root);
+      yield* desktopGate(caller);
       if ((yield* permissions({ automation: false })).accessibility === "denied") {
         return yield* fail("accessibility_missing");
       }

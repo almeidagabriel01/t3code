@@ -155,7 +155,7 @@ describe("device issues", () => {
   it.each([
     ["not_paired", true, true],
     ["not_trusted", true, true],
-    ["locked", true, false],
+    ["locked", true, true],
     ["developer_mode_off", false, true],
     ["xcode_missing", false, true],
     ["signing_missing", false, true],
