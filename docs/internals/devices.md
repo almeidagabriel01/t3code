@@ -223,7 +223,7 @@ requests stream on their own. For the same reason an **Ask first** request waits
 relayed only for devices the link has a session on, every request must name its
 device, and a stream ends when that session does, including when the owner
 blocks the link. Removing a link closes its sessions on the owner as a best
-effort; one that cannot be reached keeps them until it next lists.
+effort; an owner that cannot be reached then keeps them open until its user closes them or blocks the link.
 
 ## Wi-Fi pairing is adb's QR flow, driven by the server
 
