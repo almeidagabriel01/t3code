@@ -65,6 +65,25 @@ panel offers only input there.
 Leases are renewed while tracked and released at the host's age limit; one a
 crashed server left behind ends on its own one TTL later, so there is no ledger.
 
+## Physical iPhones and the Mac's displays stream through a native helper
+
+Neither has a hub. [`t3-device-capture`](../../native/device-capture) is a Swift
+helper that captures one source, encodes H.264 with VideoToolbox, and serves
+serve-sim's AVCC envelopes on loopback, so the proxy and the viewer treat it as
+one more serve-sim upstream ([`MacVideoCapture`](../../apps/server/src/device/MacVideoCapture.ts)).
+It is video only: there is no input socket, so the helper serves the frame size
+at `/config` instead of in the input socket's screen message.
+
+A USB iPhone is an AVFoundation capture device only in a process that sets
+`kCMIOHardwarePropertyAllowScreenCaptureDevices`, which is why ffmpeg cannot
+see it and why this is not a Node addon: the property and the capture session
+must live in the process that holds the Camera permission. Displays use
+ScreenCaptureKit and the Screen Recording permission.
+
+A still screen produces no frames, so the helper encodes the last frame again
+once a second, and again as a keyframe for each new viewer; the viewer treats a
+silent stream as stalled.
+
 ## The hub is never exposed
 
 serve-sim has a shell-exec route whose token is readable from its own

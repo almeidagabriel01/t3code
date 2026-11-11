@@ -395,6 +395,7 @@ const MAC_DESKTOP_BUILD_PREREQUISITES = [
   { id: "sips", description: "macOS image tool (sips)" },
   { id: "iconutil", description: "macOS icon tool (iconutil)" },
   { id: "lipo", description: "Xcode universal-binary tool (lipo)" },
+  { id: "swift", description: "Xcode Swift toolchain (swift)" },
 ] as const;
 
 export class MacDesktopBuildPrerequisitesMissingError extends Schema.TaggedError<MacDesktopBuildPrerequisitesMissingError>()(
@@ -995,6 +996,8 @@ export const DESKTOP_FILE_EXCLUSIONS = [
   "!apps/desktop/resources/browser-secret",
   "!apps/desktop/resources/browser-secret/**/*",
   "!apps/desktop/prod-resources/browser-secret",
+  "!apps/desktop/prod-resources/device-capture",
+  "!apps/desktop/prod-resources/device-capture/**/*",
   "!apps/desktop/prod-resources/browser-secret/**/*",
   "!apps/desktop/prod-resources/windows-server",
   "!apps/desktop/prod-resources/windows-server/**/*",
@@ -1104,6 +1107,11 @@ export const DESKTOP_EXTRA_RESOURCES = [
 export const MANUAL_UPDATE_EXTRA_RESOURCE = {
   from: "apps/desktop/prod-resources/manual-update",
   to: "manual-update",
+} as const;
+/** The Swift helper that streams a USB iPhone's screen and the Mac's displays to the Device panel. */
+export const MAC_DEVICE_CAPTURE_EXTRA_RESOURCE = {
+  from: "apps/desktop/prod-resources/device-capture",
+  to: "device-capture",
 } as const;
 export const LINUX_CAPTURE_EXTRA_RESOURCES = [
   {
@@ -2001,6 +2009,7 @@ export const preflightMacDesktopBuild = Effect.fn("preflightMacDesktopBuild")(fu
         arch === "universal"
           ? desktopBuildProbeSucceeds(ChildProcess.make("lipo", ["-version"]), "lipo")
           : Effect.succeed(true),
+      swift: desktopBuildProbeSucceeds(ChildProcess.make("swift", ["--version"]), "swift"),
     },
     { concurrency: "unbounded" },
   );
@@ -2443,6 +2452,40 @@ export const stageResourceMonitor = Effect.fn("stageResourceMonitor")(function* 
   }
 });
 
+export const stageDeviceCapture = Effect.fn("stageDeviceCapture")(function* (input: {
+  readonly repoRoot: string;
+  readonly stageResourcesDir: string;
+  readonly arch: typeof BuildArch.Type;
+  readonly verbose: boolean;
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  // Two --arch flags make SwiftPM link one universal binary.
+  const architectures =
+    input.arch === "universal" ? ["arm64", "x86_64"] : [input.arch === "x64" ? "x86_64" : "arm64"];
+  const args = [
+    "build",
+    "--configuration",
+    "release",
+    "--package-path",
+    path.join(input.repoRoot, "native/device-capture"),
+    ...architectures.flatMap((architecture) => ["--arch", architecture]),
+  ];
+  yield* runCommand(ChildProcess.make("swift", args, { cwd: input.repoRoot }), {
+    label: `swift build device capture helper (${architectures.join(", ")})`,
+    verbose: input.verbose,
+  });
+  const binDirectory = (yield* spawnAndCollectOutput(
+    ChildProcess.make("swift", [...args, "--show-bin-path"], { cwd: input.repoRoot }),
+  )).stdout.trim();
+  const destinationDirectory = path.join(input.stageResourcesDir, "device-capture");
+  yield* fs.remove(destinationDirectory, { recursive: true, force: true }).pipe(Effect.ignore);
+  yield* fs.makeDirectory(destinationDirectory, { recursive: true });
+  const destinationPath = path.join(destinationDirectory, "t3-device-capture");
+  yield* fs.copyFile(path.join(binDirectory, "t3-device-capture"), destinationPath);
+  yield* fs.chmod(destinationPath, 0o755);
+});
+
 export const stageBrowserSecret = Effect.fn("stageBrowserSecret")(function* (input: {
   readonly repoRoot: string;
   readonly stageResourcesDir: string;
@@ -2815,6 +2858,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       : { asarUnpack: ["**/node_modules/@transcribe-cpp/**/*.{dylib,so,so.*}"] }),
     extraResources: [
       ...DESKTOP_EXTRA_RESOURCES,
+      ...(platform === "mac" ? [MAC_DEVICE_CAPTURE_EXTRA_RESOURCE] : []),
       ...(platform === "linux" ? LINUX_CAPTURE_EXTRA_RESOURCES : []),
       ...(platform === "linux" ? LINUX_BROWSER_SECRET_EXTRA_RESOURCES : []),
       ...(platform === "win" ? WINDOWS_SERVER_EXTRA_RESOURCES : []),
@@ -3801,6 +3845,14 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
     arch: options.arch,
     verbose: options.verbose,
   });
+  if (options.platform === "mac") {
+    yield* stageDeviceCapture({
+      repoRoot,
+      stageResourcesDir,
+      arch: options.arch,
+      verbose: options.verbose,
+    });
+  }
   if (options.platform === "linux") {
     for (const backend of ["kde", "hyprland"] as const)
       yield* stageLinuxCaptureHelper({

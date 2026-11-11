@@ -591,6 +591,12 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           ),
           manual,
         );
+        assert.strictEqual(
+          (config.extraResources as ReadonlyArray<{ to: string }>).some(
+            (resource) => resource.to === "device-capture",
+          ),
+          platform === "mac",
+        );
         if (platform === "mac") {
           const mac = config.mac as { identity?: string; sign?: string };
           // An unsigned mac build is signed ad hoc as a whole, never left with a broken signature.
