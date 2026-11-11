@@ -144,6 +144,7 @@ vi.mock("./components/WorktreeSnapshotsSection", () => ({
   ),
 }));
 vi.mock("./components/HeavyQueueSection", () => ({
+  HeavyCommandsSection: () => null,
   HeavyQueueSection: (props: { environmentId: string }) => (
     <i aria-label="heavy queue" data-env={props.environmentId} />
   ),

@@ -345,12 +345,14 @@ describe("HeavyCommandsGroup", () => {
       command({ source: "terminal", pid: 40, threadId: "t-gone", name: "cargo build" }),
     ]);
     await using screen = await render(commandsGroup());
-    await expect.element(screen.getByText("Heavy commands")).toBeVisible();
-    await expect.element(screen.getByText("(3)")).toBeVisible();
+    await expect.element(screen.getByRole("button", { name: "Heavy commands (3)" })).toBeVisible();
+    // The favicon mock repeats each project title, so those match twice.
     for (const text of ["Queued", "Agent", "Terminal", "App Project", "Package", "No project"]) {
-      await expect.element(screen.getByText(text, { exact: true })).toBeVisible();
+      await expect.element(screen.getByText(text, { exact: true }).first()).toBeVisible();
     }
-    await expect.element(screen.getByText("node vp test run")).toBeVisible();
+    await expect
+      .element(screen.getByText("node /work/app/node_modules/.bin/vp test run").first())
+      .toBeVisible();
     await expect
       .element(screen.getByText("Using 2.5 cores (31%) · 1.0 GB · peak 3.0 cores · 2.0 GB").first())
       .toBeVisible();
