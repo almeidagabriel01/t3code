@@ -98,8 +98,9 @@ over** and **Hand back** are in the device viewer's options menu.
 
 ### Choose which devices agents may use
 
-**Settings → Devices → Device access** lists every known device with one choice
-each.
+**Settings → Devices → Device access** lists every device attached to this
+environment's machines with one choice each. A linked environment's devices
+follow the choices made on that environment.
 
 - **Allow**: agents open and drive it. The default for simulators and emulators.
 - **Ask first**: each thread asks you once before it uses the device. The
@@ -142,6 +143,28 @@ The device stream goes through the environment server, so it works over the
 local network, Tailscale, and T3 Connect. Live video needs a secure page
 (HTTPS or localhost); on a plain-HTTP remote origin iOS falls back to a slower
 still-image stream and Android cannot show video, except on EAS Simulator.
+
+## Devices on a linked environment
+
+When this environment is linked to another one with more than read-only access
+(**Settings → Connections**), the devices plugged into that machine appear in the
+Device panel under its name, with the link's state: **Connected**, **Link down**,
+or why that environment refuses, such as **Devices off there**. You can watch,
+take over and hand back those devices, and your agents can open and drive them
+with the same `device_*` tools, without SSH. Nothing about links shows while
+there are none.
+
+The other environment stays in charge of its devices. Its access choices apply,
+a device set to **Ask first** asks its user, and its user can take over a device
+your agent is using. Its Device panel shows which environment and thread is
+using each device. To let a linked environment's agent in, choose **Allow** on
+its request in the Device panel or in **Settings → Devices**. To shut a linked
+environment out of every device, choose **Block** under **Linked environments
+using devices here**; this ends what it has open.
+
+To stop listing a linked environment's devices here and offering them to your
+agents, turn it off under **Devices from linked environments** in **Settings →
+Devices**. The mobile app has the same controls in **Settings → Devices**.
 
 ## SSH device hosts
 
