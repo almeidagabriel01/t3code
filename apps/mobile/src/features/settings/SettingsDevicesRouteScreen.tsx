@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { groupDevicesBySource, linkedDeviceSources } from "@t3tools/client-runtime/state/device";
 import {
   DEVICE_ACCESS_POLICY_LABELS,
   DEVICE_CONNECTION_LABELS,
@@ -6,6 +7,7 @@ import {
   findDeviceHold,
   storedDeviceAccessPolicy,
   type DeviceAccessPolicy,
+  type DeviceServiceState,
   type EnvironmentId,
 } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
@@ -23,7 +25,9 @@ import {
   deviceHostProbeAtom,
   useDeviceEnvironmentIds,
 } from "../../state/device";
+import { useLinkedEnvironments } from "../../state/peerLinks";
 import { useEnvironmentQuery } from "../../state/query";
+import { environmentServerConfigsAtom, serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { SettingsActionRow } from "./components/SettingsActionRow";
@@ -59,9 +63,17 @@ function DeviceEnvironment(props: {
     );
   }
   const pairing = (
-    <WifiPairingSection environmentId={environmentId} state={state} suffix={suffix} />
+    <>
+      <WifiPairingSection environmentId={environmentId} state={state} suffix={suffix} />
+      {state.supportsLinkedDevices === true ? (
+        <LinkedDeviceSections environmentId={environmentId} state={state} suffix={suffix} />
+      ) : null}
+    </>
   );
-  if (state.supportsDeviceControl !== true || state.devices.length === 0) {
+  // A linked environment's devices follow its own access settings, set there.
+  const own = groupDevicesBySource(state).find((source) => source.linked === null);
+  const ownDevices = own?.groups.flatMap((group) => group.devices) ?? [];
+  if (state.supportsDeviceControl !== true || ownDevices.length === 0) {
     return (
       <View className="gap-5">
         <ListSection title={`Device access${suffix}`}>
@@ -80,7 +92,7 @@ function DeviceEnvironment(props: {
       </View>
     );
   }
-  const devices = [...state.devices].sort(
+  const devices = [...ownDevices].sort(
     (a, b) => Number(b.physical) - Number(a.physical) || a.name.localeCompare(b.name),
   );
   return (
@@ -149,6 +161,121 @@ function DeviceEnvironment(props: {
       })}
       {pairing}
     </View>
+  );
+}
+
+/** Link requests and users of this environment's devices, and the linked environments' devices. */
+function LinkedDeviceSections(props: {
+  readonly environmentId: EnvironmentId;
+  readonly state: DeviceServiceState;
+  readonly suffix: string;
+}) {
+  const { environmentId, state, suffix } = props;
+  const canAnswer = useAtomValue(deviceEnvironment.answerLinkRequest.permissionAtom(environmentId));
+  const canBlock = useAtomValue(deviceEnvironment.setLinkBlocked.permissionAtom(environmentId));
+  const canHide = useAtomValue(serverEnvironment.updateSettings.permissionAtom(environmentId));
+  const answer = useAtomCommand(deviceEnvironment.answerLinkRequest);
+  const setBlocked = useAtomCommand(deviceEnvironment.setLinkBlocked);
+  const update = useAtomCommand(serverEnvironment.updateSettings);
+  const hidden =
+    useAtomValue(environmentServerConfigsAtom).get(environmentId)?.settings
+      .hiddenLinkedDeviceSources ?? [];
+  const links = useLinkedEnvironments(environmentId);
+  const sources = linkedDeviceSources({ links, hidden, state });
+  const requests = state.linkRequests ?? [];
+  const clients = state.linkClients ?? [];
+  return (
+    <>
+      {requests.length > 0 ? (
+        <ListSection title={`Device requests${suffix}`}>
+          {requests.map((request) => (
+            <View key={request.requestId}>
+              <ListRowLayout
+                icon="link"
+                label={`${request.linkLabel} wants ${request.deviceName}`}
+                description={request.threadTitle ? `For “${request.threadTitle}”` : undefined}
+              />
+              {([true, false] as const).map((allow) => (
+                <SettingsActionRow
+                  key={String(allow)}
+                  icon={allow ? "checkmark.circle" : "xmark.circle.fill"}
+                  label={`${allow ? "Allow" : "Don't allow"} ${request.linkLabel} to use ${request.deviceName}`}
+                  disabled={!canAnswer}
+                  onPress={() =>
+                    void answer({ environmentId, input: { requestId: request.requestId, allow } })
+                  }
+                />
+              ))}
+            </View>
+          ))}
+        </ListSection>
+      ) : null}
+      {clients.length > 0 ? (
+        <ListSection
+          title={`Linked environments using devices here${suffix}`}
+          footer="A blocked environment cannot list, watch or drive any device here."
+        >
+          {clients.map((client) => (
+            <SettingsActionRow
+              key={client.linkId}
+              icon={client.blocked ? "person.fill.checkmark" : "person.fill.xmark"}
+              label={client.blocked ? `Let ${client.label} back in` : `Block ${client.label}`}
+              disabled={!canBlock}
+              onPress={() =>
+                void setBlocked({
+                  environmentId,
+                  input: { linkId: client.linkId, label: client.label, blocked: !client.blocked },
+                })
+              }
+            />
+          ))}
+        </ListSection>
+      ) : null}
+      {sources.map((source) => {
+        const devices = source.hidden
+          ? []
+          : (groupDevicesBySource(state)
+              .find((group) => group.linked?.environmentId === source.environmentId)
+              ?.groups.flatMap((group) => group.devices) ?? []);
+        return (
+          <ListSection
+            key={source.environmentId}
+            title={`Devices on ${source.label}${suffix}`}
+            footer={
+              source.hidden
+                ? "Hidden: its devices are not listed here or offered to agents."
+                : (source.status ?? "Listed when it next answers.")
+            }
+          >
+            {devices.map((device) => (
+              <ListRowLayout
+                key={device.id}
+                icon="iphone"
+                label={`${device.name}${device.physical ? " · Physical" : ""}`}
+                description={device.version}
+              />
+            ))}
+            <SettingsActionRow
+              icon={source.hidden ? "eye" : "eye.slash"}
+              label={`${source.hidden ? "Show" : "Hide"} devices from ${source.label}`}
+              disabled={!canHide}
+              onPress={() =>
+                void update({
+                  environmentId,
+                  input: {
+                    patch: {
+                      hiddenLinkedDeviceSources: source.hidden
+                        ? hidden.filter((id) => id !== source.environmentId)
+                        : [...hidden, source.environmentId],
+                    },
+                  },
+                })
+              }
+            />
+          </ListSection>
+        );
+      })}
+    </>
   );
 }
 

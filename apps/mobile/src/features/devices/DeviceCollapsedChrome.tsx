@@ -10,10 +10,11 @@ export function DeviceCollapsedChrome(props: {
   readonly top: number;
   readonly offsetX: number;
   readonly held: boolean;
+  readonly heldBy?: string | null;
   readonly canHold: boolean;
   readonly onClose: () => void;
   readonly onShowControls: () => void;
-  readonly onHandBack: () => void;
+  readonly onHandBack?: (() => void) | undefined;
 }) {
   return (
     <View pointerEvents="box-none" className="absolute inset-x-0" style={{ top: props.top }}>
@@ -32,7 +33,11 @@ export function DeviceCollapsedChrome(props: {
         </GlassSurface>
       </View>
       {props.held ? (
-        <DeviceHoldBanner disabled={!props.canHold} onHandBack={props.onHandBack} />
+        <DeviceHoldBanner
+          disabled={!props.canHold}
+          heldBy={props.heldBy}
+          onHandBack={props.onHandBack}
+        />
       ) : null}
     </View>
   );

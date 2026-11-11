@@ -162,6 +162,7 @@ export function DevicePreviewScreen({
     });
   };
 
+  const handBack = preview?.heldThere ? undefined : () => changeHold(false);
   const holdItem = deviceHoldMenuItem(preview, canHold);
   const controls: AppBarMenuItem[] = [
     ...(holdItem ? [{ ...holdItem, onPress: () => changeHold(holdItem.nextHeld) }] : []),
@@ -327,7 +328,7 @@ export function DevicePreviewScreen({
         </View>
       )}
       {embedded && preview?.held ? (
-        <DeviceHoldBanner disabled={!canHold} onHandBack={() => changeHold(false)} />
+        <DeviceHoldBanner disabled={!canHold} heldBy={preview.heldBy} onHandBack={handBack} />
       ) : null}
       {embedded ? (
         <View
@@ -372,7 +373,7 @@ export function DevicePreviewScreen({
             </GlassSurface>
           </View>
           {preview?.held ? (
-            <DeviceHoldBanner disabled={!canHold} onHandBack={() => changeHold(false)} />
+            <DeviceHoldBanner disabled={!canHold} heldBy={preview.heldBy} onHandBack={handBack} />
           ) : null}
         </Animated.View>
       ) : (
@@ -380,10 +381,11 @@ export function DevicePreviewScreen({
           top={Math.max(insets.top, 12)}
           offsetX={(handleBounds.left - handleBounds.right) / 2}
           held={preview?.held === true}
+          heldBy={preview?.heldBy}
           canHold={canHold}
           onClose={onClose}
           onShowControls={() => setControlsVisible(true)}
-          onHandBack={() => changeHold(false)}
+          onHandBack={handBack}
         />
       )}
     </View>
