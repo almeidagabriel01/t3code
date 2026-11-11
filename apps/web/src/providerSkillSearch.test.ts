@@ -2,7 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import type { ServerProviderSkill } from "@t3tools/contracts";
 
-import { searchProviderSkills } from "./providerSkillSearch";
+import { describeCatalogEntry, searchProviderSkills } from "./providerSkillSearch";
 
 function makeSkill(input: Partial<ServerProviderSkill> & Pick<ServerProviderSkill, "name">) {
   return {
@@ -43,5 +43,17 @@ describe("searchProviderSkills", () => {
       "/Users/matt/.codex/skills/branch-audit/SKILL.md",
       "/tmp/browser/SKILL.md",
     ]);
+  });
+});
+
+describe("describeCatalogEntry", () => {
+  it.each([
+    { description: "Reviews a diff", scanning: true, expected: "Reviews a diff" },
+    { description: "Reviews a diff", scanning: false, expected: "Reviews a diff" },
+    // Names arrive before the cwd scan does, so the generic label would be a guess.
+    { description: undefined, scanning: true, expected: "Loading description…" },
+    { description: undefined, scanning: false, expected: "user skill" },
+  ])("scanning=$scanning description=$description", ({ description, scanning, expected }) => {
+    expect(describeCatalogEntry(description, scanning, "user skill")).toBe(expected);
   });
 });

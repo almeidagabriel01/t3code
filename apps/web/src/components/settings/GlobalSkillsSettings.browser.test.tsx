@@ -10,6 +10,7 @@ import { GlobalSkillsSettings } from "./GlobalSkillsSettings";
 const mocks = vi.hoisted(() => ({
   disabled: [] as string[],
   skills: [] as unknown[],
+  slimSkills: [] as unknown[],
   phase: "connected" as string,
   scopeKind: "environment" as string,
   can: true,
@@ -41,7 +42,8 @@ vi.mock("../../state/server", async (importOriginal) => {
   return {
     ...(await importOriginal<typeof import("../../state/server")>()),
     serverEnvironment: {
-      configValueAtom: () => Atom.make({ providers: [{ skills: mocks.skills }] }),
+      configValueAtom: () =>
+        Atom.make({ providers: [{ skills: mocks.slimSkills }, { skills: mocks.skills }] }),
       updateSettings: { id: "update", permissionAtom: () => Atom.make(mocks.can) },
     },
   };
@@ -74,6 +76,7 @@ const folderResult = {
 
 function setup(skills: unknown[] = [], disabled: string[] = []) {
   mocks.skills = skills;
+  mocks.slimSkills = [];
   mocks.disabled = disabled;
   mocks.phase = "connected";
   mocks.scopeKind = "environment";
@@ -91,6 +94,8 @@ it("lists T3 skills once, even when several providers publish them, and toggles 
     [skill("t3:one", { displayName: "One", description: "Does one" }), skill("t3:two")],
     ["t3:two"],
   );
+  // A provider whose catalog loads on demand lists the skill first, without its description.
+  mocks.slimSkills = [skill("t3:one", { displayName: "One" })];
   await using _screen = await mount();
   await expect.element(page.getByText("One (t3:one)")).toBeVisible();
   await expect.element(page.getByText("Does one")).toBeVisible();

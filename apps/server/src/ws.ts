@@ -104,6 +104,7 @@ import {
   type PullRequestRef,
   MemoryImportRpcError,
   MemoryMutationReceipt,
+  T3_SKILL_SCOPE,
   WS_METHODS,
   WsMemoryAdministrationRpcGroup,
   WsMemoryCoreRpcGroup,
@@ -497,9 +498,12 @@ function withoutWorkspaceSnapshots(
       ? {
           ...provider,
           slashCommands: provider.slashCommands.map(({ name }) => ({ name })),
-          skills: provider.skills.map(
-            ({ description: _d, shortDescription: _s, ...skill }) => skill,
-          ),
+          // T3 skills keep theirs: Settings lists them with no cwd to fetch a snapshot for.
+          skills: provider.skills.map((skill) => {
+            if (skill.scope === T3_SKILL_SCOPE) return skill;
+            const { description: _d, shortDescription: _s, ...slim } = skill;
+            return slim;
+          }),
         }
       : provider,
   );
@@ -1994,6 +1998,18 @@ export const layerWsRpc = (
           ),
         );
 
+      // Only providers that can scan a cwd answer the client's on-demand catalog fetch.
+      // Read per use, since a replaced instance can change that.
+      const perCwdCatalogInstanceIds = providerInstances.listInstances.pipe(
+        Effect.map(
+          (instances) =>
+            new Set<string>(
+              instances
+                .filter((instance) => instance.snapshotForCwd !== undefined)
+                .map((instance) => instance.instanceId),
+            ),
+        ),
+      );
       const loadServerConfig = Effect.fn("ws.loadServerConfig")(function* (options: {
         readonly usageLimitsCommand: boolean;
         readonly workspaceSnapshotsOnDemand: boolean;
@@ -2916,7 +2932,14 @@ export const layerWsRpc = (
                 : providers;
             const { instanceId, cwd } = input;
             if (instanceId === undefined || cwd === undefined) {
-              return { providers: withoutWorkspaceSnapshots(commandProviders) };
+              return {
+                providers: withoutWorkspaceSnapshots(
+                  commandProviders,
+                  input.providerCatalogsOnDemand === true
+                    ? yield* perCwdCatalogInstanceIds
+                    : undefined,
+                ),
+              };
             }
             const catalogOnDemand =
               input.providerCatalogsOnDemand === true &&
@@ -3686,20 +3709,9 @@ export const layerWsRpc = (
             Effect.gen(function* () {
               const usageLimitsCommand = input.usageLimitsCommand === true;
               const workspaceSnapshotsOnDemand = input.workspaceSnapshotsOnDemand === true;
-              // Only providers that can scan a cwd answer the client's on-demand catalog fetch.
-              // Read per update, since a replaced instance can change that.
               const currentCatalogsPerCwd =
                 workspaceSnapshotsOnDemand && input.providerCatalogsOnDemand === true
-                  ? providerInstances.listInstances.pipe(
-                      Effect.map(
-                        (instances) =>
-                          new Set(
-                            instances
-                              .filter((instance) => instance.snapshotForCwd !== undefined)
-                              .map((instance) => instance.instanceId),
-                          ),
-                      ),
-                    )
+                  ? perCwdCatalogInstanceIds
                   : Effect.succeed(new Set<string>());
               // Buffer changes through discovery and the initial snapshot's send.
               const keybindingsChanges = yield* keybindings.subscribeChanges;

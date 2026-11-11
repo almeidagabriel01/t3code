@@ -918,18 +918,21 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         (multipleModelSelections === null ? providerSendBlockReason : null)));
   const isSendDisabled = sendDisabledReason !== null;
   const selectedProviderStatus = selectedProviderEntry?.snapshot ?? null;
+  const {
+    cwd: catalogCwd,
+    refresh: refreshWorkspaceSnapshotOnTyping,
+    scanning: workspaceSkillsScanning,
+  } = useProviderWorkspaceSnapshotRefresh({
+    environmentId,
+    gitCwd,
+    instanceId: selectedProviderEntry?.instanceId,
+  });
   const selectedProviderSkills = selectedProviderStatus
-    ? resolveProviderSkillsForCwd(selectedProviderStatus, gitCwd)
+    ? resolveProviderSkillsForCwd(selectedProviderStatus, catalogCwd)
     : NO_PROVIDER_SKILLS;
   const selectedProviderSlashCommands = selectedProviderStatus
-    ? resolveProviderSlashCommandsForCwd(selectedProviderStatus, gitCwd)
+    ? resolveProviderSlashCommandsForCwd(selectedProviderStatus, catalogCwd)
     : NO_PROVIDER_SLASH_COMMANDS;
-  const { refresh: refreshWorkspaceSnapshotOnTyping, scanning: workspaceSkillsScanning } =
-    useProviderWorkspaceSnapshotRefresh({
-      environmentId,
-      gitCwd,
-      instanceId: selectedProviderEntry?.instanceId,
-    });
 
   const selectedPromptEffort = composerProviderState.promptEffort;
   const selectedModelOptionsForDispatch = composerProviderState.modelOptionsForDispatch;

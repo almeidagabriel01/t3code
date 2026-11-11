@@ -1176,6 +1176,13 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
       slashCommands: [{ name: `${cwd.slice(1)}-command` }],
       skills: [],
     });
+    const t3Skill = {
+      name: "t3:shared",
+      description: "A T3 skill",
+      path: "/t3/skills/shared",
+      scope: "t3",
+      enabled: true,
+    };
     const provider: ServerProvider = {
       instanceId,
       driver: ProviderDriverKind.make("claudeAgent"),
@@ -1194,6 +1201,7 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
           path: "/skills/machine-skill",
           enabled: true,
         },
+        t3Skill,
       ],
       workspaceSnapshots: [
         snapshotFor("/a", "2026-10-25T00:00:00.000Z"),
@@ -1215,6 +1223,7 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
         streamChanges: Stream.fromQueue(providerChanges).pipe(
           Stream.tap(() => Queue.offer(pulled, undefined)),
         ),
+        refresh: () => Effect.succeed([provider]),
         refreshWorkspaceSnapshot: () => Effect.succeed([provider]),
       }),
       Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
@@ -1234,6 +1243,7 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
       Layer.mock(UsageLimitSources.UsageLimitSources)({
         current: Effect.succeed([]),
         streamChanges: Stream.make([]),
+        refresh: Effect.void,
       }),
       Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({
         resolveTargets: () => Effect.succeed([]),
@@ -1310,6 +1320,8 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
     assert.deepEqual(snapshot.config.providers[0]?.slashCommands, [{ name: "machine-command" }]);
     assert.deepEqual(snapshot.config.providers[0]?.skills, [
       { name: "machine-skill", path: "/skills/machine-skill", enabled: true },
+      // Settings lists T3 skills with no cwd to fetch, so they keep their description.
+      t3Skill,
     ]);
     yield* server.write(0, { _tag: "Ack", requestId: configRequest });
 
@@ -1387,6 +1399,22 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
         slashCommandsPending: true,
         skills: provider.skills,
       },
+    ]);
+    // A refresh for no cwd, such as a usage poll, leaves the catalog out the same way.
+    yield* server.write(0, {
+      _tag: "Request",
+      id: RpcMessage.RequestId("refresh-no-cwd"),
+      tag: WS_METHODS.serverRefreshProviders,
+      payload: { workspaceSnapshotsOnDemand: true, providerCatalogsOnDemand: true },
+      headers: Headers.empty,
+    });
+    const cwdless = (yield* Queue.take(responses)) as {
+      readonly providers: ReadonlyArray<ServerProvider>;
+    };
+    assert.deepEqual(cwdless.providers[0]?.slashCommands, [{ name: "machine-command" }]);
+    assert.deepEqual(cwdless.providers[0]?.skills, [
+      { name: "machine-skill", path: "/skills/machine-skill", enabled: true },
+      t3Skill,
     ]);
     yield* server.write(0, { _tag: "Interrupt", requestId: configRequest, interruptors: [] });
   }).pipe(

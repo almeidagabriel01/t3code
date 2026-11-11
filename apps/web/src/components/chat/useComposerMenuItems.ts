@@ -29,7 +29,7 @@ import {
   getProviderSkillsForSlashMenu,
   getProviderSlashCommandsForSlashMenu,
 } from "@t3tools/client-runtime/providerSkills";
-import { searchProviderSkills } from "../../providerSkillSearch";
+import { describeCatalogEntry, searchProviderSkills } from "../../providerSkillSearch";
 import { useVisibleThreadShells } from "~/state/entities";
 import { useEnvironmentIdentities, useEnvironmentMachines } from "~/state/environments";
 import { offersLinkedEnvironmentsAtom } from "~/state/peerLinks";
@@ -298,7 +298,11 @@ export function useComposerMenuItems({
           provider: selectedProvider,
           command,
           label: `/${command.name}`,
-          description: command.description ?? command.input?.hint ?? "Run provider command",
+          description: describeCatalogEntry(
+            command.description ?? command.input?.hint,
+            workspaceSkillsScanning,
+            "Run provider command",
+          ),
         }));
       const query = composerTrigger.query.trim().toLowerCase();
       const skillItems = slashMenuSkills.map((skill) => ({
@@ -307,10 +311,11 @@ export function useComposerMenuItems({
         provider: selectedProvider,
         skill,
         label: `/skill:${skill.name}`,
-        description:
-          skill.shortDescription ??
-          skill.description ??
-          (skill.scope ? `${skill.scope} skill` : ""),
+        description: describeCatalogEntry(
+          skill.shortDescription ?? skill.description,
+          workspaceSkillsScanning,
+          skill.scope ? `${skill.scope} skill` : "",
+        ),
       }));
       // T3's `/clear` replaces the provider's, which would clear a session T3 still treats as live.
       const visibleProviderSlashCommandItems = providerSlashCommandItems.filter(
@@ -331,10 +336,11 @@ export function useComposerMenuItems({
         provider: selectedProvider,
         skill,
         label: formatProviderSkillDisplayName(skill),
-        description:
-          skill.shortDescription ??
-          skill.description ??
-          (skill.scope ? `${skill.scope} skill` : "Run provider skill"),
+        description: describeCatalogEntry(
+          skill.shortDescription ?? skill.description,
+          workspaceSkillsScanning,
+          skill.scope ? `${skill.scope} skill` : "Run provider skill",
+        ),
       }));
     }
     if (

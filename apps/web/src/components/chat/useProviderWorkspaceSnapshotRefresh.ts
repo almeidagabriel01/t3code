@@ -20,20 +20,27 @@ const idleRefreshAtom: Atom.Atom<ProviderWorkspaceSnapshotRefreshState | undefin
 
 /**
  * Keeps the selected provider's workspace snapshot fresh for the composer's
- * cwd while mounted. Returns a check to run when the user types, and whether
- * the cwd's skills are still being scanned.
+ * cwd while mounted. Returns the cwd whose catalog to read, a check to run when
+ * the user types, and whether the cwd's skills are still being scanned.
  */
 export function useProviderWorkspaceSnapshotRefresh(input: {
   readonly environmentId: EnvironmentId;
   readonly gitCwd: string | null;
   readonly instanceId: ProviderInstanceId | undefined;
-}): { readonly refresh: () => void; readonly scanning: boolean } {
+}): { readonly cwd: string | null; readonly refresh: () => void; readonly scanning: boolean } {
   const { environmentId, gitCwd, instanceId } = input;
+  // The config carries only names, so a draft with no project yet reads the scratch folder's catalog.
+  const scratchRoot = useAtomValue(
+    serverEnvironment.configValueAtom(environmentId),
+    (config) => config?.scratchWorkspaceRoot ?? null,
+  );
+  const cwd = gitCwd ?? scratchRoot;
   const atom =
-    gitCwd && instanceId
-      ? providerWorkspaceSnapshotRefresh({ environmentId, instanceId, cwd: gitCwd })
+    cwd && instanceId
+      ? providerWorkspaceSnapshotRefresh({ environmentId, instanceId, cwd })
       : idleRefreshAtom;
   return {
+    cwd,
     refresh: useAtomRefresh(atom),
     scanning: isProviderWorkspaceSnapshotScanning(useAtomValue(atom)),
   };
