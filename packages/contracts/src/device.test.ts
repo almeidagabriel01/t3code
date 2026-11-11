@@ -20,6 +20,7 @@ import {
   EasDeviceHostConfigs,
   SshDeviceHostConfigs,
 } from "./device.ts";
+import { ComputerUseError } from "./computerUse.ts";
 import {
   AppleBundleIdInput,
   AppleTeamIdInput,
@@ -438,5 +439,21 @@ describe("device access policies", () => {
         reason: "physical_device",
       }).message,
     ).toBe("Device shutdown is not available for a physical device. Turn it on or off by hand.");
+    expect(
+      ["desktop", "ios"].map(
+        (platform) =>
+          new DeviceActionUnavailableError({
+            operation: "screenshot",
+            platform: platform as "desktop" | "ios",
+            reason: "capture_device",
+          }).message,
+      ),
+    ).toEqual([
+      "Device screenshot is not available for this computer. Drive it with t3_computer and look at it with computer_screenshot.",
+      "Device screenshot is not available for a physical iPhone or iPad. Use the agent-device command device_open returned, such as its screenshot command.",
+    ]);
+    expect(new ComputerUseError({ reason: "desktop_refused" }).message).toBe(
+      "The user's device access settings refused this action on this computer.",
+    );
   });
 });

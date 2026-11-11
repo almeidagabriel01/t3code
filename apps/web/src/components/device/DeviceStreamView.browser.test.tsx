@@ -235,5 +235,11 @@ it.each([
   const keydown = new KeyboardEvent("keydown", { key: "a", bubbles: true, cancelable: true });
   surface.element().dispatchEvent(keydown);
   expect(keydown.defaultPrevented).toBe(false);
+  surface.element().dispatchEvent(new KeyboardEvent("keyup", { key: "a", bubbles: true }));
+  const clipboardData = new DataTransfer();
+  clipboardData.setData("text/plain", "hello");
+  const paste = new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true });
+  surface.element().dispatchEvent(paste);
+  expect(paste.defaultPrevented).toBe(false);
   expect(input.touches).toEqual([]);
 });

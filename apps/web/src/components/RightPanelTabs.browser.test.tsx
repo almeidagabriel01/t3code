@@ -381,3 +381,21 @@ it("moves focus without activating, ignores modified or composing keys, and reta
     unregister();
   }
 });
+
+it.each([
+  ["ios", "iOS"],
+  ["android", "Android"],
+  ["desktop", "Computer"],
+] as const)(
+  "labels a %s device tab with its platform when the version is unknown",
+  async (platform, label) => {
+    const surface: RightPanelSurface = {
+      id: "device:h:d",
+      kind: "device",
+      target: { hostId: "h", deviceId: "d", platform, name: "Thing" },
+    };
+    await using screen = await render(<Fixture initial={[surface]} />);
+    await userEvent.hover(tabs(screen.container)[0]!);
+    await expect.element(page.getByText(`Device host · ${label}`)).toBeVisible();
+  },
+);

@@ -341,7 +341,12 @@ function recoveryFixture(
   const signals: AbortSignal[] = [];
   const configs: Array<object> = [];
   const fetch = vi.fn((url: string, init: RequestInit) => {
-    if (url.includes("/config")) return Promise.resolve(Response.json(configs.shift() ?? {}));
+    if (url.includes("/config")) {
+      const next = configs.shift();
+      return next instanceof Error
+        ? Promise.reject(next)
+        : Promise.resolve(Response.json(next ?? {}));
+    }
     const signal = init.signal!;
     signals.push(signal);
     if (url.includes("/api?")) return Promise.resolve(Response.json({}));
@@ -510,10 +515,23 @@ describe("shared device stream readiness and recovery", () => {
       height: 1920,
       orientation: "portrait",
     });
+    // The same size again, or a /config that cannot be read, keeps the last size.
+    configs.push(
+      { width: 1080, height: 1920, orientation: "portrait", inputUnavailable: true },
+      new Error("offline"),
+    );
+    const sized = events.onScreen.mock.calls.length;
+    videoBodies[0]!.enqueue(new Uint8Array(envelope(1, [1, 0x64, 0, 0x1f])));
+    await vi.advanceTimersByTimeAsync(0);
+    videoBodies[0]!.enqueue(new Uint8Array(envelope(1, [1, 0x64, 0, 0x1f])));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(events.onScreen).toHaveBeenCalledTimes(sized);
     expect(fetch.mock.calls.map(([url]) => url)).toEqual([
       "https://test/api/device-hub/vendor/serve-sim/helper/test-device/stream.avcc",
-      "https://test/api/device-hub/vendor/serve-sim/helper/test-device/config",
-      "https://test/api/device-hub/vendor/serve-sim/helper/test-device/config",
+      ...Array.from(
+        { length: 4 },
+        () => "https://test/api/device-hub/vendor/serve-sim/helper/test-device/config",
+      ),
     ]);
     client.stop();
   });

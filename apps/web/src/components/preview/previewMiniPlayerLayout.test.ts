@@ -6,6 +6,7 @@ import {
   PREVIEW_MINI_PLAYER_EDGE_GAP,
   type PreviewMiniPlayerObstacles,
   resizePreviewMiniPlayer,
+  resolveDeviceMiniPlayerSourceSize,
   resolvePreviewMiniPlayerFrame,
   resolvePreviewMiniPlayerSourceSize,
 } from "./previewMiniPlayerLayout";
@@ -31,6 +32,18 @@ describe("resolvePreviewMiniPlayerSourceSize", () => {
         1,
       ),
     ).toEqual({ width: 1_280, height: 800 });
+  });
+});
+
+describe("resolveDeviceMiniPlayerSourceSize", () => {
+  it.each([
+    ["desktop", 625],
+    ["ios", 2_167],
+    ["android", 2_222],
+  ] as const)("falls back to the %s aspect before the screen size is known", (platform, height) => {
+    const size = resolveDeviceMiniPlayerSourceSize(platform, null);
+    expect(size.width).toBe(1_000);
+    expect(Math.round(size.height)).toBe(height);
   });
 });
 

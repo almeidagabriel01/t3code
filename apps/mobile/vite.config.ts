@@ -39,6 +39,7 @@ const reactTests = [
   "src/features/notes/NotesRouteScreen.test.tsx",
   "src/features/settings/SettingsMacPermissionsRouteScreen.test.tsx",
   "src/features/settings/SettingsDevicesRouteScreen.test.tsx",
+  "src/features/devices/DeviceNotices.test.tsx",
   "src/features/devices/DeviceCollapsedChrome.test.tsx",
   "src/features/settings/WifiPairingSection.test.tsx",
   "src/features/settings/SettingsComputerUseRouteScreen.test.tsx",

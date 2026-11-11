@@ -70,6 +70,30 @@ describe("DeviceSigningSettings", () => {
     expect(mocks.update).not.toHaveBeenCalled();
   });
 
+  it("replaces the draft when the saved value changes elsewhere", async () => {
+    setup({ appleTeamId: "ABCDE12345", appleRunnerBundleId: "" });
+    await using screen = await render(<DeviceSigningSettings />, { router: false });
+    const team = screen.getByLabelText("Apple Team ID");
+    await team.fill("ZZZZZ99999");
+
+    mocks.settings = { appleTeamId: "QWERT67890", appleRunnerBundleId: "" };
+    await screen.rerender(<DeviceSigningSettings />);
+
+    await expect.element(team).toHaveValue("QWERT67890");
+  });
+
+  it("restores the saved value when a save fails", async () => {
+    setup({ appleTeamId: "ABCDE12345", appleRunnerBundleId: "" });
+    await using screen = await render(<DeviceSigningSettings />, { router: false });
+    const team = screen.getByLabelText("Apple Team ID");
+    await team.fill("ZZZZZ99999");
+    await team.element().blur();
+
+    mocks.update.mock.calls[0]![1].onFailed();
+
+    await expect.element(team).toHaveValue("ABCDE12345");
+  });
+
   it("clears a saved value with an empty field and saves a bundle id", async () => {
     setup({ appleTeamId: "ABCDE12345", appleRunnerBundleId: "" });
     await using screen = await render(<DeviceSigningSettings />, { router: false });
