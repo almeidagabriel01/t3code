@@ -88,6 +88,15 @@ under Settings → Maintenance.
   limit, the pause and the priority rules keep their values and apply again
   when you turn the queue back on; jobs already running are not stopped.
 
+**Heavy commands** in the Resource Manager (on mobile, Settings → Server
+controls) lists every heavy command running now, queued or not: tests, builds
+or bundlers an agent or terminal started directly show there too once their
+processes use at least half a core or 1 GB for a few seconds. Each row shows
+its thread and project, CPU (cores and share of the machine), memory, the peak
+seen since T3 started watching it, and how long it has run. **Stop** ends the
+command and everything it started. The section appears only while something
+heavy runs.
+
 Agents never reorder the queue on their own. They may move a job up only when
 you ask them to in the conversation, and the job's note says an agent did it.
 
