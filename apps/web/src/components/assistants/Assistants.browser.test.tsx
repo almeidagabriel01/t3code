@@ -650,6 +650,60 @@ it("signing in to the sandbox's providers asks the server for a one-time pairing
   );
 });
 
+it("signs the sandbox in to GitHub with a device code, cancels, and signs it out", async () => {
+  publishAssistants([assistant("jarvis", "Jarvis")]);
+  fakeSandbox.calls = [];
+  const github = {
+    state: "signed_out",
+    login: null,
+    userCode: null,
+    verificationUri: null,
+    error: null,
+  } as const;
+  const running = {
+    ...fakeSandbox.status,
+    state: "running",
+    environmentId: "environment-box" as never,
+    url: "http://127.0.0.1:1",
+    linkedEnvironmentsEnabled: true,
+  } as const;
+  publishSandbox({ ...running, github });
+  appAtomRegistry.set(assistantDialogAtom, null);
+  await using _screen = await openApp("/settings/assistants");
+  await expect.element(page.getByText("Not signed in")).toBeVisible();
+  await userEvent.click(page.getByRole("button", { name: "Sign in to GitHub" }));
+  await eventually(() =>
+    expect(fakeSandbox.calls).toMatchObject([{ tag: "assistantSandbox.githubSignIn" }]),
+  );
+  publishSandbox({
+    ...running,
+    github: {
+      ...github,
+      state: "signing_in",
+      userCode: "ABCD-1234",
+      verificationUri: "https://github.com/login/device",
+    },
+  });
+  await expect
+    .element(page.getByText("Enter this code on GitHub to finish signing in"))
+    .toBeVisible();
+  await expect.element(page.getByText("ABCD-1234")).toBeInTheDocument();
+  await expect
+    .element(page.getByRole("link", { name: "Copy code & open GitHub" }))
+    .toHaveAttribute("href", "https://github.com/login/device");
+  await userEvent.click(page.getByRole("button", { name: "Cancel", exact: true }));
+  await eventually(() =>
+    expect(fakeSandbox.calls.at(-1)).toMatchObject({ tag: "assistantSandbox.githubSignOut" }),
+  );
+  publishSandbox({ ...running, github: { ...github, state: "signed_in", login: "octo" } });
+  await expect.element(page.getByText("Signed in as octo")).toBeVisible();
+  await userEvent.click(page.getByRole("button", { name: "Sign out" }));
+  await eventually(() => expect(fakeSandbox.calls).toHaveLength(3));
+  publishSandbox({ ...running, github: { ...github, error: "The code expired. Sign in again." } });
+  await expect.element(page.getByText("The code expired. Sign in again.")).toBeVisible();
+  publishSandbox({ ...running, github: { ...github, state: "unavailable" } });
+});
+
 it("adds a connector with a header, then saves it without echoing secrets", async () => {
   publishAssistants([assistant("jarvis", "Jarvis")]);
   fakeAssistantEdits.updates = [];

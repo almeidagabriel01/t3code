@@ -8,6 +8,7 @@ import { Tool, Toolkit } from "effect/ai";
 
 import * as AssistantGroups from "../../../assistants/AssistantGroups.ts";
 import * as AssistantSandboxControl from "../../../assistants/AssistantSandboxControl.ts";
+import * as PeerForwarding from "../../../peer/PeerForwarding.ts";
 import * as RemoteDelegation from "../../../peer/RemoteDelegation.ts";
 import * as AssistantService from "../../../assistants/AssistantService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -84,6 +85,7 @@ const AssistantTool = Tool.make("t3_assistant", {
     AssistantService.AssistantService,
     AssistantSandboxControl.AssistantSandboxControl,
     RemoteDelegation.RemoteDelegation,
+    PeerForwarding.PeerForwarding,
     AssistantGroups.AssistantGroups,
     DecisionService.DecisionService,
     ManagedProjectFolders.ManagedProjectFolders,

@@ -139,6 +139,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.assistantSandboxRemove]: AuthOrchestrationOperateScope,
   [WS_METHODS.assistantSandboxConfigure]: AuthOrchestrationOperateScope,
   [WS_METHODS.assistantSandboxPairing]: AuthOrchestrationOperateScope,
+  [WS_METHODS.assistantSandboxGithubSignIn]: AuthOrchestrationOperateScope,
+  [WS_METHODS.assistantSandboxGithubSignOut]: AuthOrchestrationOperateScope,
   [WS_METHODS.assistantTeamsCreate]: AuthOrchestrationOperateScope,
   [WS_METHODS.assistantTeamsUpdate]: AuthOrchestrationOperateScope,
   [WS_METHODS.assistantTeamsDelete]: AuthOrchestrationOperateScope,

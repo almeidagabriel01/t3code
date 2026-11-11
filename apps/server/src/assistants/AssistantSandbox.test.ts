@@ -1,7 +1,9 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { EnvironmentId, type ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
@@ -26,6 +28,14 @@ type Docker = {
   answers: boolean;
   calls: string[][];
   failing: string | null;
+  /** The daemon's cores (`docker info`). */
+  cores: number;
+  /** The container's stored limit, as `HostConfig.NanoCpus`; 0 is none. */
+  nanoCpus: number;
+  /** The account gh is signed in to in the container. */
+  github: string | null;
+  /** How `gh auth login` ends once it printed its code. */
+  githubLogin: "approved" | "denied" | "missing" | "expired" | "waits";
 };
 
 const harness = (initial: Partial<Docker> = {}, bundleFails = false) => {
@@ -36,14 +46,18 @@ const harness = (initial: Partial<Docker> = {}, bundleFails = false) => {
     answers: true,
     calls: [],
     failing: null,
+    cores: 4,
+    nanoCpus: 0,
+    github: null,
+    githubLogin: "approved",
     ...initial,
   };
-  const out = (stdout: string, code = 0, stderr = "") =>
+  const out = (stdout: string, code = 0, stderr = "", timedOut = false) =>
     Effect.succeed({
       stdout,
       stderr,
       code: code as never,
-      timedOut: false,
+      timedOut,
       stdoutTruncated: false,
       stderrTruncated: false,
       stdoutInvalidUtf8: false,
@@ -70,9 +84,14 @@ const harness = (initial: Partial<Docker> = {}, bundleFails = false) => {
         case "build":
           docker.image = true;
           return out("built");
-        case "run":
+        case "run": {
+          const at = args.indexOf("--cpus");
+          const cpus = at === -1 ? 0 : Number(args[at + 1]);
+          if (cpus > docker.cores) return out("", 1, "Range of CPUs is from 0.01 to 4.00");
           docker.container = "running";
+          docker.nanoCpus = cpus * 1e9;
           return out("abc123");
+        }
         case "start":
           docker.container = "running";
           return out("name");
@@ -81,18 +100,61 @@ const harness = (initial: Partial<Docker> = {}, bundleFails = false) => {
           return out("name");
         case "rm":
           docker.container = "none";
+          docker.nanoCpus = 0;
           return out("name");
         case "volume":
-        case "update":
           return out("");
+        case "info":
+          return out(`${docker.cores}\n`);
+        case "update": {
+          // As the daemon does: 0 leaves the stored limit alone, more than its cores is refused.
+          const cpus = Number(args[args.indexOf("--cpus") + 1]);
+          if (cpus > docker.cores) return out("", 1, "Range of CPUs is from 0.01 to 4.00");
+          if (cpus !== 0) docker.nanoCpus = cpus * 1e9;
+          return out("");
+        }
         case "inspect":
-          return docker.container === "none"
-            ? out("", 1, "No such object")
-            : out(docker.container === "running" ? "true" : "false");
+          if (docker.container === "none") return out("", 1, "No such object");
+          if (args.includes("{{.HostConfig.NanoCpus}}")) return out(String(docker.nanoCpus));
+          return out(docker.container === "running" ? "true" : "false");
         case "port":
           return out("127.0.0.1:49153\n");
-        case "exec":
+        case "exec": {
+          const command = args.slice(2).join(" ");
+          if (command.startsWith("gh auth status")) {
+            return docker.github === null
+              ? out("", 1, "You are not logged into any GitHub hosts.")
+              : out(
+                  `github.com\n  ✓ Logged in to github.com account ${docker.github} (keyring)\n  - Token: gho_****`,
+                );
+          }
+          if (command.startsWith("gh auth logout")) {
+            const was = docker.github;
+            docker.github = null;
+            return was === null ? out("", 1, "not logged in to any hosts") : out("");
+          }
+          if (command.startsWith("gh auth setup-git")) return out("");
+          if (command.includes("gh auth login")) {
+            const said =
+              "! First copy your one-time code: ABCD-1234\nOpen this URL to continue in your web browser: https://github.com/login/device\n";
+            input.onStdoutChunk?.(new TextEncoder().encode(said));
+            switch (docker.githubLogin) {
+              case "approved":
+                docker.github = "octo";
+                return out(`${said}✓ Authentication complete.\n✓ Logged in as octo\n`);
+              case "denied":
+                return out(`${said}error: access_denied`, 1);
+              case "missing":
+                return out("sh: 1: exec: gh: not found", 127);
+              case "expired":
+                return out(said, 1, "", true);
+              case "waits":
+                return Effect.never;
+            }
+          }
+          if (command.includes("kill")) return out("");
           return out(JSON.stringify({ id: "x", credential: CREDENTIAL }));
+        }
         default:
           return out("", 1, "unknown");
       }
@@ -162,6 +224,56 @@ const withSandbox = <A, E>(
 const commands = (docker: Docker) => docker.calls.map((call) => call[0]);
 
 describe("AssistantSandbox", () => {
+  it.effect("GitHub sign-in shows gh's code, sets git to use it, and signs out", () =>
+    withSandbox({ container: "running" }, (s, docker) =>
+      Effect.gen(function* () {
+        assert.isNull(yield* s.githubAccount);
+        const prompt = yield* Deferred.make<AssistantSandbox.GithubPrompt>();
+        assert.strictEqual(yield* s.githubLogin(prompt), "octo");
+        assert.deepStrictEqual(yield* Deferred.await(prompt), {
+          userCode: "ABCD-1234",
+          verificationUri: "https://github.com/login/device",
+        });
+        assert.isTrue(docker.calls.some((call) => call.join(" ").includes("gh auth setup-git")));
+        assert.strictEqual(yield* s.githubAccount, "octo");
+        yield* s.githubLogout;
+        assert.isNull(yield* s.githubAccount);
+        // Signed out already is not an error.
+        yield* s.githubLogout;
+      }),
+    ),
+  );
+
+  it.effect("a GitHub sign-in that does not finish says why", () =>
+    Effect.gen(function* () {
+      const reason = (githubLogin: Docker["githubLogin"]) =>
+        withSandbox({ container: "running", githubLogin }, (s) =>
+          Effect.gen(function* () {
+            const prompt = yield* Deferred.make<AssistantSandbox.GithubPrompt>();
+            return (yield* Effect.flip(s.githubLogin(prompt))).message;
+          }),
+        );
+      assert.include(yield* reason("denied"), "access_denied");
+      assert.include(yield* reason("missing"), "built without GitHub sign-in");
+      assert.include(yield* reason("expired"), "expired");
+    }),
+  );
+
+  it.effect("stopping a GitHub sign-in stops gh in the container", () =>
+    withSandbox({ container: "running", githubLogin: "waits" }, (s, docker) =>
+      Effect.gen(function* () {
+        const prompt = yield* Deferred.make<AssistantSandbox.GithubPrompt>();
+        const login = yield* s
+          .githubLogin(prompt)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(prompt);
+        yield* Fiber.interrupt(login);
+        assert.isTrue(docker.calls.some((call) => call.join(" ").includes("kill")));
+        assert.isNull(docker.github);
+      }),
+    ),
+  );
+
   it.effect("reports docker missing, container states and a starting server", () =>
     Effect.gen(function* () {
       assert.deepStrictEqual(yield* withSandbox({ available: false }, (s) => s.status), {
@@ -193,6 +305,8 @@ describe("AssistantSandbox", () => {
         assert.include(run, "127.0.0.1::3773");
         assert.include(run, "unless-stopped");
         assert.include(run.join(" "), "t3-assistant-sandbox-77830f5d-home:/home/t3");
+        // Sign-ins live under HOME, which must be that volume for a discard to keep them.
+        assert.match(AssistantSandbox.sandboxDockerfile, /^ENV HOME=\/home\/t3 /m);
         assert.include(run.join(" "), "t3-assistant-sandbox-77830f5d-work:/workspace");
         assert.include(run.join(" "), "/base/shared:/home/t3/shared");
         assert.isTrue(run.at(-1)!.startsWith("t3-assistant-sandbox:1.2.3-"));
@@ -228,14 +342,13 @@ describe("AssistantSandbox", () => {
   );
 
   it.effect(
-    "the CPU limit is passed at creation and lifted or changed on a container that exists",
+    "the CPU limit is set at creation, clamped to Docker's cores, and lifted on a container that exists",
     () =>
       Effect.gen(function* () {
         yield* withSandbox({}, (s, docker) =>
           Effect.gen(function* () {
             yield* s.ensure(2);
-            const run = docker.calls.find((call) => call[0] === "run")!;
-            assert.strictEqual(run[run.indexOf("--cpus") + 1], "2");
+            assert.strictEqual(docker.nanoCpus, 2e9);
           }),
         );
         yield* withSandbox({}, (s, docker) =>
@@ -245,23 +358,33 @@ describe("AssistantSandbox", () => {
               docker.calls.find((call) => call[0] === "run")!,
               "--cpus",
             );
+            assert.strictEqual(docker.nanoCpus, 0);
           }),
         );
-        yield* withSandbox({ container: "stopped" }, (s, docker) =>
+        // A Mac's core count is not the Docker VM's: 8 asked on 4 means all 4, not a failed start.
+        yield* withSandbox({}, (s, docker) =>
           Effect.gen(function* () {
-            yield* s.ensure(4);
-            assert.deepStrictEqual(
-              docker.calls.find((call) => call[0] === "update"),
-              ["update", "--cpus", "4", "t3-assistant-sandbox-77830f5d"],
-            );
+            assert.strictEqual((yield* s.ensure(8)).state, "running");
+            assert.strictEqual(docker.nanoCpus, 4e9);
+          }),
+        );
+        yield* withSandbox({ container: "stopped", nanoCpus: 2e9 }, (s, docker) =>
+          Effect.gen(function* () {
+            yield* s.ensure(null);
+            assert.strictEqual(docker.nanoCpus, 4e9);
+            yield* s.setCpus(1);
+            assert.strictEqual(docker.nanoCpus, 1e9);
             yield* s.setCpus(null);
-            assert.deepStrictEqual(
-              docker.calls
-                .filter((call) => call[0] === "update")
-                .at(-1)
-                ?.slice(1, 3),
-              ["--cpus", "0"],
-            );
+            assert.strictEqual(docker.nanoCpus, 4e9);
+          }),
+        );
+        // A container that never had a limit is left alone, so it keeps every core Docker gains later.
+        yield* withSandbox({ container: "running" }, (s, docker) =>
+          Effect.gen(function* () {
+            yield* s.setCpus(null);
+            yield* s.ensure(null);
+            assert.notInclude(commands(docker), "update");
+            assert.strictEqual(docker.nanoCpus, 0);
           }),
         );
         yield* withSandbox({}, (s, docker) =>

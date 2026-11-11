@@ -1,7 +1,9 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import {
+  assistantSandboxGithubView,
   assistantSandboxView,
   SANDBOX_CPU_DESCRIPTION,
+  SANDBOX_GITHUB_DESCRIPTION,
   SANDBOX_WHEN_DONE_CHOICES,
   SANDBOX_WHEN_DONE_DESCRIPTION,
   sandboxCpuChoices,
@@ -14,16 +16,23 @@ import {
 import { useRouter } from "@tanstack/react-router";
 import {
   BoxIcon,
+  CheckIcon,
+  CopyIcon,
   CpuIcon,
+  ExternalLinkIcon,
+  GithubIcon,
   KeyRoundIcon,
   LinkIcon,
+  LogOutIcon,
   PlayIcon,
   SquareIcon,
   Trash2Icon,
+  XIcon,
 } from "lucide-react";
 
 import { requestConfirmDialog } from "../../confirmDialog";
 import { connectPairing } from "../../connection/onboarding";
+import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { useAssistantSandbox, useAssistantSandboxActions } from "../../state/assistants";
 import { useEnvironments } from "../../state/environments";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -31,6 +40,7 @@ import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { toastManager } from "../ui/toast";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
+import { DeviceCode } from "./SourceControlAppSignInSettings";
 
 function toast(title: string, description: string) {
   toastManager.add({ type: "error", title, description });
@@ -48,6 +58,11 @@ export function AssistantSandboxSection(props: {
   const router = useRouter();
   const connect = useAtomCommand(connectPairing, { reportFailure: false });
   const disabled = !actions.canAct;
+  const github = assistantSandboxGithubView(status);
+  const { copyToClipboard, isCopied } = useCopyToClipboard({
+    timeout: 1500,
+    target: "sign-in code",
+  });
 
   const run = async (title: string, action: () => Promise<{ ok: boolean; message?: string }>) => {
     const reply = await action();
@@ -233,6 +248,71 @@ export function AssistantSandboxSection(props: {
           }
         />
       ) : null}
+      <SettingsRow
+        title={
+          <span className="inline-flex items-center gap-2">
+            <GithubIcon className="size-4 text-muted-foreground" />
+            GitHub in the sandbox
+          </span>
+        }
+        status={github.label}
+        description={github.detail ?? SANDBOX_GITHUB_DESCRIPTION}
+        control={
+          github.action === "sign_in" ? (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={disabled}
+              onClick={() => void run("Could not sign in to GitHub", actions.githubSignIn)}
+            >
+              <KeyRoundIcon />
+              Sign in to GitHub
+            </Button>
+          ) : github.action === "cancel" ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={disabled}
+              onClick={() => void run("Could not cancel the sign-in", actions.githubSignOut)}
+            >
+              <XIcon />
+              Cancel
+            </Button>
+          ) : github.action === "sign_out" ? (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={disabled}
+              onClick={() => void run("Could not sign out of GitHub", actions.githubSignOut)}
+            >
+              <LogOutIcon />
+              Sign out
+            </Button>
+          ) : null
+        }
+      >
+        {github.userCode === null || github.verificationUri === null ? null : (
+          <div className="flex flex-wrap items-center gap-3 pb-3">
+            <DeviceCode code={github.userCode} />
+            <Button
+              size="icon-xs"
+              variant="ghost"
+              aria-label="Copy code"
+              onClick={() => copyToClipboard(github.userCode ?? "", undefined)}
+            >
+              {isCopied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
+            </Button>
+            <Button
+              size="sm"
+              render={<a href={github.verificationUri} target="_blank" rel="noreferrer noopener" />}
+              onClick={() => copyToClipboard(github.userCode ?? "", undefined)}
+            >
+              Copy code & open GitHub
+              <ExternalLinkIcon aria-hidden className="size-3.5" />
+            </Button>
+          </div>
+        )}
+      </SettingsRow>
     </SettingsSection>
   );
 }

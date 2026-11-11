@@ -742,6 +742,7 @@ const SPLIT_WS_RPC_PREFIXES = [
   "provider",
   "orchestration",
   "heavyQueue",
+  "assistantSandbox",
 ] as const;
 type SplitWsRpc = Extract<
   ServerWsRpc,
@@ -2683,6 +2684,8 @@ export const layerWsRpc = (
         [WS_METHODS.assistantSandboxPairing]: (_input) => sandboxControl.pairingUrl,
         [WS_METHODS.assistantSandboxRemove]: (input) => sandboxControl.remove(input),
         [WS_METHODS.assistantSandboxConfigure]: (input) => sandboxControl.configure(input),
+        [WS_METHODS.assistantSandboxGithubSignIn]: (_input) => sandboxControl.githubSignIn,
+        [WS_METHODS.assistantSandboxGithubSignOut]: (_input) => sandboxControl.githubSignOut,
         [WS_METHODS.assistantTeamsCreate]: (input) => assistants.createTeam(input),
         [WS_METHODS.assistantTeamsUpdate]: (input) => assistants.updateTeam(input),
         [WS_METHODS.assistantTeamsDelete]: (input) =>

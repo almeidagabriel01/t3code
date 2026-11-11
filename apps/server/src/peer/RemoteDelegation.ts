@@ -21,6 +21,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -69,6 +70,9 @@ type ThreadScope = McpInvocationContext.McpThreadInvocationScope;
  * like a local one, without a child thread, and a follower completes it when
  * the thread there ends, so the parent wakes as it would for a local child.
  */
+/** How a failed clone into the other environment begins, so a caller can add how to fix it. */
+export const CLONE_FAILED = "The repository could not be cloned there: ";
+
 export class RemoteDelegation extends Context.Service<
   RemoteDelegation,
   {
@@ -188,20 +192,32 @@ const make = Effect.gen(function* () {
     if (matches.length === 0 && cloneMissing && remoteUrl !== undefined) {
       const name = (identity?.name ?? "project").replace(/[^A-Za-z0-9._-]/g, "-");
       const destinationPath = `/workspace/${name}`;
-      // A clone that already happened (a retry after the register failed) leaves the folder to register.
-      yield* forwarding
+      // A clone that already happened (a retry after the register failed) fails on the folder it
+      // left, which is then registered; with no folder the clone's own error says why, such as a
+      // private repository that needs a sign-in there.
+      const cloned = yield* forwarding
         .call(scope, ProjectToolkit.tools.t3_project_clone, environmentId, {
           environmentId,
           remoteUrl,
           destinationPath,
         })
-        .pipe(Effect.ignore);
-      const created = yield* forwarding.call(
-        scope,
-        ProjectToolkit.tools.t3_project_create,
-        environmentId,
-        { environmentId, title: here?.title ?? name, workspaceRoot: destinationPath },
-      );
+        .pipe(Effect.result);
+      const created = yield* forwarding
+        .call(scope, ProjectToolkit.tools.t3_project_create, environmentId, {
+          environmentId,
+          title: here?.title ?? name,
+          workspaceRoot: destinationPath,
+        })
+        .pipe(
+          Effect.mapError((error) =>
+            Result.isFailure(cloned)
+              ? new OrchestratorMcpFailure({
+                  code: cloned.failure.code,
+                  message: `${CLONE_FAILED}${cloned.failure.message}`,
+                })
+              : error,
+          ),
+        );
       return created.id;
     }
     return yield* new OrchestratorMcpFailure({
@@ -618,6 +634,8 @@ const make = Effect.gen(function* () {
         );
         return yield* settled(parentThreadId, taskId);
       }
+      // A repeated delegation of a finished task recorded it as started again.
+      if (Option.isSome(sandboxTasks)) yield* sandboxTasks.value.taskEnded(taskId);
       return true;
     }
     const endedHere = threads

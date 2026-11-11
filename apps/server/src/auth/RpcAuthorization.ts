@@ -190,6 +190,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.assistantSandboxRemove]: AuthOrchestrationOperateScope,
   [WS_METHODS.assistantSandboxConfigure]: AuthOrchestrationOperateScope,
   [WS_METHODS.assistantSandboxPairing]: AuthOrchestrationOperateScope,
+  [WS_METHODS.assistantSandboxGithubSignIn]: AuthOrchestrationOperateScope,
+  [WS_METHODS.assistantSandboxGithubSignOut]: AuthOrchestrationOperateScope,
   [WS_METHODS.assistantsCreate]: AuthOrchestrationOperateScope,
   [WS_METHODS.assistantsUpdate]: AuthOrchestrationOperateScope,
   [WS_METHODS.assistantsDelete]: AuthOrchestrationOperateScope,

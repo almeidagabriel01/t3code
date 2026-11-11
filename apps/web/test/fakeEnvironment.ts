@@ -777,6 +777,13 @@ export const fakeSandbox = {
     linkedEnvironmentsEnabled: false,
     cpus: null,
     whenDone: "discard",
+    github: {
+      state: "unavailable",
+      login: null,
+      userCode: null,
+      verificationUri: null,
+      error: null,
+    },
   } as AssistantSandboxStatus,
   calls: [] as Array<{ readonly tag: string; readonly input: unknown }>,
 };
@@ -796,6 +803,8 @@ for (const tag of [
   WS_METHODS.assistantSandboxStop,
   WS_METHODS.assistantSandboxRemove,
   WS_METHODS.assistantSandboxConfigure,
+  WS_METHODS.assistantSandboxGithubSignIn,
+  WS_METHODS.assistantSandboxGithubSignOut,
 ]) {
   handlers[tag] = (input: unknown) =>
     Effect.sync(() => {

@@ -490,6 +490,8 @@ import {
   AssistantsSubscribeInput,
   AssistantsUpdateInput,
   AssistantSandboxConfigureInput,
+  AssistantSandboxGithubSignInInput,
+  AssistantSandboxGithubSignOutInput,
   AssistantSandboxPairing,
   AssistantSandboxPairingInput,
   AssistantSandboxRemoveInput,
@@ -824,6 +826,8 @@ export const WS_METHODS = {
   assistantSandboxRemove: "assistantSandbox.remove",
   assistantSandboxConfigure: "assistantSandbox.configure",
   assistantSandboxPairing: "assistantSandbox.pairing",
+  assistantSandboxGithubSignIn: "assistantSandbox.githubSignIn",
+  assistantSandboxGithubSignOut: "assistantSandbox.githubSignOut",
   assistantTeamsCreate: "assistantTeams.create",
   assistantTeamsUpdate: "assistantTeams.update",
   assistantTeamsDelete: "assistantTeams.delete",
@@ -2526,6 +2530,19 @@ export const WsAssistantSandboxConfigureRpc = Rpc.make(WS_METHODS.assistantSandb
   success: AssistantSandboxStatus,
   error: AssistantRpcErrors,
 });
+export const WsAssistantSandboxGithubSignInRpc = Rpc.make(WS_METHODS.assistantSandboxGithubSignIn, {
+  payload: AssistantSandboxGithubSignInInput,
+  success: AssistantSandboxStatus,
+  error: AssistantRpcErrors,
+});
+export const WsAssistantSandboxGithubSignOutRpc = Rpc.make(
+  WS_METHODS.assistantSandboxGithubSignOut,
+  {
+    payload: AssistantSandboxGithubSignOutInput,
+    success: AssistantSandboxStatus,
+    error: AssistantRpcErrors,
+  },
+);
 export const WsAssistantSandboxPairingRpc = Rpc.make(WS_METHODS.assistantSandboxPairing, {
   payload: AssistantSandboxPairingInput,
   success: AssistantSandboxPairing,
@@ -3066,6 +3083,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsAssistantSandboxStopRpc,
   WsAssistantSandboxRemoveRpc,
   WsAssistantSandboxConfigureRpc,
+  WsAssistantSandboxGithubSignInRpc,
+  WsAssistantSandboxGithubSignOutRpc,
   WsAssistantSandboxPairingRpc,
   WsAssistantTeamsCreateRpc,
   WsAssistantTeamsUpdateRpc,

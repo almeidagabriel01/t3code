@@ -371,6 +371,9 @@ function capabilityModelOption(descriptor: ProviderOptionDescriptor): Orchestrat
   };
 }
 
+/** The `orchestrator_capabilities` constraint for a provider that needs a sign-in. */
+export const PROVIDER_UNAUTHENTICATED = "Provider is not authenticated.";
+
 function providerConstraints(
   provider: ServerProvider | undefined,
   supportsOrchestrationV2: boolean,
@@ -393,7 +396,7 @@ function providerConstraints(
     constraints.push(provider.message ?? `Provider status is ${provider.status}.`);
   }
   if (provider.auth.status === "unauthenticated") {
-    constraints.push("Provider is not authenticated.");
+    constraints.push(PROVIDER_UNAUTHENTICATED);
   }
   return constraints;
 }

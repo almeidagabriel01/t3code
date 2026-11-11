@@ -253,6 +253,8 @@ describe("command permissions", () => {
     WS_METHODS.assistantSandboxRemove,
     WS_METHODS.assistantSandboxConfigure,
     WS_METHODS.assistantSandboxPairing,
+    WS_METHODS.assistantSandboxGithubSignIn,
+    WS_METHODS.assistantSandboxGithubSignOut,
   ])("uses the target grant for both availability and execution of %s", (method) =>
     Effect.scoped(
       Effect.gen(function* () {

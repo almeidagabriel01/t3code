@@ -17,6 +17,8 @@ import {
   SourceControlRepositoryError,
   WS_METHODS,
   WsAssistantSandboxPairingRpc,
+  WsAssistantSandboxGithubSignInRpc,
+  WsAssistantSandboxGithubSignOutRpc,
   WsAssistantSandboxConfigureRpc,
   WsAssistantSandboxRemoveRpc,
   WsAssistantSandboxStartRpc,
@@ -1903,6 +1905,13 @@ it.effect("the sandbox RPCs reach the control service, and choosing the sandbox 
       linkedEnvironmentsEnabled: true,
       cpus: null,
       whenDone: "discard",
+      github: {
+        state: "signed_out",
+        login: null,
+        userCode: null,
+        verificationUri: null,
+        error: null,
+      },
     } as const;
     const assistant = { id: "a1" } as never;
     const services = Layer.mergeAll(
@@ -1923,6 +1932,8 @@ it.effect("the sandbox RPCs reach the control service, and choosing the sandbox 
         stop: Effect.sync(() => (calls.push("stop"), status)),
         pairingUrl: Effect.succeed({ pairingUrl: "http://127.0.0.1:1/pair#token=x" }),
         remove: (input) => Effect.sync(() => (calls.push(`remove:${input.deleteVolumes}`), status)),
+        githubSignIn: Effect.sync(() => (calls.push("githubSignIn"), status)),
+        githubSignOut: Effect.sync(() => (calls.push("githubSignOut"), status)),
       }),
       Layer.mock(Assistants.AssistantService)({
         create: () => Effect.succeed(assistant),
@@ -1938,6 +1949,8 @@ it.effect("the sandbox RPCs reach the control service, and choosing the sandbox 
         WsAssistantSandboxRemoveRpc,
         WsAssistantSandboxConfigureRpc,
         WsAssistantSandboxPairingRpc,
+        WsAssistantSandboxGithubSignInRpc,
+        WsAssistantSandboxGithubSignOutRpc,
         WsAssistantsCreateRpc,
         WsAssistantsUpdateRpc,
       ),
@@ -1976,6 +1989,8 @@ it.effect("the sandbox RPCs reach the control service, and choosing the sandbox 
         | "assistantSandboxRemove"
         | "assistantSandboxConfigure"
         | "assistantSandboxPairing"
+        | "assistantSandboxGithubSignIn"
+        | "assistantSandboxGithubSignOut"
         | "assistantsCreate"
         | "assistantsUpdate"],
       payload: object,
@@ -2001,7 +2016,18 @@ it.effect("the sandbox RPCs reach the control service, and choosing the sandbox 
     assert.deepInclude((yield* Queue.take(responses)) as object, {
       pairingUrl: "http://127.0.0.1:1/pair#token=x",
     });
-    assert.deepStrictEqual(calls, ["start", "stop", "remove:true", "configure:2"]);
+    yield* call(WS_METHODS.assistantSandboxGithubSignIn, {});
+    yield* Queue.take(responses);
+    yield* call(WS_METHODS.assistantSandboxGithubSignOut, {});
+    yield* Queue.take(responses);
+    assert.deepStrictEqual(calls, [
+      "start",
+      "stop",
+      "remove:true",
+      "configure:2",
+      "githubSignIn",
+      "githubSignOut",
+    ]);
     const base = { name: "Box", projectId: "p1", instructions: "", toolAccess: "full" };
     yield* call(WS_METHODS.assistantsCreate, { ...base, workspace: "sandbox" });
     yield* Queue.take(responses);

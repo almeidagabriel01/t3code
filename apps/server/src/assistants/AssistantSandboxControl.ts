@@ -1,5 +1,6 @@
 import {
   AssistantError,
+  type AssistantSandboxGithub,
   type AssistantSandboxPairing,
   type AssistantSandboxConfigureInput,
   type AssistantSandboxRemoveInput,
@@ -10,10 +11,13 @@ import {
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FiberHandle from "effect/FiberHandle";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
+import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -34,6 +38,8 @@ const RELINK_MARGIN = { minutes: 10 } as const;
 export const SANDBOX_LABEL = "Assistant sandbox";
 /** How long a task waits for the sandbox to come up before it is told to ask again. */
 const READY_WAIT = "90 seconds";
+/** How long a GitHub sign-in waits for gh to print its code before returning without it. */
+const GITHUB_CODE_WAIT = "30 seconds";
 
 export interface SandboxConfig {
   /** Null: no limit. */
@@ -81,12 +87,21 @@ export class AssistantSandboxControl extends Context.Service<
     readonly taskStarted: (environmentId: EnvironmentId, taskId: string) => Effect.Effect<void>;
     /** A task ended. The last one of a container started for tasks discards it, when set to. */
     readonly taskEnded: (taskId: string) => Effect.Effect<void>;
+    /** Runs `effect` while a task is on its way into the container, which nothing discards meanwhile. */
+    readonly holding: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
     readonly stop: Effect.Effect<AssistantSandboxStatus, AssistantError>;
     /**
      * A one-time link that connects a client on this machine to the running sandbox. Its address is
      * loopback, so only a client on this machine can use it.
      */
     readonly pairingUrl: Effect.Effect<AssistantSandboxPairing, AssistantError>;
+    /**
+     * Starts GitHub's device sign-in in the running sandbox and returns once its code is in the
+     * status; it finishes in the background when the user enters it. Repeating it changes nothing.
+     */
+    readonly githubSignIn: Effect.Effect<AssistantSandboxStatus, AssistantError>;
+    /** Signs the sandbox out of GitHub, or stops a sign-in that waits for its code. */
+    readonly githubSignOut: Effect.Effect<AssistantSandboxStatus, AssistantError>;
     /** Removing with `deleteVolumes` also forgets the link, since its sign-in lived in those files. */
     readonly remove: (
       input: AssistantSandboxRemoveInput,
@@ -109,7 +124,29 @@ const messageOf = (error: unknown) =>
     ? error.message
     : "The sandbox could not be started.";
 
+type ContainerStatus = Omit<AssistantSandboxStatus, "github">;
+
+const GITHUB_UNAVAILABLE: AssistantSandboxGithub = {
+  state: "unavailable",
+  login: null,
+  userCode: null,
+  verificationUri: null,
+  error: null,
+};
+const githubAs = (
+  state: AssistantSandboxGithub["state"],
+  fields: Partial<AssistantSandboxGithub> = {},
+): AssistantSandboxGithub => ({ ...GITHUB_UNAVAILABLE, state, ...fields });
+
+const sameGithub = (left: AssistantSandboxGithub, right: AssistantSandboxGithub) =>
+  left.state === right.state &&
+  left.login === right.login &&
+  left.userCode === right.userCode &&
+  left.verificationUri === right.verificationUri &&
+  left.error === right.error;
+
 const sameStatus = (left: AssistantSandboxStatus, right: AssistantSandboxStatus) =>
+  sameGithub(left.github, right.github) &&
   left.state === right.state &&
   left.step === right.step &&
   left.error === right.error &&
@@ -125,6 +162,14 @@ const make = Effect.gen(function* () {
   const settings = yield* ServerSettings.ServerSettingsService;
   const sql = yield* SqlClient.SqlClient;
   const scope = yield* Effect.scope;
+  // ponytail: in memory, so a restart mid-delegation forgets it; the task's own row covers it after.
+  const sending = yield* Ref.make(0);
+  const holding = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    Effect.acquireUseRelease(
+      Ref.update(sending, (count) => count + 1),
+      () => effect,
+      () => Ref.update(sending, (count) => count - 1),
+    );
   const progress = yield* SubscriptionRef.make<Progress>({
     running: false,
     step: null,
@@ -160,9 +205,12 @@ const make = Effect.gen(function* () {
     `.pipe(Effect.orDie, Effect.asVoid);
 
   const countOf = (rows: ReadonlyArray<{ readonly n: number }>) => rows[0]?.n ?? 0;
+  // A row whose task has its result is not open, so a crash between the two never pins the container.
   const openTasks = sql<{
     readonly n: number;
-  }>`SELECT COUNT(*) AS n FROM assistant_sandbox_task`.pipe(
+  }>`SELECT COUNT(*) AS n FROM assistant_sandbox_task t
+      LEFT JOIN orchestration_v2_projection_subagents s ON s.subagent_id = t.task_id
+      WHERE s.subagent_id IS NULL OR json_type(s.payload_json, '$.result') IS NOT 'text'`.pipe(
     Effect.map(countOf),
     Effect.orElseSucceed(() => 0),
   );
@@ -200,7 +248,7 @@ const make = Effect.gen(function* () {
       : Option.none<EnvironmentId>();
   });
 
-  const status = Effect.gen(function* () {
+  const containerStatus = Effect.gen(function* () {
     const current = yield* SubscriptionRef.get(progress);
     const container = yield* sandbox.status;
     const linked = yield* liveLink(container.url);
@@ -214,30 +262,61 @@ const make = Effect.gen(function* () {
       url: container.url,
       linkedEnvironmentsEnabled: yield* links.enabled,
     };
-    if (current.running) return { ...base, state: "starting" } satisfies AssistantSandboxStatus;
+    if (current.running) return { ...base, state: "starting" } satisfies ContainerStatus;
     if (container.state === "docker_unavailable") {
-      return { ...base, state: "docker_unavailable" } satisfies AssistantSandboxStatus;
+      return { ...base, state: "docker_unavailable" } satisfies ContainerStatus;
     }
-    if (current.error !== null)
-      return { ...base, state: "failed" } satisfies AssistantSandboxStatus;
+    if (current.error !== null) return { ...base, state: "failed" } satisfies ContainerStatus;
     switch (container.state) {
       case "missing":
-        return { ...base, state: "not_created" } satisfies AssistantSandboxStatus;
+        return { ...base, state: "not_created" } satisfies ContainerStatus;
       case "stopped":
-        return { ...base, state: "stopped" } satisfies AssistantSandboxStatus;
+        return { ...base, state: "stopped" } satisfies ContainerStatus;
       case "starting":
-        return { ...base, state: "starting" } satisfies AssistantSandboxStatus;
+        return { ...base, state: "starting" } satisfies ContainerStatus;
       case "running":
         return Option.isSome(linked)
-          ? ({ ...base, state: "running" } satisfies AssistantSandboxStatus)
+          ? ({ ...base, state: "running" } satisfies ContainerStatus)
           : ({
               ...base,
               state: "failed",
               error:
                 "The sandbox is running but this Mac is not linked to it at its current address. Press Start to link it.",
-            } satisfies AssistantSandboxStatus);
+            } satisfies ContainerStatus);
     }
   });
+
+  // Null until read from the running sandbox; a sign-in or sign-out there sets it.
+  const github = yield* SubscriptionRef.make<AssistantSandboxGithub | null>(null);
+  const githubLogin = yield* FiberHandle.make();
+
+  const githubView = Effect.fn("AssistantSandboxControl.githubView")(function* (running: boolean) {
+    if (!running) return GITHUB_UNAVAILABLE;
+    const known = yield* SubscriptionRef.get(github);
+    if (known !== null) return known;
+    const login = yield* sandbox.githubAccount;
+    const read = login === null ? githubAs("signed_out") : githubAs("signed_in", { login });
+    // A sign-in that began while this was read wins over it.
+    return yield* SubscriptionRef.modify(github, (current) =>
+      current === null ? [read, read] : [current, current],
+    );
+  });
+
+  /** A new or removed container is read again; a sign-in waiting on the old one stops. */
+  const forgetGithub = FiberHandle.clear(githubLogin).pipe(
+    Effect.andThen(SubscriptionRef.set(github, null)),
+  );
+
+  const status = containerStatus.pipe(
+    Effect.flatMap((current) =>
+      githubView(current.state === "running").pipe(
+        Effect.map((githubStatus): AssistantSandboxStatus => ({
+          ...current,
+          github: githubStatus,
+        })),
+      ),
+    ),
+  );
 
   const setStep = (step: string) =>
     SubscriptionRef.update(progress, (current) => ({ ...current, step }));
@@ -309,7 +388,10 @@ const make = Effect.gen(function* () {
     yield* linkSandbox(url);
   }).pipe(
     Effect.matchCauseEffect({
-      onSuccess: () => SubscriptionRef.set(progress, { running: false, step: null, error: null }),
+      onSuccess: () =>
+        SubscriptionRef.set(progress, { running: false, step: null, error: null }).pipe(
+          Effect.andThen(forgetGithub),
+        ),
       onFailure: (cause) =>
         Effect.logWarning("Assistant sandbox start failed", cause).pipe(
           Effect.andThen(
@@ -381,17 +463,40 @@ const make = Effect.gen(function* () {
 
   const discardNow = Effect.gen(function* () {
     yield* sandbox.remove({ deleteVolumes: false });
+    yield* forgetGithub;
     yield* SubscriptionRef.set(progress, { running: false, step: null, error: null });
     const config = yield* readConfig;
     if (config.oneOff) yield* writeConfig({ ...config, oneOff: false });
   });
 
+  /** Removing it now would wait out the build, then leave the start failed on a container it made. */
+  const refuseWhileStarting = (then: string) =>
+    SubscriptionRef.get(progress).pipe(
+      Effect.flatMap((current) =>
+        current.running
+          ? Effect.fail(
+              new AssistantError({
+                reason: "invalid",
+                message: `The container is starting. ${then}`,
+              }),
+            )
+          : Effect.void,
+      ),
+    );
+
   const discard = Effect.gen(function* () {
+    yield* refuseWhileStarting("Discard it once it is up and its tasks have ended.");
     const working = yield* sandboxAssistants;
     if (working > 0) {
       return yield* new AssistantError({
         reason: "invalid",
         message: `${working} assistant${working === 1 ? " works" : "s work"} in the container, so it stays. The user can remove it in Settings → Assistants.`,
+      });
+    }
+    if ((yield* Ref.get(sending)) > 0) {
+      return yield* new AssistantError({
+        reason: "invalid",
+        message: "A task is on its way into the container. Discard it once that task ends.",
       });
     }
     const running = yield* openTasks;
@@ -426,6 +531,7 @@ const make = Effect.gen(function* () {
       if (
         !config.oneOff ||
         config.whenDone !== "discard" ||
+        (yield* Ref.get(sending)) > 0 ||
         (yield* openTasks) > 0 ||
         (yield* sandboxAssistants) > 0
       ) {
@@ -441,7 +547,9 @@ const make = Effect.gen(function* () {
   const remove = Effect.fn("AssistantSandboxControl.remove")(function* (
     input: AssistantSandboxRemoveInput,
   ) {
-    yield* sandbox.remove(input);
+    yield* refuseWhileStarting("Remove it once it is up.");
+    yield* sandbox.remove(input).pipe(Effect.mapError(asAssistantError));
+    yield* forgetGithub;
     if (input.deleteVolumes) {
       const recorded = yield* recordedEnvironment;
       if (Option.isSome(recorded)) {
@@ -451,7 +559,7 @@ const make = Effect.gen(function* () {
     }
     yield* SubscriptionRef.set(progress, { running: false, step: null, error: null });
     return yield* status;
-  }, Effect.mapError(asAssistantError));
+  });
 
   const pairingUrl = Effect.gen(function* () {
     const current = yield* sandbox.status;
@@ -465,9 +573,66 @@ const make = Effect.gen(function* () {
     return { pairingUrl: `${current.url}/pair#token=${Redacted.value(credential)}` };
   }).pipe(Effect.mapError(asAssistantError));
 
-  const streamStatus = Stream.merge(
-    SubscriptionRef.changes(progress),
-    Stream.tick(WATCH_INTERVAL),
+  const githubSignIn = Effect.gen(function* () {
+    const current = yield* status;
+    if (current.state !== "running") {
+      return yield* new AssistantError({
+        reason: "invalid",
+        message: "Start the sandbox, then sign it in to GitHub.",
+      });
+    }
+    if (current.github.state === "signing_in" || current.github.state === "signed_in") {
+      return current;
+    }
+    const prompt = yield* Deferred.make<AssistantSandbox.GithubPrompt>();
+    yield* SubscriptionRef.set(github, githubAs("signing_in"));
+    const showCode = Deferred.await(prompt).pipe(
+      Effect.flatMap((code) =>
+        SubscriptionRef.update(github, (now) =>
+          now?.state === "signing_in" ? githubAs("signing_in", code) : now,
+        ),
+      ),
+    );
+    yield* FiberHandle.run(
+      githubLogin,
+      Effect.forkChild(showCode).pipe(
+        Effect.andThen(sandbox.githubLogin(prompt)),
+        Effect.matchEffect({
+          onSuccess: (login) => SubscriptionRef.set(github, githubAs("signed_in", { login })),
+          onFailure: (error) =>
+            SubscriptionRef.set(github, githubAs("signed_out", { error: error.message })),
+        }),
+      ),
+    );
+    // Back with the code to show, or with why there is none.
+    yield* SubscriptionRef.changes(github).pipe(
+      Stream.filter((now) => now?.state !== "signing_in" || now.userCode !== null),
+      Stream.runHead,
+      Effect.timeoutOption(GITHUB_CODE_WAIT),
+    );
+    return yield* status;
+  });
+
+  const githubSignOut = Effect.gen(function* () {
+    yield* FiberHandle.clear(githubLogin);
+    if ((yield* containerStatus).state !== "running") {
+      return yield* new AssistantError({
+        reason: "invalid",
+        message: "Start the sandbox to sign it out of GitHub.",
+      });
+    }
+    yield* sandbox.githubLogout.pipe(Effect.mapError(asAssistantError));
+    yield* SubscriptionRef.set(github, githubAs("signed_out"));
+    return yield* status;
+  });
+
+  const streamStatus = Stream.mergeAll(
+    [
+      SubscriptionRef.changes(progress).pipe(Stream.as(undefined)),
+      SubscriptionRef.changes(github).pipe(Stream.as(undefined)),
+      Stream.tick(WATCH_INTERVAL),
+    ],
+    { concurrency: "unbounded" },
   ).pipe(
     Stream.mapEffect(() => status),
     Stream.changesWith(sameStatus),
@@ -489,8 +654,11 @@ const make = Effect.gen(function* () {
     }),
     taskStarted,
     taskEnded,
+    holding,
     stop,
     pairingUrl,
+    githubSignIn,
+    githubSignOut,
     remove,
   });
 });

@@ -15,6 +15,8 @@ import {
   type Project,
   type RepositoryIdentity,
   RunId,
+  SourceControlProviderKind,
+  SourceControlRepositoryError,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -136,6 +138,8 @@ interface BoxThread {
   readonly noProject: Ref.Ref<boolean>;
   readonly cloned: Ref.Ref<ReadonlyArray<string>>;
   readonly registered: Ref.Ref<ReadonlyArray<string>>;
+  /** Why a clone there fails, as git says it, such as a private repository with no sign-in. */
+  readonly cloneFails: Ref.Ref<string | null>;
 }
 
 const makeBoxThread = Effect.gen(function* () {
@@ -174,6 +178,7 @@ const makeBoxThread = Effect.gen(function* () {
     noProject: yield* Ref.make(false),
     cloned: yield* Ref.make<ReadonlyArray<string>>([]),
     registered: yield* Ref.make<ReadonlyArray<string>>([]),
+    cloneFails: yield* Ref.make<string | null>(null),
   } satisfies BoxThread;
 });
 
@@ -499,13 +504,24 @@ const boxToolkitLayer = (thread: BoxThread) => {
     Layer.provide(
       Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({
         cloneRepository: (input) =>
-          Ref.update(thread.cloned, (seen) => [...seen, input.destinationPath]).pipe(
-            Effect.as({
+          Effect.gen(function* () {
+            const reason = (yield* Ref.get(thread.cloned)).includes(input.destinationPath)
+              ? "Destination path already exists and is not empty."
+              : yield* Ref.get(thread.cloneFails);
+            if (reason !== null) {
+              return yield* new SourceControlRepositoryError({
+                operation: "cloneRepository",
+                provider: SourceControlProviderKind.make("github"),
+                detail: reason,
+              });
+            }
+            yield* Ref.update(thread.cloned, (seen) => [...seen, input.destinationPath]);
+            return {
               cwd: input.destinationPath,
               remoteUrl: input.remoteUrl ?? "",
               repository: null,
-            } as never),
-          ),
+            } as never;
+          }),
       }),
     ),
     Layer.provide(
@@ -533,9 +549,16 @@ const boxToolkitLayer = (thread: BoxThread) => {
             };
           }),
         create: (input) =>
-          Ref.update(thread.registered, (seen) => [...seen, input.workspaceRoot]).pipe(
-            Effect.as(boxProjects.at(-1)!),
-          ),
+          Effect.gen(function* () {
+            if (!(yield* Ref.get(thread.cloned)).includes(input.workspaceRoot)) {
+              return yield* new ProjectService.ProjectInvalidError({
+                projectId: input.projectId,
+                detail: "The workspace root does not exist.",
+              });
+            }
+            yield* Ref.update(thread.registered, (seen) => [...seen, input.workspaceRoot]);
+            return boxProjects.at(-1)!;
+          }),
       }),
     ),
     Layer.provide(Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({})),
@@ -2021,6 +2044,17 @@ it.effect(
         expect(refused.message).toContain("No project there has this repository");
         expect(yield* Ref.get(thread.cloned)).toEqual([]);
 
+        // A failed clone says why, not that the folder it never made is missing.
+        yield* Ref.set(thread.cloneFails, "could not read Username for 'https://github.com'");
+        const unsigned = yield* Effect.flip(
+          a.remote.delegate(scope, input, { cloneMissingProject: true }),
+        );
+        expect(unsigned.message).toBe(
+          "The repository could not be cloned there: could not read Username for 'https://github.com'",
+        );
+        expect(yield* Ref.get(thread.registered)).toEqual([]);
+        yield* Ref.set(thread.cloneFails, null);
+
         yield* a.remote.delegate(scope, input, { cloneMissingProject: true });
         expect(yield* Ref.get(thread.cloned)).toEqual(["/workspace/app"]);
         expect(yield* Ref.get(thread.registered)).toEqual(["/workspace/app"]);
@@ -2038,12 +2072,13 @@ it.effect("tells the sandbox when a task starts in it and when that task ends", 
         ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
       >([]);
       const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
-      const events: Array<string> = [];
+      const started: Array<string> = [];
+      const ended = yield* Queue.unbounded<string>();
       const a = yield* makeLaptop(database, offers, undefined, {
         isSandbox: (environmentId) => Effect.succeed(environmentId === box.environmentId),
         taskStarted: (environmentId, taskId) =>
-          Effect.sync(() => void events.push(`started:${environmentId}:${taskId}`)),
-        taskEnded: (taskId) => Effect.sync(() => void events.push(`ended:${taskId}`)),
+          Effect.sync(() => void started.push(`${environmentId}:${taskId}`)),
+        taskEnded: (taskId) => Queue.offer(ended, taskId).pipe(Effect.asVoid),
       });
       yield* linkTo(a.links, b, "full-access");
       yield* seedParent(a);
@@ -2051,15 +2086,17 @@ it.effect("tells the sandbox when a task starts in it and when that task ends", 
       const delegated = yield* delegateToBox(a);
       // The row says where it ran in words, not with the container's hostname.
       expect(delegated.remoteChild.label).toBe("Assistant sandbox");
-      expect(events).toEqual([`started:${box.environmentId}:${delegated.taskId}`]);
+      expect(started).toEqual([`${box.environmentId}:${delegated.taskId}`]);
       yield* Ref.set(thread.status, "completed");
       yield* Deferred.succeed(thread.finished, undefined);
       yield* taskResult(a, delegated.taskId);
-      yield* Effect.yieldNow;
-      expect(events).toEqual([
-        `started:${box.environmentId}:${delegated.taskId}`,
-        `ended:${delegated.taskId}`,
-      ]);
+      expect(yield* Queue.take(ended)).toBe(delegated.taskId);
+      // A repeat of the finished call records the task as started again; its follower, finding it
+      // done, ends it again, so the sandbox never counts it as still running.
+      const repeated = yield* delegateToBox(a);
+      expect(repeated.taskId).toBe(delegated.taskId);
+      expect(started).toHaveLength(2);
+      expect(yield* Queue.take(ended)).toBe(delegated.taskId);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

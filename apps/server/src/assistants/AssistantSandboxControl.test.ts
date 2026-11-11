@@ -6,11 +6,14 @@ import {
   type PeerLinkCreateInput,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -36,6 +39,12 @@ interface World {
   /** The limit each `ensure` and `setCpus` was given. */
   ensured: Array<number | null>;
   limits: Array<number | null>;
+  /** What `ensure` waits on first, standing for an image build. */
+  hold: Effect.Effect<void>;
+  github: string | null;
+  /** How `gh auth login` ends after it showed its code. */
+  githubLogin: Effect.Effect<string, AssistantSandbox.AssistantSandboxError>;
+  githubAccountReads: number;
 }
 
 const harness = (
@@ -53,6 +62,10 @@ const harness = (
     removed: [],
     ensured: [],
     limits: [],
+    hold: Effect.void,
+    github: null,
+    githubLogin: Effect.succeed("octo"),
+    githubAccountReads: 0,
     ...initial,
   };
   const status = () =>
@@ -63,22 +76,26 @@ const harness = (
   const sandbox = Layer.succeed(AssistantSandbox.AssistantSandbox, {
     status: Effect.sync(status),
     ensure: (cpus) =>
-      Effect.suspend(() => {
-        world.ensured.push(cpus);
-        if (world.ensureError !== null) {
-          return Effect.fail(
-            new AssistantSandbox.AssistantSandboxError({
-              reason: "docker_failed",
-              message: world.ensureError,
-            }),
-          );
-        }
-        if (world.container !== "running") {
-          world.container = "running";
-          world.url = url;
-        }
-        return Effect.sync(status);
-      }),
+      Effect.suspend(() => world.hold).pipe(
+        Effect.andThen(
+          Effect.suspend(() => {
+            world.ensured.push(cpus);
+            if (world.ensureError !== null) {
+              return Effect.fail(
+                new AssistantSandbox.AssistantSandboxError({
+                  reason: "docker_failed",
+                  message: world.ensureError,
+                }),
+              );
+            }
+            if (world.container !== "running") {
+              world.container = "running";
+              world.url = url;
+            }
+            return Effect.sync(status);
+          }),
+        ),
+      ),
     setCpus: (cpus) => Effect.sync(() => void world.limits.push(cpus)),
     stop: Effect.sync(() => {
       world.container = "stopped";
@@ -91,6 +108,19 @@ const harness = (
         return status();
       }),
     pairingCredential: Effect.succeed(Redacted.make("PAIRCODE")),
+    githubAccount: Effect.sync(() => {
+      world.githubAccountReads += 1;
+      return world.github;
+    }),
+    githubLogin: (prompt) =>
+      Deferred.succeed(prompt, {
+        userCode: "ABCD-1234",
+        verificationUri: "https://github.com/login/device",
+      }).pipe(
+        Effect.andThen(Effect.suspend(() => world.githubLogin)),
+        Effect.tap((login) => Effect.sync(() => void (world.github = login))),
+      ),
+    githubLogout: Effect.sync(() => void (world.github = null)),
   });
   const peerLinks = Layer.effect(
     PeerLinks.PeerLinks,
@@ -420,6 +450,75 @@ it.effect("discard removes the container but not while a task still runs in it",
   }).pipe(Effect.provide(layer));
 });
 
+it.effect("a task waits a while for a first build, then is told to ask again", () => {
+  const { world, layer } = harness();
+  return Effect.gen(function* () {
+    const { control } = yield* configured;
+    const built = yield* Deferred.make<void>();
+    world.hold = Deferred.await(built);
+    const first = yield* control.startForTask.pipe(Effect.forkChild({ startImmediately: true }));
+    yield* TestClock.adjust("90 seconds");
+    assert.strictEqual((yield* Fiber.join(first)).state, "starting");
+    // A second task during the build joins it, and the build stays one started for tasks.
+    const second = yield* control.startForTask.pipe(Effect.forkChild({ startImmediately: true }));
+    yield* Deferred.succeed(built, undefined);
+    assert.deepInclude(yield* Fiber.join(second), { state: "running", environmentId: sandboxId });
+    assert.deepStrictEqual(world.ensured, [null]);
+    assert.isTrue((yield* control.config).oneOff);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("discard and remove are refused while the container is starting", () => {
+  const { world, layer } = harness();
+  return Effect.gen(function* () {
+    const { control } = yield* configured;
+    const built = yield* Deferred.make<void>();
+    world.hold = Deferred.await(built);
+    assert.strictEqual((yield* control.start).state, "starting");
+    assert.include((yield* Effect.flip(control.discard)).message, "is starting");
+    assert.include(
+      (yield* Effect.flip(control.remove({ deleteVolumes: true }))).message,
+      "is starting",
+    );
+    assert.deepStrictEqual(world.removed, []);
+    yield* Deferred.succeed(built, undefined);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("a task on its way into the container keeps it from being discarded", () => {
+  const { world, layer } = harness();
+  return Effect.gen(function* () {
+    const { control } = yield* configured;
+    yield* forTask("t1");
+    const recorded = yield* Deferred.make<void>();
+    const sending = yield* control
+      .holding(Deferred.await(recorded))
+      .pipe(Effect.forkChild({ startImmediately: true }));
+    yield* control.taskEnded("t1");
+    assert.deepStrictEqual(world.removed, []);
+    assert.include((yield* Effect.flip(control.discard)).message, "on its way");
+    yield* Deferred.succeed(recorded, undefined);
+    yield* Fiber.join(sending);
+    assert.strictEqual((yield* control.discard).state, "not_created");
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("a task that already has its result never keeps the container", () => {
+  const { world, layer } = harness();
+  return Effect.gen(function* () {
+    const { control, sql } = yield* configured;
+    yield* forTask("t1");
+    // Its end was recorded here, but the server stopped before the sandbox heard of it.
+    yield* sql`
+      INSERT INTO orchestration_v2_projection_subagents
+        (subagent_id, thread_id, parent_node_id, provider, origin, status, updated_at, payload_json)
+      VALUES ('t1', 'thread-1', 'node-1', 'remote', 'app_owned', 'completed', 'now',
+        '{"result":"Done."}')`;
+    assert.strictEqual((yield* control.discard).state, "not_created");
+    assert.deepStrictEqual(world.removed, [false]);
+  }).pipe(Effect.provide(layer));
+});
+
 it.effect("discard is refused while an assistant works in the container", () => {
   const { world, layer } = harness();
   return Effect.gen(function* () {
@@ -435,5 +534,83 @@ it.effect("discard is refused while an assistant works in the container", () => 
     yield* control.taskEnded("t3");
     assert.include((yield* Effect.flip(control.discard)).message, "1 assistant works");
     assert.strictEqual(world.removed.length, 2);
+  }).pipe(Effect.provide(layer));
+});
+
+const githubOf = (control: Control.AssistantSandboxControl["Service"]) =>
+  control.status.pipe(Effect.map((status) => status.github));
+
+const githubSettles = (control: Control.AssistantSandboxControl["Service"]) =>
+  control.streamStatus.pipe(
+    Stream.map((status) => status.github),
+    Stream.filter((github) => github.state !== "signing_in"),
+    Stream.runHead,
+    Effect.map(Option.getOrThrow),
+  );
+
+it.effect("GitHub sign-in shows the code to enter, then the account it signed in to", () => {
+  const { world, layer } = harness({ githubLogin: Effect.never });
+  return Effect.gen(function* () {
+    const control = yield* Control.AssistantSandboxControl;
+    assert.strictEqual((yield* githubOf(control)).state, "unavailable");
+    assert.include((yield* Effect.flip(control.githubSignIn)).message, "Start the sandbox");
+    yield* started;
+    assert.deepInclude(yield* githubOf(control), { state: "signed_out", login: null });
+    const signing = yield* control.githubSignIn;
+    assert.deepInclude(signing.github, {
+      state: "signing_in",
+      userCode: "ABCD-1234",
+      verificationUri: "https://github.com/login/device",
+    });
+    // A second press while the code is up shows the same code.
+    assert.deepStrictEqual((yield* control.githubSignIn).github, signing.github);
+    // Cancel stops the login waiting in the container.
+    assert.deepInclude((yield* control.githubSignOut).github, { state: "signed_out" });
+    world.githubLogin = Effect.succeed("octo");
+    yield* control.githubSignIn;
+    assert.deepInclude(yield* githubSettles(control), { state: "signed_in", login: "octo" });
+    assert.strictEqual((yield* control.githubSignIn).github.state, "signed_in");
+    assert.deepInclude((yield* control.githubSignOut).github, { state: "signed_out" });
+    assert.isNull(world.github);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("a GitHub sign-in that fails says why and can be tried again", () => {
+  const { world, layer } = harness({
+    githubLogin: Effect.fail(
+      new AssistantSandbox.AssistantSandboxError({
+        reason: "docker_failed",
+        message: "The code expired before it was entered. Sign in again.",
+      }),
+    ),
+  });
+  return Effect.gen(function* () {
+    const control = yield* Control.AssistantSandboxControl;
+    yield* started;
+    yield* control.githubSignIn;
+    assert.deepInclude(yield* githubSettles(control), {
+      state: "signed_out",
+      error: "The code expired before it was entered. Sign in again.",
+    });
+    world.githubLogin = Effect.succeed("octo");
+    yield* control.githubSignIn;
+    assert.deepInclude(yield* githubSettles(control), { state: "signed_in", error: null });
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("the GitHub account is read once per container and again after a remove", () => {
+  const { world, layer } = harness({ github: "octo" });
+  return Effect.gen(function* () {
+    const control = yield* Control.AssistantSandboxControl;
+    yield* started;
+    assert.deepInclude(yield* githubOf(control), { state: "signed_in", login: "octo" });
+    yield* githubOf(control);
+    assert.strictEqual(world.githubAccountReads, 1);
+    yield* control.remove({ deleteVolumes: false });
+    assert.strictEqual((yield* githubOf(control)).state, "unavailable");
+    assert.include((yield* Effect.flip(control.githubSignOut)).message, "Start the sandbox");
+    yield* started;
+    yield* githubOf(control);
+    assert.strictEqual(world.githubAccountReads, 2);
   }).pipe(Effect.provide(layer));
 });
