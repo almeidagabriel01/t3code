@@ -7,6 +7,7 @@ import {
   DevicePlatform,
   DevicePlatformAvailability,
   DeviceSummary,
+  LINKED_DEVICE_HOST_PREFIX,
   LinkedDeviceState,
 } from "./device.ts";
 
@@ -16,17 +17,8 @@ import {
  */
 export const LINKED_DEVICE_ROUTE_PREFIX = "/api/linked-device";
 
-/**
- * A linked environment's devices are one host here, named after it. Configured host ids cannot
- * hold a dot, so this prefix never collides with one.
- */
-export const LINKED_DEVICE_HOST_PREFIX = "linked.";
-
 export const linkedDeviceHostId = (environmentId: string) =>
   `${LINKED_DEVICE_HOST_PREFIX}${environmentId}` as DeviceHostId;
-
-export const isLinkedDeviceHostId = (hostId: string | undefined) =>
-  hostId?.startsWith(LINKED_DEVICE_HOST_PREFIX) === true;
 
 /** The header a forwarded agent-device call names its thread in, as the linking side knows it. */
 export const LINKED_DEVICE_THREAD_HEADER = "t3-linked-thread";

@@ -91,5 +91,9 @@ describe("native device stream messages", () => {
     expect(
       deviceStreamMessage('{"type":"phoneInput","input":{"type":"tap","x":0.5,"y":0.25}}'),
     ).toEqual({ type: "phoneInput", input: { type: "tap", x: 0.5, y: 0.25 } });
+    // A lone space, Enter or Backspace is text the phone must still get.
+    expect(deviceStreamMessage('{"type":"phoneInput","input":{"type":"text","text":" "}}')).toEqual(
+      { type: "phoneInput", input: { type: "text", text: " " } },
+    );
   });
 });

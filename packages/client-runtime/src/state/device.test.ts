@@ -342,31 +342,45 @@ describe("capturePhoneControl", () => {
   it.each([
     [
       "this computer stays view only",
-      { platform: "desktop" as const },
+      { hostId: "local", platform: "desktop" as const },
       true,
       { controllable: false, notice: "View only. Agents use computer tools on this computer." },
     ],
     [
       "a server without phone input",
-      { platform: "ios" as const },
+      { hostId: "local", platform: "ios" as const },
       undefined,
       { controllable: false, notice: "View only. Use the phone to control it." },
     ],
     [
       "a ready iPhone",
-      { platform: "ios" as const, issues: [] },
+      { hostId: "local", platform: "ios" as const, issues: [] },
       true,
       { controllable: true, notice: null },
     ],
     [
+      "a linked environment's iPhone",
+      { hostId: "linked.studio", platform: "ios" as const, issues: [] },
+      true,
+      { controllable: false, notice: "View only. Use the phone to control it." },
+    ],
+    [
       "an iPhone without signing",
-      { platform: "ios" as const, issues: [{ reason: "signing_missing" as const }] },
+      {
+        hostId: "local",
+        platform: "ios" as const,
+        issues: [{ reason: "signing_missing" as const }],
+      },
       true,
       { controllable: false, notice: "iPhone signing is not set up" },
     ],
     [
       "an issue that only stops the video does not block control",
-      { platform: "ios" as const, issues: [{ reason: "capture_failed" as const }] },
+      {
+        hostId: "local",
+        platform: "ios" as const,
+        issues: [{ reason: "capture_failed" as const }],
+      },
       true,
       { controllable: true, notice: null },
     ],

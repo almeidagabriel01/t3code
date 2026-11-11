@@ -58,9 +58,10 @@ export function threadDevicePreviews(state: DeviceServiceState | null, threadId:
         capture,
         /** A USB iPhone the user drives from the preview. */
         phoneControl: control?.controllable === true,
-        // A blocking issue's own row already names it.
+        // The issue's own row, shown under the stream unless it stops the video, already names it.
         viewOnlyNotice:
-          control?.notice && !issues.some((issue) => issue.title === control.notice)
+          control?.notice &&
+          !issues.some((issue) => !issue.blocksView && issue.title === control.notice)
             ? control.notice
             : null,
         issues,

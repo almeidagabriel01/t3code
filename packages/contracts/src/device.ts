@@ -317,15 +317,25 @@ export const isDesktopDevice = (device: {
 }): boolean => device.hostId === LOCAL_DEVICE_HOST_ID && device.id === DESKTOP_DEVICE_ID;
 
 /**
- * Devices the server streams itself with a capture helper (a USB iPhone or iPad, or this
- * computer's screen) instead of through a device hub. They have no input socket.
+ * A linked environment's devices are one host here, named after it. Configured host ids cannot
+ * hold a dot, so this prefix never collides with one.
+ */
+export const LINKED_DEVICE_HOST_PREFIX = "linked.";
+
+export const isLinkedDeviceHostId = (hostId: string | undefined) =>
+  hostId?.startsWith(LINKED_DEVICE_HOST_PREFIX) === true;
+
+/**
+ * Devices a server streams itself with a capture helper (a USB iPhone or iPad, or this
+ * computer's screen) instead of through a device hub. They have no input socket. A linked
+ * environment's USB iPhone streams from that machine's helper; its screen is never linked.
  */
 export const isCaptureDevice = (device: {
   readonly hostId: string;
   readonly platform: DevicePlatform;
   readonly physical: boolean;
 }): boolean =>
-  device.hostId === LOCAL_DEVICE_HOST_ID &&
+  (device.hostId === LOCAL_DEVICE_HOST_ID || isLinkedDeviceHostId(device.hostId)) &&
   (device.platform === "desktop" || (device.platform === "ios" && device.physical));
 
 export const deviceIssueBlocks = (

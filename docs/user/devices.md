@@ -151,7 +151,8 @@ or paste, and use **Home** and **App switcher**. Each tap or swipe is sent whole
 when you lift your finger, typing is sent when you pause, and the first input
 can take a few seconds while the phone starts its helper app. Driving it takes
 the phone over from agents, as **Take over** does. Until it is ready, the panel
-names what is missing instead.
+names what is missing instead. A phone plugged into a linked environment's
+computer is view only here; drive it from that environment.
 
 A phone that is not ready says why next to it, with what to do: pair or trust
 it, unlock it, turn on **Developer Mode** (**Settings → Privacy & Security** on

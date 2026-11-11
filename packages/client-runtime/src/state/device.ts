@@ -2,6 +2,7 @@ import {
   DEVICE_ISSUES,
   DEVICE_WIFI_PAIRING_FAILURE_LABELS,
   deviceIssueBlocks,
+  isLinkedDeviceHostId,
   type DevicePlatform,
   type DeviceServiceState,
   type DeviceSummary,
@@ -391,7 +392,7 @@ export function linkedDeviceSources(input: {
  * this computer stays view only, and a USB iPhone names what blocks control.
  */
 export function capturePhoneControl(
-  device: Pick<DeviceSummary, "platform" | "issues">,
+  device: Pick<DeviceSummary, "hostId" | "platform" | "issues">,
   supportsPhoneControl: boolean | undefined,
 ): { readonly controllable: boolean; readonly notice: string | null } {
   if (device.platform === "desktop")
@@ -399,7 +400,8 @@ export function capturePhoneControl(
       controllable: false,
       notice: "View only. Agents use computer tools on this computer.",
     };
-  if (supportsPhoneControl !== true)
+  // Input reaches only this server's own phones; a linked one is driven from its own machine.
+  if (supportsPhoneControl !== true || isLinkedDeviceHostId(device.hostId))
     return { controllable: false, notice: "View only. Use the phone to control it." };
   const blocker = deviceIssueBlocks(device.issues, "control");
   return blocker

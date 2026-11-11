@@ -178,6 +178,7 @@ describe("device issues", () => {
     expect(isCaptureDevice({ ...device, physical: false })).toBe(false);
     expect(isCaptureDevice({ ...device, platform: "android" })).toBe(false);
     expect(isCaptureDevice({ ...device, hostId: "mac-mini" })).toBe(false);
+    expect(isCaptureDevice({ ...device, hostId: "linked.studio" })).toBe(true);
     expect(isCaptureDevice({ ...device, platform: "desktop" })).toBe(true);
   });
 

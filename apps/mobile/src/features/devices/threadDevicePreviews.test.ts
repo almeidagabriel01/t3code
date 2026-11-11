@@ -198,6 +198,13 @@ describe("thread device previews", () => {
     expect(
       threadDevicePreviews({ ...withControl, devices: [{ ...iphone, issues: [] }] }, threadId)[0],
     ).toMatchObject({ phoneControl: true, viewOnlyNotice: null });
+    // A locked phone's row stops the video, so DeviceNotices hides it: the notice names it instead.
+    expect(
+      threadDevicePreviews(
+        { ...withControl, devices: [{ ...iphone, issues: [{ reason: "locked" as const }] }] },
+        threadId,
+      )[0],
+    ).toMatchObject({ phoneControl: false, viewOnlyNotice: "Locked" });
     expect(threadDevicePreviews(state, threadId)[0]).toMatchObject({
       capture: false,
       blocked: null,
