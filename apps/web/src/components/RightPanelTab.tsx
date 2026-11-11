@@ -41,15 +41,15 @@ import {
   MessagesSquareIcon,
   NotebookPenIcon,
   TerminalSquare,
+  Volume2Icon,
+  VolumeOffIcon,
   X,
 } from "lucide-react";
-import { Volume2, VolumeOff } from "lucide";
 import { type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 
 import type { DesktopPreviewOverlay } from "~/previewStateStore";
 import type { RightPanelSurface } from "~/rightPanelStore";
 import { cn } from "~/lib/utils";
-import { MorphIcon } from "~/components/MorphIcon";
 import { AndroidIcon, AppleIcon } from "~/components/Icons";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { faviconUrlForOrigin } from "@t3tools/shared/favicon";
@@ -514,7 +514,11 @@ export function RightPanelTab(
                     .catch(() => undefined);
                 }}
               >
-                <MorphIcon className="size-3.5" icon={audio === "muted" ? VolumeOff : Volume2} />
+                {audio === "muted" ? (
+                  <VolumeOffIcon className="size-3.5" />
+                ) : (
+                  <Volume2Icon className="size-3.5" />
+                )}
               </button>
             }
           />

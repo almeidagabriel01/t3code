@@ -101,7 +101,6 @@ const harness = (
           Effect.map((value) => value.linkedEnvironmentsEnabled),
           Effect.orDie,
         ),
-        describe: () => Effect.succeedSome({ environmentId: sandboxId, label: "box" }),
         get: (environmentId: EnvironmentId) =>
           Effect.succeed(Option.fromNullishOr(world.links.get(environmentId))),
         link: (input: PeerLinkCreateInput) =>

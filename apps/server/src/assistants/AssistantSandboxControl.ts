@@ -262,15 +262,11 @@ const make = Effect.gen(function* () {
 
   /** Reuses a live link to the sandbox at this address; otherwise pairs with a fresh credential. */
   const linkSandbox = Effect.fn("AssistantSandboxControl.link")(function* (url: string) {
-    const described = yield* links.describe(url);
-    if (Option.isNone(described)) {
-      return yield* new AssistantSandbox.AssistantSandboxError({
-        reason: "docker_failed",
-        message: "The sandbox answered, but not as a T3 Code environment.",
-      });
-    }
-    const { environmentId } = described.value;
-    const existing = yield* links.get(environmentId);
+    // The recorded id holds while the sandbox keeps its volume; removing it clears the record.
+    const recorded = yield* recordedEnvironment;
+    const existing = Option.isSome(recorded)
+      ? yield* links.get(recorded.value).pipe(Effect.orElseSucceed(() => Option.none()))
+      : Option.none();
     const reusable =
       Option.isSome(existing) &&
       existing.value.urls.includes(url) &&
@@ -278,16 +274,15 @@ const make = Effect.gen(function* () {
         existing.value.expiresAt,
         DateTime.add(yield* DateTime.now, RELINK_MARGIN),
       );
-    if (!reusable) {
-      const credential = yield* sandbox.pairingCredential;
-      yield* links.link({
-        url,
-        pairingCode: Redacted.value(credential),
-        access: "full-access",
-        expectedEnvironmentId: environmentId,
-        expectedLabel: SANDBOX_LABEL,
-      });
-    }
+    // The sandbox answers on this machine's loopback, so it links by address: an expected id
+    // would refuse loopback, where anything may answer as the machine picked.
+    const environmentId = reusable
+      ? existing.value.environmentId
+      : (yield* links.link({
+          url,
+          pairingCode: Redacted.value(yield* sandbox.pairingCredential),
+          access: "full-access",
+        })).environmentId;
     const linkedAt = DateTime.formatIso(yield* DateTime.now);
     yield* sql`
       INSERT INTO assistant_sandbox (singleton, environment_id, linked_at)

@@ -175,12 +175,10 @@ export const makeThreadWorkspace = Effect.gen(function* () {
       Effect.orElseSucceed(() => null),
     );
     if (project === null) return null;
-    if (
-      !(yield* gitWorkflow
-        .isRepository(project.workspaceRoot)
-        .pipe(Effect.orElseSucceed(() => false)))
-    )
-      return null;
+    const repositoryRoot = yield* gitWorkflow
+      .repositoryRoot(project.workspaceRoot)
+      .pipe(Effect.orElseSucceed(() => null));
+    if (repositoryRoot === null) return null;
     return { cwd: project.workspaceRoot, worktreePath, branch };
   });
 

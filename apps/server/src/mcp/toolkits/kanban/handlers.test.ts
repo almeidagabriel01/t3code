@@ -108,7 +108,7 @@ const dependencies = (threadId: ThreadId, { kanban, client, threads, link }: Cal
       namedProjectsRoot: "/projects",
       ensureScratchProject: scratchAvailable
         ? Effect.succeed({ projectId: scratchProjectId })
-        : Effect.fail(new ManagedProjectFolders.ScratchUnavailableError()),
+        : Effect.fail(new ManagedProjectFolders.ScratchUnavailableError({ baseDir: "/t3" })),
     }),
   ).pipe(
     Layer.provideMerge(

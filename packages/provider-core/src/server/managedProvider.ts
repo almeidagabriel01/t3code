@@ -16,7 +16,11 @@ import * as Stream from "effect/Stream";
 import * as Semaphore from "effect/Semaphore";
 
 import * as ProviderHost from "./ProviderHost.ts";
-import { applyUsageLimitsUpdate, resolveUsageLimitsAfterProbe } from "./usageLimits.ts";
+import {
+  applyUsageLimitsUpdate,
+  makeUsageLimits,
+  resolveUsageLimitsAfterProbe,
+} from "./usageLimits.ts";
 import type { ManagedServerProvider } from "./snapshot.ts";
 
 interface ProviderSnapshotState {
@@ -24,6 +28,8 @@ interface ProviderSnapshotState {
   readonly enrichmentGeneration: number;
   /** When a running session last reported each usage window: a probe replaces only older readings. */
   readonly streamedAt: ReadonlyMap<string, string>;
+  // null preserves an explicitly cleared plan across probes and enrichment.
+  readonly usageAuthLabel: string | null | undefined;
 }
 
 function withUsageLimits(
@@ -75,6 +81,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     snapshot: initialSnapshot,
     enrichmentGeneration: 0,
     streamedAt: new Map(),
+    usageAuthLabel: undefined,
   });
   const settingsRef = yield* Ref.make(initialSettings);
   const enrichmentFiberRef = yield* Ref.make<Fiber.Fiber<void, unknown> | null>(null);
@@ -89,7 +96,15 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
         return [null, state] as const;
       }
       // Enrichment must not revert usage updates newer than its input snapshot.
-      const merged = withUsageLimits(nextSnapshot, state.snapshot.usageLimits);
+      const merged = withUsageLimits(
+        state.usageAuthLabel === undefined
+          ? nextSnapshot
+          : {
+              ...nextSnapshot,
+              auth: { ...nextSnapshot.auth, label: state.usageAuthLabel ?? undefined },
+            },
+        state.snapshot.usageLimits,
+      );
       if (Equal.equals(state.snapshot, merged)) {
         return [null, state] as const;
       }
@@ -153,6 +168,8 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
       return state.snapshot;
     }
 
+    // A probe without usage must not erase a report published while its I/O was in flight.
+    const usageBeforeProbe = (yield* Ref.get(snapshotStateRef)).snapshot.usageLimits;
     const probedSnapshot = yield* input.checkProvider;
     const { snapshot: nextSnapshot, generation: nextGeneration } = yield* Ref.modify(
       snapshotStateRef,
@@ -170,22 +187,36 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
             probedSnapshot.auth.workspaceId !== previous.workspaceId);
         const usageLimits = switchedAccount
           ? probedSnapshot.usageLimits
-          : resolveUsageLimitsAfterProbe({
-              published: state.snapshot.usageLimits,
-              probed: probedSnapshot.usageLimits,
-              streamedAt: state.streamedAt,
-            });
+          : probedSnapshot.usageLimits === undefined &&
+              state.snapshot.usageLimits !== usageBeforeProbe
+            ? state.snapshot.usageLimits
+            : resolveUsageLimitsAfterProbe({
+                published: state.snapshot.usageLimits,
+                probed: probedSnapshot.usageLimits,
+                streamedAt: state.streamedAt,
+              });
         const workspaceId =
           usageLimits === probedSnapshot.usageLimits ? undefined : state.snapshot.auth.workspaceId;
+        const usageAuthLabel =
+          !switchedAccount && usageLimits?.checkedAt === state.snapshot.usageLimits?.checkedAt
+            ? state.usageAuthLabel
+            : undefined;
+        const labeledProbe =
+          usageAuthLabel === undefined
+            ? probedSnapshot
+            : {
+                ...probedSnapshot,
+                auth: { ...probedSnapshot.auth, label: usageAuthLabel ?? undefined },
+              };
         const snapshot = withUsageLimits(
           workspaceId && !probedSnapshot.auth.workspaceId
-            ? { ...probedSnapshot, auth: { ...probedSnapshot.auth, workspaceId } }
-            : probedSnapshot,
+            ? { ...labeledProbe, auth: { ...labeledProbe.auth, workspaceId } }
+            : labeledProbe,
           usageLimits,
         );
         return [
           { snapshot, generation },
-          { ...state, snapshot, enrichmentGeneration: generation },
+          { ...state, snapshot, enrichmentGeneration: generation, usageAuthLabel },
         ] as const;
       },
     );
@@ -201,18 +232,37 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   const applyUsageLimits: ManagedServerProvider["applyUsageLimits"] = Effect.fnUntraced(
     function* (update) {
       const snapshotToPublish = yield* Ref.modify(snapshotStateRef, (state) => {
-        const usageLimits = applyUsageLimitsUpdate({
-          previous: state.snapshot.usageLimits,
-          update,
-          checkedAt: update.checkedAt,
-        });
-        if (usageLimits === state.snapshot.usageLimits) {
+        const complete = update.complete && update.windows.length > 0;
+        const usageLimits = complete
+          ? makeUsageLimits(update)
+          : applyUsageLimitsUpdate({
+              previous: state.snapshot.usageLimits,
+              update,
+              checkedAt: update.checkedAt,
+            });
+        const { auth } = state.snapshot;
+        const label = update.windows.length > 0 ? update.authLabel : undefined;
+        const relabel =
+          (label !== undefined || (complete && state.usageAuthLabel !== undefined)) &&
+          label !== auth.label;
+        if (usageLimits === state.snapshot.usageLimits && !relabel) {
           return [null, state] as const;
         }
         const streamedAt = new Map(state.streamedAt);
         for (const window of update.windows) streamedAt.set(window.id, update.checkedAt);
-        const snapshot = withUsageLimits(state.snapshot, usageLimits);
-        return [snapshot, { ...state, snapshot, streamedAt }] as const;
+        const snapshot = withUsageLimits(
+          relabel ? { ...state.snapshot, auth: { ...auth, label } } : state.snapshot,
+          usageLimits,
+        );
+        return [
+          snapshot,
+          {
+            ...state,
+            snapshot,
+            streamedAt,
+            usageAuthLabel: label ?? (complete ? null : state.usageAuthLabel),
+          },
+        ] as const;
       });
       if (snapshotToPublish !== null) {
         yield* PubSub.publish(changesPubSub, snapshotToPublish);

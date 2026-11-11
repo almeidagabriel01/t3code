@@ -103,8 +103,44 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
   const maxPending = Math.max(1, options.maxPending ?? DEFAULT_MAX_PENDING);
   const concurrency = Math.max(1, options.concurrency ?? DEFAULT_CONCURRENCY);
 
+  // Outlives the cache entry so an expired or refreshing identity still reads as its last value.
+  const lastRepositoryIdentities = new Map<string, RepositoryIdentity>();
+  // `invalidate` drops a root's in-flight lookup so its late result cannot overwrite a newer one.
+  const lookupsInFlight = new Map<string, object>();
+  const rememberRepositoryIdentity = (
+    workspaceRoot: string,
+    repositoryIdentity: RepositoryIdentity | null,
+  ) => {
+    lastRepositoryIdentities.delete(workspaceRoot);
+    if (repositoryIdentity === null) return;
+    if (lastRepositoryIdentities.size >= cacheCapacity) {
+      const oldestRoot = lastRepositoryIdentities.keys().next().value;
+      if (oldestRoot !== undefined) lastRepositoryIdentities.delete(oldestRoot);
+    }
+    lastRepositoryIdentities.set(workspaceRoot, repositoryIdentity);
+  };
+
   const repositoryIdentityCache = yield* Cache.makeWith(
-    (workspaceRoot: string) => Effect.exit(repositoryIdentityResolver.resolve(workspaceRoot)),
+    (workspaceRoot: string) =>
+      Effect.suspend(() => {
+        const lookup = {};
+        lookupsInFlight.set(workspaceRoot, lookup);
+        const isCurrent = () => lookupsInFlight.get(workspaceRoot) === lookup;
+        return Effect.exit(repositoryIdentityResolver.resolve(workspaceRoot)).pipe(
+          Effect.tap((result) =>
+            Effect.sync(() => {
+              if (Exit.isSuccess(result) && isCurrent()) {
+                rememberRepositoryIdentity(workspaceRoot, result.value);
+              }
+            }),
+          ),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (isCurrent()) lookupsInFlight.delete(workspaceRoot);
+            }),
+          ),
+        );
+      }),
     {
       capacity: cacheCapacity,
       timeToLive: Exit.match({
@@ -252,10 +288,13 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
       );
       const resolvedRoot = path.resolve(workspaceRoot);
       const managedRole = managedRoots.find(([, root]) => root === resolvedRoot)?.[0];
+      const repositoryIdentityResolved = isSuccessfullyResolved(repositoryIdentity);
       return {
-        repositoryIdentity: availableValue(repositoryIdentity),
+        repositoryIdentity: repositoryIdentityResolved
+          ? availableValue(repositoryIdentity)
+          : (lastRepositoryIdentities.get(workspaceRoot) ?? null),
         faviconPath: availableValue(faviconPath),
-        repositoryIdentityResolved: isSuccessfullyResolved(repositoryIdentity),
+        repositoryIdentityResolved,
         ...(managedRole === undefined ? {} : { managedRole }),
       };
     },
@@ -302,6 +341,10 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
         Effect.all(
           [
             Cache.invalidate(repositoryIdentityCache, workspaceRoot),
+            Effect.sync(() => {
+              lookupsInFlight.delete(workspaceRoot);
+              lastRepositoryIdentities.delete(workspaceRoot);
+            }),
             Cache.invalidate(faviconCache, workspaceRoot),
             // The resolver keeps its own misses, which would outlive a clone filling the folder.
             faviconResolver.invalidate(workspaceRoot),

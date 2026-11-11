@@ -126,7 +126,7 @@ const run = (
             name: Effect.succeed("T3 Code"),
             quit: Effect.sync(quit),
           } as unknown as ElectronApp.ElectronApp["Service"]),
-          DesktopIpc.layer({
+          DesktopIpc.layerTest({
             handle: (channel, handler) => void handlers.set(channel, handler),
             removeHandler: (channel) => void handlers.delete(channel),
             on: vi.fn(),

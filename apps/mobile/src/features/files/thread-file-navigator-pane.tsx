@@ -94,17 +94,8 @@ export function ThreadFileNavigatorPane(props: {
   );
 
   return (
-    <View className="flex-1 ios:bg-sheet android:bg-header">
-      <AppBar
-        title="Files"
-        subtitle={props.projectName}
-        search={{
-          value: searchQuery,
-          onChangeText: setSearchQuery,
-          placeholder: "Search files",
-        }}
-        refresh={{ accessibilityLabel: "Refresh files", onPress: entriesQuery.refresh }}
-      />
+    // Material drags target the first scroll view, so place content before the header.
+    <View className="flex-1 ios:bg-sheet android:bg-header android:flex-col-reverse">
       <ScreenContent insetHorizontal>
         {workspaceCleaned && selectedThread !== null ? (
           <View className="pt-3">
@@ -120,6 +111,16 @@ export function ThreadFileNavigatorPane(props: {
           fileTree
         )}
       </ScreenContent>
+      <AppBar
+        title="Files"
+        subtitle={props.projectName}
+        search={{
+          value: searchQuery,
+          onChangeText: setSearchQuery,
+          placeholder: "Search files",
+        }}
+        refresh={{ accessibilityLabel: "Refresh files", onPress: entriesQuery.refresh }}
+      />
     </View>
   );
 }

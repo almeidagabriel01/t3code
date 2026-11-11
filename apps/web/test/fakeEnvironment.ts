@@ -103,7 +103,7 @@ const auth = {
   sessionCookieName: "t3_session",
 };
 
-const serverConfig: ServerConfig = {
+const baseServerConfig: ServerConfig = {
   ...Schema.decodeUnknownSync(ServerConfig)({
     environment: descriptor,
     auth,
@@ -141,6 +141,11 @@ const serverConfig: ServerConfig = {
   }),
   keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
 };
+// A server only leaves threads out of the shell when it serves their families.
+const serverConfig = (): ServerConfig =>
+  threads.some((thread) => thread.olderSettled)
+    ? { ...baseServerConfig, shellThreadFamilies: true }
+    : baseServerConfig;
 
 const project: OrchestrationProjectShell = {
   id: PROJECT_ID,
@@ -224,6 +229,8 @@ function run(threadId: ThreadId, id: RunId, ordinal: number, userMessageId: stri
 export interface FakeThread {
   /** Makes this a side chat of that thread. */
   readonly sideChatOf?: ThreadId;
+  /** Makes this an older settled thread the shell leaves out; only its family read returns it. */
+  readonly olderSettled?: true;
   readonly id: ThreadId;
   readonly title: string;
   readonly runs: ReadonlyArray<OrchestrationV2Run>;
@@ -288,8 +295,8 @@ function shellOf(thread: FakeThread): OrchestrationV2ThreadShell {
     createdAt: AT,
     updatedAt: AT,
     archivedAt: null,
-    settledOverride: null,
-    settledAt: null,
+    settledOverride: thread.olderSettled ? "settled" : null,
+    settledAt: thread.olderSettled ? AT : null,
     lastVisitedAt: AT,
     deletedAt: null,
   };
@@ -325,8 +332,8 @@ function projectionOf(thread: FakeThread): OrchestrationV2ThreadProjection {
       createdAt: AT,
       updatedAt: AT,
       archivedAt: null,
-      settledOverride: null,
-      settledAt: null,
+      settledOverride: shell.settledOverride,
+      settledAt: shell.settledAt,
       lastVisitedAt: AT,
       deletedAt: null,
     },
@@ -375,32 +382,34 @@ let autonomyOverride: AutonomySettings | null = null;
 export function setFakeAutonomy(autonomy: AutonomySettings | null): void {
   autonomyOverride = autonomy;
 }
-const currentServerConfig = (): ServerConfig =>
-  Object.keys(extraCapabilities).length === 0 &&
-  hostOs === "linux" &&
-  autonomyOverride === null &&
-  !reasoningEffort
-    ? serverConfig
+const currentServerConfig = (): ServerConfig => {
+  const config = serverConfig();
+  return Object.keys(extraCapabilities).length === 0 &&
+    hostOs === "linux" &&
+    autonomyOverride === null &&
+    !reasoningEffort
+    ? config
     : {
-        ...serverConfig,
+        ...config,
         providers: reasoningEffort
-          ? serverConfig.providers.map((provider) => ({
+          ? config.providers.map((provider) => ({
               ...provider,
               models: provider.models.map((model) => ({
                 ...model,
                 capabilities: effortCapabilities,
               })),
             }))
-          : serverConfig.providers,
+          : config.providers,
         settings: autonomyOverride
-          ? { ...serverConfig.settings, autonomy: autonomyOverride }
-          : serverConfig.settings,
+          ? { ...config.settings, autonomy: autonomyOverride }
+          : config.settings,
         environment: {
-          ...serverConfig.environment,
-          platform: { ...serverConfig.environment.platform, os: hostOs },
-          capabilities: { ...serverConfig.environment.capabilities, ...extraCapabilities },
+          ...config.environment,
+          platform: { ...config.environment.platform, os: hostOs },
+          capabilities: { ...config.environment.capabilities, ...extraCapabilities },
         },
       };
+};
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -453,7 +462,7 @@ const handlers: Record<string, (input: never) => unknown> = {
             schemaVersion: 1,
             snapshotSequence: sequence,
             projects: [project],
-            threads: threads.map(shellOf),
+            threads: threads.filter((thread) => !thread.olderSettled).map(shellOf),
             archivedThreads: [],
           },
         },
@@ -481,6 +490,16 @@ const handlers: Record<string, (input: never) => unknown> = {
         };
       },
     );
+  },
+  [ORCHESTRATION_V2_WS_METHODS.getThreadFamily]: (input: { readonly threadId: ThreadId }) => {
+    const rootOf = (thread: FakeThread) => thread.sideChatOf ?? thread.id;
+    const requested = threads.find((candidate) => candidate.id === input.threadId);
+    return Effect.succeed({
+      snapshotSequence: sequence,
+      threads: requested
+        ? threads.filter((thread) => rootOf(thread) === rootOf(requested)).map(shellOf)
+        : [],
+    });
   },
   [WS_METHODS.subscribeVcsStatus]: () =>
     subscribe<VcsStatusStreamEvent>([], (queue) => {
@@ -819,7 +838,7 @@ handlers[WS_METHODS.assistantsSetAvatarImage] = (input: { readonly assistantId: 
 export const fakeSettings = { patches: [] as unknown[] };
 handlers[WS_METHODS.serverUpdateSettings] = (input: { readonly patch: object }) => {
   fakeSettings.patches.push(input.patch);
-  return Effect.succeed({ ...serverConfig.settings, ...input.patch });
+  return Effect.succeed({ ...baseServerConfig.settings, ...input.patch });
 };
 
 handlers[WS_METHODS.assistantsCreate] = (input: object) => {

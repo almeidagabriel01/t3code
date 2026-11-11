@@ -54,7 +54,8 @@ import { formatUsd, TIME_ZONE, useInstanceSpend } from "./useInstanceSpend";
 import { collectUsageSessions } from "@t3tools/client-runtime/state/usageSessions";
 import { LimitName, ResetText, UsageSessionsList } from "./UsageRosterParts";
 import { useUsageItems } from "./useUsageItems";
-import { ResetCreditDialog, resetCreditsSummary, useResetCredit } from "../usage/UsageLimits";
+import { ResetCreditDialog, useResetCredit } from "../usage/UsageLimits";
+import { type ResetCreditChoice, resetCreditChoices } from "@t3tools/shared/usageLimits";
 import { useEnvironmentScope } from "../../state/session";
 import { useMinuteNow } from "./useMinuteNow";
 
@@ -427,7 +428,7 @@ function RosterRow({
   readonly item: UsageItem;
   readonly display: StatusBarUsagePercentage;
   readonly onRetry: () => void;
-  readonly onUseReset: (item: UsageItem) => void;
+  readonly onUseReset: (target: ResetTarget) => void;
 }) {
   const now = useMinuteNow();
   const showSessions = useClientSettings((settings) => settings.usageShowSessions);
@@ -488,6 +489,11 @@ function RosterRow({
   );
 }
 
+interface ResetTarget {
+  readonly item: UsageItem;
+  readonly choice: ResetCreditChoice;
+}
+
 function RosterResetCredits({
   item,
   now,
@@ -495,49 +501,60 @@ function RosterResetCredits({
 }: {
   readonly item: UsageItem;
   readonly now: number;
-  readonly onUse: (item: UsageItem) => void;
+  readonly onUse: (target: ResetTarget) => void;
 }) {
   const canManageProviders = useEnvironmentScope(item.environmentId, AuthProvidersManageScope);
   const credits = item.limits?.resetCredits;
   if (!credits || credits.availableCount === 0) return null;
+  const choices = resetCreditChoices(
+    credits,
+    { instanceId: item.entry.instanceId },
+    now,
+    false,
+    item.entry.displayName,
+  );
   return (
-    <div className="flex items-center gap-2 pl-7.5">
-      <span className="min-w-0 flex-1 truncate text-2xs text-muted-foreground tabular-nums">
-        {resetCreditsSummary(credits, now)}
-      </span>
-      <Button
-        size="xs"
-        variant="outline"
-        disabled={!canManageProviders}
-        onClick={() => onUse(item)}
-      >
-        Use reset
-      </Button>
+    <div className="flex flex-col gap-1 pl-7.5">
+      {choices.map((choice) => (
+        <div key={choice.key} className="flex items-center gap-2">
+          <span className="min-w-0 flex-1 truncate text-2xs text-muted-foreground tabular-nums">
+            {choice.summary}
+          </span>
+          {choice.availableCount > 0 ? (
+            <Button
+              size="xs"
+              variant="outline"
+              disabled={!canManageProviders}
+              onClick={() => onUse({ item, choice })}
+            >
+              {choice.actionLabel}
+            </Button>
+          ) : null}
+        </div>
+      ))}
     </div>
   );
 }
 
 /** Mounted outside the popover: popovers stack above dialogs and unmount on close. */
 function StatusBarResetDialog({
-  item,
+  target,
   onClose,
 }: {
-  readonly item: UsageItem;
+  readonly target: ResetTarget;
   readonly onClose: () => void;
 }) {
-  const { canManageProviders, busy, redeem } = useResetCredit(item.environmentId, {
-    instanceId: item.entry.instanceId,
-  });
+  const { canManageProviders, busy, redeem } = useResetCredit(target.item.environmentId);
   return (
     <ResetCreditDialog
       open={!busy}
       onOpenChange={(open) => {
         if (!open) onClose();
       }}
+      choice={target.choice}
       disabled={!canManageProviders}
-      account={item.entry.displayName}
       onConfirm={() =>
-        void redeem().then((message) => {
+        void redeem(target.choice).then((message) => {
           onClose();
           if (message) toastManager.add({ type: "info", title: message });
         })
@@ -553,14 +570,14 @@ function UsageSegmentsBody() {
   const display = useClientSettings((settings) => settings.statusBarUsagePercentage);
   const { refresh, refreshing } = useUsageRefresh(environmentIds);
   const [open, setOpen] = useState(false);
-  const [resetting, setResetting] = useState<UsageItem | null>(null);
+  const [resetting, setResetting] = useState<ResetTarget | null>(null);
   const items = allItems.filter((item) => isStatusBarItemShown(hidden, item.entry.instanceId));
   if (items.length === 0) return null;
   return (
     // Narrow windows clip the chips instead of drawing them over the ports and memory segments.
     <div className="flex min-w-0 items-center gap-1.5 overflow-hidden">
       {resetting ? (
-        <StatusBarResetDialog item={resetting} onClose={() => setResetting(null)} />
+        <StatusBarResetDialog target={resetting} onClose={() => setResetting(null)} />
       ) : null}
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger

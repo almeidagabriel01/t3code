@@ -4,10 +4,14 @@ import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
-import { act, render } from "../../test/render";
+import { act, render, stubGlobal } from "../../test/render";
 import { focusPanelTerminalAfterClose, registerTerminalFocusTarget } from "~/lib/terminalFocus";
 import { useRightPanelStore, type RightPanelSurface } from "~/rightPanelStore";
+import { HistorySwipeNavigation } from "./HistorySwipeNavigation";
 import { RightPanelTabs } from "./RightPanelTabs";
+
+const navigateHistory = vi.hoisted(() => vi.fn());
+vi.mock("../navigationHistory", () => ({ canNavigateHistory: () => true, navigateHistory }));
 
 function files(count: number): RightPanelSurface[] {
   return Array.from({ length: count }, (_, index) => ({
@@ -399,3 +403,78 @@ it.each([
     await expect.element(page.getByText(`Device host · ${label}`)).toBeVisible();
   },
 );
+
+// Chromium starts a gesture scroll, and Electron reports its begin, only for a
+// wheel event the page did not preventDefault; it then scrolls the latched scroller.
+function trackpad() {
+  const begin = new Set<() => void>();
+  const end = new Set<() => void>();
+  const subscribe = (listeners: Set<() => void>) => (listener: () => void) => {
+    listeners.add(listener);
+    return () => listeners.delete(listener);
+  };
+  let scrolling = false;
+  return {
+    bridge: { onTrackpadScrollBegin: subscribe(begin), onTrackpadScrollEnd: subscribe(end) },
+    scroll(target: Element, deltas: readonly number[]) {
+      let scroller: Element | null = target;
+      while (
+        scroller &&
+        (scroller.scrollWidth <= scroller.clientWidth ||
+          !/auto|scroll/.test(getComputedStyle(scroller).overflowX))
+      ) {
+        scroller = scroller.parentElement;
+      }
+      for (const deltaX of deltas) {
+        const event = new WheelEvent("wheel", {
+          deltaX,
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+        });
+        target.dispatchEvent(event);
+        if (event.defaultPrevented) continue;
+        if (scroller) scroller.scrollLeft += deltaX;
+        if (scrolling) continue;
+        scrolling = true;
+        for (const listener of begin) listener();
+      }
+      if (scrolling) for (const listener of end) listener();
+      scrolling = false;
+    },
+  };
+}
+
+it("a flick that scrolls the tab strip to its left edge keeps the thread, a swipe from the edge goes back", async () => {
+  navigateHistory.mockReset();
+  const { bridge, scroll } = trackpad();
+  using _bridge = stubGlobal("desktopBridge", bridge);
+  using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+  const terminals: RightPanelSurface[] = Array.from({ length: 16 }, (_, index) => ({
+    id: `terminal:${index}`,
+    kind: "terminal",
+    resourceId: `${index}`,
+    terminalIds: [`${index}`],
+    activeTerminalId: `${index}`,
+  }));
+  await using screen = await render(
+    <>
+      <HistorySwipeNavigation />
+      <Fixture initial={terminals} width={320} />
+    </>,
+  );
+  const strip = viewport(screen.container);
+  expect(strip.scrollWidth - strip.clientWidth).toBeGreaterThan(120);
+  strip.scrollLeft = 120;
+
+  const momentum = Array.from({ length: 24 }, (_, index) => -60 * 0.85 ** index);
+  scroll(strip.querySelector("[data-active-tab]")!, [-10, -20, -30, ...momentum]);
+
+  expect(strip.scrollLeft).toBe(0);
+  expect(navigateHistory).not.toHaveBeenCalled();
+
+  strip.scrollLeft = 0;
+  scroll(strip.querySelector("[data-active-tab]")!, [-40, -40, -40, -40, -40]);
+
+  expect(navigateHistory).toHaveBeenCalledExactlyOnceWith("back");
+});
