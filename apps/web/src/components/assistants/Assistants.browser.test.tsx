@@ -607,7 +607,11 @@ it("stops a running sandbox, offers the provider sign-in, and removes it keeping
   );
   // A container discarded after a task leaves its files: one question deletes them.
   fakeSandbox.calls = [];
-  publishSandbox({ ...fakeSandbox.status, state: "not_created" });
+  publishSandbox({
+    ...fakeSandbox.status,
+    state: "not_created",
+    environmentId: "environment-box" as never,
+  });
   await userEvent.click(page.getByRole("button", { name: "Delete files" }));
   await expect.element(page.getByText("Delete the sandbox files?")).toBeVisible();
   await confirmStep();
