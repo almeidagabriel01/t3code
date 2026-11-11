@@ -385,7 +385,8 @@ function SidebarProjectGroup(props: ProjectGroupProps) {
           aria-expanded={expanded}
           onClick={() => props.onToggleProject(project, expanded)}
           className="flex h-8 w-full cursor-pointer items-center gap-2.5 rounded-(--control-radius) px-(--sidebar-row-content-inset) text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-          {...attributes}
+          // A disabled sortable marks its activator aria-disabled, but the row still toggles.
+          {...(props.projectDragEnabled ? attributes : {})}
           {...listeners}
           data-sidebar-row={projectRowId(scope)}
         >
