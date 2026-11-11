@@ -66,7 +66,10 @@ const on = (deviceId: string, threadId = threadA) => ({
   deviceId: DeviceId.make(deviceId),
 });
 
-const harness = Effect.fn("harness")(function* () {
+const harness = Effect.fn("harness")(function* (
+  run: DeviceHost.DeviceHostReady["run"] = () =>
+    Effect.succeed({ code: 0, stdout: "", stderr: "" }),
+) {
   const calls = {
     boots: [] as Array<string>,
     shutdowns: [] as Array<string>,
@@ -75,7 +78,6 @@ const harness = Effect.fn("harness")(function* () {
     endedSessions: [] as Array<string>,
     releasedLaunchers: [] as Array<string>,
   };
-  const run = () => Effect.succeed({ code: 0, stdout: "", stderr: "" });
   const ready: DeviceHost.DeviceHostReady = {
     nodePath: process.execPath,
     hub: { origin: "http://device.test" },
@@ -600,5 +602,140 @@ describe("asking the user for device access", () => {
       expect(yield* ask).toBe("allowed");
       expect(requested).toEqual([id, `${id}:1`, `${id}:2`]);
     }),
+  );
+});
+
+describe("Wi-Fi pairing and forgetting", () => {
+  const PASSWORD = /P:([A-Z2-9]+);;$/;
+  // A phone that has not scanned yet: adb works and sees no pairing service.
+  const adbWaiting =
+    (
+      commands: Array<ReadonlyArray<string>>,
+      answer: (args: ReadonlyArray<string>) => string = () => "",
+    ): DeviceHost.DeviceHostReady["run"] =>
+    (_command, args) =>
+      Effect.sync(() => {
+        commands.push(args);
+        const stdout =
+          args.join(" ") === "mdns check" ? "mdns daemon version [test]" : answer(args);
+        return { code: 0, stdout, stderr: "" };
+      });
+
+  it.effect("runs one attempt per environment, repeats by request id, and cancels", () =>
+    Effect.gen(function* () {
+      const commands: Array<ReadonlyArray<string>> = [];
+      const { service } = yield* harness(adbWaiting(commands));
+      const started = yield* service.startWifiPairing({ requestId: "web-1" });
+      expect(started.qrPayload).toMatch(/^WIFI:T:ADB;S:ADB_WIFI_[A-Z2-9]+;P:[A-Z2-9]+;;$/);
+      expect(started.state.supportsWifiPairing).toBe(true);
+      expect(started.state.wifiPairing).toEqual({
+        attemptId: started.attemptId,
+        hostId: LOCAL_DEVICE_HOST_ID,
+        status: "waiting",
+      });
+      // Every client sees the attempt; only the one that started it gets the password.
+      const password = PASSWORD.exec(started.qrPayload)?.[1] ?? "";
+      expect(JSON.stringify(yield* service.state)).not.toContain(password);
+
+      const repeated = yield* service.startWifiPairing({ requestId: "web-1" });
+      expect(repeated.qrPayload).toBe(started.qrPayload);
+      expect(yield* Effect.flip(service.startWifiPairing({ requestId: "mobile-1" }))).toMatchObject(
+        { _tag: "DeviceWifiPairingBusyError", attemptId: started.attemptId },
+      );
+
+      // An unknown attempt changes nothing; the right one clears the state and frees the slot.
+      const before = (yield* service.state).revision;
+      expect((yield* service.cancelWifiPairing({ attemptId: "other" })).revision).toBe(before);
+      expect((yield* service.cancelWifiPairing({ attemptId: started.attemptId })).wifiPairing).toBe(
+        undefined,
+      );
+      const next = yield* service.startWifiPairing({ requestId: "mobile-1" });
+      expect(next.attemptId).not.toBe(started.attemptId);
+      expect(commands.some((args) => args.join(" ").includes(password))).toBe(false);
+    }).pipe(withSettings(), Effect.scoped),
+  );
+
+  it.effect("publishes each step to every client and frees the slot once connected", () =>
+    Effect.gen(function* () {
+      let serviceName = "";
+      const commands: Array<ReadonlyArray<string>> = [];
+      const { service } = yield* harness(
+        adbWaiting(commands, (args) =>
+          args[0] === "mdns"
+            ? `${serviceName}\t_adb-tls-pairing._tcp\t192.168.1.20:37111`
+            : args[0] === "pair"
+              ? "Successfully paired to 192.168.1.20:37111 [guid=adb-R5CT900-x]"
+              : args[0] === "devices"
+                ? "192.168.1.20:41233\tdevice"
+                : "",
+        ),
+      );
+      const subscription = yield* service.subscribe;
+      const started = yield* service.startWifiPairing({ requestId: "web-1" });
+      serviceName = started.attemptId;
+      const seen: Array<string> = [];
+      let last = started.state;
+      while (seen.at(-1) !== "connected") {
+        last = yield* PubSub.take(subscription);
+        const status = last.wifiPairing?.status;
+        if (status && status !== seen.at(-1)) seen.push(status);
+      }
+      expect(seen).toEqual(["waiting", "pairing", "connecting", "connected"]);
+      expect(last.wifiPairing).toMatchObject({
+        status: "connected",
+        deviceId: "192.168.1.20:41233",
+      });
+      // A finished attempt leaves room for the next one, and cancelling it dismisses it.
+      yield* service.startWifiPairing({ requestId: "web-2" });
+    }).pipe(withSettings(), Effect.scoped),
+  );
+
+  it.effect("reports why an attempt failed", () =>
+    Effect.gen(function* () {
+      const { service } = yield* harness(() =>
+        Effect.succeed({ code: 127, stdout: "", stderr: "spawn adb ENOENT" }),
+      );
+      const subscription = yield* service.subscribe;
+      yield* service.startWifiPairing({ requestId: "web-1" });
+      let pairing = (yield* PubSub.take(subscription)).wifiPairing;
+      while (pairing?.status !== "failed") pairing = (yield* PubSub.take(subscription)).wifiPairing;
+      expect(pairing).toMatchObject({ status: "failed", reason: "adb_missing" });
+    }).pipe(withSettings(), Effect.scoped),
+  );
+
+  it.effect("forgets a Wi-Fi phone, ending what was open on it, and refuses other devices", () =>
+    Effect.gen(function* () {
+      const commands: Array<ReadonlyArray<string>> = [];
+      const { service } = yield* harness(adbWaiting(commands, () => "disconnected"));
+      const wifi = DeviceId.make(wifiPhone.id);
+      yield* service.open({ ...on(wifiPhone.id), platform: "android" });
+      yield* service.setHold({ deviceId: wifi, held: true });
+
+      const forgotten = yield* service.forgetDevice({ deviceId: wifi });
+      expect(commands).toContainEqual(["disconnect", wifiPhone.id]);
+      expect(forgotten.sessions).toEqual([]);
+      expect(forgotten.holds).toEqual([]);
+
+      expect(
+        yield* Effect.flip(service.forgetDevice({ deviceId: DeviceId.make(phone.id) })),
+      ).toMatchObject({ _tag: "DeviceActionUnavailableError", reason: "not_wifi" });
+      expect(
+        yield* Effect.flip(service.forgetDevice({ deviceId: DeviceId.make("gone") })),
+      ).toMatchObject({ _tag: "DeviceNotFoundError" });
+    }).pipe(withSettings(), Effect.scoped),
+  );
+
+  it.effect("treats a phone adb already let go as forgotten and reports other failures", () =>
+    Effect.gen(function* () {
+      let answer = { code: 1, stdout: "", stderr: "error: no such device '192.168.1.20:41233'" };
+      const { service } = yield* harness(() => Effect.sync(() => answer));
+      const wifi = { deviceId: DeviceId.make(wifiPhone.id) };
+      yield* service.forgetDevice(wifi);
+      answer = { code: 1, stdout: "", stderr: "error: cannot reach adb server" };
+      expect(yield* Effect.flip(service.forgetDevice(wifi))).toMatchObject({
+        _tag: "DeviceOperationError",
+        operation: "forget",
+      });
+    }).pipe(withSettings(), Effect.scoped),
   );
 });

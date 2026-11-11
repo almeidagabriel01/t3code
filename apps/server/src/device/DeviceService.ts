@@ -26,6 +26,11 @@ import {
   type DeviceServiceState,
   type DeviceSession,
   type DeviceSetAccessInput,
+  type DeviceForgetInput,
+  type DeviceWifiPairCancelInput,
+  type DeviceWifiPairStartInput,
+  type DeviceWifiPairStartResult,
+  DeviceWifiPairingBusyError,
   type DeviceSetHoldInput,
   type DeviceShutdownInput,
   type DeviceSummary,
@@ -75,6 +80,7 @@ import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as Fiber from "effect/Fiber";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SynchronizedRef from "effect/SynchronizedRef";
@@ -88,6 +94,7 @@ import * as ProcessRunner from "../processRunner.ts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as SecretResolverLayer from "../secrets/SecretResolver.ts";
 import { requireSettingsSecret } from "../secrets/settingsSecretValue.ts";
+import * as AdbWifiPairing from "./AdbWifiPairing.ts";
 import * as DeviceHost from "./DeviceHost.ts";
 import * as SshDeviceHost from "./SshDeviceHost.ts";
 import * as EasDeviceHost from "./EasDeviceHost.ts";
@@ -249,6 +256,17 @@ export class DeviceService extends Context.Service<
     readonly setAccess: (
       input: DeviceSetAccessInput,
     ) => Effect.Effect<DeviceServiceState, DeviceError>;
+    /** Starts pairing a phone over Wi-Fi; one attempt per environment, repeats by request id. */
+    readonly startWifiPairing: (
+      input: DeviceWifiPairStartInput,
+    ) => Effect.Effect<DeviceWifiPairStartResult, DeviceError | DeviceWifiPairingBusyError>;
+    readonly cancelWifiPairing: (
+      input: DeviceWifiPairCancelInput,
+    ) => Effect.Effect<DeviceServiceState>;
+    /** Disconnects a phone connected over Wi-Fi and ends what was open on it. */
+    readonly forgetDevice: (
+      input: DeviceForgetInput,
+    ) => Effect.Effect<DeviceServiceState, DeviceError>;
     readonly state: Effect.Effect<DeviceServiceState>;
     readonly subscribe: Effect.Effect<PubSub.Subscription<DeviceServiceState>, never, Scope.Scope>;
     readonly configure: (
@@ -379,6 +397,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       supportsEasHosts: true,
       supportsSimlockHosts: true,
       supportsDeviceControl: true,
+      supportsWifiPairing: true,
       holds: [],
       access: initialSettings.access,
       hosts: initialHosts,
@@ -1385,6 +1404,127 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     );
   });
 
+  const pairingScope = yield* Scope.Scope;
+  /** The environment's one Wi-Fi pairing attempt; the password stays here, never in state. */
+  let pairing: {
+    readonly requestId: string;
+    readonly attemptId: string;
+    readonly hostId: DeviceHostId;
+    readonly qrPayload: string;
+    fiber?: Fiber.Fiber<void>;
+    done?: boolean;
+  } | null = null;
+  const publishPairing = (wifiPairing: DeviceServiceState["wifiPairing"]) =>
+    publish(({ wifiPairing: _previous, ...state }) =>
+      wifiPairing ? { ...state, wifiPairing } : state,
+    );
+
+  const startWifiPairing: DeviceService["Service"]["startWifiPairing"] = Effect.fn(
+    "DeviceService.startWifiPairing",
+  )(function* (input) {
+    const ready = yield* readiness(input.hostId);
+    // Checked and claimed without yielding between, so two clients never start two attempts.
+    if (pairing && !pairing.done) {
+      if (pairing.requestId === input.requestId)
+        return {
+          attemptId: pairing.attemptId,
+          qrPayload: pairing.qrPayload,
+          state: (yield* SynchronizedRef.get(stateRef)).state,
+        };
+      return yield* new DeviceWifiPairingBusyError({
+        hostId: pairing.hostId,
+        attemptId: pairing.attemptId,
+      });
+    }
+    const secret = AdbWifiPairing.newWifiPairingSecret();
+    const attempt: NonNullable<typeof pairing> = {
+      requestId: input.requestId,
+      attemptId: secret.serviceName,
+      hostId: ready.hostId,
+      qrPayload: AdbWifiPairing.wifiPairingQrPayload(secret),
+    };
+    pairing = attempt;
+    const base = { attemptId: attempt.attemptId, hostId: attempt.hostId };
+    const current = () => pairing === attempt;
+    const report = (wifiPairing: NonNullable<DeviceServiceState["wifiPairing"]>) =>
+      Effect.suspend(() => {
+        if (!current()) return Effect.void;
+        if (wifiPairing.status === "connected" || wifiPairing.status === "failed")
+          attempt.done = true;
+        return publishPairing(wifiPairing);
+      }).pipe(Effect.asVoid);
+    const published = yield* publishPairing({ ...base, status: "waiting" });
+    const fiber = yield* AdbWifiPairing.pairOverWifi(ready.run, secret, (status) =>
+      report({ ...base, status }),
+    ).pipe(
+      Effect.flatMap((deviceId) =>
+        report({ ...base, status: "connected", deviceId: DeviceId.make(deviceId) }).pipe(
+          Effect.andThen(refresh(ready).pipe(Effect.ignore)),
+        ),
+      ),
+      Effect.catchTags({
+        WifiPairingFailed: (error) =>
+          report({
+            ...base,
+            status: "failed",
+            reason: error.reason,
+            ...(error.detail ? { detail: error.detail } : {}),
+          }),
+      }),
+      Effect.forkIn(pairingScope),
+    );
+    attempt.fiber = fiber;
+    return { attemptId: attempt.attemptId, qrPayload: attempt.qrPayload, state: published };
+  });
+
+  const cancelWifiPairing: DeviceService["Service"]["cancelWifiPairing"] = Effect.fn(
+    "DeviceService.cancelWifiPairing",
+  )(function* (input) {
+    const attempt = pairing;
+    const { state } = yield* SynchronizedRef.get(stateRef);
+    if (attempt?.attemptId === input.attemptId) {
+      pairing = null;
+      if (attempt.fiber) yield* Fiber.interrupt(attempt.fiber);
+    }
+    return state.wifiPairing?.attemptId === input.attemptId
+      ? yield* publishPairing(undefined)
+      : state;
+  });
+
+  const forgetDevice: DeviceService["Service"]["forgetDevice"] = Effect.fn(
+    "DeviceService.forgetDevice",
+  )(function* (input) {
+    const hostId = input.hostId ?? LOCAL_DEVICE_HOST_ID;
+    const { state } = yield* SynchronizedRef.get(stateRef);
+    const device = findDevice(state, hostId, input.deviceId);
+    if (!device) return yield* new DeviceNotFoundError({ hostId, deviceId: input.deviceId });
+    if (device.connection !== "wifi")
+      return yield* new DeviceActionUnavailableError({
+        operation: "forget",
+        platform: device.platform,
+        reason: "not_wifi",
+      });
+    const ready = yield* readiness(hostId);
+    for (const threadId of new Set(
+      state.sessions
+        .filter((session) => session.hostId === hostId && session.deviceId === device.id)
+        .map((session) => session.threadId),
+    ))
+      yield* close({ threadId, hostId, deviceId: device.id, shutdown: false });
+    yield* setHold({ hostId, deviceId: device.id, held: false });
+    const result = yield* ready.run("adb", ["disconnect", device.id]);
+    const said = `${result.stdout}\n${result.stderr}`;
+    // "No such device" means adb already let it go, which is what forgetting asks for.
+    if (result.code !== 0 && !/no such device|disconnected/i.test(said))
+      return yield* new DeviceOperationError({
+        operation: "forget",
+        reason: "command_failed",
+        exitCode: result.code,
+        cause: said.trim(),
+      });
+    return yield* refresh(ready);
+  });
+
   // Sessions live in memory, so this removes every launcher a previous run left behind.
   yield* pruneLaunchers;
   // Holds live in memory too: a marker left behind would block agents with nothing to hand back.
@@ -1518,6 +1658,9 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       setHold,
       holdOnInput,
       setAccess,
+      startWifiPairing,
+      cancelWifiPairing,
+      forgetDevice,
       detail,
       action,
       screenshot,

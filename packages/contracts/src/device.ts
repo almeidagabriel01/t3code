@@ -359,6 +359,37 @@ export const DeviceHostStatuses = Schema.Record(
   }),
 );
 
+/** Why pairing a phone over Wi-Fi stopped. */
+export const DeviceWifiPairingFailure = Schema.Literals([
+  "adb_missing",
+  "mdns_unavailable",
+  "timeout",
+  "wrong_network",
+  "pair_refused",
+]);
+export type DeviceWifiPairingFailure = typeof DeviceWifiPairingFailure.Type;
+
+export const DEVICE_WIFI_PAIRING_FAILURE_LABELS: Record<DeviceWifiPairingFailure, string> = {
+  adb_missing: "adb is not installed on this device host. Install Android platform tools.",
+  mdns_unavailable: "adb cannot discover phones on the network (mDNS is unavailable).",
+  timeout: "No phone scanned the code in time.",
+  wrong_network: "The phone could not be reached. Put it on the same Wi-Fi network as the host.",
+  pair_refused: "The phone refused to pair. Scan a fresh code.",
+};
+
+/** A Wi-Fi pairing attempt as every client sees it. The password is never part of it. */
+export const DeviceWifiPairing = Schema.Struct({
+  attemptId: Schema.String,
+  hostId: DeviceHostId,
+  status: Schema.Literals(["waiting", "pairing", "connecting", "connected", "failed"]),
+  reason: Schema.optional(DeviceWifiPairingFailure),
+  /** adb's own words for a failure, for the user to act on. */
+  detail: Schema.optional(Schema.String),
+  /** The paired phone's id once connected. */
+  deviceId: Schema.optional(DeviceId),
+});
+export type DeviceWifiPairing = typeof DeviceWifiPairing.Type;
+
 const deviceServiceStateFields = {
   supportsHostRetry: Schema.optional(Schema.Boolean),
   supportsToolUpdate: Schema.optional(Schema.Boolean),
@@ -370,6 +401,9 @@ const deviceServiceStateFields = {
   /** Servers from before takeover and device access have neither RPC. */
   supportsDeviceControl: Schema.optional(Schema.Boolean),
   holds: Schema.optional(Schema.Array(DeviceHold)),
+  /** Servers from before Wi-Fi pairing have neither its RPCs nor `wifiPairing`. */
+  supportsWifiPairing: Schema.optional(Schema.Boolean),
+  wifiPairing: Schema.optional(DeviceWifiPairing),
   /** The stored `deviceAccess` setting; devices without an entry use their default. */
   access: Schema.optional(DeviceAccessMap),
   hostStatus: DeviceHostStatus,
@@ -487,6 +521,31 @@ export const DeviceSetAccessInput = Schema.Struct({
   policy: Schema.NullOr(DeviceAccessPolicy),
 });
 export type DeviceSetAccessInput = typeof DeviceSetAccessInput.Type;
+
+export const DeviceWifiPairStartInput = Schema.Struct({
+  hostId: Schema.optional(DeviceHostId),
+  /** A repeat with the same id returns the same attempt. */
+  requestId: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
+});
+export type DeviceWifiPairStartInput = typeof DeviceWifiPairStartInput.Type;
+
+export const DeviceWifiPairStartResult = Schema.Struct({
+  attemptId: Schema.String,
+  /** What the phone scans: `WIFI:T:ADB;S:<service name>;P:<password>;;`. */
+  qrPayload: Schema.String,
+  state: DeviceServiceState,
+});
+export type DeviceWifiPairStartResult = typeof DeviceWifiPairStartResult.Type;
+
+/** Stops a running attempt, or clears a finished one. Unknown ids change nothing. */
+export const DeviceWifiPairCancelInput = Schema.Struct({ attemptId: Schema.String });
+export type DeviceWifiPairCancelInput = typeof DeviceWifiPairCancelInput.Type;
+
+export const DeviceForgetInput = Schema.Struct({
+  hostId: Schema.optional(DeviceHostId),
+  deviceId: DeviceId,
+});
+export type DeviceForgetInput = typeof DeviceForgetInput.Type;
 
 export const DeviceAppearance = Schema.Literals(["light", "dark"]);
 export type DeviceAppearance = typeof DeviceAppearance.Type;
@@ -730,10 +789,12 @@ export class DeviceActionUnavailableError extends Schema.TaggedError<DeviceActio
   {
     operation: Schema.String,
     platform: DevicePlatform,
-    reason: Schema.Literals(["unsupported", "helper_missing", "physical_device"]),
+    reason: Schema.Literals(["unsupported", "helper_missing", "physical_device", "not_wifi"]),
   },
 ) {
   override get message(): string {
+    if (this.reason === "not_wifi")
+      return `Device ${this.operation} applies only to a phone connected over Wi-Fi.`;
     return this.reason === "helper_missing"
       ? `Device ${this.operation} requires a helper missing from this install. Set up device support again.`
       : this.reason === "physical_device"
@@ -801,6 +862,16 @@ export class DeviceInUseError extends Schema.TaggedError<DeviceInUseError>()("De
         ? `thread ${this.threadId}`
         : `the thread "${this.threadTitle}" (${this.threadId})`;
     return `${refusedDevice(this)} is in use by the agent in ${thread}. Use another device, or wait until that thread closes it. Do not close or reuse that thread's session.`;
+  }
+}
+
+/** Another client already started pairing a phone on this environment. */
+export class DeviceWifiPairingBusyError extends Schema.TaggedError<DeviceWifiPairingBusyError>()(
+  "DeviceWifiPairingBusyError",
+  { hostId: DeviceHostId, attemptId: Schema.String },
+) {
+  override get message(): string {
+    return "A phone is already being paired over Wi-Fi here. Cancel that attempt or wait for it to finish.";
   }
 }
 

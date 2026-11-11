@@ -29,6 +29,10 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.deviceSetHold]: AuthOrchestrationOperateScope,
   // Decides which devices agents may use.
   [WS_METHODS.deviceSetAccess]: AuthSettingsWriteScope,
+  // Pairing or forgetting a phone changes which devices this environment can reach.
+  [WS_METHODS.deviceWifiPairStart]: AuthSettingsWriteScope,
+  [WS_METHODS.deviceWifiPairCancel]: AuthSettingsWriteScope,
+  [WS_METHODS.deviceForget]: AuthSettingsWriteScope,
   // Stopping a server signals its processes, as closing a terminal does.
   [WS_METHODS.previewStopLocalServer]: AuthTerminalOperateScope,
   // Killing a listener signals a host process, as closing a terminal does.
