@@ -1719,7 +1719,7 @@ const WsProjectsWriteFileRpc = Rpc.make(WS_METHODS.projectsWriteFile, {
   error: Schema.Union([ProjectWriteFileError, EnvironmentAuthorizationError]),
 });
 
-const WsProjectsChangeEntryRpc = Rpc.make(WS_METHODS.projectsChangeEntry, {
+export const WsProjectsChangeEntryRpc = Rpc.make(WS_METHODS.projectsChangeEntry, {
   payload: ProjectChangeEntryInput,
   success: ProjectChangeEntryResult,
   error: Schema.Union([ProjectChangeEntryError, EnvironmentAuthorizationError]),

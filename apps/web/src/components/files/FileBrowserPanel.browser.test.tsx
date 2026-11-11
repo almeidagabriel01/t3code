@@ -393,6 +393,12 @@ describe("FileBrowserPanel", () => {
     await vi.waitFor(() => expect(findTreeRow(".env")).toBeNull());
     expect(localStorage.getItem("t3code.fileExplorerShowDotfiles")).toBe("false");
     expect(findTreeRow("README.md")).not.toBeNull();
+    // The header carries the same toggle for trees with no empty space to right-click.
+    await userEvent.click(screen.getByRole("button", { name: "Show dotfiles" }));
+    await vi.waitFor(() => expect(findTreeRow(".env")).not.toBeNull());
+    await expect
+      .element(screen.getByRole("button", { name: "Hide dotfiles" }))
+      .toHaveAttribute("aria-pressed", "true");
   });
 
   it("renames the focused row with F2", async () => {
@@ -593,6 +599,34 @@ describe("FileBrowserPanel", () => {
     area.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
     await userEvent.click(page.getByRole("menuitem", { name: "Refresh Explorer", exact: true }));
     await vi.waitFor(() => expect(refresh).toHaveBeenCalled());
+  });
+
+  it("moves rows dropped on a folder and puts the tree back when the move fails", async () => {
+    setup({ replies: [{ entries: [], failures: [] }, failure("already_exists", "Taken.")] });
+    await using screen = await renderPanel();
+    await vi.waitFor(() => expect(findTreeRow("src/")).not.toBeNull());
+    const drag = (path: string) => {
+      const dataTransfer = new DataTransfer();
+      const row = findTreeRow(path)!;
+      const folder = findTreeRow("src/")!;
+      const box = folder.getBoundingClientRect();
+      const at = { clientX: box.left + box.width / 2, clientY: box.top + box.height / 2 };
+      const init = { bubbles: true, cancelable: true, composed: true, dataTransfer, ...at };
+      row.dispatchEvent(new DragEvent("dragstart", init));
+      folder.dispatchEvent(new DragEvent("dragover", init));
+      folder.dispatchEvent(new DragEvent("drop", init));
+      row.dispatchEvent(new DragEvent("dragend", init));
+    };
+    drag("README.md");
+    await vi.waitFor(() =>
+      expect(server.changes).toEqual([
+        { _tag: "move", relativePath: "README.md", newRelativePath: "src/README.md" },
+      ]),
+    );
+    await vi.waitFor(() => expect(findTreeRow(".env")).not.toBeNull());
+    drag(".env");
+    await expect.element(screen.getByRole("alert")).toHaveTextContent("Taken.");
+    await vi.waitFor(() => expect(findTreeRow(".env")).not.toBeNull());
   });
 
   it("skips dropped files over the import limit", async () => {

@@ -23,6 +23,8 @@ import * as Schema from "effect/Schema";
 import {
   ChevronsDownUpIcon,
   ChevronsUpDownIcon,
+  EyeIcon,
+  EyeOffIcon,
   FilePlusIcon,
   FolderPlusIcon,
   XIcon,
@@ -100,6 +102,7 @@ function treePath(entry: ProjectEntry): string {
 function HeaderIconButton(props: {
   label: string;
   disabled?: boolean;
+  pressed?: boolean;
   onClick: () => void;
   children: React.ReactNode;
 }) {
@@ -112,6 +115,7 @@ function HeaderIconButton(props: {
             variant="ghost"
             size="icon-xs"
             aria-label={props.label}
+            aria-pressed={props.pressed}
             disabled={props.disabled}
             onClick={props.onClick}
           />
@@ -893,6 +897,13 @@ export default function FileBrowserPanel({
           <FolderPlusIcon className="size-3.5" />
         </HeaderIconButton>
         <RefreshFilesButton isPending={isPending} onRefresh={handleRefresh} />
+        <HeaderIconButton
+          label={showDotfiles ? "Hide dotfiles" : "Show dotfiles"}
+          pressed={showDotfiles}
+          onClick={() => setShowDotfiles((current) => !current)}
+        >
+          {showDotfiles ? <EyeIcon className="size-3.5" /> : <EyeOffIcon className="size-3.5" />}
+        </HeaderIconButton>
         <FileSearchField
           inputRef={searchInputRef}
           name="project-files-search"

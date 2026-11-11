@@ -91,19 +91,25 @@ export function useFileTreeEditing(options: {
   /** Applies changes in order and records them as one undo step, even when a later one fails. */
   const apply = async (changes: readonly ProjectEntryChange[]) => {
     const applied: { change: ProjectEntryChange; result: ProjectChangeEntryResult }[] = [];
-    try {
-      for (const change of changes) applied.push({ change, result: await run(change) });
-      const failures = applied.flatMap(({ result }) => result.failures);
-      setError(
-        failures.length === 0
-          ? null
-          : `${failures.length === 1 ? failures[0]!.relativePath : `${failures.length} items`}: ${failures[0]!.message}`,
-      );
-      return applied.map(({ result }) => result);
-    } finally {
-      history.record(applied);
-      if (applied.length > 0) options.refresh();
+    let failure: { readonly cause: unknown } | null = null;
+    for (const change of changes) {
+      try {
+        applied.push({ change, result: await run(change) });
+      } catch (cause) {
+        failure = { cause };
+        break;
+      }
     }
+    history.record(applied);
+    if (applied.length > 0) options.refresh();
+    if (failure) throw failure.cause;
+    const failures = applied.flatMap(({ result }) => result.failures);
+    setError(
+      failures.length === 0
+        ? null
+        : `${failures.length === 1 ? failures[0]!.relativePath : `${failures.length} items`}: ${failures[0]!.message}`,
+    );
+    return applied.map(({ result }) => result);
   };
 
   const flush = (relativePath: string) =>

@@ -112,14 +112,11 @@ export function useFileExplorerHostActions(input: {
       zip.file(path.slice(directory.length + 1), blob);
     }
     const url = URL.createObjectURL(await zip.generateAsync({ type: "blob" }));
-    try {
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = `${leafName(directory)}.zip`;
-      anchor.click();
-    } finally {
-      setTimeout(() => URL.revokeObjectURL(url), 30_000);
-    }
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${leafName(directory)}.zip`;
+    anchor.click();
+    setTimeout(() => URL.revokeObjectURL(url), 30_000);
   };
 
   return {
