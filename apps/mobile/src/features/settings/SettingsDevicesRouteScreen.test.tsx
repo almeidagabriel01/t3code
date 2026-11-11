@@ -47,20 +47,26 @@ vi.mock("../../components/ui/ListSection", () => ({
     </section>
   ),
 }));
-vi.mock("../../components/ui/ListChoiceRow", () => ({
-  ListChoiceRow: (props: {
-    label: string;
-    selected: boolean;
-    disabled?: boolean;
-    onPress: () => void;
+vi.mock("../../components/ui/Menu", () => ({
+  Menu: (props: {
+    title: string;
+    actions: { id: string; title: string; state?: string; attributes?: { disabled?: boolean } }[];
+    onPressAction: (event: { nativeEvent: { event: string } }) => void;
+    children?: ReactNode;
   }) => (
-    <button
-      role="radio"
-      aria-checked={props.selected}
-      aria-label={props.label}
-      disabled={props.disabled}
-      onClick={props.onPress}
-    />
+    <div role="group" aria-label={props.title}>
+      {props.children}
+      {props.actions.map((action) => (
+        <button
+          key={action.id}
+          role="menuitemradio"
+          aria-checked={action.state === "on"}
+          aria-label={action.title}
+          disabled={action.attributes?.disabled}
+          onClick={() => props.onPressAction({ nativeEvent: { event: action.id } })}
+        />
+      ))}
+    </div>
   ),
 }));
 vi.mock("../../components/ui/ScreenScrollView", () => ({ ScreenScrollView: Children }));
@@ -131,38 +137,38 @@ async function setup(next: Partial<typeof mocks> = {}, element = <SettingsDevice
   const container = window.document.createElement("div");
   const root = createRoot(container);
   await act(async () => root.render(element));
+  const menu = (name: string) => `[role="group"][aria-label="Agents and ${name}"]`;
+  const click = (selector: string) =>
+    act(async () => container.querySelector<HTMLButtonElement>(selector)!.click());
   return {
     container,
-    press: (section: string, label: string) =>
-      act(async () =>
-        container
-          .querySelector<HTMLButtonElement>(
-            `section[aria-label="${section}"] button[aria-label="${label}"]`,
-          )!
-          .click(),
-      ),
-    selected: (section: string) =>
-      container
-        .querySelector(`section[aria-label="${section}"] [aria-checked="true"]`)
-        ?.getAttribute("aria-label"),
+    choose: (name: string, label: string) => click(`${menu(name)} button[aria-label="${label}"]`),
+    press: (label: string) => click(`button[aria-label="${label}"]`),
+    selected: (name: string) =>
+      container.querySelector(`${menu(name)} [aria-checked="true"]`)?.getAttribute("aria-label"),
     [Symbol.dispose]: () => act(() => root.unmount()),
   };
 }
 
 describe("Devices settings", () => {
-  it("shows one checked policy per device, physical first, and saves, resets and hands back", async () => {
+  it("lists each device in one row, physical first, and saves, resets and hands back", async () => {
     using screen = await setup();
-    const titles = [...screen.container.querySelectorAll("h3")].map((title) => title.textContent);
-    expect(titles).toEqual(["Pixel · Physical", "Emulator"]);
-    expect(screen.selected("Pixel · Physical")).toBe("Ask first");
+    const rows = [...screen.container.querySelectorAll('[role="group"]')].map((row) =>
+      row.getAttribute("aria-label"),
+    );
+    expect(rows).toEqual(["Agents and Pixel", "Agents and Emulator"]);
+    expect(screen.selected("Pixel")).toBe("Ask first");
     expect(screen.selected("Emulator")).toBe("Never");
-    expect(screen.container.textContent).toContain("This Mac · Android 16 · Wi-Fi");
+    expect(screen.container.textContent).toContain(
+      "PixelThis Mac · Android 16 · Physical · Wi-Fi · In your control",
+    );
+    expect(screen.container.textContent).toContain("EmulatorThis Mac · Android 16");
     expect(screen.container.textContent).toContain("Wi-Fi pairing");
 
-    await screen.press("Pixel · Physical", "Allow");
-    await screen.press("Emulator", "Reset Emulator to default");
-    await screen.press("Pixel · Physical", "Hand Pixel back to the agent");
-    await screen.press("Pixel · Physical", "Forget Pixel");
+    await screen.choose("Pixel", "Allow");
+    await screen.choose("Emulator", "Reset to default");
+    await screen.press("Hand Pixel back to the agent");
+    await screen.press("Forget Pixel");
 
     const input = (extra: object) => ({
       environmentId: "env-a",
@@ -176,7 +182,12 @@ describe("Devices settings", () => {
     expect(mocks.forget.mock.calls).toEqual([[input({ deviceId: "pixel" })]]);
     expect(screen.container.querySelector('button[aria-label="Forget Emulator"]')).toBeNull();
     expect(
-      screen.container.querySelector('button[aria-label="Reset Pixel to default"]'),
+      screen.container.querySelector('button[aria-label="Hand Emulator back to the agent"]'),
+    ).toBeNull();
+    expect(
+      screen.container.querySelector(
+        `[aria-label="Agents and Pixel"] [aria-label="Reset to default"]`,
+      ),
     ).toBeNull();
   });
 
@@ -198,13 +209,13 @@ describe("Devices settings", () => {
   ])("says so when %s", async (_name, next, text) => {
     using screen = await setup(next);
     expect(screen.container.textContent).toContain(text);
-    expect(screen.container.querySelector('[role="radio"]')).toBeNull();
+    expect(screen.container.querySelector('[role="menuitemradio"]')).toBeNull();
   });
 
   it("names each environment and locks the choices without permission", async () => {
     using screen = await setup({ ids: ["env-a", "env-b"], can: false });
     const titles = [...screen.container.querySelectorAll("h3")].map((title) => title.textContent);
-    expect(titles).toContain("Emulator · Office Mac");
+    expect(titles).toEqual(["Device access · Studio Mac", "Device access · Office Mac"]);
     const buttons = [...screen.container.querySelectorAll("button")];
     expect(buttons.length).toBeGreaterThan(0);
     expect(buttons.every((button) => button.disabled)).toBe(true);

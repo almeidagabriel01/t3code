@@ -14,9 +14,9 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { EmptyState } from "../../components/ui/EmptyState";
-import { ListChoiceRow } from "../../components/ui/ListChoiceRow";
 import { ListRowLayout } from "../../components/ui/ListRowLayout";
 import { ListSection } from "../../components/ui/ListSection";
+import { Menu } from "../../components/ui/Menu";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import {
   deviceEnvironment,
@@ -83,70 +83,103 @@ function DeviceEnvironment(props: {
   const devices = [...state.devices].sort(
     (a, b) => Number(b.physical) - Number(a.physical) || a.name.localeCompare(b.name),
   );
+  const describe = (device: (typeof devices)[number]) => {
+    const host = state.hosts.find((candidate) => candidate.id === device.hostId);
+    return [
+      host?.label ?? "Device host",
+      device.version,
+      device.physical ? "Physical" : null,
+      device.connection ? DEVICE_CONNECTION_LABELS[device.connection] : null,
+      findDeviceHold(state.holds, device) ? "In your control" : null,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+  };
   return (
     <View className="gap-5">
-      {devices.map((device) => {
-        const policy = deviceAccessPolicy(state.access, device);
-        const host = state.hosts.find((candidate) => candidate.id === device.hostId);
-        const save = (next: DeviceAccessPolicy | null) =>
-          void setAccess({
-            environmentId,
-            input: { hostId: device.hostId, deviceId: device.id, policy: next },
-          });
-        return (
-          <ListSection
-            key={`${device.hostId}:${device.id}`}
-            title={`${device.name}${device.physical ? " · Physical" : ""}${suffix}`}
-            footer={`${host?.label ?? "Device host"} · ${device.version}${device.connection ? ` · ${DEVICE_CONNECTION_LABELS[device.connection]}` : ""}`}
-          >
-            {POLICIES.map((option, index) => (
-              <ListChoiceRow
-                key={option}
-                label={DEVICE_ACCESS_POLICY_LABELS[option].label}
-                description={DEVICE_ACCESS_POLICY_LABELS[option].description}
-                selected={policy === option}
-                separated={index > 0}
-                disabled={!canEdit}
-                onPress={() => save(option)}
-              />
-            ))}
-            {storedDeviceAccessPolicy(state.access, device) !== undefined ? (
-              <SettingsActionRow
-                icon="arrow.counterclockwise"
-                label={`Reset ${device.name} to default`}
-                disabled={!canEdit}
-                onPress={() => save(null)}
-              />
-            ) : null}
-            {findDeviceHold(state.holds, device) ? (
-              <SettingsActionRow
-                icon="arrow.uturn.backward"
-                label={`Hand ${device.name} back to the agent`}
-                disabled={!canHold}
-                onPress={() =>
-                  void setHold({
-                    environmentId,
-                    input: { hostId: device.hostId, deviceId: device.id, held: false },
-                  })
-                }
-              />
-            ) : null}
-            {device.connection === "wifi" ? (
-              <SettingsActionRow
-                icon="wifi.slash"
-                label={`Forget ${device.name}`}
-                disabled={!canForget}
-                onPress={() =>
-                  void forget({
-                    environmentId,
-                    input: { hostId: device.hostId, deviceId: device.id },
-                  })
-                }
-              />
-            ) : null}
-          </ListSection>
-        );
-      })}
+      <ListSection title={`Device access${suffix}`}>
+        {devices.map((device, index) => {
+          const policy = deviceAccessPolicy(state.access, device);
+          const stored = storedDeviceAccessPolicy(state.access, device) !== undefined;
+          const save = (next: DeviceAccessPolicy | null) =>
+            void setAccess({
+              environmentId,
+              input: { hostId: device.hostId, deviceId: device.id, policy: next },
+            });
+          return (
+            <View
+              key={`${device.hostId}:${device.id}`}
+              className={index > 0 ? "border-t border-border-subtle" : undefined}
+            >
+              <Menu
+                title={`Agents and ${device.name}`}
+                actions={[
+                  ...POLICIES.map((option) => ({
+                    id: option,
+                    title: DEVICE_ACCESS_POLICY_LABELS[option].label,
+                    subtitle: DEVICE_ACCESS_POLICY_LABELS[option].description,
+                    state: policy === option ? ("on" as const) : ("off" as const),
+                    attributes: { disabled: !canEdit },
+                  })),
+                  ...(stored
+                    ? [
+                        {
+                          id: "reset",
+                          title: "Reset to default",
+                          attributes: { disabled: !canEdit },
+                        },
+                      ]
+                    : []),
+                ]}
+                onPressAction={({ nativeEvent }) => {
+                  if (!canEdit) return;
+                  if (nativeEvent.event === "reset") save(null);
+                  const option = POLICIES.find((candidate) => candidate === nativeEvent.event);
+                  if (option) save(option);
+                }}
+              >
+                <ListRowLayout
+                  icon="iphone"
+                  label={device.name}
+                  description={describe(device)}
+                  detail={DEVICE_ACCESS_POLICY_LABELS[policy].label}
+                  disabled={!canEdit}
+                />
+              </Menu>
+              {findDeviceHold(state.holds, device) ? (
+                <View className="border-t border-border-subtle">
+                  <SettingsActionRow
+                    icon="arrow.uturn.backward"
+                    label={`Hand ${device.name} back to the agent`}
+                    disabled={!canHold}
+                    onPress={() =>
+                      void setHold({
+                        environmentId,
+                        input: { hostId: device.hostId, deviceId: device.id, held: false },
+                      })
+                    }
+                  />
+                </View>
+              ) : null}
+              {device.connection === "wifi" ? (
+                <View className="border-t border-border-subtle">
+                  <SettingsActionRow
+                    icon="wifi.slash"
+                    label={`Forget ${device.name}`}
+                    disabled={!canForget}
+                    onPress={() =>
+                      void forget({
+                        environmentId,
+                        input: { hostId: device.hostId, deviceId: device.id },
+                      })
+                    }
+                  />
+                </View>
+              ) : null}
+            </View>
+          );
+        })}
+      </ListSection>
       {pairing}
     </View>
   );
