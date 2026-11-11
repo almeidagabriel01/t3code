@@ -3676,6 +3676,7 @@ export const layerWsRpc = (
         [WS_METHODS.deviceShutdown]: (input) => deviceService.shutdown(input),
         [WS_METHODS.deviceDetail]: (input) => deviceService.detail(input),
         [WS_METHODS.deviceAction]: (input) => deviceService.action(input),
+        [WS_METHODS.deviceInput]: (input) => deviceService.input(input),
         [WS_METHODS.deviceSetHold]: (input) => deviceService.setHold(input),
         [WS_METHODS.deviceSetAccess]: (input) => deviceService.setAccess(input),
         [WS_METHODS.deviceWifiPairStart]: (input) => deviceService.startWifiPairing(input),

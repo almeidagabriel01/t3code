@@ -12,6 +12,7 @@ import {
   type DeviceDetail,
   type DeviceDetailInput,
   type DeviceError,
+  type DeviceInputInput,
   DeviceHeldError,
   type DeviceHold,
   DeviceHostId,
@@ -76,15 +77,18 @@ import {
 } from "./AgentDeviceShim.ts";
 import * as ServerConfig from "../config.ts";
 import {
+  agentDeviceCommand,
   agentDeviceConfigPath,
   agentDeviceHoldName,
   agentDeviceSession,
   writeAgentDeviceConfig,
 } from "./AgentDeviceTarget.ts";
+import { phoneInputCommand, phonePointSize, phoneRunnerIssue } from "./PhoneInput.ts";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -96,6 +100,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import * as ServerSettings from "../serverSettings.ts";
 import { isLocalSshDeviceHost, remoteSshDeviceHosts } from "./localSshDeviceHost.ts";
@@ -285,6 +290,11 @@ export class DeviceService extends Context.Service<
     }) => Effect.Effect<void, DeviceError>;
     /** Takes a device over for the user or hands it back. Repeating either changes nothing. */
     readonly setHold: (input: DeviceSetHoldInput) => Effect.Effect<DeviceServiceState, DeviceError>;
+    /**
+     * The user's tap, swipe, text or button for a USB iPhone, through agent-device's runner on it.
+     * It takes the device over, as stream input does, and runs one at a time per device.
+     */
+    readonly input: (input: DeviceInputInput) => Effect.Effect<void, DeviceError>;
     /** The user sent input to a device through the stream; it never fails the stream. */
     readonly holdOnInput: (
       hostId: DeviceHostId | undefined,
@@ -496,6 +506,8 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     ),
   );
   const initialSettings = yield* readDeviceSettings;
+  // Optional like `captures`: hosts-only tests have no HTTP client, and then phones stay view only.
+  const http = Option.getOrUndefined(yield* Effect.serviceOption(HttpClient.HttpClient));
 
   const statePubSub = yield* PubSub.unbounded<DeviceServiceState>();
   const initialHosts = yield* Effect.forEach(hosts.values(), (host) => host.summary);
@@ -508,6 +520,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       supportsEasHosts: true,
       supportsSimlockHosts: true,
       supportsDeviceControl: true,
+      supportsPhoneControl: captures !== undefined && http !== undefined,
       supportsWifiPairing: true,
       supportsLinkedDevices: true,
       linkRequests: [],
@@ -823,44 +836,51 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       const summary = yield* host.summary;
       if (summary.kind === "local" && !summary.platforms.some((platform) => platform.available))
         return null;
-      const ready = yield* host
-        .ensureAgentReady((phase, detail) =>
-          setHostStatus(host.id, { status: phase, detail }).pipe(Effect.asVoid),
-        )
-        .pipe(
-          Effect.tapError((error) =>
-            setHostStatus(host.id, {
-              status: "failed",
-              detail:
-                error._tag === "DeviceHostError" && error.step === "probe"
-                  ? sshProbeFailureMessage(error)
-                  : error.message,
+      return yield* agentReadiness(host);
+    });
+
+  /** Starts the host's agent-device daemon; the user's own phone input needs it without agent access. */
+  const agentReadiness = Effect.fn("DeviceService.agentReadiness")(function* (
+    host: DeviceHost.DeviceHost["Service"],
+  ) {
+    const ready = yield* host
+      .ensureAgentReady((phase, detail) =>
+        setHostStatus(host.id, { status: phase, detail }).pipe(Effect.asVoid),
+      )
+      .pipe(
+        Effect.tapError((error) =>
+          setHostStatus(host.id, {
+            status: "failed",
+            detail:
+              error._tag === "DeviceHostError" && error.step === "probe"
+                ? sshProbeFailureMessage(error)
+                : error.message,
+          }),
+        ),
+        Effect.mapError(
+          (error) =>
+            new DeviceHostUnavailableError({
+              hostId: host.id,
+              hostLabel: host.label,
+              reason:
+                error._tag === "NodeRuntimeUnavailableError"
+                  ? nodeRuntimeUnavailableMessage("Local device support")
+                  : error._tag === "DeviceHostTimeoutError"
+                    ? `Agent tools did not start within ${error.timeoutMs} ms.`
+                    : error._tag === "AgentDeviceStartError"
+                      ? error.message
+                      : error.step === "probe"
+                        ? sshProbeFailureMessage(error)
+                        : `Device support failed during ${error.step}.`,
+              cause: error,
             }),
-          ),
-          Effect.mapError(
-            (error) =>
-              new DeviceHostUnavailableError({
-                hostId: host.id,
-                hostLabel: host.label,
-                reason:
-                  error._tag === "NodeRuntimeUnavailableError"
-                    ? nodeRuntimeUnavailableMessage("Local device support")
-                    : error._tag === "DeviceHostTimeoutError"
-                      ? `Agent tools did not start within ${error.timeoutMs} ms.`
-                      : error._tag === "AgentDeviceStartError"
-                        ? error.message
-                        : error.step === "probe"
-                          ? sshProbeFailureMessage(error)
-                          : `Device support failed during ${error.step}.`,
-                cause: error,
-              }),
-          ),
-        );
-      const hostSummaries = yield* Effect.forEach(hosts.values(), (candidate) => candidate.summary);
-      yield* publish((state) => ({ ...state, hosts: hostSummaries }));
-      yield* setHostStatus(host.id, { status: "ready" });
-      return { hostId: host.id, ...ready };
-    }, lifecycleLock.withPermit);
+        ),
+      );
+    const hostSummaries = yield* Effect.forEach(hosts.values(), (candidate) => candidate.summary);
+    yield* publish((state) => ({ ...state, hosts: hostSummaries }));
+    yield* setHostStatus(host.id, { status: "ready" });
+    return { hostId: host.id, ...ready };
+  }, lifecycleLock.withPermit);
 
   const currentReadiness: DeviceService["Service"]["currentReadiness"] = (hostId) =>
     resolveHost(hostId).pipe(
@@ -1177,6 +1197,112 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
         : changeHold({ hostId, deviceId, held: true }, link).pipe(Effect.ignore),
     );
 
+  const inputLocks = new Map<string, Semaphore.Semaphore>();
+  const decodeCaptureScreen = HttpClientResponse.schemaBodyJson(
+    Schema.Struct({
+      width: Schema.Number,
+      height: Schema.Number,
+      sourceWidth: Schema.optional(Schema.Number),
+      sourceHeight: Schema.optional(Schema.Number),
+    }),
+  );
+
+  const input: DeviceService["Service"]["input"] = Effect.fn("DeviceService.input")(
+    function* (request) {
+      const hostId = request.hostId ?? LOCAL_DEVICE_HOST_ID;
+      const key = holdKey(hostId, request.deviceId);
+      // Taken before anything yields, so a slow runner never lets a later tap pass an earlier one.
+      const lock = inputLocks.get(key) ?? Semaphore.makeUnsafe(1);
+      inputLocks.set(key, lock);
+      return yield* lock.withPermit(sendPhoneInput(hostId, request));
+    },
+  );
+
+  const sendPhoneInput = Effect.fn("DeviceService.sendPhoneInput")(function* (
+    hostId: DeviceHostId,
+    request: DeviceInputInput,
+  ) {
+    const { state } = yield* SynchronizedRef.get(stateRef);
+    const device = findDevice(state, hostId, request.deviceId);
+    if (!device) return yield* new DeviceNotFoundError({ hostId, deviceId: request.deviceId });
+    // The runner drives a phone on this machine's cable; the desktop and simulators have their own input.
+    if (!captures || !http || !isLocalCapture(device) || device.platform !== "ios")
+      return yield* new DeviceActionUnavailableError({
+        operation: "input",
+        platform: device.platform,
+        reason: "unsupported",
+      });
+    const refused = { hostId, deviceId: device.id, deviceName: device.name };
+    const blocking = controlBlocker(device, (yield* readDeviceSettings).signingReady);
+    if (blocking) return yield* new DeviceNotReadyError({ ...refused, ...blocking });
+    const opened = state.sessions
+      .filter((session) => session.hostId === hostId && session.deviceId === device.id)
+      .toSorted((a, b) => a.openedAt.localeCompare(b.openedAt))
+      .at(-1);
+    const route = yield* captures.route(
+      `/vendor/serve-sim/helper/${encodeURIComponent(device.id)}/config`,
+      new URLSearchParams(),
+    );
+    if (!opened || route === null || route === "unavailable")
+      return yield* new DeviceOperationError({
+        operation: "input",
+        reason: "request_failed",
+        cause: new Error("The phone's live screen is not open."),
+      });
+    yield* holdOnInput(hostId, device.id);
+    const screen = yield* http.get(route.url).pipe(
+      Effect.flatMap(decodeCaptureScreen),
+      Effect.scoped,
+      Effect.timeout(Duration.seconds(5)),
+      Effect.mapError(
+        (cause) =>
+          new DeviceOperationError({ operation: "input", reason: "request_failed", cause }),
+      ),
+    );
+    const ready = yield* agentReadiness(yield* resolveHost(hostId));
+    if (!ready.agentDevice)
+      return yield* new DeviceHostUnavailableError({
+        hostId,
+        reason: "This host has no agent-device daemon.",
+      });
+    const command = agentDeviceCommand(http, ready.agentDevice);
+    const send = (session: string) =>
+      command(
+        {
+          session,
+          ...phoneInputCommand(request.input, phonePointSize(screen)),
+          flags: { platform: "ios", udid: device.id },
+        },
+        // The first input on a phone builds and installs agent-device's runner on it.
+        Duration.minutes(5),
+      );
+    // In the thread's own session, which holds the phone's claim once its agent opened it.
+    const session = yield* sessionName(opened);
+    yield* send(session).pipe(
+      Effect.catchTags({
+        AgentDeviceCommandRejected: (rejected) => {
+          const owner =
+            rejected.code === "DEVICE_IN_USE" && /session "([^"]+)"/.exec(rejected.detail)?.[1];
+          return owner && owner !== session ? send(owner) : Effect.fail(rejected);
+        },
+      }),
+      Effect.catchTags({
+        AgentDeviceCommandRejected: (rejected) => {
+          const issue = phoneRunnerIssue(rejected.reason);
+          return Effect.fail(
+            issue
+              ? new DeviceNotReadyError({ ...refused, reason: issue, detail: rejected.detail })
+              : new DeviceOperationError({
+                  operation: "input",
+                  reason: "command_failed",
+                  cause: rejected,
+                }),
+          );
+        },
+      }),
+    );
+  });
+
   const publishAccess = (access: DeviceAccessMap) => publish((state) => ({ ...state, access }));
 
   const setAccess: DeviceService["Service"]["setAccess"] = Effect.fn("DeviceService.setAccess")(
@@ -1295,6 +1421,18 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       return publishLinkClients().pipe(Effect.asVoid);
     });
 
+  /** What keeps a capture device from being driven; signing is read now, not from the listing. */
+  const controlBlocker = (device: DeviceSummary, signingReady: boolean) =>
+    deviceIssueBlocks(
+      [
+        ...(device.issues ?? []).filter((issue) => issue.reason !== "signing_missing"),
+        ...(device.platform === "ios" && !signingReady
+          ? [{ reason: "signing_missing" as const }]
+          : []),
+      ],
+      "control",
+    );
+
   const authorizeAgent: DeviceService["Service"]["authorizeAgent"] = Effect.fn(
     "DeviceService.authorizeAgent",
   )(function* (input) {
@@ -1367,14 +1505,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       return yield* new DeviceHeldError({ ...refused, since: hold.since });
     }
     if (input.intent === "open" && device && isLocalCapture(device)) {
-      // Signing is read now: the listing's answer is stale once the user saves a Team ID.
-      const issues = [
-        ...(device.issues ?? []).filter((issue) => issue.reason !== "signing_missing"),
-        ...(device.platform === "ios" && !deviceSettings.signingReady
-          ? [{ reason: "signing_missing" as const }]
-          : []),
-      ];
-      const blocking = deviceIssueBlocks(issues, "control");
+      const blocking = controlBlocker(device, deviceSettings.signingReady);
       if (blocking) {
         // A lock or trust failure is only known from a failed video start: it refuses once, then
         // the next attempt after the user fixes it goes through.
@@ -2283,6 +2414,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       shutdown,
       authorizeAgent,
       setHold,
+      input,
       holdOnInput,
       setLinkedHold,
       holdLink,

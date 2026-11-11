@@ -19,7 +19,7 @@ public final class StreamServer {
   private let onSubscriber: () -> Void
   private var listener: NWListener?
   private var subscribers: [ObjectIdentifier: Subscriber] = [:]
-  private var size: (width: Int, height: Int)?
+  private var size: (width: Int, height: Int, sourceWidth: Int, sourceHeight: Int)?
 
   /// `onSubscriber` runs on the server's queue each time a viewer starts reading the stream.
   public init(port: UInt16, onSubscriber: @escaping () -> Void) {
@@ -72,7 +72,7 @@ public final class StreamServer {
 
   public func broadcast(_ frame: EncodedFrame) {
     queue.async { [self] in
-      size = (frame.width, frame.height)
+      size = (frame.width, frame.height, frame.sourceWidth, frame.sourceHeight)
       for subscriber in subscribers.values {
         if subscriber.awaitingKeyframe && !frame.isKeyframe { continue }
         if subscriber.pending > Self.maxPendingFrames {
@@ -143,6 +143,7 @@ public final class StreamServer {
         connection, "200 OK",
         [
           "width": size.width, "height": size.height,
+          "sourceWidth": size.sourceWidth, "sourceHeight": size.sourceHeight,
           "orientation": size.width > size.height ? "landscape_left" : "portrait",
           "inputUnavailable": true, "keyboardUnavailable": true,
         ])

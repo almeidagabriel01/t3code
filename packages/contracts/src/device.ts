@@ -640,6 +640,8 @@ const deviceServiceStateFields = {
   supportsSimlockHosts: Schema.optional(Schema.Boolean),
   /** Servers from before takeover and device access have neither RPC. */
   supportsDeviceControl: Schema.optional(Schema.Boolean),
+  /** Servers from before panel control of USB iPhones show them view only. */
+  supportsPhoneControl: Schema.optional(Schema.Boolean),
   holds: Schema.optional(Schema.Array(DeviceHold)),
   /** Servers from before Wi-Fi pairing have neither its RPCs nor `wifiPairing`. */
   supportsWifiPairing: Schema.optional(Schema.Boolean),
@@ -969,6 +971,34 @@ export const DeviceActionInput = Schema.Union([
 ]);
 export type DeviceActionInput = typeof DeviceActionInput.Type;
 export type DeviceActionType = DeviceActionInput["type"];
+
+/** 0..1 across the displayed frame, from its top-left corner. */
+const NormalizedCoordinate = Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 1 }));
+
+/** The user's own input to a USB iPhone from the Device panel. */
+export const DeviceUserInput = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("tap"), x: NormalizedCoordinate, y: NormalizedCoordinate }),
+  Schema.Struct({
+    type: Schema.Literal("swipe"),
+    x: NormalizedCoordinate,
+    y: NormalizedCoordinate,
+    toX: NormalizedCoordinate,
+    toY: NormalizedCoordinate,
+    durationMs: Schema.Int.check(Schema.isBetween({ minimum: 16, maximum: 10_000 })),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("text"),
+    text: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(2_000)),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("button"),
+    button: Schema.Literals(["home", "appSwitcher"]),
+  }),
+]);
+export type DeviceUserInput = typeof DeviceUserInput.Type;
+
+export const DeviceInputInput = Schema.Struct({ ...DeviceTarget, input: DeviceUserInput });
+export type DeviceInputInput = typeof DeviceInputInput.Type;
 
 export const DeviceDetailInput = Schema.Struct(DeviceTarget);
 export type DeviceDetailInput = typeof DeviceDetailInput.Type;

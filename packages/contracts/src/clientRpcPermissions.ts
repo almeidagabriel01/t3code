@@ -27,6 +27,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.previewClose]: AuthPreviewOperateScope,
   // Taking a device over pauses the agent driving it, as sending it input does.
   [WS_METHODS.deviceSetHold]: AuthOrchestrationOperateScope,
+  [WS_METHODS.deviceInput]: AuthOrchestrationOperateScope,
   // Decides which devices agents may use.
   [WS_METHODS.deviceSetAccess]: AuthSettingsWriteScope,
   // Pairing or forgetting a phone changes which devices this environment can reach.

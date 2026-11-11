@@ -95,7 +95,7 @@ final class PipelineTests: XCTestCase {
     _ = try request(socket, "GET /config HTTP/1.1")
     XCTAssertEqual(
       String(decoding: try readToEnd(socket), as: UTF8.self),
-      #"{"height":180,"inputUnavailable":true,"keyboardUnavailable":true,"orientation":"landscape_left","width":320}"#)
+      #"{"height":180,"inputUnavailable":true,"keyboardUnavailable":true,"orientation":"landscape_left","sourceHeight":360,"sourceWidth":640,"width":320}"#)
   }
 
   func testListensOnLoopbackOnly() throws {

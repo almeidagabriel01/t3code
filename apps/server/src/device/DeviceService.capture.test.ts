@@ -11,13 +11,17 @@ import {
   type DeviceSummary,
 } from "@t3tools/contracts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import { HttpClient, HttpClientResponse } from "effect/http";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as ServerSettings from "../serverSettings.ts";
+import { agentDeviceSession } from "./AgentDeviceTarget.ts";
 import * as CaptureDevices from "./CaptureDevices.ts";
 import * as DeviceHost from "./DeviceHost.ts";
 import type { HostDevice } from "./DeviceHost.ts";
@@ -76,6 +80,25 @@ const harness = Effect.fn("harness")(function* (initial: ReadonlyArray<HostDevic
       }),
     ended: PubSub.subscribe(ended),
   });
+  /** Each agent-device command's params; `answer` decides the reply, and may wait. */
+  const commands: Array<Record<string, unknown>> = [];
+  const daemon = {
+    answer: (_params: Record<string, unknown>): Effect.Effect<unknown> =>
+      Effect.succeed({ result: { ok: true } }),
+  };
+  const http = HttpClient.make((request) =>
+    Effect.gen(function* () {
+      if (request.url.endsWith("/config"))
+        return HttpClientResponse.fromWeb(
+          request,
+          Response.json({ width: 884, height: 1920, sourceWidth: 1320, sourceHeight: 2868 }),
+        );
+      if (request.body._tag !== "Uint8Array") return yield* Effect.die("Missing command body");
+      const params = JSON.parse(new TextDecoder().decode(request.body.body)).params;
+      commands.push(params);
+      return HttpClientResponse.fromWeb(request, Response.json(yield* daemon.answer(params)));
+    }),
+  );
   const hubDevices = yield* Ref.make<ReadonlyArray<HostDevice>>([]);
   const ready = {
     nodePath: process.execPath,
@@ -125,6 +148,7 @@ const harness = Effect.fn("harness")(function* (initial: ReadonlyArray<HostDevic
     Effect.provide(
       Layer.mergeAll(
         NodeCrypto.layer,
+        Layer.succeed(HttpClient.HttpClient, http),
         Layer.succeed(
           ServerSettings.ServerSettingsService,
           ServerSettings.ServerSettingsService.of({
@@ -145,7 +169,19 @@ const harness = Effect.fn("harness")(function* (initial: ReadonlyArray<HostDevic
       ),
     ),
   );
-  return { service, settings, listing, startFailure, calls, listed, ended, routes, hubDevices };
+  return {
+    service,
+    settings,
+    listing,
+    startFailure,
+    calls,
+    listed,
+    ended,
+    routes,
+    hubDevices,
+    commands,
+    daemon,
+  };
 });
 
 const open = (deviceId: DeviceId, platform: "ios" | "desktop") => ({
@@ -458,6 +494,160 @@ describe("DeviceService capture devices", () => {
       expect(localDevices(yield* service.state)).toEqual([]);
     }),
   );
+
+  describe("the user's input to a USB iPhone", () => {
+    const phone = Effect.fn("phone")(function* () {
+      const fixture = yield* harness([iphone(), desktop]);
+      yield* Ref.update(fixture.settings, (current) => ({ ...current, appleTeamId: VALID_TEAM }));
+      yield* fixture.service.list;
+      yield* fixture.service.open(open(IPHONE, "ios"));
+      const session = yield* agentDeviceSession(thread, LOCAL_DEVICE_HOST_ID, IPHONE).pipe(
+        Effect.provide(NodeCrypto.layer),
+      );
+      return { ...fixture, session };
+    });
+    const tap = { deviceId: IPHONE, input: { type: "tap", x: 0.5, y: 0.25 } } as const;
+
+    it.effect("drives it in points through the thread's session, and takes it over", () =>
+      Effect.gen(function* () {
+        const { service, commands, session } = yield* phone();
+        expect((yield* service.state).supportsPhoneControl).toBe(true);
+        yield* service.input(tap);
+        yield* service.input({
+          deviceId: IPHONE,
+          input: { type: "swipe", x: 0.5, y: 0.8, toX: 0.5, toY: 0.2, durationMs: 300 },
+        });
+        // The helper scaled a 1320×2868 Pro Max to 1920 high; the runner wants 440×956 points.
+        expect(commands).toEqual([
+          {
+            command: "press",
+            session,
+            positionals: ["220", "239"],
+            flags: { platform: "ios", udid: IPHONE },
+          },
+          {
+            command: "gesture",
+            session,
+            positionals: [],
+            input: {
+              kind: "pan",
+              origin: { x: 220, y: 765 },
+              delta: { x: 0, y: -574 },
+              durationMs: 300,
+            },
+            flags: { platform: "ios", udid: IPHONE },
+          },
+        ]);
+        expect((yield* service.state).holds).toMatchObject([
+          { hostId: LOCAL_DEVICE_HOST_ID, deviceId: IPHONE },
+        ]);
+      }),
+    );
+
+    it.effect("sends one input at a time, in the order the user gave them", () =>
+      Effect.gen(function* () {
+        const { service, commands, daemon } = yield* phone();
+        const arrived = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        daemon.answer = () =>
+          Deferred.succeed(arrived, undefined).pipe(
+            Effect.andThen(Deferred.await(release)),
+            Effect.as({ result: { ok: true } }),
+          );
+        const first = yield* service.input(tap).pipe(Effect.forkChild);
+        const second = yield* service
+          .input({ deviceId: IPHONE, input: { type: "button", button: "home" } })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(arrived);
+        expect(commands.map((params) => params.command)).toEqual(["press"]);
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(first);
+        yield* Fiber.join(second);
+        expect(commands.map((params) => params.command)).toEqual(["press", "home"]);
+      }),
+    );
+
+    it.effect("moves to the session holding the phone when another one has it", () =>
+      Effect.gen(function* () {
+        const { service, commands, daemon, session } = yield* phone();
+        daemon.answer = (params) =>
+          Effect.succeed(
+            params.session === session
+              ? {
+                  error: {
+                    code: -32000,
+                    message: "in use",
+                    data: {
+                      code: "DEVICE_IN_USE",
+                      message: 'Device is already in use by session "t3-other".',
+                    },
+                  },
+                }
+              : { result: { ok: true } },
+          );
+        yield* service.input(tap);
+        expect(commands.map((params) => params.session)).toEqual([session, "t3-other"]);
+      }),
+    );
+
+    it.effect("refuses what only the user can fix, before any command or takeover", () =>
+      Effect.gen(function* () {
+        const { service, commands, settings } = yield* phone();
+        yield* Ref.update(settings, (current) => ({ ...current, appleTeamId: "" }));
+        expect(yield* service.input(tap).pipe(Effect.flip)).toMatchObject({
+          _tag: "DeviceNotReadyError",
+          reason: "signing_missing",
+        });
+        expect(commands).toEqual([]);
+        expect((yield* service.state).holds).toEqual([]);
+      }),
+    );
+
+    it.effect("names a runner signing or Developer Mode failure as the phone's issue", () =>
+      Effect.gen(function* () {
+        const { service, daemon } = yield* phone();
+        const failing = (reason: string) => () =>
+          Effect.succeed({
+            error: {
+              code: -32000,
+              message: "failed",
+              data: { code: "COMMAND_FAILED", message: "xcodebuild failed", details: { reason } },
+            },
+          });
+        daemon.answer = failing("signing_no_development_team");
+        expect(yield* service.input(tap).pipe(Effect.flip)).toMatchObject({
+          _tag: "DeviceNotReadyError",
+          reason: "signing_missing",
+          detail: "xcodebuild failed",
+        });
+        daemon.answer = failing("build_failed_unclassified");
+        expect(yield* service.input(tap).pipe(Effect.flip)).toMatchObject({
+          _tag: "DeviceOperationError",
+          operation: "input",
+          reason: "command_failed",
+        });
+      }),
+    );
+
+    it.effect("takes no input for this computer, or for a phone whose screen is not open", () =>
+      Effect.gen(function* () {
+        const { service } = yield* phone();
+        expect(
+          yield* service
+            .input({ deviceId: DESKTOP_DEVICE_ID, input: { type: "button", button: "home" } })
+            .pipe(Effect.flip),
+        ).toMatchObject({ _tag: "DeviceActionUnavailableError", platform: "desktop" });
+        yield* service.close({ threadId: thread, deviceId: IPHONE });
+        expect(yield* service.input(tap).pipe(Effect.flip)).toMatchObject({
+          _tag: "DeviceOperationError",
+          operation: "input",
+        });
+        expect(
+          yield* service.input({ ...tap, deviceId: DeviceId.make("gone") }).pipe(Effect.flip),
+        ).toMatchObject({ _tag: "DeviceNotFoundError" });
+      }),
+    );
+  });
 
   it.effect("stops running captures when device support is turned off", () =>
     Effect.gen(function* () {

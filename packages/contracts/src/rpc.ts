@@ -316,6 +316,7 @@ import {
 } from "./preview.ts";
 import {
   DeviceActionInput,
+  DeviceInputInput,
   DeviceCloseInput,
   DeviceConfigureInput,
   DeviceDetail,
@@ -697,6 +698,7 @@ export const WS_METHODS = {
   deviceShutdown: "device.shutdown",
   deviceDetail: "device.detail",
   deviceAction: "device.action",
+  deviceInput: "device.input",
   deviceSetHold: "device.setHold",
   deviceSetAccess: "device.setAccess",
   deviceWifiPairStart: "device.wifiPairStart",
@@ -2101,6 +2103,11 @@ const WsDeviceActionRpc = Rpc.make(WS_METHODS.deviceAction, {
   error: Schema.Union([DeviceError, EnvironmentAuthorizationError]),
 });
 
+const WsDeviceInputRpc = Rpc.make(WS_METHODS.deviceInput, {
+  payload: DeviceInputInput,
+  error: Schema.Union([DeviceError, EnvironmentAuthorizationError]),
+});
+
 const WsDeviceSetHoldRpc = Rpc.make(WS_METHODS.deviceSetHold, {
   payload: DeviceSetHoldInput,
   success: DeviceServiceState,
@@ -3201,6 +3208,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsDeviceSetLinkBlockedRpc,
   WsDeviceDetailRpc,
   WsDeviceActionRpc,
+  WsDeviceInputRpc,
   WsSubscribeDeviceStateRpc,
   WsSubscribeServerConfigRpc,
   WsSubscribeServerLifecycleRpc,

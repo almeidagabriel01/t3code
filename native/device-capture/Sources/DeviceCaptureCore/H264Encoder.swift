@@ -10,6 +10,9 @@ public struct EncodedFrame {
   public let data: Data
   public let width: Int
   public let height: Int
+  /// The captured frame before scaling: what maps the picture back to the device's own screen.
+  public let sourceWidth: Int
+  public let sourceHeight: Int
 }
 
 /// Real-time H.264 without frame reordering. Call it from one queue; output arrives on VideoToolbox's.
@@ -50,6 +53,7 @@ public final class H264Encoder {
     }
     guard let session else { return false }
     let size = outputSize
+    let source = inputSize
     let properties =
       forceKeyframe ? [kVTEncodeFrameOptionKey_ForceKeyFrame: true] as CFDictionary : nil
     let status = VTCompressionSessionEncodeFrame(
@@ -62,7 +66,7 @@ public final class H264Encoder {
       infoFlagsOut: nil
     ) { [onOutput] status, _, sampleBuffer in
       guard status == noErr, let sampleBuffer,
-        let frame = encodedFrame(sampleBuffer, width: size.width, height: size.height)
+        let frame = encodedFrame(sampleBuffer, size: size, source: source)
       else { return }
       onOutput(frame)
     }
@@ -127,7 +131,9 @@ public final class H264Encoder {
   }
 }
 
-private func encodedFrame(_ sampleBuffer: CMSampleBuffer, width: Int, height: Int) -> EncodedFrame? {
+private func encodedFrame(
+  _ sampleBuffer: CMSampleBuffer, size: (width: Int, height: Int), source: (width: Int, height: Int)
+) -> EncodedFrame? {
   guard let block = CMSampleBufferGetDataBuffer(sampleBuffer) else { return nil }
   let length = CMBlockBufferGetDataLength(block)
   var data = Data(count: length)
@@ -149,7 +155,8 @@ private func encodedFrame(_ sampleBuffer: CMSampleBuffer, width: Int, height: In
     description = record
   }
   return EncodedFrame(
-    description: description, isKeyframe: isKeyframe, data: data, width: width, height: height)
+    description: description, isKeyframe: isKeyframe, data: data, width: size.width,
+    height: size.height, sourceWidth: source.width, sourceHeight: source.height)
 }
 
 private func decoderConfiguration(_ format: CMFormatDescription) -> Data? {

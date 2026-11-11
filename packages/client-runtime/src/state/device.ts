@@ -126,6 +126,10 @@ export function createDeviceEnvironmentAtoms<R, E>(
       label: "environment-data:device:set-hold",
       tag: WS_METHODS.deviceSetHold,
     }),
+    input: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:device:input",
+      tag: WS_METHODS.deviceInput,
+    }),
     setAccess: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:device:set-access",
       tag: WS_METHODS.deviceSetAccess,
