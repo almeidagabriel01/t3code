@@ -184,7 +184,8 @@ export function ActivityPage() {
       <div className="flex min-h-0 flex-1 border-t border-border">
         <nav
           aria-label="Activity threads"
-          className="flex w-80 shrink-0 flex-col gap-3 overflow-y-auto border-r border-border p-2"
+          // Reordered rows must not pull the viewport to their new position.
+          className="flex w-80 shrink-0 flex-col gap-3 overflow-y-auto border-r border-border p-2 [overflow-anchor:none]"
         >
           <DecisionsSection />
           {entries.length === 0 && !hasOpenDecisions ? (
