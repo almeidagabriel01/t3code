@@ -531,10 +531,9 @@ export function RightPanelTab(
         tabIndex={-1}
         className={cn(
           "flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-md hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-          !props.active &&
-            (narrow
-              ? "invisible"
-              : "invisible group-hover/tab:visible group-focus-within/tab:visible [@media(hover:none)]:visible"),
+          !props.active && "invisible group-hover/tab:visible group-focus-within/tab:visible",
+          // Touch shows every inactive close only while tabs have room for it.
+          !props.active && !narrow && "[@media(hover:none)]:visible",
         )}
         onPointerDown={(event) => event.stopPropagation()}
         onClick={(event) => {
