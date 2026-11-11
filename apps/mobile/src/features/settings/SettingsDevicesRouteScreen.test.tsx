@@ -11,6 +11,7 @@ const { mocks, Children } = vi.hoisted(() => ({
     can: true,
     setAccess: vi.fn(),
     setHold: vi.fn(),
+    forget: vi.fn(),
   },
 }));
 vi.mock("react-native", () => ({ View: Children }));
@@ -83,11 +84,14 @@ vi.mock("../../state/device", () => ({
     state: () => "state-atom",
     setAccess: { permissionAtom: () => "access-permission" },
     setHold: { hold: true, permissionAtom: () => "hold-permission" },
+    forget: { forget: true, permissionAtom: () => "forget-permission" },
   },
 }));
 vi.mock("../../state/use-atom-command", () => ({
-  useAtomCommand: (command: { hold?: boolean }) => (command.hold ? mocks.setHold : mocks.setAccess),
+  useAtomCommand: (command: { hold?: boolean; forget?: boolean }) =>
+    command.hold ? mocks.setHold : command.forget ? mocks.forget : mocks.setAccess,
 }));
+vi.mock("./WifiPairingSection", () => ({ WifiPairingSection: () => <p>Wi-Fi pairing</p> }));
 
 import { DeviceHoldBanner } from "../devices/DeviceHoldBanner";
 import { SettingsDevicesRouteScreen } from "./SettingsDevicesRouteScreen";
@@ -103,7 +107,10 @@ const device = (id: string, name: string, physical: boolean) => ({
 });
 const state = {
   hosts: [{ id: "local", label: "This Mac" }],
-  devices: [device("emu", "Emulator", false), device("pixel", "Pixel", true)],
+  devices: [
+    device("emu", "Emulator", false),
+    { ...device("pixel", "Pixel", true), connection: "wifi" },
+  ],
   supportsDeviceControl: true,
   access: { "local:emu": "deny", "local:gone": "ask", "local:pixel": "sometimes" },
   holds: [{ hostId: "local", deviceId: "pixel", since: "2026-01-01T00:00:00.000Z" }],
@@ -141,11 +148,13 @@ describe("Devices settings", () => {
     expect(titles).toEqual(["Pixel · Physical", "Emulator"]);
     expect(screen.selected("Pixel · Physical")).toBe("Ask first");
     expect(screen.selected("Emulator")).toBe("Never");
-    expect(screen.container.textContent).toContain("This Mac · Android 16");
+    expect(screen.container.textContent).toContain("This Mac · Android 16 · Wi-Fi");
+    expect(screen.container.textContent).toContain("Wi-Fi pairing");
 
     await screen.press("Pixel · Physical", "Allow");
     await screen.press("Emulator", "Reset Emulator to default");
     await screen.press("Pixel · Physical", "Hand Pixel back to the agent");
+    await screen.press("Pixel · Physical", "Forget Pixel");
 
     const input = (extra: object) => ({
       environmentId: "env-a",
@@ -156,6 +165,8 @@ describe("Devices settings", () => {
       [input({ deviceId: "emu", policy: null })],
     ]);
     expect(mocks.setHold.mock.calls).toEqual([[input({ deviceId: "pixel", held: false })]]);
+    expect(mocks.forget.mock.calls).toEqual([[input({ deviceId: "pixel" })]]);
+    expect(screen.container.querySelector('button[aria-label="Forget Emulator"]')).toBeNull();
     expect(
       screen.container.querySelector('button[aria-label="Reset Pixel to default"]'),
     ).toBeNull();
@@ -165,7 +176,7 @@ describe("Devices settings", () => {
     ["no environment has devices on", { ids: [] }, "Devices are not available"],
     ["the state is loading", { data: null }, "Finding devices..."],
     ["the state failed", { data: null, error: "Offline" }, "Could not load the devicesOffline"],
-    ["no device is known", { data: { ...state, devices: [] } }, "No devices found"],
+    ["no device is known", { data: { ...state, devices: [] } }, "No devices foundWi-Fi pairing"],
     [
       "the server is older",
       { data: { ...state, supportsDeviceControl: false } },

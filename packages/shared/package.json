@@ -231,6 +231,10 @@
       "types": "./src/qrCode.ts",
       "import": "./src/qrCode.ts"
     },
+    "./qrCodePath": {
+      "types": "./src/qrCodePath.ts",
+      "import": "./src/qrCodePath.ts"
+    },
     "./forkUpdateTags": {
       "types": "./src/forkUpdateTags.ts",
       "import": "./src/forkUpdateTags.ts"

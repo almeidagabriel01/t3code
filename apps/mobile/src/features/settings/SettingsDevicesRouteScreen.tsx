@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   DEVICE_ACCESS_POLICY_LABELS,
+  DEVICE_CONNECTION_LABELS,
   deviceAccessPolicy,
   findDeviceHold,
   storedDeviceAccessPolicy,
@@ -22,6 +23,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { SettingsActionRow } from "./components/SettingsActionRow";
 import { SettingsScreen } from "./components/SettingsScreen";
+import { WifiPairingSection } from "./WifiPairingSection";
 
 const POLICIES = ["allow", "ask", "deny"] as const;
 
@@ -35,6 +37,8 @@ function DeviceEnvironment(props: {
   const canHold = useAtomValue(deviceEnvironment.setHold.permissionAtom(environmentId));
   const setAccess = useAtomCommand(deviceEnvironment.setAccess);
   const setHold = useAtomCommand(deviceEnvironment.setHold);
+  const canForget = useAtomValue(deviceEnvironment.forget.permissionAtom(environmentId));
+  const forget = useAtomCommand(deviceEnvironment.forget);
   const state = query.data;
   const suffix = props.title ? ` · ${props.title}` : "";
   if (state === null) {
@@ -48,18 +52,24 @@ function DeviceEnvironment(props: {
       </ListSection>
     );
   }
+  const pairing = (
+    <WifiPairingSection environmentId={environmentId} state={state} suffix={suffix} />
+  );
   if (state.supportsDeviceControl !== true || state.devices.length === 0) {
     return (
-      <ListSection title={`Device access${suffix}`}>
-        <ListRowLayout
-          icon="iphone"
-          label={
-            state.supportsDeviceControl === true
-              ? "No devices found"
-              : "Update T3 Code on this environment to set device access"
-          }
-        />
-      </ListSection>
+      <View className="gap-5">
+        <ListSection title={`Device access${suffix}`}>
+          <ListRowLayout
+            icon="iphone"
+            label={
+              state.supportsDeviceControl === true
+                ? "No devices found"
+                : "Update T3 Code on this environment to set device access"
+            }
+          />
+        </ListSection>
+        {pairing}
+      </View>
     );
   }
   const devices = [...state.devices].sort(
@@ -79,7 +89,7 @@ function DeviceEnvironment(props: {
           <ListSection
             key={`${device.hostId}:${device.id}`}
             title={`${device.name}${device.physical ? " · Physical" : ""}${suffix}`}
-            footer={`${host?.label ?? "Device host"} · ${device.version}`}
+            footer={`${host?.label ?? "Device host"} · ${device.version}${device.connection ? ` · ${DEVICE_CONNECTION_LABELS[device.connection]}` : ""}`}
           >
             {POLICIES.map((option, index) => (
               <ListChoiceRow
@@ -113,9 +123,23 @@ function DeviceEnvironment(props: {
                 }
               />
             ) : null}
+            {device.connection === "wifi" ? (
+              <SettingsActionRow
+                icon="wifi.slash"
+                label={`Forget ${device.name}`}
+                disabled={!canForget}
+                onPress={() =>
+                  void forget({
+                    environmentId,
+                    input: { hostId: device.hostId, deviceId: device.id },
+                  })
+                }
+              />
+            ) : null}
           </ListSection>
         );
       })}
+      {pairing}
     </View>
   );
 }

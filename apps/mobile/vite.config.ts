@@ -40,6 +40,7 @@ const reactTests = [
   "src/features/settings/SettingsMacPermissionsRouteScreen.test.tsx",
   "src/features/settings/SettingsDevicesRouteScreen.test.tsx",
   "src/features/devices/DeviceCollapsedChrome.test.tsx",
+  "src/features/settings/WifiPairingSection.test.tsx",
   "src/features/settings/SettingsComputerUseRouteScreen.test.tsx",
   "src/features/kanban/KanbanAddAttachmentButton.test.tsx",
   "src/features/threads/git/GitBranchesSheet.test.tsx",
