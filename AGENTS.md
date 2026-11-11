@@ -226,6 +226,7 @@ This checkout is a personal fork that adds features (notes, kanban, memory, dest
 - The packaged desktop app shares the Electron profile of the developer's installed app, so never launch a local packaged copy to test: use `vp run dev:desktop` or the web dev app, both isolated.
 - CI does not run on this fork (every run is cancelled for lack of runners). `vp run check:changed` plus the test files you ran are the only gate before a release, so say exactly what you ran.
 - On a busy Mac, browser tests that boot the whole app (`AssistantDialog.browser.test.tsx`) time out in the full gate and every later test in the file fails with them. Rerun as `VITEST_MAX_WORKERS=2 vp run check:changed` before suspecting the code.
+- After an upstream merge, `check:changed` touches most of the repo and its default 900s budget kills the test step: pass `--timeout 3300`.
 - `vp run mobile:install android` needs `ANDROID_HOME` (usually `~/Library/Android/sdk`) when the shell does not set it.
 - Save captures you will show the developer, and the scripts that make them, outside `/tmp`: macOS empties it on restart, and a report's images then show as unavailable.
 - Never drive the command palette or type into the app from a script: keystrokes land in whatever editor has focus and change user data or settings. Toggle appearance by setting the attribute on the test page only, and restore anything you changed in `<worktree>/.t3/userdata`.
