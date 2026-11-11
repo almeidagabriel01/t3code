@@ -23,11 +23,14 @@ function viewerFixture(supported: boolean, extra: Partial<Parameters<typeof star
       static isConfigSupported = async () => ({ supported });
       state = "unconfigured";
       decodeQueueSize = 0;
+      constructor(private readonly init: { output: (frame: unknown) => void }) {}
       configure(config: VideoDecoderConfig) {
         configured.push(config.codec);
         this.state = "configured";
       }
-      decode() {}
+      decode() {
+        this.init.output({ displayWidth: 400, displayHeight: 800, close() {} });
+      }
       close() {
         this.state = "closed";
       }
@@ -141,7 +144,7 @@ describe("capture source viewer", () => {
 describe("controllable captured iPhone viewer", () => {
   it("posts typed text and pasted text before a button, and no touch before video", async () => {
     try {
-      const { posted } = viewerFixture(true, {
+      const { posted, videoBodies } = viewerFixture(true, {
         serveSimOnly: true,
         videoOnly: true,
         sizeFromConfig: true,
@@ -160,6 +163,7 @@ describe("controllable captured iPhone viewer", () => {
       frame.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 1 }));
       command("home");
       command("appSwitcher");
+      command("rotate");
       const inputs = posted.filter(
         (message): message is { type: "phoneInput"; input: unknown } =>
           (message as { type: string }).type === "phoneInput",
@@ -169,6 +173,44 @@ describe("controllable captured iPhone viewer", () => {
         { type: "button", button: "home" },
         { type: "button", button: "appSwitcher" },
       ]);
+
+      // Once video arrives, a drag is one swipe.
+      using _canvas = vi
+        .spyOn(HTMLCanvasElement.prototype, "getContext")
+        .mockReturnValue({ drawImage() {} } as never);
+      videoBodies[0]!.enqueue(new Uint8Array(envelope(1, [1, 0x64, 0x00, 0x33])));
+      videoBodies[0]!.enqueue(new Uint8Array(envelope(2, [0, 0, 0, 1, 0x65])));
+      await vi.advanceTimersByTimeAsync(0);
+      frame.getBoundingClientRect = () => new DOMRect(0, 0, 100, 200);
+      const pointer = (type: string, x: number, y: number) =>
+        frame.dispatchEvent(new PointerEvent(type, { pointerId: 2, clientX: x, clientY: y }));
+      frame.setPointerCapture = () => {};
+      pointer("pointerdown", 50, 180);
+      await vi.advanceTimersByTimeAsync(200);
+      pointer("pointermove", 50, 100);
+      pointer("pointerup", 50, 20);
+      expect(posted.at(-1)).toEqual({
+        type: "phoneInput",
+        input: { type: "swipe", x: 0.5, y: 0.9, toX: 0.5, toY: 0.1, durationMs: 200 },
+      });
+    } finally {
+      stop();
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
+describe("simulator viewer keys", () => {
+  it("passes keys to the simulator", async () => {
+    try {
+      viewerFixture(true);
+      await vi.advanceTimersByTimeAsync(0);
+      const frame = document.querySelector<HTMLElement>('[role="application"]')!;
+      const keydown = new KeyboardEvent("keydown", { key: "a", cancelable: true });
+      frame.dispatchEvent(keydown);
+      frame.dispatchEvent(new KeyboardEvent("keyup", { key: "a" }));
+      expect(keydown.defaultPrevented).toBe(true);
     } finally {
       stop();
       vi.useRealTimers();

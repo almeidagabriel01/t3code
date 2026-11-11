@@ -41,6 +41,7 @@ const reactTests = [
   "src/features/settings/SettingsDevicesRouteScreen.test.tsx",
   "src/features/devices/DeviceNotices.test.tsx",
   "src/features/devices/DeviceCollapsedChrome.test.tsx",
+  "src/features/devices/usePhoneInput.test.tsx",
   "src/features/settings/WifiPairingSection.test.tsx",
   "src/features/settings/SettingsComputerUseRouteScreen.test.tsx",
   "src/features/kanban/KanbanAddAttachmentButton.test.tsx",
