@@ -8,23 +8,53 @@ export const CloudSpeechApiKey = TrimmedNonEmptyString.check(
   Schema.isPattern(/^(?![a-z][a-z\d+.-]*:\/\/)[!-~]+$/i),
 );
 
-export const CloudSpeechProvider = Schema.Literals(["openai", "xai", "openrouter"]);
+export const CloudSpeechProvider = Schema.Literals(["openai", "xai", "openrouter", "chatgpt"]);
 export type CloudSpeechProvider = typeof CloudSpeechProvider.Type;
 export const CLOUD_SPEECH_LABELS = {
   openai: "OpenAI",
   xai: "Grok Voice Transcribe",
   openrouter: "OpenRouter",
+  chatgpt: "ChatGPT subscription",
 } as const;
 export const CLOUD_SPEECH_PROVIDER_NAMES = {
   openai: "OpenAI",
   xai: "xAI",
   openrouter: "OpenRouter",
+  chatgpt: "ChatGPT",
 } as const;
-/** Servers that predate OpenRouter report only the first two providers. */
+/**
+ * Where the Codex ChatGPT sign-in stands, read locally without starting Codex.
+ * `keychain`: Codex keeps it in the system keychain, so only Codex can confirm it at dictation time.
+ * `managed`: only T3's managed ChatGPT connection exists, which dictation cannot use.
+ */
+export const ChatGptSpeechStatus = Schema.Literals([
+  "ready",
+  "keychain",
+  "signed-out",
+  "api-key",
+  "expired",
+  "unreadable",
+  "managed",
+  "codex-off",
+]);
+export type ChatGptSpeechStatus = typeof ChatGptSpeechStatus.Type;
+export const ChatGptSpeechFailure = Schema.Literals([
+  "network",
+  "rejected-key",
+  "endpoint-changed",
+  "rate-limit",
+  "unavailable",
+]);
+export type ChatGptSpeechFailure = typeof ChatGptSpeechFailure.Type;
+/** Servers that predate OpenRouter or ChatGPT account dictation omit those keys. */
 export const CloudSpeechKeys = Schema.Struct({
   openai: Schema.Boolean,
   xai: Schema.Boolean,
   openrouter: Schema.optionalKey(Schema.Boolean),
+  chatgpt: Schema.optionalKey(Schema.Boolean),
+  chatgptStatus: Schema.optionalKey(ChatGptSpeechStatus),
+  /** The last ChatGPT dictation on this server failed this way; cleared by a success. */
+  chatgptLastFailure: Schema.optionalKey(ChatGptSpeechFailure),
 });
 export type CloudSpeechKeys = typeof CloudSpeechKeys.Type;
 
@@ -51,6 +81,8 @@ export class CloudSpeechError extends Schema.TaggedError<CloudSpeechError>()(
       "rejected-key",
       "rate-limit",
       "model-unavailable",
+      "network",
+      "endpoint-changed",
       "unavailable",
     ]),
   },
@@ -60,17 +92,25 @@ export class CloudSpeechError extends Schema.TaggedError<CloudSpeechError>()(
     const name = CLOUD_SPEECH_PROVIDER_NAMES[this.provider];
     switch (this.reason) {
       case "missing-key":
+        if (this.provider === "chatgpt")
+          return "Sign in to Codex with ChatGPT, not an API key, on the selected environment to dictate with your ChatGPT subscription. Settings → Voice shows how.";
         return `Add your ${name} API key in Settings → Voice.`;
       case "key-changed":
         return `The ${name} key changed before your recording was sent. Try again.`;
       case "unreadable-key":
         return `Couldn’t read the ${name} API key. Unlock the vault on the selected environment or update the key in Settings → Voice. No audio was sent to ${name}.`;
       case "rejected-key":
+        if (this.provider === "chatgpt")
+          return "ChatGPT rejected the Codex sign-in. Sign in to Codex with ChatGPT again on the selected environment.";
         return `${name} rejected this API key. Check its permissions and billing in Settings → Voice.`;
       case "rate-limit":
         return `${name} reached a usage limit. Check the account's quota or try again later.`;
       case "model-unavailable":
         return `The chosen model isn’t available on ${name}. Choose another model in Settings → Voice.`;
+      case "network":
+        return `Couldn’t reach ${name}. Check the environment’s internet connection and try again.`;
+      case "endpoint-changed":
+        return `${name} changed its unofficial transcription service, so ChatGPT subscription dictation stopped working. Choose another destination in Settings → Voice.`;
       case "unavailable":
         return `${name} couldn’t transcribe this recording. Try again later.`;
     }

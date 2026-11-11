@@ -1,5 +1,10 @@
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
-import { cloudSpeechDisclosure } from "@t3tools/shared/speech";
+import {
+  CHATGPT_SPEECH_UNOFFICIAL_NOTE,
+  chatGptSpeechStatusText,
+  chatGptSpeechUsable,
+  cloudSpeechDisclosure,
+} from "@t3tools/shared/speech";
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import {
   configuredSecretSources,
@@ -14,10 +19,12 @@ import {
   AuthOrchestrationOperateScope,
   AuthSettingsWriteScope,
   CloudSpeechApiKey,
+  CloudSpeechError,
   CloudSpeechModelId,
   CLOUD_SPEECH_LABELS,
   CLOUD_SPEECH_PROVIDER_NAMES,
   isSecretReference,
+  type CloudSpeechKeys,
   type CloudSpeechModel,
   type CloudSpeechProvider,
   type SecretProviderId,
@@ -148,6 +155,38 @@ function ModelPicker({
   );
 }
 
+/** The Codex sign-in that ChatGPT subscription dictation borrows, and how to fix it. */
+function ChatGptSignInStatus({
+  keys,
+  environment,
+  onCheck,
+}: {
+  keys: CloudSpeechKeys | null;
+  environment: string;
+  onCheck: () => void;
+}) {
+  const status = keys?.chatgptStatus ?? (keys?.chatgpt ? "ready" : "signed-out");
+  const usable = chatGptSpeechUsable(status);
+  const failure = keys?.chatgptLastFailure;
+  return (
+    <div className="grid justify-items-start gap-2 text-sm">
+      <p role="status" className={usable ? "text-muted-foreground" : "text-foreground"}>
+        {chatGptSpeechStatusText(status, environment)}
+      </p>
+      {failure && (
+        <p className="text-destructive">
+          Last dictation failed:{" "}
+          {new CloudSpeechError({ provider: "chatgpt", reason: failure }).message}
+        </p>
+      )}
+      <p className="text-muted-foreground">{CHATGPT_SPEECH_UNOFFICIAL_NOTE}</p>
+      <Button size="sm" variant="outline" onClick={onCheck}>
+        Check again
+      </Button>
+    </div>
+  );
+}
+
 export function CloudVoiceConfiguration({
   environment,
   provider,
@@ -163,6 +202,7 @@ export function CloudVoiceConfiguration({
   const name = CLOUD_SPEECH_LABELS[provider];
   const company = CLOUD_SPEECH_PROVIDER_NAMES[provider];
   const routed = provider === "openrouter";
+  const keyless = provider === "chatgpt";
   const formId = useId();
   const prepared = Option.getOrNull(usePreparedConnection(id));
   const canUse = useEnvironmentScope(id, AuthOrchestrationOperateScope);
@@ -183,7 +223,9 @@ export function CloudVoiceConfiguration({
   const [error, setError] = useState("");
   const [model, setModel] = useState(currentModel ?? "");
   const saved = AsyncResult.isSuccess(presence) ? presence.value?.[provider] : undefined;
-  const existing = environment.serverConfig?.settings?.cloudSpeechCredentials?.[provider];
+  const existing = keyless
+    ? undefined
+    : environment.serverConfig?.settings?.cloudSpeechCredentials?.[provider];
   const sources =
     isSecretsFeatureEnabled && environment.serverConfig?.secretReferences
       ? configuredSecretSources(environment.serverConfig.settings?.secretProviders ?? {})
@@ -210,7 +252,7 @@ export function CloudVoiceConfiguration({
     );
   const connected = canUse && prepared !== null;
   // Fixed providers edit the key only when nothing is saved or the device already uses them.
-  const editingKey = canManage && saved !== undefined && (routed || active || !saved);
+  const editingKey = !keyless && canManage && saved !== undefined && (routed || active || !saved);
   const listedModels = AsyncResult.isSuccess(models) ? (models.value?.models ?? null) : null;
   const modelChosen = isModelId(model) && (listedModels?.some((m) => m.id === model) ?? false);
   const keyReady = draft.trim() ? credential !== undefined : Boolean(saved);
@@ -218,7 +260,7 @@ export function CloudVoiceConfiguration({
   const destination = (): CloudDestination =>
     routed && isModelId(model)
       ? { kind: "cloud", provider: "openrouter", environmentId: id, model }
-      : { kind: "cloud", provider: provider as "openai" | "xai", environmentId: id };
+      : { kind: "cloud", provider: provider as "openai" | "xai" | "chatgpt", environmentId: id };
   const enable = () => chooseAudioDestination(destination());
   const canSubmit = routed
     ? modelChosen && keyReady && (!active || modelChanged || keyChanged)
@@ -324,13 +366,15 @@ export function CloudVoiceConfiguration({
               : active
                 ? routed
                   ? "Manage OpenRouter dictation"
-                  : `Manage ${company} key`
+                  : keyless
+                    ? `${name} dictation`
+                    : `Manage ${company} key`
                 : `Use ${name} for dictation?`}
           </DialogTitle>
           <DialogDescription>
             {remove
               ? `Everyone using ${name} for dictation on ${environment.label} will lose access.`
-              : active && !routed
+              : active && !routed && !keyless
                 ? `Anyone with dictation access to ${environment.label} can use this API key.`
                 : cloudSpeechDisclosure(provider, environment.label)}
           </DialogDescription>
@@ -341,15 +385,25 @@ export function CloudVoiceConfiguration({
               <p>Connect to {environment.label} with dictation access to continue.</p>
             ) : AsyncResult.isFailure(presence) && saved === undefined ? (
               <Button size="sm" variant="outline" onClick={refresh}>
-                Retry loading API key
+                {keyless ? "Retry checking sign-in" : "Retry loading API key"}
               </Button>
-            ) : routed &&
+            ) : (routed || keyless) &&
               AsyncResult.isSuccess(presence) &&
               presence.value &&
               saved === undefined ? (
-              <p>Update {environment.label} to use OpenRouter dictation.</p>
+              <p>
+                Update {environment.label} to use {name} dictation.
+              </p>
             ) : saved === undefined ? (
-              <p role="status">Checking for an API key…</p>
+              <p role="status">
+                {keyless ? "Checking the Codex sign-in…" : "Checking for an API key…"}
+              </p>
+            ) : keyless ? (
+              <ChatGptSignInStatus
+                keys={AsyncResult.isSuccess(presence) ? presence.value : null}
+                environment={environment.label}
+                onCheck={refresh}
+              />
             ) : routed ? (
               <form
                 id={formId}
@@ -416,7 +470,7 @@ export function CloudVoiceConfiguration({
           </p>
         )}
         <DialogFooter>
-          {connected && canManage && saved && (active || routed) && !remove && (
+          {connected && canManage && saved && !keyless && (active || routed) && !remove && (
             <div className="sm:mr-auto">
               <Button
                 type="button"

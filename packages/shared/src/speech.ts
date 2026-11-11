@@ -1,4 +1,5 @@
 import {
+  type ChatGptSpeechStatus,
   CLOUD_SPEECH_PROVIDER_NAMES,
   type CloudSpeechProvider,
   SPEECH_MAX_OPTIONS_BYTES,
@@ -11,10 +12,40 @@ const decodeOptions = Schema.decodeUnknownSync(Schema.fromJsonString(SpeechTrans
 const encodeOptions = Schema.encodeSync(Schema.fromJsonString(SpeechTranscriptionOptions));
 
 export function cloudSpeechDisclosure(provider: CloudSpeechProvider, environment: string) {
+  if (provider === "chatgpt")
+    return `After you stop, ${environment} sends the recording to ChatGPT with the Codex ChatGPT sign-in there. Anyone with dictation access to ${environment} uses that subscription.`;
   return provider === "openrouter"
     ? `After you stop, ${environment} sends the recording to OpenRouter. OpenRouter chooses who runs your model. T3 requests zero data retention; your OpenRouter account may allow safety retention.`
     : `After you stop, ${environment} sends your recording and vocabulary hints, including project names, to ${CLOUD_SPEECH_PROVIDER_NAMES[provider]}.`;
 }
+
+export const CHATGPT_SPEECH_UNOFFICIAL_NOTE =
+  "Uses an unofficial ChatGPT service that Codex relies on. It may change or stop working without notice.";
+
+/** What a ChatGPT subscription dictation status means for the person choosing it, and how to fix it. */
+export function chatGptSpeechStatusText(status: ChatGptSpeechStatus, environment: string) {
+  switch (status) {
+    case "ready":
+      return `Ready. Uses the Codex ChatGPT sign-in on ${environment}; no API key needed.`;
+    case "keychain":
+      return `Codex keeps its sign-in in the system keychain on ${environment}, so T3 asks Codex for it when you dictate.`;
+    case "signed-out":
+      return `Codex isn’t signed in with ChatGPT on ${environment}. Install Codex there and run “codex login”, then check again.`;
+    case "api-key":
+      return `Codex on ${environment} is signed in with an API key, which this option can’t use. Run “codex login” there and choose ChatGPT, or pick OpenAI and add the key.`;
+    case "expired":
+      return `The Codex ChatGPT sign-in on ${environment} expired. Run “codex login” there again.`;
+    case "unreadable":
+      return `Couldn’t read the Codex sign-in on ${environment}. Run “codex login” there again.`;
+    case "managed":
+      return `Codex on ${environment} uses only T3’s managed ChatGPT connection, which dictation can’t use. Sign in with the Codex CLI there by running “codex login”.`;
+    case "codex-off":
+      return `Codex is turned off on ${environment}. Turn it on in Settings → Providers, then sign in with ChatGPT.`;
+  }
+}
+
+export const chatGptSpeechUsable = (status: ChatGptSpeechStatus | undefined) =>
+  status === "ready" || status === "keychain";
 
 // Only offer explicit hints understood by all cloud APIs; other languages can still be detected.
 export const cloudSpeechLanguages = {

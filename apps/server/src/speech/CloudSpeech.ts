@@ -8,21 +8,32 @@ import {
   type SecretReference,
   type ServerSettingsError,
   type CloudSpeechKeys,
+  ChatGptSpeechFailure,
   type CloudSpeechProvider,
   EnvironmentSpeechTranscriptionResult,
   type SpeechTranscriptionOptions,
 } from "@t3tools/contracts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
-import { cloudSpeechLanguages, effectiveSpeechLanguage } from "@t3tools/shared/speech";
+import {
+  chatGptSpeechUsable,
+  cloudSpeechLanguages,
+  effectiveSpeechLanguage,
+} from "@t3tools/shared/speech";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import * as ServerSettings from "../serverSettings.ts";
 import { requireSettingsSecret } from "../secrets/settingsSecretValue.ts";
+import {
+  ChatGptSpeechAuth,
+  type ChatGptSpeechAuthFailure,
+  type ChatGptSpeechCredentials,
+} from "./ChatGptSpeechAuth.ts";
 import { applySpeechAliases } from "./customWords.ts";
 import { removeSpeechFillerWords } from "./fillerWords.ts";
 import { decodeSpeechPcm, SpeechInvalidAudioError } from "./SpeechService.ts";
@@ -32,16 +43,31 @@ const endpoints = {
   xai: { url: "https://api.x.ai/v1/stt", model: "grok-voice-transcribe-2.0" },
   openrouter: { url: "https://openrouter.ai/api/v1/audio/transcriptions" },
 };
+// Unofficial ChatGPT route Codex dictation used (24 kHz mono PCM16 WAV); it can change without notice.
+const CHATGPT_TRANSCRIBE_URL = "https://chatgpt.com/backend-api/transcribe";
+const CHATGPT_SAMPLE_RATE = 24_000;
 const OPENROUTER_CATALOG_URL =
   "https://openrouter.ai/api/v1/models?output_modalities=transcription&zdr=true";
 const isApiKey = Schema.is(CloudSpeechApiKey);
 const isModelId = Schema.is(CloudSpeechModelId);
+const isChatGptFailure = Schema.is(ChatGptSpeechFailure);
 const sameCredential = Schema.toEquivalence(SettingsSecretValue);
 const OpenRouterCatalog = Schema.Struct({
   data: Schema.Array(Schema.Struct({ id: Schema.String, name: Schema.optionalKey(Schema.String) })),
 });
 
-function wave(samples: Float32Array) {
+function resample(samples: Float32Array, from: number, to: number) {
+  const out = new Float32Array(Math.max(1, Math.round((samples.length * to) / from)));
+  for (let index = 0; index < out.length; index++) {
+    const at = (index * from) / to;
+    const left = Math.min(Math.floor(at), samples.length - 1);
+    const right = Math.min(left + 1, samples.length - 1);
+    out[index] = samples[left]! + (samples[right]! - samples[left]!) * (at - left);
+  }
+  return out;
+}
+
+function wave(samples: Float32Array, rate = 16_000) {
   const buffer = new ArrayBuffer(44 + samples.length * 2);
   const view = new DataView(buffer);
   const tag = (at: number, value: string) =>
@@ -53,8 +79,8 @@ function wave(samples: Float32Array) {
   view.setUint32(16, 16, true);
   view.setUint16(20, 1, true);
   view.setUint16(22, 1, true);
-  view.setUint32(24, 16_000, true);
-  view.setUint32(28, 32_000, true);
+  view.setUint32(24, rate, true);
+  view.setUint32(28, rate * 2, true);
   view.setUint16(32, 2, true);
   view.setUint16(34, 16, true);
   tag(36, "data");
@@ -101,6 +127,18 @@ function openRouterBody(model: string, audio: ArrayBuffer, language: string) {
   });
 }
 
+/** ChatGPT subscription dictation uses the environment's Codex sign-in, so it has no stored key. */
+export type StoredKeyProvider = Exclude<CloudSpeechProvider, "chatgpt">;
+
+function tidy(text: string, language: string, options: SpeechTranscriptionOptions) {
+  const corrected = applySpeechAliases(text, options.speechCustomWords);
+  return (
+    options.speechRemoveFillerWords
+      ? removeSpeechFillerWords(corrected, language, options.speechCorrectionWord)
+      : corrected
+  ).trim();
+}
+
 export class CloudSpeech extends Context.Service<
   CloudSpeech,
   {
@@ -108,7 +146,7 @@ export class CloudSpeech extends Context.Service<
     /** OpenRouter's public transcription catalog, cached briefly on this server. */
     readonly models: Effect.Effect<ReadonlyArray<CloudSpeechModel>, CloudSpeechError>;
     readonly setKey: (
-      provider: CloudSpeechProvider,
+      provider: StoredKeyProvider,
       key: Redacted.Redacted<string> | SecretReference | null,
     ) => Effect.Effect<void, ServerSettingsError>;
     readonly transcribe: (
@@ -129,13 +167,22 @@ export const layer = Layer.effect(
     const credentials = settings.getSettings.pipe(
       Effect.map((value) => value.cloudSpeechCredentials),
     );
-    const configured = credentials.pipe(
-      Effect.map(({ openai, xai, openrouter }) => ({
+    const chatgpt = yield* ChatGptSpeechAuth;
+    // Server-wide and in memory: Settings shows why the last ChatGPT dictation failed.
+    const chatgptFailure = yield* Ref.make<ChatGptSpeechFailure | undefined>(undefined);
+    const configured = Effect.gen(function* () {
+      const { openai, xai, openrouter } = yield* credentials;
+      const chatgptStatus = yield* chatgpt.status;
+      const chatgptLastFailure = yield* Ref.get(chatgptFailure);
+      return {
         openai: Boolean(openai),
         xai: Boolean(xai),
         openrouter: Boolean(openrouter),
-      })),
-    );
+        chatgpt: chatGptSpeechUsable(chatgptStatus),
+        chatgptStatus,
+        ...(chatgptLastFailure ? { chatgptLastFailure } : {}),
+      };
+    });
     const execute = (request: HttpClientRequest.HttpClientRequest) =>
       http
         .execute(request)
@@ -169,7 +216,7 @@ export const layer = Layer.effect(
       (exit) => (Exit.isSuccess(exit) ? "10 minutes" : 0),
     );
     const setKey = Effect.fn("CloudSpeech.setKey")(function* (
-      provider: CloudSpeechProvider,
+      provider: StoredKeyProvider,
       key: Redacted.Redacted<string> | SecretReference | null,
     ) {
       yield* settings.updateSettings({
@@ -178,6 +225,72 @@ export const layer = Layer.effect(
         },
       });
     });
+    const viaChatGpt = Effect.fn("CloudSpeech.viaChatGpt")(
+      function* (pcm: Uint8Array, options: SpeechTranscriptionOptions, model?: string) {
+        const provider = "chatgpt" as const;
+        const fail = (reason: CloudSpeechError["reason"]) =>
+          new CloudSpeechError({ provider, reason });
+        if (model) return yield* fail("model-unavailable");
+        const samples = yield* Effect.try({
+          try: () => decodeSpeechPcm(pcm),
+          catch: () =>
+            new SpeechInvalidAudioError({
+              byteLength: pcm.byteLength,
+              message: "Invalid PCM audio.",
+            }),
+        });
+        const language = effectiveSpeechLanguage(cloudSpeechLanguages, options.speechLanguage);
+        const audio = wave(resample(samples, 16_000, CHATGPT_SAMPLE_RATE), CHATGPT_SAMPLE_RATE);
+        const refused = (reason: ChatGptSpeechAuthFailure) =>
+          fail(reason === "signed-out" ? "missing-key" : "rejected-key");
+        const upload = ({ token, accountId }: ChatGptSpeechCredentials) => {
+          const form = new FormData();
+          form.set("file", new Blob([audio], { type: "audio/wav" }), "audio.wav");
+          if (language !== "auto") form.set("language", language);
+          return execute(
+            HttpClientRequest.post(CHATGPT_TRANSCRIBE_URL).pipe(
+              HttpClientRequest.bearerToken(token),
+              accountId
+                ? HttpClientRequest.setHeader("ChatGPT-Account-Id", accountId)
+                : (request) => request,
+              HttpClientRequest.bodyFormData(form),
+            ),
+          ).pipe(Effect.mapError(() => fail("network")));
+        };
+        const session = yield* chatgpt.open.pipe(Effect.mapError(refused));
+        let response = yield* upload(
+          yield* session.credentials(false).pipe(Effect.mapError(refused)),
+        );
+        // Only a 401 renews, as Codex does: a forced renewal rotates the refresh token, and a 403
+        // is a plan or workspace refusal that a new token would not fix.
+        if (response.status === 401)
+          response = yield* upload(yield* session.credentials(true).pipe(Effect.mapError(refused)));
+        if (response.status === 401 || response.status === 403) return yield* fail("rejected-key");
+        if (response.status < 200 || response.status >= 300)
+          return yield* fail(
+            response.status === 429
+              ? "rate-limit"
+              : [404, 405, 410].includes(response.status)
+                ? "endpoint-changed"
+                : "unavailable",
+          );
+        // A success that no longer carries `text` means the unofficial route changed shape.
+        const { text } = yield* HttpClientResponse.schemaBodyJson(
+          EnvironmentSpeechTranscriptionResult,
+        )(response).pipe(Effect.mapError(() => fail("endpoint-changed")));
+        return tidy(text, language, options);
+      },
+      Effect.scoped,
+      (effect) =>
+        effect.pipe(
+          Effect.tap(() => Ref.set(chatgptFailure, undefined)),
+          Effect.tapError((error) =>
+            error._tag === "CloudSpeechError" && isChatGptFailure(error.reason)
+              ? Ref.set(chatgptFailure, error.reason)
+              : Effect.void,
+          ),
+        ),
+    );
     const transcribe = Effect.fn("CloudSpeech.transcribe")(
       function* (
         provider: CloudSpeechProvider,
@@ -185,6 +298,7 @@ export const layer = Layer.effect(
         options: SpeechTranscriptionOptions,
         model?: string,
       ) {
+        if (provider === "chatgpt") return yield* viaChatGpt(pcm, options, model);
         const source = (yield* credentials)[provider];
         if (!source) return yield* new CloudSpeechError({ provider, reason: "missing-key" });
         if (provider === "openrouter" && (!model || !isModelId(model)))
@@ -238,12 +352,7 @@ export const layer = Layer.effect(
         const { text } = yield* HttpClientResponse.schemaBodyJson(
           EnvironmentSpeechTranscriptionResult,
         )(response).pipe(Effect.mapError(unavailable));
-        const corrected = applySpeechAliases(text, options.speechCustomWords);
-        return (
-          options.speechRemoveFillerWords
-            ? removeSpeechFillerWords(corrected, language, options.speechCorrectionWord)
-            : corrected
-        ).trim();
+        return tidy(text, language, options);
       },
       (effect, provider) =>
         effect.pipe(

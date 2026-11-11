@@ -1,5 +1,6 @@
 import { PrimaryConnectionTarget } from "@t3tools/client-runtime/connection";
-import { EnvironmentId } from "@t3tools/contracts";
+import { CloudSpeechError, EnvironmentId } from "@t3tools/contracts";
+import { CHATGPT_SPEECH_UNOFFICIAL_NOTE, chatGptSpeechStatusText } from "@t3tools/shared/speech";
 import * as Option from "effect/Option";
 import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
@@ -219,6 +220,126 @@ it("OpenRouter needs an exact model, and changing it writes no credential", asyn
           await expect.element(dialog).not.toBeInTheDocument();
           await expect.element(destination).toHaveTextContent("OpenRouter via Laptop");
           expect(grantModel()).toBe("acme/transcribe-1");
+          expect(writes).toEqual([]);
+        },
+      );
+    },
+  );
+});
+
+it("ChatGPT subscription dictation has no key field and shows each Codex sign-in state", async () => {
+  const id = EnvironmentId.make("voice-host");
+  const target = new PrimaryConnectionTarget({
+    environmentId: id,
+    label: "Laptop",
+    httpBaseUrl: window.location.origin,
+    wsBaseUrl: "ws://localhost",
+  });
+  const prepared = Option.some({
+    ...target,
+    target,
+    socketUrl: target.wsBaseUrl,
+    httpAuthorization: null,
+  });
+  using cleanup = new DisposableStack();
+  cleanup.defer(() => chooseAudioDestination(null));
+  chooseAudioDestination(null);
+  let keys: Record<string, unknown> = { openai: false, xai: false };
+  const writes: string[] = [];
+  const fetch = globalThis.fetch;
+  using _network = vi.spyOn(globalThis, "fetch").mockImplementation((request, init) => {
+    const url = new URL(request instanceof Request ? request.url : request, window.location.href);
+    if (url.pathname === "/api/voice/cloud/keys") return Promise.resolve(Response.json(keys));
+    if (url.pathname.endsWith("/key")) {
+      writes.push(url.pathname);
+      return Promise.resolve(new Response(null, { status: 204 }));
+    }
+    return fetch(request, init);
+  });
+  await vi.mocked(useEnvironmentScope).withImplementation(
+    () => true,
+    async () => {
+      await vi.mocked(usePreparedConnection).withImplementation(
+        () => prepared,
+        async () => {
+          await using screen = await render(
+            <SettingsScopeProvider search={{}} onChange={() => {}}>
+              <VoiceSettingsPanel />
+            </SettingsScopeProvider>,
+          );
+          const destination = screen.getByRole("combobox", { name: "Transcribe with" });
+          const choose = async () => {
+            await destination.click();
+            await page.getByRole("option", { name: "ChatGPT subscription via Laptop" }).click();
+          };
+          const dialog = page.getByRole("dialog");
+          const use = dialog.getByRole("button", { name: "Use ChatGPT subscription" });
+          await choose();
+          await expect
+            .element(dialog.getByText("Update Laptop to use ChatGPT subscription dictation."))
+            .toBeVisible();
+          await dialog.getByRole("button", { name: "Cancel" }).click();
+          const statuses = [
+            "signed-out",
+            "api-key",
+            "expired",
+            "unreadable",
+            "managed",
+            "codex-off",
+          ] as const;
+          keys = { openai: false, xai: false, chatgpt: false, chatgptStatus: statuses[0] };
+          await choose();
+          await expect.element(dialog.getByText(CHATGPT_SPEECH_UNOFFICIAL_NOTE)).toBeVisible();
+          await expect.element(dialog.getByRole("textbox")).not.toBeInTheDocument();
+          for (const status of statuses) {
+            keys = { openai: false, xai: false, chatgpt: false, chatgptStatus: status };
+            await dialog.getByRole("button", { name: "Check again" }).click();
+            await expect
+              .element(dialog.getByText(chatGptSpeechStatusText(status, "Laptop")))
+              .toBeVisible();
+            await expect.element(use).not.toBeInTheDocument();
+          }
+          // A server that predates the detailed status still reports whether it is usable.
+          keys = { openai: false, xai: false, chatgpt: false };
+          await dialog.getByRole("button", { name: "Check again" }).click();
+          await expect
+            .element(dialog.getByText(chatGptSpeechStatusText("signed-out", "Laptop")))
+            .toBeVisible();
+          keys = { openai: false, xai: false, chatgpt: true, chatgptStatus: "keychain" };
+          await dialog.getByRole("button", { name: "Check again" }).click();
+          await expect
+            .element(dialog.getByText(chatGptSpeechStatusText("keychain", "Laptop")))
+            .toBeVisible();
+          await expect
+            .element(dialog.getByText(/After you stop, Laptop sends the recording to ChatGPT/))
+            .toBeVisible();
+          await use.click();
+          await expect.element(dialog).not.toBeInTheDocument();
+          await expect.element(destination).toHaveTextContent("ChatGPT subscription via Laptop");
+          keys = {
+            openai: false,
+            xai: false,
+            chatgpt: true,
+            chatgptStatus: "ready",
+            chatgptLastFailure: "endpoint-changed",
+          };
+          await screen.getByRole("button", { name: "ChatGPT sign-in status" }).click();
+          await expect
+            .element(dialog.getByRole("heading", { name: "ChatGPT subscription dictation" }))
+            .toBeVisible();
+          await expect
+            .element(dialog.getByText(chatGptSpeechStatusText("ready", "Laptop")))
+            .toBeVisible();
+          await expect
+            .element(
+              dialog.getByText(
+                new CloudSpeechError({ provider: "chatgpt", reason: "endpoint-changed" }).message,
+                { exact: false },
+              ),
+            )
+            .toBeVisible();
+          await expect.element(use).not.toBeInTheDocument();
+          await dialog.getByRole("button", { name: "Cancel" }).click();
           expect(writes).toEqual([]);
         },
       );

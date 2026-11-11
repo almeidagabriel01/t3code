@@ -1,4 +1,4 @@
-import { encodeSpeechPcmRequest } from "@t3tools/shared/speech";
+import { chatGptSpeechStatusText, encodeSpeechPcmRequest } from "@t3tools/shared/speech";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
@@ -100,7 +100,10 @@ export const requireCloudSpeechKey = (
         : Effect.fail(
             new VoiceTranscriptionError({
               code: "unavailable",
-              message: new CloudSpeechError({ provider, reason: "missing-key" }).message,
+              message:
+                provider === "chatgpt" && keys.chatgptStatus
+                  ? chatGptSpeechStatusText(keys.chatgptStatus, "the selected environment")
+                  : new CloudSpeechError({ provider, reason: "missing-key" }).message,
             }),
           ),
     ),

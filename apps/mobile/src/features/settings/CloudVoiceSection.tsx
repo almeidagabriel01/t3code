@@ -1,5 +1,9 @@
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
-import { cloudSpeechDisclosure } from "@t3tools/shared/speech";
+import {
+  CHATGPT_SPEECH_UNOFFICIAL_NOTE,
+  chatGptSpeechStatusText,
+  cloudSpeechDisclosure,
+} from "@t3tools/shared/speech";
 import { setCloudSpeechKey } from "@t3tools/client-runtime/voice-input";
 import {
   configuredSecretSources,
@@ -11,8 +15,10 @@ import {
   CLOUD_SPEECH_PROVIDER_NAMES,
   CloudSpeechProvider,
   CloudSpeechApiKey,
+  CloudSpeechError,
   CloudSpeechModelId,
   isSecretReference,
+  type CloudSpeechKeys,
   type CloudSpeechModel,
   type SecretProviderId,
   type SettingsSecretValue,
@@ -64,7 +70,7 @@ export function CloudVoiceChoice({
           active
             ? `${CLOUD_SPEECH_LABELS[active.provider]}${active.provider === "openrouter" ? ` · ${active.model}` : ""}`
             : usable
-              ? "Use your own API key"
+              ? "Your API key or ChatGPT subscription"
               : "Not connected"
         }
         selected={active !== null}
@@ -171,6 +177,57 @@ function Separated({ children }: { children: ReactNode }) {
   return <View className="border-t border-border-subtle">{children}</View>;
 }
 
+/** The Codex sign-in that ChatGPT subscription dictation borrows, and how to fix it. */
+function ChatGptSignInDetail({
+  environment,
+  keys,
+  active,
+  onCheck,
+  onUse,
+  onBack,
+}: {
+  environment: string;
+  keys: CloudSpeechKeys;
+  active: boolean;
+  onCheck: () => void;
+  onUse: () => void;
+  onBack: () => void;
+}) {
+  const status = keys.chatgptStatus ?? (keys.chatgpt ? "ready" : "signed-out");
+  const failure = keys.chatgptLastFailure;
+  return (
+    <>
+      <Text className="px-2 text-sm text-foreground-muted">
+        {cloudSpeechDisclosure("chatgpt", environment)}
+      </Text>
+      <ListSection title="Codex sign-in" footer={CHATGPT_SPEECH_UNOFFICIAL_NOTE}>
+        <View className="gap-2 px-4 py-3">
+          <Text accessibilityRole="text" className="text-sm text-foreground">
+            {chatGptSpeechStatusText(status, environment)}
+          </Text>
+          {failure ? (
+            <Text className="text-sm text-danger-foreground">
+              Last dictation failed:{" "}
+              {new CloudSpeechError({ provider: "chatgpt", reason: failure }).message}
+            </Text>
+          ) : null}
+        </View>
+        <Separated>
+          <ListActionRow label="Check again" onPress={onCheck} />
+        </Separated>
+      </ListSection>
+      {keys.chatgpt && !active ? (
+        <ListSection>
+          <ListActionRow label={`Use ${CLOUD_SPEECH_LABELS.chatgpt}`} onPress={onUse} />
+        </ListSection>
+      ) : null}
+      <ListSection>
+        <ListActionRow label="Back to providers" onPress={onBack} />
+      </ListSection>
+    </>
+  );
+}
+
 function CloudChoices({ environment, active, onClose }: Props & { onClose: () => void }) {
   const id = environment.environmentId;
   const connection = useAtomValue(cloudVoiceConnectionAtom(id));
@@ -212,7 +269,10 @@ function CloudChoices({ environment, active, onClose }: Props & { onClose: () =>
     }
   };
   const edit = (provider: CloudSpeechProvider, enable: boolean) => {
-    const stored = environment.serverConfig?.settings.cloudSpeechCredentials?.[provider];
+    const stored =
+      provider === "chatgpt"
+        ? undefined
+        : environment.serverConfig?.settings.cloudSpeechCredentials?.[provider];
     const ref =
       isSecretReference(stored) && sources.some((candidate) => candidate.id === stored.provider)
         ? stored
@@ -274,10 +334,11 @@ function CloudChoices({ environment, active, onClose }: Props & { onClose: () =>
     const saved = keys.value;
     if (!editing)
       return (
-        <ListSection footer={`Audio is sent through ${environment.label} using its API key.`}>
+        <ListSection footer={`Audio is sent through ${environment.label}.`}>
           {CloudSpeechProvider.literals.map((provider, index) => {
             const label = CLOUD_SPEECH_LABELS[provider];
             const routed = provider === "openrouter";
+            const keyless = provider === "chatgpt";
             const key = saved[provider];
             const isActive = active?.provider === provider;
             return (
@@ -287,31 +348,42 @@ function CloudChoices({ environment, active, onClose }: Props & { onClose: () =>
                 leading={
                   <ProviderIcon
                     provider={
-                      provider === "openai" ? "codex" : provider === "xai" ? "grok" : provider
+                      provider === "openai" || provider === "chatgpt"
+                        ? "codex"
+                        : provider === "xai"
+                          ? "grok"
+                          : provider
                     }
                     size={20}
                   />
                 }
                 selected={isActive}
                 separated={index > 0}
-                disabled={key === undefined || (!key && !canManage) || saving}
+                disabled={key === undefined || (!key && !canManage && !keyless) || saving}
                 description={
                   key === undefined
                     ? "Update the environment to use this provider"
-                    : isActive && routed
-                      ? `${activeModel} · Tap to change model${canManage ? " or key" : ""}`
-                      : isActive && key && canManage
-                        ? "Tap to manage key"
+                    : keyless
+                      ? isActive
+                        ? "Tap to see the Codex sign-in status"
                         : key
-                          ? routed
-                            ? "API key saved · choose a model to use it"
-                            : "API key saved"
-                          : canManage
-                            ? "Add an API key to use this provider"
-                            : "Ask an environment administrator to add an API key"
+                          ? "Uses the Codex ChatGPT sign-in · no API key"
+                          : "Not ready · tap to see how to fix"
+                      : isActive && routed
+                        ? `${activeModel} · Tap to change model${canManage ? " or key" : ""}`
+                        : isActive && key && canManage
+                          ? "Tap to manage key"
+                          : key
+                            ? routed
+                              ? "API key saved · choose a model to use it"
+                              : "API key saved"
+                            : canManage
+                              ? "Add an API key to use this provider"
+                              : "Ask an environment administrator to add an API key"
                 }
                 onPress={() => {
                   if (routed) return edit(provider, !isActive);
+                  if (keyless && (!key || isActive)) return edit(provider, false);
                   if (!key) return edit(provider, true);
                   if (isActive) {
                     if (canManage) edit(provider, false);
@@ -319,7 +391,7 @@ function CloudChoices({ environment, active, onClose }: Props & { onClose: () =>
                   }
                   Dialog.confirm({
                     title: `Use ${label} for dictation?`,
-                    message: `${cloudSpeechDisclosure(provider, environment.label)} Select This device to stop sharing.`,
+                    message: `${cloudSpeechDisclosure(provider, environment.label)}${keyless ? ` ${CHATGPT_SPEECH_UNOFFICIAL_NOTE}` : ""} Select This device to stop sharing.`,
                     confirmText: `Use ${label}`,
                     onConfirm: () => enable(pendingCloudVoiceChoice(id, provider)),
                   });
@@ -331,6 +403,20 @@ function CloudChoices({ environment, active, onClose }: Props & { onClose: () =>
       );
 
     const provider = editing.provider;
+    if (provider === "chatgpt")
+      return (
+        <ChatGptSignInDetail
+          environment={environment.label}
+          keys={saved}
+          active={active?.provider === "chatgpt"}
+          onCheck={reload}
+          onUse={() => {
+            enable(pendingCloudVoiceChoice(id, "chatgpt"));
+            onClose();
+          }}
+          onBack={reset}
+        />
+      );
     const label = CLOUD_SPEECH_LABELS[provider];
     const company = CLOUD_SPEECH_PROVIDER_NAMES[provider];
     const routed = provider === "openrouter";
