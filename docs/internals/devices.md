@@ -88,10 +88,11 @@ silent stream as stalled.
 
 serve-sim has a shell-exec route whose token is readable from its own
 unauthenticated `/api`, and serve-emu's action routes have no auth at all. The
-hub binds loopback and the only way in is the
+hub binds loopback and the only ways in are the
 [proxy](../../apps/server/src/device/DeviceHubProxy.ts), which allowlists the
 stream, config, and screenshot routes and authenticates every request as an
-environment session. `<img>` and `WebSocket` cannot carry headers, so the proxy
+environment session, and the linked-device gateway's hub route, which runs the
+same allowlist for a linked environment and only for devices it opened. `<img>` and `WebSocket` cannot carry headers, so the proxy
 authenticates like the `/ws` upgrade: cookie, or a short-lived `wsTicket` that
 bearer and DPoP clients mint over authenticated HTTP. The ticket is stripped
 before the request reaches the hub.
@@ -188,7 +189,7 @@ Agents choose between these tools and ssh before they open anything, so
 sessions that hold `device` get a short block from
 [`orchestrationInstructions.ts`](../../packages/provider-core/src/server/orchestrationInstructions.ts)
 through their adapter's instruction channel. It points simulator, emulator and phone UI
-work on local and SSH hosts at the tools; `simctl`, `adb` and ssh stay
+work on local, SSH and linked environments' hosts at the tools; `simctl`, `adb` and ssh stay
 available for what the tools do not cover. Pi and Muse do not send it yet.
 Claude's native subagents never see the session's system prompt, so a
 `SubagentStart` hook passes them the block, where the runtime runs hooks and the
