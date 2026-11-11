@@ -141,9 +141,17 @@ paired devices list on the phone.
 
 On a Mac, plug the iPhone or iPad into the Mac that hosts the environment
 server, unlock it and tap **Trust**. It appears under **Physical devices**
-marked **USB**. The Device panel shows its screen live; it is view only, so use
-the phone itself to tap and type. The first time, macOS asks to let T3 Code use
-the Camera, because that is how macOS shares a phone's screen.
+marked **USB**. The Device panel shows its screen live. The first time, macOS
+asks to let T3 Code use the Camera, because that is how macOS shares a phone's
+screen.
+
+Once the phone is ready for agents (below), you can drive it from the Device
+panel on the web, desktop and mobile apps: tap, swipe, type with your keyboard
+or paste, and use **Home** and **App switcher**. Each tap or swipe is sent whole
+when you lift your finger, typing is sent when you pause, and the first input
+can take a few seconds while the phone starts its helper app. Driving it takes
+the phone over from agents, as **Take over** does. Until it is ready, the panel
+names what is missing instead.
 
 A phone that is not ready says why next to it, with what to do: pair or trust
 it, unlock it, turn on **Developer Mode** (**Settings → Privacy & Security** on

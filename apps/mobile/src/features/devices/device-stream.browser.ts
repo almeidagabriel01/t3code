@@ -3,6 +3,12 @@ import {
   type DeviceScreenSize,
 } from "@t3tools/client-runtime/device/stream";
 
+import {
+  createPhoneGesture,
+  createPhoneTextBuffer,
+  phoneKeyText,
+} from "@t3tools/client-runtime/device/phone-input";
+
 import type { DeviceStreamConfiguration } from "./device-stream-document";
 
 declare global {
@@ -16,10 +22,15 @@ let activeClient: ReturnType<typeof createDeviceStreamClient> | null = null;
 export function stop() {
   activeClient?.stop();
   activeClient = null;
+  phoneButton = null;
 }
 
+/** A captured phone's buttons, posted after anything still being typed. */
+let phoneButton: ((button: "home" | "appSwitcher") => void) | null = null;
+
 export function command(button: "home" | "back" | "appSwitcher" | "rotate") {
-  if (button === "rotate") activeClient?.rotate();
+  if (phoneButton && (button === "home" || button === "appSwitcher")) phoneButton(button);
+  else if (button === "rotate") activeClient?.rotate();
   else activeClient?.pressButton(button);
 }
 
@@ -90,14 +101,27 @@ export function start(configuration: DeviceStreamConfiguration) {
   container.append(frame);
   document.body.replaceChildren(container, inputStatus);
 
-  const viewOnly = configuration.videoOnly === true;
+  const phoneControl = configuration.phoneControl === true;
+  const viewOnly = configuration.videoOnly === true && !phoneControl;
+  const sendPhoneInput = (input: object) => {
+    if (activeClient === client) post({ type: "phoneInput", input });
+  };
+  const phoneGesture = createPhoneGesture(sendPhoneInput);
+  const phoneText = createPhoneTextBuffer(sendPhoneInput);
+  phoneButton = phoneControl
+    ? (button) => {
+        phoneText.flush();
+        sendPhoneInput({ type: "button", button });
+      }
+    : null;
   let pointerId: number | null = null;
   let inputConnected = false;
   let streaming = false;
   const reportStatus = (status: "connecting" | "streaming" | "error", detail?: string) => {
     if (activeClient !== client) return;
     streaming = status === "streaming";
-    inputStatus.style.display = streaming && !inputConnected && !viewOnly ? "block" : "none";
+    inputStatus.style.display =
+      streaming && !inputConnected && !viewOnly && !phoneControl ? "block" : "none";
     post({ type: "status", status, detail });
   };
   const layout = (screen: DeviceScreenSize | null) => {
@@ -151,7 +175,8 @@ export function start(configuration: DeviceStreamConfiguration) {
     onUnauthorized: unauthorized,
     onInputConnected: (connected) => {
       inputConnected = connected;
-      inputStatus.style.display = streaming && !connected && !viewOnly ? "block" : "none";
+      inputStatus.style.display =
+        streaming && !connected && !viewOnly && !phoneControl ? "block" : "none";
       post({ type: "input", connected });
     },
   });
@@ -159,14 +184,16 @@ export function start(configuration: DeviceStreamConfiguration) {
   client.setMjpegImage(image);
   const touch = (event: PointerEvent, phase: "begin" | "move" | "end") => {
     const rect = frame.getBoundingClientRect();
-    client.sendTouch(
-      phase,
-      Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)),
-      Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height)),
-    );
+    const x = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+    const y = Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height));
+    if (!phoneControl) client.sendTouch(phase, x, y);
+    else {
+      if (phase === "begin") phoneText.flush();
+      phoneGesture.touch(phase, x, y);
+    }
   };
   frame.addEventListener("pointerdown", (event) => {
-    if (!inputConnected || pointerId !== null) return;
+    if (!(phoneControl ? streaming : inputConnected) || pointerId !== null) return;
     event.preventDefault();
     pointerId = event.pointerId;
     frame.setPointerCapture(event.pointerId);
@@ -185,10 +212,24 @@ export function start(configuration: DeviceStreamConfiguration) {
   frame.addEventListener("pointercancel", endTouch);
   frame.addEventListener("lostpointercapture", endTouch);
   frame.addEventListener("keydown", (event) => {
+    if (!phoneControl) {
+      event.preventDefault();
+      client.sendKey(event, "down");
+      return;
+    }
+    const text = phoneKeyText(event);
+    if (text === null) return;
     event.preventDefault();
-    client.sendKey(event, "down");
+    phoneText.add(text);
   });
-  frame.addEventListener("keyup", (event) => client.sendKey(event, "up"));
+  frame.addEventListener("keyup", (event) => {
+    if (!phoneControl) client.sendKey(event, "up");
+  });
+  frame.addEventListener("paste", (event) => {
+    if (!phoneControl) return;
+    event.preventDefault();
+    phoneText.add(event.clipboardData?.getData("text/plain") ?? "");
+  });
   window.addEventListener("pagehide", stop, { once: true });
   post({ type: "input", connected: false });
   client.start();

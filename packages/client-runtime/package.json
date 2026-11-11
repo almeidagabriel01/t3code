@@ -639,6 +639,10 @@
       "types": "./src/device/phoneViewer.ts",
       "default": "./src/device/phoneViewer.ts"
     },
+    "./device/phone-input": {
+      "types": "./src/device/phoneInput.ts",
+      "default": "./src/device/phoneInput.ts"
+    },
     "./device/phone-interaction": {
       "types": "./src/device/phoneInteraction.ts",
       "default": "./src/device/phoneInteraction.ts"

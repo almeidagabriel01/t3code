@@ -4,6 +4,7 @@ import {
   ChevronLeft,
   Home,
   Keyboard,
+  Layers,
   Box,
   Maximize,
   MoreHorizontal,
@@ -48,6 +49,8 @@ export function DeviceControlsRail(props: {
   onClose: () => void;
   /** A capture source takes no input: only float and close remain. */
   viewOnly?: boolean;
+  /** A capture iPhone the user drives: its Home and app switcher, sent through its runner. */
+  onPhoneButton?: ((button: "home" | "appSwitcher") => void) | undefined;
   /** Absent for a physical device, which is turned off by hand. */
   onPowerOff?: (() => void) | undefined;
 }) {
@@ -64,7 +67,28 @@ export function DeviceControlsRail(props: {
       className="pointer-events-none absolute inset-y-0 right-0 z-10 flex w-14 flex-col items-center gap-2 overflow-y-auto [justify-content:safe_center] py-3 pr-2 [scrollbar-width:none]"
     >
       <div className="pointer-events-auto flex shrink-0 flex-col items-center gap-1 overflow-y-auto rounded-full border border-border/50 bg-background/80 p-2 shadow-sm [scrollbar-width:none]">
-        {props.viewOnly ? null : (
+        {props.viewOnly ? (
+          props.onPhoneButton ? (
+            <>
+              <RailButton
+                tooltipSide={popupSide}
+                label="Home"
+                disabled={!view.streaming}
+                onClick={() => props.onPhoneButton?.("home")}
+              >
+                <Home />
+              </RailButton>
+              <RailButton
+                tooltipSide={popupSide}
+                label="App switcher"
+                disabled={!view.streaming}
+                onClick={() => props.onPhoneButton?.("appSwitcher")}
+              >
+                <Layers />
+              </RailButton>
+            </>
+          ) : null
+        ) : (
           <>
             <RailButton
               tooltipSide={popupSide}

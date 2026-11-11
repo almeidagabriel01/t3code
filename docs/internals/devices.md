@@ -73,7 +73,8 @@ every viewer. A capture serves serve-sim's AVCC envelopes on loopback, so the
 proxy and the viewer treat it as one more serve-sim upstream, routed before the
 hub's readiness check because no hub is behind it. A capture is video only:
 there is no input socket, so it serves the frame size at `/config`, and the
-viewer reads it again on each new description.
+viewer reads it again on each new description. `/config` also carries the
+captured size before the helper scales frames to 1920, which user input needs.
 
 - **Mac**: [`t3-device-capture`](../../native/device-capture) captures a USB
   iPhone or a display and encodes with VideoToolbox
@@ -104,6 +105,17 @@ Agents drive a USB iPhone with agent-device's on-device runner. The daemon reads
 the signing team and bundle id from its own environment when it starts, so a
 signing change stops the daemon and the next command starts it with the new
 values.
+
+The user drives it through the same runner: `device.input` sends one whole tap,
+swipe, text or button as a daemon command in the agent-device session that
+opened the device, or in the session that holds it when the daemon names
+another. The runner takes UIKit points, so
+[`PhoneInput`](../../apps/server/src/device/PhoneInput.ts) derives the point
+size from the captured pixel size; it is a table of known screen scales, not a
+reading from the phone. Input is serialized per device, holds the device like a
+simulator touch does, and refuses with the blocking issue before starting the
+runner. It serves only this server's own capture devices and is not forwarded
+to linked environments.
 
 This computer is a device only for access and holds. Computer use passes every
 acting call and snapshot through `DeviceService.authorizeAgent` for the desktop,

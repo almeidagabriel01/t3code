@@ -1,5 +1,6 @@
 import type { DeviceHubAccess } from "@t3tools/client-runtime/device/hub-access";
-import type { DevicePlatform } from "@t3tools/contracts";
+import { DeviceUserInput, type DevicePlatform } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import type { PlatformOSType } from "react-native";
 
 export interface DeviceStreamConfiguration {
@@ -12,6 +13,8 @@ export interface DeviceStreamConfiguration {
   readonly videoOnly?: boolean;
   /** See `DeviceStreamTarget.sizeFromConfig`. */
   readonly sizeFromConfig?: boolean;
+  /** A capture iPhone the user drives: its gestures and keys post `phoneInput` messages. */
+  readonly phoneControl?: boolean;
   readonly colors: {
     readonly background: string;
     readonly foreground: string;
@@ -27,7 +30,12 @@ export function deviceStreamConfigurationJson(
   props: DeviceStreamConfiguration & { readonly capture?: boolean },
 ) {
   const flags = props.capture
-    ? { serveSimOnly: true, videoOnly: true, sizeFromConfig: true }
+    ? {
+        serveSimOnly: true,
+        videoOnly: true,
+        sizeFromConfig: true,
+        ...(props.phoneControl ? { phoneControl: true } : {}),
+      }
     : props.serveSimOnly
       ? { serveSimOnly: true }
       : {};
@@ -60,10 +68,16 @@ export function deviceStreamDocument(configuration: string, script: string) {
   return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"></head><body><script>window.addEventListener("error",function(){${failure}});window.addEventListener("unhandledrejection",function(){${failure}});\n${safeScript}\ntry{T3DeviceStream.start(${safeConfiguration});}catch{${failure}}</script></body></html>`;
 }
 
+const decodePhoneInput = Schema.decodeUnknownOption(DeviceUserInput);
+
 export function deviceStreamMessage(data: string) {
   try {
     const message: unknown = JSON.parse(data);
     if (typeof message !== "object" || message === null || !("type" in message)) return null;
+    if (message.type === "phoneInput" && "input" in message) {
+      const input = decodePhoneInput(message.input);
+      return input._tag === "Some" ? ({ type: message.type, input: input.value } as const) : null;
+    }
     if (message.type === "unauthorized" || message.type === "retry") {
       return { type: message.type } as const;
     }

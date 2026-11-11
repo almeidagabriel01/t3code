@@ -42,6 +42,7 @@ import { useAppearancePreferences } from "../settings/appearance/AppearancePrefe
 import { DeviceCollapsedChrome } from "./DeviceCollapsedChrome";
 import { DeviceHoldBanner } from "./DeviceHoldBanner";
 import { DeviceStreamWebView, type DeviceStreamRef } from "./DeviceStreamWebView";
+import { usePhoneInput } from "./usePhoneInput";
 import {
   deviceHoldMenuItem,
   selectedThreadDevicePreview,
@@ -51,6 +52,7 @@ import {
 import { createShakeDetector } from "./shakeDetector";
 
 const OVERLAY_ENTERING = FadeIn.duration(160).reduceMotion(ReduceMotion.System);
+const PHONE_PENDING_ENTERING = FadeIn.delay(1000).duration(160).reduceMotion(ReduceMotion.System);
 const OVERLAY_EXITING = FadeOut.duration(120).reduceMotion(ReduceMotion.System);
 
 type DevicePreviewRouteScreenProps = StaticScreenProps<{
@@ -236,14 +238,14 @@ export function DevicePreviewScreen({
           },
         ]
       : []),
-    ...(preview?.capture
+    ...(preview?.capture && !preview.phoneControl
       ? []
       : [
           {
             id: "app-switcher",
             title: "App switcher",
             icon: "square.on.square",
-            disabled: !inputConnected,
+            disabled: !preview?.phoneControl && !inputConnected,
             onPress: () => streamRef.current?.appSwitcher(),
           },
         ]),
@@ -350,11 +352,11 @@ export function DevicePreviewScreen({
           className="flex-row items-center justify-center gap-2 px-3 py-2"
           style={{ paddingBottom: Math.max(insets.bottom, 8) }}
         >
-          {preview?.capture ? null : (
+          {preview?.capture && !preview.phoneControl ? null : (
             <ControlPill
               accessibilityLabel="Home"
               icon="house"
-              disabled={!inputConnected}
+              disabled={!preview?.phoneControl && !inputConnected}
               onPress={pressHome}
             />
           )}
@@ -380,11 +382,11 @@ export function DevicePreviewScreen({
               <AppText numberOfLines={1} className="flex-1 text-center font-t3-medium text-base">
                 {preview?.name ?? "Devices"}
               </AppText>
-              {preview?.capture ? null : (
+              {preview?.capture && !preview.phoneControl ? null : (
                 <ControlPill
                   accessibilityLabel="Home"
                   icon="house"
-                  disabled={!inputConnected}
+                  disabled={!preview?.phoneControl && !inputConnected}
                   onPress={pressHome}
                 />
               )}
@@ -444,25 +446,52 @@ function OpenDevicePreview({
   const [viewer] = useState(uuidv4);
   const { access, error, refresh } = useDeviceHubAccess(environmentId, session.hostId, viewer);
   const onUnauthorized = async () => refresh();
+  const phoneInput = usePhoneInput(environmentId, session);
   return access ? (
-    <DeviceStreamWebView
-      ref={streamRef}
-      access={access}
-      platform={session.platform}
-      deviceId={session.deviceId}
-      serveSimOnly={preview.serveSimOnly}
-      capture={preview.capture}
-      colors={{
-        background: themeVariables["--color-sheet-solid"],
-        foreground: themeVariables["--color-foreground"],
-        muted: themeVariables["--color-foreground-muted"],
-        buttonBackground: themeVariables["--color-secondary"],
-        buttonForeground: themeVariables["--color-secondary-foreground"],
-        buttonBorder: themeVariables["--color-secondary-border"],
-      }}
-      onUnauthorized={onUnauthorized}
-      onInputConnected={onInputConnected}
-    />
+    <View className="flex-1">
+      <DeviceStreamWebView
+        ref={streamRef}
+        access={access}
+        platform={session.platform}
+        deviceId={session.deviceId}
+        serveSimOnly={preview.serveSimOnly}
+        capture={preview.capture}
+        phoneControl={preview.phoneControl}
+        onPhoneInput={preview.phoneControl ? phoneInput.send : undefined}
+        colors={{
+          background: themeVariables["--color-sheet-solid"],
+          foreground: themeVariables["--color-foreground"],
+          muted: themeVariables["--color-foreground-muted"],
+          buttonBackground: themeVariables["--color-secondary"],
+          buttonForeground: themeVariables["--color-secondary-foreground"],
+          buttonBorder: themeVariables["--color-secondary-border"],
+        }}
+        onUnauthorized={onUnauthorized}
+        onInputConnected={onInputConnected}
+      />
+      {phoneInput.pending || phoneInput.error ? (
+        <Animated.View
+          key={phoneInput.pending ? "pending" : "error"}
+          // Pending shows only once the phone takes over a second: its runner can be slow to start.
+          entering={phoneInput.pending ? PHONE_PENDING_ENTERING : undefined}
+          pointerEvents="none"
+          className="absolute inset-x-0 bottom-3 items-center px-4"
+        >
+          <GlassSurface className="px-3 py-1.5">
+            <AppText
+              accessibilityLiveRegion="polite"
+              className={
+                phoneInput.pending
+                  ? "text-center text-xs text-foreground-muted"
+                  : "text-center text-xs text-destructive"
+              }
+            >
+              {phoneInput.pending ? "Sending to the phone…" : phoneInput.error}
+            </AppText>
+          </GlassSurface>
+        </Animated.View>
+      ) : null}
+    </View>
   ) : (
     <View className="flex-1 items-center justify-center gap-4 px-6">
       {error ? (

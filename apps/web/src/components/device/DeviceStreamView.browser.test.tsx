@@ -243,3 +243,56 @@ it.each([
   expect(paste.defaultPrevented).toBe(false);
   expect(input.touches).toEqual([]);
 });
+
+it("a controllable captured iPhone takes text and paste", async () => {
+  using input = setup();
+  const touches: unknown[] = [];
+  const typed: string[] = [];
+  const pasted: string[] = [];
+  await using screen = await render(
+    <RegistryContext.Provider value={AtomRegistry.make()}>
+      <div style={{ width: 400, height: 800 }}>
+        <DeviceStreamView
+          hostId="local"
+          environmentId={EnvironmentId.make("test")}
+          deviceId="capture"
+          platform="ios"
+          visible
+          allowPhoneView
+          captureSource
+          phoneControl={{
+            touch: (phase, x, y) => touches.push({ phase, x, y }),
+            key: (event) => {
+              typed.push(event.key);
+              return event.key !== "Shift";
+            },
+            paste: (text) => pasted.push(text),
+          }}
+        />
+      </div>
+    </RegistryContext.Provider>,
+    options,
+  );
+
+  const surface = screen.getByRole("application", { name: "Device screen" });
+  await expect.element(surface).toBeVisible();
+  const keydown = new KeyboardEvent("keydown", { key: "a", bubbles: true, cancelable: true });
+  surface.element().dispatchEvent(keydown);
+  expect(keydown.defaultPrevented).toBe(true);
+  const shift = new KeyboardEvent("keydown", { key: "Shift", bubbles: true, cancelable: true });
+  surface.element().dispatchEvent(shift);
+  expect(shift.defaultPrevented).toBe(false);
+  surface.element().dispatchEvent(new KeyboardEvent("keyup", { key: "a", bubbles: true }));
+  const clipboardData = new DataTransfer();
+  clipboardData.setData("text/plain", "hello");
+  surface
+    .element()
+    .dispatchEvent(new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true }));
+  expect(typed).toEqual(["a", "Shift"]);
+  expect(pasted).toEqual(["hello"]);
+  // A captured phone has no input socket: touches wait for its video, which never comes here.
+  const { send } = flatPointer(screen.container);
+  send("pointerdown", 1);
+  expect(touches).toEqual([]);
+  expect(input.touches).toEqual([]);
+});

@@ -11,6 +11,7 @@ import {
 import { Platform, View } from "react-native";
 import { WebView } from "react-native-webview";
 import type { DeviceStreamStatus } from "@t3tools/client-runtime/device/stream";
+import type { DeviceUserInput } from "@t3tools/contracts";
 
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { AppText } from "../../components/ui/AppText";
@@ -34,6 +35,8 @@ type NativeStreamBridge = {
   readonly ref?: Ref<DeviceStreamRef>;
   readonly onUnauthorized: () => Promise<void>;
   readonly onInputConnected: (connected: boolean) => Promise<void>;
+  /** A capture iPhone's gestures, keys and buttons, which the app sends to the server. */
+  readonly onPhoneInput?: ((input: DeviceUserInput) => void) | undefined;
 };
 
 export function DeviceStreamWebView({
@@ -52,6 +55,7 @@ export function DeviceStreamWebView({
       background={props.colors.background}
       onUnauthorized={props.onUnauthorized}
       onInputConnected={props.onInputConnected}
+      onPhoneInput={props.onPhoneInput}
       onRetry={() => {
         processRetried.current = false;
         setAttempt((attempt) => attempt + 1);
@@ -78,6 +82,7 @@ function DeviceStreamDocumentView({
   background,
   onUnauthorized,
   onInputConnected,
+  onPhoneInput,
   onRetry,
   onStreaming,
   onRecoverProcess,
@@ -174,6 +179,7 @@ function DeviceStreamDocumentView({
           if (message?.type === "unauthorized") void onUnauthorized();
           else if (message?.type === "input") void onInputConnected(message.connected);
           else if (message?.type === "retry") onRetry();
+          else if (message?.type === "phoneInput") onPhoneInput?.(message.input);
           else if (message?.type === "status") {
             clearBootstrapTimer();
             if (message.status === "error") fail(message.detail ?? "Device stream failed.");

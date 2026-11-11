@@ -306,6 +306,7 @@ export function DevicePanel(props: {
               hostDiagnostics={
                 diagnostics.find(({ hostId }) => hostId === activeDevice.hostId)?.detail
               }
+              supportsPhoneControl={state.supportsPhoneControl}
               visible={props.visible}
               onFloat={floatActive}
               onClose={() => closeActive(false)}

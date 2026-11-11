@@ -16,6 +16,12 @@ describe("native device stream document", () => {
       { capture: true },
       { serveSimOnly: true, videoOnly: true, sizeFromConfig: true },
     ],
+    [
+      "a capture iPhone the user drives",
+      { capture: true, phoneControl: true },
+      { serveSimOnly: true, videoOnly: true, sizeFromConfig: true, phoneControl: true },
+    ],
+    ["a simulator, which never takes phone input", { phoneControl: true }, {}],
   ])("sets the stream flags for %s", (_name, props, flags) => {
     const configuration = JSON.parse(
       deviceStreamConfigurationJson({
@@ -76,5 +82,14 @@ describe("native device stream messages", () => {
     '{"type":"status","status":"unknown"}',
     '{"type":"status","status":"error","detail":42}',
     '{"type":"status"}',
+    '{"type":"phoneInput"}',
+    '{"type":"phoneInput","input":{"type":"tap","x":2,"y":0}}',
+    '{"type":"phoneInput","input":{"type":"button","button":"power"}}',
   ])("ignores invalid bridge messages: %s", (data) => expect(deviceStreamMessage(data)).toBeNull());
+
+  it("reads the user's phone input", () => {
+    expect(
+      deviceStreamMessage('{"type":"phoneInput","input":{"type":"tap","x":0.5,"y":0.25}}'),
+    ).toEqual({ type: "phoneInput", input: { type: "tap", x: 0.5, y: 0.25 } });
+  });
 });

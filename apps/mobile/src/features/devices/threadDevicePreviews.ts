@@ -9,19 +9,13 @@ import {
   type DeviceSummary,
   type ThreadId,
 } from "@t3tools/contracts";
+import { capturePhoneControl } from "@t3tools/client-runtime/state/device";
 
 const FALLBACK_NAMES: Record<DevicePlatform, string> = {
   ios: "iOS Simulator",
   android: "Android Emulator",
   desktop: "This computer",
 };
-
-/** Capture sources have no input socket, so the notice says who drives them instead. */
-export function deviceViewOnlyNotice(platform: DevicePlatform) {
-  return platform === "desktop"
-    ? "View only. Agents use computer tools on this computer."
-    : "View only. Use the phone to control it.";
-}
 
 /** Each issue as the user reads it: what is wrong, what to do, and whether it stops viewing. */
 export function deviceIssueRows(device: Pick<DeviceSummary, "issues"> | undefined) {
@@ -45,6 +39,8 @@ export function threadDevicePreviews(state: DeviceServiceState | null, threadId:
       const host = state?.hosts.find((host) => host.id === session.hostId);
       const blocking = deviceOpenBlocker(device?.issues);
       const capture = device !== undefined && isCaptureDevice(device);
+      const control = capture ? capturePhoneControl(device, state?.supportsPhoneControl) : null;
+      const issues = deviceIssueRows(device);
       const hold = findDeviceHold(state?.holds, { hostId: session.hostId, id: session.deviceId });
       return {
         key: JSON.stringify([session.hostId, session.deviceId]),
@@ -60,8 +56,14 @@ export function threadDevicePreviews(state: DeviceServiceState | null, threadId:
           .join(" · "),
         physical: device?.physical === true,
         capture,
-        viewOnlyNotice: capture ? deviceViewOnlyNotice(session.platform) : null,
-        issues: deviceIssueRows(device),
+        /** A USB iPhone the user drives from the preview. */
+        phoneControl: control?.controllable === true,
+        // A blocking issue's own row already names it.
+        viewOnlyNotice:
+          control?.notice && !issues.some((issue) => issue.title === control.notice)
+            ? control.notice
+            : null,
+        issues,
         /** The issue that keeps the live screen from opening, which the preview shows instead. */
         blocked: blocking
           ? {

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { start, stop } from "./device-stream.browser";
+import { command, start, stop } from "./device-stream.browser";
 
 const envelope = (tag: number, payload: number[]) => {
   const length = 1 + payload.length;
@@ -59,7 +59,10 @@ function viewerFixture(supported: boolean, extra: Partial<Parameters<typeof star
       ),
     );
   });
-  vi.stubGlobal("ReactNativeWebView", { postMessage() {} });
+  const posted: unknown[] = [];
+  vi.stubGlobal("ReactNativeWebView", {
+    postMessage: (message: string) => posted.push(JSON.parse(message)),
+  });
   start({
     platform: "ios",
     deviceId: "sim",
@@ -79,7 +82,7 @@ function viewerFixture(supported: boolean, extra: Partial<Parameters<typeof star
     },
     ...extra,
   });
-  return { configured, requested, videoBodies };
+  return { configured, requested, videoBodies, posted };
 }
 
 describe("native iOS simulator viewer", () => {
@@ -127,6 +130,45 @@ describe("capture source viewer", () => {
       expect(document.querySelector<HTMLElement>('[role="status"]')!.style.display).not.toBe(
         "block",
       );
+    } finally {
+      stop();
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
+describe("controllable captured iPhone viewer", () => {
+  it("posts typed text and pasted text before a button, and no touch before video", async () => {
+    try {
+      const { posted } = viewerFixture(true, {
+        serveSimOnly: true,
+        videoOnly: true,
+        sizeFromConfig: true,
+        phoneControl: true,
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      const frame = document.querySelector<HTMLElement>('[role="application"]')!;
+      for (const key of ["h", "i", "Shift", "Enter"])
+        frame.dispatchEvent(new KeyboardEvent("keydown", { key, cancelable: true }));
+      frame.dispatchEvent(new KeyboardEvent("keyup", { key: "i" }));
+      const paste = Object.assign(new Event("paste", { cancelable: true }), {
+        clipboardData: { getData: () => "there" },
+      });
+      frame.dispatchEvent(paste);
+      expect(paste.defaultPrevented).toBe(true);
+      frame.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 1 }));
+      command("home");
+      command("appSwitcher");
+      const inputs = posted.filter(
+        (message): message is { type: "phoneInput"; input: unknown } =>
+          (message as { type: string }).type === "phoneInput",
+      );
+      expect(inputs.map((message) => message.input)).toEqual([
+        { type: "text", text: "hi\nthere" },
+        { type: "button", button: "home" },
+        { type: "button", button: "appSwitcher" },
+      ]);
     } finally {
       stop();
       vi.useRealTimers();

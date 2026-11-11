@@ -1,5 +1,7 @@
 import {
+  DEVICE_ISSUES,
   DEVICE_WIFI_PAIRING_FAILURE_LABELS,
+  deviceIssueBlocks,
   type DevicePlatform,
   type DeviceServiceState,
   type DeviceSummary,
@@ -382,4 +384,25 @@ export function linkedDeviceSources(input: {
       };
     })
     .sort((a, b) => a.label.localeCompare(b.label));
+}
+
+/**
+ * Whether the user drives a capture device from its live screen, and the notice shown when not:
+ * this computer stays view only, and a USB iPhone names what blocks control.
+ */
+export function capturePhoneControl(
+  device: Pick<DeviceSummary, "platform" | "issues">,
+  supportsPhoneControl: boolean | undefined,
+): { readonly controllable: boolean; readonly notice: string | null } {
+  if (device.platform === "desktop")
+    return {
+      controllable: false,
+      notice: "View only. Agents use computer tools on this computer.",
+    };
+  if (supportsPhoneControl !== true)
+    return { controllable: false, notice: "View only. Use the phone to control it." };
+  const blocker = deviceIssueBlocks(device.issues, "control");
+  return blocker
+    ? { controllable: false, notice: DEVICE_ISSUES[blocker.reason].title }
+    : { controllable: true, notice: null };
 }

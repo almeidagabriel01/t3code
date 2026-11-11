@@ -3,7 +3,6 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   deviceHoldMenuItem,
-  deviceViewOnlyNotice,
   selectedThreadDevicePreview,
   threadDevicePreviews,
 } from "./threadDevicePreviews";
@@ -184,7 +183,21 @@ describe("thread device previews", () => {
       { title: "Live video failed", blocksView: true },
     ]);
     expect(previews[2]).toMatchObject({ capture: false, viewOnlyNotice: null, issues: [] });
-    expect(deviceViewOnlyNotice("ios")).not.toContain("—");
+    expect(previews.map((preview) => preview.phoneControl)).toEqual([false, false, false]);
+
+    // With phone input, the iPhone's blocking issue row is the notice; once fixed it is controllable.
+    const withControl = {
+      ...state,
+      supportsPhoneControl: true,
+      sessions: [session("iphone", "ios")],
+    };
+    expect(threadDevicePreviews({ ...withControl, devices: [iphone] }, threadId)[0]).toMatchObject({
+      phoneControl: false,
+      viewOnlyNotice: null,
+    });
+    expect(
+      threadDevicePreviews({ ...withControl, devices: [{ ...iphone, issues: [] }] }, threadId)[0],
+    ).toMatchObject({ phoneControl: true, viewOnlyNotice: null });
     expect(threadDevicePreviews(state, threadId)[0]).toMatchObject({
       capture: false,
       blocked: null,

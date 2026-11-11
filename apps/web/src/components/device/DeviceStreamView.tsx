@@ -80,6 +80,14 @@ export interface DeviceStreamHandle {
   readonly inputConnected: boolean;
 }
 
+/** Input to a capture iPhone, which takes whole gestures and typed text through its runner. */
+export interface DevicePhoneControl {
+  readonly touch: (phase: "begin" | "move" | "end", x: number, y: number) => void;
+  /** Whether the key was taken as text. */
+  readonly key: (event: KeyboardEvent) => boolean;
+  readonly paste: (text: string) => void;
+}
+
 export function DeviceStreamView(props: {
   readonly environmentId: EnvironmentId;
   readonly platform: DevicePlatform;
@@ -95,10 +103,13 @@ export function DeviceStreamView(props: {
   readonly viewId?: string;
   /** The host serves only serve-sim's stream and input socket (Simlock). */
   readonly serveSimOnly?: boolean;
-  /** A capture source (USB iPhone, this computer): view only, no input of any kind. */
+  /** A capture source (USB iPhone, this computer): view only unless `phoneControl` drives it. */
   readonly captureSource?: boolean;
+  readonly phoneControl?: DevicePhoneControl | undefined;
 }) {
   const captureSource = props.captureSource === true;
+  const phoneControl = captureSource ? props.phoneControl : undefined;
+  const viewOnly = captureSource && !phoneControl;
   const model = deviceModel(props.platform, props.deviceName ?? "");
   const isDuo = model?.id === "iphone-duo";
   const [presentation, setPresentation] = useState<"phone" | "flat">("phone");
@@ -226,7 +237,8 @@ export function DeviceStreamView(props: {
     if (pointer?.id !== event.pointerId) return;
     activePointer.current = null;
     const { x, y } = event.type === "lostpointercapture" ? pointer : normalizedPoint(event);
-    client?.sendTouch("end", x, y);
+    if (phoneControl) phoneControl.touch("end", x, y);
+    else client?.sendTouch("end", x, y);
   };
 
   const phoneUnavailableReason =
@@ -326,8 +338,8 @@ export function DeviceStreamView(props: {
           "after:pointer-events-none after:absolute after:inset-0 after:z-10 focus-visible:after:ring-2 focus-visible:after:ring-inset focus-visible:after:ring-ring",
           controlsInset && "pr-14",
         )}
-        tabIndex={captureSource ? undefined : 0}
-        role={captureSource ? "group" : "application"}
+        tabIndex={viewOnly ? undefined : 0}
+        role={viewOnly ? "group" : "application"}
         aria-label={
           props.platform === "desktop"
             ? "Computer screen"
@@ -336,7 +348,11 @@ export function DeviceStreamView(props: {
               : `${props.platform === "ios" ? "iOS Simulator" : "Android Emulator"} screen`
         }
         onKeyDown={(event) => {
-          if (captureSource || event.target !== event.currentTarget) return;
+          if (viewOnly || event.target !== event.currentTarget) return;
+          if (phoneControl) {
+            if (phoneControl.key(event.nativeEvent)) event.preventDefault();
+            return;
+          }
           if (event.metaKey && !["r", "R"].includes(event.key)) return;
           // Let browser paste chords fire the paste event.
           if (
@@ -349,12 +365,14 @@ export function DeviceStreamView(props: {
           client?.sendKey(event.nativeEvent, "down");
         }}
         onPaste={(event) => {
-          if (captureSource || event.target !== event.currentTarget) return;
+          if (viewOnly || event.target !== event.currentTarget) return;
           event.preventDefault();
-          client?.sendText(event.clipboardData.getData("text/plain"));
+          const text = event.clipboardData.getData("text/plain");
+          if (phoneControl) phoneControl.paste(text);
+          else client?.sendText(text);
         }}
         onKeyUp={(event) => {
-          if (captureSource || event.target !== event.currentTarget) return;
+          if (phoneControl || viewOnly || event.target !== event.currentTarget) return;
           client?.sendKey(event.nativeEvent, "up");
         }}
       >
@@ -362,19 +380,21 @@ export function DeviceStreamView(props: {
           className={cn("relative select-none", showPhone && "invisible pointer-events-none")}
           style={{ width: frame.width, height: frame.height }}
           onPointerDown={(event) => {
-            if (event.button !== 0 || !inputState.connected || activePointer.current !== null)
-              return;
+            const canTouch = phoneControl ? status === "streaming" : inputState.connected;
+            if (event.button !== 0 || !canTouch || activePointer.current !== null) return;
             event.currentTarget.setPointerCapture(event.pointerId);
             (event.currentTarget.parentElement as HTMLElement | null)?.focus();
             const { x, y } = normalizedPoint(event);
             activePointer.current = { id: event.pointerId, x, y };
-            client?.sendTouch("begin", x, y);
+            if (phoneControl) phoneControl.touch("begin", x, y);
+            else client?.sendTouch("begin", x, y);
           }}
           onPointerMove={(event) => {
             if (activePointer.current?.id !== event.pointerId) return;
             const { x, y } = normalizedPoint(event);
             activePointer.current = { id: event.pointerId, x, y };
-            client?.sendTouch("move", x, y);
+            if (phoneControl) phoneControl.touch("move", x, y);
+            else client?.sendTouch("move", x, y);
           }}
           onPointerUp={endPointer}
           onPointerCancel={endPointer}

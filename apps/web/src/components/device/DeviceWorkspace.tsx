@@ -6,6 +6,7 @@ import {
   type EnvironmentId,
 } from "@t3tools/contracts";
 import { useRef, useState } from "react";
+import { capturePhoneControl } from "@t3tools/client-runtime/state/device";
 import {
   captureDeviceScreenshot,
   DeviceScreenshotError,
@@ -15,6 +16,7 @@ import { DeviceControlsRail } from "./DeviceControlsRail";
 import { DeviceStreamView } from "./DeviceStreamView";
 import { DeviceToolsPanel } from "./DeviceToolsPanel";
 import { useDeviceControls } from "./useDeviceControls";
+import { usePhoneInput } from "./usePhoneInput";
 
 const isDeviceScreenshotError = Schema.is(DeviceScreenshotError);
 
@@ -26,6 +28,8 @@ export function DeviceWorkspace(props: {
   hostLabel: string;
   hostKind: DeviceHostSummary["kind"] | undefined;
   hostDiagnostics: string | undefined;
+  /** The server sends the user's input to a USB iPhone. */
+  supportsPhoneControl: boolean | undefined;
   visible: boolean;
   onFloat: () => void;
   onClose: () => void;
@@ -40,6 +44,10 @@ export function DeviceWorkspace(props: {
   const access = useDeviceHubAccess(props.environmentId, props.device.hostId);
   // Settings and tools run commands on the device's own machine, which EAS and Simlock do not expose.
   const captureSource = isCaptureDevice(props.device);
+  const phone = captureSource
+    ? capturePhoneControl(props.device, props.supportsPhoneControl)
+    : null;
+  const phoneInput = usePhoneInput(props.environmentId, props.device);
   const runsHostCommands =
     !captureSource && (props.hostKind === "local" || props.hostKind === "ssh");
   const controls = useDeviceControls({
@@ -83,19 +91,17 @@ export function DeviceWorkspace(props: {
   return (
     <>
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-        {screenshotError || (controls.error && !toolsOpen) ? (
+        {screenshotError || (controls.error && !toolsOpen) || phoneInput.error ? (
           <p role="alert" className="px-3 py-2 text-xs text-destructive">
-            {screenshotError ?? controls.error}
+            {screenshotError ?? (toolsOpen ? null : controls.error) ?? phoneInput.error}
           </p>
         ) : null}
-        {captureSource ? (
+        {phone?.notice ? (
           <p role="status" className="px-3 py-1.5 text-xs text-muted-foreground">
-            {props.device.platform === "desktop"
-              ? "View only. Agents use computer tools on this computer."
-              : "View only. Use the phone to control it."}
+            {phone.notice}
           </p>
         ) : null}
-        <div className="min-h-0 flex-1">
+        <div className="relative min-h-0 flex-1">
           <DeviceStreamView
             environmentId={props.environmentId}
             platform={props.device.platform}
@@ -106,6 +112,7 @@ export function DeviceWorkspace(props: {
             visible={props.visible}
             serveSimOnly={props.hostKind === "simlock"}
             captureSource={captureSource}
+            phoneControl={phone?.controllable ? phoneInput.view : undefined}
             axOverlay={axOverlay}
             allowPhoneView
             renderControls={(view) => (
@@ -122,10 +129,22 @@ export function DeviceWorkspace(props: {
                 onFloat={props.onFloat}
                 onClose={props.onClose}
                 viewOnly={captureSource}
+                onPhoneButton={phone?.controllable ? phoneInput.button : undefined}
                 onPowerOff={props.onPowerOff}
               />
             )}
           />
+          {phoneInput.pending ? (
+            // Shown only when the phone takes over a second; its runner can be slow to start.
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center p-2 transition-opacity delay-1000 duration-0 starting:opacity-0">
+              <span
+                role="status"
+                className="rounded-md bg-background/85 px-2 py-1 text-xs text-muted-foreground"
+              >
+                Sending to the phone…
+              </span>
+            </div>
+          ) : null}
         </div>
       </div>
       {toolsOpen ? (
