@@ -309,6 +309,9 @@ describe("CaptureDevices capture lifecycle", () => {
         reason: "locked",
       });
       expect((yield* captures.list).map(issues)).toEqual([[], ["locked"]]);
+      // Once an agent has been told, the next listing no longer carries the failure.
+      yield* captures.forget(phone!.id);
+      expect((yield* captures.list).map(issues)).toEqual([[], []]);
 
       fixture.startFailures.push(
         new MacVideoCaptureError({ code: "device_locked", detail: "Unlock the iPhone." }),

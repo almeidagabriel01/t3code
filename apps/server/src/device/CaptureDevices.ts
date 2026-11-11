@@ -63,6 +63,8 @@ export class CaptureDevices extends Context.Service<
       hubPath: string,
       search: URLSearchParams,
     ) => Effect.Effect<CaptureRoute | "unavailable" | null>;
+    /** Drops the failure a start left on the device, once the user has been told about it. */
+    readonly forget: (deviceId: string) => Effect.Effect<void>;
     /** Stops the device's capture now, whoever watches it. */
     readonly stop: (deviceId: string) => Effect.Effect<void>;
     /** Device ids whose capture ended on its own, such as an unplugged phone. */
@@ -431,6 +433,11 @@ const make = Effect.gen(function* () {
     list,
     start,
     route,
+    forget: Effect.fn("CaptureDevices.forget")((deviceId) =>
+      Effect.sync(() => {
+        failures.delete(deviceId);
+      }),
+    ),
     stop,
     ended: PubSub.subscribe(endedPubSub),
   });

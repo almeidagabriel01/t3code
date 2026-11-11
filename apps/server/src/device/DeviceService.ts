@@ -1142,7 +1142,12 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
           : []),
       ];
       const blocking = deviceIssueBlocks(issues, "control");
-      if (blocking) return yield* new DeviceNotReadyError({ ...refused, ...blocking });
+      if (blocking) {
+        // A lock or trust failure is only known from a failed video start: it refuses once, then
+        // the next attempt after the user fixes it goes through.
+        if (captures) yield* captures.forget(device.id);
+        return yield* new DeviceNotReadyError({ ...refused, ...blocking });
+      }
     }
   });
 
@@ -1875,9 +1880,26 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       currentReadiness,
       // Runs for every proxied device request; the capture route is the span that matters.
       captureRoute: Effect.fnUntraced(function* (hostId, hubPath, search) {
-        return captures && (hostId ?? LOCAL_DEVICE_HOST_ID) === LOCAL_DEVICE_HOST_ID
-          ? yield* captures.route(hubPath, search)
-          : null;
+        if (!captures || (hostId ?? LOCAL_DEVICE_HOST_ID) !== LOCAL_DEVICE_HOST_ID) return null;
+        const segment = MacVideoCapture.CAPTURE_ROUTE.exec(hubPath)?.[1];
+        if (segment === undefined) return null;
+        const { state } = yield* SynchronizedRef.get(stateRef);
+        const named = (id: string) => segment === id || segment === encodeURIComponent(id);
+        const device = state.devices.find(
+          (candidate) => isLocalCapture(candidate) && named(candidate.id),
+        );
+        if (!device) return null;
+        // Only an open session streams, so a stale tab cannot restart a closed or disabled capture.
+        const enabled = yield* readDeviceSettings.pipe(
+          Effect.map((value) => value.enabled),
+          Effect.orElseSucceed(() => false),
+        );
+        const watched =
+          enabled &&
+          state.sessions.some(
+            (session) => session.hostId === LOCAL_DEVICE_HOST_ID && session.deviceId === device.id,
+          );
+        return watched ? yield* captures.route(hubPath, search) : ("unavailable" as const);
       }),
       sessionsForThread,
     }),

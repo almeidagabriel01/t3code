@@ -64,7 +64,11 @@ const harness = Effect.fn("harness")(function* (initial: ReadonlyArray<HostDevic
     route: (hubPath) =>
       Effect.sync(() => {
         routes.push(hubPath);
-        return "unavailable" as const;
+        return { url: `http://capture.test${hubPath}`, release: Effect.void };
+      }),
+    forget: (id) =>
+      Effect.sync(() => {
+        calls.push(`forget:${id}`);
       }),
     stop: (id) =>
       Effect.sync(() => {
@@ -101,7 +105,11 @@ const harness = Effect.fn("harness")(function* (initial: ReadonlyArray<HostDevic
     }),
     platformAvailability: (platform) => Effect.succeed({ platform, available: true }),
     ensureReady: () => Effect.succeed(ready),
-    ensureAgentReady: () => Effect.die("Capture devices never start the agent daemon"),
+    ensureAgentReady: () =>
+      Effect.succeed({
+        ...ready,
+        agentDevice: { baseUrl: "http://127.0.0.1:4100", token: "token", entryPath: "/agent.mjs" },
+      }),
     current: Effect.succeed(ready),
     stopAgent: Effect.void,
     stop: Effect.void,
@@ -109,7 +117,7 @@ const harness = Effect.fn("harness")(function* (initial: ReadonlyArray<HostDevic
   const service = yield* DeviceService.makeWithHosts(
     new Map([[host.id, host]]),
     undefined,
-    undefined,
+    () => Effect.succeed("/state/agent-device.json"),
     undefined,
     undefined,
     captures,
@@ -245,6 +253,46 @@ describe("DeviceService capture devices", () => {
       }),
     );
 
+    it.effect("get a signed iPhone's agent-device target, pinned to its UDID", () =>
+      Effect.gen(function* () {
+        const { service, settings, calls } = yield* harness([iphone()]);
+        yield* Ref.update(settings, (current) => ({
+          ...current,
+          appleTeamId: VALID_TEAM,
+          enableAgentDeviceAccess: true,
+        }));
+        yield* service.list;
+        yield* service.open(open(IPHONE, "ios"), { agent });
+        const target = yield* service.agentTarget({
+          threadId: thread,
+          hostId: LOCAL_DEVICE_HOST_ID,
+          deviceId: IPHONE,
+          agent,
+        });
+        expect(target).toMatchObject({
+          agentDeviceId: IPHONE,
+          args: ["--config", "/state/agent-device.json", "--session", target.session],
+        });
+        expect(calls).toEqual([]);
+      }),
+    );
+
+    it.effect("are refused once for a lock a failed start found, then let through", () =>
+      Effect.gen(function* () {
+        const { service, settings, listing, calls } = yield* harness([iphone()]);
+        yield* Ref.update(settings, (current) => ({ ...current, appleTeamId: VALID_TEAM }));
+        yield* Ref.set(listing, [iphone([{ reason: "locked" }])]);
+        yield* service.list;
+        const refused = yield* service.open(open(IPHONE, "ios"), { agent }).pipe(Effect.flip);
+        expect(refused).toMatchObject({ _tag: "DeviceNotReadyError", reason: "locked" });
+        expect(calls).toEqual([`forget:${IPHONE}`]);
+        // The capture source drops the failure, so the next listing no longer carries it.
+        yield* Ref.set(listing, [iphone()]);
+        yield* service.list;
+        expect((yield* service.open(open(IPHONE, "ios"), { agent })).deviceId).toBe(IPHONE);
+      }),
+    );
+
     it.effect("open an iPhone without starting video once signing is set", () =>
       Effect.gen(function* () {
         const { service, settings, calls } = yield* harness([iphone()]);
@@ -254,7 +302,7 @@ describe("DeviceService capture devices", () => {
         yield* Ref.update(settings, (current) => ({ ...current, appleTeamId: ` ${VALID_TEAM} ` }));
         const session = yield* service.open(open(IPHONE, "ios"), { agent });
         expect(session.deviceId).toBe(IPHONE);
-        expect(calls).toEqual([]);
+        expect(calls.filter((call) => call.startsWith("start:"))).toEqual([]);
       }),
     );
 
@@ -374,16 +422,28 @@ describe("DeviceService capture devices", () => {
     }),
   );
 
-  it.effect("routes capture paths for the local host only", () =>
+  it.effect("streams a capture device only while a session is open and devices are on", () =>
     Effect.gen(function* () {
-      const { service, routes } = yield* harness([iphone()]);
+      const { service, routes, settings } = yield* harness([iphone()]);
       const search = new URLSearchParams();
-      expect(yield* service.captureRoute(undefined, "/stream.mjpeg", search)).toBe("unavailable");
-      expect(yield* service.captureRoute(LOCAL_DEVICE_HOST_ID, "/config", search)).toBe(
-        "unavailable",
-      );
-      expect(yield* service.captureRoute("mac-mini" as never, "/config", search)).toBeNull();
-      expect(routes).toEqual(["/stream.mjpeg", "/config"]);
+      const stream = `/vendor/serve-sim/helper/${IPHONE}/stream.avcc`;
+      yield* service.list;
+      // A stale tab cannot start a capture nobody has open.
+      expect(yield* service.captureRoute(undefined, stream, search)).toBe("unavailable");
+      expect(
+        yield* service.captureRoute(undefined, "/vendor/serve-sim/helper/sim-1/config", search),
+      ).toBeNull();
+      expect(yield* service.captureRoute(undefined, "/api/devices", search)).toBeNull();
+      expect(yield* service.captureRoute("mac-mini" as never, stream, search)).toBeNull();
+      expect(routes).toEqual([]);
+
+      yield* service.open(open(IPHONE, "ios"));
+      expect(yield* service.captureRoute(LOCAL_DEVICE_HOST_ID, stream, search)).toMatchObject({
+        url: `http://capture.test${stream}`,
+      });
+      yield* Ref.update(settings, (current) => ({ ...current, enableDeviceSupport: false }));
+      expect(yield* service.captureRoute(undefined, stream, search)).toBe("unavailable");
+      expect(routes).toEqual([stream]);
     }),
   );
 
