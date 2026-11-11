@@ -17,6 +17,8 @@ export function DeviceHostUpdates({
   return (
     <div className="space-y-2">
       {state.hosts.map((host) => {
+        // A linked environment's group header already shows its link state.
+        if (host.kind === "linked") return null;
         const status = state.hostStatuses[host.id];
         if (!status || !["installing", "starting", "failed"].includes(status.status)) return null;
         const failed = status.status === "failed";
