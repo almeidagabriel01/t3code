@@ -110,6 +110,23 @@ const requireProviderThere = Effect.fn("mcp.assistant.requireProviderThere")(fun
   );
 });
 
+/** A clone that failed before the container signed in to GitHub may be a private repository. */
+const withGithubSignIn = Effect.fn("mcp.assistant.withGithubSignIn")(function* (
+  error: OrchestratorMcpFailure,
+) {
+  const control = yield* AssistantSandboxControl.AssistantSandboxControl;
+  if (
+    !error.message.startsWith(RemoteDelegation.CLONE_FAILED) ||
+    (yield* control.status).github.state === "signed_in"
+  ) {
+    return yield* error;
+  }
+  return yield* new OrchestratorMcpFailure({
+    code: error.code,
+    message: `${error.message} If it is a private GitHub repository, the user signs the container in at Settings → Assistants → Sandbox → Sign in to GitHub. Tell them; do not retry until they have.`,
+  });
+});
+
 /**
  * One task in the sandbox container while the caller stays on this Mac. Every step repeats
  * safely: the question and the start are single, the project is found before it is cloned, and
@@ -159,17 +176,19 @@ export const containerTask = Effect.fn("mcp.assistant.containerTask")(function* 
       }
       const scope = yield* requireThreadScope(caller.scope, "container_task");
       yield* requireProviderThere(scope, status.environmentId, instanceId);
-      const { taskId } = yield* delegation.delegate(
-        scope,
-        {
-          task,
-          mode: "async",
-          ...(input.name === undefined ? {} : { title: input.name }),
-          clientRequestId: key,
-          target: { environmentId: status.environmentId },
-        },
-        { cloneMissingProject: true },
-      );
+      const { taskId } = yield* delegation
+        .delegate(
+          scope,
+          {
+            task,
+            mode: "async",
+            ...(input.name === undefined ? {} : { title: input.name }),
+            clientRequestId: key,
+            target: { environmentId: status.environmentId },
+          },
+          { cloneMissingProject: true },
+        )
+        .pipe(Effect.catch(withGithubSignIn));
       return {
         status: "started",
         taskId,

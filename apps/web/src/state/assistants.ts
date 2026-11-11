@@ -285,6 +285,12 @@ export function useAssistantSandboxActions(environmentId: EnvironmentId) {
     reportFailure: false,
   });
   const pairing = useAtomCommand(assistantsEnvironment.sandboxPairing, { reportFailure: false });
+  const githubSignIn = useAtomCommand(assistantsEnvironment.sandboxGithubSignIn, {
+    reportFailure: false,
+  });
+  const githubSignOut = useAtomCommand(assistantsEnvironment.sandboxGithubSignOut, {
+    reportFailure: false,
+  });
   const reply = <A>(
     result:
       | { readonly _tag: "Success"; readonly value: A }
@@ -302,6 +308,8 @@ export function useAssistantSandboxActions(environmentId: EnvironmentId) {
     configure: async (input: AssistantSandboxConfigureInput) =>
       reply(await configure({ environmentId, input })),
     pairingUrl: async () => reply(await pairing({ environmentId, input: {} })),
+    githubSignIn: async () => reply(await githubSignIn({ environmentId, input: {} })),
+    githubSignOut: async () => reply(await githubSignOut({ environmentId, input: {} })),
   };
 }
 

@@ -461,6 +461,29 @@ export type AssistantSandboxState = typeof AssistantSandboxState.Type;
 export const AssistantSandboxWhenDone = Schema.Literals(["discard", "keep"]);
 export type AssistantSandboxWhenDone = typeof AssistantSandboxWhenDone.Type;
 
+/**
+ * The sandbox's own GitHub sign-in, which private repositories need to clone there. "unavailable"
+ * while the sandbox is not running.
+ */
+export const AssistantSandboxGithubState = Schema.Literals([
+  "unavailable",
+  "signed_out",
+  "signing_in",
+  "signed_in",
+]);
+export type AssistantSandboxGithubState = typeof AssistantSandboxGithubState.Type;
+
+export const AssistantSandboxGithub = Schema.Struct({
+  state: AssistantSandboxGithubState,
+  login: Schema.NullOr(Schema.String),
+  /** While signing in: the one-time code to enter at `verificationUri`. It is not a credential. */
+  userCode: Schema.NullOr(Schema.String),
+  verificationUri: Schema.NullOr(Schema.String),
+  /** Why the last sign-in did not finish. */
+  error: Schema.NullOr(Schema.String),
+});
+export type AssistantSandboxGithub = typeof AssistantSandboxGithub.Type;
+
 export const AssistantSandboxStatus = Schema.Struct({
   state: AssistantSandboxState,
   /** What a start is doing now; null when nothing is in progress. */
@@ -475,6 +498,7 @@ export const AssistantSandboxStatus = Schema.Struct({
   /** The most CPU cores the container may use; null means no limit. */
   cpus: Schema.NullOr(Schema.Number),
   whenDone: AssistantSandboxWhenDone,
+  github: AssistantSandboxGithub,
 });
 export type AssistantSandboxStatus = typeof AssistantSandboxStatus.Type;
 
@@ -498,6 +522,11 @@ export const AssistantSandboxConfigureInput = Schema.Struct({
   whenDone: Schema.optional(AssistantSandboxWhenDone),
 });
 export type AssistantSandboxConfigureInput = typeof AssistantSandboxConfigureInput.Type;
+
+export const AssistantSandboxGithubSignInInput = Schema.Struct({});
+export type AssistantSandboxGithubSignInInput = typeof AssistantSandboxGithubSignInInput.Type;
+export const AssistantSandboxGithubSignOutInput = Schema.Struct({});
+export type AssistantSandboxGithubSignOutInput = typeof AssistantSandboxGithubSignOutInput.Type;
 
 export const AssistantSandboxPairingInput = Schema.Struct({});
 export type AssistantSandboxPairingInput = typeof AssistantSandboxPairingInput.Type;

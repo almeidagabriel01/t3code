@@ -11,6 +11,10 @@ const { mocks } = vi.hoisted(() => ({
     stop: vi.fn(),
     remove: vi.fn(),
     configure: vi.fn(),
+    githubSignIn: vi.fn(),
+    githubSignOut: vi.fn(),
+    copied: [] as string[],
+    opened: [] as string[],
     alert: vi.fn(),
     confirms: [] as Array<{
       title: string;
@@ -18,6 +22,12 @@ const { mocks } = vi.hoisted(() => ({
       onCancel?: () => void;
     }>,
   },
+}));
+vi.mock("expo-clipboard", () => ({
+  setStringAsync: async (text: string) => void mocks.copied.push(text),
+}));
+vi.mock("react-native", () => ({
+  Linking: { openURL: async (url: string) => void mocks.opened.push(url) },
 }));
 vi.mock("../../components/ui/Dialog", () => ({
   alert: mocks.alert,
@@ -56,11 +66,20 @@ vi.mock("../../state/assistants", () => ({
     stop: mocks.stop,
     remove: mocks.remove,
     configure: mocks.configure,
+    githubSignIn: mocks.githubSignIn,
+    githubSignOut: mocks.githubSignOut,
   }),
 }));
 
 import { AssistantSandboxSection } from "./AssistantSandboxSection";
 
+const signedOut = {
+  state: "signed_out",
+  login: null,
+  userCode: null,
+  verificationUri: null,
+  error: null,
+};
 const status = (state: string, extra: object = {}) => ({
   state,
   step: null,
@@ -70,6 +89,7 @@ const status = (state: string, extra: object = {}) => ({
   linkedEnvironmentsEnabled: true,
   cpus: null,
   whenDone: "discard",
+  github: { ...signedOut },
   ...extra,
 });
 
@@ -89,9 +109,21 @@ beforeEach(() => {
   mocks.status = status("running");
   mocks.canAct = true;
   mocks.confirms = [];
-  for (const mock of [mocks.start, mocks.stop, mocks.remove, mocks.configure, mocks.alert]) {
+  mocks.copied = [];
+  mocks.opened = [];
+  for (const mock of [
+    mocks.start,
+    mocks.stop,
+    mocks.remove,
+    mocks.configure,
+    mocks.githubSignIn,
+    mocks.githubSignOut,
+    mocks.alert,
+  ]) {
     mock.mockReset();
   }
+  mocks.githubSignIn.mockResolvedValue({ ok: true });
+  mocks.githubSignOut.mockResolvedValue({ ok: true });
   mocks.start.mockResolvedValue({ ok: true });
   mocks.stop.mockResolvedValue({ ok: true });
   mocks.remove.mockResolvedValue({ ok: true });
@@ -178,5 +210,49 @@ describe("AssistantSandboxSection", () => {
     mocks.remove.mockResolvedValue({ ok: false, message: "Busy" });
     await act(async () => mocks.confirms[1]!.onConfirm());
     expect(mocks.alert).toHaveBeenCalledWith("Could not remove the sandbox", "Busy");
+  });
+
+  it("signs the sandbox in to GitHub with a code to copy and open, cancels, and signs out", async () => {
+    mocks.status = status("stopped", { github: { ...signedOut, state: "unavailable" } });
+    render();
+    expect(container.textContent).toContain("GitHub · Start the sandbox to sign in");
+    expect(button("Sign in to GitHub")).toBeNull();
+
+    mocks.status = status("running");
+    render();
+    expect(container.textContent).toContain("Lets work in the sandbox clone and push");
+    mocks.githubSignIn.mockResolvedValue({ ok: false, message: "Not running" });
+    await act(async () => button("Sign in to GitHub").click());
+    expect(mocks.alert).toHaveBeenCalledWith("Could not sign in to GitHub", "Not running");
+
+    mocks.status = status("running", {
+      github: {
+        ...signedOut,
+        state: "signing_in",
+        userCode: "ABCD-1234",
+        verificationUri: "https://github.com/login/device",
+      },
+    });
+    render();
+    expect(container.textContent).toContain(
+      "GitHub · Enter this code on GitHub to finish signing in|ABCD-1234",
+    );
+    await act(async () => button("Copy code & open GitHub").click());
+    expect(mocks.copied).toEqual(["ABCD-1234"]);
+    expect(mocks.opened).toEqual(["https://github.com/login/device"]);
+    await act(async () => button("Cancel sign-in").click());
+    expect(mocks.githubSignOut).toHaveBeenCalledOnce();
+
+    mocks.status = status("running", {
+      github: { ...signedOut, state: "signed_in", login: "octo" },
+    });
+    render();
+    expect(container.textContent).toContain("GitHub · Signed in as octo");
+    await act(async () => button("Sign out of GitHub").click());
+    expect(mocks.githubSignOut).toHaveBeenCalledTimes(2);
+
+    mocks.status = status("running", { github: { ...signedOut, error: "The code expired." } });
+    render();
+    expect(container.textContent).toContain("GitHub · Not signed in|The code expired.");
   });
 });

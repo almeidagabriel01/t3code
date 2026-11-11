@@ -1,7 +1,9 @@
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Hash from "effect/Hash";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -63,8 +65,23 @@ export class AssistantSandbox extends Context.Service<
     }) => Effect.Effect<AssistantSandboxStatus, AssistantSandboxError>;
     /** A one-time pairing credential minted inside the running container. Never logged. */
     readonly pairingCredential: Effect.Effect<Redacted.Redacted<string>, AssistantSandboxError>;
+    /** The GitHub account `gh` is signed in to there; null when signed out or not running. */
+    readonly githubAccount: Effect.Effect<string | null>;
+    /**
+     * `gh`'s device sign-in there: completes `prompt` with the code to enter, then waits for the
+     * user and sets git to use it. Returns the account. Interrupting it stops it there too.
+     */
+    readonly githubLogin: (
+      prompt: Deferred.Deferred<GithubPrompt>,
+    ) => Effect.Effect<string, AssistantSandboxError>;
+    readonly githubLogout: Effect.Effect<void, AssistantSandboxError>;
   }
 >()("t3/assistants/AssistantSandbox") {}
+
+export interface GithubPrompt {
+  readonly userCode: string;
+  readonly verificationUri: string;
+}
 
 /** The server's own bundle: `dist` is where its entry file sits, or the build beside the sources. */
 export class SandboxBundleSource extends Context.Service<
@@ -78,6 +95,9 @@ const LABEL = "t3.assistant-sandbox";
 const BUILD_TIMEOUT = "20 minutes";
 const DOCKER_TIMEOUT = "30 seconds";
 const HOME = "/home/t3";
+/** A device code lasts 15 minutes. */
+const GITHUB_LOGIN_TIMEOUT = "16 minutes";
+const GITHUB_LOGIN_PID = "/tmp/t3-github-login.pid";
 const WORKSPACE = "/workspace";
 /** Packages the server loads from disk instead of bundling; keep aligned with scripts/lib/cli-external-packages.ts. */
 const RUNTIME_PACKAGES = [
@@ -104,7 +124,8 @@ const START_SCRIPT = [
 export const sandboxDockerfile = [
   `FROM ${NODE_IMAGE}`,
   // ssh lets git reach an SSH remote, or fall back to HTTPS when it has no key for it.
-  "RUN apt-get update && apt-get install -y --no-install-recommends git openssh-client ca-certificates python3 make g++ && rm -rf /var/lib/apt/lists/*",
+  // gh, from GitHub's own apt repository, is the sandbox's GitHub sign-in.
+  'RUN apt-get update && apt-get install -y --no-install-recommends git openssh-client ca-certificates curl python3 make g++ && mkdir -p -m 755 /etc/apt/keyrings && curl -fsSL -o /etc/apt/keyrings/githubcli-archive-keyring.gpg https://cli.github.com/packages/githubcli-archive-keyring.gpg && chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list && apt-get update && apt-get install -y --no-install-recommends gh && rm -rf /var/lib/apt/lists/*',
   `RUN mkdir -p ${HOME} ${WORKSPACE} /opt/t3 && chown -R node:node ${HOME} ${WORKSPACE} /opt/t3`,
   "WORKDIR /opt/t3",
   "USER node",
@@ -411,6 +432,106 @@ export const layer = Layer.effect(
       return Redacted.make(issued.credential);
     });
 
+    // Only the account line is read: the rest of `gh auth status` names the token, masked.
+    const githubAccount = Effect.gen(function* () {
+      const out = yield* docker([
+        "exec",
+        yield* name,
+        "gh",
+        "auth",
+        "status",
+        "--hostname",
+        "github.com",
+        "--active",
+      ]);
+      return (
+        /Logged in to github\.com account (\S+)/.exec(`${out.stdout}\n${out.stderr}`)?.[1] ?? null
+      );
+    });
+
+    const githubLogin = Effect.fn("AssistantSandbox.githubLogin")(function* (
+      prompt: Deferred.Deferred<GithubPrompt>,
+    ) {
+      const containerName = yield* name;
+      const decoder = new TextDecoder();
+      let said = "";
+      const stop = docker([
+        "exec",
+        containerName,
+        "sh",
+        "-c",
+        `kill "$(cat ${GITHUB_LOGIN_PID})" 2>/dev/null; rm -f ${GITHUB_LOGIN_PID}`,
+      ]);
+      // Without a terminal gh prints the code and the address instead of opening a browser.
+      const out = yield* runner
+        .run({
+          command: "docker",
+          args: [
+            "exec",
+            containerName,
+            "sh",
+            "-c",
+            `echo $$ > ${GITHUB_LOGIN_PID}; exec gh auth login --hostname github.com --git-protocol https --web 2>&1`,
+          ],
+          timeout: GITHUB_LOGIN_TIMEOUT,
+          timeoutBehavior: "timedOutResult",
+          onStdoutChunk: (chunk) => {
+            said += decoder.decode(chunk, { stream: true });
+            const userCode = /one-time code: ([A-Z0-9]{4}-[A-Z0-9]{4})/.exec(said)?.[1];
+            const verificationUri = /web browser: (https:\/\/\S+)/.exec(said)?.[1];
+            if (userCode !== undefined && verificationUri !== undefined) {
+              Deferred.doneUnsafe(prompt, Exit.succeed({ userCode, verificationUri }));
+            }
+          },
+        })
+        .pipe(
+          Effect.mapError(() => fail("docker_failed", "Docker could not run the GitHub sign-in.")),
+          Effect.onInterrupt(() => stop),
+        );
+      if (out.timedOut) {
+        yield* stop;
+        return yield* fail("invalid", "The code expired before it was entered. Sign in again.");
+      }
+      if (out.code === 127) {
+        return yield* fail(
+          "invalid",
+          "This sandbox was built without GitHub sign-in. Remove it, keeping its files, and start it again.",
+        );
+      }
+      if (out.code !== 0) {
+        return yield* fail(
+          "docker_failed",
+          `GitHub sign-in did not finish. ${out.stdout.trim().split("\n").at(-1) ?? ""}`.trim(),
+        );
+      }
+      yield* dockerOrFail("set git to use the GitHub sign-in", [
+        "exec",
+        containerName,
+        "gh",
+        "auth",
+        "setup-git",
+        "--hostname",
+        "github.com",
+      ]);
+      return /Logged in as (\S+)/.exec(said)?.[1] ?? (yield* githubAccount) ?? "GitHub";
+    });
+
+    const githubLogout = Effect.gen(function* () {
+      const out = yield* docker([
+        "exec",
+        yield* name,
+        "gh",
+        "auth",
+        "logout",
+        "--hostname",
+        "github.com",
+      ]);
+      // Already signed out is what was asked for.
+      if (!out.ok && (yield* githubAccount) !== null) {
+        return yield* fail("docker_failed", "GitHub sign-out did not finish.");
+      }
+    });
+
     return AssistantSandbox.of({
       status: read(),
       ensure: Effect.fn("AssistantSandbox.ensureExclusive")((cpus: number | null) =>
@@ -422,6 +543,9 @@ export const layer = Layer.effect(
       stop: lock.withPermits(1)(stop()),
       remove: Effect.fn("AssistantSandbox.remove")((input) => lock.withPermits(1)(remove(input))),
       pairingCredential: pairingCredential(),
+      githubAccount,
+      githubLogin,
+      githubLogout,
     });
   }),
 );

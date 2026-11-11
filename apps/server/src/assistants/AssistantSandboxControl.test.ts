@@ -41,6 +41,10 @@ interface World {
   limits: Array<number | null>;
   /** What `ensure` waits on first, standing for an image build. */
   hold: Effect.Effect<void>;
+  github: string | null;
+  /** How `gh auth login` ends after it showed its code. */
+  githubLogin: Effect.Effect<string, AssistantSandbox.AssistantSandboxError>;
+  githubAccountReads: number;
 }
 
 const harness = (
@@ -59,6 +63,9 @@ const harness = (
     ensured: [],
     limits: [],
     hold: Effect.void,
+    github: null,
+    githubLogin: Effect.succeed("octo"),
+    githubAccountReads: 0,
     ...initial,
   };
   const status = () =>
@@ -101,6 +108,19 @@ const harness = (
         return status();
       }),
     pairingCredential: Effect.succeed(Redacted.make("PAIRCODE")),
+    githubAccount: Effect.sync(() => {
+      world.githubAccountReads += 1;
+      return world.github;
+    }),
+    githubLogin: (prompt) =>
+      Deferred.succeed(prompt, {
+        userCode: "ABCD-1234",
+        verificationUri: "https://github.com/login/device",
+      }).pipe(
+        Effect.andThen(Effect.suspend(() => world.githubLogin)),
+        Effect.tap((login) => Effect.sync(() => void (world.github = login))),
+      ),
+    githubLogout: Effect.sync(() => void (world.github = null)),
   });
   const peerLinks = Layer.effect(
     PeerLinks.PeerLinks,
@@ -514,5 +534,83 @@ it.effect("discard is refused while an assistant works in the container", () => 
     yield* control.taskEnded("t3");
     assert.include((yield* Effect.flip(control.discard)).message, "1 assistant works");
     assert.strictEqual(world.removed.length, 2);
+  }).pipe(Effect.provide(layer));
+});
+
+const githubOf = (control: Control.AssistantSandboxControl["Service"]) =>
+  control.status.pipe(Effect.map((status) => status.github));
+
+const githubSettles = (control: Control.AssistantSandboxControl["Service"]) =>
+  control.streamStatus.pipe(
+    Stream.map((status) => status.github),
+    Stream.filter((github) => github.state !== "signing_in"),
+    Stream.runHead,
+    Effect.map(Option.getOrThrow),
+  );
+
+it.effect("GitHub sign-in shows the code to enter, then the account it signed in to", () => {
+  const { world, layer } = harness({ githubLogin: Effect.never });
+  return Effect.gen(function* () {
+    const control = yield* Control.AssistantSandboxControl;
+    assert.strictEqual((yield* githubOf(control)).state, "unavailable");
+    assert.include((yield* Effect.flip(control.githubSignIn)).message, "Start the sandbox");
+    yield* started;
+    assert.deepInclude(yield* githubOf(control), { state: "signed_out", login: null });
+    const signing = yield* control.githubSignIn;
+    assert.deepInclude(signing.github, {
+      state: "signing_in",
+      userCode: "ABCD-1234",
+      verificationUri: "https://github.com/login/device",
+    });
+    // A second press while the code is up shows the same code.
+    assert.deepStrictEqual((yield* control.githubSignIn).github, signing.github);
+    // Cancel stops the login waiting in the container.
+    assert.deepInclude((yield* control.githubSignOut).github, { state: "signed_out" });
+    world.githubLogin = Effect.succeed("octo");
+    yield* control.githubSignIn;
+    assert.deepInclude(yield* githubSettles(control), { state: "signed_in", login: "octo" });
+    assert.strictEqual((yield* control.githubSignIn).github.state, "signed_in");
+    assert.deepInclude((yield* control.githubSignOut).github, { state: "signed_out" });
+    assert.isNull(world.github);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("a GitHub sign-in that fails says why and can be tried again", () => {
+  const { world, layer } = harness({
+    githubLogin: Effect.fail(
+      new AssistantSandbox.AssistantSandboxError({
+        reason: "docker_failed",
+        message: "The code expired before it was entered. Sign in again.",
+      }),
+    ),
+  });
+  return Effect.gen(function* () {
+    const control = yield* Control.AssistantSandboxControl;
+    yield* started;
+    yield* control.githubSignIn;
+    assert.deepInclude(yield* githubSettles(control), {
+      state: "signed_out",
+      error: "The code expired before it was entered. Sign in again.",
+    });
+    world.githubLogin = Effect.succeed("octo");
+    yield* control.githubSignIn;
+    assert.deepInclude(yield* githubSettles(control), { state: "signed_in", error: null });
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("the GitHub account is read once per container and again after a remove", () => {
+  const { world, layer } = harness({ github: "octo" });
+  return Effect.gen(function* () {
+    const control = yield* Control.AssistantSandboxControl;
+    yield* started;
+    assert.deepInclude(yield* githubOf(control), { state: "signed_in", login: "octo" });
+    yield* githubOf(control);
+    assert.strictEqual(world.githubAccountReads, 1);
+    yield* control.remove({ deleteVolumes: false });
+    assert.strictEqual((yield* githubOf(control)).state, "unavailable");
+    assert.include((yield* Effect.flip(control.githubSignOut)).message, "Start the sandbox");
+    yield* started;
+    yield* githubOf(control);
+    assert.strictEqual(world.githubAccountReads, 2);
   }).pipe(Effect.provide(layer));
 });

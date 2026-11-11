@@ -51,10 +51,14 @@ describe("sandbox hooks", () => {
       .fn()
       .mockResolvedValue({ _tag: "Failure", cause: Cause.fail({ message: "Docker said no" }) });
     const remove = vi.fn().mockResolvedValue({ _tag: "Success", value: { state: "not_created" } });
+    const github = vi.fn().mockResolvedValue({ _tag: "Success", value: { state: "running" } });
     vi.mocked(useAtomCommand)
       .mockReturnValueOnce(start as never)
       .mockReturnValueOnce(stop as never)
-      .mockReturnValueOnce(remove as never);
+      .mockReturnValueOnce(remove as never)
+      .mockReturnValueOnce(vi.fn() as never)
+      .mockReturnValueOnce(github as never)
+      .mockReturnValueOnce(github as never);
     vi.mocked(useAtomValue).mockReturnValueOnce(true);
     const actions = useAssistantSandboxActions("hub" as never);
     expect(actions.canAct).toBe(true);
@@ -63,6 +67,9 @@ describe("sandbox hooks", () => {
     expect(await actions.stop()).toEqual({ ok: false, message: "Docker said no" });
     await actions.remove(true);
     expect(remove).toHaveBeenCalledWith({ environmentId: "hub", input: { deleteVolumes: true } });
+    expect((await actions.githubSignIn()).ok).toBe(true);
+    expect((await actions.githubSignOut()).ok).toBe(true);
+    expect(github).toHaveBeenCalledTimes(2);
   });
 });
 

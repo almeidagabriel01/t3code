@@ -735,7 +735,13 @@ const ServerWsRpcGroup = RpcAuthorization.AuthorizedWsRpcGroup.middleware(RpcIns
 // crosses TypeScript's instantiation limit and the layer's requirements degrade to
 // `any`, so the handlers are registered as two disjoint, smaller groups.
 type ServerWsRpc = RpcGroup.Rpcs<typeof BaseWsRpcGroup>;
-const SPLIT_WS_RPC_PREFIXES = ["server", "pullRequests", "provider", "orchestration"] as const;
+const SPLIT_WS_RPC_PREFIXES = [
+  "server",
+  "pullRequests",
+  "provider",
+  "orchestration",
+  "assistantSandbox",
+] as const;
 type SplitWsRpc = Extract<
   ServerWsRpc,
   { readonly _tag: `${(typeof SPLIT_WS_RPC_PREFIXES)[number]}.${string}` }
@@ -2675,6 +2681,8 @@ export const layerWsRpc = (
         [WS_METHODS.assistantSandboxPairing]: (_input) => sandboxControl.pairingUrl,
         [WS_METHODS.assistantSandboxRemove]: (input) => sandboxControl.remove(input),
         [WS_METHODS.assistantSandboxConfigure]: (input) => sandboxControl.configure(input),
+        [WS_METHODS.assistantSandboxGithubSignIn]: (_input) => sandboxControl.githubSignIn,
+        [WS_METHODS.assistantSandboxGithubSignOut]: (_input) => sandboxControl.githubSignOut,
         [WS_METHODS.assistantTeamsCreate]: (input) => assistants.createTeam(input),
         [WS_METHODS.assistantTeamsUpdate]: (input) => assistants.updateTeam(input),
         [WS_METHODS.assistantTeamsDelete]: (input) =>

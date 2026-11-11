@@ -70,6 +70,9 @@ type ThreadScope = McpInvocationContext.McpThreadInvocationScope;
  * like a local one, without a child thread, and a follower completes it when
  * the thread there ends, so the parent wakes as it would for a local child.
  */
+/** How a failed clone into the other environment begins, so a caller can add how to fix it. */
+export const CLONE_FAILED = "The repository could not be cloned there: ";
+
 export class RemoteDelegation extends Context.Service<
   RemoteDelegation,
   {
@@ -210,7 +213,7 @@ const make = Effect.gen(function* () {
             Result.isFailure(cloned)
               ? new OrchestratorMcpFailure({
                   code: cloned.failure.code,
-                  message: `The repository could not be cloned there: ${cloned.failure.message}`,
+                  message: `${CLONE_FAILED}${cloned.failure.message}`,
                 })
               : error,
           ),

@@ -1,7 +1,9 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { EnvironmentId, type ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
@@ -30,6 +32,10 @@ type Docker = {
   cores: number;
   /** The container's stored limit, as `HostConfig.NanoCpus`; 0 is none. */
   nanoCpus: number;
+  /** The account gh is signed in to in the container. */
+  github: string | null;
+  /** How `gh auth login` ends once it printed its code. */
+  githubLogin: "approved" | "denied" | "missing" | "expired" | "waits";
 };
 
 const harness = (initial: Partial<Docker> = {}, bundleFails = false) => {
@@ -42,14 +48,16 @@ const harness = (initial: Partial<Docker> = {}, bundleFails = false) => {
     failing: null,
     cores: 4,
     nanoCpus: 0,
+    github: null,
+    githubLogin: "approved",
     ...initial,
   };
-  const out = (stdout: string, code = 0, stderr = "") =>
+  const out = (stdout: string, code = 0, stderr = "", timedOut = false) =>
     Effect.succeed({
       stdout,
       stderr,
       code: code as never,
-      timedOut: false,
+      timedOut,
       stdoutTruncated: false,
       stderrTruncated: false,
       stdoutInvalidUtf8: false,
@@ -111,8 +119,42 @@ const harness = (initial: Partial<Docker> = {}, bundleFails = false) => {
           return out(docker.container === "running" ? "true" : "false");
         case "port":
           return out("127.0.0.1:49153\n");
-        case "exec":
+        case "exec": {
+          const command = args.slice(2).join(" ");
+          if (command.startsWith("gh auth status")) {
+            return docker.github === null
+              ? out("", 1, "You are not logged into any GitHub hosts.")
+              : out(
+                  `github.com\n  ✓ Logged in to github.com account ${docker.github} (keyring)\n  - Token: gho_****`,
+                );
+          }
+          if (command.startsWith("gh auth logout")) {
+            const was = docker.github;
+            docker.github = null;
+            return was === null ? out("", 1, "not logged in to any hosts") : out("");
+          }
+          if (command.startsWith("gh auth setup-git")) return out("");
+          if (command.includes("gh auth login")) {
+            const said =
+              "! First copy your one-time code: ABCD-1234\nOpen this URL to continue in your web browser: https://github.com/login/device\n";
+            input.onStdoutChunk?.(new TextEncoder().encode(said));
+            switch (docker.githubLogin) {
+              case "approved":
+                docker.github = "octo";
+                return out(`${said}✓ Authentication complete.\n✓ Logged in as octo\n`);
+              case "denied":
+                return out(`${said}error: access_denied`, 1);
+              case "missing":
+                return out("sh: 1: exec: gh: not found", 127);
+              case "expired":
+                return out(said, 1, "", true);
+              case "waits":
+                return Effect.never;
+            }
+          }
+          if (command.includes("kill")) return out("");
           return out(JSON.stringify({ id: "x", credential: CREDENTIAL }));
+        }
         default:
           return out("", 1, "unknown");
       }
@@ -182,6 +224,56 @@ const withSandbox = <A, E>(
 const commands = (docker: Docker) => docker.calls.map((call) => call[0]);
 
 describe("AssistantSandbox", () => {
+  it.effect("GitHub sign-in shows gh's code, sets git to use it, and signs out", () =>
+    withSandbox({ container: "running" }, (s, docker) =>
+      Effect.gen(function* () {
+        assert.isNull(yield* s.githubAccount);
+        const prompt = yield* Deferred.make<AssistantSandbox.GithubPrompt>();
+        assert.strictEqual(yield* s.githubLogin(prompt), "octo");
+        assert.deepStrictEqual(yield* Deferred.await(prompt), {
+          userCode: "ABCD-1234",
+          verificationUri: "https://github.com/login/device",
+        });
+        assert.isTrue(docker.calls.some((call) => call.join(" ").includes("gh auth setup-git")));
+        assert.strictEqual(yield* s.githubAccount, "octo");
+        yield* s.githubLogout;
+        assert.isNull(yield* s.githubAccount);
+        // Signed out already is not an error.
+        yield* s.githubLogout;
+      }),
+    ),
+  );
+
+  it.effect("a GitHub sign-in that does not finish says why", () =>
+    Effect.gen(function* () {
+      const reason = (githubLogin: Docker["githubLogin"]) =>
+        withSandbox({ container: "running", githubLogin }, (s) =>
+          Effect.gen(function* () {
+            const prompt = yield* Deferred.make<AssistantSandbox.GithubPrompt>();
+            return (yield* Effect.flip(s.githubLogin(prompt))).message;
+          }),
+        );
+      assert.include(yield* reason("denied"), "access_denied");
+      assert.include(yield* reason("missing"), "built without GitHub sign-in");
+      assert.include(yield* reason("expired"), "expired");
+    }),
+  );
+
+  it.effect("stopping a GitHub sign-in stops gh in the container", () =>
+    withSandbox({ container: "running", githubLogin: "waits" }, (s, docker) =>
+      Effect.gen(function* () {
+        const prompt = yield* Deferred.make<AssistantSandbox.GithubPrompt>();
+        const login = yield* s
+          .githubLogin(prompt)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(prompt);
+        yield* Fiber.interrupt(login);
+        assert.isTrue(docker.calls.some((call) => call.join(" ").includes("kill")));
+        assert.isNull(docker.github);
+      }),
+    ),
+  );
+
   it.effect("reports docker missing, container states and a starting server", () =>
     Effect.gen(function* () {
       assert.deepStrictEqual(yield* withSandbox({ available: false }, (s) => s.status), {

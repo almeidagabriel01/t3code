@@ -164,6 +164,51 @@ export function assistantSandboxView(status: AssistantSandboxStatus | null): Ass
   };
 }
 
+export const SANDBOX_GITHUB_DESCRIPTION =
+  "Lets work in the sandbox clone and push your private GitHub repositories. It does not use this Mac's GitHub sign-in.";
+
+export interface AssistantSandboxGithubView {
+  readonly label: string;
+  /** Why the last sign-in did not finish. */
+  readonly detail: string | null;
+  /** The one button the row shows; "cancel" stops a sign-in that waits for the code. */
+  readonly action: "sign_in" | "sign_out" | "cancel" | null;
+  /** While signing in: the code to enter, and where. */
+  readonly userCode: string | null;
+  readonly verificationUri: string | null;
+}
+
+export function assistantSandboxGithubView(
+  status: AssistantSandboxStatus | null,
+): AssistantSandboxGithubView {
+  const github = status?.github;
+  const base = { detail: github?.error ?? null, userCode: null, verificationUri: null };
+  switch (github?.state) {
+    case undefined:
+    case "unavailable":
+      return { ...base, label: "Start the sandbox to sign in", action: null };
+    case "signed_out":
+      return { ...base, label: "Not signed in", action: "sign_in" };
+    case "signing_in":
+      return {
+        ...base,
+        label:
+          github.userCode === null
+            ? "Asking GitHub for a code"
+            : "Enter this code on GitHub to finish signing in",
+        action: "cancel",
+        userCode: github.userCode,
+        verificationUri: github.verificationUri,
+      };
+    case "signed_in":
+      return {
+        ...base,
+        label: github.login === null ? "Signed in" : `Signed in as ${github.login}`,
+        action: "sign_out",
+      };
+  }
+}
+
 const SANDBOX_CPU_PRESETS = [1, 2, 4, 8, 16];
 
 export const SANDBOX_CPU_DESCRIPTION =
@@ -241,6 +286,8 @@ export function createAssistantsEnvironmentAtoms<R, E>(
       | typeof WS_METHODS.assistantSandboxStop
       | typeof WS_METHODS.assistantSandboxRemove
       | typeof WS_METHODS.assistantSandboxConfigure
+      | typeof WS_METHODS.assistantSandboxGithubSignIn
+      | typeof WS_METHODS.assistantSandboxGithubSignOut
       | typeof WS_METHODS.assistantSandboxPairing,
   >(
     tag: TTag,
@@ -290,6 +337,8 @@ export function createAssistantsEnvironmentAtoms<R, E>(
     removeSandbox: command(WS_METHODS.assistantSandboxRemove, "removeSandbox"),
     configureSandbox: command(WS_METHODS.assistantSandboxConfigure, "configureSandbox"),
     sandboxPairing: command(WS_METHODS.assistantSandboxPairing, "sandboxPairing"),
+    sandboxGithubSignIn: command(WS_METHODS.assistantSandboxGithubSignIn, "sandboxGithubSignIn"),
+    sandboxGithubSignOut: command(WS_METHODS.assistantSandboxGithubSignOut, "sandboxGithubSignOut"),
     spend: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:assistants:spend",
       tag: WS_METHODS.assistantsSpend,

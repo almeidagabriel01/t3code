@@ -17,6 +17,7 @@ import {
   selectActiveAssistants,
   selectArchivedAssistants,
   selectTeams,
+  assistantSandboxGithubView,
   assistantSandboxView,
   sandboxCpuChoices,
   sandboxCpuLabel,
@@ -154,6 +155,13 @@ describe("assistantSandboxView", () => {
     linkedEnvironmentsEnabled: true,
     cpus: null,
     whenDone: "discard",
+    github: {
+      state: "signed_out",
+      login: null,
+      userCode: null,
+      verificationUri: null,
+      error: null,
+    },
     ...overrides,
   });
 
@@ -192,6 +200,62 @@ describe("assistantSandboxView", () => {
     );
     assert.isNull(assistantSandboxView(status({})).unavailableReason);
     assert.isFalse(assistantSandboxView(status({ environmentId: null })).canSignIn);
+  });
+});
+
+describe("assistantSandboxGithubView", () => {
+  const github = (
+    overrides: Partial<AssistantSandboxStatus["github"]>,
+  ): AssistantSandboxStatus["github"] => ({
+    state: "signed_out",
+    login: null,
+    userCode: null,
+    verificationUri: null,
+    error: null,
+    ...overrides,
+  });
+  const withGithub = (value: AssistantSandboxStatus["github"]) =>
+    ({ github: value }) as AssistantSandboxStatus;
+
+  it.each([
+    [null, "Start the sandbox to sign in", null],
+    [withGithub(github({ state: "unavailable" })), "Start the sandbox to sign in", null],
+    [withGithub(github({})), "Not signed in", "sign_in"],
+    [withGithub(github({ state: "signing_in" })), "Asking GitHub for a code", "cancel"],
+    [
+      withGithub(
+        github({
+          state: "signing_in",
+          userCode: "ABCD-1234",
+          verificationUri: "https://github.com/login/device",
+        }),
+      ),
+      "Enter this code on GitHub to finish signing in",
+      "cancel",
+    ],
+    [withGithub(github({ state: "signed_in", login: "octo" })), "Signed in as octo", "sign_out"],
+    [withGithub(github({ state: "signed_in" })), "Signed in", "sign_out"],
+  ] as const)("reads %j", (input, label, action) => {
+    assert.deepInclude(assistantSandboxGithubView(input), { label, action });
+  });
+
+  it("shows the code and where to enter it, and why the last sign-in failed", () => {
+    assert.deepInclude(
+      assistantSandboxGithubView(
+        withGithub(
+          github({
+            state: "signing_in",
+            userCode: "ABCD-1234",
+            verificationUri: "https://github.com/login/device",
+          }),
+        ),
+      ),
+      { userCode: "ABCD-1234", verificationUri: "https://github.com/login/device" },
+    );
+    assert.strictEqual(
+      assistantSandboxGithubView(withGithub(github({ error: "The code expired." }))).detail,
+      "The code expired.",
+    );
   });
 });
 

@@ -1,11 +1,15 @@
 import {
+  assistantSandboxGithubView,
   assistantSandboxView,
   SANDBOX_CPU_DESCRIPTION,
+  SANDBOX_GITHUB_DESCRIPTION,
   SANDBOX_WHEN_DONE_CHOICES,
   SANDBOX_WHEN_DONE_DESCRIPTION,
   sandboxCpuChoices,
 } from "@t3tools/client-runtime/state/assistants";
 import type { EnvironmentId } from "@t3tools/contracts";
+import * as Clipboard from "expo-clipboard";
+import { Linking } from "react-native";
 
 import * as Dialog from "../../components/ui/Dialog";
 import { ListActionRow } from "../../components/ui/ListActionRow";
@@ -22,6 +26,8 @@ export function AssistantSandboxSection(props: {
   const status = useAssistantSandbox(props.environmentId);
   const actions = useAssistantSandboxActions(props.environmentId);
   const view = assistantSandboxView(status);
+  const github = assistantSandboxGithubView(status);
+  const { userCode, verificationUri } = github;
   const disabled = !actions.canAct;
   // An environment that never answers (offline, older server) has no sandbox to show.
   if (status === null) return null;
@@ -49,6 +55,11 @@ export function AssistantSandboxSection(props: {
           onCancel: () => void run("Could not remove the sandbox", () => actions.remove(false)),
         }),
     });
+
+  const openGithub = (userCode: string, verificationUri: string) => {
+    void Clipboard.setStringAsync(userCode).catch(() => undefined);
+    void Linking.openURL(verificationUri).catch(() => undefined);
+  };
 
   return (
     <>
@@ -87,6 +98,49 @@ export function AssistantSandboxSection(props: {
           disabled={disabled || !view.canRemove}
           onPress={remove}
         />
+      </ListSection>
+      <ListSection title="GitHub in the sandbox" footer={SANDBOX_GITHUB_DESCRIPTION}>
+        <ListRowLayout
+          icon="person.crop.circle"
+          label={`GitHub · ${github.label}`}
+          {...(userCode !== null
+            ? { description: userCode }
+            : github.detail === null
+              ? {}
+              : { description: github.detail })}
+        />
+        {github.action === "sign_in" ? (
+          <ListActionRow
+            icon="key"
+            label="Sign in to GitHub"
+            disabled={disabled}
+            onPress={() => void run("Could not sign in to GitHub", actions.githubSignIn)}
+          />
+        ) : null}
+        {userCode !== null && verificationUri !== null ? (
+          <ListActionRow
+            icon="arrow.up.right.square"
+            label="Copy code & open GitHub"
+            onPress={() => openGithub(userCode, verificationUri)}
+          />
+        ) : null}
+        {github.action === "cancel" ? (
+          <ListActionRow
+            icon="xmark"
+            label="Cancel sign-in"
+            disabled={disabled}
+            onPress={() => void run("Could not cancel the sign-in", actions.githubSignOut)}
+          />
+        ) : null}
+        {github.action === "sign_out" ? (
+          <ListActionRow
+            icon="rectangle.portrait.and.arrow.right"
+            label="Sign out of GitHub"
+            tone="danger"
+            disabled={disabled}
+            onPress={() => void run("Could not sign out of GitHub", actions.githubSignOut)}
+          />
+        ) : null}
       </ListSection>
       <ListSection title="CPU limit" footer={SANDBOX_CPU_DESCRIPTION}>
         {sandboxCpuChoices(status.cpus).map((choice) => (

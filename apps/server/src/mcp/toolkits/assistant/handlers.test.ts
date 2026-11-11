@@ -8,6 +8,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   type OrchestrationV2ThreadShell,
+  OrchestratorMcpFailure,
   type RuntimeMode,
   ThreadId,
 } from "@t3tools/contracts";
@@ -183,6 +184,9 @@ const containerWorld = () => ({
   delegated: [] as Array<{ input: any; options: unknown }>,
   discardError: null as string | null,
   discards: 0,
+  /** Why the delegation fails, as RemoteDelegation says it. */
+  delegateError: null as string | null,
+  github: "signed_out" as "signed_out" | "signed_in",
   /** What `orchestrator_capabilities` in the container lists. */
   providers: [] as Array<{
     providerInstanceId: string;
@@ -221,6 +225,7 @@ const harness = (
                 return {} as never;
               }),
             startForTask: Effect.sync(() => container.status as never),
+            status: Effect.sync(() => ({ github: { state: container.github } }) as never),
             holding: (effect) => effect,
             discard: Effect.suspend(() => {
               if (container.discardError !== null) {
@@ -240,9 +245,17 @@ const harness = (
           }),
           Layer.mock(RemoteDelegation.RemoteDelegation)({
             delegate: (_scope, input, options) =>
-              Effect.sync(() => {
+              Effect.suspend(() => {
+                if (container.delegateError !== null) {
+                  return Effect.fail(
+                    new OrchestratorMcpFailure({
+                      code: "orchestration_error",
+                      message: container.delegateError,
+                    }),
+                  );
+                }
                 container.delegated.push({ input, options });
-                return { taskId: "task-1" as never };
+                return Effect.succeed({ taskId: "task-1" as never });
               }),
           }),
           Layer.succeed(McpInvocationContext.McpInvocationContext, {
@@ -798,6 +811,26 @@ it.effect("container_task names the sign-in when the provider cannot run in the 
     expect(container.delegated).toEqual([]);
     container.providers[0] = { ...container.providers[0]!, canRunChildTask: true, constraints: [] };
     expect(yield* call(containerTask)).toMatchObject({ status: "started" });
+  }),
+);
+
+it.effect("a clone that fails before a GitHub sign-in names where to sign in", () =>
+  Effect.gen(function* () {
+    const { call, container } = yield* harness("full-access");
+    container.config = { ...container.config, chosen: true };
+    container.delegateError = `${RemoteDelegation.CLONE_FAILED}could not read Username for 'https://github.com'`;
+    const unsigned = yield* call(containerTask);
+    expect(unsigned).toMatchObject({ code: "orchestration_error" });
+    expect(unsigned.message).toContain("could not read Username");
+    expect(unsigned.message).toContain("Settings → Assistants → Sandbox → Sign in to GitHub");
+    // Signed in, the clone's own reason stands alone: a sign-in would not change it.
+    container.github = "signed_in";
+    const denied = yield* call(containerTask);
+    expect(denied.message).not.toContain("Sign in to GitHub");
+    // Other failures pass through as they are.
+    container.github = "signed_out";
+    container.delegateError = "The calling thread was not found.";
+    expect((yield* call(containerTask)).message).toBe("The calling thread was not found.");
   }),
 );
 

@@ -365,8 +365,10 @@ folder inside it is what separates them.
   refuses more than its own cores, the VM's on a Mac, so no limit raises it to all of them), starts
   and links the container, then calls `RemoteDelegation.delegate` with `cloneMissingProject`, which
   finds the project there by repository or clones and registers it. The container has none of this
-  Mac's git credentials, so a private repository clones only after a sign-in inside it; the clone's
-  own error is what the caller sees. `RemoteDelegation` tells `AssistantSandboxControl`
+  Mac's git credentials: `assistantSandbox.githubSignIn` runs `gh auth login --web` inside it
+  (device flow, so the code reaches any client, phone included) and `gh auth setup-git`. `HOME` is
+  the home volume, so this sign-in and the providers' survive a discard. A clone that fails while
+  GitHub is signed out tells the agent where the user signs in instead of git's raw error. `RemoteDelegation` tells `AssistantSandboxControl`
   when such a task starts and ends (`assistant_sandbox_task`). The container is discarded
   (removed, volumes kept so sign-ins and clones survive) when the last task ends only if that
   task's call brought it up (`one_off`), the setting says discard, and no sandboxed assistant is
@@ -397,6 +399,7 @@ folder inside it is what separates them.
 - **Seeded once.** The container's first start writes `linkedEnvironmentsEnabled` into its settings
   file if none exists, because both ends of a peer link need the beta. Later edits are kept.
 - **Credentials never travel in arguments or logs.** A pairing credential is minted with
-  `docker exec … auth pairing create` and returned as `Redacted`.
+  `docker exec … auth pairing create` and returned as `Redacted`. The GitHub token stays in the
+  container: only the device code and the account name (`gh auth status`) leave it.
 - **Not built: a macOS VM** for an assistant that needs visual apps. A container cannot run macOS
   apps; this needs a separate VM runtime and its own environment type.

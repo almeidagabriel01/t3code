@@ -80,8 +80,9 @@ example "run the CI in the container". The rest of its work stays on the Mac.
   also applies to a sandbox that is running. On a Mac the most it can use is the number of CPUs
   Docker Desktop has.
 - If the project is not in the sandbox yet, it is cloned there. The sandbox has none of your Mac's
-  git sign-ins, so a private repository can only be cloned after you sign in to git inside the
-  sandbox.
+  git sign-ins: for a private GitHub repository, sign the sandbox in once at **Settings →
+  Assistants → Sandbox → Sign in to GitHub**, enter the code it shows on GitHub, and it stays signed
+  in until you sign it out or remove the sandbox with its files. This works from a phone too.
 - **When a task is done** decides what happens to a sandbox that was started only for tasks:
   **Discard the container** removes it once its last task ends, and keeps its files and provider
   sign-ins. **Keep the container** leaves it running. A sandbox you started yourself, or one an
