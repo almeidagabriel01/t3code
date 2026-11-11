@@ -17,6 +17,7 @@ import { AppText } from "../../components/ui/AppText";
 
 import {
   deviceStreamBaseUrl,
+  deviceStreamConfigurationJson,
   deviceStreamDocument,
   deviceStreamMessage,
   type DeviceStreamConfiguration,
@@ -38,16 +39,10 @@ type NativeStreamBridge = {
 export function DeviceStreamWebView({
   ref,
   ...props
-}: DeviceStreamConfiguration & NativeStreamBridge) {
+}: DeviceStreamConfiguration & { readonly capture?: boolean } & NativeStreamBridge) {
   const [attempt, setAttempt] = useState(0);
   const processRetried = useRef(false);
-  const configuration = JSON.stringify({
-    access: props.access,
-    platform: props.platform,
-    deviceId: props.deviceId,
-    ...(props.serveSimOnly ? { serveSimOnly: true } : {}),
-    colors: props.colors,
-  });
+  const configuration = deviceStreamConfigurationJson(props);
   return (
     <DeviceStreamDocumentView
       key={`${attempt}:${configuration}`}

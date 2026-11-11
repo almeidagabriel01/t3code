@@ -1,9 +1,40 @@
 import * as NodeVM from "node:vm";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { deviceStreamDocument, deviceStreamMessage } from "./device-stream-document";
+import {
+  deviceStreamConfigurationJson,
+  deviceStreamDocument,
+  deviceStreamMessage,
+} from "./device-stream-document";
 
 describe("native device stream document", () => {
+  it.each([
+    ["a simulator", {}, {}],
+    ["a Simlock host", { serveSimOnly: true }, { serveSimOnly: true }],
+    [
+      "a capture source",
+      { capture: true },
+      { serveSimOnly: true, videoOnly: true, sizeFromConfig: true },
+    ],
+  ])("sets the stream flags for %s", (_name, props, flags) => {
+    const configuration = JSON.parse(
+      deviceStreamConfigurationJson({
+        access: { httpBase: "http://mac" },
+        platform: "desktop",
+        deviceId: "desktop",
+        colors: {},
+        ...props,
+      } as never),
+    );
+    expect(configuration).toEqual({
+      access: { httpBase: "http://mac" },
+      platform: "desktop",
+      deviceId: "desktop",
+      colors: {},
+      ...flags,
+    });
+  });
+
   it("keeps ticket and device values from terminating the embedded script", () => {
     const deviceId = '</script><script>alert("device")</script>';
     const configuration = JSON.stringify({ deviceId, ticket: "<ticket>" });

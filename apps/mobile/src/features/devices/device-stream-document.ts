@@ -8,6 +8,10 @@ export interface DeviceStreamConfiguration {
   readonly deviceId: string;
   /** See `DeviceStreamTarget.serveSimOnly`. */
   readonly serveSimOnly?: boolean;
+  /** See `DeviceStreamTarget.videoOnly`. */
+  readonly videoOnly?: boolean;
+  /** See `DeviceStreamTarget.sizeFromConfig`. */
+  readonly sizeFromConfig?: boolean;
   readonly colors: {
     readonly background: string;
     readonly foreground: string;
@@ -16,6 +20,24 @@ export interface DeviceStreamConfiguration {
     readonly buttonForeground: string;
     readonly buttonBorder: string;
   };
+}
+
+/** A capture source (USB iPhone, this computer) speaks serve-sim AVCC, view-only, sized by /config. */
+export function deviceStreamConfigurationJson(
+  props: DeviceStreamConfiguration & { readonly capture?: boolean },
+) {
+  const flags = props.capture
+    ? { serveSimOnly: true, videoOnly: true, sizeFromConfig: true }
+    : props.serveSimOnly
+      ? { serveSimOnly: true }
+      : {};
+  return JSON.stringify({
+    access: props.access,
+    platform: props.platform,
+    deviceId: props.deviceId,
+    ...flags,
+    colors: props.colors,
+  });
 }
 
 export function deviceStreamBaseUrl(

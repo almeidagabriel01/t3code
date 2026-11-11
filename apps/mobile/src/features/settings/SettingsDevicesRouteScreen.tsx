@@ -28,6 +28,8 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { SettingsActionRow } from "./components/SettingsActionRow";
 import { SettingsScreen } from "./components/SettingsScreen";
+import { deviceIssueRows } from "../devices/threadDevicePreviews";
+import { IphoneSigningSection } from "./IphoneSigningSection";
 import { WifiPairingSection } from "./WifiPairingSection";
 
 const POLICIES = ["allow", "ask", "deny"] as const;
@@ -59,7 +61,10 @@ function DeviceEnvironment(props: {
     );
   }
   const pairing = (
-    <WifiPairingSection environmentId={environmentId} state={state} suffix={suffix} />
+    <>
+      <IphoneSigningSection environmentId={environmentId} suffix={suffix} />
+      <WifiPairingSection environmentId={environmentId} state={state} suffix={suffix} />
+    </>
   );
   if (state.supportsDeviceControl !== true || state.devices.length === 0) {
     return (
@@ -87,6 +92,7 @@ function DeviceEnvironment(props: {
     <View className="gap-5">
       {devices.map((device) => {
         const policy = deviceAccessPolicy(state.access, device);
+        const issues = deviceIssueRows(device);
         const host = state.hosts.find((candidate) => candidate.id === device.hostId);
         const save = (next: DeviceAccessPolicy | null) =>
           void setAccess({
@@ -96,16 +102,24 @@ function DeviceEnvironment(props: {
         return (
           <ListSection
             key={`${device.hostId}:${device.id}`}
-            title={`${device.name}${device.physical ? " · Physical" : ""}${suffix}`}
+            title={`${device.name}${device.physical && device.platform !== "desktop" ? " · Physical" : ""}${suffix}`}
             footer={`${host?.label ?? "Device host"} · ${device.version}${device.connection ? ` · ${DEVICE_CONNECTION_LABELS[device.connection]}` : ""}`}
           >
+            {issues.map((issue) => (
+              <ListRowLayout
+                key={issue.reason}
+                icon="exclamationmark.triangle"
+                label={issue.title}
+                description={issue.action}
+              />
+            ))}
             {POLICIES.map((option, index) => (
               <ListChoiceRow
                 key={option}
                 label={DEVICE_ACCESS_POLICY_LABELS[option].label}
                 description={DEVICE_ACCESS_POLICY_LABELS[option].description}
                 selected={policy === option}
-                separated={index > 0}
+                separated={index > 0 || issues.length > 0}
                 disabled={!canEdit}
                 onPress={() => save(option)}
               />

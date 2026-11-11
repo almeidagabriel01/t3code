@@ -50,7 +50,13 @@ export function start(configuration: DeviceStreamConfiguration) {
   frame.setAttribute("role", "application");
   frame.setAttribute(
     "aria-label",
-    platform === "ios" ? "iOS Simulator screen" : "Android Emulator screen",
+    platform === "desktop"
+      ? "Computer screen"
+      : platform === "ios"
+        ? configuration.videoOnly
+          ? "iPhone screen"
+          : "iOS Simulator screen"
+        : "Android Emulator screen",
   );
   frame.tabIndex = 0;
   Object.assign(frame.style, {
@@ -84,13 +90,14 @@ export function start(configuration: DeviceStreamConfiguration) {
   container.append(frame);
   document.body.replaceChildren(container, inputStatus);
 
+  const viewOnly = configuration.videoOnly === true;
   let pointerId: number | null = null;
   let inputConnected = false;
   let streaming = false;
   const reportStatus = (status: "connecting" | "streaming" | "error", detail?: string) => {
     if (activeClient !== client) return;
     streaming = status === "streaming";
-    inputStatus.style.display = streaming && !inputConnected ? "block" : "none";
+    inputStatus.style.display = streaming && !inputConnected && !viewOnly ? "block" : "none";
     post({ type: "status", status, detail });
   };
   const layout = (screen: DeviceScreenSize | null) => {
@@ -144,7 +151,7 @@ export function start(configuration: DeviceStreamConfiguration) {
     onUnauthorized: unauthorized,
     onInputConnected: (connected) => {
       inputConnected = connected;
-      inputStatus.style.display = streaming && !connected ? "block" : "none";
+      inputStatus.style.display = streaming && !connected && !viewOnly ? "block" : "none";
       post({ type: "input", connected });
     },
   });

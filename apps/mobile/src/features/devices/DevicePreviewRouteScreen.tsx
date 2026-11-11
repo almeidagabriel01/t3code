@@ -223,7 +223,7 @@ export function DevicePreviewScreen({
         setStreamAttempt((attempt) => attempt + 1);
       },
     },
-    ...(preview?.session.platform === "android"
+    ...(preview?.session.platform === "android" && !preview.capture
       ? [
           {
             id: "back",
@@ -234,14 +234,18 @@ export function DevicePreviewScreen({
           },
         ]
       : []),
-    {
-      id: "app-switcher",
-      title: "App switcher",
-      icon: "square.on.square",
-      disabled: !inputConnected,
-      onPress: () => streamRef.current?.appSwitcher(),
-    },
-    ...(preview?.session.platform === "ios"
+    ...(preview?.capture
+      ? []
+      : [
+          {
+            id: "app-switcher",
+            title: "App switcher",
+            icon: "square.on.square",
+            disabled: !inputConnected,
+            onPress: () => streamRef.current?.appSwitcher(),
+          },
+        ]),
+    ...(preview?.session.platform === "ios" && !preview.capture
       ? [
           {
             id: "rotate",
@@ -252,7 +256,7 @@ export function DevicePreviewScreen({
           },
         ]
       : []),
-    ...(preview?.physical
+    ...(preview?.physical || preview?.capture
       ? []
       : [
           {
@@ -302,7 +306,16 @@ export function DevicePreviewScreen({
           <View style={{ height: barOverlap }} />
         </>
       ) : null}
-      {preview && focused && foreground ? (
+      {preview?.blocked && focused && foreground ? (
+        <View className="flex-1 items-center justify-center gap-2 px-6">
+          <AppText className="text-center font-t3-medium text-base">
+            {preview.blocked.title}
+          </AppText>
+          <AppText className="text-center text-sm text-foreground-muted">
+            {preview.blocked.action}
+          </AppText>
+        </View>
+      ) : preview && focused && foreground ? (
         <OpenDevicePreview
           key={`${preview.key}:${streamAttempt}`}
           environmentId={environmentId}
@@ -329,17 +342,20 @@ export function DevicePreviewScreen({
       {embedded && preview?.held ? (
         <DeviceHoldBanner disabled={!canHold} onHandBack={() => changeHold(false)} />
       ) : null}
+      {embedded ? <DeviceNotices preview={preview} /> : null}
       {embedded ? (
         <View
           className="flex-row items-center justify-center gap-2 px-3 py-2"
           style={{ paddingBottom: Math.max(insets.bottom, 8) }}
         >
-          <ControlPill
-            accessibilityLabel="Home"
-            icon="house"
-            disabled={!inputConnected}
-            onPress={pressHome}
-          />
+          {preview?.capture ? null : (
+            <ControlPill
+              accessibilityLabel="Home"
+              icon="house"
+              disabled={!inputConnected}
+              onPress={pressHome}
+            />
+          )}
           <DeviceOptionsMenu items={menuItems} />
         </View>
       ) : controlsVisible ? (
@@ -362,18 +378,21 @@ export function DevicePreviewScreen({
               <AppText numberOfLines={1} className="flex-1 text-center font-t3-medium text-base">
                 {preview?.name ?? "Devices"}
               </AppText>
-              <ControlPill
-                accessibilityLabel="Home"
-                icon="house"
-                disabled={!inputConnected}
-                onPress={pressHome}
-              />
+              {preview?.capture ? null : (
+                <ControlPill
+                  accessibilityLabel="Home"
+                  icon="house"
+                  disabled={!inputConnected}
+                  onPress={pressHome}
+                />
+              )}
               <DeviceOptionsMenu items={menuItems} />
             </GlassSurface>
           </View>
           {preview?.held ? (
             <DeviceHoldBanner disabled={!canHold} onHandBack={() => changeHold(false)} />
           ) : null}
+          <DeviceNotices preview={preview} />
         </Animated.View>
       ) : (
         <DeviceCollapsedChrome
@@ -386,6 +405,27 @@ export function DevicePreviewScreen({
           onHandBack={() => changeHold(false)}
         />
       )}
+    </View>
+  );
+}
+
+/** The view-only notice and each issue the user can fix, muted under the stream chrome. */
+function DeviceNotices({ preview }: { readonly preview: ThreadDevicePreview | null }) {
+  if (!preview) return null;
+  const issues = preview.issues.filter((issue) => !issue.blocksView);
+  if (!preview.viewOnlyNotice && issues.length === 0) return null;
+  return (
+    <View className="gap-1 px-5 py-2" pointerEvents="none">
+      {preview.viewOnlyNotice ? (
+        <AppText className="text-center text-xs text-foreground-muted">
+          {preview.viewOnlyNotice}
+        </AppText>
+      ) : null}
+      {issues.map((issue) => (
+        <AppText key={issue.reason} className="text-center text-xs text-foreground-muted">
+          {`${issue.title}. ${issue.action}`}
+        </AppText>
+      ))}
     </View>
   );
 }
@@ -429,6 +469,7 @@ function OpenDevicePreview({
       platform={session.platform}
       deviceId={session.deviceId}
       serveSimOnly={preview.serveSimOnly}
+      capture={preview.capture}
       colors={{
         background: themeVariables["--color-sheet-solid"],
         foreground: themeVariables["--color-foreground"],
