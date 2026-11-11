@@ -191,7 +191,8 @@ still-image stream and Android cannot show video, except on EAS Simulator.
 ## Devices on a linked environment
 
 When this environment is linked to another one with more than read-only access
-(**Settings → Connections**), the devices plugged into that machine appear in the
+(see [Link another environment](./remote-access.md#link-another-environment)), the
+devices plugged into that machine appear in the
 Device panel under its name, with the link's state: **Connected**, **Link down**,
 or why that environment refuses, such as **Devices off there**. You can watch,
 take over and hand back those devices, and your agents can open and drive them
