@@ -136,6 +136,41 @@ it. The phone may reconnect on its own while **Wireless debugging** stays on;
 to stop that, turn Wireless debugging off or remove this computer from its
 paired devices list on the phone.
 
+## iPhones and iPads over USB
+
+On a Mac, plug the iPhone or iPad into the Mac that hosts the environment
+server, unlock it and tap **Trust**. It appears under **Physical devices**
+marked **USB**. The Device panel shows its screen live; it is view only, so use
+the phone itself to tap and type. The first time, macOS asks to let T3 Code use
+the Camera, because that is how macOS shares a phone's screen.
+
+A phone that is not ready says why next to it, with what to do: pair or trust
+it, unlock it, turn on **Developer Mode** (**Settings → Privacy & Security** on
+the phone), install Xcode on the Mac, or grant the Camera permission.
+
+Agents drive the phone through an app they install on it, which must be signed
+with your Apple developer team. Set **Settings → Devices → iPhone signing →
+Apple Team ID** (find it under **Membership** in your Apple Developer account);
+set **Runner bundle id** only if the default one is taken by another team. On
+the first run, trust the developer profile on the phone (**Settings → General →
+VPN & Device Management**). Without a Team ID you can still watch the phone,
+and agents are told to ask you to set it.
+
+## This computer's screen
+
+The Device panel lists this computer under **This computer**. Open it to watch
+its screen live; it is view only. Agents act on this computer with computer
+tools, not with device tools, but the same rules apply: **Settings → Devices →
+Device access** decides whether they may (by default each thread asks you
+once), and **Take over** pauses every agent action on the computer except
+screenshots until you press **Hand back**.
+
+- **macOS** needs the Screen Recording permission (**Settings → Mac
+  permissions**).
+- **Windows and Linux** need [ffmpeg](https://ffmpeg.org/download.html) with
+  the libx264 encoder on the PATH, or set `SERVE_EMU_FFMPEG` to its path. On
+  Linux the screen is captured from X11; Wayland sessions are not supported.
+
 ## Remote connections
 
 The device stream goes through the environment server, so it works over the

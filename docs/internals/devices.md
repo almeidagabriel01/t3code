@@ -65,24 +65,52 @@ panel offers only input there.
 Leases are renewed while tracked and released at the host's age limit; one a
 crashed server left behind ends on its own one TTL later, so there is no ledger.
 
-## Physical iPhones and the Mac's displays stream through a native helper
+## USB iPhones and this computer stream from capture sources
 
-Neither has a hub. [`t3-device-capture`](../../native/device-capture) is a Swift
-helper that captures one source, encodes H.264 with VideoToolbox, and serves
-serve-sim's AVCC envelopes on loopback, so the proxy and the viewer treat it as
-one more serve-sim upstream ([`MacVideoCapture`](../../apps/server/src/device/MacVideoCapture.ts)).
-It is video only: there is no input socket, so the helper serves the frame size
-at `/config` instead of in the input socket's screen message.
+Neither has a hub. [`CaptureDevices`](../../apps/server/src/device/CaptureDevices.ts)
+lists them on the local host and runs at most one capture per device, shared by
+every viewer. A capture serves serve-sim's AVCC envelopes on loopback, so the
+proxy and the viewer treat it as one more serve-sim upstream, routed before the
+hub's readiness check because no hub is behind it. A capture is video only:
+there is no input socket, so it serves the frame size at `/config`, and the
+viewer reads it again on each new description.
 
-A USB iPhone is an AVFoundation capture device only in a process that sets
-`kCMIOHardwarePropertyAllowScreenCaptureDevices`, which is why ffmpeg cannot
-see it and why this is not a Node addon: the property and the capture session
-must live in the process that holds the Camera permission. Displays use
-ScreenCaptureKit and the Screen Recording permission.
+- **Mac**: [`t3-device-capture`](../../native/device-capture) captures a USB
+  iPhone or a display and encodes with VideoToolbox
+  ([`MacVideoCapture`](../../apps/server/src/device/MacVideoCapture.ts)). A USB
+  iPhone is an AVFoundation capture device only in a process that sets
+  `kCMIOHardwarePropertyAllowScreenCaptureDevices`, which is why ffmpeg cannot
+  see it and why this is not a Node addon: the property and the capture session
+  must live in the process that holds the Camera permission. Displays use
+  ScreenCaptureKit and the Screen Recording permission. A still screen produces
+  no frames, so the helper repeats the last frame once a second, and as a
+  keyframe for each new viewer.
+- **Windows and Linux**: ffmpeg grabs the desktop (gdigrab, x11grab) into
+  Annex B H.264, and [`avccFramer`](../../apps/server/src/device/avccFramer.ts)
+  re-frames it into the same envelopes. Wayland has no grab ffmpeg can use
+  without a portal prompt, so it is an issue, not a fallback.
 
-A still screen produces no frames, so the helper encodes the last frame again
-once a second, and again as a keyframe for each new viewer; the viewer treats a
-silent stream as stalled.
+A user open starts the capture; an agent open never does. The last viewer
+leaving arms a short linger so a reconnect does not restart the helper; close,
+an `ended` event (an unplugged phone), disabling devices and server shutdown
+stop it. A failed start is never cached: it shows on the device as an issue
+until a start succeeds.
+
+Readiness is a list of `issues`, each marked with what it blocks: watching,
+agents driving, or both. Signing is read from settings at authorization time,
+since the listing goes stale the moment the user saves a Team ID.
+
+Agents drive a USB iPhone with agent-device's on-device runner. The daemon reads
+the signing team and bundle id from its own environment when it starts, so a
+signing change stops the daemon and the next command starts it with the new
+values.
+
+This computer is a device only for access and holds. Computer use passes every
+acting call and snapshot through `DeviceService.authorizeAgent` for the desktop,
+before asking the user to approve the action and again right before acting, so
+the access policy and **Take over** decide computer use and device tools alike.
+Screenshots and permission reads skip the gate. Device tools never open the
+desktop.
 
 ## The hub is never exposed
 
