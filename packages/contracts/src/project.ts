@@ -519,6 +519,91 @@ export const ProjectWriteFileResult = Schema.Struct({
 });
 export type ProjectWriteFileResult = typeof ProjectWriteFileResult.Type;
 
+const ProjectEntryPath = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(PROJECT_WRITE_FILE_PATH_MAX_LENGTH),
+);
+export const PROJECT_ENTRY_IMPORT_MAX_BYTES = 25 * 1024 * 1024;
+export const PROJECT_ENTRY_BATCH_MAX = 500;
+
+/** One file explorer edit. Paths are workspace-relative; the server confines them to the root. */
+export const ProjectEntryChange = Schema.Union([
+  Schema.TaggedStruct("create", {
+    relativePath: ProjectEntryPath,
+    kind: Schema.Literals(["file", "directory"]),
+  }),
+  Schema.TaggedStruct("move", {
+    relativePath: ProjectEntryPath,
+    newRelativePath: ProjectEntryPath,
+  }),
+  Schema.TaggedStruct("duplicate", { relativePath: ProjectEntryPath }),
+  Schema.TaggedStruct("delete", {
+    relativePaths: Schema.Array(ProjectEntryPath).check(
+      Schema.isMinLength(1),
+      Schema.isMaxLength(PROJECT_ENTRY_BATCH_MAX),
+    ),
+    /** `trash` fails with `trash_unavailable` rather than deleting permanently. */
+    mode: Schema.Literals(["trash", "permanent"]),
+  }),
+  Schema.TaggedStruct("restore", {
+    restoreTokens: Schema.Array(TrimmedNonEmptyString).check(
+      Schema.isMinLength(1),
+      Schema.isMaxLength(PROJECT_ENTRY_BATCH_MAX),
+    ),
+  }),
+  /** Writes uploaded bytes; a taken name gets a ` copy` suffix instead of failing. */
+  Schema.TaggedStruct("import", {
+    relativePath: ProjectEntryPath,
+    contentsBase64: Schema.String.check(
+      Schema.isMaxLength(Math.ceil(PROJECT_ENTRY_IMPORT_MAX_BYTES / 3) * 4),
+    ),
+  }),
+]);
+export type ProjectEntryChange = typeof ProjectEntryChange.Type;
+
+export const ProjectChangeEntryInput = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+  change: ProjectEntryChange,
+});
+export type ProjectChangeEntryInput = typeof ProjectChangeEntryInput.Type;
+
+export const ProjectChangedEntry = Schema.Struct({
+  relativePath: TrimmedNonEmptyString,
+  /** Set when a delete went to the trash and can be put back with `restore`. */
+  restoreToken: Schema.optionalKey(TrimmedNonEmptyString),
+});
+export type ProjectChangedEntry = typeof ProjectChangedEntry.Type;
+
+export const ProjectChangeEntryResult = Schema.Struct({
+  entries: Schema.Array(ProjectChangedEntry),
+  /** Batch items that failed after validation passed; the others were applied. */
+  failures: Schema.Array(
+    Schema.Struct({ relativePath: TrimmedNonEmptyString, message: TrimmedNonEmptyString }),
+  ),
+});
+export type ProjectChangeEntryResult = typeof ProjectChangeEntryResult.Type;
+
+export const ProjectEntryChangeFailure = Schema.Literals([
+  "outside_root",
+  "invalid_target",
+  "already_exists",
+  "not_found",
+  "trash_unavailable",
+  "too_large",
+  "operation_failed",
+]);
+export type ProjectEntryChangeFailure = typeof ProjectEntryChangeFailure.Type;
+
+export class ProjectChangeEntryError extends Schema.TaggedError<ProjectChangeEntryError>()(
+  "ProjectChangeEntryError",
+  {
+    cwd: Schema.optional(TrimmedNonEmptyString),
+    relativePath: Schema.optional(TrimmedNonEmptyString),
+    failure: ProjectEntryChangeFailure,
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
+
 export const ProjectEnsureScratchResult = Schema.Struct({
   projectId: ProjectId,
 });
