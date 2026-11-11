@@ -33,6 +33,7 @@ import * as Schema from "effect/Schema";
 import { McpSchema, McpServer } from "effect/ai";
 
 import * as ServerConfig from "../../apps/server/src/config.ts";
+import * as DecisionService from "../../apps/server/src/decisions/DecisionService.ts";
 import * as AgentDeviceShim from "../../apps/server/src/device/AgentDeviceShim.ts";
 import {
   agentDeviceConfigPath,
@@ -71,6 +72,10 @@ export interface DeviceWorld {
   readonly deviceInvalidCapture?: boolean | undefined;
   /** Devices another thread's agent-device session holds, by device id: that thread's id. */
   readonly deviceOwners?: Readonly<Record<string, string>> | undefined;
+  /** Device ids the user took over in the Device panel and has not handed back. */
+  readonly deviceHeld?: ReadonlyArray<string> | undefined;
+  /** The user's stored agent access policy, by device id. */
+  readonly deviceAccess?: Readonly<Record<string, "allow" | "ask" | "deny">> | undefined;
 }
 
 /** A shell, file or web call and the output the agent saw. */
@@ -757,6 +762,20 @@ export const makeDeviceTools = Effect.fn("evaluateMcpToolUse.makeDeviceTools")(f
             }
           : undefined;
       const service = yield* makeWithHosts(hosts, undefined, configureAgent, undefined, launchers);
+      // Refs before takeover have no setHold and ignore the field.
+      const keyed = (deviceId: string) => {
+        const device = world.devices.find((candidate) => candidate.id === deviceId);
+        return device
+          ? Effect.succeed(device)
+          : Effect.die(new Error(`world.deviceHeld names no device ${deviceId}.`));
+      };
+      if ("setHold" in service && world.deviceHeld?.length) {
+        yield* Effect.ignore(service.list);
+        for (const deviceId of world.deviceHeld) {
+          const { hostId } = yield* keyed(deviceId);
+          yield* Effect.orDie(service.setHold({ hostId, deviceId, held: true }));
+        }
+      }
       return DeviceService.DeviceService.of({
         ...service,
         // Older refs install the CLI through agentCli; makeWithHosts has none to install.
@@ -794,10 +813,19 @@ export const makeDeviceTools = Effect.fn("evaluateMcpToolUse.makeDeviceTools")(f
               room: true,
             }),
           }),
+          Layer.mock(DecisionService.DecisionService)({}),
           ServerSettingsService.layerTest({
             enableDeviceSupport: true,
             enableAgentDeviceAccess: world.deviceAgentAccess !== false,
             deviceOnboardingCompleted: true,
+            // Keyed as T3 stores it; refs before access policy ignore the setting. A physical
+            // device defaults to ask, which no one answers here, so worlds allow it unless told.
+            deviceAccess: Object.fromEntries(
+              world.devices.map((device) => [
+                `${device.hostId}:${device.id}`,
+                world.deviceAccess?.[device.id] ?? "allow",
+              ]),
+            ),
           }),
         ),
       ),

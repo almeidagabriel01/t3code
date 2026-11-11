@@ -25,6 +25,10 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.providerClaudeChromeSetDefault]: AuthProvidersManageScope,
   [WS_METHODS.providerAuthRemoveMethod]: AuthProvidersManageScope,
   [WS_METHODS.previewClose]: AuthPreviewOperateScope,
+  // Taking a device over pauses the agent driving it, as sending it input does.
+  [WS_METHODS.deviceSetHold]: AuthOrchestrationOperateScope,
+  // Decides which devices agents may use.
+  [WS_METHODS.deviceSetAccess]: AuthSettingsWriteScope,
   // Stopping a server signals its processes, as closing a terminal does.
   [WS_METHODS.previewStopLocalServer]: AuthTerminalOperateScope,
   // Killing a listener signals a host process, as closing a terminal does.

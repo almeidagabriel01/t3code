@@ -11,10 +11,14 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import {
+  AGENT_DEVICE_RELEASE_ENV,
   agentDeviceCloseOutcome,
+  agentDeviceHoldMarker,
   bindAgentDeviceLauncher,
+  clearAgentDeviceHolds,
   ensureAgentDeviceShim,
   pruneAgentDeviceLaunchers,
+  setAgentDeviceHold,
 } from "./AgentDeviceShim.ts";
 import {
   agentDeviceConfigPath,
@@ -343,6 +347,64 @@ exec '${process.execPath.replaceAll("'", "'\"'\"'")}' "$@"
       Effect.provideService(HostProcess.ExecutablePath, process.execPath),
       Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     ),
+  );
+
+  it.effect("refuses to act on a device the user holds, and still looks and releases", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-hold-" });
+      const entryPath = path.join(dir, "cli.mjs");
+      yield* fs.writeFileString(entryPath, "console.log('ran ' + process.argv[2]);");
+      const holdMarker = agentDeviceHoldMarker(dir, "phone", path);
+      const target = ["--config", "/h.json", "--session", "t3-a"];
+      const command = yield* bindAgentDeviceLauncher({
+        entryPath,
+        stateDir: dir,
+        session: "t3-a",
+        targetArgs: target,
+        holdMarker,
+      });
+      const launcher = path.join(path.dirname(command), "agent-device-launcher.mjs");
+      const launch = (args: ReadonlyArray<string>, env: Record<string, string> = {}) =>
+        Effect.promise(() =>
+          exec(process.execPath, [launcher, ...args], { env: { ...process.env, ...env } }).then(
+            (result) => result.stdout.trim(),
+            (error: { stderr: string }) => `refused: ${error.stderr.trim()}`,
+          ),
+        );
+      const held = "The user is holding this device: Pixel 9 is under their control.";
+      const refused = `refused: ${held}`;
+
+      // Not held: everything runs.
+      expect(yield* launch(["press", "@e3"])).toBe("ran press");
+
+      yield* setAgentDeviceHold({ stateDir: dir, name: "phone", message: held });
+      const rows: ReadonlyArray<readonly [ReadonlyArray<string>, string]> = [
+        [["press", "@e3"], refused],
+        [["open", "com.acme.app"], refused],
+        [["fill", "@e5", "text"], refused],
+        [["close"], refused],
+        [["takeover", "release"], refused],
+        [["--json", "press", "@e3"], refused],
+        [["screenshot", "/tmp/shot.png"], "ran screenshot"],
+        [["snapshot", "-i"], "ran snapshot"],
+        [["apps"], "ran apps"],
+        [["help", "press"], "ran help"],
+      ];
+      for (const [args, expected] of rows) expect(yield* launch(args)).toBe(expected);
+      // T3 Code ending the session of a held device must still release its claim.
+      expect(yield* launch(["close"], { [AGENT_DEVICE_RELEASE_ENV]: "1" })).toBe("ran close");
+
+      yield* setAgentDeviceHold({ stateDir: dir, name: "phone", message: null });
+      expect(yield* launch(["press", "@e3"])).toBe("ran press");
+
+      // A restart hands every device back, so the markers of the previous run go.
+      yield* setAgentDeviceHold({ stateDir: dir, name: "phone", message: held });
+      yield* clearAgentDeviceHolds(dir);
+      expect(yield* fs.exists(holdMarker)).toBe(false);
+      expect(yield* launch(["press", "@e3"])).toBe("ran press");
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("prunes the launchers of ended sessions and keeps the shared one", () =>

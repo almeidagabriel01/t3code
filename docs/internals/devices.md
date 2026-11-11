@@ -1,6 +1,6 @@
 # Devices
 
-The environment server owns simulators and emulators the way it owns
+The environment server owns simulators, emulators and connected physical devices the way it owns
 terminals: discovery, streaming, and agent access all run there, and every
 client reaches them through the environment connection. This is what makes the
 Device panel work over Tailscale and T3 Connect, including when an SSH host runs the devices.
@@ -122,6 +122,31 @@ checks that connection first: agent-device reports a sandboxed shell and a
 dropped tunnel alike as an unreachable daemon, so the launcher names which one it
 is. Ending a session (`device_close`, the Device panel, a shutdown) also closes
 its agent-device session, which quits the app that session opened and releases the CLI's claim on the device.
+
+One method, `DeviceService.authorizeAgent`, decides whether an agent may act on a
+device, and `open`, `agentTarget`, `agentLauncher` and every `device_*` handler
+call it. It checks, in order: the device's access policy (`deviceAccess` in
+server settings; a simulator or emulator defaults to allow, a physical device to
+ask), whether another thread already has a launcher bound to the device, and
+whether the user holds it. The user's own opens over the WebSocket carry no agent
+and skip it. `ask` needs `DecisionService`, which sits above `DeviceService` in
+the layer stack, so the MCP handler passes the question in with the call; the
+answer is remembered per thread in memory and lost on restart.
+
+The in-use rule is T3's, not agent-device's: the CLI runs in the agent's shell,
+so the server never sees its `DEVICE_IN_USE`. A thread that called `device_open`
+therefore blocks every other thread, a delegated child included, until it
+closes. Simlock sessions are shared by design and exempt.
+
+A hold is in-memory state per host and device, set by the first input frame the
+user sends through `DeviceHubProxy` or by `device.setHold`, and cleared only by
+`device.setHold`; nothing times it out, and it outlives the session. A held
+device refuses every agent action except a screenshot. The generated launcher
+enforces the same thing for the CLI: `setHold` writes a marker file, and the
+launcher's preflight prints it and exits for any command that is not read-only.
+That is the ceiling: an agent that calls `agent-device` without the launcher, or
+drives the device with `adb` or `simctl`, is not stopped. Closing that gap means
+proxying the daemon's `/rpc` instead of handing the agent its address.
 
 Agents choose between these tools and ssh before they open anything, so
 sessions that hold `device` get a short block from

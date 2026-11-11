@@ -16,6 +16,7 @@ import { Tool, Toolkit } from "effect/ai";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as HeavyQueue from "../../../heavyQueue/HeavyQueue.ts";
+import * as DecisionService from "../../../decisions/DecisionService.ts";
 import * as DeviceService from "../../../device/DeviceService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
@@ -24,13 +25,15 @@ const dependencies = [
   McpInvocationContext.McpInvocationContext,
   ThreadManagementService.ThreadManagementService,
   DeviceService.DeviceService,
+  // A device set to "ask first" asks the thread's user through a decision.
+  DecisionService.DecisionService,
 ];
 
 const DeviceToolFailure = Schema.Union([DeviceToolError, OrchestratorMcpFailure]);
 
 const DeviceListTool = Tool.make("device_list", {
   description:
-    "List iOS Simulators and Android Emulators on every device host, what each host can run, and what is open in this thread's Device panel. Call before `device_open` when you do not know a device id.",
+    "List iOS Simulators, Android Emulators and connected physical devices (`physical: true`) on every device host, what each host can run, what is open in this thread's Device panel, and `heldByUser`: devices the user is driving by hand. Call before `device_open` when you do not know a device id.",
   // An empty struct serializes as `anyOf [object, array]`, which some
   // providers reject and then drop every tool on the server with it.
   parameters: Schema.Struct({
@@ -50,7 +53,7 @@ const DeviceListTool = Tool.make("device_list", {
 
 const DeviceOpenTool = Tool.make("device_open", {
   description:
-    "Open a simulator or emulator for this thread. Pass `deviceId` and `hostId` from `device_list`. Boots it if needed and shows it in the user's Device panel. Returns the `agent-device` CLI call pinned to that device. Drive the device with that CLI.",
+    "Open a simulator, emulator or physical device for this thread. Pass `deviceId` and `hostId` from `device_list`. Boots a simulator or emulator if needed (a physical device must already be on) and shows it in the user's Device panel. Returns the `agent-device` CLI call pinned to that device. Drive the device with that CLI. The user decides which devices agents may use: an error saying access is denied, still waiting for the user, or that the user is holding the device is final for now. Wait or use another device; never reach the device another way (adb, simctl, idb, ssh), and do not retry in a loop.",
   parameters: Schema.Struct({
     ...DeviceToolOpenInput.fields,
     skipHeavyQueue: Schema.optional(
@@ -80,7 +83,7 @@ const DeviceOpenTool = Tool.make("device_open", {
 
 export const DeviceScreenshotTool = Tool.make("device_screenshot", {
   description:
-    "Get a PNG of an open device's screen. For taps and text, use the `agent-device` CLI.",
+    "Get a PNG of an open device's screen. Works while the user is holding the device. For taps and text, use the `agent-device` CLI.",
   parameters: DeviceToolTargetInput,
   success: DeviceToolScreenshotResult,
   failure: DeviceToolFailure,
@@ -94,7 +97,7 @@ export const DeviceScreenshotTool = Tool.make("device_screenshot", {
 
 const DeviceCloseTool = Tool.make("device_close", {
   description:
-    "Remove a device from this thread's Device panel. `shutdown=true` also turns it off.",
+    "Remove a device from this thread's Device panel. `shutdown=true` also turns a simulator or emulator off; a physical device stays on. Refused while the user is holding the device.",
   parameters: DeviceToolCloseInput,
   success: Schema.Record(Schema.String, Schema.Never),
   failure: DeviceToolFailure,

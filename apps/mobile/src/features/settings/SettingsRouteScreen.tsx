@@ -36,6 +36,7 @@ import { useAssistantsEnvironmentIds } from "../../state/assistants";
 import { useHasKanbanEnvironments } from "../../state/kanban";
 import { useImessageEnvironmentIds } from "../../state/imessageChannel";
 import { useTelegramEnvironmentIds } from "../../state/telegramChannel";
+import { useDeviceEnvironmentIds } from "../../state/device";
 import { useMacEnvironmentIds } from "../../state/macPermissions";
 import { useHasMemoryEnvironments } from "../../state/memory";
 import { useHasNotesEnvironments } from "../../state/notes";
@@ -229,6 +230,7 @@ function useSettingsIndexSections(): SettingsListSection[] {
   const hasImessage = useImessageEnvironmentIds().length > 0;
   const hasTelegram = useTelegramEnvironmentIds().length > 0;
   const hasMac = useMacEnvironmentIds().length > 0;
+  const hasDevices = useDeviceEnvironmentIds().length > 0;
   const hasAssistants = useAssistantsEnvironmentIds().length > 0;
   const scopedProjectMembers =
     selectedProjectGroups?.length === 1
@@ -285,6 +287,7 @@ function useSettingsIndexSections(): SettingsListSection[] {
               ),
             ]
           : []),
+        ...(hasDevices ? [page("SettingsDevices", "iphone", "Devices")] : []),
         page("SettingsScheduledTasks", "clock", "Scheduled tasks"),
         ...(hasBoards ? [page("SettingsKanban", "square.grid.2x2", "Board")] : []),
         ...(hasNotes ? [page("SettingsNotes", "doc.text", "Notes")] : []),

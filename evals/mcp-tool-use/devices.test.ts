@@ -665,6 +665,23 @@ it.effect("denies every device tool with T3's own error when agent device access
   }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
+it.effect("refuses a device the user holds or denied, with T3's own errors", () =>
+  Effect.gen(function* () {
+    const held = yield* deviceTools({ deviceHeld: [IPHONE] });
+    const refused = yield* held.call("device_open", { hostId: MAC, deviceId: IPHONE });
+    assert.isTrue(refused.isError);
+    assert.include(refused.text, "The user is holding this device");
+    assert.include(refused.text, "do not retry in a loop");
+    assert.deepEqual(json((yield* held.call("device_list", {})).text).heldByUser.length, 1);
+
+    const denied = yield* deviceTools({ deviceAccess: { [IPHONE]: "deny" } });
+    const blocked = yield* denied.call("device_open", { hostId: MAC, deviceId: IPHONE });
+    assert.isTrue(blocked.isError);
+    assert.include(blocked.text, "Settings");
+    assert.deepEqual(json((yield* denied.call("device_list", {})).text).open ?? [], []);
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
 it.effect("reports an unreadable capture as T3 does: a successful 0×0 screenshot", () =>
   Effect.gen(function* () {
     const tools = yield* deviceTools({ deviceInvalidCapture: true });

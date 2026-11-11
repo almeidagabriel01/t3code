@@ -46,7 +46,8 @@ export function DeviceControlsRail(props: {
   onTools: () => void;
   onFloat: () => void;
   onClose: () => void;
-  onPowerOff: () => void;
+  /** Absent for a physical device, which is turned off by hand. */
+  onPowerOff?: (() => void) | undefined;
 }) {
   const { view, handle, controls } = props;
   const popupSide = "left";
@@ -226,11 +227,15 @@ export function DeviceControlsRail(props: {
               <X />
               Close device panel
             </MenuItem>
-            <MenuSeparator />
-            <MenuItem variant="destructive" onClick={props.onPowerOff}>
-              <Power />
-              {props.hostKind === "simlock" ? "Return device to the pool" : "Power off device"}
-            </MenuItem>
+            {props.onPowerOff ? (
+              <>
+                <MenuSeparator />
+                <MenuItem variant="destructive" onClick={props.onPowerOff}>
+                  <Power />
+                  {props.hostKind === "simlock" ? "Return device to the pool" : "Power off device"}
+                </MenuItem>
+              </>
+            ) : null}
           </MenuPopup>
         </Menu>
         <RailDivider />

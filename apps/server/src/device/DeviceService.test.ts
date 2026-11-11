@@ -1140,9 +1140,13 @@ it.effect.each(["shutdown", "close"] as const)(
         return yield* agentDeviceSession(open.threadId, LOCAL_DEVICE_HOST_ID, deviceId);
       }, Effect.provide(NodeCrypto.layer));
       const session = yield* bind(input);
-      yield* bind(other);
+      // A second thread can watch the device, but its agent gets no launcher while the first has one.
+      yield* service.open(other);
+      expect(
+        yield* Effect.flip(service.agentLauncher({ ...target(other.threadId), targetArgs: [] })),
+      ).toMatchObject({ _tag: "DeviceInUseError", threadId, deviceId });
       expect(capture).toBe(1);
-      expect(launchers.size).toBe(2);
+      expect(launchers.size).toBe(1);
       if (operation === "shutdown") yield* service.shutdown(input);
       else yield* service.close({ threadId, deviceId, shutdown: true });
       expect(capture).toBeNull();
@@ -1150,17 +1154,9 @@ it.effect.each(["shutdown", "close"] as const)(
       expect(launchers).toEqual(new Set());
       // Retiring a session ends its agent-device session too, which releases the device claim.
       // Powering the device off retires the other thread's session on it as well.
-      const firstOther = yield* agentDeviceSession(
-        other.threadId,
-        LOCAL_DEVICE_HOST_ID,
-        deviceId,
-      ).pipe(Effect.provide(NodeCrypto.layer));
-      expect(new Set(released.map(([launcher]) => launcher))).toEqual(
-        new Set([session, firstOther]),
-      );
-      expect(released.every(([, existed]) => existed)).toBe(true);
+      expect(released).toEqual([[session, true]]);
       // agent-device can close the session's app only while the device is on.
-      expect(releasedWhileBooted).toEqual([true, true]);
+      expect(releasedWhileBooted).toEqual([true]);
       // A device_open that was still preparing when the close landed.
       expect(yield* service.agentLauncher({ ...target(threadId), targetArgs: [] })).toEqual(
         Option.none(),
@@ -1168,14 +1164,20 @@ it.effect.each(["shutdown", "close"] as const)(
       expect(launchers).toEqual(new Set());
       expect(yield* bind(input)).toBe(session);
       // Reopening the same device ends nothing.
-      expect(released).toHaveLength(2);
+      expect(released).toHaveLength(1);
       expect(capture).toBe(2);
       expect((yield* service.state).sessions).toHaveLength(1);
+      // Once the first thread closes, the second thread's agent can take the device.
+      yield* service.close({ threadId });
       const otherSession = yield* bind(other);
-      yield* service.close({ threadId: other.threadId });
-      expect(launchers).toEqual(new Set([session]));
-      expect(released.slice(2)).toEqual([[otherSession, true]]);
       expect(otherSession).not.toBe(session);
+      yield* service.close({ threadId: other.threadId });
+      expect(released.slice(1)).toEqual([
+        [session, true],
+        [otherSession, true],
+      ]);
+      expect(yield* bind(input)).toBe(session);
+      expect(launchers).toEqual(new Set([session]));
       // A caller interrupted after retirement committed, while a bind holds the launcher lock.
       pauseBind = { entered: yield* Deferred.make<void>(), proceed: yield* Deferred.make<void>() };
       const binding = yield* Effect.forkChild(
@@ -1679,7 +1681,15 @@ it.effect("reconciles SSH host settings without publishing no-op changes", () =>
     const removed = yield* update([]);
     expect(removed.hosts.map((entry) => entry.id)).toEqual([LOCAL_DEVICE_HOST_ID]);
     expect(removed.hostStatuses[host.id]).toBeUndefined();
-    expect(removedFiles).toHaveLength(1);
+    // Startup also clears stale hold markers; only the host's config file goes with the host.
+    expect(removedFiles.filter((file) => !file.endsWith("holds"))).toHaveLength(1);
+
+    // A policy written outside the service, such as by a settings import, reaches the state.
+    const value = yield* settings.updateSettings({ deviceAccess: { "local:phone": "deny" } });
+    const done = yield* Deferred.make<void>();
+    yield* Queue.offer(changes, { value, done });
+    yield* Deferred.await(done);
+    expect((yield* service.state).access).toEqual({ "local:phone": "deny" });
   }).pipe(
     Effect.scoped,
     Effect.provide(

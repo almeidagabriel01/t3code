@@ -224,6 +224,18 @@ describe("serverSettings helpers", () => {
     });
   });
 
+  it("replaces the device access map so a reset policy does not survive", () => {
+    const denied = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      deviceAccess: { "local:SIM-1": "deny", "local:PIXEL-1": "allow" },
+    });
+    expect(
+      applyServerSettingsPatch(denied, { deviceAccess: { "local:PIXEL-1": "allow" } }).deviceAccess,
+    ).toEqual({ "local:PIXEL-1": "allow" });
+    expect(applyServerSettingsPatch(denied, { enableDeviceSupport: true }).deviceAccess).toEqual(
+      denied.deviceAccess,
+    );
+  });
+
   it("keeps a source control host's saved tokens when a patch sets another host's token", () => {
     const reference = { provider: "vault", reference: "github/token" };
     const saved = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {

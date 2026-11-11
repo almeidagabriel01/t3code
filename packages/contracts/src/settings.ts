@@ -4,7 +4,12 @@ import {
   MemoryHubSettings,
   MemoryOwnerSourceReadPolicy,
 } from "./memory.ts";
-import { EasDeviceHostConfigs, SimlockDeviceHostConfigs, SshDeviceHostConfigs } from "./device.ts";
+import {
+  DeviceAccessMap,
+  EasDeviceHostConfigs,
+  SimlockDeviceHostConfigs,
+  SshDeviceHostConfigs,
+} from "./device.ts";
 import {
   AuthOrchestrationOperateScope,
   AuthSettingsWriteScope,
@@ -1616,6 +1621,8 @@ export const ServerSettings = Schema.Struct({
   simlockDeviceHosts: SimlockDeviceHostConfigs.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   /** Alpha: Simlock device hosts. Off, the server ignores `simlockDeviceHosts`. */
   simlockDeviceHostsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Agent access per device; a device without an entry uses its default. */
+  deviceAccess: DeviceAccessMap.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   sidebarAutoSettleAfterDays: Schema.NullOr(SidebarAutoSettleAfterDays).pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS)),
   ),
@@ -2081,6 +2088,8 @@ const ServerSettingsPatchFields = Schema.Struct({
   easDeviceHosts: Schema.optionalKey(EasDeviceHostConfigs),
   simlockDeviceHosts: Schema.optionalKey(SimlockDeviceHostConfigs),
   simlockDeviceHostsEnabled: Schema.optionalKey(Schema.Boolean),
+  /** Replaces the whole map, so a missing key is a removed policy. */
+  deviceAccess: Schema.optionalKey(DeviceAccessMap),
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
   compactIdleThreads: Schema.optionalKey(LegacyCompactIdleThreads),
   idleCompaction: Schema.optionalKey(IdleCompactionMode),

@@ -1,7 +1,11 @@
 import { ThreadId, type DeviceServiceState } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { selectedThreadDevicePreview, threadDevicePreviews } from "./threadDevicePreviews";
+import {
+  deviceHoldMenuItem,
+  selectedThreadDevicePreview,
+  threadDevicePreviews,
+} from "./threadDevicePreviews";
 
 const threadId = ThreadId.make("thread");
 const state: DeviceServiceState = {
@@ -82,6 +86,37 @@ describe("thread device previews", () => {
     expect(selectedThreadDevicePreview(previews, previews[1]!.key)?.description).toBe(
       "Android 15 · Mac mini",
     );
+  });
+
+  it("marks a physical device and one the user holds, on the host that holds it", () => {
+    const previews = threadDevicePreviews(
+      {
+        ...state,
+        supportsDeviceControl: true,
+        devices: [{ ...state.devices[0]!, physical: true }, state.devices[1]!],
+        holds: [{ hostId: "remote", deviceId: "emulator-5554", since: "2026-09-18T00:03:00Z" }],
+      },
+      threadId,
+    );
+    expect(
+      previews.map(({ description, physical, held, canHold }) => ({
+        description,
+        physical,
+        held,
+        canHold,
+      })),
+    ).toEqual([
+      { description: "Physical · Android 16 · Local", physical: true, held: false, canHold: true },
+      { description: "Android 15 · Mac mini", physical: false, held: true, canHold: true },
+    ]);
+    expect(threadDevicePreviews(state, threadId)[0]).toMatchObject({ canHold: false, held: false });
+    expect(previews.map((preview) => deviceHoldMenuItem(preview, true))).toMatchObject([
+      { title: "Take over", nextHeld: true, disabled: false },
+      { title: "Hand back to the agent", nextHeld: false, disabled: false },
+    ]);
+    expect(deviceHoldMenuItem(previews[0]!, false)?.disabled).toBe(true);
+    expect(deviceHoldMenuItem(threadDevicePreviews(state, threadId)[0]!, true)).toBeNull();
+    expect(deviceHoldMenuItem(null, true)).toBeNull();
   });
 
   it("selects another open device when the agent closes the selected session", () => {

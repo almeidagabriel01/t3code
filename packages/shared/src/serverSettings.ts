@@ -542,6 +542,8 @@ function applyServerSettingsPatchFields(
     usageModelAliases: usageModelAliasesPatch,
     // Replaced whole: deepMerge would merge its column list entry by entry.
     kanbanDefaultTemplate: kanbanDefaultTemplatePatch,
+    // Replaced whole: deepMerge would keep a policy the user reset.
+    deviceAccess: deviceAccessPatch,
     // Entry replacement: deepMerge would keep keys the client meant to clear.
     projectSettingsOverrides: projectSettingsOverridesPatch,
     projectAgentBrowserAccessOverrides: _legacyBrowserAccess,
@@ -797,6 +799,7 @@ function applyServerSettingsPatchFields(
           ),
         }
       : {}),
+    ...(deviceAccessPatch !== undefined ? { deviceAccess: deviceAccessPatch } : {}),
     ...(kanbanDefaultTemplatePatch !== undefined
       ? { kanbanDefaultTemplate: kanbanDefaultTemplatePatch }
       : {}),

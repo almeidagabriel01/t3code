@@ -67,6 +67,18 @@ const DROPPED_REQUEST_HEADERS = new Set([
   "x-forwarded-proto",
 ]);
 
+// serve-sim's touch, button, key, orientation and hinge messages: a tag byte, then JSON.
+const IOS_INPUT_TAGS = new Set([0x03, 0x04, 0x06, 0x07, 0x10]);
+
+/**
+ * Whether a frame the client sent is the user driving the device. serve-emu takes gestures as
+ * JSON text; its only frame the viewer sends unprompted asks for a keyframe.
+ */
+export const isUserInputFrame = (frame: string | Uint8Array): boolean =>
+  typeof frame === "string"
+    ? !/"type"\s*:\s*"reset-video"/.test(frame)
+    : IOS_INPUT_TAGS.has(frame[0] ?? -1);
+
 const isWebSocketUpgrade = (request: HttpServerRequest.HttpServerRequest) =>
   request.headers.upgrade?.toLowerCase() === "websocket";
 
@@ -100,6 +112,7 @@ const proxyWebSocket = Effect.fn("DeviceHubProxy.proxyWebSocket")(function* (
   upstreamUrl: string,
   protocols: ReadonlyArray<string> = [],
   headers: Readonly<Record<string, string>> = {},
+  onUserInput: Effect.Effect<void> = Effect.void,
 ) {
   const client = yield* request.upgrade;
   const upstream = yield* Socket.makeWebSocket(upstreamUrl, {
@@ -113,7 +126,7 @@ const proxyWebSocket = Effect.fn("DeviceHubProxy.proxyWebSocket")(function* (
       const writeToUpstream = yield* upstream.writer;
       return yield* Effect.raceFirst(
         pumpFrames(upstream, writeToClient),
-        pumpFrames(client, writeToUpstream),
+        pumpFrames(client, writeToUpstream, onUserInput),
       );
     }),
   ).pipe(Effect.ignoreCause);
@@ -122,10 +135,16 @@ const proxyWebSocket = Effect.fn("DeviceHubProxy.proxyWebSocket")(function* (
 
 const pumpFrames =
   /* Frame pumping runs continuously; a span per frame stream adds no diagnostic value. */
-  Effect.fnUntraced(function* (source: Socket.Socket, sink: Socket.Writer) {
+  Effect.fnUntraced(function* (
+    source: Socket.Socket,
+    sink: Socket.Writer,
+    onUserInput?: Effect.Effect<void>,
+  ) {
     const { pull } = yield* source.reader;
     while (true) {
-      yield* sink.writeAll(yield* pull);
+      const frames = yield* pull;
+      if (onUserInput && frames.some(isUserInputFrame)) yield* onUserInput;
+      yield* sink.writeAll(frames);
     }
   });
 
@@ -204,7 +223,8 @@ const handler = Effect.gen(function* () {
     controlsDevice ? AuthOrchestrationOperateScope : AuthOrchestrationReadScope,
   );
   const devices = yield* DeviceService.DeviceService;
-  const ready = yield* devices.currentReadiness(url.value.searchParams.get("hostId") ?? undefined);
+  const hostId = url.value.searchParams.get("hostId") ?? undefined;
+  const ready = yield* devices.currentReadiness(hostId);
   if (!ready) {
     return HttpServerResponse.text("Device hub is not running", { status: 503 });
   }
@@ -220,11 +240,14 @@ const handler = Effect.gen(function* () {
   }
   const upstreamUrl = routed?.url ?? `${ready.hub.origin}${hubPath}${search}`;
   if (upgrade) {
+    // The user driving a device through the stream takes it over from the agent.
+    const inputDevice = controlsDevice ? url.value.searchParams.get("device") : null;
     return yield* proxyWebSocket(
       request,
       upstreamUrl.replace(/^http/, "ws"),
       routed?.protocols,
       routed?.headers,
+      inputDevice ? devices.holdOnInput(hostId, inputDevice) : undefined,
     );
   }
   return yield* proxyHttp(request, upstreamUrl, routed?.headers);

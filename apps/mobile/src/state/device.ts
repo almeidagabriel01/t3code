@@ -3,13 +3,31 @@ import { resolveDeviceHubAccess } from "@t3tools/client-runtime/state/deviceHubA
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import { useAtomValue } from "@effect/atom-react";
 import { Atom } from "effect/reactivity";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 import { useEnvironmentQuery } from "./query";
+import { environmentServerConfigsAtom } from "./server";
 import { environmentSession, usePreparedConnection } from "./session";
 
 export const deviceEnvironment = createDeviceEnvironmentAtoms(connectionAtomRuntime);
+
+/** Environments with device support on, the only ones with devices to set access for. */
+const deviceEnvironmentIdsAtom = Atom.make((get): ReadonlyArray<EnvironmentId> => {
+  const next = [...get(environmentServerConfigsAtom)]
+    .filter(([, config]) => config.settings.enableDeviceSupport)
+    .map(([environmentId]) => environmentId);
+  const previous = get.self<ReadonlyArray<EnvironmentId>>();
+  const prior = previous._tag === "Some" ? previous.value : null;
+  return prior !== null && prior.length === next.length && prior.every((id, i) => id === next[i])
+    ? prior
+    : next;
+}).pipe(Atom.withLabel("mobile-device-environment-ids"));
+
+export function useDeviceEnvironmentIds(): ReadonlyArray<EnvironmentId> {
+  return useAtomValue(deviceEnvironmentIdsAtom);
+}
 
 // Hub tickets are single use, so each viewer resolves its own access: a new
 // viewer (a reload, a device switch, a return to the screen) never reuses a

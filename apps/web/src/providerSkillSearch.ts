@@ -106,15 +106,3 @@ export function searchProviderSkills(
 
   return ranked.map((entry) => entry.item);
 }
-
-/**
- * The config carries only names for a provider whose catalog loads per cwd, so until that
- * scan lands a missing description is unknown, not absent.
- */
-export function describeCatalogEntry(
-  description: string | undefined,
-  scanning: boolean,
-  fallback: string,
-): string {
-  return description ?? (scanning ? "Loading description…" : fallback);
-}

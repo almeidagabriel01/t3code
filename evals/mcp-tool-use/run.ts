@@ -281,6 +281,12 @@ const McpToolUseWorld = Schema.StructWithRest(
     deviceInvalidCapture: Schema.optional(Schema.Boolean),
     /** Devices another thread's agent-device session holds, by device id: that thread's id. */
     deviceOwners: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+    /** Device ids the user took over in the Device panel. T3 refuses agent actions on them. */
+    deviceHeld: Schema.optional(Schema.Array(Schema.String)),
+    /** The user's agent access policy by device id; `deny` makes T3 refuse the device. */
+    deviceAccess: Schema.optional(
+      Schema.Record(Schema.String, Schema.Literals(["allow", "ask", "deny"])),
+    ),
     /** PRs already linked to the thread, with the state T3 last saw. */
     linkedPullRequests: Schema.optional(
       Schema.Array(

@@ -1,0 +1,198 @@
+import { act, type ReactNode } from "react";
+import { createRoot } from "react-dom/client";
+import { describe, expect, it, vi } from "vite-plus/test";
+
+const { mocks, Children } = vi.hoisted(() => ({
+  Children: ({ children }: { children?: ReactNode }) => children,
+  mocks: {
+    ids: ["env-a"] as string[],
+    data: null as unknown,
+    error: null as string | null,
+    can: true,
+    setAccess: vi.fn(),
+    setHold: vi.fn(),
+  },
+}));
+vi.mock("react-native", () => ({ View: Children }));
+vi.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ bottom: 0 }) }));
+vi.mock("@effect/atom-react", () => ({ useAtomValue: () => mocks.can }));
+vi.mock("../../components/ui/AppText", () => ({ AppText: Children }));
+vi.mock("../../components/ui/Button", () => ({
+  Button: (props: { label: string; disabled?: boolean; onPress: () => void }) => (
+    <button aria-label={props.label} disabled={props.disabled} onClick={props.onPress} />
+  ),
+}));
+vi.mock("../../components/ui/GlassSurface", () => ({ GlassSurface: Children }));
+vi.mock("../../components/ui/EmptyState", () => ({
+  EmptyState: (props: { title: string }) => <p>{props.title}</p>,
+}));
+vi.mock("../../components/ui/ListRowLayout", () => ({
+  ListRowLayout: (props: { label: string; description?: string }) => (
+    <div>
+      {props.label}
+      {props.description}
+    </div>
+  ),
+}));
+vi.mock("../../components/ui/ListSection", () => ({
+  ListSection: (props: { title?: string; footer?: string; children?: ReactNode }) => (
+    <section aria-label={props.title}>
+      <h3>{props.title}</h3>
+      {props.children}
+      <footer>{props.footer}</footer>
+    </section>
+  ),
+}));
+vi.mock("../../components/ui/ListChoiceRow", () => ({
+  ListChoiceRow: (props: {
+    label: string;
+    selected: boolean;
+    disabled?: boolean;
+    onPress: () => void;
+  }) => (
+    <button
+      role="radio"
+      aria-checked={props.selected}
+      aria-label={props.label}
+      disabled={props.disabled}
+      onClick={props.onPress}
+    />
+  ),
+}));
+vi.mock("../../components/ui/ScreenScrollView", () => ({ ScreenScrollView: Children }));
+vi.mock("./components/SettingsScreen", () => ({ SettingsScreen: Children }));
+vi.mock("./components/SettingsActionRow", () => ({
+  SettingsActionRow: (props: { label: string; disabled?: boolean; onPress: () => void }) => (
+    <button aria-label={props.label} disabled={props.disabled} onClick={props.onPress} />
+  ),
+}));
+vi.mock("../../state/use-remote-environment-registry", () => ({
+  useSavedRemoteConnections: () => ({
+    savedConnectionsById: {
+      "env-a": { environmentLabel: "Studio Mac" },
+      "env-b": { environmentLabel: "Office Mac" },
+    },
+  }),
+}));
+vi.mock("../../state/query", () => ({
+  useEnvironmentQuery: () => ({ data: mocks.data, error: mocks.error }),
+}));
+vi.mock("../../state/device", () => ({
+  useDeviceEnvironmentIds: () => mocks.ids,
+  deviceEnvironment: {
+    state: () => "state-atom",
+    setAccess: { permissionAtom: () => "access-permission" },
+    setHold: { hold: true, permissionAtom: () => "hold-permission" },
+  },
+}));
+vi.mock("../../state/use-atom-command", () => ({
+  useAtomCommand: (command: { hold?: boolean }) => (command.hold ? mocks.setHold : mocks.setAccess),
+}));
+
+import { DeviceHoldBanner } from "../devices/DeviceHoldBanner";
+import { SettingsDevicesRouteScreen } from "./SettingsDevicesRouteScreen";
+
+const device = (id: string, name: string, physical: boolean) => ({
+  hostId: "local",
+  id,
+  name,
+  platform: "android",
+  version: "Android 16",
+  booted: true,
+  physical,
+});
+const state = {
+  hosts: [{ id: "local", label: "This Mac" }],
+  devices: [device("emu", "Emulator", false), device("pixel", "Pixel", true)],
+  supportsDeviceControl: true,
+  access: { "local:emu": "deny", "local:gone": "ask", "local:pixel": "sometimes" },
+  holds: [{ hostId: "local", deviceId: "pixel", since: "2026-01-01T00:00:00.000Z" }],
+};
+
+async function setup(next: Partial<typeof mocks> = {}, element = <SettingsDevicesRouteScreen />) {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  vi.clearAllMocks();
+  Object.assign(mocks, { ids: ["env-a"], data: state, error: null, can: true }, next);
+  const container = window.document.createElement("div");
+  const root = createRoot(container);
+  await act(async () => root.render(element));
+  return {
+    container,
+    press: (section: string, label: string) =>
+      act(async () =>
+        container
+          .querySelector<HTMLButtonElement>(
+            `section[aria-label="${section}"] button[aria-label="${label}"]`,
+          )!
+          .click(),
+      ),
+    selected: (section: string) =>
+      container
+        .querySelector(`section[aria-label="${section}"] [aria-checked="true"]`)
+        ?.getAttribute("aria-label"),
+    [Symbol.dispose]: () => act(() => root.unmount()),
+  };
+}
+
+describe("Devices settings", () => {
+  it("shows one checked policy per device, physical first, and saves, resets and hands back", async () => {
+    using screen = await setup();
+    const titles = [...screen.container.querySelectorAll("h3")].map((title) => title.textContent);
+    expect(titles).toEqual(["Pixel · Physical", "Emulator"]);
+    expect(screen.selected("Pixel · Physical")).toBe("Ask first");
+    expect(screen.selected("Emulator")).toBe("Never");
+    expect(screen.container.textContent).toContain("This Mac · Android 16");
+
+    await screen.press("Pixel · Physical", "Allow");
+    await screen.press("Emulator", "Reset Emulator to default");
+    await screen.press("Pixel · Physical", "Hand Pixel back to the agent");
+
+    const input = (extra: object) => ({
+      environmentId: "env-a",
+      input: { hostId: "local", ...extra },
+    });
+    expect(mocks.setAccess.mock.calls).toEqual([
+      [input({ deviceId: "pixel", policy: "allow" })],
+      [input({ deviceId: "emu", policy: null })],
+    ]);
+    expect(mocks.setHold.mock.calls).toEqual([[input({ deviceId: "pixel", held: false })]]);
+    expect(
+      screen.container.querySelector('button[aria-label="Reset Pixel to default"]'),
+    ).toBeNull();
+  });
+
+  it.each([
+    ["no environment has devices on", { ids: [] }, "Devices are not available"],
+    ["the state is loading", { data: null }, "Finding devices..."],
+    ["the state failed", { data: null, error: "Offline" }, "Could not load the devicesOffline"],
+    ["no device is known", { data: { ...state, devices: [] } }, "No devices found"],
+    [
+      "the server is older",
+      { data: { ...state, supportsDeviceControl: false } },
+      "Update T3 Code on this environment to set device access",
+    ],
+  ])("says so when %s", async (_name, next, text) => {
+    using screen = await setup(next);
+    expect(screen.container.textContent).toContain(text);
+    expect(screen.container.querySelector('[role="radio"]')).toBeNull();
+  });
+
+  it("names each environment and locks the choices without permission", async () => {
+    using screen = await setup({ ids: ["env-a", "env-b"], can: false });
+    const titles = [...screen.container.querySelectorAll("h3")].map((title) => title.textContent);
+    expect(titles).toContain("Emulator · Office Mac");
+    const buttons = [...screen.container.querySelectorAll("button")];
+    expect(buttons.length).toBeGreaterThan(0);
+    expect(buttons.every((button) => button.disabled)).toBe(true);
+  });
+
+  it("hands back from the preview banner", async () => {
+    const onHandBack = vi.fn();
+    using screen = await setup({}, <DeviceHoldBanner onHandBack={onHandBack} />);
+    expect(screen.container.textContent).toContain("You are in control");
+    await act(async () =>
+      screen.container.querySelector<HTMLButtonElement>('button[aria-label="Hand back"]')!.click(),
+    );
+    expect(onHandBack).toHaveBeenCalledOnce();
+  });
+});

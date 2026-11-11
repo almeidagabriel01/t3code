@@ -42,6 +42,10 @@ export const agentDeviceConfigPath = (
     Effect.map((hash) => path.join(stateDir, "device", "hosts", `${hash}.json`)),
   );
 
+/** Names the hold marker of one device; the same name for every thread's launcher on it. */
+export const agentDeviceHoldName = (hostId: string, deviceId: string) =>
+  key(JSON.stringify(["hold", hostId, deviceId]));
+
 export const agentDeviceSession = (threadId: string, hostId: string, deviceId: string) =>
   key(JSON.stringify([threadId, hostId, deviceId])).pipe(Effect.map((hash) => `t3-${hash}`));
 

@@ -24,7 +24,7 @@ export function DeviceWorkspace(props: {
   visible: boolean;
   onFloat: () => void;
   onClose: () => void;
-  onPowerOff: () => void;
+  onPowerOff?: (() => void) | undefined;
 }) {
   const [toolsOpen, setToolsOpen] = useState(false);
   const [axOverlay, setAxOverlay] = useState(false);

@@ -23,6 +23,7 @@ vi.mock("../../state/server", () => ({
 import type { ModelOption } from "../../lib/modelOptions";
 import {
   buildComposerModelItems,
+  buildComposerSkillItem,
   buildComposerSlashCommandItems,
   resolveComposerCommandSelection,
   resolveComposerMenuSelection,
@@ -104,6 +105,43 @@ describe("mobile slash commands", () => {
     expect(build(true)).toEqual(["cmd:clear"]);
     expect(build(false)).toEqual(["pcmd:clear"]);
     expect(build(true, false)).toEqual([]);
+  });
+});
+
+describe("mobile catalog descriptions", () => {
+  // Names arrive before the folder scan does, so a generic label would be a guess.
+  it.each([
+    { catalogScanning: true, command: "Loading description…", skill: "Loading description…" },
+    { catalogScanning: false, command: "Run provider command", skill: "user skill" },
+  ])("scanning=$catalogScanning labels entries with no description", (row) => {
+    const [command] = buildComposerSlashCommandItems({
+      query: "review",
+      atMessageStart: true,
+      hasThread: true,
+      catalogScanning: row.catalogScanning,
+      selectedProviderStatus: {
+        driver: ProviderDriverKind.make("claudeAgent"),
+        slashCommands: [{ name: "review" }],
+      },
+    });
+    expect(command?.description).toBe(row.command);
+    const skill = { name: "audit", path: "/skills/audit/SKILL.md", enabled: true, scope: "user" };
+    expect(
+      buildComposerSkillItem({
+        skill,
+        label: "audit",
+        catalogScanning: row.catalogScanning,
+        fallback: "Run provider skill",
+      }).description,
+    ).toBe(row.skill);
+    expect(
+      buildComposerSkillItem({
+        skill: { ...skill, shortDescription: "Audits a branch" },
+        label: "audit",
+        catalogScanning: row.catalogScanning,
+        fallback: "Run provider skill",
+      }).description,
+    ).toBe("Audits a branch");
   });
 });
 

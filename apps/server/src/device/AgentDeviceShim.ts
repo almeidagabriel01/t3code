@@ -7,6 +7,24 @@ import * as Path from "effect/Path";
 
 const SHIM_DIR = "device/bin";
 const TARGETS_DIR = "device/targets";
+const HOLDS_DIR = "device/holds";
+
+/** Commands that only look; the launcher runs them while the user holds the device. */
+export const AGENT_DEVICE_READ_ONLY_COMMANDS: ReadonlyArray<string> = [
+  "screenshot",
+  "snapshot",
+  "apps",
+  "appstate",
+  "capabilities",
+  "devices",
+  "events",
+  "get",
+  "is",
+  "session",
+];
+
+/** Set by T3 Code when it ends a session, which must work on a held device too. */
+export const AGENT_DEVICE_RELEASE_ENV = "T3_DEVICE_SESSION_RELEASE";
 const STALE_RUNTIME =
   "This agent-device command is out of date because T3 Code moved or updated its runtime. Call device_open again for a fresh one.";
 
@@ -152,7 +170,12 @@ const VALUE_FLAGS: ReadonlyArray<string> = [
 // agent-device 0.21.31 refuses some bound flags per command; connect/disconnect/auth/daemon would
 // replace T3's connection; device status reads this machine's claims. It reports a sandboxed shell and a
 // dropped tunnel alike, so check first, at --daemon-base-url if given, as agent-device prefers it.
-const launcherSource = (node: string, entryPath: string, boundArgs: ReadonlyArray<string>) =>
+const launcherSource = (
+  node: string,
+  entryPath: string,
+  boundArgs: ReadonlyArray<string>,
+  holdMarker: string | null,
+) =>
   `import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { connect } from "node:net";
@@ -178,6 +201,15 @@ if (!informational && managed.includes(name)) {
 }
 if (!informational && name === "device") {
   console.error("\`device status\` reads this machine's device claims, not those on the device's host, so it is not available through this command. Quote the DEVICE_IN_USE error instead.");
+  process.exit(1);
+}
+// An agent that skips this launcher is not stopped; the upgrade is proxying the daemon's /rpc.
+const holdMarker = ${JSON.stringify(holdMarker)};
+const readOnly = ${JSON.stringify(AGENT_DEVICE_READ_ONLY_COMMANDS)};
+if (!informational && holdMarker && !readOnly.includes(name) && process.env.${AGENT_DEVICE_RELEASE_ENV} !== "1" && existsSync(holdMarker)) {
+  let held = "";
+  try { held = readFileSync(holdMarker, "utf8").trim(); } catch {}
+  console.error(held || "The user is holding this device. Wait for them to hand it back in the Device panel, and do not retry in a loop.");
   process.exit(1);
 }
 const skip = refused.get(name) ?? [];
@@ -225,6 +257,7 @@ const writeLauncher = Effect.fn("AgentDeviceShim.writeLauncher")(function* (inpu
   readonly dir: string;
   readonly entryPath: string;
   readonly boundArgs: ReadonlyArray<string>;
+  readonly holdMarker?: string | undefined;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -232,7 +265,10 @@ const writeLauncher = Effect.fn("AgentDeviceShim.writeLauncher")(function* (inpu
   const node = yield* resolveNodeExecutable("Device automation");
   yield* fs.makeDirectory(input.dir, { recursive: true });
   const launcherPath = path.join(input.dir, "agent-device-launcher.mjs");
-  yield* fs.writeFileString(launcherPath, launcherSource(node, input.entryPath, input.boundArgs));
+  yield* fs.writeFileString(
+    launcherPath,
+    launcherSource(node, input.entryPath, input.boundArgs, input.holdMarker ?? null),
+  );
   if (platform === "win32") {
     const script = `@echo off\r\nsetlocal EnableExtensions DisableDelayedExpansion\r\nif not exist "${node}" (echo ${STALE_RUNTIME} 1>&2 & exit /b 1)\r\nset "ELECTRON_RUN_AS_NODE=1"\r\n"${node}" "${launcherPath}" %*\r\n`;
     const scriptPath = path.join(input.dir, "agent-device.cmd");
@@ -266,13 +302,42 @@ export const bindAgentDeviceLauncher = Effect.fn("AgentDeviceShim.bind")(functio
   readonly stateDir: string;
   readonly session: string;
   readonly targetArgs: ReadonlyArray<string>;
+  /** The file whose presence means the user holds this launcher's device. */
+  readonly holdMarker?: string | undefined;
 }) {
   const path = yield* Path.Path;
   return yield* writeLauncher({
     dir: path.join(input.stateDir, TARGETS_DIR, input.session),
     entryPath: input.entryPath,
     boundArgs: input.targetArgs,
+    holdMarker: input.holdMarker,
   });
+});
+
+export const agentDeviceHoldMarker = (stateDir: string, name: string, path: Path.Path) =>
+  path.join(stateDir, HOLDS_DIR, name);
+
+/** Writes the marker a held device's launcher refuses on, or removes it when `message` is null. */
+export const setAgentDeviceHold = Effect.fn("AgentDeviceShim.setHold")(function* (input: {
+  readonly stateDir: string;
+  readonly name: string;
+  readonly message: string | null;
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const marker = agentDeviceHoldMarker(input.stateDir, input.name, path);
+  if (input.message === null) return yield* fs.remove(marker, { force: true });
+  yield* fs.makeDirectory(path.dirname(marker), { recursive: true });
+  yield* fs.writeFileString(marker, input.message);
+});
+
+/** Holds live in memory, so every marker a previous run left is stale. */
+export const clearAgentDeviceHolds = Effect.fn("AgentDeviceShim.clearHolds")(function* (
+  stateDir: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  yield* fs.remove(path.join(stateDir, HOLDS_DIR), { recursive: true, force: true });
 });
 
 /** Removes the bound launchers of agent-device sessions not in `live`. */

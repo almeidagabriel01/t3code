@@ -90,6 +90,16 @@ export function createDeviceEnvironmentAtoms<R, E>(
       scheduler,
       concurrency,
     }),
+    setHold: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:device:set-hold",
+      tag: WS_METHODS.deviceSetHold,
+    }),
+    setAccess: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:device:set-access",
+      tag: WS_METHODS.deviceSetAccess,
+      scheduler,
+      concurrency,
+    }),
   };
 }
 

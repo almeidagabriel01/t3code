@@ -69,6 +69,17 @@ describe("decision client guards", () => {
   });
 });
 
+describe("device client guards", () => {
+  it("guards takeover as driving a device and access policies as settings", () => {
+    expect(clientRpcRequiredScopes(WS_METHODS.deviceSetHold, {})).toEqual([
+      "orchestration:operate",
+    ]);
+    expect(clientRpcRequiredScopes(WS_METHODS.deviceSetAccess, {})).toEqual(["settings:write"]);
+    // Watching device state stays open to readers.
+    expect(Object.hasOwn(CLIENT_GUARDED_RPC_SCOPES, WS_METHODS.subscribeDeviceState)).toBe(false);
+  });
+});
+
 describe("computer use client guards", () => {
   it("guards opening a System Settings pane and leaves the status read open to readers", () => {
     expect(clientRpcRequiredScopes(WS_METHODS.computerUseOpenSettings, {})).toEqual([

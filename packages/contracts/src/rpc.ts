@@ -334,6 +334,8 @@ import {
   DeviceServiceState,
   DeviceSession,
   DeviceShutdownInput,
+  DeviceSetAccessInput,
+  DeviceSetHoldInput,
 } from "./device.ts";
 import {
   ServerConfigStreamEvent,
@@ -688,6 +690,8 @@ export const WS_METHODS = {
   deviceShutdown: "device.shutdown",
   deviceDetail: "device.detail",
   deviceAction: "device.action",
+  deviceSetHold: "device.setHold",
+  deviceSetAccess: "device.setAccess",
 
   serverProbe: "server.probe",
   serverGetConfig: "server.getConfig",
@@ -2085,6 +2089,18 @@ const WsDeviceActionRpc = Rpc.make(WS_METHODS.deviceAction, {
   error: Schema.Union([DeviceError, EnvironmentAuthorizationError]),
 });
 
+const WsDeviceSetHoldRpc = Rpc.make(WS_METHODS.deviceSetHold, {
+  payload: DeviceSetHoldInput,
+  success: DeviceServiceState,
+  error: Schema.Union([DeviceError, EnvironmentAuthorizationError]),
+});
+
+const WsDeviceSetAccessRpc = Rpc.make(WS_METHODS.deviceSetAccess, {
+  payload: DeviceSetAccessInput,
+  success: DeviceServiceState,
+  error: Schema.Union([DeviceError, EnvironmentAuthorizationError]),
+});
+
 const WsSubscribeDeviceStateRpc = Rpc.make(WS_METHODS.subscribeDeviceState, {
   payload: Schema.Struct({}),
   success: DeviceServiceState,
@@ -3134,6 +3150,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsDeviceOpenRpc,
   WsDeviceCloseRpc,
   WsDeviceShutdownRpc,
+  WsDeviceSetHoldRpc,
+  WsDeviceSetAccessRpc,
   WsDeviceDetailRpc,
   WsDeviceActionRpc,
   WsSubscribeDeviceStateRpc,

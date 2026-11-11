@@ -2,6 +2,7 @@ import { DeviceHostUpdates } from "../device/DeviceHostUpdates";
 import { DeviceToolVersions } from "../device/DeviceToolVersions";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 import { ScopedSwitch } from "./ScopedSwitch";
+import { DeviceAccessSettings } from "./DeviceAccessSettings";
 import { DeviceSourcesSettings } from "./DeviceSourcesSettings";
 import {
   AuthSettingsWriteScope,
@@ -825,6 +826,7 @@ function DeviceIntegrationSettings() {
           agentAccessEnabled={settings.enableAgentDeviceAccess}
         />
       </SettingsSection>
+      {environmentId ? <DeviceAccessSettings environmentId={environmentId} state={state} /> : null}
       <DeviceSourcesSettings
         supportsEas={state.supportsEasHosts === true}
         supportsSimlock={state.supportsSimlockHosts === true}

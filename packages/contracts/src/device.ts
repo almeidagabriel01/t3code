@@ -183,6 +183,66 @@ export const DeviceSummary = Schema.Struct({
 });
 export type DeviceSummary = typeof DeviceSummary.Type;
 
+/** What agents may do with one device. The user's own Device panel is never gated. */
+export const DeviceAccessPolicy = Schema.Literals(["allow", "ask", "deny"]);
+export type DeviceAccessPolicy = typeof DeviceAccessPolicy.Type;
+
+/**
+ * Stored policies by `deviceAccessKey`. Values stay loose: one value a newer
+ * build wrote must not fail the settings decode, and it is kept on write.
+ */
+export const DeviceAccessMap = Schema.Record(Schema.String, Schema.Unknown);
+export type DeviceAccessMap = typeof DeviceAccessMap.Type;
+
+/** Host ids hold no colon, so the first one splits the key. */
+export const deviceAccessKey = (device: { readonly hostId: string; readonly id: string }): string =>
+  `${device.hostId}:${device.id}`;
+
+export const defaultDeviceAccessPolicy = (device: {
+  readonly physical: boolean;
+}): DeviceAccessPolicy => (device.physical ? "ask" : "allow");
+
+const isDeviceAccessPolicy = Schema.is(DeviceAccessPolicy);
+
+/** The stored policy for a device, or undefined when none (or an unreadable one) is stored. */
+export function storedDeviceAccessPolicy(
+  access: DeviceAccessMap | undefined,
+  device: { readonly hostId: string; readonly id: string },
+): DeviceAccessPolicy | undefined {
+  const key = deviceAccessKey(device);
+  const stored = access !== undefined && Object.hasOwn(access, key) ? access[key] : undefined;
+  return isDeviceAccessPolicy(stored) ? stored : undefined;
+}
+
+export const deviceAccessPolicy = (
+  access: DeviceAccessMap | undefined,
+  device: { readonly hostId: string; readonly id: string; readonly physical: boolean },
+): DeviceAccessPolicy =>
+  storedDeviceAccessPolicy(access, device) ?? defaultDeviceAccessPolicy(device);
+
+export const DEVICE_ACCESS_POLICY_LABELS: Record<
+  DeviceAccessPolicy,
+  { readonly label: string; readonly description: string }
+> = {
+  allow: { label: "Allow", description: "Agents can open and drive this device." },
+  ask: { label: "Ask first", description: "Each thread asks you once before using it." },
+  deny: { label: "Never", description: "Agents cannot use this device." },
+};
+
+/** The user is driving this device by hand; agents wait until it is handed back. */
+export const DeviceHold = Schema.Struct({
+  hostId: DeviceHostId,
+  deviceId: DeviceId,
+  since: Schema.String,
+});
+export type DeviceHold = typeof DeviceHold.Type;
+
+export const findDeviceHold = (
+  holds: ReadonlyArray<DeviceHold> | undefined,
+  device: { readonly hostId: string; readonly id: string },
+): DeviceHold | undefined =>
+  holds?.find((hold) => hold.hostId === device.hostId && hold.deviceId === device.id);
+
 export const DevicePlatformAvailability = Schema.Struct({
   platform: DevicePlatform,
   available: Schema.Boolean,
@@ -268,6 +328,11 @@ const deviceServiceStateFields = {
   supportsEasHosts: Schema.optional(Schema.Boolean),
   /** Servers from before Simlock hosts ignore `simlockDeviceHosts`. */
   supportsSimlockHosts: Schema.optional(Schema.Boolean),
+  /** Servers from before takeover and device access have neither RPC. */
+  supportsDeviceControl: Schema.optional(Schema.Boolean),
+  holds: Schema.optional(Schema.Array(DeviceHold)),
+  /** The stored `deviceAccess` setting; devices without an entry use their default. */
+  access: Schema.optional(DeviceAccessMap),
   hostStatus: DeviceHostStatus,
   hostStatusDetail: Schema.optional(Schema.String),
   hostStatuses: DeviceHostStatuses,
@@ -367,6 +432,22 @@ export const DeviceShutdownInput = Schema.Struct({
   platform: DevicePlatform,
 });
 export type DeviceShutdownInput = typeof DeviceShutdownInput.Type;
+
+export const DeviceSetHoldInput = Schema.Struct({
+  hostId: Schema.optional(DeviceHostId),
+  deviceId: DeviceId,
+  /** True takes the device over; false hands it back. Both are idempotent. */
+  held: Schema.Boolean,
+});
+export type DeviceSetHoldInput = typeof DeviceSetHoldInput.Type;
+
+export const DeviceSetAccessInput = Schema.Struct({
+  hostId: Schema.optional(DeviceHostId),
+  deviceId: DeviceId,
+  /** Null removes the stored policy, which returns the device to its default. */
+  policy: Schema.NullOr(DeviceAccessPolicy),
+});
+export type DeviceSetAccessInput = typeof DeviceSetAccessInput.Type;
 
 export const DeviceAppearance = Schema.Literals(["light", "dark"]);
 export type DeviceAppearance = typeof DeviceAppearance.Type;
@@ -610,13 +691,77 @@ export class DeviceActionUnavailableError extends Schema.TaggedError<DeviceActio
   {
     operation: Schema.String,
     platform: DevicePlatform,
-    reason: Schema.Literals(["unsupported", "helper_missing"]),
+    reason: Schema.Literals(["unsupported", "helper_missing", "physical_device"]),
   },
 ) {
   override get message(): string {
     return this.reason === "helper_missing"
       ? `Device ${this.operation} requires a helper missing from this install. Set up device support again.`
-      : `Device ${this.operation} is not supported on ${this.platform}.`;
+      : this.reason === "physical_device"
+        ? `Device ${this.operation} is not available for a physical device. Turn it on or off by hand.`
+        : `Device ${this.operation} is not supported on ${this.platform}.`;
+  }
+}
+
+const deviceRefusalFields = {
+  hostId: DeviceHostId,
+  deviceId: DeviceId,
+  deviceName: Schema.optional(Schema.String),
+};
+const refusedDevice = (error: {
+  readonly deviceId: string;
+  readonly deviceName?: string | undefined;
+}) => error.deviceName ?? `Device ${error.deviceId}`;
+
+const NO_WORKAROUND = "Do not drive it another way, such as adb, simctl, idb or ssh.";
+
+/** The user took the device over; only an explicit hand back ends it. */
+export class DeviceHeldError extends Schema.TaggedError<DeviceHeldError>()("DeviceHeldError", {
+  ...deviceRefusalFields,
+  since: Schema.String,
+}) {
+  override get message(): string {
+    return `The user is holding this device: ${refusedDevice(this)} is under their control since ${this.since}. Wait for them to hand it back in the Device panel, and do not retry in a loop. ${NO_WORKAROUND} device_screenshot still works. Tell the user you are waiting.`;
+  }
+}
+
+export class DeviceAccessDeniedError extends Schema.TaggedError<DeviceAccessDeniedError>()(
+  "DeviceAccessDeniedError",
+  {
+    ...deviceRefusalFields,
+    /** `policy`: the setting is Never. `declined`: the user answered no for this thread. */
+    reason: Schema.Literals(["policy", "declined"]),
+  },
+) {
+  override get message(): string {
+    return this.reason === "policy"
+      ? `Agents are not allowed to use ${refusedDevice(this)}: its device access setting is Never. ${NO_WORKAROUND} Use another device, or ask the user to change it in Settings > Devices > Device access.`
+      : `The user did not allow this thread to use ${refusedDevice(this)}. ${NO_WORKAROUND} Use another device, or ask the user to allow it in Settings > Devices > Device access.`;
+  }
+}
+
+/** The user has not answered the access question yet. */
+export class DeviceAccessPendingError extends Schema.TaggedError<DeviceAccessPendingError>()(
+  "DeviceAccessPendingError",
+  deviceRefusalFields,
+) {
+  override get message(): string {
+    return `Still waiting for the user to allow this thread to use ${refusedDevice(this)}. Call again with the same arguments to keep waiting. ${NO_WORKAROUND}`;
+  }
+}
+
+/** Another thread's agent already drives this device. */
+export class DeviceInUseError extends Schema.TaggedError<DeviceInUseError>()("DeviceInUseError", {
+  ...deviceRefusalFields,
+  threadId: ThreadId,
+  threadTitle: Schema.optional(Schema.String),
+}) {
+  override get message(): string {
+    const thread =
+      this.threadTitle === undefined
+        ? `thread ${this.threadId}`
+        : `the thread "${this.threadTitle}" (${this.threadId})`;
+    return `${refusedDevice(this)} is in use by the agent in ${thread}. Use another device, or wait until that thread closes it. Do not close or reuse that thread's session.`;
   }
 }
 
@@ -627,6 +772,10 @@ export const DeviceError = Schema.Union([
   DeviceBootError,
   DeviceOperationError,
   DeviceActionUnavailableError,
+  DeviceHeldError,
+  DeviceAccessDeniedError,
+  DeviceAccessPendingError,
+  DeviceInUseError,
 ]);
 export type DeviceError = typeof DeviceError.Type;
 
@@ -635,6 +784,8 @@ export const DeviceToolListResult = Schema.Struct({
   hosts: Schema.Array(DeviceHostSummary),
   devices: Schema.Array(DeviceSummary),
   open: Schema.Array(Schema.Struct({ hostId: DeviceHostId, deviceId: DeviceId })),
+  /** Devices the user is driving by hand; wait for a hand back before acting on one. */
+  heldByUser: Schema.optional(Schema.Array(DeviceHold)),
 });
 export type DeviceToolListResult = typeof DeviceToolListResult.Type;
 
@@ -722,6 +873,10 @@ export const DeviceToolError = Schema.Union([
   DeviceBootError,
   DeviceOperationError,
   DeviceActionUnavailableError,
+  DeviceHeldError,
+  DeviceAccessDeniedError,
+  DeviceAccessPendingError,
+  DeviceInUseError,
 ]);
 export type DeviceToolError = typeof DeviceToolError.Type;
 

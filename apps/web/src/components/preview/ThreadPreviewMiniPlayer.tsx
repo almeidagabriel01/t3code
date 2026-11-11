@@ -50,6 +50,7 @@ import {
 import { useRightPanelStore } from "~/rightPanelStore";
 import { useDeviceState } from "~/state/device";
 
+import { DeviceHoldBar } from "../device/DeviceHoldBar";
 import { DeviceStreamView } from "../device/DeviceStreamView";
 import type { DeviceScreenSize } from "@t3tools/client-runtime/device/stream";
 import { Atom } from "effect/reactivity";
@@ -406,6 +407,15 @@ function DeviceMiniPlayer({
             viewId={viewId}
             serveSimOnly={host?.kind === "simlock"}
           />
+          {device ? (
+            <DeviceHoldBar
+              environmentId={threadRef.environmentId}
+              state={deviceState}
+              device={device}
+              heldOnly
+              className="absolute inset-x-1.5 top-1.5 rounded-lg border border-foreground/12 shadow-md surface-glass"
+            />
+          ) : null}
         </div>
       )}
     </MiniPlayerShell>

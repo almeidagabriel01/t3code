@@ -38,6 +38,7 @@ it.effect("preserves binary input and admission frames through the real socket p
       socket.send(Uint8Array.of(0x83));
       socket.on("message", (data, binary) => socket.send(data, { binary }));
     });
+    const held: Array<[string | undefined, string]> = [];
     const services = yield* Layer.build(
       HttpRouter.serve(DeviceHubProxy.layer, { disableListenLog: true }).pipe(
         Layer.provideMerge(NodeHttpServer.layerTest),
@@ -54,6 +55,8 @@ it.effect("preserves binary input and admission frames through the real socket p
         ),
         Layer.provide(
           Layer.succeed(DeviceService.DeviceService, {
+            holdOnInput: (hostId, deviceId) =>
+              Effect.sync(() => void held.push([hostId, deviceId])),
             currentReadiness: () =>
               Effect.succeed({
                 hostId: LOCAL_DEVICE_HOST_ID,
@@ -88,6 +91,11 @@ it.effect("preserves binary input and admission frames through the real socket p
     });
     yield* Effect.promise(() => received.promise);
     expect(frames).toEqual([[0x83], [0x03, 1], [0x03, 2]]);
+    // Each touch the user sends takes the device over; the hub's own frames do not.
+    expect(held).toEqual([
+      [undefined, "test"],
+      [undefined, "test"],
+    ]);
   }),
 );
 

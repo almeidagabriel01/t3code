@@ -265,3 +265,21 @@ it("rejects unsupported Duo routes", async () => {
   expect(response.status).toBe(404);
   expect(requests).toEqual([]);
 });
+
+it.each([
+  // serve-sim: touch, button, key, orientation and hinge messages.
+  { frame: Uint8Array.of(0x03, 1), input: true },
+  { frame: Uint8Array.of(0x04), input: true },
+  { frame: Uint8Array.of(0x06), input: true },
+  { frame: Uint8Array.of(0x07), input: true },
+  { frame: Uint8Array.of(0x10), input: true },
+  { frame: Uint8Array.of(0x83), input: false },
+  { frame: new Uint8Array(), input: false },
+  // serve-emu: gestures are JSON; the viewer asks for keyframes on its own.
+  { frame: '{"type":"touch","action":"down","x":0.5,"y":0.5}', input: true },
+  { frame: '{"type":"home"}', input: true },
+  { frame: '{"type":"reset-video","ack":false}', input: false },
+  { frame: '{ "type" : "reset-video" }', input: false },
+])("treats $frame as user input: $input", ({ frame, input }) => {
+  expect(DeviceHubProxy.isUserInputFrame(frame)).toBe(input);
+});

@@ -100,6 +100,16 @@ const SETTINGS_SEARCH_TERMS = {
     "emails",
   ],
   SettingsTelegram: ["telegram", "bot", "botfather", "token", "user id", "assistants", "chat"],
+  SettingsDevices: [
+    "devices",
+    "device access",
+    "simulator",
+    "emulator",
+    "physical device",
+    "take over",
+    "hand back",
+    "agent",
+  ],
   SettingsMacPermissions: [
     "mac permissions",
     "computer use",

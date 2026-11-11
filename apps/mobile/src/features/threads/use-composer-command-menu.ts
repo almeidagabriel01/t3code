@@ -4,6 +4,7 @@ import type {
   ProjectId,
   ServerProvider,
   ThreadId,
+  ServerProviderSkill,
   ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import {
@@ -44,9 +45,12 @@ import {
 import {
   createProviderWorkspaceSnapshotRefreshAtomFamily,
   dedupeProviderSkillsByName,
+  describeCatalogEntry,
   getProviderSkillsForSlashMenu,
   getProviderSlashCommandsForSlashMenu,
   isProviderSkillUserInvocable,
+  isProviderWorkspaceSnapshotScanning,
+  type ProviderWorkspaceSnapshotRefreshState,
   resolveProviderSkillsForCwd,
   resolveProviderSlashCommandsForCwd,
 } from "@t3tools/client-runtime/providerSkills";
@@ -54,7 +58,7 @@ import {
   formatComposerModelMention,
   rankComposerModelMentions,
 } from "@t3tools/client-runtime/composer-model-mentions";
-import { useAtomRefresh } from "@effect/atom-react";
+import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import { Atom } from "effect/reactivity";
 import { useEffect, useState } from "react";
 
@@ -74,9 +78,31 @@ const providerWorkspaceSnapshotRefresh = createProviderWorkspaceSnapshotRefreshA
   refreshProviders: serverEnvironment.refreshProviders,
 });
 
-const idleWorkspaceSnapshotRefreshAtom: Atom.Atom<unknown> = Atom.make<void>(undefined).pipe(
+const idleWorkspaceSnapshotRefreshAtom: Atom.Atom<
+  ProviderWorkspaceSnapshotRefreshState | undefined
+> = Atom.make<ProviderWorkspaceSnapshotRefreshState | undefined>(undefined).pipe(
   Atom.withLabel("mobile:provider-workspace-snapshot-refresh:idle"),
 );
+
+export function buildComposerSkillItem(input: {
+  readonly skill: ServerProviderSkill;
+  readonly label: string;
+  readonly catalogScanning: boolean;
+  readonly fallback: string;
+}): Extract<ComposerCommandItem, { type: "skill" }> {
+  const { skill } = input;
+  return {
+    id: `skill:${skill.name}`,
+    type: "skill",
+    skill,
+    label: input.label,
+    description: describeCatalogEntry(
+      skill.shortDescription ?? skill.description,
+      input.catalogScanning,
+      skill.scope ? `${skill.scope} skill` : input.fallback,
+    ),
+  };
+}
 
 function composerSelectionAtEnd(draftMessage: string): ComposerEditorSelection {
   return { start: draftMessage.length, end: draftMessage.length };
@@ -112,6 +138,8 @@ export function buildComposerSlashCommandItems(input: {
   /** T3's `/clear` replaces the provider's, which would clear a session T3 still treats as live. */
   readonly offersFreshSession?: boolean;
   readonly offersSideChat?: boolean;
+  /** The cwd's catalog is still being scanned, so a missing description is not yet known. */
+  readonly catalogScanning?: boolean;
   readonly selectedProviderStatus: Pick<ServerProvider, "driver" | "slashCommands"> | null;
 }): ComposerCommandItem[] {
   const query = input.query.toLowerCase();
@@ -192,7 +220,11 @@ export function buildComposerSlashCommandItems(input: {
       type: "provider-slash-command",
       command,
       label: `/${command.name}`,
-      description: command.description ?? "",
+      description: describeCatalogEntry(
+        command.description ?? command.input?.hint,
+        input.catalogScanning === true,
+        "Run provider command",
+      ),
     });
   }
   return items;
@@ -333,14 +365,17 @@ export function useComposerCommandMenu({
     ? resolveProviderSkillsForCwd(selectedProviderStatus, projectCwd)
     : [];
   const selectedProviderInstanceId = selectedProviderStatus?.instanceId;
-  const refreshWorkspaceSnapshot = useAtomRefresh(
+  const workspaceSnapshotRefreshAtom =
     environmentId && projectCwd && selectedProviderInstanceId
       ? providerWorkspaceSnapshotRefresh({
           environmentId,
           instanceId: selectedProviderInstanceId,
           cwd: projectCwd,
         })
-      : idleWorkspaceSnapshotRefreshAtom,
+      : idleWorkspaceSnapshotRefreshAtom;
+  const refreshWorkspaceSnapshot = useAtomRefresh(workspaceSnapshotRefreshAtom);
+  const catalogScanning = isProviderWorkspaceSnapshotScanning(
+    useAtomValue(workspaceSnapshotRefreshAtom),
   );
   // Every draft change rechecks a stale snapshot, including drafts written by
   // another surface (a prompt link) that never move the editor selection.
@@ -417,6 +452,7 @@ export function useComposerCommandMenu({
         offersUsageLimits,
         offersFreshSession: onFreshSession !== undefined,
         offersSideChat,
+        catalogScanning,
         selectedProviderStatus: selectedProviderStatus
           ? {
               ...selectedProviderStatus,
@@ -430,13 +466,14 @@ export function useComposerCommandMenu({
 
       const skillItems = visibleSkills
         .filter((skill) => matchesSlashSkillQuery(skill, q))
-        .map((skill) => ({
-          id: `skill:${skill.name}`,
-          type: "skill" as const,
-          skill,
-          label: `skill:${skill.name}`,
-          description: skill.shortDescription ?? skill.description ?? "",
-        }));
+        .map((skill) =>
+          buildComposerSkillItem({
+            skill,
+            label: `skill:${skill.name}`,
+            catalogScanning,
+            fallback: "",
+          }),
+        );
 
       return [...commandItems, ...skillItems];
     }
@@ -448,13 +485,14 @@ export function useComposerCommandMenu({
       });
 
       if (!normalizedQuery) {
-        return enabledSkills.slice(0, 20).map((skill) => ({
-          id: `skill:${skill.name}`,
-          type: "skill" as const,
-          skill,
-          label: skill.displayName ?? skill.name,
-          description: skill.shortDescription ?? skill.description ?? "",
-        }));
+        return enabledSkills.slice(0, 20).map((skill) =>
+          buildComposerSkillItem({
+            skill,
+            label: skill.displayName ?? skill.name,
+            catalogScanning,
+            fallback: "Run provider skill",
+          }),
+        );
       }
 
       const ranked: Array<{
@@ -515,13 +553,14 @@ export function useComposerCommandMenu({
         }
       }
 
-      return ranked.map(({ item: skill }) => ({
-        id: `skill:${skill.name}`,
-        type: "skill" as const,
-        skill,
-        label: skill.displayName ?? skill.name,
-        description: skill.shortDescription ?? skill.description ?? "",
-      }));
+      return ranked.map(({ item: skill }) =>
+        buildComposerSkillItem({
+          skill,
+          label: skill.displayName ?? skill.name,
+          catalogScanning,
+          fallback: "Run provider skill",
+        }),
+      );
     }
 
     if (trigger.kind === "path") {

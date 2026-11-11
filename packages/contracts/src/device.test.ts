@@ -1,18 +1,29 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Schema } from "effect";
 import {
+  defaultDeviceAccessPolicy,
+  deviceAccessKey,
+  deviceAccessPolicy,
+  DeviceActionUnavailableError,
   DeviceBootError,
+  DeviceError,
+  DeviceHeldError,
+  DeviceInUseError,
   DeviceServiceState,
+  findDeviceHold,
+  storedDeviceAccessPolicy,
   EasDeviceHostConfig,
   SimlockDeviceHostConfig,
   EasDeviceHostConfigs,
   SshDeviceHostConfigs,
 } from "./device.ts";
-import { secretSettingsFields } from "./settings.ts";
+import { secretSettingsFields, ServerSettings } from "./settings.ts";
+import { ThreadId } from "./baseSchemas.ts";
 
 const decodeSshHosts = Schema.decodeUnknownSync(SshDeviceHostConfigs);
 const decodeEas = Schema.decodeUnknownSync(EasDeviceHostConfigs);
 const encodeState = Schema.encodeSync(DeviceServiceState);
+const encodeError = Schema.encodeSync(DeviceError);
 const decodeState = Schema.decodeUnknownSync(DeviceServiceState);
 // The host summary as clients decoded it before EAS hosts existed.
 const decodeOlderState = Schema.decodeUnknownSync(
@@ -106,5 +117,110 @@ describe("device boot errors", () => {
     }).message;
     expect(message).toContain("PANIC: Missing emulator engine program");
     expect(message).not.toContain("Try again");
+  });
+});
+
+describe("device access policies", () => {
+  const decodeSettings = Schema.decodeUnknownSync(ServerSettings);
+  const encodeSettings = Schema.encodeSync(ServerSettings);
+  const simulator = { hostId: "local", id: "SIM-1", physical: false };
+  const phone = { hostId: "mac-mini", id: "192.168.1.5:5555", physical: true };
+
+  it.each([
+    { stored: undefined, device: simulator, policy: "allow" },
+    { stored: undefined, device: phone, policy: "ask" },
+    { stored: {}, device: phone, policy: "ask" },
+    { stored: { "local:SIM-1": "deny" }, device: simulator, policy: "deny" },
+    // Host ids hold no colon, so a device id with one still has its own key.
+    { stored: { "mac-mini:192.168.1.5:5555": "allow" }, device: phone, policy: "allow" },
+    { stored: { "local:192.168.1.5:5555": "deny" }, device: phone, policy: "ask" },
+    // A value this build cannot read, and a key from the object prototype, are no policy.
+    { stored: { "local:SIM-1": "sometimes" }, device: simulator, policy: "allow" },
+    { stored: { "local:SIM-1": { mode: "allow" } }, device: simulator, policy: "allow" },
+    { stored: {}, device: { hostId: "constructor", id: "", physical: false }, policy: "allow" },
+  ] as const)("$device.id with $stored is $policy", ({ stored, device, policy }) => {
+    expect(deviceAccessPolicy(stored, device)).toBe(policy);
+  });
+
+  it("tells a stored policy from a default one, so a row can offer a reset", () => {
+    const stored = { [deviceAccessKey(simulator)]: "allow", [deviceAccessKey(phone)]: "soon" };
+    expect(storedDeviceAccessPolicy(stored, simulator)).toBe("allow");
+    expect(storedDeviceAccessPolicy(stored, phone)).toBeUndefined();
+    expect(defaultDeviceAccessPolicy(phone)).toBe("ask");
+  });
+
+  it("reads the stored map tolerantly and keeps what it cannot read", () => {
+    expect(decodeSettings({}).deviceAccess).toEqual({});
+    const stored = {
+      "local:SIM-1": "deny",
+      "local:future": "ask-every-time",
+      "mac-mini:phone": { mode: "allow", until: "2027-01-01" },
+    };
+    const settings = decodeSettings({ deviceAccess: stored });
+    expect(settings.deviceAccess).toEqual(stored);
+    expect(encodeSettings(settings).deviceAccess).toEqual(stored);
+  });
+
+  it("finds a hold by host and device, and sends holds and policies with the state", () => {
+    const holds = [{ hostId: "local", deviceId: "SIM-1", since: "2026-11-10T10:00:00.000Z" }];
+    expect(findDeviceHold(holds, simulator)).toEqual(holds[0]);
+    expect(findDeviceHold(holds, { hostId: "mac-mini", id: "SIM-1" })).toBeUndefined();
+    expect(findDeviceHold(undefined, simulator)).toBeUndefined();
+    const state = decodeState({
+      hostStatus: "ready",
+      hostStatuses: {},
+      hosts: [],
+      devices: [],
+      sessions: [],
+      onboardingCompleted: true,
+      agentAccessEnabled: true,
+      hubBasePath: "/api/device-hub",
+      revision: 1,
+      supportsDeviceControl: true,
+      holds,
+      access: { "local:SIM-1": "deny", "local:future": 7 },
+    });
+    expect(state.holds).toEqual(holds);
+    expect(state.access).toEqual({ "local:SIM-1": "deny", "local:future": 7 });
+    // An older server sends neither, and the state still decodes.
+    const {
+      holds: _holds,
+      access: _access,
+      supportsDeviceControl: _supports,
+      ...older
+    } = encodeState(state);
+    expect(decodeState(older).holds).toBeUndefined();
+  });
+
+  it("tells the agent to wait, not to work around a refusal", () => {
+    const decodeError = Schema.decodeUnknownSync(DeviceError);
+    const held = new DeviceHeldError({
+      hostId: "local",
+      deviceId: "SIM-1",
+      deviceName: "iPhone 17",
+      since: "2026-11-10T10:00:00.000Z",
+    });
+    expect(held.message).toContain("The user is holding this device");
+    expect(held.message).toContain("do not retry in a loop");
+    expect(held.message).toContain("adb, simctl, idb or ssh");
+    expect(decodeError(encodeError(held))).toMatchObject({
+      _tag: "DeviceHeldError",
+    });
+    expect(
+      new DeviceInUseError({
+        hostId: "local",
+        deviceId: "SIM-1",
+        threadId: ThreadId.make("thread-a"),
+      }).message,
+    ).toBe(
+      "Device SIM-1 is in use by the agent in thread thread-a. Use another device, or wait until that thread closes it. Do not close or reuse that thread's session.",
+    );
+    expect(
+      new DeviceActionUnavailableError({
+        operation: "shutdown",
+        platform: "android",
+        reason: "physical_device",
+      }).message,
+    ).toBe("Device shutdown is not available for a physical device. Turn it on or off by hand.");
   });
 });

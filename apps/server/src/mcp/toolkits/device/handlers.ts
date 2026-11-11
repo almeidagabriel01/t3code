@@ -7,16 +7,20 @@ import {
   type DeviceSummary,
   DeviceToolUnavailableError,
   HeavyQueueError,
+  type OrchestratorMcpFailure,
   LOCAL_DEVICE_HOST_ID,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as DecisionService from "../../../decisions/DecisionService.ts";
+import { askDeviceAccess } from "../../../device/DeviceAccessApproval.ts";
 import * as DeviceService from "../../../device/DeviceService.ts";
 import * as HeavyQueue from "../../../heavyQueue/HeavyQueue.ts";
 import { threadWorkspaceRoot } from "../../../project/threadWorkspaceRoot.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
+import { loadCaller } from "../../threadAccess.ts";
 import { DeviceScreenshotToolkit, DeviceStandardToolkit, DeviceToolkit } from "./tools.ts";
 
 function agentDeviceTargetArgs(device: DeviceSummary): ReadonlyArray<string> {
@@ -176,7 +180,7 @@ const pickDevice = Effect.fn("handlers.pickDevice")(function* (
     return yield* new DeviceToolUnavailableError({
       reason:
         input.platform === undefined
-          ? "No simulators or emulators were found. Call device_list to see why."
+          ? "No simulators, emulators or physical devices were found. Call device_list to see why."
           : `No ${input.platform} devices were found on host ${hostId}. Call device_list to see why.`,
     });
   }
@@ -216,7 +220,23 @@ export const gateHeavyOpen =
         );
     });
 
-const toolError = (error: DeviceError | DeviceToolUnavailableError) => error;
+const toolError = (error: DeviceError | DeviceToolUnavailableError | OrchestratorMcpFailure) =>
+  error;
+
+/** Who the device service gates: the calling thread, and how to ask its user. */
+const agentCaller = Effect.gen(function* () {
+  const { caller } = yield* loadCaller();
+  const decisions = yield* DecisionService.DecisionService;
+  return caller === undefined
+    ? {}
+    : {
+        threadTitle: caller.title,
+        ask: askDeviceAccess(decisions, {
+          projectId: caller.projectId,
+          threadTitle: caller.title,
+        }),
+      };
+});
 
 const handlers = {
   device_list: McpToolAccess.readsAsCaller((input) =>
@@ -243,6 +263,7 @@ const handlers = {
           ? state.devices.filter((device) => device.hostId === hostId)
           : state.devices,
         open,
+        heldByUser: (state.holds ?? []).filter((hold) => !hostId || hold.hostId === hostId),
       };
     }).pipe(Effect.mapError(toolError)),
   ),
@@ -266,6 +287,15 @@ const handlers = {
             "Agent device access requires enabled device support, agent access, and an available simulator platform on this host.",
         });
       }
+      const caller = yield* agentCaller;
+      // Before the heavy queue: a refused device must not wait its turn to say so.
+      yield* devices.authorizeAgent({
+        threadId: scope.thread.threadId,
+        hostId: target.hostId,
+        deviceId: target.id,
+        intent: "open",
+        agent: caller,
+      });
       const workspaceRoot = yield* threadWorkspaceRoot(scope.thread.threadId);
       const session = yield* gateHeavyOpen({
         queue: yield* HeavyQueue.HeavyQueue,
@@ -281,7 +311,7 @@ const handlers = {
             deviceId: target.id,
             platform: target.platform,
           },
-          { workspaceRoot },
+          { workspaceRoot, agent: caller },
         ),
       );
       const after = yield* devices.state;
@@ -296,7 +326,7 @@ const handlers = {
         hostId: session.hostId,
         deviceId: session.deviceId,
       };
-      const agent = yield* devices.agentTarget(opened);
+      const agent = yield* devices.agentTarget({ ...opened, agent: caller });
       const hostKind = after.hosts.find((host) => host.id === device.hostId)?.kind;
       const targetArgs = [
         ...(agent.agentDeviceId === null
@@ -304,7 +334,7 @@ const handlers = {
           : agentDeviceTargetArgs({ ...device, id: agent.agentDeviceId })),
         ...agent.args,
       ];
-      const launcher = yield* devices.agentLauncher({ ...opened, targetArgs });
+      const launcher = yield* devices.agentLauncher({ ...opened, targetArgs, agent: caller });
       if (Option.isNone(launcher)) {
         return yield* new DeviceToolUnavailableError({
           reason:
@@ -358,6 +388,13 @@ const handlers = {
               : `Device ${input.deviceId} is not open in this thread. Call device_open first.`,
         });
       }
+      yield* devices.authorizeAgent({
+        threadId,
+        hostId: target.hostId,
+        deviceId: target.deviceId,
+        intent: "read",
+        agent: yield* agentCaller,
+      });
       const shot = yield* devices.screenshot(target);
       return {
         device: shot.device,
@@ -385,6 +422,22 @@ const handlers = {
               .locateSession({ threadId: scope.thread.threadId, deviceId, hostId: inputHostId })
               .pipe(mapLocateErrors);
       const hostId = Option.isSome(open) ? open.value.hostId : inputHostId;
+      // Closing quits the app the session opened, so it waits for a hand back like any other action.
+      yield* Effect.forEach(
+        (yield* devices.sessionsForThread(scope.thread.threadId)).filter(
+          (session) =>
+            (hostId === undefined || session.hostId === hostId) &&
+            (deviceId === undefined || session.deviceId === deviceId),
+        ),
+        (session) =>
+          devices.authorizeAgent({
+            threadId: scope.thread.threadId,
+            hostId: session.hostId,
+            deviceId: session.deviceId,
+            intent: "close",
+          }),
+        { discard: true },
+      );
       yield* devices.close({
         threadId: scope.thread.threadId,
         ...(hostId === undefined ? {} : { hostId }),

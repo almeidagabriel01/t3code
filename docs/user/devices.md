@@ -1,8 +1,9 @@
 # Devices
 
-The Device panel shows a live iOS Simulator or Android Emulator next to a
-thread, so you can watch an agent verify mobile work and tap the device
-yourself. Agents get the same device through `device_*` tools and the
+The Device panel shows a live iOS Simulator, Android Emulator or connected
+physical device next to a thread, so you can watch an agent verify mobile work
+and tap the device yourself. Physical devices are listed apart and marked
+**Physical**; T3 Code does not turn them on or off. Agents get the same device through `device_*` tools and the
 `agent-device` command line, which T3 Code sets up for them.
 
 ## Open a device
@@ -85,7 +86,31 @@ taps build a small test runner on first use, which takes a couple of minutes
 once per server. Restart an existing agent session after granting access so it
 receives the device CLI environment.
 
-To keep agents away from simulators, turn off **Agents can use devices** in
+### Take over from an agent
+
+Touching the device in the panel takes it over: the agent's device commands are
+refused until you hand it back, and the agent is told to wait instead of
+retrying. You can also press **Take over** before you touch anything. The panel
+shows that you are in control; press **Hand back** when you are done. Nothing
+hands the device back for you, so an agent stays paused on it until you do. The
+agent can still take screenshots while you drive. In the mobile app, **Take
+over** and **Hand back** are in the device viewer's options menu.
+
+### Choose which devices agents may use
+
+**Settings → Devices → Device access** lists every known device with one choice
+each.
+
+- **Allow**: agents open and drive it. The default for simulators and emulators.
+- **Ask first**: each thread asks you once before it uses the device. The
+  default for physical devices.
+- **Never**: agents cannot use it.
+
+Reset a row to return it to its default. A thread you declined stays declined;
+set the device to **Allow** to let it in. Only one thread's agent drives a
+device at a time: a second thread is told which thread has it.
+
+To keep agents away from every device, turn off **Agents can use devices** in
 **Settings → Devices**. This hides the device tools from agents
 started from then on; your own Device panel is unaffected.
 

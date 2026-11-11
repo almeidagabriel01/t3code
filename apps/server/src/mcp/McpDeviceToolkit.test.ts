@@ -1,6 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  DeviceAccessDeniedError,
+  DeviceHeldError,
   DeviceHostUnavailableError,
   DeviceId,
   EnvironmentId,
@@ -13,6 +15,7 @@ import * as Option from "effect/Option";
 import { McpSchema, McpServer } from "effect/ai";
 
 import * as ServerConfig from "../config.ts";
+import * as DecisionService from "../decisions/DecisionService.ts";
 import * as DeviceService from "../device/DeviceService.ts";
 import * as HeavyQueue from "../heavyQueue/HeavyQueue.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -119,6 +122,8 @@ const layerHeavyQueueMock = Layer.mock(HeavyQueue.HeavyQueue)({
   }),
 });
 
+const layerDecisionsMock = Layer.mock(DecisionService.DecisionService)({});
+
 const openSession = {
   threadId,
   hostId: "local",
@@ -127,6 +132,7 @@ const openSession = {
   openedAt: "2026-09-08T00:00:00.000Z",
 };
 const layerDeviceServiceMock = Layer.mock(DeviceService.DeviceService)({
+  authorizeAgent: () => Effect.void,
   state: Effect.succeed(state),
   list: Effect.succeed(state),
   agentReadinessIfSupported: () => Effect.succeed(readiness),
@@ -166,6 +172,7 @@ const layerTest = McpHttpServer.layerDeviceToolkit.pipe(
   Layer.provideMerge(layerDeviceServiceMock),
   Layer.provide(layerProjectsMock),
   Layer.provide(layerHeavyQueueMock),
+  Layer.provide(layerDecisionsMock),
   Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-device-toolkit-test-" })),
   Layer.provide(NodeServices.layer),
 );
@@ -259,6 +266,7 @@ it.effect("registers the device tools and returns the screenshot as image conten
 
 it.effect("rejects unavailable agent access before booting or opening a device", () => {
   const layerUnavailable = Layer.mock(DeviceService.DeviceService)({
+    authorizeAgent: () => Effect.void,
     list: Effect.succeed(state),
     agentReadinessIfSupported: () =>
       Effect.fail(
@@ -292,6 +300,7 @@ it.effect("rejects unavailable agent access before booting or opening a device",
         Layer.provide(layerUnavailable),
         Layer.provide(layerProjectsMock),
         Layer.provide(layerHeavyQueueMock),
+        Layer.provide(layerDecisionsMock),
         Layer.provide(
           ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-device-toolkit-test-" }),
         ),
@@ -368,6 +377,7 @@ describe("device targeting across hosts", () => {
     const opened: Array<{ hostId: string; deviceId: string }> = [];
     const closed: Array<{ hostId?: string | undefined; deviceId?: string | undefined }> = [];
     const layerDevices = Layer.mock(DeviceService.DeviceService)({
+      authorizeAgent: () => Effect.void,
       state: Effect.succeed(multiHostState),
       list: Effect.succeed(multiHostState),
       agentReadinessIfSupported: () => Effect.succeed(readiness),
@@ -433,6 +443,7 @@ describe("device targeting across hosts", () => {
           Layer.provide(layerDevices),
           Layer.provide(layerProjectsMock),
           Layer.provide(layerHeavyQueueMock),
+          Layer.provide(layerDecisionsMock),
           Layer.provide(
             ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-device-toolkit-test-" }),
           ),
@@ -443,6 +454,67 @@ describe("device targeting across hosts", () => {
   };
   const text = (result: McpSchema.CallToolResult) =>
     result.content.flatMap((entry) => (entry.type === "text" ? [entry.text] : [])).join("\n");
+
+  const refusedDevice = { hostId: "mac-mini", deviceId: DeviceId.make("MAC-UDID") };
+  const held = new DeviceHeldError({ ...refusedDevice, since: "2026-11-10T10:00:00.000Z" });
+  const deniedByPolicy = new DeviceAccessDeniedError({ ...refusedDevice, reason: "policy" });
+  // What each tool does when the device service refuses an intent; screenshots only read.
+  it.effect.each([
+    { tool: "device_open", args: { deviceId: "MAC-UDID" }, refuses: "open", error: held },
+    { tool: "device_close", args: { deviceId: "MAC-UDID" }, refuses: "close", error: held },
+    { tool: "device_close", args: {}, refuses: "close", error: held },
+    { tool: "device_open", args: { deviceId: "MAC-UDID" }, refuses: "open", error: deniedByPolicy },
+    {
+      tool: "device_screenshot",
+      args: { deviceId: "MAC-UDID" },
+      refuses: "read",
+      error: deniedByPolicy,
+    },
+  ] as const)("$tool returns the device service's refusal of $refuses ($error._tag)", (row) => {
+    const intents: Array<string> = [];
+    return run(
+      [session("mac-mini", "MAC-UDID", "ios")],
+      ({ opened, closed, call }) =>
+        Effect.gen(function* () {
+          const result = yield* call(row.tool, row.args);
+          expect(result.isError).toBe(true);
+          expect(text(result)).toBe(row.error.message);
+          expect(intents).toContain(row.refuses);
+          expect([opened, closed]).toEqual([[], []]);
+        }),
+      {
+        authorizeAgent: (input) => {
+          intents.push(input.intent);
+          return input.intent === row.refuses ? Effect.fail(row.error) : Effect.void;
+        },
+      },
+    );
+  });
+
+  it.effect("screenshots a held device and lists who holds what", () =>
+    run(
+      [session("mac-mini", "MAC-UDID", "ios")],
+      ({ call }) =>
+        Effect.gen(function* () {
+          const shot = yield* call("device_screenshot", { deviceId: "MAC-UDID" });
+          expect(shot.isError).toBe(false);
+          const listed = yield* call("device_list", { hostId: "mac-mini" });
+          expect(listed.structuredContent).toMatchObject({
+            heldByUser: [{ hostId: "mac-mini", deviceId: "MAC-UDID" }],
+          });
+        }),
+      {
+        authorizeAgent: (input) => (input.intent === "read" ? Effect.void : Effect.fail(held)),
+        list: Effect.succeed({
+          ...multiHostState,
+          holds: [
+            { ...refusedDevice, since: held.since },
+            { hostId: "local", deviceId: DeviceId.make("UDID-1"), since: held.since },
+          ],
+        }),
+      },
+    ),
+  );
 
   it.effect("opens a device id that exists only on another host", () =>
     run([], ({ opened, call }) =>

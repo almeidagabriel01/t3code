@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   createProviderWorkspaceSnapshotRefreshAtomFamily,
+  describeCatalogEntry,
   getProviderSkillsForSlashMenu,
   hasCompleteProviderWorkspaceSnapshot,
   isProviderWorkspaceSnapshotScanning,
@@ -419,5 +420,17 @@ describe("provider workspace snapshot refresh atom", () => {
     registry.set(providersAtom, withSnapshot("2026-01-01T00:00:00.000Z"));
     expect(run).not.toHaveBeenCalled();
     unmount();
+  });
+});
+
+describe("describeCatalogEntry", () => {
+  it.each([
+    { description: "Reviews a diff", scanning: true, expected: "Reviews a diff" },
+    { description: "Reviews a diff", scanning: false, expected: "Reviews a diff" },
+    // Names arrive before the cwd scan does, so the generic label would be a guess.
+    { description: undefined, scanning: true, expected: "Loading description…" },
+    { description: undefined, scanning: false, expected: "user skill" },
+  ])("scanning=$scanning description=$description", ({ description, scanning, expected }) => {
+    expect(describeCatalogEntry(description, scanning, "user skill")).toBe(expected);
   });
 });

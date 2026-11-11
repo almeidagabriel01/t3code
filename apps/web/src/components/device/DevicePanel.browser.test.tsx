@@ -11,6 +11,7 @@ import type { RightPanelSurface } from "~/rightPanelStore";
 
 import { act, render } from "../../../test/render";
 
+import { DeviceHoldBar } from "./DeviceHoldBar";
 import { DevicePanel } from "./DevicePanel";
 import "~/index.css";
 
@@ -21,6 +22,8 @@ const mocks = vi.hoisted(() => ({
   open: vi.fn<(request: unknown) => Promise<CommandResult>>(),
   close: vi.fn<(request: unknown) => Promise<CommandResult>>(),
   list: vi.fn<(request: unknown) => Promise<CommandResult>>(),
+  setHold: vi.fn<(request: unknown) => Promise<CommandResult>>(),
+  canHold: true,
   openDevice: vi.fn(),
   closeSurface: vi.fn(),
 }));
@@ -66,8 +69,15 @@ let currentState = deviceState;
 vi.mock("~/state/device", async () => {
   const Effect = await import("effect/Effect");
   const { AsyncResult, Atom } = await import("effect/reactivity");
+  const ALLOWED = Atom.make(true);
+  const DENIED = Atom.make(false);
   return {
-    deviceEnvironment: { list: "list", open: "open", close: "close" },
+    deviceEnvironment: {
+      list: "list",
+      open: "open",
+      close: "close",
+      setHold: { permissionAtom: () => (mocks.canHold ? ALLOWED : DENIED) },
+    },
     deviceHostProbeAtom: Atom.family((environmentId: string) =>
       Atom.make(() => Effect.promise(() => mocks.list({ environmentId, input: {} }))),
     ),
@@ -76,14 +86,16 @@ vi.mock("~/state/device", async () => {
   };
 });
 vi.mock("~/state/use-atom-command", () => ({
-  useAtomCommand: (command: string) =>
+  useAtomCommand: (command: string | object) =>
     command === "open"
       ? mocks.open
       : command === "close"
         ? mocks.close
         : command === "list"
           ? mocks.list
-          : () => Promise.resolve({ _tag: "Success", value: {} }),
+          : typeof command === "object"
+            ? mocks.setHold
+            : () => Promise.resolve({ _tag: "Success", value: {} }),
 }));
 vi.mock("~/state/query", () => ({ formatEnvironmentQueryError: () => "Device failed" }));
 vi.mock("~/rightPanelStore", () => ({
@@ -98,9 +110,8 @@ vi.mock("~/rightPanelStore", () => ({
 }));
 vi.mock("~/components/device/DeviceHostUpdates", () => ({ DeviceHostUpdates: () => null }));
 vi.mock("~/components/device/DeviceWorkspace", () => ({
-  DeviceWorkspace: ({ onPowerOff }: { onPowerOff: () => void }) => (
-    <button onClick={onPowerOff}>Power off</button>
-  ),
+  DeviceWorkspace: ({ onPowerOff }: { onPowerOff?: () => void }) =>
+    onPowerOff ? <button onClick={onPowerOff}>Power off</button> : <p>Workspace</p>,
 }));
 vi.mock("~/components/preview/PreviewPanelShell", () => ({
   PreviewPanelShell: ({ children }: { children: ReactNode }) => (
@@ -155,6 +166,7 @@ function setup() {
   vi.resetAllMocks();
   mocks.list.mockResolvedValue({ _tag: "Success", value: { hostId: "local", deviceId: "" } });
   currentState = deviceState;
+  mocks.canHold = true;
   container = document.createElement("div");
   container.style.width = "480px";
   container.style.height = "800px";
@@ -232,5 +244,137 @@ describe("DevicePanel discovery warning", () => {
     currentState = withCause("second cause");
     await screen.rerender(devicePanel(threadA));
     await expect.element(screen.getByText(warning)).toBeVisible();
+  });
+});
+
+describe("DevicePanel takeover and physical devices", () => {
+  const pixel = {
+    hostId: "local",
+    id: "pixel",
+    name: "Pixel",
+    platform: "android",
+    version: "Android 16",
+    booted: true,
+    physical: true,
+  } as const;
+  const hold = { hostId: "local", deviceId: "pixel", since: "2026-01-01T00:00:00.000Z" };
+  const held = (deviceId: string) => ({ ...hold, deviceId });
+  const withControl = (extra: Partial<DeviceServiceState>): DeviceServiceState => ({
+    ...deviceState,
+    supportsDeviceControl: true,
+    devices: [phone, pixel],
+    ...extra,
+  });
+  const active = (deviceId: string): Extract<RightPanelSurface, { kind: "device" }> => ({
+    id: "device",
+    kind: "device",
+    target: { hostId: "local", deviceId, platform: "ios", name: deviceId },
+  });
+
+  it("lists physical devices apart, without a start action, and hands a held one back", async () => {
+    setup();
+    currentState = withControl({ holds: [hold] });
+    await using screen = await render(devicePanel(threadA), { container });
+
+    const headings = [...container.querySelectorAll("h3")].map((heading) => heading.textContent);
+    expect(headings).toEqual(["Physical devices", "iOS Simulators"]);
+    await expect.element(screen.getByText("Physical", { exact: true })).toBeInTheDocument();
+    await expect.element(screen.getByRole("button", { name: "Open Pixel" })).toBeInTheDocument();
+    await expect.element(screen.getByText(/Connected · You are in control/)).toBeInTheDocument();
+
+    await screen.getByRole("button", { name: "Hand back Pixel" }).click();
+
+    expect(mocks.setHold.mock.calls).toEqual([
+      [
+        {
+          environmentId: threadA.environmentId,
+          input: { hostId: "local", deviceId: "pixel", held: false },
+        },
+      ],
+    ]);
+  });
+
+  it.each([
+    [
+      "offers Take over while agents can drive it",
+      [],
+      "Agents can use this device",
+      "Take over",
+      true,
+    ],
+    [
+      "shows the paused state with Hand back while held",
+      [held("phone")],
+      "You are in control. Agent paused.",
+      "Hand back",
+      false,
+    ],
+  ] as const)("%s", async (_name, holds, status, action, nextHeld) => {
+    setup();
+    currentState = withControl({ holds: [...holds] });
+    await using screen = await render(devicePanel(threadA, active("phone")), { container });
+
+    await expect.element(screen.getByText(status)).toBeInTheDocument();
+    await screen.getByRole("button", { name: action }).click();
+
+    expect(mocks.setHold.mock.calls).toEqual([
+      [
+        {
+          environmentId: threadA.environmentId,
+          input: { hostId: "local", deviceId: "phone", held: nextHeld },
+        },
+      ],
+    ]);
+    await expect.element(screen.getByRole("button", { name: "Power off" })).toBeInTheDocument();
+  });
+
+  it("offers no power off and no takeover row for a physical device agents cannot reach", async () => {
+    setup();
+    currentState = withControl({
+      agentAccessEnabled: false,
+      sessions: [{ ...deviceState.sessions[0]!, deviceId: "pixel", platform: "android" }],
+    });
+    await using screen = await render(devicePanel(threadA, active("pixel")), { container });
+
+    await expect.element(screen.getByText("Workspace")).toBeInTheDocument();
+    expect(container.querySelector('[role="status"]')).toBeNull();
+    expect(screen.getByRole("button", { name: "Power off" }).query()).toBeNull();
+  });
+
+  it.each([
+    ["a physical device asks first", {}, false, "Agents ask before using this device", "Take over"],
+    [
+      "a denied device offers no takeover",
+      { access: { "local:pixel": "deny" } },
+      false,
+      "Agents cannot use this device",
+      null,
+    ],
+    ["the floating preview stays clear until held", {}, true, null, null],
+    [
+      "the floating preview shows the held state",
+      { holds: [hold] },
+      true,
+      "You are in control. Agent paused.",
+      "Hand back",
+    ],
+  ] as const)("hold bar: %s", async (_name, extra, heldOnly, status, action) => {
+    setup();
+    mocks.canHold = false;
+    await using screen = await render(
+      <DeviceHoldBar
+        environmentId={threadA.environmentId}
+        state={withControl(extra)}
+        device={pixel}
+        heldOnly={heldOnly}
+      />,
+      { container },
+    );
+
+    expect(container.querySelector('[role="status"]')?.textContent ?? null).toBe(
+      status === null ? null : `${status}${action ?? ""}`,
+    );
+    // Without the operate grant the switch is shown but cannot be pressed.
+    if (action) await expect.element(screen.getByRole("button", { name: action })).toBeDisabled();
   });
 });

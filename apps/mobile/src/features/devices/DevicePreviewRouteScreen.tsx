@@ -8,6 +8,7 @@ import {
 } from "@t3tools/client-runtime/state/device";
 import { useIsFocused, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
 import * as Cause from "effect/Cause";
 import { useEffect, useRef, useState, type RefObject } from "react";
 import * as Haptics from "expo-haptics";
@@ -37,8 +38,10 @@ import { deviceEnvironment, useDeviceHubAccess } from "../../state/device";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
+import { DeviceHoldBanner } from "./DeviceHoldBanner";
 import { DeviceStreamWebView, type DeviceStreamRef } from "./DeviceStreamWebView";
 import {
+  deviceHoldMenuItem,
   selectedThreadDevicePreview,
   threadDevicePreviews,
   type ThreadDevicePreview,
@@ -103,6 +106,8 @@ export function DevicePreviewScreen({
   const [controlsVisible, setControlsVisible] = useState(true);
   const retryHost = useAtomCommand(deviceEnvironment.list);
   const shutdown = useAtomCommand(deviceEnvironment.shutdown, { reportFailure: false });
+  const setHold = useAtomCommand(deviceEnvironment.setHold);
+  const canHold = useAtomValue(deviceEnvironment.setHold.permissionAtom(environmentId));
   const streamRef = useRef<DeviceStreamRef>(null);
   const state = useEnvironmentQuery(deviceEnvironment.state({ environmentId, input: {} }));
   const previews = threadDevicePreviews(state.data, threadId);
@@ -148,7 +153,17 @@ export function DevicePreviewScreen({
     }
   };
 
+  const changeHold = (held: boolean) => {
+    if (!preview) return;
+    void setHold({
+      environmentId,
+      input: { hostId: preview.session.hostId, deviceId: preview.session.deviceId, held },
+    });
+  };
+
+  const holdItem = deviceHoldMenuItem(preview, canHold);
   const controls: AppBarMenuItem[] = [
+    ...(holdItem ? [{ ...holdItem, onPress: () => changeHold(holdItem.nextHeld) }] : []),
     ...(state.data?.hosts
       .filter(
         (host) =>
@@ -236,13 +251,17 @@ export function DevicePreviewScreen({
           },
         ]
       : []),
-    {
-      id: "shutdown",
-      title: shuttingDown ? "Shutting down…" : "Shut down device",
-      icon: "power",
-      disabled: !preview || shuttingDown,
-      onPress: () => void shutDownDevice(),
-    },
+    ...(preview?.physical
+      ? []
+      : [
+          {
+            id: "shutdown",
+            title: shuttingDown ? "Shutting down…" : "Shut down device",
+            icon: "power" as const,
+            disabled: !preview || shuttingDown,
+            onPress: () => void shutDownDevice(),
+          },
+        ]),
   ];
   const pressHome = () => streamRef.current?.home();
   const menuItems: AppBarMenuItem[] = [
@@ -306,6 +325,9 @@ export function DevicePreviewScreen({
           ) : null}
         </View>
       )}
+      {embedded && preview?.held ? (
+        <DeviceHoldBanner disabled={!canHold} onHandBack={() => changeHold(false)} />
+      ) : null}
       {embedded ? (
         <View
           className="flex-row items-center justify-center gap-2 px-3 py-2"
@@ -348,6 +370,9 @@ export function DevicePreviewScreen({
               <DeviceOptionsMenu items={menuItems} />
             </GlassSurface>
           </View>
+          {preview?.held ? (
+            <DeviceHoldBanner disabled={!canHold} onHandBack={() => changeHold(false)} />
+          ) : null}
         </Animated.View>
       ) : (
         <View

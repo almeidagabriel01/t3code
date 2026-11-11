@@ -38,6 +38,7 @@ const reactTests = [
   "src/features/kanban/KanbanCardRouteScreen.test.tsx",
   "src/features/notes/NotesRouteScreen.test.tsx",
   "src/features/settings/SettingsMacPermissionsRouteScreen.test.tsx",
+  "src/features/settings/SettingsDevicesRouteScreen.test.tsx",
   "src/features/kanban/KanbanAddAttachmentButton.test.tsx",
   "src/features/threads/git/GitBranchesSheet.test.tsx",
   "src/features/threads/new-task-flow-provider.test.tsx",
