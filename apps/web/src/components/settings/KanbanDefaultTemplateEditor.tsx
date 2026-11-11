@@ -37,6 +37,12 @@ const TEMPLATE_ICONS = ["bug", "lightbulb", "wrench", "broom", "tag"].map((value
   label: value,
 }));
 
+// A saved or agent-set icon outside the list stays selectable instead of showing a blank field.
+const iconOptions = (current: string) =>
+  TEMPLATE_ICONS.some((option) => option.value === current)
+    ? TEMPLATE_ICONS
+    : [...TEMPLATE_ICONS, { value: current, label: current }];
+
 const lines = (text: string) =>
   text
     .split("\n")
@@ -73,7 +79,12 @@ export function TemplateDialog(props: {
               />
             </div>
             <div className="grid grid-cols-3 gap-2">
-              <OptionSelect label="Icon" value={icon} options={TEMPLATE_ICONS} onChange={setIcon} />
+              <OptionSelect
+                label="Icon"
+                value={icon}
+                options={iconOptions(icon)}
+                onChange={setIcon}
+              />
               <OptionSelect
                 label="Color"
                 value={color}
