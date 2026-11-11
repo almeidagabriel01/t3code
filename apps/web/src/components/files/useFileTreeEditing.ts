@@ -109,7 +109,8 @@ export function useFileTreeEditing(options: {
   const flush = (relativePath: string) =>
     flushFileSavesUnder({ environmentId: options.environmentId, cwd: options.cwd }, relativePath);
 
-  const fillRenameInput = (value: string, attempt = 0) => {
+  /** Focuses Pierre's rename input, replacing its text when a value is given. */
+  const fillRenameInput = (value: string | undefined, attempt = 0) => {
     const input = options
       .model()
       ?.getFileTreeContainer()
@@ -119,8 +120,10 @@ export function useFileTreeEditing(options: {
       if (attempt < 5) requestAnimationFrame(() => fillRenameInput(value, attempt + 1));
       return;
     }
-    input.value = value;
-    input.dispatchEvent(new Event("input", { bubbles: true }));
+    if (value !== undefined) {
+      input.value = value;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    }
     input.focus();
   };
 
@@ -130,7 +133,8 @@ export function useFileTreeEditing(options: {
     const model = options.model();
     if (!model || kind === undefined) return;
     if (!model.startRenaming(treePathOf(relativePath, kind === "directory"))) return;
-    if (value !== undefined) fillRenameInput(value);
+    // A closing context menu hands focus back to the row; take it for the input.
+    fillRenameInput(value);
   };
 
   const startCreate = (kind: "file" | "directory", directory: string, value = "") => {

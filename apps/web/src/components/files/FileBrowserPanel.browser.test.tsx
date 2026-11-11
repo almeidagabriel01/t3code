@@ -6,6 +6,7 @@ import {
   type ProjectEntryChange,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Schema from "effect/Schema";
 import * as Atom from "effect/reactivity/Atom";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -21,6 +22,7 @@ const entries: readonly ProjectEntry[] = [
   { path: "src", kind: "directory" },
   { path: "README.md", kind: "file" },
   { path: ".env", kind: "file" },
+  { path: "index.html", kind: "file" },
 ];
 const loadingDirectories: ReadonlySet<string> = new Set();
 const directory = {
@@ -44,17 +46,30 @@ vi.mock("./useDirectoryEntries", () => ({ useDirectoryEntries: () => directory }
 vi.mock("~/state/queries", () => ({ useProjectPathSearch: () => pathSearch }));
 vi.mock("~/fileContextMenu", () => ({
   useFileContextMenu: () => ({
-    buildItems: () => [],
-    activate: () => Promise.resolve(),
-    capabilities: { canOpenDefault: false, editorIds: [], revealLabel: undefined },
+    buildItems: () => [
+      {
+        id: "open-with",
+        label: "Open with",
+        children: server.editorIds.map((id) => ({ id: `editor:${id}`, label: id })),
+      },
+    ],
+    activate: server.activate,
+    capabilities: {
+      canOpenDefault: false,
+      editorIds: server.editorIds,
+      revealLabel: server.editorIds.length > 0 ? "Reveal in Finder" : undefined,
+    },
   }),
 }));
 
 type ChangeReply = ProjectChangeEntryResult | ProjectChangeEntryError;
+const isChangeEntryError = Schema.is(ProjectChangeEntryError);
 const server = vi.hoisted(() => ({
   writable: true,
   changes: [] as ProjectEntryChange[],
   replies: [] as unknown[],
+  editorIds: [] as string[],
+  activate: (..._args: unknown[]) => Promise.resolve(),
 }));
 const permission = { writable: Atom.make(true), readOnly: Atom.make(false) };
 vi.mock("~/state/projects", async (importOriginal) => {
@@ -78,20 +93,32 @@ vi.mock("~/state/use-atom-command", () => ({
         entries: [],
         failures: [],
       };
-      return reply instanceof ProjectChangeEntryError
+      return isChangeEntryError(reply)
         ? AsyncResult.failure(Cause.fail(reply))
         : AsyncResult.success(reply);
     },
 }));
 
 /** Resets the fake server; each reply answers one change in order, then empty successes. */
-function setup(options: { writable?: boolean; replies?: ChangeReply[] } = {}) {
+function setup(
+  options: {
+    writable?: boolean;
+    replies?: ChangeReply[];
+    editorIds?: string[];
+    activate?: (...args: unknown[]) => Promise<void>;
+  } = {},
+) {
   server.writable = options.writable ?? true;
   server.changes = [];
   server.replies = [...(options.replies ?? [])];
+  server.editorIds = options.editorIds ?? [];
+  server.activate = options.activate ?? (() => Promise.resolve());
 }
 
-const renderPanel = (onOpenFile: (path: string) => void = () => {}) =>
+const renderPanel = (
+  onOpenFile: (path: string) => void = () => {},
+  extra: Partial<Parameters<typeof FileBrowserPanel>[0]> = {},
+) =>
   render(
     <FileBrowserPanel
       environmentId={EnvironmentId.make("env-files")}
@@ -101,8 +128,23 @@ const renderPanel = (onOpenFile: (path: string) => void = () => {}) =>
       selectedPathRevealId={0}
       onOpenFile={onOpenFile}
       workspaceMutationId={null}
+      {...extra}
     />,
   );
+
+async function pick(path: string, name: string | RegExp) {
+  await vi.waitFor(() => expect(findTreeRow(path)).not.toBeNull());
+  openRowMenu(path);
+  const item = page.getByRole(
+    "menuitem",
+    typeof name === "string" ? { name, exact: true } : { name },
+  );
+  await expect.element(item).toBeVisible();
+  await userEvent.click(item);
+}
+
+const failure = (failureKind: ProjectChangeEntryError["failure"], message: string) =>
+  new ProjectChangeEntryError({ failure: failureKind, message });
 
 function openRowMenu(path: string) {
   findTreeRow(path)!.dispatchEvent(
@@ -387,5 +429,185 @@ describe("FileBrowserPanel", () => {
     openRowMenu("README.md");
     await userEvent.click(page.getByRole("menuitem", { name: "Copy Relative Path", exact: true }));
     await vi.waitFor(() => expect(clipboard).toHaveBeenLastCalledWith("README.md"));
+  });
+
+  it("runs the host's folder and file actions from the menu", async () => {
+    setup({ editorIds: ["vscode"] });
+    const hostActions = {
+      openInTerminal: vi.fn(),
+      addAsProject: vi.fn(),
+      openInBrowser: vi.fn(),
+      openMarkdownPreview: vi.fn(),
+    };
+    const activate = vi.fn((..._args: unknown[]) => Promise.resolve());
+    server.activate = activate;
+    await using _screen = await renderPanel(() => {}, { hostActions });
+    using _menu = { [Symbol.dispose]: () => dismissContextMenu() };
+    await pick("src/", "Open in Terminal");
+    expect(hostActions.openInTerminal).toHaveBeenCalledWith("/repo/src");
+    await pick("src/", "Add as Project…");
+    expect(hostActions.addAsProject).toHaveBeenCalledWith("/repo/src");
+    await pick("index.html", "Open in Browser");
+    expect(hostActions.openInBrowser).toHaveBeenCalledWith("index.html");
+    await pick("README.md", "Open Markdown Preview");
+    expect(hostActions.openMarkdownPreview).toHaveBeenCalledWith("README.md");
+    await pick("README.md", "Reveal in Finder");
+    await vi.waitFor(() =>
+      expect(activate).toHaveBeenCalledWith(
+        "reveal-in-folder",
+        expect.objectContaining({ filePath: "README.md" }),
+      ),
+    );
+    openRowMenu("README.md");
+    await userEvent.click(page.getByRole("menuitem", { name: "Open in", exact: true }));
+    await userEvent.click(page.getByRole("menuitem", { name: "vscode", exact: true }));
+    await vi.waitFor(() =>
+      expect(activate).toHaveBeenLastCalledWith(
+        "editor:vscode",
+        expect.objectContaining({ filePath: "README.md" }),
+      ),
+    );
+  });
+
+  it("renames from the menu, retargeting the open file", async () => {
+    setup({
+      replies: [{ entries: [{ relativePath: "GUIDE.md" }], failures: [] }],
+    });
+    const onOpenFile = vi.fn();
+    await using _screen = await renderPanel(onOpenFile, { selectedPath: "README.md" });
+    using _menu = { [Symbol.dispose]: () => dismissContextMenu() };
+    await pick("README.md", /^Rename/);
+    await vi.waitFor(() => expect(renameInput()?.value).toBe("README.md"));
+    await userEvent.keyboard("{ControlOrMeta>}a{/ControlOrMeta}");
+    await typeName("GUIDE.md");
+    await vi.waitFor(() => expect(onOpenFile).toHaveBeenCalledWith("GUIDE.md"));
+    expect(server.changes.map((change) => change._tag)).toEqual(["move"]);
+  });
+
+  it("asks before deleting from the menu and does nothing when declined", async () => {
+    setup();
+    await using _screen = await renderPanel();
+    using _menu = { [Symbol.dispose]: () => dismissContextMenu() };
+    using confirm = vi.spyOn(readLocalApi()!.dialogs, "confirm").mockResolvedValue(false);
+    await pick("src/", /^Delete/);
+    await vi.waitFor(() => expect(confirm).toHaveBeenCalledOnce());
+    expect(server.changes).toEqual([]);
+  });
+
+  it("restores the name and shows the server's reason when a rename fails", async () => {
+    setup({ replies: [failure("already_exists", '"src" already exists.')] });
+    await using screen = await renderPanel();
+    await vi.waitFor(() => expect(findTreeRow("README.md")).not.toBeNull());
+    findTreeRow("README.md")!.focus();
+    await userEvent.keyboard("{F2}");
+    await vi.waitFor(() => expect(renameInput()?.value).toBe("README.md"));
+    await userEvent.keyboard("{ControlOrMeta>}a{/ControlOrMeta}");
+    await typeName("NOTES.md");
+    await expect.element(screen.getByRole("alert")).toHaveTextContent('"src" already exists.');
+    await vi.waitFor(() => expect(renameInput()?.value).toBe("NOTES.md"));
+    await userEvent.keyboard("{Escape}");
+    await vi.waitFor(() => expect(findTreeRow("README.md")).not.toBeNull());
+  });
+
+  it("asks again for a rename the explorer refuses before reaching the server", async () => {
+    setup();
+    await using screen = await renderPanel();
+    await vi.waitFor(() => expect(findTreeRow("README.md")).not.toBeNull());
+    findTreeRow("README.md")!.focus();
+    await userEvent.keyboard("{F2}");
+    await vi.waitFor(() => expect(renameInput()?.value).toBe("README.md"));
+    await userEvent.keyboard("{ControlOrMeta>}a{/ControlOrMeta}");
+    await typeName("~home");
+    await expect
+      .element(screen.getByRole("alert"))
+      .toHaveTextContent("Use a name inside the project.");
+    await userEvent.keyboard("{Escape}");
+    findTreeRow("README.md")!.focus();
+    await userEvent.keyboard("{F2}");
+    await vi.waitFor(() => expect(renameInput()?.value).toBe("README.md"));
+    await userEvent.keyboard("{ControlOrMeta>}a{/ControlOrMeta}");
+    // The tree itself refuses a name a sibling already has.
+    await typeName("src");
+    await vi.waitFor(() => expect(renameInput()?.value).toBe("src"));
+    expect(server.changes).toEqual([]);
+  });
+
+  it("creates in a folder from the menu and recovers when the server refuses", async () => {
+    setup({ replies: [failure("operation_failed", "Disk full.")] });
+    const onOpenFile = vi.fn();
+    await using screen = await renderPanel(onOpenFile);
+    using _menu = { [Symbol.dispose]: () => dismissContextMenu() };
+    await pick("src/", "New File");
+    await typeName("x.ts");
+    await expect.element(screen.getByRole("alert")).toHaveTextContent("Disk full.");
+    await vi.waitFor(() => expect(renameInput()?.value).toBe("x.ts"));
+    await userEvent.keyboard("{Enter}");
+    await vi.waitFor(() =>
+      expect(server.changes).toEqual([
+        { _tag: "create", relativePath: "src/x.ts", kind: "file" },
+        { _tag: "create", relativePath: "src/x.ts", kind: "file" },
+      ]),
+    );
+    await vi.waitFor(() => expect(onOpenFile).toHaveBeenCalledWith("src/x.ts"));
+  });
+
+  it("reports delete, duplicate and undo failures in the explorer", async () => {
+    setup({
+      replies: [
+        failure("not_found", "README.md is gone."),
+        failure("operation_failed", "Copy failed."),
+      ],
+    });
+    await using screen = await renderPanel();
+    using _menu = { [Symbol.dispose]: () => dismissContextMenu() };
+    using _confirm = vi.spyOn(readLocalApi()!.dialogs, "confirm").mockResolvedValue(true);
+    await pick("README.md", /^Delete/);
+    await expect.element(screen.getByRole("alert")).toHaveTextContent("README.md is gone.");
+    await pick("README.md", "Duplicate");
+    await expect.element(screen.getByRole("alert")).toHaveTextContent("Copy failed.");
+  });
+
+  it("reports a failed permanent delete after the Trash fallback", async () => {
+    setup({
+      replies: [failure("trash_unavailable", "No Trash."), failure("operation_failed", "Locked.")],
+    });
+    await using screen = await renderPanel();
+    using _confirm = vi.spyOn(readLocalApi()!.dialogs, "confirm").mockResolvedValue(true);
+    await vi.waitFor(() => expect(findTreeRow("README.md")).not.toBeNull());
+    findTreeRow("README.md")!.focus();
+    await userEvent.keyboard("{ControlOrMeta>}{Backspace}{/ControlOrMeta}");
+    await expect.element(screen.getByRole("alert")).toHaveTextContent("Locked.");
+  });
+
+  it("collapses and refreshes from the menus", async () => {
+    setup();
+    using refresh = vi.spyOn(directory, "refresh");
+    await using screen = await renderPanel();
+    using _menu = { [Symbol.dispose]: () => dismissContextMenu() };
+    await vi.waitFor(() => expect(findTreeRow("src/")).not.toBeNull());
+    findTreeRow("src/")!.click();
+    await pick("src/", "Collapse Folder");
+    const area = screen.container.querySelector<HTMLElement>("[data-file-tree-area]")!;
+    area.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    await userEvent.click(page.getByRole("menuitem", { name: "Collapse All", exact: true }));
+    area.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    await userEvent.click(page.getByRole("menuitem", { name: "Refresh Explorer", exact: true }));
+    await vi.waitFor(() => expect(refresh).toHaveBeenCalled());
+  });
+
+  it("skips dropped files over the import limit", async () => {
+    setup();
+    await using screen = await renderPanel();
+    await vi.waitFor(() => expect(findTreeRow("src/")).not.toBeNull());
+    const big = new DataTransfer();
+    big.items.add(new File([new Uint8Array(25 * 1024 * 1024 + 1)], "huge.bin"));
+    const area = screen.container.querySelector<HTMLElement>("[data-file-tree-area]")!;
+    area.dispatchEvent(
+      new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: big }),
+    );
+    await expect
+      .element(screen.getByRole("alert"))
+      .toHaveTextContent('"huge.bin" is larger than 25 MB and was not added.');
+    expect(server.changes).toEqual([]);
   });
 });
