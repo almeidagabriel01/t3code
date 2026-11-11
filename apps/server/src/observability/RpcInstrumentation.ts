@@ -320,6 +320,8 @@ const RPC_AGGREGATES = {
   [WS_METHODS.deviceWifiPairStart]: "device",
   [WS_METHODS.deviceWifiPairCancel]: "device",
   [WS_METHODS.deviceForget]: "device",
+  [WS_METHODS.deviceAnswerLinkRequest]: "device",
+  [WS_METHODS.deviceSetLinkBlocked]: "device",
   [WS_METHODS.deviceDetail]: "device",
   [WS_METHODS.deviceAction]: "device",
   [WS_METHODS.subscribeDeviceState]: "device",

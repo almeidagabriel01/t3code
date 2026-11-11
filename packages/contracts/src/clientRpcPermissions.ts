@@ -33,6 +33,9 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.deviceWifiPairStart]: AuthSettingsWriteScope,
   [WS_METHODS.deviceWifiPairCancel]: AuthSettingsWriteScope,
   [WS_METHODS.deviceForget]: AuthSettingsWriteScope,
+  // Letting a linked environment use a device, or shutting it out, decides who drives it, as access policies do.
+  [WS_METHODS.deviceAnswerLinkRequest]: AuthSettingsWriteScope,
+  [WS_METHODS.deviceSetLinkBlocked]: AuthSettingsWriteScope,
   // Stopping a server signals its processes, as closing a terminal does.
   [WS_METHODS.previewStopLocalServer]: AuthTerminalOperateScope,
   // Killing a listener signals a host process, as closing a terminal does.

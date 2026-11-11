@@ -6,6 +6,7 @@ import {
 } from "./memory.ts";
 import {
   DeviceAccessMap,
+  DeviceLinkClientRef,
   EasDeviceHostConfigs,
   SimlockDeviceHostConfigs,
   SshDeviceHostConfigs,
@@ -1623,6 +1624,14 @@ export const ServerSettings = Schema.Struct({
   simlockDeviceHostsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** Agent access per device; a device without an entry uses its default. */
   deviceAccess: DeviceAccessMap.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  /** Linked environments refused every device here, by link session; labels keep the rows named. */
+  deviceBlockedLinks: Schema.Array(DeviceLinkClientRef).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  /** Linked environments whose devices this environment does not list or offer to agents. */
+  hiddenLinkedDeviceSources: Schema.Array(Schema.String).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   sidebarAutoSettleAfterDays: Schema.NullOr(SidebarAutoSettleAfterDays).pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS)),
   ),
@@ -2090,6 +2099,8 @@ const ServerSettingsPatchFields = Schema.Struct({
   simlockDeviceHostsEnabled: Schema.optionalKey(Schema.Boolean),
   /** Replaces the whole map, so a missing key is a removed policy. */
   deviceAccess: Schema.optionalKey(DeviceAccessMap),
+  deviceBlockedLinks: Schema.optionalKey(Schema.Array(DeviceLinkClientRef)),
+  hiddenLinkedDeviceSources: Schema.optionalKey(Schema.Array(Schema.String)),
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
   compactIdleThreads: Schema.optionalKey(LegacyCompactIdleThreads),
   idleCompaction: Schema.optionalKey(IdleCompactionMode),

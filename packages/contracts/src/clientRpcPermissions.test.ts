@@ -79,6 +79,8 @@ describe("device client guards", () => {
       WS_METHODS.deviceWifiPairStart,
       WS_METHODS.deviceWifiPairCancel,
       WS_METHODS.deviceForget,
+      WS_METHODS.deviceAnswerLinkRequest,
+      WS_METHODS.deviceSetLinkBlocked,
     ])
       expect(clientRpcRequiredScopes(method, {})).toEqual(["settings:write"]);
     // Watching device state stays open to readers.
