@@ -230,7 +230,11 @@ export function NoteList(props: {
           </Tooltip>
         ) : null}
       </div>
-      <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
+      {/* Saving moves a note to the top; the list must not follow it there. */}
+      <div
+        ref={listRef}
+        className="min-h-0 flex-1 overflow-y-auto px-2 py-2 [overflow-anchor:none]"
+      >
         {props.children}
         {pathToOpen ? (
           <button

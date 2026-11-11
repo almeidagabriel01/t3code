@@ -666,7 +666,8 @@ function HistoryProcessTable({
         hideScrollbars
         className="max-h-[28rem] w-full max-w-full"
       >
-        <table className="w-full min-w-[1020px] table-fixed text-left text-xs">
+        {/* Re-ranked rows must not pull the viewport to their new position. */}
+        <table className="w-full min-w-[1020px] table-fixed text-left text-xs [overflow-anchor:none]">
           <colgroup>
             <col className="w-[24%]" />
             <col className="w-[11%]" />
@@ -751,7 +752,8 @@ function HistoryProcessTable({
 function AttributionTable({ entries }: { entries: ReadonlyArray<ResourceAttributionEntry> }) {
   return (
     <div className="overflow-x-auto border-t border-border/60">
-      <table className="w-full min-w-[720px] table-fixed text-left text-xs">
+      {/* Re-ranked rows must not pull the viewport to their new position. */}
+      <table className="w-full min-w-[720px] table-fixed text-left text-xs [overflow-anchor:none]">
         <colgroup>
           <col className="w-[22%]" />
           <col className="w-[28%]" />

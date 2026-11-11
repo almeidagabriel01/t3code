@@ -171,3 +171,45 @@ describe("NoteList row menu", () => {
     expect(mocks.move).not.toHaveBeenCalled();
   });
 });
+
+const notesAt = (newest: string | null) =>
+  Array.from({ length: 40 }, (_, index) => ({
+    ...note,
+    path: `n${index}.md`,
+    title: `Note ${index}`,
+    updatedAt:
+      newest === `n${index}.md`
+        ? "2026-02-01T00:00:00.000Z"
+        : `2026-01-01T00:${String(59 - index).padStart(2, "0")}:00.000Z`,
+  }));
+
+describe("NoteList scroll", () => {
+  it("stays where it is when saving moves the note in view to the top", async () => {
+    const container = document.createElement("div");
+    container.style.cssText = "display:flex;flex-direction:column;height:300px";
+    const view = (notes: NoteSummary[]) => (
+      <NoteList
+        environmentId={EnvironmentId.make("env")}
+        notes={notes}
+        folders={[]}
+        selectedPath={undefined}
+        query=""
+        onQueryChange={() => undefined}
+        onSelect={() => undefined}
+        onOpenEditor={() => undefined}
+        onCreate={null}
+        createShortcut={null}
+      />
+    );
+    await using screen = await render(view(notesAt(null)), { container, router: false });
+    const row = page.getByRole("button", { name: /^Note 15\b/ });
+    await expect.element(row).toBeInTheDocument();
+    let scroller = row.element().parentElement!;
+    while (getComputedStyle(scroller).overflowY !== "auto") scroller = scroller.parentElement!;
+    scroller.scrollTop +=
+      row.element().getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+    const before = scroller.scrollTop;
+    await screen.rerender(view(notesAt("n15.md")));
+    expect(scroller.scrollTop).toBe(before);
+  });
+});

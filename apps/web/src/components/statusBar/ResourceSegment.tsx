@@ -27,8 +27,9 @@ import {
   WrenchIcon,
   XIcon,
 } from "lucide-react";
-import { createContext, use, useEffect, useState } from "react";
+import { createContext, use, useEffect, useRef, useState } from "react";
 
+import { useOrderWhileOpen } from "../../hooks/useOrderWhileOpen";
 import { useClientSettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { useDeviceState } from "../../state/device";
@@ -51,6 +52,8 @@ import {
   buildResourceTree,
   deviceShutdownTargets,
   EMPTY_USAGE,
+  orderResourceTree,
+  resourceTreeKeys,
   type AppProcessGroup,
   type DevicePlatform,
   type DeviceRow,
@@ -541,6 +544,7 @@ export function EnvironmentSection({
   resources,
   snapshot,
   sort,
+  holdOrder = false,
   label,
   threadInfo,
   projectTitleById,
@@ -548,6 +552,8 @@ export function EnvironmentSection({
   readonly resources: EnvironmentResources;
   readonly snapshot: ResourceTelemetrySnapshot | null;
   readonly sort: SortOption;
+  /** Keeps rows where they are instead of re-ranking them as usage changes. */
+  readonly holdOrder?: boolean;
   readonly label: string | null;
   readonly threadInfo: ReadonlyMap<string, ThreadInfo>;
   readonly projectTitleById: ReadonlyMap<ProjectId, string>;
@@ -568,7 +574,7 @@ export function EnvironmentSection({
       .map((session) => [`${session.target.threadId}:${session.target.terminalId}`, session]),
   );
   const owners = snapshot?.owners ?? [];
-  const tree = buildResourceTree({
+  const ranked = buildResourceTree({
     processes: snapshot?.processes ?? [],
     terminals: [...sessions].map(([key, session]) => ({
       key,
@@ -589,6 +595,8 @@ export function EnvironmentSection({
         : (projectTitleById.get(projectKey as ProjectId) ?? UNATTRIBUTED),
     threadTitle: (threadId) => infoOf(threadId)?.title || "Agent",
   });
+  const order = useOrderWhileOpen(resourceTreeKeys(ranked), String, holdOrder);
+  const tree = holdOrder ? orderResourceTree(ranked, order) : ranked;
   const app = snapshot === null ? null : tree.app;
   const appTotal =
     app === null ? null : app.reduce((sum, row) => addUsage(sum, row.usage), EMPTY_USAGE);
@@ -767,6 +775,14 @@ function ResourceManager({
 }) {
   const defaultSort = useClientSettings((settings) => settings.statusBarResourceSort);
   const [sort, setSort] = useState<SortOption>(defaultSort);
+  // Scrolled down, rows hold their order so the ones in view stay put; at the top they re-rank live.
+  const [scrolled, setScrolled] = useState(false);
+  const listRef = useRef<HTMLDivElement>(null);
+  const changeSort = (next: SortOption) => {
+    setSort(next);
+    setScrolled(false);
+    listRef.current?.scrollTo({ top: 0 });
+  };
   const projects = useProjects();
   const threads = useThreadShells();
   const snapshots = useEnvironmentSnapshots(resources.map(({ environmentId }) => environmentId));
@@ -787,14 +803,19 @@ function ResourceManager({
         <MemoryStickIcon aria-hidden className="size-3 shrink-0 text-muted-foreground" />
         <span className="truncate">Resource Manager</span>
       </div>
-      <SortHeader sort={sort} onSort={setSort} />
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <SortHeader sort={sort} onSort={changeSort} />
+      <div
+        ref={listRef}
+        className="min-h-0 flex-1 overflow-y-auto"
+        onScroll={(event) => setScrolled(event.currentTarget.scrollTop > 0)}
+      >
         {resources.map((environment) => (
           <EnvironmentSection
             key={environment.environmentId}
             resources={environment}
             snapshot={snapshots.get(environment.environmentId) ?? null}
             sort={sort}
+            holdOrder={scrolled}
             label={resources.length > 1 ? environment.label : null}
             threadInfo={threadInfo}
             projectTitleById={projectTitleById}

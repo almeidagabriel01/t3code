@@ -10,6 +10,8 @@ import {
   attributeTerminalUsage,
   buildResourceTree,
   deviceShutdownTargets,
+  orderResourceTree,
+  resourceTreeKeys,
   toMachineShare,
 } from "./resourceUsage.logic";
 
@@ -191,6 +193,13 @@ describe("buildResourceTree", () => {
     expect(
       tree.projects.flatMap((project) => project.rows).some((row) => row.threadId === "dead"),
     ).toBe(false);
+  });
+
+  it("holds projects, rows, devices, app groups and their processes in a kept order", () => {
+    const held = resourceTreeKeys(run());
+    const reranked = run({ sort: "name" });
+    expect(resourceTreeKeys(reranked)).not.toEqual(held);
+    expect(resourceTreeKeys(orderResourceTree(reranked, held))).toEqual(held);
   });
 
   it("lets a terminal keep a pid an agent also reaches", () => {
