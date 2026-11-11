@@ -38,7 +38,13 @@ export function DeviceHoldBar(props: {
   readonly className?: string;
 }) {
   const { canHold, changeHold } = useDeviceHold(props.environmentId);
-  const held = findDeviceHold(props.state.holds, props.device) !== undefined;
+  const hold = findDeviceHold(props.state.holds, props.device);
+  const held = hold !== undefined;
+  const linkedHost = props.state.hosts.find(
+    (host) => host.id === props.device.hostId && host.kind === "linked",
+  );
+  // A hold from the device's own environment is not this user's to hand back.
+  const heldThere = hold?.linked !== undefined && linkedHost !== undefined;
   if (!props.state.supportsDeviceControl) return null;
   if (!held && (props.heldOnly || !props.state.agentAccessEnabled)) return null;
   const policy = deviceAccessPolicy(props.state.access, props.device);
@@ -53,9 +59,15 @@ export function DeviceHoldBar(props: {
           held ? "font-medium text-foreground" : "text-muted-foreground",
         )}
       >
-        {held ? "You are in control. Agent paused." : AGENT_STATUS[policy]}
+        {hold?.linked
+          ? `${hold.linked.label} is in control. Agents paused.`
+          : held
+            ? "You are in control. Agent paused."
+            : linkedHost
+              ? `Agents follow ${linkedHost.label}'s access settings for this device`
+              : AGENT_STATUS[policy]}
       </span>
-      {held || policy !== "deny" ? (
+      {!heldThere && (held || linkedHost || policy !== "deny") ? (
         <Button
           size="xs"
           variant={held ? "default" : "outline"}

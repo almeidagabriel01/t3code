@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
   close: vi.fn<(request: unknown) => Promise<CommandResult>>(),
   list: vi.fn<(request: unknown) => Promise<CommandResult>>(),
   setHold: vi.fn<(request: unknown) => Promise<CommandResult>>(),
+  answer: vi.fn<(request: unknown) => Promise<CommandResult>>(),
   canHold: true,
   openDevice: vi.fn(),
   closeSurface: vi.fn(),
@@ -80,6 +81,7 @@ vi.mock("~/state/device", async () => {
       wifiPairStart: { permissionAtom: () => ALLOWED },
       wifiPairCancel: "wifiPairCancel",
       forget: { permissionAtom: () => ALLOWED },
+      answerLinkRequest: { kind: "answer", permissionAtom: () => ALLOWED },
     },
     deviceHostProbeAtom: Atom.family((environmentId: string) =>
       Atom.make(() => Effect.promise(() => mocks.list({ environmentId, input: {} }))),
@@ -96,9 +98,11 @@ vi.mock("~/state/use-atom-command", () => ({
         ? mocks.close
         : command === "list"
           ? mocks.list
-          : typeof command === "object"
-            ? mocks.setHold
-            : () => Promise.resolve({ _tag: "Success", value: {} }),
+          : typeof command === "object" && "kind" in command
+            ? mocks.answer
+            : typeof command === "object"
+              ? mocks.setHold
+              : () => Promise.resolve({ _tag: "Success", value: {} }),
 }));
 vi.mock("~/state/query", () => ({ formatEnvironmentQueryError: () => "Device failed" }));
 vi.mock("~/rightPanelStore", () => ({
@@ -388,5 +392,154 @@ describe("DevicePanel takeover and physical devices", () => {
     );
     // Without the operate grant the switch is shown but cannot be pressed.
     if (action) await expect.element(screen.getByRole("button", { name: action })).toBeDisabled();
+  });
+
+  const studio = {
+    id: "linked.env-studio",
+    kind: "linked",
+    label: "Studio Mac",
+    environmentId: "env-studio",
+    linkState: "connected",
+    platforms: [{ platform: "android", available: true }],
+    hubInstalled: true,
+    agentDeviceInstalled: true,
+  } as const;
+  const galaxy = { ...pixel, hostId: studio.id, id: "R5CX", name: "Galaxy" } as const;
+
+  it.each([
+    [
+      "a linked device the owner holds",
+      { holds: [{ ...held("R5CX"), hostId: studio.id, linked: { label: "Studio Mac" } }] },
+      "Studio Mac is in control. Agents paused.",
+      null,
+    ],
+    [
+      "a linked device nobody holds",
+      {},
+      "Agents follow Studio Mac's access settings for this device",
+      "Take over",
+    ],
+  ] as const)("hold bar: %s", async (_name, extra, status, action) => {
+    setup();
+    await using _screen = await render(
+      <DeviceHoldBar
+        environmentId={threadA.environmentId}
+        state={withControl({ hosts: [...deviceState.hosts, studio], devices: [galaxy], ...extra })}
+        device={galaxy}
+      />,
+      { container },
+    );
+
+    expect(container.querySelector('[role="status"]')?.textContent).toBe(
+      `${status}${action ?? ""}`,
+    );
+  });
+});
+
+describe("DevicePanel linked environments", () => {
+  const studio = {
+    id: "linked.env-studio",
+    kind: "linked",
+    label: "Studio Mac",
+    environmentId: "env-studio",
+    linkState: "connected",
+    platforms: [{ platform: "android", available: true }],
+    hubInstalled: true,
+    agentDeviceInstalled: true,
+  } as const;
+  const attic = {
+    ...studio,
+    id: "linked.env-attic",
+    label: "Attic PC",
+    environmentId: "env-attic",
+    linkState: "link_down",
+    linkDetail: "Attic PC is not reachable over the link: No address answered.",
+  } as const;
+  const galaxy = {
+    hostId: studio.id,
+    id: "R5CX",
+    name: "Galaxy",
+    platform: "android",
+    version: "Android 16",
+    booted: true,
+    physical: true,
+  } as const;
+  const atticPhone = { ...galaxy, hostId: attic.id, id: "ATTIC", name: "Old Pixel" } as const;
+
+  it("lists each linked environment's devices under its name and state", async () => {
+    setup();
+    currentState = {
+      ...deviceState,
+      hosts: [...deviceState.hosts, attic, studio],
+      devices: [phone, galaxy, atticPhone],
+    };
+    await using screen = await render(devicePanel(threadA), { container });
+
+    const headings = [...container.querySelectorAll("h3")].map((heading) => heading.textContent);
+    expect(headings).toEqual(["iOS Simulators", "Attic PC", "Studio Mac"]);
+    await expect.element(screen.getByText("Connected", { exact: true })).toBeInTheDocument();
+    await expect.element(screen.getByText("Link down", { exact: true })).toBeInTheDocument();
+    await expect.element(screen.getByText(attic.linkDetail)).toBeInTheDocument();
+    await expect.element(screen.getByRole("button", { name: "Open Galaxy" })).toBeEnabled();
+    await expect.element(screen.getByRole("button", { name: "Open Old Pixel" })).toBeDisabled();
+    await expect.element(screen.getByText("Physical", { exact: true }).first()).toBeInTheDocument();
+  });
+
+  it("says a connected linked environment has no devices, and shows nothing without links", async () => {
+    setup();
+    currentState = { ...deviceState, hosts: [...deviceState.hosts, studio] };
+    await using screen = await render(devicePanel(threadA), { container });
+    await expect.element(screen.getByText("No devices on Studio Mac.")).toBeInTheDocument();
+
+    currentState = deviceState;
+    await screen.rerender(devicePanel(threadA));
+    await expect.element(screen.getByText("Studio Mac")).not.toBeInTheDocument();
+  });
+
+  it("shows the owner who uses a device from a link, and answers a link's request", async () => {
+    setup();
+    mocks.answer.mockResolvedValue({ _tag: "Success", value: { hostId: "", deviceId: "" } });
+    currentState = {
+      ...deviceState,
+      sessions: [
+        {
+          ...deviceState.sessions[0]!,
+          threadId: ThreadId.make("linked:link-1:thread-9"),
+          linked: { label: "Laptop", threadTitle: "Fix login" },
+        },
+      ],
+      holds: [
+        {
+          hostId: "local",
+          deviceId: "phone",
+          since: "2026-01-01T00:00:00.000Z",
+          linked: { label: "Laptop" },
+        },
+      ],
+      linkRequests: [
+        {
+          requestId: "r-1",
+          linkLabel: "Laptop",
+          threadTitle: "Fix login",
+          hostId: "local",
+          deviceId: "phone",
+          deviceName: "Phone",
+        },
+      ],
+    };
+    await using screen = await render(devicePanel(threadA), { container });
+
+    await expect
+      .element(screen.getByText(/Laptop is in control · Used by “Fix login” on Laptop/))
+      .toBeInTheDocument();
+    await expect
+      .element(screen.getByText("“Fix login” on Laptop wants to use Phone."))
+      .toBeInTheDocument();
+    await screen.getByRole("button", { name: "Allow", exact: true }).click();
+    await screen.getByRole("button", { name: "Don't allow" }).click();
+    expect(mocks.answer.mock.calls).toEqual([
+      [{ environmentId: threadA.environmentId, input: { requestId: "r-1", allow: true } }],
+      [{ environmentId: threadA.environmentId, input: { requestId: "r-1", allow: false } }],
+    ]);
   });
 });

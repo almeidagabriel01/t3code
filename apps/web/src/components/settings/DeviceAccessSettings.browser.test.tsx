@@ -101,6 +101,28 @@ describe("DeviceAccessSettings", () => {
     ["the client may not change settings", { ...state }, false, 2],
     ["the server has no device control", { ...state, supportsDeviceControl: false }, true, 0],
     ["no device is known", { ...state, devices: [] }, true, 0],
+    [
+      "only a linked environment's devices are known, set there",
+      {
+        ...state,
+        hosts: [
+          ...state.hosts,
+          {
+            id: "linked.env-studio",
+            kind: "linked",
+            label: "Studio Mac",
+            environmentId: "env-studio",
+            linkState: "connected",
+            platforms: [],
+            hubInstalled: true,
+            agentDeviceInstalled: true,
+          },
+        ],
+        devices: [{ ...device("pixel", "Pixel", true), hostId: "linked.env-studio" }],
+      },
+      true,
+      0,
+    ],
   ] as const)("is read-only or absent when %s", async (_name, next, canEdit, rows) => {
     setup(canEdit);
     await using screen = await render(
