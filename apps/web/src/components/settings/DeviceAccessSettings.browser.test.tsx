@@ -42,7 +42,11 @@ const state: DeviceServiceState = {
   ],
   hostStatus: "ready",
   hostStatuses: {},
-  devices: [device("emu", "Emulator", false), device("pixel", "Pixel", true)],
+  devices: [
+    device("emu", "Emulator", false),
+    device("pixel", "Pixel", true),
+    { ...device("desktop", "Studio (desktop)", true), platform: "desktop", version: "macOS" },
+  ],
   sessions: [],
   onboardingCompleted: true,
   agentAccessEnabled: true,
@@ -70,6 +74,7 @@ describe("DeviceAccessSettings", () => {
     await expect
       .element(screen.getByRole("combobox", { name: "Agent access to Emulator" }))
       .toHaveTextContent("Never");
+    // Only the phone is badged: the computer itself is not a "physical device".
     await expect.element(screen.getByText("Physical", { exact: true })).toBeInTheDocument();
     await expect
       .element(screen.getByText("This Mac · Android 16. Agents cannot use this device."))
@@ -98,7 +103,7 @@ describe("DeviceAccessSettings", () => {
   });
 
   it.each([
-    ["the client may not change settings", { ...state }, false, 2],
+    ["the client may not change settings", { ...state }, false, 3],
     ["the server has no device control", { ...state, supportsDeviceControl: false }, true, 0],
     ["no device is known", { ...state, devices: [] }, true, 0],
   ] as const)("is read-only or absent when %s", async (_name, next, canEdit, rows) => {

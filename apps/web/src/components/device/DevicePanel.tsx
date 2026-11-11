@@ -377,7 +377,7 @@ export function DevicePanel(props: {
                                       ) : null}
                                     </span>
                                     <span className="truncate text-xs text-muted-foreground">
-                                      {`${state.hosts.find((host) => host.id === device.hostId)?.label} · ${device.version}${deviceConnectionLabel(device)} · ${device.platform === "desktop" ? (device.booted ? "Available" : "Not ready") : device.physical ? (device.booted ? "Connected" : "Not ready") : device.booted ? "Running" : "Stopped"}${findDeviceHold(state.holds, device) ? " · You are in control" : ""}`}
+                                      {`${state.hosts.find((host) => host.id === device.hostId)?.label} · ${device.version}${deviceConnectionLabel(device)} · ${device.platform === "desktop" ? (device.booted && !viewBlocked ? "Available" : "Not ready") : device.physical ? (device.booted ? "Connected" : "Not ready") : device.booted ? "Running" : "Stopped"}${findDeviceHold(state.holds, device) ? " · You are in control" : ""}`}
                                     </span>
                                   </div>
                                   {findDeviceHold(state.holds, device) ? (

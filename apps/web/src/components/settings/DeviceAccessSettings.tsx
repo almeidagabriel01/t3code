@@ -53,7 +53,7 @@ export function DeviceAccessSettings(props: {
             title={
               <span className="flex items-center gap-2">
                 <span className="truncate">{device.name}</span>
-                {device.physical ? (
+                {device.physical && device.platform !== "desktop" ? (
                   <Badge variant="outline" size="sm">
                     Physical
                   </Badge>

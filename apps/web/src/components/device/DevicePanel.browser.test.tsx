@@ -438,7 +438,7 @@ describe("DevicePanel capture devices", () => {
     await expect.element(screen.getByText("Camera permission is off")).toBeVisible();
     await expect.element(screen.getByText("iPhone signing is not set up")).toBeVisible();
     await expect.element(screen.getByText("no team")).toBeVisible();
-    await expect.element(screen.getByText("This Mac · macOS · Available")).toBeVisible();
+    await expect.element(screen.getByText("This Mac · macOS · Not ready")).toBeVisible();
     const links = screen.getByRole("link", { name: "Open Mac permissions" });
     await expect.element(links).toHaveAttribute("href", "/settings/mac-permissions");
     expect(container.querySelectorAll("a")).toHaveLength(1);
