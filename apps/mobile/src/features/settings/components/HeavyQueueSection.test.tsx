@@ -1,4 +1,10 @@
-import type { EnvironmentId, HeavyQueueEntry, HeavyQueueState } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  HeavyCommand,
+  HeavyCommandsState,
+  HeavyQueueEntry,
+  HeavyQueueState,
+} from "@t3tools/contracts";
 import type { ReactNode } from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
@@ -7,6 +13,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 const { mocks } = vi.hoisted(() => ({
   mocks: {
     state: null as unknown as HeavyQueueState,
+    heavy: { commands: [], cpuCount: 8 } as HeavyCommandsState,
     can: true,
     commands: {} as Record<string, ReturnType<typeof vi.fn>>,
     alert: vi.fn(),
@@ -24,8 +31,11 @@ vi.mock("../../../state/entities", () => ({
   useThreadShell: (ref: { threadId: string } | null) =>
     ref === null || mocks.titles[ref.threadId] === undefined
       ? null
-      : { title: mocks.titles[ref.threadId] },
-  useProjects: () => [{ environmentId: "env", workspaceRoot: "/work/app", title: "App Project" }],
+      : { title: mocks.titles[ref.threadId], projectId: "p2" },
+  useProjects: () => [
+    { id: "p1", environmentId: "env", workspaceRoot: "/work/app", title: "App Project" },
+    { id: "p2", environmentId: "env", workspaceRoot: "/work/api", title: "Api Project" },
+  ],
 }));
 vi.mock("../../../state/heavyQueue", () => {
   const command = (id: string) => ({ permissionAtom: () => "p", id });
@@ -38,8 +48,10 @@ vi.mock("../../../state/heavyQueue", () => {
       setPaused: command("setPaused"),
       setRule: command("setRule"),
       setMaxRunning: command("setMaxRunning"),
+      stopCommand: command("stopCommand"),
     },
     useHeavyQueueState: () => mocks.state,
+    useHeavyCommandsState: () => mocks.heavy,
   };
 });
 vi.mock("../../../state/use-atom-command", () => ({
@@ -82,7 +94,7 @@ vi.mock("./SettingsSwitchRow", () => ({
   ),
 }));
 
-import { HeavyQueueSection } from "./HeavyQueueSection";
+import { HeavyCommandsSection, HeavyQueueSection } from "./HeavyQueueSection";
 
 const NOW = "2026-01-01T10:00:00.000Z";
 const entry = (id: string, extra: Partial<HeavyQueueEntry> = {}): HeavyQueueEntry => ({
@@ -125,6 +137,7 @@ async function mount() {
 
 afterEach(() => {
   mocks.can = true;
+  mocks.heavy = { commands: [], cpuCount: 8 };
   mocks.titles = {};
   mocks.commands = {};
   vi.clearAllMocks();
@@ -342,6 +355,109 @@ describe("HeavyQueueSection", () => {
         (el) => (el as HTMLButtonElement).disabled,
       ),
     ).toBe(true);
+    await view.unmount();
+  });
+});
+
+const GIB = 1024 ** 3;
+const heavy = (over: Partial<HeavyCommand>): HeavyCommand => ({
+  source: "agent",
+  pid: 12,
+  startTimeMs: 34,
+  threadId: "t1",
+  label: "/usr/bin/node vp test run",
+  name: "Tests",
+  startedAt: NOW,
+  stoppable: true,
+  cpu: 2.5,
+  memory: GIB,
+  peakCpu: 3,
+  peakMemory: 2 * GIB,
+  ...over,
+});
+
+async function mountCommands(commands: ReadonlyArray<HeavyCommand>) {
+  mocks.heavy = { commands, cpuCount: 8 };
+  const host = document.createElement("div");
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(<HeavyCommandsSection environmentId={"env" as EnvironmentId} />);
+  });
+  const buttons = (name: string) =>
+    [...host.querySelectorAll("button")].filter((b) => b.textContent === name);
+  return { host, buttons, unmount: () => act(() => root.unmount()) };
+}
+
+const confirmAlert = (index: number) => {
+  const buttons = mocks.alert.mock.calls[index]![2] as Array<{
+    text: string;
+    onPress?: () => void;
+  }>;
+  buttons.find((b) => b.text === "Stop")!.onPress!();
+};
+
+describe("HeavyCommandsSection", () => {
+  it("renders nothing while no heavy command runs", async () => {
+    const view = await mountCommands([]);
+    expect(view.host.innerHTML).toBe("");
+    await view.unmount();
+  });
+
+  it("describes each command with usage, project, thread, origin and run time", async () => {
+    mocks.titles = { t1: "Fix login" };
+    const view = await mountCommands([
+      heavy({
+        source: "queue",
+        entryId: "q1",
+        threadId: null,
+        cwd: "/work/app/src",
+        name: "Build",
+      }),
+      heavy({}),
+    ]);
+    const rows = [...view.host.querySelectorAll("p")].map((row) => row.textContent);
+    expect(rows[0]).toMatch(
+      /^Build\|node vp test run · Using 2.5 cores \(31%\) · 1.0 GB · peak 3.0 cores · 2.0 GB · App Project · Queued · Running /,
+    );
+    expect(rows[1]).toMatch(
+      /^Tests\|node vp test run · .* · Api Project · Fix login · Agent · Running /,
+    );
+    await act(async () => view.buttons("Open thread")[0]!.click());
+    expect(mocks.selectDetail).toHaveBeenCalledWith({
+      name: "Thread",
+      params: { environmentId: "env", threadId: "t1" },
+    });
+    await view.unmount();
+  });
+
+  it("stops after the alert: a direct command by its process, a queued one through the queue", async () => {
+    const view = await mountCommands([
+      heavy({}),
+      heavy({ source: "queue", entryId: "q1", pid: 50 }),
+      heavy({ source: "queue", entryId: "s", name: "Checkpoint", stoppable: false }),
+    ]);
+    const stops = view.buttons("Stop");
+    expect(stops).toHaveLength(2);
+    await act(async () => stops[0]!.click());
+    expect(mocks.commands.stopCommand).not.toHaveBeenCalled();
+    confirmAlert(0);
+    expect(mocks.commands.stopCommand).toHaveBeenCalledWith({
+      environmentId: "env",
+      input: { pid: 12, startTimeMs: 34 },
+    });
+    await act(async () => stops[1]!.click());
+    confirmAlert(1);
+    expect(mocks.commands.cancel).toHaveBeenCalledWith({
+      environmentId: "env",
+      input: { id: "q1" },
+    });
+    await view.unmount();
+  });
+
+  it("disables Stop without permission", async () => {
+    mocks.can = false;
+    const view = await mountCommands([heavy({})]);
+    expect(view.buttons("Stop")[0]!.disabled).toBe(true);
     await view.unmount();
   });
 });

@@ -6,6 +6,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
+import * as HeavyCommands from "../../../heavyQueue/HeavyCommands.ts";
 import * as HeavyQueue from "../../../heavyQueue/HeavyQueue.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as HostResources from "../../../resourceTelemetry/HostResources.ts";
@@ -41,6 +42,7 @@ const base = {
   reasons: {},
   machine: null,
   command: "t3 heavy --",
+  commands: [],
 };
 
 describe("heavyStatus", () => {
@@ -170,6 +172,27 @@ const callTool = (params: { action: "status" | "promote"; id?: string }, access?
               ? Effect.fail(new HeavyQueueError({ reason: "not-found", message: "No such entry." }))
               : Effect.sync(() => void promoted.push([id, note])),
         }),
+        Layer.mock(HeavyCommands.HeavyCommands)({
+          list: Effect.succeed({
+            cpuCount: 8,
+            commands: [
+              {
+                source: "agent",
+                pid: 12,
+                startTimeMs: 1,
+                threadId: "other",
+                label: "/usr/bin/node vp test run",
+                name: "Tests",
+                startedAt: "2026-01-01T00:00:00.000Z",
+                stoppable: true,
+                cpu: 2.5,
+                memory: 1024,
+                peakCpu: 3,
+                peakMemory: 2048,
+              },
+            ],
+          }),
+        }),
         Layer.mock(HostResources.HostResources)({
           read: Effect.succeed({
             sampledAt: 1,
@@ -196,6 +219,19 @@ describe("t3_heavy", () => {
         command: "t3 heavy --",
         running: { id: "run" },
         yours: [{ id: "w", position: 1 }],
+        commands: [
+          {
+            name: "Tests",
+            source: "agent",
+            threadId: "other",
+            pid: 12,
+            startedAt: "2026-01-01T00:00:00.000Z",
+            cpuCores: 2.5,
+            memoryBytes: 1024,
+            peakCpuCores: 3,
+            peakMemoryBytes: 2048,
+          },
+        ],
       });
     }),
   );

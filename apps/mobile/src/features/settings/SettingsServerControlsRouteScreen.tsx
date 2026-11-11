@@ -45,7 +45,7 @@ import {
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import { AutoSettleSettingsRows } from "./ThreadSettingsSections";
 import { KeepAwakeSection } from "./components/KeepAwakeSection";
-import { HeavyQueueSection } from "./components/HeavyQueueSection";
+import { HeavyCommandsSection, HeavyQueueSection } from "./components/HeavyQueueSection";
 import { WorktreeSnapshotsSection } from "./components/WorktreeSnapshotsSection";
 import { FallbackModelsSection } from "./components/FallbackModelsSection";
 import { FolderModelsSection } from "./components/FolderModelsSection";
@@ -571,6 +571,9 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                     disabled={disabledFor("keepAwake")}
                     onChange={(mode) => write({ keepAwake: mode })}
                   />
+                ) : null}
+                {!projectSelected ? (
+                  <HeavyCommandsSection environmentId={reference.environment.environmentId} />
                 ) : null}
                 {!projectSelected ? (
                   <HeavyQueueSection environmentId={reference.environment.environmentId} />

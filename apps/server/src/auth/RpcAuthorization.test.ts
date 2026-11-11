@@ -88,6 +88,7 @@ describe("RPC authorization scopes", () => {
       WS_METHODS.heavyQueueSetEnabled,
       WS_METHODS.heavyQueueSetRule,
       WS_METHODS.heavyQueueSetMaxRunning,
+      WS_METHODS.heavyQueueStopCommand,
     ]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthTerminalOperateScope);
     }

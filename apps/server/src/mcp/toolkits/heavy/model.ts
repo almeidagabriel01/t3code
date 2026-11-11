@@ -1,4 +1,4 @@
-import type { HeavyQueueEntry, HeavyQueueState } from "@t3tools/contracts";
+import type { HeavyCommand, HeavyQueueEntry, HeavyQueueState } from "@t3tools/contracts";
 import { heavyEntryName } from "@t3tools/shared/heavyEntryName";
 
 const LOAD_PER_CORE_HIGH = 1.5;
@@ -25,6 +25,8 @@ export const heavyStatus = (input: {
   /** The reading the queue last decided on; null when none is fresh. */
   readonly machine: HeavyQueueState["machine"];
   readonly command: string;
+  /** Every heavy command running now, queued or run directly, with its tree's usage. */
+  readonly commands: ReadonlyArray<HeavyCommand>;
 }) => {
   const loadPerCore = input.busyCores / Math.max(1, input.cpuCount);
   const availableMemoryPercent =
@@ -67,5 +69,16 @@ export const heavyStatus = (input: {
         position: waiting.find((waiter) => waiter.id === entry.id)?.position ?? 0,
       })),
     command: input.command,
+    commands: input.commands.map((command) => ({
+      name: command.name,
+      source: command.source,
+      threadId: command.threadId,
+      pid: command.pid,
+      startedAt: command.startedAt,
+      cpuCores: command.cpu ?? null,
+      memoryBytes: command.memory ?? null,
+      peakCpuCores: command.peakCpu ?? null,
+      peakMemoryBytes: command.peakMemory ?? null,
+    })),
   };
 };

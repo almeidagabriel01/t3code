@@ -32,7 +32,7 @@ import { createContext, use, useEffect, useState } from "react";
 import { useClientSettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { useDeviceState } from "../../state/device";
-import { useHeavyQueue } from "../../state/heavyQueue";
+import { useHeavyCommands, useHeavyQueue } from "../../state/heavyQueue";
 import { useProjects, useThreadShells } from "../../state/entities";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useEnvironmentQuery, useEnvironmentQuerySelector } from "../../state/query";
@@ -43,6 +43,7 @@ import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { HeavyCommandRows, type HeavyCommandThreads } from "./HeavyCommandsBody";
 import { HeavyQueueBody } from "./HeavyQueueBody";
 import { processLabel } from "./processLabel.logic";
 import {
@@ -491,6 +492,28 @@ function DeviceGroup({
   );
 }
 
+/** Renders nothing while no heavy command runs; while mounted the server samples processes. */
+export function HeavyCommandsGroup({
+  environmentId,
+  threads,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly threads: HeavyCommandThreads;
+}) {
+  const { commands, cpuCount } = useHeavyCommands(environmentId);
+  if (commands.length === 0) return null;
+  return (
+    <ProjectGroup title="Heavy commands" count={commands.length}>
+      <HeavyCommandRows
+        environmentId={environmentId}
+        commands={commands}
+        cpuCount={cpuCount}
+        threads={threads}
+      />
+    </ProjectGroup>
+  );
+}
+
 /** Renders nothing while the machine-wide heavy-work queue is on, empty and not paused. */
 export function HeavyQueueGroup({
   environmentId,
@@ -596,6 +619,14 @@ export function EnvironmentSection({
             Nothing running right now
           </div>
         ) : null}
+        <HeavyCommandsGroup
+          environmentId={environmentId}
+          threads={{
+            threadTitle: (threadId) => infoOf(threadId)?.title,
+            projectIdOfThread: (threadId) => infoOf(threadId)?.projectId,
+            onOpenThread: (threadId) => openThread(threadId as ThreadId),
+          }}
+        />
         {tree.projects.map((project) => (
           <ProjectGroup
             key={project.projectKey ?? UNATTRIBUTED}

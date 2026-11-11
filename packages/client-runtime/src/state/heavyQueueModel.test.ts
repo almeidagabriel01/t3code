@@ -1,11 +1,13 @@
-import type { HeavyQueueEntry } from "@t3tools/contracts";
+import type { HeavyCommand, HeavyQueueEntry } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 
 import {
   dropTarget,
   formatDuration,
+  heavyCommandKey,
   moveTarget,
   ordinal,
+  projectForCommand,
   projectForCwd,
   queueSummary,
   usageLine,
@@ -172,5 +174,43 @@ describe("summary and formatting", () => {
     expect(formatDuration("2026-01-01T02:04:55.000Z", now)).toBe("5s");
     expect(formatDuration("2026-01-01T01:55:00.000Z", now)).toBe("10m");
     expect(formatDuration("2026-01-01T00:00:00.000Z", now)).toBe("2h 5m");
+  });
+});
+
+describe("heavy commands", () => {
+  const command = (over: Partial<HeavyCommand>): HeavyCommand => ({
+    source: "agent",
+    pid: 12,
+    startTimeMs: 34,
+    threadId: "t1",
+    label: "vp test",
+    name: "Tests",
+    startedAt: "2026-01-01T00:00:00.000Z",
+    stoppable: true,
+    ...over,
+  });
+  const projects = [
+    { id: "app", workspaceRoot: "/w/app" },
+    { id: "api", workspaceRoot: "/w/api" },
+  ];
+  const threadProject = (threadId: string) => (threadId === "t1" ? "api" : undefined);
+
+  it.each([
+    { name: "a queue row by its folder", over: { cwd: "/w/app/src" }, expected: "app" },
+    {
+      name: "a folder outside every project falls back to the thread",
+      over: { cwd: "/tmp" },
+      expected: "api",
+    },
+    { name: "a direct command by its thread", over: {}, expected: "api" },
+    { name: "an unknown thread", over: { threadId: "t9" }, expected: undefined },
+    { name: "no thread and no folder", over: { threadId: null }, expected: undefined },
+  ])("finds the project of $name", ({ over, expected }) => {
+    expect(projectForCommand(command(over), projects, threadProject)?.id).toBe(expected);
+  });
+
+  it("keys a queue row by its entry and a direct one by its process identity", () => {
+    expect(heavyCommandKey(command({ entryId: "q1" }))).toBe("q1");
+    expect(heavyCommandKey(command({}))).toBe("12:34");
   });
 });

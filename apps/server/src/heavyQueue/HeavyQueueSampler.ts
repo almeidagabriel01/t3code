@@ -11,36 +11,23 @@ import * as Layer from "effect/Layer";
 
 import { HostResources } from "../resourceTelemetry/HostResources.ts";
 import { ResourceTelemetry } from "../resourceTelemetry/ResourceTelemetry.ts";
+import { childrenByParent, treeUsage } from "./classifyHeavyCommands.ts";
 import * as QueueFile from "./queueFile.ts";
 
 const SAMPLE_INTERVAL = "2 seconds";
 
-/** CPU percents count 100 per core; a job is its entry's process and everything beneath it. */
+/** A job is its entry's process and everything beneath it, in cores and resident bytes. */
 export const peaksOf = (
   entries: ReadonlyArray<HeavyQueueEntry>,
   processes: ReadonlyArray<ResourceTelemetryProcess>,
 ) => {
-  const children = new Map<number, ResourceTelemetryProcess[]>();
-  for (const process of processes) {
-    children.set(process.ppid, [...(children.get(process.ppid) ?? []), process]);
-  }
+  const children = childrenByParent(processes);
   const peaks: Record<string, { cpu: number; memoryBytes: number }> = {};
   for (const entry of entries) {
     if (entry.startedAt === null) continue;
     const root = processes.find((process) => process.identity.pid === entry.pid);
     if (root === undefined) continue;
-    let cpu = 0;
-    let memoryBytes = 0;
-    const seen = new Set<number>();
-    const stack = [root];
-    while (stack.length > 0) {
-      const next = stack.pop()!;
-      if (seen.has(next.identity.pid)) continue;
-      seen.add(next.identity.pid);
-      cpu += next.cpuPercent / 100;
-      memoryBytes += next.residentBytes;
-      stack.push(...(children.get(next.identity.pid) ?? []));
-    }
+    const { cpu, memoryBytes } = treeUsage(root, children);
     peaks[entry.id] = { cpu, memoryBytes };
   }
   return peaks;

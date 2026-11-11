@@ -169,6 +169,8 @@ const RPC_AGGREGATES = {
   [WS_METHODS.heavyQueueSetEnabled]: "heavyQueue",
   [WS_METHODS.heavyQueueSetRule]: "heavyQueue",
   [WS_METHODS.heavyQueueSetMaxRunning]: "heavyQueue",
+  [WS_METHODS.heavyQueueSubscribeCommands]: "heavyQueue",
+  [WS_METHODS.heavyQueueStopCommand]: "heavyQueue",
   [WS_METHODS.telegramChannelGetSettings]: "telegramChannel",
   [WS_METHODS.telegramChannelConfigure]: "telegramChannel",
   [WS_METHODS.telegramChannelSubscribeStatus]: "telegramChannel",

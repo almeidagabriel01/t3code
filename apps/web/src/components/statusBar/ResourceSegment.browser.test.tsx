@@ -22,8 +22,12 @@ vi.mock("./useKillTarget", () => ({
     promote: vi.fn(),
     cancel: vi.fn(),
   }),
+  useStopHeavyCommand: () => ({ canStop: false, stop: vi.fn() }),
 }));
-vi.mock("../../state/heavyQueue", () => ({ useHeavyQueue: () => ({ entries: [] }) }));
+vi.mock("../../state/heavyQueue", () => ({
+  useHeavyQueue: () => ({ entries: [] }),
+  useHeavyCommands: () => ({ commands: [], cpuCount: 1 }),
+}));
 vi.mock("../../state/session", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../state/session")>()),
   useEnvironmentScope: () => true,

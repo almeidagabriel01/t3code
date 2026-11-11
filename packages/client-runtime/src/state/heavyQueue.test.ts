@@ -8,6 +8,7 @@ it("builds a guarded command for every queue control, including the on/off switc
   const atoms = createHeavyQueueEnvironmentAtoms(Atom.runtime(Layer.empty) as never);
   expect(Object.keys(atoms).sort()).toEqual([
     "cancel",
+    "commands",
     "move",
     "promote",
     "setEnabled",
@@ -16,6 +17,7 @@ it("builds a guarded command for every queue control, including the on/off switc
     "setRule",
     "startNow",
     "state",
+    "stopCommand",
   ]);
   expect(atoms.setEnabled.permissionAtom("hub" as never)).toBeDefined();
 });

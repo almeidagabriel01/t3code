@@ -168,8 +168,12 @@ describe("heavy queue client guards", () => {
       WS_METHODS.heavyQueueSetEnabled,
       WS_METHODS.heavyQueueSetRule,
       WS_METHODS.heavyQueueSetMaxRunning,
+      WS_METHODS.heavyQueueStopCommand,
     ])
       expect(clientRpcRequiredScopes(method, {})).toEqual(["terminal:operate"]);
     expect(Object.hasOwn(CLIENT_GUARDED_RPC_SCOPES, WS_METHODS.heavyQueueSubscribe)).toBe(false);
+    expect(Object.hasOwn(CLIENT_GUARDED_RPC_SCOPES, WS_METHODS.heavyQueueSubscribeCommands)).toBe(
+      false,
+    );
   });
 });

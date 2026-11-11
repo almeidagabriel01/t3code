@@ -20,6 +20,12 @@ describe("liveOwners", () => {
       [2],
       1,
     ],
+    [
+      "keeps terminal owners off the wire",
+      [{ kind: "terminal", pid: 2, threadId: "t", terminalId: "default" }],
+      [2],
+      0,
+    ],
     ["returns nothing without processes", [{ kind: "agent", pid: 2, threadId: "t" }], [], 0],
   ] as const)("%s", (_name, registered, pids, expected) => {
     const owners = liveOwners(registered, pids.map(proc));
