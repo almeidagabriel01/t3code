@@ -5,10 +5,12 @@ import type { ProjectEntry } from "@t3tools/contracts";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { useEffect, useRef, useState } from "react";
-import { Pressable, RefreshControl, View } from "react-native";
+import type { MenuAction } from "@react-native-menu/menu";
+import { Pressable, RefreshControl, View, type GestureResponderEvent } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { PierreEntryIcon } from "../../components/PierreEntryIcon";
+import { Menu } from "../../components/ui/Menu";
 import { cn } from "../../lib/cn";
 import { useContentBottomInset, useContentTopInset } from "../../components/ui/useBarInset";
 import {
@@ -39,11 +41,14 @@ const FileTreeRow = function FileTreeRow(props: {
   readonly onPressDirectory: (path: string, expand: boolean) => void;
   readonly onPreviewFile?: (path: string) => void;
   readonly onPressFile: (path: string) => void;
+  /** Android's long-press menu hands its trigger to the row's own Pressable. */
+  readonly onLongPress?: (event: GestureResponderEvent) => void;
 }) {
   const { node, depth } = props.item;
 
   return (
     <Pressable
+      onLongPress={props.onLongPress}
       accessibilityRole="button"
       accessibilityLabel={node.path}
       accessibilityState={{ selected: props.selected }}
@@ -115,6 +120,13 @@ export function FileTreeBrowser(props: {
   readonly onPreviewFile?: (path: string) => void;
   readonly onRefresh: () => void;
   readonly onSelectFile: (path: string) => void;
+  /** "Find in Folder": the folder the search is limited to, with a way back to all files. */
+  readonly searchScope?: { readonly path: string; readonly onClear: () => void } | null;
+  readonly rowMenu?: (
+    path: string,
+    kind: FileTreeNode["kind"],
+    isExpanded: boolean,
+  ) => { readonly actions: MenuAction[]; readonly onPressAction: (id: string) => void };
 }) {
   const { expandedPaths, setExpandedPaths } = props;
   const [pendingSelection, setPendingSelection] = useState<{
@@ -197,17 +209,31 @@ export function FileTreeBrowser(props: {
     }, OPTIMISTIC_SELECTION_TIMEOUT_MS);
     onSelectFile(path);
   };
-  const renderItem = ({ item }: { readonly item: VisibleFileTreeNode }) => (
-    <FileTreeRow
-      item={item}
-      selected={item.node.kind === "file" && item.node.path === selectedPath}
-      expanded={expandedPaths.has(item.node.path)}
-      loading={loadingDirectories.has(item.node.path)}
-      onPressDirectory={toggleDirectory}
-      onPreviewFile={onPreviewFile}
-      onPressFile={handleSelectFile}
-    />
-  );
+  const renderItem = ({ item }: { readonly item: VisibleFileTreeNode }) => {
+    const expanded = expandedPaths.has(item.node.path);
+    const row = (
+      <FileTreeRow
+        item={item}
+        selected={item.node.kind === "file" && item.node.path === selectedPath}
+        expanded={expanded}
+        loading={loadingDirectories.has(item.node.path)}
+        onPressDirectory={toggleDirectory}
+        onPreviewFile={onPreviewFile}
+        onPressFile={handleSelectFile}
+      />
+    );
+    const menu = props.rowMenu?.(item.node.path, item.node.kind, expanded);
+    if (!menu || menu.actions.length === 0) return row;
+    return (
+      <Menu
+        actions={menu.actions}
+        onPressAction={({ nativeEvent }) => menu.onPressAction(nativeEvent.event)}
+        shouldOpenOnLongPress
+      >
+        {row}
+      </Menu>
+    );
+  };
 
   const extraData = { expandedPaths, loadingDirectories, selectedPath };
 
@@ -236,6 +262,21 @@ export function FileTreeBrowser(props: {
       renderItem={renderItem}
       ListHeaderComponent={
         <>
+          {props.searchScope ? (
+            <View className="mx-4 my-2 flex-row items-center gap-2">
+              <Text className="min-w-0 flex-1 text-xs text-foreground-muted" numberOfLines={1}>
+                Searching in {props.searchScope.path}/
+              </Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Search all files"
+                hitSlop={8}
+                onPress={props.searchScope.onClear}
+              >
+                <SymbolView name="xmark" size={12} tintColorClassName="accent-icon-muted" />
+              </Pressable>
+            </View>
+          ) : null}
           {props.error && props.entries.length > 0 ? (
             <Text accessibilityRole="alert" className="mx-4 my-2 text-xs text-foreground-muted">
               {props.error}

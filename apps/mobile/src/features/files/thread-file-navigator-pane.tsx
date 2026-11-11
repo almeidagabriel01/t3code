@@ -13,6 +13,8 @@ import { useThreadSelection } from "../../state/use-thread-selection";
 import { ThreadWorkspaceNotice, useThreadWorkspaceCleaned } from "../threads/ThreadWorkspaceNotice";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { FileTreeBrowser } from "./FileTreeBrowser";
+import { scopeSearchResults } from "./fileTree";
+import { useFileExplorer } from "./useFileExplorer";
 import { useFileTreeEntries } from "./useFileTreeEntries";
 import { preloadWorkspaceFileContents } from "./preload-workspace-file";
 
@@ -24,6 +26,7 @@ export function ThreadFileNavigatorPane(props: {
   readonly onSelectFile: (path: string) => void;
 }) {
   const [searchQuery, setSearchQuery] = useState("");
+  const [searchScope, setSearchScope] = useState<string | null>(null);
   const { selectedThread } = useThreadSelection();
   const { selectedThreadWorktreePath: worktreePath } = useSelectedThreadWorktree();
   // Only the thread's own worktree is replaced; a host folder opened from it still lists.
@@ -54,6 +57,22 @@ export function ThreadFileNavigatorPane(props: {
     cwd: canReadFiles ? props.cwd : null,
     searchQuery,
   });
+  const explorer = useFileExplorer({
+    environmentId: props.environmentId,
+    cwd: props.cwd,
+    entries: entriesQuery.entries,
+    selectedPath: props.selectedPath ?? entriesQuery.selectedPath,
+    setExpandedPaths: entriesQuery.setExpandedPaths,
+    onOpenFile: (path) => {
+      entriesQuery.selectPath(path);
+      props.onSelectFile(path);
+    },
+    onFindInFolder: (path) => {
+      setSearchScope(path);
+      entriesQuery.setExpandedPaths((current) => new Set(current).add(path));
+    },
+    refresh: entriesQuery.refresh,
+  });
   const handlePreviewFile = (relativePath: string) => {
     preloadWorkspaceFileContents({
       cwd: props.cwd,
@@ -81,7 +100,11 @@ export function ThreadFileNavigatorPane(props: {
       isPending={fileAccess.isPending || entriesQuery.isPending}
       isRefreshing={entriesQuery.isRefreshing}
       searchQuery={searchQuery}
-      searchResultPaths={entriesQuery.searchResultPaths}
+      searchResultPaths={scopeSearchResults(entriesQuery.searchResultPaths, searchScope)}
+      searchScope={
+        searchScope === null ? null : { path: searchScope, onClear: () => setSearchScope(null) }
+      }
+      rowMenu={canReadFiles ? explorer.rowMenu : undefined}
       searchTruncated={entriesQuery.searchTruncated}
       selectedPath={props.selectedPath ?? entriesQuery.selectedPath}
       onPreviewFile={handlePreviewFile}
@@ -120,6 +143,7 @@ export function ThreadFileNavigatorPane(props: {
           placeholder: "Search files",
         }}
         refresh={{ accessibilityLabel: "Refresh files", onPress: entriesQuery.refresh }}
+        menus={canReadFiles ? [explorer.headerMenu] : undefined}
       />
     </View>
   );

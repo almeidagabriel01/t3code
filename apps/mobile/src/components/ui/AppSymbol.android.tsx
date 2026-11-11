@@ -6,6 +6,9 @@ import IconAlertCircle from "@tabler/icons-react-native/IconAlertCircle";
 import IconAlertTriangle from "@tabler/icons-react-native/IconAlertTriangle";
 import IconApps from "@tabler/icons-react-native/IconApps";
 import IconArchive from "@tabler/icons-react-native/IconArchive";
+import IconCopyPlus from "@tabler/icons-react-native/IconCopyPlus";
+import IconFilePlus from "@tabler/icons-react-native/IconFilePlus";
+import IconFolderSearch from "@tabler/icons-react-native/IconFolderSearch";
 import IconCalendarClock from "@tabler/icons-react-native/IconCalendarClock";
 import IconHourglass from "@tabler/icons-react-native/IconHourglass";
 import IconStopwatch from "@tabler/icons-react-native/IconStopwatch";
@@ -245,6 +248,7 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   "chevron.up": IconChevronUp,
   desktopcomputer: IconDeviceDesktop,
   doc: IconFileText,
+  "doc.badge.plus": IconFilePlus,
   "doc.on.doc": IconCopy,
   "doc.text": IconFileText,
   "file.diff": IconFileDiff,
@@ -281,6 +285,7 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   macmini: IconServer,
   macstudio: IconDeviceDesktop,
   magnifyingglass: IconSearch,
+  "text.magnifyingglass": IconFolderSearch,
   mic: IconMicrophone,
   paintbrush: IconPalette,
   pencil: IconPencil,
@@ -312,6 +317,7 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   "square.and.arrow.up": IconShare,
   "square.and.pencil": IconEdit,
   "square.on.square": IconCopy,
+  "plus.square.on.square": IconCopyPlus,
   "square.grid.2x2": IconApps,
   "square.split.2x1": IconLayoutColumns,
   star: IconStar,

@@ -132,3 +132,12 @@ export function flattenFileTree(input: {
   }
   return output;
 }
+
+/** Search results limited to one folder's subtree; null stays null so the tree browses normally. */
+export function scopeSearchResults(
+  results: ReadonlySet<string> | null,
+  scope: string | null,
+): ReadonlySet<string> | null {
+  if (results === null || scope === null) return results;
+  return new Set([...results].filter((path) => path === scope || path.startsWith(`${scope}/`)));
+}
