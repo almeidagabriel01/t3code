@@ -235,6 +235,31 @@ it("reserves readable title space beside audio and an active close at minimum wi
   expect(tab.scrollWidth).toBeLessThanOrEqual(tab.clientWidth);
 });
 
+it("reveals an inactive minimum-width tab's close on focus and hover without shifting its title", async () => {
+  await using screen = await render(<Fixture initial={files(4)} width={440} />);
+  await vi.waitFor(() => expect(tabs(screen.container)[2]!.getBoundingClientRect().width).toBe(96));
+  const tab = tabs(screen.container)[2]!;
+  const closeButton = tab.querySelector<HTMLElement>("button[aria-label^='Close']")!;
+  const label = [...tab.querySelectorAll("span")].find(
+    (span) => span.textContent === "Long descriptive document 2.md",
+  )!;
+  const labelBox = label.getBoundingClientRect();
+  expect(getComputedStyle(closeButton).visibility).toBe("hidden");
+  await act(() => tab.focus());
+  await vi.waitFor(() => expect(getComputedStyle(closeButton).visibility).toBe("visible"));
+  await userEvent.click(screen.getByRole("button", { name: "Outside the tab strip" }));
+  await vi.waitFor(() => expect(getComputedStyle(closeButton).visibility).toBe("hidden"));
+  await userEvent.hover(tab);
+  const close = screen.getByRole("button", { name: "Close Long descriptive document 2.md" });
+  await expect.element(close).toBeVisible();
+  expect(label.getBoundingClientRect()).toEqual(labelBox);
+  await userEvent.click(close);
+  await vi.waitFor(() => expect(tabs(screen.container)).toHaveLength(3));
+  await expect
+    .element(screen.getByRole("tab", { name: "a.ts" }))
+    .toHaveAttribute("aria-selected", "true");
+});
+
 it("preserves the scrolled span on middle and rightmost close and releases it on keyboard navigation", async () => {
   await using screen = await render(<Fixture initial={files(8)} width={460} />);
   const scroller = viewport(screen.container);
