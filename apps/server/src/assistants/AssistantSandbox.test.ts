@@ -26,6 +26,10 @@ type Docker = {
   answers: boolean;
   calls: string[][];
   failing: string | null;
+  /** The daemon's cores (`docker info`). */
+  cores: number;
+  /** The container's stored limit, as `HostConfig.NanoCpus`; 0 is none. */
+  nanoCpus: number;
 };
 
 const harness = (initial: Partial<Docker> = {}, bundleFails = false) => {
@@ -36,6 +40,8 @@ const harness = (initial: Partial<Docker> = {}, bundleFails = false) => {
     answers: true,
     calls: [],
     failing: null,
+    cores: 4,
+    nanoCpus: 0,
     ...initial,
   };
   const out = (stdout: string, code = 0, stderr = "") =>
@@ -70,9 +76,14 @@ const harness = (initial: Partial<Docker> = {}, bundleFails = false) => {
         case "build":
           docker.image = true;
           return out("built");
-        case "run":
+        case "run": {
+          const at = args.indexOf("--cpus");
+          const cpus = at === -1 ? 0 : Number(args[at + 1]);
+          if (cpus > docker.cores) return out("", 1, "Range of CPUs is from 0.01 to 4.00");
           docker.container = "running";
+          docker.nanoCpus = cpus * 1e9;
           return out("abc123");
+        }
         case "start":
           docker.container = "running";
           return out("name");
@@ -81,14 +92,23 @@ const harness = (initial: Partial<Docker> = {}, bundleFails = false) => {
           return out("name");
         case "rm":
           docker.container = "none";
+          docker.nanoCpus = 0;
           return out("name");
         case "volume":
-        case "update":
           return out("");
+        case "info":
+          return out(`${docker.cores}\n`);
+        case "update": {
+          // As the daemon does: 0 leaves the stored limit alone, more than its cores is refused.
+          const cpus = Number(args[args.indexOf("--cpus") + 1]);
+          if (cpus > docker.cores) return out("", 1, "Range of CPUs is from 0.01 to 4.00");
+          if (cpus !== 0) docker.nanoCpus = cpus * 1e9;
+          return out("");
+        }
         case "inspect":
-          return docker.container === "none"
-            ? out("", 1, "No such object")
-            : out(docker.container === "running" ? "true" : "false");
+          if (docker.container === "none") return out("", 1, "No such object");
+          if (args.includes("{{.HostConfig.NanoCpus}}")) return out(String(docker.nanoCpus));
+          return out(docker.container === "running" ? "true" : "false");
         case "port":
           return out("127.0.0.1:49153\n");
         case "exec":
@@ -193,6 +213,8 @@ describe("AssistantSandbox", () => {
         assert.include(run, "127.0.0.1::3773");
         assert.include(run, "unless-stopped");
         assert.include(run.join(" "), "t3-assistant-sandbox-77830f5d-home:/home/t3");
+        // Sign-ins live under HOME, which must be that volume for a discard to keep them.
+        assert.match(AssistantSandbox.sandboxDockerfile, /^ENV HOME=\/home\/t3 /m);
         assert.include(run.join(" "), "t3-assistant-sandbox-77830f5d-work:/workspace");
         assert.include(run.join(" "), "/base/shared:/home/t3/shared");
         assert.isTrue(run.at(-1)!.startsWith("t3-assistant-sandbox:1.2.3-"));
@@ -228,14 +250,13 @@ describe("AssistantSandbox", () => {
   );
 
   it.effect(
-    "the CPU limit is passed at creation and lifted or changed on a container that exists",
+    "the CPU limit is set at creation, clamped to Docker's cores, and lifted on a container that exists",
     () =>
       Effect.gen(function* () {
         yield* withSandbox({}, (s, docker) =>
           Effect.gen(function* () {
             yield* s.ensure(2);
-            const run = docker.calls.find((call) => call[0] === "run")!;
-            assert.strictEqual(run[run.indexOf("--cpus") + 1], "2");
+            assert.strictEqual(docker.nanoCpus, 2e9);
           }),
         );
         yield* withSandbox({}, (s, docker) =>
@@ -245,23 +266,33 @@ describe("AssistantSandbox", () => {
               docker.calls.find((call) => call[0] === "run")!,
               "--cpus",
             );
+            assert.strictEqual(docker.nanoCpus, 0);
           }),
         );
-        yield* withSandbox({ container: "stopped" }, (s, docker) =>
+        // A Mac's core count is not the Docker VM's: 8 asked on 4 means all 4, not a failed start.
+        yield* withSandbox({}, (s, docker) =>
           Effect.gen(function* () {
-            yield* s.ensure(4);
-            assert.deepStrictEqual(
-              docker.calls.find((call) => call[0] === "update"),
-              ["update", "--cpus", "4", "t3-assistant-sandbox-77830f5d"],
-            );
+            assert.strictEqual((yield* s.ensure(8)).state, "running");
+            assert.strictEqual(docker.nanoCpus, 4e9);
+          }),
+        );
+        yield* withSandbox({ container: "stopped", nanoCpus: 2e9 }, (s, docker) =>
+          Effect.gen(function* () {
+            yield* s.ensure(null);
+            assert.strictEqual(docker.nanoCpus, 4e9);
+            yield* s.setCpus(1);
+            assert.strictEqual(docker.nanoCpus, 1e9);
             yield* s.setCpus(null);
-            assert.deepStrictEqual(
-              docker.calls
-                .filter((call) => call[0] === "update")
-                .at(-1)
-                ?.slice(1, 3),
-              ["--cpus", "0"],
-            );
+            assert.strictEqual(docker.nanoCpus, 4e9);
+          }),
+        );
+        // A container that never had a limit is left alone, so it keeps every core Docker gains later.
+        yield* withSandbox({ container: "running" }, (s, docker) =>
+          Effect.gen(function* () {
+            yield* s.setCpus(null);
+            yield* s.ensure(null);
+            assert.notInclude(commands(docker), "update");
+            assert.strictEqual(docker.nanoCpus, 0);
           }),
         );
         yield* withSandbox({}, (s, docker) =>

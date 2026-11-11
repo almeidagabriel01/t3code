@@ -6,11 +6,14 @@ import {
   type PeerLinkCreateInput,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -36,6 +39,8 @@ interface World {
   /** The limit each `ensure` and `setCpus` was given. */
   ensured: Array<number | null>;
   limits: Array<number | null>;
+  /** What `ensure` waits on first, standing for an image build. */
+  hold: Effect.Effect<void>;
 }
 
 const harness = (
@@ -53,6 +58,7 @@ const harness = (
     removed: [],
     ensured: [],
     limits: [],
+    hold: Effect.void,
     ...initial,
   };
   const status = () =>
@@ -63,22 +69,26 @@ const harness = (
   const sandbox = Layer.succeed(AssistantSandbox.AssistantSandbox, {
     status: Effect.sync(status),
     ensure: (cpus) =>
-      Effect.suspend(() => {
-        world.ensured.push(cpus);
-        if (world.ensureError !== null) {
-          return Effect.fail(
-            new AssistantSandbox.AssistantSandboxError({
-              reason: "docker_failed",
-              message: world.ensureError,
-            }),
-          );
-        }
-        if (world.container !== "running") {
-          world.container = "running";
-          world.url = url;
-        }
-        return Effect.sync(status);
-      }),
+      Effect.suspend(() => world.hold).pipe(
+        Effect.andThen(
+          Effect.suspend(() => {
+            world.ensured.push(cpus);
+            if (world.ensureError !== null) {
+              return Effect.fail(
+                new AssistantSandbox.AssistantSandboxError({
+                  reason: "docker_failed",
+                  message: world.ensureError,
+                }),
+              );
+            }
+            if (world.container !== "running") {
+              world.container = "running";
+              world.url = url;
+            }
+            return Effect.sync(status);
+          }),
+        ),
+      ),
     setCpus: (cpus) => Effect.sync(() => void world.limits.push(cpus)),
     stop: Effect.sync(() => {
       world.container = "stopped";
@@ -417,6 +427,75 @@ it.effect("discard removes the container but not while a task still runs in it",
     assert.deepStrictEqual(world.removed, [false]);
     // Nothing left to discard is not an error.
     assert.strictEqual((yield* control.discard).state, "not_created");
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("a task waits a while for a first build, then is told to ask again", () => {
+  const { world, layer } = harness();
+  return Effect.gen(function* () {
+    const { control } = yield* configured;
+    const built = yield* Deferred.make<void>();
+    world.hold = Deferred.await(built);
+    const first = yield* control.startForTask.pipe(Effect.forkChild({ startImmediately: true }));
+    yield* TestClock.adjust("90 seconds");
+    assert.strictEqual((yield* Fiber.join(first)).state, "starting");
+    // A second task during the build joins it, and the build stays one started for tasks.
+    const second = yield* control.startForTask.pipe(Effect.forkChild({ startImmediately: true }));
+    yield* Deferred.succeed(built, undefined);
+    assert.deepInclude(yield* Fiber.join(second), { state: "running", environmentId: sandboxId });
+    assert.deepStrictEqual(world.ensured, [null]);
+    assert.isTrue((yield* control.config).oneOff);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("discard and remove are refused while the container is starting", () => {
+  const { world, layer } = harness();
+  return Effect.gen(function* () {
+    const { control } = yield* configured;
+    const built = yield* Deferred.make<void>();
+    world.hold = Deferred.await(built);
+    assert.strictEqual((yield* control.start).state, "starting");
+    assert.include((yield* Effect.flip(control.discard)).message, "is starting");
+    assert.include(
+      (yield* Effect.flip(control.remove({ deleteVolumes: true }))).message,
+      "is starting",
+    );
+    assert.deepStrictEqual(world.removed, []);
+    yield* Deferred.succeed(built, undefined);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("a task on its way into the container keeps it from being discarded", () => {
+  const { world, layer } = harness();
+  return Effect.gen(function* () {
+    const { control } = yield* configured;
+    yield* forTask("t1");
+    const recorded = yield* Deferred.make<void>();
+    const sending = yield* control
+      .holding(Deferred.await(recorded))
+      .pipe(Effect.forkChild({ startImmediately: true }));
+    yield* control.taskEnded("t1");
+    assert.deepStrictEqual(world.removed, []);
+    assert.include((yield* Effect.flip(control.discard)).message, "on its way");
+    yield* Deferred.succeed(recorded, undefined);
+    yield* Fiber.join(sending);
+    assert.strictEqual((yield* control.discard).state, "not_created");
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("a task that already has its result never keeps the container", () => {
+  const { world, layer } = harness();
+  return Effect.gen(function* () {
+    const { control, sql } = yield* configured;
+    yield* forTask("t1");
+    // Its end was recorded here, but the server stopped before the sandbox heard of it.
+    yield* sql`
+      INSERT INTO orchestration_v2_projection_subagents
+        (subagent_id, thread_id, parent_node_id, provider, origin, status, updated_at, payload_json)
+      VALUES ('t1', 'thread-1', 'node-1', 'remote', 'app_owned', 'completed', 'now',
+        '{"result":"Done."}')`;
+    assert.strictEqual((yield* control.discard).state, "not_created");
+    assert.deepStrictEqual(world.removed, [false]);
   }).pipe(Effect.provide(layer));
 });
 

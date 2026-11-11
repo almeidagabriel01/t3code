@@ -1,14 +1,18 @@
 import * as NodeOS from "node:os";
 
-import { OrchestratorMcpFailure } from "@t3tools/contracts";
+import { type EnvironmentId, OrchestratorMcpFailure } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import type * as Schema from "effect/Schema";
 
 import * as AssistantSandboxControl from "../../../assistants/AssistantSandboxControl.ts";
 import * as AssistantService from "../../../assistants/AssistantService.ts";
 import * as DecisionService from "../../../decisions/DecisionService.ts";
+import * as PeerForwarding from "../../../peer/PeerForwarding.ts";
 import * as RemoteDelegation from "../../../peer/RemoteDelegation.ts";
-import { requireThreadScope } from "../../McpInvocationContext.ts";
+import { type McpThreadInvocationScope, requireThreadScope } from "../../McpInvocationContext.ts";
+import { PROVIDER_UNAUTHENTICATED } from "../../OrchestratorMcpService.ts";
+import { OrchestratorToolkit } from "../orchestrator/tools.ts";
 import { type Caller, unavailable } from "../../threadAccess.ts";
 import type { AssistantParameters } from "./tools.ts";
 
@@ -70,11 +74,40 @@ const askCpuLimit = Effect.fn("mcp.assistant.askCpuLimit")(function* (caller: Ca
     const answer = decision.status === "answered" ? decision.answer?.optionId : undefined;
     const cpus = answer === "none" ? null : Number(answer?.replace("cpus-", ""));
     if (answer === undefined || (cpus !== null && !Number.isInteger(cpus))) {
-      return yield* invalid("The user did not choose a CPU limit. Do not retry.");
+      return yield* invalid(
+        "The user did not choose a CPU limit. Tell them to set it in Settings → Assistants → Sandbox → CPU limit; do not retry until they have.",
+      );
     }
     yield* control.configure({ cpus }).pipe(Effect.mapError(() => unavailable()));
     return null;
   }
+});
+
+/**
+ * The container has its own provider sign-ins, so a task on a provider that cannot run there would
+ * only fail later. A container that cannot say, or does not list the provider, is left to the launch.
+ */
+const requireProviderThere = Effect.fn("mcp.assistant.requireProviderThere")(function* (
+  scope: McpThreadInvocationScope,
+  environmentId: EnvironmentId,
+  instanceId: string,
+) {
+  const forwarding = yield* PeerForwarding.PeerForwarding;
+  const capabilities = yield* forwarding
+    .call(scope, OrchestratorToolkit.tools.orchestrator_capabilities, environmentId, {
+      environmentId,
+    })
+    .pipe(Effect.option);
+  const provider = Option.isSome(capabilities)
+    ? capabilities.value.providers.find((entry) => entry.providerInstanceId === instanceId)
+    : undefined;
+  if (provider === undefined || provider.canRunChildTask) return;
+  const signIn = provider.constraints.includes(PROVIDER_UNAUTHENTICATED)
+    ? " The user signs it in at Settings → Assistants → Sandbox → Sign in, on the Mac that runs the container."
+    : "";
+  return yield* invalid(
+    `${provider.displayName ?? instanceId} cannot run in the container: ${provider.constraints.join(" ")}${signIn} Tell the user; do not retry until they fix it.`,
+  );
 });
 
 /**
@@ -107,36 +140,44 @@ export const containerTask = Effect.fn("mcp.assistant.containerTask")(function* 
   }
   const pending = yield* askCpuLimit(caller);
   if (pending !== null) return pending;
-  const status = yield* control.startForTask;
-  if (status.state !== "running" || status.environmentId === null) {
-    if (status.state === "starting") {
+  const instanceId = caller.caller.modelSelection.instanceId;
+  // Held from the start to the record, so another task ending meanwhile does not discard it.
+  return yield* control.holding(
+    Effect.gen(function* () {
+      const status = yield* control.startForTask;
+      if (status.state !== "running" || status.environmentId === null) {
+        if (status.state === "starting") {
+          return {
+            status: "starting",
+            message:
+              "The container is starting (the first time builds its image, which takes minutes). Repeat this same call (same clientRequestId) in a while.",
+          } satisfies Out;
+        }
+        return yield* invalid(
+          status.error ?? "The sandbox container is not available. Tell the user; do not retry.",
+        );
+      }
+      const scope = yield* requireThreadScope(caller.scope, "container_task");
+      yield* requireProviderThere(scope, status.environmentId, instanceId);
+      const { taskId } = yield* delegation.delegate(
+        scope,
+        {
+          task,
+          mode: "async",
+          ...(input.name === undefined ? {} : { title: input.name }),
+          clientRequestId: key,
+          target: { environmentId: status.environmentId },
+        },
+        { cloneMissingProject: true },
+      );
       return {
-        status: "starting",
-        message:
-          "The container is starting (the first time builds its image, which takes minutes). Repeat this same call (same clientRequestId) in a while.",
+        status: "started",
+        taskId,
+        environmentId: status.environmentId,
+        next: "It runs in the container; its result arrives here as a new message. End your turn. You stay on this Mac.",
       } satisfies Out;
-    }
-    return yield* invalid(
-      status.error ?? "The sandbox container is not available. Tell the user; do not retry.",
-    );
-  }
-  const { taskId } = yield* delegation.delegate(
-    yield* requireThreadScope(caller.scope, "container_task"),
-    {
-      task,
-      mode: "async",
-      ...(input.name === undefined ? {} : { title: input.name }),
-      clientRequestId: key,
-      target: { environmentId: status.environmentId },
-    },
-    { cloneMissingProject: true },
+    }),
   );
-  return {
-    status: "started",
-    taskId,
-    environmentId: status.environmentId,
-    next: "It runs in the container; its result arrives here as a new message. End your turn. You stay on this Mac.",
-  } satisfies Out;
 });
 
 /** Removes the container, keeping its files and sign-ins. The assistant keeps working on this Mac. */

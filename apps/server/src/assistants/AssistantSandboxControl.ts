@@ -14,6 +14,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
+import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -81,6 +82,8 @@ export class AssistantSandboxControl extends Context.Service<
     readonly taskStarted: (environmentId: EnvironmentId, taskId: string) => Effect.Effect<void>;
     /** A task ended. The last one of a container started for tasks discards it, when set to. */
     readonly taskEnded: (taskId: string) => Effect.Effect<void>;
+    /** Runs `effect` while a task is on its way into the container, which nothing discards meanwhile. */
+    readonly holding: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
     readonly stop: Effect.Effect<AssistantSandboxStatus, AssistantError>;
     /**
      * A one-time link that connects a client on this machine to the running sandbox. Its address is
@@ -125,6 +128,14 @@ const make = Effect.gen(function* () {
   const settings = yield* ServerSettings.ServerSettingsService;
   const sql = yield* SqlClient.SqlClient;
   const scope = yield* Effect.scope;
+  // ponytail: in memory, so a restart mid-delegation forgets it; the task's own row covers it after.
+  const sending = yield* Ref.make(0);
+  const holding = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    Effect.acquireUseRelease(
+      Ref.update(sending, (count) => count + 1),
+      () => effect,
+      () => Ref.update(sending, (count) => count - 1),
+    );
   const progress = yield* SubscriptionRef.make<Progress>({
     running: false,
     step: null,
@@ -160,9 +171,12 @@ const make = Effect.gen(function* () {
     `.pipe(Effect.orDie, Effect.asVoid);
 
   const countOf = (rows: ReadonlyArray<{ readonly n: number }>) => rows[0]?.n ?? 0;
+  // A row whose task has its result is not open, so a crash between the two never pins the container.
   const openTasks = sql<{
     readonly n: number;
-  }>`SELECT COUNT(*) AS n FROM assistant_sandbox_task`.pipe(
+  }>`SELECT COUNT(*) AS n FROM assistant_sandbox_task t
+      LEFT JOIN orchestration_v2_projection_subagents s ON s.subagent_id = t.task_id
+      WHERE s.subagent_id IS NULL OR json_type(s.payload_json, '$.result') IS NOT 'text'`.pipe(
     Effect.map(countOf),
     Effect.orElseSucceed(() => 0),
   );
@@ -386,12 +400,34 @@ const make = Effect.gen(function* () {
     if (config.oneOff) yield* writeConfig({ ...config, oneOff: false });
   });
 
+  /** Removing it now would wait out the build, then leave the start failed on a container it made. */
+  const refuseWhileStarting = (then: string) =>
+    SubscriptionRef.get(progress).pipe(
+      Effect.flatMap((current) =>
+        current.running
+          ? Effect.fail(
+              new AssistantError({
+                reason: "invalid",
+                message: `The container is starting. ${then}`,
+              }),
+            )
+          : Effect.void,
+      ),
+    );
+
   const discard = Effect.gen(function* () {
+    yield* refuseWhileStarting("Discard it once it is up and its tasks have ended.");
     const working = yield* sandboxAssistants;
     if (working > 0) {
       return yield* new AssistantError({
         reason: "invalid",
         message: `${working} assistant${working === 1 ? " works" : "s work"} in the container, so it stays. The user can remove it in Settings → Assistants.`,
+      });
+    }
+    if ((yield* Ref.get(sending)) > 0) {
+      return yield* new AssistantError({
+        reason: "invalid",
+        message: "A task is on its way into the container. Discard it once that task ends.",
       });
     }
     const running = yield* openTasks;
@@ -426,6 +462,7 @@ const make = Effect.gen(function* () {
       if (
         !config.oneOff ||
         config.whenDone !== "discard" ||
+        (yield* Ref.get(sending)) > 0 ||
         (yield* openTasks) > 0 ||
         (yield* sandboxAssistants) > 0
       ) {
@@ -441,7 +478,8 @@ const make = Effect.gen(function* () {
   const remove = Effect.fn("AssistantSandboxControl.remove")(function* (
     input: AssistantSandboxRemoveInput,
   ) {
-    yield* sandbox.remove(input);
+    yield* refuseWhileStarting("Remove it once it is up.");
+    yield* sandbox.remove(input).pipe(Effect.mapError(asAssistantError));
     if (input.deleteVolumes) {
       const recorded = yield* recordedEnvironment;
       if (Option.isSome(recorded)) {
@@ -451,7 +489,7 @@ const make = Effect.gen(function* () {
     }
     yield* SubscriptionRef.set(progress, { running: false, step: null, error: null });
     return yield* status;
-  }, Effect.mapError(asAssistantError));
+  });
 
   const pairingUrl = Effect.gen(function* () {
     const current = yield* sandbox.status;
@@ -489,6 +527,7 @@ const make = Effect.gen(function* () {
     }),
     taskStarted,
     taskEnded,
+    holding,
     stop,
     pairingUrl,
     remove,

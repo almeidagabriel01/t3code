@@ -103,14 +103,16 @@ const START_SCRIPT = [
 
 export const sandboxDockerfile = [
   `FROM ${NODE_IMAGE}`,
-  "RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates python3 make g++ && rm -rf /var/lib/apt/lists/*",
+  // ssh lets git reach an SSH remote, or fall back to HTTPS when it has no key for it.
+  "RUN apt-get update && apt-get install -y --no-install-recommends git openssh-client ca-certificates python3 make g++ && rm -rf /var/lib/apt/lists/*",
   `RUN mkdir -p ${HOME} ${WORKSPACE} /opt/t3 && chown -R node:node ${HOME} ${WORKSPACE} /opt/t3`,
   "WORKDIR /opt/t3",
   "USER node",
   "COPY --chown=node:node package.json ./",
   "RUN npm install --omit=dev --no-audit --no-fund",
   "COPY --chown=node:node dist ./dist",
-  `ENV T3CODE_HOME=${HOME} T3CODE_NO_BROWSER=1`,
+  // HOME on the home volume, so provider and git sign-ins (~/.claude, ~/.codex) outlive the container.
+  `ENV HOME=${HOME} T3CODE_HOME=${HOME} T3CODE_NO_BROWSER=1`,
   `EXPOSE ${SERVER_PORT}`,
   `CMD ["sh", "-c", ${JSON.stringify(START_SCRIPT)}]`,
   "",
@@ -131,7 +133,7 @@ const sandboxContainerName = (environmentId: string) =>
   `t3-assistant-sandbox-${environmentId.replace(/[^a-zA-Z0-9]/g, "").slice(0, 8)}`;
 
 /** Published on this machine's loopback only; Docker picks the host port. */
-const sandboxRunArgs = (name: string, image: string, sharedDir: string, cpus: number | null) => [
+const sandboxRunArgs = (name: string, image: string, sharedDir: string, cpus: string | null) => [
   "run",
   "-d",
   "--name",
@@ -144,7 +146,7 @@ const sandboxRunArgs = (name: string, image: string, sharedDir: string, cpus: nu
   "ALL",
   "--security-opt",
   "no-new-privileges",
-  ...(cpus === null ? [] : ["--cpus", String(cpus)]),
+  ...(cpus === null ? [] : ["--cpus", cpus]),
   "-p",
   `127.0.0.1::${SERVER_PORT}`,
   "-v",
@@ -291,14 +293,44 @@ export const layer = Layer.effect(
       yield* dockerOrFail("build the sandbox image", ["build", "-t", image, dir], BUILD_TIMEOUT);
     }, Effect.scoped);
 
-    /** `docker update --cpus 0` lifts a limit. */
-    const updateCpus = (containerName: string, cpus: number | null) =>
-      dockerOrFail("set the sandbox CPU limit", [
+    /**
+     * `--cpus` for `cpus` cores at most. Docker refuses more than its own cores, which on a Mac are
+     * the VM's, not the Mac's, so a larger limit means all of them.
+     */
+    const cpuLimit = Effect.fn("AssistantSandbox.cpuLimit")(function* (cpus: number | null) {
+      const cores = Number(
+        yield* dockerOrFail("read its CPU count", ["info", "--format", "{{.NCPU}}"]),
+      );
+      if (!Number.isInteger(cores) || cores < 1) {
+        return yield* fail("docker_failed", "Docker did not report how many CPUs it has.");
+      }
+      return String(cpus === null ? cores : Math.min(cpus, cores));
+    });
+
+    /**
+     * `docker update --cpus 0` changes nothing, so a limit is lifted by raising it to every core.
+     * A container that never had one is left alone and keeps the cores Docker gains later.
+     */
+    const updateCpus = Effect.fn("AssistantSandbox.updateCpus")(function* (
+      containerName: string,
+      cpus: number | null,
+    ) {
+      if (cpus === null) {
+        const limited = yield* dockerOrFail("read the sandbox CPU limit", [
+          "inspect",
+          "--format",
+          "{{.HostConfig.NanoCpus}}",
+          containerName,
+        ]);
+        if (Number(limited) === 0) return;
+      }
+      yield* dockerOrFail("set the sandbox CPU limit", [
         "update",
         "--cpus",
-        String(cpus ?? 0),
+        yield* cpuLimit(cpus),
         containerName,
       ]);
+    });
 
     const ensure = Effect.fn("AssistantSandbox.ensure")(function* (cpus: number | null) {
       yield* requireDocker();
@@ -317,9 +349,10 @@ export const layer = Layer.effect(
       const descriptor = yield* environment.getDescriptor;
       const image = sandboxImageTag(descriptor.serverVersion, bundle);
       yield* buildImage(image, bundle);
+      const limit = cpus === null ? null : yield* cpuLimit(cpus);
       yield* dockerOrFail(
         "create the sandbox",
-        sandboxRunArgs(containerName, image, sharedDir, cpus),
+        sandboxRunArgs(containerName, image, sharedDir, limit),
       );
       return yield* read();
     });

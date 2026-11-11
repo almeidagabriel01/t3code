@@ -18,7 +18,9 @@ import * as Stream from "effect/Stream";
 import * as AssistantGroups from "../../../assistants/AssistantGroups.ts";
 import * as AssistantSandboxControl from "../../../assistants/AssistantSandboxControl.ts";
 import * as AssistantService from "../../../assistants/AssistantService.ts";
+import * as PeerForwarding from "../../../peer/PeerForwarding.ts";
 import * as RemoteDelegation from "../../../peer/RemoteDelegation.ts";
+import { PROVIDER_UNAUTHENTICATED } from "../../OrchestratorMcpService.ts";
 import * as DecisionService from "../../../decisions/DecisionService.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as SqlitePersistence from "../../../persistence/Sqlite.ts";
@@ -181,6 +183,13 @@ const containerWorld = () => ({
   delegated: [] as Array<{ input: any; options: unknown }>,
   discardError: null as string | null,
   discards: 0,
+  /** What `orchestrator_capabilities` in the container lists. */
+  providers: [] as Array<{
+    providerInstanceId: string;
+    displayName: string | null;
+    canRunChildTask: boolean;
+    constraints: Array<string>;
+  }>,
 });
 
 const harness = (
@@ -212,6 +221,7 @@ const harness = (
                 return {} as never;
               }),
             startForTask: Effect.sync(() => container.status as never),
+            holding: (effect) => effect,
             discard: Effect.suspend(() => {
               if (container.discardError !== null) {
                 return Effect.fail(
@@ -221,6 +231,12 @@ const harness = (
               container.discards += 1;
               return Effect.succeed({ state: "not_created" } as never);
             }),
+          }),
+          Layer.mock(PeerForwarding.PeerForwarding)({
+            call: (_scope, tool, environmentId) =>
+              tool.name === "orchestrator_capabilities" && environmentId === sandboxId
+                ? Effect.sync(() => ({ providers: container.providers }) as never)
+                : Effect.die(`unexpected ${tool.name}`),
           }),
           Layer.mock(RemoteDelegation.RemoteDelegation)({
             delegate: (_scope, input, options) =>
@@ -247,6 +263,7 @@ const harness = (
                 archivedAt: null,
                 activeRunId: "run-1",
                 providerInstanceId,
+                modelSelection: { instanceId: providerInstanceId, model: "gpt-5.4" },
                 runtimeMode: callerMode,
                 interactionMode: "default",
               } as unknown as OrchestrationV2ThreadShell),
@@ -746,8 +763,41 @@ it.effect("container_task is refused for good when the user dismisses the CPU qu
     const { call, container, decisions } = yield* harness("full-access");
     const pending = yield* call(containerTask);
     yield* decisions.dismiss(pending.decisionId);
-    expect(yield* call(containerTask)).toMatchObject({ code: "invalid_request" });
+    const refused = yield* call(containerTask);
+    expect(refused).toMatchObject({ code: "invalid_request" });
+    // The way on is Settings, which the next call honours without asking again.
+    expect(refused.message).toContain("Settings → Assistants → Sandbox → CPU limit");
     expect(container.delegated).toEqual([]);
+  }),
+);
+
+it.effect("container_task names the sign-in when the provider cannot run in the container", () =>
+  Effect.gen(function* () {
+    const { call, container } = yield* harness("full-access");
+    container.config = { ...container.config, chosen: true };
+    container.providers = [
+      {
+        providerInstanceId,
+        displayName: "Codex",
+        canRunChildTask: false,
+        constraints: [PROVIDER_UNAUTHENTICATED],
+      },
+    ];
+    const unsigned = yield* call(containerTask);
+    expect(unsigned).toMatchObject({ code: "invalid_request" });
+    expect(unsigned.message).toContain("Codex cannot run in the container");
+    expect(unsigned.message).toContain("Settings → Assistants → Sandbox → Sign in");
+    // Another reason is passed on without pointing at a sign-in that would not help.
+    container.providers[0] = {
+      ...container.providers[0]!,
+      constraints: ["Provider executable is not installed."],
+    };
+    const missing = yield* call(containerTask);
+    expect(missing.message).toContain("Provider executable is not installed.");
+    expect(missing.message).not.toContain("Sign in");
+    expect(container.delegated).toEqual([]);
+    container.providers[0] = { ...container.providers[0]!, canRunChildTask: true, constraints: [] };
+    expect(yield* call(containerTask)).toMatchObject({ status: "started" });
   }),
 );
 
