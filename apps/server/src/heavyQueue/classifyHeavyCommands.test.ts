@@ -94,7 +94,17 @@ describe("classifyHeavyCommands", () => {
         WRAPPER,
         proc(12, 11, "node", { cpu: 100, rss: 33 * 1024 ** 2 }, "node -e while(1){}"),
       ],
-      expected: [{ source: "agent", pid: 12, threadId: "t-agent", cpu: 1, memory: 32 * 1024 ** 2 }],
+      expected: [{ source: "agent", pid: 12, threadId: "t-agent", cpu: 1, memory: 33 * 1024 ** 2 }],
+    },
+    {
+      name: "never shows a running CPU-heavy command as using no memory",
+      processes: [
+        SERVER,
+        CLAUDE,
+        WRAPPER,
+        proc(12, 11, "yes", { cpu: 100, rss: 300 * 1024 }, "yes"),
+      ],
+      expected: [{ source: "agent", pid: 12, threadId: "t-agent", cpu: 1, memory: 1024 ** 2 }],
     },
     {
       name: "leaves out a light command",

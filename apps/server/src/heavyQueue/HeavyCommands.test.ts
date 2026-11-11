@@ -28,14 +28,18 @@ const proc = (pid: number, ppid: number, name: string, cpuPercent = 0) =>
     runTimeMs: 60_000,
   }) as ResourceTelemetryProcess;
 
-const snapshot = (readAtMs: number, buildCpu: number | null): ResourceTelemetrySnapshot =>
+const snapshot = (
+  readAtMs: number,
+  buildCpu: number | null,
+  childCpu = 50,
+): ResourceTelemetrySnapshot =>
   ({
     readAt: DateTime.makeUnsafe(readAtMs),
     cpuCount: 8,
     processes: [
       proc(10, 1, "claude"),
       proc(11, 10, "zsh"),
-      ...(buildCpu === null ? [] : [proc(12, 11, "tsc", buildCpu), proc(13, 12, "node", 50)]),
+      ...(buildCpu === null ? [] : [proc(12, 11, "tsc", buildCpu), proc(13, 12, "node", childCpu)]),
     ],
   }) as never;
 
@@ -149,14 +153,24 @@ describe("HeavyCommands", () => {
       outcome: "killed",
       sent: ["SIGTERM:12", "SIGTERM:13", "SIGKILL:13"],
     },
-  ])("stop $name", ({ alive, outcome, sent: expected }) =>
-    withService({ snapshots: [snapshot(1_000, 200)], alive }, (service, sent) =>
-      Effect.gen(function* () {
-        const fiber = yield* service.stop({ pid: 12, startTimeMs: 12 }).pipe(Effect.forkChild);
-        yield* TestClock.adjust("5 seconds");
-        expect(yield* Fiber.join(fiber)).toEqual({ outcome });
-        expect(sent.toSorted()).toEqual(expected.toSorted());
-      }),
+    {
+      // The row on screen can lag a sample behind, so a command that just dipped stays stoppable.
+      name: "stops a command that has dropped below the heavy line",
+      alive: () => false,
+      outcome: "terminated",
+      sent: ["SIGTERM:12", "SIGTERM:13"],
+      light: true,
+    },
+  ])("stop $name", ({ alive, outcome, sent: expected, light }) =>
+    withService(
+      { snapshots: [light ? snapshot(1_000, 1, 1) : snapshot(1_000, 200)], alive },
+      (service, sent) =>
+        Effect.gen(function* () {
+          const fiber = yield* service.stop({ pid: 12, startTimeMs: 12 }).pipe(Effect.forkChild);
+          yield* TestClock.adjust("5 seconds");
+          expect(yield* Fiber.join(fiber)).toEqual({ outcome });
+          expect(sent.toSorted()).toEqual(expected.toSorted());
+        }),
     ),
   );
 

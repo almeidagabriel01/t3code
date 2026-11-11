@@ -5,6 +5,7 @@ import type {
   HeavyQueueEntry,
   HeavyQueueState,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import type { ReactNode } from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
@@ -55,7 +56,8 @@ vi.mock("../../../state/heavyQueue", () => {
   };
 });
 vi.mock("../../../state/use-atom-command", () => ({
-  useAtomCommand: (command: { id: string }) => (mocks.commands[command.id] ??= vi.fn()),
+  useAtomCommand: (command: { id: string }) =>
+    (mocks.commands[command.id] ??= vi.fn(async () => ({ _tag: "Success", value: undefined }))),
 }));
 vi.mock("../../layout/workspace/useSelectWorkspaceDetail", () => ({
   useSelectWorkspaceDetail: () => mocks.selectDetail,
@@ -391,9 +393,11 @@ async function mountCommands(commands: ReadonlyArray<HeavyCommand>) {
 const confirmAlert = (index: number) => {
   const buttons = mocks.alert.mock.calls[index]![2] as Array<{
     text: string;
-    onPress?: () => void;
+    onPress?: () => unknown;
   }>;
-  buttons.find((b) => b.text === "Stop")!.onPress!();
+  return act(async () => {
+    await buttons.find((b) => b.text === "Stop")!.onPress!();
+  });
 };
 
 describe("HeavyCommandsSection", () => {
@@ -440,17 +444,29 @@ describe("HeavyCommandsSection", () => {
     expect(stops).toHaveLength(2);
     await act(async () => stops[0]!.click());
     expect(mocks.commands.stopCommand).not.toHaveBeenCalled();
-    confirmAlert(0);
+    await confirmAlert(0);
     expect(mocks.commands.stopCommand).toHaveBeenCalledWith({
       environmentId: "env",
       input: { pid: 12, startTimeMs: 34 },
     });
     await act(async () => stops[1]!.click());
-    confirmAlert(1);
+    await confirmAlert(1);
     expect(mocks.commands.cancel).toHaveBeenCalledWith({
       environmentId: "env",
       input: { id: "q1" },
     });
+    expect(mocks.alert).toHaveBeenCalledTimes(2);
+
+    mocks.commands.stopCommand!.mockResolvedValueOnce({
+      _tag: "Failure",
+      cause: Cause.fail(new Error("That process is not a command an agent or terminal runs.")),
+    });
+    await act(async () => stops[0]!.click());
+    await confirmAlert(2);
+    expect(mocks.alert).toHaveBeenLastCalledWith(
+      "Could not stop it",
+      "That process is not a command an agent or terminal runs.",
+    );
     await view.unmount();
   });
 

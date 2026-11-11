@@ -15,6 +15,10 @@ import {
   usageLine,
   type MoveAction,
 } from "@t3tools/client-runtime/state/heavyQueueModel";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import { heavyEntryName } from "@t3tools/shared/heavyEntryName";
 import {
   ThreadId,
@@ -395,13 +399,22 @@ export function HeavyCommandsSection(props: { readonly environmentId: Environmen
       {
         text: "Stop",
         style: "destructive",
-        onPress: () =>
-          void (command.entryId === undefined
-            ? stopCommand({
-                environmentId,
-                input: { pid: command.pid, startTimeMs: command.startTimeMs },
-              })
-            : cancel({ environmentId, input: { id: command.entryId } })),
+        onPress: async () => {
+          const result =
+            command.entryId === undefined
+              ? await stopCommand({
+                  environmentId,
+                  input: { pid: command.pid, startTimeMs: command.startTimeMs },
+                })
+              : await cancel({ environmentId, input: { id: command.entryId } });
+          if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+            const failure = squashAtomCommandFailure(result);
+            Alert.alert(
+              "Could not stop it",
+              failure instanceof Error ? failure.message : String(failure),
+            );
+          }
+        },
       },
     ]);
   return (

@@ -101,11 +101,11 @@ export interface Classification {
 export const commandKey = (pid: number, startTimeMs: number) => `${pid}:${startTimeMs}`;
 const tenth = (value: number) => Math.round(value * 10) / 10;
 const TENTH_GIB = HEAVY_MEMORY_BYTES / 10;
-const MEMORY_STEP_BELOW_GIB = 4 * 1024 ** 2;
-/** The precision surfaces show (MB below a GiB, tenths above), so jitter below it sends no new frame. */
+const MIB = 1024 ** 2;
+/** The precision surfaces show (MB below a GiB, tenths above); a running command never reads 0 MB. */
 const roundMemory = (bytes: number) => {
-  const step = bytes < HEAVY_MEMORY_BYTES ? MEMORY_STEP_BELOW_GIB : TENTH_GIB;
-  return Math.round(bytes / step) * step;
+  const step = bytes < HEAVY_MEMORY_BYTES ? MIB : TENTH_GIB;
+  return bytes > 0 ? Math.max(MIB, Math.round(bytes / step) * step) : 0;
 };
 
 const queueCommand = (entry: HeavyQueueEntry & { readonly startedAt: string }): HeavyCommand => ({
@@ -158,6 +158,8 @@ export function classifyHeavyCommands(input: {
       const usage = treeUsage(root, children, claimed);
       const key = commandKey(root.identity.pid, root.identity.startTimeMs);
       const previous = input.previous.get(key);
+      // Every command stays stoppable: a row on screen may be a sample behind its usage.
+      trees.set(key, usage.pids);
       const heavy =
         root.runTimeMs >= MIN_RUN_MS &&
         (usage.cpu >= HEAVY_CORES || usage.memoryBytes >= HEAVY_MEMORY_BYTES);
@@ -170,7 +172,6 @@ export function classifyHeavyCommands(input: {
         lastHeavyAt: heavy ? input.now : previous!.lastHeavyAt,
       };
       tracked.set(key, next);
-      trees.set(key, usage.pids);
       const label = root.command || root.name;
       direct.push({
         source: owner.kind,

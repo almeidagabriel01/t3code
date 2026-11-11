@@ -140,7 +140,7 @@ const make = Effect.fn("HeavyCommands.make")(function* (options: {
       if (!live) return { outcome: "already-exited" } satisfies HeavyCommandStopResult;
       return yield* new HeavyQueueError({
         reason: "not-found",
-        message: "That process is not a heavy command an agent or terminal runs.",
+        message: "That process is not a command an agent or terminal runs.",
       });
     }
     const targets = pids.filter((pid) => pid !== process.pid);
