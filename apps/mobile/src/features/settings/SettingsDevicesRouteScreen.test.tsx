@@ -9,18 +9,37 @@ const { mocks, Children } = vi.hoisted(() => ({
     data: null as unknown,
     error: null as string | null,
     can: true,
+    config: { settings: { appleTeamId: "", appleRunnerBundleId: "" } } as unknown,
+    update: vi.fn((_request: unknown) => Promise.resolve({ _tag: "Success" })),
     probe: { _tag: "Success" } as unknown,
     setAccess: vi.fn(),
     setHold: vi.fn(),
     forget: vi.fn(),
+    navigate: vi.fn(),
   },
 }));
-vi.mock("react-native", () => ({ View: Children }));
+vi.mock("react-native", () => ({ View: Children, Keyboard: { dismiss: vi.fn() } }));
 vi.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ bottom: 0 }) }));
 vi.mock("@effect/atom-react", () => ({
-  useAtomValue: (atom: unknown) => (atom === "probe-atom" ? mocks.probe : mocks.can),
+  useAtomValue: (atom: unknown) =>
+    atom === "probe-atom" ? mocks.probe : atom === "config-atom" ? mocks.config : mocks.can,
 }));
-vi.mock("../../components/ui/AppText", () => ({ AppText: Children }));
+vi.mock("../../components/ui/AppText", () => ({
+  AppText: Children,
+  AppTextInput: (props: {
+    accessibilityLabel: string;
+    value: string;
+    editable: boolean;
+    onChangeText: (text: string) => void;
+  }) => (
+    <input
+      aria-label={props.accessibilityLabel}
+      value={props.value}
+      disabled={!props.editable}
+      onChange={(event) => props.onChangeText(event.target.value)}
+    />
+  ),
+}));
 vi.mock("../../components/ui/Button", () => ({
   Button: (props: { label: string; disabled?: boolean; onPress: () => void }) => (
     <button aria-label={props.label} disabled={props.disabled} onClick={props.onPress} />
@@ -45,6 +64,17 @@ vi.mock("../../components/ui/ListSection", () => ({
       {props.children}
       <footer>{props.footer}</footer>
     </section>
+  ),
+}));
+vi.mock("@react-navigation/native", () => ({
+  useNavigation: () => ({ navigate: mocks.navigate }),
+}));
+vi.mock("../../components/ui/ListRow", () => ({
+  ListRow: (props: { label: string; description?: string; onPress: () => void }) => (
+    <button aria-label={props.label} onClick={props.onPress}>
+      {props.label}
+      {props.description}
+    </button>
   ),
 }));
 vi.mock("../../components/ui/Menu", () => ({
@@ -97,9 +127,21 @@ vi.mock("../../state/device", () => ({
     forget: { forget: true, permissionAtom: () => "forget-permission" },
   },
 }));
+vi.mock("../../state/server", () => ({
+  serverEnvironment: {
+    configValueAtom: () => "config-atom",
+    updateSettings: { update: true, permissionAtom: () => "update-permission" },
+  },
+}));
 vi.mock("../../state/use-atom-command", () => ({
-  useAtomCommand: (command: { hold?: boolean; forget?: boolean }) =>
-    command.hold ? mocks.setHold : command.forget ? mocks.forget : mocks.setAccess,
+  useAtomCommand: (command: { hold?: boolean; forget?: boolean; update?: boolean }) =>
+    command.hold
+      ? mocks.setHold
+      : command.forget
+        ? mocks.forget
+        : command.update
+          ? mocks.update
+          : mocks.setAccess,
 }));
 vi.mock("./WifiPairingSection", () => ({ WifiPairingSection: () => <p>Wi-Fi pairing</p> }));
 
@@ -115,6 +157,18 @@ const device = (id: string, name: string, physical: boolean) => ({
   booted: true,
   physical,
 });
+const iphone = {
+  ...device("iphone", "Ana's iPhone", true),
+  platform: "ios",
+  version: "iOS 19",
+  connection: "usb",
+  issues: [{ reason: "developer_mode_off" }, { reason: "locked" }],
+};
+const desktop = {
+  ...device("desktop", "Ana's Mac (desktop)", true),
+  platform: "desktop",
+  version: "macOS",
+};
 const state = {
   hosts: [{ id: "local", label: "This Mac" }],
   devices: [
@@ -191,6 +245,96 @@ describe("Devices settings", () => {
     ).toBeNull();
   });
 
+  it("lists the desktop and a USB iPhone with each issue's title and action", async () => {
+    using screen = await setup({ data: { ...state, devices: [iphone, desktop] } });
+    const rows = [...screen.container.querySelectorAll('[role="group"]')].map((row) =>
+      row.getAttribute("aria-label"),
+    );
+    expect(rows).toEqual(["Agents and Ana's iPhone", "Agents and Ana's Mac (desktop)"]);
+    expect(screen.container.textContent).toContain("Ana's Mac (desktop)This Mac · macOS");
+    expect(screen.container.textContent).not.toContain("macOS · Physical");
+    const section = screen.container;
+    expect(section.textContent).toContain("Developer Mode is off");
+    expect(section.textContent).toContain("turn on Settings > Privacy & Security > Developer Mode");
+    expect(section.textContent).toContain("Locked");
+    expect(section.textContent).toContain("This Mac · iOS 19 · Physical · USB");
+  });
+
+  it("takes a missing Screen Recording permission to Mac permissions", async () => {
+    using screen = await setup({
+      data: {
+        ...state,
+        devices: [{ ...desktop, issues: [{ reason: "screen_recording_permission" }] }],
+      },
+    });
+    await screen.press("Screen Recording permission is off");
+    expect(mocks.navigate).toHaveBeenCalledWith("SettingsMacPermissions");
+  });
+
+  it("validates the iPhone signing fields and saves only what changed", async () => {
+    using screen = await setup();
+    expect(screen.container.textContent).toContain("Developer Mode");
+    expect(screen.container.textContent).toContain("VPN & Device Management");
+    const field = (label: string) =>
+      screen.container.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`)!;
+    const save = () =>
+      screen.container.querySelector<HTMLButtonElement>(
+        'button[aria-label="Save iPhone signing"]',
+      )!;
+    const type = (label: string, value: string) =>
+      act(async () => {
+        const input = field(label);
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
+          input,
+          value,
+        );
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    expect(save().disabled).toBe(true);
+    await type("Apple Team ID", "abc");
+    expect(screen.container.textContent).toContain("A Team ID is 10 uppercase letters");
+    expect(save().disabled).toBe(true);
+    await type("Apple Team ID", "ABCDE12345");
+    await type("Runner bundle id (optional)", "nodots");
+    expect(screen.container.textContent).toContain("A bundle id is reverse-DNS");
+    await type("Runner bundle id (optional)", "com.ana.runner");
+    expect(screen.container.textContent).not.toContain("is reverse-DNS");
+    await act(async () => save().click());
+    expect(mocks.update.mock.calls).toEqual([
+      [
+        {
+          environmentId: "env-a",
+          input: { patch: { appleTeamId: "ABCDE12345", appleRunnerBundleId: "com.ana.runner" } },
+        },
+      ],
+    ]);
+  });
+
+  it("clears a saved team id with an empty field", async () => {
+    using screen = await setup({
+      config: { settings: { appleTeamId: "ABCDE12345", appleRunnerBundleId: "" } },
+    });
+    const input = screen.container.querySelector<HTMLInputElement>(
+      'input[aria-label="Apple Team ID"]',
+    )!;
+    expect(input.value).toBe("ABCDE12345");
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () =>
+      screen.container
+        .querySelector<HTMLButtonElement>('button[aria-label="Save iPhone signing"]')!
+        .click(),
+    );
+    expect(mocks.update.mock.calls[0]![0]).toMatchObject({ input: { patch: { appleTeamId: "" } } });
+  });
+
+  it("hides signing until the environment's settings arrive", async () => {
+    using screen = await setup({ config: null });
+    expect(screen.container.querySelector('input[aria-label="Apple Team ID"]')).toBeNull();
+  });
+
   it.each([
     ["no environment has devices on", { ids: [] }, "Devices are not available"],
     ["the state is loading", { data: null }, "Finding devices..."],
@@ -214,7 +358,9 @@ describe("Devices settings", () => {
 
   it("names each environment and locks the choices without permission", async () => {
     using screen = await setup({ ids: ["env-a", "env-b"], can: false });
-    const titles = [...screen.container.querySelectorAll("h3")].map((title) => title.textContent);
+    const titles = [...screen.container.querySelectorAll("h3")]
+      .map((title) => title.textContent)
+      .filter((title) => !title?.startsWith("iPhone signing"));
     expect(titles).toEqual(["Device access · Studio Mac", "Device access · Office Mac"]);
     const buttons = [...screen.container.querySelectorAll("button")];
     expect(buttons.length).toBeGreaterThan(0);

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
   DEFAULT_SERVER_SETTINGS,
+  DESKTOP_DEVICE_ID,
   DeviceBootError,
   DeviceError,
   DeviceId,
@@ -35,6 +36,7 @@ import { HttpClient, HttpClientResponse } from "effect/http";
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as CaptureDevices from "./CaptureDevices.ts";
 import * as DeviceHost from "./DeviceHost.ts";
 import { makeDeviceHubOperations } from "./DeviceHubOperations.ts";
 import { NodeRuntimeUnavailableError } from "@t3tools/shared/nodeRuntime";
@@ -1593,6 +1595,8 @@ it.effect("reconciles SSH host settings without publishing no-op changes", () =>
     // Each change is acknowledged after reconciliation consumed it, so no-ops are observable.
     const changes = yield* Queue.unbounded<{ value: Settings; done: Deferred.Deferred<void> }>();
     const removedFiles: string[] = [];
+    let agentStops = 0;
+    const captureLists: string[] = [];
     const localHost: DeviceHost.DeviceHost["Service"] = {
       id: LOCAL_DEVICE_HOST_ID,
       label: "This machine",
@@ -1609,10 +1613,35 @@ it.effect("reconciles SSH host settings without publishing no-op changes", () =>
       ensureReady: () => Effect.die("Unexpected device launch"),
       ensureAgentReady: () => Effect.die("Unexpected agent launch"),
       stop: Effect.void,
-      stopAgent: Effect.void,
+      stopAgent: Effect.sync(() => {
+        agentStops++;
+      }),
     };
     const service = yield* DeviceService.make.pipe(
       Effect.provideService(DeviceHost.DeviceHost, localHost),
+      Effect.provideService(
+        CaptureDevices.CaptureDevices,
+        CaptureDevices.CaptureDevices.of({
+          list: Effect.sync(() => {
+            captureLists.push("list");
+            return [
+              {
+                id: DESKTOP_DEVICE_ID,
+                platform: "desktop",
+                name: "Test Mac (desktop)",
+                version: "macOS",
+                booted: true,
+                physical: true,
+              },
+            ];
+          }),
+          start: () => Effect.void,
+          route: () => Effect.succeed(null),
+          forget: () => Effect.void,
+          stop: () => Effect.void,
+          ended: PubSub.unbounded<string>().pipe(Effect.flatMap(PubSub.subscribe)),
+        }),
+      ),
       Effect.provideService(ServerSettings.ServerSettingsService, {
         ...settings,
         subscribeChanges: Effect.succeed(
@@ -1696,6 +1725,23 @@ it.effect("reconciles SSH host settings without publishing no-op changes", () =>
     yield* Queue.offer(changes, { value, done });
     yield* Deferred.await(done);
     expect((yield* service.state).access).toEqual({ "local:phone": "deny" });
+
+    // The agent daemon reads iPhone signing when it starts, so a new Team ID restarts it, once.
+    for (const appleTeamId of ["ABCDE12345", "ABCDE12345", "not-a-team"]) {
+      const signed = yield* settings.updateSettings({ appleTeamId });
+      const applied = yield* Deferred.make<void>();
+      yield* Queue.offer(changes, { value: signed, done: applied });
+      yield* Deferred.await(applied);
+    }
+    expect(agentStops).toBe(2);
+
+    // The production service lists this computer from its capture source.
+    yield* settings.updateSettings({ enableDeviceSupport: true });
+    const listed = yield* service.list;
+    expect(captureLists.length).toBeGreaterThan(0);
+    expect(listed.devices.map((device) => `${device.hostId}:${device.id}`)).toContain(
+      `${LOCAL_DEVICE_HOST_ID}:${DESKTOP_DEVICE_ID}`,
+    );
   }).pipe(
     Effect.scoped,
     Effect.provide(

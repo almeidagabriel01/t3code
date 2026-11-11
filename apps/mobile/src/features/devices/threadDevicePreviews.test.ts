@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   deviceHoldMenuItem,
+  deviceViewOnlyNotice,
   selectedThreadDevicePreview,
   threadDevicePreviews,
 } from "./threadDevicePreviews";
@@ -117,6 +118,76 @@ describe("thread device previews", () => {
     expect(deviceHoldMenuItem(previews[0]!, false)?.disabled).toBe(true);
     expect(deviceHoldMenuItem(threadDevicePreviews(state, threadId)[0]!, true)).toBeNull();
     expect(deviceHoldMenuItem(null, true)).toBeNull();
+  });
+
+  it("labels the desktop and a USB iPhone, marks them view-only and surfaces their issues", () => {
+    const desktop = {
+      hostId: "local",
+      id: "desktop",
+      platform: "desktop" as const,
+      name: "Ana's Mac (desktop)",
+      version: "",
+      booted: true,
+      physical: false,
+      issues: [{ reason: "wayland_unsupported" as const }],
+    };
+    const iphone = {
+      hostId: "local",
+      id: "iphone",
+      platform: "ios" as const,
+      name: "Ana's iPhone",
+      version: "iOS 19",
+      booted: true,
+      physical: true,
+      connection: "usb" as const,
+      issues: [{ reason: "developer_mode_off" as const }],
+    };
+    const session = (deviceId: string, platform: "ios" | "desktop") => ({
+      threadId,
+      hostId: "local",
+      deviceId,
+      platform,
+      openedAt: "2026-09-18T00:00:00Z",
+    });
+    const previews = threadDevicePreviews(
+      {
+        ...state,
+        devices: [desktop, iphone],
+        sessions: [
+          session("desktop", "desktop"),
+          session("iphone", "ios"),
+          session("gone", "desktop"),
+        ],
+      },
+      threadId,
+    );
+    expect(previews.map((preview) => preview.name)).toEqual([
+      "Ana's Mac (desktop)",
+      "Ana's iPhone",
+      "This computer",
+    ]);
+    expect(previews[0]).toMatchObject({
+      description: "This computer · Local",
+      capture: true,
+      viewOnlyNotice: "View only. Agents use computer tools on this computer.",
+      blocked: { title: "Live video is not available on Wayland" },
+    });
+    expect(previews[1]).toMatchObject({
+      description: "Physical · USB · iOS 19 · Local",
+      capture: true,
+      viewOnlyNotice: "View only. Use the phone to control it.",
+      blocked: null,
+    });
+    expect(previews[1]!.issues).toMatchObject([
+      { title: "Developer Mode is off", blocksView: false, action: expect.any(String) },
+    ]);
+    expect(previews[2]).toMatchObject({ capture: false, viewOnlyNotice: null, issues: [] });
+    expect(deviceViewOnlyNotice("ios")).not.toContain("—");
+    expect(threadDevicePreviews(state, threadId)[0]).toMatchObject({
+      capture: false,
+      blocked: null,
+    });
+    expect(deviceHoldMenuItem(previews[1]!, true)).toBeNull();
   });
 
   it("selects another open device when the agent closes the selected session", () => {

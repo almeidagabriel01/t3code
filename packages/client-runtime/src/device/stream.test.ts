@@ -290,9 +290,10 @@ class MjpegImage extends EventTarget {
 }
 
 function recoveryFixture(
-  platform: "ios" | "android" = "ios",
+  platform: "ios" | "android" | "desktop" = "ios",
   preferMjpeg = true,
   serveSimOnly = false,
+  capture = false,
 ) {
   vi.useFakeTimers();
   const sockets: Socket[] = [];
@@ -338,7 +339,14 @@ function recoveryFixture(
   vi.stubGlobal("EncodedVideoChunk", vi.fn());
   const videoBodies: ReadableStreamDefaultController<Uint8Array>[] = [];
   const signals: AbortSignal[] = [];
+  const configs: Array<object> = [];
   const fetch = vi.fn((url: string, init: RequestInit) => {
+    if (url.includes("/config")) {
+      const next = configs.shift();
+      return next instanceof Error
+        ? Promise.reject(next)
+        : Promise.resolve(Response.json(next ?? {}));
+    }
     const signal = init.signal!;
     signals.push(signal);
     if (url.includes("/api?")) return Promise.resolve(Response.json({}));
@@ -371,6 +379,7 @@ function recoveryFixture(
       platform,
       preferMjpeg,
       serveSimOnly,
+      ...(capture ? { videoOnly: true, sizeFromConfig: true } : {}),
       deviceId: "test-device",
       access: {
         httpBase: "https://test/api/device-hub",
@@ -400,6 +409,7 @@ function recoveryFixture(
   const sps = new Uint8Array([0, 0, 0, 1, 0x67, 0x64, 0, 0x1f, 0, 0, 1, 0x65]).buffer;
   return {
     client,
+    configs,
     events,
     image,
     imageReady,
@@ -467,6 +477,61 @@ describe("shared device stream readiness and recovery", () => {
     expect(sent).toEqual([
       [0x03, { type: "begin", x: 0.25, y: 0.5 }],
       [0x04, { button: "back" }],
+    ]);
+    // Its screen size comes from the input socket alone; /config is never asked.
+    expect(fetch.mock.calls.every(([url]) => !url.includes("/config"))).toBe(true);
+    client.stop();
+  });
+
+  it("sizes a video-only capture source from /config, again whenever its description changes", async () => {
+    const { client, configs, events, fetch, sockets, videoBodies, decoders } = recoveryFixture(
+      "desktop",
+      false,
+      true,
+      true,
+    );
+    configs.push(
+      { width: 1920, height: 1080, orientation: "landscape_left", inputUnavailable: true },
+      { width: 1080, height: 1920, orientation: "portrait", inputUnavailable: true },
+    );
+    client.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(sockets).toEqual([]);
+    videoBodies[0]!.enqueue(
+      new Uint8Array([...envelope(1, [1, 0x64, 0, 0x1f]), ...envelope(2, [2])]),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(decoders[0]!.decode).toHaveBeenCalledOnce();
+    expect(events.onScreen).toHaveBeenLastCalledWith({
+      width: 1920,
+      height: 1080,
+      orientation: "landscape_left",
+    });
+    // A new description (a rotated phone) reads the size again.
+    videoBodies[0]!.enqueue(new Uint8Array(envelope(1, [1, 0x64, 0, 0x1f])));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(events.onScreen).toHaveBeenLastCalledWith({
+      width: 1080,
+      height: 1920,
+      orientation: "portrait",
+    });
+    // The same size again, or a /config that cannot be read, keeps the last size.
+    configs.push(
+      { width: 1080, height: 1920, orientation: "portrait", inputUnavailable: true },
+      new Error("offline"),
+    );
+    const sized = events.onScreen.mock.calls.length;
+    videoBodies[0]!.enqueue(new Uint8Array(envelope(1, [1, 0x64, 0, 0x1f])));
+    await vi.advanceTimersByTimeAsync(0);
+    videoBodies[0]!.enqueue(new Uint8Array(envelope(1, [1, 0x64, 0, 0x1f])));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(events.onScreen).toHaveBeenCalledTimes(sized);
+    expect(fetch.mock.calls.map(([url]) => url)).toEqual([
+      "https://test/api/device-hub/vendor/serve-sim/helper/test-device/stream.avcc",
+      ...Array.from(
+        { length: 4 },
+        () => "https://test/api/device-hub/vendor/serve-sim/helper/test-device/config",
+      ),
     ]);
     client.stop();
   });

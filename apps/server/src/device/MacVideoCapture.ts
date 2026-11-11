@@ -17,7 +17,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import type { HubUpstream } from "./DeviceHost.ts";
 
 const HELPER_NAME = "t3-device-capture";
-const ROUTE = /^\/vendor\/serve-sim\/helper\/([^/]+)\/(stream\.avcc|config|health)$/;
+export const CAPTURE_ROUTE = /^\/vendor\/serve-sim\/helper\/([^/]+)\/(stream\.avcc|config|health)$/;
 
 const Permission = Schema.Literals(["camera", "screen-recording"]);
 
@@ -89,6 +89,21 @@ const HelperLine = Schema.Union([
 ]);
 // Lines that are not the helper's JSON (a framework's own logging) are skipped, not fatal.
 const decodeLine = Schema.decodeUnknownOption(Schema.fromJsonString(HelperLine));
+
+/** Routes `deviceId`'s serve-sim stream, config and health paths to a capture server at `origin`. */
+export const captureUpstream =
+  (origin: string, deviceId: string): MacVideoCaptureSession["upstream"] =>
+  (hubPath) =>
+    Effect.sync(() => {
+      const route = CAPTURE_ROUTE.exec(hubPath);
+      if (!route) return null;
+      try {
+        if (decodeURIComponent(route[1]!) !== deviceId) return null;
+      } catch {
+        return null;
+      }
+      return { url: `${origin}/${route[2]}`, headers: {}, protocols: [] };
+    });
 
 export type MacVideoCaptureSource =
   | { readonly kind: "iphone"; readonly udid: string }
@@ -285,23 +300,12 @@ const make = Effect.gen(function* () {
 
         const size = yield* Deferred.await(ready);
         const origin = `http://127.0.0.1:${port}`;
-        const upstream: MacVideoCaptureSession["upstream"] = (hubPath) =>
-          Effect.sync(() => {
-            const route = ROUTE.exec(hubPath);
-            if (!route) return null;
-            try {
-              if (decodeURIComponent(route[1]!) !== input.deviceId) return null;
-            } catch {
-              return null;
-            }
-            return { url: `${origin}/${route[2]}`, headers: {}, protocols: [] };
-          });
         return {
           pid: Number(child.pid),
           origin,
           width: size.width,
           height: size.height,
-          upstream,
+          upstream: captureUpstream(origin, input.deviceId),
           ended: Deferred.await(ended),
           stop,
         };

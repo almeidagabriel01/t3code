@@ -121,6 +121,11 @@ export interface DeviceStreamTarget {
   readonly videoOnly?: boolean;
   /** The host speaks only serve-sim's AVCC stream and input socket, on both platforms (Simlock). */
   readonly serveSimOnly?: boolean;
+  /**
+   * A capture source with no input socket (a USB iPhone, a desktop): its frame size comes from
+   * the helper's `/config`, read again whenever the stream sends a new description.
+   */
+  readonly sizeFromConfig?: boolean;
 }
 
 export type DeviceHardwareButton = "home" | "back" | "recents" | "power" | "appSwitcher";
@@ -704,6 +709,19 @@ export function createDeviceStreamClient(
     events.onUnauthorized();
   };
 
+  const readConfigSize = async (isCurrent: () => boolean) => {
+    const response = await fetch(httpUrl(`/helper/${device}/config`), {
+      credentials: access.credentials ? "include" : "same-origin",
+    }).catch(() => null);
+    const config = decodeScreenConfig(await response?.json().catch(() => null));
+    if (!isCurrent() || Option.isNone(config)) return;
+    const { width, height, orientation } = config.value;
+    if (screen?.width === width && screen.height === height && screen.orientation === orientation)
+      return;
+    screen = { width, height, orientation };
+    events.onScreen(screen);
+  };
+
   const readIosVideo = async () => {
     const lifecycle = generation;
     const feedGeneration = ++videoGeneration;
@@ -785,6 +803,7 @@ export function createDeviceStreamClient(
                 isCurrent,
               );
               if (!isCurrent()) return;
+              if (configured && target.sizeFromConfig) void readConfigSize(isCurrent);
               if (!configured) {
                 await reader.cancel().catch(() => {});
                 if (!isCurrent()) return;

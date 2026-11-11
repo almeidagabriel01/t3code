@@ -105,6 +105,10 @@ const harness = (client?: "read-only") => {
           id,
           projectId,
           title: "Tidy settings",
+          lineage: {
+            relationshipToParent: "subagent",
+            parentThreadId: id === "parent" ? null : "parent",
+          },
           deletedAt: null,
           archivedAt: null,
           activeRunId: "run-1",
@@ -173,7 +177,13 @@ it.effect("passes the caller, arguments and request id through, and says what is
     expect(clicked).toMatchObject({ ok: true, action: "click" });
     yield* call({ action: "type", target: "the name field", text: "hello" });
     yield* call({ action: "key", target: "the editor", key: "a", modifiers: ["command"] });
-    const caller = { threadId: "thread-1", projectId, threadTitle: "Tidy settings" };
+    // The delegating thread shares the computer's access answer.
+    const caller = {
+      threadId: "thread-1",
+      projectId,
+      threadTitle: "Tidy settings",
+      ancestors: ["parent"],
+    };
     expect(seen).toMatchObject([
       [
         "click",

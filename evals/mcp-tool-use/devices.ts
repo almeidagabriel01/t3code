@@ -76,6 +76,8 @@ export interface DeviceWorld {
   readonly deviceHeld?: ReadonlyArray<string> | undefined;
   /** The user's stored agent access policy, by device id. */
   readonly deviceAccess?: Readonly<Record<string, "allow" | "ask" | "deny">> | undefined;
+  /** Settings → Devices → iPhone signing. Unset: no team id, so a USB iPhone on this Mac cannot be driven. */
+  readonly appleTeamId?: string | undefined;
 }
 
 /** A shell, file or web call and the output the agent saw. */
@@ -552,7 +554,11 @@ const failing = <A, R>(effect: Effect.Effect<A, DeviceError, R>) =>
 // The hosts' own output, which T3 passes on. Launcher scripts embed these paths, never shown.
 const NODE = "/usr/bin/node";
 const HUB = "http://127.0.0.1:47613";
-const PLATFORM_NAMES = { ios: "iOS Simulators", android: "Android Emulators" } as const;
+const PLATFORM_NAMES = {
+  ios: "iOS Simulators",
+  android: "Android Emulators",
+  desktop: "desktop",
+} as const;
 /** T3 reads only a capture's PNG header; replay has no screens to send. */
 const capture = (platform: DevicePlatform) => {
   const png = new Uint8Array(24);
@@ -816,6 +822,7 @@ export const makeDeviceTools = Effect.fn("evaluateMcpToolUse.makeDeviceTools")(f
           Layer.mock(DecisionService.DecisionService)({}),
           ServerSettingsService.layerTest({
             enableDeviceSupport: true,
+            appleTeamId: world.appleTeamId ?? "",
             enableAgentDeviceAccess: world.deviceAgentAccess !== false,
             deviceOnboardingCompleted: true,
             // Keyed as T3 stores it; refs before access policy ignore the setting. A physical

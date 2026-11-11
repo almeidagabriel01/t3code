@@ -1,6 +1,6 @@
 import { pruneLocalDeviceTools } from "./deviceToolMaintenance.ts";
 import { registerOwner } from "@t3tools/shared/ProcessOwners";
-import { deviceToolInstallMessage } from "@t3tools/contracts";
+import { deviceToolInstallMessage, isAppleBundleId, isAppleTeamId } from "@t3tools/contracts";
 // The hub runs at origin root; T3 strips its prefix and the Device panel derives stream URLs from it.
 import {
   type DeviceHostSummary,
@@ -37,6 +37,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { releaseAgentDeviceSession } from "./AgentDeviceTarget.ts";
 import * as DeviceHost from "./DeviceHost.ts";
 import { makeDeviceHubOperations } from "./DeviceHubOperations.ts";
@@ -258,6 +259,21 @@ const hubEnvironment = Effect.fn("LocalDeviceHost.hubEnvironment")(function* (
 const hubPlatformArguments = (hostPlatform: NodeJS.Platform) =>
   hostPlatform === "darwin" ? [] : ["--platform", "android"];
 
+/** agent-device signs its iOS runner with these; an unset or malformed value is left out. */
+export const appleSigningEnvironment = (settings: {
+  readonly appleTeamId: string;
+  readonly appleRunnerBundleId: string;
+}): NodeJS.ProcessEnv => {
+  const team = settings.appleTeamId.trim();
+  const bundle = settings.appleRunnerBundleId.trim();
+  return {
+    ...(isAppleTeamId(team) ? { AGENT_DEVICE_IOS_TEAM_ID: team } : {}),
+    ...(isAppleTeamId(team) && isAppleBundleId(bundle)
+      ? { AGENT_DEVICE_IOS_BUNDLE_ID: bundle }
+      : {}),
+  };
+};
+
 export const make = Effect.fn("LocalDeviceHost.make")(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const config = yield* ServerConfig.ServerConfig;
@@ -269,6 +285,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
   const environment = yield* HostProcess.Environment;
   const workingDirectory = yield* HostProcess.WorkingDirectory;
   const hostPlatform = yield* HostProcess.Platform;
+  const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
   const sdk = yield* androidSdk;
   const hostEnvironment = deviceHostEnvironment(environment, sdk.root, hostPlatform, path);
   const startLock = yield* Semaphore.make(1);
@@ -535,8 +552,15 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     const stateDir = agentDeviceStateDir(path, config.stateDir);
     yield* fs.makeDirectory(stateDir, { recursive: true }).pipe(Effect.ignore);
     const existing = yield* readDaemonFile().pipe(Effect.option);
+    const signing = Option.isSome(serverSettings)
+      ? yield* serverSettings.value.getSettings.pipe(
+          Effect.map(appleSigningEnvironment),
+          Effect.orElseSucceed(() => ({})),
+        )
+      : {};
     const daemonEnvironment: NodeJS.ProcessEnv = {
       ...hostEnvironment,
+      ...signing,
       AGENT_DEVICE_STATE_DIR: stateDir,
       AGENT_DEVICE_DAEMON_SERVER_MODE: "http",
       // Disable the five-minute idle timeout; the server owns shutdown.

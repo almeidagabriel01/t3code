@@ -1,7 +1,9 @@
 import { useAtomValue } from "@effect/atom-react";
+import { useNavigation } from "@react-navigation/native";
 import {
   DEVICE_ACCESS_POLICY_LABELS,
   DEVICE_CONNECTION_LABELS,
+  DEVICE_ISSUES,
   deviceAccessPolicy,
   findDeviceHold,
   storedDeviceAccessPolicy,
@@ -14,6 +16,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { EmptyState } from "../../components/ui/EmptyState";
+import { ListRow } from "../../components/ui/ListRow";
 import { ListRowLayout } from "../../components/ui/ListRowLayout";
 import { ListSection } from "../../components/ui/ListSection";
 import { Menu } from "../../components/ui/Menu";
@@ -28,6 +31,8 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { SettingsActionRow } from "./components/SettingsActionRow";
 import { SettingsScreen } from "./components/SettingsScreen";
+import { deviceIssueRows } from "../devices/threadDevicePreviews";
+import { IphoneSigningSection } from "./IphoneSigningSection";
 import { WifiPairingSection } from "./WifiPairingSection";
 
 const POLICIES = ["allow", "ask", "deny"] as const;
@@ -41,6 +46,7 @@ function DeviceEnvironment(props: {
   const canEdit = useAtomValue(deviceEnvironment.setAccess.permissionAtom(environmentId));
   const canHold = useAtomValue(deviceEnvironment.setHold.permissionAtom(environmentId));
   const setAccess = useAtomCommand(deviceEnvironment.setAccess);
+  const navigation = useNavigation();
   const setHold = useAtomCommand(deviceEnvironment.setHold);
   const canForget = useAtomValue(deviceEnvironment.forget.permissionAtom(environmentId));
   const forget = useAtomCommand(deviceEnvironment.forget);
@@ -59,7 +65,10 @@ function DeviceEnvironment(props: {
     );
   }
   const pairing = (
-    <WifiPairingSection environmentId={environmentId} state={state} suffix={suffix} />
+    <>
+      <IphoneSigningSection environmentId={environmentId} suffix={suffix} />
+      <WifiPairingSection environmentId={environmentId} state={state} suffix={suffix} />
+    </>
   );
   if (state.supportsDeviceControl !== true || state.devices.length === 0) {
     return (
@@ -88,7 +97,7 @@ function DeviceEnvironment(props: {
     return [
       host?.label ?? "Device host",
       device.version,
-      device.physical ? "Physical" : null,
+      device.physical && device.platform !== "desktop" ? "Physical" : null,
       device.connection ? DEVICE_CONNECTION_LABELS[device.connection] : null,
       findDeviceHold(state.holds, device) ? "In your control" : null,
     ]
@@ -101,6 +110,7 @@ function DeviceEnvironment(props: {
         {devices.map((device, index) => {
           const policy = deviceAccessPolicy(state.access, device);
           const stored = storedDeviceAccessPolicy(state.access, device) !== undefined;
+          const issues = deviceIssueRows(device);
           const save = (next: DeviceAccessPolicy | null) =>
             void setAccess({
               environmentId,
@@ -139,13 +149,31 @@ function DeviceEnvironment(props: {
                 }}
               >
                 <ListRowLayout
-                  icon="iphone"
+                  icon={device.platform === "desktop" ? "desktopcomputer" : "iphone"}
                   label={device.name}
                   description={describe(device)}
                   detail={DEVICE_ACCESS_POLICY_LABELS[policy].label}
                   disabled={!canEdit}
                 />
               </Menu>
+              {issues.map((issue) => (
+                <View key={issue.reason} className="border-t border-border-subtle">
+                  {DEVICE_ISSUES[issue.reason].macPermission === "screen-recording" ? (
+                    <ListRow
+                      icon="exclamationmark.triangle"
+                      label={issue.title}
+                      description={issue.action}
+                      onPress={() => navigation.navigate("SettingsMacPermissions")}
+                    />
+                  ) : (
+                    <ListRowLayout
+                      icon="exclamationmark.triangle"
+                      label={issue.title}
+                      description={issue.action}
+                    />
+                  )}
+                </View>
+              ))}
               {findDeviceHold(state.holds, device) ? (
                 <View className="border-t border-border-subtle">
                   <SettingsActionRow

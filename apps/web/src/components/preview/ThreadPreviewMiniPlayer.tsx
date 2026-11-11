@@ -1,4 +1,4 @@
-import { FILL_PREVIEW_VIEWPORT, type ScopedThreadRef } from "@t3tools/contracts";
+import { FILL_PREVIEW_VIEWPORT, isCaptureDevice, type ScopedThreadRef } from "@t3tools/contracts";
 import { previewPdfAssetUrl } from "@t3tools/shared/preview";
 import { useEnvironmentHttpBaseUrl } from "~/state/environments";
 import { PanelRightIcon, PictureInPicture2, XIcon } from "lucide-react";
@@ -406,6 +406,7 @@ function DeviceMiniPlayer({
             visible
             viewId={viewId}
             serveSimOnly={host?.kind === "simlock"}
+            captureSource={device ? isCaptureDevice(device) : source.platform === "desktop"}
           />
           {device ? (
             <DeviceHoldBar

@@ -14,7 +14,7 @@ const envelope = (tag: number, payload: number[]) => {
   ];
 };
 
-function viewerFixture(supported: boolean) {
+function viewerFixture(supported: boolean, extra: Partial<Parameters<typeof start>[0]> = {}) {
   vi.useFakeTimers();
   const configured: string[] = [];
   vi.stubGlobal(
@@ -77,6 +77,7 @@ function viewerFixture(supported: boolean) {
       buttonForeground: "white",
       buttonBorder: "gray",
     },
+    ...extra,
   });
   return { configured, requested, videoBodies };
 }
@@ -105,4 +106,31 @@ describe("native iOS simulator viewer", () => {
       }
     },
   );
+});
+
+describe("capture source viewer", () => {
+  it.each([
+    [{ platform: "desktop" as const }, "Computer screen"],
+    [{ platform: "ios" as const }, "iPhone screen"],
+  ])("is labelled and never offers input controls (%o)", async (extra, label) => {
+    try {
+      viewerFixture(true, {
+        ...extra,
+        serveSimOnly: true,
+        videoOnly: true,
+        sizeFromConfig: true,
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(document.querySelector('[role="application"]')?.getAttribute("aria-label")).toBe(
+        label,
+      );
+      expect(document.querySelector<HTMLElement>('[role="status"]')!.style.display).not.toBe(
+        "block",
+      );
+    } finally {
+      stop();
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
+  });
 });

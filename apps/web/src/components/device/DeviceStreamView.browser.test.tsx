@@ -206,3 +206,40 @@ it("releases flat pointer ownership when input disconnects", async () => {
     { type: "end", x: 0.75, y: 0.75 },
   ]);
 });
+
+it.each([
+  ["desktop", "Computer screen"],
+  ["ios", "Device screen"],
+] as const)("a captured %s takes no keyboard input", async (platform, label) => {
+  using input = setup();
+  await using screen = await render(
+    <RegistryContext.Provider value={AtomRegistry.make()}>
+      <div style={{ width: 400, height: 800 }}>
+        <DeviceStreamView
+          hostId="local"
+          environmentId={EnvironmentId.make("test")}
+          deviceId="capture"
+          platform={platform}
+          visible
+          allowPhoneView
+          captureSource
+        />
+      </div>
+    </RegistryContext.Provider>,
+    options,
+  );
+
+  const surface = screen.getByRole("group", { name: label });
+  await expect.element(surface).toBeVisible();
+  expect(screen.getByRole("application").query()).toBeNull();
+  const keydown = new KeyboardEvent("keydown", { key: "a", bubbles: true, cancelable: true });
+  surface.element().dispatchEvent(keydown);
+  expect(keydown.defaultPrevented).toBe(false);
+  surface.element().dispatchEvent(new KeyboardEvent("keyup", { key: "a", bubbles: true }));
+  const clipboardData = new DataTransfer();
+  clipboardData.setData("text/plain", "hello");
+  const paste = new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true });
+  surface.element().dispatchEvent(paste);
+  expect(paste.defaultPrevented).toBe(false);
+  expect(input.touches).toEqual([]);
+});

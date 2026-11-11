@@ -70,6 +70,8 @@ export class ComputerUseError extends Schema.TaggedError<ComputerUseError>()("Co
     "already_executed",
     "invalid",
     "failed",
+    /** This computer's device access refused it (policy, an unanswered ask, or the user's hold). */
+    "desktop_refused",
   ]),
   /** Reaches the agent: what happened and what to do next. */
   detail: Schema.optional(Schema.String),
@@ -94,6 +96,8 @@ export class ComputerUseError extends Schema.TaggedError<ComputerUseError>()("Co
         return "The action arguments are not valid.";
       case "failed":
         return "The Mac action failed.";
+      case "desktop_refused":
+        return "The user's device access settings refused this action on this computer.";
     }
   }
 }

@@ -10,6 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { HttpClient, HttpClientResponse, HttpRouter } from "effect/http";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import type { CaptureRoute } from "./CaptureDevices.ts";
 import type * as DeviceHost from "./DeviceHost.ts";
 import * as DeviceService from "./DeviceService.ts";
 import * as DeviceHubProxy from "./DeviceHubProxy.ts";
@@ -24,6 +25,7 @@ const fixture = (
   fail = false,
   authError?: EnvironmentAuth.ServerAuthCredentialError | EnvironmentAuth.ServerAuthInternalError,
   upstream?: DeviceHost.DeviceHostReady["upstream"],
+  capture: CaptureRoute | "unavailable" | null = null,
 ) => {
   let finalized = 0;
   const requests: string[] = [];
@@ -59,13 +61,14 @@ const fixture = (
       ),
       Layer.provideMerge(
         Layer.succeed(DeviceService.DeviceService, {
+          captureRoute: () => Effect.succeed(capture),
           currentReadiness: () =>
             Effect.succeed({
               hostId: LOCAL_DEVICE_HOST_ID,
               hub: { origin: "http://hub.test" },
               ...(upstream ? { upstream } : {}),
             }),
-        } as DeviceService.DeviceService["Service"]),
+        } as unknown as DeviceService.DeviceService["Service"]),
       ),
       Layer.provideMerge(Layer.succeed(HttpClient.HttpClient, client)),
     ),
@@ -85,6 +88,41 @@ describe("device hub proxy", () => {
     expect(await response.text()).toBe("frame");
     expect(requests).toEqual(["http://hub.test/api/devices"]);
     expect(finalized()).toBe(1);
+  });
+
+  it("streams a capture device from its own capture and ends its viewer with the body", async () => {
+    let released = 0;
+    const release = Effect.sync(() => {
+      released++;
+    });
+    const path = "http://t3.test/api/device-hub/vendor/serve-sim/helper/desktop/stream.avcc";
+    const served = fixture([AuthOrchestrationReadScope], false, undefined, undefined, {
+      url: "http://127.0.0.1:9/stream.avcc",
+      release,
+    });
+    const response = await served.handler(new Request(`${path}?wsTicket=secret`));
+    expect(response.status).toBe(200);
+    expect(released).toBe(0);
+    expect(await response.text()).toBe("frame");
+    expect(served.requests).toEqual(["http://127.0.0.1:9/stream.avcc"]);
+    expect(released).toBe(1);
+
+    const failed = fixture([AuthOrchestrationReadScope], true, undefined, undefined, {
+      url: "http://127.0.0.1:9/stream.avcc",
+      release,
+    });
+    expect((await failed.handler(new Request(path))).status).toBe(500);
+    expect(released).toBe(2);
+
+    const stopped = fixture(
+      [AuthOrchestrationReadScope],
+      false,
+      undefined,
+      undefined,
+      "unavailable",
+    );
+    expect((await stopped.handler(new Request(path))).status).toBe(503);
+    expect(stopped.requests).toEqual([]);
   });
 
   it.each(["/vendor/serve-sim/helper/ws", "/vendor/serve-emu/ws"])(
