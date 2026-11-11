@@ -2,7 +2,6 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   DEVICE_ACCESS_POLICY_LABELS,
   DeviceAccessPolicy,
-  deviceAccessKey,
   deviceAccessPolicy,
   storedDeviceAccessPolicy,
   type DeviceServiceState,
@@ -49,7 +48,7 @@ export function DeviceAccessSettings(props: {
           });
         return (
           <SettingsRow
-            key={deviceAccessKey(device)}
+            key={`${device.hostId}:${device.id}`}
             title={
               <span className="flex items-center gap-2">
                 <span className="truncate">{device.name}</span>

@@ -1,7 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   DEVICE_ACCESS_POLICY_LABELS,
-  deviceAccessKey,
   deviceAccessPolicy,
   findDeviceHold,
   storedDeviceAccessPolicy,
@@ -78,7 +77,7 @@ function DeviceEnvironment(props: {
           });
         return (
           <ListSection
-            key={deviceAccessKey(device)}
+            key={`${device.hostId}:${device.id}`}
             title={`${device.name}${device.physical ? " · Physical" : ""}${suffix}`}
             footer={`${host?.label ?? "Device host"} · ${device.version}`}
           >
