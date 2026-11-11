@@ -212,7 +212,7 @@ export const layer = Layer.effect(
       );
       const raw = yield* fs.readFileString(path.join(home, "auth.json")).pipe(
         Effect.map((text): string | undefined => text),
-        Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed(undefined)),
+        Effect.catchReason("PlatformError", "NotFound", () => Effect.undefined),
         Effect.option,
       );
       return Option.isNone(raw)

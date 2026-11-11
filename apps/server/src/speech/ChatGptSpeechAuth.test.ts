@@ -26,7 +26,7 @@ vi.mock("../provider/CodexProvider.ts", async () => {
   return {
     withCodexAppServerClient: (input: { homePath?: string }) =>
       codex.spawnFails
-        ? Effect.fail(new Error("spawn codex ENOENT"))
+        ? Effect.fail({ _tag: "CodexSpawnError" } as const)
         : Effect.acquireRelease(
             Effect.sync(() => {
               codex.spawns.push(input);
