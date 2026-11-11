@@ -37,6 +37,7 @@ const live = vi.hoisted(() => ({
     id: `t${index}`,
     projectId: "p1",
     title: `Thread ${index}`,
+    runtime: { status: "running" },
   })),
 }));
 vi.mock("./useEnvironmentResources", () => ({
@@ -128,7 +129,9 @@ function setup() {
   hostResources.current = null;
   return {
     resources: { environmentId, label: "Local", terminals: [terminal] },
-    threadInfo: new Map([[`${environmentId}:t1`, { projectId, title: "Fix build" }]]),
+    threadInfo: new Map([
+      [`${environmentId}:t1`, { projectId, title: "Fix build", working: true }],
+    ]),
     projectTitleById: new Map([[projectId, "My project"]]),
   } as never as {
     resources: Parameters<typeof EnvironmentSection>[0]["resources"];
@@ -155,6 +158,20 @@ describe("EnvironmentSection", () => {
       force: true,
     });
     expect(closeTerminal).toHaveBeenCalledWith({ threadId: "t1", terminalId: "term" }, "dev");
+
+    // A finished agent keeps its provider session warm for follow-ups; the row must not read as working.
+    await screen.rerender(
+      <EnvironmentSection
+        {...props}
+        threadInfo={
+          new Map([[`${environmentId}:t1`, { projectId, title: "Fix build", working: false }]])
+        }
+        snapshot={snapshot}
+        sort="memory"
+        label="Local"
+      />,
+    );
+    await expect.element(screen.getByRole("button", { name: "Fix build · idle" })).toBeVisible();
   });
 
   it("expands a row to list its processes with usage and the full command", async () => {
@@ -314,4 +331,23 @@ describe("ResourceManager scroll", () => {
       if (focusRow) expect(document.activeElement).toBe(toggle.element());
     },
   );
+
+  it("keeps a collapsed section collapsed after the popup closes and reopens", async () => {
+    using _storage = { [Symbol.dispose]: () => localStorage.clear() };
+    localStorage.clear();
+    live.snapshot = agentSnapshot(byRank);
+    await using screen = await render(<ResourceSegment />, { router: "/" });
+    const trigger = screen.getByRole("button", { name: "Resource Manager" });
+    const section = page.getByRole("button", { name: /^My project/ });
+    await userEvent.click(trigger);
+    await userEvent.click(section);
+    await expect.element(section).toHaveAttribute("aria-expanded", "false");
+    await userEvent.keyboard("{Escape}");
+    await expect.element(section).not.toBeInTheDocument();
+    await userEvent.click(trigger);
+    await expect.element(section).toHaveAttribute("aria-expanded", "false");
+    await expect
+      .element(page.getByRole("button", { name: "Thread 0", exact: true }))
+      .not.toBeInTheDocument();
+  });
 });

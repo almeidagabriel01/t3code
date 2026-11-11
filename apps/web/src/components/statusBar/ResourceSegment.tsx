@@ -1,4 +1,5 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/models";
 import {
   AuthDiagnosticsReadScope,
   AuthOrchestrationReadScope,
@@ -10,6 +11,7 @@ import {
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/reactivity";
 import {
   AppWindowIcon,
@@ -29,6 +31,7 @@ import {
 } from "lucide-react";
 import { createContext, use, useEffect, useRef, useState } from "react";
 
+import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { useOrderWhileOpen } from "../../hooks/useOrderWhileOpen";
 import { useClientSettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
@@ -399,8 +402,19 @@ function UsageRow({
   );
 }
 
+const SECTIONS_KEY = "t3code:resource-manager:sections";
+const SectionsSchema = Schema.Record(Schema.String, Schema.Boolean);
+
+/** Each section keeps the open state the user left it in, so closing the popup does not reset it. */
+function useSectionOpen(id: string, defaultOpen: boolean) {
+  const [sections, setSections] = useLocalStorage(SECTIONS_KEY, {}, SectionsSchema);
+  const setOpen = (open: boolean) => setSections((current) => ({ ...current, [id]: open }));
+  return [sections[id] ?? defaultOpen, setOpen] as const;
+}
+
 function ProjectGroup({
   title,
+  sectionId,
   count,
   usage,
   children,
@@ -409,9 +423,10 @@ function ProjectGroup({
   readonly count: number;
   /** Omitted for groups whose rows have no usage, so the header shows no empty metrics. */
   readonly usage?: ResourceUsage | null;
+  readonly sectionId: string;
   readonly children: React.ReactNode;
 }) {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useSectionOpen(sectionId, true);
   return (
     <div className="border-t border-border/50">
       <Collapsible open={open} onOpenChange={setOpen}>
@@ -437,6 +452,7 @@ function ProjectGroup({
 interface ThreadInfo {
   readonly projectId: ProjectId;
   readonly title: string;
+  readonly working: boolean;
 }
 
 /** Rendered only while devices run, so the device state subscription stays closed otherwise. */
@@ -454,7 +470,12 @@ function DeviceGroup({
   );
   const total = devices.reduce((sum, device) => addUsage(sum, device.usage), EMPTY_USAGE);
   return (
-    <ProjectGroup title="Devices" count={devices.length} usage={total}>
+    <ProjectGroup
+      title="Devices"
+      sectionId={`${environmentId}:devices`}
+      count={devices.length}
+      usage={total}
+    >
       {devices.map((device) => {
         const Icon = DEVICE_ICON[device.platform];
         const targets = deviceShutdownTargets(device, state.devices, localHostIds);
@@ -489,7 +510,11 @@ export function HeavyCommandsGroup({
   const { commands, cpuCount } = useHeavyCommands(environmentId);
   if (commands.length === 0) return null;
   return (
-    <ProjectGroup title="Heavy commands" count={commands.length}>
+    <ProjectGroup
+      title="Heavy commands"
+      sectionId={`${environmentId}:heavy-commands`}
+      count={commands.length}
+    >
       <HeavyCommandRows
         environmentId={environmentId}
         commands={commands}
@@ -513,7 +538,11 @@ export function HeavyQueueGroup({
   const { entries, paused, enabled } = useHeavyQueue(environmentId);
   if (entries.length === 0 && !paused && enabled) return null;
   return (
-    <ProjectGroup title="Heavy work queue" count={entries.length}>
+    <ProjectGroup
+      title="Heavy work queue"
+      sectionId={`${environmentId}:heavy-queue`}
+      count={entries.length}
+    >
       <HeavyQueueBody
         environmentId={environmentId}
         threadTitle={threadTitle}
@@ -544,7 +573,7 @@ export function EnvironmentSection({
   const { environmentId } = resources;
   const navigate = useNavigate();
   const { canClose, close } = useCloseTerminal(environmentId);
-  const [appOpen, setAppOpen] = useState(false);
+  const [appOpen, setAppOpen] = useSectionOpen(`${environmentId}:app`, false);
   const infoOf = (threadId: string) => threadInfo.get(`${environmentId}:${threadId}`);
   const openThread = (threadId: ThreadId) =>
     void navigate({
@@ -621,6 +650,7 @@ export function EnvironmentSection({
         {tree.projects.map((project) => (
           <ProjectGroup
             key={project.projectKey ?? UNATTRIBUTED}
+            sectionId={`${environmentId}:project:${project.projectKey ?? UNATTRIBUTED}`}
             title={project.title}
             count={project.rows.length}
             usage={snapshot === null ? null : project.usage}
@@ -628,12 +658,18 @@ export function EnvironmentSection({
             {project.rows.map((row) => {
               const usage = snapshot === null ? null : row.usage;
               if (row.kind === "agent") {
+                const working = infoOf(row.threadId)?.working ?? false;
                 return (
                   <UsageRow
                     key={row.key}
                     icon={<BotIcon aria-hidden />}
                     label={row.name}
-                    detail={`Agent · ${row.name}`}
+                    detail={
+                      working
+                        ? `Agent · ${row.name}`
+                        : `Idle agent session, kept open for follow-ups · ${row.name}`
+                    }
+                    suffix={working ? null : "idle"}
                     usage={usage}
                     processes={snapshot === null ? undefined : row.processes}
                     onOpen={() => openThread(row.threadId as ThreadId)}
@@ -775,7 +811,11 @@ function ResourceManager({
   const threadInfo = new Map<string, ThreadInfo>(
     threads.map((thread) => [
       `${thread.environmentId}:${thread.id}`,
-      { projectId: thread.projectId, title: thread.title },
+      {
+        projectId: thread.projectId,
+        title: thread.title,
+        working: threadRuntimeIsActive(thread.runtime),
+      },
     ]),
   );
   return (
