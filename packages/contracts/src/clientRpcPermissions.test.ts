@@ -177,3 +177,11 @@ describe("heavy queue client guards", () => {
     );
   });
 });
+
+describe("file explorer client guards", () => {
+  it("guards entry changes with filesystem write, as saving a file needs", () => {
+    expect(clientRpcRequiredScopes(WS_METHODS.projectsChangeEntry, {})).toEqual([
+      "filesystem:write",
+    ]);
+  });
+});

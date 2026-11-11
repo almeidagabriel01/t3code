@@ -77,6 +77,7 @@ import {
   ProjectSearchContentsError,
   ProjectSearchEntriesError,
   ProjectWriteFileError,
+  ProjectChangeEntryError,
   ProjectMutationError,
   ProviderUploadFeedbackError,
   ProviderSetupError,
@@ -231,6 +232,7 @@ import * as PortScanner from "./preview/PortScanner.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as KnownWorkspaces from "./workspace/KnownWorkspaces.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
+import * as WorkspaceEntryChanges from "./workspace/WorkspaceEntryChanges.ts";
 import { readWorkflowScript } from "./orchestration-v2/workflowScriptQuery.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
@@ -1615,6 +1617,7 @@ export const layerWsRpc = (
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+      const workspaceEntryChanges = yield* WorkspaceEntryChanges.WorkspaceEntryChanges;
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
       const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
       const rpcClientIds = yield* Ref.make(new Set<RpcClientId>());
@@ -3439,6 +3442,19 @@ export const layerWsRpc = (
                   cwd: input.cwd,
                   relativePath: input.relativePath,
                   ...projectFileFailureContext(cause),
+                  cause,
+                }),
+            ),
+          ),
+        [WS_METHODS.projectsChangeEntry]: (input) =>
+          workspaceEntryChanges.changeEntry(input).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProjectChangeEntryError({
+                  cwd: input.cwd,
+                  relativePath: cause.relativePath || undefined,
+                  failure: cause.failure,
+                  message: cause.message,
                   cause,
                 }),
             ),

@@ -281,6 +281,9 @@ import {
   ProjectWriteFileError,
   ProjectWriteFileInput,
   ProjectWriteFileResult,
+  ProjectChangeEntryError,
+  ProjectChangeEntryInput,
+  ProjectChangeEntryResult,
 } from "./project.ts";
 import {
   TerminalAttachInput,
@@ -618,6 +621,7 @@ export const WS_METHODS = {
   projectsSearchContents: "projects.searchContents",
   projectsSearchEntries: "projects.searchEntries",
   projectsWriteFile: "projects.writeFile",
+  projectsChangeEntry: "projects.changeEntry",
   projectsMutate: "projects.mutate",
   projectsEnsureScratch: "projects.ensureScratch",
   projectsCreateNew: "projects.createNew",
@@ -1717,6 +1721,12 @@ const WsProjectsWriteFileRpc = Rpc.make(WS_METHODS.projectsWriteFile, {
   payload: ProjectWriteFileInput,
   success: ProjectWriteFileResult,
   error: Schema.Union([ProjectWriteFileError, EnvironmentAuthorizationError]),
+});
+
+export const WsProjectsChangeEntryRpc = Rpc.make(WS_METHODS.projectsChangeEntry, {
+  payload: ProjectChangeEntryInput,
+  success: ProjectChangeEntryResult,
+  error: Schema.Union([ProjectChangeEntryError, EnvironmentAuthorizationError]),
 });
 
 const WsProjectsMutateRpc = Rpc.make(WS_METHODS.projectsMutate, {
@@ -3177,6 +3187,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsProjectsCreateNewRpc,
   WsProjectsCreateFromThreadRpc,
   WsProjectsWriteFileRpc,
+  WsProjectsChangeEntryRpc,
   WsProjectsMutateRpc,
   WsShellOpenInEditorRpc,
   WsFilesystemBrowseRpc,

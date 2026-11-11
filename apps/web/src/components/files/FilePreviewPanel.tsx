@@ -83,6 +83,11 @@ import { BrowserDocumentFrame, isPdfPreviewFile } from "./BrowserDocumentFrame";
 import { DelimitedTablePreview } from "./DelimitedTablePreview";
 import { PreviewImage } from "./PreviewImage";
 import FileBrowserPanel from "./FileBrowserPanel";
+import { joinHostPath } from "./filePath";
+import {
+  type FileExplorerHostActions,
+  useFileExplorerHostActions,
+} from "./useFileExplorerHostActions";
 import { FileExplorerPane } from "./FileExplorerPane";
 import { FileBreadcrumbs } from "./FileBreadcrumbs";
 import { breadcrumbPathOf, retainedBreadcrumbTrail, trailChildOf } from "./filePath";
@@ -1159,6 +1164,7 @@ export default function FilePreviewPanel({
       : tableDelimiter
         ? setRenderTablePreferred
         : setRenderBrowserFilePreferred;
+  const hostSideActions = useFileExplorerHostActions({ environmentId, threadRef, cwd });
   const canOpenInBrowser =
     canOperatePreview &&
     previewPath !== null &&
@@ -1219,12 +1225,14 @@ export default function FilePreviewPanel({
     });
   };
 
-  const handleOpenInBrowser = () => {
-    if (!canReadFiles || !canOperatePreview || !absolutePath || !environmentHttpBaseUrl) return;
+  const canBrowseFiles =
+    canReadFiles && canOperatePreview && previewAvailable && environmentHttpBaseUrl !== null;
+  const openPathInBrowser = (filePath: string | null) => {
+    if (!canBrowseFiles || !filePath || !environmentHttpBaseUrl) return;
     void (async () => {
       const result = await openFileInPreview({
         threadRef,
-        filePath: absolutePath,
+        filePath,
         workspaceRoot: cwd,
         httpBaseUrl: environmentHttpBaseUrl,
         createAssetUrl,
@@ -1242,6 +1250,19 @@ export default function FilePreviewPanel({
         }),
       );
     })();
+  };
+  const explorerHostActions: FileExplorerHostActions = {
+    ...hostSideActions,
+    ...(canBrowseFiles
+      ? {
+          openInBrowser: (path: string) =>
+            openPathInBrowser(isBrowserPreviewFile(path) ? joinHostPath(cwd, path) : null),
+        }
+      : {}),
+    openMarkdownPreview: (path) => {
+      setRenderMarkdownPreferred(true);
+      onOpenFile(path);
+    },
   };
 
   if (attachment === undefined && !canReadFiles) {
@@ -1330,7 +1351,10 @@ export default function FilePreviewPanel({
             </FileSurfaceAction>
           ) : null}
           {canOpenInBrowser ? (
-            <FileSurfaceAction label="Open file in preview browser" onPress={handleOpenInBrowser}>
+            <FileSurfaceAction
+              label="Open file in preview browser"
+              onPress={() => openPathInBrowser(absolutePath)}
+            >
               <Globe2 className="size-3.5" />
             </FileSurfaceAction>
           ) : null}
@@ -1560,6 +1584,7 @@ export default function FilePreviewPanel({
               selectedPathRevealId={revealRequestId}
               onOpenFile={onOpenFile}
               workspaceMutationId={workspaceMutationId}
+              {...(hostFolderPath === null ? { hostActions: explorerHostActions } : {})}
               {...(previewPath && !isMedia && !isPdf
                 ? {
                     onRefreshSelectedFile: () => {

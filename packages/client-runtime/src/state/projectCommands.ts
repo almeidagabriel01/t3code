@@ -207,6 +207,16 @@ export function createProjectEnvironmentAtoms<R, E>(
       scheduler: projectScheduler,
       concurrency: { mode: "serial", key: ({ environmentId }) => environmentId },
     }),
+    changeEntry: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:projects:change-entry",
+      tag: WS_METHODS.projectsChangeEntry,
+      scheduler: fileScheduler,
+      // Undo replays changes in order, so one project's edits never overlap.
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.cwd]),
+      },
+    }),
     writeFile: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:projects:write-file",
       tag: WS_METHODS.projectsWriteFile,

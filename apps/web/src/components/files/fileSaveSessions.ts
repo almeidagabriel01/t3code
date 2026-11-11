@@ -124,6 +124,19 @@ export function createFileSaveSessions(deps: FileSaveSessionDeps) {
   return {
     /** Holds the file's session open until the returned release runs. */
     acquire,
+    /** Writes pending drafts at or under a path, so a move or delete does not race an autosave. */
+    flushUnder(target: Omit<FileSaveTarget, "relativePath">, relativePath: string): Promise<void> {
+      const prefix = fileSaveKey({ ...target, relativePath: "" });
+      return Promise.all(
+        [...sessions].flatMap(([key, session]) => {
+          const path = key.slice(prefix.length);
+          return key.startsWith(prefix) &&
+            (path === relativePath || path.startsWith(`${relativePath}/`))
+            ? [session.coordinator.flushAndWait()]
+            : [];
+        }),
+      ).then(() => undefined);
+    },
     /** Edits for a file nobody holds open are dropped, so retired editors stay inert. */
     change(target: FileSaveTarget, contents: string): void {
       const session = sessions.get(fileSaveKey(target));
@@ -175,4 +188,11 @@ export function useFileSaveSession(
 
 export function changeFileSaveSession(target: FileSaveTarget, contents: string): void {
   fileSaveSessions.change(target, contents);
+}
+
+export function flushFileSavesUnder(
+  target: Omit<FileSaveTarget, "relativePath">,
+  relativePath: string,
+): Promise<void> {
+  return fileSaveSessions.flushUnder(target, relativePath);
 }

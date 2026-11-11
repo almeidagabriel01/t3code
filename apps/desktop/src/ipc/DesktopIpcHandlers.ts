@@ -49,6 +49,7 @@ import {
   checkSystemPermission,
   requestMicrophoneAccess,
   pasteAsText,
+  copyFilesToClipboard,
   probeRemoteEditors,
   revealWindow,
   pickFolder,
@@ -161,6 +162,7 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(checkSystemPermission);
   yield* ipc.handle(requestMicrophoneAccess);
   yield* ipc.handle(pasteAsText);
+  yield* ipc.handle(copyFilesToClipboard);
   yield* ipc.handle(revealWindow);
   yield* ipc.handle(syncHtmlFullscreen);
   yield* ipc.handle(probeRemoteEditors);

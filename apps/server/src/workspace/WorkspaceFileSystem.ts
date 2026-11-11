@@ -35,6 +35,26 @@ const isGitMetadataName = (segment: string) => {
   return name === ".GIT" || name === "GIT~1";
 };
 
+// Reject Git folders, including renamed bare repos whose config/hooks can execute; paths must be normalized.
+// Stop at linked worktrees' .git files since worktrees can sit inside bare repos.
+export const isInGitMetadata = async (path: Path.Path, absolutePath: string) => {
+  if (absolutePath.split(path.sep).some(isGitMetadataName)) return true;
+  for (let folder = path.dirname(absolutePath); ; folder = path.dirname(folder)) {
+    const [head, commondir, objects, refs, dotGit] = await Promise.all(
+      ["HEAD", "commondir", "objects", "refs", ".git"].map((name) =>
+        NodeFSP.lstat(path.join(folder, name)).catch((error: NodeJS.ErrnoException) => {
+          // Any other failure leaves the folder unknown, so the write is refused.
+          if (error.code === "ENOENT" || error.code === "ENOTDIR") return null;
+          throw error;
+        }),
+      ),
+    );
+    // Git recognizes HEAD with commondir or objects/refs as a repository.
+    if (head && (commondir || (objects && refs))) return true;
+    if (dotGit?.isFile() || path.dirname(folder) === folder) return false;
+  }
+};
+
 export class WorkspaceFileSystemOperationError extends Schema.TaggedError<WorkspaceFileSystemOperationError>()(
   "WorkspaceFileSystemOperationError",
   {
@@ -197,25 +217,7 @@ export const make = Effect.gen(function* () {
     );
   };
 
-  // Reject Git folders, including renamed bare repos whose config/hooks can execute; paths must be normalized.
-  // Stop at linked worktrees' .git files since worktrees can sit inside bare repos.
-  const isInGitFolder = async (absolutePath: string) => {
-    if (absolutePath.split(path.sep).some(isGitMetadataName)) return true;
-    for (let folder = path.dirname(absolutePath); ; folder = path.dirname(folder)) {
-      const [head, commondir, objects, refs, dotGit] = await Promise.all(
-        ["HEAD", "commondir", "objects", "refs", ".git"].map((name) =>
-          NodeFSP.lstat(path.join(folder, name)).catch((error: NodeJS.ErrnoException) => {
-            // Any other failure leaves the folder unknown, so the write is refused.
-            if (error.code === "ENOENT" || error.code === "ENOTDIR") return null;
-            throw error;
-          }),
-        ),
-      );
-      // Git recognizes HEAD with commondir or objects/refs as a repository.
-      if (head && (commondir || (objects && refs))) return true;
-      if (dotGit?.isFile() || path.dirname(folder) === folder) return false;
-    }
-  };
+  const isInGitFolder = (absolutePath: string) => isInGitMetadata(path, absolutePath);
 
   /**
    * Workspace-relative paths must stay inside the root, symlinks included. An

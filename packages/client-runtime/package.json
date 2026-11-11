@@ -15,6 +15,10 @@
       "types": "./src/assemblyHighlighting.ts",
       "default": "./src/assemblyHighlighting.ts"
     },
+    "./file-explorer": {
+      "types": "./src/fileExplorer.ts",
+      "default": "./src/fileExplorer.ts"
+    },
     "./zip/bounded-zip": {
       "types": "./src/zip/boundedZip.ts",
       "default": "./src/zip/boundedZip.ts"

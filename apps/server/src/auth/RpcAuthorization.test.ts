@@ -103,6 +103,10 @@ describe("RPC authorization scopes", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.memoryHubSettingsUpdate)).toBe("settings:write");
   });
 
+  it("requires filesystem write for file explorer edits, as for saving a file", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.projectsChangeEntry)).toBe("filesystem:write");
+  });
+
   it.effect("clients cannot supply a task memory ceiling; the server captures it from grants", () =>
     Effect.gen(function* () {
       expect(

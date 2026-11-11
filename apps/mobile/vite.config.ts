@@ -13,6 +13,8 @@ const reactTests = [
   "src/features/assistants/useAssistantEditor.test.tsx",
   "src/features/threads/GitOverviewSheet.workspace.test.tsx",
   "src/features/files/thread-file-navigator-pane.test.tsx",
+  "src/features/files/useFileExplorer.test.tsx",
+  "src/features/files/FileTreeBrowser.test.tsx",
   "src/features/layout/AdaptiveWorkspaceLayout.inspector.test.tsx",
   "src/state/heavyQueue.test.tsx",
   "src/features/settings/components/HeavyQueueSection.test.tsx",

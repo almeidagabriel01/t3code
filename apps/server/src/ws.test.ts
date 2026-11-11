@@ -26,10 +26,12 @@ import {
   WsAssistantSandboxSubscribeRpc,
   WsAssistantsCreateRpc,
   WsAssistantsUpdateRpc,
+  WsProjectsChangeEntryRpc,
   WsRpcGroup,
   WsServerRefreshProvidersRpc,
   WsSubscribeServerConfigRpc,
   type OrchestrationV2StoredEvent,
+  type ProjectEntryChange,
   type OrchestrationV2ThreadShell,
   type OrchestrationProjectShell,
   type ServerConfig,
@@ -150,6 +152,7 @@ import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
+import * as WorkspaceEntryChanges from "./workspace/WorkspaceEntryChanges.ts";
 import * as WorktreeSetupTracker from "./project/WorktreeSetupTracker.ts";
 import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
@@ -902,6 +905,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({}),
   Layer.mock(WorkspaceEntries.WorkspaceEntries)({}),
   Layer.mock(WorkspaceFileSystem.WorkspaceFileSystem)({}),
+  Layer.mock(WorkspaceEntryChanges.WorkspaceEntryChanges)({}),
   Layer.mock(WorktreeSetupTracker.WorktreeSetupTracker)({}),
 );
 
@@ -2039,6 +2043,90 @@ it.effect("the sandbox RPCs reach the control service, and choosing the sandbox 
     yield* call(WS_METHODS.assistantsUpdate, { assistantId: "a1", role: "QA" });
     yield* Queue.take(responses);
     assert.strictEqual(calls.filter((entry) => entry === "start").length, 3);
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.fresh(layerConfigSources),
+        Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
+        Layer.mock(ServerBrowser.ServerBrowser)({}),
+      ),
+    ),
+    Effect.scoped,
+  ),
+);
+
+it.effect("file explorer changes keep the failure kind across the RPC", () =>
+  Effect.gen(function* () {
+    const exits = yield* Queue.unbounded<Exit.Exit<unknown, unknown>>();
+    const services = Layer.mergeAll(
+      layerUnusedConfigRpcServices,
+      Layer.mock(ExternalLauncher.ExternalLauncher)({}),
+      Layer.mock(ProviderRegistry.ProviderRegistry)({}),
+      Layer.mock(UsageLimitSources.UsageLimitSources)({}),
+      Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
+      Layer.mock(DirectEndpoints.DirectEndpoints)({}),
+      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: process.cwd() }),
+      Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
+      Layer.mock(ServerEnvironment.ServerEnvironment)({}),
+      Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
+      Layer.mock(AssistantGroups.AssistantGroups)({ member: {} as never }),
+      Layer.mock(WorkspaceEntryChanges.WorkspaceEntryChanges)({
+        changeEntry: (input) =>
+          input.change._tag === "delete"
+            ? Effect.fail(
+                new WorkspaceEntryChanges.WorkspaceEntryChangeError({
+                  failure: "trash_unavailable",
+                  relativePath: "",
+                  message: "No Trash on this volume.",
+                }),
+              )
+            : Effect.succeed({ entries: [{ relativePath: "a.ts" }], failures: [] }),
+      }),
+    );
+    const server = yield* RpcServer.makeNoSerialization(RpcGroup.make(WsProjectsChangeEntryRpc), {
+      ...WS_RPC_SERVER_OPTIONS,
+      onFromServer: (response) =>
+        response._tag === "Exit" ? Queue.offer(exits, response.exit) : Effect.void,
+    }).pipe(
+      Effect.provide(
+        layerWsRpc(
+          {
+            sessionId: AuthSessionId.make("explorer-test"),
+            subject: "explorer-test",
+            method: "browser-session-cookie",
+            scopes: [],
+          },
+          {},
+          yield* ServerBrowser.ServerBrowser,
+          () => Effect.void,
+          { secretReferences: true },
+        ).pipe(Layer.provide(services)),
+      ),
+    );
+    const call = (id: string, change: ProjectEntryChange) =>
+      server.write(0, {
+        _tag: "Request",
+        id: RpcMessage.RequestId(id),
+        tag: WS_METHODS.projectsChangeEntry,
+        payload: { cwd: "/repo", change },
+        headers: Headers.empty,
+      });
+    yield* call("create", { _tag: "create", relativePath: "a.ts", kind: "file" });
+    const created = yield* Queue.take(exits);
+    assert.deepStrictEqual(Exit.isSuccess(created) ? created.value : null, {
+      entries: [{ relativePath: "a.ts" }],
+      failures: [],
+    });
+    yield* call("delete", { _tag: "delete", relativePaths: ["a.ts"], mode: "trash" });
+    const deleted = yield* Queue.take(exits);
+    const error = Exit.isFailure(deleted) ? Cause.squash(deleted.cause) : null;
+    assert.deepInclude(error as object, {
+      _tag: "ProjectChangeEntryError",
+      cwd: "/repo",
+      relativePath: undefined,
+      failure: "trash_unavailable",
+      message: "No Trash on this volume.",
+    });
   }).pipe(
     Effect.provide(
       Layer.mergeAll(
