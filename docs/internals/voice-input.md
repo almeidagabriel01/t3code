@@ -53,6 +53,21 @@ applies the account's safety-retention policy when choosing an endpoint. The cat
 holds no credential or consent state, which is why it may be cached while key
 presence is read fresh on every request.
 
+ChatGPT subscription has no stored key: `CloudSpeech` borrows the Codex ChatGPT sign-in
+through [ChatGPT speech auth](../../apps/server/src/speech/ChatGptSpeechAuth.ts), using
+the default model's Codex instance, then `codex`, then the first enabled unmanaged one;
+with only managed instances it reads the native home (`CODEX_HOME`, then `~/.codex`).
+Clients read key presence before every recording, so its status only reads that
+instance's `auth.json` and `config.toml` and never starts Codex. Codex owns the
+sign-in: T3 never writes `auth.json`. A current file token is used directly; an
+expired one, a 401 from ChatGPT, or a keychain store (`cli_auth_credentials_store`
+of `keyring` or `auto`) asks a request-scoped `codex app-server` through `getAuthStatus`,
+which refreshes and persists with Codex's own rules. A forced refresh rotates the refresh
+token, so it runs only after expiry or a 401; a 403 is a plan refusal and is reported as is. T3's managed ChatGPT tokens are scoped
+to the API and are never sent there. The transcribe route is unofficial and takes 24 kHz mono
+PCM16 WAV, so the server resamples; 404, 405, 410 or a reply without `text` reports
+`endpoint-changed`, and the last failure is kept in memory for Settings.
+
 ## Server side
 
 The [speech service](../../apps/server/src/speech/SpeechService.ts) runs

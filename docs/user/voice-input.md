@@ -47,6 +47,16 @@ Vocabulary hints are not sent to OpenRouter; dictionary spellings are applied
 after transcription. If OpenRouter stops listing your model, dictation stops
 until you choose another.
 
+**ChatGPT subscription** needs no API key and adds no API charges. It uses the
+Codex ChatGPT sign-in on the environment, so install Codex there and run
+`codex login` with ChatGPT first. Settings → Voice shows whether that sign-in is
+ready and how to fix it: not signed in, signed in with an API key instead, expired,
+or Codex turned off. T3 asks Codex to renew an expired sign-in; if that fails, run
+`codex login` again. Anyone with dictation access to the environment uses that
+subscription, and only this device opts in. Vocabulary hints are not sent;
+dictionary spellings are applied after transcription. This uses an unofficial
+ChatGPT service and can stop working without notice.
+
 ## Set up a model
 
 In **Settings → Voice → Transcription**, download a model and choose **Use model** if it
