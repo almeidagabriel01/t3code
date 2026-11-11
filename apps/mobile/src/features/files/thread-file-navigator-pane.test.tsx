@@ -1,0 +1,100 @@
+import type { ReactNode } from "react";
+import { act } from "react";
+import { createRoot } from "react-dom/client";
+import { beforeEach, expect, it, vi } from "vite-plus/test";
+
+const mocks = vi.hoisted(() => ({
+  worktreePath: "/worktrees/p/feat" as string | null,
+  cleaned: false,
+  cleanedArgs: vi.fn(),
+  notice: vi.fn(),
+  refresh: vi.fn(),
+}));
+
+vi.mock("react-native", () => ({
+  View: (props: { children?: ReactNode }) => <div>{props.children}</div>,
+}));
+vi.mock("@t3tools/client-runtime/state/filesystem", () => ({
+  resolveFilesystemReadAccess: () => ({ canReadFiles: true, isPending: false, error: null }),
+}));
+vi.mock("../../state/session", () => ({ environmentSession: { sessionStateAtom: () => "s" } }));
+vi.mock("../../state/query", () => ({ useEnvironmentQuery: () => ({ data: null }) }));
+vi.mock("../../state/presentation", () => ({
+  useEnvironmentPresentation: () => ({ isReady: true, presentation: null }),
+}));
+vi.mock("../../state/use-thread-selection", () => ({
+  useThreadSelection: () => ({ selectedThread: { environmentId: "env", id: "thread" } }),
+}));
+vi.mock("../../state/use-selected-thread-worktree", () => ({
+  useSelectedThreadWorktree: () => ({ selectedThreadWorktreePath: mocks.worktreePath }),
+}));
+vi.mock("../threads/ThreadWorkspaceNotice", () => ({
+  useThreadWorkspaceCleaned: (...args: unknown[]) => {
+    mocks.cleanedArgs(...args);
+    return mocks.cleaned;
+  },
+  ThreadWorkspaceNotice: (props: { onRestored?: () => void }) => {
+    mocks.notice(props);
+    return <aside>notice</aside>;
+  },
+}));
+vi.mock("../settings/appearance/AppearancePreferencesProvider", () => ({
+  useAppearancePreferences: () => ({ themeAppearance: "dark" }),
+}));
+vi.mock("./useFileTreeEntries", () => ({
+  useFileTreeEntries: () => ({ refresh: mocks.refresh }),
+}));
+vi.mock("./FileTreeBrowser", () => ({ FileTreeBrowser: () => <section>tree</section> }));
+vi.mock("./preload-workspace-file", () => ({ preloadWorkspaceFileContents: vi.fn() }));
+vi.mock("../../components/ui/AppBar", () => ({ AppBar: () => null }));
+vi.mock("../../components/ui/ScreenContent", () => ({
+  ScreenContent: (props: { children?: ReactNode }) => <div>{props.children}</div>,
+}));
+
+import { ThreadFileNavigatorPane } from "./thread-file-navigator-pane";
+
+function mount(cwd: string) {
+  const host = document.createElement("div");
+  const root = createRoot(host);
+  act(() =>
+    root.render(
+      <ThreadFileNavigatorPane
+        cwd={cwd}
+        environmentId={"env" as never}
+        projectName="p"
+        selectedPath={null}
+        onSelectFile={() => {}}
+      />,
+    ),
+  );
+  return { host, [Symbol.dispose]: () => act(() => root.unmount()) };
+}
+
+beforeEach(() => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  mocks.worktreePath = "/worktrees/p/feat";
+  mocks.cleaned = false;
+  mocks.cleanedArgs.mockReset();
+  mocks.notice.mockReset();
+});
+
+it("replaces the file tree with the restore notice for a cleaned worktree", () => {
+  mocks.cleaned = true;
+  using view = mount("/worktrees/p/feat/apps");
+  expect(view.host.textContent).toBe("notice");
+  expect(mocks.cleanedArgs).toHaveBeenCalledWith("env", "thread", "/worktrees/p/feat");
+  const props = mocks.notice.mock.calls[0]?.[0] as { onRestored: () => void } | undefined;
+  props?.onRestored();
+  expect(mocks.refresh).toHaveBeenCalledOnce();
+});
+
+it("lists files while the worktree is ready", () => {
+  using view = mount("/worktrees/p/feat");
+  expect(view.host.textContent).toBe("tree");
+});
+
+it("does not treat a folder outside the thread's worktree as the cleaned one", () => {
+  using view = mount("/worktrees/p/feat-other");
+  expect(mocks.cleanedArgs).toHaveBeenCalledWith("env", "thread", null);
+  expect(view.host.textContent).toBe("tree");
+});

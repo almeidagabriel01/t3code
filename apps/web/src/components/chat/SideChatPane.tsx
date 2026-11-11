@@ -20,7 +20,7 @@ import { useComposerDraftStore } from "../../composerDraftStore";
 import { ComposerHandleContext } from "../../composerHandleContext";
 import { useClientSettings } from "../../hooks/useSettings";
 import { releaseComposerDraftUploads } from "../../lib/composerDraftUploads";
-import type { SideChatParentPanel } from "../../lib/sideChatPane";
+import { useStartingSideChats, type SideChatParentPanel } from "../../lib/sideChatPane";
 import { readLocalApi } from "../../localApi";
 import { hostRightPanel, useRightPanelStore } from "../../rightPanelStore";
 import { useQuietThreadProjection, useQuietThreadShell } from "../../state/entities";
@@ -31,6 +31,7 @@ import { buildThreadRouteParams } from "../../threadRoutes";
 import { useAtomCommand } from "../../state/use-atom-command";
 import ChatView from "../ChatView";
 import { Button } from "../ui/button";
+import { Spinner } from "../ui/spinner";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { BackgroundThreadContext } from "./backgroundThread";
@@ -61,6 +62,7 @@ export default function SideChatPane(props: {
     [parentRef, threadId],
   );
   const shell = useQuietThreadShell(threadRef);
+  const startingPrompt = useStartingSideChats((prompts) => prompts[threadId]);
   const parent = useQuietThreadShell(parentRef);
   const snapshotLoaded = useEnvironmentShellHasSnapshot(parentRef.environmentId);
   const projection = useQuietThreadProjection(shell === null ? null : threadRef)?.projection;
@@ -300,7 +302,18 @@ export default function SideChatPane(props: {
           <XIcon />
         </Button>
       </div>
-      {shell === null ? (
+      {startingPrompt !== undefined ? (
+        // Shown from the moment `/side` is sent, until the side chat has the message.
+        <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3">
+          <p className="max-w-[85%] self-end rounded-2xl bg-message px-3 py-2 text-sm break-words whitespace-pre-wrap text-message-foreground">
+            {startingPrompt}
+          </p>
+          <p className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Spinner size="xs" />
+            Starting the side chat…
+          </p>
+        </div>
+      ) : shell === null ? (
         snapshotLoaded ? (
           <p className="p-3 text-xs text-muted-foreground">This side chat was deleted.</p>
         ) : null

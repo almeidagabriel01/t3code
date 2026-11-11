@@ -20,6 +20,7 @@ import { deriveProviderInstanceEntries } from "../../providerInstances";
 import {
   scheduledTaskDefaultModel,
   defaultScheduledTaskProjectId,
+  draftForNewTask,
   matchesScheduledTaskScope,
   maxRunsFromDraft,
   scheduleFromDraft,
@@ -195,6 +196,21 @@ describe("scheduled task destination", () => {
       threadId: "",
       workspaceMode: "worktree",
       startFromOrigin: true,
+    });
+  });
+
+  it("a new task opened from a conversation continues it; otherwise it starts a new thread", () => {
+    const empty = { ...taskToDraft(legacyTask), threadId: "", threadMode: "new_thread" as const };
+    const threadId = ThreadId.make("assistant:atlas:1");
+    const projectId = ProjectId.make("project:bound");
+    expect(
+      draftForNewTask(empty, { bound: { threadId, projectId }, defaultProjectId: "project:other" }),
+    ).toMatchObject({ threadId, projectId, threadMode: "continue" });
+    expect(draftForNewTask(empty, { groupId: "team-1", defaultProjectId: "p" })).toMatchObject({
+      threadId: "",
+      projectId: "p",
+      assistantTeamId: "team-1",
+      threadMode: "new_thread",
     });
   });
 });

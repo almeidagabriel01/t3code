@@ -510,13 +510,28 @@ handlers[ORCHESTRATION_V2_WS_METHODS.dispatchCommand] = (command: {
     if (fakeCommands.failTypes.has(command.type)) {
       return Effect.fail(new FakeCommandRejected({ message: `${command.type} failed` }));
     }
+    if (fakeCommands.holdTypes.has(command.type)) {
+      // Refused when the test ends: one left unanswered blocks the same command in later tests.
+      return Effect.callback<never, FakeCommandRejected>((resume) => {
+        heldCommands.push(() =>
+          resume(Effect.fail(new FakeCommandRejected({ message: `${command.type} held` }))),
+        );
+      });
+    }
     return Effect.sync(() => dispatchCommand(command));
   });
 
-/** Commands the fake server received, and the command types it rejects. */
+const heldCommands: Array<() => void> = [];
+
+/** Commands the fake server received, the types it rejects, and the types it holds unanswered. */
 export const fakeCommands = {
   dispatched: [] as Array<{ readonly type: string; readonly [key: string]: unknown }>,
   failTypes: new Set<string>(),
+  holdTypes: new Set<string>(),
+  /** Answers every held command with a rejection. */
+  refuseHeld: () => {
+    for (const refuse of heldCommands.splice(0)) refuse();
+  },
 };
 
 const dispatchCommand = (command: {
@@ -1172,6 +1187,8 @@ export function installFakeEnvironment(
       threads = [];
       fakeCommands.dispatched.length = 0;
       fakeCommands.failTypes.clear();
+      fakeCommands.holdTypes.clear();
+      fakeCommands.refuseHeld();
       autonomyOverride = null;
       fakeSettings.patches = [];
       fakeWatches.items = [];

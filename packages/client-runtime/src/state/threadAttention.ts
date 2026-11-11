@@ -100,31 +100,48 @@ function isActiveSubagentChild(thread: EnvironmentThreadShell): boolean {
     status === "approval" ||
     status === "input" ||
     status === "request" ||
-    (status === "waiting" && thread.runtime?.status === "running")
+    // Blocked on a thread wait, or a finished run parked on awaited background work.
+    status === "waiting"
   );
 }
 
-/** Non-terminal subagent children by parent thread key, oldest first. */
+/**
+ * Subagent children the parent's subagent record still counts as running, by parent thread key,
+ * oldest first: working, needing the user, or held open by background work or their own children.
+ */
 export function activeSubagentChildrenByParent(
   threads: ReadonlyArray<EnvironmentThreadShell>,
 ): ReadonlyMap<string, readonly EnvironmentThreadShell[]> {
-  const byParent = new Map<string, EnvironmentThreadShell[]>();
+  const allByParent = new Map<string, EnvironmentThreadShell[]>();
   for (const thread of threads) {
     const parentId = thread.lineage.parentThreadId;
-    if (
-      thread.lineage.relationshipToParent !== "subagent" ||
-      parentId === null ||
-      !isActiveSubagentChild(thread)
-    ) {
-      continue;
-    }
+    if (thread.lineage.relationshipToParent !== "subagent" || parentId === null) continue;
     const parentKey = scopedThreadKey(scopeThreadRef(thread.environmentId, parentId));
-    const children = byParent.get(parentKey);
-    if (children === undefined) byParent.set(parentKey, [thread]);
+    const children = allByParent.get(parentKey);
+    if (children === undefined) allByParent.set(parentKey, [thread]);
     else children.push(thread);
   }
-  for (const children of byParent.values()) {
-    children.sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+  const active = new Map<EnvironmentThreadShell, boolean>();
+  const isActive = (thread: EnvironmentThreadShell): boolean => {
+    const known = active.get(thread);
+    if (known !== undefined) return known;
+    // Set before recursing so a malformed lineage cycle ends.
+    active.set(thread, false);
+    const result =
+      thread.archivedAt === null &&
+      (isActiveSubagentChild(thread) ||
+        (
+          allByParent.get(scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))) ?? []
+        ).some(isActive));
+    active.set(thread, result);
+    return result;
+  };
+  const byParent = new Map<string, EnvironmentThreadShell[]>();
+  for (const [parentKey, children] of allByParent) {
+    const live = children.filter(isActive);
+    if (live.length === 0) continue;
+    live.sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+    byParent.set(parentKey, live);
   }
   return byParent;
 }

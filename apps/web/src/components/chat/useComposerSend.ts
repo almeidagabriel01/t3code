@@ -133,6 +133,7 @@ import type {
 } from "@t3tools/client-runtime/state/shell";
 import type { Dispatch } from "react";
 import type { ComposerThreadTarget } from "../../composerDraftStore";
+import { appendToDraftPrompt } from "../../lib/sideChatPane";
 import type { ProviderInstanceEntry } from "../../providerInstances";
 import type { SessionPhase } from "../../types";
 import type { DraftSessionState } from "../../composerDraftStore";
@@ -498,16 +499,23 @@ export function useComposerSend(input: ComposerSendInput) {
         );
         return;
       }
-      const started = await onSideChat(sideChatCommand.prompt);
-      // Clear only what was sent; the user may have edited the draft or left meanwhile.
-      if (
-        started &&
-        currentRouteThreadKeyRef.current === routeThreadKey &&
-        promptRef.current === promptAtSend
-      ) {
-        promptRef.current = "";
-        setComposerDraftPrompt(composerDraftTarget, "");
-        composerRef.current?.resetCursorState();
+      // The side chat's tab shows the message at once, so the draft leaves the composer at once.
+      promptRef.current = "";
+      setComposerDraftPrompt(composerDraftTarget, "");
+      composerRef.current?.resetCursorState();
+      if (await onSideChat(sideChatCommand.prompt)) return;
+      // Not started: the text returns, after anything typed meanwhile.
+      const restored = appendToDraftPrompt(
+        useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.prompt ?? "",
+        promptAtSend,
+      );
+      setComposerDraftPrompt(composerDraftTarget, restored);
+      if (currentRouteThreadKeyRef.current === routeThreadKey) {
+        promptRef.current = restored;
+        composerRef.current?.resetCursorState({
+          cursor: collapseExpandedComposerCursor(restored, restored.length),
+          prompt: restored,
+        });
       }
       return;
     }

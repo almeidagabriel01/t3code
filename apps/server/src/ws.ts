@@ -926,6 +926,9 @@ const enrichProjectShells = Effect.fn("ws.orchestrationV2.enrichProjectShells")(
               project: {
                 ...project,
                 repositoryIdentity: enrichment.repositoryIdentity,
+                ...(enrichment.managedRole === undefined
+                  ? {}
+                  : { managedRole: enrichment.managedRole }),
               },
               repositoryIdentityResolved: enrichment.repositoryIdentityResolved,
             })),
@@ -2875,8 +2878,10 @@ export const layerWsRpc = (
               : input.reloadSecrets === true
                 ? providerRegistry.reloadSecretsAndRefresh(input.instanceId)
                 : input.instanceId !== undefined
-                  ? providerRegistry.refreshInstance(input.instanceId)
-                  : providerRegistry.refresh();
+                  ? providerRegistry.refreshInstance(input.instanceId, {
+                      fresh: input.fresh === true,
+                    })
+                  : providerRegistry.refresh(undefined, { fresh: input.fresh === true });
             if (input.refreshModels) {
               const instances = yield* providerInstances.listInstances;
               for (const instance of instances) {

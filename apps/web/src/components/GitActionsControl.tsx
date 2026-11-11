@@ -121,6 +121,8 @@ interface GitActionsControlProps {
   showActions?: boolean;
   showChanges?: boolean;
   onOpenChanges?: () => void;
+  /** False for a managed worktree: its missing folder is restored, never initialized. */
+  allowInitialize?: boolean;
 }
 
 interface PendingDefaultBranchAction {
@@ -932,6 +934,7 @@ export default function GitActionsControl({
   showActions = true,
   showChanges = true,
   onOpenChanges,
+  allowInitialize = true,
 }: GitActionsControlProps) {
   const panelAnchorRef = useRef<HTMLDivElement | null>(null);
   const updateThreadMetadata = useAtomCommand(
@@ -1488,19 +1491,21 @@ export default function GitActionsControl({
   return (
     <>
       {!showActions ? null : !isRepo ? (
-        <ThreadDetailsControl
-          size="xs"
-          variant="ghost"
-          part="row"
-          panel
-          disabled={!canWriteSourceControl || initAction.isPending}
-          onClick={initializeGit}
-        >
-          <GitBranchPlusIcon className="size-3.5" aria-hidden />
-          <span className={cn("ml-0.5", THREAD_DETAILS_PANEL_LABEL_CLASS)}>
-            {initAction.isPending ? "Initializing..." : "Initialize Git"}
-          </span>
-        </ThreadDetailsControl>
+        !allowInitialize ? null : (
+          <ThreadDetailsControl
+            size="xs"
+            variant="ghost"
+            part="row"
+            panel
+            disabled={!canWriteSourceControl || initAction.isPending}
+            onClick={initializeGit}
+          >
+            <GitBranchPlusIcon className="size-3.5" aria-hidden />
+            <span className={cn("ml-0.5", THREAD_DETAILS_PANEL_LABEL_CLASS)}>
+              {initAction.isPending ? "Initializing..." : "Initialize Git"}
+            </span>
+          </ThreadDetailsControl>
+        )
       ) : quietEmptyDraft || (compact && !gitActionProgress && !visibleInlineSuccess) ? null : (
         <div
           role="group"

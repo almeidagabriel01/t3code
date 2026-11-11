@@ -1,4 +1,4 @@
-import type { RepositoryIdentity } from "@t3tools/contracts";
+import { ProjectManagedRole, type RepositoryIdentity } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -7,11 +7,13 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import type * as Scope from "effect/Scope";
 
+import * as ServerConfig from "../config.ts";
 import * as ProjectFaviconResolver from "./ProjectFaviconResolver.ts";
 import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
 
@@ -27,7 +29,12 @@ export interface ProjectEnrichment {
   readonly repositoryIdentity: RepositoryIdentity | null;
   readonly faviconPath: string | null;
   readonly repositoryIdentityResolved: boolean;
+  readonly managedRole?: ProjectManagedRole;
 }
+
+/** Each managed folder sits under the data dir, named for its role. */
+export const managedProjectRoot = (path: Path.Path, baseDir: string, role: ProjectManagedRole) =>
+  path.resolve(baseDir, role);
 
 export interface ProjectEnrichmentChange {
   readonly workspaceRoot: string;
@@ -87,6 +94,11 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
 ) {
   const repositoryIdentityResolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
   const faviconResolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+  const { baseDir } = yield* ServerConfig.ServerConfig;
+  const path = yield* Path.Path;
+  const managedRoots = ProjectManagedRole.literals.map(
+    (role) => [role, managedProjectRoot(path, baseDir, role)] as const,
+  );
   const cacheCapacity = Math.max(1, options.cacheCapacity ?? DEFAULT_CACHE_CAPACITY);
   const maxPending = Math.max(1, options.maxPending ?? DEFAULT_MAX_PENDING);
   const concurrency = Math.max(1, options.concurrency ?? DEFAULT_CONCURRENCY);
@@ -238,10 +250,13 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
         ] as const,
         { concurrency: "unbounded" },
       );
+      const resolvedRoot = path.resolve(workspaceRoot);
+      const managedRole = managedRoots.find(([, root]) => root === resolvedRoot)?.[0];
       return {
         repositoryIdentity: availableValue(repositoryIdentity),
         faviconPath: availableValue(faviconPath),
         repositoryIdentityResolved: isSuccessfullyResolved(repositoryIdentity),
+        ...(managedRole === undefined ? {} : { managedRole }),
       };
     },
   );

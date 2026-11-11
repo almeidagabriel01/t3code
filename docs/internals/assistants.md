@@ -95,7 +95,9 @@ lead when it was that member; archiving leaves membership alone. `ensureForkSche
 (`assistant_group_tasks`). A chat message runs nothing itself: it opens one root task per recipient,
 and each member works its tasks in its own hidden thread for that group,
 `assistant:<assistantId>:g-<hash>` (`assistant_group_threads`). The suffix is a hash because team ids
-may hold `:`; look the group up in the table, never parse it out of the id. `forThread` resolves these
+may hold `:`; look the group up in the table, never parse it out of the id. The table is also the only
+source of a member's thread id: a deleted thread keeps its id reserved, so `ensureThread` launches the
+replacement under an id derived from the dead one and moves the row. `forThread` resolves these
 threads as non-current, so sandbox, runtime policy, connectors and the note apply, and
 `guardAssistantThread` refuses archive, delete and unarchive on them; the service changes their
 lifecycle through the Orchestrator directly.

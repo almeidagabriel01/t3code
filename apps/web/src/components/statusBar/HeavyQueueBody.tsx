@@ -267,18 +267,20 @@ function Row({
           )}
         </div>
         <div className="truncate text-xs font-medium text-foreground/90">{label}</div>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <div className="cursor-default truncate font-mono text-3xs text-muted-foreground" />
-            }
-          >
-            {command}
-          </TooltipTrigger>
-          <TooltipPopup side="top" className="max-w-sm break-all">
-            {entry.label}
-          </TooltipPopup>
-        </Tooltip>
+        {command === label ? null : (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <div className="cursor-default truncate font-mono text-3xs text-muted-foreground" />
+              }
+            >
+              {command}
+            </TooltipTrigger>
+            <TooltipPopup side="top" className="max-w-sm break-all">
+              {entry.label}
+            </TooltipPopup>
+          </Tooltip>
+        )}
         {usage === null ? null : (
           <div className="truncate text-3xs text-muted-foreground">{usage}</div>
         )}

@@ -70,6 +70,9 @@ export const layer = HttpApiBuilder.group(
               Effect.map((enrichment) => ({
                 ...project,
                 repositoryIdentity: enrichment.repositoryIdentity,
+                ...(enrichment.managedRole === undefined
+                  ? {}
+                  : { managedRole: enrichment.managedRole }),
               })),
             ),
           { concurrency: 16 },

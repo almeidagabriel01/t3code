@@ -33,6 +33,7 @@ import { useSelectedThreadGitState } from "../../../state/use-selected-thread-gi
 import { useSelectedThreadWorktree } from "../../../state/use-selected-thread-worktree";
 import { vcsEnvironment } from "../../../state/vcs";
 import { menuItemIconName, statusSummary } from "./gitSheetComponents";
+import { ThreadWorkspaceNotice, useThreadWorkspaceCleaned } from "../ThreadWorkspaceNotice";
 import {
   LinkedPullRequestRow,
   linkedPullRequestKey,
@@ -96,7 +97,14 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
   );
 
   const currentBranchLabel = gitStatus.data?.refName ?? selectedThread?.branch ?? "Detached HEAD";
-  const currentStatusSummary = statusSummary(gitStatus.data);
+  const workspaceCleaned = useThreadWorkspaceCleaned(
+    environmentId,
+    threadId,
+    selectedThreadWorktreePath,
+  );
+  const currentStatusSummary = workspaceCleaned
+    ? "Worktree cleaned up"
+    : statusSummary(gitStatus.data);
   const currentWorktreePath = selectedThreadWorktreePath;
   const gitOperationLabel = gitState.gitOperationLabel;
   const busy = gitOperationLabel !== null;
@@ -244,6 +252,13 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
         <RefreshControl refreshing={isRefreshing} onRefresh={() => void handleRefresh()} />
       }
     >
+      <ThreadWorkspaceNotice
+        environmentId={environmentId}
+        threadId={threadId}
+        worktreePath={selectedThreadWorktreePath}
+        inset={false}
+        onRestored={() => void gitActions.refreshSelectedThreadGitStatus()}
+      />
       <ListSection>
         {sheetMenuItems.map(({ item, disabledReason }) => (
           <ListRow

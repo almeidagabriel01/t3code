@@ -136,10 +136,11 @@ it.effect("keeps assistants in Scratch, or in their own project when Scratch is 
     yield* withScratch(() =>
       Effect.gen(function* () {
         const scratch = yield* ManagedProjectFolders.ManagedProjectFolders;
-        assert.equal(
-          (yield* scratch.ensureAssistantProject).projectId,
-          (yield* scratch.ensureScratchProject).projectId,
-        );
+        const projects = yield* ProjectService.ProjectService;
+        const { projectId } = yield* scratch.ensureScratchProject;
+        assert.equal((yield* scratch.ensureAssistantProject).projectId, projectId);
+        const shell = Option.getOrThrow(yield* projects.getShell(projectId));
+        assert.equal(shell.managedRole, "scratch");
       }),
     );
     const checkout = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-assistant-repo-" });
@@ -155,6 +156,8 @@ it.effect("keeps assistants in Scratch, or in their own project when Scratch is 
         (project) => project.id === first.projectId,
       );
       assert.equal(owner?.workspaceRoot, path.resolve(baseDir, "assistants"));
+      const shell = Option.getOrThrow(yield* projects.getShell(first.projectId));
+      assert.equal(shell.managedRole, "assistants");
     }).pipe(Effect.provide(layer(baseDir)));
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

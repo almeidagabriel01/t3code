@@ -22,11 +22,11 @@ export async function refreshEnvironmentLimits(
   // they were started and the newest outcome always wins.
   const result = await refreshUsageLimits(
     environmentId,
-    () =>
+    (fresh) =>
       runAtomCommand(
         registry,
         serverEnvironment.refreshProviders,
-        { environmentId, input: {} },
+        { environmentId, input: fresh ? { fresh: true } : {} },
         { reportFailure: false },
       ),
     options.automatic,

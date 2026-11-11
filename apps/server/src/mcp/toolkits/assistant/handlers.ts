@@ -11,6 +11,7 @@ import {
   OrchestratorMcpFailure,
   type ProjectId,
   runtimeModeForToolAccess,
+  type ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import type * as Schema from "effect/Schema";
@@ -93,7 +94,8 @@ const read = Effect.fn("mcp.assistant.read")(function* (input: AssistantParamete
   if (input.action === "list")
     return { assistants: all.map((assistant) => brief(assistant, all, teams)) } satisfies Out;
   const found = yield* find(all, input.handle, "read");
-  return brief(found, all, teams);
+  const { tasks, truncated } = yield* assistants.tasksOf(found.id as AssistantId);
+  return { ...brief(found, all, teams), tasks, ...(truncated ? { tasksTruncated: true } : {}) };
 });
 
 /** Only active assistants can be named; the first handle that is not one is reported. */
@@ -210,6 +212,18 @@ const mutate = Effect.fn("mcp.assistant.mutate")(function* (input: AssistantPara
       );
     case "container_discard":
       return yield* containerDiscard();
+    case "task_dismiss":
+    case "task_restore": {
+      const threadId = input.threadId?.trim();
+      if (threadId === undefined || threadId === "")
+        return yield* invalid(`${input.action} needs \`threadId\`.`);
+      const dismissed = input.action === "task_dismiss";
+      const id = threadId as ThreadId;
+      const task = yield* (
+        dismissed ? assistants.dismissTask(id) : assistants.restoreTask(id)
+      ).pipe(Effect.mapError(failure));
+      return { threadId: task.threadId, dismissed: task.dismissedAt != null } satisfies Out;
+    }
     case "group_post": {
       if (caller.caller === undefined) {
         return yield* invalid("group_post needs a conversation to post from.");

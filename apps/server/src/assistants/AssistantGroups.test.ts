@@ -185,10 +185,10 @@ const harness = (options: Options = {}) => {
     Layer.mock(ThreadLaunch.ThreadLaunchService)({
       launch: ((input: (typeof launched)[number]) => {
         if (state.failLaunch) return Effect.fail(new Boom());
+        // Like the Orchestrator: an id that exists, deleted or not, cannot be launched again.
+        if (fakeThreads.has(input.threadId)) return Effect.fail(new Boom());
         launched.push(input);
-        if (!fakeThreads.has(input.threadId)) {
-          addThread(input.threadId, input.projectId, input.modelSelection, input.title);
-        }
+        addThread(input.threadId, input.projectId, input.modelSelection, input.title);
         return Effect.succeed({ threadId: input.threadId });
       }) as never,
     }),
@@ -759,17 +759,67 @@ it.effect("a task that cannot start fails with a reason the user can see", () =>
     h.state.failLaunch = false;
     h.state.failSend = true;
     yield* groups.post({ teamId: TEAM, text: "@beto two" }, h.user);
-    // A thread that was deleted behind the group's back is not relaunched.
-    h.state.failSend = false;
-    h.fakeThreads.get(betoThread)!.deletedAt = "now";
-    yield* groups.post({ teamId: TEAM, text: "@beto three" }, h.user);
     assert.deepEqual(
       (yield* h.tasks).map((task) => [task.status, task.reason]),
       [
         ["failed", "thread_unavailable"],
         ["failed", "could_not_start"],
-        ["failed", "thread_unavailable"],
       ],
+    );
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("a member whose group thread is gone gets a new one and its tasks run", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    yield* groups.post({ teamId: TEAM, text: "@ada one @beto one" }, h.user);
+    yield* h.finish(0, "completed", "ok");
+    yield* h.finish(1, "completed", "ok");
+    const threadOf = (assistantId: string) =>
+      h
+        .sqlRows<{ thread_id: string; seen_seq: number }>(
+          `SELECT thread_id, seen_seq FROM assistant_group_threads WHERE assistant_id = '${assistantId}'`,
+        )
+        .pipe(Effect.map((rows) => rows[0]!));
+
+    // Deleted (its project was deleted): the id stays reserved, so the member moves to a new one.
+    h.fakeThreads.get(betoThread)!.deletedAt = "now";
+    h.state.failLaunch = true;
+    const stuck = yield* groups.post({ teamId: TEAM, text: "@beto two @ada two" }, h.user);
+    assert.deepEqual(
+      (yield* h.tasks).slice(2).map((task) => [task.owner_id, task.status, task.reason]),
+      [
+        ["beto", "failed", "thread_unavailable"],
+        ["ada", "running", null],
+      ],
+    );
+    h.state.failLaunch = false;
+    const failedId = stuck.tasks.find((task) => task.ownerId === "beto")!.id;
+    const resumed = yield* groups.taskAction({ taskId: failedId, action: "resume" });
+    const moved = (yield* threadOf("beto")).thread_id;
+    assert.notEqual(moved, betoThread);
+    assert.match(moved, /^assistant:beto:g-[0-9a-f]{16}$/);
+    assert.deepEqual([resumed.status, resumed.threadId], ["running", moved]);
+    assert.equal(h.sent.at(-1)!.threadId, moved);
+    // The new thread has seen nothing, so its first packet carries the chat again.
+    assert.include(h.sent.at(-1)!.text, "@ada one @beto one");
+    yield* groups.post({ teamId: TEAM, text: "@beto three" }, h.user);
+    assert.deepEqual(
+      h.launched.map((input) => input.threadId),
+      [adaThread, betoThread, moved],
+    );
+
+    // Absent (rows copied without their threads): no tombstone, so the same id launches.
+    h.fakeThreads.delete(adaThread);
+    for (const index of [2, 3, 4]) yield* h.finish(index, "completed", "ok");
+    yield* groups.post({ teamId: TEAM, text: "@ada three" }, h.user);
+    assert.equal((yield* threadOf("ada")).thread_id, adaThread);
+    assert.equal(h.launched.at(-1)!.threadId, adaThread);
+    assert.notEqual(h.launched.at(-1)!.commandId, h.launched[0]!.commandId);
+    assert.deepEqual(
+      (yield* h.tasks).filter((task) => task.owner_id === "ada").map((task) => task.status),
+      ["completed", "completed", "running"],
     );
   }).pipe(Effect.provide(h.layer));
 });

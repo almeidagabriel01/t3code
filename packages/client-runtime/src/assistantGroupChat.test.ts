@@ -18,6 +18,7 @@ import {
   assistantGroupFinished,
   assistantGroupLatestSeq,
   assistantGroupNewSeq,
+  assistantGroupReadStep,
   assistantGroupMentionOptions,
   assistantGroupMentionQuery,
   ASSISTANT_MENTION_HREF,
@@ -361,6 +362,33 @@ describe("read position", () => {
     assert.strictEqual(assistantGroupNewSeq(chat, 3), 5);
     assert.strictEqual(assistantGroupNewSeq(chat, 5), null);
     assert.strictEqual(assistantGroupLatestSeq({ ...chat, messages: new Map() }), 0);
+  });
+
+  it.each([
+    { name: "unread when opened", latestSeq: 4, readSeq: 1, seen: 0, seenAfter: 1, target: 4 },
+    { name: "read when opened", latestSeq: 4, readSeq: 4, seen: 0, seenAfter: 4, target: null },
+    {
+      name: "read when opened, then marked unread",
+      latestSeq: 4,
+      readSeq: 1,
+      seen: 4,
+      seenAfter: 4,
+      target: null,
+    },
+    {
+      name: "marked unread, then a newer one",
+      latestSeq: 5,
+      readSeq: 1,
+      seen: 4,
+      seenAfter: 4,
+      target: 5,
+    },
+    { name: "not loaded", latestSeq: null, readSeq: 0, seen: 0, seenAfter: 0, target: null },
+  ])("reports an open chat as read: $name", ({ latestSeq, readSeq, seen, seenAfter, target }) => {
+    assert.deepStrictEqual(assistantGroupReadStep({ latestSeq, readSeq, seen }), {
+      seen: seenAfter,
+      target,
+    });
   });
 
   it("announces a group once, when its work goes from open to none", () => {

@@ -10,10 +10,25 @@ import { View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
+import { cn } from "../../lib/cn";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
+
+/** True while the thread's managed worktree folder is gone; reads the status the notice shows. */
+export function useThreadWorkspaceCleaned(
+  environmentId: EnvironmentId | null,
+  threadId: ThreadId | null,
+  worktreePath: string | null,
+): boolean {
+  const query = useEnvironmentQuery(
+    environmentId === null || threadId === null || worktreePath === null
+      ? null
+      : serverEnvironment.threadWorkspaceStatus({ environmentId, input: { threadId } }),
+  );
+  return query.data?.state === "cleaned";
+}
 
 /** Shown while a thread's managed worktree folder is gone; sending a message restores it too. */
 export function ThreadWorkspaceNotice(props: {
@@ -21,7 +36,11 @@ export function ThreadWorkspaceNotice(props: {
   readonly threadId: ThreadId;
   readonly worktreePath: string | null;
   /** Changes when a turn starts or ends, the moments a restore can have happened. */
-  readonly turnKey: string;
+  readonly turnKey?: string;
+  /** False inside a pane that already pads its content. */
+  readonly inset?: boolean;
+  /** Lets a pane reread what it shows from the restored folder. */
+  readonly onRestored?: () => void;
 }) {
   const query = useEnvironmentQuery(
     props.worktreePath === null
@@ -61,12 +80,16 @@ export function ThreadWorkspaceNotice(props: {
       return;
     }
     refresh();
+    props.onRestored?.();
   };
 
   return (
     <View
       accessibilityRole="alert"
-      className="mx-3 mb-2 gap-2 rounded-xl border border-border-subtle bg-screen p-3"
+      className={cn(
+        "gap-2 rounded-xl border border-border-subtle bg-screen p-3",
+        props.inset !== false && "mx-3 mb-2",
+      )}
     >
       <Text className="text-sm font-t3-medium text-foreground">Worktree cleaned up</Text>
       <Text className="text-xs text-foreground-muted">

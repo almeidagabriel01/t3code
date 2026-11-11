@@ -139,6 +139,47 @@ describe("resolveUsageLimitsAfterProbe", () => {
     expect(resolveUsageLimitsAfterProbe({ published: live, probed: newer })).toEqual(newer);
   });
 
+  it.each([
+    {
+      name: "a session tick during the probe keeps only the window it read",
+      streamedAt: { five_hour: "2026-09-03T12:00:05.000Z" },
+      expected: [
+        { ...session, usedPercent: 95 },
+        { ...weekly, usedPercent: 3 },
+      ],
+    },
+    {
+      name: "a window streamed before the probe gives way to the probe, even when it dropped",
+      streamedAt: { five_hour: "2026-09-03T11:59:00.000Z", seven_day: "2026-09-03T11:00:00.000Z" },
+      expected: [
+        { ...session, usedPercent: 2 },
+        { ...weekly, usedPercent: 3 },
+      ],
+    },
+  ])("takes the newest reading per window: $name", ({ streamedAt, expected }) => {
+    const live = {
+      checkedAt: "2026-09-03T12:00:05.000Z",
+      windows: [
+        { ...session, usedPercent: 95 },
+        { ...weekly, usedPercent: 100 },
+      ],
+    };
+    const probed = {
+      checkedAt,
+      windows: [
+        { ...session, usedPercent: 2 },
+        { ...weekly, usedPercent: 3 },
+      ],
+    };
+    expect(
+      resolveUsageLimitsAfterProbe({
+        published: live,
+        probed,
+        streamedAt: new Map(Object.entries(streamedAt)),
+      }),
+    ).toEqual({ checkedAt: live.checkedAt, windows: expected });
+  });
+
   it("keeps the last good windows through a failed probe but not an unsupported one", () => {
     const failed = { checkedAt, windows: [], unavailable: { reason: "probeFailed" as const } };
     const unsupported = { checkedAt, windows: [], unavailable: { reason: "unsupported" as const } };

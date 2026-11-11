@@ -63,6 +63,7 @@ import { useEnvironmentProviders, useEnvironments } from "../../state/environmen
 import { useProjects, useThreadShell } from "../../state/entities";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { isAssistantHomeProject } from "@t3tools/client-runtime/state/projects";
 import { validateMemorySettingsSearch } from "../settings/MemorySettings.logic";
 import { cn } from "../../lib/utils";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
@@ -335,7 +336,7 @@ function AssistantDialog(props: {
   const effectiveProject = projects.find((project) => project.id === effectiveProjectId) ?? null;
   const pickerRows = projectPickerRows(
     projects
-      .filter((project) => !project.isScratch)
+      .filter((project) => !isAssistantHomeProject(project))
       .map((project) => ({
         id: project.id,
         label: projectName(project),
@@ -350,7 +351,7 @@ function AssistantDialog(props: {
     assistant !== null && !sameProjects(effectivePicked, assistantProjectSelection(assistant));
   const projectOptions = projects.map((project) => ({
     id: project.id,
-    label: project.isScratch ? "All projects" : projectName(project),
+    label: isAssistantHomeProject(project) ? "All projects" : projectName(project),
   }));
 
   const settings = useEnvironmentSettings((environmentId ?? "") as EnvironmentId);

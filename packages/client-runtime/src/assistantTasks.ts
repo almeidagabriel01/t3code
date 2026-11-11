@@ -1,9 +1,14 @@
 import type { AssistantTask } from "@t3tools/contracts";
 
-import { assistantPresence, type AssistantFace, type AssistantMood } from "./assistantRobot.ts";
+import {
+  assistantTaskStatusOf,
+  type AssistantTaskStatus,
+} from "@t3tools/shared/assistantTaskStatus";
+
+import type { assistantPresence, AssistantFace } from "./assistantRobot.ts";
 
 /** What a task row says, read from the task thread's own shell. */
-export type AssistantTaskState = "running" | "waiting" | "done" | "failed";
+export type AssistantTaskState = AssistantTaskStatus;
 
 export const ASSISTANT_TASK_STATE_LABEL: Record<AssistantTaskState, string> = {
   running: "Running",
@@ -18,13 +23,6 @@ type TaskShell = NonNullable<Parameters<typeof assistantPresence>[0]> & {
   readonly archivedAt?: string | null;
 };
 
-const STATE_OF_MOOD: Record<AssistantMood, AssistantTaskState> = {
-  working: "running",
-  needs: "waiting",
-  failed: "failed",
-  idle: "done",
-};
-
 /** The robot's face for a state, so a task thread wears its assistant's look and mood. */
 export const ASSISTANT_TASK_FACE: Record<AssistantTaskState, AssistantFace> = {
   running: "working",
@@ -34,7 +32,14 @@ export const ASSISTANT_TASK_FACE: Record<AssistantTaskState, AssistantFace> = {
 };
 
 export function assistantTaskState(shell: TaskShell): AssistantTaskState {
-  return STATE_OF_MOOD[assistantPresence(shell).mood];
+  return assistantTaskStatusOf({
+    needsUser:
+      shell.hasPendingApprovals ||
+      shell.hasPendingUserInput ||
+      shell.pendingSubagentRequest != null ||
+      (shell.pendingGuestMessageCount ?? 0) > 0,
+    runtimeStatus: shell.runtime?.status ?? null,
+  });
 }
 
 /** A task whose thread still runs or waits on the user keeps its row; the server refuses it too. */

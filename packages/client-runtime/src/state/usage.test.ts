@@ -191,17 +191,22 @@ describe("manual usage refresh", () => {
 });
 
 describe("limits refresh cooldown", () => {
-  it("shares an in-flight check and skips duplicate automatic refreshes", async () => {
+  it("shares an in-flight check between automatic refreshes, and a manual one reads fresh after it", async () => {
     const id = EnvironmentId.make("limits-in-flight");
     const oldCheck = Promise.withResolvers<string>();
-    const first = refreshUsageLimits(id, () => oldCheck.promise, true);
-    const newCheck = vi.fn(async () => "new limits");
+    const automaticCheck = vi.fn((_fresh: boolean) => oldCheck.promise);
+    const first = refreshUsageLimits(id, automaticCheck, true);
+    const newCheck = vi.fn(async (_fresh: boolean) => "new limits");
     const manual = refreshUsageLimits(id, newCheck);
+    const sameClick = refreshUsageLimits(id, newCheck);
     expect(await refreshUsageLimits(id, newCheck, true)).toBeUndefined();
     expect(newCheck).not.toHaveBeenCalled();
     oldCheck.resolve("old limits");
     expect(await first).toBe("old limits");
-    expect(await manual).toBe("old limits");
-    expect(newCheck).not.toHaveBeenCalled();
+    // The automatic check may have been answered from a cached reading: the click asks again.
+    expect(await manual).toBe("new limits");
+    expect(await sameClick).toBe("new limits");
+    expect(automaticCheck.mock.calls).toEqual([[false]]);
+    expect(newCheck.mock.calls).toEqual([[true]]);
   });
 });

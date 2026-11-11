@@ -1587,6 +1587,19 @@ it.layer(
           assert.strictEqual(yield* Ref.get(forceRefreshCalls), 0);
           assert.strictEqual(yield* Ref.get(first.invalidations), 0);
           assert.strictEqual(yield* readCachedVersion("codex_first-package"), "1.0.0");
+          // A user-asked refresh drops cached probe results first; the cached numbers are stale.
+          yield* registry.refreshInstance(first.instance.instanceId, { fresh: true });
+          assert.deepStrictEqual(
+            [yield* Ref.get(first.invalidations), yield* Ref.get(second.invalidations)],
+            [1, 0],
+          );
+          yield* registry.refresh(undefined, { fresh: true });
+          assert.deepStrictEqual(
+            [yield* Ref.get(first.invalidations), yield* Ref.get(second.invalidations)],
+            [2, 1],
+          );
+          yield* Ref.set(first.invalidations, 0);
+          yield* Ref.set(second.invalidations, 0);
           yield* first.takeMaintenanceReads;
 
           yield* registry.invalidateModelCaches({ instanceId: first.instance.instanceId });
@@ -1882,6 +1895,8 @@ it.layer(
         const refreshCalls = yield* Ref.make(0);
         const probeStarted = yield* Deferred.make<void>();
         const releaseProbe = yield* Deferred.make<void>();
+        const laterProbeStarted = yield* Deferred.make<void>();
+        const releaseLaterProbe = yield* Deferred.make<void>();
         const instances = [
           {
             instanceId,
@@ -1899,9 +1914,10 @@ it.layer(
                 ),
               getSnapshot: Effect.succeed(provider),
               refresh: Effect.gen(function* () {
-                yield* Ref.update(refreshCalls, (count) => count + 1);
+                const calls = yield* Ref.updateAndGet(refreshCalls, (count) => count + 1);
                 yield* Deferred.succeed(probeStarted, undefined);
-                yield* Deferred.await(releaseProbe);
+                if (calls === 3) yield* Deferred.succeed(laterProbeStarted, undefined);
+                yield* Deferred.await(calls === 3 ? releaseLaterProbe : releaseProbe);
                 return provider;
               }),
               streamChanges: Stream.empty,
@@ -1951,6 +1967,17 @@ it.layer(
 
           yield* registry.refresh();
           assert.strictEqual(yield* Ref.get(refreshCalls), 2);
+
+          // A fresh refresh does not settle for a pass that may have read the cache before it.
+          const running = yield* registry.refresh().pipe(Effect.forkChild);
+          yield* Deferred.await(laterProbeStarted);
+          const fresh = yield* registry.refresh(undefined, { fresh: true }).pipe(Effect.forkChild);
+          yield* Effect.yieldNow;
+          assert.strictEqual(yield* Ref.get(refreshCalls), 3);
+          yield* Deferred.succeed(releaseLaterProbe, undefined);
+          yield* Fiber.join(running);
+          yield* Fiber.join(fresh);
+          assert.strictEqual(yield* Ref.get(refreshCalls), 4);
         }).pipe(Effect.provide(runtimeServices));
       }),
     );

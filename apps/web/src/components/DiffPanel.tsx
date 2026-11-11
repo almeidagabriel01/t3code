@@ -65,6 +65,7 @@ import { formatRelativeTimeLabel, formatShortTimestamp } from "../timestampForma
 import { DiffFilePathCopyButton } from "./DiffFilePathCopyButton";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
 import { DiffStatLabel } from "./chat/DiffStatLabel";
+import { ThreadWorkspaceCleanedGate } from "./chat/ThreadWorkspaceCleaned";
 import { AnnotatableCodeView } from "./diffs/AnnotatableCodeView";
 import { DiffFileTree } from "./diffs/DiffFileTree";
 import { FileExplorerPane } from "./files/FileExplorerPane";
@@ -1283,9 +1284,14 @@ export default function DiffPanel({
           Select a thread to inspect turn diffs.
         </div>
       ) : !isGitRepo && !toolCallSelection ? (
-        <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
-          Turn diffs are unavailable because this project is not a git repository.
-        </div>
+        <ThreadWorkspaceCleanedGate
+          threadRef={{ environmentId: activeThread.environmentId, threadId: activeThread.id }}
+          cwd={activeCwd}
+        >
+          <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
+            Turn diffs are unavailable because this project is not a git repository.
+          </div>
+        </ThreadWorkspaceCleanedGate>
       ) : selectedRunId !== null && orderedTurnDiffSummaries.length === 0 ? (
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
           No completed turns yet.

@@ -327,6 +327,24 @@ export function moveDraftToThread(
   };
 }
 
+/** A form opened from a conversation continues it: sent as "new_thread", the server drops the thread. */
+export function draftForNewTask(
+  empty: DraftState,
+  target: {
+    readonly bound?: { readonly threadId: ThreadId; readonly projectId: ProjectId } | undefined;
+    readonly groupId?: string | undefined;
+    readonly defaultProjectId: string;
+  },
+): DraftState {
+  if (target.bound) {
+    return moveDraftToThread(empty, {
+      id: target.bound.threadId,
+      projectId: target.bound.projectId,
+    });
+  }
+  return { ...empty, projectId: target.defaultProjectId, assistantTeamId: target.groupId ?? "" };
+}
+
 /** Leaves the thread but keeps the mode. Matches MCP: new threads stay out of the shared checkout. */
 export function unbindDraftFromThread(draft: DraftState): DraftState {
   if (!draft.threadId) return draft;

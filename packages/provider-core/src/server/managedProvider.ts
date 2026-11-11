@@ -22,6 +22,8 @@ import type { ManagedServerProvider } from "./snapshot.ts";
 interface ProviderSnapshotState {
   readonly snapshot: ServerProvider;
   readonly enrichmentGeneration: number;
+  /** When a running session last reported each usage window: a probe replaces only older readings. */
+  readonly streamedAt: ReadonlyMap<string, string>;
 }
 
 function withUsageLimits(
@@ -72,6 +74,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   const snapshotStateRef = yield* Ref.make<ProviderSnapshotState>({
     snapshot: initialSnapshot,
     enrichmentGeneration: 0,
+    streamedAt: new Map(),
   });
   const settingsRef = yield* Ref.make(initialSettings);
   const enrichmentFiberRef = yield* Ref.make<Fiber.Fiber<void, unknown> | null>(null);
@@ -170,6 +173,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
           : resolveUsageLimitsAfterProbe({
               published: state.snapshot.usageLimits,
               probed: probedSnapshot.usageLimits,
+              streamedAt: state.streamedAt,
             });
         const workspaceId =
           usageLimits === probedSnapshot.usageLimits ? undefined : state.snapshot.auth.workspaceId;
@@ -181,7 +185,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
         );
         return [
           { snapshot, generation },
-          { snapshot, enrichmentGeneration: generation },
+          { ...state, snapshot, enrichmentGeneration: generation },
         ] as const;
       },
     );
@@ -205,8 +209,10 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
         if (usageLimits === state.snapshot.usageLimits) {
           return [null, state] as const;
         }
+        const streamedAt = new Map(state.streamedAt);
+        for (const window of update.windows) streamedAt.set(window.id, update.checkedAt);
         const snapshot = withUsageLimits(state.snapshot, usageLimits);
-        return [snapshot, { ...state, snapshot }] as const;
+        return [snapshot, { ...state, snapshot, streamedAt }] as const;
       });
       if (snapshotToPublish !== null) {
         yield* PubSub.publish(changesPubSub, snapshotToPublish);
@@ -276,6 +282,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
       const usageLimits = resolveUsageLimitsAfterProbe({
         published: state.snapshot.usageLimits,
         probed,
+        streamedAt: state.streamedAt,
       });
       const snapshot = withUsageLimits(state.snapshot, usageLimits);
       return [snapshot, { ...state, snapshot }] as const;

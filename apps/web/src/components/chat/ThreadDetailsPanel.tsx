@@ -12,6 +12,9 @@ import { useT3ProjectFileScripts } from "../../hooks/useT3ProjectFileScripts";
 import { type EnvMode, type EnvironmentOption } from "../BranchToolbar.logic";
 import { BranchToolbar } from "../BranchToolbar";
 import BaseGitActionsControl from "../GitActionsControl";
+import { ThreadWorkspaceCleanedRow } from "./ThreadWorkspaceCleaned";
+import { useThreadWorkspaceRestore } from "./useThreadWorkspaceRestore";
+import { missingRepositoryAction } from "@t3tools/client-runtime/threadWorkspace";
 import ProjectScriptsControl, {
   type NewProjectScriptInput,
   type ProjectScriptActionResult,
@@ -94,6 +97,15 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
     props.activeProjectScripts && visible.scripts ? props.gitCwd : null,
   );
   const activeThreadRef = { environmentId: props.environmentId, threadId: props.threadId };
+  const workspace = useThreadWorkspaceRestore({
+    environmentId: props.environmentId,
+    threadId: props.threadId,
+    worktreePath: props.draftId ? null : props.worktreePath,
+  });
+  const repositoryAction = missingRepositoryAction({
+    hasWorktree: !props.draftId && props.worktreePath !== null,
+    status: workspace.status,
+  });
   const branchToolbarProps = {
     showGitControls: props.isGitRepo,
     environmentId: props.environmentId,
@@ -223,8 +235,11 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                     {show.branch ? (
                       <BranchToolbar layout="panel" panelSection="branch" {...branchToolbarProps} />
                     ) : null}
-                    {show.git ? (
+                    {show.git && repositoryAction === "restore" ? (
+                      <ThreadWorkspaceCleanedRow workspace={workspace} />
+                    ) : show.git ? (
                       <GitActionsControl
+                        allowInitialize={repositoryAction === "initialize"}
                         compact={density !== "full"}
                         showActions={visible.gitActions}
                         showChanges={visible.changes}

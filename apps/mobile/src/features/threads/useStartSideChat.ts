@@ -17,6 +17,7 @@ import {
 import * as Dialog from "../../components/ui/Dialog";
 import { uuidv4 } from "../../lib/uuid";
 import { appAtomRegistry } from "../../state/atom-registry";
+import { setStartingSideChat } from "../../state/starting-side-chats";
 import { environmentThreadShells, threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { waitForThreadShell } from "./threadForkNavigation";
@@ -57,9 +58,10 @@ export function useStartSideChat(environmentId: EnvironmentId) {
 }
 
 /**
- * Forks `source` at its latest stable point into a side chat, sends `prompt` there, and opens
- * it like any linked thread. Resolves false when the side chat did not start. `settings` are
- * what the parent's composer would send, which its thread gets only on its next send.
+ * Forks `source` at its latest stable point into a side chat and sends `prompt` there. Its
+ * screen opens with the message at once and shows a failed start; resolves false when it did
+ * not start. `settings` are what the parent's composer would send, which its thread gets only
+ * on its next send.
  */
 export function useStartSideChatWithPrompt() {
   const forkSideChat = useAtomCommand(threadEnvironment.forkSideChat, { reportFailure: false });
@@ -68,21 +70,33 @@ export function useStartSideChatWithPrompt() {
   const startTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
   const openLinkedThread = useOpenLinkedThread();
 
-  const alertFailure = (
-    failure: Extract<AtomCommandResult<unknown, unknown>, { readonly _tag: "Failure" }>,
-    fallback: string,
-  ) => {
-    if (isAtomCommandInterrupted(failure)) return;
-    const error = squashAtomCommandFailure(failure);
-    Dialog.alert("Side chat not started", error instanceof Error ? error.message : fallback);
-  };
-
   return async (
     source: ScopedThreadRef,
     prompt: string,
     settings: { readonly runtimeMode: RuntimeMode; readonly modelSelection: ModelSelection },
   ): Promise<boolean> => {
     const targetThreadId = ThreadId.make(uuidv4());
+    setStartingSideChat(targetThreadId, { prompt, error: null });
+    openLinkedThread({ environmentId: source.environmentId, threadId: targetThreadId });
+    const fail = (
+      failure: Extract<AtomCommandResult<unknown, unknown>, { readonly _tag: "Failure" }>,
+      fallback: string,
+      created: boolean,
+    ) => {
+      const error = isAtomCommandInterrupted(failure) ? null : squashAtomCommandFailure(failure);
+      setStartingSideChat(targetThreadId, {
+        prompt,
+        error: error instanceof Error ? error.message : fallback,
+      });
+      // Drops the empty side chat a failed start leaves behind; one that got its message stays.
+      if (created) {
+        void deleteThread({
+          environmentId: source.environmentId,
+          input: { threadId: targetThreadId, onlyIfUnused: true },
+        });
+      }
+      return false;
+    };
     const fork = await forkSideChat({
       environmentId: source.environmentId,
       input: {
@@ -92,32 +106,10 @@ export function useStartSideChatWithPrompt() {
         creationSource: "mobile",
       },
     });
-    if (fork._tag === "Failure") {
-      alertFailure(fork, "Could not start a side chat.");
-      return false;
-    }
-    // Drops the empty side chat a failed start leaves behind; one that got its message stays.
-    const discard = () =>
-      void deleteThread({
-        environmentId: source.environmentId,
-        input: { threadId: targetThreadId, onlyIfUnused: true },
-      });
-    const targetRef = scopeThreadRef(source.environmentId, targetThreadId);
-    if (!(await waitForThreadShell(targetRef))) {
-      Dialog.alert(
-        "Side chat not started",
-        "The side chat was created, but it did not reach this device.",
-      );
-      discard();
-      return false;
-    }
-    const sideChat = appAtomRegistry.get(environmentThreadShells.threadShellAtom(targetRef));
-    if (sideChat === null) {
-      Dialog.alert("Side chat not started", "The side chat is no longer available.");
-      discard();
-      return false;
-    }
-    if (settings.runtimeMode !== sideChat.runtimeMode) {
+    if (fork._tag === "Failure") return fail(fork, "Could not start a side chat.", false);
+    // A fork starts with its parent's mode, so only a mode changed in the composer needs setting.
+    const parent = appAtomRegistry.get(environmentThreadShells.threadShellAtom(source));
+    if (settings.runtimeMode !== parent?.runtimeMode) {
       const mode = await setRuntimeMode({
         environmentId: source.environmentId,
         input: {
@@ -127,9 +119,7 @@ export function useStartSideChatWithPrompt() {
         },
       });
       if (mode._tag === "Failure") {
-        alertFailure(mode, "Could not set the side chat's permission mode.");
-        discard();
-        return false;
+        return fail(mode, "Could not set the side chat's permission mode.", true);
       }
     }
     const turn = await startTurn({
@@ -149,12 +139,11 @@ export function useStartSideChatWithPrompt() {
         createdAt: new Date().toISOString(),
       },
     });
-    if (turn._tag === "Failure") {
-      alertFailure(turn, "Could not send the side chat message.");
-      discard();
-      return false;
-    }
-    openLinkedThread({ environmentId: source.environmentId, threadId: targetThreadId });
+    if (turn._tag === "Failure") return fail(turn, "Could not send the side chat message.", true);
+    // A slow link gets a few waits for the shell; the route's own loading screen covers a later one.
+    const targetRef = scopeThreadRef(source.environmentId, targetThreadId);
+    for (let waits = 0; waits < 4 && !(await waitForThreadShell(targetRef)); waits++);
+    setStartingSideChat(targetThreadId, null);
     return true;
   };
 }

@@ -56,6 +56,55 @@ describe("activeSubagentChildrenByParent", () => {
     ).toEqual(["native"]);
   });
 
+  const unawaited = { taskId: "bg", description: "npm ci", kind: "command" } as const;
+  const awaited = { ...unawaited, awaited: true } as const;
+  const held = (
+    id: string,
+    status: "completed" | "failed",
+    tasks: ReadonlyArray<typeof awaited | typeof unawaited>,
+    parent = parentId,
+  ) =>
+    presentThreadShell(environmentId, {
+      ...v2ThreadShell,
+      id: ThreadId.make(id),
+      latestRunId: RunId.make(`run-${id}`),
+      status,
+      pendingBackgroundTasks: tasks,
+      lineage: { parentThreadId: parent, relationshipToParent: "subagent", rootThreadId: parentId },
+    });
+
+  // The parent's subagent record stays running in each listed case, so Lineage counts it.
+  it.each([
+    ["a finished run awaiting a background command", [held("x", "completed", [awaited])], ["x"]],
+    [
+      "a finished run with only unawaited background work",
+      [held("x", "completed", [unawaited])],
+      [],
+    ],
+    ["a failed run with awaited background work", [held("x", "failed", [awaited])], []],
+    [
+      "a finished run held by its own live subagent",
+      [
+        held("x", "completed", []),
+        held("y", "completed", [], ThreadId.make("x")),
+        held("z", "completed", [awaited], ThreadId.make("y")),
+      ],
+      ["x"],
+    ],
+    [
+      "a finished run whose own subagents all finished",
+      [held("x", "completed", []), held("y", "completed", [], ThreadId.make("x"))],
+      [],
+    ],
+  ] as const)("lists a child with %s as the parent's record does", (_name, threads, expected) => {
+    const byParent = activeSubagentChildrenByParent(threads);
+    expect(
+      (byParent.get(scopedThreadKey(scopeThreadRef(environmentId, parentId))) ?? []).map(
+        (thread) => thread.id,
+      ),
+    ).toEqual(expected);
+  });
+
   it("drops a parent once every child is terminal", () => {
     expect(activeSubagentChildrenByParent([child("b", "completed")]).size).toBe(0);
   });

@@ -23,12 +23,18 @@ import {
   DEFAULT_MODEL,
   isProviderAvailable,
   type ModelSelection,
+  type OrchestrationV2ThreadShell,
   type ProjectId,
   ProviderInstanceId,
   type ServerProvider,
   runtimeModeForToolAccess,
   type ThreadId,
 } from "@t3tools/contracts";
+import {
+  assistantTaskStatusOf,
+  type AssistantTaskStatus,
+} from "@t3tools/shared/assistantTaskStatus";
+import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -93,6 +99,28 @@ const threadFailure = (message: string) => (cause: unknown) =>
     Effect.andThen(Effect.fail(assistantError("storage", message))),
   );
 
+export interface AssistantTaskList {
+  readonly tasks: ReadonlyArray<{
+    readonly threadId: ThreadId;
+    readonly title: string;
+    readonly status: AssistantTaskStatus;
+    readonly dismissed: boolean;
+  }>;
+  readonly truncated: boolean;
+}
+
+const TASK_LIST_CAP = 50;
+
+const taskStatusOf = (shell: OrchestrationV2ThreadShell) => {
+  const parked =
+    backgroundWorkHoldsCompletion(shell.pendingBackgroundTasks ?? []) && shell.status !== "failed";
+  const status = parked ? "idle" : (shell.activityRunStatus ?? shell.status);
+  return assistantTaskStatusOf({
+    needsUser: shell.pendingRuntimeRequest !== null || (shell.pendingGuestMessageCount ?? 0) > 0,
+    runtimeStatus: status === "idle" && !parked ? null : status,
+  });
+};
+
 export class AssistantService extends Context.Service<
   AssistantService,
   {
@@ -115,6 +143,8 @@ export class AssistantService extends Context.Service<
     /** Hides a finished task from the lists; refused while its thread runs. A repeat changes nothing more. */
     readonly dismissTask: (threadId: ThreadId) => Effect.Effect<AssistantTask, AssistantError>;
     readonly restoreTask: (threadId: ThreadId) => Effect.Effect<AssistantTask, AssistantError>;
+    /** The assistant's 50 newest tasks with the status its rows show; threads that are gone are left out. */
+    readonly tasksOf: (assistantId: AssistantId) => Effect.Effect<AssistantTaskList>;
     readonly remove: (assistantId: AssistantId) => Effect.Effect<void, AssistantError>;
     readonly reset: (input: AssistantsResetInput) => Effect.Effect<Assistant, AssistantError>;
     readonly teams: Effect.Effect<ReadonlyArray<AssistantTeam>, AssistantError>;
@@ -506,6 +536,28 @@ const make = Effect.gen(function* () {
     }
     const stored = yield* tasks.setDismissed(threadId, dismissed ? yield* nowIso : null);
     return Option.getOrElse(stored, () => current.value);
+  });
+
+  const tasksOf = Effect.fn("AssistantService.tasksOf")(function* (assistantId: AssistantId) {
+    const rows = yield* tasks.listFor(assistantId, TASK_LIST_CAP + 1);
+    const listed = yield* Effect.forEach(rows.slice(0, TASK_LIST_CAP), (task) =>
+      threads.getThreadShell(task.threadId).pipe(
+        Effect.map((shell) =>
+          shell === null
+            ? []
+            : [
+                {
+                  threadId: task.threadId,
+                  title: task.title,
+                  status: taskStatusOf(shell),
+                  dismissed: task.dismissedAt != null,
+                },
+              ],
+        ),
+        Effect.orElseSucceed(() => []),
+      ),
+    );
+    return { tasks: listed.flat(), truncated: rows.length > TASK_LIST_CAP };
   });
 
   const requireProject = (projectId: ProjectId) =>
@@ -1082,6 +1134,7 @@ const make = Effect.gen(function* () {
     restoreTask: Effect.fn("AssistantService.restoreTask")((threadId) =>
       setTaskDismissed(threadId, false),
     ),
+    tasksOf,
     remove,
     reset,
     teams,

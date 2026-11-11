@@ -119,7 +119,7 @@ tests, asks a teammate to review when that helps, sends fixes back, and only the
 The threads an assistant launched are listed under it in the sidebar and on the Assistants page with
 their state (running, waiting, done or failed). Open one to see the work; the thread shows the
 assistant's face in the mood of the task, and tapping it returns to the assistant. A project assistant
-can only start tasks in its own project.
+can only start tasks in its own project. You can dismiss a finished task from the list, and restore it later; an assistant does the same when you ask it to.
 
 ## Assistants can consult each other
 

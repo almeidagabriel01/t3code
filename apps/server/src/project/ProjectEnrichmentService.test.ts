@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { RepositoryIdentity } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -6,6 +7,7 @@ import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 
+import * as ServerConfig from "../config.ts";
 import * as ProjectEnrichment from "./ProjectEnrichmentService.ts";
 import * as ProjectFaviconResolver from "./ProjectFaviconResolver.ts";
 import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
@@ -46,7 +48,39 @@ const layer = (
 ) =>
   Layer.effect(ProjectEnrichment.ProjectEnrichmentService, ProjectEnrichment.make(options)).pipe(
     Layer.provide(metadataLayer),
+    Layer.provideMerge(
+      ServerConfig.layerTest(process.cwd(), { prefix: "project-enrichment-test-" }),
+    ),
+    Layer.provideMerge(NodeServices.layer),
   );
+
+it.effect("marks the folders the server manages by their role", () =>
+  Effect.gen(function* () {
+    const layerMetadata = Layer.merge(
+      Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
+        resolve: () => Effect.succeed(null),
+      }),
+      Layer.succeed(ProjectFaviconResolver.ProjectFaviconResolver, {
+        invalidate: () => Effect.void,
+        resolvePath: () => Effect.succeed(null),
+      }),
+    );
+
+    yield* Effect.gen(function* () {
+      const service = yield* ProjectEnrichment.ProjectEnrichmentService;
+      const { baseDir } = yield* ServerConfig.ServerConfig;
+      for (const [workspaceRoot, role] of [
+        [`${baseDir}/scratch`, "scratch"],
+        [`${baseDir}/assistants/`, "assistants"],
+        [`${baseDir}/scratch/2026-01-01-thread`, undefined],
+        [`${baseDir}/projects/app`, undefined],
+        ["/elsewhere/scratch", undefined],
+      ] as const) {
+        assert.strictEqual((yield* service.getAvailable(workspaceRoot)).managedRole, role);
+      }
+    }).pipe(Effect.provide(layer(layerMetadata)));
+  }),
+);
 
 it.effect("publishes repository completion while favicon enrichment is still pending", () =>
   Effect.gen(function* () {

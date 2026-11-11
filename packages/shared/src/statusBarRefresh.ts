@@ -14,11 +14,21 @@ export const PORTS_REFRESH_MS = {
   "5m": 300_000,
 } as const;
 
-/** Automatic usage refresh runs only for a timed interval, a visible window, and an elapsed interval. */
+/**
+ * Automatic usage refresh runs only for a timed interval, a visible window, and an elapsed interval.
+ * `opening` is the first check after a page load: manual mode then fetches only a missing reading.
+ */
 export const shouldRefreshUsage = (input: {
   readonly intervalMs: number | null;
   readonly hidden: boolean;
   readonly lastRefreshAt: number;
   readonly now: number;
+  readonly opening?: boolean;
 }): boolean =>
-  input.intervalMs !== null && !input.hidden && input.now - input.lastRefreshAt >= input.intervalMs;
+  input.intervalMs === null
+    ? input.opening === true && input.lastRefreshAt === 0
+    : !input.hidden && input.now - input.lastRefreshAt >= input.intervalMs;
+
+/** When the server last read usage: its oldest reading, 0 when it holds none. */
+export const usageReadingAt = (checkedAts: ReadonlyArray<string>): number =>
+  checkedAts.length === 0 ? 0 : Math.min(...checkedAts.map((at) => Date.parse(at))) || 0;

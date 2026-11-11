@@ -188,6 +188,8 @@ vi.mock("../lib/copyTextWithHaptic", () => ({ copyTextWithHaptic: vi.fn() }));
 vi.mock("./use-remote-environment-registry", () => ({ setPendingConnectionError: vi.fn() }));
 
 import { Alert } from "react-native";
+import { appAtomRegistry } from "./atom-registry";
+import { threadComposerErrorsAtom } from "./thread-composer-error";
 import { useThreadComposerState } from "./use-thread-composer-state";
 import { useSelectedThreadRequests } from "./use-selected-thread-requests";
 
@@ -361,7 +363,16 @@ describe("mobile task permissions", () => {
       modelSelection: selection,
       runtimeMode: "approval-required",
     };
+    const emptyDraft = () => {
+      state.draft = { ...state.draft, text: "" };
+    };
+    // The side chat's screen shows the message, so it leaves the composer before the server work.
     const startSideChat = vi.fn(async () => true);
+    startSideChat.mockImplementationOnce(async () => {
+      expect(state.draft.text).toBe("");
+      return true;
+    });
+    state.clearDraft.mockImplementationOnce(emptyDraft);
     const composer = useThreadComposerState({ startSideChat });
     expect(composer.sideChatUnavailableReason).toBeNull();
     expect(await composer.onSendMessage()).toBeNull();
@@ -371,30 +382,40 @@ describe("mobile task permissions", () => {
       { runtimeMode: "approval-required", modelSelection: selection },
     );
     expect(state.enqueue).not.toHaveBeenCalled();
-    expect(state.clearDraft).toHaveBeenCalled();
+    expect(state.clearDraft).toHaveBeenCalledExactlyOnceWith("secondary:thread");
+    expect(state.draft.text).toBe("");
 
-    // An attachment added while the side chat starts stays in the draft.
-    vi.clearAllMocks();
-    startSideChat.mockImplementationOnce(async () => {
-      state.draft = {
-        ...state.draft,
-        attachments: [{ id: "added" } as DraftComposerImageAttachment],
-      };
-      return true;
-    });
-    state.draft = { ...state.draft, text: "/side again?", attachments: [] };
-    expect(await useThreadComposerState({ startSideChat }).onSendMessage()).toBeNull();
-    expect(startSideChat).toHaveBeenCalledOnce();
-    expect(state.clearDraft).not.toHaveBeenCalled();
+    // A side chat that did not start gives the text back, after anything typed meanwhile.
+    for (const { typed, restored } of [
+      { typed: "", restored: "/side again?" },
+      { typed: "  \n", restored: "/side again?" },
+      { typed: "typed meanwhile\n", restored: "typed meanwhile\n\n/side again?" },
+    ]) {
+      vi.clearAllMocks();
+      state.draft = { ...state.draft, text: "/side again?" };
+      state.clearDraft.mockImplementationOnce(emptyDraft);
+      startSideChat.mockImplementationOnce(async () => {
+        state.draft = { ...state.draft, text: typed };
+        return false;
+      });
+      expect(await useThreadComposerState({ startSideChat }).onSendMessage()).toBeNull();
+      expect(startSideChat).toHaveBeenCalledOnce();
+      expect(state.draft.text).toBe(restored);
+      // The composer says why the text is back.
+      expect(appAtomRegistry.get(threadComposerErrorsAtom)["secondary:thread"]?.message).toMatch(
+        /did not start/,
+      );
+    }
     // A model the send would refuse does not start a side chat either.
     vi.clearAllMocks();
     state.serverConfig = {
       ...state.serverConfig,
       providers: [{ instanceId: "codex", driver: "codex", enabled: false }],
     } as unknown as ServerConfig;
-    state.draft = { ...state.draft, attachments: [] };
+    state.draft = { ...state.draft, text: "/side again?" };
     expect(await useThreadComposerState({ startSideChat }).onSendMessage()).toBeNull();
     expect(startSideChat).not.toHaveBeenCalled();
+    expect(state.clearDraft).not.toHaveBeenCalled();
     expect(Alert.alert).toHaveBeenCalledOnce();
   });
 

@@ -4,6 +4,7 @@ import { Fragment } from "react";
 import { assistantProjectsLabel } from "@t3tools/client-runtime/assistantSections";
 import { teamSubtitle, teamSummary } from "@t3tools/client-runtime/assistantTeam";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { isAssistantHomeProject } from "@t3tools/client-runtime/state/projects";
 import {
   ArchiveIcon,
   ArchiveRestoreIcon,
@@ -83,7 +84,7 @@ function AssistantRow(props: {
     const project = projects.find(
       (candidate) => candidate.environmentId === environmentId && candidate.id === projectId,
     );
-    return project?.isScratch
+    return project && isAssistantHomeProject(project)
       ? "All projects"
       : (groups.find((group) =>
           group.memberProjects.some(

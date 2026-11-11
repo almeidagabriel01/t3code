@@ -18,6 +18,9 @@ import { useNavigation } from "@react-navigation/native";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 
 import { useEnvironmentScope } from "../../state/session";
+import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
+import { useThreadSelection } from "../../state/use-thread-selection";
+import { useThreadWorkspaceCleaned } from "./ThreadWorkspaceNotice";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import {
   basename,
@@ -41,7 +44,10 @@ function compactMenuBranchLabel(branch: string): string {
   return truncateMiddle(branch, 24);
 }
 
-function compactMenuStatus(gitStatus: VcsStatusResult | null): string {
+function compactMenuStatus(gitStatus: VcsStatusResult | null, workspaceCleaned: boolean): string {
+  if (workspaceCleaned) {
+    return "Worktree cleaned up";
+  }
   if (!gitStatus) {
     return "Checking status";
   }
@@ -116,10 +122,27 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
   const currentBranchLabel = gitStatus?.refName ?? props.currentBranch ?? "Detached HEAD";
   const busy = gitOperationLabel !== null;
   const isRepo = gitStatus?.isRepo ?? true;
+  const { selectedThread } = useThreadSelection();
+  const { selectedThreadWorktreePath } = useSelectedThreadWorktree();
+  const workspaceCleaned = useThreadWorkspaceCleaned(
+    selectedThread?.environmentId ?? null,
+    selectedThread?.id ?? null,
+    selectedThread !== null && String(selectedThread.id) === String(threadId)
+      ? selectedThreadWorktreePath
+      : null,
+  );
   const hasPrimaryRemote = gitStatus?.hasPrimaryRemote ?? false;
   const isDefaultRef = gitStatus?.isDefaultRef ?? false;
 
   const quickAction = (() => {
+    if (workspaceCleaned) {
+      return {
+        label: "Worktree cleaned up",
+        disabled: true,
+        kind: "show_hint" as const,
+        hint: "This thread's worktree was cleaned up. Restore it from the conversation.",
+      };
+    }
     if (!isRepo) {
       return {
         label: "Git unavailable",
@@ -239,6 +262,7 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
   return {
     currentBranchLabel,
     isRepo,
+    workspaceCleaned,
     openGitInspector,
     openReview,
     quickAction,
@@ -314,7 +338,7 @@ export function useThreadGitMenuDefinition(props: ThreadGitMenuProps): AppBarMen
         title: compactMenuBranchLabel(model.currentBranchLabel),
         icon: "point.topleft.down.curvedto.point.bottomright.up",
         disabled: true,
-        subtitle: compactMenuStatus(props.gitStatus),
+        subtitle: compactMenuStatus(props.gitStatus, model.workspaceCleaned),
         onPress: () => {},
       },
       {

@@ -15,7 +15,11 @@ import { useContext, useEffect, useState } from "react";
 import { cn } from "../../lib/utils";
 import { observeVisibleAnimation } from "../../lib/visibleAnimation";
 import { usePrimarySettings, useClientSettings } from "../../hooks/useSettings";
-import { shouldRefreshUsage, USAGE_REFRESH_MS } from "@t3tools/shared/statusBarRefresh";
+import {
+  shouldRefreshUsage,
+  usageReadingAt,
+  USAGE_REFRESH_MS,
+} from "@t3tools/shared/statusBarRefresh";
 import { budgetPercent, budgetPeriodLabel } from "@t3tools/shared/providerBudget";
 import {
   BAND_FILL,
@@ -65,20 +69,27 @@ function useUsageRefresh(environmentIds: ReadonlyArray<EnvironmentId>) {
   useEffect(() => {
     if (key === "") return;
     const ids = key.split("\n") as EnvironmentId[];
-    let lastRefreshAt = 0;
-    const run = (initial = false) => {
+    const refreshedAt = new Map<EnvironmentId, number>();
+    const run = (opening = false) => {
       const now = Date.now();
-      if (
-        !initial &&
-        !shouldRefreshUsage({ intervalMs, hidden: document.hidden, lastRefreshAt, now })
-      ) {
-        return;
-      }
-      lastRefreshAt = now;
       for (const environmentId of ids) {
+        // The reading the server already holds counts: a reload must not probe every provider again.
+        const readings = (
+          registry.get(serverEnvironment.providersValueAtom(environmentId)) ?? []
+        ).flatMap((provider) => (provider.usageLimits ? [provider.usageLimits.checkedAt] : []));
+        const lastRefreshAt = Math.max(
+          refreshedAt.get(environmentId) ?? 0,
+          usageReadingAt(readings),
+        );
+        if (
+          !shouldRefreshUsage({ intervalMs, hidden: document.hidden, lastRefreshAt, now, opening })
+        ) {
+          continue;
+        }
+        refreshedAt.set(environmentId, now);
         void refreshUsageLimits(
           environmentId,
-          () => refreshProviders({ environmentId, input: {} }),
+          (fresh) => refreshProviders({ environmentId, input: fresh ? { fresh: true } : {} }),
           true,
           false,
           intervalMs ?? undefined,
@@ -104,7 +115,9 @@ function useUsageRefresh(environmentIds: ReadonlyArray<EnvironmentId>) {
     setRefreshing(true);
     void Promise.allSettled(
       environmentIds.map((environmentId) =>
-        refreshUsageLimits(environmentId, () => refreshProviders({ environmentId, input: {} })),
+        refreshUsageLimits(environmentId, (fresh) =>
+          refreshProviders({ environmentId, input: fresh ? { fresh: true } : {} }),
+        ),
       ),
     ).finally(() => setRefreshing(false));
   };

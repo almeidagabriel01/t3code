@@ -8,6 +8,9 @@ import { View } from "react-native";
 
 import { useEnvironmentQuery } from "../../state/query";
 import { useEnvironmentPresentation } from "../../state/presentation";
+import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
+import { useThreadSelection } from "../../state/use-thread-selection";
+import { ThreadWorkspaceNotice, useThreadWorkspaceCleaned } from "../threads/ThreadWorkspaceNotice";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { FileTreeBrowser } from "./FileTreeBrowser";
 import { useFileTreeEntries } from "./useFileTreeEntries";
@@ -21,6 +24,19 @@ export function ThreadFileNavigatorPane(props: {
   readonly onSelectFile: (path: string) => void;
 }) {
   const [searchQuery, setSearchQuery] = useState("");
+  const { selectedThread } = useThreadSelection();
+  const { selectedThreadWorktreePath: worktreePath } = useSelectedThreadWorktree();
+  // Only the thread's own worktree is replaced; a host folder opened from it still lists.
+  const threadWorktreePath =
+    worktreePath !== null &&
+    (props.cwd === worktreePath || props.cwd.startsWith(`${worktreePath}/`))
+      ? worktreePath
+      : null;
+  const workspaceCleaned = useThreadWorkspaceCleaned(
+    selectedThread?.environmentId ?? null,
+    selectedThread?.id ?? null,
+    threadWorktreePath,
+  );
   const { themeAppearance: highlightTheme } = useAppearancePreferences();
   const fileAccessSession = useEnvironmentQuery(
     environmentSession.sessionStateAtom(props.environmentId),
@@ -89,7 +105,21 @@ export function ThreadFileNavigatorPane(props: {
         }}
         refresh={{ accessibilityLabel: "Refresh files", onPress: entriesQuery.refresh }}
       />
-      <ScreenContent insetHorizontal>{fileTree}</ScreenContent>
+      <ScreenContent insetHorizontal>
+        {workspaceCleaned && selectedThread !== null ? (
+          <View className="pt-3">
+            <ThreadWorkspaceNotice
+              environmentId={selectedThread.environmentId}
+              threadId={selectedThread.id}
+              worktreePath={threadWorktreePath}
+              inset={false}
+              onRestored={entriesQuery.refresh}
+            />
+          </View>
+        ) : (
+          fileTree
+        )}
+      </ScreenContent>
     </View>
   );
 }

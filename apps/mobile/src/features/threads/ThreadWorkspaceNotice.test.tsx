@@ -29,7 +29,10 @@ vi.mock("@t3tools/client-runtime/state/runtime", () => ({
   squashAtomCommandFailure: (result: { error: unknown }) => result.error,
 }));
 vi.mock("../../state/query", () => ({
-  useEnvironmentQuery: () => ({ data: mocks.data, refresh: mocks.refresh }),
+  useEnvironmentQuery: (atom: unknown) => ({
+    data: atom === null ? null : mocks.data,
+    refresh: mocks.refresh,
+  }),
 }));
 vi.mock("../../state/server", () => ({
   serverEnvironment: {
@@ -37,15 +40,16 @@ vi.mock("../../state/server", () => ({
     restoreThreadWorkspace: "restore",
   },
 }));
+vi.mock("../../lib/cn", () => ({ cn: (...parts: unknown[]) => parts.filter(Boolean).join(" ") }));
 vi.mock("../../state/session", () => ({ useEnvironmentScope: () => mocks.canRestore }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => mocks.restore }));
 
-import { ThreadWorkspaceNotice } from "./ThreadWorkspaceNotice";
+import { ThreadWorkspaceNotice, useThreadWorkspaceCleaned } from "./ThreadWorkspaceNotice";
 
 const environmentId = "env" as EnvironmentId;
 const threadId = "thread" as ThreadId;
 
-async function mount(turnKey = "run:false") {
+async function mount(turnKey = "run:false", onRestored?: () => void) {
   const host = document.createElement("div");
   const root = createRoot(host);
   const element = (key: string) => (
@@ -54,6 +58,7 @@ async function mount(turnKey = "run:false") {
       threadId={threadId}
       worktreePath="/worktrees/p/feat"
       turnKey={key}
+      {...(onRestored ? { onRestored, inset: false } : {})}
     />
   );
   await act(async () => root.render(element(turnKey)));
@@ -91,6 +96,37 @@ describe("ThreadWorkspaceNotice", () => {
     expect(mocks.refresh).toHaveBeenCalledOnce();
     await view.unmount();
   });
+
+  it("tells its pane when a restore succeeded, and only then", async () => {
+    const onRestored = vi.fn();
+    mocks.restore.mockResolvedValueOnce({ _tag: "Failure", error: new Error("Conflicts.") });
+    mocks.restore.mockResolvedValueOnce({ _tag: "Success" });
+    const view = await mount("run:false", onRestored);
+    await act(async () => view.button()?.click());
+    expect(onRestored).not.toHaveBeenCalled();
+    await act(async () => view.button()?.click());
+    expect(onRestored).toHaveBeenCalledOnce();
+    await view.unmount();
+  });
+
+  it.each([
+    ["a cleaned worktree", cleaned, "/worktrees/p/feat", true],
+    ["a ready worktree", { state: "ready", snapshot: null }, "/worktrees/p/feat", false],
+    ["a thread on the project folder", cleaned, null, false],
+  ] as const)(
+    "reports %s to the git and files panes",
+    async (_name, data, worktreePath, expected) => {
+      mocks.data = data;
+      const Probe = () => (
+        <span>{String(useThreadWorkspaceCleaned(environmentId, threadId, worktreePath))}</span>
+      );
+      const host = document.createElement("div");
+      const root = createRoot(host);
+      await act(async () => root.render(<Probe />));
+      expect(host.textContent).toBe(String(expected));
+      act(() => root.unmount());
+    },
+  );
 
   it("shows why a restore failed and keeps the button", async () => {
     mocks.restore.mockResolvedValue({ _tag: "Failure", error: new Error("Conflicts.") });

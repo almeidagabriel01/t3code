@@ -54,6 +54,7 @@ interface FakeThread {
   archivedAt: string | null;
   modelSelection: ModelSelection;
   activeRunId?: string | null;
+  shell?: Record<string, unknown>;
 }
 
 /** The thread side of the world, with the pointer each archive or delete saw recorded. */
@@ -81,7 +82,19 @@ const harness = () => {
               : Effect.succeed({ thread } as never);
           },
           getThreadShell: (threadId: string) =>
-            Effect.succeed({ activeRunId: threads.get(threadId)?.activeRunId ?? null } as never),
+            Effect.succeed(
+              (threads.has(threadId) || threadId.startsWith("assistant:")
+                ? {
+                    pendingRuntimeRequest: null,
+                    pendingGuestMessageCount: 0,
+                    pendingBackgroundTasks: [],
+                    status: "completed",
+                    activityRunStatus: null,
+                    ...threads.get(threadId)?.shell,
+                    activeRunId: threads.get(threadId)?.activeRunId ?? null,
+                  }
+                : null) as never,
+            ),
           dispatch: (command: { type: string; threadId: string }) =>
             Effect.gen(function* () {
               const row = yield* sql<{
@@ -1275,6 +1288,55 @@ it.effect(
 
       const missing = yield* assistants.restoreTask(ThreadId.make("nope")).pipe(Effect.flip);
       assert.equal(missing.reason, "not_found");
+    }).pipe(Effect.provide(layer));
+  },
+);
+
+it.effect(
+  "tasksOf gives each task the status its row shows, newest first, and skips gone threads",
+  () => {
+    const { layer, threads } = harness();
+    return Effect.gen(function* () {
+      const assistants = yield* Assistants.AssistantService;
+      const links = yield* AssistantTaskLinks.AssistantTasks;
+      const owner = AssistantId.make(DEFAULT_ASSISTANT_ID);
+      const cases: ReadonlyArray<readonly [string, Record<string, unknown> | null, string]> = [
+        ["t-done", { status: "completed" }, "done"],
+        ["t-run", { status: "running", activityRunStatus: "running" }, "running"],
+        ["t-ask", { status: "running", pendingRuntimeRequest: { kind: "user_input" } }, "waiting"],
+        ["t-fail", { status: "failed" }, "failed"],
+        ["t-gone", null, ""],
+      ];
+      for (const [index, [id, shell]] of cases.entries()) {
+        yield* links.link({
+          threadId: ThreadId.make(id),
+          assistantId: owner,
+          projectId: repo,
+          title: id,
+          createdAt: `2026-01-0${index + 1}T00:00:00.000Z`,
+        });
+        if (shell !== null) {
+          threads.set(id, {
+            projectId: repo,
+            deletedAt: null,
+            archivedAt: null,
+            modelSelection: model("m"),
+            shell,
+          });
+        }
+      }
+      yield* assistants.dismissTask(ThreadId.make("t-done"));
+      const { tasks, truncated } = yield* assistants.tasksOf(owner);
+      assert.isFalse(truncated);
+      assert.deepEqual(
+        tasks.map((task) => [task.threadId, task.status, task.dismissed]),
+        [
+          ["t-fail", "failed", false],
+          ["t-ask", "waiting", false],
+          ["t-run", "running", false],
+          ["t-done", "done", true],
+        ],
+      );
     }).pipe(Effect.provide(layer));
   },
 );

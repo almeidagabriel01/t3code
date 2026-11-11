@@ -58,13 +58,16 @@ export class ProviderRegistry extends Context.Service<
     readonly getProviders: Effect.Effect<ReadonlyArray<ServerProvider>>;
     readonly rescanGlobalSkills?: Effect.Effect<ReadonlyArray<ServerProvider>>;
 
+    /** `fresh` is a refresh the user asked for: cached probe results are dropped before probing. */
     readonly refresh: (
       provider?: ProviderDriverKind,
+      options?: { readonly fresh?: boolean },
     ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
     /** Unknown instance ids return the cached list without error. */
     readonly refreshInstance: (
       instanceId: ProviderInstanceId,
+      options?: { readonly fresh?: boolean },
     ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
     /** Re-reads secret-backed environments first, so a fixed secret applies without a restart. */
@@ -645,7 +648,16 @@ export const layer = Layer.effect(
     // What the last full pass could see; a later manifest fetch does not reach providers by itself.
     const probedManifestUpdatedAt = yield* Ref.make(initialManifest.updatedAt);
 
-    const refreshAll = Effect.fn("refreshAll")(function* () {
+    const refreshAll: (fresh?: boolean) => Effect.Effect<ReadonlyArray<ServerProvider>> = Effect.fn(
+      "refreshAll",
+    )(function* (fresh = false) {
+      if (fresh) {
+        yield* Effect.forEach(
+          yield* instanceRegistry.listInstances,
+          (instance) => instance.invalidateCaches ?? Effect.void,
+          { discard: true },
+        );
+      }
       const claimed = yield* Ref.modify(
         refreshAllInFlightRef,
         (
@@ -686,28 +698,39 @@ export const layer = Layer.effect(
           Effect.forkDetach,
         );
       }
+      // A pass that was already running may have read a cache this call just dropped: run again.
+      if (fresh && !claimed.owner) {
+        yield* Deferred.await(claimed.completion).pipe(Effect.exit);
+        return yield* refreshAll();
+      }
       return yield* Deferred.await(claimed.completion);
     });
 
-    const refresh = Effect.fn("refresh")(function* (provider?: ProviderDriverKind) {
+    const refresh = Effect.fn("refresh")(function* (
+      provider?: ProviderDriverKind,
+      options?: { readonly fresh?: boolean },
+    ) {
       if (provider === undefined) {
-        return yield* refreshAll();
+        return yield* refreshAll(options?.fresh);
       }
       const instance = (yield* Ref.get(liveSubsRef)).get(defaultInstanceIdForDriver(provider));
       if (!instance) {
         return yield* Ref.get(providersRef);
       }
+      if (options?.fresh) yield* instance.invalidateCaches ?? Effect.void;
       return yield* refreshOneSource(instance);
     });
 
     const refreshInstance = Effect.fn("refreshInstance")(function* (
       instanceId: ProviderInstanceId,
+      options?: { readonly fresh?: boolean },
     ) {
       yield* syncLiveSourcesAndContinue;
       const instance = (yield* Ref.get(liveSubsRef)).get(instanceId);
       if (!instance) {
         return yield* Ref.get(providersRef);
       }
+      if (options?.fresh) yield* instance.invalidateCaches ?? Effect.void;
       return yield* refreshOneSource(instance);
     });
 
@@ -1113,10 +1136,10 @@ export const layer = Layer.effect(
     return {
       getProviders: Ref.get(providersRef),
       rescanGlobalSkills,
-      refresh: (provider?: ProviderDriverKind) =>
-        refresh(provider).pipe(Effect.catchCause(recoverRefreshFailure)),
-      refreshInstance: (instanceId: ProviderInstanceId) =>
-        refreshInstance(instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
+      refresh: (provider, options) =>
+        refresh(provider, options).pipe(Effect.catchCause(recoverRefreshFailure)),
+      refreshInstance: (instanceId, options) =>
+        refreshInstance(instanceId, options).pipe(Effect.catchCause(recoverRefreshFailure)),
       reloadSecretsAndRefresh: (instanceId?: ProviderInstanceId) =>
         reloadSecretsAndRefresh(instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
       refreshWorkspaceSnapshot: (input) =>

@@ -48,7 +48,7 @@ function teamsLines(self: Pick<Colleague, "handle">, teams: ReadonlyArray<TeamMe
 }
 
 const TASKS_FOLLOW =
-  "It carries your instructions, model and access. You are woken when it finishes, so never wait on it. Then check its diff, run the tests, ask a teammate to review when that helps, send fixes with t3_thread_send, and only then tell the user.";
+  "It carries your instructions, model and access. You are woken when it finishes, so never wait on it. Then check its diff, run the tests, ask a teammate to review when that helps, send fixes with t3_thread_send, and only then tell the user. Dismiss a finished task (t3_assistant task_dismiss) only when the user asks to clear it, never on your own and never one whose result you have not told them.";
 const TASKS_HOST = `Do quick things yourself, here: a question, a lookup, a small tweak. Real multi-step code work (changing several files, adding tests, running a suite) is never done in this conversation: start a thread for it with t3_thread_launch in the right project, with a full brief of goal, files, constraints and how to verify. ${TASKS_FOLLOW}`;
 const TASKS_SANDBOX = `Any change to files, and any command that changes anything, is work for a thread, never for this conversation: start it with t3_thread_launch in your sandbox, with a full brief of goal, files, constraints and how to verify. ${TASKS_FOLLOW}`;
 

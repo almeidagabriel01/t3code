@@ -104,6 +104,7 @@ import {
   scheduleLabel,
   WEEKDAY_LABELS,
   changeDraftProject,
+  draftForNewTask,
   moveDraftToThread,
   scheduleDraftErrors,
   scheduledTaskDestinationThreads,
@@ -1517,18 +1518,11 @@ function ScheduledTaskEditorForm({
   const [draft, setDraft] = useState<DraftState>(() =>
     task
       ? taskToDraft(task)
-      : bound
-        ? { ...EMPTY_DRAFT, projectId: bound.projectId, threadId: bound.threadId }
-        : groupId !== undefined
-          ? {
-              ...EMPTY_DRAFT,
-              projectId: defaultScheduledTaskProjectId(scopedProjects, scope),
-              assistantTeamId: groupId,
-            }
-          : {
-              ...EMPTY_DRAFT,
-              projectId: defaultScheduledTaskProjectId(scopedProjects, scope),
-            },
+      : draftForNewTask(EMPTY_DRAFT, {
+          bound,
+          groupId,
+          defaultProjectId: defaultScheduledTaskProjectId(scopedProjects, scope),
+        }),
   );
   const words = scheduledTaskWording(isRoutineTarget(draft));
   const boundName = useBoundThreadName(environmentId, draft.threadId as ThreadId | "");

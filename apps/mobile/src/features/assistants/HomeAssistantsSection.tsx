@@ -295,14 +295,17 @@ function GroupFoldRow(props: {
         >
           {team.name}
         </Text>
-        <View testID="group-avatars" className="flex-row items-center pl-0.5">
-          {shown.map(({ assistant }, index) => (
-            <View key={assistant.id} style={{ marginLeft: index === 0 ? 0 : -6 }}>
-              <AssistantAvatar assistant={assistant} environmentId={environmentId} size={16} />
-            </View>
-          ))}
-          {more > 0 ? <Text className="pl-1 text-2xs text-foreground-muted">+{more}</Text> : null}
-        </View>
+        {/* The narrow tablet bar drops the faces while the group runs, so its name stays whole. */}
+        {props.sidebar && props.running > 0 ? null : (
+          <View testID="group-avatars" className="flex-row items-center pl-0.5">
+            {shown.map(({ assistant }, index) => (
+              <View key={assistant.id} style={{ marginLeft: index === 0 ? 0 : -6 }}>
+                <AssistantAvatar assistant={assistant} environmentId={environmentId} size={16} />
+              </View>
+            ))}
+            {more > 0 ? <Text className="pl-1 text-2xs text-foreground-muted">+{more}</Text> : null}
+          </View>
+        )}
         <View className="min-w-2 flex-1" />
         {unread > 0 ? (
           <View

@@ -20,6 +20,8 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
+  type ContextType,
   type ReactNode,
 } from "react";
 import {
@@ -116,6 +118,79 @@ import { WorkspaceThreadSidebar } from "./workspace/WorkspaceThreadSidebar";
 
 export { useAdaptiveWorkspaceLayout };
 
+interface InspectorPaneEntry {
+  readonly render: () => ReactNode;
+  readonly navigation: ContextType<typeof NavigationContext>;
+  readonly route: ContextType<typeof NavigationRouteContext>;
+}
+
+/** The latest panes of one `Inspector`, with its navigation; a mounted pane follows its own entry. */
+function createInspectorPaneRenders() {
+  let entries: ReadonlyMap<string, InspectorPaneEntry> = new Map();
+  const listeners = new Set<() => void>();
+  return {
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    get: (key: string) => entries.get(key),
+    set: (
+      panes: InspectorContent["panes"],
+      navigation: InspectorPaneEntry["navigation"],
+      route: InspectorPaneEntry["route"],
+    ) => {
+      const previous = entries;
+      entries = new Map(
+        panes.map((pane) => {
+          const entry = previous.get(pane.key);
+          return [
+            pane.key,
+            entry?.render === pane.render &&
+            entry.navigation === navigation &&
+            entry.route === route
+              ? entry
+              : { render: pane.render, navigation, route },
+          ];
+        }),
+      );
+      for (const listener of listeners) listener();
+    },
+  };
+}
+
+function InspectorPaneSlot(props: {
+  readonly renders: ReturnType<typeof createInspectorPaneRenders>;
+  readonly paneKey: string;
+}) {
+  const { renders, paneKey } = props;
+  const entry = useSyncExternalStore(renders.subscribe, () => renders.get(paneKey));
+  if (entry === undefined) return null;
+  return (
+    <NavigationContext.Provider value={entry.navigation}>
+      <NavigationRouteContext.Provider value={entry.route}>
+        {entry.render()}
+      </NavigationRouteContext.Provider>
+    </NavigationContext.Provider>
+  );
+}
+
+function sameInspectorLayout(left: InspectorContent, right: InspectorContent) {
+  const leftResetKeys = left.resetKeys ?? [];
+  const rightResetKeys = right.resetKeys ?? [];
+  return (
+    left.active === right.active &&
+    left.panes.length === right.panes.length &&
+    left.panes.every(
+      (pane, index) =>
+        pane.key === right.panes[index]?.key && pane.prewarm === right.panes[index]?.prewarm,
+    ) &&
+    leftResetKeys.length === rightResetKeys.length &&
+    leftResetKeys.every((key, index) => Object.is(key, rightResetKeys[index]))
+  );
+}
+
 /**
  * Shows these panes in the workspace's inspector while this screen is focused. Register on focus
  * events because frozen blurred screens may never clean up.
@@ -128,30 +203,50 @@ export function Inspector(props: {
   const { registerWorkspaceInspector } = useAdaptiveWorkspaceLayout();
   const navigation = use(NavigationContext);
   const route = use(NavigationRouteContext);
+  const [paneRenders] = useState(createInspectorPaneRenders);
   const content: InspectorContent = {
     ...props.content,
     resetKeys: [route?.key, ...(props.content.resetKeys ?? [])],
     panes: props.content.panes.map((pane) => ({
       ...pane,
-      render: () => (
-        <NavigationContext.Provider value={navigation}>
-          <NavigationRouteContext.Provider value={route}>
-            {pane.render()}
-          </NavigationRouteContext.Provider>
-        </NavigationContext.Provider>
-      ),
+      render: () => <InspectorPaneSlot renders={paneRenders} paneKey={pane.key} />,
     })),
   };
   const focusedRef = useRef(false);
   const deactivateRef = useRef<(() => void) | null>(null);
+  const registeredRef = useRef<{
+    readonly content: InspectorContent;
+    readonly revealKey: string | undefined;
+  } | null>(null);
 
   const syncRegistration = useEffectEvent(() => {
     if (!focusedRef.current) {
+      registeredRef.current = null;
       deactivateRef.current?.();
       return;
     }
+    registeredRef.current = { content: props.content, revealKey: props.revealKey };
     deactivateRef.current = registerWorkspaceInspector(content, route?.key, props.revealKey);
   });
+
+  // A registration re-renders the layout and, through its context, this screen. So only a changed
+  // layout registers again; new pane closures re-render their mounted pane alone, like a child.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Publishes this screen's panes to the inspector column, which renders outside this screen's tree.
+  useEffect(() => {
+    paneRenders.set(props.content.panes, navigation, route);
+    const registered = registeredRef.current;
+    if (
+      focusedRef.current &&
+      !(
+        registered !== null &&
+        registered.revealKey === props.revealKey &&
+        sameInspectorLayout(registered.content, props.content)
+      )
+    ) {
+      syncRegistration();
+    }
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Changed column content replaces its existing native workspace registration.
+  }, [props.content, props.revealKey, navigation, route]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Navigation focus events own the inspector registration lifetime.
   useEffect(() => {
@@ -172,18 +267,11 @@ export function Inspector(props: {
       unsubscribeFocus();
       unsubscribeBlur();
       focusedRef.current = false;
+      registeredRef.current = null;
       deactivateRef.current?.();
       deactivateRef.current = null;
     };
   }, [navigation]);
-
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Changed column content replaces the focused inspector registration.
-  useEffect(() => {
-    if (focusedRef.current) {
-      syncRegistration();
-    }
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Changed column content replaces its existing native workspace registration.
-  }, [props.content, props.revealKey]);
   return null;
 }
 

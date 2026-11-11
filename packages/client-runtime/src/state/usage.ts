@@ -18,37 +18,45 @@ export function usageSummaryInput(
 }
 
 const limitsRefreshedAt = new Map<EnvironmentId, number>();
-const limitsRefreshes = new Map<EnvironmentId, Promise<unknown>>();
+const limitsRefreshes = new Map<
+  EnvironmentId,
+  { readonly fresh: boolean; readonly promise: Promise<unknown> }
+>();
 
+/**
+ * One limits refresh per environment at a time. `refresh` receives `fresh`: true for a refresh the
+ * user asked for, which must reach the provider instead of a cached reading. Automatic refreshes
+ * are throttled; a manual one never settles for an automatic check that is already running.
+ */
 export async function refreshUsageLimits<A>(
   environmentId: EnvironmentId,
-  refresh: () => Promise<A>,
+  refresh: (fresh: boolean) => Promise<A>,
   automatic = false,
   afterPending = false,
   minIntervalMs = 5 * 60_000,
 ): Promise<A | undefined> {
   const pending = limitsRefreshes.get(environmentId);
   if (pending !== undefined) {
-    if (afterPending) {
+    if (afterPending || (!automatic && !pending.fresh)) {
       try {
-        await pending;
+        await pending.promise;
       } catch {}
-      return refreshUsageLimits(environmentId, refresh, false, true, minIntervalMs);
+      return refreshUsageLimits(environmentId, refresh, false, afterPending, minIntervalMs);
     }
-    return automatic ? undefined : ((await pending) as A);
+    return automatic ? undefined : ((await pending.promise) as A);
   }
   const refreshedAt = limitsRefreshedAt.get(environmentId) ?? 0;
   // @effect-diagnostics-next-line globalDate:off
   if (automatic && Date.now() < refreshedAt + minIntervalMs) return;
-  const current = Promise.resolve()
-    .then(refresh)
+  const promise = Promise.resolve()
+    .then(() => refresh(!automatic))
     .finally(() => {
       limitsRefreshes.delete(environmentId);
       // @effect-diagnostics-next-line globalDate:off
       limitsRefreshedAt.set(environmentId, Date.now());
     });
-  limitsRefreshes.set(environmentId, current);
-  return await current;
+  limitsRefreshes.set(environmentId, { fresh: !automatic, promise });
+  return await promise;
 }
 
 export async function refreshUsage({

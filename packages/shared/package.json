@@ -467,6 +467,10 @@
       "types": "./src/Array.ts",
       "import": "./src/Array.ts"
     },
+    "./assistantTaskStatus": {
+      "types": "./src/assistantTaskStatus.ts",
+      "import": "./src/assistantTaskStatus.ts"
+    },
     "./orchestrationV2PendingBackgroundWork": {
       "types": "./src/orchestrationV2PendingBackgroundWork.ts",
       "import": "./src/orchestrationV2PendingBackgroundWork.ts"

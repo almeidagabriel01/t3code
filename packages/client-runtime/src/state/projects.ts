@@ -1,3 +1,4 @@
+import type { ProjectManagedRole } from "@t3tools/contracts";
 import {
   isExplicitRelativePath,
   isUncPath,
@@ -135,13 +136,23 @@ export function findProjectByPath<T extends { workspaceRoot?: string; cwd?: stri
   });
 }
 
+/** Records from older servers carry no role, so they fall back to the live config's Scratch root. */
 export function isScratchProject(
-  project: { readonly workspaceRoot: string },
+  project: { readonly workspaceRoot: string; readonly managedRole?: ProjectManagedRole },
   scratchWorkspaceRoot: string | null | undefined,
 ): boolean {
+  if (project.managedRole !== undefined) return project.managedRole === "scratch";
   return (
     scratchWorkspaceRoot != null && findProjectByPath([project], scratchWorkspaceRoot) !== undefined
   );
+}
+
+/** Where assistants without a project live; pickers show it as "All projects", never as a project. */
+export function isAssistantHomeProject(project: {
+  readonly isScratch?: true;
+  readonly managedRole?: ProjectManagedRole;
+}): boolean {
+  return project.isScratch === true || project.managedRole === "assistants";
 }
 
 /** Projects opened with Open folder stay out of lists until they hold a thread or a draft. */

@@ -1,14 +1,10 @@
-import { useAtomValue } from "@effect/atom-react";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { describeCleanedWorkspace } from "@t3tools/client-runtime/threadWorkspace";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { ArchiveRestoreIcon } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
-import { useEnvironmentQuery } from "../../state/query";
-import { serverEnvironment } from "../../state/server";
-import { useAtomCommand } from "../../state/use-atom-command";
+import { useEffect, useRef } from "react";
 import { Alert, AlertAction, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
+import { useThreadWorkspaceRestore } from "./useThreadWorkspaceRestore";
 
 /** Shown while a thread's managed worktree folder is gone; sending a message restores it too. */
 export function ThreadWorkspaceBanner(props: {
@@ -18,23 +14,8 @@ export function ThreadWorkspaceBanner(props: {
   /** Changes when a turn starts or ends, the moments a restore can have happened. */
   turnKey: string;
 }) {
-  const query = useEnvironmentQuery(
-    props.worktreePath === null
-      ? null
-      : serverEnvironment.threadWorkspaceStatus({
-          environmentId: props.environmentId,
-          input: { threadId: props.threadId },
-        }),
-  );
-  const restore = useAtomCommand(serverEnvironment.restoreThreadWorkspace, {
-    reportFailure: false,
-  });
-  const canRestore = useAtomValue(
-    serverEnvironment.restoreThreadWorkspace.permissionAtom(props.environmentId),
-  );
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const { refresh } = query;
+  const workspace = useThreadWorkspaceRestore(props);
+  const { cleaned, refresh } = workspace;
   const seenTurnKey = useRef(props.turnKey);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the server restores the worktree on turn start, outside this query
   useEffect(() => {
@@ -42,41 +23,25 @@ export function ThreadWorkspaceBanner(props: {
     seenTurnKey.current = props.turnKey;
     refresh();
   }, [props.turnKey, refresh]);
-  if (query.data?.state !== "cleaned") return null;
-
-  const run = async () => {
-    setPending(true);
-    setError(null);
-    const result = await restore({
-      environmentId: props.environmentId,
-      input: { threadId: props.threadId },
-    });
-    setPending(false);
-    if (result._tag === "Failure") {
-      const failure = squashAtomCommandFailure(result);
-      setError(failure instanceof Error ? failure.message : "Could not restore the worktree.");
-      return;
-    }
-    refresh();
-  };
+  if (cleaned === null) return null;
 
   return (
     <div className="pointer-events-auto mx-auto w-fit max-w-[min(48rem,calc(100%-2rem))] pt-3">
       <Alert variant="info" surface="glass" controlAlignment="first-line">
         <ArchiveRestoreIcon />
         <AlertDescription>
-          <p>{describeCleanedWorkspace(query.data)}</p>
+          <p>{describeCleanedWorkspace(cleaned)}</p>
           <p>Sending a message restores it as well.</p>
-          {error !== null && <p className="text-error-foreground">{error}</p>}
+          {workspace.error !== null && <p className="text-error-foreground">{workspace.error}</p>}
         </AlertDescription>
         <AlertAction>
           <Button
             variant="default"
             size="sm"
-            disabled={pending || !canRestore}
-            onClick={() => void run()}
+            disabled={workspace.pending || !workspace.canRestore}
+            onClick={() => void workspace.run()}
           >
-            {pending ? "Restoring…" : "Restore"}
+            {workspace.pending ? "Restoring…" : "Restore"}
           </Button>
         </AlertAction>
       </Alert>

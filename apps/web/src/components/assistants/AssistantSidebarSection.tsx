@@ -365,9 +365,12 @@ function GroupRow(props: {
       >
         <HashIcon aria-hidden className="size-4 shrink-0 text-(--sidebar-icon-color)" />
         <span className="min-w-0 truncate">{team.name}</span>
-        {/* A narrow row drops the faces whole rather than clipping one, so the name stays readable. */}
+        {/* A narrow row drops the faces whole, sooner while it runs, so the name stays readable. */}
         <span
-          className="flex shrink-0 items-center ps-0.5 @max-[15rem]/group-row:hidden"
+          className={cn(
+            "flex shrink-0 items-center ps-0.5",
+            props.running > 0 ? "@max-[19rem]/group-row:hidden" : "@max-[15rem]/group-row:hidden",
+          )}
           data-testid="group-avatars"
         >
           {shown.map(({ assistant }) => (
@@ -387,10 +390,13 @@ function GroupRow(props: {
         {props.running > 0 ? (
           <span
             data-testid="group-status"
-            className="flex shrink-0 items-center gap-1 text-xs font-normal text-info-foreground"
+            aria-label={`${props.running} running`}
+            className="flex shrink-0 items-center gap-1 text-xs font-normal text-info-foreground tabular-nums"
           >
             <Spinner size="xs" tone="muted" aria-hidden />
-            {props.running} running
+            {props.running}
+            {/* The word goes first on a narrow row: the count and the group's name stay. */}
+            <span className="@max-[19rem]/group-row:hidden">{" running"}</span>
           </span>
         ) : props.members.length === 0 ? (
           <span

@@ -170,21 +170,51 @@ it("keeps the parent when the maximized child's Agents sheet opens another child
   expect(screen.state).toEqual(originalState);
 });
 
-it("keeps a focused inspector registered across renders and updates its content", () => {
+it("registers a focused inspector once per layout and keeps its panes current", () => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   const requireMobile = NodeModule.createRequire(import.meta.url);
   const listeners = { focus: new Set<() => void>(), blur: new Set<() => void>() };
   let focused = true;
-  let activeRender: (() => React.ReactNode) | undefined;
-  const deactivate = vi.fn(() => {
-    activeRender = undefined;
+  interface Registered {
+    readonly active: string;
+    readonly resetKeys?: ReadonlyArray<unknown>;
+    readonly panes: ReadonlyArray<{ readonly key: string; readonly render: () => React.ReactNode }>;
+  }
+  const deactivate = vi.fn();
+  type Register = (
+    content: Registered,
+    routeKey: string | undefined,
+    revealKey?: string,
+  ) => () => void;
+  const register = vi.fn<Register>(() => deactivate);
+  const layoutContext = React.createContext<{ readonly registerWorkspaceInspector: Register }>({
+    registerWorkspaceInspector: register,
   });
-  const registerWorkspaceInspector = vi.fn(
-    (content: { readonly panes: ReadonlyArray<{ readonly render: () => React.ReactNode }> }) => {
-      activeRender = content.panes[0]?.render;
-      return deactivate;
-    },
-  );
+  // Like the workspace layout without compiler memoization: each registration is a new state
+  // object and a new context value. The cap ends a registration loop so the count can fail.
+  function Layout(props: { readonly children: React.ReactNode }) {
+    const [registered, setRegistered] = React.useState<{ readonly content: Registered } | null>(
+      null,
+    );
+    const registerWorkspaceInspector: Register = (content, routeKey, revealKey) => {
+      register(content, routeKey, revealKey);
+      if (register.mock.calls.length <= 20) setRegistered({ content });
+      return () => {
+        deactivate();
+        setRegistered(null);
+      };
+    };
+    return (
+      <layoutContext.Provider value={{ registerWorkspaceInspector }}>
+        {props.children}
+        <div data-testid="column">
+          {registered?.content.panes.map((pane) => (
+            <div key={pane.key}>{pane.render()}</div>
+          ))}
+        </div>
+      </layoutContext.Provider>
+    );
+  }
   const navigation = {
     isFocused: () => focused,
     addListener(event: "focus" | "blur", listener: () => void) {
@@ -195,7 +225,9 @@ it("keeps a focused inspector registered across renders and updates its content"
     },
   };
   const navigationContext = React.createContext(navigation);
-  const routeContext = React.createContext({ key: "file" });
+  const routeContext = React.createContext<{ readonly key: string; readonly param?: string }>({
+    key: "file",
+  });
   const babel = requireMobile("@babel/core") as {
     transformFileSync(file: string, options: Record<string, unknown>): { code: string };
   };
@@ -223,19 +255,12 @@ it("keeps a focused inspector registered across renders and updates its content"
     },
   );
   const exports: {
-    Inspector?: (props: {
-      readonly content: {
-        readonly active: string;
-        readonly panes: ReadonlyArray<{ readonly key: string; readonly render: () => string }>;
-      };
-    }) => null;
+    Inspector?: (props: { readonly content: Registered; readonly revealKey?: string }) => null;
   } = {};
   const load = (name: string) => {
     if (name === "react" || name.startsWith("react/")) return requireMobile(name);
     if (name === "./adaptive-workspace-context")
-      return {
-        useAdaptiveWorkspaceLayout: () => ({ registerWorkspaceInspector }),
-      };
+      return { useAdaptiveWorkspaceLayout: () => React.use(layoutContext) };
     if (name === "@react-navigation/native")
       return {
         NavigationContext: navigationContext,
@@ -245,55 +270,126 @@ it("keeps a focused inspector registered across renders and updates its content"
   };
   new Function("require", "exports", compiled.code)(load, exports);
   const Inspector = exports.Inspector!;
-  const contents = new Map<string, Parameters<typeof Inspector>[0]["content"]>();
-  function Screen({ content }: { content: string | undefined }) {
-    if (content === undefined) return null;
-    let panes = contents.get(content);
-    if (!panes) {
-      panes = { active: "main", panes: [{ key: "main", render: () => content }] };
-      contents.set(content, panes);
-    }
-    return <Inspector content={panes} />;
+  interface Spec {
+    readonly label: string;
+    readonly active?: string;
+    readonly keys?: ReadonlyArray<string>;
+    readonly resetKeys?: ReadonlyArray<unknown>;
+    readonly revealKey?: string;
+    readonly routeParam?: string;
   }
-  const root = createRoot(document.createElement("div"));
+  // A screen that reads the layout and builds its inspector content anew on every render.
+  function Screen({ spec }: { spec: Spec | undefined }) {
+    React.use(layoutContext);
+    if (spec === undefined) return null;
+    const RouteParam = () => React.use(routeContext).param ?? "";
+    return (
+      <routeContext.Provider value={{ key: "file", param: spec.routeParam }}>
+        <ScreenInspector spec={spec} RouteParam={RouteParam} />
+      </routeContext.Provider>
+    );
+  }
+  function ScreenInspector({ spec, RouteParam }: { spec: Spec; RouteParam: () => string }) {
+    return (
+      <Inspector
+        revealKey={spec.revealKey}
+        content={{
+          active: spec.active ?? "main",
+          resetKeys: spec.resetKeys ?? ["thread"],
+          panes: (spec.keys ?? ["main"]).map((key) => ({
+            key,
+            render: () => (
+              <>
+                {key}:{spec.label}
+                <RouteParam />{" "}
+              </>
+            ),
+          })),
+        }}
+      />
+    );
+  }
+  const container = document.createElement("div");
+  const root = createRoot(container);
   using _root = { [Symbol.dispose]: () => act(() => root.unmount()) };
-  const render = (content: string | undefined) =>
-    act(() => root.render(<Screen content={content} />));
-  const first = "first";
-  render(first);
-  registerWorkspaceInspector.mockClear();
-  deactivate.mockClear();
-  render(first);
-  render(first);
-  expect(registerWorkspaceInspector).not.toHaveBeenCalled();
-  expect(deactivate).not.toHaveBeenCalled();
-  const second = "second";
-  render(second);
-  expect(registerWorkspaceInspector).toHaveBeenCalledTimes(1);
-  const paneContainer = document.createElement("div");
-  const paneRoot = createRoot(paneContainer);
-  using _pane = { [Symbol.dispose]: () => act(() => paneRoot.unmount()) };
-  act(() => paneRoot.render(activeRender?.()));
-  expect(paneContainer.textContent).toBe("second");
+  const render = (spec: Spec | undefined) =>
+    act(() =>
+      root.render(
+        <Layout>
+          <Screen spec={spec} />
+        </Layout>,
+      ),
+    );
+  const column = () => container.querySelector("[data-testid=column]")?.textContent;
+  const registrations = () => register.mock.calls.length;
+
+  render({ label: "first" });
+  expect(registrations()).toBe(1);
+  expect(column()).toBe("main:first ");
+  render({ label: "first" });
+  expect(registrations()).toBe(1);
+  render({ label: "second" });
+  expect(registrations()).toBe(1);
+  expect(column()).toBe("main:second ");
+  render({ label: "second", routeParam: "?params" });
+  expect(registrations()).toBe(1);
+  expect(column()).toBe("main:second?params ");
+
+  const changes: ReadonlyArray<readonly [string, Spec, string]> = [
+    ["panes", { label: "a", keys: ["main", "git"] }, "main:a git:a "],
+    ["active pane", { label: "b", keys: ["main", "git"], active: "git" }, "main:b git:b "],
+    ["reset keys", { label: "c", resetKeys: ["other thread"] }, "main:c "],
+    ["reveal key", { label: "d", resetKeys: ["other thread"], revealKey: "reveal" }, "main:d "],
+  ];
+  for (const [change, spec, shown] of changes) {
+    const before = registrations();
+    render(spec);
+    render({ ...spec });
+    expect(registrations(), change).toBe(before + 1);
+    expect(column(), change).toBe(shown);
+    const [content, routeKey, revealKey] = register.mock.lastCall!;
+    expect(
+      {
+        active: content.active,
+        keys: content.panes.map((pane) => pane.key),
+        resetKeys: content.resetKeys,
+        routeKey,
+        revealKey,
+      },
+      change,
+    ).toEqual({
+      active: spec.active ?? "main",
+      keys: spec.keys ?? ["main"],
+      resetKeys: ["file", ...(spec.resetKeys ?? ["thread"])],
+      routeKey: "file",
+      revealKey: spec.revealKey,
+    });
+  }
+
   const emit = (event: "focus" | "blur") =>
     act(() => {
       focused = event === "focus";
       for (const listener of listeners[event]) listener();
     });
+  const last = changes.at(-1)![1];
+  const beforeBlur = registrations();
   emit("blur");
   expect(deactivate).toHaveBeenCalledTimes(1);
-  registerWorkspaceInspector.mockClear();
-  render(first);
-  expect(registerWorkspaceInspector).not.toHaveBeenCalled();
+  expect(column()).toBe("");
+  render({ ...last, label: "blurred" });
+  expect(registrations()).toBe(beforeBlur);
   emit("focus");
-  expect(registerWorkspaceInspector).toHaveBeenCalledTimes(1);
+  expect(registrations()).toBe(beforeBlur + 1);
+  expect(column()).toBe("main:blurred ");
   emit("focus");
-  expect(registerWorkspaceInspector).toHaveBeenCalledTimes(1);
+  expect(registrations()).toBe(beforeBlur + 1);
   render(undefined);
-  expect(activeRender).toBeUndefined();
-  render(second);
-  expect(activeRender).toBeDefined();
+  expect(deactivate).toHaveBeenCalledTimes(2);
+  expect(column()).toBe("");
+  render(last);
+  expect(registrations()).toBe(beforeBlur + 2);
+  expect(column()).toBe("main:d ");
   act(() => root.unmount());
-  expect(activeRender).toBeUndefined();
+  expect(deactivate).toHaveBeenCalledTimes(3);
   expect(listeners.focus.size + listeners.blur.size).toBe(0);
 });

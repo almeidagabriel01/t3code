@@ -1,3 +1,4 @@
+import { assistantGroupReadStep } from "@t3tools/client-runtime/assistantGroupChat";
 import { useEffect, useEffectEvent, useState } from "react";
 import { AppState } from "react-native";
 
@@ -17,8 +18,9 @@ export function useGroupReadMarker(input: {
 }) {
   const { latestSeq, readSeq, atBottom, enabled } = input;
   const markRead = useEffectEvent(input.markRead);
-  // Marked as unread from the menu while open stays unread until something newer arrives.
-  const [sent, setSent] = useState(0);
+  const [seen, setSeen] = useState(0);
+  const step = assistantGroupReadStep({ latestSeq, readSeq, seen });
+  if (step.seen !== seen) setSeen(step.seen);
   const [foreground, setForeground] = useState(AppState.currentState === "active");
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- app state is native state
   useEffect(() => {
@@ -27,20 +29,12 @@ export function useGroupReadMarker(input: {
     );
     return () => subscription.remove();
   }, []);
-  const target =
-    enabled &&
-    foreground &&
-    atBottom &&
-    latestSeq !== null &&
-    latestSeq > readSeq &&
-    latestSeq > sent
-      ? latestSeq
-      : null;
+  const target = enabled && foreground && atBottom ? step.target : null;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a timer that reports to the server
   useEffect(() => {
     if (target === null) return;
     const timer = setTimeout(() => {
-      setSent(target);
+      setSeen(target);
       markRead(target);
     }, MARK_DELAY_MS);
     return () => clearTimeout(timer);

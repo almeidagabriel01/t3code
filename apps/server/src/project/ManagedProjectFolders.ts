@@ -23,6 +23,7 @@ import * as Schema from "effect/Schema";
 import * as ServerConfig from "../config.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import { managedProjectRoot } from "./ProjectEnrichmentService.ts";
 import * as ProjectService from "./ProjectService.ts";
 
 export class ScratchUnavailableError extends Schema.TaggedError<ScratchUnavailableError>()(
@@ -245,7 +246,9 @@ const make = Effect.gen(function* () {
     gitWorkflow.isRepository(config.baseDir).pipe(
       Effect.catchIf(isGitMissing, () => Effect.succeed(false)),
       Effect.map((isRepository) =>
-        isRepository ? Option.none<string>() : Option.some(path.resolve(config.baseDir, "scratch")),
+        isRepository
+          ? Option.none<string>()
+          : Option.some(managedProjectRoot(path, config.baseDir, "scratch")),
       ),
       Effect.catchCause((cause) =>
         Cause.hasInterrupts(cause) ? Effect.interrupt : Effect.succeed(Option.none<string>()),
@@ -325,7 +328,7 @@ const make = Effect.gen(function* () {
           onSome: ensureScratchAt,
           onNone: () =>
             ensureManagedProject({
-              workspaceRoot: path.resolve(config.baseDir, "assistants"),
+              workspaceRoot: managedProjectRoot(path, config.baseDir, "assistants"),
               kind: "assistants",
               title: "Assistants",
               icon: "bot",
@@ -357,7 +360,7 @@ const make = Effect.gen(function* () {
   ) =>
     Effect.zipWith(
       isScratchProject(projectId),
-      isScratchRoot(projectId, path.resolve(config.baseDir, "assistants")),
+      isScratchRoot(projectId, managedProjectRoot(path, config.baseDir, "assistants")),
       (scratch, assistants) => scratch || assistants,
     );
 

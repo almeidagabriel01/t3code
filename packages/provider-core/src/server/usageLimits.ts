@@ -112,11 +112,17 @@ function usageWindowEquals(a: ServerProviderUsageWindow, b: ServerProviderUsageW
   );
 }
 
+/**
+ * The newest reading wins, by when it was read and never by its percent: a reset credit or a plan
+ * change lowers usage before the window's reset time. `streamedAt` is when a session last
+ * reported each window; without it a newer published reading keeps all of its windows.
+ */
 export function resolveUsageLimitsAfterProbe(input: {
   readonly published: ServerProviderUsageLimits | undefined;
   readonly probed: ServerProviderUsageLimits | undefined;
+  readonly streamedAt?: ReadonlyMap<string, string>;
 }): ServerProviderUsageLimits | undefined {
-  const { published, probed } = input;
+  const { published, probed, streamedAt } = input;
   if (probed?.unavailable?.reason === "probeFailed" && published && !published.unavailable) {
     return published;
   }
@@ -127,7 +133,19 @@ export function resolveUsageLimitsAfterProbe(input: {
     !probed.unavailable &&
     Date.parse(published.checkedAt) > Date.parse(probed.checkedAt)
   ) {
-    return { ...probed, checkedAt: published.checkedAt, windows: published.windows };
+    if (streamedAt === undefined) {
+      return { ...probed, checkedAt: published.checkedAt, windows: published.windows };
+    }
+    const probedAt = Date.parse(probed.checkedAt);
+    const windows = new Map(probed.windows.map((window) => [window.id, window] as const));
+    for (const window of published.windows) {
+      const at = streamedAt.get(window.id);
+      if (at !== undefined && Date.parse(at) > probedAt) windows.set(window.id, window);
+    }
+    return {
+      ...probed,
+      ...makeUsageLimits({ checkedAt: published.checkedAt, windows: windows.values() }),
+    };
   }
   return probed;
 }

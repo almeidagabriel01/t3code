@@ -8,12 +8,13 @@ import type { UsageItem } from "./usageItems.logic";
 
 const mocks = vi.hoisted(() => ({
   items: [] as UsageItem[],
+  environmentIds: [] as EnvironmentId[],
   consume: vi.fn(async (_value: unknown) => ({ _tag: "Success", value: { outcome: "reset" } })),
   toast: vi.fn(),
 }));
 
 vi.mock("./useUsageItems", () => ({
-  useUsageItems: () => ({ environmentIds: [], items: mocks.items }),
+  useUsageItems: () => ({ environmentIds: mocks.environmentIds, items: mocks.items }),
 }));
 vi.mock("../../state/session", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../state/session")>()),
@@ -48,11 +49,24 @@ const codex = (availableCount: number) =>
     environmentLabel: null,
   }) as unknown as UsageItem;
 
-function setup(items: UsageItem[]) {
+function setup(items: UsageItem[], environmentIds: EnvironmentId[] = []) {
   mocks.items = items;
+  mocks.environmentIds = environmentIds;
   mocks.consume.mockClear();
   mocks.toast.mockClear();
 }
+
+describe("UsageSegments refresh", () => {
+  it("asks the providers for usage once when the bar opens, and not again on the next check", async () => {
+    setup([codex(0)], ["env" as EnvironmentId]);
+    await using _screen = await render(<UsageSegments />);
+    await vi.waitFor(() =>
+      expect(mocks.consume.mock.calls).toEqual([[{ environmentId: "env", input: {} }]]),
+    );
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect(mocks.consume).toHaveBeenCalledOnce();
+  });
+});
 
 describe("UsageSegments reset credits", () => {
   it("uses a banked reset from the status bar after confirming, then reports the outcome", async () => {

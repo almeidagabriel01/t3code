@@ -13,6 +13,7 @@ import {
   type VcsListRefsResult,
   type VcsStatusResult,
 } from "@t3tools/contracts";
+import type { ReactNode } from "react";
 import * as DateTime from "effect/DateTime";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
@@ -88,6 +89,11 @@ vi.mock("~/browser/useOpenLink", () => ({ useOpenLink: () => async () => {} }));
 vi.mock("./diffs/DiffCommentAnnotation", () => ({ DiffCommentAnnotation: () => null }));
 vi.mock("./diffs/DiffFileTree", () => ({ DiffFileTree: () => null }));
 vi.mock("./DiffFilePathCopyButton", () => ({ DiffFilePathCopyButton: () => null }));
+vi.mock("./chat/ThreadWorkspaceCleaned", () => ({
+  ThreadWorkspaceCleanedGate: (props: { cwd?: string; children: ReactNode }) => (
+    <section aria-label={`Cleaned gate for ${props.cwd}`}>{props.children}</section>
+  ),
+}));
 
 import DiffPanel from "./DiffPanel";
 import { useDiffPanelSessionStore, useDiffPanelStore } from "~/diffPanelStore";
@@ -268,3 +274,15 @@ it.each([false, true])(
     await expect.element(toggle).toHaveAttribute("aria-expanded", "false");
   },
 );
+
+it("wraps the not-a-repository state of a thread worktree in the cleaned-worktree gate", async () => {
+  using context = setup(null);
+  state.status = Atom.make(AsyncResult.success({ isRepo: false } as unknown as VcsStatusResult));
+  await using screen = await render(
+    <RegistryContext.Provider value={context.registry}>
+      <DiffPanel composerDraftTarget={context.threadRef} workspaceMutationId={null} visible />
+    </RegistryContext.Provider>,
+  );
+  const gate = screen.getByRole("region", { name: `Cleaned gate for ${cwd}` });
+  await expect.element(gate.getByText(/not a git repository/)).toBeVisible();
+});

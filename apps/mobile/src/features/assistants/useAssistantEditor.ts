@@ -5,6 +5,7 @@ import {
   projectPickerRows,
 } from "@t3tools/client-runtime/assistantSections";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { isAssistantHomeProject } from "@t3tools/client-runtime/state/projects";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { DEFAULT_AUTONOMY_SETTINGS, type ModelSelection } from "@t3tools/contracts";
 
@@ -14,7 +15,7 @@ import { scheduledTaskDefaultModel } from "../settings/scheduledTaskDraft";
 import { assistantEditorAtom } from "./assistantDraft";
 
 export function assistantProjectName(project: EnvironmentProject): string {
-  return project.isScratch === true ? "All projects" : project.title;
+  return isAssistantHomeProject(project) ? "All projects" : project.title;
 }
 
 /**
@@ -28,7 +29,7 @@ export function useAssistantEditor() {
   const picked = editor?.current.projectIds ?? [ALL_PROJECTS];
   const pickerRows = projectPickerRows(
     projects
-      .filter((project) => project.isScratch !== true)
+      .filter((project) => !isAssistantHomeProject(project))
       .map((project) => ({
         id: project.id,
         label: project.title,

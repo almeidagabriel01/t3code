@@ -12,3 +12,15 @@ export function describeCleanedWorkspace(status: ThreadWorkspaceStatus): string 
     ? "This thread's worktree was cleaned up. No saved changes remain, so Restore recreates it from its branch."
     : `This thread's worktree was cleaned up. Restore brings back the changes saved on ${savedOn(status.snapshot.capturedAt)}.`;
 }
+
+/**
+ * What a thread's git surface offers when its folder is not a repository. A managed worktree is
+ * never initialized: its folder is either cleaned up (restore) or about to report as a repository.
+ */
+export function missingRepositoryAction(input: {
+  readonly hasWorktree: boolean;
+  readonly status: ThreadWorkspaceStatus | null;
+}): "restore" | "initialize" | "none" {
+  if (!input.hasWorktree) return "initialize";
+  return input.status?.state === "cleaned" ? "restore" : "none";
+}

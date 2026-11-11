@@ -12,7 +12,7 @@ import { AppRoot } from "~/AppRoot";
 import "~/components/ChatView";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { __setClientSettingsForTests } from "~/hooks/useSettings";
-import { useRightPanelStore } from "~/rightPanelStore";
+import { selectThreadRightPanelState, useRightPanelStore } from "~/rightPanelStore";
 import { getRouter } from "~/router";
 import {
   ENVIRONMENT_ID,
@@ -87,6 +87,64 @@ async function openSideChat() {
   await router.load();
   return { parent, router };
 }
+
+it("/side shows the message in its tab before the server answers, and returns it to the composer when the start fails", async () => {
+  const { parent, router } = await openSideChat();
+  const parentRef = scopeThreadRef(ENVIRONMENT_ID, parent.id);
+  using _draft = {
+    [Symbol.dispose]: () => useComposerDraftStore.getState().clearComposerContent(parentRef),
+  };
+  using _environment = installFakeEnvironment([parent], { sideChats: true });
+  fakeCommands.holdTypes.add("thread.fork");
+  await using _app = await render(<AppRoot router={router} />, { router: false });
+  const editor = page.getByTestId("composer-editor");
+  await userEvent.type(editor, "/side why is it slow");
+  await page.getByRole("button", { name: "Send to side chat" }).click();
+  await expect.element(page.getByText("Starting the side chat…")).toBeVisible();
+  await expect.element(page.getByText("why is it slow", { exact: true })).toBeVisible();
+  await expect.element(editor).toHaveTextContent("");
+  fakeCommands.refuseHeld();
+  await expect.element(editor).toHaveTextContent("/side why is it slow");
+  await expect.element(page.getByText("Starting the side chat…")).not.toBeInTheDocument();
+});
+
+it.each([
+  { name: "is accepted", fails: false, editorText: "" },
+  { name: "is refused", fails: true, editorText: "/side why is it slow" },
+])("/side sends the message once the side chat exists: $name", async ({ fails, editorText }) => {
+  const { parent, router } = await openSideChat();
+  const parentRef = scopeThreadRef(ENVIRONMENT_ID, parent.id);
+  using _draft = {
+    [Symbol.dispose]: () => {
+      useComposerDraftStore.getState().clearComposerContent(parentRef);
+      useRightPanelStore.getState().closeAllSurfaces(parentRef);
+    },
+  };
+  using _environment = installFakeEnvironment([parent], { sideChats: true });
+  if (fails) fakeCommands.failTypes.add("message.dispatch");
+  await using _app = await render(<AppRoot router={router} />, { router: false });
+  const editor = page.getByTestId("composer-editor").first();
+  await userEvent.type(editor, "/side why is it slow");
+  await page.getByRole("button", { name: "Send to side chat" }).click();
+  // Ids, so a second send shows whether it repeated the command, the message or the thread.
+  const sent = () =>
+    fakeCommands.dispatched
+      .filter((command) => command.type === "message.dispatch")
+      .map((command) => {
+        const { commandId, threadId, messageId } = command as unknown as Record<string, string>;
+        return `${threadId} ${messageId} ${commandId}`;
+      });
+  await vi.waitFor(() => expect(sent()).not.toHaveLength(0));
+  await expect.element(page.getByText("Starting the side chat…")).not.toBeInTheDocument();
+  await expect.element(editor).toHaveTextContent(editorText);
+  expect(sent()).toHaveLength(1);
+  expect(
+    selectThreadRightPanelState(
+      useRightPanelStore.getState().byThreadKey,
+      parentRef,
+    ).surfaces.filter((surface) => surface.kind === "side-chat"),
+  ).toHaveLength(fails ? 0 : 1);
+});
 
 it("Send to main chat puts a side chat answer into the parent composer", async () => {
   const { parent, router } = await openSideChat();

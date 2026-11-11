@@ -177,3 +177,29 @@ effectIt.effect("an icon kind from a newer server shows the default icon", () =>
     assert.strictEqual(broken._tag, "Failure");
   }),
 );
+
+effectIt.effect("a managed role this build does not know reads as an ordinary project", () =>
+  Effect.gen(function* () {
+    const base = {
+      id: "project-1",
+      title: "Project",
+      workspaceRoot: "/tmp/project",
+      defaultModelSelection: null,
+      scripts: [],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+    for (const [managedRole, expected] of [
+      ["scratch", "scratch"],
+      ["assistants", "assistants"],
+      ["sandbox", undefined],
+      [42, undefined],
+      [undefined, undefined],
+    ] as const) {
+      const shell = yield* decodeProjectShell(
+        managedRole === undefined ? base : { ...base, managedRole },
+      );
+      assert.strictEqual(shell.managedRole, expected);
+    }
+  }),
+);

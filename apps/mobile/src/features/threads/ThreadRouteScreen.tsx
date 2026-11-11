@@ -21,6 +21,8 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { View } from "react-native";
+import { useAtomValue } from "@effect/atom-react";
 import * as Option from "effect/Option";
 import {
   AuthOrchestrationOperateScope,
@@ -49,6 +51,9 @@ import { dismissGitActionResult, useGitActionProgress } from "../../state/use-vc
 import { vcsEnvironment } from "../../state/vcs";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { LoadingScreen } from "../../components/LoadingScreen";
+import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
+import { AppText as Text } from "../../components/ui/AppText";
+import { startingSideChatsAtom } from "../../state/starting-side-chats";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { useThreadShell } from "../../state/entities";
@@ -132,14 +137,17 @@ function firstRouteParam(value: string | string[] | undefined): string | null {
 // The inspector pane's bar belongs to ThreadInspectorHeader; the fallback must not draw its own.
 const InspectorHeaderShownContext = createContext(false);
 
-function ThreadRouteFallbackLayout(props: { readonly children: ReactNode }) {
+function ThreadRouteFallbackLayout(props: {
+  readonly children: ReactNode;
+  readonly title?: string;
+}) {
   const goBack = useWorkspaceBackNavigation("threads");
   const inspectorHeaderShown = use(InspectorHeaderShownContext);
   return (
     <ThreadScreenFallback
       header={
         inspectorHeaderShown ? undefined : (
-          <AppBar title="Thread" onBackToList={goBack} hideBottomBorder />
+          <AppBar title={props.title ?? "Thread"} onBackToList={goBack} hideBottomBorder />
         )
       }
     >
@@ -152,6 +160,43 @@ function OpeningThreadLoadingScreen() {
   return (
     <ThreadRouteFallbackLayout>
       <LoadingScreen message="Opening thread…" messagePlacement="above-spinner" embedded />
+    </ThreadRouteFallbackLayout>
+  );
+}
+
+/** The message of a side chat the server is still creating, or why it did not start. */
+function StartingSideChatScreen(props: { readonly prompt: string; readonly error: string | null }) {
+  return (
+    <ThreadRouteFallbackLayout title="Side chat">
+      <ScrollView
+        contentInsetAdjustmentBehavior="automatic"
+        contentContainerStyle={{ flexGrow: 1, gap: 12, paddingHorizontal: 16, paddingVertical: 16 }}
+        className="bg-screen flex-1 android:bg-transparent"
+      >
+        <View className="max-w-[85%] self-end rounded-[20px] bg-user-bubble px-3.5 py-2.5">
+          <Text selectable className="text-base text-user-bubble-foreground">
+            {props.prompt}
+          </Text>
+        </View>
+        {props.error === null ? (
+          <View className="flex-row items-center gap-2">
+            <AppActivityIndicator size="small" />
+            <Text className="text-sm text-foreground-muted">Starting the side chat…</Text>
+          </View>
+        ) : (
+          <View accessibilityRole="alert" className="gap-1">
+            <Text className="font-t3-bold text-base text-danger-foreground">
+              Side chat not started
+            </Text>
+            <Text selectable className="text-sm text-foreground">
+              {props.error}
+            </Text>
+            <Text className="text-sm text-foreground-muted">
+              Your message is back in the main chat.
+            </Text>
+          </View>
+        )}
+      </ScrollView>
     </ThreadRouteFallbackLayout>
   );
 }
@@ -243,6 +288,7 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
       ? null
       : scopedThreadKey(selectedThread.environmentId, selectedThread.id);
   const selectedThreadDetailState = useSelectedThreadDetailState();
+  const startingSideChats = useAtomValue(startingSideChatsAtom);
   const detailError = selectedThreadDetailState.error;
   const [errorBeforeConnected, setErrorBeforeConnected] = useState(() =>
     routeConnectionState === "connected" ? Option.none<string>() : detailError,
@@ -250,11 +296,13 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
   if (routeConnectionState !== "connected" && errorBeforeConnected !== detailError) {
     setErrorBeforeConnected(detailError);
   }
+  const startingSideChat = threadIdRaw === null ? undefined : startingSideChats[threadIdRaw];
+  const threadReady = selectedThread !== null && selectedThreadKey === routeThreadKey;
   const withInspectorHeader = (content: ReactNode) =>
     props.inspectorPresentation ? (
       <InspectorHeaderShownContext value>
         <ThreadInspectorHeader
-          title={selectedThread?.title ?? "Thread"}
+          title={startingSideChat ? "Side chat" : (selectedThread?.title ?? "Thread")}
           {...props.inspectorPresentation}
         />
         {content}
@@ -267,7 +315,13 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
     return withInspectorHeader(<OpeningThreadLoadingScreen />);
   }
 
-  if (selectedThread !== null && selectedThreadKey === routeThreadKey) {
+  // Before the thread branch: an empty shell arriving first must not replace the message.
+  // A failed start whose thread exists after all shows the thread, not the stale error.
+  if (startingSideChat && !(startingSideChat.error !== null && threadReady)) {
+    return withInspectorHeader(<StartingSideChatScreen {...startingSideChat} />);
+  }
+
+  if (threadReady) {
     return withInspectorHeader(
       <ThreadRouteContent {...props} selectedThreadDetailState={selectedThreadDetailState} />,
     );

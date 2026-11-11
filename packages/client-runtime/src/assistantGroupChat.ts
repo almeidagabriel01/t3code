@@ -371,6 +371,24 @@ export function assistantGroupNewSeq(
   return first;
 }
 
+/**
+ * What an open chat reports as read. `seen` is the furthest it has been read while open, by the
+ * server's position or a report already sent, so marking it unread from the menu lowers the
+ * server's position without making the chat report it read again until something newer arrives.
+ */
+export function assistantGroupReadStep(input: {
+  readonly latestSeq: number | null;
+  readonly readSeq: number;
+  readonly seen: number;
+}): { readonly seen: number; readonly target: number | null } {
+  const seen = Math.max(input.seen, input.readSeq);
+  const { latestSeq } = input;
+  return {
+    seen,
+    target: latestSeq !== null && latestSeq > input.readSeq && latestSeq > seen ? latestSeq : null,
+  };
+}
+
 type TeamChat = Pick<AssistantTeam, "name"> & {
   readonly chat?: AssistantTeam["chat"];
   readonly archivedAt?: AssistantTeam["archivedAt"];

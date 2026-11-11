@@ -79,7 +79,45 @@ const assistantsMock = () => {
     } as never,
   ];
   const writes: Array<unknown> = [];
+  const taskRows = new Map<string, { title: string; status: string; dismissedAt: string | null }>([
+    ["task-done", { title: "Ship it", status: "done", dismissedAt: null }],
+    ["task-run", { title: "Still going", status: "running", dismissedAt: null }],
+  ]);
+  const setTask = (threadId: string, dismissed: boolean) =>
+    Effect.suspend(() => {
+      const row = taskRows.get(threadId);
+      if (row === undefined)
+        return Effect.fail(new AssistantError({ reason: "not_found", message: "No such task." }));
+      if (dismissed && row.status === "running") {
+        return Effect.fail(
+          new AssistantError({
+            reason: "invalid",
+            message: "A running task cannot be dismissed. Stop it first.",
+          }),
+        );
+      }
+      if ((row.dismissedAt !== null) !== dismissed) {
+        row.dismissedAt = dismissed ? "now" : null;
+        writes.push({ task: threadId, dismissed });
+      }
+      return Effect.succeed({ threadId, dismissedAt: row.dismissedAt } as never);
+    });
   const layer = Layer.mock(AssistantService.AssistantService)({
+    tasksOf: (assistantId) =>
+      Effect.succeed({
+        tasks:
+          assistantId === "ceo"
+            ? [...taskRows].map(([threadId, row]) => ({
+                threadId,
+                title: row.title,
+                status: row.status,
+                dismissed: row.dismissedAt !== null,
+              }))
+            : [],
+        truncated: assistantId === "ceo" && taskRows.size > 2,
+      }) as never,
+    dismissTask: (threadId) => setTask(threadId, true),
+    restoreTask: (threadId) => setTask(threadId, false),
     list: Effect.sync(() => [...rows]),
     teams: Effect.sync(() => [...teams]),
     create: (input, options) =>
@@ -293,6 +331,42 @@ it.effect("list and read give each assistant its role and its groups' lead by ha
     expect(yield* call({ action: "read", handle: "nobody" })).toMatchObject({
       code: "invalid_request",
     });
+  }),
+);
+
+it.effect("read lists the assistant's tasks; task_dismiss and task_restore are retry-safe", () =>
+  Effect.gen(function* () {
+    const { call, writes } = yield* harness("full-access");
+    expect(yield* call({ action: "read", handle: "eng" })).toMatchObject({ tasks: [] });
+    const read = yield* call({ action: "read", handle: "ceo" });
+    expect(read.tasks).toEqual([
+      { threadId: "task-done", title: "Ship it", status: "done", dismissed: false },
+      { threadId: "task-run", title: "Still going", status: "running", dismissed: false },
+    ]);
+    expect(read.tasksTruncated).toBeUndefined();
+    for (let repeat = 0; repeat < 2; repeat++) {
+      expect(yield* call({ action: "task_dismiss", threadId: "task-done" })).toEqual({
+        threadId: "task-done",
+        dismissed: true,
+      });
+    }
+    expect(writes).toEqual([{ task: "task-done", dismissed: true }]);
+    expect((yield* call({ action: "read", handle: "ceo" })).tasks[0].dismissed).toBe(true);
+    for (let repeat = 0; repeat < 2; repeat++) {
+      expect(yield* call({ action: "task_restore", threadId: "task-done" })).toEqual({
+        threadId: "task-done",
+        dismissed: false,
+      });
+    }
+    expect(writes).toHaveLength(2);
+    expect(yield* call({ action: "task_dismiss", threadId: "task-run" })).toMatchObject({
+      code: "invalid_request",
+      message: "A running task cannot be dismissed. Stop it first.",
+    });
+    expect(yield* call({ action: "task_dismiss", threadId: "nope" })).toMatchObject({
+      code: "invalid_request",
+    });
+    expect(yield* call({ action: "task_dismiss" })).toMatchObject({ code: "invalid_request" });
   }),
 );
 

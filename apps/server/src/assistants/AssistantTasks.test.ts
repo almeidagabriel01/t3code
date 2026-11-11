@@ -101,6 +101,12 @@ it.effect("tasks are per assistant, and deleting an assistant removes its links 
       Option.getOrNull(yield* tasks.forThread(ThreadId.make("t1")))?.assistantId,
       "a",
     );
+    yield* tasks.link({ ...task("t3", "a"), createdAt: "2026-01-03T00:00:00.000Z" });
+    assert.deepEqual(
+      (yield* tasks.listFor("a", 5)).map((entry) => entry.threadId),
+      ["t3", "t1"],
+    );
+    assert.strictEqual((yield* tasks.listFor("a", 1)).length, 1);
     yield* tasks.removeFor("a");
     assert.deepEqual(
       (yield* tasks.list).map((entry) => entry.threadId),

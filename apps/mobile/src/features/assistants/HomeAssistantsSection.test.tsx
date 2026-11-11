@@ -145,7 +145,20 @@ vi.mock("../../state/entities", () => ({
         ? []
         : [{ environmentId: entry.environmentId, id: entry.assistant.threadId }],
     ),
-    ...mocks.tasks.map((task) => ({ environmentId: "hub", id: task.threadId, title: task.title })),
+    ...mocks.tasks.map((task) => {
+      const mood = mocks.presence[task.threadId]?.mood;
+      return {
+        environmentId: "hub",
+        id: task.threadId,
+        title: task.title,
+        runtime:
+          mood === "working"
+            ? { status: "running" }
+            : mood === "failed"
+              ? { status: "failed" }
+              : null,
+      };
+    }),
   ],
   useProjects: () => mocks.projects,
 }));
@@ -405,16 +418,20 @@ describe("HomeAssistantsSection", () => {
   });
 
   it("a group is one row: avatars with +N, running or empty status, members behind the chevron", async () => {
-    mocks.active = make(6);
+    mocks.active = make(8);
     mocks.teams = [
       team("g1", "Everyone", ["a0", "a1", "a2", "a3", "a4", "a5"]),
       team("g2", "Nobody", []),
+      team("g3", "Idle", ["a2", "a3", "a4", "a5", "a6", "a7"]),
     ];
     mocks.presence.t0 = { mood: "working", detail: "W", since: null };
     mocks.presence.t1 = { mood: "working", detail: "W", since: null };
     mocks.showAll = true;
     render();
-    const stack = container.querySelector('[data-testid="group-avatars"]')!;
+    // The tablet bar drops a running group's faces so its name stays whole.
+    const stacks = container.querySelectorAll('[data-testid="group-avatars"]');
+    expect(stacks).toHaveLength(2);
+    const stack = stacks[1]!;
     expect(stack.querySelectorAll("i")).toHaveLength(4);
     expect(stack.textContent).toContain("+2");
     const statuses = Array.from(container.querySelectorAll('[data-testid="group-status"]'));

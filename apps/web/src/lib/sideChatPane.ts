@@ -1,4 +1,5 @@
-import type { OrchestrationV2ThreadShell, ScopedThreadRef } from "@t3tools/contracts";
+import type { OrchestrationV2ThreadShell, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
+import { create } from "zustand";
 
 import type { ToolCallDiffTarget } from "../diffPanelStore";
 import { useComposerDraftStore, type ComposerThreadTarget } from "../composerDraftStore";
@@ -41,4 +42,15 @@ export function openSideChatTab(
 export function appendToComposerDraft(target: ComposerThreadTarget, text: string): void {
   const store = useComposerDraftStore.getState();
   store.setPrompt(target, appendToDraftPrompt(store.getComposerDraft(target)?.prompt ?? "", text));
+}
+
+/** Messages of side chats whose tab is open while the server still creates them, by thread id. */
+export const useStartingSideChats = create<Readonly<Record<string, string>>>(() => ({}));
+
+/** Shows `prompt` in the side chat's tab until it starts; null once it started or failed. */
+export function setStartingSideChat(threadId: ThreadId, prompt: string | null): void {
+  useStartingSideChats.setState((current) => {
+    const { [threadId]: _dropped, ...rest } = current;
+    return prompt === null ? rest : { ...rest, [threadId]: prompt };
+  }, true);
 }

@@ -572,6 +572,8 @@ export function useThreadComposerState(input: {
         alertModelUnavailable();
       } else if (!startingSideChatRef.current) {
         startingSideChatRef.current = true;
+        // The side chat's screen shows the message at once, so it leaves the composer at once.
+        clearComposerDraftContent(threadKey);
         const started = await input
           .startSideChat(
             { environmentId: thread.environmentId, threadId: thread.id },
@@ -584,15 +586,20 @@ export function useThreadComposerState(input: {
           .finally(() => {
             startingSideChatRef.current = false;
           });
-        // Clear only what was sent; the draft may have changed while the side chat started.
-        const current = getComposerDraftSnapshot(threadKey);
-        if (
-          started &&
-          current.text === draft.text &&
-          current.attachments.length === 0 &&
-          (current.context?.records.length ?? 0) === 0
-        ) {
-          clearComposerDraftContent(threadKey);
+        if (!started) {
+          // Not started: the text returns, after anything typed meanwhile.
+          const typed = getComposerDraftSnapshot(threadKey).text;
+          setComposerDraftText(
+            threadKey,
+            typed.trim().length === 0
+              ? draft.text
+              : `${typed.replace(/\s+$/, "")}\n\n${draft.text}`,
+          );
+          // Says why the text is back, also for someone who left the side chat's screen.
+          setThreadComposerError(
+            threadKey,
+            "The side chat did not start. Your message is back here.",
+          );
         }
       }
       return null;

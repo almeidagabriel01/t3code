@@ -46,6 +46,11 @@ export class AssistantTasks extends Context.Service<
       dismissedAt: string | null,
     ) => Effect.Effect<Option.Option<AssistantTask>>;
     readonly list: Effect.Effect<ReadonlyArray<AssistantTask>>;
+    /** One assistant's tasks, newest first. */
+    readonly listFor: (
+      assistantId: string,
+      limit: number,
+    ) => Effect.Effect<ReadonlyArray<AssistantTask>>;
     readonly removeFor: (assistantId: string) => Effect.Effect<void>;
     /** Link events from now on, for the assistants stream. */
     readonly changes: PubSub.PubSub<AssistantTask>;
@@ -91,6 +96,12 @@ const make = Effect.gen(function* () {
       Effect.map((rows) => rows.map(toTask)),
       Effect.orDie,
     ),
+    listFor: Effect.fn("AssistantTasks.listFor")(function* (assistantId, limit) {
+      const rows = yield* sql<TaskRow>`
+        SELECT * FROM assistant_tasks WHERE assistant_id = ${assistantId}
+        ORDER BY created_at DESC, thread_id DESC LIMIT ${limit}`;
+      return rows.map(toTask);
+    }, Effect.orDie),
     removeFor: Effect.fn("AssistantTasks.removeFor")(function* (assistantId) {
       yield* sql`DELETE FROM assistant_tasks WHERE assistant_id = ${assistantId}`;
     }, Effect.orDie),
