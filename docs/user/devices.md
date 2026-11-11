@@ -107,12 +107,34 @@ each.
 - **Never**: agents cannot use it.
 
 Reset a row to return it to its default. A thread you declined stays declined;
-set the device to **Allow** to let it in. Only one thread's agent drives a
-device at a time: a second thread is told which thread has it.
+set the device to **Allow** to let it in. A thread and the tasks it delegates
+share one answer and one device. Only one piece of work drives a device at a
+time: an unrelated thread is told which thread has it. A choice stays with the
+device when an emulator boots or a Wi-Fi phone reconnects.
 
 To keep agents away from every device, turn off **Agents can use devices** in
 **Settings → Devices**. This hides the device tools from agents
 started from then on; your own Device panel is unaffected.
+
+## Physical Android phones
+
+Over USB, turn on **USB debugging** in the phone's **Developer options**, plug
+it into the machine that hosts the environment server, and accept the prompt on
+the phone. It appears under **Physical devices** marked **USB**.
+
+To connect without a cable, the phone needs Android 11 or later and the same
+Wi-Fi network as that machine. Choose **Connect a phone over Wi-Fi** in the
+Device panel or in **Settings → Devices**, then on the phone open **Developer
+options → Wireless debugging → Pair device with QR code** and scan the code.
+The dialog shows each step and, if pairing fails, why and how to retry. Only
+one phone pairs at a time per environment. In the mobile app, the same flow is
+in **Settings → Devices**; scan the code with the phone you want to connect, and
+to connect the phone that shows the code, open the screen on another device.
+
+A paired phone is listed marked **Wi-Fi**. **Forget** next to it disconnects
+it. The phone may reconnect on its own while **Wireless debugging** stays on;
+to stop that, turn Wireless debugging off or remove this computer from its
+paired devices list on the phone.
 
 ## Remote connections
 

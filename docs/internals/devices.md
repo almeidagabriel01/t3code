@@ -150,12 +150,26 @@ ask), whether another thread already has a launcher bound to the device, and
 whether the user holds it. The user's own opens over the WebSocket carry no agent
 and skip it. `ask` needs `DecisionService`, which sits above `DeviceService` in
 the layer stack, so the MCP handler passes the question in with the call; the
-answer is remembered per thread in memory and lost on restart.
+answer is remembered per delegation tree in memory and lost on restart.
 
 The in-use rule is T3's, not agent-device's: the CLI runs in the agent's shell,
-so the server never sees its `DEVICE_IN_USE`. A thread that called `device_open`
-therefore blocks every other thread, a delegated child included, until it
-closes. Simlock sessions are shared by design and exempt.
+so the server never sees its `DEVICE_IN_USE`. Orchestration also sits above
+`DeviceService`, so the MCP handler walks the caller's `subagent` parent links
+and passes the ancestors in; forks end the walk. Threads in one delegation
+lineage share the device, the access answer and one agent-device session, named
+after the lineage's top thread, because the CLI claims a device per session and
+would refuse a child with its own. That session ends when the lineage's last
+thread closes. Any other thread is refused while one is open. Simlock sessions
+are shared by design and exempt.
+
+Access policies are keyed by an identity that survives boots and reconnects
+(`deviceIdentity` in contracts): an emulator's AVD name, since its id becomes
+`emulator-NNNN` once booted; a Wi-Fi phone's `ro.serialno`, since its id is an
+address or mDNS name that changes; the id for everything else (iOS UDIDs, USB
+serials). The hub reports only adb serials, so `DeviceHubOperations` reads the
+serial once per Wi-Fi connection. A policy stored under a plain id still
+applies and moves to the stable key on the next change. Holds and in-use checks
+stay keyed by the id the stream and launchers use.
 
 A hold is in-memory state per host and device, set by the first input frame the
 user sends through `DeviceHubProxy` or by `device.setHold`, and cleared only by
@@ -170,12 +184,29 @@ proxying the daemon's `/rpc` instead of handing the agent its address.
 Agents choose between these tools and ssh before they open anything, so
 sessions that hold `device` get a short block from
 [`orchestrationInstructions.ts`](../../packages/provider-core/src/server/orchestrationInstructions.ts)
-through their adapter's instruction channel. It points simulator and emulator UI
+through their adapter's instruction channel. It points simulator, emulator and phone UI
 work on local and SSH hosts at the tools; `simctl`, `adb` and ssh stay
 available for what the tools do not cover. Pi and Muse do not send it yet.
 Claude's native subagents never see the session's system prompt, so a
 `SubagentStart` hook passes them the block, where the runtime runs hooks and the
 subagent's context is not isolated.
+
+## Wi-Fi pairing is adb's QR flow, driven by the server
+
+`DeviceService.startWifiPairing` runs Android's "Pair device with QR code"
+protocol through the host's `run`, so an SSH host pairs with its own adb. The
+QR carries a random `ADB_WIFI_` service name and password; the server watches
+`adb mdns services` for that pairing service, runs `adb pair` with the password
+on stdin (never in argv, state or logs), then waits for the phone in
+`adb devices` or connects to its `_adb-tls-connect` service. adb's exit codes
+are unreliable here, so success is read from its output. adb auto-connects
+paired phones by mDNS name, so `forgetDevice`'s `adb disconnect` may be undone
+while the phone keeps Wireless debugging on.
+
+One attempt runs per environment, held in memory; a repeat with the same
+request id returns it, and another is refused. Live status travels in
+`DeviceServiceState.wifiPairing` without the password, so every client sees an
+attempt but only the one that started it can show the code.
 
 ## The viewer decodes both vendored protocols
 
