@@ -101,6 +101,47 @@ export const HeavyQueueSetRuleInput = Schema.Struct({
 });
 export type HeavyQueueSetRuleInput = typeof HeavyQueueSetRuleInput.Type;
 
+/**
+ * A heavy command running now: a started queue entry, or a process tree an agent or terminal runs
+ * directly. Cores and bytes sum its process tree.
+ */
+export const HeavyCommand = Schema.Struct({
+  source: Schema.Literals(["queue", "agent", "terminal"]),
+  /** The queue entry, for queue rows; Stop goes through the queue's cancel. */
+  entryId: Schema.optionalKey(Schema.String),
+  pid: Schema.Int,
+  startTimeMs: Schema.Int,
+  threadId: Schema.NullOr(Schema.String),
+  /** Known for queue rows; a direct command's project comes from its thread. */
+  cwd: Schema.optionalKey(Schema.String),
+  /** The root command line. */
+  label: Schema.String,
+  name: Schema.String,
+  startedAt: Schema.String,
+  /** False for work the T3 server itself holds, which no signal can stop. */
+  stoppable: Schema.Boolean,
+  cpu: Schema.optionalKey(Schema.Number),
+  memory: Schema.optionalKey(Schema.Number),
+  /** Highest tree total seen so far. */
+  peakCpu: Schema.optionalKey(Schema.Number),
+  peakMemory: Schema.optionalKey(Schema.Number),
+});
+export type HeavyCommand = typeof HeavyCommand.Type;
+
+export const HeavyCommandsState = Schema.Struct({
+  commands: Schema.Array(HeavyCommand),
+  cpuCount: Schema.Int,
+});
+export type HeavyCommandsState = typeof HeavyCommandsState.Type;
+
+export const HeavyCommandStopInput = Schema.Struct({ pid: Schema.Int, startTimeMs: Schema.Int });
+export type HeavyCommandStopInput = typeof HeavyCommandStopInput.Type;
+
+export const HeavyCommandStopResult = Schema.Struct({
+  outcome: Schema.Literals(["terminated", "killed", "already-exited"]),
+});
+export type HeavyCommandStopResult = typeof HeavyCommandStopResult.Type;
+
 export class HeavyQueueError extends Schema.TaggedError<HeavyQueueError>()("HeavyQueueError", {
   reason: Schema.Literals(["not-found", "running", "unavailable"]),
   message: Schema.String,

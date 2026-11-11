@@ -9,7 +9,7 @@ export function liveOwners(
   const live = new Set(processes.map((process) => process.identity.pid));
   const byPid = new Map<number, ResourceTelemetryOwner>();
   for (const owner of registered) {
-    if (live.has(owner.pid)) byPid.set(owner.pid, owner);
+    if (owner.kind !== "terminal" && live.has(owner.pid)) byPid.set(owner.pid, owner);
   }
   return [...byPid.values()];
 }

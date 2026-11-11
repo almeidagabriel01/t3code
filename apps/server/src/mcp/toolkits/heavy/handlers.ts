@@ -3,6 +3,7 @@ import * as NodeOS from "node:os";
 import { OrchestratorMcpFailure } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
+import * as HeavyCommands from "../../../heavyQueue/HeavyCommands.ts";
 import * as HeavyQueue from "../../../heavyQueue/HeavyQueue.ts";
 import * as HostResources from "../../../resourceTelemetry/HostResources.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
@@ -38,6 +39,7 @@ export const layer = McpToolAccess.toLayer(HeavyToolkit, {
       }
       const state = yield* queue.state;
       const resources = yield* (yield* HostResources.HostResources).read;
+      const running = yield* (yield* HeavyCommands.HeavyCommands).list;
       const shells = yield* threads
         .listProjectThreads({ projectId: undefined, includeSubagents: true })
         .pipe(Effect.mapError(unavailable));
@@ -55,6 +57,7 @@ export const layer = McpToolAccess.toLayer(HeavyToolkit, {
         totalMemoryBytes: resources.totalMemoryBytes,
         workingAgents: countThreads(shells).running,
         command: yield* queue.command,
+        commands: running.commands,
       });
     }),
   ),

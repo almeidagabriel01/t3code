@@ -276,6 +276,7 @@ import * as AssistantSandboxControl from "./assistants/AssistantSandboxControl.t
 import * as AssistantSpend from "./assistants/AssistantSpend.ts";
 import * as ImessageChannelSettings from "./channels/imessage/ImessageChannelSettings.ts";
 import * as HeavyQueue from "./heavyQueue/HeavyQueue.ts";
+import * as HeavyCommands from "./heavyQueue/HeavyCommands.ts";
 import * as KeepAwake from "./keepAwake/KeepAwake.ts";
 import * as TelegramChannelSettings from "./channels/telegram/TelegramChannelSettings.ts";
 import * as InstanceSpend from "./usage/InstanceSpend.ts";
@@ -735,7 +736,13 @@ const ServerWsRpcGroup = RpcAuthorization.AuthorizedWsRpcGroup.middleware(RpcIns
 // crosses TypeScript's instantiation limit and the layer's requirements degrade to
 // `any`, so the handlers are registered as two disjoint, smaller groups.
 type ServerWsRpc = RpcGroup.Rpcs<typeof BaseWsRpcGroup>;
-const SPLIT_WS_RPC_PREFIXES = ["server", "pullRequests", "provider", "orchestration"] as const;
+const SPLIT_WS_RPC_PREFIXES = [
+  "server",
+  "pullRequests",
+  "provider",
+  "orchestration",
+  "heavyQueue",
+] as const;
 type SplitWsRpc = Extract<
   ServerWsRpc,
   { readonly _tag: `${(typeof SPLIT_WS_RPC_PREFIXES)[number]}.${string}` }
@@ -1528,6 +1535,7 @@ export const layerWsRpc = (
       const imessageChannelSettings = yield* ImessageChannelSettings.ImessageChannelSettings;
       const keepAwake = yield* KeepAwake.KeepAwake;
       const heavyQueue = yield* HeavyQueue.HeavyQueue;
+      const heavyCommands = yield* HeavyCommands.HeavyCommands;
       const telegramChannelSettings = yield* TelegramChannelSettings.TelegramChannelSettings;
       const noteWork = yield* NoteWork.NoteWorkService;
       const secretRequests = yield* SecretRequests.SecretRequests;
@@ -2696,6 +2704,8 @@ export const layerWsRpc = (
         [WS_METHODS.imessageChannelCheckAccess]: () => imessageChannelSettings.checkAccess,
         [WS_METHODS.keepAwakeSubscribeStatus]: () => keepAwake.streamStatus,
         [WS_METHODS.heavyQueueSubscribe]: () => heavyQueue.stream,
+        [WS_METHODS.heavyQueueSubscribeCommands]: () => heavyCommands.stream,
+        [WS_METHODS.heavyQueueStopCommand]: (input) => heavyCommands.stop(input),
         [WS_METHODS.heavyQueuePromote]: ({ id }) => heavyQueue.promote(id),
         [WS_METHODS.heavyQueueStartNow]: ({ id }) => heavyQueue.startNow(id),
         [WS_METHODS.heavyQueueCancel]: ({ id }) => heavyQueue.cancel(id),

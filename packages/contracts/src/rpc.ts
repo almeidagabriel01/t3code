@@ -542,6 +542,9 @@ import {
 } from "./telegramChannel.ts";
 import { KeepAwakeStatus, KeepAwakeSubscribeStatusInput } from "./keepAwake.ts";
 import {
+  HeavyCommandsState,
+  HeavyCommandStopInput,
+  HeavyCommandStopResult,
   HeavyQueueEntryInput,
   HeavyQueueError,
   HeavyQueueMoveInput,
@@ -848,6 +851,8 @@ export const WS_METHODS = {
   heavyQueueSetEnabled: "heavyQueue.setEnabled",
   heavyQueueSetRule: "heavyQueue.setRule",
   heavyQueueSetMaxRunning: "heavyQueue.setMaxRunning",
+  heavyQueueSubscribeCommands: "heavyQueue.subscribeCommands",
+  heavyQueueStopCommand: "heavyQueue.stopCommand",
   telegramChannelGetSettings: "telegramChannel.getSettings",
   telegramChannelConfigure: "telegramChannel.configure",
   telegramChannelSubscribeStatus: "telegramChannel.subscribeStatus",
@@ -2670,6 +2675,19 @@ const WsHeavyQueueSetMaxRunningRpc = Rpc.make(WS_METHODS.heavyQueueSetMaxRunning
   error: Schema.Union([HeavyQueueError, EnvironmentAuthorizationError]),
 });
 
+const WsHeavyQueueSubscribeCommandsRpc = Rpc.make(WS_METHODS.heavyQueueSubscribeCommands, {
+  payload: Schema.Struct({}),
+  success: HeavyCommandsState,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
+const WsHeavyQueueStopCommandRpc = Rpc.make(WS_METHODS.heavyQueueStopCommand, {
+  payload: HeavyCommandStopInput,
+  success: HeavyCommandStopResult,
+  error: Schema.Union([HeavyQueueError, EnvironmentAuthorizationError]),
+});
+
 const WsKeepAwakeSubscribeStatusRpc = Rpc.make(WS_METHODS.keepAwakeSubscribeStatus, {
   payload: KeepAwakeSubscribeStatusInput,
   success: KeepAwakeStatus,
@@ -3076,6 +3094,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsHeavyQueueSetEnabledRpc,
   WsHeavyQueueSetRuleRpc,
   WsHeavyQueueSetMaxRunningRpc,
+  WsHeavyQueueSubscribeCommandsRpc,
+  WsHeavyQueueStopCommandRpc,
   WsTelegramChannelGetSettingsRpc,
   WsTelegramChannelConfigureRpc,
   WsTelegramChannelSubscribeStatusRpc,

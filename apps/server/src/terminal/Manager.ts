@@ -38,6 +38,7 @@ import {
 import { makeKeyedCoalescingWorker } from "@t3tools/shared/KeyedCoalescingWorker";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { AgentScope } from "@t3tools/shared/AgentScope";
+import { registerOwner } from "@t3tools/shared/ProcessOwners";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { mergePathEntries } from "@t3tools/shared/shell";
 
@@ -2488,6 +2489,12 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 
             const processPid = ptyProcess.pid;
             let eventsActivated = false;
+            yield* registerOwner({
+              kind: "terminal",
+              pid: processPid,
+              threadId: session.threadId,
+              terminalId: session.terminalId,
+            });
 
             let eventStamp: ReturnType<typeof advanceEventSequence> = {
               updatedAt: session.updatedAt,

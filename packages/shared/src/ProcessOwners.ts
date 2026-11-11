@@ -4,7 +4,14 @@ import * as Effect from "effect/Effect";
 /** A root process T3 started on behalf of something the user can name. */
 export type ProcessOwner =
   | { readonly kind: "agent"; readonly pid: number; readonly threadId: string }
-  | { readonly kind: "device-hub"; readonly pid: number };
+  | { readonly kind: "device-hub"; readonly pid: number }
+  /** Kept on the server: the telemetry wire carries only agent and device-hub owners. */
+  | {
+      readonly kind: "terminal";
+      readonly pid: number;
+      readonly threadId: string;
+      readonly terminalId: string;
+    };
 
 export interface ProcessOwnersShape {
   readonly register: (owner: ProcessOwner) => Effect.Effect<void>;
