@@ -42,6 +42,11 @@ import {
   isAndroidDiscoveryUncertain,
 } from "./DeviceSetup";
 import { DeviceWorkspace } from "./DeviceWorkspace";
+import {
+  deviceConnectionLabel,
+  ForgetWifiDeviceButton,
+  WifiPairingButton,
+} from "./WifiPairingDialog";
 import { PreviewPanelShell, type PreviewPanelMode } from "../preview/PreviewPanelShell";
 
 const groupLabel = (group: DevicePlatform | "physical") =>
@@ -357,7 +362,7 @@ export function DevicePanel(props: {
                                     ) : null}
                                   </span>
                                   <span className="truncate text-xs text-muted-foreground">
-                                    {`${state.hosts.find((host) => host.id === device.hostId)?.label} · ${device.version} · ${device.physical ? (device.booted ? "Connected" : "Not ready") : device.booted ? "Running" : "Stopped"}${findDeviceHold(state.holds, device) ? " · You are in control" : ""}`}
+                                    {`${state.hosts.find((host) => host.id === device.hostId)?.label} · ${device.version}${deviceConnectionLabel(device)} · ${device.physical ? (device.booted ? "Connected" : "Not ready") : device.booted ? "Running" : "Stopped"}${findDeviceHold(state.holds, device) ? " · You are in control" : ""}`}
                                   </span>
                                 </div>
                                 {findDeviceHold(state.holds, device) ? (
@@ -371,6 +376,12 @@ export function DevicePanel(props: {
                                     <Undo2 />
                                     Hand back
                                   </Button>
+                                ) : null}
+                                {device.connection === "wifi" ? (
+                                  <ForgetWifiDeviceButton
+                                    environmentId={environmentId}
+                                    device={device}
+                                  />
                                 ) : null}
                                 <Button
                                   variant="outline"
@@ -406,14 +417,21 @@ export function DevicePanel(props: {
                   </p>
                 ) : null}
                 {loaded && !hostBusy ? (
-                  <Button
-                    className={grouped.length > 0 ? "self-start" : "self-center"}
-                    variant="outline"
-                    size="sm"
-                    onClick={() => void list({ environmentId, input: {} })}
+                  <div
+                    className={cn(
+                      "flex flex-wrap gap-2",
+                      grouped.length > 0 ? "self-start" : "self-center",
+                    )}
                   >
-                    Refresh devices
-                  </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => void list({ environmentId, input: {} })}
+                    >
+                      Refresh devices
+                    </Button>
+                    <WifiPairingButton environmentId={environmentId} state={state} />
+                  </div>
                 ) : null}
               </div>
             </div>

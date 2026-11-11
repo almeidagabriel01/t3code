@@ -1457,7 +1457,12 @@ it.effect.each([LOCAL_DEVICE_HOST_ID, "ssh-fixture"])(
       );
 
       const incomplete = yield* service.list;
-      expect(incomplete.devices).toEqual(hubDevices.map((device) => ({ ...device, hostId })));
+      const listed = hubDevices.map((device) => ({
+        ...device,
+        hostId,
+        ...(device.physical ? { connection: "usb" } : {}),
+      }));
+      expect(incomplete.devices).toEqual(listed);
       expect(incomplete.hostStatuses[hostId]).toEqual({
         status: "ready",
         androidDiscoveryIncomplete: true,
@@ -1471,7 +1476,7 @@ it.effect.each([LOCAL_DEVICE_HOST_ID, "ssh-fixture"])(
       enumeration = { code: 0, stdout: "Running_AVD\r\nStopped_AVD\nStopped_AVD\n", stderr: "" };
       const recovered = yield* service.retryHost(hostId);
       expect(recovered.devices).toEqual([
-        ...hubDevices.map((device) => ({ ...device, hostId })),
+        ...listed,
         {
           hostId,
           id: "Stopped_AVD",

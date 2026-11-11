@@ -41,6 +41,22 @@ const phone = {
   physical: true,
 };
 const lockedPhone = { ...phone, id: "PIXEL-OFF", name: "Pixel 8", booted: false };
+// A booted emulator's id is its serial; the AVD name is what it keeps.
+const emulator = {
+  id: "emulator-5554",
+  name: "Pixel_9_API_36",
+  version: "Android 16",
+  platform: "android" as const,
+  booted: true,
+  physical: false,
+};
+const wifiPhone = {
+  ...phone,
+  id: "192.168.1.20:41233",
+  name: "Pixel 7",
+  connection: "wifi" as const,
+  identity: "R5CT900",
+};
 
 const threadA = ThreadId.make("thread-a");
 const threadB = ThreadId.make("thread-b");
@@ -50,19 +66,27 @@ const on = (deviceId: string, threadId = threadA) => ({
   deviceId: DeviceId.make(deviceId),
 });
 
-const harness = Effect.fn("harness")(function* () {
+const harness = Effect.fn("harness")(function* (
+  run: DeviceHost.DeviceHostReady["run"] = () =>
+    Effect.succeed({ code: 0, stdout: "", stderr: "" }),
+) {
   const calls = {
     boots: [] as Array<string>,
     shutdowns: [] as Array<string>,
     markers: [] as Array<readonly [string, string | null]>,
     cleared: 0,
+    endedSessions: [] as Array<string>,
+    releasedLaunchers: [] as Array<string>,
   };
-  const run = () => Effect.succeed({ code: 0, stdout: "", stderr: "" });
   const ready: DeviceHost.DeviceHostReady = {
     nodePath: process.execPath,
     hub: { origin: "http://device.test" },
+    releaseAgentSession: (session) => Effect.sync(() => void calls.endedSessions.push(session)),
     devices: {
-      list: Effect.succeed({ devices: [simulator, phone, lockedPhone], detail: undefined }),
+      list: Effect.succeed({
+        devices: [simulator, phone, lockedPhone, emulator, wifiPhone],
+        detail: undefined,
+      }),
       boot: (device) =>
         Effect.sync(() => {
           calls.boots.push(device.id);
@@ -109,7 +133,7 @@ const harness = Effect.fn("harness")(function* () {
     {
       bind: ({ session }) => Effect.succeed(session),
       prune: () => Effect.void,
-      release: () => Effect.void,
+      release: (launcher) => Effect.sync(() => void calls.releasedLaunchers.push(launcher)),
       hold: (device, message) =>
         Effect.sync(() => void calls.markers.push([device.deviceId, message])),
       clearHolds: Effect.sync(() => void calls.cleared++),
@@ -310,6 +334,133 @@ describe("agent access", () => {
     }).pipe(withSettings(), Effect.scoped),
   );
 
+  // root delegated to child and sibling; child delegated to grandchild; other is someone else's work.
+  const root = ThreadId.make("root");
+  const child = ThreadId.make("child");
+  const grandchild = ThreadId.make("grandchild");
+  const sibling = ThreadId.make("sibling");
+  const other = ThreadId.make("other");
+  const ancestors: Record<string, ReadonlyArray<ThreadId>> = {
+    root: [],
+    child: [root],
+    grandchild: [child, root],
+    sibling: [root],
+    other: [],
+  };
+  const drive = Effect.fn("drive")(function* (
+    service: DeviceService.DeviceService["Service"],
+    threadId: ThreadId,
+  ) {
+    const agent = { threadTitle: threadId, ancestors: ancestors[threadId] };
+    const target = on(simulator.id, threadId);
+    yield* service.open({ ...target, platform: "ios" }, { agent });
+    const { session, args } = yield* service.agentTarget({ ...target, agent });
+    yield* service.agentLauncher({ ...target, targetArgs: args, agent });
+    return session;
+  });
+
+  it.effect.each([
+    { holders: [root], opener: child, expected: "shared" },
+    { holders: [root], opener: grandchild, expected: "shared" },
+    { holders: [child], opener: root, expected: "shared" },
+    { holders: [grandchild], opener: root, expected: "shared" },
+    { holders: [child], opener: grandchild, expected: "shared" },
+    { holders: [child], opener: sibling, expected: "in use by child" },
+    { holders: [grandchild], opener: sibling, expected: "in use by grandchild" },
+    { holders: [root], opener: other, expected: "in use by root" },
+    { holders: [other], opener: child, expected: "in use by other" },
+    // The parent holding it too does not let a sibling in beside the child.
+    { holders: [child, root], opener: sibling, expected: "in use by child" },
+  ])("a device driven by $holders is $expected for $opener", ({ holders, opener, expected }) =>
+    Effect.gen(function* () {
+      const { service } = yield* harness();
+      const sessions = yield* Effect.forEach(holders, (holder) => drive(service, holder));
+      const result = yield* drive(service, opener).pipe(
+        Effect.map((session) => (sessions.every((held) => held === session) ? "shared" : "apart")),
+        Effect.catchTags({
+          DeviceInUseError: (error) => Effect.succeed(`in use by ${error.threadId}`),
+        }),
+      );
+      expect(result).toBe(expected);
+    }).pipe(withSettings(), Effect.scoped),
+  );
+
+  it.effect("ends a lineage's agent-device session only when its last thread closes", () =>
+    Effect.gen(function* () {
+      const { service, calls } = yield* harness();
+      const session = yield* drive(service, root);
+      yield* drive(service, child);
+
+      // device_close carries no caller; the lineage is the one the thread's open gave.
+      yield* service.authorizeAgent({ ...on(simulator.id, child), intent: "close" });
+      yield* service.close({ ...on(simulator.id, child), shutdown: false });
+      expect(calls.endedSessions).toEqual([]);
+      expect(calls.releasedLaunchers).toEqual([]);
+      // The parent drives on, and other work is still told who has the device.
+      yield* service.authorizeAgent({ ...on(simulator.id, root), intent: "open" });
+      expect(yield* Effect.flip(drive(service, other))).toMatchObject({ threadId: root });
+
+      yield* service.close(on(simulator.id, root));
+      expect(calls.endedSessions).toEqual([session]);
+      expect(yield* drive(service, other)).not.toBe(session);
+    }).pipe(withSettings(), Effect.scoped),
+  );
+
+  it.effect("shares one answer across a delegation tree and asks other work again", () =>
+    Effect.gen(function* () {
+      const { service } = yield* harness();
+      const asked: Array<string> = [];
+      const open = (threadId: ThreadId, answer: DeviceService.DeviceAccessAnswer) =>
+        service
+          .authorizeAgent({
+            ...on(phone.id, threadId),
+            intent: "open",
+            agent: {
+              ancestors: ancestors[threadId],
+              ask: () =>
+                Effect.sync(() => {
+                  asked.push(threadId);
+                  return answer;
+                }),
+            },
+          })
+          .pipe(
+            Effect.as("allowed"),
+            Effect.catch((error) => Effect.succeed(error._tag)),
+          );
+      expect(yield* open(child, "allowed")).toBe("allowed");
+      expect(yield* open(root, "declined")).toBe("allowed");
+      expect(yield* open(grandchild, "declined")).toBe("allowed");
+      expect(yield* open(sibling, "declined")).toBe("allowed");
+      expect(yield* open(other, "declined")).toBe("DeviceAccessDeniedError");
+      expect(asked).toEqual([child, other]);
+    }).pipe(withSettings(), Effect.scoped),
+  );
+
+  it.effect.each([
+    // Stored while the emulator was off, when its id was the AVD name.
+    { stored: `local:${emulator.name}`, device: emulator.id, stable: `local:${emulator.name}` },
+    // Stored by a build that keyed a booted emulator by its serial.
+    { stored: `local:${emulator.id}`, device: emulator.id, stable: `local:${emulator.name}` },
+    { stored: `local:${wifiPhone.identity}`, device: wifiPhone.id, stable: "local:R5CT900" },
+    { stored: `local:${wifiPhone.id}`, device: wifiPhone.id, stable: "local:R5CT900" },
+    { stored: `local:${phone.id}`, device: phone.id, stable: `local:${phone.id}` },
+    { stored: `local:${simulator.id}`, device: simulator.id, stable: `local:${simulator.id}` },
+  ])("a policy stored as $stored applies to $device and moves to its stable key", (row) =>
+    Effect.gen(function* () {
+      const { service } = yield* harness();
+      expect(
+        yield* Effect.flip(service.authorizeAgent({ ...on(row.device), intent: "open" })),
+      ).toMatchObject({ _tag: "DeviceAccessDeniedError", reason: "policy" });
+      const set = yield* service.setAccess({
+        deviceId: DeviceId.make(row.device),
+        policy: "allow",
+      });
+      expect(set.access).toEqual({ [row.stable]: "allow" });
+      yield* service.authorizeAgent({ ...on(row.device), intent: "open" });
+    }).pipe(withSettings({ [row.stored]: "deny" }), Effect.scoped),
+  );
+
   it.effect("stores a policy beside entries it cannot read and resets one to its default", () =>
     Effect.gen(function* () {
       const { service } = yield* harness();
@@ -451,5 +602,140 @@ describe("asking the user for device access", () => {
       expect(yield* ask).toBe("allowed");
       expect(requested).toEqual([id, `${id}:1`, `${id}:2`]);
     }),
+  );
+});
+
+describe("Wi-Fi pairing and forgetting", () => {
+  const PASSWORD = /P:([A-Z2-9]+);;$/;
+  // A phone that has not scanned yet: adb works and sees no pairing service.
+  const adbWaiting =
+    (
+      commands: Array<ReadonlyArray<string>>,
+      answer: (args: ReadonlyArray<string>) => string = () => "",
+    ): DeviceHost.DeviceHostReady["run"] =>
+    (_command, args) =>
+      Effect.sync(() => {
+        commands.push(args);
+        const stdout =
+          args.join(" ") === "mdns check" ? "mdns daemon version [test]" : answer(args);
+        return { code: 0, stdout, stderr: "" };
+      });
+
+  it.effect("runs one attempt per environment, repeats by request id, and cancels", () =>
+    Effect.gen(function* () {
+      const commands: Array<ReadonlyArray<string>> = [];
+      const { service } = yield* harness(adbWaiting(commands));
+      const started = yield* service.startWifiPairing({ requestId: "web-1" });
+      expect(started.qrPayload).toMatch(/^WIFI:T:ADB;S:ADB_WIFI_[A-Z2-9]+;P:[A-Z2-9]+;;$/);
+      expect(started.state.supportsWifiPairing).toBe(true);
+      expect(started.state.wifiPairing).toEqual({
+        attemptId: started.attemptId,
+        hostId: LOCAL_DEVICE_HOST_ID,
+        status: "waiting",
+      });
+      // Every client sees the attempt; only the one that started it gets the password.
+      const password = PASSWORD.exec(started.qrPayload)?.[1] ?? "";
+      expect(JSON.stringify(yield* service.state)).not.toContain(password);
+
+      const repeated = yield* service.startWifiPairing({ requestId: "web-1" });
+      expect(repeated.qrPayload).toBe(started.qrPayload);
+      expect(yield* Effect.flip(service.startWifiPairing({ requestId: "mobile-1" }))).toMatchObject(
+        { _tag: "DeviceWifiPairingBusyError", attemptId: started.attemptId },
+      );
+
+      // An unknown attempt changes nothing; the right one clears the state and frees the slot.
+      const before = (yield* service.state).revision;
+      expect((yield* service.cancelWifiPairing({ attemptId: "other" })).revision).toBe(before);
+      expect((yield* service.cancelWifiPairing({ attemptId: started.attemptId })).wifiPairing).toBe(
+        undefined,
+      );
+      const next = yield* service.startWifiPairing({ requestId: "mobile-1" });
+      expect(next.attemptId).not.toBe(started.attemptId);
+      expect(commands.some((args) => args.join(" ").includes(password))).toBe(false);
+    }).pipe(withSettings(), Effect.scoped),
+  );
+
+  it.effect("publishes each step to every client and frees the slot once connected", () =>
+    Effect.gen(function* () {
+      let serviceName = "";
+      const commands: Array<ReadonlyArray<string>> = [];
+      const { service } = yield* harness(
+        adbWaiting(commands, (args) =>
+          args[0] === "mdns"
+            ? `${serviceName}\t_adb-tls-pairing._tcp\t192.168.1.20:37111`
+            : args[0] === "pair"
+              ? "Successfully paired to 192.168.1.20:37111 [guid=adb-R5CT900-x]"
+              : args[0] === "devices"
+                ? "192.168.1.20:41233\tdevice"
+                : "",
+        ),
+      );
+      const subscription = yield* service.subscribe;
+      const started = yield* service.startWifiPairing({ requestId: "web-1" });
+      serviceName = started.attemptId;
+      const seen: Array<string> = [];
+      let last = started.state;
+      while (seen.at(-1) !== "connected") {
+        last = yield* PubSub.take(subscription);
+        const status = last.wifiPairing?.status;
+        if (status && status !== seen.at(-1)) seen.push(status);
+      }
+      expect(seen).toEqual(["waiting", "pairing", "connecting", "connected"]);
+      expect(last.wifiPairing).toMatchObject({
+        status: "connected",
+        deviceId: "192.168.1.20:41233",
+      });
+      // A finished attempt leaves room for the next one, and cancelling it dismisses it.
+      yield* service.startWifiPairing({ requestId: "web-2" });
+    }).pipe(withSettings(), Effect.scoped),
+  );
+
+  it.effect("reports why an attempt failed", () =>
+    Effect.gen(function* () {
+      const { service } = yield* harness(() =>
+        Effect.succeed({ code: 127, stdout: "", stderr: "spawn adb ENOENT" }),
+      );
+      const subscription = yield* service.subscribe;
+      yield* service.startWifiPairing({ requestId: "web-1" });
+      let pairing = (yield* PubSub.take(subscription)).wifiPairing;
+      while (pairing?.status !== "failed") pairing = (yield* PubSub.take(subscription)).wifiPairing;
+      expect(pairing).toMatchObject({ status: "failed", reason: "adb_missing" });
+    }).pipe(withSettings(), Effect.scoped),
+  );
+
+  it.effect("forgets a Wi-Fi phone, ending what was open on it, and refuses other devices", () =>
+    Effect.gen(function* () {
+      const commands: Array<ReadonlyArray<string>> = [];
+      const { service } = yield* harness(adbWaiting(commands, () => "disconnected"));
+      const wifi = DeviceId.make(wifiPhone.id);
+      yield* service.open({ ...on(wifiPhone.id), platform: "android" });
+      yield* service.setHold({ deviceId: wifi, held: true });
+
+      const forgotten = yield* service.forgetDevice({ deviceId: wifi });
+      expect(commands).toContainEqual(["disconnect", wifiPhone.id]);
+      expect(forgotten.sessions).toEqual([]);
+      expect(forgotten.holds).toEqual([]);
+
+      expect(
+        yield* Effect.flip(service.forgetDevice({ deviceId: DeviceId.make(phone.id) })),
+      ).toMatchObject({ _tag: "DeviceActionUnavailableError", reason: "not_wifi" });
+      expect(
+        yield* Effect.flip(service.forgetDevice({ deviceId: DeviceId.make("gone") })),
+      ).toMatchObject({ _tag: "DeviceNotFoundError" });
+    }).pipe(withSettings(), Effect.scoped),
+  );
+
+  it.effect("treats a phone adb already let go as forgotten and reports other failures", () =>
+    Effect.gen(function* () {
+      let answer = { code: 1, stdout: "", stderr: "error: no such device '192.168.1.20:41233'" };
+      const { service } = yield* harness(() => Effect.sync(() => answer));
+      const wifi = { deviceId: DeviceId.make(wifiPhone.id) };
+      yield* service.forgetDevice(wifi);
+      answer = { code: 1, stdout: "", stderr: "error: cannot reach adb server" };
+      expect(yield* Effect.flip(service.forgetDevice(wifi))).toMatchObject({
+        _tag: "DeviceOperationError",
+        operation: "forget",
+      });
+    }).pipe(withSettings(), Effect.scoped),
   );
 });

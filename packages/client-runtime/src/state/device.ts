@@ -1,4 +1,9 @@
-import { type DeviceToolVersions, WS_METHODS } from "@t3tools/contracts";
+import {
+  DEVICE_WIFI_PAIRING_FAILURE_LABELS,
+  type DeviceServiceState,
+  type DeviceToolVersions,
+  WS_METHODS,
+} from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
@@ -100,6 +105,20 @@ export function createDeviceEnvironmentAtoms<R, E>(
       scheduler,
       concurrency,
     }),
+    wifiPairStart: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:device:wifi-pair-start",
+      tag: WS_METHODS.deviceWifiPairStart,
+    }),
+    wifiPairCancel: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:device:wifi-pair-cancel",
+      tag: WS_METHODS.deviceWifiPairCancel,
+    }),
+    forget: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:device:forget",
+      tag: WS_METHODS.deviceForget,
+      scheduler,
+      concurrency,
+    }),
   };
 }
 
@@ -128,3 +147,66 @@ export function deviceToolUpdatePolicy(tools: DeviceToolVersions | undefined) {
 }
 export const deviceToolUpdateOwnership =
   "This environment's T3 server chooses device tool versions for itself and its SSH hosts. Update that server to receive newer tool versions; updating only your browser or mobile app does not update a remote server.";
+
+/** What a Wi-Fi pairing screen shows, from the attempt this client started and the live state. */
+export type WifiPairingView =
+  | { readonly kind: "starting" }
+  | { readonly kind: "elsewhere"; readonly attemptId: string }
+  | {
+      readonly kind: "waiting" | "pairing" | "connecting";
+      readonly qrPayload: string;
+      readonly label: string;
+    }
+  | { readonly kind: "connected"; readonly label: string }
+  | { readonly kind: "failed"; readonly label: string; readonly detail?: string };
+
+const WIFI_PAIRING_STEP_LABELS = {
+  waiting: "Waiting for your phone to scan the code…",
+  pairing: "Pairing with your phone…",
+  connecting: "Connecting to your phone…",
+} as const;
+
+export function wifiPairingView(input: {
+  readonly state: DeviceServiceState;
+  /** The attempt this client started, with the state revision the start answered with. */
+  readonly attempt: {
+    readonly attemptId: string;
+    readonly qrPayload: string;
+    readonly revision: number;
+  } | null;
+  /** Why starting failed: another client's attempt, or a message to show. */
+  readonly startError: "busy" | string | null;
+}): WifiPairingView {
+  const live = input.state.wifiPairing;
+  if (input.startError === "busy")
+    return live && live.status !== "connected" && live.status !== "failed"
+      ? { kind: "elsewhere", attemptId: live.attemptId }
+      : { kind: "failed", label: "The other pairing attempt ended. Try again." };
+  if (input.startError !== null && input.startError !== "busy")
+    return { kind: "failed", label: input.startError };
+  if (!input.attempt) return { kind: "starting" };
+  const mine = live?.attemptId === input.attempt.attemptId ? live : undefined;
+  // A state as new as the start answer that lacks the attempt means someone cancelled it;
+  // an older one has not caught up yet.
+  if (!mine && input.state.revision >= input.attempt.revision)
+    return { kind: "failed", label: "Pairing was cancelled on another device." };
+  if (mine?.status === "connected") {
+    const device = input.state.devices.find((candidate) => candidate.id === mine.deviceId);
+    return { kind: "connected", label: `Connected to ${device?.name ?? "your phone"}.` };
+  }
+  if (mine?.status === "failed")
+    return {
+      kind: "failed",
+      label: mine.reason ? DEVICE_WIFI_PAIRING_FAILURE_LABELS[mine.reason] : "Pairing failed.",
+      ...(mine.detail ? { detail: mine.detail } : {}),
+    };
+  const kind = mine?.status ?? "waiting";
+  return { kind, qrPayload: input.attempt.qrPayload, label: WIFI_PAIRING_STEP_LABELS[kind] };
+}
+
+/** The steps on the phone, in the words Android uses. */
+export const WIFI_PAIRING_PHONE_STEPS = [
+  "On the phone, open Settings > Developer options.",
+  "Turn on Wireless debugging, then open it.",
+  "Tap Pair device with QR code and scan this code.",
+] as const;

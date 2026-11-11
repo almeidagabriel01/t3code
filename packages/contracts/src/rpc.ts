@@ -335,6 +335,11 @@ import {
   DeviceSession,
   DeviceShutdownInput,
   DeviceSetAccessInput,
+  DeviceWifiPairStartInput,
+  DeviceWifiPairStartResult,
+  DeviceWifiPairingBusyError,
+  DeviceWifiPairCancelInput,
+  DeviceForgetInput,
   DeviceSetHoldInput,
 } from "./device.ts";
 import {
@@ -692,6 +697,9 @@ export const WS_METHODS = {
   deviceAction: "device.action",
   deviceSetHold: "device.setHold",
   deviceSetAccess: "device.setAccess",
+  deviceWifiPairStart: "device.wifiPairStart",
+  deviceWifiPairCancel: "device.wifiPairCancel",
+  deviceForget: "device.forget",
 
   serverProbe: "server.probe",
   serverGetConfig: "server.getConfig",
@@ -2101,6 +2109,24 @@ const WsDeviceSetAccessRpc = Rpc.make(WS_METHODS.deviceSetAccess, {
   error: Schema.Union([DeviceError, EnvironmentAuthorizationError]),
 });
 
+const WsDeviceWifiPairStartRpc = Rpc.make(WS_METHODS.deviceWifiPairStart, {
+  payload: DeviceWifiPairStartInput,
+  success: DeviceWifiPairStartResult,
+  error: Schema.Union([DeviceError, DeviceWifiPairingBusyError, EnvironmentAuthorizationError]),
+});
+
+const WsDeviceWifiPairCancelRpc = Rpc.make(WS_METHODS.deviceWifiPairCancel, {
+  payload: DeviceWifiPairCancelInput,
+  success: DeviceServiceState,
+  error: Schema.Union([DeviceError, EnvironmentAuthorizationError]),
+});
+
+const WsDeviceForgetRpc = Rpc.make(WS_METHODS.deviceForget, {
+  payload: DeviceForgetInput,
+  success: DeviceServiceState,
+  error: Schema.Union([DeviceError, EnvironmentAuthorizationError]),
+});
+
 const WsSubscribeDeviceStateRpc = Rpc.make(WS_METHODS.subscribeDeviceState, {
   payload: Schema.Struct({}),
   success: DeviceServiceState,
@@ -3152,6 +3178,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsDeviceShutdownRpc,
   WsDeviceSetHoldRpc,
   WsDeviceSetAccessRpc,
+  WsDeviceWifiPairStartRpc,
+  WsDeviceWifiPairCancelRpc,
+  WsDeviceForgetRpc,
   WsDeviceDetailRpc,
   WsDeviceActionRpc,
   WsSubscribeDeviceStateRpc,

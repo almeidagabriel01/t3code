@@ -180,8 +180,33 @@ export const DeviceSummary = Schema.Struct({
   version: Schema.String,
   booted: Schema.Boolean,
   physical: Schema.Boolean,
+  /** How a physical Android phone reaches adb. Absent for everything else. */
+  connection: Schema.optional(Schema.Literals(["usb", "wifi"])),
+  /**
+   * What names this device when its id does not: a phone paired over Wi-Fi has an
+   * `ip:port` id that changes, so the server reads its hardware serial here.
+   */
+  identity: Schema.optional(Schema.String),
 });
 export type DeviceSummary = typeof DeviceSummary.Type;
+
+export const DEVICE_CONNECTION_LABELS: Record<NonNullable<DeviceSummary["connection"]>, string> = {
+  usb: "USB",
+  wifi: "Wi-Fi",
+};
+
+type DeviceIdentityFields = Pick<DeviceSummary, "id"> &
+  Partial<Pick<DeviceSummary, "platform" | "physical" | "name" | "identity">>;
+
+/**
+ * The name a device keeps across boots and reconnects: an emulator's AVD name (its id becomes a
+ * serial once booted), a Wi-Fi phone's hardware serial, and the id for everything else.
+ */
+export const deviceIdentity = (device: DeviceIdentityFields): string =>
+  device.identity ??
+  (device.platform === "android" && device.physical === false && device.name
+    ? device.name
+    : device.id);
 
 /** What agents may do with one device. The user's own Device panel is never gated. */
 export const DeviceAccessPolicy = Schema.Literals(["allow", "ask", "deny"]);
@@ -195,8 +220,15 @@ export const DeviceAccessMap = Schema.Record(Schema.String, Schema.Unknown);
 export type DeviceAccessMap = typeof DeviceAccessMap.Type;
 
 /** Host ids hold no colon, so the first one splits the key. */
-export const deviceAccessKey = (device: { readonly hostId: string; readonly id: string }): string =>
-  `${device.hostId}:${device.id}`;
+export const deviceAccessKey = (
+  device: DeviceIdentityFields & { readonly hostId: string },
+): string => `${device.hostId}:${deviceIdentity(device)}`;
+
+/** The key builds before stable identities wrote; a policy stored under it still applies. */
+export const legacyDeviceAccessKey = (device: {
+  readonly hostId: string;
+  readonly id: string;
+}): string => `${device.hostId}:${device.id}`;
 
 export const defaultDeviceAccessPolicy = (device: {
   readonly physical: boolean;
@@ -207,16 +239,19 @@ const isDeviceAccessPolicy = Schema.is(DeviceAccessPolicy);
 /** The stored policy for a device, or undefined when none (or an unreadable one) is stored. */
 export function storedDeviceAccessPolicy(
   access: DeviceAccessMap | undefined,
-  device: { readonly hostId: string; readonly id: string },
+  device: DeviceIdentityFields & { readonly hostId: string },
 ): DeviceAccessPolicy | undefined {
-  const key = deviceAccessKey(device);
-  const stored = access !== undefined && Object.hasOwn(access, key) ? access[key] : undefined;
-  return isDeviceAccessPolicy(stored) ? stored : undefined;
+  if (access === undefined) return undefined;
+  for (const key of [deviceAccessKey(device), legacyDeviceAccessKey(device)]) {
+    const stored = Object.hasOwn(access, key) ? access[key] : undefined;
+    if (isDeviceAccessPolicy(stored)) return stored;
+  }
+  return undefined;
 }
 
 export const deviceAccessPolicy = (
   access: DeviceAccessMap | undefined,
-  device: { readonly hostId: string; readonly id: string; readonly physical: boolean },
+  device: DeviceIdentityFields & { readonly hostId: string; readonly physical: boolean },
 ): DeviceAccessPolicy =>
   storedDeviceAccessPolicy(access, device) ?? defaultDeviceAccessPolicy(device);
 
@@ -225,7 +260,11 @@ export const DEVICE_ACCESS_POLICY_LABELS: Record<
   { readonly label: string; readonly description: string }
 > = {
   allow: { label: "Allow", description: "Agents can open and drive this device." },
-  ask: { label: "Ask first", description: "Each thread asks you once before using it." },
+  ask: {
+    label: "Ask first",
+    description:
+      "Each thread asks you once before using it; the tasks it delegates share the answer.",
+  },
   deny: { label: "Never", description: "Agents cannot use this device." },
 };
 
@@ -320,6 +359,37 @@ export const DeviceHostStatuses = Schema.Record(
   }),
 );
 
+/** Why pairing a phone over Wi-Fi stopped. */
+export const DeviceWifiPairingFailure = Schema.Literals([
+  "adb_missing",
+  "mdns_unavailable",
+  "timeout",
+  "wrong_network",
+  "pair_refused",
+]);
+export type DeviceWifiPairingFailure = typeof DeviceWifiPairingFailure.Type;
+
+export const DEVICE_WIFI_PAIRING_FAILURE_LABELS: Record<DeviceWifiPairingFailure, string> = {
+  adb_missing: "adb is not installed on this device host. Install Android platform tools.",
+  mdns_unavailable: "adb cannot discover phones on the network (mDNS is unavailable).",
+  timeout: "No phone scanned the code in time.",
+  wrong_network: "The phone could not be reached. Put it on the same Wi-Fi network as the host.",
+  pair_refused: "The phone refused to pair. Scan a fresh code.",
+};
+
+/** A Wi-Fi pairing attempt as every client sees it. The password is never part of it. */
+export const DeviceWifiPairing = Schema.Struct({
+  attemptId: Schema.String,
+  hostId: DeviceHostId,
+  status: Schema.Literals(["waiting", "pairing", "connecting", "connected", "failed"]),
+  reason: Schema.optional(DeviceWifiPairingFailure),
+  /** adb's own words for a failure, for the user to act on. */
+  detail: Schema.optional(Schema.String),
+  /** The paired phone's id once connected. */
+  deviceId: Schema.optional(DeviceId),
+});
+export type DeviceWifiPairing = typeof DeviceWifiPairing.Type;
+
 const deviceServiceStateFields = {
   supportsHostRetry: Schema.optional(Schema.Boolean),
   supportsToolUpdate: Schema.optional(Schema.Boolean),
@@ -331,6 +401,9 @@ const deviceServiceStateFields = {
   /** Servers from before takeover and device access have neither RPC. */
   supportsDeviceControl: Schema.optional(Schema.Boolean),
   holds: Schema.optional(Schema.Array(DeviceHold)),
+  /** Servers from before Wi-Fi pairing have neither its RPCs nor `wifiPairing`. */
+  supportsWifiPairing: Schema.optional(Schema.Boolean),
+  wifiPairing: Schema.optional(DeviceWifiPairing),
   /** The stored `deviceAccess` setting; devices without an entry use their default. */
   access: Schema.optional(DeviceAccessMap),
   hostStatus: DeviceHostStatus,
@@ -448,6 +521,31 @@ export const DeviceSetAccessInput = Schema.Struct({
   policy: Schema.NullOr(DeviceAccessPolicy),
 });
 export type DeviceSetAccessInput = typeof DeviceSetAccessInput.Type;
+
+export const DeviceWifiPairStartInput = Schema.Struct({
+  hostId: Schema.optional(DeviceHostId),
+  /** A repeat with the same id returns the same attempt. */
+  requestId: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
+});
+export type DeviceWifiPairStartInput = typeof DeviceWifiPairStartInput.Type;
+
+export const DeviceWifiPairStartResult = Schema.Struct({
+  attemptId: Schema.String,
+  /** What the phone scans: `WIFI:T:ADB;S:<service name>;P:<password>;;`. */
+  qrPayload: Schema.String,
+  state: DeviceServiceState,
+});
+export type DeviceWifiPairStartResult = typeof DeviceWifiPairStartResult.Type;
+
+/** Stops a running attempt, or clears a finished one. Unknown ids change nothing. */
+export const DeviceWifiPairCancelInput = Schema.Struct({ attemptId: Schema.String });
+export type DeviceWifiPairCancelInput = typeof DeviceWifiPairCancelInput.Type;
+
+export const DeviceForgetInput = Schema.Struct({
+  hostId: Schema.optional(DeviceHostId),
+  deviceId: DeviceId,
+});
+export type DeviceForgetInput = typeof DeviceForgetInput.Type;
 
 export const DeviceAppearance = Schema.Literals(["light", "dark"]);
 export type DeviceAppearance = typeof DeviceAppearance.Type;
@@ -691,10 +789,12 @@ export class DeviceActionUnavailableError extends Schema.TaggedError<DeviceActio
   {
     operation: Schema.String,
     platform: DevicePlatform,
-    reason: Schema.Literals(["unsupported", "helper_missing", "physical_device"]),
+    reason: Schema.Literals(["unsupported", "helper_missing", "physical_device", "not_wifi"]),
   },
 ) {
   override get message(): string {
+    if (this.reason === "not_wifi")
+      return `Device ${this.operation} applies only to a phone connected over Wi-Fi.`;
     return this.reason === "helper_missing"
       ? `Device ${this.operation} requires a helper missing from this install. Set up device support again.`
       : this.reason === "physical_device"
@@ -762,6 +862,16 @@ export class DeviceInUseError extends Schema.TaggedError<DeviceInUseError>()("De
         ? `thread ${this.threadId}`
         : `the thread "${this.threadTitle}" (${this.threadId})`;
     return `${refusedDevice(this)} is in use by the agent in ${thread}. Use another device, or wait until that thread closes it. Do not close or reuse that thread's session.`;
+  }
+}
+
+/** Another client already started pairing a phone on this environment. */
+export class DeviceWifiPairingBusyError extends Schema.TaggedError<DeviceWifiPairingBusyError>()(
+  "DeviceWifiPairingBusyError",
+  { hostId: DeviceHostId, attemptId: Schema.String },
+) {
+  override get message(): string {
+    return "A phone is already being paired over Wi-Fi here. Cancel that attempt or wait for it to finish.";
   }
 }
 

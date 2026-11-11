@@ -2,6 +2,7 @@ import { DeviceHostUpdates } from "../device/DeviceHostUpdates";
 import { DeviceToolVersions } from "../device/DeviceToolVersions";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 import { ScopedSwitch } from "./ScopedSwitch";
+import { WifiPairingButton } from "../device/WifiPairingDialog";
 import { DeviceAccessSettings } from "./DeviceAccessSettings";
 import { DeviceSourcesSettings } from "./DeviceSourcesSettings";
 import {
@@ -825,6 +826,14 @@ function DeviceIntegrationSettings() {
           enabled={settings.enableDeviceSupport}
           agentAccessEnabled={settings.enableAgentDeviceAccess}
         />
+        {environmentId && state.supportsWifiPairing === true ? (
+          <SettingsRow
+            id="device-wifi-pairing"
+            title="Phone over Wi-Fi"
+            description="Pair an Android phone on the same network by scanning a QR code with it."
+            control={<WifiPairingButton environmentId={environmentId} state={state} />}
+          />
+        ) : null}
       </SettingsSection>
       {environmentId ? <DeviceAccessSettings environmentId={environmentId} state={state} /> : null}
       <DeviceSourcesSettings

@@ -38,6 +38,7 @@ import { deviceEnvironment, useDeviceHubAccess } from "../../state/device";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
+import { DeviceCollapsedChrome } from "./DeviceCollapsedChrome";
 import { DeviceHoldBanner } from "./DeviceHoldBanner";
 import { DeviceStreamWebView, type DeviceStreamRef } from "./DeviceStreamWebView";
 import {
@@ -375,23 +376,15 @@ export function DevicePreviewScreen({
           ) : null}
         </Animated.View>
       ) : (
-        <View
-          pointerEvents="box-none"
-          className="absolute self-center"
-          style={{
-            top: Math.max(insets.top, 12),
-            transform: [{ translateX: (handleBounds.left - handleBounds.right) / 2 }],
-          }}
-        >
-          <GlassSurface className="flex-row items-center gap-1 p-1">
-            <SheetCloseButton accessibilityLabel="Close device preview" onClose={onClose} />
-            <ControlPill
-              accessibilityLabel="Show device controls"
-              icon="chevron.down"
-              onPress={() => setControlsVisible(true)}
-            />
-          </GlassSurface>
-        </View>
+        <DeviceCollapsedChrome
+          top={Math.max(insets.top, 12)}
+          offsetX={(handleBounds.left - handleBounds.right) / 2}
+          held={preview?.held === true}
+          canHold={canHold}
+          onClose={onClose}
+          onShowControls={() => setControlsVisible(true)}
+          onHandBack={() => changeHold(false)}
+        />
       )}
     </View>
   );

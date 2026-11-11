@@ -2,7 +2,6 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   DEVICE_ACCESS_POLICY_LABELS,
   DeviceAccessPolicy,
-  deviceAccessKey,
   deviceAccessPolicy,
   storedDeviceAccessPolicy,
   type DeviceServiceState,
@@ -19,6 +18,7 @@ import {
   SelectValue,
 } from "~/components/ui/select";
 import { deviceEnvironment } from "~/state/device";
+import { deviceConnectionLabel, ForgetWifiDeviceButton } from "../device/WifiPairingDialog";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { SettingResetButton, SettingsRow, SettingsSection } from "./settingsLayout";
 
@@ -49,7 +49,7 @@ export function DeviceAccessSettings(props: {
           });
         return (
           <SettingsRow
-            key={deviceAccessKey(device)}
+            key={`${device.hostId}:${device.id}`}
             title={
               <span className="flex items-center gap-2">
                 <span className="truncate">{device.name}</span>
@@ -60,7 +60,7 @@ export function DeviceAccessSettings(props: {
                 ) : null}
               </span>
             }
-            description={`${host?.label ?? "Device host"} · ${device.version}. ${DEVICE_ACCESS_POLICY_LABELS[policy].description}`}
+            description={`${host?.label ?? "Device host"} · ${device.version}${deviceConnectionLabel(device)}. ${DEVICE_ACCESS_POLICY_LABELS[policy].description}`}
             resetAction={
               canEdit && storedDeviceAccessPolicy(access, device) !== undefined ? (
                 <SettingResetButton
@@ -70,28 +70,33 @@ export function DeviceAccessSettings(props: {
               ) : null
             }
             control={
-              <Select
-                value={policy}
-                disabled={!canEdit}
-                onValueChange={(value) => {
-                  if (isPolicy(value)) save(value);
-                }}
-              >
-                <SelectTrigger
-                  size="sm"
-                  className="w-full sm:w-40"
-                  aria-label={`Agent access to ${device.name}`}
+              <span className="flex items-center gap-2">
+                {device.connection === "wifi" ? (
+                  <ForgetWifiDeviceButton environmentId={props.environmentId} device={device} />
+                ) : null}
+                <Select
+                  value={policy}
+                  disabled={!canEdit}
+                  onValueChange={(value) => {
+                    if (isPolicy(value)) save(value);
+                  }}
                 >
-                  <SelectValue>{DEVICE_ACCESS_POLICY_LABELS[policy].label}</SelectValue>
-                </SelectTrigger>
-                <SelectPopup align="end" alignItemWithTrigger={false}>
-                  {POLICIES.map((option) => (
-                    <SelectItem key={option} value={option}>
-                      {DEVICE_ACCESS_POLICY_LABELS[option].label}
-                    </SelectItem>
-                  ))}
-                </SelectPopup>
-              </Select>
+                  <SelectTrigger
+                    size="sm"
+                    className="w-full sm:w-40"
+                    aria-label={`Agent access to ${device.name}`}
+                  >
+                    <SelectValue>{DEVICE_ACCESS_POLICY_LABELS[policy].label}</SelectValue>
+                  </SelectTrigger>
+                  <SelectPopup align="end" alignItemWithTrigger={false}>
+                    {POLICIES.map((option) => (
+                      <SelectItem key={option} value={option}>
+                        {DEVICE_ACCESS_POLICY_LABELS[option].label}
+                      </SelectItem>
+                    ))}
+                  </SelectPopup>
+                </Select>
+              </span>
             }
           />
         );

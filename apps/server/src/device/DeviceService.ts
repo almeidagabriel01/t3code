@@ -3,6 +3,7 @@ import {
   type DeviceAccessMap,
   DeviceAccessPendingError,
   deviceAccessKey,
+  legacyDeviceAccessKey,
   deviceAccessPolicy,
   type DeviceActionInput,
   DeviceActionUnavailableError,
@@ -25,6 +26,11 @@ import {
   type DeviceServiceState,
   type DeviceSession,
   type DeviceSetAccessInput,
+  type DeviceForgetInput,
+  type DeviceWifiPairCancelInput,
+  type DeviceWifiPairStartInput,
+  type DeviceWifiPairStartResult,
+  DeviceWifiPairingBusyError,
   type DeviceSetHoldInput,
   type DeviceShutdownInput,
   type DeviceSummary,
@@ -74,6 +80,7 @@ import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as Fiber from "effect/Fiber";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SynchronizedRef from "effect/SynchronizedRef";
@@ -87,6 +94,7 @@ import * as ProcessRunner from "../processRunner.ts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as SecretResolverLayer from "../secrets/SecretResolver.ts";
 import { requireSettingsSecret } from "../secrets/settingsSecretValue.ts";
+import * as AdbWifiPairing from "./AdbWifiPairing.ts";
 import * as DeviceHost from "./DeviceHost.ts";
 import * as SshDeviceHost from "./SshDeviceHost.ts";
 import * as EasDeviceHost from "./EasDeviceHost.ts";
@@ -172,6 +180,11 @@ export type DeviceAccessAnswer = "allowed" | "declined" | "pending";
 /** The agent a device call is made for. Calls from the user's own client carry none and are not gated. */
 export interface DeviceAgentCaller {
   readonly threadTitle?: string | undefined;
+  /**
+   * The threads that delegated to this one, nearest first. A thread shares a device, its
+   * agent-device session and its access answer with them; orchestration sits above this service.
+   */
+  readonly ancestors?: ReadonlyArray<ThreadId> | undefined;
   /** Asks the user whether this thread may use the device. Without it an unanswered ask stays pending. */
   readonly ask?: (question: DeviceAccessQuestion) => Effect.Effect<DeviceAccessAnswer, DeviceError>;
 }
@@ -242,6 +255,17 @@ export class DeviceService extends Context.Service<
     ) => Effect.Effect<void>;
     readonly setAccess: (
       input: DeviceSetAccessInput,
+    ) => Effect.Effect<DeviceServiceState, DeviceError>;
+    /** Starts pairing a phone over Wi-Fi; one attempt per environment, repeats by request id. */
+    readonly startWifiPairing: (
+      input: DeviceWifiPairStartInput,
+    ) => Effect.Effect<DeviceWifiPairStartResult, DeviceError | DeviceWifiPairingBusyError>;
+    readonly cancelWifiPairing: (
+      input: DeviceWifiPairCancelInput,
+    ) => Effect.Effect<DeviceServiceState>;
+    /** Disconnects a phone connected over Wi-Fi and ends what was open on it. */
+    readonly forgetDevice: (
+      input: DeviceForgetInput,
     ) => Effect.Effect<DeviceServiceState, DeviceError>;
     readonly state: Effect.Effect<DeviceServiceState>;
     readonly subscribe: Effect.Effect<PubSub.Subscription<DeviceServiceState>, never, Scope.Scope>;
@@ -373,6 +397,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       supportsEasHosts: true,
       supportsSimlockHosts: true,
       supportsDeviceControl: true,
+      supportsWifiPairing: true,
       holds: [],
       access: initialSettings.access,
       hosts: initialHosts,
@@ -387,24 +412,53 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     },
   });
 
-  /** Devices the user holds, by `deviceAccessKey`. In memory: a restart hands every device back. */
+  /** Devices the user holds, by `holdKey`. In memory: a restart hands every device back. */
   const holds = new Map<string, DeviceHold>();
-  /** What the user answered a thread that had to ask, by thread and device. */
+  // Holds follow the id the stream and the launcher marker use, not the stored access identity.
+  const holdKey = (hostId: DeviceHostId, deviceId: DeviceId) => `${hostId}:${deviceId}`;
+  /** What the user answered a delegation tree that had to ask, by its top thread and device. */
   const accessAnswers = new Map<string, boolean>();
+  /** Each agent thread's delegating ancestors, nearest first, as its last device call gave them. */
+  const lineages = new Map<ThreadId, ReadonlyArray<ThreadId>>();
+  const lineageRoot = (threadId: ThreadId) => lineages.get(threadId)?.at(-1) ?? threadId;
+  const sameLineage = (a: ThreadId, b: ThreadId) =>
+    a === b || lineages.get(a)?.includes(b) === true || lineages.get(b)?.includes(a) === true;
+  // A delegation tree drives a device through one agent-device session: the CLI claims a device
+  // per session, so a child with its own would be refused by it.
+  const sessionName = (session: {
+    readonly threadId: ThreadId;
+    readonly hostId: DeviceHostId;
+    readonly deviceId: DeviceId;
+  }) =>
+    agentDeviceSession(lineageRoot(session.threadId), session.hostId, session.deviceId).pipe(
+      Effect.provideService(Digest.Digest, digest),
+    );
+  const isSession =
+    (target: {
+      readonly threadId: ThreadId;
+      readonly hostId: DeviceHostId;
+      readonly deviceId: DeviceId;
+    }) =>
+    (session: {
+      readonly threadId: ThreadId;
+      readonly hostId: DeviceHostId;
+      readonly deviceId: DeviceId;
+    }) =>
+      session.threadId === target.threadId &&
+      session.hostId === target.hostId &&
+      session.deviceId === target.deviceId;
   const accessLock = yield* Semaphore.make(1);
   const launcherLock = yield* Semaphore.make(1);
   /** Launchers bound since startup, by agent-device session. */
   const boundLaunchers = new Map<string, string>();
-  /** The thread each bound launcher was handed to, by agent-device session. */
-  const launcherOwners = new Map<
-    string,
-    {
-      readonly threadId: ThreadId;
-      readonly hostId: DeviceHostId;
-      readonly deviceId: DeviceId;
-      readonly threadTitle?: string | undefined;
-    }
-  >();
+  /** Every thread a bound launcher was handed to; one agent-device session can serve a lineage. */
+  let launcherOwners: ReadonlyArray<{
+    readonly session: string;
+    readonly threadId: ThreadId;
+    readonly hostId: DeviceHostId;
+    readonly deviceId: DeviceId;
+    readonly threadTitle?: string | undefined;
+  }> = [];
   /** Launchers on a session the host leases to every thread; the host ends it, not a retiring thread. */
   const hostSessionLaunchers = new Set<string>();
   // Binding and pruning read sessions under the lock, so neither acts on a session list the other has outdated.
@@ -414,16 +468,10 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     Effect.gen(function* () {
       if (!launchers) return;
       const { state } = yield* SynchronizedRef.get(stateRef);
-      const live = new Set(
-        yield* Effect.forEach(state.sessions, (session) =>
-          agentDeviceSession(session.threadId, session.hostId, session.deviceId),
-        ).pipe(Effect.provideService(Digest.Digest, digest)),
-      );
+      const live = new Set(yield* Effect.forEach(state.sessions, sessionName));
       const retired = [...boundLaunchers].filter(([session]) => !live.has(session));
-      for (const [session] of retired) {
-        boundLaunchers.delete(session);
-        launcherOwners.delete(session);
-      }
+      for (const [session] of retired) boundLaunchers.delete(session);
+      launcherOwners = launcherOwners.filter((owner) => state.sessions.some(isSession(owner)));
       const ending = retired.filter(([session]) => !hostSessionLaunchers.delete(session));
       const release = launchers.release;
       if (release)
@@ -435,25 +483,36 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     }),
   );
 
+  /** The agent-device sessions that end with `ending`: none that a thread staying open still uses. */
+  const endingSessionNames = Effect.fnUntraced(function* (ending: ReadonlyArray<DeviceSession>) {
+    const { state } = yield* SynchronizedRef.get(stateRef);
+    const kept = new Set(
+      yield* Effect.forEach(
+        state.sessions.filter((session) => !ending.includes(session)),
+        sessionName,
+      ),
+    );
+    const names = new Map<string, DeviceSession>();
+    for (const session of ending) {
+      const name = yield* sessionName(session);
+      if (!kept.has(name)) names.set(name, session);
+    }
+    return names;
+  });
+
   const releaseLaunchers = (sessions: ReadonlyArray<DeviceSession>) =>
     launcherLock.withPermit(
-      Effect.forEach(
-        sessions,
-        (session) =>
-          Effect.gen(function* () {
-            const name = yield* agentDeviceSession(
-              session.threadId,
-              session.hostId,
-              session.deviceId,
-            ).pipe(Effect.provideService(Digest.Digest, digest));
-            const launcher = boundLaunchers.get(name);
-            if (!launcher || hostSessionLaunchers.has(name) || !launchers?.release) return;
-            yield* launchers.release(launcher);
-            boundLaunchers.delete(name);
-            launcherOwners.delete(name);
-          }),
-        { discard: true },
-      ),
+      Effect.gen(function* () {
+        for (const name of (yield* endingSessionNames(sessions)).keys()) {
+          const launcher = boundLaunchers.get(name);
+          if (!launcher || hostSessionLaunchers.has(name) || !launchers?.release) continue;
+          yield* launchers.release(launcher);
+          boundLaunchers.delete(name);
+        }
+        launcherOwners = launcherOwners.filter(
+          (owner) => !sessions.some((session) => isSession(owner)(session)),
+        );
+      }),
     );
 
   // Uninterruptible so a committed retirement always prunes, even if its caller is cancelled.
@@ -857,7 +916,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
   const setHold: DeviceService["Service"]["setHold"] = Effect.fn("DeviceService.setHold")(
     function* (input) {
       const hostId = input.hostId ?? LOCAL_DEVICE_HOST_ID;
-      const key = deviceAccessKey({ hostId, id: input.deviceId });
+      const key = holdKey(hostId, input.deviceId);
       const since = DateTime.formatIso(yield* DateTime.now);
       const { state } = yield* SynchronizedRef.get(stateRef);
       // Checked and changed without yielding between, so a repeat never publishes twice.
@@ -888,7 +947,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
   // Runs for every input frame, so a held device costs one map lookup and no span.
   const holdOnInput: DeviceService["Service"]["holdOnInput"] = (hostId, deviceId) =>
     Effect.suspend(() =>
-      holds.has(deviceAccessKey({ hostId: hostId ?? LOCAL_DEVICE_HOST_ID, id: deviceId }))
+      holds.has(holdKey(hostId ?? LOCAL_DEVICE_HOST_ID, deviceId))
         ? Effect.void
         : setHold({ hostId, deviceId, held: true }).pipe(Effect.ignore),
     );
@@ -897,14 +956,20 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
 
   const setAccess: DeviceService["Service"]["setAccess"] = Effect.fn("DeviceService.setAccess")(
     function* (input) {
-      const key = deviceAccessKey({
-        hostId: input.hostId ?? LOCAL_DEVICE_HOST_ID,
-        id: input.deviceId,
-      });
+      const hostId = input.hostId ?? LOCAL_DEVICE_HOST_ID;
+      const { state } = yield* SynchronizedRef.get(stateRef);
+      // A device that is not listed has only its id to go by.
+      const device = findDevice(state, hostId, input.deviceId) ?? { hostId, id: input.deviceId };
+      const key = deviceAccessKey(device);
+      const legacyKey = legacyDeviceAccessKey(device);
       // Read and written under one lock: the stored map is replaced whole, unknown entries included.
       return yield* accessLock.withPermit(
         Effect.gen(function* () {
-          const { [key]: _previous, ...rest } = (yield* readDeviceSettings).access;
+          const {
+            [key]: _previous,
+            [legacyKey]: _legacy,
+            ...rest
+          } = (yield* readDeviceSettings).access;
           const access = input.policy === null ? rest : { ...rest, [key]: input.policy };
           yield* settings.updateSettings({ deviceAccess: access }).pipe(
             Effect.mapError(
@@ -927,7 +992,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
   )(function* (input) {
     const { state } = yield* SynchronizedRef.get(stateRef);
     const device = findDevice(state, input.hostId, input.deviceId);
-    const key = deviceAccessKey({ hostId: input.hostId, id: input.deviceId });
+    if (input.agent?.ancestors) lineages.set(input.threadId, input.agent.ancestors);
     const refused = {
       hostId: input.hostId,
       deviceId: input.deviceId,
@@ -935,16 +1000,13 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     };
     // Ending a session is not using the device, so a policy never keeps one open.
     if (input.intent !== "close") {
-      const policy = deviceAccessPolicy((yield* readDeviceSettings).access, {
-        hostId: input.hostId,
-        id: input.deviceId,
-        physical: device?.physical ?? false,
-      });
+      const subject = device ?? { hostId: input.hostId, id: input.deviceId, physical: false };
+      const policy = deviceAccessPolicy((yield* readDeviceSettings).access, subject);
       if (policy === "deny") {
         return yield* new DeviceAccessDeniedError({ ...refused, reason: "policy" });
       }
       if (policy === "ask") {
-        const answerKey = `${input.threadId}\u0000${key}`;
+        const answerKey = `${lineageRoot(input.threadId)}\u0000${deviceAccessKey(subject)}`;
         if (!accessAnswers.has(answerKey)) {
           const answer = input.agent?.ask
             ? yield* input.agent.ask({
@@ -965,14 +1027,15 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       }
     }
     if (input.intent === "open") {
-      // A session a host leases to every thread is shared on purpose.
-      const owner = [...launcherOwners].find(
-        ([session, bound]) =>
+      // A session a host leases to every thread is shared on purpose, and so is a delegation
+      // tree's: the opener has to be an ancestor or a descendant of every thread already driving.
+      const owner = launcherOwners.find(
+        (bound) =>
           bound.hostId === input.hostId &&
           bound.deviceId === input.deviceId &&
-          bound.threadId !== input.threadId &&
-          !hostSessionLaunchers.has(session),
-      )?.[1];
+          !sameLineage(bound.threadId, input.threadId) &&
+          !hostSessionLaunchers.has(bound.session),
+      );
       if (owner) {
         return yield* new DeviceInUseError({
           ...refused,
@@ -981,7 +1044,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
         });
       }
     }
-    const hold = holds.get(key);
+    const hold = holds.get(holdKey(input.hostId, input.deviceId));
     if (hold && input.intent !== "read") {
       return yield* new DeviceHeldError({ ...refused, since: hold.since });
     }
@@ -1162,6 +1225,10 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
                   closed.deviceId === session.deviceId,
               ),
           );
+          const released: Array<{
+            readonly session: DeviceSession;
+            readonly release: DeviceHost.DeviceHostReady["releaseAgentSession"];
+          }> = [];
           for (const session of ending) {
             const host = yield* resolveHost(session.hostId);
             const ready = yield* host.current;
@@ -1172,14 +1239,13 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
                 hostLabel: host.label,
                 reason: "Device host is reconnecting. Retry close after it reconnects.",
               });
-            if (ready?.releaseAgentSession) {
-              const name = yield* agentDeviceSession(
-                session.threadId,
-                session.hostId,
-                session.deviceId,
-              ).pipe(Effect.provideService(Digest.Digest, digest));
-              yield* ready.releaseAgentSession(name, session.deviceId);
-            }
+            released.push({ session, release: ready?.releaseAgentSession });
+          }
+          // A thread of the same lineage that stays open keeps the agent-device session it shares.
+          const endingNames = yield* endingSessionNames(ending);
+          for (const [name, session] of endingNames) {
+            const release = released.find((entry) => entry.session === session)?.release;
+            if (release) yield* release(name, session.deviceId);
           }
           if (input.shutdown) yield* releaseLaunchers(ending);
           if (input.shutdown) {
@@ -1338,6 +1404,127 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     );
   });
 
+  const pairingScope = yield* Scope.Scope;
+  /** The environment's one Wi-Fi pairing attempt; the password stays here, never in state. */
+  let pairing: {
+    readonly requestId: string;
+    readonly attemptId: string;
+    readonly hostId: DeviceHostId;
+    readonly qrPayload: string;
+    fiber?: Fiber.Fiber<void>;
+    done?: boolean;
+  } | null = null;
+  const publishPairing = (wifiPairing: DeviceServiceState["wifiPairing"]) =>
+    publish(({ wifiPairing: _previous, ...state }) =>
+      wifiPairing ? { ...state, wifiPairing } : state,
+    );
+
+  const startWifiPairing: DeviceService["Service"]["startWifiPairing"] = Effect.fn(
+    "DeviceService.startWifiPairing",
+  )(function* (input) {
+    const ready = yield* readiness(input.hostId);
+    // Checked and claimed without yielding between, so two clients never start two attempts.
+    if (pairing && !pairing.done) {
+      if (pairing.requestId === input.requestId)
+        return {
+          attemptId: pairing.attemptId,
+          qrPayload: pairing.qrPayload,
+          state: (yield* SynchronizedRef.get(stateRef)).state,
+        };
+      return yield* new DeviceWifiPairingBusyError({
+        hostId: pairing.hostId,
+        attemptId: pairing.attemptId,
+      });
+    }
+    const secret = AdbWifiPairing.newWifiPairingSecret();
+    const attempt: NonNullable<typeof pairing> = {
+      requestId: input.requestId,
+      attemptId: secret.serviceName,
+      hostId: ready.hostId,
+      qrPayload: AdbWifiPairing.wifiPairingQrPayload(secret),
+    };
+    pairing = attempt;
+    const base = { attemptId: attempt.attemptId, hostId: attempt.hostId };
+    const current = () => pairing === attempt;
+    const report = (wifiPairing: NonNullable<DeviceServiceState["wifiPairing"]>) =>
+      Effect.suspend(() => {
+        if (!current()) return Effect.void;
+        if (wifiPairing.status === "connected" || wifiPairing.status === "failed")
+          attempt.done = true;
+        return publishPairing(wifiPairing);
+      }).pipe(Effect.asVoid);
+    const published = yield* publishPairing({ ...base, status: "waiting" });
+    const fiber = yield* AdbWifiPairing.pairOverWifi(ready.run, secret, (status) =>
+      report({ ...base, status }),
+    ).pipe(
+      Effect.flatMap((deviceId) =>
+        report({ ...base, status: "connected", deviceId: DeviceId.make(deviceId) }).pipe(
+          Effect.andThen(refresh(ready).pipe(Effect.ignore)),
+        ),
+      ),
+      Effect.catchTags({
+        WifiPairingFailed: (error) =>
+          report({
+            ...base,
+            status: "failed",
+            reason: error.reason,
+            ...(error.detail ? { detail: error.detail } : {}),
+          }),
+      }),
+      Effect.forkIn(pairingScope),
+    );
+    attempt.fiber = fiber;
+    return { attemptId: attempt.attemptId, qrPayload: attempt.qrPayload, state: published };
+  });
+
+  const cancelWifiPairing: DeviceService["Service"]["cancelWifiPairing"] = Effect.fn(
+    "DeviceService.cancelWifiPairing",
+  )(function* (input) {
+    const attempt = pairing;
+    const { state } = yield* SynchronizedRef.get(stateRef);
+    if (attempt?.attemptId === input.attemptId) {
+      pairing = null;
+      if (attempt.fiber) yield* Fiber.interrupt(attempt.fiber);
+    }
+    return state.wifiPairing?.attemptId === input.attemptId
+      ? yield* publishPairing(undefined)
+      : state;
+  });
+
+  const forgetDevice: DeviceService["Service"]["forgetDevice"] = Effect.fn(
+    "DeviceService.forgetDevice",
+  )(function* (input) {
+    const hostId = input.hostId ?? LOCAL_DEVICE_HOST_ID;
+    const { state } = yield* SynchronizedRef.get(stateRef);
+    const device = findDevice(state, hostId, input.deviceId);
+    if (!device) return yield* new DeviceNotFoundError({ hostId, deviceId: input.deviceId });
+    if (device.connection !== "wifi")
+      return yield* new DeviceActionUnavailableError({
+        operation: "forget",
+        platform: device.platform,
+        reason: "not_wifi",
+      });
+    const ready = yield* readiness(hostId);
+    for (const threadId of new Set(
+      state.sessions
+        .filter((session) => session.hostId === hostId && session.deviceId === device.id)
+        .map((session) => session.threadId),
+    ))
+      yield* close({ threadId, hostId, deviceId: device.id, shutdown: false });
+    yield* setHold({ hostId, deviceId: device.id, held: false });
+    const result = yield* ready.run("adb", ["disconnect", device.id]);
+    const said = `${result.stdout}\n${result.stderr}`;
+    // "No such device" means adb already let it go, which is what forgetting asks for.
+    if (result.code !== 0 && !/no such device|disconnected/i.test(said))
+      return yield* new DeviceOperationError({
+        operation: "forget",
+        reason: "command_failed",
+        exitCode: result.code,
+        cause: said.trim(),
+      });
+    return yield* refresh(ready);
+  });
+
   // Sessions live in memory, so this removes every launcher a previous run left behind.
   yield* pruneLaunchers;
   // Holds live in memory too: a marker left behind would block agents with nothing to hand back.
@@ -1419,11 +1606,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
               };
             }),
           );
-        const ownSession = yield* agentDeviceSession(
-          input.threadId,
-          input.hostId,
-          input.deviceId,
-        ).pipe(Effect.provideService(Digest.Digest, digest));
+        const ownSession = yield* sessionName(input);
         if (boundSession) hostSessionLaunchers.add(ownSession);
         const session = boundSession ?? ownSession;
         return {
@@ -1444,23 +1627,11 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
             hostId: target.hostId,
             reason: "Agent launchers are unavailable in this device service.",
           });
-        const session = yield* agentDeviceSession(
-          target.threadId,
-          target.hostId,
-          target.deviceId,
-        ).pipe(Effect.provideService(Digest.Digest, digest));
+        const session = yield* sessionName(target);
         return yield* launcherLock.withPermit(
           Effect.gen(function* () {
             const { state } = yield* SynchronizedRef.get(stateRef);
-            if (
-              !state.sessions.some(
-                (live) =>
-                  live.threadId === target.threadId &&
-                  live.hostId === target.hostId &&
-                  live.deviceId === target.deviceId,
-              )
-            )
-              return Option.none();
+            if (!state.sessions.some(isSession(target))) return Option.none();
             const launcher = yield* launchers.bind({
               session,
               targetArgs,
@@ -1468,7 +1639,10 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
               deviceId: target.deviceId,
             });
             boundLaunchers.set(session, launcher);
-            launcherOwners.set(session, { ...target, threadTitle: agent?.threadTitle });
+            launcherOwners = [
+              ...launcherOwners.filter((owner) => !isSession(target)(owner)),
+              { ...target, session, threadTitle: agent?.threadTitle },
+            ];
             return Option.some(launcher);
           }),
         );
@@ -1484,6 +1658,9 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       setHold,
       holdOnInput,
       setAccess,
+      startWifiPairing,
+      cancelWifiPairing,
+      forgetDevice,
       detail,
       action,
       screenshot,

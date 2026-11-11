@@ -77,6 +77,9 @@ vi.mock("~/state/device", async () => {
       open: "open",
       close: "close",
       setHold: { permissionAtom: () => (mocks.canHold ? ALLOWED : DENIED) },
+      wifiPairStart: { permissionAtom: () => ALLOWED },
+      wifiPairCancel: "wifiPairCancel",
+      forget: { permissionAtom: () => ALLOWED },
     },
     deviceHostProbeAtom: Atom.family((environmentId: string) =>
       Atom.make(() => Effect.promise(() => mocks.list({ environmentId, input: {} }))),
@@ -273,14 +276,23 @@ describe("DevicePanel takeover and physical devices", () => {
 
   it("lists physical devices apart, without a start action, and hands a held one back", async () => {
     setup();
-    currentState = withControl({ holds: [hold] });
+    currentState = withControl({
+      holds: [hold],
+      devices: [phone, { ...pixel, connection: "wifi" }],
+    });
     await using screen = await render(devicePanel(threadA), { container });
 
     const headings = [...container.querySelectorAll("h3")].map((heading) => heading.textContent);
     expect(headings).toEqual(["Physical devices", "iOS Simulators"]);
     await expect.element(screen.getByText("Physical", { exact: true })).toBeInTheDocument();
     await expect.element(screen.getByRole("button", { name: "Open Pixel" })).toBeInTheDocument();
-    await expect.element(screen.getByText(/Connected · You are in control/)).toBeInTheDocument();
+    await expect
+      .element(screen.getByText(/Wi-Fi · Connected · You are in control/))
+      .toBeInTheDocument();
+    await expect.element(screen.getByRole("button", { name: "Forget Pixel" })).toBeInTheDocument();
+    await expect
+      .element(screen.getByRole("button", { name: "Connect a phone over Wi-Fi" }))
+      .not.toBeInTheDocument();
 
     await screen.getByRole("button", { name: "Hand back Pixel" }).click();
 

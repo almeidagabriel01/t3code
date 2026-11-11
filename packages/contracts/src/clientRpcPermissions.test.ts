@@ -70,11 +70,17 @@ describe("decision client guards", () => {
 });
 
 describe("device client guards", () => {
-  it("guards takeover as driving a device and access policies as settings", () => {
+  it("guards takeover as driving a device, and access policies and Wi-Fi pairing as settings", () => {
     expect(clientRpcRequiredScopes(WS_METHODS.deviceSetHold, {})).toEqual([
       "orchestration:operate",
     ]);
     expect(clientRpcRequiredScopes(WS_METHODS.deviceSetAccess, {})).toEqual(["settings:write"]);
+    for (const method of [
+      WS_METHODS.deviceWifiPairStart,
+      WS_METHODS.deviceWifiPairCancel,
+      WS_METHODS.deviceForget,
+    ])
+      expect(clientRpcRequiredScopes(method, {})).toEqual(["settings:write"]);
     // Watching device state stays open to readers.
     expect(Object.hasOwn(CLIENT_GUARDED_RPC_SCOPES, WS_METHODS.subscribeDeviceState)).toBe(false);
   });
