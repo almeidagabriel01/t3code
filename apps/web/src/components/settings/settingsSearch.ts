@@ -36,6 +36,7 @@ export type SettingsPath =
   | "/settings/browser"
   | "/settings/devices"
   | "/settings/mac-permissions"
+  | "/settings/computer-use"
   | "/settings/scheduled-tasks"
   | "/settings/kanban"
   | "/settings/source-control"
@@ -83,6 +84,8 @@ export interface SettingsSearchItem {
   readonly requiresImessage?: boolean;
   readonly requiresTelegram?: boolean;
   readonly macProviderSettingsOnly?: boolean;
+  /** Needs a connected Windows or Linux host, which has no permissions page. */
+  readonly computerUseHostOnly?: boolean;
   readonly fastWorktreeCheckoutOnly?: boolean;
   readonly textGeneratorsOnly?: boolean;
   readonly secondary?: boolean;
@@ -104,6 +107,7 @@ export interface SettingsSearchAvailability {
   readonly hasImessage?: boolean;
   readonly hasTelegram?: boolean;
   readonly hasMacProviderSettingsEnvironment?: boolean;
+  readonly hasComputerUseHostEnvironment?: boolean;
   readonly hasFastWorktreeCheckoutEnvironment?: boolean;
   /** An environment without a provider allow-list, which hides text generators. */
   readonly hasTextGeneratorsEnvironment?: boolean;
@@ -128,6 +132,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/browser": "Browser",
   "/settings/devices": "Devices",
   "/settings/mac-permissions": "Mac permissions",
+  "/settings/computer-use": "Computer use",
   "/settings/scheduled-tasks": "Scheduled tasks",
   "/settings/kanban": "Kanban",
   "/settings/source-control": "Source control",
@@ -174,6 +179,7 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
       "/settings/browser",
       "/settings/devices",
       "/settings/mac-permissions",
+      "/settings/computer-use",
       "/settings/scheduled-tasks",
       "/settings/kanban",
     ],
@@ -574,6 +580,15 @@ export const SETTINGS_SEARCH_ITEMS = [
       "computer use screen recording accessibility automation click screenshot privacy system settings",
     ],
     macProviderSettingsOnly: true,
+  },
+  {
+    id: "computer-use",
+    title: "Computer use",
+    to: "/settings/computer-use",
+    searchTerms: [
+      "windows linux wayland x11 screenshot click type keys desktop control agents capabilities",
+    ],
+    computerUseHostOnly: true,
   },
   {
     id: "fork-updates-folder",
@@ -1720,6 +1735,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/browser": null,
   "/settings/devices": null,
   "/settings/mac-permissions": null,
+  "/settings/computer-use": null,
   "/settings/source-control": "environment-defaults",
   "/settings/worktrees": "project-defaults",
   "/settings/status-bar": null,
@@ -1854,6 +1870,7 @@ export function filterAvailableSettingsSearchItems(
       (!item.environmentOnly || availability.hasEnvironment) &&
       (!item.providerSettingsOnly || availability.hasProviderSettingsEnvironment) &&
       (!item.macProviderSettingsOnly || availability.hasMacProviderSettingsEnvironment === true) &&
+      (!item.computerUseHostOnly || availability.hasComputerUseHostEnvironment === true) &&
       (!item.localBackendManagementOnly || availability.canManageLocalBackend) &&
       (!item.localEnvironmentOnly || !availability.localEnvironmentDisabled) &&
       (!item.primaryEnvironmentOnly || availability.hasPrimaryEnvironment === true) &&

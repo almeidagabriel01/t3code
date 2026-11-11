@@ -21,6 +21,7 @@ import {
   GlobeIcon,
   InfoIcon,
   MonitorCogIcon,
+  MousePointerClickIcon,
   KeyboardIcon,
   KeyRoundIcon,
   MessageCircleIcon,
@@ -113,6 +114,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/browser": GlobeIcon,
   "/settings/devices": SmartphoneIcon,
   "/settings/mac-permissions": MonitorCogIcon,
+  "/settings/computer-use": MousePointerClickIcon,
   "/settings/scheduled-tasks": CalendarClockIcon,
   "/settings/kanban": SquareKanbanIcon,
   "/settings/source-control": GitBranchIcon,
@@ -159,7 +161,8 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
         (to !== "/settings/memory" &&
           to !== "/settings/imessage" &&
           to !== "/settings/telegram" &&
-          to !== "/settings/mac-permissions") ||
+          to !== "/settings/mac-permissions" &&
+          to !== "/settings/computer-use") ||
         searchableItems.some((entry) => entry.to === to),
     ),
   })).filter((group) => group.paths.length > 0);

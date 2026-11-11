@@ -56,6 +56,11 @@ const harness = (client?: "read-only") => {
         screenRecording: "granted",
         accessibility: "denied",
         automation: "unknown",
+        host: {
+          os: "linux",
+          display: "wayland",
+          capabilities: [{ key: "pointer", state: "unavailable", detail: "No pointer." }],
+        },
       }),
     screenshot: Effect.succeed({ png, width: 640, height: 360 }),
     snapshot: (caller, input) =>
@@ -150,6 +155,11 @@ it.effect("passes the caller, arguments and request id through, and says what is
       screenRecording: "granted",
       accessibility: "denied",
       automation: "unknown",
+      host: {
+        os: "linux",
+        display: "wayland",
+        capabilities: [{ key: "pointer", state: "unavailable", detail: "No pointer." }],
+      },
     });
     const clicked = yield* call({
       action: "click",
@@ -224,7 +234,10 @@ it.effect("snapshot returns the elements and a drill-in note; click and type pas
 it.effect("a read-only client can snapshot and read permissions but not act", () =>
   Effect.gen(function* () {
     const { call, seen } = yield* harness("read-only");
-    expect(yield* call({ action: "permissions" })).toMatchObject({ supported: true });
+    expect(yield* call({ action: "permissions" })).toMatchObject({
+      supported: true,
+      host: { display: "wayland", capabilities: [{ key: "pointer", state: "unavailable" }] },
+    });
     expect(yield* call({ action: "snapshot" })).toMatchObject({ app: "Notes" });
     seen.length = 0;
     expect(yield* call({ action: "click", target: "t", x: 1, y: 1 })).toMatchObject({

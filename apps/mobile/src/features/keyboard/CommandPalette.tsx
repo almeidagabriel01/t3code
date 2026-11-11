@@ -59,7 +59,7 @@ import { useOpenAssistantTeam } from "../assistants/assistantTeamTarget";
 import { useHasKanbanEnvironments } from "../../state/kanban";
 import { useImessageEnvironmentIds } from "../../state/imessageChannel";
 import { useTelegramEnvironmentIds } from "../../state/telegramChannel";
-import { useMacEnvironmentIds } from "../../state/macPermissions";
+import { useComputerUseHostEnvironmentIds, useMacEnvironmentIds } from "../../state/macPermissions";
 import { useHasMemoryEnvironments } from "../../state/memory";
 import { useHasNotesEnvironments } from "../../state/notes";
 import { useThreadSearch } from "../../state/queries";
@@ -248,6 +248,7 @@ export function CommandPalette(props: {
   const hasImessage = useImessageEnvironmentIds().length > 0;
   const hasTelegram = useTelegramEnvironmentIds().length > 0;
   const hasMac = useMacEnvironmentIds().length > 0;
+  const hasComputerUseHost = useComputerUseHostEnvironmentIds().length > 0;
   const assistants = useAssistantEntries().active;
   const hasAssistantsEnvironment = useAssistantsEnvironmentIds().length > 0;
   const autonomyPause = useAutonomyPause();
@@ -407,6 +408,17 @@ export function CommandPalette(props: {
               title: "Mac permissions",
               searchTerms: ["computer use", "screen recording", "accessibility", "automation"],
               run: () => openSettings(navigation, "SettingsMacPermissions"),
+            },
+          ]
+        : []),
+      ...(hasComputerUseHost
+        ? [
+            {
+              key: "computer-use",
+              kind: "action" as const,
+              title: "Computer use",
+              searchTerms: ["windows", "linux", "wayland", "screenshot", "click", "keys"],
+              run: () => openSettings(navigation, "SettingsComputerUse"),
             },
           ]
         : []),
@@ -624,6 +636,7 @@ export function CommandPalette(props: {
     hasImessage,
     hasTelegram,
     hasMac,
+    hasComputerUseHost,
     assistants,
     hasAssistantsEnvironment,
     openAssistantTeam,
