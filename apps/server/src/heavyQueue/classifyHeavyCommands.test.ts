@@ -87,6 +87,16 @@ describe("classifyHeavyCommands", () => {
       expected: [{ source: "agent", pid: 12, threadId: "t-agent", cpu: 3.5, memory: 0.5 * GIB }],
     },
     {
+      name: "keeps megabytes for a CPU-heavy command under a gigabyte",
+      processes: [
+        SERVER,
+        CLAUDE,
+        WRAPPER,
+        proc(12, 11, "node", { cpu: 100, rss: 33 * 1024 ** 2 }, "node -e while(1){}"),
+      ],
+      expected: [{ source: "agent", pid: 12, threadId: "t-agent", cpu: 1, memory: 32 * 1024 ** 2 }],
+    },
+    {
       name: "leaves out a light command",
       processes: [SERVER, CLAUDE, WRAPPER, proc(12, 11, "git", { cpu: 10, rss: 0.1 * GIB })],
       expected: [],

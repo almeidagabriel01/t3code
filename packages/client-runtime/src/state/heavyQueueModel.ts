@@ -80,7 +80,10 @@ export function formatDuration(fromIso: string, now: number): string {
 
 const GB = 1024 ** 3;
 const cores = (n: number) => `${n.toFixed(1)} cores`;
-const gb = (bytes: number) => `${(bytes / GB).toFixed(1)} GB`;
+const MB = 1024 ** 2;
+// Below a gigabyte "0.0 GB" hides real usage, so small amounts read in megabytes.
+const gb = (bytes: number) =>
+  bytes < GB ? `${Math.max(1, Math.round(bytes / MB))} MB` : `${(bytes / GB).toFixed(1)} GB`;
 const usualTime = (ms: number) => {
   const seconds = Math.round(ms / 1000);
   if (seconds < 60) return `${seconds}s`;
@@ -107,6 +110,13 @@ export function runningUsageLine(usage: RunningUsage, cpuCount: number | null): 
     parts.push(`peak ${cores(usage.peakCpu)} · ${gb(usage.peakMemory)}`);
   }
   return parts.length === 0 ? null : parts.join(" · ");
+}
+
+/** "Peak 3.0 cores · 2.4 GB"; null until a peak was sampled. */
+export function peakUsageLine(usage: RunningUsage): string | null {
+  return usage.peakCpu === undefined || usage.peakMemory === undefined
+    ? null
+    : `Peak ${cores(usage.peakCpu)} · ${gb(usage.peakMemory)}`;
 }
 
 /** One muted line of usage: a running job's current and peak, or a waiter's usual cost. Null when unknown. */

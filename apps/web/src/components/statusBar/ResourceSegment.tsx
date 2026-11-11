@@ -60,6 +60,7 @@ import {
   type ResourceSort,
   type ResourceUsage,
 } from "./resourceUsage.logic";
+import { CPU_COLUMN, formatCpu, GUTTER, MEM_COLUMN, Metrics, METRICS } from "./ResourceMetrics";
 import { formatMemory, sparklinePoints } from "./statusBar.logic";
 import { isStatusBarItemShown, STATUS_BAR_RESOURCE_ITEM } from "./statusBarItems.logic";
 import { useCloseTerminal, useShutDownDevice } from "./useKillTarget";
@@ -85,29 +86,12 @@ const APP_GROUP_ICON: Record<AppProcessGroup, typeof AppWindowIcon> = {
 };
 const UNATTRIBUTED = "Unattributed";
 
-const CPU_COLUMN = "w-12 text-right";
-const MEM_COLUMN = "w-16 text-right";
-const GUTTER = "flex w-5 shrink-0 items-center justify-end";
-const METRICS = "flex shrink-0 items-center tabular-nums";
-
 // Half a core; process CPU arrives as a share of the whole machine.
 const HEAVY_CPU_PERCENT_OF_CORE = 50;
 const HostCoresContext = createContext(1);
 const HEAVY_RSS_BYTES = 1024 ** 3;
 
-// Shares of the whole machine are small; one decimal keeps a busy process from reading as 0%.
-const formatCpu = (cpuPercent: number) =>
-  cpuPercent > 0 && cpuPercent < 10 ? `${cpuPercent.toFixed(1)}%` : `${Math.round(cpuPercent)}%`;
 const CPU_SCALE_HINT = "Share of the whole machine: 100% means every CPU core is busy.";
-
-function Metrics({ usage }: { readonly usage: ResourceUsage | null }) {
-  return (
-    <div className={cn(METRICS, "text-2xs text-muted-foreground")}>
-      <span className={CPU_COLUMN}>{usage === null ? "--" : formatCpu(usage.cpuPercent)}</span>
-      <span className={MEM_COLUMN}>{usage === null ? "--" : formatMemory(usage.rssBytes)}</span>
-    </div>
-  );
-}
 
 const SCOPE_HINT: Record<"mac" | "t3", string> = {
   mac: "Every app on this computer.",
@@ -303,7 +287,6 @@ function ProcessList({
               usage={{
                 cpuPercent: process.cpuPercent,
                 rssBytes: process.residentBytes,
-                processCount: 1,
               }}
             />
             <span className={GUTTER} aria-hidden />

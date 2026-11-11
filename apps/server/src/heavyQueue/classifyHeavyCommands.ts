@@ -101,8 +101,12 @@ export interface Classification {
 export const commandKey = (pid: number, startTimeMs: number) => `${pid}:${startTimeMs}`;
 const tenth = (value: number) => Math.round(value * 10) / 10;
 const TENTH_GIB = HEAVY_MEMORY_BYTES / 10;
-/** Tenths of a GiB, the precision every surface shows, so jitter below it sends no new frame. */
-const tenthGiB = (bytes: number) => Math.round(bytes / TENTH_GIB) * TENTH_GIB;
+const MEMORY_STEP_BELOW_GIB = 4 * 1024 ** 2;
+/** The precision surfaces show (MB below a GiB, tenths above), so jitter below it sends no new frame. */
+const roundMemory = (bytes: number) => {
+  const step = bytes < HEAVY_MEMORY_BYTES ? MEMORY_STEP_BELOW_GIB : TENTH_GIB;
+  return Math.round(bytes / step) * step;
+};
 
 const queueCommand = (entry: HeavyQueueEntry & { readonly startedAt: string }): HeavyCommand => ({
   source: "queue",
@@ -116,9 +120,9 @@ const queueCommand = (entry: HeavyQueueEntry & { readonly startedAt: string }): 
   startedAt: entry.startedAt,
   stoppable: entry.server !== true,
   ...(entry.cpu === undefined ? {} : { cpu: tenth(entry.cpu) }),
-  ...(entry.memory === undefined ? {} : { memory: tenthGiB(entry.memory) }),
+  ...(entry.memory === undefined ? {} : { memory: roundMemory(entry.memory) }),
   ...(entry.peakCpu === undefined ? {} : { peakCpu: tenth(entry.peakCpu) }),
-  ...(entry.peakMemory === undefined ? {} : { peakMemory: tenthGiB(entry.peakMemory) }),
+  ...(entry.peakMemory === undefined ? {} : { peakMemory: roundMemory(entry.peakMemory) }),
 });
 
 /**
@@ -178,9 +182,9 @@ export function classifyHeavyCommands(input: {
         startedAt: DateTime.formatIso(DateTime.makeUnsafe(root.identity.startTimeMs)),
         stoppable: true,
         cpu: tenth(usage.cpu),
-        memory: tenthGiB(usage.memoryBytes),
+        memory: roundMemory(usage.memoryBytes),
         peakCpu: tenth(next.peakCpu),
-        peakMemory: tenthGiB(next.peakMemory),
+        peakMemory: roundMemory(next.peakMemory),
       });
     }
   }

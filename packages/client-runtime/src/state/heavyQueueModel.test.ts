@@ -7,6 +7,7 @@ import {
   heavyCommandKey,
   moveTarget,
   ordinal,
+  peakUsageLine,
   projectForCommand,
   projectForCwd,
   queueSummary,
@@ -100,6 +101,12 @@ describe("usageLine", () => {
       "peak 1.0 cores · 1.0 GB",
     ],
     ["nothing before a sample", e("r", true), { machine }, null],
+    [
+      "megabytes below a gigabyte",
+      { ...e("r", true), cpu: 0.6, memory: 32 * 1024 ** 2, peakCpu: 0.9, peakMemory: 1000 },
+      { machine },
+      "Using 0.6 cores (8%) · 32 MB · peak 0.9 cores · 1 MB",
+    ],
     [
       "usual in seconds",
       e("b"),
@@ -212,5 +219,15 @@ describe("heavy commands", () => {
   it("keys a queue row by its entry and a direct one by its process identity", () => {
     expect(heavyCommandKey(command({ entryId: "q1" }))).toBe("q1");
     expect(heavyCommandKey(command({}))).toBe("12:34");
+  });
+});
+
+describe("peakUsageLine", () => {
+  it.each([
+    [{ peakCpu: 0.9, peakMemory: 40 * 1024 ** 2 }, "Peak 0.9 cores · 40 MB"],
+    [{ peakCpu: 3, peakMemory: 2.4 * 1024 ** 3 }, "Peak 3.0 cores · 2.4 GB"],
+    [{ cpu: 1, memory: 1 }, null],
+  ])("formats %o", (usage, expected) => {
+    expect(peakUsageLine(usage)).toBe(expected);
   });
 });

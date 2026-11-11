@@ -3,16 +3,17 @@ import {
   heavyCommandKey,
   projectForCommand,
   readableLabel,
-  runningUsageLine,
+  peakUsageLine,
 } from "@t3tools/client-runtime/state/heavyQueueModel";
 import type { EnvironmentId, HeavyCommand } from "@t3tools/contracts";
-import { BotIcon, ListOrderedIcon, SquareIcon, TerminalIcon } from "lucide-react";
+import { BotIcon, CircleStopIcon, ListOrderedIcon, TerminalIcon } from "lucide-react";
 
 import { useProjects } from "../../state/entities";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Elapsed } from "./HeavyQueueBody";
+import { GUTTER, Metrics } from "./ResourceMetrics";
 import { useStopHeavyCommand } from "./useKillTarget";
 
 const SOURCE_ICON: Record<HeavyCommand["source"], typeof BotIcon> = {
@@ -41,72 +42,78 @@ function Row({
   const projects = useProjects();
   const project = projectForCommand(command, projects, threads.projectIdOfThread);
   const Icon = SOURCE_ICON[command.source];
-  const usage = runningUsageLine(command, cpuCount);
+  const peak = peakUsageLine(command);
   const program = readableLabel(command.label);
   const { threadId } = command;
+  const usage =
+    command.cpu === undefined || command.memory === undefined
+      ? null
+      : { cpuPercent: (command.cpu / Math.max(1, cpuCount)) * 100, rssBytes: command.memory };
   return (
-    <div className="flex items-center gap-1.5 py-1.5 pl-2 pr-3 hover:bg-foreground/8">
-      <span className="flex size-5 shrink-0 items-center justify-center text-muted-foreground [&>svg]:size-3">
+    <div className="flex items-center gap-2 py-1.5 pl-3 pr-3 hover:bg-foreground/8">
+      <span className="flex size-4 shrink-0 items-center justify-center text-muted-foreground [&>svg]:size-3.5">
         <Icon aria-hidden />
       </span>
       <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-1.5 text-3xs text-muted-foreground">
-          {project === undefined ? null : (
-            <ProjectFavicon project={project} className="size-3.5 shrink-0" />
-          )}
-          <span className="truncate">{project?.title ?? "No project"}</span>
-          <span className="shrink-0 rounded-sm bg-foreground/8 px-1">
-            {HEAVY_COMMAND_SOURCE_LABEL[command.source]}
-          </span>
-        </div>
-        <div className="truncate text-xs font-medium text-foreground/90">{command.name}</div>
-        {program === command.name ? null : (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <div className="cursor-default truncate font-mono text-3xs text-muted-foreground" />
-              }
-            >
-              {program}
-            </TooltipTrigger>
-            <TooltipPopup side="top" className="max-w-sm break-all">
-              {command.label} · pid {command.pid}
-            </TooltipPopup>
-          </Tooltip>
-        )}
-        {usage === null ? null : (
-          <div className="truncate text-3xs text-muted-foreground">{usage}</div>
-        )}
-        {threadId === null ? null : (
-          <button
-            type="button"
-            className="block max-w-full cursor-pointer truncate rounded-sm text-3xs text-muted-foreground hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
-            onClick={() => threads.onOpenThread(threadId)}
-          >
-            {threads.threadTitle(threadId) ?? "Open thread"}
-          </button>
-        )}
-      </div>
-      <span className="shrink-0 text-right text-2xs tabular-nums text-muted-foreground">
-        <Elapsed since={command.startedAt} prefix="Running ·" />
-      </span>
-      {command.stoppable && stop.canStop ? (
         <Tooltip>
           <TooltipTrigger
             render={
-              <Button
-                variant="ghost-destructive"
-                size="icon-micro"
-                aria-label={`Stop ${command.name}`}
-                onClick={() => void stop.stop(command)}
-              />
+              <div className="cursor-default truncate text-xs font-medium text-foreground/90" />
             }
           >
-            <SquareIcon aria-hidden />
+            {command.name}
           </TooltipTrigger>
-          <TooltipPopup side="top">Stop</TooltipPopup>
+          <TooltipPopup side="top" className="max-w-sm break-all">
+            {program === command.name ? command.label : program} · pid {command.pid}
+          </TooltipPopup>
         </Tooltip>
-      ) : null}
+        <div className="flex min-w-0 items-center gap-1 text-3xs text-muted-foreground">
+          {project === undefined ? null : (
+            <ProjectFavicon project={project} className="size-3 shrink-0" />
+          )}
+          <span className="max-w-[40%] shrink-0 truncate">{project?.title ?? "No project"}</span>
+          <span className="shrink-0 rounded-sm bg-foreground/8 px-1">
+            {HEAVY_COMMAND_SOURCE_LABEL[command.source]}
+          </span>
+          {threadId === null ? null : (
+            <button
+              type="button"
+              className="min-w-0 cursor-pointer truncate rounded-sm hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+              onClick={() => threads.onOpenThread(threadId)}
+            >
+              {threads.threadTitle(threadId) ?? "Open thread"}
+            </button>
+          )}
+          <span className="shrink-0 tabular-nums">
+            <Elapsed since={command.startedAt} prefix="·" />
+          </span>
+        </div>
+      </div>
+      <Tooltip>
+        <TooltipTrigger render={<div className="cursor-default" />}>
+          <Metrics usage={usage} />
+        </TooltipTrigger>
+        <TooltipPopup side="top">{peak ?? "No peak sampled yet"}</TooltipPopup>
+      </Tooltip>
+      <span className={GUTTER}>
+        {command.stoppable && stop.canStop ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="ghost-destructive"
+                  size="icon-micro"
+                  aria-label={`Stop ${command.name}`}
+                  onClick={() => void stop.stop(command)}
+                />
+              }
+            >
+              <CircleStopIcon aria-hidden />
+            </TooltipTrigger>
+            <TooltipPopup side="top">Stop</TooltipPopup>
+          </Tooltip>
+        ) : null}
+      </span>
     </div>
   );
 }
