@@ -18,12 +18,14 @@ import {
   PROJECT_SCOPED_SERVER_SETTING_KEYS,
   requiredScopesForProjectMutation,
   requiredScopesForServerSettingsPatch,
+  pickWorktreeCleanupRules,
   resolveIdleCompaction,
   resolveProjectProviderInstanceEnabled,
   resolveProviderInstanceEnabled,
   ServerSettings,
   ServerSettingsPatch,
   withIdleCompaction,
+  WorktreeCleanupRules,
 } from "./settings.ts";
 
 const decodeMemoryHubSettings = Schema.decodeSync(MemoryHubSettings);
@@ -182,6 +184,18 @@ describe("merged worktree cleanup", () => {
     expect(() =>
       decodeServerSettingsPatch({ storageCleanup: { worktreeMerged: "sometimes" } }),
     ).toThrow();
+  });
+
+  it("copies only worktree rules from the machine's storage settings", () => {
+    const { storageCleanup } = decodeServerSettings({
+      storageCleanup: { worktreeMerged: "after-days", worktreeMergedAfterDays: 4 },
+    });
+    const rules = pickWorktreeCleanupRules(storageCleanup);
+    expect(rules).toMatchObject({ worktreeMerged: "after-days", worktreeMergedAfterDays: 4 });
+    expect(Object.keys(rules).toSorted()).toEqual(
+      Object.keys(WorktreeCleanupRules.fields).toSorted(),
+    );
+    expect(Object.keys(storageCleanup).length).toBeGreaterThan(Object.keys(rules).length);
   });
 });
 
