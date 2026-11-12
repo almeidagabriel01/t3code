@@ -21,6 +21,7 @@ import {
   resolveAddProjectEntry,
   createCommandPaletteSearchState,
   reduceCommandPaletteSearchState,
+  splitThreadItems,
   type CommandPaletteUiState,
 } from "./CommandPalette.logic";
 
@@ -188,6 +189,30 @@ describe("buildThreadActionItems", () => {
     const remoteItem = items.find((item) => item.description === "Remote project · Current thread");
     await remoteItem?.run();
     expect(runThread).toHaveBeenCalledWith(remote);
+  });
+
+  it("re-aims thread rows to open beside the routed thread, leaving it out", async () => {
+    const routed = makeThread();
+    const other = makeThread({ environmentId: EnvironmentId.make("remote-copy") });
+    const elsewhere = makeThread({ environmentId: EnvironmentId.make("elsewhere") });
+    const runThread = vi.fn(async () => {});
+    const items = buildThreadActionItems({
+      threads: [routed, other, elsewhere],
+      projectByKey: new Map(),
+      icon: null,
+      runThread,
+    });
+    const openBeside = vi.fn(async () => {});
+    const split = splitThreadItems(
+      items,
+      `${routed.environmentId}:${routed.id}`,
+      (ref) => ref.environmentId !== "elsewhere",
+      openBeside,
+    );
+    expect(split.map((item) => item.value)).toEqual([`split:thread:remote-copy:${other.id}`]);
+    await split[0]?.run();
+    expect(openBeside).toHaveBeenCalledWith({ environmentId: "remote-copy", threadId: other.id });
+    expect(runThread).not.toHaveBeenCalled();
   });
 
   it("ranks thread title matches ahead of contextual project-name matches", () => {

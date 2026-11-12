@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildThreadActionMenuItems, type ThreadActionMenuState } from "./threadActionMenu.logic";
+import {
+  buildThreadActionMenuItems,
+  threadActionRequiresOperate,
+  type ThreadActionMenuState,
+} from "./threadActionMenu.logic";
 
 const baseState: ThreadActionMenuState = {
   canOperate: true,
@@ -72,6 +76,12 @@ describe("buildThreadActionMenuItems", () => {
     expect(items.some((item) => item.id === "link-card")).toBe(canLinkCard);
     const readOnly = buildThreadActionMenuItems({ ...baseState, canOperate: false, canLinkCard });
     expect(readOnly.find((item) => item.id === "link-card")?.disabled).toBeUndefined();
+  });
+
+  it.each([true, false])("offers opening side by side only beside another thread (%s)", (can) => {
+    const items = buildThreadActionMenuItems({ ...baseState, canOpenSideBySide: can });
+    expect(items.some((item) => item.id === "open-side-by-side")).toBe(can);
+    expect(threadActionRequiresOperate("open-side-by-side")).toBe(false);
   });
 
   it("disables archive and turning into a project while the thread is running", () => {

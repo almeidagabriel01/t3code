@@ -3,6 +3,7 @@ import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled"
 
 export type ThreadActionMenuId =
   | "find"
+  | "open-side-by-side"
   | "new-thread-on-branch"
   | "filter-by-project"
   | "turn-into-project"
@@ -77,6 +78,8 @@ export function buildDraftActionMenuItems(options: {
 export interface ThreadActionMenuState {
   readonly canOperate: boolean;
   readonly canFind?: boolean;
+  /** Another thread is open, so this one can sit beside it. */
+  readonly canOpenSideBySide?: boolean;
   readonly branch: string | null;
   readonly projectFilter: {
     readonly label: string;
@@ -117,6 +120,7 @@ export interface ThreadActionMenuState {
 export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean {
   return ![
     "find",
+    "open-side-by-side",
     "new-thread-on-branch",
     "project-settings",
     "mark-unread",
@@ -139,6 +143,9 @@ export function buildThreadActionMenuItems(
   const items: ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> = [
     ...(state.canFind
       ? [{ id: "find" as const, label: "Find in thread", icon: "text-search" }]
+      : []),
+    ...(state.canOpenSideBySide
+      ? [{ id: "open-side-by-side" as const, label: "Open side by side", icon: "columns-2" }]
       : []),
     ...(state.branch
       ? [

@@ -113,6 +113,8 @@ import {
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
 import { useUiStateStore } from "../uiStateStore";
+import { applyThreadTabDrop } from "../threadTabsStore";
+import { readThreadTabsProjectKey } from "./chat/threadTabsProject";
 import {
   getThreadKeysToDeselectAfterDelete,
   useThreadSelectionStore,
@@ -1008,6 +1010,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const openAddProjectCommandPalette = () => openCommandPalette({ open: "add-project" });
   const routeThreadRef = resolveActiveThreadRouteRef(routeTarget, routeDraftThread);
   const routeThreadKey = routeThreadRef ? scopedThreadKey(routeThreadRef) : null;
+  // Only an open server thread has tabs, and only its own project's threads open beside it.
+  const tabsRouteRef = routeTarget?.kind === "server" ? routeTarget.threadRef : null;
 
   // A selection made under one scope can hold threads the next scope hides.
   // The viewport outlives the scope and does not anchor, so a new list starts at the top.
@@ -1655,14 +1659,21 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     const threads = contextDragThreads();
     const threadRef = parseScopedThreadKey(contextDragKeyRef.current ?? "");
     const title = (threadRef && readThreadShell(threadRef)?.title.trim()) || "Thread";
-    moveThreadContextDragGhost(point, { title, count: threads.length });
+    moveThreadContextDragGhost(point, {
+      title,
+      count: threads.length,
+      threadKey: threads.length === 1 ? contextDragKeyRef.current : null,
+      projectKey: readThreadTabsProjectKey(threadRef),
+    });
     return true;
   };
   const dropThreadContextDrag = (point: { x: number; y: number }) => {
     if (contextDragKeyRef.current === null) return false;
     if (!pointerOutsideThreadList(point)) return false;
     restoreDragScroll();
-    dropThreadContext(point, contextDragThreads());
+    dropThreadContext(point, contextDragThreads(), {
+      projectKey: readThreadTabsProjectKey(parseScopedThreadKey(contextDragKeyRef.current ?? "")),
+    });
     return true;
   };
   // useSensor memoizes options identity; fresh options rebuild DndContext and every sortable row.
@@ -2546,6 +2557,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
             buildThreadActionMenuItems({
+              canOpenSideBySide:
+                tabsRouteRef !== null &&
+                scopedThreadKey(tabsRouteRef) !== threadKey &&
+                readThreadTabsProjectKey(tabsRouteRef) !== null &&
+                readThreadTabsProjectKey(tabsRouteRef) === readThreadTabsProjectKey(threadRef),
               canOperate: readEnvironmentScope(
                 threadRef.environmentId,
                 AuthOrchestrationOperateScope,
@@ -2707,6 +2723,21 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           case "handoff":
             openThreadHandoffDialog(threadRef);
             return;
+          case "open-side-by-side": {
+            const projectKey = readThreadTabsProjectKey(tabsRouteRef);
+            if (tabsRouteRef === null || projectKey === null) return;
+            if (
+              applyThreadTabDrop(projectKey, scopedThreadKey(tabsRouteRef), threadKey, {
+                beside: true,
+              })
+            ) {
+              void router.navigate({
+                to: "/$environmentId/$threadId",
+                params: buildThreadRouteParams(threadRef),
+              });
+            }
+            return;
+          }
           case "regenerate-title": {
             if (isRegeneratingTitle) return;
             const result = await updateThreadMetadata({
