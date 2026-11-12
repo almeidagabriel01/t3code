@@ -339,9 +339,9 @@ Agents can also read any pull request in the environment (checks, reviews, diff)
 it yourself, use the row menu in the **Linked pull requests** panel. In the thread details card, a
 watched pull request shows an eye; click it to stop watching.
 
-A watched thread counts as working between wakes, so it does not auto-settle, and on mobile it
-stays in the **Working** section. In the sidebar's **Activity** view on web and desktop, it appears in **Priority**
-instead; **Mark all as read** does not stop a watch. Agents stop watching when they hand the work
+A watched thread counts as working between wakes, so it does not auto-settle. In the sidebar's
+**Activity** view on web and desktop, it appears in **Priority**; **Mark all as read** does not stop
+a watch. Agents stop watching when they hand the work
 back to you, and the thread then returns to your inbox.
 
 Cross-repository links use a project on the same host. Azure DevOps reviews require a project checked

@@ -160,7 +160,6 @@ export interface Preferences {
   readonly projectGroupingEnabled?: boolean;
   readonly projectGroupingMode?: SidebarProjectGroupingMode;
   readonly toolCallVisibility?: ToolCallVisibility;
-  readonly workingShelfEnabled?: boolean;
   readonly threadOrder?: SidebarThreadOrder;
   /** Unset means the shared client default. */
   readonly usagePaceEnabled?: boolean;
@@ -176,7 +175,6 @@ export interface Preferences {
   }>;
   readonly threadListSettledShelfExpanded?: boolean;
   readonly threadListSnoozedShelfExpanded?: boolean;
-  readonly threadListWorkingShelfExpanded?: boolean;
   readonly homeAssistantsCollapsed?: boolean;
   readonly homeAgentsDoneExpanded?: boolean;
   readonly homeAssistantsShowAll?: boolean;
@@ -256,7 +254,6 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     projectGroupingEnabled?: boolean;
     projectGroupingMode?: SidebarProjectGroupingMode;
     toolCallVisibility?: ToolCallVisibility;
-    workingShelfEnabled?: boolean;
     threadOrder?: SidebarThreadOrder;
     usagePaceEnabled?: boolean;
     usageProjectionEnabled?: boolean;
@@ -268,7 +265,6 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     modelFavorites?: Preferences["modelFavorites"];
     threadListSettledShelfExpanded?: boolean;
     threadListSnoozedShelfExpanded?: boolean;
-    threadListWorkingShelfExpanded?: boolean;
     homeAssistantsCollapsed?: boolean;
     homeAgentsDoneExpanded?: boolean;
     homeAssistantsShowAll?: boolean;
@@ -397,9 +393,6 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   if (isToolCallVisibility(parsed.toolCallVisibility)) {
     preferences.toolCallVisibility = parsed.toolCallVisibility;
   }
-  if (typeof parsed.workingShelfEnabled === "boolean") {
-    preferences.workingShelfEnabled = parsed.workingShelfEnabled;
-  }
   if (parsed.threadOrder === "activity" || parsed.threadOrder === "fixed") {
     preferences.threadOrder = parsed.threadOrder;
   }
@@ -440,9 +433,6 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (typeof parsed.threadListSnoozedShelfExpanded === "boolean") {
     preferences.threadListSnoozedShelfExpanded = parsed.threadListSnoozedShelfExpanded;
-  }
-  if (typeof parsed.threadListWorkingShelfExpanded === "boolean") {
-    preferences.threadListWorkingShelfExpanded = parsed.threadListWorkingShelfExpanded;
   }
   for (const key of [
     "homeAssistantsCollapsed",

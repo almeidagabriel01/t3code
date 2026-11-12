@@ -66,7 +66,6 @@ import {
   ThreadListV2ShowMoreRow,
   ThreadListV2SnoozedShelfHeader,
   ThreadListV2SubagentRow,
-  ThreadListV2WorkingShelfHeader,
 } from "./thread-list-v2-items";
 import { useThreadRowProviderInstanceResolver } from "./thread-provider-instance";
 import type { ThreadPrPresentation } from "../../state/thread-pr-presentation";
@@ -249,11 +248,8 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     settledShelfExpanded,
     snoozedShelfExpanded,
     threadOrder,
-    workingShelfEnabled,
-    workingShelfExpanded,
     toggleSettledShelf,
     toggleSnoozedShelf,
-    toggleWorkingShelf,
   } = useThreadListV2ShelfPreferences();
   const now = useThreadListNow(threads);
   const listEnvironments = useAtomValue(threadListEnvironmentsAtom);
@@ -293,8 +289,6 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     pendingOrder,
     shelfPreferencesLoaded,
     threadOrder,
-    workingShelfEnabled,
-    workingShelfExpanded,
     snoozedShelfExpanded,
     settledShelfExpanded,
     selectedThreadKey: props.selectedThreadKey ?? null,
@@ -372,7 +366,6 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     listEnvironments,
     threadSearchMatchByKey,
     threadOrder,
-    workingShelfEnabled,
   };
   useThreadJumpShortcuts(listItems, handleSelectThread);
   const sidebarItemsAreEqual = (previous: SidebarListItem, item: SidebarListItem): boolean => {
@@ -505,16 +498,6 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
             thread={item.thread}
             showTrailingDivider={item.showTrailingDivider}
             onSelectThread={handleSelectThread}
-          />
-        );
-      case "v2-working-shelf":
-        return (
-          <ThreadListV2WorkingShelfHeader
-            count={item.count}
-            disabled={item.disabled}
-            expanded={item.expanded}
-            onToggle={toggleWorkingShelf}
-            pane="sidebar"
           />
         );
       case "v2-snoozed-shelf":

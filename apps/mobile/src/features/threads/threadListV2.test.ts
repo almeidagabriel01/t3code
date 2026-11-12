@@ -1,5 +1,4 @@
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
-import { createInboxReturnTracker } from "@t3tools/client-runtime/state/thread-inbox";
 import { presentThreadShell } from "@t3tools/client-runtime/state/models";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
@@ -1696,7 +1695,7 @@ describe("buildThreadListV2ListItems row-state stamps", () => {
   });
 });
 
-describe("Working section beta", () => {
+describe("open thread order", () => {
   const running = {
     status: "running" as const,
     activeRunId: null,
@@ -1705,189 +1704,73 @@ describe("Working section beta", () => {
     lastError: null,
     updatedAt: NOW,
   };
-  const finishedAt = (id: string, completedAt: string) =>
-    makeThread({
-      id: ThreadId.make(id),
-      title: id,
-      createdAt: "2026-06-01T00:00:00.000Z",
-      latestRun: {
-        runId: RunId.make(`run-${id}`),
-        status: "completed",
-        requestedAt: "2026-06-01T00:00:00.000Z",
-        startedAt: "2026-06-01T00:00:00.000Z",
-        completedAt,
-        assistantMessageId: null,
-      },
+  const run = (id: string, requestedAt: string, completedAt: string | null) => ({
+    runId: RunId.make(`run-${id}`),
+    status: completedAt === null ? ("running" as const) : ("completed" as const),
+    requestedAt,
+    startedAt: requestedAt,
+    completedAt,
+    assistantMessageId: null,
+  });
+  const ids = (layout: ReturnType<typeof buildThreadListV2Items>) =>
+    layout.items.map((item) => item.thread.id);
+
+  it("ranks an agent-started run above a seen idle thread, even with the old Working shelf saved on", () => {
+    const agentRun = makeThread({
+      id: ThreadId.make("agent-run"),
+      title: "agent-run",
+      runtime: running,
+      lastVisitedAt: "2026-06-01T01:00:00.000Z",
+      latestUserAuthoredMessageAt: "2026-06-01T00:00:00.000Z",
+      latestRun: run("agent-run", "2026-06-01T02:00:00.000Z", null),
     });
-  const threads = [
-    finishedAt("finished-early", "2026-06-01T01:00:00.000Z"),
-    finishedAt("finished-late", "2026-06-01T03:00:00.000Z"),
-    makeThread({ id: ThreadId.make("working"), title: "working", runtime: running }),
-    makeThread({
-      id: ThreadId.make("asks-approval"),
-      title: "asks-approval",
-      createdAt: "2026-06-01T02:00:00.000Z",
-      runtime: running,
-      hasPendingApprovals: true,
-    }),
-    makeThread({
-      id: ThreadId.make("pinned-working"),
-      title: "pinned-working",
-      runtime: running,
-      pinnedAt: "2026-06-01T00:00:00.000Z",
-    }),
-  ];
-  const build = (input: Partial<Parameters<typeof buildThreadListV2Items>[0]> = {}) =>
-    buildThreadListV2Items({
+    const seenIdle = makeThread({
+      id: ThreadId.make("seen-idle"),
+      title: "seen-idle",
+      lastVisitedAt: "2026-06-01T09:00:00.000Z",
+      latestUserAuthoredMessageAt: "2026-06-01T05:00:00.000Z",
+      latestRun: run("seen-idle", "2026-06-01T05:00:00.000Z", "2026-06-01T06:00:00.000Z"),
+    });
+    const savedPreferences = { workingShelfEnabled: true, workingShelfExpanded: false };
+    const layout = buildThreadListV2Items({
+      ...savedPreferences,
+      threads: [seenIdle, agentRun],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+    });
+    expect(ids(layout)).toEqual(["agent-run", "seen-idle"]);
+  });
+
+  it("promotes a finished run only when its row shows it unseen", () => {
+    const finished = (id: string, lastVisitedAt: string | null, sentAt: string) =>
+      makeThread({
+        id: ThreadId.make(id),
+        title: id,
+        lastVisitedAt,
+        latestUserAuthoredMessageAt: sentAt,
+        latestRun: run(id, sentAt, "2026-06-01T03:00:00.000Z"),
+      });
+    const threads = [
+      finished("never-visited", null, "2026-06-01T01:00:00.000Z"),
+      finished("unseen", "2026-06-01T02:00:00.000Z", "2026-06-01T00:00:00.000Z"),
+      finished("seen-newer-send", "2026-06-01T04:00:00.000Z", "2026-06-01T02:00:00.000Z"),
+    ];
+    const layout = buildThreadListV2Items({
       threads,
       environmentId: null,
       searchQuery: "",
       now: NOW,
-      workingShelfEnabled: true,
-      ...input,
     });
-  const ids = (layout: ReturnType<typeof buildThreadListV2Items>) =>
-    layout.items.map((item) => item.thread.id);
-
-  it("folds unpinned working threads into a collapsed shelf", () => {
-    const layout = build();
-    expect(ids(layout)).toEqual([
-      "pinned-working",
-      "finished-late",
-      "asks-approval",
-      "finished-early",
-    ]);
-    expect(layout.workingCount).toBe(1);
-    expect(layout.workingShelfHeaderIndex).toBe(4);
-
-    const off = build({ workingShelfEnabled: false });
-    expect(ids(off)).toContain("working");
-    expect(off.workingCount).toBe(0);
-  });
-
-  it("keeps a thread you just messaged at the top while it works", () => {
-    const runFrom = (id: string, requestedAt: string) => ({
-      runId: RunId.make(`run-${id}`),
-      status: "running" as const,
-      requestedAt,
-      startedAt: requestedAt,
-      completedAt: null,
-      assistantMessageId: null,
-    });
-    const messaged = makeThread({
-      id: ThreadId.make("messaged"),
-      title: "messaged",
-      runtime: running,
-      latestUserAuthoredMessageAt: "2026-06-01T05:00:00.000Z",
-      latestRun: runFrom("messaged", "2026-06-01T05:00:00.000Z"),
-    });
-    const woken = makeThread({
-      id: ThreadId.make("woken"),
-      title: "woken",
-      runtime: running,
-      latestUserAuthoredMessageAt: "2026-06-01T01:00:00.000Z",
-      latestRun: runFrom("woken", "2026-06-01T06:00:00.000Z"),
-    });
-    const seen = threads
-      .slice(0, 2)
-      .map((thread) => ({ ...thread, lastVisitedAt: "2026-06-01T09:00:00.000Z" }));
-    const layout = build({ threads: [...seen, messaged, woken] });
-    expect(ids(layout)).toEqual(["messaged", "finished-late", "finished-early"]);
-    expect(layout.workingCount).toBe(1);
-  });
-
-  it("keeps an inactive row in Working during the shared grace and returns it on expiry", () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date(NOW));
-    const tracker = createInboxReturnTracker();
-    const working = makeThread({ id: ThreadId.make("grace"), title: "grace", runtime: running });
-    const inactive = { ...working, runtime: null };
-    const render = () =>
-      build({
-        threads: [inactive],
-        workingShelfExpanded: true,
-        isWorking: tracker.isWorking,
-        inboxReturnAt: tracker.returnedAt,
-      });
-    try {
-      tracker.observe([working]);
-      tracker.observe([inactive]);
-      expect(render().workingCount).toBe(1);
-      expect(render().items[0]?.thread.runtime).toBeNull();
-      vi.advanceTimersByTime(2_000);
-      expect(render().workingCount).toBe(0);
-      expect(ids(render())).toEqual(["grace"]);
-      expect(tracker.returnedAt(inactive)).toBe(Date.parse(NOW) + 2_000);
-    } finally {
-      tracker.observe(null);
-      vi.useRealTimers();
-    }
-  });
-
-  it("orders the inbox by the latest return this device observed", () => {
-    const layout = build({
-      inboxReturnAt: (thread) =>
-        thread.id === "finished-early" ? Date.parse("2026-06-01T04:00:00.000Z") : undefined,
-    });
-    expect(ids(layout).slice(1)).toEqual(["finished-early", "finished-late", "asks-approval"]);
-  });
-
-  it("places the shelf after queued tasks and before snoozed and settled threads", () => {
-    const layout = buildThreadListV2Items({
-      threads: [
-        makeThread({ id: ThreadId.make("active"), title: "active" }),
-        makeThread({ id: ThreadId.make("working"), title: "working", runtime: running }),
-        makeThread({
-          id: ThreadId.make("snoozed"),
-          title: "snoozed",
-          runtime: running,
-          snoozedUntil: "2026-06-03T09:00:00.000Z",
-          snoozedAt: "2026-06-01T12:00:00.000Z",
-        }),
-        makeThread({
-          id: ThreadId.make("settled"),
-          title: "settled",
-          settledOverride: "settled",
-          settledAt: NOW,
-        }),
-      ],
-      environmentId: null,
-      searchQuery: "",
-      now: NOW,
-      workingShelfEnabled: true,
-      workingShelfExpanded: true,
-      snoozedShelfExpanded: true,
-    });
-    const items = buildThreadListV2ListItems({
-      items: layout.items,
-      pendingTasks: [makePendingTask("queued")],
-      workingCount: layout.workingCount,
-      workingShelfExpanded: true,
-      workingShelfHeaderIndex: layout.workingShelfHeaderIndex,
-      snoozedCount: layout.snoozedCount,
-      snoozedShelfExpanded: true,
-      snoozedShelfHeaderIndex: layout.snoozedShelfHeaderIndex,
-      settledCount: layout.settledCount,
-      settledShelfHeaderIndex: layout.settledShelfHeaderIndex,
-    });
+    expect(ids(layout)).toEqual(["unseen", "seen-newer-send", "never-visited"]);
     expect(
-      items.map((item) =>
-        item.type === "v2-thread"
-          ? item.item.thread.id
-          : item.type === "v2-pending"
-            ? item.pendingTask.title
-            : item.type,
-      ),
-    ).toEqual([
-      "queued",
-      "active",
-      "v2-working-shelf",
-      "working",
-      "v2-snoozed-shelf",
-      "snoozed",
-      "v2-settled-shelf",
-      "settled",
-    ]);
+      getThreadListV2OrderedSection({
+        threads,
+        section: "active",
+        threadOrder: "activity",
+        now: NOW,
+      }).map((thread) => thread.id),
+    ).toEqual(ids(layout));
   });
 });
 

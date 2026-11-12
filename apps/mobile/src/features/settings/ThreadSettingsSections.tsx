@@ -209,43 +209,26 @@ const THREAD_ORDER_OPTIONS: ReadonlyArray<{
   },
 ];
 
-export function WorkingSectionSettings() {
+export function ThreadOrderSettings() {
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const preferences = useAtomValue(mobilePreferencesAtom);
   const loaded = AsyncResult.isSuccess(preferences);
   const threadOrder = (loaded ? preferences.value.threadOrder : undefined) ?? "activity";
-  const workingShelfEnabled = loaded && preferences.value.workingShelfEnabled === true;
 
   return (
-    <View className="gap-3">
-      <SettingsSection title="Thread order">
-        {THREAD_ORDER_OPTIONS.map((option, index) => (
-          <SettingsChoiceRow
-            key={option.order}
-            label={option.label}
-            description={option.description}
-            selected={loaded && threadOrder === option.order}
-            separated={index > 0}
-            disabled={!loaded}
-            onPress={() => savePreferences({ threadOrder: option.order })}
-          />
-        ))}
-      </SettingsSection>
-      <SettingsSection title="Sidebar">
-        <SettingsSwitchRow
-          icon="bolt.circle"
-          label="Working section"
-          value={workingShelfEnabled && threadOrder === "activity"}
-          disabled={threadOrder === "fixed"}
-          onValueChange={(value) => savePreferences({ workingShelfEnabled: value })}
+    <SettingsSection title="Thread order">
+      {THREAD_ORDER_OPTIONS.map((option, index) => (
+        <SettingsChoiceRow
+          key={option.order}
+          label={option.label}
+          description={option.description}
+          selected={loaded && threadOrder === option.order}
+          separated={index > 0}
+          disabled={!loaded}
+          onPress={() => savePreferences({ threadOrder: option.order })}
         />
-      </SettingsSection>
-      <Text className="px-2 text-sm text-foreground-muted">
-        {threadOrder === "fixed"
-          ? "The Working section is not used while thread order is Fixed."
-          : "Fold threads the agent is working on by itself into a Working section. Threads you message stay at the top, and threads return there when they need you."}
-      </Text>
-    </View>
+      ))}
+    </SettingsSection>
   );
 }
 

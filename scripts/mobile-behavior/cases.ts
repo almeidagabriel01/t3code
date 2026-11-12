@@ -219,20 +219,6 @@ export const CASES: ReadonlyArray<MobileBehaviorCase> = [
     checks: [{ metric: "silentFailure", equals: false }],
   },
   {
-    id: "working-shelf-clears-when-done",
-    area: "status",
-    kind: "bad",
-    source: "#24901",
-    experience: "A finished thread stays in the Working shelf.",
-    scenario: "workingShelfFinish",
-    key: "shelfCountAfter",
-    checks: [
-      { metric: "shelfShownWhileWorking", equals: true },
-      { metric: "shelfCountAfter", equals: 0 },
-      { metric: "statusAfter", equals: "ready" },
-    ],
-  },
-  {
     id: "pending-question-shows-input",
     area: "status",
     kind: "guard",
@@ -240,10 +226,7 @@ export const CASES: ReadonlyArray<MobileBehaviorCase> = [
     experience: "A thread waiting on a question shows as Working instead of needing input.",
     scenario: "pendingQuestion",
     key: "status",
-    checks: [
-      { metric: "status", equals: "input" },
-      { metric: "shelfCount", equals: 0 },
-    ],
+    checks: [{ metric: "status", equals: "input" }],
   },
   {
     id: "running-subagents-not-idle",

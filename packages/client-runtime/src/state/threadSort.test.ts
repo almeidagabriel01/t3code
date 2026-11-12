@@ -384,7 +384,7 @@ describe("sortActiveThreadsByOrderKey", () => {
       thread("done", 1, { latestRun: finished }),
       thread("seen", 40, { latestRun: finished, lastVisitedAt: at(52) }),
       thread("working", 2, { runtime: { status: "running" } }),
-      // Between runs while its subagents work: the Working section counts it, so ranking must too.
+      // Between runs while its subagents work, so it ranks as working.
       thread("waitsOnSubagent", 0, { runtime: { status: "idle" } }),
       thread("idle", 20),
     ];

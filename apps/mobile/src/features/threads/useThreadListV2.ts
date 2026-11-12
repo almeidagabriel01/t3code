@@ -1,7 +1,7 @@
 import { activeSubagentChildrenByParent } from "@t3tools/client-runtime/state/thread-attention";
 import type { OlderSettledScope } from "@t3tools/client-runtime/state/threads";
 import type { EnvironmentId, SidebarThreadOrder } from "@t3tools/contracts";
-import { useMemo, useSyncExternalStore } from "react";
+import { useMemo } from "react";
 
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../../state/olderSettledShelf";
@@ -10,7 +10,6 @@ import {
   buildThreadListV2Items,
   buildThreadListV2ListItems,
   getThreadListV2OrderedSection,
-  threadListInboxReturns,
   threadListV2LayoutTime,
 } from "./threadListV2";
 import { computeThreadMoveAvailability } from "./threadOrder";
@@ -28,17 +27,6 @@ function useKeySet(newlineSeparatedKeys: string): ReadonlySet<string> {
 }
 
 type LayoutInput = Parameters<typeof buildThreadListV2Items>[0];
-
-/**
- * The React Compiler drops unread dependencies, so pass the expired-grace version through
- * this call to keep inbox updates tied to its subscription.
- */
-function observeInbox(
-  threads: Parameters<typeof threadListInboxReturns.observe>[0],
-  _expiredGraceVersion: number,
-) {
-  return threadListInboxReturns.observe(threads);
-}
 
 /**
  * Shelf callbacks prevent compiler caching across the whole derivation, so each stage keeps
@@ -62,25 +50,14 @@ export function useThreadListV2(input: {
   readonly pendingOrder: LayoutInput["pendingOrder"];
   readonly shelfPreferencesLoaded: boolean;
   readonly threadOrder: SidebarThreadOrder;
-  readonly workingShelfEnabled: boolean;
-  readonly workingShelfExpanded: boolean;
   readonly snoozedShelfExpanded: boolean;
   readonly settledShelfExpanded: boolean;
   readonly selectedThreadKey: string | null;
 }) {
-  const { threads, threadOrder, workingShelfEnabled } = input;
+  const { threads, threadOrder } = input;
   const layoutTime = useMemo(
     () => threadListV2LayoutTime({ threads, now: input.now, searchQuery: input.searchQuery }),
     [threads, input.now, input.searchQuery],
-  );
-  // A thread can stop working when the threads change, or when its exit grace expires.
-  const inboxVersion = useSyncExternalStore(
-    threadListInboxReturns.subscribe,
-    threadListInboxReturns.getSnapshot,
-  );
-  const inbox = useMemo(
-    () => observeInbox(workingShelfEnabled ? threads : null, inboxVersion),
-    [threads, workingShelfEnabled, inboxVersion],
   );
   // Compute move availability per section; per-row planning is quadratic.
   const moveAvailability = useMemo(() => {
@@ -149,10 +126,6 @@ export function useThreadListV2(input: {
         settledLimit: input.settledLimit,
         now: layoutTime,
         threadOrder,
-        workingShelfEnabled,
-        workingShelfExpanded: input.workingShelfExpanded,
-        inboxReturnAt: inbox.returnedAt,
-        isWorking: inbox.isWorking,
         snoozedShelfExpanded: input.snoozedShelfExpanded,
         settledShelfExpanded: input.settledShelfExpanded,
         selectedThreadKey: input.selectedThreadKey,
@@ -182,10 +155,6 @@ export function useThreadListV2(input: {
       input.settledLimit,
       layoutTime,
       threadOrder,
-      workingShelfEnabled,
-      input.workingShelfExpanded,
-      inbox.returnedAt,
-      inbox.isWorking,
       input.snoozedShelfExpanded,
       input.settledShelfExpanded,
       input.selectedThreadKey,
@@ -219,9 +188,6 @@ export function useThreadListV2(input: {
       buildThreadListV2ListItems({
         items: layout.items,
         pendingTasks,
-        workingCount: layout.workingCount,
-        workingShelfExpanded: input.workingShelfExpanded,
-        workingShelfHeaderIndex: layout.workingShelfHeaderIndex,
         snoozedCount: layout.snoozedCount,
         snoozedShelfExpanded: input.snoozedShelfExpanded,
         snoozedShelfHeaderIndex: layout.snoozedShelfHeaderIndex,
@@ -241,7 +207,6 @@ export function useThreadListV2(input: {
     [
       layout,
       pendingTasks,
-      input.workingShelfExpanded,
       input.snoozedShelfExpanded,
       input.settledShelfExpanded,
       input.now,

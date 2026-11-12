@@ -79,7 +79,6 @@ import {
   ThreadListV2SubagentRow,
   ThreadListV2ShowMoreRow,
   ThreadListV2SnoozedShelfHeader,
-  ThreadListV2WorkingShelfHeader,
 } from "../threads/thread-list-v2-items";
 import { useThreadRowProviderInstanceResolver } from "../threads/thread-provider-instance";
 import { useOpenThreadPullRequests } from "../threads/use-open-thread-pull-requests";
@@ -468,11 +467,8 @@ export function HomeScreen(props: HomeScreenProps) {
     settledShelfExpanded,
     snoozedShelfExpanded,
     threadOrder,
-    workingShelfEnabled,
-    workingShelfExpanded,
     toggleSettledShelf,
     toggleSnoozedShelf,
-    toggleWorkingShelf,
   } = useThreadListV2ShelfPreferences();
   const now = useThreadListNow(props.threads);
   const listEnvironments = useAtomValue(threadListEnvironmentsAtom);
@@ -512,8 +508,6 @@ export function HomeScreen(props: HomeScreenProps) {
     pendingOrder,
     shelfPreferencesLoaded,
     threadOrder,
-    workingShelfEnabled,
-    workingShelfExpanded,
     snoozedShelfExpanded,
     settledShelfExpanded,
     selectedThreadKey,
@@ -583,16 +577,6 @@ export function HomeScreen(props: HomeScreenProps) {
           thread={item.thread}
           showTrailingDivider={item.showTrailingDivider}
           onSelectThread={selectThread}
-        />
-      );
-    }
-    if (item.type === "v2-working-shelf") {
-      return (
-        <ThreadListV2WorkingShelfHeader
-          count={item.count}
-          disabled={item.disabled}
-          expanded={item.expanded}
-          onToggle={toggleWorkingShelf}
         />
       );
     }
@@ -700,7 +684,6 @@ export function HomeScreen(props: HomeScreenProps) {
     selectedThreadKey,
     threadSearchMatchByKey,
     threadOrder,
-    workingShelfEnabled,
   };
 
   const hasAnyThreads =

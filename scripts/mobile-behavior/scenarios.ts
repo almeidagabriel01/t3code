@@ -362,29 +362,6 @@ export const SCENARIOS = {
     } satisfies Metrics;
   }, failure),
 
-  /** A working thread finishes while Home is open. */
-  workingShelfFinish: Effect.fn("scenario.workingShelfFinish")(function* (ctx: ScenarioContext) {
-    const key = `shelf-${(yield* uuid).slice(0, 8)}`;
-    const threadId = yield* ctx.env.launch("Shelf work", `Run the job. [[eval:hold:${key}]]`);
-    const working = yield* ctx.device.waitFor(
-      "the thread to show as working",
-      (state) => state.threads[threadId] === "working",
-    );
-    yield* ctx.env.release(key);
-    yield* ctx.env.settled(threadId);
-    // The shelf keeps a finished row for WORKING_EXIT_GRACE_MS (2 s) on purpose.
-    yield* Effect.sleep("5 seconds");
-    const after = yield* ctx.device.state;
-    return {
-      shelfShownWhileWorking: shelfCount(working) > 0,
-      shelfCountAfter: shelfCount(after),
-      // For diagnosis: threads the app itself calls working, beside the shelf's count.
-      appWorkingThreads: Object.values(after.threads).filter((status) => status === "working")
-        .length,
-      statusAfter: after.threads[threadId] ?? "missing",
-    } satisfies Metrics;
-  }, failure),
-
   /** A thread asks a question while Home is open. */
   pendingQuestion: Effect.fn("scenario.pendingQuestion")(function* (ctx: ScenarioContext) {
     const threadId = yield* ctx.env.launch("Question", `Ask me first. [[eval:question]]`);
@@ -392,10 +369,7 @@ export const SCENARIOS = {
     yield* Effect.sleep("2 seconds");
     const after = yield* ctx.device.state;
     yield* ctx.env.interruptAll();
-    return {
-      status: after.threads[threadId] ?? "missing",
-      shelfCount: shelfCount(after),
-    } satisfies Metrics;
+    return { status: after.threads[threadId] ?? "missing" } satisfies Metrics;
   }, failure),
 
   /** A thread runs two subagents; Home and the thread must not look idle. */
@@ -582,18 +556,7 @@ const waitForRow = Effect.fn("scenario.waitForRow")(function* (
     if (nodes.some((node) => node.label?.includes(title))) return;
     // A crowded list can hold the new row below the fold; scroll to the top once.
     if (attempt === 4) yield* ctx.device.run(["scroll", "top"]).pipe(Effect.ignore);
-    // A finished row can stay folded in the Working shelf; open it once if it is collapsed.
-    const shelf = nodes.find((node) => /^\d+ working threads?$/.test(node.label ?? ""));
-    const collapsed = (yield* ctx.device.state).homeList?.some(
-      (entry) => entry.type === "v2-working-shelf" && entry.expanded === false,
-    );
-    if (attempt === 10 && collapsed && shelf?.label)
-      yield* ctx.device.press(`label="${shelf.label}"`);
     yield* Effect.sleep("500 millis");
   }
   return yield* new ScenarioFailure({ message: `Row "${title}" never appeared on Home.` });
 });
-
-function shelfCount(state: ProbeState) {
-  return state.homeList?.find((entry) => entry.type === "v2-working-shelf")?.count ?? 0;
-}

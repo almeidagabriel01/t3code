@@ -23,7 +23,7 @@ A case fails when half or more of its graded samples fail, and is `incomplete` w
 - **Scroll.** The probe reads the thread list's state on every JS frame and records each visible row's y on screen. `backwardPx` is the largest move against the drag. `teleports` counts one-frame moves over 400 pt, faster than a real fling. `maxFromEndPx` is the distance from the latest message.
 - **Jank.** JS-thread frames from `requestAnimationFrame` in the probe, UI-thread frames from a worklet loop. Simulators render at 60 Hz, and injected swipes load the simulator's UI thread, so swipe cases grade JS frames only.
 - **Composer.** The draft store, the editor's text from the accessibility tree, whether it expanded, and whether the keyboard is up.
-- **Status.** Each Home row's status from the app's own `resolveThreadListV2Status`, and the Working shelf count, against server state.
+- **Status.** Each Home row's status from the app's own `resolveThreadListV2Status`, against server state.
 
 ## Add a case
 

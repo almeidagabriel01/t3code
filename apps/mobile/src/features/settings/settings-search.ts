@@ -56,7 +56,6 @@ const SETTINGS_SEARCH_TERMS = {
     "group projects",
     "organization",
     "sidebar",
-    "working section",
     "thread order",
     "fixed order",
     "new threads",
