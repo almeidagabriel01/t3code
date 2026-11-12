@@ -36,11 +36,13 @@ import {
   type HeavyEventRecord,
   parseLog,
   requeueRecord,
+  startRecord,
   withRecord,
 } from "./heavyNotices.ts";
 import {
   DEFAULT_MACHINE_CONFIG,
   eligibilityOf,
+  intentOf,
   mayPublish,
   nextHealth,
   planRoutes,
@@ -435,6 +437,10 @@ const decideStart = (doc: QueueDoc, id: string, now: number): Decided<StartResul
         // Only a gated Mac start makes the next Mac waiter let it ramp up.
         lastStartAt: gated ? now : doc.lastStartAt,
         holding: decision.holding,
+        events: withRecord(
+          doc.events,
+          startRecord(entry, intentOf(entry, contextOf(doc)(entry.cwd)).intent, admit.runner, now),
+        ),
       },
       result: {
         status: "started",

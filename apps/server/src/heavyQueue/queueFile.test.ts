@@ -643,6 +643,29 @@ describe("Runner in the queue file", () => {
       reason: "Linux is unavailable and nobody answered in time: canceled",
     });
     expect(Queue.read(dir)).toEqual([]);
+    expect(Queue.readDoc(dir).events).toEqual([
+      expect.objectContaining({
+        kind: "deadline",
+        dropped: false,
+        job: expect.objectContaining({ id: "a" }),
+      }),
+    ]);
+  });
+
+  it("logs a Linux-bound job that starts here, and the failure it then exits with", () => {
+    const dir = queueWith(block(config({ runnerWhere: "linux", runnerUnavailable: "mac" })), false);
+    Queue.enqueue(dir, test("a"));
+    expect(Queue.tryStart(dir, "a", NOW)).toMatchObject({ status: "started" });
+    Queue.finish(dir, "a", 1, NOW);
+    expect(Queue.read(dir)).toEqual([]);
+    expect(Queue.readDoc(dir).events).toEqual([
+      expect.objectContaining({ kind: "displaced", cause: "unavailable" }),
+      expect.objectContaining({
+        kind: "ended",
+        code: 1,
+        job: expect.objectContaining({ runner: "mac" }),
+      }),
+    ]);
   });
 
   it("answering sends the waiter where the user said and clears the question", () => {
@@ -662,6 +685,8 @@ describe("Runner in the queue file", () => {
     expect(Queue.read(dir)[0]).toMatchObject({ route: "mac" });
     expect(Queue.read(dir)[0]).not.toHaveProperty("ask");
     expect(Queue.tryStart(dir, "a", NOW)).toMatchObject({ status: "started", workers: 9 });
+    // The user's own move is no surprise.
+    expect(Queue.readDoc(dir).events).toEqual([]);
   });
 
   it("refuses to send exclusive or Mac-only work to Linux, and unknown entries", () => {
@@ -703,6 +728,9 @@ describe("Runner in the queue file", () => {
     Queue.confirmStopped(dir, "a");
     expect(Queue.read(dir)[0]).not.toHaveProperty("unconfirmed");
     expect(Queue.requeue(dir, "gone", {})).toBe(false);
+    expect(Queue.readDoc(dir).events).toEqual([
+      expect.objectContaining({ kind: "linux-lost", dropped: true, unconfirmed: true }),
+    ]);
   });
 
   it("forcing a rerun clears the unconfirmed hold", () => {

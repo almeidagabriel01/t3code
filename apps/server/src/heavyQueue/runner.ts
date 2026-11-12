@@ -493,7 +493,7 @@ const dropHolds = (entry: HeavyQueueEntry, config: RunnerProjectConfig, now: num
       !(askExpired(entry, now) && config.runnerDeadlineAction === "wait")));
 
 /** Where the entry's own settings send it before Linux health is considered. */
-const intentOf = (
+export const intentOf = (
   entry: HeavyQueueEntry,
   context: WorkContext,
 ): { readonly intent: "mac" | "linux" | "automatic"; readonly reason: string } => {

@@ -22,12 +22,12 @@ import {
   confirmStopped,
   defaultQueueDir,
   enqueue,
+  finish,
   gitRootOf,
   modeFor,
   readDoc,
   recordHealth,
   recordSampleIfStale,
-  remove,
   requeue,
   setProgress,
   setQos,
@@ -366,7 +366,8 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
     priority: priority ?? (agent ? "low" : "normal"),
     ...(launch.where === undefined ? {} : { where: launch.where }),
   });
-  process.on("exit", () => remove(dir, id));
+  // The code a failure notice reports; every exit path ends here.
+  process.on("exit", (code) => finish(dir, id, code));
 
   /** What a signal does right now: exit while waiting, or stop the running attempt. */
   let onSignal: (signal: (typeof SIGNALS)[number]) => void = (signal) =>
