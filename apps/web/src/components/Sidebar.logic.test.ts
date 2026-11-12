@@ -27,6 +27,7 @@ import {
   searchSidebarThreads,
   shouldRecedeSidebarThread,
   partitionSidebarThreads,
+  resolveSidebarDropVerb,
   type SidebarThreadAttention,
   resolveSidebarDropTarget,
   planSidebarThreadDrop,
@@ -1129,6 +1130,90 @@ describe("open threads", () => {
     expect(unseen[0]).toBe(visitedHere);
   });
 
+  it("projects an optimistic drop into its section, reordered, and sorts snoozed by wake time", () => {
+    const base = presentThreadShell(localEnvironmentId, makeThreadFixture().source);
+    const thread = (id: string, overrides: Partial<EnvironmentThreadShell> = {}) => ({
+      ...base,
+      id: ThreadId.make(id),
+      createdAt: "2026-03-09T09:00:00.000Z",
+      pinnedAt: null,
+      pinOrderKey: null,
+      activeOrderKey: null,
+      snoozedAt: null,
+      snoozedUntil: null,
+      settledOverride: null,
+      ...overrides,
+    });
+    const keyOf = (entry: EnvironmentThreadShell) =>
+      scopedThreadKey(scopeThreadRef(entry.environmentId, entry.id));
+    const wake = "2099-01-01T00:00:00.000Z";
+    const later = "2099-06-01T00:00:00.000Z";
+    const lateSnoozed = thread("late", {
+      snoozedAt: "2026-03-09T10:00:00.000Z",
+      snoozedUntil: later,
+    });
+    const soonSnoozed = thread("soon", {
+      snoozedAt: "2026-03-09T10:00:00.000Z",
+      snoozedUntil: wake,
+    });
+    const pinnedA = thread("pin-a", { pinnedAt: "2026-03-09T10:00:00.000Z", pinOrderKey: "a" });
+    const pinnedB = thread("pin-b", { pinnedAt: "2026-03-09T10:00:00.000Z", pinOrderKey: "b" });
+    const activeA = thread("act-a", { activeOrderKey: "a" });
+    const activeB = thread("act-b", { activeOrderKey: "b" });
+    const partition = (
+      threads: EnvironmentThreadShell[],
+      optimisticDrop: Parameters<typeof partitionSidebarThreads>[0]["optimisticDrop"],
+    ) =>
+      partitionSidebarThreads({
+        threads,
+        scopedProjectKeys: null,
+        delegatedUnderParent: new Set(),
+        serverConfigs: new Map([[localEnvironmentId, {} as never]]),
+        connectedEnvironmentIds: [],
+        optimisticDrop,
+        threadOrder: "fixed",
+        attention: { lastVisitedAtByKey: {}, openDecisionKeys: new Set() },
+        clockKey: "",
+      });
+    const drop = (
+      moved: EnvironmentThreadShell,
+      section: "pinned" | "active",
+      order: readonly string[] | null,
+      clearsSnooze: boolean,
+    ) => ({
+      key: keyOf(moved),
+      sourceSection: "active" as const,
+      section,
+      occurredAt: "2026-03-09T12:00:00.000Z",
+      clearsSnooze,
+      order,
+      keysAtDrop: new Map<string, string | null>(),
+      assignedKeys: new Map<string, string>(),
+      scopeKeys: new Set<string>(),
+    });
+
+    const sorted = partition([lateSnoozed, soonSnoozed], null);
+    expect(sorted.snoozedThreads.map((entry) => entry.id)).toEqual(["soon", "late"]);
+    expect(sorted.activeThreads).toEqual([]);
+
+    const pinned = partition(
+      [pinnedA, pinnedB],
+      drop(pinnedB, "pinned", [keyOf(pinnedB), keyOf(pinnedA)], true),
+    );
+    expect(pinned.pinnedThreads.map((entry) => entry.id)).toEqual(["pin-b", "pin-a"]);
+
+    const active = partition(
+      [activeA, activeB],
+      drop(activeB, "active", [keyOf(activeB), keyOf(activeA)], true),
+    );
+    expect(active.activeThreads.map((entry) => entry.id)).toEqual(["act-b", "act-a"]);
+
+    const kept = partition([soonSnoozed], drop(soonSnoozed, "active", null, false));
+    expect(kept.activeThreads[0]).toMatchObject({ snoozedUntil: wake });
+    const woken = partition([soonSnoozed], drop(soonSnoozed, "active", null, true));
+    expect(woken.activeThreads[0]).toMatchObject({ snoozedUntil: null });
+  });
+
   describe("dragging", () => {
     const marker = (name: SidebarListMarker): SidebarListItem => ({ kind: "marker", marker: name });
     const row = (key: string, section: SidebarSection): SidebarListItem => ({
@@ -1145,6 +1230,14 @@ describe("open threads", () => {
       marker("settled-header"),
       row("s1", "settled"),
     ];
+
+    it("names the verb a drop performs and none for snoozed or same-section drops", () => {
+      expect(resolveSidebarDropVerb("active", "snoozed")).toBeNull();
+      expect(resolveSidebarDropVerb("active", "active")).toBeNull();
+      expect(resolveSidebarDropVerb("active", "pinned")).toBe("pin");
+      expect(resolveSidebarDropVerb("pinned", "active")).toBe("unpin");
+      expect(resolveSidebarDropVerb("snoozed", "active")).toBe("wake");
+    });
 
     it("drops a pinned thread into the active order", () => {
       expect(resolveSidebarDropTarget(items, "p1", "a2")).toEqual({
