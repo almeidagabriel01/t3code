@@ -196,6 +196,13 @@ narrow windows these shortcuts move to the bottom of the sidebar.
 that belong to no project, pick **No project** in **New card**: those cards live on their own
 board, and an agent started from one runs as a thread without a project. On mobile, the board is
 under **Settings → Board**, where **New board** creates a board for a project that has none.
+
+A thread's project board and its scheduled tasks can also sit beside the conversation: choose
+**Kanban** or **Scheduled tasks** from the right panel's **+** menu, or search the command palette.
+The board switches between the project and **No project**, folds each column, and moves a card by
+dragging it or with **Move to** in its **⋯** menu. Scheduled tasks shows today's and tomorrow's
+runs above the project's tasks, each with run now, pause and resume. On mobile, both are in a
+thread's menu.
 Long-press a card for quick actions: rename, move, labels, due date, archive, and delete. **New
 card** on the all-projects board adds a card to any project, and the card screen takes attachments.
 

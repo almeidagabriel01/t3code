@@ -84,7 +84,7 @@ const card = {
 let root: Root;
 let host: HTMLElement;
 const onOpen = vi.fn();
-const render = () =>
+const render = (openOnPress?: boolean) =>
   act(() =>
     root.render(
       <KanbanCardMenu
@@ -92,6 +92,7 @@ const render = () =>
         board={board}
         card={card}
         onOpen={onOpen}
+        openOnPress={openOnPress}
       >
         <span>tile</span>
       </KanbanCardMenu>,
@@ -159,6 +160,11 @@ describe("KanbanCardMenu", () => {
     expect(host.querySelector("[data-long-press]")?.getAttribute("data-long-press")).toBe("true");
     await press("open");
     expect(onOpen).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens on a plain press behind a visible actions button", () => {
+    render(true);
+    expect(host.querySelector("[data-long-press]")?.getAttribute("data-long-press")).toBe("false");
   });
 
   it("renames through a prompt, ignoring blank or unchanged titles", async () => {
