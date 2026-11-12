@@ -9,6 +9,7 @@ import {
   checkLinux,
   confirmed,
   remoteCommand,
+  removeRunnerCopy,
   resolveRemoto,
   startLinuxRun,
   stopRemote,
@@ -156,5 +157,16 @@ describe("ssh calls around a Linux run", () => {
     const answer = await stopRemote(DEFAULT_MACHINE_CONFIG, env(fake(body)), "app-1", 5);
     expect(answer).toBe(result);
     expect(confirmed(answer)).toBe(clean);
+  });
+
+  it.each([
+    ["echo removed", "removed"],
+    ["echo busy", "busy"],
+    ["echo nonsense", "unreachable"],
+    ["exit 255", "unreachable"],
+  ] as const)("a copy removal printing %j is %s", async (body, result) => {
+    expect(await removeRunnerCopy(DEFAULT_MACHINE_CONFIG, env(fake(body)), "app-0123abcd")).toBe(
+      result,
+    );
   });
 });
