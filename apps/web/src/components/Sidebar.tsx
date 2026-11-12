@@ -108,6 +108,7 @@ import {
 } from "../sidebarProjectGrouping";
 import { useUiStateStore } from "../uiStateStore";
 import { useOpenDecisionThreadKeys } from "../state/decisions";
+import { useRightPanelStore } from "../rightPanelStore";
 import { applyThreadTabDrop } from "../threadTabsStore";
 import { readThreadTabsProjectKey } from "./chat/threadTabsProject";
 import {
@@ -1169,6 +1170,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     if (isMobile) {
       setOpenMobile(false);
     }
+    // A sidebar pick lands on the thread's chat tab, even over a file tab it had open.
+    useRightPanelStore.getState().showChat(threadRef);
     return router.navigate({
       to: "/$environmentId/$threadId",
       params: buildThreadRouteParams(threadRef),
@@ -2572,6 +2575,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 beside: true,
               })
             ) {
+              useRightPanelStore.getState().showChat(threadRef);
               void router.navigate({
                 to: "/$environmentId/$threadId",
                 params: buildThreadRouteParams(threadRef),

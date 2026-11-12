@@ -118,7 +118,15 @@ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { resolveThreadReferenceCopyTarget } from "@t3tools/client-runtime/thread-reference";
 import { resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
 import { useAtomValue } from "@effect/atom-react";
-import { type SetStateAction, use, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  type ReactNode,
+  type SetStateAction,
+  use,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { BackgroundThreadContext } from "./chat/backgroundThread";
 import { WorkspaceMutationIdContext } from "./chat/ChatMarkdownMedia";
 import { useLocation, useNavigate } from "@tanstack/react-router";
@@ -418,6 +426,8 @@ type ChatViewProps =
        * parent's right panel passes that panel; a page embedding a thread passes true.
        */
       embedded?: SideChatParentPanel | boolean;
+      /** A tab group's strip; it shows this thread's file tabs, so the view adds no row of its own. */
+      renderGroupTabStrip?: (pendingFileIds: ReadonlySet<string>) => ReactNode;
       routeKind: "server";
       draftId?: never;
     }
@@ -428,6 +438,7 @@ type ChatViewProps =
       reserveTitleBarControlInset?: boolean;
       forceExpandedMobileComposer?: boolean;
       embedded?: never;
+      renderGroupTabStrip?: never;
       routeKind: "draft";
       draftId: DraftId;
     };
@@ -443,6 +454,7 @@ export default function ChatView(props: ChatViewProps) {
     reserveTitleBarControlInset = true,
     forceExpandedMobileComposer = false,
     embedded: embeddedProp,
+    renderGroupTabStrip,
   } = props;
   const parentPanel = typeof embeddedProp === "object" ? embeddedProp : undefined;
   const embedded = embeddedProp !== undefined && embeddedProp !== false;
@@ -1128,6 +1140,7 @@ export default function ChatView(props: ChatViewProps) {
     routeThreadRef,
     enabled: !embedded && routeKind === "server" && !rightPanelMaximized,
   });
+  const tabStrip = renderGroupTabStrip ?? threadTabs.routeStrip;
   const [threadPanelPopoverHandle] = useState(PopoverCreateHandle);
   const [chatCanvasStore] = useState(createChatCanvasStore);
 
@@ -3265,7 +3278,13 @@ export default function ChatView(props: ChatViewProps) {
   };
 
   if (!activeThread) {
-    return embedded ? null : <NoActiveThreadState />;
+    if (!embedded) return <NoActiveThreadState />;
+    // The strip stays, so a tab whose thread is gone can still be closed.
+    return renderGroupTabStrip ? (
+      <div className="flex min-w-0 flex-1 flex-col">
+        {renderGroupTabStrip(EMPTY_PENDING_FILE_SURFACE_IDS)}
+      </div>
+    ) : null;
   }
 
   const renderSurfaceContent = (
@@ -3473,10 +3492,11 @@ export default function ChatView(props: ChatViewProps) {
               />
             </header>
           )}
-          {threadTabs.routeStrip}
-
-          {activeThreadRef && mainFileSurfaces.length > 0 ? (
+          {tabStrip ? (
+            tabStrip(pendingFileSurfaceIds)
+          ) : activeThreadRef && mainFileSurfaces.length > 0 ? (
             <MainFileTabs
+              title={activeThread.title}
               files={mainFileSurfaces}
               activeFileId={activeMainFileSurface?.id ?? null}
               pendingIds={pendingFileSurfaceIds}

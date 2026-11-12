@@ -1,5 +1,9 @@
 import { createMemoryHistory } from "@tanstack/react-router";
-import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  scopedThreadKey,
+  scopeProjectRef,
+  scopeThreadRef,
+} from "@t3tools/client-runtime/environment";
 import { ThreadId } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import type * as Context from "effect/Context";
@@ -14,6 +18,7 @@ import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { __setClientSettingsForTests } from "~/hooks/useSettings";
 import { selectThreadRightPanelState, useRightPanelStore } from "~/rightPanelStore";
 import { getRouter } from "~/router";
+import { useThreadTabsStore } from "~/threadTabsStore";
 import {
   ENVIRONMENT_ID,
   PROJECT_ID,
@@ -253,8 +258,59 @@ it("keeps an open file tab mounted behind the chat, so it returns where it was",
   useRightPanelStore.getState().showChat(ref);
   await vi.waitFor(() => expect(panel?.getAttribute("aria-hidden")).toBe("true"));
   expect(panel?.isConnected).toBe(true);
-  await page.getByRole("button", { name: "plan.html", exact: true }).click();
+  // The file's tab sits in the thread tab row, inside its own thread's block.
+  expect(tab.element().closest("[data-thread-tab]")?.getAttribute("data-thread-tab")).toBe(
+    scopedThreadKey(ref),
+  );
+  await tab.click();
   await vi.waitFor(() => expect(panel?.hasAttribute("aria-hidden")).toBe(false));
+});
+
+it("shows a split group's file tabs in that group's own strip", async () => {
+  await page.viewport(1400, 900);
+  const left = threadWithHistory("split-left", 1);
+  const right = threadWithHistory("split-right", 1);
+  using _environment = installFakeEnvironment([left, right]);
+  using _tabs = { [Symbol.dispose]: () => useThreadTabsStore.setState({ byProject: {} }) };
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const leftKey = scopedThreadKey(scopeThreadRef(ENVIRONMENT_ID, left.id));
+  const rightRef = scopeThreadRef(ENVIRONMENT_ID, right.id);
+  const rightKey = scopedThreadKey(rightRef);
+  useThreadTabsStore.setState({
+    byProject: {
+      [`${ENVIRONMENT_ID}:${PROJECT_ID}`]: {
+        groups: [
+          { id: "main", tabs: [leftKey], active: leftKey },
+          { id: "g2", tabs: [rightKey], active: rightKey },
+        ],
+        layout: {
+          type: "split",
+          id: "s1",
+          direction: "horizontal",
+          ratio: 0.5,
+          first: { type: "leaf", groupId: "main" },
+          second: { type: "leaf", groupId: "g2" },
+        },
+        focusedGroupId: "main",
+      },
+    },
+  });
+  useRightPanelStore.getState().openFile(rightRef, "docs/notes.md");
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${left.id}`] }),
+  );
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, { router: false });
+
+  const tab = page.getByRole("tab", { name: "notes.md" });
+  await expect.element(tab).toBeVisible();
+  expect(tab.element().closest("[data-thread-tab]")?.getAttribute("data-thread-tab")).toBe(
+    rightKey,
+  );
+  expect(document.querySelectorAll('[role="tablist"][aria-label="Open tabs"]')).toHaveLength(2);
 });
 
 it("opens the thread actions menu for an older settled thread the shell leaves out", async () => {

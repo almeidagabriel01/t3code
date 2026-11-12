@@ -16,6 +16,7 @@ import { makeThreadFixture } from "../test-fixtures";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { __setClientSettingsForTests, getClientSettings } from "../hooks/useSettings";
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
+import { selectActiveMainFileSurface, useRightPanelStore } from "../rightPanelStore";
 import { useProjects, useQuietThreadShells } from "../state/entities";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import type { Project } from "../types";
@@ -187,5 +188,50 @@ describe("sidebar render isolation", () => {
     await userEvent.keyboard(`{/${modifier}}`);
     expect(rowRenders()).toBeGreaterThan(beforeRelease);
     expect(jumpLabelsSince(beforeRelease)).toEqual([]);
+  });
+});
+
+describe("sidebar thread pick", () => {
+  it("lands on the thread's chat tab, even over a file tab it had showing", async () => {
+    const activeProject = project("active");
+    const threads = [threadShell(activeProject.id, 0), threadShell(activeProject.id, 1)];
+    const routeThreadRef: ScopedThreadRef = {
+      environmentId: activeProject.environmentId,
+      threadId: threads[0]!.id,
+    };
+    const picked: ScopedThreadRef = {
+      environmentId: activeProject.environmentId,
+      threadId: threads[1]!.id,
+    };
+    vi.mocked(useProjects).mockReturnValue([activeProject]);
+    vi.mocked(useQuietThreadShells).mockReturnValue(threads);
+    vi.mocked(useThreadRouteTarget).mockReturnValue({ kind: "server", threadRef: routeThreadRef });
+    vi.mocked(useHandleNewThread).mockReturnValue({
+      activeDraftThread: null,
+      activeThread: null,
+      defaultProjectRef: {
+        environmentId: activeProject.environmentId,
+        projectId: activeProject.id,
+      },
+      defaultProjectFallbackReady: true,
+      handleNewThread: vi.fn().mockResolvedValue(null),
+      routeDraftId: null,
+      routeThreadRef,
+    });
+    useRightPanelStore.setState({ byThreadKey: {}, userActionRevisionByThreadKey: {} });
+    useRightPanelStore.getState().openFile(picked, "src/x.ts");
+    await using screen = await render(
+      <SidebarProvider>
+        <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+      </SidebarProvider>,
+    );
+
+    await userEvent.click(screen.getByText("Thread 1").first());
+    expect(
+      selectActiveMainFileSurface(useRightPanelStore.getState().byThreadKey, picked),
+    ).toBeNull();
+    await vi.waitFor(() =>
+      expect(screen.router?.state.location.pathname).toBe(`/local/${threads[1]!.id}`),
+    );
   });
 });
