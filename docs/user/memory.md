@@ -22,6 +22,9 @@ Choose **Remember something**, then pick its scope: **All projects**, **Project*
 Search a memory, open it to read its history, or edit it. Forgetting a memory removes its content, and
 other devices drop it when they sync; it is never imported again.
 
+From a thread, **Memory** in the right panel (on mobile, **Project → Memory** in the thread menu)
+lists that project's memories to search, edit or forget without leaving the thread.
+
 If search coverage is incomplete, an empty result does not prove a memory is missing. Clear the
 search to browse instead.
 

@@ -66,6 +66,10 @@ or waited, and why a waiting job has not started ("waiting for room: needs
 ~4 GB, 1.2 GB free", "letting the last one ramp up", "paused"). On mobile it is
 under Settings → Maintenance.
 
+To see only one project's jobs, open **Heavy work** from a thread's right panel
+(on mobile, **Project → Heavy work** in the thread menu). Waiting jobs keep their
+place in the whole queue.
+
 - **Slots.** Settings → Maintenance → **Heavy work** sets how many jobs run at
   once (default 3; 1 is strictly one at a time). The next job starts only when
   the machine has room for what that command used in its last runs, and a few
