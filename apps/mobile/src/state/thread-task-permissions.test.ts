@@ -9,6 +9,7 @@ import {
   RuntimeRequestId,
   TurnItemId,
   type ModelSelection,
+  type OrchestrationMessageContext,
   type OrchestrationV2ThreadProjection,
   type RuntimeMode,
   type ServerConfig,
@@ -30,6 +31,7 @@ const state = vi.hoisted(() => ({
   draft: {
     text: "Keep my draft",
     attachments: [] as DraftComposerImageAttachment[],
+    context: undefined as OrchestrationMessageContext | undefined,
     modelSelection: undefined as ModelSelection | undefined,
     runtimeMode: undefined as RuntimeMode | undefined,
   },
@@ -41,6 +43,9 @@ const state = vi.hoisted(() => ({
   compactDue: false,
   setFreshPending: vi.fn(),
   clearDraft: vi.fn(),
+  cleanUpAttachments: vi.fn(),
+  appendAttachments: vi.fn(),
+  mergeDraft: vi.fn(),
   approve: vi.fn(),
   answer: vi.fn(),
   feedback: vi.fn(),
@@ -162,10 +167,10 @@ vi.mock("./use-composer-drafts", async () => {
     },
     updateComposerDraftSettings: state.updateSettings,
     ensureComposerDraftsLoaded: () => {},
-    scheduleUnusedComposerAttachmentCleanup: () => {},
-    appendComposerDraftAttachments: vi.fn(),
+    scheduleUnusedComposerAttachmentCleanup: state.cleanUpAttachments,
+    appendComposerDraftAttachments: state.appendAttachments,
     appendComposerDraftText: vi.fn(),
-    mergeComposerDraftContent: vi.fn(),
+    mergeComposerDraftContent: state.mergeDraft,
     removeComposerDraftAttachment: vi.fn(),
     useComposerDraft: () => state.draft,
     useComposerDraftSettings: () => state.draft,
@@ -201,6 +206,7 @@ beforeEach(() => {
   state.draft = {
     text: "Keep my draft",
     attachments: [],
+    context: undefined,
     modelSelection: undefined,
     runtimeMode: undefined,
   };
@@ -357,9 +363,24 @@ describe("mobile task permissions", () => {
       model: "gpt-5.4",
       options: [{ id: "reasoningEffort", value: "xhigh" }],
     };
+    // The side chat's message carries the composer's images and their records.
+    const image: DraftComposerImageAttachment = {
+      type: "image",
+      id: "image",
+      name: "shot.png",
+      mimeType: "image/png",
+      sizeBytes: 3,
+      previewUri: "file:///shot.png",
+    };
+    const context = {
+      version: 1,
+      records: [{ kind: "image", attachmentId: "image" }],
+    } as unknown as OrchestrationMessageContext;
     state.draft = {
       ...state.draft,
       text: "/side why does this fail?",
+      attachments: [image],
+      context,
       modelSelection: selection,
       runtimeMode: "approval-required",
     };
@@ -380,9 +401,14 @@ describe("mobile task permissions", () => {
       { environmentId: "secondary", threadId: "thread" },
       "why does this fail?",
       { runtimeMode: "approval-required", modelSelection: selection },
+      { attachments: [image], context },
     );
     expect(state.enqueue).not.toHaveBeenCalled();
-    expect(state.clearDraft).toHaveBeenCalledExactlyOnceWith("secondary:thread");
+    // The attachment files stay until the side chat has them.
+    expect(state.clearDraft).toHaveBeenCalledExactlyOnceWith("secondary:thread", {
+      deferAttachmentCleanup: true,
+    });
+    expect(state.cleanUpAttachments).toHaveBeenCalledExactlyOnceWith([image]);
     expect(state.draft.text).toBe("");
 
     // A side chat that did not start gives the text back, after anything typed meanwhile.
@@ -401,6 +427,16 @@ describe("mobile task permissions", () => {
       expect(await useThreadComposerState({ startSideChat }).onSendMessage()).toBeNull();
       expect(startSideChat).toHaveBeenCalledOnce();
       expect(state.draft.text).toBe(restored);
+      // The image and its record come back too, even past the attachment cap.
+      expect(state.appendAttachments).toHaveBeenCalledExactlyOnceWith("secondary:thread", [image], {
+        allowOverflow: true,
+      });
+      expect(state.mergeDraft).toHaveBeenCalledExactlyOnceWith("secondary:thread", {
+        text: "",
+        context,
+        attachments: [],
+      });
+      expect(state.cleanUpAttachments).not.toHaveBeenCalled();
       // The composer says why the text is back.
       expect(appAtomRegistry.get(threadComposerErrorsAtom)["secondary:thread"]?.message).toMatch(
         /did not start/,
@@ -417,6 +453,63 @@ describe("mobile task permissions", () => {
     expect(startSideChat).not.toHaveBeenCalled();
     expect(state.clearDraft).not.toHaveBeenCalled();
     expect(Alert.alert).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    {
+      name: "refuses added context",
+      text: "/side why?",
+      records: [{ kind: "thread" }],
+      attachments: 0,
+      alert: [
+        "Side chats take text, images and files",
+        "Remove the added context, then send it again.",
+      ],
+    },
+    {
+      name: "asks for a question when there is nothing to send",
+      text: "/side",
+      records: [],
+      attachments: 0,
+      alert: ["Ask a side question", "Type the question after /side, then send it."],
+    },
+    {
+      name: "sends attachments without a question",
+      text: "/side",
+      records: [{ kind: "file", attachmentId: "image" }],
+      attachments: 1,
+      alert: null,
+    },
+  ])("/side $name", async ({ text, records, attachments, alert }) => {
+    state.grantedEnvironments.add("secondary");
+    state.serverConfig = {
+      ...state.serverConfig,
+      environment: { capabilities: { sideChats: true } },
+    } as ServerConfig;
+    state.draft = {
+      ...state.draft,
+      text,
+      attachments: Array.from({ length: attachments }, () => ({
+        type: "image" as const,
+        id: "image",
+        name: "shot.png",
+        mimeType: "image/png",
+        sizeBytes: 3,
+        previewUri: "file:///shot.png",
+      })),
+      context: { version: 1, records } as unknown as OrchestrationMessageContext,
+    };
+    const startSideChat = vi.fn(async () => true);
+    expect(await useThreadComposerState({ startSideChat }).onSendMessage()).toBeNull();
+    expect(state.enqueue).not.toHaveBeenCalled();
+    if (alert === null) {
+      expect(startSideChat).toHaveBeenCalledOnce();
+      expect(Alert.alert).not.toHaveBeenCalled();
+    } else {
+      expect(startSideChat).not.toHaveBeenCalled();
+      expect(state.clearDraft).not.toHaveBeenCalled();
+      expect(Alert.alert).toHaveBeenCalledExactlyOnceWith(...alert);
+    }
   });
 
   it("rechecks a retained send callback before clearing or queueing the draft", async () => {
