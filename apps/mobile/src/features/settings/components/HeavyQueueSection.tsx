@@ -16,6 +16,16 @@ import {
   type MoveAction,
 } from "@t3tools/client-runtime/state/heavyQueueModel";
 import {
+  ASK_TITLE,
+  askRemaining,
+  heavyModeLine,
+  RUNNER_POLICY_LABEL,
+  routeActions,
+  runnerBadge,
+  type RouteAction,
+  RUNNER_UNCONFIRMED_NOTE,
+} from "@t3tools/client-runtime/state/runnerModel";
+import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
@@ -25,6 +35,8 @@ import {
   type EnvironmentId,
   type HeavyCommand,
   type HeavyQueueEntry,
+  type HeavyQueueState,
+  type RunnerWhere,
 } from "@t3tools/contracts";
 import { useEffect, useState } from "react";
 import { Alert } from "react-native";
@@ -53,12 +65,76 @@ type Commands = {
   readonly cancel: (entry: HeavyQueueEntry) => void;
   readonly setPriority: (id: string, priority: "low" | "high") => void;
   readonly setRule: (root: string, priority: "first" | "last" | null) => void;
+  readonly route: (entry: HeavyQueueEntry, action: RouteAction) => void;
 };
+
+const ASK_MAC: RouteAction = {
+  runner: "mac",
+  label: RUNNER_POLICY_LABEL.mac,
+  confirm: null,
+  force: false,
+};
+const ASK_WAIT: RouteAction = {
+  runner: "linux",
+  label: RUNNER_POLICY_LABEL.wait,
+  confirm: null,
+  force: false,
+};
+
+function RunnerAskRows(props: {
+  readonly entry: HeavyQueueEntry;
+  readonly ask: NonNullable<HeavyQueueEntry["ask"]>;
+  readonly actions: ReadonlyArray<RouteAction>;
+  readonly canRoute: boolean;
+  readonly canChange: boolean;
+  readonly commands: Commands;
+}) {
+  const { entry, commands } = props;
+  const [now, setNow] = useState(() => Date.now());
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- one-second countdown while the question is on screen
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  // Running here may need the confirmation routeActions gives a run Linux has not confirmed stopped.
+  const mac = props.actions.find((action) => action.runner === "mac") ?? ASK_MAC;
+  return (
+    <>
+      <ListRowLayout
+        icon="exclamationmark.triangle"
+        label={ASK_TITLE[props.ask.reason]}
+        description="Choose where it runs before the time runs out."
+        detail={askRemaining(props.ask.deadlineAt, now)}
+      />
+      <SettingsActionRow
+        icon="laptopcomputer"
+        label={ASK_MAC.label}
+        disabled={!props.canRoute}
+        onPress={() => commands.route(entry, mac)}
+      />
+      <SettingsActionRow
+        icon="hourglass"
+        label={ASK_WAIT.label}
+        disabled={!props.canRoute}
+        onPress={() => commands.route(entry, ASK_WAIT)}
+      />
+      <SettingsActionRow
+        icon="xmark"
+        label="Cancel"
+        tone="danger"
+        disabled={!props.canChange}
+        onPress={() => commands.cancel(entry)}
+      />
+    </>
+  );
+}
 
 function QueueEntryRows(props: {
   readonly environmentId: EnvironmentId;
   readonly entries: ReadonlyArray<HeavyQueueEntry>;
   readonly entry: HeavyQueueEntry;
+  readonly state: HeavyQueueState;
+  readonly canRoute: boolean;
   readonly position: number | null;
   readonly reason: string | undefined;
   readonly usage: string | null;
@@ -79,7 +155,10 @@ function QueueEntryRows(props: {
   );
   const origin = thread?.title ?? entry.cwd.split(/[\\/]/).findLast(Boolean) ?? entry.cwd;
   const running = position === null;
+  const badge = runnerBadge(entry, props.state);
+  const actions = routeActions(entry, props.state);
   const description = [
+    badge?.label,
     readableLabel(entry.label),
     props.usage,
     project?.title,
@@ -90,6 +169,7 @@ function QueueEntryRows(props: {
       : `Waiting ${formatDuration(entry.createdAt, props.now)}`,
     props.reason,
     entry.note,
+    entry.unconfirmed === true ? RUNNER_UNCONFIRMED_NOTE : undefined,
   ]
     .filter(Boolean)
     .join(" · ");
@@ -107,6 +187,26 @@ function QueueEntryRows(props: {
         description={description}
         {...(position === null ? {} : { detail: `#${position}` })}
       />
+      {entry.ask === undefined ? (
+        actions.map((action) => (
+          <SettingsActionRow
+            key={action.runner}
+            icon={action.runner === "mac" ? "laptopcomputer" : "server.rack"}
+            label={action.label}
+            disabled={!props.canRoute}
+            onPress={() => commands.route(entry, action)}
+          />
+        ))
+      ) : (
+        <RunnerAskRows
+          entry={entry}
+          ask={entry.ask}
+          actions={actions}
+          canRoute={props.canRoute}
+          canChange={props.canChange}
+          commands={commands}
+        />
+      )}
       {running ? null : (
         <>
           <SettingsActionRow
@@ -193,7 +293,7 @@ function QueueEntryRows(props: {
           }
         />
       )}
-      {running && entry.server === true ? null : (
+      {(running && entry.server === true) || entry.ask !== undefined ? null : (
         <SettingsActionRow
           icon={running ? "xmark" : "trash"}
           label={running ? "Stop" : "Remove"}
@@ -206,10 +306,22 @@ function QueueEntryRows(props: {
   );
 }
 
-export function HeavyQueueSection(props: { readonly environmentId: EnvironmentId }) {
-  const { environmentId } = props;
+export interface RunnerMode {
+  readonly enabled: boolean;
+  readonly where: RunnerWhere;
+  readonly overflow: number;
+}
+
+export function HeavyQueueSection(props: {
+  readonly environmentId: EnvironmentId;
+  /** Effective Runner settings, for the line that says what the queue and the Runner do together. */
+  readonly runner: RunnerMode;
+}) {
+  const { environmentId, runner } = props;
   const state = useHeavyQueueState(environmentId);
   const canChange = useAtomValue(heavyQueueEnvironment.move.permissionAtom(environmentId));
+  const canRoute = useAtomValue(heavyQueueEnvironment.route.permissionAtom(environmentId));
+  const route = useAtomCommand(heavyQueueEnvironment.route);
   const move = useAtomCommand(heavyQueueEnvironment.move);
   const startNow = useAtomCommand(heavyQueueEnvironment.startNow);
   const cancel = useAtomCommand(heavyQueueEnvironment.cancel);
@@ -225,6 +337,18 @@ export function HeavyQueueSection(props: { readonly environmentId: EnvironmentId
     setPriority: (id, priority) => void setPriority({ environmentId, input: { id, priority } }),
     move: (id, beforeId) => void move({ environmentId, input: { id, beforeId } }),
     setRule: (root, priority) => void setRule({ environmentId, input: { root, priority } }),
+    route: (entry, action) => {
+      const send = () =>
+        void route({
+          environmentId,
+          input: { id: entry.id, runner: action.runner, force: action.force },
+        });
+      if (action.confirm === null) return send();
+      Alert.alert(heavyEntryName(entry), action.confirm, [
+        { text: "Keep", style: "cancel" },
+        { text: action.label, style: "destructive", onPress: send },
+      ]);
+    },
     startNow: (entry) =>
       Alert.alert("Start now?", `${heavyEntryName(entry)} starts even if the Mac is busy.`, [
         { text: "Cancel", style: "cancel" },
@@ -273,6 +397,16 @@ export function HeavyQueueSection(props: { readonly environmentId: EnvironmentId
         onValueChange={(enabled) => void setEnabled({ environmentId, input: { enabled } })}
       />
       <ListRowLayout icon="timer" label={queueSummary(state)} />
+      <ListRowLayout
+        icon="arrow.left.arrow.right"
+        label={heavyModeLine({
+          queueEnabled: state.enabled,
+          queuePaused: state.paused,
+          runnerEnabled: runner.enabled,
+          where: runner.where,
+          overflow: runner.overflow,
+        })}
+      />
       <SettingsSwitchRow
         icon="pause"
         label="Pause queue"
@@ -349,6 +483,8 @@ export function HeavyQueueSection(props: { readonly environmentId: EnvironmentId
             environmentId={environmentId}
             entries={entries}
             entry={entry}
+            state={state}
+            canRoute={canRoute}
             position={position}
             now={now}
             reason={state.reasons[entry.id]}

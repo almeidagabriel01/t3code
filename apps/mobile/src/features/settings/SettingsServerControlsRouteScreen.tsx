@@ -13,6 +13,7 @@ import {
   type WorktreeSubmodules,
   PROJECT_SCOPED_SERVER_SETTING_KEYS,
   type ProjectScopedServerSettingKey,
+  RUNNER_PROJECT_KEYS,
 } from "@t3tools/contracts";
 import { useRef, useState } from "react";
 import { View } from "react-native";
@@ -46,6 +47,7 @@ import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import { AutoSettleSettingsRows } from "./ThreadSettingsSections";
 import { KeepAwakeSection } from "./components/KeepAwakeSection";
 import { HeavyCommandsSection, HeavyQueueSection } from "./components/HeavyQueueSection";
+import { RunnerSection } from "./components/RunnerSection";
 import { WorktreeSnapshotsSection } from "./components/WorktreeSnapshotsSection";
 import { FallbackModelsSection } from "./components/FallbackModelsSection";
 import { FolderModelsSection } from "./components/FolderModelsSection";
@@ -79,7 +81,7 @@ const PAGE_PROJECT_KEYS: Record<SettingsPage, readonly ProjectScopedServerSettin
     "branchNamePrefix",
     "branchNameInstructions",
   ],
-  maintenance: ["continueThreadsAfterServerUpdate"],
+  maintenance: ["continueThreadsAfterServerUpdate", ...RUNNER_PROJECT_KEYS],
 };
 
 const SUBMODULE_CHOICES: ReadonlyArray<{
@@ -246,7 +248,9 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
       if (queued?.key === targetsKey) write({ ...patch, ...queued.patch });
     });
   };
-  const clearProjectOverrides = () => {
+  const clearProjectOverrides = (
+    keys: readonly ProjectScopedServerSettingKey[] = PAGE_PROJECT_KEYS[props.page],
+  ) => {
     if (
       writeInFlight.current ||
       !targets.every((target) =>
@@ -254,7 +258,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
       )
     )
       return;
-    const writes = planMobileScopedSettingsClear(targets, PAGE_PROJECT_KEYS[props.page]);
+    const writes = planMobileScopedSettingsClear(targets, keys);
     if (writes.length === 0) return;
     writeInFlight.current = true;
     setPendingTargets(targets);
@@ -312,7 +316,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                 )}
                 pending={pendingWrites > 0}
                 disabled={!canWriteSettings}
-                onClear={clearProjectOverrides}
+                onClear={() => clearProjectOverrides()}
               />
             ) : null}
             {props.page === "threads" ? (
@@ -576,8 +580,33 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                   <HeavyCommandsSection environmentId={reference.environment.environmentId} />
                 ) : null}
                 {!projectSelected ? (
-                  <HeavyQueueSection environmentId={reference.environment.environmentId} />
+                  <HeavyQueueSection
+                    environmentId={reference.environment.environmentId}
+                    runner={{
+                      enabled: reference.settings.runnerEnabled,
+                      where: reference.settings.runnerWhere,
+                      overflow: reference.settings.runnerOverflow,
+                    }}
+                  />
                 ) : null}
+                <RunnerSection
+                  environmentId={reference.environment.environmentId}
+                  settings={reference.settings}
+                  projectSelected={projectSelected}
+                  overridden={(key) =>
+                    displayTargets.some((target) => target.sources[key] === "project")
+                  }
+                  mixed={(key) =>
+                    displayTargets.some(
+                      (target) =>
+                        JSON.stringify(target.settings[key]) !==
+                        JSON.stringify(reference.settings[key]),
+                    )
+                  }
+                  disabledFor={disabledFor}
+                  write={write}
+                  reset={(key) => clearProjectOverrides([key])}
+                />
                 {!projectSelected ? (
                   <WorktreeSnapshotsSection
                     value={

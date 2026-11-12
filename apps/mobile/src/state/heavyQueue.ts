@@ -19,6 +19,9 @@ const EMPTY: HeavyQueueState = {
   claudeHookInstalled: false,
   deviceIdleMinutes: 20,
   machine: null,
+  linux: null,
+  macOnly: [],
+  routes: {},
 };
 
 /** Run order, running entries first; empty while loading or when an older server rejects it. */
