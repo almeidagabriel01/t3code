@@ -1231,7 +1231,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "heavy-work-max",
-    title: "Run up to N heavy jobs at once",
+    title: "Jobs at once on this Mac",
     to: "/settings/maintenance",
     searchTerms: ["heavy work queue concurrency parallel slots tests builds simulators"],
   },
@@ -1240,6 +1240,26 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Pause heavy work queue",
     to: "/settings/maintenance",
     searchTerms: ["heavy work queue hold stop starting"],
+  },
+  {
+    id: "heavy-work-cpu-ceiling",
+    title: "CPU limit",
+    to: "/settings/maintenance",
+    searchTerms: ["heavy work queue mac cpu limit ceiling busy percent room"],
+  },
+  {
+    id: "heavy-work-memory-floor",
+    title: "Keep memory free",
+    to: "/settings/maintenance",
+    searchTerms: ["heavy work queue mac memory ram free floor percent low"],
+  },
+  {
+    id: "heavy-work-over-limit",
+    title: "Over the limit for",
+    to: "/settings/maintenance",
+    searchTerms: [
+      "heavy work queue runner hybrid sustained spike seconds limit wait move linux mac",
+    ],
   },
   {
     id: "heavy-work-claude-hook",
@@ -1263,13 +1283,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "runner-where",
     title: RUNNER_SETTING_COPY.runnerWhere.title,
     to: "/settings/maintenance",
-    searchTerms: ["runner this mac linux automatic offload"],
-  },
-  {
-    id: "runner-overflow",
-    title: RUNNER_SETTING_COPY.runnerOverflow.title,
-    to: "/settings/maintenance",
-    searchTerms: ["runner automatic overflow busy jobs threshold linux"],
+    searchTerms: ["runner this mac linux hybrid automatic offload balance both queues"],
   },
   {
     id: "runner-linux-commands",
@@ -1320,6 +1334,20 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/maintenance",
     scope: "environment",
     searchTerms: ["runner linux slots concurrency parallel"],
+  },
+  {
+    id: "runner-linux-cpu-ceiling",
+    title: RUNNER_SETTING_COPY.runnerLinuxCpuCeilingPercent.title,
+    to: "/settings/maintenance",
+    scope: "environment",
+    searchTerms: ["runner linux cpu limit ceiling load busy percent"],
+  },
+  {
+    id: "runner-linux-memory-floor",
+    title: RUNNER_SETTING_COPY.runnerLinuxMemoryFloorPercent.title,
+    to: "/settings/maintenance",
+    scope: "environment",
+    searchTerms: ["runner linux memory ram free floor percent"],
   },
   {
     id: "runner-heartbeat",

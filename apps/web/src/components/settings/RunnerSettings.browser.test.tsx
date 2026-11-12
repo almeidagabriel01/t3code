@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   state: null as unknown as Pick<HeavyQueueState, "enabled" | "paused" | "linux">,
   settings: {} as Record<string, unknown>,
   mixed: [] as string[],
+  target: null as string | null,
   update: vi.fn(),
 }));
 
@@ -30,9 +31,13 @@ vi.mock("./useScopedSettings", () => ({
   useUpdateScopedSettings: () => mocks.update,
 }));
 vi.mock("./settingsLayout", () => ({
-  SettingsSection: ({ title, children }: { title: string; children: ReactNode }) => (
-    <section aria-label={title}>{children}</section>
+  SettingsSection: (props: { title: string; headerAction?: ReactNode; children: ReactNode }) => (
+    <section aria-label={props.title}>
+      {props.headerAction}
+      {props.children}
+    </section>
   ),
+  useSettingsSearchTargetId: () => mocks.target,
   SettingResetButton: ({ label, onClick }: { label: string; onClick: () => void }) => (
     <button type="button" aria-label={`Reset ${label}`} onClick={onClick}>
       Reset
@@ -76,6 +81,7 @@ function setup(
     scope?: string;
     environmentIds?: string[];
     mixed?: string[];
+    target?: string;
     state?: Partial<typeof mocks.state>;
   } = {},
 ) {
@@ -87,119 +93,160 @@ function setup(
   mocks.state = { enabled: true, paused: false, linux: null, ...over.state };
   mocks.settings = { ...RUNNER_DEFAULTS, ...settings };
   mocks.mixed = over.mixed ?? [];
+  mocks.target = over.target ?? null;
   return render(<RunnerSettingsSection />, { router: false }); // rows are mocked
 }
 
 const patches = () => mocks.update.mock.calls.map(([patch]) => patch);
+const ON = { runnerEnabled: true } as const;
 
-it("writes each Runner row to its own setting", async () => {
-  await using screen = await setup();
+it("writes each Runner control to its own setting", async () => {
+  await using screen = await setup(ON);
   await userEvent.click(screen.getByRole("switch", { name: "Use the Runner" }));
-  const where = screen.getByRole("combobox", { name: "Where heavy work runs" });
-  await expect.element(where).toHaveTextContent("This Mac");
-  await userEvent.click(where);
-  await userEvent.click(screen.getByRole("option", { name: "Automatic" }));
-  await userEvent.click(screen.getByRole("combobox", { name: "When Linux is offline" }));
-  await userEvent.click(screen.getByRole("option", { name: "Wait for Linux" }));
-  await userEvent.click(screen.getByRole("combobox", { name: "If nobody answers" }));
-  await userEvent.click(screen.getByRole("option", { name: "Cancel" }));
-  for (const [label, value] of [
-    ["Send to Linux after", "5"],
-    ["Jobs at once on Linux", "4"],
-    ["Linux host", " pc "],
-  ] as const) {
-    const field = screen.getByLabelText(label);
-    await field.fill(value);
-    await field.element().blur();
-  }
+  const where = screen.getByRole("group", { name: "Where heavy work runs" });
+  await expect
+    .element(where.getByRole("button", { name: "This Mac" }))
+    .toHaveAttribute("aria-pressed", "true");
+  await userEvent.click(where.getByRole("button", { name: "Hybrid" }));
+  await userEvent.click(
+    screen
+      .getByRole("group", { name: "When Linux is offline" })
+      .getByRole("button", { name: "Wait for Linux" }),
+  );
+  await userEvent.click(
+    screen
+      .getByRole("group", { name: "If nobody answers" })
+      .getByRole("button", { name: "Cancel" }),
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Increase Jobs at once on Linux" }));
+  const host = screen.getByLabelText("Linux host");
+  await host.fill(" pc ");
+  await host.element().blur();
   expect(patches()).toEqual([
-    { runnerEnabled: true },
+    { runnerEnabled: false },
     { runnerWhere: "automatic" },
     { runnerUnavailable: "wait" },
     { runnerDeadlineAction: "cancel" },
-    { runnerOverflow: 5 },
-    { runnerLinuxSlots: 4 },
+    { runnerLinuxSlots: 3 },
     { runnerHost: "pc" },
   ]);
 });
 
-it("rejects invalid numbers and hosts inline, saves nothing, and restores a failed save", async () => {
-  await using screen = await setup();
-  const overflow = screen.getByLabelText("Send to Linux after");
-  for (const [value, message] of [
-    ["21", "Use 0 to 20 jobs."],
-    ["2.5", "Use a whole number of jobs."],
-    ["", "Use a whole number of jobs."],
-  ] as const) {
-    await overflow.fill(value);
-    await overflow.element().blur();
-    await expect.element(screen.getByText(message)).toBeVisible();
-    await expect.element(overflow).toHaveAttribute("aria-invalid", "true");
-  }
+it("clamps numbers to their range and rejects a bad host inline", async () => {
+  await using screen = await setup(ON);
+  const slots = screen.getByLabelText("Jobs at once on Linux");
+  await slots.fill("99");
+  await slots.element().blur();
   const host = screen.getByLabelText("Linux host");
   await host.fill("-oProxyCommand=x");
   await host.element().blur();
   await expect.element(screen.getByText("A host cannot start with a dash.")).toBeVisible();
-  expect(mocks.update).not.toHaveBeenCalled();
-
-  const minutes = screen.getByLabelText("Wait for an answer");
-  await minutes.fill("9");
-  await minutes.element().blur();
-  expect(patches()).toEqual([{ runnerAskMinutes: 9 }]);
-  mocks.update.mock.calls[0]![1].onFailed();
-  await expect.element(minutes).toHaveValue(String(RUNNER_DEFAULTS.runnerAskMinutes));
+  await expect.element(host).toHaveAttribute("aria-invalid", "true");
+  expect(patches()).toEqual([{ runnerLinuxSlots: 16 }]);
+  await host.fill("pc");
+  await host.element().blur();
+  mocks.update.mock.calls[1]![1].onFailed();
+  await expect.element(host).toHaveValue(RUNNER_DEFAULTS.runnerHost);
 });
 
-it("normalizes a pattern list on blur and refuses one that is too long", async () => {
-  await using screen = await setup();
-  const linux = screen.getByLabelText("Commands that may run on Linux");
-  await expect.element(linux).toHaveValue(RUNNER_DEFAULTS.runnerLinuxCommands.join("\n"));
-  await linux.fill("  vitest \n\nvitest\n lint ");
-  await linux.element().blur();
-  await expect.element(linux).toHaveValue("vitest\nlint");
-  const macOnly = screen.getByLabelText("Commands that stay on this Mac");
-  await macOnly.fill(Array.from({ length: 51 }, (_, index) => `cmd${index}`).join("\n"));
-  await macOnly.element().blur();
-  await expect.element(screen.getByText("Keep it to 50 patterns.")).toBeVisible();
-  expect(patches()).toEqual([{ runnerLinuxCommands: ["vitest", "lint"] }]);
-});
-
-it("says what the queue and the Runner do together, and how Linux is doing", async () => {
-  await using screen = await setup(
-    { runnerEnabled: true, runnerWhere: "automatic" },
-    { state: { enabled: false, linux: LINUX } },
+it("edits a command list as chips: remove, add on Enter, skip repeats, cap the length", async () => {
+  await using screen = await setup({ ...ON, runnerWhere: "linux" });
+  await userEvent.click(
+    screen.getByRole("button", { name: "Remove vitest from Can run on Linux" }),
   );
+  const add = screen.getByLabelText("Add a command to Can run on Linux");
+  await add.fill(" pytest ");
+  await userEvent.keyboard("{Enter}");
+  await add.fill("lint");
+  await userEvent.click(screen.getByRole("button", { name: "Add to Can run on Linux" }));
+  await expect.element(add).toHaveValue("");
+  expect(patches()).toEqual([
+    { runnerLinuxCommands: RUNNER_DEFAULTS.runnerLinuxCommands.filter((c) => c !== "vitest") },
+    { runnerLinuxCommands: [...RUNNER_DEFAULTS.runnerLinuxCommands, "pytest"] },
+  ]);
+
+  await using full = await setup({
+    ...ON,
+    runnerMacOnly: Array.from({ length: 50 }, (_, index) => `cmd${index}`),
+  });
+  const macOnly = full.getByLabelText("Add a command to Always on this Mac");
+  await macOnly.fill("one-more");
+  await userEvent.keyboard("{Enter}");
+  await expect.element(full.getByText("Keep it to 50 patterns.")).toBeVisible();
+  await expect.element(macOnly).toHaveValue("one-more");
+  expect(mocks.update).not.toHaveBeenCalled();
+});
+
+it("shows only the fields the current choices use", async () => {
+  await using off = await setup({ runnerEnabled: false });
+  expect(off.container.textContent).not.toContain("Where heavy work runs");
+  expect(off.container.textContent).not.toContain("Linux host");
+
+  await using mac = await setup({ ...ON, runnerUnavailable: "mac", runnerDropped: "wait" });
+  for (const hidden of ["Can run on Linux", "Wait for an answer", "If nobody answers"]) {
+    expect(mac.container.textContent).not.toContain(hidden);
+  }
+  await expect.element(mac.getByText("Always on this Mac")).toBeVisible();
+
+  await using hybrid = await setup({ ...ON, runnerWhere: "automatic", runnerDropped: "ask" });
+  await expect.element(hybrid.getByText("Can run on Linux")).toBeVisible();
+  await expect.element(hybrid.getByText("Wait for an answer")).toBeVisible();
+});
+
+it("shows a hidden field a search lands on, with why it does nothing now", async () => {
+  await using screen = await setup({ runnerEnabled: false }, { target: "runner-linux-commands" });
+  await expect.element(screen.getByText("Can run on Linux")).toBeVisible();
   await expect
-    .element(
-      screen.getByText(
-        "No queue: jobs start here right away until 3 jobs run, then listed commands go to Linux.",
-      ),
-    )
+    .element(screen.getByText("Only applies while the Runner is on.").first())
     .toBeVisible();
+  expect(screen.container.textContent).not.toContain("Linux host");
+
+  await using folded = await setup(ON, { target: "runner-ssh-timeout" });
+  await expect.element(folded.getByLabelText("SSH timeout")).toBeVisible();
+});
+
+it("folds the connection checks until opened", async () => {
+  await using screen = await setup(ON);
+  expect(screen.container.querySelector('[aria-label="SSH timeout"]')).toBeNull();
+  await userEvent.click(screen.getByRole("button", { name: "Connection checks" }));
+  await expect.element(screen.getByLabelText("SSH timeout")).toBeVisible();
+});
+
+it("says how Linux is doing in the header and on the host row", async () => {
+  await using screen = await setup(ON, { state: { linux: LINUX } });
+  await expect.element(screen.getByText("Linux online", { exact: true })).toBeVisible();
   await expect.element(screen.getByText("Linux online · 0 of 2 running")).toBeVisible();
-  await expect.element(screen.getByRole("switch", { name: "Use the Runner" })).toBeEnabled();
+  await using offline = await setup(ON, { state: { linux: { ...LINUX, online: false } } });
+  // The header and the host row both say it when Linux gives no error.
+  expect(offline.getByText("Linux offline", { exact: true }).elements()).toHaveLength(2);
+  await using checking = await setup(ON, { state: { linux: { ...LINUX, online: null } } });
+  await expect.element(checking.getByText("Checking Linux", { exact: true })).toBeVisible();
 });
 
 it("resets to the built-in value, but leaves machine rows alone in a project", async () => {
-  await using env = await setup({ runnerWhere: "linux", runnerLinuxSlots: 4 });
+  await using env = await setup({ ...ON, runnerWhere: "linux", runnerLinuxSlots: 4 });
   await userEvent.click(env.getByRole("button", { name: "Reset Where heavy work runs" }));
   await userEvent.click(env.getByRole("button", { name: "Reset Jobs at once on Linux" }));
   expect(patches()).toEqual([{ runnerWhere: "mac" }, { runnerLinuxSlots: 2 }]);
 
   await using project = await setup(
-    { runnerWhere: "linux", runnerLinuxSlots: 4, runnerHost: "pc" },
-    { scope: "project", mixed: ["runnerDropped"] },
+    { ...ON, runnerWhere: "linux", runnerLinuxSlots: 4, runnerHost: "pc" },
+    { scope: "project", mixed: ["runnerDropped", "runnerMacOnly"] },
   );
-  await expect
-    .element(project.getByRole("combobox", { name: "When Linux drops a job" }))
-    .toHaveTextContent("Mixed");
+  const dropped = project.getByRole("group", { name: "When Linux drops a job" });
+  for (const name of ["Ask me", "Run on this Mac", "Wait for Linux"]) {
+    await expect
+      .element(dropped.getByRole("button", { name }))
+      .toHaveAttribute("aria-pressed", "false");
+  }
+  await expect.element(project.getByText(/Differs across the selected targets/)).toBeVisible();
   for (const name of ["Reset Jobs at once on Linux", "Reset Linux host"]) {
     expect(project.container.querySelector(`[aria-label="${name}"]`)).toBeNull();
   }
 });
 
-it("keeps the rows editable but drops the mode line across several environments", async () => {
-  await using screen = await setup({}, { environmentIds: ["a", "b"] });
+it("hides the Linux status across several environments", async () => {
+  await using screen = await setup(ON, { environmentIds: ["a", "b"], state: { linux: LINUX } });
   await expect.element(screen.getByRole("switch", { name: "Use the Runner" })).toBeEnabled();
-  expect(screen.container.textContent).not.toContain("Heavy jobs wait their turn");
+  expect(screen.container.textContent).not.toContain("Linux online");
 });
