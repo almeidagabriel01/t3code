@@ -4136,6 +4136,8 @@ export default function ChatView(props: ChatViewProps) {
               return (
                 <div
                   key={surface.id}
+                  {...workspaceAreaProps("file", 1, "File")}
+                  data-workspace-focus-key={surface.id}
                   data-main-file-surface={surface.id}
                   inert={!active}
                   aria-hidden={!active || undefined}
