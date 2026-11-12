@@ -71,8 +71,11 @@ describe("heavy Bash commands", () => {
       "ELECTRON_RUN_AS_NODE=1 '/Applications/T3 Code.app/Contents/MacOS/T3 Code' heavy --queue-dir '/x' -- vp",
       true,
     ],
+    ["remoto vp test run", true],
+    ["cd apps/web && remoto pnpm test", true],
     ["vp test run heavyQueue", false],
     ["rg heavy apps", false],
+    ["echo remoto && vp test run", false],
   ])("%s already queued: %s", (command, queued) => {
     expect(isQueued(command)).toBe(queued);
   });

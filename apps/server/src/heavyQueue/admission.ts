@@ -146,6 +146,10 @@ export interface Plan {
 
 const gb = (bytes: number) => `${(Math.max(0, bytes) / GIB).toFixed(1)} GB`;
 
+/**
+ * Pure: decides for one machine from its own sample and the entries it runs, so a second runner
+ * plans by calling this with its own reading and its own entries.
+ */
 export const plan = (input: PlanInput): Plan => {
   const { entries, now } = input;
   const running = entries.filter((entry) => entry.startedAt !== null);

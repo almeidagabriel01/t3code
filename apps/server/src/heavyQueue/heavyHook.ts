@@ -105,8 +105,12 @@ export const heavySegment = (command: string): string | null => {
   return null;
 };
 
-/** `t3 heavy …`, or the prefix agents copy from `t3_heavy` status (`'<exe>' heavy --queue-dir …`). */
+/**
+ * `t3 heavy …`, the prefix agents copy from `t3_heavy` status (`'<exe>' heavy --queue-dir …`), or
+ * `remoto …`, which already runs the command on another machine (or falls back here by itself).
+ */
 export const isQueued = (command: string) =>
+  /^\s*(cd\s+\S+\s*&&\s*)?remoto(\s|$)/.test(command) ||
   /(^|[\s'"/])t3['"]?\s+heavy\b/.test(command) ||
   /\bheavy['"]?\s+--(queue-dir|name|priority)?(\s|=|$)/.test(command);
 
