@@ -33,6 +33,12 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import type { prepareTurnAttachments } from "./chatViewSend";
 
+/** A side chat's first message: the question and the composer's attachments. */
+export interface SideChatMessage {
+  readonly prompt: string;
+  readonly attachments: SideChatAttachments;
+}
+
 /** The images and files a side chat's first message carries, uploaded by the main send's path. */
 export interface SideChatAttachments {
   readonly items: ReadonlyArray<ComposerImageAttachment | ComposerFileAttachment>;
@@ -42,11 +48,6 @@ export interface SideChatAttachments {
     readonly context: OrchestrationMessageContext | undefined;
   }>;
 }
-
-const NO_ATTACHMENTS: SideChatAttachments = {
-  items: [],
-  prepare: async () => ({ attachments: [], context: undefined }),
-};
 
 /**
  * Starts side chats from `threadRef`, or offers none when it is null. `open` forks the
@@ -79,15 +80,11 @@ export function useSideChat(input: {
     const error = squashAtomCommandFailure(failure);
     input.onError(error instanceof Error ? error.message : fallback);
   };
-  const start = async (
-    threadRef: ScopedThreadRef,
-    prompt: string | undefined,
-    attachments: SideChatAttachments,
-  ) => {
+  const start = async (threadRef: ScopedThreadRef, message: SideChatMessage | undefined) => {
     const { runtimeMode, modelSelection } = input.readSettings();
-    const text = prompt?.trim() ?? "";
-    return text || attachments.items.length > 0
-      ? send(threadRef, text, attachments, runtimeMode, modelSelection)
+    const text = message?.prompt.trim() ?? "";
+    return message && (text || message.attachments.items.length > 0)
+      ? send(threadRef, text, message.attachments, runtimeMode, modelSelection)
       : openEmpty(threadRef, runtimeMode, modelSelection);
   };
   // Drops the empty side chat a failed start leaves behind; one that got its message stays.
@@ -130,16 +127,12 @@ export function useSideChat(input: {
       return false;
     };
     // Uploads settle first, so one that cannot go out leaves no side chat behind.
-    const prepared = await attachments.prepare().then(
-      (value) => ({ ok: true as const, value }),
-      (error: unknown) => ({ ok: false as const, error }),
-    );
-    if (!prepared.ok) {
-      const { error } = prepared;
-      return fail(false, () =>
-        input.onError(error instanceof Error ? error.message : "Could not upload the attachments."),
+    const prepared = await attachments
+      .prepare()
+      .catch((error: unknown) =>
+        error instanceof Error ? error : new Error("Could not upload the attachments."),
       );
-    }
+    if (prepared instanceof Error) return fail(false, () => input.onError(prepared.message));
     const fork = await forkSideChat({
       environmentId: threadRef.environmentId,
       input: { sourceThreadId: threadRef.threadId, targetThreadId, title: "Side chat" },
@@ -170,8 +163,8 @@ export function useSideChat(input: {
           messageId: newMessageId(),
           role: "user",
           text: text || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
-          attachments: prepared.value.attachments,
-          ...(prepared.value.context === undefined ? {} : { context: prepared.value.context }),
+          attachments: prepared.attachments,
+          ...(prepared.context === undefined ? {} : { context: prepared.context }),
         },
         ...(modelSelection === undefined ? {} : { modelSelection }),
         titleSeed: deriveThreadTitleSeed({ text, attachments: attachments.items }),
@@ -229,11 +222,11 @@ export function useSideChat(input: {
     useRightPanelStore.getState().openSideChat(threadRef, targetThreadId);
     return true;
   };
-  const open = async (prompt?: string, attachments: SideChatAttachments = NO_ATTACHMENTS) => {
+  const open = async (message?: SideChatMessage) => {
     const { threadRef } = input;
     if (!threadRef || pendingRef.current) return false;
     pendingRef.current = true;
-    return start(threadRef, prompt, attachments).finally(() => {
+    return start(threadRef, message).finally(() => {
       pendingRef.current = false;
     });
   };

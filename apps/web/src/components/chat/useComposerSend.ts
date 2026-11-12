@@ -101,7 +101,7 @@ import {
   sideChatContextBlock,
 } from "./composerSend.logic";
 import { useMultipleModelSend } from "./useMultipleModelSend";
-import type { SideChatAttachments } from "./useSideChat";
+import type { SideChatMessage } from "./useSideChat";
 import { type ComposerDispatchMode } from "@t3tools/client-runtime/state/composer-dispatch";
 import {
   awaitAttachmentUploads,
@@ -283,9 +283,7 @@ interface ComposerSendInput {
   readonly anchorNewTurn: TimelineFollow["anchorNewTurn"];
   readonly acknowledgeActiveThreadWoke: () => void;
   /** Resolves true once the side chat started and got the prompt and attachments. */
-  readonly onSideChat?:
-    | ((prompt: string, attachments: SideChatAttachments) => Promise<boolean>)
-    | undefined;
+  readonly onSideChat?: ((message: SideChatMessage) => Promise<boolean>) | undefined;
   /** Refuses `/side` with this reason and keeps the draft. */
   readonly sideChatDisabledReason: string | null;
   readonly handleNewThreadInActiveProject: () => void;
@@ -550,27 +548,30 @@ export function useComposerSend(input: ComposerSendInput) {
       for (const image of images) store.removeImage(composerDraftTarget, image.id);
       for (const file of files) store.removeFile(composerDraftTarget, file.id);
       composerRef.current?.resetCursorState();
-      const started = await onSideChat(sideChatCommand.prompt, {
-        items,
-        prepare: async () => {
-          const attachments = await prepareTurnAttachments({
-            environmentId,
-            attachments: items,
-            usesAttachmentUploads,
-          });
-          const ids = boundAttachmentIds(attachments, items);
-          return {
-            attachments,
-            context: buildMessageContext({
-              terminalContexts: [],
-              reviewComments: [],
-              previewAnnotations: [],
-              attachments: items.map((attachment, index) => ({
-                attachment,
-                attachmentId: ids[index]!,
-              })),
-            }),
-          };
+      const started = await onSideChat({
+        prompt: sideChatCommand.prompt,
+        attachments: {
+          items,
+          prepare: async () => {
+            const attachments = await prepareTurnAttachments({
+              environmentId,
+              attachments: items,
+              usesAttachmentUploads,
+            });
+            const ids = boundAttachmentIds(attachments, items);
+            return {
+              attachments,
+              context: buildMessageContext({
+                terminalContexts: [],
+                reviewComments: [],
+                previewAnnotations: [],
+                attachments: items.map((attachment, index) => ({
+                  attachment,
+                  attachmentId: ids[index]!,
+                })),
+              }),
+            };
+          },
         },
       });
       if (started) return;

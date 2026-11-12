@@ -1,7 +1,10 @@
 import { createMemoryHistory } from "@tanstack/react-router";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { ThreadId } from "@t3tools/contracts";
-import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
+import { type ScopedThreadRef, ThreadId } from "@t3tools/contracts";
+import {
+  ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+  threadContextRecord,
+} from "@t3tools/shared/composerContextReferences";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import type * as Context from "effect/Context";
 import { expect, it, vi } from "vite-plus/test";
@@ -110,12 +113,56 @@ it("/side shows the message in its tab before the server answers, and returns it
   await expect.element(page.getByText("Starting the side chat…")).not.toBeInTheDocument();
 });
 
+function addImage(ref: ScopedThreadRef, name: string, mimeType: string) {
+  const file = new File(["img"], name, { type: mimeType });
+  useComposerDraftStore.getState().addImages(ref, [
+    {
+      type: "image",
+      id: "side-image",
+      name,
+      mimeType,
+      sizeBytes: file.size,
+      previewUrl: URL.createObjectURL(file),
+      file,
+    },
+  ]);
+}
+
+const draftImageNames = (ref: ScopedThreadRef) =>
+  useComposerDraftStore
+    .getState()
+    .getComposerDraft(ref)
+    ?.images.map((image) => image.name) ?? [];
+
 it.each([
-  { name: "is accepted", fails: false, editorText: "", images: [] },
-  { name: "is refused", fails: true, editorText: "/side why is it slow", images: ["shot.png"] },
+  {
+    name: "is accepted",
+    typed: "/side why is it slow",
+    text: "why is it slow",
+    fails: false,
+    editorText: "",
+    images: [],
+  },
+  {
+    name: "is refused",
+    typed: "/side why is it slow",
+    text: "why is it slow",
+    fails: true,
+    editorText: "/side why is it slow",
+    images: ["shot.png"],
+  },
+  // An image without a question asks about the image, as the main send does.
+  {
+    name: "is accepted with only an image",
+    typed: "/side",
+    text: ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+    fails: false,
+    editorText: "",
+    images: [],
+  },
 ])(
   "/side sends the message once the side chat exists: $name",
-  async ({ fails, editorText, images }) => {
+  async ({ typed, text, fails, editorText, images }) => {
     const { parent, router } = await openSideChat();
     const parentRef = scopeThreadRef(ENVIRONMENT_ID, parent.id);
     using _draft = {
@@ -126,18 +173,7 @@ it.each([
       },
     };
     // An image already uploaded to the environment, as the composer's upload leaves it.
-    const file = new File(["png"], "shot.png", { type: "image/png" });
-    useComposerDraftStore.getState().addImages(parentRef, [
-      {
-        type: "image",
-        id: "side-image",
-        name: "shot.png",
-        mimeType: "image/png",
-        sizeBytes: file.size,
-        previewUrl: URL.createObjectURL(file),
-        file,
-      },
-    ]);
+    addImage(parentRef, "shot.png", "image/png");
     useAttachmentUploadStore.setState({
       uploadsByImageId: {
         "side-image": { status: "ready", environmentId: ENVIRONMENT_ID, attachmentId: "upload-1" },
@@ -147,7 +183,7 @@ it.each([
     if (fails) fakeCommands.failTypes.add("message.dispatch");
     await using _app = await render(<AppRoot router={router} />, { router: false });
     const editor = page.getByTestId("composer-editor").first();
-    await userEvent.type(editor, "/side why is it slow");
+    await userEvent.type(editor, typed);
     await page.getByRole("button", { name: "Send to side chat" }).click();
     // Ids, so a second send shows whether it repeated the command, the message or the thread.
     const sent = () =>
@@ -163,17 +199,13 @@ it.each([
     expect(sent()).toHaveLength(1);
     expect(fakeCommands.dispatched.find((command) => command.type === "message.dispatch")).toEqual(
       expect.objectContaining({
+        text,
         attachments: [expect.objectContaining({ type: "image", name: "shot.png" })],
         context: { version: 1, records: [expect.objectContaining({ kind: "image" })] },
       }),
     );
     // A side chat that did not start gives the image back with the text.
-    expect(
-      useComposerDraftStore
-        .getState()
-        .getComposerDraft(parentRef)
-        ?.images.map((image) => image.name) ?? [],
-    ).toEqual(images);
+    expect(draftImageNames(parentRef)).toEqual(images);
     expect(
       selectThreadRightPanelState(
         useRightPanelStore.getState().byThreadKey,
@@ -182,6 +214,28 @@ it.each([
     ).toHaveLength(fails ? 0 : 1);
   },
 );
+
+it("/side starts no side chat when its image cannot upload, and gives it back", async () => {
+  const { parent, router } = await openSideChat();
+  const parentRef = scopeThreadRef(ENVIRONMENT_ID, parent.id);
+  using _draft = {
+    [Symbol.dispose]: () => {
+      useComposerDraftStore.getState().clearComposerContent(parentRef);
+      useAttachmentUploadStore.setState({ uploadsByImageId: {} });
+    },
+  };
+  // The upload queue refuses this type before reaching the server.
+  addImage(parentRef, "shot.bmp", "image/bmp");
+  using _environment = installFakeEnvironment([parent], { sideChats: true });
+  await using _app = await render(<AppRoot router={router} />, { router: false });
+  const editor = page.getByTestId("composer-editor").first();
+  await userEvent.type(editor, "/side why is it slow");
+  await page.getByRole("button", { name: "Send to side chat" }).click();
+  await expect.element(page.getByText("Attachment 'shot.bmp' failed to upload.")).toBeVisible();
+  await expect.element(editor).toHaveTextContent("/side why is it slow");
+  expect(draftImageNames(parentRef)).toEqual(["shot.bmp"]);
+  expect(fakeCommands.dispatched.map((command) => command.type)).not.toContain("thread.fork");
+});
 
 it("/side refuses added context and keeps the draft", async () => {
   const { parent, router } = await openSideChat();
