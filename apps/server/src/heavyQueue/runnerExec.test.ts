@@ -36,6 +36,7 @@ const runWith = (remoto: string) => {
     program: "/bin/zsh",
     args: ["-c", "vp test run"],
     cwd: dir,
+    root: dir,
     environment: process.env,
     machine: DEFAULT_MACHINE_CONFIG,
     macOnly: ["CaptureDevices.test.ts"],
@@ -60,8 +61,20 @@ describe("running on Linux through remoto", () => {
     ["/bin/zsh", ["-c", "vp test"], ["bash", "-c", "vp test"]],
     ["/opt/homebrew/bin/node", ["--test"], ["node", "--test"]],
     ["vp", ["test"], ["vp", "test"]],
+    // Paths inside the checkout become relative to the folder it runs from there.
+    [
+      "vp",
+      ["test", "run", "/w/repo/apps/web/src/a.test.ts"],
+      ["vp", "test", "run", "src/a.test.ts"],
+    ],
+    ["vp", ["test", "--root=/w/repo/apps/web"], ["vp", "test", "--root=."]],
+    ["vp", ["test", "--dir=/w/repo/packages/x"], ["vp", "test", "--dir=../../packages/x"]],
+    ["vp", ["test", "/tmp/out.json", "--x=/tmp/y"], ["vp", "test", "/tmp/out.json", "--x=/tmp/y"]],
+    ["/w/repo/node_modules/.bin/vitest", ["run"], ["../../node_modules/.bin/vitest", "run"]],
+    ["/w/repo/apps/web/run.sh", [], ["./run.sh"]],
+    ["./scripts/check.sh", [], ["./scripts/check.sh"]],
   ] as const)("%s %j runs there as %j", (program, args, expected) => {
-    expect(remoteCommand(program, args)).toEqual(expected);
+    expect(remoteCommand(program, args, "/w/repo/apps/web", "/w/repo")).toEqual(expected);
   });
 
   it("passes output through, strips markers into progress and keeps the command's code", async () => {

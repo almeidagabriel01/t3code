@@ -157,9 +157,16 @@ work queue, and each section says what the two do together.
 - **Over the limit for.** Either machine counts as over its limits, or back
   under them, only once its readings stay there this long (default 20
   seconds), so a short spike never moves work.
-- **Folders.** A command that starts with `cd <folder> &&` runs on Linux from
-  that folder. One that changes folder any other way (a later `cd`, `cd $VAR`,
-  `pushd`, a subshell) or names a path on this Mac stays here.
+- **What goes to Linux.** In a line such as `cd apps/web && vp test run > out.log 2>&1; tail out.log`,
+  only the listed commands run on Linux, each from the folder the line is in
+  at that point; redirects, pipes and everything else run here, and the job
+  holds one Linux slot. A job stays on this Mac, and its row says why, when a
+  command is not listed, is on **Mac only**, reads its input from this Mac
+  (`cat x | vp test run`), runs outside a git checkout, names a file outside
+  its checkout, is a git command (commits run here, since the pre-commit hook
+  edits this Mac's repository), or uses shell syntax T3 Code cannot follow
+  (`eval`, `case`, functions). A path that is only known when the line runs is
+  checked then: if it turns out to need this Mac, the job runs here instead.
 - **When Linux is offline or drops a job.** Choose **Run on this Mac**, **Wait
   for Linux** or **Ask me**. A question shows on the job in the Resource
   Manager with a countdown; unanswered, it follows the deadline setting. An

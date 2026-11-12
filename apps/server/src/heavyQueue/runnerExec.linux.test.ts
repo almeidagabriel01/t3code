@@ -52,6 +52,7 @@ const run = (cwd: string, script: string, env = environment) => {
     program: "/bin/zsh",
     args: ["-c", script],
     cwd,
+    root: cwd,
     environment: env,
     machine,
     macOnly: ["src/device/CaptureDevices.test.ts"],

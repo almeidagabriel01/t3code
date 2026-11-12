@@ -24,6 +24,7 @@ import { estimate, hasHeadroom, machineHold, SAMPLE_FRESH_MS, signatureOf } from
 import * as ClaudeSettingsHook from "./claudeSettingsHook.ts";
 import { hookScript, shellQuote } from "./heavyHook.ts";
 import * as QueueFile from "./queueFile.ts";
+import type { QueuedEntry } from "./runner.ts";
 
 const POLL_INTERVAL = "1 second";
 const STREAM_INTERVAL = "2 seconds";
@@ -236,7 +237,8 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
         estimates[entry.id] = { ...usual, durationMs: usual.durationMs };
     }
     return {
-      entries,
+      // A job's full line stays in the file; the row shows its label.
+      entries: entries.map(({ line: _line, routeReason: _reason, ...entry }: QueuedEntry) => entry),
       estimates,
       enabled,
       paused,

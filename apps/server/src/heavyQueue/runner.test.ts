@@ -98,6 +98,8 @@ const input = (
   contextOf: (cwd) => ({
     config: { ...DEFAULT_PROJECT_CONFIG, runnerEnabled: true, ...config },
     worktree: cwd,
+    home: "/home/me",
+    rootOf: () => "/work",
   }),
   machine: DEFAULT_MACHINE_CONFIG,
   health: ONLINE,
@@ -541,6 +543,38 @@ describe("runtime toggles", () => {
     expect(plan.admits).toEqual({ f: { runner: "mac", ungated: false } });
     expect(plan.reasons.l).toBe("paused");
   });
+
+  it("once a Runner is on, every Mac row says why it stays, beside what it waits for here", () => {
+    const entries = [
+      job("run", "git commit -m x", { startedAt: ago(1000) }),
+      job("commit", "git commit -m 'fix: t3 heavy'"),
+      job("build", "vp run build"),
+      job("moved", "vp test run", { route: "mac" }),
+      job("back", "vp test run", {
+        route: "mac",
+        routeReason: "Uses a file outside the project: /x",
+      } as Partial<HeavyQueueEntry>),
+      job("forced", "vp test run", { forced: true }),
+    ];
+    const at = (over: Partial<RoutePlanInput>, config: Partial<RunnerProjectConfig> = {}) =>
+      planRoutes(input(entries, { runnerWhere: "linux", ...config }, { maxRunning: 1, ...over }))
+        .reasons;
+    const commits = "Commits run here: the pre-commit edits this Mac's repository";
+    expect(at({ runnerOn: true })).toEqual({
+      run: commits,
+      commit: `${commits} · next in line`,
+      build: "Not on the Can run on Linux list: vp run build · waiting its turn",
+      moved: "Moved to this Mac · waiting its turn",
+      back: "Uses a file outside the project: /x · waiting its turn",
+      forced: "Started here by you",
+    });
+    expect(at({ runnerOn: true }, { runnerWhere: "mac" }).build).toMatch(/^Not on the/);
+    expect(at({ runnerOn: true, enabled: false }, { runnerEnabled: false })).toMatchObject({
+      build: "Runner off for this project",
+    });
+    // With every Runner off, rows read as they always did.
+    expect(at({}).build).toBe("waiting its turn");
+  });
 });
 
 describe("patterns and eligibility", () => {
@@ -560,21 +594,29 @@ describe("patterns and eligibility", () => {
     expect(matchesAny(text, [pattern])).toBe(result);
   });
 
+  const at = { config: DEFAULT_PROJECT_CONFIG, home: "/home/me", rootOf: () => "/w" };
   it.each([
-    ["vp test run", "linux"],
-    ["vp run typecheck && vp run lint", "linux"],
-    ["vp run build && vp test run", "not-listed"],
-    ["xcodebuild -scheme App test", "mac-only"],
-    ["vp run dev:desktop", "exclusive"],
-    ["echo hi", "not-listed"],
-  ])("%s is %s by default", (label, eligibility) => {
-    expect(eligibilityOf({ label }, DEFAULT_PROJECT_CONFIG)).toBe(eligibility);
+    ["vp test run", "linux", null],
+    ["vp run typecheck && vp run lint", "linux", null],
+    ["vp run build && vp test run", "not-listed", "Not on the Can run on Linux list: vp run build"],
+    ["xcodebuild -scheme App test", "mac-only", "Always on this Mac: xcodebuild"],
+    ["vp run dev:desktop", "exclusive", "Always on this Mac: vp run dev:desktop"],
+    ["echo hi", "mac-only", "Nothing in it runs on Linux"],
+    ["./scripts/ci.sh", "not-listed", "Not on the Can run on Linux list: ci.sh"],
+  ])("%s is %s by default", (label, eligibility, reason) => {
+    expect(eligibilityOf({ label, cwd: "/w" }, at)).toEqual({ eligibility, reason });
   });
 
-  it("device opens held by a server are exclusive", () => {
-    expect(eligibilityOf({ label: "Open iPhone", server: true }, DEFAULT_PROJECT_CONFIG)).toBe(
-      "exclusive",
-    );
+  it("judges the full line a long label was cut from, and device opens held by a server", () => {
+    const line = `vp test run ${"a".repeat(200)} /etc/hosts`;
+    expect(eligibilityOf({ label: line.slice(0, 200), line, cwd: "/w" }, at)).toEqual({
+      eligibility: "mac-only",
+      reason: "Uses a file outside the project: /etc/hosts",
+    });
+    expect(eligibilityOf({ label: "Open iPhone", server: true, cwd: "/w" }, at)).toEqual({
+      eligibility: "exclusive",
+      reason: "Always on this Mac: Open iPhone",
+    });
   });
 
   it("finds Mac-only test files in a failed run's output", () => {

@@ -571,10 +571,16 @@ describe("Runner in the queue file", () => {
     projects: RunnerBlock["projects"] = [],
     publisher: RunnerBlock["publisher"] = { pid: process.pid, home: "/home", primary: true },
   ): RunnerBlock => ({ global, machine: DEFAULT_MACHINE_CONFIG, projects, publisher });
+  /** A git checkout: work outside one stays on this Mac. */
+  const checkout = (id: string) => {
+    const root = NodePath.join(tempDir(), id);
+    NodeFS.mkdirSync(NodePath.join(root, ".git"), { recursive: true });
+    return root;
+  };
   const test = (id: string, extra: Partial<HeavyQueueEntry> = {}) => ({
     ...entry(id),
     label: "vp test run",
-    cwd: `/w/${id}`,
+    cwd: checkout(id),
     ...extra,
   });
   const queueWith = (runner: RunnerBlock, online: boolean | null = true) => {

@@ -3,6 +3,7 @@
  * `t3 heavy hook` CLI and the in-process SDK hook both call it, and anything unexpected leaves the
  * command untouched.
  */
+import { parseLine, type Command, type Word } from "./shellLine.ts";
 
 /** Claude Code's ceiling for a foreground Bash call; a higher request is capped, not rejected. */
 const BASH_MAX_TIMEOUT_MS = 600_000;
@@ -45,25 +46,55 @@ const SCRIPT =
   /^(test|tests|build|check|lint|typecheck|e2e|bundle|compile|knip|coverage|fmt|format|ci|verify)([:._-].*)?$|^dev:desktop$/;
 const RUNNERS = new Set(["npm", "pnpm", "yarn", "bun", "vp", "deno"]);
 const EXECUTORS = new Set(["npx", "pnpx", "bunx"]);
-const PREFIXES = new Set(["time", "nice", "env", "command", "exec", "caffeinate"]);
+const PREFIXES = new Set([
+  "time",
+  "nice",
+  "env",
+  "command",
+  "exec",
+  "caffeinate",
+  "timeout",
+  "nohup",
+  "eval",
+]);
 
 const base = (word: string) => word.split("/").pop() ?? word;
-const unquote = (word: string) => word.replace(/^['"]|['"]$/g, "");
+const isAssignment = (word: string) => /^[A-Za-z_][A-Za-z0-9_]*=/.test(word);
+/** Run here around the remote part: `time vp test` times the whole Linux run. */
+const LOCAL_PREFIXES = new Set([
+  "time",
+  "nice",
+  "command",
+  "exec",
+  "caffeinate",
+  "nohup",
+  "timeout",
+]);
 
-/** Program and subcommand words with assignments, wrappers and flags removed. */
-const wordsOf = (segment: string) => {
-  // A quoted word stays one token: `NODE_OPTIONS="--max-old-space-size=4096" vp test`.
-  const tokens = (segment.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) ?? []).map(unquote);
-  while (
-    tokens.length > 0 &&
-    (/^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[0]!) || PREFIXES.has(base(tokens[0]!)))
-  ) {
-    tokens.shift();
+/** Where a command's program starts, past assignments, prefixes and their options (`nice -n 5`). */
+const programAt = (values: ReadonlyArray<string>, from = 0, local = false) => {
+  let at = from;
+  while (at < values.length) {
+    const word = base(values[at]!);
+    if (!(local ? LOCAL_PREFIXES : PREFIXES).has(word)) break;
+    at++;
+    while (
+      at < values.length &&
+      (/^-|^\d+(\.\d+)?[smhd]?$/.test(values[at]!) || isAssignment(values[at]!))
+    )
+      at++;
   }
+  return at;
+};
+
+/** Program and subcommand words with assignments, prefixes and flags removed. */
+const wordsAt = (values: ReadonlyArray<string>, from: number) => {
+  const at = programAt(values, from);
   return {
-    program: tokens[0] === undefined ? "" : base(tokens[0]),
-    words: tokens.slice(1).filter((token) => !token.startsWith("-")),
-    flags: tokens.slice(1).filter((token) => token.startsWith("-")),
+    at,
+    program: values[at] === undefined ? "" : base(values[at]!),
+    words: values.slice(at + 1).filter((value) => !value.startsWith("-")),
+    flags: values.slice(at + 1).filter((value) => value.startsWith("-")),
   };
 };
 
@@ -148,87 +179,237 @@ answer=$(printf '%s' "$input" | { ${hookCommand}; } 2>/dev/null) || exit 0
 printf '%s' "$answer"
 `;
 
-/** A heredoc's body is text a program reads (a script, a file to write), never commands. */
-const HEREDOC = /<<-?[\t ]*(['"]?)([A-Za-z_]\w*)\1[^\n]*\n[\s\S]*?\n[\t ]*\2[\t ]*(?=\n|$)/g;
+/** One simple command of a line, as the queue and the Runner see it. */
+export interface Part {
+  readonly command: Command;
+  readonly values: ReadonlyArray<string>;
+  /** The word the work starts at: past local prefixes (`time`) and an agent's `remoto`. */
+  readonly remoteAt: number;
+  /** The program's word, past `env` and its assignments. */
+  readonly programAt: number;
+  readonly program: string;
+  readonly words: ReadonlyArray<string>;
+  readonly flags: ReadonlyArray<string>;
+  readonly heavy: boolean;
+  /** The agent's own `remoto` in front of it. */
+  readonly remoto: Word | null;
+  /** It is `t3 heavy …`, or the T3 executable's `heavy` subcommand as `selfPrefix` writes it. */
+  readonly queued: boolean;
+  /** The heavy part inside a nested `sh -c '<line>'`, which makes this part heavy too. */
+  readonly nested: Part | null;
+}
+
+const SHELLS = new Set(["sh", "bash", "zsh", "dash"]);
+
+/** `bash -c '<line>'`: the line's first heavy part. */
+const nestedHeavy = (program: string, values: ReadonlyArray<string>, at: number) => {
+  if (!SHELLS.has(program)) return null;
+  const flag = values.findIndex((value, index) => index > at && /^-[a-z]*c[a-z]*$/.test(value));
+  const line = flag < 0 ? undefined : values[flag + 1];
+  return line === undefined ? null : (readLine(line).parts.find((part) => part.heavy) ?? null);
+};
+
+const isHeavyCall = (values: ReadonlyArray<string>) => {
+  let at = 1;
+  while (at < values.length && /\.[cm]?js$/.test(values[at]!)) at++;
+  const next = values[at + 1] ?? "";
+  return (
+    values[at] === "heavy" &&
+    (base(values[0] ?? "") === "t3" || next === "hook" || next.startsWith("--"))
+  );
+};
+
+const partOf = (command: Command): Part => {
+  const values = command.words.map((word) => word.value);
+  let remoteAt = programAt(values, 0, true);
+  let remoto: Word | null = null;
+  if (base(values[remoteAt] ?? "") === "remoto" && remoteAt + 1 < values.length) {
+    remoto = command.words[remoteAt]!;
+    remoteAt = programAt(values, remoteAt + 1, true);
+  }
+  const { at, program, words, flags } = wordsAt(values, remoteAt);
+  const nested = nestedHeavy(program, values, at);
+  return {
+    command,
+    values,
+    remoteAt,
+    programAt: at,
+    program,
+    words,
+    flags,
+    heavy: nested !== null || (program !== "" && heavyWords(program, words, flags)),
+    remoto,
+    queued: isHeavyCall(values.slice(at)),
+    nested,
+  };
+};
+
+/** Every simple command of a line in source order, and why it cannot be followed exactly. */
+export const readLine = (
+  line: string,
+): { readonly unsafe: string | null; readonly parts: Part[] } => {
+  const { commands, unsafe } = parseLine(line);
+  return {
+    unsafe,
+    parts: commands.map(partOf).toSorted((a, b) => a.command.start - b.command.start),
+  };
+};
+
+const BUILTINS = new Set([
+  "cd",
+  "pushd",
+  "popd",
+  "export",
+  "unset",
+  "set",
+  "source",
+  ".",
+  "echo",
+  "printf",
+  "true",
+  "false",
+  "test",
+  "[",
+  "[[",
+  ":",
+  "exit",
+  "return",
+  "shift",
+  "read",
+  "wait",
+  "trap",
+  "local",
+  "declare",
+  "alias",
+  "sleep",
+]);
+
+/** The parts that are the work: heavy ones and `remoto` calls, else every program a queued job runs. */
+export const workParts = (parts: ReadonlyArray<Part>) => {
+  const work = parts.filter((part) => part.heavy || part.remoto !== null);
+  return work.length > 0
+    ? work
+    : parts.filter((part) => part.program !== "" && !part.queued && !BUILTINS.has(part.program));
+};
 
 /** Every part of a shell command line that is heavy work, in order. */
-export const heavySegments = (command: string): ReadonlyArray<string> =>
-  command
-    .replace(HEREDOC, "")
-    .split(/&&|\|\||[;|&\n()]/)
-    .filter((segment) => {
-      const { program, words, flags } = wordsOf(segment);
-      return program !== "" && heavyWords(program, words, flags);
-    })
-    .map((segment) => segment.trim());
+const heavySegments = (command: string): ReadonlyArray<string> =>
+  readLine(command)
+    .parts.filter((part) => part.heavy)
+    .map((part) => command.slice(part.command.start, part.command.end).trim());
 
 /** The first part of a shell command line that is heavy work, or null when none is. */
 export const heavySegment = (command: string): string | null => heavySegments(command)[0] ?? null;
 
 /**
- * `t3 heavy …`, the prefix agents copy from `t3_heavy` status (`'<exe>' heavy --queue-dir …`), or
- * `remoto …`, which already runs the command on another machine (or falls back here by itself).
+ * The line runs `t3 heavy` itself (the prefix agents copy from `t3_heavy` status) or `remoto`,
+ * which already runs work on another machine, and no heavy part runs outside them. Quoted text
+ * and a grep pattern are arguments, never a call.
  */
-export const isQueued = (command: string) =>
-  lineParts(command).remoto ||
-  /(^|[\s'"/])t3['"]?\s+heavy\b/.test(command) ||
-  /\bheavy['"]?\s+--(queue-dir|name|priority)?(\s|=|$)/.test(command);
+export const isQueued = (command: string) => {
+  const { parts } = readLine(command);
+  return (
+    parts.some((part) => part.queued || part.remoto !== null) &&
+    parts.every((part) => !part.heavy || part.remoto !== null)
+  );
+};
 
-const LEADING_CD = /^\s*cd[\t ]+('[^']*'|"[^"]*"|[^\s'"&;|()<>]+)[\t ]*&&/;
-const PLAIN = String.raw`[^\s'"$\`\\*?[\]{}!#]`;
-/** Unquoted, a folder the shell takes as written: no variable, glob, option (`-`) or `~user`. */
-const PLAIN_DIR = new RegExp(String.raw`^(?:~(?:/${PLAIN}*)?|(?![-~])${PLAIN}+)$`);
+/** A `cd` argument as the folder it names (`~` unexpanded), or null when only the shell could tell. */
+const literalDir = (word: Word | undefined): string | null => {
+  if (word === undefined || word.vars.length > 0) return null;
+  const { value } = word;
+  if (value === "" || value.startsWith("-") || /[*?[]/.test(value)) return null;
+  // Quoted, `~` is a folder named `~`; `~user` is another home.
+  if (value.startsWith("~") && (!word.tilde || !/^~(\/|$)/.test(value))) return null;
+  return value;
+};
 
-/** A `cd` argument as the folder it names, or null when only running the shell could tell. */
-const literalDir = (word: string): string | null => {
-  if (/^'[^']*'$|^"[^"$`\\]*"$/.test(word)) {
-    const dir = word.slice(1, -1);
-    // Quoted, `~` is a folder named `~`; `jobOf` would read it as home.
-    return dir === "" || dir.startsWith("~") ? null : dir;
-  }
-  return PLAIN_DIR.test(word) ? word : null;
+const spanEnd = (line: string, end: number) => {
+  let at = end;
+  while (line[at] === " " || line[at] === "\t") at++;
+  return at;
 };
 
 /**
- * A shell line as `[cd <dir> && …] [remoto] <command>`: the folders its leading `cd`s name, in
- * order (`~` unexpanded), and whether it is an agent's own `remoto` call. Parsing stops at the
- * first `cd` it cannot resolve, which stays in `command`, so `tiedToMac` keeps that line here.
+ * The line with each work part sent through `executor`, spliced at source offsets so the user's
+ * shell reads the rest as written: redirects, pipes, `;` and assignments stay local. Null runs
+ * the work here. Either way an agent's `remoto` word goes, since T3 decides where work runs.
+ */
+export const rewriteLine = (line: string, executor: string | null) => {
+  const { parts } = readLine(line);
+  const edits: Array<{ readonly start: number; readonly end: number; readonly text: string }> = [];
+  for (const part of parts) {
+    if (part.remoto !== null) {
+      edits.push({ start: part.remoto.start, end: spanEnd(line, part.remoto.end), text: "" });
+    }
+  }
+  if (executor !== null) {
+    for (const part of workParts(parts)) {
+      const { assigns, words } = part.command;
+      // `remoto` passes argv alone, so assignments travel as `env` arguments.
+      const env = assigns.map((word) => line.slice(word.start, word.end));
+      for (const word of assigns) {
+        edits.push({ start: word.start, end: spanEnd(line, word.end), text: "" });
+      }
+      const at = words[part.remoteAt]!.start;
+      edits.push({
+        start: at,
+        end: at,
+        text: `${executor} ${env.length === 0 ? "" : `env ${env.join(" ")} `}`,
+      });
+    }
+  }
+  return edits
+    .toSorted((a, b) => b.start - a.start)
+    .reduce((text, edit) => text.slice(0, edit.start) + edit.text + text.slice(edit.end), line);
+};
+
+/**
+ * A shell line as `[cd <dir> && …] <command>`: the folders its leading `cd`s name, in order (`~`
+ * unexpanded), whether an agent's `remoto` runs in it, and the rest with `remoto` taken out.
+ * Parsing stops at the first `cd` it cannot resolve, which stays in `command`.
  */
 export const lineParts = (line: string) => {
+  const { parts } = readLine(line);
   const dirs: string[] = [];
-  let rest = line;
-  for (let match = LEADING_CD.exec(rest); match !== null; match = LEADING_CD.exec(rest)) {
-    const dir = literalDir(match[1]!);
-    if (dir === null) break;
+  let from = 0;
+  for (const part of parts) {
+    const { command } = part;
+    const dir = literalDir(command.words[1]);
+    if (
+      command.scope.length > 0 ||
+      command.substituted ||
+      command.next !== "&&" ||
+      command.assigns.length > 0 ||
+      command.redirects.length > 0 ||
+      part.values[0] !== "cd" ||
+      part.values.length !== 2 ||
+      dir === null
+    ) {
+      break;
+    }
     dirs.push(dir);
-    rest = rest.slice(match[0].length);
+    from = line.indexOf("&&", command.end) + 2;
   }
-  const remoto = /^\s*remoto\s+(?=\S)/.exec(rest);
   return {
     dirs,
-    remoto: remoto !== null,
-    command: (remoto === null ? rest : rest.slice(remoto[0].length)).trimStart(),
+    remoto: parts.some((part) => part.remoto !== null),
+    command: rewriteLine(line.slice(from), null).trimStart(),
   };
 };
-
-/**
- * Changes folder anywhere (`cd`, `pushd`, `popd`, also inside quotes, subshells or `$(…)`) or
- * names a path of this Mac (`/Users/…`, `~`). Such a line never runs on Linux: the folder or path
- * does not exist there. Over-matching only keeps work here.
- */
-export const tiedToMac = (line: string) =>
-  /(?:^|[^\w./-])(?:cd|pushd|popd)(?![\w./-])/.test(line) ||
-  /(?:^|[^\w.-])(?:\/(?:Users|Volumes|private|Applications|Library|System)\/|~(?![\w-]))/.test(
-    line,
-  );
 
 export const shellQuote = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
 
 /** A short title for the queue row: the heavy part's program and first words. */
 export const nameOf = (segment: string) => {
-  const { program, words } = wordsOf(segment);
+  const { parts } = readLine(segment);
+  const found = parts.find((each) => each.heavy) ?? parts.find((each) => each.program !== "");
+  if (found === undefined) return segment.trim().slice(0, 60);
+  const part = found.nested ?? found;
   // `git commit -m "…"`: the message is not part of the name.
-  return [program, ...words.slice(0, program === "git" ? 1 : 2)].join(" ").slice(0, 60);
+  return [part.program, ...part.words.slice(0, part.program === "git" ? 1 : 2)]
+    .join(" ")
+    .slice(0, 60);
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>

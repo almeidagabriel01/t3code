@@ -51,6 +51,11 @@ const HEAVY: ReadonlyArray<readonly [string, string]> = [
   ["(cd web && vp build) | tail -5", "vp build"],
   ["make test", "make test"],
   ["cat > a.sh <<'EOF'\necho hi\nEOF\nvp test run", "vp test run"],
+  ["timeout 110 vp test run", "timeout 110 vp test run"],
+  ["(nohup vp test run > /tmp/a.log 2>&1 &)", "nohup vp test run > /tmp/a.log 2>&1"],
+  ["nohup sh -c 'npx tsc --noEmit > /tmp/t.out' &", "nohup sh -c 'npx tsc --noEmit > /tmp/t.out'"],
+  ["X=$(vp test run 2>&1 | tail -1)", "vp test run 2>&1"],
+  ["nice -n 10 vp test run", "nice -n 10 vp test run"],
 ];
 
 const LIGHT = [
@@ -75,6 +80,11 @@ const LIGHT = [
   // A heredoc is a script's text, not commands: editing a test file is not running it.
   "cd /w && python3 - <<'EOF'\ns = 'cd apps/server && vp test run'\nEOF",
   "cat <<-END > notes.md\n\tvp run build && npm test\n\tEND",
+  // Quoted text and patterns are arguments, never commands.
+  'grep -v "t3 heavy" log.txt',
+  'grep "a\\|vitest" src/x.ts',
+  "git log --grep 'vp test run' -1",
+  "bash -c 'echo vitest'",
 ];
 
 describe("heavy Bash commands", () => {
@@ -99,6 +109,14 @@ describe("heavy Bash commands", () => {
     ["vp test run heavyQueue", false],
     ["rg heavy apps", false],
     ["echo remoto && vp test run", false],
+    // Text is never a call; and a call does not cover heavy work outside it.
+    ['vp test run 2>&1 | grep -v "t3 heavy"', false],
+    ["git commit -m 'feat: t3 heavy -- vp test'", false],
+    ["t3 heavy -- vp lint && vp test run", false],
+    [
+      "A='/Applications/T3 Code (Beta).app/Contents'; ELECTRON_RUN_AS_NODE=1 \"$A/MacOS/T3 Code (Beta)\" \"$A/Resources/app.asar/apps/server/dist/bin.mjs\" heavy --queue-dir /q -- sh -c 'vp test'",
+      true,
+    ],
   ])("%s already queued: %s", (command, queued) => {
     expect(isQueued(command)).toBe(queued);
   });
@@ -176,9 +194,11 @@ describe("an agent's own remoto call", () => {
     [`cd "/a b" && cd 'c' && remoto vp test`, ["/a b", "c"], true, "vp test"],
     ["  remoto ./scripts/check.sh --all", [], true, "./scripts/check.sh --all"],
     ["cd /w && vp test run", ["/w"], false, "vp test run"],
-    ["cd /w && cd $X && remoto vp test", ["/w"], false, "cd $X && remoto vp test"],
-    ["ls && remoto vp test run", [], false, "ls && remoto vp test run"],
-    ["REMOTO_HOST=pc remoto vp test", [], false, "REMOTO_HOST=pc remoto vp test"],
+    ["cd /w && cd $X && remoto vp test", ["/w"], true, "cd $X && vp test"],
+    ["ls && remoto vp test run", [], true, "ls && vp test run"],
+    ["REMOTO_HOST=pc remoto vp test", [], true, "REMOTO_HOST=pc vp test"],
+    ["cd /w && (cd x && vp test)", ["/w"], false, "(cd x && vp test)"],
+    ["cd /w; vp test", [], false, "cd /w; vp test"],
     ["remoto", [], false, "remoto"],
   ])("%j starts in %j, remoto %s, running %j", (line, dirs, remoto, command) => {
     expect(lineParts(line)).toEqual({ dirs, remoto, command });
@@ -200,7 +220,7 @@ describe("an agent's own remoto call", () => {
 
   it.each([
     ["the Runner off", "remoto vp test run", false],
-    ["a shape it cannot unwrap", "ls && remoto vp test run", true],
+    ["the Runner off, after another command", "ls && remoto vp test run", false],
   ])("is left to remoto with %s, so it never runs twice", (_why, command, runner) => {
     expect(queueBashCall(bash({ command }), PREFIX, {}, { runner })).toBeNull();
   });

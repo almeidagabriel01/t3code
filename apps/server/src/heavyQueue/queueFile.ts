@@ -40,6 +40,7 @@ import {
   UNKNOWN_HEALTH,
   type HealthCheck,
   type LinuxHealth,
+  type QueuedEntry,
   type RoutePlan,
   type RunnerBlock,
   type WorkContext,
@@ -297,11 +298,25 @@ export const modeFor = (doc: Pick<QueueDoc, "enabled" | "runner">, cwd: string) 
   runner: configFor(doc, cwd).runnerEnabled,
 });
 
+const gitRoots = new Map<string, string | null>();
+/** The git checkout holding `cwd`, or null when none does. */
+export const gitRootOf = (cwd: string) => {
+  let found = gitRoots.get(cwd);
+  if (found === undefined) {
+    const { root } = cachedCheckout(cwd);
+    found = NodeFS.existsSync(NodePath.join(root, ".git")) ? root : null;
+    gitRoots.set(cwd, found);
+  }
+  return found;
+};
+
 const contextOf =
   (doc: QueueDoc) =>
   (cwd: string): WorkContext => ({
     config: configFor(doc, cwd),
     worktree: cachedCheckout(cwd).root,
+    home: NodeOS.homedir(),
+    rootOf: gitRootOf,
   });
 
 const planOf = (doc: QueueDoc, now: number): RoutePlan =>
@@ -320,6 +335,10 @@ const planOf = (doc: QueueDoc, now: number): RoutePlan =>
     contextOf: contextOf(doc),
     machine: doc.runner?.machine ?? DEFAULT_MACHINE_CONFIG,
     health: doc.linux,
+    runnerOn:
+      doc.runner !== null &&
+      (doc.runner.global.runnerEnabled ||
+        doc.runner.projects.some((project) => project.config.runnerEnabled)),
   });
 
 /** Fields that describe one attempt; a requeued entry drops them. */
@@ -559,7 +578,7 @@ export const readDoc = (dir: string): QueueDoc => {
 
 export const read = (dir: string): ReadonlyArray<HeavyQueueEntry> => readDoc(dir).entries;
 
-export const enqueue = (dir: string, entry: HeavyQueueEntry) =>
+export const enqueue = (dir: string, entry: QueuedEntry) =>
   mutate(dir, (doc) => ({ doc: insertNew(doc, entry), result: undefined }));
 
 export const tryStart = (dir: string, id: string, now = Date.now()) =>
@@ -729,8 +748,8 @@ export const setRule = (dir: string, root: string, priority: HeavyQueueRule["pri
   });
 
 /** Exclusive work and its project's Mac-only list never leave this Mac. */
-export const staysOnMac = (doc: Pick<QueueDoc, "runner">, entry: HeavyQueueEntry) => {
-  const eligibility = eligibilityOf(entry, configFor(doc, entry.cwd));
+export const staysOnMac = (doc: QueueDoc, entry: HeavyQueueEntry) => {
+  const { eligibility } = eligibilityOf(entry, contextOf(doc)(entry.cwd));
   return eligibility === "exclusive" || eligibility === "mac-only";
 };
 
@@ -818,15 +837,16 @@ export const setProgress = (
 export const requeue = (
   dir: string,
   id: string,
-  next: Pick<HeavyQueueEntry, "route" | "dropped" | "unconfirmed" | "linuxFailedAt">,
+  next: Pick<QueuedEntry, "route" | "routeReason" | "dropped" | "unconfirmed" | "linuxFailedAt">,
 ) =>
   mutate(dir, (doc) => {
     const target = doc.entries.find((entry) => entry.id === id);
     if (target === undefined) return { doc, result: false };
     const active = runningOf(doc.entries).filter((entry) => entry.id !== id);
     const waiters = doc.entries.filter((entry) => entry.startedAt === null && entry.id !== id);
-    const again: HeavyQueueEntry = {
-      ...withoutAttempt(target),
+    const { routeReason: _reason, ...previous }: QueuedEntry = withoutAttempt(target);
+    const again: QueuedEntry = {
+      ...previous,
       ...Object.fromEntries(Object.entries(next).filter(([, value]) => value !== undefined)),
     };
     return { doc: { ...doc, entries: [...active, again, ...waiters] }, result: true };

@@ -21,7 +21,8 @@ import {
   type PlanInput,
   type Sustained,
 } from "./admission.ts";
-import { heavySegments, tiedToMac } from "./heavyHook.ts";
+import { nameOf, readLine, workParts, type Part } from "./heavyHook.ts";
+import type { Word } from "./shellLine.ts";
 
 export const DEFAULT_PROJECT_CONFIG: RunnerProjectConfig = {
   runnerEnabled: RUNNER_DEFAULTS.runnerEnabled,
@@ -116,21 +117,191 @@ export const matchesAny = (text: string, patterns: ReadonlyArray<string>) =>
 
 export type Eligibility = "linux" | "exclusive" | "mac-only" | "not-listed";
 
+export interface Verdict {
+  readonly eligibility: Eligibility;
+  /** For people, on the Resource Manager row; null when Linux can take it. */
+  readonly reason: string | null;
+}
+
 /**
- * Exclusive work, Mac-only work and a line tied to this Mac's folders never leave it; Linux takes
- * only what every heavy part lists.
+ * Fields only the queue file keeps: a job's full command line (the label is cut short for the
+ * row) and why a Linux attempt sent it back to this Mac.
+ */
+export type QueuedEntry = HeavyQueueEntry & {
+  readonly line?: string;
+  readonly routeReason?: string;
+};
+const lineOf = (entry: Pick<QueuedEntry, "label" | "line">) => entry.line ?? entry.label;
+
+/** A Mac path resolved the way the shell would, without touching the disk. */
+const resolvePath = (from: string, to: string) => {
+  const out: string[] = [];
+  for (const part of (to.startsWith("/") ? to : `${from}/${to}`).split("/")) {
+    if (part === "..") out.pop();
+    else if (part !== "" && part !== ".") out.push(part);
+  }
+  return `/${out.join("/")}`;
+};
+
+/** A word as the shell will pass it, or the expansion only this Mac can resolve. */
+const expand = (
+  word: Word,
+  vars: ReadonlyMap<string, string | null>,
+  cwd: string,
+): { readonly value: string } | { readonly unknown: string } => {
+  let value = word.tilde ? word.value.replace(/^~(?=\/|$)/, vars.get("HOME") ?? "~") : word.value;
+  for (const name of word.vars) {
+    if (name === "") return { unknown: "$(…)" };
+    const known = name === "PWD" ? cwd : vars.get(name);
+    if (known === null || known === undefined) return { unknown: `$${name}` };
+    value = value.replace(new RegExp(String.raw`\$\{${name}\}|\$${name}(?!\w)`, "g"), () => known);
+  }
+  return { value };
+};
+
+/** Devices Linux has too, so naming them ties nothing here. */
+const SHARED = /^\/dev\//;
+
+/**
+ * Why an argument ties its part to this Mac: an absolute or `..` path (alone or as
+ * `--flag=<path>`) outside the checkout Linux gets a copy of. Null when it ties nothing.
+ */
+export const outsideTie = (arg: string, cwd: string, root: string): string | null => {
+  const flagValue = /^-[\w.-]*=(.+)$/.exec(arg)?.[1];
+  for (const candidate of [arg, flagValue]) {
+    if (candidate === undefined || !/^(\/|\.\.(\/|$))/.test(candidate)) continue;
+    const path = resolvePath(cwd, candidate);
+    if (!inside(path, root) && !SHARED.test(path))
+      return `Uses a file outside the project: ${path}`;
+  }
+  return null;
+};
+
+/**
+ * Why one part of the work must run on this Mac, or null when Linux can run it from `cwd`. What
+ * only the shell knows (a variable set elsewhere, `$(…)`, `cd $d`) passes here: `linux-part`
+ * checks the expanded command and folder again before anything leaves.
+ */
+const tieOf = (
+  part: Part,
+  cwd: string | null,
+  vars: ReadonlyMap<string, string | null>,
+  rootOf: (cwd: string) => string | null,
+  config: RunnerProjectConfig,
+): string | null => {
+  const text = part.values.slice(part.remoteAt).join(" ");
+  const pattern = config.runnerMacOnly.find((each) => matchesAny(text, [each]));
+  if (pattern !== undefined) return `Always on this Mac: ${pattern.trim()}`;
+  if (part.program === "git") {
+    return part.words[0] === "commit"
+      ? "Commits run here: the pre-commit edits this Mac's repository"
+      : "Uses this Mac's git repository";
+  }
+  // Its own redirects and pipes would run there too.
+  if (part.nested !== null) return "Couldn't read this command safely (nested shell)";
+  const { command } = part;
+  // `remoto` gives the command no input there.
+  if (command.piped || command.redirects.some((redirect) => redirect.op.includes("<"))) {
+    return `Reads its input from this Mac: ${nameOf(text)}`;
+  }
+  if (cwd === null) return null;
+  // `remoto` syncs the checkout it runs from, so each part is judged against its own.
+  const root = rootOf(cwd);
+  if (root === null) return `Runs outside a git checkout: ${cwd}`;
+  for (const word of part.command.words.slice(part.programAt + 1)) {
+    const expanded = expand(word, vars, cwd);
+    const tie = "value" in expanded ? outsideTie(expanded.value, cwd, root) : null;
+    if (tie !== null) return tie;
+  }
+  return null;
+};
+
+const literalValue = (word: Word, vars: ReadonlyMap<string, string | null>, cwd: string) => {
+  const expanded = expand(word, vars, cwd);
+  return "value" in expanded ? expanded.value : null;
+};
+
+const DECLARES = new Set(["export", "declare", "local", "readonly"]);
+
+/**
+ * Whether Linux can run a job, and why not. Only the work parts leave (heavy commands and
+ * `remoto` calls); the rest of the line runs here, so only they are judged, each from the folder
+ * it runs in. Every part must pass, else the whole job stays and the reason names the part.
  */
 export const eligibilityOf = (
-  entry: Pick<HeavyQueueEntry, "label" | "server">,
-  config: RunnerProjectConfig,
-): Eligibility => {
-  if (kindOf(entry) === "exclusive") return "exclusive";
-  if (matchesAny(entry.label, config.runnerMacOnly) || tiedToMac(entry.label)) return "mac-only";
-  const segments = heavySegments(entry.label);
-  const parts = segments.length === 0 ? [entry.label] : segments;
-  return parts.every((part) => matchesAny(part, config.runnerLinuxCommands))
-    ? "linux"
-    : "not-listed";
+  entry: Pick<QueuedEntry, "label" | "line" | "server" | "cwd" | "where">,
+  context: Pick<WorkContext, "config" | "home" | "rootOf">,
+): Verdict => {
+  const line = lineOf(entry);
+  if (kindOf(entry) === "exclusive") {
+    return { eligibility: "exclusive", reason: `Always on this Mac: ${nameOf(line)}` };
+  }
+  const { config, home, rootOf } = context;
+  const { unsafe, parts } = readLine(line);
+  if (unsafe !== null) {
+    return { eligibility: "mac-only", reason: `Couldn't read this command safely (${unsafe})` };
+  }
+  const work = new Set(workParts(parts));
+  if (work.size === 0) return { eligibility: "mac-only", reason: "Nothing in it runs on Linux" };
+  const cwds = new Map<string, string | null>([["", entry.cwd]]);
+  const vars = new Map<string, string | null>([["HOME", home]]);
+  const cwdAt = (scope: ReadonlyArray<number>): string | null => {
+    const key = scope.join("/");
+    if (!cwds.has(key)) cwds.set(key, cwdAt(scope.slice(0, -1)));
+    return cwds.get(key)!;
+  };
+  let notListed: string | null = null;
+  for (const part of parts) {
+    const { command } = part;
+    const cwd = cwdAt(command.scope);
+    if (work.has(part)) {
+      const tie = tieOf(part, cwd, vars, rootOf, config);
+      if (tie !== null) return { eligibility: "mac-only", reason: tie };
+      const text = part.values.slice(part.remoteAt).join(" ");
+      if (
+        notListed === null &&
+        entry.where === undefined &&
+        part.remoto === null &&
+        !matchesAny(text, config.runnerLinuxCommands)
+      ) {
+        notListed = `Not on the Can run on Linux list: ${nameOf(text)}`;
+      }
+    }
+    // A substitution runs in its own subshell: its folder and variables end with it.
+    if (command.substituted) continue;
+    const first = part.values[0];
+    if (first === "cd" || first === "pushd" || first === "popd") {
+      const args = command.words.slice(1).filter((word) => !/^-[LPe@]+$/.test(word.value));
+      const target =
+        first === "popd" || command.conditional || cwd === null || args.length > 1
+          ? null
+          : args[0] === undefined
+            ? home
+            : literalValue(args[0], vars, cwd);
+      cwds.set(
+        command.scope.join("/"),
+        target === null || target === "-" ? null : resolvePath(cwd ?? "/", target),
+      );
+    }
+    const assignments =
+      command.words.length === 0
+        ? command.assigns
+        : DECLARES.has(first ?? "")
+          ? command.words.slice(1).filter((word) => /^[A-Za-z_]\w*=/.test(word.value))
+          : [];
+    for (const word of assignments) {
+      const name = word.value.slice(0, word.value.indexOf("="));
+      const value = literalValue(
+        { ...word, value: word.value.slice(name.length + 1) },
+        vars,
+        cwd ?? "/",
+      );
+      vars.set(name, command.conditional ? null : value);
+    }
+  }
+  return notListed === null
+    ? { eligibility: "linux", reason: null }
+    : { eligibility: "not-listed", reason: notListed };
 };
 
 export interface LinuxHealth extends Sustained {
@@ -252,12 +423,17 @@ export interface WorkContext {
   readonly config: RunnerProjectConfig;
   /** Two jobs of one worktree never run on Linux together: `remoto` would serialize them. */
   readonly worktree: string;
+  readonly home: string;
+  /** The git checkout `remoto` would sync from a folder, or null outside any. */
+  readonly rootOf: (cwd: string) => string | null;
 }
 
 export interface RoutePlanInput extends PlanInput {
   readonly contextOf: (cwd: string) => WorkContext;
   readonly machine: RunnerMachineConfig;
   readonly health: LinuxHealth;
+  /** Some project uses the Runner: Mac rows then say why they stay. */
+  readonly runnerOn?: boolean;
 }
 
 export interface Admit {
@@ -297,15 +473,23 @@ const dropHolds = (entry: HeavyQueueEntry, config: RunnerProjectConfig, now: num
 /** Where the entry's own settings send it before Linux health is considered. */
 const intentOf = (
   entry: HeavyQueueEntry,
-  config: RunnerProjectConfig,
-): "mac" | "linux" | "automatic" => {
-  if (!config.runnerEnabled || entry.forced === true) return "mac";
-  const eligibility = eligibilityOf(entry, config);
-  if (eligibility === "exclusive" || eligibility === "mac-only") return "mac";
-  if (entry.route !== undefined) return entry.route;
+  context: WorkContext,
+): { readonly intent: "mac" | "linux" | "automatic"; readonly reason: string } => {
+  const mac = (reason: string) => ({ intent: "mac" as const, reason });
+  if (!context.config.runnerEnabled) return mac("Runner off for this project");
+  if (entry.forced === true) return mac("Started here by you");
+  const verdict = eligibilityOf(entry, context);
+  if (verdict.eligibility === "exclusive" || verdict.eligibility === "mac-only") {
+    return mac(verdict.reason!);
+  }
+  if (entry.route === "mac") return mac((entry as QueuedEntry).routeReason ?? "Moved to this Mac");
+  if (entry.route === "linux") return { intent: "linux", reason: "" };
   // `--runner` (an agent's own `remoto` call) speaks for the job; otherwise only listed work leaves.
-  if (entry.where !== undefined) return entry.where;
-  return eligibility === "linux" ? config.runnerWhere : "mac";
+  const where = entry.where ?? (verdict.reason === null ? context.config.runnerWhere : "mac");
+  if (where !== "mac") return { intent: where, reason: "" };
+  return mac(
+    verdict.reason ?? (entry.where === "mac" ? "Asked for this Mac" : "Runner set to this Mac"),
+  );
 };
 
 /**
@@ -342,8 +526,11 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
   const asks: Record<string, HeavyRunnerAskReason> = {};
   const cancels: Record<string, string> = {};
   const macWaiters: HeavyQueueEntry[] = [];
+  /** Why each job runs on this Mac, shown with what it waits for there. */
+  const macWhy: Record<string, string> = {};
 
-  const toMac = (entry: HeavyQueueEntry) => {
+  const toMac = (entry: HeavyQueueEntry, reason: string) => {
+    if (input.runnerOn === true) macWhy[entry.id] = reason;
     routes[entry.id] = "mac";
     macCount += 1;
     if (queueOn) macWaiters.push(entry);
@@ -377,22 +564,36 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
     admits[entry.id] = { runner: "linux", ungated: !queueOn };
   };
 
+  if (input.runnerOn === true) {
+    for (const entry of macRunning) {
+      const { intent, reason } = intentOf(entry, input.contextOf(entry.cwd));
+      if (intent === "mac") macWhy[entry.id] = reason;
+    }
+  }
   for (const entry of waiting) {
-    const { config, worktree } = input.contextOf(entry.cwd);
+    const context = input.contextOf(entry.cwd);
+    const { config, worktree } = context;
     if (entry.unconfirmed === true) {
       routes[entry.id] = entry.route ?? "linux";
       reasons[entry.id] = "Linux dropped it mid-run: confirming it stopped there before rerunning";
       continue;
     }
-    const intent = intentOf(entry, config);
+    const { intent, reason: why } = intentOf(entry, context);
     if (intent === "mac") {
-      toMac(entry);
+      toMac(entry, why);
       continue;
     }
     const up = linuxUpFor(health, entry) && !dropHolds(entry, config, now);
     if (intent === "automatic") {
       if (paused || !up || macRoom()) {
-        toMac(entry);
+        toMac(
+          entry,
+          paused
+            ? "Hybrid: queue paused"
+            : !up
+              ? "Hybrid: Linux is unavailable"
+              : "Hybrid: this Mac has room",
+        );
         continue;
       }
       const why = linuxBusy(worktree);
@@ -404,7 +605,7 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
         linuxCount / machine.runnerLinuxSlots < macCount / Math.max(1, input.maxRunning)
       ) {
         toLinux(entry, `waiting for Linux: ${why}`);
-      } else toMac(entry);
+      } else toMac(entry, "Hybrid: this Mac's backlog is shorter");
       continue;
     }
     // Bound for Linux.
@@ -431,7 +632,7 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
     const policy = reason === "dropped" ? config.runnerDropped : config.runnerUnavailable;
     const what = reason === "dropped" ? "Linux dropped it mid-run" : "Linux is unavailable";
     if (policy === "mac") {
-      toMac(entry);
+      toMac(entry, `${what}: running here`);
       continue;
     }
     if (policy === "wait") {
@@ -447,7 +648,8 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
       toLinux(entry, `${what}: waiting for your answer`);
       continue;
     }
-    if (config.runnerDeadlineAction === "mac") toMac(entry);
+    if (config.runnerDeadlineAction === "mac")
+      toMac(entry, `${what} and nobody answered: running here`);
     else if (config.runnerDeadlineAction === "wait") {
       toLinux(entry, `${what}: no answer, waiting for it`);
     } else {
@@ -457,14 +659,32 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
   }
 
   if (!queueOn) {
-    return { admits, routes, reasons, asks, cancels, room: true, holding: false, mac: null };
+    return {
+      admits,
+      routes,
+      reasons: { ...macWhy, ...reasons },
+      asks,
+      cancels,
+      room: true,
+      holding: false,
+      mac: null,
+    };
   }
   const mac = plan({ ...input, entries: [...macRunning, ...macWaiters] });
   if (mac.admit !== null) admits[mac.admit] = { runner: "mac", ungated: false };
   return {
     admits,
     routes,
-    reasons: { ...mac.reasons, ...reasons },
+    reasons: {
+      ...macWhy,
+      ...Object.fromEntries(
+        Object.entries(mac.reasons).map(([id, why]) => [
+          id,
+          macWhy[id] === undefined ? why : `${macWhy[id]} · ${why}`,
+        ]),
+      ),
+      ...reasons,
+    },
     asks,
     cancels,
     room: mac.room,
