@@ -20,6 +20,7 @@ const reactTests = [
   "src/state/heavyQueue.test.tsx",
   "src/features/settings/components/HeavyQueueSection.test.tsx",
   "src/features/settings/components/RunnerSection.test.tsx",
+  "src/features/heavy/HeavyNoticeHost.test.tsx",
   "src/features/settings/ThreadOrderSettings.test.tsx",
   "src/features/threads/ThreadArrangementSheet.test.tsx",
   "src/features/threads/useVisibleNewTaskScopes.test.tsx",

@@ -46,6 +46,7 @@ import {
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import { AutoSettleSettingsRows } from "./ThreadSettingsSections";
 import { KeepAwakeSection } from "./components/KeepAwakeSection";
+import { HeavyNoticesSection } from "./components/HeavyNoticesSection";
 import { HeavyCommandsSection, HeavyQueueSection } from "./components/HeavyQueueSection";
 import { RunnerSection } from "./components/RunnerSection";
 import { WorktreeSnapshotsSection } from "./components/WorktreeSnapshotsSection";
@@ -599,6 +600,13 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                       );
                     })
                   : null}
+                {!projectSelected ? (
+                  <HeavyNoticesSection
+                    value={isMixed("heavyNotices") ? null : uniform("heavyNotices")}
+                    disabled={disabledFor("heavyNotices")}
+                    onChange={(mode) => write({ heavyNotices: mode })}
+                  />
+                ) : null}
                 <RunnerSection
                   environmentId={reference.environment.environmentId}
                   settings={reference.settings}
