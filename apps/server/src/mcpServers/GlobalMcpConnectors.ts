@@ -15,7 +15,8 @@ export const globalMcpConnectors = (
   settings.getSettings.pipe(
     Effect.map((current) =>
       Object.entries(current.mcpServers).flatMap(([name, server]): ThreadConnector[] =>
-        !server.enabled
+        // Integrations reach providers only through the sign-in proxy, never as a bare URL.
+        !server.enabled || (server.transport === "http" && server.integration !== undefined)
           ? []
           : server.transport === "stdio"
             ? [

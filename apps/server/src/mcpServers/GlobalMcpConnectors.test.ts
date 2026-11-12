@@ -23,31 +23,40 @@ const settings = {
         headers: { Authorization: "Bearer value" },
       },
       off: { enabled: false, transport: "stdio" as const, command: "never", args: [], env: {} },
+      linear: {
+        enabled: true,
+        transport: "http" as const,
+        url: "https://mcp.linear.app/mcp",
+        headers: {},
+        integration: { catalogId: "linear", auth: "oauth" as const, availability: "all" as const },
+      },
     },
   }),
 };
 
-it.effect("enabled servers become suffixed connectors with secrets resolved", () =>
-  Effect.gen(function* () {
-    expect(yield* globalMcpConnectors(settings)).toEqual([
-      {
-        name: "local_t3",
-        transport: "stdio",
-        command: "example",
-        args: ["serve"],
-        headers: {},
-        env: { TOKEN: "value" },
-      },
-      {
-        name: "remote_t3",
-        transport: "http",
-        url: "https://mcp.example.test/mcp",
-        args: [],
-        headers: { Authorization: "Bearer value" },
-        env: {},
-      },
-    ]);
-  }),
+it.effect(
+  "enabled servers become suffixed connectors with secrets resolved, integrations aside",
+  () =>
+    Effect.gen(function* () {
+      expect(yield* globalMcpConnectors(settings)).toEqual([
+        {
+          name: "local_t3",
+          transport: "stdio",
+          command: "example",
+          args: ["serve"],
+          headers: {},
+          env: { TOKEN: "value" },
+        },
+        {
+          name: "remote_t3",
+          transport: "http",
+          url: "https://mcp.example.test/mcp",
+          args: [],
+          headers: { Authorization: "Bearer value" },
+          env: {},
+        },
+      ]);
+    }),
 );
 
 it.effect("unreadable settings add no connectors", () =>

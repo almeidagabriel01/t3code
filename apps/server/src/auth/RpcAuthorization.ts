@@ -216,6 +216,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.imessageChannelConfigure]: AuthOrchestrationOperateScope,
   [WS_METHODS.keepAwakeSubscribeStatus]: AuthOrchestrationReadScope,
   [WS_METHODS.heavyQueueSubscribe]: AuthOrchestrationReadScope,
+  [WS_METHODS.integrationsSubscribe]: AuthOrchestrationReadScope,
   [WS_METHODS.heavyQueuePromote]: AuthTerminalOperateScope,
   [WS_METHODS.heavyQueueStartNow]: AuthTerminalOperateScope,
   [WS_METHODS.heavyQueueCancel]: AuthTerminalOperateScope,
