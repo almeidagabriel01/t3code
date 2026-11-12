@@ -19,7 +19,7 @@ export function ThreadContextDragGhost() {
           className={
             preview.kind === "insert"
               ? "pointer-events-none fixed z-[90] rounded-full bg-primary"
-              : "pointer-events-none fixed z-[90] rounded-xl border border-primary/45 bg-primary/12 shadow-xl backdrop-blur-xs transition-[left,top,width,height,opacity] duration-200 ease-out starting:opacity-0 motion-reduce:transition-none"
+              : "pointer-events-none fixed z-[90] rounded-xl border border-primary/45 bg-primary/15 transition-[left,top,width,height,opacity] duration-200 ease-out starting:opacity-0 motion-reduce:transition-none"
           }
           style={
             preview.kind === "insert"
