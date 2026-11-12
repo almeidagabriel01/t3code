@@ -253,6 +253,14 @@ describe("classifyHeavyCommands", () => {
       expected: [],
     },
     {
+      name: "reads only a process's own program, not words its argv lost quotes around",
+      processes: [
+        proc(80, 0, "ssh", { cpu: 100 }, "ssh pc cd /w && npm test"),
+        proc(81, 0, "claude", { cpu: 100 }, "claude -p fix it; npm test"),
+      ],
+      expected: [],
+    },
+    {
       name: "leaves out heavy tools an app runs as helpers",
       processes: [
         proc(60, 0, "Code Helper (Plugin)"),

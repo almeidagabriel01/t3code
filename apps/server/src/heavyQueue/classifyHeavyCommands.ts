@@ -3,7 +3,7 @@ import { heavyEntryName } from "@t3tools/shared/heavyEntryName";
 import type { ProcessOwner } from "@t3tools/shared/ProcessOwners";
 import * as DateTime from "effect/DateTime";
 
-import { heavySegment } from "./heavyHook.ts";
+import { readLine } from "./heavyHook.ts";
 
 /** Summed over the tree: half a core, or 1 GiB resident, as the Resource Manager flags a process. */
 const HEAVY_CORES = 0.5;
@@ -89,11 +89,25 @@ const commandRoots = (
 /** `node /x/.bin/vitest run` as `/x/.bin/vitest run`: a process line names its interpreter first. */
 const NODE_SCRIPT = /^(?:\S*\/)?node(?:\s+-\S+)*\s+(?=[^-\s])/;
 
-/** Heavy by the hook's own rules, read from a process's command line. */
+/** Parsing ~900 process lines costs ~40 ms a sample; the lines barely change between samples. */
+const heavyLines = new Map<string, boolean>();
+const HEAVY_LINES_MAX = 4096;
+
+/**
+ * Heavy by the hook's own rules, read from a process's command line. Only its program counts:
+ * argv loses its quotes, so `ssh host 'cd w && npm test'` reads as two commands.
+ */
 const isHeavyProcess = (process: ResourceTelemetryProcess) => {
   if (isShell(process)) return false;
   const line = process.command || process.name;
-  return heavySegment(line) !== null || heavySegment(line.replace(NODE_SCRIPT, "")) !== null;
+  let heavy = heavyLines.get(line);
+  if (heavy === undefined) {
+    const first = (text: string) => readLine(text).parts[0]?.heavy === true;
+    heavy = first(line) || first(line.replace(NODE_SCRIPT, ""));
+    if (heavyLines.size >= HEAVY_LINES_MAX) heavyLines.clear();
+    heavyLines.set(line, heavy);
+  }
+  return heavy;
 };
 
 export const DETACHED_REASON = "Started outside an agent, so the queue can't route it";
