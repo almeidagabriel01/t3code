@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -67,7 +68,7 @@ const fakeSpawner = () =>
     );
   });
 
-const readAfter = (host: HostResources.HostResources["Service"], wait: string) =>
+const readAfter = (host: HostResources.HostResources["Service"], wait: Duration.Input) =>
   Effect.gen(function* () {
     const fiber = yield* Effect.forkChild(host.read);
     yield* TestClock.adjust(wait);
@@ -92,7 +93,7 @@ describe("HostResources memory", () => {
           Layer.provide(
             Layer.mergeAll(
               Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, fakeSpawner()),
-              Layer.mock(FileSystem.FileSystem)({}),
+              FileSystem.layerNoop({}),
             ),
           ),
           Layer.provide(Layer.succeed(HostProcess.Platform, "darwin")),
@@ -115,7 +116,7 @@ describe("HostResources memory", () => {
           Layer.provide(
             Layer.mergeAll(
               Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, fakeSpawner()),
-              Layer.mock(FileSystem.FileSystem)({
+              FileSystem.layerNoop({
                 readFileString: (path: string) =>
                   Effect.succeed(
                     path === "/proc/meminfo" ? "MemAvailable:    1000000 kB\n" : "pswpin 5\n",
