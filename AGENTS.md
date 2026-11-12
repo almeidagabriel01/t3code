@@ -272,6 +272,7 @@ This checkout is a personal fork that adds features (notes, kanban, memory, dest
 ### Robust logic
 
 - A status label shown beside a live reading is derived from that same reading: "Mac has room" next to "CPU 100%" is a bug.
+- A list orders rows with the same function and inputs their labels use (local visits, open decisions), and never parks rows in a section whose header is not drawn: a hidden Working shelf sank running threads below finished ones three times.
 - Never allowlist fields of external or user-edited data (frontmatter, provider memory files, CLI output). Parse tolerantly, ignore unknown keys and preserve them on write; only reject what is truly unusable.
 - One bad item never hides the others. Process per item, report skipped items with an enumerable reason, and keep the UI able to tell "nothing found" from "failed".
 - Compare versions as semver, not as strings. Validate every item before mutating any of them.
