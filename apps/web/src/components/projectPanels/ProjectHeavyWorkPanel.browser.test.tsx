@@ -128,10 +128,21 @@ it("shows only this project's commands and jobs, worktree jobs by their thread, 
 });
 
 it.each([
-  { item: "High priority now", priority: "high" },
-  { item: "Lower priority", priority: "low" },
-])("$item on a running job changes its priority", async ({ item, priority }) => {
-  setup([entry("run", { startedAt: STARTED })], []);
+  { job: "waiting", over: {}, item: "High priority now", priority: "high" },
+  {
+    job: "running",
+    over: { startedAt: STARTED, qos: "normal" },
+    item: "Lower priority",
+    priority: "low",
+  },
+  {
+    job: "lowered",
+    over: { startedAt: STARTED, qos: "background" },
+    item: "Normal priority",
+    priority: "high",
+  },
+] as const)("$item on a $job job changes its priority", async ({ over, item, priority }) => {
+  setup([entry("run", over)], []);
   await using screen = await render(panel());
   await userEvent.click(screen.getByRole("button", { name: "Actions for pnpm run" }));
   await userEvent.click(screen.getByRole("menuitem", { name: item }));

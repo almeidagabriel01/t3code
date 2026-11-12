@@ -174,7 +174,7 @@ describe("heavy queue file", () => {
     });
   });
 
-  it("high starts a waiter at once and low takes it back; a running job only records the level", () => {
+  it("high starts a waiter at once and low takes it back; a running job keeps its place and records QoS apart", () => {
     const dir = tempDir();
     for (const id of ["a", "b"]) Queue.enqueue(dir, { ...entry(id), priority: "low" });
     Queue.tryStart(dir, "a");
@@ -189,9 +189,17 @@ describe("heavy queue file", () => {
     expect(Queue.tryStart(dir, "b")).toMatchObject({ status: "started" });
     expect(Queue.setPriority(dir, "a", "high")).toMatchObject({
       result: "ok",
-      entry: { id: "a", priority: "high" },
+      entry: { id: "a", priority: "low" },
     });
     expect(Queue.read(dir).find((e) => e.id === "a")).not.toHaveProperty("forced");
+    // An agent's job waits "low" yet runs at normal QoS: the two never share a field.
+    expect(Queue.read(dir).find((e) => e.id === "a")).not.toHaveProperty("qos");
+    Queue.setQos(dir, "a", "background");
+    Queue.setQos(dir, "waiter-never-started", "normal");
+    expect(Queue.read(dir).find((e) => e.id === "a")).toMatchObject({
+      priority: "low",
+      qos: "background",
+    });
     expect(Queue.setPriority(dir, "gone", "high")).toEqual({ result: "not-found" });
   });
 

@@ -18,6 +18,7 @@ import {
   readDoc,
   recordSampleIfStale,
   remove,
+  setQos,
   tryStart,
 } from "./queueFile.ts";
 
@@ -28,16 +29,25 @@ import {
  */
 const AGENT_JOB_CPU = "normal" as "normal" | "background";
 
-/** The program a job runs as: under `taskpolicy -b` when it starts in the background on macOS. */
+/**
+ * The program a job runs as, under `taskpolicy -b` when it starts in the background on macOS, and
+ * the QoS to record; none off macOS, where T3 cannot change it later.
+ */
 export const launchOf = (
   program: string,
   args: ReadonlyArray<string>,
   background: boolean,
   platform: NodeJS.Platform,
 ) =>
-  background && platform === "darwin"
-    ? { program: "/usr/sbin/taskpolicy", args: ["-b", program, ...args] }
-    : { program, args };
+  platform !== "darwin"
+    ? { program, args, qos: null }
+    : background
+      ? {
+          program: "/usr/sbin/taskpolicy",
+          args: ["-b", program, ...args],
+          qos: "background" as const,
+        }
+      : { program, args, qos: "normal" as const };
 
 const POLL_MS = 1000;
 /** A server writes readings every 2 s; past this a waiter takes over sampling. */
@@ -265,5 +275,6 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
     // oxlint-disable-next-line t3code/no-global-process-runtime -- The CLI fast path runs before any Effect runtime.
     NodeOS.platform(),
   );
+  if (launch.qos !== null) setQos(dir, id, launch.qos);
   child = runDirect(launch.program, launch.args, run.env);
 };

@@ -31,6 +31,29 @@ export function ruleForRoot(
   return rules.find((rule) => trimRoot(rule.root) === trimRoot(root));
 }
 
+/** A job-menu priority change, and the `setPriority` input that makes it. */
+export const PRIORITY_CHANGE = {
+  "high-now": "high",
+  normal: "high",
+  lower: "low",
+} as const satisfies Record<string, "low" | "high">;
+export type PriorityChange = keyof typeof PRIORITY_CHANGE;
+
+/**
+ * The row's priority label and the changes its menu offers. A waiter can be released at once; a
+ * running job shows and changes the CPU QoS it actually runs with, never its place in the queue.
+ */
+export function jobPriority(entry: HeavyQueueEntry): {
+  readonly label: "Low priority" | null;
+  readonly changes: ReadonlyArray<PriorityChange>;
+} {
+  if (entry.startedAt === null) {
+    return { label: null, changes: entry.priority === "high" ? [] : ["high-now"] };
+  }
+  if (entry.qos === "background") return { label: "Low priority", changes: ["normal"] };
+  return { label: null, changes: entry.qos === "normal" ? ["lower"] : [] };
+}
+
 export type MoveAction = "next" | "up" | "down" | "end";
 
 /**

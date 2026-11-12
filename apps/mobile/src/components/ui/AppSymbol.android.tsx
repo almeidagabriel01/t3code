@@ -95,6 +95,7 @@ import IconFolder from "@tabler/icons-react-native/IconFolder";
 import IconFolderOpen from "@tabler/icons-react-native/IconFolderOpen";
 import IconHeadphones from "@tabler/icons-react-native/IconHeadphones";
 import IconFolderPlus from "@tabler/icons-react-native/IconFolderPlus";
+import IconGauge from "@tabler/icons-react-native/IconGauge";
 import IconGitPullRequestClosed from "@tabler/icons-react-native/IconGitPullRequestClosed";
 import IconGitPullRequestDraft from "@tabler/icons-react-native/IconGitPullRequestDraft";
 import IconGitCommit from "@tabler/icons-react-native/IconGitCommit";
@@ -264,6 +265,7 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   "folder.badge.plus": IconFolderPlus,
   "folder.fill": IconFolder,
   briefcase: IconBriefcase,
+  "gauge.with.dots.needle.50percent": IconGauge,
   gearshape: IconSettings,
   globe: IconWorld,
   hammer: IconHammer,

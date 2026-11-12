@@ -291,6 +291,10 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
         yield* setTreePriority(entry!.pid, priority).pipe(
           Effect.mapError((error) => unavailable(error)),
         );
+        yield* Effect.try({
+          try: () => QueueFile.setQos(dir, id, priority === "high" ? "normal" : "background"),
+          catch: unavailable,
+        });
       }
       yield* announce;
     }),
