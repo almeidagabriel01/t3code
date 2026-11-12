@@ -10,6 +10,8 @@ import type {
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 
+import { isDeviceRootName } from "./DeviceProcesses.ts";
+
 const MAX_DELTA_INTERVAL_MS = 30_000;
 const ELECTRON_IDENTITY_TOLERANCE_MS = 2_000;
 
@@ -94,7 +96,8 @@ function finiteNonNegative(value: number): number {
 
 function categoryGroup(
   category: ResourceTelemetryProcessCategory,
-): "backend" | "electron" | "monitor" {
+): "backend" | "electron" | "monitor" | "external" {
+  if (category === "external-device") return "external";
   if (category === "resource-monitor") return "monitor";
   if (category.startsWith("electron-")) return "electron";
   return "backend";
@@ -310,7 +313,7 @@ function applyLifecycleCounters(input: {
         monitor = incrementCounters(monitor, processDelta);
         break;
     }
-    allT3 = incrementCounters(allT3, processDelta);
+    if (group !== "external") allT3 = incrementCounters(allT3, processDelta);
   }
 
   for (const [identityKey, current] of input.current) {
@@ -327,7 +330,7 @@ function applyLifecycleCounters(input: {
         monitor = incrementCounters(monitor, { processStarts: 1 });
         break;
     }
-    allT3 = incrementCounters(allT3, { processStarts: 1 });
+    if (group !== "external") allT3 = incrementCounters(allT3, { processStarts: 1 });
   }
 
   for (const [identityKey, previous] of input.previous) {
@@ -344,7 +347,7 @@ function applyLifecycleCounters(input: {
         monitor = incrementCounters(monitor, { processExits: 1 });
         break;
     }
-    allT3 = incrementCounters(allT3, { processExits: 1 });
+    if (group !== "external") allT3 = incrementCounters(allT3, { processExits: 1 });
   }
 
   return { backend, electron, monitor, allT3 };
@@ -433,7 +436,8 @@ export function mergeProcesses(input: MergeProcessesInput): MergeProcessesResult
   const explicitElectronRootPids = new Set(
     [...requestedElectronRootPids].filter((pid) => {
       const process = processesByPid.get(pid);
-      if (!process) return false;
+      // The sidecar echoes device roots among its external roots; they are never Electron.
+      if (!process || isDeviceRootName(process.name)) return false;
       const expectedStartTime = input.electronRootStartTimes?.get(pid);
       if (expectedStartTime !== undefined) {
         return Math.abs(process.startTimeMs - expectedStartTime) <= ELECTRON_IDENTITY_TOLERANCE_MS;
@@ -460,7 +464,26 @@ export function mergeProcesses(input: MergeProcessesInput): MergeProcessesResult
       })
       .toSorted((left, right) => left - right),
   ].filter((pid, index, values) => values.indexOf(pid) === index);
-  const rootPids = [input.serverPid, ...electronRootPids];
+  const isT3 = (pid: number): boolean => {
+    const visited = new Set<number>();
+    let currentPid = pid;
+    while (!visited.has(currentPid)) {
+      visited.add(currentPid);
+      if (currentPid === input.serverPid || electronPids.has(currentPid)) return true;
+      const current = processesByPid.get(currentPid);
+      if (!current) return false;
+      currentPid = current.ppid;
+    }
+    return false;
+  };
+  // Every tracked process outside the server and Electron trees belongs to a device root.
+  const externalPids = new Set(
+    processes.filter((process) => !isT3(process.pid)).map((process) => process.pid),
+  );
+  const externalRootPids = [...externalPids]
+    .filter((pid) => !externalPids.has(processesByPid.get(pid)!.ppid))
+    .toSorted((left, right) => left - right);
+  const rootPids = [input.serverPid, ...electronRootPids, ...externalRootPids];
   const roots = new Set(rootPids);
   const depths = processDepths(processes, roots);
   const childrenByParent = new Map<number, number[]>();
@@ -506,13 +529,15 @@ export function mergeProcesses(input: MergeProcessesInput): MergeProcessesResult
         ? "server"
         : Option.contains(input.sidecarPid, process.pid)
           ? "resource-monitor"
-          : explicitElectronRootPids.has(process.pid)
-            ? "electron-main"
-            : electronMetric
-              ? electronCategory(electronMetric)
-              : isElectronDescendant(process.pid, processesByPid, electronPids, input.serverPid)
-                ? inferredElectronCategory(process)
-                : "server-child";
+          : externalPids.has(process.pid)
+            ? "external-device"
+            : explicitElectronRootPids.has(process.pid)
+              ? "electron-main"
+              : electronMetric
+                ? electronCategory(electronMetric)
+                : isElectronDescendant(process.pid, processesByPid, electronPids, input.serverPid)
+                  ? inferredElectronCategory(process)
+                  : "server-child";
     const firstSeenAt = previous?.process.firstSeenAt ?? DateTime.makeUnsafe(sampledAtMs);
     const preservePreviousRates = !input.updatePrevious && previous !== undefined;
     const cpuPercent = preservePreviousRates
@@ -606,7 +631,10 @@ export function mergeProcesses(input: MergeProcessesInput): MergeProcessesResult
       backend: aggregate(backendProcesses, counters.backend),
       electron: aggregate(electronProcesses, counters.electron),
       monitor: aggregate(monitorProcesses, counters.monitor),
-      allT3: aggregate(ordered, counters.allT3),
+      allT3: aggregate(
+        ordered.filter((process) => categoryGroup(process.category) !== "external"),
+        counters.allT3,
+      ),
     },
     deltas: processDeltas,
   };

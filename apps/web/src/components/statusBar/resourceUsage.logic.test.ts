@@ -9,6 +9,7 @@ import {
   appBreakdown,
   attributeTerminalUsage,
   buildResourceTree,
+  deviceRowLabel,
   deviceShutdownTargets,
   orderResourceTree,
   resourceTreeKeys,
@@ -110,14 +111,32 @@ describe("deviceShutdownTargets", () => {
   const local = new Set(["local"]);
 
   it.each([
-    ["the booted emulator running the row's AVD", "android", "Pixel_8", ["emulator-5554"]],
-    ["every booted simulator for the Simulator app", "ios", null, ["sim-a", "sim-b"]],
-    ["nothing for the device tools", "tools", null, []],
-    ["nothing when the AVD is not booted here", "android", "Nexus", []],
-  ] as const)("shuts down %s", (_, platform, avd, expected) => {
+    ["the booted emulator running the row's AVD", "android", "Pixel_8", null, ["emulator-5554"]],
+    ["only the simulator the row runs", "ios", null, "sim-b", ["sim-b"]],
+    ["nothing for the Simulator app itself", "ios", null, null, []],
+    ["nothing for a simulator that is not booted", "ios", null, "sim-off", []],
+    ["nothing for the device tools", "tools", null, null, []],
+    ["nothing when the AVD is not booted here", "android", "Nexus", null, []],
+  ] as const)("shuts down %s", (_, platform, avd, udid, expected) => {
     expect(
-      deviceShutdownTargets({ platform, avd }, devices, local).map((target) => target.deviceId),
+      deviceShutdownTargets({ platform, avd, udid }, devices, local).map(
+        (target) => target.deviceId,
+      ),
     ).toEqual(expected);
+  });
+
+  it.each([
+    ["a simulator by its device name", "sim-a", local, "iPhone 17"],
+    [
+      "a simulator another host lists by its fallback",
+      "sim-a",
+      new Set(["mac-mini"]),
+      "iOS Simulator",
+    ],
+    ["an unknown simulator by its fallback", "gone", local, "iOS Simulator"],
+    ["a row without a simulator by its own label", null, local, "iOS Simulator"],
+  ] as const)("labels %s", (_, udid, hosts, expected) => {
+    expect(deviceRowLabel({ label: "iOS Simulator", udid }, devices, hosts)).toBe(expected);
   });
 });
 
@@ -129,13 +148,14 @@ describe("buildResourceTree", () => {
     cpuPercent: number,
     name = "node",
     command = name,
+    category: ResourceTelemetryProcess["category"] = "server-child",
   ) =>
     ({
       identity: { pid, startTimeMs: 0 },
       childPids,
       residentBytes,
       cpuPercent,
-      category: "server-child",
+      category,
       name,
       command,
     }) as unknown as ResourceTelemetryProcess;
@@ -221,9 +241,52 @@ describe("buildResourceTree", () => {
     const ios = [p(50, [51], 1, 0, "node"), p(51, [], 700, 20, "Simulator")];
     const { devices } = run({ processes: ios, hubPids: [50, 60] });
     expect(devices.map((device) => [device.label, device.platform])).toEqual([
-      ["iOS Simulator", "ios"],
+      ["Simulator app", "ios"],
       ["Device tools", "tools"],
     ]);
+  });
+
+  it("lists devices outside T3 by simulator, Simulator app and AVD, apart from the app", () => {
+    const udid = "C7ECB864-1C0B-4E4D-B0E7-0B7037305D4B";
+    const out = (
+      pid: number,
+      childPids: number[],
+      residentBytes: number,
+      name: string,
+      command = name,
+    ) => p(pid, childPids, residentBytes, 1, name, command, "external-device");
+    const processes = [
+      p(1, [], 5, 0, "t3-server", "t3-server", "server"),
+      out(
+        70,
+        [71],
+        100,
+        "launchd_sim",
+        `launchd_sim /Users/me/Library/Developer/CoreSimulator/Devices/${udid}/data/var/run/launchd_bootstrap.plist`,
+      ),
+      out(71, [], 900, "SpringBoard"),
+      out(80, [], 300, "Simulator"),
+      out(90, [91], 10, "emulator", "/sdk/emulator/emulator -avd Medium_Phone"),
+      out(91, [], 2000, "qemu-system-aarch64", "/sdk/qemu-system-aarch64 -avd Medium_Phone"),
+      out(95, [], 4000, "qemu-system-aarch64", "qemu-system-aarch64 -machine virt"),
+    ];
+    const tree = run({ processes, terminals: [], agents: [], hubPids: [] });
+    expect(
+      tree.devices.map((device) => [
+        device.key,
+        device.label,
+        device.platform,
+        device.udid,
+        device.avd,
+        device.outside,
+        device.usage.rssBytes,
+      ]),
+    ).toEqual([
+      ["outside:android:Medium_Phone", "Medium Phone", "android", null, "Medium_Phone", true, 2010],
+      [`outside:ios:${udid}`, "iOS Simulator", "ios", udid, null, true, 1000],
+      ["outside:simulator:80", "Simulator app", "ios", null, null, true, 300],
+    ]);
+    expect(tree.app.map((row) => [row.group, row.usage.processCount])).toEqual([["server", 1]]);
   });
 
   it("lists each row's processes once", () => {

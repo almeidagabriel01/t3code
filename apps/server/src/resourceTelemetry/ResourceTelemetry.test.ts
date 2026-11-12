@@ -1,5 +1,6 @@
 import type {
   DesktopHostTelemetrySnapshot,
+  ResourceMonitorExternalProcess,
   ResourceMonitorProcessSample,
   ResourceMonitorSnapshotEvent,
 } from "@t3tools/contracts";
@@ -11,6 +12,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
@@ -365,6 +367,48 @@ describe("ResourceTelemetry", () => {
         }).pipe(Effect.provide(layerTelemetry));
       }),
     ),
+  );
+
+  it.effect("tracks this machine's simulators and emulators beside Electron while watched", () =>
+    Effect.gen(function* () {
+      const sent = yield* Queue.unbounded<ReadonlyArray<ResourceMonitorExternalProcess>>();
+      const layerNative = NativeTelemetryClient.layerTest({
+        sampleNow: Effect.never,
+        setExternalProcesses: (processes) => Queue.offer(sent, processes).pipe(Effect.asVoid),
+        processTable: Effect.succeed([
+          { pid: 1, ppid: 0, name: "launchd" },
+          { pid: 500, ppid: 1, name: "launchd_sim" },
+          { pid: 501, ppid: 500, name: "SpringBoard" },
+          { pid: 600, ppid: 1, name: "Simulator" },
+          { pid: 700, ppid: 1, name: "node" },
+          { pid: 800, ppid: 42, name: "qemu-system-aarch64-headless" },
+          { pid: 900, ppid: 42, name: "emulator.exe" },
+          { pid: 901, ppid: 42, name: "qemu-system-aar" },
+        ]),
+      });
+      const layerDesktop = DesktopTelemetryReceiver.layerTest({
+        latest: Effect.succeedSome(desktopSnapshot(0)),
+      });
+      const layerTelemetry = ResourceTelemetry.layer.pipe(
+        Layer.provide(Layer.mergeAll(layerNative, layerDesktop, ResourceAttribution.layer)),
+      );
+      const electron = { pid: ELECTRON_PID, startTimeMs: 300 };
+
+      yield* Effect.gen(function* () {
+        const telemetry = yield* ResourceTelemetry.ResourceTelemetry;
+        expect(yield* Queue.take(sent)).toEqual([electron]);
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            yield* telemetry.subscribe;
+            expect(yield* Queue.take(sent)).toEqual([
+              electron,
+              ...[500, 600, 800, 900, 901].map((pid) => ({ pid })),
+            ]);
+          }),
+        );
+        expect(yield* Queue.take(sent)).toEqual([electron]);
+      }).pipe(Effect.provide(layerTelemetry));
+    }),
   );
 
   it.effect("atomically subscribes while a desktop update is being rebuilt", () =>

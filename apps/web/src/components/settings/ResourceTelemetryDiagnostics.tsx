@@ -123,6 +123,8 @@ function categoryLabel(category: ResourceTelemetryProcessCategory): string {
       return "Monitor";
     case "unknown-t3":
       return "T3 process";
+    case "external-device":
+      return "Outside T3";
   }
 }
 
