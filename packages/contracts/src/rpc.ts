@@ -560,6 +560,7 @@ import {
   HeavyQueueSetPriorityInput,
   HeavyQueueSetPausedInput,
   HeavyQueueSetRuleInput,
+  HeavyQueueRouteInput,
   HeavyQueueState,
 } from "./heavyQueue.ts";
 import {
@@ -861,6 +862,7 @@ export const WS_METHODS = {
   heavyQueueSetPaused: "heavyQueue.setPaused",
   heavyQueueSetEnabled: "heavyQueue.setEnabled",
   heavyQueueSetRule: "heavyQueue.setRule",
+  heavyQueueRoute: "heavyQueue.route",
   heavyQueueSetMaxRunning: "heavyQueue.setMaxRunning",
   heavyQueueSetPriority: "heavyQueue.setPriority",
   heavyQueueSetClaudeHook: "heavyQueue.setClaudeHook",
@@ -2698,6 +2700,11 @@ const WsHeavyQueueSetEnabledRpc = Rpc.make(WS_METHODS.heavyQueueSetEnabled, {
   error: Schema.Union([HeavyQueueError, EnvironmentAuthorizationError]),
 });
 
+const WsHeavyQueueRouteRpc = Rpc.make(WS_METHODS.heavyQueueRoute, {
+  payload: HeavyQueueRouteInput,
+  error: Schema.Union([HeavyQueueError, EnvironmentAuthorizationError]),
+});
+
 const WsHeavyQueueSetRuleRpc = Rpc.make(WS_METHODS.heavyQueueSetRule, {
   payload: HeavyQueueSetRuleInput,
   error: Schema.Union([HeavyQueueError, EnvironmentAuthorizationError]),
@@ -3143,6 +3150,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsHeavyQueueSetPausedRpc,
   WsHeavyQueueSetEnabledRpc,
   WsHeavyQueueSetRuleRpc,
+  WsHeavyQueueRouteRpc,
   WsHeavyQueueSetMaxRunningRpc,
   WsHeavyQueueSetPriorityRpc,
   WsHeavyQueueSetClaudeHookRpc,

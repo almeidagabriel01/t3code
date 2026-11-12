@@ -477,23 +477,40 @@ describe("scoped settings writes", () => {
   });
 
   it("refuses environment-wide keys at project scope", () => {
+    for (const patch of [{ enableProviderUpdateChecks: false }, { runnerHost: "pc" }]) {
+      expect(planScopedSettingsPatch(project, environments, patch)).toMatchObject({
+        serverWrites: [],
+        unavailableReason:
+          "This setting is environment-wide and cannot be overridden by a project.",
+      });
+    }
     expect(
-      planScopedSettingsPatch(project, environments, { enableProviderUpdateChecks: false }),
-    ).toMatchObject({
-      serverWrites: [],
-      unavailableReason: "This setting is environment-wide and cannot be overridden by a project.",
-    });
+      planScopedSettingsPatch(project, [laptop, server], {
+        runnerWhere: "linux",
+      }).serverWrites.map((write) => write.patch),
+    ).toEqual([
+      { projectSettingsOverrides: { [projectId]: { runnerWhere: "linux" } } },
+      { projectSettingsOverrides: { [laptopProjectId]: { runnerWhere: "linux" } } },
+    ]);
   });
 
   it("clears overrides per member and removes an emptied entry", () => {
     const withOverrides = environment("Server", {
       settings: {
         projectSettingsOverrides: {
-          [projectId]: { defaultAutoPull: true, enableAgentBrowserAccess: false },
+          [projectId]: {
+            defaultAutoPull: true,
+            runnerMacOnly: ["xcodebuild"],
+            enableAgentBrowserAccess: false,
+          },
         },
       },
     });
-    const plan = planScopedSettingsClear(checkout, [laptop, withOverrides], ["defaultAutoPull"]);
+    const plan = planScopedSettingsClear(
+      checkout,
+      [laptop, withOverrides],
+      ["defaultAutoPull", "runnerMacOnly"],
+    );
     expect(plan.serverWrites).toEqual([
       {
         environmentId: server.environmentId,
@@ -506,7 +523,7 @@ describe("scoped settings writes", () => {
       planScopedSettingsClear(
         checkout,
         [laptop, withOverrides],
-        ["defaultAutoPull", "enableAgentBrowserAccess"],
+        ["defaultAutoPull", "runnerMacOnly", "enableAgentBrowserAccess"],
       ).serverWrites[0]?.patch,
     ).toEqual({ projectSettingsOverrides: { [projectId]: null } });
   });

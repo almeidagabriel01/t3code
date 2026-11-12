@@ -20,6 +20,9 @@ const EMPTY_QUEUE: HeavyQueueState = {
   deviceIdleMinutes: 20,
   machine: null,
   hold: null,
+  linux: null,
+  macOnly: [],
+  routes: {},
 };
 const NO_QUEUE = Atom.make(EMPTY_QUEUE).pipe(Atom.withLabel("web-heavy-queue-none"));
 

@@ -19,6 +19,7 @@ const reactTests = [
   "src/features/layout/AdaptiveWorkspaceLayout.inspector.test.tsx",
   "src/state/heavyQueue.test.tsx",
   "src/features/settings/components/HeavyQueueSection.test.tsx",
+  "src/features/settings/components/RunnerSection.test.tsx",
   "src/features/threads/useVisibleNewTaskScopes.test.tsx",
   "src/features/archive/ArchivedThreadsRouteScreen.test.tsx",
   "src/features/archive/ArchivedThreadsScreen.test.tsx",

@@ -4,7 +4,12 @@
  */
 // @effect-diagnostics nodeBuiltinImport:off - An entry id needs no Effect service.
 import * as NodeCrypto from "node:crypto";
-import { HeavyQueueError, type HeavyQueueState } from "@t3tools/contracts";
+import {
+  HeavyQueueError,
+  type HeavyQueueState,
+  type HeavyRunner,
+  type HeavyRunnerLinux,
+} from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import * as Context from "effect/Context";
@@ -17,7 +22,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { estimate, hasHeadroom, machineHold, SAMPLE_FRESH_MS, signatureOf } from "./admission.ts";
 import * as ClaudeSettingsHook from "./claudeSettingsHook.ts";
-import { hookScript, interceptBashCall, shellQuote } from "./heavyHook.ts";
+import { hookScript, shellQuote } from "./heavyHook.ts";
 import * as QueueFile from "./queueFile.ts";
 
 const POLL_INTERVAL = "1 second";
@@ -26,14 +31,30 @@ const STREAM_INTERVAL = "2 seconds";
 const failure = (reason: HeavyQueueError["reason"], message: string) =>
   new HeavyQueueError({ reason, message });
 
-const moveFailure = (action: string, result: QueueFile.MoveResult) =>
-  result === "ok"
-    ? Effect.void
-    : Effect.fail(
-        result === "running"
-          ? failure("running", `The running command cannot be ${action}.`)
-          : failure("not-found", "That entry is no longer in the queue."),
+const moveFailure = (action: string, result: QueueFile.MoveResult) => {
+  switch (result) {
+    case "ok":
+      return Effect.void;
+    case "running":
+      return Effect.fail(failure("running", `The running command cannot be ${action}.`));
+    case "not-allowed":
+      return Effect.fail(
+        failure(
+          "not-allowed",
+          "This job only runs on this Mac (exclusive or on the Mac-only list).",
+        ),
       );
+    case "unconfirmed":
+      return Effect.fail(
+        failure(
+          "not-allowed",
+          "Linux has not confirmed the earlier run stopped; rerunning now may run it twice.",
+        ),
+      );
+    case "not-found":
+      return Effect.fail(failure("not-found", "That entry is no longer in the queue."));
+  }
+};
 
 const unavailable = (error: unknown) => failure("unavailable", `Heavy queue unavailable: ${error}`);
 
@@ -63,6 +84,15 @@ export class HeavyQueue extends Context.Service<
     /** Adds or removes the queue hook in the user's Claude Code settings. */
     readonly setClaudeHook: (installed: boolean) => Effect.Effect<void, HeavyQueueError>;
     readonly setDeviceIdleMinutes: (minutes: number) => Effect.Effect<void, HeavyQueueError>;
+    /**
+     * Sends a waiter to a runner (also the answer to its Linux question). A running entry stops
+     * and waits again there; `force` reruns one Linux could not confirm stopped.
+     */
+    readonly route: (
+      id: string,
+      runner: HeavyRunner,
+      force: boolean,
+    ) => Effect.Effect<void, HeavyQueueError>;
     /** A null priority clears the folder's rule. */
     readonly setRule: (
       root: string,
@@ -113,12 +143,36 @@ export const queuePrefix = Effect.fn("HeavyQueue.queuePrefix")(function* (
   ].join(" ");
 });
 
+/** Linux as clients show it; null while the Runner is off everywhere. No timestamps, so the stream stays quiet. */
+export const linuxState = (doc: ReturnType<typeof QueueFile.readDoc>): HeavyRunnerLinux | null => {
+  const block = doc.runner;
+  if (
+    block === null ||
+    !(block.global.runnerEnabled || block.projects.some((project) => project.config.runnerEnabled))
+  ) {
+    return null;
+  }
+  const { linux } = doc;
+  return {
+    host: block.machine.runnerHost,
+    online: linux.online,
+    slots: block.machine.runnerLinuxSlots,
+    running: doc.entries.filter((entry) => entry.startedAt !== null && entry.runner === "linux")
+      .length,
+    load1: linux.load1 === null ? null : Math.round(linux.load1 * 10) / 10,
+    cpuCount: linux.cpuCount,
+    availableMemoryBytes: linux.availableMemoryBytes,
+    totalMemoryBytes: linux.totalMemoryBytes,
+    ...(linux.online === false && linux.error !== undefined ? { error: linux.error } : {}),
+  };
+};
+
 /** The in-process PreToolUse hook for Claude sessions T3 starts; the queue switched off leaves calls alone. */
 export const bashHook =
   (prefix: string, dir: string = QueueFile.defaultQueueDir()) =>
   (hookInput: unknown) =>
     // readDoc never throws: a missing or corrupt file reads as an empty queue that is on.
-    interceptBashCall(hookInput, prefix, QueueFile.readDoc(dir));
+    QueueFile.answerBashCall(dir, hookInput, prefix);
 
 const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings?: string) {
   const command = `${yield* queuePrefix(dir)} --`;
@@ -197,7 +251,10 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
           }
         : null,
       // With nothing held back, the limit the same reading is past, so the summary never claims room.
-      hold: plan.hold ?? (fresh ? machineHold(sample) : null),
+      hold: plan.mac?.hold ?? (fresh ? machineHold(sample) : null),
+      linux: linuxState(doc),
+      macOnly: entries.filter((entry) => QueueFile.staysOnMac(doc, entry)).map((entry) => entry.id),
+      routes: plan.routes,
     };
   });
 
@@ -310,6 +367,9 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
     ),
     setDeviceIdleMinutes: Effect.fn("HeavyQueue.setDeviceIdleMinutes")((minutes: number) =>
       change(() => QueueFile.setDeviceIdleMinutes(dir, minutes)),
+    ),
+    route: Effect.fn("HeavyQueue.route")((id: string, runner: HeavyRunner, force: boolean) =>
+      act("moved", () => QueueFile.route(dir, id, runner, force)),
     ),
     setRule: Effect.fn("HeavyQueue.setRule")((root: string, priority: "first" | "last" | null) =>
       change(() => QueueFile.setRule(dir, root, priority)),

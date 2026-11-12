@@ -1,4 +1,8 @@
-import { DEFAULT_SERVER_SETTINGS, type ServerSettingsPatch } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  type ProjectId,
+  type ServerSettingsPatch,
+} from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import type { ReactNode } from "react";
 import { act } from "react";
@@ -9,6 +13,14 @@ const { Children, mocks } = vi.hoisted(() => ({
   Children: ({ children }: { children?: ReactNode }) => children,
   mocks: {
     branchNaming: { onChange: (_patch: ServerSettingsPatch) => {} },
+    runner: null as null | {
+      projectSelected: boolean;
+      overridden: (key: string) => boolean;
+      mixed: (key: string) => boolean;
+      disabledFor: (key: string) => boolean;
+      write: (patch: ServerSettingsPatch) => void;
+      reset: (key: string) => void;
+    },
     updateSettings: vi.fn(),
     alert: vi.fn(),
     targets: [] as ReturnType<typeof environment>[],
@@ -145,9 +157,19 @@ vi.mock("./components/WorktreeSnapshotsSection", () => ({
 }));
 vi.mock("./components/HeavyQueueSection", () => ({
   HeavyCommandsSection: () => null,
-  HeavyQueueSection: (props: { environmentId: string }) => (
-    <i aria-label="heavy queue" data-env={props.environmentId} />
+  HeavyQueueSection: (props: { environmentId: string; runner: object }) => (
+    <i
+      aria-label="heavy queue"
+      data-env={props.environmentId}
+      data-runner={JSON.stringify(props.runner)}
+    />
   ),
+}));
+vi.mock("./components/RunnerSection", () => ({
+  RunnerSection: (props: NonNullable<typeof mocks.runner>) => {
+    mocks.runner = props;
+    return null;
+  },
 }));
 vi.mock("./components/FolderModelsSection", () => ({ FolderModelsSection: () => null }));
 vi.mock("./components/BranchNamingSettings", () => ({
@@ -282,6 +304,71 @@ describe("SettingsServerControlsRouteScreen", () => {
     expect(container.querySelector<HTMLElement>('[aria-label="heavy queue"]')?.dataset.env).toBe(
       "local",
     );
+  });
+
+  it("passes the effective Runner mode to the heavy-work queue", () => {
+    act(() => root.render(<SettingsEnvironmentMaintenanceRouteScreen />));
+    expect(
+      JSON.parse(
+        container.querySelector<HTMLElement>('[aria-label="heavy queue"]')!.dataset.runner!,
+      ),
+    ).toEqual({ enabled: false, where: "mac", overflow: 3 });
+  });
+
+  it("saves Runner settings for the environment, or as project overrides it can reset", async () => {
+    act(() => root.render(<SettingsEnvironmentMaintenanceRouteScreen />));
+    expect(mocks.runner!.projectSelected).toBe(false);
+    await act(async () => mocks.runner!.write({ runnerHost: "box" }));
+    expect(mocks.updateSettings).toHaveBeenLastCalledWith({
+      environmentId: "local",
+      input: { patch: { runnerHost: "box" } },
+    });
+    act(() => root.unmount());
+
+    mocks.projectSelected = true;
+    const project = environment("local", "Local");
+    project.serverConfig.settings = {
+      ...project.serverConfig.settings,
+      projectSettingsOverrides: {
+        ["project" as ProjectId]: { runnerWhere: "linux", runnerOverflow: 5 },
+      },
+    };
+    mocks.targets = [project];
+    root = createRoot(container);
+    act(() => root.render(<SettingsEnvironmentMaintenanceRouteScreen />));
+    expect(mocks.runner!.overridden("runnerWhere")).toBe(true);
+    expect(mocks.runner!.overridden("runnerEnabled")).toBe(false);
+    expect(mocks.runner!.disabledFor("runnerHost")).toBe(true);
+    expect(mocks.runner!.disabledFor("runnerWhere")).toBe(false);
+    await act(async () => mocks.runner!.write({ runnerEnabled: true }));
+    expect(mocks.updateSettings).toHaveBeenLastCalledWith({
+      environmentId: "local",
+      input: {
+        patch: {
+          projectSettingsOverrides: {
+            project: { runnerWhere: "linux", runnerOverflow: 5, runnerEnabled: true },
+          },
+        },
+      },
+    });
+    await act(async () => mocks.runner!.reset("runnerWhere"));
+    expect(mocks.updateSettings).toHaveBeenLastCalledWith({
+      environmentId: "local",
+      input: { patch: { projectSettingsOverrides: { project: { runnerOverflow: 5 } } } },
+    });
+  });
+
+  it("marks Runner settings mixed only when selected environments differ in content", () => {
+    const remote = environment("remote", "Remote");
+    remote.serverConfig.settings = {
+      ...remote.serverConfig.settings,
+      runnerMacOnly: [...remote.serverConfig.settings.runnerMacOnly],
+      runnerHost: "box",
+    };
+    mocks.targets = [environment("local", "Local"), remote];
+    act(() => root.render(<SettingsEnvironmentMaintenanceRouteScreen />));
+    expect(mocks.runner!.mixed("runnerMacOnly")).toBe(false);
+    expect(mocks.runner!.mixed("runnerHost")).toBe(true);
   });
 
   it("saves the keep-awake mode picked on the Maintenance page", () => {

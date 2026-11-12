@@ -14,6 +14,7 @@ import {
   isQueued,
   nameOf,
   queueBashCall,
+  unwrapRemoto,
 } from "./heavyHook.ts";
 
 const PREFIX = "ELECTRON_RUN_AS_NODE=1 '/app/t3' heavy --queue-dir '/q'";
@@ -159,16 +160,62 @@ describe("the PreToolUse answer", () => {
   });
 });
 
-describe("the one switch every entry point reads", () => {
-  it("queue on: heavy calls are held; queue off: every call passes through as written", () => {
-    const heavy = bash({ command: "vp test run", description: "Tests" });
-    expect(heavyRoute({ enabled: true })).toBe("queue");
-    expect(heavyRoute({ enabled: false })).toBe("direct");
-    expect(interceptBashCall(heavy, PREFIX, { enabled: true })).toEqual(
-      queueBashCall(heavy, PREFIX),
+describe("an agent's own remoto call", () => {
+  it.each([
+    ["remoto vp test run", "vp test run"],
+    [
+      "cd apps/server && remoto vp test run src/a.test.ts",
+      "cd apps/server && vp test run src/a.test.ts",
+    ],
+    ["  remoto ./scripts/check.sh --all", "./scripts/check.sh --all"],
+    ["ls && remoto vp test run", null],
+    ["REMOTO_HOST=pc remoto vp test", null],
+    ["remoto", null],
+  ])("%j unwraps to %j", (command, unwrapped) => {
+    expect(unwrapRemoto(command)).toBe(unwrapped);
+  });
+
+  it("with the Runner on, becomes one job sent to Linux instead of a second wrapper", () => {
+    const answer = queueBashCall(
+      bash({ command: "cd apps/server && remoto vp test run" }),
+      PREFIX,
+      {},
+      { runner: true },
     );
-    expect(queueBashCall(heavy, PREFIX)).not.toBeNull();
-    expect(interceptBashCall(heavy, PREFIX, { enabled: false })).toBeNull();
+    expect(answer!.hookSpecificOutput.updatedInput.command).toBe(
+      `${PREFIX} --runner linux --name 'vp test run' -- "\${SHELL:-/bin/sh}" -c 'cd apps/server && vp test run'`,
+    );
+    const script = queueBashCall(bash({ command: "remoto ./x.sh" }), PREFIX, {}, { runner: true });
+    expect(script!.hookSpecificOutput.updatedInput.command).toContain(
+      "--runner linux --name 'x.sh'",
+    );
+  });
+
+  it.each([
+    ["the Runner off", "remoto vp test run", false],
+    ["a shape it cannot unwrap", "ls && remoto vp test run", true],
+  ])("is left to remoto with %s, so it never runs twice", (_why, command, runner) => {
+    expect(queueBashCall(bash({ command }), PREFIX, {}, { runner })).toBeNull();
+  });
+});
+
+describe("the one switch every entry point reads", () => {
+  it.each([
+    [true, false, "queue"],
+    [false, false, "direct"],
+    [false, true, "queue"],
+    [true, true, "queue"],
+  ] as const)("queue %s, Runner %s: %s", (enabled, runner, route) => {
+    const heavy = bash({ command: "vp test run", description: "Tests" });
+    expect(heavyRoute({ enabled, runner })).toBe(route);
+    expect(interceptBashCall(heavy, PREFIX, { enabled, runner })).toEqual(
+      route === "direct" ? null : queueBashCall(heavy, PREFIX, {}, { runner }),
+    );
+  });
+
+  it("admission's Mac gate reads only the queue", () => {
+    expect(heavyRoute({ enabled: false })).toBe("direct");
+    expect(heavyRoute({ enabled: true })).toBe("queue");
   });
 });
 
@@ -209,6 +256,10 @@ describe("the sh pre-filter installed for sessions outside T3", () => {
       expect(run(reached, command)).toBe("T3");
     },
   );
+
+  it("hands a remoto call to T3, which decides whether the Runner takes it", () => {
+    expect(run(reached, "remoto ./scripts/check.sh")).toBe("T3");
+  });
 
   it.each(["ls -la", "git status && git log --format=%H -3", "cat build.md", "rg TODO apps"])(
     "answers %j itself with no output",

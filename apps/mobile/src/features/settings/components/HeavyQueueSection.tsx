@@ -21,6 +21,16 @@ import {
   type PriorityChange,
 } from "@t3tools/client-runtime/state/heavyQueueModel";
 import {
+  ASK_TITLE,
+  askRemaining,
+  heavyModeLine,
+  RUNNER_POLICY_LABEL,
+  routeActions,
+  runnerBadge,
+  type RouteAction,
+  RUNNER_UNCONFIRMED_NOTE,
+} from "@t3tools/client-runtime/state/runnerModel";
+import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
@@ -30,6 +40,8 @@ import {
   type EnvironmentId,
   type HeavyCommand,
   type HeavyQueueEntry,
+  type HeavyQueueState,
+  type RunnerWhere,
 } from "@t3tools/contracts";
 import { useEffect, useState } from "react";
 import { Alert } from "react-native";
@@ -83,12 +95,76 @@ type Commands = {
   readonly cancel: (entry: HeavyQueueEntry) => void;
   readonly setPriority: (id: string, priority: "low" | "high") => void;
   readonly setRule: (root: string, priority: "first" | "last" | null) => void;
+  readonly route: (entry: HeavyQueueEntry, action: RouteAction) => void;
 };
+
+const ASK_MAC: RouteAction = {
+  runner: "mac",
+  label: RUNNER_POLICY_LABEL.mac,
+  confirm: null,
+  force: false,
+};
+const ASK_WAIT: RouteAction = {
+  runner: "linux",
+  label: RUNNER_POLICY_LABEL.wait,
+  confirm: null,
+  force: false,
+};
+
+function RunnerAskRows(props: {
+  readonly entry: HeavyQueueEntry;
+  readonly ask: NonNullable<HeavyQueueEntry["ask"]>;
+  readonly actions: ReadonlyArray<RouteAction>;
+  readonly canRoute: boolean;
+  readonly canChange: boolean;
+  readonly commands: Commands;
+}) {
+  const { entry, commands } = props;
+  const [now, setNow] = useState(() => Date.now());
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- one-second countdown while the question is on screen
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  // Running here may need the confirmation routeActions gives a run Linux has not confirmed stopped.
+  const mac = props.actions.find((action) => action.runner === "mac") ?? ASK_MAC;
+  return (
+    <>
+      <ListRowLayout
+        icon="exclamationmark.triangle"
+        label={ASK_TITLE[props.ask.reason]}
+        description="Choose where it runs before the time runs out."
+        detail={askRemaining(props.ask.deadlineAt, now)}
+      />
+      <SettingsActionRow
+        icon="laptopcomputer"
+        label={ASK_MAC.label}
+        disabled={!props.canRoute}
+        onPress={() => commands.route(entry, mac)}
+      />
+      <SettingsActionRow
+        icon="hourglass"
+        label={ASK_WAIT.label}
+        disabled={!props.canRoute}
+        onPress={() => commands.route(entry, ASK_WAIT)}
+      />
+      <SettingsActionRow
+        icon="xmark"
+        label="Cancel"
+        tone="danger"
+        disabled={!props.canChange}
+        onPress={() => commands.cancel(entry)}
+      />
+    </>
+  );
+}
 
 function QueueEntryRows(props: {
   readonly environmentId: EnvironmentId;
   readonly entries: ReadonlyArray<HeavyQueueEntry>;
   readonly entry: HeavyQueueEntry;
+  readonly state: HeavyQueueState;
+  readonly canRoute: boolean;
   readonly position: number | null;
   readonly reason: string | undefined;
   readonly usage: string | null;
@@ -112,8 +188,11 @@ function QueueEntryRows(props: {
   // A project-scoped list already names the project, and a folder named like it adds nothing.
   const projectTitle = props.scoped ? undefined : project?.title;
   const running = position === null;
+  const badge = runnerBadge(entry, props.state);
+  const routes = routeActions(entry, props.state);
   const priority = jobPriority(entry);
   const description = [
+    badge?.label,
     readableLabel(entry.label),
     props.usage,
     projectTitle,
@@ -125,6 +204,7 @@ function QueueEntryRows(props: {
       : `Waiting ${formatDuration(entry.createdAt, props.now)}`,
     props.reason,
     entry.note,
+    entry.unconfirmed === true ? RUNNER_UNCONFIRMED_NOTE : undefined,
   ]
     .filter(Boolean)
     .join(" · ");
@@ -141,6 +221,16 @@ function QueueEntryRows(props: {
     attributes: { disabled },
   });
   const actions: MenuAction[] = [
+    ...(entry.ask === undefined
+      ? routes.map((route) =>
+          item(
+            `route:${route.runner}`,
+            route.label,
+            route.runner === "mac" ? "laptopcomputer" : "server.rack",
+            !props.canRoute,
+          ),
+        )
+      : []),
     ...(running
       ? []
       : [
@@ -165,7 +255,7 @@ function QueueEntryRows(props: {
     ...(project === undefined
       ? []
       : [item("rule", "Priority for this project", "tag", !props.canChange)]),
-    ...(running && entry.server === true
+    ...((running && entry.server === true) || entry.ask !== undefined
       ? []
       : [
           {
@@ -205,33 +295,59 @@ function QueueEntryRows(props: {
         },
       ]);
     else if (id === "cancel") commands.cancel(entry);
+    else {
+      const route = routes.find((candidate) => `route:${candidate.runner}` === id);
+      if (route !== undefined) commands.route(entry, route);
+    }
   };
   return (
-    <ListRowLayout
-      icon={running ? "play" : "hourglass"}
-      label={heavyEntryName(entry)}
-      description={description}
-      {...(position === null ? {} : { detail: `#${position}` })}
-      accessory={
-        <RowMenuButton
-          label={`Actions for ${heavyEntryName(entry)}`}
-          actions={actions}
-          onAction={run}
+    <>
+      <ListRowLayout
+        icon={running ? "play" : "hourglass"}
+        label={heavyEntryName(entry)}
+        description={description}
+        {...(position === null ? {} : { detail: `#${position}` })}
+        accessory={
+          <RowMenuButton
+            label={`Actions for ${heavyEntryName(entry)}`}
+            actions={actions}
+            onAction={run}
+          />
+        }
+      />
+      {entry.ask === undefined ? null : (
+        <RunnerAskRows
+          entry={entry}
+          ask={entry.ask}
+          actions={routes}
+          canRoute={props.canRoute}
+          canChange={props.canChange}
+          commands={commands}
         />
-      }
-    />
+      )}
+    </>
   );
+}
+
+export interface RunnerMode {
+  readonly enabled: boolean;
+  readonly where: RunnerWhere;
+  readonly overflow: number;
 }
 
 /** The machine's heavy queue; with `projectId`, only that project's jobs and none of the machine-wide controls. */
 export function HeavyQueueSection(props: {
   readonly environmentId: EnvironmentId;
   readonly projectId?: string;
+  /** Effective Runner settings, for the line that says what the queue and the Runner do together. */
+  readonly runner?: RunnerMode;
 }) {
-  const { environmentId, projectId } = props;
+  const { environmentId, projectId, runner } = props;
   const inProject = useProjectItems(environmentId, projectId);
   const state = useHeavyQueueState(environmentId);
   const canChange = useAtomValue(heavyQueueEnvironment.move.permissionAtom(environmentId));
+  const canRoute = useAtomValue(heavyQueueEnvironment.route.permissionAtom(environmentId));
+  const route = useAtomCommand(heavyQueueEnvironment.route);
   const move = useAtomCommand(heavyQueueEnvironment.move);
   const startNow = useAtomCommand(heavyQueueEnvironment.startNow);
   const cancel = useAtomCommand(heavyQueueEnvironment.cancel);
@@ -247,6 +363,18 @@ export function HeavyQueueSection(props: {
     setPriority: (id, priority) => void setPriority({ environmentId, input: { id, priority } }),
     move: (id, beforeId) => void move({ environmentId, input: { id, beforeId } }),
     setRule: (root, priority) => void setRule({ environmentId, input: { root, priority } }),
+    route: (entry, action) => {
+      const send = () =>
+        void route({
+          environmentId,
+          input: { id: entry.id, runner: action.runner, force: action.force },
+        });
+      if (action.confirm === null) return send();
+      Alert.alert(heavyEntryName(entry), action.confirm, [
+        { text: "Keep", style: "cancel" },
+        { text: action.label, style: "destructive", onPress: send },
+      ]);
+    },
     startNow: (entry) =>
       Alert.alert("Start now?", `${heavyEntryName(entry)} starts even if the Mac is busy.`, [
         { text: "Cancel", style: "cancel" },
@@ -298,6 +426,8 @@ export function HeavyQueueSection(props: {
             environmentId={environmentId}
             entries={entries}
             entry={entry}
+            state={state}
+            canRoute={canRoute}
             position={position}
             now={now}
             reason={state.reasons[entry.id]}
@@ -340,6 +470,18 @@ export function HeavyQueueSection(props: {
         onValueChange={(enabled) => void setEnabled({ environmentId, input: { enabled } })}
       />
       <ListRowLayout icon="timer" label={queueSummary(state)} />
+      {runner === undefined ? null : (
+        <ListRowLayout
+          icon="arrow.left.arrow.right"
+          label={heavyModeLine({
+            queueEnabled: state.enabled,
+            queuePaused: state.paused,
+            runnerEnabled: runner.enabled,
+            where: runner.where,
+            overflow: runner.overflow,
+          })}
+        />
+      )}
       <SettingsSwitchRow
         icon="pause"
         label="Pause queue"

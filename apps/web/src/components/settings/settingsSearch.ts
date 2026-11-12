@@ -4,6 +4,7 @@ import { isMacPlatform, isWindowsPlatform, normalizeSearchText } from "~/lib/uti
 import { STATIC_KEYBINDING_COMMANDS, type KeybindingCommand } from "@t3tools/contracts";
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
+import { RUNNER_SETTING_COPY } from "@t3tools/client-runtime/state/runnerModel";
 import { GLASS_SETTINGS_SEARCH_ITEMS } from "./settingsSearchGlassItems";
 import { hasDesktopWindowMaterialApi } from "../../desktop/useDesktopWindowMaterial";
 import {
@@ -1257,6 +1258,102 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Power off idle simulators",
     to: "/settings/maintenance",
     searchTerms: ["heavy work queue emulator simulator idle power off shut down minutes"],
+  },
+  {
+    id: "runner-enabled",
+    title: RUNNER_SETTING_COPY.runnerEnabled.title,
+    to: "/settings/maintenance",
+    searchTerms: ["runner linux pc remote ssh offload heavy work tests"],
+  },
+  {
+    id: "runner-where",
+    title: RUNNER_SETTING_COPY.runnerWhere.title,
+    to: "/settings/maintenance",
+    searchTerms: ["runner this mac linux automatic offload"],
+  },
+  {
+    id: "runner-overflow",
+    title: RUNNER_SETTING_COPY.runnerOverflow.title,
+    to: "/settings/maintenance",
+    searchTerms: ["runner automatic overflow busy jobs threshold linux"],
+  },
+  {
+    id: "runner-linux-commands",
+    title: RUNNER_SETTING_COPY.runnerLinuxCommands.title,
+    to: "/settings/maintenance",
+    searchTerms: ["runner linux patterns tests lint typecheck allow list"],
+  },
+  {
+    id: "runner-mac-only",
+    title: RUNNER_SETTING_COPY.runnerMacOnly.title,
+    to: "/settings/maintenance",
+    searchTerms: ["runner mac only patterns simulator xcodebuild gradle"],
+  },
+  {
+    id: "runner-unavailable",
+    title: RUNNER_SETTING_COPY.runnerUnavailable.title,
+    to: "/settings/maintenance",
+    searchTerms: ["runner linux offline unavailable ask wait run here"],
+  },
+  {
+    id: "runner-dropped",
+    title: RUNNER_SETTING_COPY.runnerDropped.title,
+    to: "/settings/maintenance",
+    searchTerms: ["runner linux dropped disconnected mid run ask wait"],
+  },
+  {
+    id: "runner-ask-minutes",
+    title: RUNNER_SETTING_COPY.runnerAskMinutes.title,
+    to: "/settings/maintenance",
+    searchTerms: ["runner ask me question timeout minutes deadline"],
+  },
+  {
+    id: "runner-deadline",
+    title: RUNNER_SETTING_COPY.runnerDeadlineAction.title,
+    to: "/settings/maintenance",
+    searchTerms: ["runner ask deadline unanswered cancel run here wait"],
+  },
+  {
+    id: "runner-host",
+    title: RUNNER_SETTING_COPY.runnerHost.title,
+    to: "/settings/maintenance",
+    scope: "environment",
+    searchTerms: ["runner ssh host alias remoto linux pc"],
+  },
+  {
+    id: "runner-linux-slots",
+    title: RUNNER_SETTING_COPY.runnerLinuxSlots.title,
+    to: "/settings/maintenance",
+    scope: "environment",
+    searchTerms: ["runner linux slots concurrency parallel"],
+  },
+  {
+    id: "runner-heartbeat",
+    title: RUNNER_SETTING_COPY.runnerHeartbeatSeconds.title,
+    to: "/settings/maintenance",
+    scope: "environment",
+    searchTerms: ["runner heartbeat interval seconds health check"],
+  },
+  {
+    id: "runner-offline-after",
+    title: RUNNER_SETTING_COPY.runnerOfflineAfterFailures.title,
+    to: "/settings/maintenance",
+    scope: "environment",
+    searchTerms: ["runner offline failures checks heartbeat"],
+  },
+  {
+    id: "runner-ssh-timeout",
+    title: RUNNER_SETTING_COPY.runnerSshTimeoutSeconds.title,
+    to: "/settings/maintenance",
+    scope: "environment",
+    searchTerms: ["runner ssh timeout seconds connect"],
+  },
+  {
+    id: "runner-stop-wait",
+    title: RUNNER_SETTING_COPY.runnerStopWaitSeconds.title,
+    to: "/settings/maintenance",
+    scope: "environment",
+    searchTerms: ["runner stop kill grace seconds linux job"],
   },
   {
     id: "heavy-work-rules",

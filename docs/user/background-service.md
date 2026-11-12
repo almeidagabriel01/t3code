@@ -110,7 +110,7 @@ place in the whole queue.
   starting while running jobs finish. A pause icon appears in the status bar.
 - **Off.** Settings → Maintenance → **Heavy work** → **Heavy work queue** turns
   the queue off. Every heavy job then starts right away, jobs that were waiting
-  included, and agents stop asking whether to run now or queue. Use it when the
+  included (unless the Runner sends it to Linux), and agents stop asking whether to run now or queue. Use it when the
   machine has power to spare, or when you would rather have everything run at
   once than wait. The Resource Manager still lists what is running. The slot
   limit, the pause and the priority rules keep their values and apply again
@@ -127,6 +127,34 @@ heavy runs.
 
 Agents never reorder the queue on their own. They may move a job up only when
 you ask them to in the conversation, and the job's note says an agent did it.
+
+## Runner: heavy work on a Linux PC
+
+Settings → Maintenance → **Runner** sends heavy jobs to a Linux PC over SSH
+with `remoto` instead of this Mac. It switches on and off apart from the heavy
+work queue, and each section says what the two do together.
+
+- **Heavy work runs on.** **This Mac** keeps everything here. **Linux** sends
+  the commands in **Linux commands** (tests, lint, type checks; builds stay
+  here, since their output is needed on the Mac). **Automatic** keeps work here
+  until a number of heavy jobs are running or waiting on this Mac, then sends
+  the next listed command to Linux. **Mac only** commands (Xcode, Gradle,
+  simulators) never leave. All of these, and the policies below, can be set per
+  project; the PC's SSH host, slots and checks apply to the whole machine.
+- **When Linux is offline or drops a job.** Choose **Run on this Mac**, **Wait
+  for Linux** or **Ask me**. A question shows on the job in the Resource
+  Manager with a countdown; unanswered, it follows the deadline setting. An
+  agent's foreground command gives up after 10 minutes, so longer waits only
+  help background commands.
+- **Moving a job.** A job's **⋯** menu has **Run on this Mac** and **Run on
+  Linux**. Moving a running job stops it and starts it again on the other side.
+  A job Linux dropped runs again only once Linux confirms the earlier run
+  stopped; if the PC cannot be reached, the menu asks before running it twice.
+- **Status.** The Resource Manager shows whether Linux is online, its jobs, load
+  and free memory, and on each job where it runs and whether it is syncing,
+  installing dependencies or running.
+- A job canceled because nobody answered in time exits with code 75, the code
+  `remoto` uses when the PC is down.
 
 ## Local network access
 

@@ -7,6 +7,7 @@ import * as NodeURL from "node:url";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 
 import { labelOf, launchOf, parseHeavyArgs, selfPrefix, withWorkers } from "./heavyCli.ts";
+import { DEFAULT_MACHINE_CONFIG, DEFAULT_PROJECT_CONFIG } from "./runner.ts";
 import * as Queue from "./queueFile.ts";
 
 const BIN = NodeURL.fileURLToPath(new URL("../bin.ts", import.meta.url));
@@ -173,6 +174,129 @@ describe("t3 heavy", () => {
     expect(Queue.read(dir)).toEqual([]);
     nested.child.stdin.end();
     expect(await nested.exited).toBe(0);
+  });
+
+  it("queue off runs direct with the Runner off, and tracks an ungated job with it on", async () => {
+    const dir = tempDir();
+    const marker = NodePath.join(dir, "m");
+    Queue.setEnabled(dir, false);
+    const direct = heavy(dir, [process.execPath, "-e", holdProgram(marker, "d")]);
+    await direct.until("out", "started d");
+    expect(Queue.read(dir)).toEqual([]);
+    direct.child.stdin.end();
+    expect(await direct.exited).toBe(0);
+
+    Queue.publishRunner(dir, {
+      global: { ...DEFAULT_PROJECT_CONFIG, runnerEnabled: true },
+      machine: DEFAULT_MACHINE_CONFIG,
+      projects: [],
+      publisher: { pid: process.pid, home: dir, primary: true },
+    });
+    const tracked = heavy(dir, [process.execPath, "-e", holdProgram(marker, "t")]);
+    await tracked.until("out", "started t");
+    expect(Queue.read(dir)).toEqual([
+      expect.objectContaining({ ungated: true, startedAt: expect.any(String) }),
+    ]);
+    tracked.child.stdin.end();
+    expect(await tracked.exited).toBe(0);
+    expect(Queue.read(dir)).toEqual([]);
+  });
+
+  describe("with the Runner sending work to Linux (fake remoto and ssh)", () => {
+    const M = "\\036remoto";
+    const script = (dir: string, name: string, body: string) => {
+      const path = NodePath.join(dir, name);
+      NodeFS.writeFileSync(path, `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+      return path;
+    };
+    /** Heartbeats read as online; a stop check answers `gone`. */
+    const setup = (remotoBody: string, config: Partial<typeof DEFAULT_PROJECT_CONFIG> = {}) => {
+      const dir = tempDir();
+      Queue.publishRunner(dir, {
+        global: { ...DEFAULT_PROJECT_CONFIG, runnerEnabled: true, runnerWhere: "linux", ...config },
+        machine: DEFAULT_MACHINE_CONFIG,
+        projects: [],
+        publisher: { pid: process.pid, home: dir, primary: true },
+      });
+      const env = {
+        T3CODE_REMOTO: script(dir, "remoto", remotoBody),
+        T3CODE_RUNNER_SSH: script(
+          dir,
+          "ssh",
+          `case "$*" in *loadavg*) printf '0.5 0.4 0.3 1/2 3\\n6\\nMem: 100 10 20 0 0 80\\n';; *) echo gone;; esac`,
+        ),
+      };
+      return { dir, env };
+    };
+    const onMac = [process.execPath, "-e", "console.log('ran on mac')"];
+
+    it("passes the command's output and exit code through, without the markers", async () => {
+      const { dir, env } = setup(
+        [
+          `printf '${M} phase=syncing id=app-1\\n${M} phase=running pgid=4\\n' >&2`,
+          "echo remote-out",
+          `printf '${M} exit=3\\n' >&2`,
+          "exit 3",
+        ].join("\n"),
+      );
+      const run = heavy(dir, ["vp", "test", "run"], env, ["--runner", "linux", "--"]);
+      expect(await run.exited).toBe(3);
+      expect(run.stdout()).toBe("remote-out\n");
+      expect(run.stderr()).not.toContain("remoto phase");
+      expect(Queue.read(dir)).toEqual([]);
+    });
+
+    it("runs on the Mac when Linux is unavailable and the policy says so", async () => {
+      const { dir, env } = setup("exit 75", { runnerUnavailable: "mac" });
+      const run = heavy(dir, onMac, env, ["--runner", "linux", "--"]);
+      expect(await run.exited).toBe(0);
+      expect(run.stdout()).toBe("ran on mac\n");
+    });
+
+    it("reruns a dropped job on the Mac only after Linux confirms it stopped", async () => {
+      const { dir, env } = setup(
+        `printf '${M} phase=syncing id=app-1\\n${M} phase=running pgid=4\\n' >&2; exit 255`,
+        { runnerDropped: "mac" },
+      );
+      const run = heavy(dir, onMac, env, ["--runner", "linux", "--"]);
+      expect(await run.exited).toBe(0);
+      expect(run.stdout()).toBe("ran on mac\n");
+    });
+
+    const longRun = `printf '${M} phase=syncing id=app-1\\n${M} phase=running pgid=4\\n' >&2; exec sleep 30`;
+
+    it("Stop during a Linux run ends remoto, confirms Linux stopped, and leaves the queue", async () => {
+      const { dir, env } = setup(longRun);
+      const run = heavy(dir, onMac, env, ["--runner", "linux", "--"]);
+      await run.until("err", "Linux: running");
+      run.child.kill("SIGTERM");
+      expect(await run.exited).toBe(143);
+      expect(run.stderr()).not.toContain("may still be running");
+      expect(Queue.read(dir)).toEqual([]);
+    });
+
+    it("a running Linux job the user moves stops there and runs again on the Mac", async () => {
+      const { dir, env } = setup(longRun);
+      const run = heavy(dir, onMac, env, ["--runner", "linux", "--"]);
+      await run.until("err", "Linux: running");
+      expect(Queue.route(dir, Queue.read(dir)[0]!.id, "mac")).toBe("ok");
+      expect(await run.exited).toBe(0);
+      expect(run.stderr()).toContain("moved by the user");
+      expect(run.stdout()).toBe("ran on mac\n");
+    });
+
+    it("without remoto installed, Linux counts as unavailable", async () => {
+      const { dir, env } = setup("exit 0", { runnerUnavailable: "mac" });
+      const run = heavy(
+        dir,
+        onMac,
+        { ...env, T3CODE_REMOTO: undefined, HOME: dir, PATH: "/usr/bin:/bin" },
+        ["--runner", "linux", "--"],
+      );
+      expect(await run.exited).toBe(0);
+      expect(run.stderr()).toContain("remoto is not installed");
+      expect(run.stdout()).toBe("ran on mac\n");
+    });
   });
 
   it("queues agents' jobs low, the user's normal, and --priority high as asked", async () => {

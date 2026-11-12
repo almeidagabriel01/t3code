@@ -92,6 +92,10 @@ function setup(entries: HeavyQueueEntry[], commands: HeavyCommand[]) {
     claudeHookInstalled: false,
     deviceIdleMinutes: 20,
     machine: null,
+    hold: null,
+    linux: null,
+    macOnly: [],
+    routes: {},
   };
 }
 

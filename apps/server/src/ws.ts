@@ -2721,6 +2721,8 @@ export const layerWsRpc = (
         [WS_METHODS.heavyQueueSetMaxRunning]: ({ maxRunning }) =>
           heavyQueue.setMaxRunning(maxRunning),
         [WS_METHODS.heavyQueueSetRule]: ({ root, priority }) => heavyQueue.setRule(root, priority),
+        [WS_METHODS.heavyQueueRoute]: ({ id, runner, force }) =>
+          heavyQueue.route(id, runner, force === true),
         [WS_METHODS.heavyQueueSetPriority]: ({ id, priority }) =>
           heavyQueue.setPriority(id, priority),
         [WS_METHODS.heavyQueueSetClaudeHook]: ({ installed }) =>

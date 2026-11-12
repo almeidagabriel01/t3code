@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import type { RouteAction } from "@t3tools/client-runtime/state/runnerModel";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -84,6 +85,8 @@ export function useShutDownDevice(environmentId: EnvironmentId) {
 
 export function useHeavyQueueActions(environmentId: EnvironmentId) {
   const canChange = useAtomValue(heavyQueueEnvironment.move.permissionAtom(environmentId));
+  const canRoute = useAtomValue(heavyQueueEnvironment.route.permissionAtom(environmentId));
+  const routeCommand = useAtomCommand(heavyQueueEnvironment.route, { reportFailure: false });
   const moveCommand = useAtomCommand(heavyQueueEnvironment.move, { reportFailure: false });
   const startNowCommand = useAtomCommand(heavyQueueEnvironment.startNow, { reportFailure: false });
   const cancelCommand = useAtomCommand(heavyQueueEnvironment.cancel, { reportFailure: false });
@@ -107,6 +110,17 @@ export function useHeavyQueueActions(environmentId: EnvironmentId) {
   };
   return {
     canChange,
+    canRoute,
+    route: async (id: string, action: Pick<RouteAction, "runner" | "confirm" | "force">) => {
+      if (action.confirm !== null && !(await confirmKill(action.confirm))) return;
+      report(
+        "Could not move it",
+        await routeCommand({
+          environmentId,
+          input: { id, runner: action.runner, ...(action.force ? { force: true } : {}) },
+        }),
+      );
+    },
     move: async (id: string, beforeId: string | null) =>
       report("Could not move it", await moveCommand({ environmentId, input: { id, beforeId } })),
     startNow: async (id: string) =>

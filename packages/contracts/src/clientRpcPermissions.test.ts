@@ -167,6 +167,7 @@ describe("heavy queue client guards", () => {
       WS_METHODS.heavyQueueSetPaused,
       WS_METHODS.heavyQueueSetEnabled,
       WS_METHODS.heavyQueueSetRule,
+      WS_METHODS.heavyQueueRoute,
       WS_METHODS.heavyQueueSetMaxRunning,
       WS_METHODS.heavyQueueStopCommand,
     ])

@@ -291,6 +291,10 @@
       "types": "./src/state/heavyQueueModel.ts",
       "default": "./src/state/heavyQueueModel.ts"
     },
+    "./state/runnerModel": {
+      "types": "./src/state/runnerModel.ts",
+      "default": "./src/state/runnerModel.ts"
+    },
     "./state/keepAwake": {
       "types": "./src/state/keepAwake.ts",
       "default": "./src/state/keepAwake.ts"

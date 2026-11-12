@@ -109,6 +109,7 @@ import {
 import { searchableSetting } from "./settingsSearch";
 import { BackgroundActivitySettingsRow } from "./BackgroundActivitySettings";
 import { HeavyWorkSettingsSection } from "./HeavyWorkSettings";
+import { RunnerSettingsSection } from "./RunnerSettings";
 import { KeepAwakeSettingsRow } from "./KeepAwakeSettings";
 import { AdvancedSettings } from "./AdvancedSettings";
 import { PullRequestLinksOpenInAppSetting } from "./IntegrationsSettings";
@@ -2248,6 +2249,8 @@ export function MaintenanceSettingsPanel() {
       </SettingsSection>
 
       <HeavyWorkSettingsSection />
+
+      <RunnerSettingsSection />
 
       <StorageCleanupSections />
 
