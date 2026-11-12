@@ -76,6 +76,7 @@ import {
   setAgentDeviceHold,
 } from "./AgentDeviceShim.ts";
 import * as ServerConfig from "../config.ts";
+import * as QueueFile from "../heavyQueue/queueFile.ts";
 import {
   agentDeviceCommand,
   agentDeviceConfigPath,
@@ -87,6 +88,7 @@ import { phoneInputCommand, phonePointSize, phoneRunnerIssue } from "./PhoneInpu
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Digest from "effect/crypto/Digest";
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -376,6 +378,11 @@ export class DeviceService extends Context.Service<
     ) => Effect.Effect<DeviceSession, DeviceError>;
     readonly close: (input: DeviceCloseInput) => Effect.Effect<void, DeviceError>;
     readonly shutdown: (input: DeviceShutdownInput) => Effect.Effect<void, DeviceError>;
+    /**
+     * Powers off local emulators and simulators T3 used this run that nothing touched for
+     * `idleMinutes`; 0 keeps them on. A later open boots them again.
+     */
+    readonly reapIdleDevices: (idleMinutes: number) => Effect.Effect<void>;
     readonly detail: (input: DeviceDetailInput) => Effect.Effect<DeviceDetail, DeviceError>;
     readonly action: (input: DeviceActionInput) => Effect.Effect<DeviceDetail, DeviceError>;
     readonly screenshot: (input: {
@@ -457,6 +464,8 @@ export interface AgentDeviceLaunchers {
   readonly prune: (live: ReadonlySet<string>) => Effect.Effect<void>;
   /** Ends the agent-device session behind a launcher, which releases its claim on the device. */
   readonly release?: (launcher: string) => Effect.Effect<void>;
+  /** When an agent last ran a launcher, in epoch ms; null when unknown. */
+  readonly lastRun?: (launcher: string) => Effect.Effect<number | null>;
 }
 
 /** Hosts built without linked environments have no tunnel to route a launcher through. */
@@ -545,6 +554,12 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
   const holdKey = (hostId: DeviceHostId, deviceId: DeviceId) => `${hostId}:${deviceId}`;
   /** Which link holds a device, by `holdKey`; a hold without an entry is this environment's user's. */
   const holdLinks = new Map<string, string>();
+  /** When T3 last saw each device in use, by `holdKey`; a device T3 never used is never reaped. */
+  const lastUse = new Map<string, number>();
+  const markUsed = (hostId: DeviceHostId, deviceId: DeviceId) =>
+    Clock.currentTimeMillis.pipe(
+      Effect.map((now) => void lastUse.set(holdKey(hostId, deviceId), now)),
+    );
   /** Links that used devices here since startup, by link id. */
   const seenLinks = new Map<string, string>();
   /** Linked agents waiting on this user for an "Ask first" device, by answer key. */
@@ -1154,6 +1169,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       return yield* new DeviceNotFoundError({ hostId, deviceId: input.deviceId });
     }
     const target = { hostId, deviceId: input.deviceId };
+    yield* markUsed(hostId, input.deviceId);
     // A linked environment's device is held there, where its agents and that owner's see it.
     if (!link && isLinkedDeviceHostId(hostId)) {
       const ready = yield* currentReadiness(hostId);
@@ -1734,6 +1750,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
           }));
         }),
       );
+      yield* markUsed(host.id, device.id);
       return session;
     },
   );
@@ -1927,6 +1944,59 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       yield* refreshAfterShutdown(ready);
     },
   );
+
+  const reapIdleDevices: DeviceService["Service"]["reapIdleDevices"] = Effect.fn(
+    "DeviceService.reapIdleDevices",
+  )(function* (idleMinutes) {
+    const now = yield* Clock.currentTimeMillis;
+    const { state } = yield* SynchronizedRef.get(stateRef);
+    for (const device of state.devices) {
+      const key = holdKey(device.hostId, device.id);
+      const since = lastUse.get(key);
+      if (since === undefined) continue;
+      if (device.hostId !== LOCAL_DEVICE_HOST_ID || device.physical || !device.booted) {
+        lastUse.delete(key);
+        continue;
+      }
+      if (holds.has(key)) {
+        lastUse.set(key, now);
+        continue;
+      }
+      const runs = yield* Effect.forEach(
+        launcherOwners.filter(
+          (owner) => owner.hostId === device.hostId && owner.deviceId === device.id,
+        ),
+        (owner) => {
+          const launcher = boundLaunchers.get(owner.session);
+          return launcher && launchers?.lastRun
+            ? launchers.lastRun(launcher)
+            : Effect.succeed(null);
+        },
+      );
+      const last = Math.max(since, ...runs.filter((run) => run !== null));
+      lastUse.set(key, last);
+      if (idleMinutes <= 0 || now - last < idleMinutes * 60_000) continue;
+      lastUse.delete(key);
+      const open = state.sessions.find(
+        (session) => session.hostId === device.hostId && session.deviceId === device.id,
+      );
+      yield* (
+        open
+          ? close({
+              threadId: open.threadId,
+              hostId: device.hostId,
+              deviceId: device.id,
+              shutdown: true,
+            })
+          : shutdown({ hostId: device.hostId, deviceId: device.id, platform: device.platform })
+      ).pipe(
+        Effect.tap(() => Effect.logInfo("Powered off an idle device", { deviceId: device.id })),
+        Effect.catch((cause) =>
+          Effect.logWarning("Could not power off an idle device", { deviceId: device.id, cause }),
+        ),
+      );
+    }
+  });
 
   const screenshot: DeviceService["Service"]["screenshot"] = Effect.fn("DeviceService.screenshot")(
     function* (input) {
@@ -2397,6 +2467,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
               deviceId: target.deviceId,
             });
             boundLaunchers.set(session, launcher);
+            yield* markUsed(target.hostId, target.deviceId);
             launcherOwners = [
               ...launcherOwners.filter((owner) => !isSession(target)(owner)),
               { ...target, session, threadTitle: agent?.threadTitle },
@@ -2412,6 +2483,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       open,
       close,
       shutdown,
+      reapIdleDevices,
       authorizeAgent,
       setHold,
       input,
@@ -2658,6 +2730,12 @@ export const make = Effect.gen(function* () {
           Effect.logWarning("Could not end the agent-device session", { launcher, cause }),
         ),
         Effect.ignore,
+      ),
+    // The launcher touches its own directory on every command an agent runs through it.
+    lastRun: (launcher) =>
+      fs.stat(path.dirname(launcher)).pipe(
+        Effect.map((info) => Option.getOrNull(Option.map(info.mtime, (at) => at.getTime()))),
+        Effect.orElseSucceed(() => null),
       ),
   };
   const peerLinks = yield* Effect.serviceOption(PeerLinks.PeerLinks);
@@ -3050,6 +3128,16 @@ export const make = Effect.gen(function* () {
     const host = linkedHosts.get(hostId as DeviceHostId);
     return host ? host.agentUpstream(token, path) : Effect.succeedNone;
   };
+
+  // The limit lives in the heavy queue's file, shared by every T3 server on this machine.
+  yield* Effect.sleep(Duration.minutes(1)).pipe(
+    Effect.andThen(
+      Effect.sync(() => QueueFile.readDoc(QueueFile.defaultQueueDir()).deviceIdleMinutes),
+    ),
+    Effect.flatMap(service.reapIdleDevices),
+    Effect.forever,
+    Effect.forkIn(scope),
+  );
 
   return {
     ...service,

@@ -180,7 +180,7 @@ const launcherSource = (
   holdMarker: string | null,
 ) =>
   `import { spawn } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, utimesSync } from "node:fs";
 import { connect } from "node:net";
 const entry = ${JSON.stringify(entryPath)};
 const bound = ${JSON.stringify(boundArgs)};
@@ -215,6 +215,8 @@ if (!informational && holdMarker && !readOnly.includes(name) && process.env.${AG
   console.error(held || "The user is holding this device. Wait for them to hand it back in the Device panel, and do not retry in a loop.");
   process.exit(1);
 }
+// T3 powers off a device no agent ran a command on for a while; this marks the run.
+if (!informational) try { utimesSync(new URL(".", import.meta.url), new Date(), new Date()); } catch {}
 const skip = refused.get(name) ?? [];
 if (!informational) for (let index = 0; index + 1 < bound.length; index += 2) if (!skip.includes(bound[index]) && !options.some(arg => arg === bound[index] || arg.startsWith(bound[index] + "="))) options.push(bound[index], bound[index + 1]);
 const command = end < 0 ? options : [...options, ...args.slice(end)];

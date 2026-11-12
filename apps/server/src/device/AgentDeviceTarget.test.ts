@@ -9,6 +9,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Layer from "effect/Layer";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import {
   AGENT_DEVICE_RELEASE_ENV,
@@ -121,11 +122,14 @@ exec '${process.execPath.replaceAll("'", "'\"'\"'")}' "$@"
           (result) => JSON.parse(result.stdout),
         );
       const bound = path.dirname(command);
+      yield* fs.utimes(bound, 0, 0);
       expect(yield* Effect.promise(() => launch(bound, ["snapshot", "-i"]))).toEqual([
         "snapshot",
         "-i",
         ...target,
       ]);
+      // Each command marks its launcher's directory, which the idle-device check reads.
+      expect(Option.getOrThrow((yield* fs.stat(bound)).mtime).getTime()).toBeGreaterThan(0);
       // A flag the agent passes itself wins over the bound one.
       expect(yield* Effect.promise(() => launch(bound, ["open", "--session", "mine"]))).toEqual([
         "open",

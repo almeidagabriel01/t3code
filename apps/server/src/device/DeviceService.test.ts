@@ -1021,6 +1021,43 @@ it.effect("keeps shutdown successful when subsequent discovery fails", () =>
   }).pipe(Effect.scoped),
 );
 
+it.effect("powers off an emulator T3 used once nothing touched it for the idle limit", () =>
+  Effect.gen(function* () {
+    const { service } = yield* fixture();
+    yield* service.configure({ enabled: true });
+    const threadId = ThreadId.make("idle");
+    const { deviceId } = yield* service.open({
+      threadId,
+      deviceId: "Pixel_API_35",
+      platform: "android",
+    });
+    const booted = Effect.map(
+      service.state,
+      (state) => state.devices.find((device) => device.id === deviceId)?.booted,
+    );
+
+    yield* TestClock.adjust("19 minutes");
+    yield* service.reapIdleDevices(20);
+    expect(yield* booted).toBe(true);
+
+    yield* service.setHold({ deviceId, held: true });
+    yield* TestClock.adjust("30 minutes");
+    yield* service.reapIdleDevices(20);
+    expect(yield* booted).toBe(true);
+    yield* service.setHold({ deviceId, held: false });
+
+    yield* TestClock.adjust("30 minutes");
+    yield* service.reapIdleDevices(0);
+    expect(yield* booted).toBe(true);
+    yield* service.reapIdleDevices(20);
+    const state = yield* service.state;
+    expect(state.sessions).toEqual([]);
+    // Powered off, the emulator's serial leaves the list and its AVD shows stopped.
+    expect(yield* booted).toBeUndefined();
+    expect(state.devices.find((device) => device.id === "Pixel_API_35")?.booted).toBe(false);
+  }).pipe(Effect.scoped),
+);
+
 it.effect.each(["shutdown", "close"] as const)(
   "%s releases iOS capture and the session's launcher so reopening uses a fresh session",
   (operation) =>
