@@ -1,5 +1,9 @@
 import { createMemoryHistory } from "@tanstack/react-router";
-import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  scopedThreadKey,
+  scopeProjectRef,
+  scopeThreadRef,
+} from "@t3tools/client-runtime/environment";
 import { ThreadId } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import type * as Context from "effect/Context";
@@ -253,7 +257,11 @@ it("keeps an open file tab mounted behind the chat, so it returns where it was",
   useRightPanelStore.getState().showChat(ref);
   await vi.waitFor(() => expect(panel?.getAttribute("aria-hidden")).toBe("true"));
   expect(panel?.isConnected).toBe(true);
-  await page.getByRole("button", { name: "plan.html", exact: true }).click();
+  // The file's tab sits in the thread tab row, inside its own thread's block.
+  expect(tab.element().closest("[data-thread-tab]")?.getAttribute("data-thread-tab")).toBe(
+    scopedThreadKey(ref),
+  );
+  await tab.click();
   await vi.waitFor(() => expect(panel?.hasAttribute("aria-hidden")).toBe(false));
 });
 
