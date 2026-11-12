@@ -9,9 +9,83 @@ import type {
   HeavyRunnerLinux,
   HeavyRunnerPhase,
   RunnerDeadlineAction,
+  RunnerKey,
   RunnerUnavailablePolicy,
   RunnerWhere,
 } from "@t3tools/contracts";
+
+/** Every Runner setting's label and description; web and mobile both read these. */
+export const RUNNER_SETTING_COPY: Record<
+  RunnerKey,
+  { readonly title: string; readonly description: string }
+> = {
+  runnerEnabled: {
+    title: "Use the Runner",
+    description:
+      "Runs heavy jobs on a Linux PC over SSH as well as on this Mac. Works with the queue on or off.",
+  },
+  runnerWhere: {
+    title: "Where heavy work runs",
+    description:
+      "This Mac keeps everything here. Linux sends the listed commands there. Automatic keeps work here until this Mac has the number of jobs below, then sends listed commands to Linux.",
+  },
+  runnerOverflow: {
+    title: "Send to Linux after",
+    description:
+      "Automatic sends work to Linux once this Mac has this many heavy jobs, running and waiting.",
+  },
+  runnerLinuxCommands: {
+    title: "Commands that may run on Linux",
+    description:
+      "One per line. A heavy command goes to Linux only when each heavy part of it matches one. Builds are left out because their output would stay on the PC.",
+  },
+  runnerMacOnly: {
+    title: "Commands that stay on this Mac",
+    description:
+      "One per line. A heavy command that matches one always runs on this Mac, such as simulators and native builds.",
+  },
+  runnerUnavailable: {
+    title: "When Linux is offline",
+    description: "What a job headed for Linux does while Linux is offline.",
+  },
+  runnerDropped: {
+    title: "When Linux drops a job",
+    description: "What a job does when Linux goes away while it runs there.",
+  },
+  runnerAskMinutes: {
+    title: "Wait for an answer",
+    description:
+      "How long Ask me waits for your answer. An agent's foreground command gives up after 10 minutes, so a longer wait only helps background commands.",
+  },
+  runnerDeadlineAction: {
+    title: "If nobody answers",
+    description: "What happens when nobody answers in time.",
+  },
+  runnerHost: {
+    title: "Linux host",
+    description: "The Linux PC, as an alias from ~/.ssh/config or user@host.",
+  },
+  runnerLinuxSlots: {
+    title: "Jobs at once on Linux",
+    description: "How many heavy jobs Linux runs at the same time.",
+  },
+  runnerHeartbeatSeconds: {
+    title: "Check Linux every",
+    description: "How often this Mac checks that Linux is reachable and how busy it is.",
+  },
+  runnerOfflineAfterFailures: {
+    title: "Mark Linux offline after",
+    description: "Failed checks in a row before Linux counts as offline.",
+  },
+  runnerSshTimeoutSeconds: {
+    title: "SSH timeout",
+    description: "How long one SSH check waits before it counts as failed.",
+  },
+  runnerStopWaitSeconds: {
+    title: "Wait for a stopped job",
+    description: "How long a stopped Linux job gets to exit before it is killed.",
+  },
+};
 
 export const RUNNER_WHERE_LABEL: Record<RunnerWhere, string> = {
   mac: "This Mac",

@@ -136,7 +136,7 @@ describe("RunnerSection", () => {
   it("writes each environment setting from its control", async () => {
     const view = await mount();
     await act(async () =>
-      view.host.querySelector<HTMLInputElement>('input[aria-label="Runner"]')!.click(),
+      view.host.querySelector<HTMLInputElement>('input[aria-label="Use the Runner"]')!.click(),
     );
     await act(async () => view.button("Automatic")!.click());
     await act(async () => view.button("Wait for Linux", 0)!.click());
@@ -164,7 +164,7 @@ describe("RunnerSection", () => {
     expect(rows.find((row) => row.startsWith("When Linux is offline"))).toContain(
       "Inherited from the environment.",
     );
-    expect(view.input("SSH host")).toBeDefined();
+    expect(view.input("Linux host")).toBeDefined();
     expect(view.host.textContent).toContain(
       "Environment-wide setting. Select All projects to change it.",
     );
@@ -179,13 +179,13 @@ describe("RunnerSection", () => {
 
   it("rejects numbers outside the limits and saves only valid changes", async () => {
     const view = await mount();
-    await view.type("Automatic overflow", "99");
+    await view.type("Send to Linux after", "99");
     expect(view.host.textContent).toContain("Use 0 to 20 jobs.");
-    await view.type("Automatic overflow", "", false);
+    await view.type("Send to Linux after", "", false);
     expect(view.host.textContent).toContain("Use a whole number of jobs.");
-    await view.type("Automatic overflow", "3");
+    await view.type("Send to Linux after", "3");
     expect(view.host.textContent).not.toContain("Use a whole number");
-    await view.type("Automatic overflow", "0");
+    await view.type("Send to Linux after", "0");
     await view.type("Jobs at once on Linux", "4");
     expect(view.write.mock.calls.map(([patch]) => patch)).toEqual([
       { runnerOverflow: 0 },
@@ -196,7 +196,7 @@ describe("RunnerSection", () => {
 
   it("normalizes pattern lists and rejects too many", async () => {
     const view = await mount();
-    await view.type("Commands that can run on Linux", " vitest \n\nlint\nvitest");
+    await view.type("Commands that may run on Linux", " vitest \n\nlint\nvitest");
     expect(view.write).toHaveBeenLastCalledWith({ runnerLinuxCommands: ["vitest", "lint"] });
     await view.type(
       "Commands that stay on this Mac",
@@ -209,9 +209,9 @@ describe("RunnerSection", () => {
 
   it("checks the SSH host before saving it", async () => {
     const view = await mount();
-    await view.type("SSH host", "-oProxyCommand");
+    await view.type("Linux host", "-oProxyCommand");
     expect(view.host.textContent).toContain("A host cannot start with a dash.");
-    await view.type("SSH host", " box ");
+    await view.type("Linux host", " box ");
     expect(view.write.mock.calls).toEqual([[{ runnerHost: "box" }]]);
     await view.unmount();
   });
@@ -223,16 +223,16 @@ describe("RunnerSection", () => {
     for (const name of ["This Mac", "Linux", "Automatic"]) {
       expect(view.button(name)!.getAttribute("aria-checked")).toBe("false");
     }
-    expect(view.input("Automatic overflow")).toMatchObject({
+    expect(view.input("Send to Linux after")).toMatchObject({
       defaultValue: "",
       placeholder: "Mixed",
     });
-    await view.type("Automatic overflow", "3");
+    await view.type("Send to Linux after", "3");
     await view.type(
       "Commands that stay on this Mac",
       DEFAULT_SERVER_SETTINGS.runnerMacOnly.join("\n"),
     );
-    await view.type("SSH host", DEFAULT_SERVER_SETTINGS.runnerHost);
+    await view.type("Linux host", DEFAULT_SERVER_SETTINGS.runnerHost);
     expect(view.write.mock.calls.map(([patch]) => patch)).toEqual([
       { runnerOverflow: 3 },
       { runnerMacOnly: DEFAULT_SERVER_SETTINGS.runnerMacOnly },
@@ -243,8 +243,8 @@ describe("RunnerSection", () => {
 
   it("saves a valid unsent draft when the section closes", async () => {
     const view = await mount();
-    await view.type("Time to answer", "8", false);
-    await view.type("Health check interval", "2", false);
+    await view.type("Wait for an answer", "8", false);
+    await view.type("Check Linux every", "2", false);
     await view.unmount();
     expect(view.write.mock.calls).toEqual([[{ runnerAskMinutes: 8 }]]);
   });
@@ -264,13 +264,13 @@ describe("RunnerSection", () => {
     const view = await mount({ linux, disabled: ["runnerEnabled", "runnerHost"] });
     expect(view.host.textContent).toContain("Heavy jobs wait their turn on this Mac.");
     expect(view.host.textContent).toContain("Linux offline: ssh timed out");
-    expect(view.host.querySelector<HTMLInputElement>('input[aria-label="Runner"]')!.disabled).toBe(
-      true,
-    );
-    expect(view.input("SSH host").editable).toBe(false);
+    expect(
+      view.host.querySelector<HTMLInputElement>('input[aria-label="Use the Runner"]')!.disabled,
+    ).toBe(true);
+    expect(view.input("Linux host").editable).toBe(false);
     await view.unmount();
     const off = await mount();
-    expect(off.host.textContent).not.toContain("Linux offline");
+    expect(off.host.textContent).not.toContain("Linux offline:");
     await off.unmount();
   });
 });

@@ -4,6 +4,7 @@ import {
   RUNNER_DEADLINE_LABEL,
   RUNNER_POLICY_LABEL,
   RUNNER_WHERE_LABEL,
+  RUNNER_SETTING_COPY,
 } from "@t3tools/client-runtime/state/runnerModel";
 import {
   RUNNER_LIMITS,
@@ -169,13 +170,15 @@ export function RunnerSection(props: {
   >(
     key: K,
     icon: AppSymbolName,
-    label: string,
-    description: string,
     options: ReadonlyArray<ServerSettings[K]>,
     labels: Record<ServerSettings[K], string>,
   ) => (
     <>
-      <ListRowLayout icon={icon} label={label} description={scoped(key, description)} />
+      <ListRowLayout
+        icon={icon}
+        label={RUNNER_SETTING_COPY[key].title}
+        description={scoped(key, RUNNER_SETTING_COPY[key].description)}
+      />
       {options.map((option) => (
         <ListChoiceRow
           key={option}
@@ -188,11 +191,11 @@ export function RunnerSection(props: {
       {resetRow(key)}
     </>
   );
-  const number = (key: RunnerNumberKey, label: string, description: string) => (
+  const number = (key: RunnerNumberKey) => (
     <>
       <DraftField
-        label={label}
-        description={scoped(key, `${description} ${range(key)}`)}
+        label={RUNNER_SETTING_COPY[key].title}
+        description={scoped(key, `${RUNNER_SETTING_COPY[key].description} ${range(key)}`)}
         value={String(settings[key])}
         disabled={props.disabledFor(key)}
         numeric
@@ -203,15 +206,11 @@ export function RunnerSection(props: {
       {isProjectKey(key) ? resetRow(key) : null}
     </>
   );
-  const patterns = (
-    key: "runnerLinuxCommands" | "runnerMacOnly",
-    label: string,
-    description: string,
-  ) => (
+  const patterns = (key: "runnerLinuxCommands" | "runnerMacOnly") => (
     <>
       <DraftField
-        label={label}
-        description={scoped(key, description)}
+        label={RUNNER_SETTING_COPY[key].title}
+        description={scoped(key, RUNNER_SETTING_COPY[key].description)}
         value={settings[key].join("\n")}
         disabled={props.disabledFor(key)}
         multiline
@@ -224,10 +223,7 @@ export function RunnerSection(props: {
   );
   return (
     <>
-      <SettingsSection
-        title="Runner"
-        footer="Sends heavy work to a Linux PC over SSH with remoto, or keeps it on this Mac."
-      >
+      <SettingsSection title="Runner">
         <ListRowLayout
           icon="arrow.left.arrow.right"
           label={heavyModeLine({
@@ -243,93 +239,56 @@ export function RunnerSection(props: {
         )}
         <SettingsSwitchRow
           icon="desktopcomputer"
-          label="Runner"
-          subtitle={scoped("runnerEnabled", "Lets heavy work run on the Linux PC.")}
+          label={RUNNER_SETTING_COPY.runnerEnabled.title}
+          subtitle={scoped("runnerEnabled", RUNNER_SETTING_COPY.runnerEnabled.description)}
           value={props.mixed("runnerEnabled") ? null : settings.runnerEnabled}
           disabled={props.disabledFor("runnerEnabled")}
           onValueChange={(value) => props.write({ runnerEnabled: value })}
         />
         {resetRow("runnerEnabled")}
-        {choices(
-          "runnerWhere",
-          "laptopcomputer",
-          "Where heavy work runs",
-          "Linux and Automatic send only the listed commands.",
-          RunnerWhere.literals,
-          RUNNER_WHERE_LABEL,
-        )}
-        {number(
-          "runnerOverflow",
-          "Automatic overflow",
-          "Automatic sends work to Linux after this many heavy jobs on this Mac, running and waiting.",
-        )}
+        {choices("runnerWhere", "laptopcomputer", RunnerWhere.literals, RUNNER_WHERE_LABEL)}
+        {number("runnerOverflow")}
       </SettingsSection>
       <SettingsSection title="Runner commands">
-        {patterns(
-          "runnerLinuxCommands",
-          "Commands that can run on Linux",
-          "One pattern per line. A heavy command goes to Linux only when every heavy part matches one.",
-        )}
-        {patterns(
-          "runnerMacOnly",
-          "Commands that stay on this Mac",
-          "One pattern per line. A match always runs here.",
-        )}
+        {patterns("runnerLinuxCommands")}
+        {patterns("runnerMacOnly")}
       </SettingsSection>
       <SettingsSection title="When Linux is unavailable">
         {choices(
           "runnerUnavailable",
           "wifi.slash",
-          "When Linux is offline",
-          "For a job headed to Linux.",
           RunnerUnavailablePolicy.literals,
           RUNNER_POLICY_LABEL,
         )}
         {choices(
           "runnerDropped",
           "exclamationmark.triangle",
-          "When Linux drops a job",
-          "For a job Linux stopped answering for mid-run.",
           RunnerUnavailablePolicy.literals,
           RUNNER_POLICY_LABEL,
         )}
-        {number(
-          "runnerAskMinutes",
-          "Time to answer",
-          "How long a question waits. An agent's foreground command gives up after 10 minutes, so a longer wait only helps background commands.",
-        )}
+        {number("runnerAskMinutes")}
         {choices(
           "runnerDeadlineAction",
           "timer",
-          "When nobody answers",
-          "What happens once the time to answer runs out.",
           RunnerDeadlineAction.literals,
           RUNNER_DEADLINE_LABEL,
         )}
       </SettingsSection>
       <SettingsSection title="Linux PC" footer="These apply to every project on this environment.">
         <DraftField
-          label="SSH host"
-          description={scoped("runnerHost", "The alias from ~/.ssh/config, or user@host.")}
+          label={RUNNER_SETTING_COPY.runnerHost.title}
+          description={scoped("runnerHost", RUNNER_SETTING_COPY.runnerHost.description)}
           value={settings.runnerHost}
           disabled={props.disabledFor("runnerHost")}
           mixed={props.mixed("runnerHost")}
           check={hostCheck(props.mixed("runnerHost") ? null : settings.runnerHost)}
           onSave={props.write}
         />
-        {number("runnerLinuxSlots", "Jobs at once on Linux", "Heavy jobs Linux runs together.")}
-        {number("runnerHeartbeatSeconds", "Health check interval", "How often to check Linux.")}
-        {number(
-          "runnerOfflineAfterFailures",
-          "Offline after",
-          "Failed checks in a row before Linux counts as offline.",
-        )}
-        {number("runnerSshTimeoutSeconds", "SSH timeout", "How long to wait for SSH to connect.")}
-        {number(
-          "runnerStopWaitSeconds",
-          "Stop grace period",
-          "How long a stopped Linux job gets to exit before it is killed.",
-        )}
+        {number("runnerLinuxSlots")}
+        {number("runnerHeartbeatSeconds")}
+        {number("runnerOfflineAfterFailures")}
+        {number("runnerSshTimeoutSeconds")}
+        {number("runnerStopWaitSeconds")}
       </SettingsSection>
     </>
   );

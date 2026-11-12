@@ -4,6 +4,7 @@ import { isMacPlatform, isWindowsPlatform, normalizeSearchText } from "~/lib/uti
 import { STATIC_KEYBINDING_COMMANDS, type KeybindingCommand } from "@t3tools/contracts";
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
+import { RUNNER_SETTING_COPY } from "@t3tools/client-runtime/state/runnerModel";
 import { GLASS_SETTINGS_SEARCH_ITEMS } from "./settingsSearchGlassItems";
 import { hasDesktopWindowMaterialApi } from "../../desktop/useDesktopWindowMaterial";
 import {
@@ -1260,96 +1261,96 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "runner-enabled",
-    title: "Use the Runner",
+    title: RUNNER_SETTING_COPY.runnerEnabled.title,
     to: "/settings/maintenance",
     searchTerms: ["runner linux pc remote ssh offload heavy work tests"],
   },
   {
     id: "runner-where",
-    title: "Where heavy work runs",
+    title: RUNNER_SETTING_COPY.runnerWhere.title,
     to: "/settings/maintenance",
     searchTerms: ["runner this mac linux automatic offload"],
   },
   {
     id: "runner-overflow",
-    title: "Send to Linux after",
+    title: RUNNER_SETTING_COPY.runnerOverflow.title,
     to: "/settings/maintenance",
     searchTerms: ["runner automatic overflow busy jobs threshold linux"],
   },
   {
     id: "runner-linux-commands",
-    title: "Commands that may run on Linux",
+    title: RUNNER_SETTING_COPY.runnerLinuxCommands.title,
     to: "/settings/maintenance",
     searchTerms: ["runner linux patterns tests lint typecheck allow list"],
   },
   {
     id: "runner-mac-only",
-    title: "Commands that stay on this Mac",
+    title: RUNNER_SETTING_COPY.runnerMacOnly.title,
     to: "/settings/maintenance",
     searchTerms: ["runner mac only patterns simulator xcodebuild gradle"],
   },
   {
     id: "runner-unavailable",
-    title: "When Linux is offline",
+    title: RUNNER_SETTING_COPY.runnerUnavailable.title,
     to: "/settings/maintenance",
     searchTerms: ["runner linux offline unavailable ask wait run here"],
   },
   {
     id: "runner-dropped",
-    title: "When Linux drops a job",
+    title: RUNNER_SETTING_COPY.runnerDropped.title,
     to: "/settings/maintenance",
     searchTerms: ["runner linux dropped disconnected mid run ask wait"],
   },
   {
     id: "runner-ask-minutes",
-    title: "Wait for an answer",
+    title: RUNNER_SETTING_COPY.runnerAskMinutes.title,
     to: "/settings/maintenance",
     searchTerms: ["runner ask me question timeout minutes deadline"],
   },
   {
     id: "runner-deadline",
-    title: "If nobody answers",
+    title: RUNNER_SETTING_COPY.runnerDeadlineAction.title,
     to: "/settings/maintenance",
     searchTerms: ["runner ask deadline unanswered cancel run here wait"],
   },
   {
     id: "runner-host",
-    title: "Linux host",
+    title: RUNNER_SETTING_COPY.runnerHost.title,
     to: "/settings/maintenance",
     scope: "environment",
     searchTerms: ["runner ssh host alias remoto linux pc"],
   },
   {
     id: "runner-linux-slots",
-    title: "Jobs at once on Linux",
+    title: RUNNER_SETTING_COPY.runnerLinuxSlots.title,
     to: "/settings/maintenance",
     scope: "environment",
     searchTerms: ["runner linux slots concurrency parallel"],
   },
   {
     id: "runner-heartbeat",
-    title: "Check Linux every",
+    title: RUNNER_SETTING_COPY.runnerHeartbeatSeconds.title,
     to: "/settings/maintenance",
     scope: "environment",
     searchTerms: ["runner heartbeat interval seconds health check"],
   },
   {
     id: "runner-offline-after",
-    title: "Mark Linux offline after",
+    title: RUNNER_SETTING_COPY.runnerOfflineAfterFailures.title,
     to: "/settings/maintenance",
     scope: "environment",
     searchTerms: ["runner offline failures checks heartbeat"],
   },
   {
     id: "runner-ssh-timeout",
-    title: "SSH timeout",
+    title: RUNNER_SETTING_COPY.runnerSshTimeoutSeconds.title,
     to: "/settings/maintenance",
     scope: "environment",
     searchTerms: ["runner ssh timeout seconds connect"],
   },
   {
     id: "runner-stop-wait",
-    title: "Wait for a stopped job",
+    title: RUNNER_SETTING_COPY.runnerStopWaitSeconds.title,
     to: "/settings/maintenance",
     scope: "environment",
     searchTerms: ["runner stop kill grace seconds linux job"],

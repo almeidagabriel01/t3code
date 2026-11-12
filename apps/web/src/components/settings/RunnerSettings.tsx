@@ -3,6 +3,7 @@ import {
   linuxLine,
   RUNNER_DEADLINE_LABEL,
   RUNNER_POLICY_LABEL,
+  RUNNER_SETTING_COPY,
   RUNNER_WHERE_LABEL,
 } from "@t3tools/client-runtime/state/runnerModel";
 import {
@@ -246,7 +247,7 @@ function HostRow({ linux }: { readonly linux: HeavyQueueState["linux"] }) {
       {...searchableSetting("runner-host")}
       serverScoped
       settingKeys={["runnerHost"]}
-      description="The Linux PC, as an alias from ~/.ssh/config or user@host."
+      description={RUNNER_SETTING_COPY.runnerHost.description}
       status={
         error !== null ? (
           <span className="text-destructive">{error}</span>
@@ -290,7 +291,7 @@ export function RunnerSettingsSection() {
         {...searchableSetting("runner-enabled")}
         serverScoped
         settingKeys={["runnerEnabled"]}
-        description="Runs heavy jobs on a Linux PC over SSH as well as on this Mac. Works with the queue on or off."
+        description={RUNNER_SETTING_COPY.runnerEnabled.description}
         status={environmentId === null ? undefined : modeLine}
         resetAction={useResetAction("runnerEnabled", title)}
         control={
@@ -306,76 +307,76 @@ export function RunnerSettingsSection() {
         settingKey="runnerWhere"
         searchId="runner-where"
         labels={RUNNER_WHERE_LABEL}
-        description="This Mac keeps everything here. Linux sends the listed commands there. Automatic keeps work here until this Mac has the number of jobs below, then sends listed commands to Linux."
+        description={RUNNER_SETTING_COPY.runnerWhere.description}
       />
       <NumberRow
         settingKey="runnerOverflow"
         searchId="runner-overflow"
-        description="Automatic sends work to Linux once this Mac has this many heavy jobs, running and waiting."
+        description={RUNNER_SETTING_COPY.runnerOverflow.description}
       />
       <PatternsRow
         settingKey="runnerLinuxCommands"
         searchId="runner-linux-commands"
-        description="One per line. A heavy command that contains one of these may run on Linux. Builds are left out because their output would stay on the PC."
+        description={RUNNER_SETTING_COPY.runnerLinuxCommands.description}
       />
       <PatternsRow
         settingKey="runnerMacOnly"
         searchId="runner-mac-only"
-        description="One per line. A heavy command that contains one of these always runs on this Mac, such as simulators and native builds."
+        description={RUNNER_SETTING_COPY.runnerMacOnly.description}
       />
       <ChoiceRow
         settingKey="runnerUnavailable"
         searchId="runner-unavailable"
         labels={RUNNER_POLICY_LABEL}
-        description="What a job headed for Linux does while Linux is offline."
+        description={RUNNER_SETTING_COPY.runnerUnavailable.description}
       />
       <ChoiceRow
         settingKey="runnerDropped"
         searchId="runner-dropped"
         labels={RUNNER_POLICY_LABEL}
-        description="What a job does when Linux goes away while it runs there."
+        description={RUNNER_SETTING_COPY.runnerDropped.description}
       />
       <NumberRow
         settingKey="runnerAskMinutes"
         searchId="runner-ask-minutes"
-        description="How long Ask me waits for your answer. An agent's foreground command gives up after 10 minutes, so a longer wait only helps background commands."
+        description={RUNNER_SETTING_COPY.runnerAskMinutes.description}
       />
       <ChoiceRow
         settingKey="runnerDeadlineAction"
         searchId="runner-deadline"
         labels={RUNNER_DEADLINE_LABEL}
-        description="What happens when nobody answers in time."
+        description={RUNNER_SETTING_COPY.runnerDeadlineAction.description}
       />
       <HostRow linux={queue.linux} />
       <NumberRow
         machine
         settingKey="runnerLinuxSlots"
         searchId="runner-linux-slots"
-        description="How many heavy jobs Linux runs at the same time."
+        description={RUNNER_SETTING_COPY.runnerLinuxSlots.description}
       />
       <NumberRow
         machine
         settingKey="runnerHeartbeatSeconds"
         searchId="runner-heartbeat"
-        description="How often this Mac checks that Linux is reachable and how busy it is."
+        description={RUNNER_SETTING_COPY.runnerHeartbeatSeconds.description}
       />
       <NumberRow
         machine
         settingKey="runnerOfflineAfterFailures"
         searchId="runner-offline-after"
-        description="Failed checks in a row before Linux counts as offline."
+        description={RUNNER_SETTING_COPY.runnerOfflineAfterFailures.description}
       />
       <NumberRow
         machine
         settingKey="runnerSshTimeoutSeconds"
         searchId="runner-ssh-timeout"
-        description="How long one SSH check waits before it counts as failed."
+        description={RUNNER_SETTING_COPY.runnerSshTimeoutSeconds.description}
       />
       <NumberRow
         machine
         settingKey="runnerStopWaitSeconds"
         searchId="runner-stop-wait"
-        description="How long a stopped Linux job gets to exit before it is killed."
+        description={RUNNER_SETTING_COPY.runnerStopWaitSeconds.description}
       />
     </SettingsSection>
   );
