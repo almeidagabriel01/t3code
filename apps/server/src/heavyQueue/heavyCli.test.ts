@@ -6,7 +6,7 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 
-import { labelOf, parseHeavyArgs, selfPrefix, withWorkers } from "./heavyCli.ts";
+import { labelOf, launchOf, parseHeavyArgs, selfPrefix, withWorkers } from "./heavyCli.ts";
 import * as Queue from "./queueFile.ts";
 
 const BIN = NodeURL.fileURLToPath(new URL("../bin.ts", import.meta.url));
@@ -242,6 +242,14 @@ describe("t3 heavy", () => {
       /^ELECTRON_RUN_AS_NODE=1 '.+' heavy --queue-dir '\/q dir'$/,
     );
     expect(selfPrefix("/q", {})).not.toContain("ELECTRON_RUN_AS_NODE");
+  });
+
+  it.each([
+    [true, "darwin", "/usr/sbin/taskpolicy", ["-b", "vp", "test"]],
+    [false, "darwin", "vp", ["test"]],
+    [true, "linux", "vp", ["test"]],
+  ] as const)("starts in the background: %s on %s", (background, platform, program, args) => {
+    expect(launchOf("vp", ["test"], background, platform)).toEqual({ program, args });
   });
 
   it.each([

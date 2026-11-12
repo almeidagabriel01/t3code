@@ -21,6 +21,24 @@ import {
   tryStart,
 } from "./queueFile.ts";
 
+/**
+ * CPU priority an agent's job starts with on macOS; the user's own jobs always run normal.
+ * "background" is `taskpolicy -b`. Adopt it only if scripts/heavy-priority-bench.sh shows it
+ * within ~15% of normal on a free machine.
+ */
+const AGENT_JOB_CPU: "normal" | "background" = "normal";
+
+/** The program a job runs as: under `taskpolicy -b` when it starts in the background on macOS. */
+export const launchOf = (
+  program: string,
+  args: ReadonlyArray<string>,
+  background: boolean,
+  platform: NodeJS.Platform,
+) =>
+  background && platform === "darwin"
+    ? { program: "/usr/sbin/taskpolicy", args: ["-b", program, ...args] }
+    : { program, args };
+
 const POLL_MS = 1000;
 /** A server writes readings every 2 s; past this a waiter takes over sampling. */
 const SAMPLE_STALE_MS = 5000;
@@ -234,5 +252,14 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
   }
 
   const run = withWorkers(program, args, workers, process.env);
-  child = runDirect(program, run.args, run.env);
+  // Read at start: the user may have raised this job while it waited.
+  const lane = readDoc(dir).entries.find((entry) => entry.id === id)?.priority;
+  const launch = launchOf(
+    program,
+    run.args,
+    AGENT_JOB_CPU === "background" && lane === "low",
+    // oxlint-disable-next-line t3code/no-global-process-runtime -- The CLI fast path runs before any Effect runtime.
+    NodeOS.platform(),
+  );
+  child = runDirect(launch.program, launch.args, run.env);
 };
