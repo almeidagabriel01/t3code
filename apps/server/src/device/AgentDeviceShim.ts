@@ -3,6 +3,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveNodeExecutable } from "@t3tools/shared/nodeRuntime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
 const SHIM_DIR = "device/bin";
@@ -318,6 +319,17 @@ export const bindAgentDeviceLauncher = Effect.fn("AgentDeviceShim.bind")(functio
     holdMarker: input.holdMarker,
   });
 });
+
+/** When an agent last ran a command through a bound launcher, which marks its directory; null if unknown. */
+export const launcherLastRun = Effect.fn("AgentDeviceShim.lastRun")(
+  function* (launcher: string) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const info = yield* fs.stat(path.dirname(launcher));
+    return Option.getOrNull(Option.map(info.mtime, (at) => at.getTime()));
+  },
+  Effect.orElseSucceed(() => null),
+);
 
 export const agentDeviceHoldMarker = (stateDir: string, name: string, path: Path.Path) =>
   path.join(stateDir, HOLDS_DIR, name);

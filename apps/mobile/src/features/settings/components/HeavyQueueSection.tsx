@@ -4,7 +4,9 @@ import {
   formatDuration,
   HEAVY_COMMAND_SOURCE_LABEL,
   heavyCommandKey,
+  jobPriority,
   moveTarget,
+  PRIORITY_CHANGE,
   projectForCommand,
   PRIORITY_LABEL,
   projectForCwd,
@@ -14,6 +16,7 @@ import {
   runningUsageLine,
   usageLine,
   type MoveAction,
+  type PriorityChange,
 } from "@t3tools/client-runtime/state/heavyQueueModel";
 import {
   ASK_TITLE,
@@ -58,6 +61,11 @@ import { SettingsSwitchRow } from "./SettingsSwitchRow";
 
 const MAX_LIMIT = 8;
 const IDLE_MINUTES = [0, 10, 20, 30, 60] as const;
+const PRIORITY_CHANGE_ROW: Record<PriorityChange, { icon: AppSymbolName; label: string }> = {
+  "high-now": { icon: "bolt.horizontal.circle", label: "High priority now" },
+  normal: { icon: "gauge.with.dots.needle.50percent", label: "Normal priority" },
+  lower: { icon: "arrow.down.circle", label: "Lower priority" },
+};
 
 type Commands = {
   readonly move: (id: string, beforeId: string | null) => void;
@@ -157,6 +165,7 @@ function QueueEntryRows(props: {
   const running = position === null;
   const badge = runnerBadge(entry, props.state);
   const actions = routeActions(entry, props.state);
+  const priority = jobPriority(entry);
   const description = [
     badge?.label,
     readableLabel(entry.label),
@@ -164,6 +173,7 @@ function QueueEntryRows(props: {
     project?.title,
     origin,
     rule === undefined ? undefined : PRIORITY_LABEL[rule.priority],
+    priority.label ?? undefined,
     running && entry.startedAt !== null
       ? `Running ${formatDuration(entry.startedAt, props.now)}`
       : `Waiting ${formatDuration(entry.createdAt, props.now)}`,
@@ -242,22 +252,15 @@ function QueueEntryRows(props: {
           />
         </>
       )}
-      {entry.priority === "high" ? null : (
+      {priority.changes.map((change) => (
         <SettingsActionRow
-          icon="bolt.horizontal.circle"
-          label="High priority now"
+          key={change}
+          icon={PRIORITY_CHANGE_ROW[change].icon}
+          label={PRIORITY_CHANGE_ROW[change].label}
           disabled={!props.canChange}
-          onPress={() => commands.setPriority(entry.id, "high")}
+          onPress={() => commands.setPriority(entry.id, PRIORITY_CHANGE[change])}
         />
-      )}
-      {running ? (
-        <SettingsActionRow
-          icon="arrow.down.circle"
-          label="Lower priority"
-          disabled={!props.canChange}
-          onPress={() => commands.setPriority(entry.id, "low")}
-        />
-      ) : null}
+      ))}
       {entry.threadId === null ? null : (
         <SettingsActionRow
           icon="bubble.left"

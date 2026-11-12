@@ -84,13 +84,17 @@ describe("HeavyQueue", () => {
           Queue.enqueue(dir, { ...holder, id: "job", pid: parent.pid! });
           Queue.tryStart(dir, "job");
           Queue.enqueue(dir, { ...holder, id: "waiter", priority: "low" });
+          const qos = () => Queue.read(dir).find((e) => e.id === "job")?.qos;
           yield* queue.setPriority("job", "low");
           const darwin = NodeOS.platform() === "darwin"; // oxlint-disable-line t3code/no-global-process-runtime -- taskpolicy exists only on the real macOS host.
-          if (darwin) expect(priorities([parent.pid!, childPid])).toEqual([4, 4]);
+          // Background is 4, and a busy machine can show a running background thread lower still.
+          if (darwin)
+            expect(priorities([parent.pid!, childPid]).every((pri) => pri <= 4)).toBe(true);
+          expect(qos()).toBe(darwin ? "background" : undefined);
           yield* queue.setPriority("job", "high");
           if (darwin)
             expect(priorities([parent.pid!, childPid]).every((pri) => pri > 4)).toBe(true);
-          expect(Queue.read(dir).find((e) => e.id === "job")).toMatchObject({ priority: "high" });
+          expect(qos()).toBe(darwin ? "normal" : undefined);
           yield* queue.setPriority("waiter", "high");
           expect(Queue.read(dir).find((e) => e.id === "waiter")).toMatchObject({ forced: true });
           const missing = yield* Effect.flip(queue.setPriority("gone", "high"));
@@ -139,7 +143,7 @@ describe("HeavyQueue", () => {
       ),
   );
 
-  it.effect("the Bash hook queues heavy calls only while the queue is on", () =>
+  it.effect("the Bash hook takes heavy calls while the queue or the Runner is on", () =>
     withQueue((dir, queue) =>
       Effect.gen(function* () {
         const command = yield* queue.command;
@@ -148,6 +152,13 @@ describe("HeavyQueue", () => {
         expect(JSON.stringify(hook(call))).toContain(`--queue-dir '${dir}' --name 'vp run build'`);
         Queue.setEnabled(dir, false);
         expect(hook(call)).toBeNull();
+        Queue.publishRunner(dir, {
+          global: { ...DEFAULT_PROJECT_CONFIG, runnerEnabled: true },
+          machine: DEFAULT_MACHINE_CONFIG,
+          projects: [],
+          publisher: { pid: process.pid, home: dir, primary: true },
+        });
+        expect(JSON.stringify(hook(call))).toContain("--name 'vp run build'");
       }),
     ),
   );

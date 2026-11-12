@@ -72,6 +72,7 @@ import {
   bindAgentDeviceLauncher,
   clearAgentDeviceHolds,
   ensureAgentDeviceShim,
+  launcherLastRun,
   pruneAgentDeviceLaunchers,
   setAgentDeviceHold,
 } from "./AgentDeviceShim.ts";
@@ -2731,11 +2732,10 @@ export const make = Effect.gen(function* () {
         ),
         Effect.ignore,
       ),
-    // The launcher touches its own directory on every command an agent runs through it.
     lastRun: (launcher) =>
-      fs.stat(path.dirname(launcher)).pipe(
-        Effect.map((info) => Option.getOrNull(Option.map(info.mtime, (at) => at.getTime()))),
-        Effect.orElseSucceed(() => null),
+      launcherLastRun(launcher).pipe(
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
       ),
   };
   const peerLinks = yield* Effect.serviceOption(PeerLinks.PeerLinks);

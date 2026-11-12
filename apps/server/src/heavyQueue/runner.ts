@@ -85,13 +85,6 @@ export const runnerConfigFor = (
   return best?.config ?? block.global;
 };
 
-/** Queue and Runner switch independently; work is intercepted while either is on. */
-export interface HeavyMode {
-  readonly queue: boolean;
-  readonly runner: boolean;
-}
-export const intercepts = (mode: HeavyMode) => mode.queue || mode.runner;
-
 const escape = (text: string) => text.replace(/[.+?^${}()|[\]\\]/g, "\\$&");
 
 /**

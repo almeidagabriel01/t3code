@@ -29,8 +29,10 @@ export const HeavyQueueEntry = Schema.Struct({
   note: Schema.optionalKey(Schema.String),
   /** The user released it: it starts at once, even when slots are full, the machine is loaded or the queue is paused. */
   forced: Schema.optionalKey(Schema.Boolean),
-  /** Agents' jobs run "low" (background QoS on macOS) and the user's "normal"; "high" was asked for. Absent on older entries. */
+  /** Place in the queue: agents' jobs wait "low" behind the user's "normal"; "high" was asked for. Absent on older entries. */
   priority: Schema.optionalKey(Schema.Literals(["low", "normal", "high"])),
+  /** CPU QoS its process tree runs with, recorded at start and on each change; absent where T3 cannot change it. */
+  qos: Schema.optionalKey(Schema.Literals(["background", "normal"])),
   /** Worker count its test runners were given when it started: the cores free then. */
   workers: Schema.optionalKey(Schema.Int),
   /** Held by a T3 server itself rather than a `t3 heavy` command, so it cannot be stopped by signal. */

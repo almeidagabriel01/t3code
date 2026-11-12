@@ -401,16 +401,24 @@ describe("HeavyQueueSection", () => {
     await view.unmount();
   });
 
-  it("raises a job to high priority and lowers only running ones", async () => {
-    setup([entry("a", { startedAt: NOW }), entry("b"), entry("c", { priority: "high" })]);
+  it("offers each job only the priority changes that apply to it", async () => {
+    setup([
+      entry("a", { startedAt: NOW, priority: "low", qos: "normal" }),
+      entry("d", { startedAt: NOW, qos: "background" }),
+      entry("b"),
+      entry("c", { priority: "high" }),
+    ]);
     const view = await mount();
     expect(view.button("Lower priority", 1)).toBeUndefined();
-    expect(view.button("High priority now", 2)).toBeUndefined();
-    await act(async () => view.button("High priority now", 1).click());
+    expect(view.button("Normal priority", 1)).toBeUndefined();
+    expect(view.button("High priority now", 1)).toBeUndefined();
+    await act(async () => view.button("High priority now").click());
     await act(async () => view.button("Lower priority").click());
+    await act(async () => view.button("Normal priority").click());
     expect(mocks.commands.setPriority!.mock.calls.map(([call]) => call.input)).toEqual([
       { id: "b", priority: "high" },
       { id: "a", priority: "low" },
+      { id: "d", priority: "high" },
     ]);
     await view.unmount();
   });

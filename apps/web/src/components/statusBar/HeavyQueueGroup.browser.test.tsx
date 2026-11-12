@@ -245,9 +245,9 @@ describe("HeavyQueueGroup", () => {
     expect(mocks.actions.setRule).toHaveBeenCalledWith("/work/app", priority);
   });
 
-  it("raises a job's priority, and lowers only a running one", async () => {
+  it("offers a running job only the CPU change that applies, and a waiter high priority", async () => {
     setup([
-      entry("run", { startedAt: "2026-01-01T00:00:00.000Z" }),
+      entry("run", { startedAt: "2026-01-01T00:00:00.000Z", priority: "low", qos: "normal" }),
       entry("b", { priority: "high" }),
     ]);
     await using screen = await render(group());
@@ -256,9 +256,7 @@ describe("HeavyQueueGroup", () => {
     expect(screen.getByRole("menuitem", { name: "Lower priority" }).elements()).toHaveLength(0);
     await userEvent.keyboard("{Escape}");
     await openMenu(screen, "run");
-    await userEvent.click(screen.getByRole("menuitem", { name: "High priority now" }));
-    expect(mocks.actions.setPriority).toHaveBeenCalledWith("run", "high");
-    await openMenu(screen, "run");
+    expect(screen.getByRole("menuitem", { name: "High priority now" }).elements()).toHaveLength(0);
     await userEvent.click(screen.getByRole("menuitem", { name: "Lower priority" }));
     expect(mocks.actions.setPriority).toHaveBeenCalledWith("run", "low");
   });

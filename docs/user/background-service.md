@@ -87,9 +87,10 @@ under Settings → Maintenance.
   Settings → Maintenance → **Heavy work** lists the rules so you can remove them.
 - **Priority per job.** Commands you run in T3 Code's terminal go ahead of the
   ones agents queue. **High priority now** in a job's menu starts a waiting job
-  right away, or gives a running one its full CPU priority back; **Lower
-  priority** moves a running job to background priority (macOS). Agents can ask
-  for it with `t3 heavy --priority high`.
+  right away; agents can ask for it with `t3 heavy --priority high`. On macOS,
+  **Lower priority** moves a running job to background CPU priority and its row
+  shows **Low priority** until **Normal priority** gives it back. macOS has no
+  CPU priority above normal for a running job.
 - **Claude Code hook.** Settings → Maintenance → **Heavy work** → **Claude Code
   hook** adds a hook to your Claude Code settings (`~/.claude/settings.json`, or
   `CLAUDE_CONFIG_DIR`) so Claude sessions outside T3 Code queue heavy commands

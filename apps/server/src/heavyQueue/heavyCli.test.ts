@@ -7,6 +7,7 @@ import * as NodeURL from "node:url";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 
 import { labelOf, launchOf, parseHeavyArgs, selfPrefix, withWorkers } from "./heavyCli.ts";
+import { DEFAULT_MACHINE_CONFIG, DEFAULT_PROJECT_CONFIG } from "./runner.ts";
 import * as Queue from "./queueFile.ts";
 
 const BIN = NodeURL.fileURLToPath(new URL("../bin.ts", import.meta.url));
@@ -175,6 +176,32 @@ describe("t3 heavy", () => {
     expect(await nested.exited).toBe(0);
   });
 
+  it("queue off runs direct with the Runner off, and tracks an ungated job with it on", async () => {
+    const dir = tempDir();
+    const marker = NodePath.join(dir, "m");
+    Queue.setEnabled(dir, false);
+    const direct = heavy(dir, [process.execPath, "-e", holdProgram(marker, "d")]);
+    await direct.until("out", "started d");
+    expect(Queue.read(dir)).toEqual([]);
+    direct.child.stdin.end();
+    expect(await direct.exited).toBe(0);
+
+    Queue.publishRunner(dir, {
+      global: { ...DEFAULT_PROJECT_CONFIG, runnerEnabled: true },
+      machine: DEFAULT_MACHINE_CONFIG,
+      projects: [],
+      publisher: { pid: process.pid, home: dir, primary: true },
+    });
+    const tracked = heavy(dir, [process.execPath, "-e", holdProgram(marker, "t")]);
+    await tracked.until("out", "started t");
+    expect(Queue.read(dir)).toEqual([
+      expect.objectContaining({ ungated: true, startedAt: expect.any(String) }),
+    ]);
+    tracked.child.stdin.end();
+    expect(await tracked.exited).toBe(0);
+    expect(Queue.read(dir)).toEqual([]);
+  });
+
   it("queues agents' jobs low, the user's normal, and --priority high as asked", async () => {
     const dir = tempDir();
     const marker = NodePath.join(dir, "m");
@@ -245,11 +272,11 @@ describe("t3 heavy", () => {
   });
 
   it.each([
-    [true, "darwin", "/usr/sbin/taskpolicy", ["-b", "vp", "test"]],
-    [false, "darwin", "vp", ["test"]],
-    [true, "linux", "vp", ["test"]],
-  ] as const)("starts in the background: %s on %s", (background, platform, program, args) => {
-    expect(launchOf("vp", ["test"], background, platform)).toEqual({ program, args });
+    [true, "darwin", "/usr/sbin/taskpolicy", ["-b", "vp", "test"], "background"],
+    [false, "darwin", "vp", ["test"], "normal"],
+    [true, "linux", "vp", ["test"], null],
+  ] as const)("starts in the background: %s on %s", (background, platform, program, args, qos) => {
+    expect(launchOf("vp", ["test"], background, platform)).toEqual({ program, args, qos });
   });
 
   it.each([

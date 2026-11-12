@@ -7,7 +7,6 @@ import {
   DEFAULT_PROJECT_CONFIG,
   eligibilityOf,
   foldMarker,
-  intercepts,
   matchesAny,
   mayPublish,
   nextHealth,
@@ -362,17 +361,6 @@ describe("runtime toggles", () => {
     );
     expect(plan.admits).toEqual({ f: { runner: "mac", ungated: false } });
     expect(plan.reasons.l).toBe("paused");
-  });
-});
-
-describe("queue and Runner switches", () => {
-  it.each([
-    [true, false, true],
-    [false, false, false],
-    [false, true, true],
-    [true, true, true],
-  ])("queue %s, Runner %s: intercepted %s", (queue, runner, result) => {
-    expect(intercepts({ queue, runner })).toBe(result);
   });
 });
 

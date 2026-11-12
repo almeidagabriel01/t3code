@@ -228,4 +228,27 @@ export const queueBashCall = (
   };
 };
 
+/**
+ * How heavy work runs right now: through `t3 heavy`, or started as written. The one switch every
+ * entry point reads: the in-process Claude hook and `t3 heavy hook` through `interceptBashCall`,
+ * `t3 heavy` itself, and admission's `plan` (which passes no `runner`, so it gates on the queue
+ * alone). Queue and Runner switch independently; work goes through while either is on.
+ */
+export type HeavyRoute = "queue" | "direct";
+export const heavyRoute = (mode: {
+  readonly enabled: boolean;
+  readonly runner?: boolean;
+}): HeavyRoute => (mode.enabled || mode.runner === true ? "queue" : "direct");
+
+/** The hook's answer for these switches; null leaves the call as Claude wrote it. */
+export const interceptBashCall = (
+  hookInput: unknown,
+  queuePrefix: string,
+  mode: { readonly enabled: boolean; readonly runner?: boolean },
+  environment: Readonly<Record<string, string | undefined>> = {},
+) =>
+  heavyRoute(mode) === "direct"
+    ? null
+    : queueBashCall(hookInput, queuePrefix, environment, { runner: mode.runner === true });
+
 export type BashHook = (hookInput: unknown) => ReturnType<typeof queueBashCall>;

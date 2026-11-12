@@ -7,8 +7,10 @@ import { describe, expect, it } from "@effect/vitest";
 
 import {
   HEAVY_JOB_ENV,
+  heavyRoute,
   heavySegment,
   hookScript,
+  interceptBashCall,
   isQueued,
   nameOf,
   queueBashCall,
@@ -194,6 +196,26 @@ describe("an agent's own remoto call", () => {
     ["a shape it cannot unwrap", "ls && remoto vp test run", true],
   ])("is left to remoto with %s, so it never runs twice", (_why, command, runner) => {
     expect(queueBashCall(bash({ command }), PREFIX, {}, { runner })).toBeNull();
+  });
+});
+
+describe("the one switch every entry point reads", () => {
+  it.each([
+    [true, false, "queue"],
+    [false, false, "direct"],
+    [false, true, "queue"],
+    [true, true, "queue"],
+  ] as const)("queue %s, Runner %s: %s", (enabled, runner, route) => {
+    const heavy = bash({ command: "vp test run", description: "Tests" });
+    expect(heavyRoute({ enabled, runner })).toBe(route);
+    expect(interceptBashCall(heavy, PREFIX, { enabled, runner })).toEqual(
+      route === "direct" ? null : queueBashCall(heavy, PREFIX, {}, { runner }),
+    );
+  });
+
+  it("admission's Mac gate reads only the queue", () => {
+    expect(heavyRoute({ enabled: false })).toBe("direct");
+    expect(heavyRoute({ enabled: true })).toBe("queue");
   });
 });
 

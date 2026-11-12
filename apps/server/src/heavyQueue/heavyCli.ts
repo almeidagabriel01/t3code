@@ -12,7 +12,7 @@ import * as NodeSea from "node:sea";
 
 import type { RunnerMachineConfig, RunnerProjectConfig } from "@t3tools/contracts";
 
-import { HEAVY_JOB_ENV, shellQuote } from "./heavyHook.ts";
+import { HEAVY_JOB_ENV, heavyRoute, shellQuote } from "./heavyHook.ts";
 import { readMemorySync, swapInRate } from "./hostReader.ts";
 import {
   answerBashCall,
@@ -28,9 +28,10 @@ import {
   remove,
   requeue,
   setProgress,
+  setQos,
   tryStart,
 } from "./queueFile.ts";
-import { DEFAULT_MACHINE_CONFIG, intercepts } from "./runner.ts";
+import { DEFAULT_MACHINE_CONFIG } from "./runner.ts";
 import { checkLinux, confirmed, resolveRemoto, startLinuxRun, stopRemote } from "./runnerExec.ts";
 
 /**
@@ -40,16 +41,25 @@ import { checkLinux, confirmed, resolveRemoto, startLinuxRun, stopRemote } from 
  */
 const AGENT_JOB_CPU = "normal" as "normal" | "background";
 
-/** The program a job runs as: under `taskpolicy -b` when it starts in the background on macOS. */
+/**
+ * The program a job runs as, under `taskpolicy -b` when it starts in the background on macOS, and
+ * the QoS to record; none off macOS, where T3 cannot change it later.
+ */
 export const launchOf = (
   program: string,
   args: ReadonlyArray<string>,
   background: boolean,
   platform: NodeJS.Platform,
 ) =>
-  background && platform === "darwin"
-    ? { program: "/usr/sbin/taskpolicy", args: ["-b", program, ...args] }
-    : { program, args };
+  platform !== "darwin"
+    ? { program, args, qos: null }
+    : background
+      ? {
+          program: "/usr/sbin/taskpolicy",
+          args: ["-b", program, ...args],
+          qos: "background" as const,
+        }
+      : { program, args, qos: "normal" as const };
 
 const POLL_MS = 1000;
 /** A server writes readings every 2 s; past this a waiter takes over sampling. */
@@ -214,7 +224,10 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
   }
   // Inside a queue job the slot is already held; queuing again would wait on itself.
   // With the queue and the Runner both off here, nothing is tracked or routed.
-  if (process.env[HEAVY_JOB_ENV] === "1" || !intercepts(modeFor(readDoc(dir), process.cwd()))) {
+  if (
+    process.env[HEAVY_JOB_ENV] === "1" ||
+    heavyRoute(modeFor(readDoc(dir), process.cwd())) === "direct"
+  ) {
     runDirect(program, args, process.env);
     return;
   }
@@ -349,6 +362,8 @@ const runMacAttempt = async (
     // oxlint-disable-next-line t3code/no-global-process-runtime -- The CLI fast path runs before any Effect runtime.
     NodeOS.platform(),
   );
+  // Queue off leaves CPU priority alone, so there is nothing for a row to show or change.
+  if (job.workers !== null && launch.qos !== null) setQos(job.dir, job.id, launch.qos);
   const child = NodeChildProcess.spawn(launch.program, launch.args, {
     stdio: "inherit",
     env: run.env,
