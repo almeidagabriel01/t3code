@@ -91,10 +91,17 @@ describe("deriveTrayMenu", () => {
         shell("input", { hasPendingUserInput: true }),
         shell("guest", { pendingGuestMessageCount: 1 }),
         shell("busy", running),
+        // The sidebar's "Waiting": blocked on a thread wait, or a run held by its subagents.
+        shell("awaiting", { ...running, blockedOnThreadWait: true }),
+        shell("held", { runtime: { status: "idle" } }),
         shell("pin", { pinnedAt: "2026-01-02T00:00:00.000Z" }),
         shell("plain"),
       ],
-      expected: { attention: ["approve", "input", "guest"], running: ["busy"], pinned: ["pin"] },
+      expected: {
+        attention: ["approve", "input", "guest"],
+        running: ["busy", "awaiting", "held"],
+        pinned: ["pin"],
+      },
     },
     {
       name: "a thread lands in its first section only",

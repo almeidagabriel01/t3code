@@ -10,7 +10,10 @@ import type {
   EnvironmentProject,
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/models";
-import { resolveSidebarThreadStatus } from "@t3tools/client-runtime/state/thread-attention";
+import {
+  resolveSidebarThreadStatus,
+  sidebarStatusIsRunning,
+} from "@t3tools/client-runtime/state/thread-attention";
 import { sortPinnedThreadsByOrderKey } from "@t3tools/client-runtime/state/thread-sort";
 import type { AnyRouter } from "@tanstack/react-router";
 import type { AtomRegistry } from "effect/reactivity";
@@ -56,8 +59,9 @@ const newestFirst = (left: TrayShell, right: TrayShell) =>
   right.updatedAt.localeCompare(left.updatedAt);
 
 /**
- * Needs-you and running follow the sidebar status, and only for environments whose shells are
- * live (a cached shell may describe a run that already ended). A thread lands in one section.
+ * Needs-you and running follow the sidebar status (running includes its "Waiting"), and only for
+ * environments whose shells are live (a cached shell may describe a run that already ended).
+ * A thread lands in one section.
  * `environmentLabels` is null when only one environment exists, so labels stay out of the rows.
  */
 export function deriveTrayMenu(
@@ -89,7 +93,7 @@ export function deriveTrayMenu(
       : null;
     if (status === "approval" || status === "input" || status === "request") {
       attention.push(thread);
-    } else if (status === "working") {
+    } else if (status !== null && sidebarStatusIsRunning(status)) {
       running.push(thread);
     } else if (thread.pinnedAt !== null) {
       pinned.push(thread);

@@ -8,6 +8,7 @@ import {
   hasSidebarNotification,
   hasUnseenCompletion,
   hasUnseenFailure,
+  sidebarStatusIsRunning,
   type SidebarThreadStatus,
 } from "@t3tools/client-runtime/state/thread-attention";
 import {
@@ -894,7 +895,7 @@ export function shouldRecedeSidebarThread(input: {
   ) {
     return false;
   }
-  if (input.status === "working" || input.status === "waiting") {
+  if (sidebarStatusIsRunning(input.status)) {
     return true;
   }
   if (input.status === "ready" || input.status === "approval") {
