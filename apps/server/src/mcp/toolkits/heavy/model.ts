@@ -47,7 +47,9 @@ export const heavyStatus = (input: {
       name: heavyEntryName(entry),
       position: index + 1,
       ...(input.reasons[entry.id] === undefined ? {} : { reason: input.reasons[entry.id] }),
-      ...(input.routes[entry.id] === undefined ? {} : { runsOn: input.routes[entry.id] }),
+      ...(input.linux === null || input.routes[entry.id] === undefined
+        ? {}
+        : { runsOn: input.routes[entry.id] }),
     }));
   return {
     // Ask only when work would wait: pressure is high, or others queue and no slot is free soon.
@@ -64,7 +66,8 @@ export const heavyStatus = (input: {
     },
     running: running === null ? null : { ...running, name: heavyEntryName(running) },
     machine: input.machine,
-    linux: input.linux,
+    // Only with the Runner on, so the output stays as it was for everyone else.
+    ...(input.linux === null ? {} : { linux: input.linux }),
     runningCount: active.length,
     maxRunning: input.maxRunning,
     waiting,

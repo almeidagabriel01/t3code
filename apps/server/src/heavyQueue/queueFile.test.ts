@@ -550,6 +550,19 @@ describe("Runner in the queue file", () => {
     expect(Queue.tryStart(dir, "a", NOW)).toMatchObject({ runner: "linux", workers: null });
   });
 
+  it("with the queue off, a pause left on never shows on a job waiting for Linux", () => {
+    const dir = queueWith(
+      block(config({ runnerWhere: "linux", runnerUnavailable: "wait" })),
+      false,
+    );
+    Queue.setPaused(dir, true);
+    Queue.setEnabled(dir, false);
+    Queue.enqueue(dir, test("a"));
+    const start = Queue.tryStart(dir, "a", NOW);
+    expect(start).toMatchObject({ status: "waiting" });
+    expect(start).not.toHaveProperty("paused");
+  });
+
   it("asks once with the deadline from the setting, then cancels when the action says so", () => {
     const dir = queueWith(
       block(config({ runnerWhere: "linux", runnerAskMinutes: 2, runnerDeadlineAction: "cancel" })),

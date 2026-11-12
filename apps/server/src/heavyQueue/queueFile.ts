@@ -402,7 +402,7 @@ const decideStart = (doc: QueueDoc, id: string, now: number): Decided<StartResul
       status: "waiting",
       position: index - active.length + 1,
       ...(active[0] === undefined ? {} : { running: active[0] }),
-      ...(doc.paused ? { paused: true as const } : {}),
+      ...(doc.enabled && doc.paused ? { paused: true as const } : {}),
       ...(decision.reasons[id] === undefined ? {} : { reason: decision.reasons[id] }),
     },
   };

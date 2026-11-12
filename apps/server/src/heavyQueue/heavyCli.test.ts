@@ -262,6 +262,41 @@ describe("t3 heavy", () => {
       expect(await run.exited).toBe(0);
       expect(run.stdout()).toBe("ran on mac\n");
     });
+
+    const longRun = `printf '${M} phase=syncing id=app-1\\n${M} phase=running pgid=4\\n' >&2; exec sleep 30`;
+
+    it("Stop during a Linux run ends remoto, confirms Linux stopped, and leaves the queue", async () => {
+      const { dir, env } = setup(longRun);
+      const run = heavy(dir, onMac, env, ["--runner", "linux", "--"]);
+      await run.until("err", "Linux: running");
+      run.child.kill("SIGTERM");
+      expect(await run.exited).toBe(143);
+      expect(run.stderr()).not.toContain("may still be running");
+      expect(Queue.read(dir)).toEqual([]);
+    });
+
+    it("a running Linux job the user moves stops there and runs again on the Mac", async () => {
+      const { dir, env } = setup(longRun);
+      const run = heavy(dir, onMac, env, ["--runner", "linux", "--"]);
+      await run.until("err", "Linux: running");
+      expect(Queue.route(dir, Queue.read(dir)[0]!.id, "mac")).toBe("ok");
+      expect(await run.exited).toBe(0);
+      expect(run.stderr()).toContain("moved by the user");
+      expect(run.stdout()).toBe("ran on mac\n");
+    });
+
+    it("without remoto installed, Linux counts as unavailable", async () => {
+      const { dir, env } = setup("exit 0", { runnerUnavailable: "mac" });
+      const run = heavy(
+        dir,
+        onMac,
+        { ...env, T3CODE_REMOTO: undefined, HOME: dir, PATH: "/usr/bin:/bin" },
+        ["--runner", "linux", "--"],
+      );
+      expect(await run.exited).toBe(0);
+      expect(run.stderr()).toContain("remoto is not installed");
+      expect(run.stdout()).toBe("ran on mac\n");
+    });
   });
 
   it("queues agents' jobs low, the user's normal, and --priority high as asked", async () => {

@@ -127,6 +127,26 @@ describe("heavyStatus", () => {
     expect(status.pressure).toMatchObject({ loadPerCore: 0.25, availableMemoryPercent: 50 });
   });
 
+  it("shows Linux and where each waiter runs only while the Runner is on", () => {
+    const entries = [entry("w1", "me", null)];
+    const off = heavyStatus({ ...base, entries, routes: { w1: "mac" } });
+    expect(off).not.toHaveProperty("linux");
+    expect(off.waiting[0]).not.toHaveProperty("runsOn");
+    const linux = {
+      host: "pc",
+      online: true,
+      slots: 2,
+      running: 0,
+      load1: null,
+      cpuCount: null,
+      availableMemoryBytes: null,
+      totalMemoryBytes: null,
+    };
+    const on = heavyStatus({ ...base, entries, linux, routes: { w1: "linux" } });
+    expect(on).toMatchObject({ linux });
+    expect(on.waiting[0]).toMatchObject({ runsOn: "linux" });
+  });
+
   it("reads zero total memory as no memory pressure", () => {
     expect(heavyStatus({ ...base, totalMemoryBytes: 0 }).pressure.availableMemoryPercent).toBe(100);
   });

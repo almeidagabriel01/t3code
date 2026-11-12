@@ -88,7 +88,8 @@ const outcomeOf = (plan: ReturnType<typeof planRoutes>, id: string): Outcome => 
 };
 
 describe("routing matrix", () => {
-  const queues = ["on", "off", "paused"] as const;
+  // "off-paused": the queue switched off with a pause left on from before; it is plain off.
+  const queues = ["on", "off", "paused", "off-paused"] as const;
   const runners = [true, false] as const;
   const wheres = ["mac", "linux", "automatic"] as const;
   const linuxStates = ["online", "offline", "full", "same-worktree", "unknown"] as const;
@@ -112,7 +113,7 @@ describe("routing matrix", () => {
     // Mac admission: queue off starts at once; paused holds; three running fill the slots; an
     // exclusive job waits for the running ones to finish.
     const mac: Outcome =
-      queue === "off"
+      queue === "off" || queue === "off-paused"
         ? "mac-start"
         : queue === "paused" || load === "at" || kind === "exclusive"
           ? "mac-wait"
@@ -161,8 +162,8 @@ describe("routing matrix", () => {
           entries,
           { runnerEnabled: runner, runnerWhere: where, runnerOverflow: 3 },
           {
-            enabled: queue !== "off",
-            paused: queue === "paused",
+            enabled: queue === "on" || queue === "paused",
+            paused: queue === "paused" || queue === "off-paused",
             health: linux === "offline" ? OFFLINE : linux === "unknown" ? UNKNOWN_HEALTH : ONLINE,
           },
         ),
