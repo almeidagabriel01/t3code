@@ -283,6 +283,35 @@ describe("Linux unavailable, deadline and dropped policies", () => {
     if (outcome === "ask") expect(plan.asks.a).toBe("dropped");
   });
 
+  // A heartbeat right after the drop must not undo the policy: "Run on this Mac" stays on the
+  // Mac and an open question stays open; only waiting goes back to Linux once it answers.
+  it.each([
+    ["mac", undefined, "mac-start"],
+    ["ask", undefined, "ask"],
+    ["ask", -1, "linux-start"],
+    ["wait", undefined, "linux-start"],
+  ] as const)(
+    "dropped mid-run, Linux back: %s (question deadline %s) → %s",
+    (policy, deadline, outcome) => {
+      const plan = planRoutes(
+        input(
+          [
+            job("a", "vp test run", {
+              dropped: true,
+              linuxFailedAt: NOW - 5000,
+              ...(deadline === undefined
+                ? {}
+                : { ask: { reason: "dropped" as const, deadlineAt: ago(-deadline) } }),
+            }),
+          ],
+          { runnerWhere: "linux", runnerDropped: policy, runnerDeadlineAction: "wait" },
+          { health: { ...ONLINE, okAt: NOW - 100 } },
+        ),
+      );
+      expect(outcomeOf(plan, "a")).toBe(outcome);
+    },
+  );
+
   it("an open question holds the job until its deadline", () => {
     const plan = offline(job("a", "vp test run", { ask: asked(60_000) }), {});
     expect(plan.asks).toEqual({});

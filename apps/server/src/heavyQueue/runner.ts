@@ -235,6 +235,17 @@ export interface RoutePlan {
 const askExpired = (entry: HeavyQueueEntry, now: number) =>
   entry.ask !== undefined && Date.parse(entry.ask.deadlineAt) <= now;
 
+/**
+ * A drop keeps its policy until it resolves: "Run on this Mac" and an unanswered question are
+ * not undone by the next good heartbeat. Waiting (chosen, or an expired question) ends the hold.
+ */
+const dropHolds = (entry: HeavyQueueEntry, config: RunnerProjectConfig, now: number) =>
+  entry.dropped === true &&
+  entry.route === undefined &&
+  (config.runnerDropped === "mac" ||
+    (config.runnerDropped === "ask" &&
+      !(askExpired(entry, now) && config.runnerDeadlineAction === "wait")));
+
 /** Where the entry's own settings send it before Linux health is considered. */
 const intentOf = (
   entry: HeavyQueueEntry,
@@ -302,7 +313,7 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
       toMac(entry);
       continue;
     }
-    const up = linuxUpFor(health, entry);
+    const up = linuxUpFor(health, entry) && !dropHolds(entry, config, now);
     if (intent === "automatic") {
       if (macCount < config.runnerOverflow || !up || paused) {
         toMac(entry);
