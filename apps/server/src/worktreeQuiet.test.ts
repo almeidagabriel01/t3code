@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 
 import * as ProcessRunner from "./processRunner.ts";
 import { listProcessCwds, parseLsofCwds } from "./worktreeQuiet.ts";
@@ -16,6 +17,6 @@ describe("worktree quiet checks", () => {
   it.effect("finds this process's working directory", () =>
     Effect.gen(function* () {
       expect(yield* listProcessCwds()).toContain(process.cwd());
-    }).pipe(Effect.provide(ProcessRunner.layer), Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(ProcessRunner.layer.pipe(Layer.provideMerge(NodeServices.layer)))),
   );
 });

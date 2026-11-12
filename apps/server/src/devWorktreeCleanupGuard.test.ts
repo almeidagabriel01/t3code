@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as FileSystem from "effect/FileSystem";
 
 import * as ServerConfig from "./config.ts";
@@ -36,8 +37,11 @@ describe("dev worktree cleanup guard", () => {
       );
       expect(result).toBe(blocked);
     }).pipe(
-      Effect.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-dev-guard-config-" })),
-      Effect.provide(NodeServices.layer),
+      Effect.provide(
+        ServerConfig.layerTest(process.cwd(), { prefix: "t3-dev-guard-config-" }).pipe(
+          Layer.provideMerge(NodeServices.layer),
+        ),
+      ),
     ),
   );
 });
