@@ -2406,7 +2406,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 tabsRouteRef !== null &&
                 scopedThreadKey(tabsRouteRef) !== threadKey &&
                 readThreadTabsProjectKey(tabsRouteRef) !== null &&
-                readThreadTabsProjectKey(tabsRouteRef) === readThreadTabsProjectKey(threadRef),
+                readThreadTabsProjectKey(threadRef) !== null,
               canOperate: readEnvironmentScope(
                 threadRef.environmentId,
                 AuthOrchestrationOperateScope,

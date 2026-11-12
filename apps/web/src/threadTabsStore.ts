@@ -5,7 +5,7 @@ import { resolveStorage } from "./lib/storage";
 import type { RightPanelSurface, ThreadRightPanelState } from "./rightPanelStore";
 
 /**
- * Thread tabs and tab groups for one project, after Orca's editor groups: each group is a tab
+ * Thread tabs and tab groups for one project's thread area, after Orca's editor groups: each group is a tab
  * strip, the layout is a binary tree of groups, and a group left without tabs collapses. Tabs are
  * scoped thread keys. The routed thread is always the active tab of its group.
  */
@@ -452,7 +452,7 @@ export function parsePersistedWorkspace(value: unknown): ThreadTabWorkspace | nu
 }
 
 interface ThreadTabsState {
-  /** By `environmentId:projectId`. */
+  /** By `environmentId:projectId` of the project the workspace opened for; tabs may be any project's. */
   readonly byProject: Readonly<Record<string, ThreadTabWorkspace>>;
 }
 
@@ -507,6 +507,25 @@ export function withRouteTab(
     : reconcileRouteTab(workspace, routeKey);
 }
 
+/**
+ * The workspace whose groups show `threadKey`: the one holding its tab, else its own project's
+ * (`ownKey`, null for threads that open without tabs). A tab dropped into another project's split
+ * lives there, so routing to it keeps that split.
+ */
+export function threadTabsWorkspaceKey(
+  byProject: ThreadTabsState["byProject"],
+  threadKey: string,
+  ownKey: string | null,
+): string | null {
+  if (ownKey === null) return null;
+  const own = byProject[ownKey];
+  if (own && groupOfTab(own, threadKey)) return ownKey;
+  return (
+    Object.keys(byProject).find((key) => groupOfTab(byProject[key]!, threadKey) !== undefined) ??
+    ownKey
+  );
+}
+
 /** Drops `threadKey` onto `target`; true when the layout changed. */
 export function applyThreadTabDrop(
   projectKey: string,
@@ -514,21 +533,28 @@ export function applyThreadTabDrop(
   threadKey: string,
   target: TabDropTarget | { readonly beside: true },
 ): boolean {
-  let moved = false;
-  updateThreadTabs(projectKey, (current) => {
-    const base = withRouteTab(current, routeKey);
-    const resolved =
-      "beside" in target
-        ? { groupId: groupOfTab(base, routeKey)?.id ?? FIRST_GROUP_ID, zone: "right" as const }
-        : target;
-    const next = dropThreadTab(base, threadKey, resolved, newThreadTabId);
-    moved = next !== null;
-    return next ?? current;
-  });
-  return moved;
+  const { byProject } = useThreadTabsStore.getState();
+  const base = withRouteTab(byProject[projectKey], routeKey);
+  const resolved =
+    "beside" in target
+      ? { groupId: groupOfTab(base, routeKey)?.id ?? FIRST_GROUP_ID, zone: "right" as const }
+      : target;
+  const next = dropThreadTab(base, threadKey, resolved, newThreadTabId);
+  if (next === null) return false;
+  // A thread has one tab: dropped here, it leaves the workspace of another project it was open in.
+  const rest: Record<string, ThreadTabWorkspace> = {};
+  for (const [key, workspace] of Object.entries(byProject)) {
+    if (key === projectKey) continue;
+    const left = groupOfTab(workspace, threadKey)
+      ? collapse({ ...workspace, groups: workspace.groups.map((g) => withoutTab(g, threadKey)) })
+      : workspace;
+    if (left) rest[key] = left;
+  }
+  useThreadTabsStore.setState({ byProject: { ...rest, [projectKey]: next } });
+  return true;
 }
 
-/** Whether the thread has a tab in its project's groups. */
+/** Whether the thread has a tab in its workspace's groups. */
 export function hasThreadTab(projectKey: string | null, threadKey: string): boolean {
   const workspace =
     projectKey === null ? undefined : useThreadTabsStore.getState().byProject[projectKey];

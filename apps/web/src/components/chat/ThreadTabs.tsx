@@ -1,5 +1,9 @@
 import { useAtomValue } from "@effect/atom-react";
-import { parseScopedThreadKey, scopedThreadKey } from "@t3tools/client-runtime/environment";
+import {
+  parseScopedThreadKey,
+  scopedThreadKey,
+  scopeProjectRef,
+} from "@t3tools/client-runtime/environment";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { MessageSquareIcon } from "lucide-react";
@@ -22,7 +26,7 @@ import { observeResize } from "../../lib/observeResize";
 import { cn } from "../../lib/utils";
 import { selectActiveMainFileSurface, useRightPanelStore } from "../../rightPanelStore";
 import { useOpenDecisionThreadKeys } from "../../state/decisions";
-import { useQuietThreadShell } from "../../state/entities";
+import { useProject, useQuietThreadShell } from "../../state/entities";
 import { primaryServerKeybindingsAtom } from "../../state/server";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import {
@@ -37,6 +41,7 @@ import {
   reconcileRouteTab,
   setThreadSplitRatio,
   threadTabBlock,
+  threadTabsWorkspaceKey,
   type ThreadTabGroup,
   type ThreadTabLayout,
   type ThreadTabWorkspace,
@@ -179,7 +184,10 @@ export function useThreadTabsLayout(input: {
   const navigateToThreadKey = useNavigateToThreadKey();
   const routeShell = useQuietThreadShell(input.enabled ? input.routeThreadRef : null);
   const routeKey = scopedThreadKey(input.routeThreadRef);
-  const projectKey = input.enabled ? threadTabsProjectKey(routeShell) : null;
+  const ownKey = input.enabled ? threadTabsProjectKey(routeShell) : null;
+  const projectKey = useThreadTabsStore((state) =>
+    threadTabsWorkspaceKey(state.byProject, routeKey, ownKey),
+  );
   const stored = useThreadTabsStore((state) =>
     projectKey === null ? undefined : state.byProject[projectKey],
   );
@@ -480,6 +488,9 @@ function ThreadTabGroupPane(props: {
   const { group } = props;
   const activeRef = parseScopedThreadKey(group.active);
   const shell = useQuietThreadShell(activeRef);
+  // Groups may show another project's thread, so each names its own, as the routed header does.
+  const project = useProject(shell ? scopeProjectRef(shell.environmentId, shell.projectId) : null);
+  const projectName = project?.isScratch ? "No project" : project?.title;
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const navigateToThreadKey = useNavigateToThreadKey();
   const edges = rectEdges(props.rect);
@@ -521,6 +532,16 @@ function ThreadTabGroupPane(props: {
           isElectron && edges.top && edges.right && "wco:pr-(--workspace-native-controls-inset)",
         )}
       >
+        {projectName ? (
+          <>
+            <span className="max-w-40 min-w-0 shrink truncate text-sm text-muted-foreground">
+              {projectName}
+            </span>
+            <span aria-hidden className="shrink-0 px-1.5 text-sm text-muted-foreground/60">
+              /
+            </span>
+          </>
+        ) : null}
         <Tooltip>
           <TooltipTrigger
             render={

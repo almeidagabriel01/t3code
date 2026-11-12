@@ -1,10 +1,12 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { isAssistantThreadId, type ScopedThreadRef } from "@t3tools/contracts";
 
 import { readThreadShell } from "../../state/entities";
+import { threadTabsWorkspaceKey, useThreadTabsStore } from "../../threadTabsStore";
 
 /**
- * Tabs are per project. Assistant conversations and side chats live outside project lists, so
+ * A thread's tabs open in its project's workspace. Assistant conversations and side chats live outside project lists, so
  * they open without tabs.
  */
 export function threadTabsProjectKey(
@@ -14,6 +16,12 @@ export function threadTabsProjectKey(
   return `${shell.environmentId}:${shell.projectId}`;
 }
 
+/** The workspace the thread's tab lives in; see `threadTabsWorkspaceKey`. */
 export function readThreadTabsProjectKey(ref: ScopedThreadRef | null): string | null {
-  return threadTabsProjectKey(ref ? readThreadShell(ref) : null);
+  if (ref === null) return null;
+  return threadTabsWorkspaceKey(
+    useThreadTabsStore.getState().byProject,
+    scopedThreadKey(ref),
+    threadTabsProjectKey(readThreadShell(ref)),
+  );
 }

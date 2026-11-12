@@ -104,7 +104,7 @@ export interface ThreadDragLabel {
   readonly count: number;
   /** The one dragged thread; null for several. */
   readonly threadKey: string | null;
-  /** `environmentId:projectId` of that thread: tabs only open in their own project's groups. */
+  /** The workspace key of that thread; null when it opens without tabs (assistant, side chat). */
   readonly projectKey: string | null;
   /** A tab moves between groups and never mentions itself in a composer. */
   readonly fromTab?: boolean;
@@ -169,9 +169,7 @@ function findTabDrop(
   if (label.threadKey === null || label.projectKey === null) return null;
   const element = document.elementFromPoint(point.x, point.y);
   const groups = element?.closest<HTMLElement>(`[${GROUPS_ATTRIBUTE}]`);
-  if (!element || !groups || groups.getAttribute(GROUPS_ATTRIBUTE) !== label.projectKey) {
-    return null;
-  }
+  if (!element || !groups) return null;
   const strip = element.closest<HTMLElement>(`[${STRIP_ATTRIBUTE}]`);
   const stripGroupId = strip?.getAttribute(STRIP_ATTRIBUTE);
   if (strip && stripGroupId) {
