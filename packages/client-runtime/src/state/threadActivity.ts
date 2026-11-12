@@ -280,6 +280,38 @@ export function selectAgentsSection(entries: readonly ActivityEntry[]): {
   };
 }
 
+export type ProjectActivityOutcome = "needs-you" | "failed" | "interrupted" | "finished";
+
+export interface ProjectActivityEntry extends AgentsSectionEntry {
+  readonly outcome: ProjectActivityOutcome;
+}
+
+/**
+ * One project's slice of Activity: runs waiting on the user and runs that ended unseen,
+ * newest first. Work in progress stays in the sidebar's Agents section.
+ */
+export function selectProjectActivity(
+  entries: readonly ActivityEntry[],
+  project: { readonly environmentId: string; readonly projectId: string },
+): ProjectActivityEntry[] {
+  const { needsYou, done } = selectAgentsSection(
+    entries.filter(
+      ({ thread }) =>
+        thread.environmentId === project.environmentId && thread.projectId === project.projectId,
+    ),
+  );
+  const ended = (entry: AgentsSectionEntry): ProjectActivityOutcome =>
+    entry.thread.latestRun?.status === "failed"
+      ? "failed"
+      : entry.thread.latestRun?.status === "interrupted"
+        ? "interrupted"
+        : "finished";
+  return [
+    ...needsYou.map((entry) => ({ ...entry, outcome: "needs-you" as const })),
+    ...done.map((entry) => ({ ...entry, outcome: ended(entry) })),
+  ].sort((left, right) => firstValidTimestampMs(right.at) - firstValidTimestampMs(left.at));
+}
+
 export interface ActivityReadPlan<T> {
   readonly markRead: readonly T[];
   readonly releaseKeys: readonly string[];

@@ -12,6 +12,7 @@ import {
   resolveSidebarPriorityRank,
   selectActivityClear,
   selectAgentsSection,
+  selectProjectActivity,
   selectSidebarMarkReadTargets,
 } from "./threadActivity.ts";
 
@@ -221,5 +222,49 @@ describe("selectAgentsSection", () => {
     expect(section.needsYou.map((entry) => entry.thread.id)).toEqual(needsYou);
     expect(section.working.map((entry) => entry.thread.id)).toEqual(working);
     expect(section.done.map((entry) => entry.thread.id)).toEqual(done);
+  });
+});
+
+describe("selectProjectActivity", () => {
+  const ended = (status: string, completedAt: string) => ({
+    startedAt: null,
+    requestedAt: null,
+    completedAt,
+    status,
+  });
+  const unseen = { lastVisitedAt: "2026-03-09T08:00:00.000Z" };
+  const threads = [
+    shell("done", { ...unseen, latestRun: ended("completed", "2026-03-09T09:10:00.000Z") }),
+    shell("failed", { ...unseen, latestRun: ended("failed", "2026-03-09T09:40:00.000Z") }),
+    shell("stopped", { ...unseen, latestRun: ended("interrupted", "2026-03-09T09:20:00.000Z") }),
+    shell("asks", { hasPendingApprovals: true, updatedAt: "2026-03-09T09:30:00.000Z" }),
+    shell("working", { runtime: { status: "running" } }),
+    shell("seen", { latestRun: ended("completed", "2026-03-09T07:00:00.000Z") }),
+    shell("other-project", { ...unseen, projectId: ProjectId.make("other"), latestRun }),
+    shell("other-env", {
+      ...unseen,
+      environmentId: EnvironmentId.make("env-2"),
+      latestRun,
+    }),
+    shell("assistant:helper", { ...unseen, latestRun }),
+  ];
+
+  it("keeps the project's waiting and ended runs, newest first, with what happened", () => {
+    expect(
+      selectProjectActivity(build(threads), { environmentId: "env", projectId: "project" }).map(
+        (entry) => [entry.thread.id, entry.outcome],
+      ),
+    ).toEqual([
+      ["failed", "failed"],
+      ["asks", "needs-you"],
+      ["stopped", "interrupted"],
+      ["done", "finished"],
+    ]);
+  });
+
+  it("is empty for a project with nothing to show", () => {
+    expect(
+      selectProjectActivity(build(threads), { environmentId: "env", projectId: "none" }),
+    ).toEqual([]);
   });
 });

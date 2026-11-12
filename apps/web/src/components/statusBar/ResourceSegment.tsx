@@ -532,10 +532,12 @@ export function HeavyCommandsGroup({
 export function HeavyQueueGroup({
   environmentId,
   threadTitle,
+  projectIdOfThread,
   onOpenThread,
 }: {
   readonly environmentId: EnvironmentId;
   readonly threadTitle: (threadId: string) => string | undefined;
+  readonly projectIdOfThread: (threadId: string) => string | undefined;
   readonly onOpenThread: (threadId: string) => void;
 }) {
   const { entries, paused, enabled } = useHeavyQueue(environmentId);
@@ -549,6 +551,7 @@ export function HeavyQueueGroup({
       <HeavyQueueBody
         environmentId={environmentId}
         threadTitle={threadTitle}
+        projectIdOfThread={projectIdOfThread}
         onOpenThread={onOpenThread}
       />
     </ProjectGroup>
@@ -716,6 +719,7 @@ export function EnvironmentSection({
         <HeavyQueueGroup
           environmentId={environmentId}
           threadTitle={(threadId) => infoOf(threadId)?.title}
+          projectIdOfThread={(threadId) => infoOf(threadId)?.projectId}
           onOpenThread={(threadId) => openThread(threadId as ThreadId)}
         />
         {app === null || appTotal === null ? null : (

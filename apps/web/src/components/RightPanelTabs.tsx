@@ -6,7 +6,6 @@ import type {
 } from "@t3tools/contracts";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import {
-  NotebookPenIcon,
   Smartphone,
   ChevronDown,
   ChevronLeft,
@@ -32,6 +31,8 @@ import {
 import { isElectron } from "~/env";
 import type { DesktopPreviewOverlay } from "~/previewStateStore";
 import type { RightPanelSurface } from "~/rightPanelStore";
+import { RIGHT_PANEL_TOOL_KINDS, type RightPanelToolKind } from "~/rightPanelToolKinds";
+import { RIGHT_PANEL_TOOLS } from "./chat/rightPanelTools";
 import { cn } from "~/lib/utils";
 import {
   resolveShortcutCommand,
@@ -109,7 +110,7 @@ export interface RightPanelTabsProps {
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
   onAddDevice: () => void;
-  onAddNotes: () => void;
+  onAddTool: (kind: RightPanelToolKind) => void;
   /** Absent where side chats are not offered. */
   onAddSideChat?: (() => void) | undefined;
   browserAvailable: boolean;
@@ -119,7 +120,7 @@ export interface RightPanelTabsProps {
   pullRequestAvailable: boolean;
   pullRequestsAvailable: boolean;
   deviceAvailable: boolean;
-  notesAvailable: boolean;
+  toolsAvailable: Readonly<Record<RightPanelToolKind, boolean>>;
   sideChatAvailable?: boolean;
   /** Overrides the default reason while side chats are available but cannot start. */
   sideChatDisabledReason?: string | null;
@@ -139,7 +140,6 @@ const SURFACE_DISABLED_REASONS = {
   pullRequest: "This thread's branch has no pull request yet.",
   pullRequests: "No linked pull requests are available for this thread.",
   device: "Devices are only available from a thread.",
-  notes: "Notes are only available for projects on an environment with notes.",
   sideChat: "Side chats start after the first message.",
 } as const;
 
@@ -165,7 +165,6 @@ const SURFACE_UNAVAILABLE_HINTS = {
   pullRequest: "No pull request on this branch yet.",
   pullRequests: "No linked pull requests available.",
   device: "Available from a thread.",
-  notes: "Available when a project is open.",
   sideChat: "Available after the first message.",
 } as const;
 
@@ -234,6 +233,23 @@ export function surfaceShortcutTargetsTypingContext(
   );
 }
 
+function toolSurfaceActions(
+  props: {
+    readonly onAddTool: (kind: RightPanelToolKind) => void;
+    readonly toolsAvailable: Readonly<Record<RightPanelToolKind, boolean>>;
+  },
+  reason: "disabledReason" | "unavailableHint",
+) {
+  return RIGHT_PANEL_TOOL_KINDS.map((kind) => ({
+    label: RIGHT_PANEL_TOOLS[kind].label,
+    icon: RIGHT_PANEL_TOOLS[kind].icon,
+    shortcut: RIGHT_PANEL_TOOLS[kind].shortcut,
+    available: props.toolsAvailable[kind],
+    disabledReason: RIGHT_PANEL_TOOLS[kind][reason],
+    onClick: () => props.onAddTool(kind),
+  }));
+}
+
 function DisabledReasonTooltip(props: { reason: string; trigger: ReactElement }) {
   return (
     <Tooltip>
@@ -275,7 +291,7 @@ function RightPanelEmptyState(props: {
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
   onAddDevice: () => void;
-  onAddNotes: () => void;
+  onAddTool: (kind: RightPanelToolKind) => void;
   /** Absent where side chats are not offered. */
   onAddSideChat?: (() => void) | undefined;
   browserAvailable: boolean;
@@ -285,7 +301,7 @@ function RightPanelEmptyState(props: {
   pullRequestAvailable: boolean;
   pullRequestsAvailable: boolean;
   deviceAvailable: boolean;
-  notesAvailable: boolean;
+  toolsAvailable: Readonly<Record<RightPanelToolKind, boolean>>;
   sideChatAvailable: boolean;
   sideChatDisabledReason: string | null;
 }) {
@@ -349,14 +365,7 @@ function RightPanelEmptyState(props: {
       disabledReason: SURFACE_UNAVAILABLE_HINTS.device,
       onClick: props.onAddDevice,
     },
-    {
-      label: "Notes",
-      icon: NotebookPenIcon,
-      shortcut: "N",
-      available: props.notesAvailable,
-      disabledReason: SURFACE_UNAVAILABLE_HINTS.notes,
-      onClick: props.onAddNotes,
-    },
+    ...toolSurfaceActions(props, "unavailableHint"),
     ...(props.onAddSideChat
       ? [
           {
@@ -554,7 +563,10 @@ function surfaceTitle(
     case "pull-requests":
       return "Pull requests";
     case "notes":
-      return "Notes";
+    case "activity":
+    case "memory":
+    case "heavy-work":
+      return RIGHT_PANEL_TOOLS[surface.kind].label;
     case "device":
       return surface.title ?? surface.target?.name ?? "Device";
     case "side-chat":
@@ -677,14 +689,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       disabledReason: SURFACE_DISABLED_REASONS.device,
       onClick: props.onAddDevice,
     },
-    {
-      label: "Notes",
-      icon: NotebookPenIcon,
-      shortcut: "N",
-      available: props.notesAvailable,
-      disabledReason: SURFACE_DISABLED_REASONS.notes,
-      onClick: props.onAddNotes,
-    },
+    ...toolSurfaceActions(props, "disabledReason"),
     ...(props.onAddSideChat
       ? [
           {
@@ -1119,7 +1124,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddPullRequest={props.onAddPullRequest}
             onAddPullRequests={props.onAddPullRequests}
             onAddDevice={props.onAddDevice}
-            onAddNotes={props.onAddNotes}
+            onAddTool={props.onAddTool}
             onAddSideChat={props.onAddSideChat}
             browserAvailable={props.browserAvailable}
             terminalAvailable={props.terminalAvailable}
@@ -1128,7 +1133,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             pullRequestAvailable={props.pullRequestAvailable}
             pullRequestsAvailable={props.pullRequestsAvailable}
             deviceAvailable={props.deviceAvailable}
-            notesAvailable={props.notesAvailable}
+            toolsAvailable={props.toolsAvailable}
             sideChatAvailable={props.sideChatAvailable === true}
             sideChatDisabledReason={props.sideChatDisabledReason ?? null}
           />

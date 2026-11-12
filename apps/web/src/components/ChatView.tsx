@@ -306,6 +306,7 @@ import {
 import type { ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { ThreadDetailsPanel } from "./chat/ThreadDetailsPanel";
 import { useNotesEnvironmentIds } from "../state/notes";
+import { mapRightPanelTools } from "../rightPanelToolKinds";
 import { NoActiveThreadState } from "./NoActiveThreadState";
 import {
   resolveEffectiveEnvMode,
@@ -1143,6 +1144,10 @@ export default function ChatView(props: ChatViewProps) {
     activeProject != null &&
     !activeProject.isScratch &&
     notesEnvironmentIds.includes(activeThreadRef.environmentId);
+  const projectPanelAvailable = activeThreadRef !== null && activeProject != null;
+  const rightPanelToolsAvailable = mapRightPanelTools((kind) =>
+    kind === "notes" ? notesAvailable : projectPanelAvailable,
+  );
   const activeProjectSettings = resolveProjectSettings(
     settings,
     activeProject?.id ?? null,
@@ -3282,6 +3287,11 @@ export default function ChatView(props: ChatViewProps) {
             ? { threadRef: activeThreadRef, projectId: activeProject.id }
             : null
         }
+        project={
+          activeProject
+            ? { environmentId: activeThreadRef.environmentId, projectId: activeProject.id }
+            : null
+        }
         sideChatParentPanel={sideChatParentPanel}
         terminal={{
           launchContext: activeTerminalLaunchContext ?? null,
@@ -4180,7 +4190,7 @@ export default function ChatView(props: ChatViewProps) {
           onAddPullRequests={addPullRequestsSurfaceStable}
           onAddDevice={addDeviceSurfaceStable}
           onAddSideChat={sideChatsOffered ? openSideChatStable : undefined}
-          onAddNotes={() => useRightPanelStore.getState().open(activeThreadRef, "notes")}
+          onAddTool={(kind) => useRightPanelStore.getState().open(activeThreadRef, kind)}
           browserAvailable={canOperatePreview && browserAvailable}
           terminalAvailable={activeProject !== null && canOperateTerminal}
           diffAvailable={isServerThread && isGitRepo}
@@ -4190,7 +4200,7 @@ export default function ChatView(props: ChatViewProps) {
           deviceAvailable={activeThreadRef !== null}
           sideChatAvailable={sideChat.available}
           sideChatDisabledReason={sideChatDisabledReason}
-          notesAvailable={notesAvailable}
+          toolsAvailable={rightPanelToolsAvailable}
         >
           {rightPanelContent}
         </ChatRightPanel>

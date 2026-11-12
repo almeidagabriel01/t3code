@@ -12,6 +12,7 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import { resolveStorage } from "./lib/storage";
 import { randomUUID } from "./lib/utils";
 import { type RightPanelSurface } from "./rightPanelStore";
+import { isRightPanelToolKind } from "./rightPanelToolKinds";
 
 export type ClosedView =
   | {
@@ -59,11 +60,11 @@ const isClosedViewEntry = (entry: unknown): entry is ClosedViewEntry => {
   if (view.kind !== "panel-tab") return false;
   const surface = view.surface;
   if (!surface || typeof surface.id !== "string") return false;
+  if (isRightPanelToolKind(surface.kind)) return surface.id === surface.kind;
   switch (surface.kind) {
     case "diff":
     case "files":
     case "pull-requests":
-    case "notes":
       return surface.id === surface.kind;
     case "preview":
       return surface.resourceId === null || typeof surface.resourceId === "string";

@@ -17,6 +17,9 @@ const everything = {
   "pull-requests": true,
   "pull-request": true,
   notes: true,
+  activity: true,
+  memory: true,
+  "heavy-work": true,
   "side-chat": true,
   device: true,
 } satisfies Record<QuickButtonId, boolean>;
@@ -33,9 +36,9 @@ describe("right panel quick buttons", () => {
   });
 
   it("keeps saved order, drops unknown and repeated ids, hides unavailable additions only", () => {
-    const saved = ["notes", "future", "diff", "notes", "device", "files"];
+    const saved = ["notes", "future", "diff", "notes", "device", "files", "memory"];
     const available = { ...everything, notes: false, diff: false };
-    expect(visibleQuickButtons(saved, available)).toEqual(["diff", "device", "files"]);
+    expect(visibleQuickButtons(saved, available)).toEqual(["diff", "device", "files", "memory"]);
   });
 
   it("toggles and moves while keeping ids from other app versions", () => {

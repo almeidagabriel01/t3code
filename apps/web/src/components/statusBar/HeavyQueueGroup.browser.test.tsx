@@ -105,6 +105,7 @@ const group = () => (
   <HeavyQueueGroup
     environmentId={environmentId}
     threadTitle={title}
+    projectIdOfThread={() => undefined}
     onOpenThread={mocks.openThread}
   />
 );

@@ -104,6 +104,7 @@ import { useKanbanEnvironmentIds } from "../state/kanban";
 import { useDecisionEntries } from "../state/decisions";
 import { useNotesEnvironmentIds } from "../state/notes";
 import { useNotesPaletteItems } from "./notes/notesPaletteItems";
+import { projectPanelPaletteItems } from "./projectPanels/projectPanelPaletteItems";
 import { openAssistantDialog } from "./assistants/assistantDialogState";
 import { openAssistantWork } from "./assistants/assistantWorkState";
 import { openAssistantTeamDialog } from "./assistants/assistantTeamState";
@@ -1536,6 +1537,8 @@ function OpenCommandPaletteDialog(props: {
       },
     });
   }
+
+  actionItems.push(...projectPanelPaletteItems(activeThread));
 
   if (activeThread !== null && canShareActiveThreadWithGuest) {
     const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);

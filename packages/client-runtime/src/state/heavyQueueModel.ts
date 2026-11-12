@@ -147,7 +147,7 @@ export const heavyCommandKey = (command: HeavyCommand) =>
 export function projectForCommand<
   P extends { readonly id: string; readonly workspaceRoot: string },
 >(
-  command: HeavyCommand,
+  command: Pick<HeavyCommand, "threadId"> & { readonly cwd?: string | undefined },
   projects: ReadonlyArray<P>,
   projectIdOfThread: (threadId: string) => string | undefined,
 ): P | undefined {
@@ -155,6 +155,23 @@ export function projectForCommand<
   if (byFolder !== undefined) return byFolder;
   const id = command.threadId === null ? undefined : projectIdOfThread(command.threadId);
   return id === undefined ? undefined : projects.find((project) => project.id === id);
+}
+
+/** Queue entries or heavy commands that belong to `projectId`, by the same match their rows show. */
+export function heavyItemsInProject<
+  T extends Pick<HeavyCommand, "threadId"> & { readonly cwd?: string | undefined },
+>(
+  items: ReadonlyArray<T>,
+  input: {
+    readonly projectId: string;
+    readonly projects: ReadonlyArray<{ readonly id: string; readonly workspaceRoot: string }>;
+    readonly projectIdOfThread: (threadId: string) => string | undefined;
+  },
+): T[] {
+  return items.filter(
+    (item) =>
+      projectForCommand(item, input.projects, input.projectIdOfThread)?.id === input.projectId,
+  );
 }
 
 const QUEUE_OFF_SUMMARY = "Queue off: heavy jobs start right away";

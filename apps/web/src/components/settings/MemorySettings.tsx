@@ -2,7 +2,7 @@ import { MemoryHubDiagnosticsSettings } from "./MemoryHubDiagnosticsSettings";
 import { MemoryImportSettings } from "./MemoryImportSettings";
 import { MemoryAgentAccessSettings } from "./MemoryAgentAccessSettings";
 import { MemoryGenerationSettings } from "./MemoryGenerationSettings";
-import { XIcon } from "lucide-react";
+import { Trash2Icon, XIcon } from "lucide-react";
 import { MemoryAdministration } from "./MemorySharingSettings";
 import { randomUUID } from "../../lib/utils";
 import { RegistryContext, useAtom, useAtomSubscribe, useAtomValue } from "@effect/atom-react";
@@ -1446,11 +1446,14 @@ export function MemoryForgetControl({
   environmentId,
   item,
   onForgotten,
+  compact = false,
 }: {
   environmentId: EnvironmentId;
   item: MemoryItem | null;
   label?: string;
   onForgotten?: ((message: string) => void) | undefined;
+  /** An icon trigger and an inline confirmation, for list rows. */
+  compact?: boolean;
 }) {
   const canForget = useAtomValue(memoryEnvironment.forget.permissionAtom(environmentId));
   return (
@@ -1461,6 +1464,7 @@ export function MemoryForgetControl({
       canForget={canForget}
       label={label}
       onForgotten={onForgotten}
+      compact={compact}
     />
   );
 }
@@ -1471,12 +1475,14 @@ function MemoryForgetRequest({
   item,
   canForget,
   onForgotten,
+  compact,
 }: {
   environmentId: EnvironmentId;
   item: MemoryItem | null;
   canForget: boolean;
   label: string;
   onForgotten?: ((message: string) => void) | undefined;
+  compact: boolean;
 }) {
   const registry = useContext(RegistryContext);
   const connection = Option.getOrNull(usePreparedConnection(environmentId));
@@ -1524,17 +1530,35 @@ function MemoryForgetRequest({
     } else setMessage("Forget request failed. Try again to continue this request.");
   }
   return (
-    <div>
-      {message ? <p role="status">{message}</p> : null}
+    <div className={compact ? "contents" : undefined}>
+      {message ? (
+        <p
+          role="status"
+          className={compact ? "basis-full text-xs text-muted-foreground" : undefined}
+        >
+          {message}
+        </p>
+      ) : null}
       {available || intent ? (
         intent && canForget ? (
-          <div role="group" aria-label="Forget confirmation">
-            <p>Forget this memory? This cannot be undone.</p>
-            <Button size="sm" variant="destructive" disabled={busy} onClick={() => void submit()}>
+          <div
+            role="group"
+            aria-label="Forget confirmation"
+            className={compact ? "flex basis-full flex-wrap items-center gap-1.5" : undefined}
+          >
+            <p className={compact ? "basis-full text-xs" : undefined}>
+              Forget this memory? This cannot be undone.
+            </p>
+            <Button
+              size={compact ? "xs" : "sm"}
+              variant="destructive"
+              disabled={busy}
+              onClick={() => void submit()}
+            >
               Confirm forget
             </Button>
             <Button
-              size="sm"
+              size={compact ? "xs" : "sm"}
               variant="ghost"
               disabled={busy}
               onClick={() => {
@@ -1547,8 +1571,10 @@ function MemoryForgetRequest({
           </div>
         ) : (
           <Button
-            size="sm"
-            variant="outline"
+            size={compact ? "icon-xs" : "sm"}
+            variant={compact ? "ghost-muted" : "outline"}
+            aria-label={compact ? label : undefined}
+            title={compact ? label : undefined}
             disabled={!canForget}
             onClick={() => {
               if (item && liveDestination()) {
@@ -1559,7 +1585,7 @@ function MemoryForgetRequest({
               }
             }}
           >
-            {label}
+            {compact ? <Trash2Icon aria-hidden /> : label}
           </Button>
         )
       ) : null}

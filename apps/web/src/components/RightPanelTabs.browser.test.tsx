@@ -7,6 +7,7 @@ import "~/index.css";
 import { act, render, stubGlobal } from "../../test/render";
 import { focusPanelTerminalAfterClose, registerTerminalFocusTarget } from "~/lib/terminalFocus";
 import { useRightPanelStore, type RightPanelSurface } from "~/rightPanelStore";
+import { mapRightPanelTools, type RightPanelToolKind } from "~/rightPanelToolKinds";
 import { HistorySwipeNavigation } from "./HistorySwipeNavigation";
 import { RightPanelTabs } from "./RightPanelTabs";
 
@@ -28,7 +29,7 @@ function Fixture(props: {
   width?: number;
   audio?: boolean;
   open?: boolean;
-  onAddNotes?: () => void;
+  onAddTool?: (kind: RightPanelToolKind) => void;
   close?: (surface: RightPanelSurface, finish: () => void) => void;
 }) {
   const [surfaces, setSurfaces] = useState(props.initial);
@@ -112,7 +113,7 @@ function Fixture(props: {
         onAddPullRequest={noop}
         onAddPullRequests={noop}
         onAddDevice={noop}
-        onAddNotes={props.onAddNotes ?? noop}
+        onAddTool={props.onAddTool ?? noop}
         browserAvailable={false}
         terminalAvailable={false}
         filesAvailable={false}
@@ -120,7 +121,7 @@ function Fixture(props: {
         pullRequestAvailable={false}
         pullRequestsAvailable={false}
         deviceAvailable={false}
-        notesAvailable={props.onAddNotes !== undefined}
+        toolsAvailable={mapRightPanelTools(() => props.onAddTool !== undefined)}
       >
         <button type="button">Outside the tab strip</button>
       </RightPanelTabs>
@@ -156,13 +157,18 @@ it("reserves the replacement add button when a mounted panel closes and reopens"
   });
 });
 
-it("opens Notes from the add menu with its N shortcut", async () => {
-  const onAddNotes = vi.fn();
-  await using screen = await render(<Fixture initial={files(1)} onAddNotes={onAddNotes} />);
+it.each([
+  ["Notes", "n", "notes"],
+  ["Activity", "a", "activity"],
+  ["Memory", "e", "memory"],
+  ["Heavy work", "h", "heavy-work"],
+] as const)("opens %s from the add menu with its %s shortcut", async (label, key, kind) => {
+  const onAddTool = vi.fn();
+  await using screen = await render(<Fixture initial={files(1)} onAddTool={onAddTool} />);
   await userEvent.click(screen.getByRole("button", { name: "Add panel surface" }));
-  await expect.element(page.getByRole("menuitem", { name: /Notes/ })).toBeVisible();
-  await userEvent.keyboard("n");
-  expect(onAddNotes).toHaveBeenCalledOnce();
+  await expect.element(page.getByRole("menuitem", { name: new RegExp(label) })).toBeVisible();
+  await userEvent.keyboard(key);
+  expect(onAddTool).toHaveBeenCalledExactlyOnceWith(kind);
 });
 
 it("shares capped widths independently of titles, shrinks equally, then scrolls at the minimum", async () => {

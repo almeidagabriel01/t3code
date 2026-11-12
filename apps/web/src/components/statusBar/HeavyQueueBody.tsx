@@ -13,10 +13,11 @@ import { CSS } from "@dnd-kit/utilities";
 import {
   dropTarget,
   formatDuration,
+  heavyItemsInProject,
   moveTarget,
   ordinal,
   PRIORITY_LABEL,
-  projectForCwd,
+  projectForCommand,
   queueSummary,
   readableLabel,
   ruleForRoot,
@@ -213,6 +214,7 @@ function Row({
   state,
   actions,
   threadTitle,
+  projectIdOfThread,
   onOpenThread,
 }: {
   readonly entry: HeavyQueueEntry;
@@ -221,11 +223,12 @@ function Row({
   readonly state: ReturnType<typeof useHeavyQueue>;
   readonly actions: Actions;
   readonly threadTitle: (threadId: string) => string | undefined;
+  readonly projectIdOfThread: (threadId: string) => string | undefined;
   readonly onOpenThread: (threadId: string) => void;
 }) {
   const running = position === null;
   const projects = useProjects();
-  const project = projectForCwd(projects, entry.cwd);
+  const project = projectForCommand(entry, projects, projectIdOfThread);
   const rule = project === undefined ? undefined : ruleForRoot(state.rules, project.workspaceRoot);
   const {
     setNodeRef,
@@ -365,18 +368,29 @@ function Row({
   );
 }
 
-/** The popover's heavy-work section: slot summary, pause, and the entries in run order. */
+const NO_THREAD_PROJECT = () => undefined;
+
+/**
+ * The popover's heavy-work section: slot summary, pause, and the entries in run order. With
+ * `projectId` it lists that project's entries only, at their machine-wide places, and leaves the
+ * machine-wide switches to the Resource Manager.
+ */
 export function HeavyQueueBody({
   environmentId,
   threadTitle,
+  projectIdOfThread = NO_THREAD_PROJECT,
   onOpenThread,
+  projectId,
 }: {
   readonly environmentId: EnvironmentId;
   readonly threadTitle: (threadId: string) => string | undefined;
+  readonly projectIdOfThread?: (threadId: string) => string | undefined;
   readonly onOpenThread: (threadId: string) => void;
+  readonly projectId?: string;
 }) {
   const state = useHeavyQueue(environmentId);
   const actions = useHeavyQueueActions(environmentId);
+  const projects = useProjects();
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
   const { entries } = state;
   const onDragEnd = ({ active, over }: DragEndEvent) => {
@@ -385,13 +399,21 @@ export function HeavyQueueBody({
     if (target !== undefined) void actions.move(String(active.id), target);
   };
   const waiting = entries.filter((entry) => entry.startedAt === null);
+  const shown =
+    projectId === undefined
+      ? entries
+      : heavyItemsInProject(entries, {
+          projectId,
+          projects: projects.filter((project) => project.environmentId === environmentId),
+          projectIdOfThread,
+        });
   return (
     <div>
       <div className="flex items-center gap-2 py-1.5 pl-10 pr-3">
         <span className="min-w-0 flex-1 truncate text-3xs text-muted-foreground">
-          {queueSummary(state)}
+          {projectId === undefined ? queueSummary(state) : `Whole queue: ${queueSummary(state)}`}
         </span>
-        {state.enabled ? (
+        {projectId !== undefined ? null : state.enabled ? (
           <label className="flex shrink-0 cursor-pointer items-center gap-1.5 text-3xs text-muted-foreground">
             Pause
             <Switch
@@ -420,10 +442,10 @@ export function HeavyQueueBody({
         onDragEnd={onDragEnd}
       >
         <SortableContext
-          items={waiting.map((entry) => entry.id)}
+          items={shown.filter((entry) => entry.startedAt === null).map((entry) => entry.id)}
           strategy={verticalListSortingStrategy}
         >
-          {entries.map((entry) => (
+          {shown.map((entry) => (
             <Row
               key={entry.id}
               entry={entry}
@@ -434,6 +456,7 @@ export function HeavyQueueBody({
               state={state}
               actions={actions}
               threadTitle={threadTitle}
+              projectIdOfThread={projectIdOfThread}
               onOpenThread={onOpenThread}
             />
           ))}

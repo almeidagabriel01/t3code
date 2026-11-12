@@ -1,3 +1,5 @@
+import { RIGHT_PANEL_TOOL_KINDS } from "../../rightPanelToolKinds";
+
 const QUICK_BUTTON_IDS = [
   "files",
   "diff",
@@ -5,7 +7,7 @@ const QUICK_BUTTON_IDS = [
   "preview",
   "pull-requests",
   "pull-request",
-  "notes",
+  ...RIGHT_PANEL_TOOL_KINDS,
   "side-chat",
   "device",
 ] as const;

@@ -8,6 +8,7 @@ import {
   moveTarget,
   ordinal,
   peakUsageLine,
+  heavyItemsInProject,
   projectForCommand,
   projectForCwd,
   queueSummary,
@@ -214,6 +215,34 @@ describe("heavy commands", () => {
     { name: "no thread and no folder", over: { threadId: null }, expected: undefined },
   ])("finds the project of $name", ({ over, expected }) => {
     expect(projectForCommand(command(over), projects, threadProject)?.id).toBe(expected);
+  });
+
+  it.each([
+    {
+      name: "keeps worktree jobs through their thread and nested projects by the deepest folder",
+      projectId: "api",
+      expected: ["worktree", "direct", "nested-api"],
+    },
+    { name: "keeps only the nested project's own folder", projectId: "app", expected: ["app"] },
+    { name: "keeps nothing for a project with no jobs", projectId: "web", expected: [] },
+  ])("$name", ({ projectId, expected }) => {
+    const items = [
+      { id: "worktree", cwd: "/home/.t3/worktrees/api-1", threadId: "t1" },
+      { id: "direct", threadId: "t1" },
+      { id: "nested-api", cwd: "/w/api/packages/x", threadId: null },
+      { id: "app", cwd: "/w/api/apps/app/src", threadId: "t1" },
+      { id: "orphan", cwd: "/tmp", threadId: null },
+    ];
+    const nested = [...projects, { id: "app", workspaceRoot: "/w/api/apps/app" }].filter(
+      (project) => project.workspaceRoot !== "/w/app",
+    );
+    expect(
+      heavyItemsInProject(items, {
+        projectId,
+        projects: nested,
+        projectIdOfThread: threadProject,
+      }).map((item) => item.id),
+    ).toEqual(expected);
   });
 
   it("keys a queue row by its entry and a direct one by its process identity", () => {

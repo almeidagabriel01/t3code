@@ -1,11 +1,8 @@
-import { useAtomValue } from "@effect/atom-react";
 import {
   memoryBrowseInput,
   memoryPreview,
-  memoryProjectScope,
   memoryScopeLabel,
 } from "@t3tools/client-runtime/memory-browsing";
-import { memoryLocalSpace } from "@t3tools/client-runtime/memory-presentation";
 import {
   assistantMemories,
   memorySourceLabel,
@@ -17,20 +14,19 @@ import {
   type Assistant,
   type EnvironmentId,
   type MemoryScope,
-  type MemorySpaceId,
   type ThreadId,
 } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import * as Option from "effect/Option";
 import { PencilIcon } from "lucide-react";
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, Suspense, useState } from "react";
 
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { memoryEnvironment } from "../../state/memory";
+import { useMemorySpace, useProjectMemoryScope } from "../memory/useProjectMemoryScope";
 import { useEnvironmentQuery } from "../../state/query";
 import { useEnvironmentScope } from "../../state/session";
-import { useAtomCommand } from "../../state/use-atom-command";
 import { useProjects, useThreadShell } from "../../state/entities";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -44,57 +40,6 @@ const MemoryForgetControl = lazy(() =>
 
 const NO_ITEMS: ReadonlyArray<never> = [];
 
-/** The environment's local memory space; null until the server reports one. */
-function useMemorySpace(environmentId: EnvironmentId, enabled: boolean): MemorySpaceId | null {
-  const canSync = useAtomValue(memoryEnvironment.syncStatus.permissionAtom(environmentId));
-  const getSync = useAtomCommand(memoryEnvironment.syncStatus, { reportFailure: false });
-  const [space, setSpace] = useState<MemorySpaceId | null>(null);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads the environment's memory space from the server
-  useEffect(() => {
-    if (!enabled || !canSync) return;
-    let current = true;
-    void getSync({ environmentId, input: {} }).then((result) => {
-      if (current && result._tag === "Success") setSpace(memoryLocalSpace(result.value));
-    });
-    return () => {
-      current = false;
-    };
-  }, [canSync, enabled, environmentId, getSync]);
-  return space;
-}
-
-/** The assistant's project scope when it has a project; its shared key needs a binding lookup. */
-function useProjectScope(
-  environmentId: EnvironmentId,
-  assistant: Assistant,
-  space: MemorySpaceId | null,
-): MemoryScope | null {
-  const projects = useProjects();
-  const canBind = useAtomValue(memoryEnvironment.projectBindingGet.permissionAtom(environmentId));
-  const getBinding = useAtomCommand(memoryEnvironment.projectBindingGet, { reportFailure: false });
-  const [scope, setScope] = useState<MemoryScope | null>(null);
-  const repositoryIdentity = projects.find(
-    (project) => project.environmentId === environmentId && project.id === assistant.projectId,
-  )?.repositoryIdentity;
-  const wanted = assistant.scope === "project" && canBind && space !== null;
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads the project's shared memory key from the server
-  useEffect(() => {
-    if (!wanted) return;
-    let current = true;
-    void getBinding({
-      environmentId,
-      input: { memorySpaceId: space, project: { environmentId, projectId: assistant.projectId } },
-    }).then((result) => {
-      if (current && result._tag === "Success")
-        setScope(memoryProjectScope(result.value, repositoryIdentity));
-    });
-    return () => {
-      current = false;
-    };
-  }, [assistant.projectId, environmentId, getBinding, repositoryIdentity, space, wanted]);
-  return wanted ? scope : null;
-}
-
 /** What the assistant's conversations taught the memory, each with its source, to edit or forget. */
 export function AssistantWorkMemory(props: {
   readonly environmentId: EnvironmentId;
@@ -104,7 +49,12 @@ export function AssistantWorkMemory(props: {
   const { environmentId, assistant } = props;
   const canRead = useEnvironmentScope(environmentId, AuthMemoryReadScope);
   const space = useMemorySpace(environmentId, canRead);
-  const projectScope = useProjectScope(environmentId, assistant, space);
+  const projectMemory = useProjectMemoryScope(
+    environmentId,
+    assistant.scope === "project" ? assistant.projectId : null,
+    space,
+  );
+  const projectScope = projectMemory?.status === "ready" ? projectMemory.scope : null;
   const list = (scope: MemoryScope | null) =>
     space === null || scope === null
       ? null

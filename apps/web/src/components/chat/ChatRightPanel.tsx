@@ -1,6 +1,7 @@
 import { usePreviewPanelInlineSize } from "../../hooks/usePreviewPanelInlineSize";
 import { RightPanelSheet } from "../RightPanelSheet";
 import { RightPanelTabs, type RightPanelTabsProps } from "../RightPanelTabs";
+import { mapRightPanelTools } from "../../rightPanelToolKinds";
 import { RightPanelFixedTabs } from "./RightPanelFixedTabs";
 
 type ChatRightPanelProps = Omit<RightPanelTabsProps, "mode" | "inlineSize" | "maximized"> & {
@@ -47,7 +48,7 @@ export function ChatRightPanel(props: ChatRightPanelProps) {
           preview: tabs.onAddBrowser,
           "pull-requests": tabs.onAddPullRequests,
           "pull-request": tabs.onAddPullRequest,
-          notes: tabs.onAddNotes,
+          ...mapRightPanelTools((kind) => () => tabs.onAddTool(kind)),
           "side-chat": tabs.onAddSideChat ?? noop,
           device: tabs.onAddDevice,
         }}
@@ -58,7 +59,7 @@ export function ChatRightPanel(props: ChatRightPanelProps) {
           preview: tabs.browserAvailable,
           "pull-requests": tabs.pullRequestsAvailable,
           "pull-request": tabs.pullRequestAvailable,
-          notes: tabs.notesAvailable,
+          ...tabs.toolsAvailable,
           "side-chat": tabs.sideChatAvailable === true && !tabs.sideChatDisabledReason,
           device: tabs.deviceAvailable,
         }}

@@ -688,7 +688,7 @@ it("rejects a disconnected destination at admission and discards a late result a
   expect(container.querySelector('[role="status"]')).toBeNull();
   state.executors.delete("revertResolution");
 });
-async function renderForget() {
+async function renderForget(compact = false) {
   const { AtomRegistry } = await import("effect/reactivity");
   const registry = AtomRegistry.make();
   vi.spyOn(registry, "get").mockImplementation(() => state.write as never);
@@ -696,7 +696,11 @@ async function renderForget() {
     notifyFixture();
     await mount(
       <RegistryContext value={registry}>
-        <MemoryForgetControl environmentId={EnvironmentId.make("remote-owner")} item={item} />
+        <MemoryForgetControl
+          environmentId={EnvironmentId.make("remote-owner")}
+          item={item}
+          compact={compact}
+        />
       </RegistryContext>,
     );
   });
@@ -752,6 +756,17 @@ it("requires confirmation, retains operation identity after failure, and display
   expect(container.textContent).not.toContain("Sharing pending:");
   expect(container.textContent).not.toContain("The provider's original");
   expect(container.textContent).not.toContain("Forget confirmation");
+});
+it("asks for the same confirmation from a compact row's icon", async () => {
+  await using _setup = await setup();
+  await renderForget(true);
+  const icon = container.querySelector<HTMLButtonElement>('button[aria-label="Forget memory"]');
+  expect(icon?.textContent).toBe("");
+  await act(async () => icon!.click());
+  expect(state.calls).not.toHaveBeenCalled();
+  expect(container.querySelector('[aria-label="Forget confirmation"]')).not.toBeNull();
+  await click("Confirm forget");
+  expect(state.calls).toHaveBeenCalledOnce();
 });
 it("cancels without mutation and removes an open intent when permission is revoked", async () => {
   await using _setup = await setup();
