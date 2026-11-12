@@ -246,6 +246,16 @@ export function clearProjectSettingsOverrides(
   return Object.keys(next).length === 0 ? null : next;
 }
 
+/** Whether any rule deletes worktrees; the Linux copy switch only matters then. */
+export function worktreeCleanupDeletes(rules: WorktreeCleanupRules): boolean {
+  return (
+    rules.worktreeOnDelete ||
+    rules.worktreeMerged !== "off" ||
+    rules.worktreeAfterDays !== null ||
+    rules.worktreeSettledAfterDays !== null
+  );
+}
+
 export function resolveWorktreeCleanup(
   settings: ServerSettings,
   projectId: ProjectId | null,

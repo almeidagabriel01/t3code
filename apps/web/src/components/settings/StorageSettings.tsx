@@ -6,7 +6,7 @@ import {
   type WorktreeMergedCleanup,
 } from "@t3tools/contracts";
 import { resolvePastedPath } from "@t3tools/shared/path";
-import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
+import { resolveWorktreeCleanup, worktreeCleanupDeletes } from "@t3tools/shared/projectSettings";
 import { useRef, useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -402,18 +402,14 @@ function CleanupSection() {
   const hasRules = supported.some((environment) => {
     const settings = environment.serverConfig?.settings;
     if (!settings) return false;
-    const enabled = (rules: WorktreeCleanupRules) =>
-      rules.worktreeAfterDays !== null ||
-      rules.worktreeSettledAfterDays !== null ||
-      rules.worktreeMerged !== "off" ||
-      rules.worktreeOnDelete;
     return (
       settings.storageCleanup.browserArtifactsAfterDays !== null ||
       settings.storageCleanup.logsAfterDays !== null ||
-      enabled(resolveWorktreeCleanup(settings, null)) ||
+      worktreeCleanupDeletes(resolveWorktreeCleanup(settings, null)) ||
       Object.values(settings.projectSettingsOverrides).some(
         (override) =>
-          override.worktreeCleanup?.mode === "custom" && enabled(override.worktreeCleanup.rules),
+          override.worktreeCleanup?.mode === "custom" &&
+          worktreeCleanupDeletes(override.worktreeCleanup.rules),
       )
     );
   });
@@ -579,6 +575,9 @@ export function WorktreeCleanupSection() {
   // A policy locks these through worktreeCleanup, which also reaches each project's own rules.
   const lockablePath = (key: keyof WorktreeCleanupRules) =>
     isProjectScope ? ["worktreeCleanup"] : ["worktreeCleanup", `storageCleanup.${key}`];
+  const runnerCopyApplies =
+    worktreeCleanupDeletes(settings) ||
+    targets.some((entry) => worktreeCleanupDeletes(resolveWorktreeCleanup(entry.settings, null)));
   const mergedSupported = connectedEnvironments.every(
     (environment) =>
       environment.serverConfig?.environment.capabilities.mergedWorktreeCleanup === true,
@@ -676,38 +675,20 @@ export function WorktreeCleanupSection() {
               }
             />
             {mergedSupported ? (
-              <>
-                <SettingsRow
-                  title="Delete merged worktrees"
-                  status={ruleStatus("worktreeMerged") ?? ruleStatus("worktreeMergedAfterDays")}
-                  managedPaths={lockablePath("worktreeMerged")}
-                  description="Remove worktrees whose commits are already in the default branch, merged locally or through a pull request."
-                  serverScoped={!isProjectScope}
-                >
-                  <MergedWorktreesControl
-                    value={settings.worktreeMerged}
-                    days={settings.worktreeMergedAfterDays}
-                    mixed={ruleStatus("worktreeMerged") !== undefined}
-                    onChange={updateWorktree}
-                  />
-                </SettingsRow>
-                <SettingsRow
-                  title="Delete the Linux copy too"
-                  status={ruleStatus("worktreeRunnerCopy")}
-                  managedPaths={lockablePath("worktreeRunnerCopy")}
-                  description="When cleanup deletes a worktree, also delete its copy on the Runner's Linux machine."
-                  serverScoped={!isProjectScope}
-                  control={
-                    <Switch
-                      aria-label="Delete the Linux copy too"
-                      checked={settings.worktreeRunnerCopy}
-                      onCheckedChange={(worktreeRunnerCopy) =>
-                        updateWorktree({ worktreeRunnerCopy })
-                      }
-                    />
-                  }
+              <SettingsRow
+                title="Delete merged worktrees"
+                status={ruleStatus("worktreeMerged") ?? ruleStatus("worktreeMergedAfterDays")}
+                managedPaths={lockablePath("worktreeMerged")}
+                description="Remove worktrees whose commits are already in the default branch, merged locally or through a pull request."
+                serverScoped={!isProjectScope}
+              >
+                <MergedWorktreesControl
+                  value={settings.worktreeMerged}
+                  days={settings.worktreeMergedAfterDays}
+                  mixed={ruleStatus("worktreeMerged") !== undefined}
+                  onChange={updateWorktree}
                 />
-              </>
+              </SettingsRow>
             ) : (
               <SettingsScopeNotice inline target="all">
                 Update the selected machines to change merged worktree cleanup.
@@ -727,6 +708,22 @@ export function WorktreeCleanupSection() {
                 />
               }
             />
+            {mergedSupported && runnerCopyApplies && (
+              <SettingsRow
+                title="Delete the Linux copy too"
+                status={ruleStatus("worktreeRunnerCopy")}
+                managedPaths={lockablePath("worktreeRunnerCopy")}
+                description="When cleanup deletes a worktree, also delete its copy on the Runner's Linux machine."
+                serverScoped={!isProjectScope}
+                control={
+                  <Switch
+                    aria-label="Delete the Linux copy too"
+                    checked={settings.worktreeRunnerCopy}
+                    onCheckedChange={(worktreeRunnerCopy) => updateWorktree({ worktreeRunnerCopy })}
+                  />
+                }
+              />
+            )}
             <AdvancedSettings
               // The keep-when search result lands on this section, not its row.
               targetIds={["storage-worktrees", searchableSetting("storage-worktree-keep-when").id]}

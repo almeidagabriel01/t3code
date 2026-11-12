@@ -4,7 +4,7 @@ import {
   type WorktreeCleanupRules,
   type WorktreeMergedCleanup,
 } from "@t3tools/contracts";
-import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
+import { resolveWorktreeCleanup, worktreeCleanupDeletes } from "@t3tools/shared/projectSettings";
 import { useState } from "react";
 import { View } from "react-native";
 
@@ -218,55 +218,40 @@ export function WorktreeCleanupSections(props: {
             />
           </SettingsSection>
           {mergedSupported ? (
-            <>
-              <SettingsSection
-                title="Delete merged worktrees"
-                trailing={mixed("worktreeMerged") ? mixedLabel : null}
-                footer={describe(
-                  "worktreeMerged",
-                  "Remove worktrees whose commits are already in the default branch, merged locally or through a pull request.",
-                )}
-              >
-                {(["off", "right-away", "after-days"] as const).map((option, index) => (
-                  <ListChoiceRow
-                    key={option}
-                    label={
-                      option === "after-days"
-                        ? `${MERGED_LABELS[option]} ${rules.worktreeMergedAfterDays} days`
-                        : MERGED_LABELS[option]
-                    }
-                    selected={!mixed("worktreeMerged") && rules.worktreeMerged === option}
-                    separated={index > 0}
-                    disabled={lock("worktreeMerged")}
-                    onPress={() => update({ worktreeMerged: option })}
-                  />
-                ))}
-                {rules.worktreeMerged === "after-days" && !mixed("worktreeMerged") ? (
-                  <DaysField
-                    key={rules.worktreeMergedAfterDays}
-                    label="Days unused"
-                    value={rules.worktreeMergedAfterDays}
-                    min={MERGED_WORKTREE_DAYS.minimum}
-                    max={MERGED_WORKTREE_DAYS.maximum}
-                    disabled={lock("worktreeMergedAfterDays")}
-                    onSave={(worktreeMergedAfterDays) => update({ worktreeMergedAfterDays })}
-                  />
-                ) : null}
-              </SettingsSection>
-              <SettingsSection>
-                <SettingsSwitchRow
-                  icon="internaldrive"
-                  label="Delete the Linux copy too"
-                  subtitle={describe(
-                    "worktreeRunnerCopy",
-                    "When cleanup deletes a worktree, also delete its copy on the Runner's Linux machine.",
-                  )}
-                  value={mixed("worktreeRunnerCopy") ? null : rules.worktreeRunnerCopy}
-                  disabled={lock("worktreeRunnerCopy")}
-                  onValueChange={(worktreeRunnerCopy) => update({ worktreeRunnerCopy })}
+            <SettingsSection
+              title="Delete merged worktrees"
+              trailing={mixed("worktreeMerged") ? mixedLabel : null}
+              footer={describe(
+                "worktreeMerged",
+                "Remove worktrees whose commits are already in the default branch, merged locally or through a pull request.",
+              )}
+            >
+              {(["off", "right-away", "after-days"] as const).map((option, index) => (
+                <ListChoiceRow
+                  key={option}
+                  label={
+                    option === "after-days"
+                      ? `${MERGED_LABELS[option]} ${rules.worktreeMergedAfterDays} days`
+                      : MERGED_LABELS[option]
+                  }
+                  selected={!mixed("worktreeMerged") && rules.worktreeMerged === option}
+                  separated={index > 0}
+                  disabled={lock("worktreeMerged")}
+                  onPress={() => update({ worktreeMerged: option })}
                 />
-              </SettingsSection>
-            </>
+              ))}
+              {rules.worktreeMerged === "after-days" && !mixed("worktreeMerged") ? (
+                <DaysField
+                  key={rules.worktreeMergedAfterDays}
+                  label="Days unused"
+                  value={rules.worktreeMergedAfterDays}
+                  min={MERGED_WORKTREE_DAYS.minimum}
+                  max={MERGED_WORKTREE_DAYS.maximum}
+                  disabled={lock("worktreeMergedAfterDays")}
+                  onSave={(worktreeMergedAfterDays) => update({ worktreeMergedAfterDays })}
+                />
+              ) : null}
+            </SettingsSection>
           ) : (
             <Text className="px-2 text-sm text-foreground-muted">
               Update the selected machines to change merged worktree cleanup.
@@ -297,6 +282,21 @@ export function WorktreeCleanupSections(props: {
               disabled={lock("worktreeSettledAfterDays")}
               onChange={(worktreeSettledAfterDays) => update({ worktreeSettledAfterDays })}
             />
+          ) : null}
+          {mergedSupported && perTarget.some(worktreeCleanupDeletes) ? (
+            <SettingsSection>
+              <SettingsSwitchRow
+                icon="internaldrive"
+                label="Delete the Linux copy too"
+                subtitle={describe(
+                  "worktreeRunnerCopy",
+                  "When cleanup deletes a worktree, also delete its copy on the Runner's Linux machine.",
+                )}
+                value={mixed("worktreeRunnerCopy") ? null : rules.worktreeRunnerCopy}
+                disabled={lock("worktreeRunnerCopy")}
+                onValueChange={(worktreeRunnerCopy) => update({ worktreeRunnerCopy })}
+              />
+            </SettingsSection>
           ) : null}
           <SettingsSection
             title="Keep worktrees with"

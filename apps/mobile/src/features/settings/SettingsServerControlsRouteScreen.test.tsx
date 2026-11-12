@@ -624,6 +624,35 @@ describe("SettingsServerControlsRouteScreen", () => {
       expect(JSON.stringify(lastPatch())).not.toContain("worktreeCleanup");
     });
 
+    const noRules = {
+      worktreeOnDelete: false,
+      worktreeMerged: "off",
+      worktreeAfterDays: null,
+      worktreeSettledAfterDays: null,
+    };
+    it.each([
+      ["every rule off", [{}], false],
+      ["deleted threads", [{ worktreeOnDelete: true }], true],
+      ["merged", [{ worktreeMerged: "after-days" }], true],
+      ["inactive", [{ worktreeAfterDays: 8 }], true],
+      ["settled", [{ worktreeSettledAfterDays: 0 }], true],
+      ["mixed across machines", [{}, { worktreeOnDelete: true }], true],
+    ])(
+      "shows the Linux copy switch after the rules only when one deletes: %s",
+      (_, rules, shown) => {
+        mocks.targets = rules.map((rule, index) =>
+          withSettings(environment(`env-${index}`, `Env ${index}`), { ...noRules, ...rule }),
+        );
+        act(() => root.render(<SettingsWorktreesRouteScreen />));
+        const text = container.textContent ?? "";
+        expect(text.includes("Delete the Linux copy too")).toBe(shown);
+        if (shown)
+          expect(text.indexOf("Delete the Linux copy too")).toBeGreaterThan(
+            text.indexOf("Delete settled worktrees"),
+          );
+      },
+    );
+
     it("shows mixed values when machines differ", () => {
       mocks.targets = [
         withSettings(environment("local", "Local"), { worktreeMerged: "off" }),

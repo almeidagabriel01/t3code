@@ -166,6 +166,18 @@ it("keeps cleanup disabled when settled retention and all other rules are off", 
   expect(button.disabled).toBe(true);
   await act(async () => button.click());
   expect(state.run).not.toHaveBeenCalled();
+  await screen.unmount();
+
+  const rules = { ...state.settings.storageCleanup, worktreeOnDelete: true };
+  setRetentionValues([null]);
+  state.targets[0]!.settings = {
+    ...state.settings,
+    projectSettingsOverrides: {
+      project: { worktreeCleanup: { mode: "custom", rules } },
+    } as never,
+  };
+  await using custom = await render(panel());
+  expect(deleteButton(custom.container).disabled).toBe(false);
 });
 
 it("settles mixed retention statuses independently across selected machines", async () => {
@@ -306,6 +318,46 @@ it("chooses when merged worktrees are deleted and refuses days out of range", as
     storageCleanup: { worktreeRunnerCopy: false },
   });
 });
+
+const noRules = {
+  worktreeOnDelete: false,
+  worktreeMerged: "off",
+  worktreeAfterDays: null,
+  worktreeSettledAfterDays: null,
+} as const;
+it.each([
+  ["every rule off", [{}], false],
+  ["deleted threads", [{ worktreeOnDelete: true }], true],
+  ["merged", [{ worktreeMerged: "right-away" }], true],
+  ["inactive", [{ worktreeAfterDays: 8 }], true],
+  ["settled", [{ worktreeSettledAfterDays: 0 }], true],
+  ["mixed across machines", [{}, { worktreeOnDelete: true }], true],
+] as const)(
+  "shows the Linux copy switch after the rules only when one deletes: %s",
+  async (_, rules, shown) => {
+    setup();
+    state.targets = rules.map((rule, index) => ({
+      environmentId: `env-${index}`,
+      settings: {
+        ...state.settings,
+        storageCleanup: { ...state.settings.storageCleanup, ...noRules, ...rule },
+      },
+    }));
+    state.settings = state.targets[0]!.settings;
+    await using screen = await render(
+      <RegistryProvider>
+        <WorktreeCleanupSection />
+      </RegistryProvider>,
+    );
+    const text = () => screen.container.textContent ?? "";
+    await expect.element(screen.getByText("Delete inactive worktrees").first()).toBeInTheDocument();
+    expect(text().includes("Delete the Linux copy too")).toBe(shown);
+    if (shown)
+      expect(text().indexOf("Delete the Linux copy too")).toBeGreaterThan(
+        text().indexOf("Delete inactive worktrees"),
+      );
+  },
+);
 
 it("asks to update machines that predate the merged worktree rule", async () => {
   setup();

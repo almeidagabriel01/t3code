@@ -13,6 +13,7 @@ import {
   resolveProjectSettings,
   resolveSendEnvMode,
   resolveWorktreeCleanup,
+  worktreeCleanupDeletes,
 } from "./projectSettings.ts";
 import { applyServerSettingsPatch } from "./serverSettings.ts";
 
@@ -399,6 +400,25 @@ describe("projectSettingsOverrides patches", () => {
       [projectId]: { defaultThreadEnvMode: "local" },
       [otherProjectId]: { defaultAutoPull: false },
     });
+  });
+});
+
+describe("worktreeCleanupDeletes", () => {
+  const off = resolveWorktreeCleanup(
+    applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      worktreeCleanup: { mode: "off" },
+    }),
+    null,
+  );
+  it.each([
+    ["no rule", {}, false],
+    ["delete with threads", { worktreeOnDelete: true }, true],
+    ["merged right away", { worktreeMerged: "right-away" }, true],
+    ["merged after days", { worktreeMerged: "after-days" }, true],
+    ["inactive days", { worktreeAfterDays: 8 }, true],
+    ["settled at 0 days", { worktreeSettledAfterDays: 0 }, true],
+  ] as const)("%s → %s", (_name, patch, expected) => {
+    expect(worktreeCleanupDeletes({ ...off, ...patch })).toBe(expected);
   });
 });
 
