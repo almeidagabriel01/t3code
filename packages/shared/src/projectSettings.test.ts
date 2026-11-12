@@ -427,8 +427,9 @@ describe("resolveWorktreeCleanup", () => {
       worktreeAfterDays: null,
       worktreeSettledAfterDays: null,
       worktreeOnDelete: false,
-      worktreeOnMerge: false,
-      worktreeUnchanged: false,
+      worktreeMerged: "off",
+      worktreeMergedAfterDays: 7,
+      worktreeRunnerCopy: true,
       worktreeKeepWhen: "any-local-files",
     });
     expect(resolveWorktreeCleanup(off, otherProjectId)).toEqual(inherited);
@@ -458,7 +459,7 @@ describe("resolveWorktreeCleanup", () => {
       storageCleanup: { worktreeAfterDays: 8, worktreeSettledAfterDays: 0, worktreeOnDelete: true },
     });
     const custom = applyServerSettingsPatch(initial, {
-      worktreeCleanup: { mode: "custom", rules: { worktreeOnMerge: true } },
+      worktreeCleanup: { mode: "custom", rules: { worktreeMerged: "after-days" } },
     });
     const edited = applyServerSettingsPatch(custom, {
       worktreeCleanup: { mode: "custom", rules: { worktreeAfterDays: 15 } },
@@ -467,8 +468,9 @@ describe("resolveWorktreeCleanup", () => {
       worktreeAfterDays: 15,
       worktreeSettledAfterDays: 0,
       worktreeOnDelete: true,
-      worktreeOnMerge: true,
-      worktreeUnchanged: false,
+      worktreeMerged: "after-days",
+      worktreeMergedAfterDays: 7,
+      worktreeRunnerCopy: true,
       worktreeKeepWhen: "uncommitted-changes",
     });
     expect(

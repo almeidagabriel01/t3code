@@ -3,6 +3,7 @@ import {
   type ModelSelection,
   PROJECT_FILE_BACKED_SETTINGS,
   PROJECT_SCOPED_SERVER_SETTING_KEYS,
+  pickWorktreeCleanupRules,
   type ProjectFileBackedSettingKey,
   type ProjectId,
   type ProjectScopedServerSettingKey,
@@ -251,29 +252,14 @@ export function resolveWorktreeCleanup(
 ): WorktreeCleanupRules {
   const policy = resolveProjectSettings(settings, projectId).settings.worktreeCleanup;
   if (policy?.mode === "custom") return policy.rules;
+  const rules = pickWorktreeCleanupRules(settings.storageCleanup);
   if (policy?.mode === "off")
     return {
-      worktreeKeepWhen: settings.storageCleanup.worktreeKeepWhen,
+      ...rules,
       worktreeAfterDays: null,
       worktreeSettledAfterDays: null,
-      worktreeOnMerge: false,
       worktreeOnDelete: false,
-      worktreeUnchanged: false,
+      worktreeMerged: "off",
     };
-  const {
-    worktreeKeepWhen,
-    worktreeAfterDays,
-    worktreeSettledAfterDays,
-    worktreeOnMerge,
-    worktreeOnDelete,
-    worktreeUnchanged,
-  } = settings.storageCleanup;
-  return {
-    worktreeKeepWhen,
-    worktreeAfterDays,
-    worktreeSettledAfterDays,
-    worktreeOnMerge,
-    worktreeOnDelete,
-    worktreeUnchanged,
-  };
+  return rules;
 }
