@@ -42,7 +42,7 @@ const project = () => {
   return dir;
 };
 
-const run = (cwd: string, script: string, env = environment) => {
+const run = (cwd: string, script: string, env = environment, root = cwd) => {
   const out: Buffer[] = [];
   let err = "";
   let resolveRunning!: () => void;
@@ -52,7 +52,7 @@ const run = (cwd: string, script: string, env = environment) => {
     program: "/bin/zsh",
     args: ["-c", script],
     cwd,
-    root: cwd,
+    root,
     environment: env,
     machine,
     macOnly: ["src/device/CaptureDevices.test.ts"],
@@ -79,6 +79,21 @@ describe.runIf(enabled)("Runner against a disposable Linux", () => {
     expect(job.output().stdout).toBe("hello\nLinux\n");
     expect(job.output().stderr).toBe("to-stderr\n");
     expect(platform).toEqual([]);
+  });
+
+  it("finds the project's own tools from the job's folder up to the checkout", async () => {
+    const root = project();
+    const web = NodePath.join(root, "apps", "web");
+    NodeFS.mkdirSync(web, { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(web, "b.txt"), "web\n");
+    const { progress } = await run(root, "true").done;
+    // `remoto` never syncs node_modules, and leaves what is there in place.
+    onLinux(
+      `d=runs/${progress.id}/node_modules/.bin && mkdir -p $d && printf '#!/bin/sh\\necho root-tool\\n' > $d/tool && chmod +x $d/tool`,
+    );
+    const job = run(web, "tool; cat b.txt", environment, root);
+    expect((await job.done).outcome).toEqual({ kind: "finished", code: 0 });
+    expect(job.output().stdout).toBe("root-tool\nweb\n");
   });
 
   it("names Mac-only files in a failed run's output", async () => {

@@ -647,15 +647,21 @@ describe("Runner in the queue file", () => {
 
   it("answering sends the waiter where the user said and clears the question", () => {
     const dir = queueWith(block(config({ runnerWhere: "linux" })), false);
+    // An idle 10-core reading, so the worker count never follows the machine running the test.
+    const idle = {
+      at: NOW,
+      busyCores: 0,
+      cpuCount: 10,
+      availableMemoryBytes: 9,
+      totalMemoryBytes: 10,
+    };
+    Queue.recordSample(dir, idle, {});
     Queue.enqueue(dir, test("a"));
     Queue.tryStart(dir, "a", NOW);
     expect(Queue.route(dir, "a", "mac")).toBe("ok");
     expect(Queue.read(dir)[0]).toMatchObject({ route: "mac" });
     expect(Queue.read(dir)[0]).not.toHaveProperty("ask");
-    expect(Queue.tryStart(dir, "a", NOW)).toMatchObject({
-      status: "started",
-      workers: Math.max(2, NodeOS.availableParallelism() - 1),
-    });
+    expect(Queue.tryStart(dir, "a", NOW)).toMatchObject({ status: "started", workers: 9 });
   });
 
   it("refuses to send exclusive or Mac-only work to Linux, and unknown entries", () => {

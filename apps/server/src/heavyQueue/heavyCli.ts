@@ -34,7 +34,7 @@ import {
   startFolder,
   tryStart,
 } from "./queueFile.ts";
-import { DEFAULT_MACHINE_CONFIG, outsideTie } from "./runner.ts";
+import { DEFAULT_MACHINE_CONFIG, NEEDS_GIT, needsGit, outsideTie } from "./runner.ts";
 import { checkLinux, confirmed, resolveRemoto, startLinuxRun, stopRemote } from "./runnerExec.ts";
 import type { RemoteOutcome } from "./runner.ts";
 
@@ -697,6 +697,7 @@ const runLinuxPart = async (
   if (root === null) {
     return endLine(dir, id, { kind: "mac", reason: `Runs outside a git checkout: ${cwd}` });
   }
+  if (needsGit([program, ...args])) return endLine(dir, id, { kind: "mac", reason: NEEDS_GIT });
   const tie = args.map((arg) => outsideTie(arg, cwd, root)).find((why) => why !== null);
   if (tie !== undefined && tie !== null) return endLine(dir, id, { kind: "mac", reason: tie });
   let recorded: string | null = null;

@@ -168,10 +168,14 @@ work queue, and each section says what the two do together.
   listed, is on **Mac only**, reads its input from this Mac
   (`cat x | vp test run`), runs in the background (`vp test run &`), runs
   outside a git checkout, names a file outside its checkout, is a git command
-  (commits run here, since the pre-commit hook edits this Mac's repository), or
-  uses shell syntax T3 Code cannot follow (`eval`, `case`, functions). A path
-  that is only known when the line runs is checked then: if it turns out to
-  need this Mac, the job runs here instead.
+  (commits run here, since the pre-commit hook edits this Mac's repository),
+  diffs against git (`check:changed`, `vp staged`, `--changed`; the Linux copy
+  has no git history), or uses shell syntax T3 Code cannot follow (`eval`,
+  `case`, functions). A path or flag that is only known when the line runs is
+  checked then: if it turns out to need this Mac, the job runs here instead. A
+  script that calls git inside cannot be seen from its line; add it to **Mac
+  only**. On Linux, the project's own tools (`vp`, `vitest`) come first, from
+  `node_modules/.bin` between the command's folder and the checkout.
 - **When Linux is offline or drops a job.** Choose **Run on this Mac**, **Wait
   for Linux** or **Ask me**. A question shows on the job in the Resource
   Manager with a countdown; unanswered, it follows the deadline setting. An

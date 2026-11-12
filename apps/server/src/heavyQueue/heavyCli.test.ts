@@ -17,7 +17,12 @@ import {
   withWorkers,
 } from "./heavyCli.ts";
 import { isQueued, queueBashCall } from "./heavyHook.ts";
-import { DEFAULT_MACHINE_CONFIG, DEFAULT_PROJECT_CONFIG, eligibilityOf } from "./runner.ts";
+import {
+  DEFAULT_MACHINE_CONFIG,
+  DEFAULT_PROJECT_CONFIG,
+  eligibilityOf,
+  NEEDS_GIT,
+} from "./runner.ts";
 import * as Queue from "./queueFile.ts";
 
 const BIN = NodeURL.fileURLToPath(new URL("../bin.ts", import.meta.url));
@@ -236,7 +241,8 @@ describe("t3 heavy", () => {
       });
       const env = {
         PATH: `${NodePath.join(dir, "bin")}:${process.env.PATH}`,
-        T3CODE_REMOTO: script(dir, "remoto", remotoBody),
+        // Past the PATH wrapper (runnerExec's tests cover it), to the command it runs.
+        T3CODE_REMOTO: script(dir, "remoto", `[ "$4" = t3 ] && shift 4\n${remotoBody}`),
         T3CODE_RUNNER_SSH: script(
           dir,
           "ssh",
@@ -320,6 +326,14 @@ describe("t3 heavy", () => {
       expect(run.stderr()).toContain(
         "Uses a file outside the project: /etc/hosts; running the line on this Mac",
       );
+    });
+
+    it("runs the line here when its expanded command turns out to need git", async () => {
+      const { dir, env } = setup(echoArgs);
+      const run = heavy(dir, ["/bin/sh", "-c", "F=--changed; vp test run $F"], env, ["--"], dir);
+      expect(await run.exited).toBe(0);
+      expect(run.stdout()).toBe("vp on mac: test run --changed\n");
+      expect(run.stderr()).toContain(`${NEEDS_GIT}; running the line on this Mac`);
     });
 
     it("judges the whole line, not the label cut short for the row", async () => {

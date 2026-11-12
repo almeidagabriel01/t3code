@@ -10,6 +10,7 @@ import {
   matchesAny,
   mayPublish,
   nextHealth,
+  NEEDS_GIT,
   NO_PROGRESS,
   parseHeartbeat,
   planRoutes,
@@ -603,6 +604,15 @@ describe("patterns and eligibility", () => {
     ["vp run dev:desktop", "exclusive", "Always on this Mac: vp run dev:desktop"],
     ["echo hi", "mac-only", "Nothing in it runs on Linux"],
     ["./scripts/ci.sh", "not-listed", "Not on the Can run on Linux list: ci.sh"],
+    // The Linux copy has no `.git`: what diffs against it stays here.
+    ["vp run check:changed", "mac-only", NEEDS_GIT],
+    ["vp test run --changed", "mac-only", NEEDS_GIT],
+    ["npx jest --onlyChanged", "mac-only", NEEDS_GIT],
+    ["vp test run --changedSince=origin/main", "mac-only", NEEDS_GIT],
+    ["remoto vp staged", "mac-only", NEEDS_GIT],
+    ["remoto /usr/bin/git status", "mac-only", NEEDS_GIT],
+    ["vp test run src/changed.test.ts src/staged/a.test.ts", "linux", null],
+    ["vp test run unchanged", "linux", null],
   ])("%s is %s by default", (label, eligibility, reason) => {
     expect(eligibilityOf({ label, cwd: "/w" }, at)).toEqual({ eligibility, reason });
   });

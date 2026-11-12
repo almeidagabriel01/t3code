@@ -177,6 +177,23 @@ export const outsideTie = (arg: string, cwd: string, root: string): string | nul
   return null;
 };
 
+export const NEEDS_GIT = "Needs git, which the Linux copy doesn't have";
+
+// ponytail: words only; a script that calls git inside (`ci.sh`) can't be seen from its line.
+const GIT_DRIVEN = /(^|[^a-z])(only)?(changed|staged)(since)?($|[^a-z])/i;
+
+/**
+ * Whether a command needs the repository's history, which `remoto` leaves out of the Linux copy:
+ * git itself, or a word that diffs against it (`check:changed`, `vp staged`, `--changed`,
+ * `--onlyChanged`). File paths are skipped, so `changed.test.ts` stays eligible.
+ */
+export const needsGit = (values: ReadonlyArray<string>) =>
+  values[0]?.split("/").pop() === "git" ||
+  values.some((value) => {
+    const word = value.replace(/=.*$/, "");
+    return !/[/.]/.test(word) && GIT_DRIVEN.test(word);
+  });
+
 /**
  * Why one part of the work must run on this Mac, or null when Linux can run it from `cwd`. What
  * only the shell knows (a variable set elsewhere, `$(…)`, `cd $d`) passes here: `linux-part`
@@ -192,11 +209,10 @@ const tieOf = (
   const text = part.values.slice(part.remoteAt).join(" ");
   const pattern = config.runnerMacOnly.find((each) => matchesAny(text, [each]));
   if (pattern !== undefined) return `Always on this Mac: ${pattern.trim()}`;
-  if (part.program === "git") {
-    return part.words[0] === "commit"
-      ? "Commits run here: the pre-commit edits this Mac's repository"
-      : "Uses this Mac's git repository";
+  if (part.program === "git" && part.words[0] === "commit") {
+    return "Commits run here: the pre-commit edits this Mac's repository";
   }
+  if (part.program === "git" || needsGit(part.values.slice(part.remoteAt))) return NEEDS_GIT;
   // Its own redirects and pipes would run there too.
   if (part.nested !== null) return "Couldn't read this command safely (nested shell)";
   const { command } = part;

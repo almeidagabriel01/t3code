@@ -65,6 +65,20 @@ export const remoteCommand = (
   return [remote, ...args.map(arg)];
 };
 
+/**
+ * Runs `command` with each `node_modules/.bin` from its folder up to the checkout first on PATH,
+ * so Linux finds `vp` and `vitest` the way this Mac does: neither is global there, and
+ * `remoto-rodar` sets its own PATH.
+ */
+export const withProjectBins = (command: ReadonlyArray<string>, cwd: string, root: string) => {
+  const depth = NodePath.relative(root, cwd).split(NodePath.sep).filter(Boolean).length;
+  const bins = Array.from(
+    { length: depth + 1 },
+    (_, up) => `${up === 0 ? "$PWD" : `\${PWD%${"/*".repeat(up)}}`}/node_modules/.bin`,
+  );
+  return ["bash", "-c", `export PATH="${bins.join(":")}:$PATH"; exec "$@"`, "t3", ...command];
+};
+
 const executable = (path: string) => {
   try {
     NodeFS.accessSync(path, NodeFS.constants.X_OK);
@@ -200,7 +214,11 @@ export const startLinuxRun = (options: LinuxRunOptions): LinuxRun => {
   const { machine } = options;
   const child = NodeChildProcess.spawn(
     options.remoto,
-    remoteCommand(options.program, options.args, options.cwd, options.root),
+    withProjectBins(
+      remoteCommand(options.program, options.args, options.cwd, options.root),
+      options.cwd,
+      options.root,
+    ),
     {
       cwd: options.cwd,
       stdio: ["ignore", "pipe", "pipe"],
