@@ -146,3 +146,19 @@ export function scheduledTaskColor(taskId: string): string {
   }
   return AGENDA_COLORS[Math.abs(hash) % AGENDA_COLORS.length]!;
 }
+
+const PAST_LABEL: Record<ScheduledTask["lastRunStatus"], string> = {
+  never: "ran",
+  running: "running",
+  succeeded: "succeeded",
+  failed: "failed",
+};
+
+const agendaTimeFormat = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
+
+/** A block's second line: its time, then how the run went or how many runs it folds. */
+export function agendaEntryDetail(entry: AgendaEntry): string {
+  const time = agendaTimeFormat.format(entry.at);
+  if (entry.past) return `${time} · ${PAST_LABEL[entry.task.lastRunStatus]}`;
+  return entry.runs > 1 ? `${time} · ${entry.runs} runs` : time;
+}

@@ -181,6 +181,7 @@ import {
   hasTrailingPathSeparator,
   inferProjectTitleFromPath,
   isExplicitRelativeProjectPath,
+  hasProjectPanels,
   isFilesystemBrowseQuery,
   isScratchProject,
   isUnsupportedWindowsProjectPath,
@@ -1511,7 +1512,15 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
-  if (activeThread !== null) {
+  const activeThreadProject =
+    activeThread === null
+      ? undefined
+      : projects.find(
+          (project) =>
+            project.environmentId === activeThread.environmentId &&
+            project.id === activeThread.projectId,
+        );
+  if (activeThread !== null && activeThreadProject && hasProjectPanels(activeThreadProject)) {
     const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
     if (kanbanEnvironmentIds.includes(activeThread.environmentId)) {
       actionItems.push({

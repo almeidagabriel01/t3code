@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { KANBAN_COLORS } from "./state/kanbanLogic.ts";
 import {
+  agendaEntryDetail,
   localDayStarts,
   scheduledTaskAgenda,
   scheduledTaskColor,
@@ -156,6 +157,22 @@ describe("sortScheduledTasks", () => {
       task("soon", { nextRunAt: iso(at(12, 9, 30)) }),
     ]);
     expect(sorted.map((entry) => entry.title)).toEqual(["soon", "later", "hook", "paused"]);
+  });
+});
+
+describe("agendaEntryDetail", () => {
+  const time = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(
+    at(12, 10),
+  );
+  it.each([
+    ["an upcoming run", { past: false, runs: 1 }, {}, time],
+    ["folded runs", { past: false, runs: 4 }, {}, `${time} · 4 runs`],
+    ["a past run", { past: true, runs: 1 }, { lastRunStatus: "failed" }, `${time} · failed`],
+    ["a past run with no status", { past: true, runs: 1 }, {}, `${time} · ran`],
+  ] as const)("describes %s", (_name, entry, overrides, expected) => {
+    expect(agendaEntryDetail({ ...entry, at: at(12, 10), task: task("a", overrides) })).toBe(
+      expected,
+    );
   });
 });
 

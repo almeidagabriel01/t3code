@@ -1,5 +1,5 @@
 import type { AgendaDay, AgendaEntry } from "@t3tools/client-runtime/scheduledTaskAgenda";
-import { scheduledTaskColor } from "@t3tools/client-runtime/scheduledTaskAgenda";
+import { agendaEntryDetail, scheduledTaskColor } from "@t3tools/client-runtime/scheduledTaskAgenda";
 import { kanbanColor } from "@t3tools/client-runtime/state/kanbanLogic";
 import type { ScheduledTask } from "@t3tools/contracts";
 import { CheckIcon, LoaderIcon, XIcon } from "lucide-react";
@@ -7,7 +7,6 @@ import type { CSSProperties } from "react";
 
 import { cn } from "../../lib/utils";
 
-const timeFormat = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
 const dayFormat = new Intl.DateTimeFormat(undefined, { weekday: "short", day: "numeric" });
 
 const PAST_ICON = {
@@ -16,19 +15,6 @@ const PAST_ICON = {
   succeeded: CheckIcon,
   failed: XIcon,
 } satisfies Record<ScheduledTask["lastRunStatus"], unknown>;
-
-const PAST_LABEL: Record<ScheduledTask["lastRunStatus"], string> = {
-  never: "ran",
-  running: "running",
-  succeeded: "succeeded",
-  failed: "failed",
-};
-
-function entryDetail(entry: AgendaEntry): string {
-  const time = timeFormat.format(entry.at);
-  if (entry.past) return `${time} · ${PAST_LABEL[entry.task.lastRunStatus]}`;
-  return entry.runs > 1 ? `${time} · ${entry.runs} runs` : time;
-}
 
 /** Today and tomorrow side by side, each a stack of task blocks in time order. */
 export function ScheduledTasksAgenda(props: {
@@ -96,7 +82,7 @@ function AgendaBlock(props: { readonly entry: AgendaEntry; readonly onOpen: () =
       <span className="truncate text-xs font-medium text-foreground">{entry.task.title}</span>
       <span className="flex min-w-0 items-center gap-1 text-2xs text-muted-foreground tabular-nums">
         {Icon ? <Icon aria-hidden className="size-3 shrink-0" /> : null}
-        <span className="truncate">{entryDetail(entry)}</span>
+        <span className="truncate">{agendaEntryDetail(entry)}</span>
       </span>
     </button>
   );

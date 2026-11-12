@@ -45,7 +45,7 @@ import { useProjectScriptEditing } from "./chat/useProjectScriptEditing";
 import { MainFileTabs } from "./chat/MainFileTabs";
 import { RightPanelSurfaceContent } from "./chat/RightPanelSurfaceContent";
 import { usePendingThreadRequests } from "./chat/usePendingThreadRequests";
-import { isScratchProject } from "@t3tools/client-runtime/state/projects";
+import { hasProjectPanels, isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import type { UsageLimitSourceSnapshots } from "@t3tools/contracts";
 import { feedbackBannerItem } from "./chat/ComposerFeedback";
@@ -1145,13 +1145,15 @@ export default function ChatView(props: ChatViewProps) {
     !activeProject.isScratch &&
     notesEnvironmentIds.includes(activeThreadRef.environmentId);
   const kanbanEnvironmentIds = useKanbanEnvironmentIds();
+  const projectPanelsAvailable =
+    activeThreadRef !== null && activeProject != null && hasProjectPanels(activeProject);
   const rightPanelToolsAvailable = {
     notes: notesAvailable,
     kanban:
+      projectPanelsAvailable &&
       activeThreadRef !== null &&
-      activeProject != null &&
       kanbanEnvironmentIds.includes(activeThreadRef.environmentId),
-    "scheduled-tasks": activeThreadRef !== null && activeProject != null,
+    "scheduled-tasks": projectPanelsAvailable,
   };
   const activeProjectSettings = resolveProjectSettings(
     settings,
@@ -3293,7 +3295,7 @@ export default function ChatView(props: ChatViewProps) {
             : null
         }
         project={
-          activeProject
+          activeProject && hasProjectPanels(activeProject)
             ? { environmentId: activeThreadRef.environmentId, projectId: activeProject.id }
             : null
         }

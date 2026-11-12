@@ -2,7 +2,12 @@ import { describe, expect, it } from "vite-plus/test";
 
 import type { ProjectManagedRole } from "@t3tools/contracts";
 
-import { hideIdleFolderProjects, isAssistantHomeProject, isScratchProject } from "./projects.ts";
+import {
+  hasProjectPanels,
+  hideIdleFolderProjects,
+  isAssistantHomeProject,
+  isScratchProject,
+} from "./projects.ts";
 
 describe("managed project classification", () => {
   const cases: ReadonlyArray<{
@@ -67,6 +72,7 @@ describe("managed project classification", () => {
     expect(
       isAssistantHomeProject({ ...project, ...(isScratch ? { isScratch: true as const } : {}) }),
     ).toBe(home);
+    expect(hasProjectPanels(project)).toBe(managedRole !== "assistants");
   });
 });
 
