@@ -343,6 +343,19 @@ describe("HeavyQueue", () => {
         yield* queue.setMaxRunning(1);
         expect((yield* queue.state).reasons["y"]).toBe("paused");
         expect((yield* queue.state).maxRunning).toBe(1);
+        expect(yield* queue.state).toMatchObject({
+          macMemoryFloorPercent: 20,
+          macCpuCeilingPercent: 70,
+          heavyOverLimitSeconds: 20,
+        });
+        yield* queue.setMacMemoryFloorPercent(30);
+        yield* queue.setMacCpuCeilingPercent(90);
+        yield* queue.setHeavyOverLimitSeconds(60);
+        expect(yield* queue.state).toMatchObject({
+          macMemoryFloorPercent: 30,
+          macCpuCeilingPercent: 90,
+          heavyOverLimitSeconds: 60,
+        });
         expect((yield* Effect.flip(queue.move("zzz", null))).reason).toBe("not-found");
         yield* queue.setRule("/proj", null);
         expect((yield* queue.state).rules).toEqual([]);

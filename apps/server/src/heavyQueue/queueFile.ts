@@ -6,11 +6,15 @@
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import type {
-  HeavyQueueEntry,
-  HeavyQueueRule,
-  HeavyRunner,
-  RunnerProjectConfig,
+import {
+  HEAVY_QUEUE_DEFAULTS,
+  heavyQueueLimitError,
+  HEAVY_QUEUE_LIMITS,
+  type HeavyQueueEntry,
+  type HeavyQueueLimitKey,
+  type HeavyQueueRule,
+  type HeavyRunner,
+  type RunnerProjectConfig,
 } from "@t3tools/contracts";
 
 import {
@@ -22,9 +26,10 @@ import {
   type Run,
   type Sample,
   SAMPLE_FRESH_MS,
+  sustain,
   workersFor,
 } from "./admission.ts";
-import { interceptBashCall } from "./heavyHook.ts";
+import { interceptBashCall, lineParts } from "./heavyHook.ts";
 import {
   DEFAULT_MACHINE_CONFIG,
   eligibilityOf,
@@ -104,6 +109,9 @@ interface QueueDoc {
   readonly holding: boolean;
   /** Minutes without use before T3 shuts an idle simulator or emulator down; 0 never. */
   readonly deviceIdleMinutes: number;
+  readonly macMemoryFloorPercent: number;
+  readonly macCpuCeilingPercent: number;
+  readonly heavyOverLimitSeconds: number;
   /** Runner settings a server published; null reads as the Runner off everywhere. */
   readonly runner: RunnerBlock | null;
   readonly linux: LinuxHealth;
@@ -122,6 +130,7 @@ const EMPTY_DOC: QueueDoc = {
   lastStartAt: null,
   holding: false,
   deviceIdleMinutes: DEFAULT_DEVICE_IDLE_MINUTES,
+  ...HEAVY_QUEUE_DEFAULTS,
   runner: null,
   linux: UNKNOWN_HEALTH,
 };
@@ -129,14 +138,28 @@ const EMPTY_DOC: QueueDoc = {
 const isObject = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value);
 
-/** A block missing any part reads as no block, so a half-written one never routes anything. */
+/** A stored queue setting, or its default when it is missing or out of range. */
+const limitOf = (parsed: Record<string, unknown> | null, key: HeavyQueueLimitKey) => {
+  const value = parsed?.[key];
+  return typeof value === "number" && heavyQueueLimitError(key, value) === null
+    ? value
+    : HEAVY_QUEUE_DEFAULTS[key];
+};
+
+/**
+ * A block missing any part reads as no block, so a half-written one never routes anything. An
+ * older publisher's machine settings lack newer keys, which read as their defaults.
+ */
 const parseRunner = (value: unknown): RunnerBlock | null =>
   isObject(value) &&
   isObject(value.global) &&
   isObject(value.machine) &&
   Array.isArray(value.projects) &&
   isObject(value.publisher)
-    ? (value as unknown as RunnerBlock)
+    ? ({
+        ...value,
+        machine: { ...DEFAULT_MACHINE_CONFIG, ...value.machine },
+      } as unknown as RunnerBlock)
     : null;
 
 const loadDoc = (dir: string): QueueDoc => {
@@ -155,6 +178,7 @@ const loadDoc = (dir: string): QueueDoc => {
       runner?: unknown;
       linux?: unknown;
     } | null;
+    const record = isObject(parsed) ? parsed : null;
     return {
       // Keys this version does not know stay in the file for the versions that do.
       ...(parsed !== null && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {}),
@@ -180,6 +204,9 @@ const loadDoc = (dir: string): QueueDoc => {
         typeof parsed?.deviceIdleMinutes === "number" && parsed.deviceIdleMinutes >= 0
           ? Math.floor(parsed.deviceIdleMinutes)
           : DEFAULT_DEVICE_IDLE_MINUTES,
+      macMemoryFloorPercent: limitOf(record, "macMemoryFloorPercent"),
+      macCpuCeilingPercent: limitOf(record, "macCpuCeilingPercent"),
+      heavyOverLimitSeconds: limitOf(record, "heavyOverLimitSeconds"),
       runner: parseRunner(parsed?.runner),
       linux: isObject(parsed?.linux) ? { ...UNKNOWN_HEALTH, ...parsed.linux } : UNKNOWN_HEALTH,
     };
@@ -287,6 +314,8 @@ const planOf = (doc: QueueDoc, now: number): RoutePlan =>
     sample: doc.sample,
     lastStartAt: doc.lastStartAt,
     holding: doc.holding,
+    macMemoryFloorPercent: doc.macMemoryFloorPercent,
+    macCpuCeilingPercent: doc.macCpuCeilingPercent,
     now,
     contextOf: contextOf(doc),
     machine: doc.runner?.machine ?? DEFAULT_MACHINE_CONFIG,
@@ -549,14 +578,15 @@ export const recordSample = (
   peaks: Readonly<Record<string, { readonly cpu: number; readonly memoryBytes: number }>>,
 ) =>
   mutate(dir, (doc) => {
-    const sample: Sample = {
-      ...reading,
-      headroomSince: !hasHeadroom(reading)
-        ? null
-        : doc.sample !== null && reading.at - doc.sample.at < SAMPLE_GAP_MS
-          ? (doc.sample.headroomSince ?? reading.at)
-          : reading.at,
-    };
+    const continuous = doc.sample !== null && reading.at - doc.sample.at < SAMPLE_GAP_MS;
+    const limit = sustain(
+      continuous ? doc.sample : null,
+      !hasHeadroom(reading, doc),
+      reading.at,
+      doc.heavyOverLimitSeconds * 1000,
+    );
+    // Admission's short headroom check uses the same unbroken run of readings under the limits.
+    const sample: Sample = { ...reading, ...limit, headroomSince: limit.underLimitSince };
     return {
       doc: {
         ...doc,
@@ -669,6 +699,16 @@ export const setPaused = (dir: string, paused: boolean) =>
 export const setEnabled = (dir: string, enabled: boolean) =>
   mutate(dir, (doc) => ({ doc: { ...doc, enabled }, result: undefined }));
 
+/** Stores a queue setting, clamped to its range. */
+export const setLimit = (dir: string, key: HeavyQueueLimitKey, value: number) =>
+  mutate(dir, (doc) => {
+    const { min, max } = HEAVY_QUEUE_LIMITS[key];
+    return {
+      doc: { ...doc, [key]: Math.max(min, Math.min(max, Math.floor(value))) },
+      result: undefined,
+    };
+  });
+
 export const setDeviceIdleMinutes = (dir: string, minutes: number) =>
   mutate(dir, (doc) => ({
     doc: { ...doc, deviceIdleMinutes: Math.max(0, Math.min(24 * 60, Math.floor(minutes))) },
@@ -712,7 +752,8 @@ export const recordHealth = (dir: string, check: HealthCheck, now = Date.now()) 
         linux: nextHealth(
           doc.linux,
           check,
-          (doc.runner?.machine ?? DEFAULT_MACHINE_CONFIG).runnerOfflineAfterFailures,
+          doc.runner?.machine ?? DEFAULT_MACHINE_CONFIG,
+          doc.heavyOverLimitSeconds * 1000,
           now,
         ),
       },
@@ -818,5 +859,13 @@ export const answerBashCall = (
   const doc = readDoc(dir);
   const cwd =
     isObject(hookInput) && typeof hookInput.cwd === "string" ? hookInput.cwd : process.cwd();
-  return interceptBashCall(hookInput, prefix, modeFor(doc, cwd), environment);
+  const command =
+    isObject(hookInput) && isObject(hookInput.tool_input) ? hookInput.tool_input.command : null;
+  const at =
+    typeof command === "string" ? startFolder(lineParts(command).dirs, cwd, NodeOS.homedir()) : cwd;
+  return interceptBashCall(hookInput, prefix, modeFor(doc, at), environment);
 };
+
+/** Where a shell line's leading `cd` folders (from `lineParts`) land, starting at `cwd`. */
+export const startFolder = (dirs: ReadonlyArray<string>, cwd: string, home: string) =>
+  dirs.reduce((at, dir) => NodePath.resolve(at, dir.replace(/^~(?=$|\/)/, home)), cwd);

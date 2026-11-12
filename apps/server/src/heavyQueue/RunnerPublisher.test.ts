@@ -31,12 +31,12 @@ describe("the Runner block a server publishes", () => {
   it("carries global and machine settings, and each project's override over them", () => {
     const settings = {
       ...DEFAULT_SERVER_SETTINGS,
-      runnerOverflow: 4,
+      runnerAskMinutes: 4,
       runnerHost: "pc",
       projectSettingsOverrides: {
         [app]: {
           runnerEnabled: true,
-          runnerOverflow: 1,
+          runnerAskMinutes: 1,
           runnerMacOnly: ["CaptureDevices.test.ts"],
         },
       },
@@ -49,7 +49,7 @@ describe("the Runner block a server publishes", () => {
       ],
       publisher,
     );
-    expect(block.global).toMatchObject({ runnerEnabled: false, runnerOverflow: 4 });
+    expect(block.global).toMatchObject({ runnerEnabled: false, runnerAskMinutes: 4 });
     expect(block.machine).toEqual({
       runnerHost: "pc",
       runnerLinuxSlots: RUNNER_DEFAULTS.runnerLinuxSlots,
@@ -57,12 +57,14 @@ describe("the Runner block a server publishes", () => {
       runnerOfflineAfterFailures: RUNNER_DEFAULTS.runnerOfflineAfterFailures,
       runnerSshTimeoutSeconds: RUNNER_DEFAULTS.runnerSshTimeoutSeconds,
       runnerStopWaitSeconds: RUNNER_DEFAULTS.runnerStopWaitSeconds,
+      runnerLinuxMemoryFloorPercent: RUNNER_DEFAULTS.runnerLinuxMemoryFloorPercent,
+      runnerLinuxCpuCeilingPercent: RUNNER_DEFAULTS.runnerLinuxCpuCeilingPercent,
     });
     expect(block.projects[0]).toEqual({
       root: "/code/app",
       config: expect.objectContaining({
         runnerEnabled: true,
-        runnerOverflow: 1,
+        runnerAskMinutes: 1,
         runnerMacOnly: ["CaptureDevices.test.ts"],
         runnerWhere: RUNNER_DEFAULTS.runnerWhere,
       }),

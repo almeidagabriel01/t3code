@@ -1,10 +1,11 @@
-import type {
-  EnvironmentId,
-  HeavyCommand,
-  HeavyCommandsState,
-  HeavyQueueEntry,
-  HeavyQueueState,
-  ProjectId,
+import {
+  HEAVY_QUEUE_DEFAULTS,
+  type EnvironmentId,
+  type HeavyCommand,
+  type HeavyCommandsState,
+  type HeavyQueueEntry,
+  type HeavyQueueState,
+  type ProjectId,
 } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
@@ -96,6 +97,7 @@ function setup(entries: HeavyQueueEntry[], commands: HeavyCommand[]) {
     linux: null,
     macOnly: [],
     routes: {},
+    ...HEAVY_QUEUE_DEFAULTS,
   };
 }
 

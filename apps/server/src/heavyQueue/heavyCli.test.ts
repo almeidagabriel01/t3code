@@ -6,8 +6,16 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 
-import { labelOf, launchOf, parseHeavyArgs, selfPrefix, withWorkers } from "./heavyCli.ts";
-import { DEFAULT_MACHINE_CONFIG, DEFAULT_PROJECT_CONFIG } from "./runner.ts";
+import {
+  heavyLaunch,
+  jobOf,
+  labelOf,
+  launchOf,
+  parseHeavyArgs,
+  selfPrefix,
+  withWorkers,
+} from "./heavyCli.ts";
+import { DEFAULT_MACHINE_CONFIG, DEFAULT_PROJECT_CONFIG, eligibilityOf } from "./runner.ts";
 import * as Queue from "./queueFile.ts";
 
 const BIN = NodeURL.fileURLToPath(new URL("../bin.ts", import.meta.url));
@@ -35,11 +43,13 @@ const heavy = (
   program: ReadonlyArray<string>,
   env: NodeJS.ProcessEnv = {},
   options: ReadonlyArray<string> = ["--"],
+  cwd?: string,
 ) => {
   const child = NodeChildProcess.spawn(
     process.execPath,
     [BIN, "heavy", "--queue-dir", dir, ...options, ...program],
     {
+      cwd,
       stdio: ["pipe", "pipe", "pipe"],
       // Undefined drops a variable: a run of these tests inside a queue job must still queue.
       env: { ...process.env, T3CODE_HEAVY_JOB: undefined, ...env },
@@ -246,6 +256,53 @@ describe("t3 heavy", () => {
       expect(Queue.read(dir)).toEqual([]);
     });
 
+    it("an agent's own remoto call runs once on Linux, from its cd folder", async () => {
+      const { dir, env } = setup(
+        [
+          `printf '${M} phase=running pgid=4\\n' >&2`,
+          `printf '%s|' "$@"; echo " in $(pwd -P)"`,
+          `printf '${M} exit=0\\n' >&2`,
+        ].join("\n"),
+      );
+      const sub = NodePath.join(dir, "sub");
+      NodeFS.mkdirSync(sub);
+      const wrapped = heavy(dir, ["/bin/sh", "-c", `cd ${sub} && remoto vp test run`], env);
+      expect(await wrapped.exited).toBe(0);
+      expect(wrapped.stdout()).toBe(`bash|-c|vp test run| in ${NodeFS.realpathSync(sub)}\n`);
+      const bare = heavy(dir, ["remoto", "vp", "test", "run"], env);
+      expect(await bare.exited).toBe(0);
+      expect(bare.stdout()).toMatch(/^vp\|test\|run\| in /);
+    });
+
+    const echoArgs = [
+      `printf '${M} phase=running pgid=4\\n' >&2`,
+      `printf '%s|' "$@"; echo " in $(pwd -P)"`,
+      `printf '${M} exit=0\\n' >&2`,
+    ].join("\n");
+
+    it("a cd into another checkout runs on Linux from that folder, not the session's", async () => {
+      const { dir, env } = setup(echoArgs);
+      const session = NodePath.join(dir, "session-repo");
+      const web = NodePath.join(dir, "t3-runner-ui", "apps", "web");
+      NodeFS.mkdirSync(session);
+      NodeFS.mkdirSync(web, { recursive: true });
+      const line = `cd ${web} && vp test run src/x.browser.test.tsx`;
+      const run = heavy(dir, ["/bin/sh", "-c", line], env, ["--"], session);
+      expect(await run.exited).toBe(0);
+      expect(run.stdout()).toBe(
+        `bash|-c|vp test run src/x.browser.test.tsx| in ${NodeFS.realpathSync(web)}\n`,
+      );
+    });
+
+    it("never sends a folder change past the label the queue judged; it runs here", async () => {
+      const { dir, env } = setup(echoArgs);
+      const line = `echo ran-here ${"a".repeat(200)} && cd . && true`;
+      const run = heavy(dir, ["/bin/sh", "-c", line], env, ["--runner", "linux", "--"]);
+      expect(await run.exited).toBe(0);
+      expect(run.stdout()).toMatch(/^ran-here a+\n$/);
+      expect(run.stderr()).toContain("running it here");
+    });
+
     it("runs on the Mac when Linux is unavailable and the policy says so", async () => {
       const { dir, env } = setup("exit 75", { runnerUnavailable: "mac" });
       const run = heavy(dir, onMac, env, ["--runner", "linux", "--"]);
@@ -298,6 +355,30 @@ describe("t3 heavy", () => {
       expect(run.stdout()).toBe("ran on mac\n");
     });
   });
+
+  it.each([
+    ["bare", ["remoto", "npm", "test"]],
+    ["shell-wrapped", ["/bin/sh", "-c", "remoto npm test"]],
+  ])(
+    "with the Runner off, a %s remoto call runs as written and holds no slot",
+    async (_, command) => {
+      const dir = tempDir();
+      const bin = NodePath.join(dir, "bin");
+      NodeFS.mkdirSync(bin);
+      NodeFS.writeFileSync(
+        NodePath.join(bin, "remoto"),
+        '#!/bin/sh\necho "remoto: $*"\ncat >/dev/null\n',
+        {
+          mode: 0o755,
+        },
+      );
+      const run = heavy(dir, command, { PATH: `${bin}:${process.env.PATH}` });
+      await run.until("out", "remoto: npm test");
+      expect(Queue.read(dir)).toEqual([]);
+      run.child.stdin.end();
+      expect(await run.exited).toBe(0);
+    },
+  );
 
   it("queues agents' jobs low, the user's normal, and --priority high as asked", async () => {
     const dir = tempDir();
@@ -362,10 +443,146 @@ describe("t3 heavy", () => {
     expect(labelOf("/bin/zsh", ["-c", "cd x && vp test run"])).toBe("cd x && vp test run");
     expect(labelOf("vp", ["test", "run"])).toBe("vp test run");
     expect(labelOf("zsh", ["script.sh"])).toBe("zsh script.sh");
+    // Linux runs a program by its name, so a Mac path to it never keeps the job here.
+    expect(labelOf("/Users/me/.nvm/bin/node", ["--test"])).toBe("node --test");
     expect(selfPrefix("/q dir", { ELECTRON_RUN_AS_NODE: "1" })).toMatch(
       /^ELECTRON_RUN_AS_NODE=1 '.+' heavy --queue-dir '\/q dir'$/,
     );
     expect(selfPrefix("/q", {})).not.toContain("ELECTRON_RUN_AS_NODE");
+  });
+
+  describe("an agent's own remoto call and a leading cd", () => {
+    const SH = "/bin/zsh";
+    const shapes = [
+      ["bare remoto", ["remoto", "npm", "run", "test"], "/w", "npm", ["run", "test"], true],
+      ["wrapped remoto", [SH, "-c", "remoto npm run test"], "/w", SH, ["-c", "npm run test"], true],
+      [
+        "remoto after cd",
+        [SH, "-c", "cd apps/server && remoto vp test run"],
+        "/w/apps/server",
+        SH,
+        ["-c", "vp test run"],
+        true,
+      ],
+      [
+        "remoto after cd ~",
+        [SH, "-c", "cd ~/x && remoto vp test"],
+        "/home/me/x",
+        SH,
+        ["-c", "vp test"],
+        true,
+      ],
+      [
+        "cd alone",
+        [SH, "-c", "cd /abs/app && vp test run"],
+        "/abs/app",
+        SH,
+        ["-c", "vp test run"],
+        false,
+      ],
+      ["plain", ["vp", "test", "run"], "/w", "vp", ["test", "run"], false],
+      ["bare remoto, no command", ["remoto"], "/w", "remoto", [], false],
+    ] as const;
+    const modes = [
+      ["queue on, Runner on", true, true],
+      ["queue on, Runner off", true, false],
+      ["queue off, Runner on", false, true],
+      ["queue off, Runner off", false, false],
+    ] as const;
+
+    it.each(
+      shapes.flatMap((shape) => modes.map((mode) => [shape[0], mode[0], shape, mode] as const)),
+    )("%s, %s", (_shape, _mode, [, command, cwd, program, args, remoto], [, enabled, runner]) => {
+      const launch = heavyLaunch(
+        { program: command[0], args: command.slice(1), where: undefined },
+        "/w",
+        "/home/me",
+        () => ({ enabled, runner }),
+        false,
+      );
+      // `remoto` never holds a Mac slot: Linux with the Runner on, run as written with it off.
+      const direct = (!enabled && !runner) || (remoto && !runner);
+      expect(launch).toEqual(
+        direct
+          ? { kind: "direct" }
+          : { kind: "queue", cwd, program, args, where: remoto ? "linux" : undefined },
+      );
+    });
+
+    it("reads the Runner switch where the job runs, and runs direct inside a queue job", () => {
+      const seen: string[] = [];
+      const modeAt = (cwd: string) => (seen.push(cwd), { enabled: true, runner: true });
+      const remoto = { program: SH, args: ["-c", "cd /p && remoto vp test"], where: undefined };
+      heavyLaunch(remoto, "/w", "/h", modeAt, false);
+      expect(seen).toEqual(["/p"]);
+      expect(heavyLaunch(remoto, "/w", "/h", modeAt, true)).toEqual({ kind: "direct" });
+      expect(heavyLaunch({ ...remoto, where: "mac" }, "/w", "/h", modeAt, false)).toMatchObject({
+        where: "mac",
+      });
+    });
+
+    const listed = {
+      ...DEFAULT_PROJECT_CONFIG,
+      runnerEnabled: true,
+      runnerLinuxCommands: ["test"],
+    };
+    const placed = (line: string) => {
+      const job = jobOf(SH, ["-c", line], "/w/repo", "/home/me");
+      const eligibility = eligibilityOf({ label: labelOf(job.program, job.args) }, listed);
+      return { cwd: job.cwd, line: job.args[1], eligibility };
+    };
+
+    it.each([
+      ["cd /abs/app && vp test run", "/abs/app", "vp test run"],
+      ["cd apps/web && vp test run", "/w/repo/apps/web", "vp test run"],
+      ["cd ../other && vp test run", "/w/other", "vp test run"],
+      ['cd "/a b/c" && vp test run', "/a b/c", "vp test run"],
+      ["cd '/a b' && vp test run", "/a b", "vp test run"],
+      ["cd /abs && cd apps/web && vp test run", "/abs/apps/web", "vp test run"],
+      ["cd ~/code&&vp test run", "/home/me/code", "vp test run"],
+      ["cd ~ && cd x && vp test run", "/home/me/x", "vp test run"],
+      ["  cd . && vp test run -t 'a b'", "/w/repo", "vp test run -t 'a b'"],
+    ])("%j goes to Linux from %j as %j", (line, cwd, stripped) => {
+      expect(placed(line)).toEqual({ cwd, line: stripped, eligibility: "linux" });
+    });
+
+    it.each([
+      "vp test run && cd x && vp test run",
+      "ls && cd /abs && vp test run",
+      "cd $DIR && vp test run",
+      'cd "$DIR" && vp test run',
+      "cd ${DIR}/x && vp test run",
+      "cd $(git rev-parse --show-toplevel) && vp test run",
+      "cd `pwd` && vp test run",
+      "cd - && vp test run",
+      "cd && vp test run",
+      "cd -P /abs && vp test run",
+      "cd ~other && vp test run",
+      "cd '~' && vp test run",
+      "cd /abs/* && vp test run",
+      "cd /abs; vp test run",
+      "cd /abs || exit 1 && vp test run",
+      "cd /abs && (cd x; vp test run)",
+      "(cd x && vp test run)",
+      "pushd x && vp test run",
+      "cd /abs && vp test run && popd",
+      "vp test run; cd ..",
+      "bash -c 'cd x && vp test run'",
+      "vp test run /Users/me/repo/src/a.test.ts",
+      "cd /abs && vp test run --root /Volumes/Work/app",
+      "vp test run --config ~/vitest.config.ts",
+    ])("%j stays on the Mac", (line) => {
+      expect(placed(line).eligibility).toBe("mac-only");
+    });
+
+    it("leaves a program that is not a shell line as it is", () => {
+      expect(jobOf("zsh", ["script.sh"], "/w", "/h")).toEqual({
+        cwd: "/w",
+        program: "zsh",
+        args: ["script.sh"],
+        remoto: false,
+      });
+    });
   });
 
   it.each([

@@ -18,7 +18,48 @@ export interface Sample {
   /** macOS memory pressure level (2 warning, 4 critical); absent from older readers. */
   readonly pressureLevel?: number | null;
   readonly swapInBytesPerSecond?: number | null;
+  /** Routing's view of the limits; absent from older files, which read as room. */
+  readonly overLimit?: boolean;
+  readonly overLimitSince?: number | null;
+  readonly underLimitSince?: number | null;
 }
+
+/** The Mac's limits, kept in the queue file so a waiter reads them without a server. */
+export interface MacLimits {
+  readonly macMemoryFloorPercent: number;
+  readonly macCpuCeilingPercent: number;
+}
+
+/**
+ * Whether a machine counts as over its limits for routing. It flips only after readings stay on
+ * the other side for the whole window, so a spike at the moment of a check moves nothing.
+ */
+export interface Sustained {
+  readonly overLimit: boolean;
+  /** Start of the unbroken run of readings over the limit; null while the latest is under. */
+  readonly overLimitSince: number | null;
+  readonly underLimitSince: number | null;
+}
+
+/** Folds one reading in; `previous` null after a gap in readings, which starts from "has room". */
+export const sustain = (
+  previous: Partial<Sustained> | null,
+  over: boolean,
+  at: number,
+  windowMs: number,
+): Sustained => {
+  const was = previous?.overLimit === true;
+  if (over) {
+    const since = previous?.overLimitSince ?? at;
+    return {
+      overLimit: was || at - since >= windowMs,
+      overLimitSince: since,
+      underLimitSince: null,
+    };
+  }
+  const since = previous?.underLimitSince ?? at;
+  return { overLimit: was && at - since < windowMs, overLimitSince: null, underLimitSince: since };
+};
 
 export interface Run {
   readonly cpu: number;
@@ -26,17 +67,25 @@ export interface Run {
   readonly durationMs: number;
 }
 
+type Reading = Omit<Sample, "headroomSince">;
+
 /** The machine-wide limit a reading is past, kernel signals first, or null when it has headroom. */
-export const machineHold = (sample: Omit<Sample, "headroomSince">) => {
+export const machineHold = (sample: Reading, limits: MacLimits) => {
   if ((sample.pressureLevel ?? 0) >= 2) return "pressure";
   if ((sample.swapInBytesPerSecond ?? 0) > SWAP_IN_LIMIT) return "swap-in";
-  if (sample.availableMemoryBytes < MEMORY_FLOOR * sample.totalMemoryBytes) return "memory-floor";
-  if (sample.busyCores > CPU_CEILING * sample.cpuCount) return "cpu";
+  if (
+    sample.availableMemoryBytes <
+    (limits.macMemoryFloorPercent / 100) * sample.totalMemoryBytes
+  ) {
+    return "memory-floor";
+  }
+  if (sample.busyCores > (limits.macCpuCeilingPercent / 100) * sample.cpuCount) return "cpu";
   return null;
 };
 
 /** The machine is calm enough that admitting something could be considered. */
-export const hasHeadroom = (sample: Omit<Sample, "headroomSince">) => machineHold(sample) === null;
+export const hasHeadroom = (sample: Reading, limits: MacLimits) =>
+  machineHold(sample, limits) === null;
 
 /** Workers a starting job's runners get: the cores free now, all but one on an idle machine. */
 export const workersFor = (cpuCount: number, busyCores: number | null): number =>
@@ -52,10 +101,8 @@ const SETTLE_MS = 15_000;
 export const SAMPLE_FRESH_MS = 15_000;
 /** Headroom has to hold this long before another job is admitted. */
 const HEADROOM_MS = 6_000;
-const MEMORY_FLOOR = 0.2;
-/** Once blocked, memory has to recover a little past the floor so admission does not flap. */
-const MEMORY_REOPEN = 0.25;
-const CPU_CEILING = 0.7;
+/** Once blocked, memory has to recover this many points past the floor so admission does not flap. */
+const MEMORY_REOPEN_POINTS = 5;
 /** Sustained swap-in above this is the machine paging work back in, not a blip. */
 const SWAP_IN_LIMIT = 20 * 1024 ** 2;
 
@@ -118,7 +165,7 @@ export const estimate = (
   };
 };
 
-export interface PlanInput {
+export interface PlanInput extends MacLimits {
   readonly entries: ReadonlyArray<HeavyQueueEntry>;
   readonly maxRunning: number;
   /** False: the queue is off and every waiter starts, so nothing below applies. */
@@ -200,14 +247,16 @@ export const plan = (input: PlanInput): Plan => {
   if (sample === null || now - sample.at > SAMPLE_FRESH_MS) {
     return finish(null, "no-reading", false, input.holding);
   }
-  const limit = machineHold(sample);
+  const limit = machineHold(sample, input);
   if (limit === "pressure" || limit === "swap-in") return finish(null, limit, false, true);
   if (limit !== null) return finish(null, limit, false, input.holding);
   if (sample.headroomSince === null || now - sample.headroomSince < HEADROOM_MS) {
     return finish(null, "steadying", false, input.holding);
   }
 
-  const floor = (input.holding ? MEMORY_REOPEN : MEMORY_FLOOR) * sample.totalMemoryBytes;
+  const floorPercent = input.macMemoryFloorPercent + (input.holding ? MEMORY_REOPEN_POINTS : 0);
+  const floor = (floorPercent / 100) * sample.totalMemoryBytes;
+  const ceiling = input.macCpuCeilingPercent / 100;
   const verdict = (entry: HeavyQueueEntry) => {
     const cost = estimate(input.history, entry, sample.cpuCount);
     if (sample.availableMemoryBytes - cost.memoryBytes < floor) {
@@ -217,11 +266,11 @@ export const plan = (input: PlanInput): Plan => {
         why: `needs ~${gb(cost.memoryBytes)}; ${gb(sample.availableMemoryBytes)} free, ${gb(floor)} kept spare`,
       };
     }
-    if (cost.cpu > sample.cpuCount * CPU_CEILING - sample.busyCores) {
+    if (cost.cpu > sample.cpuCount * ceiling - sample.busyCores) {
       return {
         cost,
         hold: "job-cpu" as const,
-        why: `needs ~${cost.cpu.toFixed(1)} cores; CPU ${pct(sample)}%, limit ${CPU_CEILING * 100}%`,
+        why: `needs ~${cost.cpu.toFixed(1)} cores; CPU ${pct(sample)}%, limit ${input.macCpuCeilingPercent}%`,
       };
     }
     return { cost, hold: null, why: "" };

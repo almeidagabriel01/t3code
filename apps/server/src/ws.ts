@@ -2720,6 +2720,12 @@ export const layerWsRpc = (
         [WS_METHODS.heavyQueueSetEnabled]: ({ enabled }) => heavyQueue.setEnabled(enabled),
         [WS_METHODS.heavyQueueSetMaxRunning]: ({ maxRunning }) =>
           heavyQueue.setMaxRunning(maxRunning),
+        [WS_METHODS.heavyQueueSetMacMemoryFloorPercent]: ({ macMemoryFloorPercent }) =>
+          heavyQueue.setMacMemoryFloorPercent(macMemoryFloorPercent),
+        [WS_METHODS.heavyQueueSetMacCpuCeilingPercent]: ({ macCpuCeilingPercent }) =>
+          heavyQueue.setMacCpuCeilingPercent(macCpuCeilingPercent),
+        [WS_METHODS.heavyQueueSetHeavyOverLimitSeconds]: ({ heavyOverLimitSeconds }) =>
+          heavyQueue.setHeavyOverLimitSeconds(heavyOverLimitSeconds),
         [WS_METHODS.heavyQueueSetRule]: ({ root, priority }) => heavyQueue.setRule(root, priority),
         [WS_METHODS.heavyQueueRoute]: ({ id, runner, force }) =>
           heavyQueue.route(id, runner, force === true),

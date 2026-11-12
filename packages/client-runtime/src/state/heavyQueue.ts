@@ -59,6 +59,18 @@ export function createHeavyQueueEnvironmentAtoms<R, E>(
       label: "environment-data:heavy-queue:set-max-running",
       tag: WS_METHODS.heavyQueueSetMaxRunning,
     }),
+    setMacMemoryFloorPercent: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:heavy-queue:set-mac-memory-floor-percent",
+      tag: WS_METHODS.heavyQueueSetMacMemoryFloorPercent,
+    }),
+    setMacCpuCeilingPercent: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:heavy-queue:set-mac-cpu-ceiling-percent",
+      tag: WS_METHODS.heavyQueueSetMacCpuCeilingPercent,
+    }),
+    setHeavyOverLimitSeconds: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:heavy-queue:set-heavy-over-limit-seconds",
+      tag: WS_METHODS.heavyQueueSetHeavyOverLimitSeconds,
+    }),
     setPriority: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:heavy-queue:set-priority",
       tag: WS_METHODS.heavyQueueSetPriority,

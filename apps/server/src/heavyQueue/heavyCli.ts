@@ -10,9 +10,9 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeSea from "node:sea";
 
-import type { RunnerMachineConfig, RunnerProjectConfig } from "@t3tools/contracts";
+import type { RunnerMachineConfig, RunnerProjectConfig, RunnerWhere } from "@t3tools/contracts";
 
-import { HEAVY_JOB_ENV, heavyRoute, shellQuote } from "./heavyHook.ts";
+import { HEAVY_JOB_ENV, heavyRoute, lineParts, shellQuote, tiedToMac } from "./heavyHook.ts";
 import { readMemorySync, swapInRate } from "./hostReader.ts";
 import {
   answerBashCall,
@@ -29,6 +29,7 @@ import {
   requeue,
   setProgress,
   setQos,
+  startFolder,
   tryStart,
 } from "./queueFile.ts";
 import { DEFAULT_MACHINE_CONFIG } from "./runner.ts";
@@ -93,11 +94,85 @@ export const parseHeavyArgs = (args: ReadonlyArray<string>) => {
   return { dir, name, priority, where, program: rest[0], args: rest.slice(1) };
 };
 
-/** A hook-wrapped `$SHELL -c '<line>'` is labelled by the line itself, so names and history keep it. */
+/**
+ * The job a command really is. A shell line's leading `cd <dir> &&` steps become the folder it
+ * starts from, so the queue, its project settings and Linux all see that folder, and an agent's own
+ * `remoto` around the command is dropped.
+ */
+export const jobOf = (
+  program: string,
+  args: ReadonlyArray<string>,
+  cwd: string,
+  home: string,
+): {
+  readonly cwd: string;
+  readonly program: string;
+  readonly args: ReadonlyArray<string>;
+  readonly remoto: boolean;
+} => {
+  if (NodePath.basename(program) === "remoto" && args[0] !== undefined) {
+    return { cwd, program: args[0], args: args.slice(1), remoto: true };
+  }
+  if (!SHELLS.has(NodePath.basename(program)) || args[0] !== "-c" || args[1] === undefined) {
+    return { cwd, program, args, remoto: false };
+  }
+  const parts = lineParts(args[1]);
+  return {
+    cwd: startFolder(parts.dirs, cwd, home),
+    program,
+    args: ["-c", parts.command, ...args.slice(2)],
+    remoto: parts.remoto,
+  };
+};
+
+export type HeavyLaunch =
+  | { readonly kind: "direct" }
+  | {
+      readonly kind: "queue";
+      readonly cwd: string;
+      readonly program: string;
+      readonly args: ReadonlyArray<string>;
+      readonly where: RunnerWhere | undefined;
+    };
+
+/**
+ * Run the command as written, or queue it. An agent's own `remoto` call never holds a Mac slot:
+ * with the Runner on it is queued as a Linux job, and with it off `remoto` runs and falls back by
+ * itself.
+ */
+export const heavyLaunch = (
+  command: {
+    readonly program: string;
+    readonly args: ReadonlyArray<string>;
+    readonly where: RunnerWhere | undefined;
+  },
+  cwd: string,
+  home: string,
+  modeAt: (cwd: string) => { readonly enabled: boolean; readonly runner: boolean },
+  inJob: boolean,
+): HeavyLaunch => {
+  // Inside a queue job the slot is already held; queuing again would wait on itself.
+  if (inJob) return { kind: "direct" };
+  const job = jobOf(command.program, command.args, cwd, home);
+  const mode = modeAt(job.cwd);
+  if (heavyRoute(mode) === "direct" || (job.remoto && !mode.runner)) return { kind: "direct" };
+  return {
+    kind: "queue",
+    cwd: job.cwd,
+    program: job.program,
+    args: job.args,
+    where: job.remoto ? (command.where ?? "linux") : command.where,
+  };
+};
+
+/**
+ * A hook-wrapped `$SHELL -c '<line>'` is labelled by the line itself, so names and history keep it.
+ * Any other program by its name, as Linux runs it (`remoteCommand`).
+ */
 export const labelOf = (program: string, args: ReadonlyArray<string>) =>
   (SHELLS.has(NodePath.basename(program)) && args[0] === "-c" && args[1] !== undefined
     ? args[1]
-    : [program, ...args].join(" ")
+    : [NodePath.basename(program), ...args].join(" ")
   ).slice(0, LABEL_CHARS);
 
 /**
@@ -210,6 +285,15 @@ const exitCodeOf = (code: number | null, signal: NodeJS.Signals | null) =>
 
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const enterFolder = (cwd: string) => {
+  try {
+    process.chdir(cwd);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> => {
   if (argv[0] === "hook") {
     await runHook(parseHeavyArgs(argv.slice(1)).dir);
@@ -222,12 +306,15 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
     );
     process.exit(2);
   }
-  // Inside a queue job the slot is already held; queuing again would wait on itself.
-  // With the queue and the Runner both off here, nothing is tracked or routed.
-  if (
-    process.env[HEAVY_JOB_ENV] === "1" ||
-    heavyRoute(modeFor(readDoc(dir), process.cwd())) === "direct"
-  ) {
+  const launch = heavyLaunch(
+    { program, args, where },
+    process.cwd(),
+    NodeOS.homedir(),
+    (cwd) => modeFor(readDoc(dir), cwd),
+    process.env[HEAVY_JOB_ENV] === "1",
+  );
+  if (launch.kind === "direct" || !enterFolder(launch.cwd)) {
+    // The shell reports a folder it cannot enter itself, as it would without T3.
     runDirect(program, args, process.env);
     return;
   }
@@ -238,14 +325,14 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
     id,
     pid: process.pid,
     threadId,
-    label: labelOf(program, args),
+    label: labelOf(launch.program, launch.args),
     ...(name === undefined ? {} : { name }),
     cwd: process.cwd(),
     createdAt: new Date().toISOString(),
     startedAt: null,
     // Agents' jobs wait behind the user's own.
     priority: priority ?? (agent ? "low" : "normal"),
-    ...(where === undefined ? {} : { where }),
+    ...(launch.where === undefined ? {} : { where: launch.where }),
   });
   process.on("exit", () => remove(dir, id));
 
@@ -265,11 +352,19 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
     const outcome =
       start.runner === "linux"
         ? await runLinuxAttempt(
-            { dir, id, program, args, machine, config, environment },
+            { dir, id, program: launch.program, args: launch.args, machine, config, environment },
             (handler) => (onSignal = handler),
           )
         : await runMacAttempt(
-            { dir, id, program, args, workers: start.workers, lane: self?.priority, environment },
+            {
+              dir,
+              id,
+              program: launch.program,
+              args: launch.args,
+              workers: start.workers,
+              lane: self?.priority,
+              environment,
+            },
             (handler) => (onSignal = handler),
           );
     if (outcome.kind === "exit") process.exit(outcome.code);
@@ -409,6 +504,14 @@ const runLinuxAttempt = async (
   setSignal: SignalHook,
 ): Promise<Attempt> => {
   const { dir, id, machine, environment } = job;
+  // The queue judged a label that may stop short of a `cd` or Mac path later in the command.
+  if (tiedToMac(job.args.join(" "))) {
+    process.stderr.write(
+      "[t3 heavy] it changes folder or names a path of this Mac; running it here.\n",
+    );
+    requeue(dir, id, { route: "mac" });
+    return { kind: "requeued" };
+  }
   const remoto = resolveRemoto(environment);
   if (remoto === null) {
     process.stderr.write("[t3 heavy] remoto is not installed; Linux counts as unavailable.\n");

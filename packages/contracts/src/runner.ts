@@ -16,7 +16,6 @@ export const RunnerDeadlineAction = Schema.Literals(["mac", "wait", "cancel"]);
 export type RunnerDeadlineAction = typeof RunnerDeadlineAction.Type;
 
 export const RUNNER_LIMITS = {
-  runnerOverflow: { min: 0, max: 20, unit: "jobs" },
   runnerAskMinutes: { min: 1, max: 30, unit: "minutes" },
   runnerLinuxSlots: { min: 1, max: 16, unit: "jobs" },
   runnerHeartbeatSeconds: { min: 5, max: 600, unit: "seconds" },
@@ -34,7 +33,6 @@ export const RUNNER_PATTERN_CHARS = 200;
 export const RUNNER_DEFAULTS = {
   runnerEnabled: false,
   runnerWhere: "mac" as RunnerWhere,
-  runnerOverflow: 3,
   runnerUnavailable: "ask" as RunnerUnavailablePolicy,
   runnerAskMinutes: 5,
   runnerDeadlineAction: "mac" as RunnerDeadlineAction,
@@ -82,7 +80,6 @@ export const RUNNER_DEFAULTS = {
 export const RUNNER_PROJECT_KEYS = [
   "runnerEnabled",
   "runnerWhere",
-  "runnerOverflow",
   "runnerUnavailable",
   "runnerAskMinutes",
   "runnerDeadlineAction",
@@ -134,7 +131,6 @@ export const runnerPatternsError = (values: ReadonlyArray<string>): string | nul
 const between = (key: RunnerNumberKey) =>
   Schema.Int.check(Schema.makeFilter((value: number) => runnerNumberError(key, value) ?? true));
 
-export const RunnerOverflow = between("runnerOverflow");
 export const RunnerAskMinutes = between("runnerAskMinutes");
 export const RunnerLinuxSlots = between("runnerLinuxSlots");
 export const RunnerHeartbeatSeconds = between("runnerHeartbeatSeconds");
@@ -154,7 +150,6 @@ export const RunnerPatterns = Schema.Array(Schema.String).check(
 export const RunnerProjectConfig = Schema.Struct({
   runnerEnabled: Schema.Boolean,
   runnerWhere: RunnerWhere,
-  runnerOverflow: Schema.Int,
   runnerUnavailable: RunnerUnavailablePolicy,
   runnerAskMinutes: Schema.Int,
   runnerDeadlineAction: RunnerDeadlineAction,

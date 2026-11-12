@@ -26,6 +26,9 @@ vi.mock("../../state/heavyQueue", async () => {
       setEnabled: { permissionAtom: () => allowed, name: "setEnabled" },
       setRule: { permissionAtom: () => allowed, name: "setRule" },
       setMaxRunning: { permissionAtom: () => allowed, name: "setMaxRunning" },
+      setMacMemoryFloorPercent: { name: "setMacMemoryFloorPercent" },
+      setMacCpuCeilingPercent: { name: "setMacCpuCeilingPercent" },
+      setHeavyOverLimitSeconds: { name: "setHeavyOverLimitSeconds" },
     },
   };
 });
@@ -76,6 +79,9 @@ function Probe() {
       <button onClick={() => void actions.setEnabled(false)}>off</button>
       <button onClick={() => void actions.setRule("/p", "first")}>rule</button>
       <button onClick={() => void actions.setMaxRunning(2)}>max</button>
+      <button onClick={() => void actions.setMacMemoryFloorPercent(25)}>floor</button>
+      <button onClick={() => void actions.setMacCpuCeilingPercent(80)}>ceiling</button>
+      <button onClick={() => void actions.setHeavyOverLimitSeconds(30)}>window</button>
       <StopProbe />
     </>
   );
@@ -123,7 +129,18 @@ describe("useHeavyQueueActions", () => {
   it("sends each change straight away, and removes or stops only after confirmation", async () => {
     await using screen = await setup();
     await expect.element(screen.getByRole("status")).toHaveTextContent("true");
-    for (const name of ["move", "pause", "off", "rule", "max", "cancel", "stop"]) {
+    for (const name of [
+      "move",
+      "pause",
+      "off",
+      "rule",
+      "max",
+      "floor",
+      "ceiling",
+      "window",
+      "cancel",
+      "stop",
+    ]) {
       await userEvent.click(screen.getByRole("button", { name }));
     }
     expect(mocks.calls.mock.calls).toEqual([
@@ -132,6 +149,9 @@ describe("useHeavyQueueActions", () => {
       ["setEnabled", { environmentId, input: { enabled: false } }],
       ["setRule", { environmentId, input: { root: "/p", priority: "first" } }],
       ["setMaxRunning", { environmentId, input: { maxRunning: 2 } }],
+      ["setMacMemoryFloorPercent", { environmentId, input: { macMemoryFloorPercent: 25 } }],
+      ["setMacCpuCeilingPercent", { environmentId, input: { macCpuCeilingPercent: 80 } }],
+      ["setHeavyOverLimitSeconds", { environmentId, input: { heavyOverLimitSeconds: 30 } }],
       ["cancel", { environmentId, input: { id: "b" } }],
       ["cancel", { environmentId, input: { id: "c" } }],
     ]);

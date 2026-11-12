@@ -83,6 +83,10 @@ place in the whole queue.
   memory held by running simulators and emulators counts as used. A lone job
   always starts. Each job's test runner gets as many workers as the machine has
   free cores (`VITEST_MAX_WORKERS`, `T3_HEAVY_WORKERS`).
+- **Limits.** Settings → Maintenance → **Heavy work** sets how much memory this
+  Mac keeps free (default 20%) and its CPU limit (default 70%). A job waits
+  while either is crossed, and memory must recover 5 points past the floor
+  before the next one starts.
 - **Reorder.** Drag a waiting job, or use its **⋯** menu: **Run next**, **Move
   up**, **Move down**, **Move to end**, **Open thread**, **Remove**. A running
   job's menu has **Stop**, which ends its `t3 heavy` command.
@@ -136,11 +140,26 @@ work queue, and each section says what the two do together.
 
 - **Heavy work runs on.** **This Mac** keeps everything here. **Linux** sends
   the commands in **Linux commands** (tests, lint, type checks; builds stay
-  here, since their output is needed on the Mac). **Automatic** keeps work here
-  until a number of heavy jobs are running or waiting on this Mac, then sends
-  the next listed command to Linux. **Mac only** commands (Xcode, Gradle,
-  simulators) never leave. All of these, and the policies below, can be set per
-  project; the PC's SSH host, slots and checks apply to the whole machine.
+  here, since their output is needed on the Mac). **Hybrid** runs listed
+  commands here while this Mac has room and on Linux when it does not; when
+  both are full, a waiting job goes to the side with the shorter line per slot
+  (this Mac on a tie). Hybrid never asks: while Linux is offline everything
+  stays here. With the queue off, it starts work here at once and sends listed
+  commands to Linux only while this Mac is over its limits. **Mac only**
+  commands (Xcode, Gradle, simulators) never leave. All of these, and the
+  policies below, can be set per project; the PC's SSH host, slots, limits and
+  checks apply to the whole machine.
+- **Linux limits.** Linux takes a job while a slot is free, no other job from
+  the same worktree runs there, and it stays under its own **Keep memory free**
+  (default 20%) and **CPU limit** (default 70%). The next job starts only after
+  a heartbeat that shows the last one's load. A busy Linux is not offline: jobs
+  wait for it and say why ("waiting for Linux: 1.8 GB free, keeping 20%").
+- **Over the limit for.** Either machine counts as over its limits, or back
+  under them, only once its readings stay there this long (default 20
+  seconds), so a short spike never moves work.
+- **Folders.** A command that starts with `cd <folder> &&` runs on Linux from
+  that folder. One that changes folder any other way (a later `cd`, `cd $VAR`,
+  `pushd`, a subshell) or names a path on this Mac stays here.
 - **When Linux is offline or drops a job.** Choose **Run on this Mac**, **Wait
   for Linux** or **Ask me**. A question shows on the job in the Resource
   Manager with a countdown; unanswered, it follows the deadline setting. An

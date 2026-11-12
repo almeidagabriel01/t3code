@@ -148,9 +148,13 @@ answer=$(printf '%s' "$input" | { ${hookCommand}; } 2>/dev/null) || exit 0
 printf '%s' "$answer"
 `;
 
+/** A heredoc's body is text a program reads (a script, a file to write), never commands. */
+const HEREDOC = /<<-?[\t ]*(['"]?)([A-Za-z_]\w*)\1[^\n]*\n[\s\S]*?\n[\t ]*\2[\t ]*(?=\n|$)/g;
+
 /** Every part of a shell command line that is heavy work, in order. */
 export const heavySegments = (command: string): ReadonlyArray<string> =>
   command
+    .replace(HEREDOC, "")
     .split(/&&|\|\||[;|&\n()]/)
     .filter((segment) => {
       const { program, words, flags } = wordsOf(segment);
@@ -166,15 +170,57 @@ export const heavySegment = (command: string): string | null => heavySegments(co
  * `remoto …`, which already runs the command on another machine (or falls back here by itself).
  */
 export const isQueued = (command: string) =>
-  /^\s*(cd\s+\S+\s*&&\s*)?remoto(\s|$)/.test(command) ||
+  lineParts(command).remoto ||
   /(^|[\s'"/])t3['"]?\s+heavy\b/.test(command) ||
   /\bheavy['"]?\s+--(queue-dir|name|priority)?(\s|=|$)/.test(command);
 
-/** `[cd <dir> &&] remoto <cmd>` as `[cd <dir> &&] <cmd>`; any other shape stays `remoto`'s own. */
-export const unwrapRemoto = (command: string): string | null => {
-  const match = /^\s*(cd\s+\S+\s*&&\s*)?remoto\s+(\S[\s\S]*)$/.exec(command);
-  return match === null ? null : `${match[1] ?? ""}${match[2]}`;
+const LEADING_CD = /^\s*cd[\t ]+('[^']*'|"[^"]*"|[^\s'"&;|()<>]+)[\t ]*&&/;
+const PLAIN = String.raw`[^\s'"$\`\\*?[\]{}!#]`;
+/** Unquoted, a folder the shell takes as written: no variable, glob, option (`-`) or `~user`. */
+const PLAIN_DIR = new RegExp(String.raw`^(?:~(?:/${PLAIN}*)?|(?![-~])${PLAIN}+)$`);
+
+/** A `cd` argument as the folder it names, or null when only running the shell could tell. */
+const literalDir = (word: string): string | null => {
+  if (/^'[^']*'$|^"[^"$`\\]*"$/.test(word)) {
+    const dir = word.slice(1, -1);
+    // Quoted, `~` is a folder named `~`; `jobOf` would read it as home.
+    return dir === "" || dir.startsWith("~") ? null : dir;
+  }
+  return PLAIN_DIR.test(word) ? word : null;
 };
+
+/**
+ * A shell line as `[cd <dir> && …] [remoto] <command>`: the folders its leading `cd`s name, in
+ * order (`~` unexpanded), and whether it is an agent's own `remoto` call. Parsing stops at the
+ * first `cd` it cannot resolve, which stays in `command`, so `tiedToMac` keeps that line here.
+ */
+export const lineParts = (line: string) => {
+  const dirs: string[] = [];
+  let rest = line;
+  for (let match = LEADING_CD.exec(rest); match !== null; match = LEADING_CD.exec(rest)) {
+    const dir = literalDir(match[1]!);
+    if (dir === null) break;
+    dirs.push(dir);
+    rest = rest.slice(match[0].length);
+  }
+  const remoto = /^\s*remoto\s+(?=\S)/.exec(rest);
+  return {
+    dirs,
+    remoto: remoto !== null,
+    command: (remoto === null ? rest : rest.slice(remoto[0].length)).trimStart(),
+  };
+};
+
+/**
+ * Changes folder anywhere (`cd`, `pushd`, `popd`, also inside quotes, subshells or `$(…)`) or
+ * names a path of this Mac (`/Users/…`, `~`). Such a line never runs on Linux: the folder or path
+ * does not exist there. Over-matching only keeps work here.
+ */
+export const tiedToMac = (line: string) =>
+  /(?:^|[^\w./-])(?:cd|pushd|popd)(?![\w./-])/.test(line) ||
+  /(?:^|[^\w.-])(?:\/(?:Users|Volumes|private|Applications|Library|System)\/|~(?![\w-]))/.test(
+    line,
+  );
 
 export const shellQuote = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
 
@@ -197,19 +243,21 @@ export const queueBashCall = (
   queuePrefix: string,
   environment: Readonly<Record<string, string | undefined>> = {},
   options: {
-    /** The Runner is on: an agent's `remoto <cmd>` becomes a job sent to Linux, run once. */
+    /** The Runner is on: an agent's `remoto <cmd>` is queued too, and `t3 heavy` sends it to Linux once. */
     readonly runner?: boolean;
   } = {},
 ) => {
   if (environment[HEAVY_JOB_ENV] === "1" || !isRecord(hookInput)) return null;
   if (hookInput.tool_name !== "Bash" || !isRecord(hookInput.tool_input)) return null;
   const toolInput = hookInput.tool_input;
-  const original = toolInput.command;
-  if (typeof original !== "string") return null;
-  const unwrapped = options.runner === true ? unwrapRemoto(original) : null;
-  if (unwrapped === null && isQueued(original)) return null;
-  const command = unwrapped ?? original;
-  const segment = heavySegment(command) ?? (unwrapped === null ? null : command.trim());
+  const command = toolInput.command;
+  if (typeof command !== "string") return null;
+  const parts = lineParts(command);
+  const remoto = options.runner === true && parts.remoto;
+  if (!remoto && isQueued(command)) return null;
+  const segment = remoto
+    ? (heavySegment(parts.command) ?? parts.command.trim())
+    : heavySegment(command);
   if (segment === null) return null;
   const currentTimeout = typeof toolInput.timeout === "number" ? toolInput.timeout : 0;
   return {
@@ -218,7 +266,7 @@ export const queueBashCall = (
       // Replaces the whole input, so every field Claude sent stays.
       updatedInput: {
         ...toolInput,
-        command: `${queuePrefix}${unwrapped === null ? "" : " --runner linux"} --name ${shellQuote(nameOf(segment))} -- "\${SHELL:-/bin/sh}" -c ${shellQuote(command)}`,
+        command: `${queuePrefix} --name ${shellQuote(nameOf(segment))} -- "\${SHELL:-/bin/sh}" -c ${shellQuote(command)}`,
         // Waiting counts toward the Bash timeout; a background call keeps its own, longer limit.
         ...(toolInput.run_in_background === true
           ? {}

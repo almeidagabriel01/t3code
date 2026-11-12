@@ -48,7 +48,6 @@ import {
   RunnerHost,
   RunnerLinuxSlots,
   RunnerOfflineAfterFailures,
-  RunnerOverflow,
   RunnerPatterns,
   RunnerSshTimeoutSeconds,
   RunnerStopWaitSeconds,
@@ -1331,7 +1330,6 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "speechProjectCustomWords",
   "runnerEnabled",
   "runnerWhere",
-  "runnerOverflow",
   "runnerUnavailable",
   "runnerAskMinutes",
   "runnerDeadlineAction",
@@ -1400,7 +1398,6 @@ export const ProjectSettingsOverrides = Schema.Struct({
   speechProjectCustomWords: Schema.optionalKey(SpeechCustomWords),
   runnerEnabled: Schema.optionalKey(Schema.Boolean),
   runnerWhere: Schema.optionalKey(RunnerWhere),
-  runnerOverflow: Schema.optionalKey(RunnerOverflow),
   runnerUnavailable: Schema.optionalKey(RunnerUnavailablePolicy),
   runnerAskMinutes: Schema.optionalKey(RunnerAskMinutes),
   runnerDeadlineAction: Schema.optionalKey(RunnerDeadlineAction),
@@ -1684,9 +1681,6 @@ export const ServerSettings = Schema.Struct({
   ),
   runnerWhere: RunnerWhere.pipe(
     Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerWhere)),
-  ),
-  runnerOverflow: RunnerOverflow.pipe(
-    Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerOverflow)),
   ),
   runnerUnavailable: RunnerUnavailablePolicy.pipe(
     Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerUnavailable)),
@@ -2216,7 +2210,6 @@ const ServerSettingsPatchFields = Schema.Struct({
   enableAgentDeviceAccess: Schema.optionalKey(Schema.Boolean),
   runnerEnabled: Schema.optionalKey(Schema.Boolean),
   runnerWhere: Schema.optionalKey(RunnerWhere),
-  runnerOverflow: Schema.optionalKey(RunnerOverflow),
   runnerUnavailable: Schema.optionalKey(RunnerUnavailablePolicy),
   runnerAskMinutes: Schema.optionalKey(RunnerAskMinutes),
   runnerDeadlineAction: Schema.optionalKey(RunnerDeadlineAction),

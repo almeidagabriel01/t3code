@@ -12,13 +12,20 @@ import {
   type RunnerProjectConfig,
 } from "@t3tools/contracts";
 
-import { kindOf, plan, type Plan, type PlanInput } from "./admission.ts";
-import { heavySegments } from "./heavyHook.ts";
+import {
+  kindOf,
+  plan,
+  SAMPLE_FRESH_MS,
+  sustain,
+  type Plan,
+  type PlanInput,
+  type Sustained,
+} from "./admission.ts";
+import { heavySegments, tiedToMac } from "./heavyHook.ts";
 
 export const DEFAULT_PROJECT_CONFIG: RunnerProjectConfig = {
   runnerEnabled: RUNNER_DEFAULTS.runnerEnabled,
   runnerWhere: RUNNER_DEFAULTS.runnerWhere,
-  runnerOverflow: RUNNER_DEFAULTS.runnerOverflow,
   runnerUnavailable: RUNNER_DEFAULTS.runnerUnavailable,
   runnerAskMinutes: RUNNER_DEFAULTS.runnerAskMinutes,
   runnerDeadlineAction: RUNNER_DEFAULTS.runnerDeadlineAction,
@@ -109,13 +116,16 @@ export const matchesAny = (text: string, patterns: ReadonlyArray<string>) =>
 
 export type Eligibility = "linux" | "exclusive" | "mac-only" | "not-listed";
 
-/** Exclusive and Mac-only work never leaves the Mac; Linux takes only what every heavy part lists. */
+/**
+ * Exclusive work, Mac-only work and a line tied to this Mac's folders never leave it; Linux takes
+ * only what every heavy part lists.
+ */
 export const eligibilityOf = (
   entry: Pick<HeavyQueueEntry, "label" | "server">,
   config: RunnerProjectConfig,
 ): Eligibility => {
   if (kindOf(entry) === "exclusive") return "exclusive";
-  if (matchesAny(entry.label, config.runnerMacOnly)) return "mac-only";
+  if (matchesAny(entry.label, config.runnerMacOnly) || tiedToMac(entry.label)) return "mac-only";
   const segments = heavySegments(entry.label);
   const parts = segments.length === 0 ? [entry.label] : segments;
   return parts.every((part) => matchesAny(part, config.runnerLinuxCommands))
@@ -123,7 +133,7 @@ export const eligibilityOf = (
     : "not-listed";
 };
 
-export interface LinuxHealth {
+export interface LinuxHealth extends Sustained {
   /** Null until a check settles it. */
   readonly online: boolean | null;
   readonly failures: number;
@@ -146,6 +156,9 @@ export const UNKNOWN_HEALTH: LinuxHealth = {
   cpuCount: null,
   availableMemoryBytes: null,
   totalMemoryBytes: null,
+  overLimit: false,
+  overLimitSince: null,
+  underLimitSince: null,
 };
 
 export interface LinuxReading {
@@ -179,18 +192,51 @@ export type HealthCheck =
   | { readonly ok: true; readonly reading: LinuxReading }
   | { readonly ok: false; readonly error: string };
 
-/** Offline after `failuresToOffline` failures in a row, online again after one success. */
+const GIB = 1024 ** 3;
+
+/** Which of Linux's own limits a reading is past, for the waiting reason; null when none or unknown. */
+const linuxOverBy = (reading: LinuxReading, machine: RunnerMachineConfig): string | null => {
+  const { availableMemoryBytes: free, totalMemoryBytes: total, load1, cpuCount } = reading;
+  const floor = machine.runnerLinuxMemoryFloorPercent;
+  if (free !== null && total !== null && free < (floor / 100) * total) {
+    return `${(Math.max(0, free) / GIB).toFixed(1)} GB free, keeping ${floor}%`;
+  }
+  if (load1 === null || cpuCount === null) return null;
+  const cpu = (load1 / cpuCount) * 100;
+  return cpu > machine.runnerLinuxCpuCeilingPercent
+    ? `CPU ${Math.round(cpu)}%, limit ${machine.runnerLinuxCpuCeilingPercent}%`
+    : null;
+};
+
+/**
+ * Offline after the configured failures in a row, online again after one success. Each reading
+ * also moves Linux over or back under its limits, only once that lasts `windowMs`.
+ */
 export const nextHealth = (
   previous: LinuxHealth,
   check: HealthCheck,
-  failuresToOffline: number,
+  machine: RunnerMachineConfig,
+  windowMs: number,
   now: number,
 ): LinuxHealth => {
-  if (check.ok) return { online: true, failures: 0, checkedAt: now, okAt: now, ...check.reading };
+  if (check.ok) {
+    // One missed beat keeps the run of readings; a longer silence starts over from "has room".
+    const gapMs = 2 * (machine.runnerHeartbeatSeconds + machine.runnerSshTimeoutSeconds) * 1000;
+    const continuous = previous.okAt !== null && now - previous.okAt <= gapMs;
+    const over = linuxOverBy(check.reading, machine) !== null;
+    return {
+      online: true,
+      failures: 0,
+      checkedAt: now,
+      okAt: now,
+      ...check.reading,
+      ...sustain(continuous ? previous : null, over, now, windowMs),
+    };
+  }
   const failures = previous.failures + 1;
   return {
     ...previous,
-    online: failures >= failuresToOffline ? false : previous.online,
+    online: failures >= machine.runnerOfflineAfterFailures ? false : previous.online,
     failures,
     checkedAt: now,
     error: check.error,
@@ -263,13 +309,13 @@ const intentOf = (
 };
 
 /**
- * Decides every waiter for both runners. Mac waiters go through `plan` (or start at once with the
- * queue off); Linux waiters take free Linux slots, one per worktree. Automatic sends a waiter to
- * Linux once N jobs are running or waiting on the Mac ahead of it, and keeps it on the Mac when
- * Linux is full or offline.
+ * Decides every waiter for both runners. Hybrid places each in queue order: the Mac while it has
+ * room, else Linux while it has room, else the smaller backlog per slot (the Mac on a tie). Room is
+ * judged on sustained readings, so a spike never moves work; Hybrid never asks and stays on the Mac
+ * while Linux is offline or unknown.
  */
 export const planRoutes = (input: RoutePlanInput): RoutePlan => {
-  const { entries, now, health, machine } = input;
+  const { entries, now, health, machine, sample } = input;
   const queueOn = input.enabled;
   const paused = queueOn && input.paused;
   const running = entries.filter((entry) => entry.startedAt !== null);
@@ -278,7 +324,17 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
   const macRunning = running.filter((entry) => entry.runner !== "linux");
   const busyWorktrees = new Set(linuxRunning.map((entry) => input.contextOf(entry.cwd).worktree));
   let linuxFree = machine.runnerLinuxSlots - linuxRunning.length;
+  let linuxCount = linuxRunning.length;
   let macCount = macRunning.length;
+  let lastLinuxStart = Math.max(
+    -Infinity,
+    ...linuxRunning.map((entry) => Date.parse(entry.startedAt!)),
+  );
+  const macOver =
+    sample !== null && now - sample.at <= SAMPLE_FRESH_MS && sample.overLimit === true;
+  // `plan` starts nothing beside a job that runs alone.
+  const macExclusive = queueOn && macRunning.some((entry) => kindOf(entry) === "exclusive");
+  const reading = health.load1 !== null || health.availableMemoryBytes !== null;
 
   const admits: Record<string, Admit> = {};
   const routes: Record<string, HeavyRunner> = {};
@@ -293,14 +349,32 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
     if (queueOn) macWaiters.push(entry);
     else admits[entry.id] = { runner: "mac", ungated: true };
   };
-  /** A Linux slot now, or null with why not. */
-  const linuxSlot = (entry: HeavyQueueEntry, worktree: string): string | null => {
+  const toLinux = (entry: HeavyQueueEntry, reason: string) => {
+    routes[entry.id] = "linux";
+    linuxCount += 1;
+    reasons[entry.id] = reason;
+  };
+  /** The Mac takes another job now: slots (with the queue on) and its limits. */
+  const macRoom = () =>
+    !macOver && !macExclusive && (!queueOn || macCount < Math.max(1, input.maxRunning));
+  /** Why Linux cannot take a job of `worktree` now, or null when it can. */
+  const linuxBusy = (worktree: string): string | null => {
     if (linuxFree <= 0) return `all ${machine.runnerLinuxSlots} Linux slots are busy`;
     if (busyWorktrees.has(worktree)) return "this worktree is already running on Linux";
+    if (health.overLimit) return linuxOverBy(health, machine) ?? "easing back under its limits";
+    // A reading from before the last start does not show its load yet.
+    if (reading && (health.okAt ?? 0) <= lastLinuxStart) {
+      return "a fresh reading since the last job started there";
+    }
+    return null;
+  };
+  const toLinuxNow = (entry: HeavyQueueEntry, worktree: string) => {
+    routes[entry.id] = "linux";
+    linuxCount += 1;
     linuxFree -= 1;
     busyWorktrees.add(worktree);
+    lastLinuxStart = now;
     admits[entry.id] = { runner: "linux", ungated: !queueOn };
-    return null;
   };
 
   for (const entry of waiting) {
@@ -317,33 +391,40 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
     }
     const up = linuxUpFor(health, entry) && !dropHolds(entry, config, now);
     if (intent === "automatic") {
-      if (macCount < config.runnerOverflow || !up || paused) {
+      if (paused || !up || macRoom()) {
         toMac(entry);
         continue;
       }
-      const why = linuxSlot(entry, worktree);
-      if (why === null) routes[entry.id] = "linux";
-      else toMac(entry);
+      const why = linuxBusy(worktree);
+      if (why === null) toLinuxNow(entry, worktree);
+      // Both are full: the smaller backlog per slot, the Mac on a tie. With the queue off the Mac
+      // never waits, so it starts here.
+      else if (
+        queueOn &&
+        linuxCount / machine.runnerLinuxSlots < macCount / Math.max(1, input.maxRunning)
+      ) {
+        toLinux(entry, `waiting for Linux: ${why}`);
+      } else toMac(entry);
       continue;
     }
     // Bound for Linux.
-    routes[entry.id] = "linux";
     if (paused) {
-      reasons[entry.id] = "paused";
+      toLinux(entry, "paused");
       continue;
     }
     if (up) {
-      const why = linuxSlot(entry, worktree);
-      if (why !== null) reasons[entry.id] = `waiting for Linux: ${why}`;
+      const why = linuxBusy(worktree);
+      if (why === null) toLinuxNow(entry, worktree);
+      else toLinux(entry, `waiting for Linux: ${why}`);
       continue;
     }
     if (health.online === null && entry.linuxFailedAt === undefined) {
-      reasons[entry.id] = "checking whether Linux is up";
+      toLinux(entry, "checking whether Linux is up");
       continue;
     }
     // The user (or an expired question) already chose to wait.
     if (entry.route === "linux") {
-      reasons[entry.id] = "waiting for Linux to come back";
+      toLinux(entry, "waiting for Linux to come back");
       continue;
     }
     const reason: HeavyRunnerAskReason = entry.dropped === true ? "dropped" : "unavailable";
@@ -354,22 +435,25 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
       continue;
     }
     if (policy === "wait") {
-      reasons[entry.id] = `${what}: waiting for it`;
+      toLinux(entry, `${what}: waiting for it`);
       continue;
     }
     if (entry.ask === undefined) {
       asks[entry.id] = reason;
-      reasons[entry.id] = `${what}: asking you`;
+      toLinux(entry, `${what}: asking you`);
       continue;
     }
     if (!askExpired(entry, now)) {
-      reasons[entry.id] = `${what}: waiting for your answer`;
+      toLinux(entry, `${what}: waiting for your answer`);
       continue;
     }
     if (config.runnerDeadlineAction === "mac") toMac(entry);
     else if (config.runnerDeadlineAction === "wait") {
-      reasons[entry.id] = `${what}: no answer, waiting for it`;
-    } else cancels[entry.id] = `${what} and nobody answered in time: canceled`;
+      toLinux(entry, `${what}: no answer, waiting for it`);
+    } else {
+      routes[entry.id] = "linux";
+      cancels[entry.id] = `${what} and nobody answered in time: canceled`;
+    }
   }
 
   if (!queueOn) {

@@ -13,8 +13,8 @@ import {
   interceptBashCall,
   isQueued,
   nameOf,
+  lineParts,
   queueBashCall,
-  unwrapRemoto,
 } from "./heavyHook.ts";
 
 const PREFIX = "ELECTRON_RUN_AS_NODE=1 '/app/t3' heavy --queue-dir '/q'";
@@ -50,6 +50,7 @@ const HEAVY: ReadonlyArray<readonly [string, string]> = [
   ["cargo test --locked", "cargo test --locked"],
   ["(cd web && vp build) | tail -5", "vp build"],
   ["make test", "make test"],
+  ["cat > a.sh <<'EOF'\necho hi\nEOF\nvp test run", "vp test run"],
 ];
 
 const LIGHT = [
@@ -71,6 +72,9 @@ const LIGHT = [
   "cargo",
   "vpr dev",
   "",
+  // A heredoc is a script's text, not commands: editing a test file is not running it.
+  "cd /w && python3 - <<'EOF'\ns = 'cd apps/server && vp test run'\nEOF",
+  "cat <<-END > notes.md\n\tvp run build && npm test\n\tEND",
 ];
 
 describe("heavy Bash commands", () => {
@@ -162,20 +166,25 @@ describe("the PreToolUse answer", () => {
 
 describe("an agent's own remoto call", () => {
   it.each([
-    ["remoto vp test run", "vp test run"],
+    ["remoto vp test run", [], true, "vp test run"],
     [
       "cd apps/server && remoto vp test run src/a.test.ts",
-      "cd apps/server && vp test run src/a.test.ts",
+      ["apps/server"],
+      true,
+      "vp test run src/a.test.ts",
     ],
-    ["  remoto ./scripts/check.sh --all", "./scripts/check.sh --all"],
-    ["ls && remoto vp test run", null],
-    ["REMOTO_HOST=pc remoto vp test", null],
-    ["remoto", null],
-  ])("%j unwraps to %j", (command, unwrapped) => {
-    expect(unwrapRemoto(command)).toBe(unwrapped);
+    [`cd "/a b" && cd 'c' && remoto vp test`, ["/a b", "c"], true, "vp test"],
+    ["  remoto ./scripts/check.sh --all", [], true, "./scripts/check.sh --all"],
+    ["cd /w && vp test run", ["/w"], false, "vp test run"],
+    ["cd /w && cd $X && remoto vp test", ["/w"], false, "cd $X && remoto vp test"],
+    ["ls && remoto vp test run", [], false, "ls && remoto vp test run"],
+    ["REMOTO_HOST=pc remoto vp test", [], false, "REMOTO_HOST=pc remoto vp test"],
+    ["remoto", [], false, "remoto"],
+  ])("%j starts in %j, remoto %s, running %j", (line, dirs, remoto, command) => {
+    expect(lineParts(line)).toEqual({ dirs, remoto, command });
   });
 
-  it("with the Runner on, becomes one job sent to Linux instead of a second wrapper", () => {
+  it("with the Runner on, is queued as written and named by its own command; `t3 heavy` unwraps it", () => {
     const answer = queueBashCall(
       bash({ command: "cd apps/server && remoto vp test run" }),
       PREFIX,
@@ -183,12 +192,10 @@ describe("an agent's own remoto call", () => {
       { runner: true },
     );
     expect(answer!.hookSpecificOutput.updatedInput.command).toBe(
-      `${PREFIX} --runner linux --name 'vp test run' -- "\${SHELL:-/bin/sh}" -c 'cd apps/server && vp test run'`,
+      `${PREFIX} --name 'vp test run' -- "\${SHELL:-/bin/sh}" -c 'cd apps/server && remoto vp test run'`,
     );
     const script = queueBashCall(bash({ command: "remoto ./x.sh" }), PREFIX, {}, { runner: true });
-    expect(script!.hookSpecificOutput.updatedInput.command).toContain(
-      "--runner linux --name 'x.sh'",
-    );
+    expect(script!.hookSpecificOutput.updatedInput.command).toContain("--name 'x.sh'");
   });
 
   it.each([

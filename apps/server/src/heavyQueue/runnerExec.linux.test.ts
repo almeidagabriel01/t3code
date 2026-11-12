@@ -125,16 +125,22 @@ describe.runIf(enabled)("Runner against a disposable Linux", () => {
   });
 
   it("heartbeat goes offline after the configured failures and back online after one success", async () => {
-    const limit = 2;
-    let health = nextHealth(UNKNOWN_HEALTH, await checkLinux(machine, environment), limit, 1);
+    const config = { ...machine, runnerOfflineAfterFailures: 2 };
+    let health = nextHealth(
+      UNKNOWN_HEALTH,
+      await checkLinux(machine, environment),
+      config,
+      20_000,
+      1,
+    );
     expect(health).toMatchObject({ online: true, failures: 0 });
     expect(health.cpuCount).toBeGreaterThan(0);
     expect(health.totalMemoryBytes).toBeGreaterThan(0);
-    health = nextHealth(health, await checkLinux(machine, downEnvironment), limit, 2);
+    health = nextHealth(health, await checkLinux(machine, downEnvironment), config, 20_000, 2);
     expect(health).toMatchObject({ online: true, failures: 1 });
-    health = nextHealth(health, await checkLinux(machine, downEnvironment), limit, 3);
+    health = nextHealth(health, await checkLinux(machine, downEnvironment), config, 20_000, 3);
     expect(health).toMatchObject({ online: false, failures: 2 });
-    health = nextHealth(health, await checkLinux(machine, environment), limit, 4);
+    health = nextHealth(health, await checkLinux(machine, environment), config, 20_000, 4);
     expect(health).toMatchObject({ online: true, failures: 0 });
   });
 

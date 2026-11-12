@@ -38,7 +38,7 @@ describe("the queue × Runner line", () => {
     queuePaused: boolean,
     runnerEnabled: boolean,
     where: "mac" | "linux" | "automatic",
-  ) => heavyModeLine({ queueEnabled, queuePaused, runnerEnabled, where, overflow: 3 });
+  ) => heavyModeLine({ queueEnabled, queuePaused, runnerEnabled, where });
 
   it.each([
     [true, false, false, "mac", "Heavy jobs wait their turn on this Mac."],
@@ -58,7 +58,7 @@ describe("the queue × Runner line", () => {
       false,
       true,
       "automatic",
-      "Heavy jobs queue on this Mac; past 3 jobs, listed commands go to Linux.",
+      "Listed commands run here while this Mac has room, else on Linux; the rest wait their turn here.",
     ],
     [false, false, true, "mac", "No queue: heavy jobs start on this Mac right away."],
     [
@@ -73,22 +73,10 @@ describe("the queue × Runner line", () => {
       true,
       true,
       "automatic",
-      "No queue: jobs start here right away until 3 jobs run, then listed commands go to Linux.",
+      "No queue: jobs start here right away; listed commands go to Linux while this Mac is over its limits.",
     ],
   ] as const)("queue %s paused %s Runner %s %s", (queue, paused, runner, where, text) => {
     expect(line(queue, paused, runner, where)).toBe(text);
-  });
-
-  it("says one job, not one jobs", () => {
-    expect(
-      heavyModeLine({
-        queueEnabled: true,
-        queuePaused: false,
-        runnerEnabled: true,
-        where: "automatic",
-        overflow: 1,
-      }),
-    ).toContain("past 1 job,");
   });
 });
 
@@ -173,7 +161,7 @@ describe("Runner fields that do nothing under the current choices", () => {
     [
       "runnerLinuxCommands",
       { runnerWhere: "mac" },
-      "Only applies when jobs run on Linux or Automatic.",
+      "Only applies when jobs run on Linux or Hybrid.",
     ],
     ["runnerLinuxCommands", { runnerWhere: null }, null],
     ["runnerAskMinutes", {}, null],

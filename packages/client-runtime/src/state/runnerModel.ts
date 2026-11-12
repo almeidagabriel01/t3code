@@ -27,22 +27,17 @@ export const RUNNER_SETTING_COPY: Record<
   runnerWhere: {
     title: "Where heavy work runs",
     description:
-      "This Mac keeps everything here. Linux sends the listed commands there. Automatic keeps work here until this Mac has the number of jobs below, then sends listed commands to Linux.",
-  },
-  runnerOverflow: {
-    title: "Send to Linux after",
-    description:
-      "Automatic sends work to Linux once this Mac has this many heavy jobs, running and waiting.",
+      "This Mac keeps everything here. Linux sends the listed commands there. Hybrid runs listed commands here while this Mac has room and on Linux when it does not; waiting ones go to whichever has the shorter line.",
   },
   runnerLinuxCommands: {
-    title: "Commands that may run on Linux",
+    title: "Can run on Linux",
     description:
-      "One per line. A heavy command goes to Linux only when each heavy part of it matches one. Builds are left out because their output would stay on the PC.",
+      "A heavy command goes to Linux only when each heavy part of it matches one of these. Builds are left out because their output would stay on the PC.",
   },
   runnerMacOnly: {
-    title: "Commands that stay on this Mac",
+    title: "Always on this Mac",
     description:
-      "One per line. A heavy command that matches one always runs on this Mac, such as simulators and native builds.",
+      "A heavy command that matches one of these always runs on this Mac, even when sent to Linux by hand.",
   },
   runnerUnavailable: {
     title: "When Linux is offline",
@@ -86,19 +81,20 @@ export const RUNNER_SETTING_COPY: Record<
     description: "How long a stopped Linux job gets to exit before it is killed.",
   },
   runnerLinuxMemoryFloorPercent: {
-    title: "Keep memory free on Linux",
+    title: "Keep memory free",
     description: "A new job waits while less than this share of the PC's memory is free.",
   },
   runnerLinuxCpuCeilingPercent: {
-    title: "Linux CPU limit",
+    title: "CPU limit",
     description: "A new job waits while the PC's CPU is busier than this.",
   },
 };
 
+/** In the order the choice shows them: from all-local to all-remote. */
 export const RUNNER_WHERE_LABEL: Record<RunnerWhere, string> = {
   mac: "This Mac",
+  automatic: "Hybrid",
   linux: "Linux",
-  automatic: "Automatic",
 };
 
 export const RUNNER_POLICY_LABEL: Record<RunnerUnavailablePolicy, string> = {
@@ -126,12 +122,11 @@ export interface HeavyModeInput {
   readonly queuePaused: boolean;
   readonly runnerEnabled: boolean;
   readonly where: RunnerWhere;
-  readonly overflow: number;
 }
 
 /** One sentence for the current queue × Runner combination; both settings sections show it. */
 export function heavyModeLine(mode: HeavyModeInput): string {
-  const { queueEnabled, queuePaused, runnerEnabled, where, overflow } = mode;
+  const { queueEnabled, queuePaused, runnerEnabled, where } = mode;
   if (!runnerEnabled) {
     if (!queueEnabled) return "Heavy jobs start right away, with nothing tracking them.";
     return queuePaused
@@ -139,7 +134,6 @@ export function heavyModeLine(mode: HeavyModeInput): string {
       : "Heavy jobs wait their turn on this Mac.";
   }
   if (queueEnabled && queuePaused) return "Queue paused: nothing new starts on this Mac or Linux.";
-  const jobs = `${overflow} ${overflow === 1 ? "job" : "jobs"}`;
   if (queueEnabled) {
     switch (where) {
       case "mac":
@@ -147,7 +141,7 @@ export function heavyModeLine(mode: HeavyModeInput): string {
       case "linux":
         return "Listed commands run on Linux; everything else waits its turn on this Mac.";
       case "automatic":
-        return `Heavy jobs queue on this Mac; past ${jobs}, listed commands go to Linux.`;
+        return "Listed commands run here while this Mac has room, else on Linux; the rest wait their turn here.";
     }
   }
   switch (where) {
@@ -156,7 +150,7 @@ export function heavyModeLine(mode: HeavyModeInput): string {
     case "linux":
       return "No queue: listed commands wait for a Linux slot, the rest start here right away.";
     case "automatic":
-      return `No queue: jobs start here right away until ${jobs} run, then listed commands go to Linux.`;
+      return "No queue: jobs start here right away; listed commands go to Linux while this Mac is over its limits.";
   }
 }
 
@@ -268,13 +262,9 @@ export function runnerFieldIdle(key: RunnerKey, choices: RunnerChoices): string 
   if (key === "runnerEnabled") return null;
   if (choices.runnerEnabled === false) return "Only applies while the Runner is on.";
   switch (key) {
-    case "runnerOverflow":
-      return choices.runnerWhere === null || choices.runnerWhere === "automatic"
-        ? null
-        : "Only applies when jobs run Automatic.";
     case "runnerLinuxCommands":
       return choices.runnerWhere === "mac"
-        ? "Only applies when jobs run on Linux or Automatic."
+        ? "Only applies when jobs run on Linux or Hybrid."
         : null;
     case "runnerAskMinutes":
     case "runnerDeadlineAction":

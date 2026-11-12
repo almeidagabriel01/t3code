@@ -1,7 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
-import { HeavyQueueError, type HeavyQueueEntry } from "@t3tools/contracts";
+import { HEAVY_QUEUE_DEFAULTS, HeavyQueueError, type HeavyQueueEntry } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
@@ -194,6 +194,7 @@ const callTool = (params: { action: "status" | "promote"; id?: string }, access?
             linux: null,
             routes: {},
             macOnly: [],
+            ...HEAVY_QUEUE_DEFAULTS,
           }),
           command: Effect.succeed("t3 heavy --"),
           promote: (id, note) =>

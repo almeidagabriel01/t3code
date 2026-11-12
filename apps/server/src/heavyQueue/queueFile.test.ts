@@ -490,6 +490,58 @@ describe("heavy queue file", () => {
     expect(Queue.readDoc(dir).sample?.headroomSince).toBe(60_000);
   });
 
+  it("stores the Mac's limits clamped to their ranges, and reads bad or missing ones as defaults", () => {
+    const dir = tempDir();
+    const file = NodePath.join(dir, "queue.json");
+    const limits = () => {
+      const { macMemoryFloorPercent, macCpuCeilingPercent, heavyOverLimitSeconds } =
+        Queue.readDoc(dir);
+      return [macMemoryFloorPercent, macCpuCeilingPercent, heavyOverLimitSeconds];
+    };
+    expect(limits()).toEqual([20, 70, 20]);
+    NodeFS.writeFileSync(
+      file,
+      JSON.stringify({
+        macMemoryFloorPercent: 90,
+        macCpuCeilingPercent: "70",
+        heavyOverLimitSeconds: 45,
+      }),
+    );
+    expect(limits()).toEqual([20, 70, 45]);
+    Queue.setLimit(dir, "macMemoryFloorPercent", 2);
+    Queue.setLimit(dir, "macCpuCeilingPercent", 85.7);
+    Queue.setLimit(dir, "heavyOverLimitSeconds", 9_999);
+    expect(limits()).toEqual([5, 85, 300]);
+  });
+
+  it("counts the Mac over its limits for routing only once readings stay there for the window", () => {
+    const dir = tempDir();
+    const reading = (at: number, busyCores: number) =>
+      Queue.recordSample(
+        dir,
+        { at, busyCores, cpuCount: 10, availableMemoryBytes: 30, totalMemoryBytes: 32 },
+        {},
+      );
+    const overLimit = () => Queue.readDoc(dir).sample?.overLimit;
+    Queue.setLimit(dir, "macCpuCeilingPercent", 50);
+    Queue.setLimit(dir, "heavyOverLimitSeconds", 10);
+    reading(0, 1);
+    // A 2-second spike moves nothing.
+    reading(2_000, 9);
+    reading(4_000, 1);
+    expect(overLimit()).toBe(false);
+    for (const at of [6_000, 8_000, 10_000, 12_000, 14_000]) reading(at, 6);
+    expect(overLimit()).toBe(false);
+    reading(16_000, 6);
+    expect(overLimit()).toBe(true);
+    reading(18_000, 1);
+    reading(26_000, 1);
+    expect(overLimit()).toBe(true);
+    reading(28_000, 1);
+    expect(overLimit()).toBe(false);
+    expect(Queue.readDoc(dir).sample?.headroomSince).toBe(18_000);
+  });
+
   it("lets only one waiter sample while the reading is fresh, and takes over once it is stale", () => {
     const dir = tempDir();
     const reading = (at: number) => ({
@@ -594,7 +646,10 @@ describe("Runner in the queue file", () => {
     expect(Queue.route(dir, "a", "mac")).toBe("ok");
     expect(Queue.read(dir)[0]).toMatchObject({ route: "mac" });
     expect(Queue.read(dir)[0]).not.toHaveProperty("ask");
-    expect(Queue.tryStart(dir, "a", NOW)).toMatchObject({ status: "started", workers: 9 });
+    expect(Queue.tryStart(dir, "a", NOW)).toMatchObject({
+      status: "started",
+      workers: Math.max(2, NodeOS.availableParallelism() - 1),
+    });
   });
 
   it("refuses to send exclusive or Mac-only work to Linux, and unknown entries", () => {
@@ -683,6 +738,45 @@ describe("Runner in the queue file", () => {
     expect(Queue.modeFor(Queue.readDoc(dir), "/x")).toEqual({ enabled: true, runner: false });
   });
 
+  it("reads a file from before Hybrid: overflow kept but unused, missing limits as defaults", () => {
+    const dir = tempDir();
+    const file = NodePath.join(dir, "queue.json");
+    const {
+      runnerLinuxMemoryFloorPercent: _f,
+      runnerLinuxCpuCeilingPercent: _c,
+      ...machine
+    } = DEFAULT_MACHINE_CONFIG;
+    const old = config({ runnerWhere: "automatic", runnerOverflow: 0 } as never);
+    NodeFS.writeFileSync(
+      file,
+      JSON.stringify({
+        runner: { ...block(old, [{ root: "/w", config: old }]), machine },
+        linux: { online: true, failures: 0, checkedAt: NOW, okAt: NOW, load1: 9, cpuCount: 6 },
+        sample: {
+          at: NOW - 1000,
+          busyCores: 1,
+          cpuCount: 10,
+          availableMemoryBytes: 20 * 1024 ** 3,
+          totalMemoryBytes: 32 * 1024 ** 3,
+          headroomSince: NOW - 60_000,
+        },
+      }),
+    );
+    const doc = Queue.readDoc(dir);
+    expect(doc.runner?.machine).toEqual(DEFAULT_MACHINE_CONFIG);
+    expect(doc).toMatchObject({ macMemoryFloorPercent: 20, heavyOverLimitSeconds: 20 });
+    // A busy Linux in an old heartbeat is not over its limits until a new one says so.
+    expect(doc.linux.overLimit).toBe(false);
+    expect(Queue.configFor(doc, "/w/a").runnerWhere).toBe("automatic");
+    Queue.enqueue(dir, test("a"));
+    // Hybrid with room on the Mac keeps it here, however low the old overflow was.
+    expect(Queue.tryStart(dir, "a", NOW)).toEqual({
+      status: "started",
+      workers: expect.any(Number),
+    });
+    expect(JSON.parse(NodeFS.readFileSync(file, "utf8")).runner.global.runnerOverflow).toBe(0);
+  });
+
   it("resolves a worktree's folder through its main checkout, without git", () => {
     const root = tempDir();
     const main = NodePath.join(root, "main");
@@ -699,11 +793,13 @@ describe("Runner in the queue file", () => {
     });
     expect(Queue.checkoutOf(NodePath.join(main))).toEqual({ root: main, aliases: [] });
     const doc = {
-      runner: block(config({ runnerOverflow: 3 }), [
-        { root: main, config: config({ runnerOverflow: 9 }) },
+      runner: block(config({ runnerAskMinutes: 3 }), [
+        { root: main, config: config({ runnerAskMinutes: 9 }) },
       ]),
     };
-    expect(Queue.configFor(doc, NodePath.join(worktree, "apps", "server")).runnerOverflow).toBe(9);
+    expect(Queue.configFor(doc, NodePath.join(worktree, "apps", "server")).runnerAskMinutes).toBe(
+      9,
+    );
   });
 
   describe("the one gate every Bash hook goes through", () => {
@@ -727,7 +823,7 @@ describe("Runner in the queue file", () => {
       const answer = Queue.answerBashCall(dir, call(command), PREFIX);
       expect(answer !== null).toBe(answered);
       if (command.startsWith("remoto") && answer !== null) {
-        expect(answer.hookSpecificOutput.updatedInput.command).toContain("--runner linux");
+        expect(answer.hookSpecificOutput.updatedInput.command).toContain("-c 'remoto vp test run'");
       }
     });
 
@@ -738,6 +834,13 @@ describe("Runner in the queue file", () => {
       Queue.setEnabled(dir, false);
       expect(Queue.answerBashCall(dir, call("vp test run", "/w/on/src"), PREFIX)).not.toBeNull();
       expect(Queue.answerBashCall(dir, call("vp test run", "/w/off"), PREFIX)).toBeNull();
+      // A leading `cd` names the folder the command runs in, so its project decides.
+      expect(
+        Queue.answerBashCall(dir, call("cd ../on && vp test run", "/w/off"), PREFIX),
+      ).not.toBeNull();
+      expect(
+        Queue.answerBashCall(dir, call("cd /w/off && vp test run", "/w/on"), PREFIX),
+      ).toBeNull();
     });
   });
 });

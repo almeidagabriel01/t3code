@@ -3,6 +3,32 @@ import * as Schema from "effect/Schema";
 
 import { RunnerWhere } from "./runner.ts";
 
+/** Queue settings kept in the queue file, so a `t3 heavy` waiter reads them without a server. */
+export const HEAVY_QUEUE_LIMITS = {
+  macMemoryFloorPercent: { min: 5, max: 80, unit: "percent" },
+  macCpuCeilingPercent: { min: 20, max: 100, unit: "percent" },
+  heavyOverLimitSeconds: { min: 5, max: 300, unit: "seconds" },
+} as const;
+export type HeavyQueueLimitKey = keyof typeof HEAVY_QUEUE_LIMITS;
+
+export const HEAVY_QUEUE_DEFAULTS: Record<HeavyQueueLimitKey, number> = {
+  macMemoryFloorPercent: 20,
+  macCpuCeilingPercent: 70,
+  // Routing moves work only once a machine stays past (or back under) its limits this long.
+  heavyOverLimitSeconds: 20,
+};
+
+/** Why `value` is not a valid `key`, for people; null when it is. */
+export const heavyQueueLimitError = (key: HeavyQueueLimitKey, value: number): string | null => {
+  const { min, max, unit } = HEAVY_QUEUE_LIMITS[key];
+  if (!Number.isInteger(value)) return `Use a whole number of ${unit}.`;
+  if (value < min || value > max) return `Use ${min} to ${max} ${unit}.`;
+  return null;
+};
+
+const limit = (key: HeavyQueueLimitKey) =>
+  Schema.Int.check(Schema.makeFilter((value: number) => heavyQueueLimitError(key, value) ?? true));
+
 export const HeavyRunner = Schema.Literals(["mac", "linux"]);
 export type HeavyRunner = typeof HeavyRunner.Type;
 export const HeavyRunnerPhase = Schema.Literals(["syncing", "installing", "running"]);
@@ -186,6 +212,17 @@ export const HeavyQueueState = Schema.Struct({
   rules: Schema.Array(HeavyQueueRule).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   /** How many entries may run at once. */
   maxRunning: Schema.Int.pipe(Schema.withDecodingDefault(Effect.succeed(1))),
+  /** The Mac counts as over its limits below this share of free memory or above this CPU use. */
+  macMemoryFloorPercent: Schema.Int.pipe(
+    Schema.withDecodingDefault(Effect.succeed(HEAVY_QUEUE_DEFAULTS.macMemoryFloorPercent)),
+  ),
+  macCpuCeilingPercent: Schema.Int.pipe(
+    Schema.withDecodingDefault(Effect.succeed(HEAVY_QUEUE_DEFAULTS.macCpuCeilingPercent)),
+  ),
+  /** How long readings must stay past a limit, or back under it, before routing follows. */
+  heavyOverLimitSeconds: Schema.Int.pipe(
+    Schema.withDecodingDefault(Effect.succeed(HEAVY_QUEUE_DEFAULTS.heavyOverLimitSeconds)),
+  ),
   /** Why a waiting entry is not starting, by entry id. */
   reasons: Schema.Record(Schema.String, Schema.String).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
@@ -229,6 +266,24 @@ export type HeavyQueueSetEnabledInput = typeof HeavyQueueSetEnabledInput.Type;
 
 export const HeavyQueueSetMaxRunningInput = Schema.Struct({ maxRunning: Schema.Int });
 export type HeavyQueueSetMaxRunningInput = typeof HeavyQueueSetMaxRunningInput.Type;
+
+export const HeavyQueueSetMacMemoryFloorPercentInput = Schema.Struct({
+  macMemoryFloorPercent: limit("macMemoryFloorPercent"),
+});
+export type HeavyQueueSetMacMemoryFloorPercentInput =
+  typeof HeavyQueueSetMacMemoryFloorPercentInput.Type;
+
+export const HeavyQueueSetMacCpuCeilingPercentInput = Schema.Struct({
+  macCpuCeilingPercent: limit("macCpuCeilingPercent"),
+});
+export type HeavyQueueSetMacCpuCeilingPercentInput =
+  typeof HeavyQueueSetMacCpuCeilingPercentInput.Type;
+
+export const HeavyQueueSetHeavyOverLimitSecondsInput = Schema.Struct({
+  heavyOverLimitSeconds: limit("heavyOverLimitSeconds"),
+});
+export type HeavyQueueSetHeavyOverLimitSecondsInput =
+  typeof HeavyQueueSetHeavyOverLimitSecondsInput.Type;
 
 /** A null priority clears the rule. */
 /** "high" starts a waiter now and lifts a running job's processes out of background QoS; "low" puts them back. */
