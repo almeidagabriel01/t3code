@@ -245,11 +245,11 @@ describe("t3 heavy", () => {
   });
 
   it.each([
-    [true, "darwin", "/usr/sbin/taskpolicy", ["-b", "vp", "test"]],
-    [false, "darwin", "vp", ["test"]],
-    [true, "linux", "vp", ["test"]],
-  ] as const)("starts in the background: %s on %s", (background, platform, program, args) => {
-    expect(launchOf("vp", ["test"], background, platform)).toEqual({ program, args });
+    [true, "darwin", "/usr/sbin/taskpolicy", ["-b", "vp", "test"], "background"],
+    [false, "darwin", "vp", ["test"], "normal"],
+    [true, "linux", "vp", ["test"], null],
+  ] as const)("starts in the background: %s on %s", (background, platform, program, args, qos) => {
+    expect(launchOf("vp", ["test"], background, platform)).toEqual({ program, args, qos });
   });
 
   it.each([

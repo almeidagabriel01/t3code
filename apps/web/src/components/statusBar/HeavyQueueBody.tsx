@@ -13,7 +13,9 @@ import { CSS } from "@dnd-kit/utilities";
 import {
   dropTarget,
   formatDuration,
+  jobPriority,
   moveTarget,
+  PRIORITY_CHANGE,
   ordinal,
   PRIORITY_LABEL,
   projectForCwd,
@@ -22,6 +24,7 @@ import {
   ruleForRoot,
   usageLine,
   type MoveAction,
+  type PriorityChange,
 } from "@t3tools/client-runtime/state/heavyQueueModel";
 import type { EnvironmentId, HeavyQueueEntry } from "@t3tools/contracts";
 import {
@@ -30,6 +33,7 @@ import {
   ArrowUpIcon,
   ArrowUpToLineIcon,
   EllipsisIcon,
+  GaugeIcon,
   GripVerticalIcon,
   HourglassIcon,
   MessageSquareIcon,
@@ -80,6 +84,12 @@ export function Elapsed({ since, prefix }: { readonly since: string; readonly pr
 }
 
 type Actions = ReturnType<typeof useHeavyQueueActions>;
+
+const PRIORITY_CHANGE_ITEM: Record<PriorityChange, { Icon: typeof ZapIcon; text: string }> = {
+  "high-now": { Icon: ZapIcon, text: "High priority now" },
+  normal: { Icon: GaugeIcon, text: "Normal priority" },
+  lower: { Icon: SnailIcon, text: "Lower priority" },
+};
 
 function RowMenu({
   entry,
@@ -144,24 +154,19 @@ function RowMenu({
             </MenuItem>
           </MenuGroup>
         )}
-        {entry.priority === "high" ? null : (
-          <MenuItem
-            disabled={!actions.canChange}
-            onClick={() => void actions.setPriority(entry.id, "high")}
-          >
-            <ZapIcon aria-hidden />
-            High priority now
-          </MenuItem>
-        )}
-        {running ? (
-          <MenuItem
-            disabled={!actions.canChange}
-            onClick={() => void actions.setPriority(entry.id, "low")}
-          >
-            <SnailIcon aria-hidden />
-            Lower priority
-          </MenuItem>
-        ) : null}
+        {jobPriority(entry).changes.map((change) => {
+          const { Icon, text } = PRIORITY_CHANGE_ITEM[change];
+          return (
+            <MenuItem
+              key={change}
+              disabled={!actions.canChange}
+              onClick={() => void actions.setPriority(entry.id, PRIORITY_CHANGE[change])}
+            >
+              <Icon aria-hidden />
+              {text}
+            </MenuItem>
+          );
+        })}
         {onOpenThread === null ? null : (
           <MenuItem onClick={onOpenThread}>
             <MessageSquareIcon aria-hidden />
@@ -240,6 +245,7 @@ function Row({
   const command = readableLabel(entry.label);
   const title = entry.threadId === null ? undefined : threadTitle(entry.threadId);
   const usage = usageLine(entry, state);
+  const cpuLabel = jobPriority(entry).label;
   const detail = [state.reasons[entry.id], entry.note].filter(Boolean).join(" · ");
   const Icon = running ? PlayIcon : HourglassIcon;
   return (
@@ -284,6 +290,9 @@ function Row({
             <span className="shrink-0 rounded-sm bg-foreground/8 px-1">
               {PRIORITY_LABEL[rule.priority]}
             </span>
+          )}
+          {cpuLabel === null ? null : (
+            <span className="shrink-0 rounded-sm bg-foreground/8 px-1">{cpuLabel}</span>
           )}
         </div>
         <div className="truncate text-xs font-medium text-foreground/90">{label}</div>

@@ -451,26 +451,37 @@ export const startNow = (dir: string, id: string) =>
   });
 
 /**
- * "high" on a waiter releases it at once, like `startNow`; "low" takes that back. On a running job
- * it only records the level: the caller changes its processes' QoS.
+ * "high" on a waiter releases it at once, like `startNow`; "low" takes that back. A running job's
+ * place no longer matters: the caller changes its processes' QoS and records it with `setQos`.
  */
 export const setPriority = (dir: string, id: string, priority: "low" | "high") =>
   mutate(dir, (doc): Decided<{ readonly result: MoveResult; readonly entry?: HeavyQueueEntry }> => {
     const target = doc.entries.find((entry) => entry.id === id);
     if (target === undefined) return { doc, result: { result: "not-found" } };
+    if (target.startedAt !== null) return { doc, result: { result: "ok", entry: target } };
     const { forced: _forced, ...rest } = target;
-    const waiting = target.startedAt === null;
     const updated: HeavyQueueEntry = {
       ...rest,
       priority,
-      ...(waiting && priority === "high" ? { forced: true } : {}),
-      ...(!waiting && target.forced === true ? { forced: true } : {}),
+      ...(priority === "high" ? { forced: true } : {}),
     };
     return {
       doc: { ...doc, entries: doc.entries.map((entry) => (entry.id === id ? updated : entry)) },
       result: { result: "ok", entry: updated },
     };
   });
+
+/** Records the CPU QoS a running job's processes were just given. */
+export const setQos = (dir: string, id: string, qos: NonNullable<HeavyQueueEntry["qos"]>) =>
+  mutate(dir, (doc) => ({
+    doc: {
+      ...doc,
+      entries: doc.entries.map((entry) =>
+        entry.id === id && entry.startedAt !== null ? { ...entry, qos } : entry,
+      ),
+    },
+    result: undefined,
+  }));
 
 /** Removes a waiter, or stops the running `t3 heavy` command with SIGTERM. */
 export const cancel = (dir: string, id: string) => mutate(dir, (doc) => decideCancel(doc, id));

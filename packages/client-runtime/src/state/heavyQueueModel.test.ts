@@ -5,6 +5,7 @@ import {
   dropTarget,
   formatDuration,
   heavyCommandKey,
+  jobPriority,
   moveTarget,
   ordinal,
   peakUsageLine,
@@ -26,6 +27,26 @@ const e = (id: string, started = false): HeavyQueueEntry => ({
   startedAt: started ? "2026-01-01T00:00:01.000Z" : null,
 });
 const entries = [e("r", true), e("a"), e("b"), e("c"), e("d")];
+
+describe("jobPriority", () => {
+  // Agents' jobs wait "low" but run at normal QoS: only the applied QoS may label a running row.
+  it.each([
+    ["waiting agent job", { priority: "low" }, false, null, ["high-now"]],
+    ["waiting user job", { priority: "normal" }, false, null, ["high-now"]],
+    ["waiter already released", { priority: "high" }, false, null, []],
+    ["running agent job at normal QoS", { priority: "low", qos: "normal" }, true, null, ["lower"]],
+    [
+      "running job lowered",
+      { priority: "normal", qos: "background" },
+      true,
+      "Low priority",
+      ["normal"],
+    ],
+    ["running where QoS cannot change", { priority: "low" }, true, null, []],
+  ] as const)("%s", (_name, fields, started, label, changes) => {
+    expect(jobPriority({ ...e("j", started), ...fields })).toEqual({ label, changes });
+  });
+});
 
 describe("projectForCwd", () => {
   const projects = [
