@@ -7,8 +7,10 @@ import { describe, expect, it } from "@effect/vitest";
 
 import {
   HEAVY_JOB_ENV,
+  heavyRoute,
   heavySegment,
   hookScript,
+  interceptBashCall,
   isQueued,
   nameOf,
   queueBashCall,
@@ -154,6 +156,19 @@ describe("the PreToolUse answer", () => {
     ["a non-object tool input", { tool_name: "Bash", tool_input: "vp test" }, {}],
   ])("leaves %s alone", (_why, input, env) => {
     expect(queueBashCall(input, PREFIX, env)).toBeNull();
+  });
+});
+
+describe("the one switch every entry point reads", () => {
+  it("queue on: heavy calls are held; queue off: every call passes through as written", () => {
+    const heavy = bash({ command: "vp test run", description: "Tests" });
+    expect(heavyRoute({ enabled: true })).toBe("queue");
+    expect(heavyRoute({ enabled: false })).toBe("direct");
+    expect(interceptBashCall(heavy, PREFIX, { enabled: true })).toEqual(
+      queueBashCall(heavy, PREFIX),
+    );
+    expect(queueBashCall(heavy, PREFIX)).not.toBeNull();
+    expect(interceptBashCall(heavy, PREFIX, { enabled: false })).toBeNull();
   });
 });
 

@@ -17,7 +17,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { estimate, hasHeadroom, SAMPLE_FRESH_MS, signatureOf } from "./admission.ts";
 import * as ClaudeSettingsHook from "./claudeSettingsHook.ts";
-import { hookScript, queueBashCall, shellQuote } from "./heavyHook.ts";
+import { hookScript, interceptBashCall, shellQuote } from "./heavyHook.ts";
 import * as QueueFile from "./queueFile.ts";
 
 const POLL_INTERVAL = "1 second";
@@ -118,7 +118,7 @@ export const bashHook =
   (prefix: string, dir: string = QueueFile.defaultQueueDir()) =>
   (hookInput: unknown) =>
     // readDoc never throws: a missing or corrupt file reads as an empty queue that is on.
-    QueueFile.readDoc(dir).enabled ? queueBashCall(hookInput, prefix) : null;
+    interceptBashCall(hookInput, prefix, QueueFile.readDoc(dir));
 
 const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings?: string) {
   const command = `${yield* queuePrefix(dir)} --`;

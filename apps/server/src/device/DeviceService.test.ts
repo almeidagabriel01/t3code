@@ -99,6 +99,7 @@ const fixture = Effect.fn("fixture")(function* (
     readonly routesStreams?: boolean;
     readonly onClose?: Effect.Effect<"ok" | "missing" | "reject" | "http_error" | "malformed">;
     readonly onPlatformAvailability?: Effect.Effect<void>;
+    readonly launchers?: DeviceService.AgentDeviceLaunchers;
   } = {},
 ) {
   const settings = yield* Ref.make(DEFAULT_SERVER_SETTINGS);
@@ -302,6 +303,7 @@ const fixture = Effect.fn("fixture")(function* (
     undefined,
     () => Effect.succeed("/host.json"),
     installTool,
+    options.launchers,
   ).pipe(
     Effect.provide(NodeCrypto.layer),
     Effect.provideService(DeviceHost.DeviceHost, host),
@@ -1023,7 +1025,14 @@ it.effect("keeps shutdown successful when subsequent discovery fails", () =>
 
 it.effect("powers off an emulator T3 used once nothing touched it for the idle limit", () =>
   Effect.gen(function* () {
-    const { service } = yield* fixture();
+    let lastRun: number | null = null;
+    const { service } = yield* fixture(Effect.void, undefined, false, undefined, false, undefined, {
+      launchers: {
+        bind: ({ session }) => Effect.succeed(`/targets/${session}/agent-device`),
+        prune: () => Effect.void,
+        lastRun: () => Effect.sync(() => lastRun),
+      },
+    });
     yield* service.configure({ enabled: true });
     const threadId = ThreadId.make("idle");
     const { deviceId } = yield* service.open({
@@ -1037,6 +1046,19 @@ it.effect("powers off an emulator T3 used once nothing touched it for the idle l
     );
 
     yield* TestClock.adjust("19 minutes");
+    yield* service.reapIdleDevices(20);
+    expect(yield* booted).toBe(true);
+
+    // An agent command through its launcher counts as use, read from when the launcher last ran.
+    yield* service.agentLauncher({
+      threadId,
+      hostId: LOCAL_DEVICE_HOST_ID,
+      deviceId,
+      targetArgs: [],
+    });
+    yield* TestClock.adjust("15 minutes");
+    lastRun = 34 * 60_000;
+    yield* TestClock.adjust("15 minutes");
     yield* service.reapIdleDevices(20);
     expect(yield* booted).toBe(true);
 

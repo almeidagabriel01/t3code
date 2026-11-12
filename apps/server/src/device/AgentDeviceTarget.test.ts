@@ -16,6 +16,7 @@ import {
   agentDeviceCloseOutcome,
   agentDeviceHoldMarker,
   bindAgentDeviceLauncher,
+  launcherLastRun,
   clearAgentDeviceHolds,
   ensureAgentDeviceShim,
   pruneAgentDeviceLaunchers,
@@ -130,6 +131,8 @@ exec '${process.execPath.replaceAll("'", "'\"'\"'")}' "$@"
       ]);
       // Each command marks its launcher's directory, which the idle-device check reads.
       expect(Option.getOrThrow((yield* fs.stat(bound)).mtime).getTime()).toBeGreaterThan(0);
+      expect(yield* launcherLastRun(command)).toBeGreaterThan(0);
+      expect(yield* launcherLastRun(path.join(dir, "gone", "agent-device"))).toBeNull();
       // A flag the agent passes itself wins over the bound one.
       expect(yield* Effect.promise(() => launch(bound, ["open", "--session", "mine"]))).toEqual([
         "open",
