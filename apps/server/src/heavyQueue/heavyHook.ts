@@ -126,7 +126,7 @@ export const hookScript = (hookCommand: string) => `#!/bin/sh
 # Written by T3 Code for its Claude Code hook (Settings > Maintenance > Heavy work).
 [ "\${${HEAVY_JOB_ENV}:-}" = 1 ] && exit 0
 input=
-while IFS= read -r line || [ -n "\$line" ]; do input="\$input\$line
+while IFS= read -r line || [ -n "$line" ]; do input="$input$line
 "; done
 # Just the command's JSON text: \`","\` never occurs inside an escaped string, so it ends it.
 rest=\${input#*\\"command\\"}
@@ -135,8 +135,8 @@ case "\${rest%%\\",\\"*}" in
   *) exit 0 ;;
 esac
 # Only a complete answer goes back; a T3 that fails halfway says nothing.
-answer=\$(printf '%s' "\$input" | { ${hookCommand}; } 2>/dev/null) || exit 0
-printf '%s' "\$answer"
+answer=$(printf '%s' "$input" | { ${hookCommand}; } 2>/dev/null) || exit 0
+printf '%s' "$answer"
 `;
 
 /** The first part of a shell command line that is heavy work, or null when none is. */

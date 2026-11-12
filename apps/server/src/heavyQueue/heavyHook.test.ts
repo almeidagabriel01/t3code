@@ -160,7 +160,7 @@ describe("the PreToolUse answer", () => {
 describe("the sh pre-filter installed for sessions outside T3", () => {
   const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-heavy-hook-"));
   const script = (hookCommand: string) => {
-    const path = NodePath.join(dir, `${hookCommand.length}-${Math.random()}.sh`);
+    const path = NodePath.join(dir, `${NodeFS.readdirSync(dir).length}.sh`);
     NodeFS.writeFileSync(path, hookScript(hookCommand));
     return path;
   };
