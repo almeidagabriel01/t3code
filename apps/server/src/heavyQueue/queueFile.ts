@@ -678,6 +678,12 @@ export const setRule = (dir: string, root: string, priority: HeavyQueueRule["pri
     };
   });
 
+/** Exclusive work and its project's Mac-only list never leave this Mac. */
+export const staysOnMac = (doc: Pick<QueueDoc, "runner">, entry: HeavyQueueEntry) => {
+  const eligibility = eligibilityOf(entry, configFor(doc, entry.cwd));
+  return eligibility === "exclusive" || eligibility === "mac-only";
+};
+
 /** Writes this server's Runner settings unless a live, higher-ranked publisher owns the block. */
 export const publishRunner = (dir: string, block: RunnerBlock) =>
   mutate(dir, (doc) =>
@@ -726,12 +732,7 @@ export const route = (dir: string, id: string, runner: HeavyRunner, force = fals
   mutate(dir, (doc): Decided<MoveResult> => {
     const target = doc.entries.find((entry) => entry.id === id);
     if (target === undefined) return { doc, result: "not-found" };
-    if (runner === "linux") {
-      const eligibility = eligibilityOf(target, configFor(doc, target.cwd));
-      if (eligibility === "exclusive" || eligibility === "mac-only") {
-        return { doc, result: "not-allowed" };
-      }
-    }
+    if (runner === "linux" && staysOnMac(doc, target)) return { doc, result: "not-allowed" };
     const update = (patch: (entry: HeavyQueueEntry) => HeavyQueueEntry) => ({
       doc: { ...doc, entries: doc.entries.map((e) => (e.id === id ? patch(e) : e)) },
       result: "ok" as const,

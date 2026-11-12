@@ -132,6 +132,8 @@ export const HeavyQueueState = Schema.Struct({
   deviceIdleMinutes: Schema.Int.pipe(Schema.withDecodingDefault(Effect.succeed(20))),
   /** Null while no project turns the Runner on. */
   linux: Schema.NullOr(HeavyRunnerLinux).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  /** Entries that never leave this Mac (exclusive, or on their project's Mac-only list). */
+  macOnly: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   /** Where each waiter would go if a slot opened now, by entry id. */
   routes: Schema.Record(Schema.String, HeavyRunner).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),

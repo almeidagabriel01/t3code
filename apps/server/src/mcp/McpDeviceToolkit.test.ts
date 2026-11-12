@@ -125,6 +125,7 @@ const layerHeavyQueueMock = Layer.mock(HeavyQueue.HeavyQueue)({
     machine: null,
     linux: null,
     routes: {},
+    macOnly: [],
   }),
 });
 

@@ -249,6 +249,7 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
           }
         : null,
       linux: linuxState(doc),
+      macOnly: entries.filter((entry) => QueueFile.staysOnMac(doc, entry)).map((entry) => entry.id),
       routes: plan.routes,
     };
   });

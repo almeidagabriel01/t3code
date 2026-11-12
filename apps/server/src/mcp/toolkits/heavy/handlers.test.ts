@@ -171,6 +171,7 @@ const callTool = (params: { action: "status" | "promote"; id?: string }, access?
             machine: null,
             linux: null,
             routes: {},
+            macOnly: [],
           }),
           command: Effect.succeed("t3 heavy --"),
           promote: (id, note) =>
