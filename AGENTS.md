@@ -126,6 +126,8 @@ An empty database is a bad test. Seed your worktree's `.t3` with a copy of real 
   - `rerender` needs a fresh element on every call.
   - No lifecycle hooks and no module-level mutable state. Shared mock state that `vi.mock` factories read is reset by a `setup()` call at the top of the test.
   - `router` is on by default. Pass `router: false` only with a one-line comment saying why.
+  - The React Compiler memoizes components, so a `rerender` after changing a mocked hook's value never reaches memoized children: pass the state through the first render.
+  - Under fake timers, `toHaveTextContent` can fail on text that is there; assert on `element.textContent` instead. `t3code/no-frame-waits-in-browser-tests` rejects a partial `toFake` list.
 
   ```tsx
   it("saves on Enter", async () => {
