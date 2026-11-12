@@ -1,4 +1,5 @@
 import { GLOBAL_SKILLS_WS_METHODS } from "./globalSkillsRpc.ts";
+import { INTEGRATIONS_WS_METHODS } from "./integrations.ts";
 import * as Schema from "effect/Schema";
 import { GitPreparePullRequestThreadInput, GitRunStackedActionInput } from "./git.ts";
 import {
@@ -57,6 +58,14 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.heavyQueueSetDeviceIdleMinutes]: AuthTerminalOperateScope,
   [WS_METHODS.heavyQueueStopCommand]: AuthTerminalOperateScope,
   [GLOBAL_SKILLS_WS_METHODS.globalSkillsRemove]: AuthSettingsWriteScope,
+  // Integrations hold credentials to outside services, as settings secrets do.
+  [INTEGRATIONS_WS_METHODS.integrationsBeginConnect]: AuthSettingsWriteScope,
+  [INTEGRATIONS_WS_METHODS.integrationsCompleteConnect]: AuthSettingsWriteScope,
+  [INTEGRATIONS_WS_METHODS.integrationsCancelConnect]: AuthSettingsWriteScope,
+  [INTEGRATIONS_WS_METHODS.integrationsDisconnect]: AuthSettingsWriteScope,
+  [INTEGRATIONS_WS_METHODS.integrationsSaveToken]: AuthSettingsWriteScope,
+  [INTEGRATIONS_WS_METHODS.integrationsSaveOwnApp]: AuthSettingsWriteScope,
+  [INTEGRATIONS_WS_METHODS.integrationsRemoveOwnApp]: AuthSettingsWriteScope,
   [GLOBAL_SKILLS_WS_METHODS.globalSkillsRescan]: AuthSettingsWriteScope,
   [WS_METHODS.serverRunStorageCleanup]: AuthSettingsWriteScope,
   [WS_METHODS.threadsRestoreWorkspace]: AuthOrchestrationOperateScope,

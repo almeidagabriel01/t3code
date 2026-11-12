@@ -46,6 +46,17 @@ import {
   WsGlobalSkillsRemoveRpc,
   WsGlobalSkillsRescanRpc,
 } from "./globalSkillsRpc.ts";
+import {
+  INTEGRATIONS_WS_METHODS,
+  WsIntegrationsBeginConnectRpc,
+  WsIntegrationsCancelConnectRpc,
+  WsIntegrationsCompleteConnectRpc,
+  WsIntegrationsDisconnectRpc,
+  WsIntegrationsRemoveOwnAppRpc,
+  WsIntegrationsSaveOwnAppRpc,
+  WsIntegrationsSaveTokenRpc,
+  WsIntegrationsSubscribeRpc,
+} from "./integrations.ts";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import {
@@ -617,6 +628,7 @@ import {
 
 export const WS_METHODS = {
   ...GLOBAL_SKILLS_WS_METHODS,
+  ...INTEGRATIONS_WS_METHODS,
   ...MEMORY_WS_METHODS,
 
   projectsListEntries: "projects.listEntries",
@@ -2995,6 +3007,14 @@ export class RpcScopeAuthorization extends RpcMiddleware.Service<RpcScopeAuthori
 export const WsRpcGroup = RpcGroup.make(
   WsGlobalSkillsRemoveRpc,
   WsGlobalSkillsRescanRpc,
+  WsIntegrationsSubscribeRpc,
+  WsIntegrationsBeginConnectRpc,
+  WsIntegrationsCompleteConnectRpc,
+  WsIntegrationsCancelConnectRpc,
+  WsIntegrationsDisconnectRpc,
+  WsIntegrationsSaveTokenRpc,
+  WsIntegrationsSaveOwnAppRpc,
+  WsIntegrationsRemoveOwnAppRpc,
   WsGuestShareCreateRpc,
   WsServerProbeRpc,
   WsServerGetConfigRpc,

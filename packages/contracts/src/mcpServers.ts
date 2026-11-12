@@ -47,6 +47,13 @@ const secretHeaders = Schema.Record(Schema.String, Schema.String)
   .annotateKey({ settingsSecret: true });
 
 const enabled = Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true)));
+/** Marks an http server T3 signs in to (catalog integrations); its token never sits in `headers`. */
+export const T3McpServerIntegration = Schema.Struct({
+  catalogId: McpServerName,
+  auth: Schema.Literals(["oauth", "token"]),
+  availability: Schema.Literals(["assistants", "all"]),
+});
+export type T3McpServerIntegration = typeof T3McpServerIntegration.Type;
 export const T3McpServer = Schema.Union([
   Schema.Struct({
     enabled,
@@ -60,6 +67,7 @@ export const T3McpServer = Schema.Union([
     transport: Schema.Literal("http"),
     url: McpServerUrl,
     headers: secretHeaders,
+    integration: Schema.optionalKey(T3McpServerIntegration),
   }),
 ]);
 export type T3McpServer = typeof T3McpServer.Type;
