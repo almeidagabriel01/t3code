@@ -246,6 +246,7 @@ This checkout is a personal fork that adds features (notes, kanban, memory, dest
 - The Devices panel in an isolated home needs `enableDeviceSupport` and `deviceOnboardingCompleted` in its `settings.json`, then a dev server restart: the device service reads them at startup.
 - Linked environments need no second machine: run `node apps/server/src/bin.ts serve --base-dir <worktree>/.t3/<name> --port <p>` beside dev, set `linkedEnvironmentsEnabled` in both homes' `settings.json`, then `environment link http://127.0.0.1:<p> --base-dir <worktree>/.t3 --pairing-code <Token from pair> --access full-access`. Unlink and delete that home after.
 - A dev server shares the machine-wide heavy queue (`~/.t3/heavy-queue`), so switching it off or pausing it there releases or holds every other project's jobs. Start dev with `T3CODE_HEAVY_QUEUE_DIR=<worktree>/.t3/heavy-queue-dev` before testing queue controls.
+- The Linux runner's copy of a worktree has no `.git` and no global `vp`: run `check:changed` and coverage scoring on the Mac (`t3 heavy --runner mac`), call `./node_modules/.bin/vp` there, and copy lcov files out of the synced folder in the same run (the next sync wipes them). A command line that mentions `vp test`/`vp run` is rerouted whole.
 - During an unfinished merge, `git add` the resolved files before starting `vp run dev`: git re-reads unmerged files on every status poll, and that makes the server's `node --watch` restart in a loop.
 
 ### Layout and design
