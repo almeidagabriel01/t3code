@@ -27,7 +27,7 @@ const entries: readonly ProjectEntry[] = [
 const loadingDirectories: ReadonlySet<string> = new Set();
 const directory = {
   entries,
-  load: () => Promise.resolve(),
+  load: (_path: string) => Promise.resolve(),
   refresh: () => {},
   ready: true,
   error: null,
@@ -107,9 +107,11 @@ function setup(
     editorIds?: string[];
     activate?: (...args: unknown[]) => Promise<void>;
     entries?: readonly ProjectEntry[];
+    load?: (path: string) => Promise<void>;
   } = {},
 ) {
   directory.entries = options.entries ?? entries;
+  directory.load = options.load ?? (() => Promise.resolve());
   server.writable = options.writable ?? true;
   server.changes = [];
   server.replies = [...(options.replies ?? [])];
@@ -252,17 +254,53 @@ describe("FileBrowserPanel", () => {
     await vi.waitFor(() => expect(onOpenFile).toHaveBeenCalledTimes(1));
   });
 
+  const nestedEntries: readonly ProjectEntry[] = [
+    { path: "docs", kind: "directory" },
+    { path: "docs/guide.md", kind: "file" },
+    { path: "src", kind: "directory" },
+    { path: "src/b.ts", kind: "file" },
+    { path: "src/lib", kind: "directory" },
+    { path: "src/lib/a.ts", kind: "file" },
+  ];
+
+  it("loads a revealed file's folders before showing it, and a refresh keeps folders the user closed", async () => {
+    const load = vi.fn((_path: string) => Promise.resolve());
+    setup({ entries: [{ path: "src", kind: "directory" }], load });
+    const panel = () => (
+      <FileBrowserPanel
+        environmentId={EnvironmentId.make("env-files")}
+        cwd="/repo"
+        projectName="repo"
+        selectedPath="src/lib/a.ts"
+        selectedPathRevealId={1}
+        onOpenFile={() => {}}
+        workspaceMutationId={null}
+      />
+    );
+    await using screen = await render(panel());
+    await vi.waitFor(() =>
+      expect(load.mock.calls.map(([path]) => path)).toEqual(
+        expect.arrayContaining(["", "src", "src/lib"]),
+      ),
+    );
+    expect(findTreeRow("src/lib/a.ts")).toBeNull();
+
+    directory.entries = nestedEntries;
+    await screen.rerender(panel());
+    await vi.waitFor(() =>
+      expect(findTreeRow("src/lib/a.ts")?.getAttribute("aria-selected")).toBe("true"),
+    );
+
+    findTreeRow("src/lib/")!.click();
+    await vi.waitFor(() => expect(findTreeRow("src/lib/a.ts")).toBeNull());
+    directory.entries = [...nestedEntries, { path: "NEW.md", kind: "file" }];
+    await screen.rerender(panel());
+    await vi.waitFor(() => expect(findTreeRow("NEW.md")).not.toBeNull());
+    expect(findTreeRow("src/lib/a.ts")).toBeNull();
+  });
+
   it("reveals an opened file inside closed folders without taking focus or closing open ones", async () => {
-    setup({
-      entries: [
-        { path: "docs", kind: "directory" },
-        { path: "docs/guide.md", kind: "file" },
-        { path: "src", kind: "directory" },
-        { path: "src/b.ts", kind: "file" },
-        { path: "src/lib", kind: "directory" },
-        { path: "src/lib/a.ts", kind: "file" },
-      ],
-    });
+    setup({ entries: nestedEntries });
     const panel = (selectedPath: string | null, selectedPathRevealId: number) => (
       <>
         <input aria-label="Editor" />
