@@ -5,6 +5,8 @@ import {
   VcsListRefsInput,
   VcsListRefsResult,
   WorktreeMcpHandoffInput,
+  WorktreeMcpFinishInput,
+  WorktreeMcpFinishResult,
   WorktreeMcpHandoffResult,
   WorktreeMcpStatusResult,
   ThreadId,
@@ -12,6 +14,7 @@ import {
 import * as Schema from "effect/Schema";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
+import * as StorageCleanup from "../../../storageCleanup.ts";
 import { Tool, Toolkit } from "effect/ai";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -27,7 +30,7 @@ const WorktreeToolFailure = Schema.Union([WorktreeMcpFailure, OrchestratorMcpFai
 
 const WorktreeHandoffTool = Tool.make("t3_worktree_handoff", {
   description:
-    "Move THIS thread into a new git worktree on a new branch. Runs the setup script by default. A separate agent in a worktree: `t3_thread_launch` with `workspaceStrategy`. Call last in your turn. The move ends the live session. `continuationPrompt` resumes work there next turn. Without it, the thread waits. The worktree stays after the thread is deleted. Fails if this thread has a worktree.",
+    "Move THIS thread into a new git worktree on a new branch. Runs the setup script by default. A separate agent in a worktree: `t3_thread_launch` with `workspaceStrategy`. Call last in your turn. The move ends the live session. `continuationPrompt` resumes work there next turn. Without it, the thread waits. Once its work is merged into the default branch, T3 removes the worktree; see `t3_worktree_finish`. Fails if this thread has a worktree.",
   parameters: WorktreeMcpHandoffInput,
   success: WorktreeMcpHandoffResult,
   failure: WorktreeToolFailure,
@@ -82,8 +85,24 @@ const WorktreeListTool = Tool.make("t3_worktree_list", {
 })
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false);
+const WorktreeFinishTool = Tool.make("t3_worktree_finish", {
+  description:
+    "Say you are done with a worktree: this thread's, or `worktreePath` for one you made with `git worktree add`. Call it once your work is merged into the default branch, instead of deleting the worktree yourself. T3 removes it as soon as its commits are in the default branch and nothing uses it (no running thread, process or recent edits). The branch and a snapshot stay. `status`: `removed`, `scheduled` (removed later, when unused), `gone`, or `kept` with a `reason`. Safe to repeat.",
+  parameters: WorktreeMcpFinishInput,
+  success: WorktreeMcpFinishResult,
+  failure: WorktreeToolFailure,
+  failureMode: "return",
+  dependencies: [...dependencies, StorageCleanup.StorageCleanup],
+})
+  .annotate(Tool.Title, "Finish with a git worktree")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false);
+
 export const WorktreeToolkit = Toolkit.make(
   WorktreeHandoffTool,
+  WorktreeFinishTool,
   WorktreeStatusTool,
   WorktreeListTool,
 );

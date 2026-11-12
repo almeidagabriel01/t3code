@@ -466,6 +466,30 @@ export const sshArgs = (
   command,
 ];
 
+/**
+ * `remoto`'s folder name on Linux for a checkout: its basename with every character outside
+ * `[A-Za-z0-9._-]` turned into `_` (macOS `tr -c` in a UTF-8 locale), a dash, and the first 8 hex
+ * digits of the SHA-1 of its real path (`shasum`), which `git rev-parse --show-toplevel` gives it.
+ */
+export const runnerCopyId = (realPath: string, sha1: (text: string) => string) =>
+  `${realPath.slice(realPath.lastIndexOf("/") + 1).replace(/[^A-Za-z0-9._-]/gu, "_")}-${sha1(realPath).slice(0, 8)}`;
+
+const RUNNER_COPY_ID = /^[A-Za-z0-9._-]+-[0-9a-f]{8}$/;
+
+/**
+ * Deletes `runs/<id>` and the lock and pgid files `remoto-rodar` keeps beside it. Prints `busy` when
+ * a run still holds it, `removed` otherwise.
+ */
+export const removeCopyScript = (id: string) => {
+  if (!RUNNER_COPY_ID.test(id) || id.startsWith(".")) throw new Error(`Unsafe run id: ${id}`);
+  const folder = `"$HOME/runs/${id}"`;
+  return [
+    `p=$(cat ${folder}.pgid 2>/dev/null)`,
+    `if [ -n "$p" ] && kill -0 "-$p" 2>/dev/null; then echo busy; exit 0; fi`,
+    `rm -rf -- ${folder} ${folder}.lock ${folder}.pgid && echo removed`,
+  ].join("\n");
+};
+
 export const HEARTBEAT_COMMAND = "cat /proc/loadavg; nproc; free -b";
 
 /**

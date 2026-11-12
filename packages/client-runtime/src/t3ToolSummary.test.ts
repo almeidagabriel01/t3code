@@ -52,6 +52,17 @@ describe("summarizeT3ToolCalls", () => {
     expect(summarizeT3ToolCalls("unlink-pr", [uncounted]).label).toBe("Unlinked pull requests");
   });
 
+  it("counts each worktree an agent finished with once, retries included", () => {
+    const finished = completed({}, { status: "scheduled", worktreePath: "/wt/a" });
+    expect(
+      summarizeT3ToolCalls("worktree-finish", [
+        finished,
+        finished,
+        completed({ worktreePath: "/wt/b" }, { status: "removed", worktreePath: "/wt/b" }),
+      ]).label,
+    ).toBe("Finished with 2 worktrees");
+  });
+
   it("excludes failed and unfinished sends even if the provider reports completed", () => {
     const calls: T3ToolSummaryCall[] = [
       completed({ threadId: "success" }, { messageId: "ok", threadId: "success" }),

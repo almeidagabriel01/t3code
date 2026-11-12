@@ -107,7 +107,21 @@ interface QueueDoc {
   /** Runner settings a server published; null reads as the Runner off everywhere. */
   readonly runner: RunnerBlock | null;
   readonly linux: LinuxHealth;
+  /** Linux copies of removed worktrees still to delete, waiting for the host to come back. */
+  readonly copyRemovals: ReadonlyArray<CopyRemoval>;
 }
+
+export interface CopyRemoval {
+  readonly host: string;
+  /** The `runs/<id>` name, already validated by `runnerCopyId`. */
+  readonly id: string;
+  /** The removed worktree; a checkout recreated there syncs to the same copy again. */
+  readonly path: string;
+  readonly at: number;
+}
+
+const MAX_COPY_REMOVALS = 200;
+const COPY_REMOVAL_TTL_MS = 30 * 86_400_000;
 
 const DEFAULT_DEVICE_IDLE_MINUTES = 20;
 
@@ -124,6 +138,7 @@ const EMPTY_DOC: QueueDoc = {
   deviceIdleMinutes: DEFAULT_DEVICE_IDLE_MINUTES,
   runner: null,
   linux: UNKNOWN_HEALTH,
+  copyRemovals: [],
 };
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
@@ -154,6 +169,7 @@ const loadDoc = (dir: string): QueueDoc => {
       deviceIdleMinutes?: unknown;
       runner?: unknown;
       linux?: unknown;
+      copyRemovals?: unknown;
     } | null;
     return {
       // Keys this version does not know stay in the file for the versions that do.
@@ -182,6 +198,16 @@ const loadDoc = (dir: string): QueueDoc => {
           : DEFAULT_DEVICE_IDLE_MINUTES,
       runner: parseRunner(parsed?.runner),
       linux: isObject(parsed?.linux) ? { ...UNKNOWN_HEALTH, ...parsed.linux } : UNKNOWN_HEALTH,
+      copyRemovals: Array.isArray(parsed?.copyRemovals)
+        ? (parsed.copyRemovals as unknown[]).filter(
+            (entry): entry is CopyRemoval =>
+              isObject(entry) &&
+              typeof entry.host === "string" &&
+              typeof entry.id === "string" &&
+              typeof entry.path === "string" &&
+              typeof entry.at === "number",
+          )
+        : [],
     };
   } catch {
     return EMPTY_DOC;
@@ -820,3 +846,44 @@ export const answerBashCall = (
     isObject(hookInput) && typeof hookInput.cwd === "string" ? hookInput.cwd : process.cwd();
   return interceptBashCall(hookInput, prefix, modeFor(doc, cwd), environment);
 };
+
+/** Remembers a Linux copy to delete once its host answers; newest first, bounded in count and age. */
+export const addCopyRemoval = (dir: string, removal: CopyRemoval) =>
+  mutate(
+    dir,
+    (doc) => ({
+      doc: {
+        ...doc,
+        copyRemovals: [
+          removal,
+          ...doc.copyRemovals.filter(
+            (entry) => entry.host !== removal.host || entry.id !== removal.id,
+          ),
+        ].slice(0, MAX_COPY_REMOVALS),
+      },
+      result: undefined,
+    }),
+    removal.at,
+  );
+
+/** Drops removals that are done, and ones older than the bound, which no host answered for. */
+export const settleCopyRemovals = (
+  dir: string,
+  done: ReadonlyArray<Pick<CopyRemoval, "host" | "id">>,
+  now = Date.now(),
+) =>
+  mutate(
+    dir,
+    (doc) => ({
+      doc: {
+        ...doc,
+        copyRemovals: doc.copyRemovals.filter(
+          (entry) =>
+            now - entry.at < COPY_REMOVAL_TTL_MS &&
+            !done.some((settled) => settled.host === entry.host && settled.id === entry.id),
+        ),
+      },
+      result: undefined,
+    }),
+    now,
+  );

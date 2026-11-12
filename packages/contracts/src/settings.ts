@@ -1277,6 +1277,29 @@ export const WorktreeKeepWhen = Schema.Literals([
 ]);
 export type WorktreeKeepWhen = typeof WorktreeKeepWhen.Type;
 
+/** When worktrees whose commits are already in the default branch are removed. */
+export const WorktreeMergedCleanup = Schema.Literals(["off", "right-away", "after-days"]);
+export type WorktreeMergedCleanup = typeof WorktreeMergedCleanup.Type;
+export const MERGED_WORKTREE_DAYS = { minimum: 1, maximum: 365, fallback: 7 } as const;
+const MergedWorktreeDays = Schema.Int.check(
+  Schema.isBetween({
+    minimum: MERGED_WORKTREE_DAYS.minimum,
+    maximum: MERGED_WORKTREE_DAYS.maximum,
+  }),
+);
+// Replaces the retired worktreeOnMerge and worktreeUnchanged switches; stored files still carry
+// them and decoding drops them, so either one on, or neither, reads as the "right-away" default.
+const mergedWorktreeFields = {
+  worktreeMerged: WorktreeMergedCleanup.pipe(
+    Schema.withDecodingDefault(Effect.succeed("right-away" as const)),
+  ),
+  worktreeMergedAfterDays: MergedWorktreeDays.pipe(
+    Schema.withDecodingDefault(Effect.succeed(MERGED_WORKTREE_DAYS.fallback)),
+  ),
+  /** Also delete the worktree's copy on the Runner's Linux host. */
+  worktreeRunnerCopy: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+};
+
 export const WorktreeCleanupRules = Schema.Struct({
   worktreeKeepWhen: WorktreeKeepWhen.pipe(
     Schema.withDecodingDefault(Effect.succeed("uncommitted-changes")),
@@ -1285,11 +1308,21 @@ export const WorktreeCleanupRules = Schema.Struct({
   worktreeSettledAfterDays: SettledWorktreeRetentionDays.pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
-  worktreeOnMerge: Schema.Boolean,
   worktreeOnDelete: Schema.Boolean,
-  worktreeUnchanged: Schema.Boolean,
+  ...mergedWorktreeFields,
 });
 export type WorktreeCleanupRules = typeof WorktreeCleanupRules.Type;
+
+/** The worktree rules a project's custom cleanup copies from the machine's storage settings. */
+export const pickWorktreeCleanupRules = (
+  source: WorktreeCleanupRules & Readonly<Record<string, unknown>>,
+): WorktreeCleanupRules =>
+  Object.fromEntries(
+    Object.keys(WorktreeCleanupRules.fields).map((key) => [
+      key,
+      source[key as keyof WorktreeCleanupRules],
+    ]),
+  ) as WorktreeCleanupRules;
 
 export const WorktreeCleanup = Schema.NullOr(
   Schema.Union([
@@ -1508,9 +1541,8 @@ export const StorageCleanupSettings = Schema.Struct({
   worktreeSettledAfterDays: SettledWorktreeRetentionDays.pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
-  worktreeOnMerge: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   worktreeOnDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-  worktreeUnchanged: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  ...mergedWorktreeFields,
   browserArtifactsAfterDays: StorageRetentionDays.pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
@@ -2132,9 +2164,10 @@ const ServerSettingsPatchFields = Schema.Struct({
             worktreeKeepWhen: Schema.optionalKey(WorktreeKeepWhen),
             worktreeAfterDays: Schema.optionalKey(StorageRetentionDays),
             worktreeSettledAfterDays: Schema.optionalKey(SettledWorktreeRetentionDays),
-            worktreeOnMerge: Schema.optionalKey(Schema.Boolean),
             worktreeOnDelete: Schema.optionalKey(Schema.Boolean),
-            worktreeUnchanged: Schema.optionalKey(Schema.Boolean),
+            worktreeMerged: Schema.optionalKey(WorktreeMergedCleanup),
+            worktreeMergedAfterDays: Schema.optionalKey(MergedWorktreeDays),
+            worktreeRunnerCopy: Schema.optionalKey(Schema.Boolean),
           }),
         }),
       ]),
@@ -2145,9 +2178,10 @@ const ServerSettingsPatchFields = Schema.Struct({
       worktreeKeepWhen: Schema.optionalKey(WorktreeKeepWhen),
       worktreeAfterDays: Schema.optionalKey(StorageRetentionDays),
       worktreeSettledAfterDays: Schema.optionalKey(SettledWorktreeRetentionDays),
-      worktreeOnMerge: Schema.optionalKey(Schema.Boolean),
       worktreeOnDelete: Schema.optionalKey(Schema.Boolean),
-      worktreeUnchanged: Schema.optionalKey(Schema.Boolean),
+      worktreeMerged: Schema.optionalKey(WorktreeMergedCleanup),
+      worktreeMergedAfterDays: Schema.optionalKey(MergedWorktreeDays),
+      worktreeRunnerCopy: Schema.optionalKey(Schema.Boolean),
       browserArtifactsAfterDays: Schema.optionalKey(StorageRetentionDays),
       logsAfterDays: Schema.optionalKey(StorageRetentionDays),
       worktreeSnapshotsAfterDays: Schema.optionalKey(StorageRetentionDays),

@@ -7,7 +7,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import { runMigrations } from "../src/persistence/Migrations.ts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
-import { runMigrateDevDb } from "./migrate-dev-db.ts";
+import { disableDevWorktreeCleanup, runMigrateDevDb } from "./migrate-dev-db.ts";
 
 const withDatabase = <A, E>(
   databasePath: string,
@@ -144,6 +144,11 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
       );
 
       assert.equal(result.databasePath, path.join(destDir, "userdata", "statev2.sqlite"));
+      assert.deepStrictEqual(
+        JSON.parse(yield* fs.readFileString(path.join(destDir, "userdata", "settings.json"))),
+        { worktreeCleanup: { mode: "off" } },
+        "a dev home never deletes the developer's real worktrees",
+      );
       const kept = yield* withDatabase(
         result.databasePath,
         Effect.gen(function* () {
@@ -201,6 +206,42 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
         links: 0,
       });
     }),
+  );
+
+  it.effect(
+    "turns worktree cleanup off in a copied settings file without touching other keys",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-settings-" });
+        const settingsPath = path.join(dir, "settings.json");
+        yield* fs.writeFileString(
+          settingsPath,
+          JSON.stringify({
+            theme: "dark",
+            worktreeCleanup: { mode: "custom", rules: { worktreeMerged: "right-away" } },
+            projectSettingsOverrides: {
+              withRules: { worktreeCleanup: { mode: "custom", rules: {} }, defaultAutoPull: true },
+              withoutRules: { defaultAutoPull: false },
+            },
+          }),
+        );
+        assert.equal(yield* disableDevWorktreeCleanup(settingsPath), true);
+        assert.deepStrictEqual(JSON.parse(yield* fs.readFileString(settingsPath)), {
+          theme: "dark",
+          worktreeCleanup: { mode: "off" },
+          projectSettingsOverrides: {
+            withRules: { worktreeCleanup: { mode: "off" }, defaultAutoPull: true },
+            withoutRules: { defaultAutoPull: false },
+          },
+        });
+        for (const unreadable of ["{not json", "[]"]) {
+          yield* fs.writeFileString(settingsPath, unreadable);
+          assert.equal(yield* disableDevWorktreeCleanup(settingsPath), false);
+          assert.equal(yield* fs.readFileString(settingsPath), unreadable);
+        }
+      }),
   );
 
   it.effect("never copies an archived thread, and new events append after the source's", () =>

@@ -1,4 +1,9 @@
-// @effect-diagnostics globalDate:off
+// @effect-diagnostics globalDate:off nodeBuiltinImport:off
+import * as NodeChildProcess from "node:child_process";
+import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { describe, expect, it } from "@effect/vitest";
 import type { HeavyQueueEntry, RunnerProjectConfig } from "@t3tools/contracts";
 
@@ -16,6 +21,8 @@ import {
   platformFailures,
   remoteOutcome,
   remoteStopScript,
+  removeCopyScript,
+  runnerCopyId,
   runnerConfigFor,
   sshArgs,
   UNKNOWN_HEALTH,
@@ -591,5 +598,52 @@ describe("remoto markers", () => {
     expect(script).toContain("p=42;");
     expect(script).toContain("[r]uns/app-1a2b3c4d");
     expect(script).toContain("-lt 5 ]");
+  });
+});
+
+describe("Linux copy of a removed worktree", () => {
+  const sha1 = (text: string) => NodeCrypto.createHash("sha1").update(text).digest("hex");
+
+  // Taken from `remoto`'s own naming on macOS: basename | tr -c 'A-Za-z0-9._-\n' _, then shasum.
+  it.each([
+    ["/Users/x/.t3/worktrees/t3code/t3-d3abb326", "t3-d3abb326-ee096f7e"],
+    ["/tmp/my repo/feature é😀", "feature___-c29cc305"],
+    ["/a/.hidden", ".hidden-563c52ee"],
+  ])("names %s like remoto", (path, id) => {
+    expect(runnerCopyId(path, sha1)).toBe(id);
+  });
+
+  it("refuses ids that could reach outside the runs folder", () => {
+    for (const id of ["", "..", ".hidden-563c52ee", "a/b-563c52ee", "x;rm-563c52ee", "plain"])
+      expect(() => removeCopyScript(id)).toThrow(/Unsafe run id/);
+  });
+
+  it("removes the copy and its lock files, but not while a run holds it", () => {
+    const home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-runner-copy-"));
+    try {
+      const id = "feature-0123abcd";
+      const runs = NodePath.join(home, "runs");
+      const run = (pgid: number) => {
+        NodeFS.mkdirSync(NodePath.join(runs, id, "src"), { recursive: true });
+        NodeFS.writeFileSync(NodePath.join(runs, `${id}.lock`), "");
+        NodeFS.writeFileSync(NodePath.join(runs, `${id}.pgid`), `${pgid}\n`);
+        return NodeChildProcess.spawnSync("sh", ["-c", removeCopyScript(id)], {
+          env: { ...process.env, HOME: home },
+          encoding: "utf8",
+        }).stdout.trim();
+      };
+      const holder = NodeChildProcess.spawn("sleep", ["60"], { detached: true });
+      try {
+        expect(run(holder.pid!)).toBe("busy");
+        expect(NodeFS.existsSync(NodePath.join(runs, id))).toBe(true);
+      } finally {
+        holder.kill();
+      }
+      const ended = NodeChildProcess.spawnSync(process.execPath, ["-e", ""]).pid;
+      expect(run(ended)).toBe("removed");
+      expect(NodeFS.readdirSync(runs)).toEqual([]);
+    } finally {
+      NodeFS.rmSync(home, { recursive: true, force: true });
+    }
   });
 });

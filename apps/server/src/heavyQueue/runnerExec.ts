@@ -19,6 +19,7 @@ import {
   platformFailures,
   remoteOutcome,
   remoteStopScript,
+  removeCopyScript,
   sshArgs,
   type HealthCheck,
   type RemoteOutcome,
@@ -92,6 +93,24 @@ export const checkLinux = async (
   if (result.code === 0) return { ok: true, reading: parseHeartbeat(result.stdout) };
   const why = result.stderr.trim().split("\n").pop() ?? "";
   return { ok: false, error: why === "" ? `ssh exited ${result.code ?? "on timeout"}` : why };
+};
+
+export type CopyRemovalResult = "removed" | "busy" | "unreachable";
+
+/** Deletes the Linux copy of a removed worktree; anything but a confirmed answer leaves it pending. */
+export const removeRunnerCopy = async (
+  machine: RunnerMachineConfig,
+  environment: Env,
+  id: string,
+): Promise<CopyRemovalResult> => {
+  const result = await ssh(
+    machine,
+    environment,
+    removeCopyScript(id),
+    (machine.runnerSshTimeoutSeconds + 60) * 1000,
+  );
+  const said = result.stdout.trim().split("\n").pop();
+  return result.code === 0 && (said === "removed" || said === "busy") ? said : "unreachable";
 };
 
 export type StopResult = "gone" | "stopped" | "killed" | "alive" | "unreachable";
