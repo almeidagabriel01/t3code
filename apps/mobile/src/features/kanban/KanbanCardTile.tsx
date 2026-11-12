@@ -6,6 +6,7 @@ import {
 } from "@t3tools/client-runtime/state/kanbanLogic";
 import type { KanbanBoardState } from "@t3tools/client-runtime/state/kanban";
 import type { KanbanCard } from "@t3tools/contracts";
+import type { ReactNode } from "react";
 import { Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
@@ -32,6 +33,8 @@ export function KanbanCardTile(props: {
   readonly onPress: () => void;
   /** Set by the Android long-press menu wrapping the tile. */
   readonly onLongPress?: () => void;
+  /** Trailing control on the header line, such as an actions button. */
+  readonly accessory?: ReactNode;
 }) {
   const { card } = props;
   const template = props.board.templates.find((entry) => entry.id === card.type);
@@ -78,6 +81,7 @@ export function KanbanCardTile(props: {
               {KANBAN_PRIORITY_LABELS[card.priority]}
             </Text>
           ) : null}
+          {props.accessory}
         </View>
       </View>
       <Text textRole="body" numberOfLines={3} className="font-t3-medium text-foreground">

@@ -72,6 +72,10 @@ export interface ThreadMenuInput {
   readonly restartSession?: boolean;
   /** The project's notes are reachable: the environment supports notes and the thread has a real project. */
   readonly notes?: boolean;
+  /** The environment has boards; a thread in no project shows the No project board. */
+  readonly board?: boolean;
+  /** The open thread only: its project's scheduled tasks. */
+  readonly scheduledTasks?: boolean;
   readonly turnIntoProject: { readonly archivable: boolean } | null;
   readonly snoozePresetActions: ReadonlyArray<MenuAction>;
   /** The assistant whose current conversation this is; it can't be renamed, archived or deleted. */
@@ -186,6 +190,10 @@ function buildBaseThreadMenuActions(input: ThreadMenuInput): MenuAction[] {
         ]
       : []),
     ...(input.notes ? [{ id: "notes", title: "Notes", image: "note.text" }] : []),
+    ...(input.board ? [{ id: "board", title: "Board", image: "square.grid.2x2" }] : []),
+    ...(input.scheduledTasks
+      ? [{ id: "scheduled-tasks", title: "Scheduled tasks", image: "calendar.badge.clock" }]
+      : []),
     { id: "copy-thread", title: "Copy thread", image: "text.bubble" },
     { id: "copy-thread-id", title: "Copy thread ID", image: "doc.on.doc" },
     ...(input.assistantTask
@@ -265,6 +273,8 @@ export interface ThreadMenuHandlers {
   readonly linkCard?: () => void;
   readonly restartSession?: () => void;
   readonly openNotes?: () => void;
+  readonly openBoard?: () => void;
+  readonly openScheduledTasks?: () => void;
   readonly turnIntoProject: () => void;
   readonly dismissTask?: () => void;
   readonly restoreTask?: () => void;
@@ -328,6 +338,10 @@ export function runThreadMenuEvent(
       return handlers.restartSession?.();
     case "notes":
       return handlers.openNotes?.();
+    case "board":
+      return handlers.openBoard?.();
+    case "scheduled-tasks":
+      return handlers.openScheduledTasks?.();
     case "turn-into-project":
       return handlers.turnIntoProject();
     case "dismiss-task":

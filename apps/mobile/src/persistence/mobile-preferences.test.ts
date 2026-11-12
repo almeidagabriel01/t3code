@@ -65,6 +65,28 @@ describe("mobile preferences parser", () => {
     }),
   );
 
+  it.effect("keeps every valid board panel choice and drops the invalid ones", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* loadFrom({
+          kanbanPanel: {
+            scopes: { a: "project", b: "no-project", c: "other" },
+            collapsed: { board: { todo: true, done: false, bad: "yes" }, broken: 3 },
+          },
+        }),
+      ).toEqual({
+        kanbanPanel: {
+          scopes: { a: "project", b: "no-project" },
+          collapsed: { board: { todo: true, done: false } },
+        },
+      });
+      expect(yield* loadFrom({ kanbanPanel: "x" })).toEqual({});
+      expect(yield* loadFrom({ kanbanPanel: {} })).toEqual({
+        kanbanPanel: { scopes: {}, collapsed: {} },
+      });
+    }),
+  );
+
   it.effect("keeps a known usage reset display and drops anything else", () =>
     Effect.gen(function* () {
       expect(yield* loadFrom({ usageResetDisplay: "both" })).toEqual({ usageResetDisplay: "both" });
