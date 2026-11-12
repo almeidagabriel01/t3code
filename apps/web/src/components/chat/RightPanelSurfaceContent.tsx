@@ -26,6 +26,8 @@ import { PullRequestDetailGhost } from "../pullRequest/PullRequestGhosts";
 import { PullRequestsUnavailableState } from "../pullRequest/PullRequestsUnavailableState";
 import { ThreadPullRequestsPanel } from "../pullRequest/ThreadPullRequestsPanel";
 import { NotesSurface, type NotesSurfaceProps } from "../notes/NotesSurface";
+import { KanbanSurface } from "../kanban/KanbanSurface";
+import { ScheduledTasksSurface } from "../scheduledTasks/ScheduledTasksSurface";
 
 const PreviewPanel = lazy(() =>
   import("../preview/PreviewPanel").then((module) => ({ default: module.PreviewPanel })),
@@ -80,6 +82,8 @@ export function RightPanelSurfaceContent(props: {
   readonly onCloseSurface: (surface: RightPanelSurface) => void;
   /** Null when the thread has no project or its environment has no notes. */
   readonly notes: NotesSurfaceProps | null;
+  /** Null when the thread has no project. */
+  readonly project: { readonly environmentId: EnvironmentId; readonly projectId: ProjectId } | null;
   readonly terminal: RightPanelTerminalProps;
   readonly pullRequest: RightPanelPullRequestProps;
   readonly files: RightPanelFileProps;
@@ -191,6 +195,10 @@ export function RightPanelSurfaceContent(props: {
       );
     case "notes":
       return props.notes ? <NotesSurface {...props.notes} /> : null;
+    case "kanban":
+      return props.project ? <KanbanSurface {...props.project} /> : null;
+    case "scheduled-tasks":
+      return props.project ? <ScheduledTasksSurface {...props.project} /> : null;
     case "device":
       return (
         <Suspense fallback={null}>

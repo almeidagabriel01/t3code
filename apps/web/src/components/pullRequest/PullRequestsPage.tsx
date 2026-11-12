@@ -142,6 +142,7 @@ const EMPTY_PREVIEW_SESSIONS = {};
 const EMPTY_PREVIEW_DESKTOP_STATE = {};
 const EMPTY_TERMINAL_LABELS = new Map<string, string>();
 const EMPTY_PENDING_SURFACES = new Set<string>();
+const NO_TOOLS = { notes: false, kanban: false, "scheduled-tasks": false } as const;
 export function PullRequestsPage() {
   const search = useSearch({ from: "/_chat/pull-requests" });
   const sort = search.sort ?? "ready";
@@ -1511,7 +1512,7 @@ export function PullRequestsPage() {
             onAddPullRequest={() => undefined}
             onAddPullRequests={() => undefined}
             onAddDevice={() => undefined}
-            onAddNotes={() => undefined}
+            onAddTool={() => undefined}
             browserAvailable={false}
             terminalAvailable={false}
             diffAvailable={false}
@@ -1519,7 +1520,7 @@ export function PullRequestsPage() {
             pullRequestAvailable={false}
             pullRequestsAvailable={false}
             deviceAvailable={false}
-            notesAvailable={false}
+            toolsAvailable={NO_TOOLS}
             pullRequestStatusSeeds={listedPullRequestTabStatuses}
           >
             <PullRequestDetailPanel

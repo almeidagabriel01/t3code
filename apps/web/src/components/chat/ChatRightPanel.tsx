@@ -47,7 +47,9 @@ export function ChatRightPanel(props: ChatRightPanelProps) {
           preview: tabs.onAddBrowser,
           "pull-requests": tabs.onAddPullRequests,
           "pull-request": tabs.onAddPullRequest,
-          notes: tabs.onAddNotes,
+          notes: () => tabs.onAddTool("notes"),
+          kanban: () => tabs.onAddTool("kanban"),
+          "scheduled-tasks": () => tabs.onAddTool("scheduled-tasks"),
           "side-chat": tabs.onAddSideChat ?? noop,
           device: tabs.onAddDevice,
         }}
@@ -58,7 +60,7 @@ export function ChatRightPanel(props: ChatRightPanelProps) {
           preview: tabs.browserAvailable,
           "pull-requests": tabs.pullRequestsAvailable,
           "pull-request": tabs.pullRequestAvailable,
-          notes: tabs.notesAvailable,
+          ...tabs.toolsAvailable,
           "side-chat": tabs.sideChatAvailable === true && !tabs.sideChatDisabledReason,
           device: tabs.deviceAvailable,
         }}

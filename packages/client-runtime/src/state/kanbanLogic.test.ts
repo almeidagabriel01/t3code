@@ -14,6 +14,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   kanbanCardPickerRows,
   applyMoveLocally,
+  withOptimisticMove,
   checklistProgress,
   collectGlobalBoards,
   collectGlobalCards,
@@ -141,6 +142,37 @@ describe("dropToMove", () => {
     });
     expect(dropToMove(cardId("2"), "c", columns)).toEqual({ cardId: "2", columnId: "c" });
     expect(dropToMove(cardId("2"), "2", columns)).toBeNull();
+  });
+});
+
+describe("withOptimisticMove", () => {
+  const card = (id: string, column: string, orderKey: string) => ({
+    id: cardId(id),
+    columnId: columnId(column),
+    orderKey,
+  });
+  const live = [
+    { column: { id: columnId("a") }, cards: [card("1", "a", "a0"), card("2", "a", "a1")] },
+    { column: { id: columnId("b") }, cards: [] },
+  ];
+  const optimistic = {
+    move: { cardId: cardId("1"), columnId: columnId("b") },
+    columnId: columnId("a"),
+    orderKey: "a0",
+  };
+  const ids = (columns: ReturnType<typeof withOptimisticMove>) =>
+    columns.map((entry) => entry.cards.map((entry) => entry.id));
+
+  it("shows the dropped place while the live card has not moved", () => {
+    expect(ids(withOptimisticMove(live, optimistic))).toEqual([["2"], ["1"]]);
+  });
+
+  it.each([
+    ["nothing is pending", null],
+    ["the server already moved the card", { ...optimistic, orderKey: "stale" }],
+    ["the card is gone", { ...optimistic, move: { ...optimistic.move, cardId: cardId("9") } }],
+  ])("keeps the live columns when %s", (_name, pending) => {
+    expect(withOptimisticMove(live, pending)).toBe(live);
   });
 });
 

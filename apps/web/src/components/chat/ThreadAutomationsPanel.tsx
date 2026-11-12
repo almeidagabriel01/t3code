@@ -1,18 +1,7 @@
-import { useAtomValue } from "@effect/atom-react";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { useNavigate } from "@tanstack/react-router";
 import { CalendarClockIcon, PencilIcon, PlayIcon, Settings2Icon } from "lucide-react";
-import { useState } from "react";
-import {
-  AuthOrchestrationOperateScope,
-  type EnvironmentId,
-  type ScheduledTask,
-  type ThreadId,
-} from "@t3tools/contracts";
-import {
-  isAtomCommandInterrupted,
-  squashAtomCommandFailure,
-} from "@t3tools/client-runtime/state/runtime";
+import type { EnvironmentId, ScheduledTask, ThreadId } from "@t3tools/contracts";
 
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 import { cn } from "../../lib/utils";
@@ -20,18 +9,15 @@ import { ScheduledRelativeLabel } from "../settings/ScheduledTasksSettings";
 import { scheduleLabel } from "../settings/scheduledTasksSettings.logic";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
-import { useAtomCommand } from "../../state/use-atom-command";
-
-import { readEnvironmentScope } from "../../state/session";
 import { Switch } from "../ui/switch";
-import { stackedThreadToast, toastManager } from "../ui/toast";
+import { useScheduledTaskCommands } from "../scheduledTasks/useScheduledTaskCommands";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   THREAD_DETAILS_PANEL_ICON_CLASS,
   THREAD_DETAILS_PANEL_ROW_CONTENT_CLASS,
 } from "./threadDetailsPanelStyles";
 
-const STATUS_DOT_CLASS: Record<ScheduledTask["lastRunStatus"], string> = {
+export const STATUS_DOT_CLASS: Record<ScheduledTask["lastRunStatus"], string> = {
   never: "bg-muted-foreground/40",
   running: "bg-sky-500",
   succeeded: "bg-emerald-500",
@@ -62,70 +48,20 @@ export function ThreadAutomationsPanel(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
 }) {
-  const canOperate = useAtomValue(
-    serverEnvironment.runScheduledTaskNow.permissionAtom(props.environmentId),
-  );
   const tasksQuery = useEnvironmentQuery(
     serverEnvironment.scheduledTasksLive({ environmentId: props.environmentId, input: {} }),
   );
-  const setTaskEnabled = useAtomCommand(serverEnvironment.setScheduledTaskEnabled, {
-    label: "thread automation toggle",
-  });
-  const runTaskNow = useAtomCommand(serverEnvironment.runScheduledTaskNow, {
-    label: "thread automation run now",
-  });
+  const { canOperate, busyTaskId, setEnabled, runNow } = useScheduledTaskCommands(
+    props.environmentId,
+    "thread automation",
+  );
   const navigate = useNavigate();
-  const [busyTaskId, setBusyTaskId] = useState<string | null>(null);
 
   const boundTasks = (tasksQuery.data?.tasks ?? []).filter(
     (task) => task.threadId === props.threadId,
   );
 
   if (tasksQuery.error === null && boundTasks.length === 0) return null;
-
-  const reportFailure = (title: string, error: unknown) => {
-    toastManager.add(
-      stackedThreadToast({
-        type: "error",
-        title,
-        description: error instanceof Error ? error.message : String(error),
-      }),
-    );
-  };
-
-  const toggleEnabled = async (task: ScheduledTask, enabled: boolean) => {
-    if (
-      busyTaskId !== null ||
-      !readEnvironmentScope(props.environmentId, AuthOrchestrationOperateScope)
-    )
-      return;
-    setBusyTaskId(task.id);
-    const result = await setTaskEnabled({
-      environmentId: props.environmentId,
-      input: { id: task.id, enabled },
-    });
-    setBusyTaskId(null);
-    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-      reportFailure("Could not update automation", squashAtomCommandFailure(result));
-    }
-  };
-
-  const runNow = async (task: ScheduledTask) => {
-    if (
-      busyTaskId !== null ||
-      !readEnvironmentScope(props.environmentId, AuthOrchestrationOperateScope)
-    )
-      return;
-    setBusyTaskId(task.id);
-    const result = await runTaskNow({
-      environmentId: props.environmentId,
-      input: { id: task.id },
-    });
-    setBusyTaskId(null);
-    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-      reportFailure("Could not run automation", squashAtomCommandFailure(result));
-    }
-  };
 
   return (
     <ThreadDetailsSection
@@ -234,7 +170,7 @@ export function ThreadAutomationsPanel(props: {
               checked={task.enabled}
               disabled={!canOperate || busyTaskId !== null}
               aria-label={task.enabled ? `Pause ${task.title}` : `Resume ${task.title}`}
-              onCheckedChange={(enabled) => void toggleEnabled(task, enabled)}
+              onCheckedChange={(enabled) => void setEnabled(task, enabled)}
             />
           </li>
         ))}

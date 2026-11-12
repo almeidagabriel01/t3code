@@ -50,6 +50,7 @@ function content(surface: unknown) {
       onSendAnnotation={() => {}}
       onCloseSurface={() => {}}
       notes={null}
+      project={null}
       terminal={{} as never}
       pullRequest={{} as never}
       files={{

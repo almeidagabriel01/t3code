@@ -5,7 +5,6 @@ import {
   Files,
   Globe2,
   MessagesSquareIcon,
-  NotebookPenIcon,
   RotateCcwIcon,
   Smartphone,
   TerminalSquare,
@@ -13,6 +12,7 @@ import {
 import type { ComponentType } from "react";
 
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
+import { RIGHT_PANEL_TOOLS } from "./rightPanelTools";
 import { Button } from "~/components/ui/button";
 import { Checkbox } from "~/components/ui/checkbox";
 import { persistClientSettingsUpdate, useClientSettings } from "~/hooks/useSettings";
@@ -39,7 +39,9 @@ export const QUICK_BUTTON_META: Record<
   preview: { label: "Browser", shortcut: "B", icon: Globe2 },
   "pull-requests": { label: "Linked pull requests", shortcut: "L", icon: PullRequestGlyph.link },
   "pull-request": { label: "Pull request", shortcut: "P", icon: PullRequestGlyph.pullRequest },
-  notes: { label: "Notes", shortcut: "N", icon: NotebookPenIcon },
+  notes: RIGHT_PANEL_TOOLS.notes,
+  kanban: RIGHT_PANEL_TOOLS.kanban,
+  "scheduled-tasks": RIGHT_PANEL_TOOLS["scheduled-tasks"],
   "side-chat": { label: "Side chat", shortcut: null, icon: MessagesSquareIcon },
   device: { label: "Device", shortcut: "M", icon: Smartphone },
 };

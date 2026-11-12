@@ -16,6 +16,7 @@ import {
   selectThreadRightPanelState,
   useRightPanelStore,
 } from "./rightPanelStore";
+import { RIGHT_PANEL_TOOL_KINDS } from "./rightPanelToolKinds";
 
 const refA = scopeThreadRef("env-1" as EnvironmentId, ThreadId.make("thread-A"));
 const refB = scopeThreadRef("env-1" as EnvironmentId, ThreadId.make("thread-B"));
@@ -167,15 +168,18 @@ describe("rightPanelStore", () => {
     expect(useClosedViewStore.getState().entries).toHaveLength(1);
   });
 
-  it("toggles the notes panel and remembers it when it is closed", () => {
-    const store = useRightPanelStore.getState();
-    store.toggle(refA, "notes");
-    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("notes");
-    store.closeSurface(refA, "notes");
-    expect(useClosedViewStore.getState().entries).toMatchObject([
-      { kind: "panel-tab", threadRef: refA, surface: { id: "notes", kind: "notes" } },
-    ]);
-  });
+  it.each(RIGHT_PANEL_TOOL_KINDS)(
+    "toggles the %s panel and remembers it when it is closed",
+    (kind) => {
+      const store = useRightPanelStore.getState();
+      store.toggle(refA, kind);
+      expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe(kind);
+      store.closeSurface(refA, kind);
+      expect(useClosedViewStore.getState().entries).toMatchObject([
+        { kind: "panel-tab", threadRef: refA, surface: { id: kind, kind } },
+      ]);
+    },
+  );
 
   it("gives each host/device its own tab and preserves renamed tabs", () => {
     const store = useRightPanelStore.getState();

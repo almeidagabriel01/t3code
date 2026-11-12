@@ -17,6 +17,8 @@ const everything = {
   "pull-requests": true,
   "pull-request": true,
   notes: true,
+  kanban: true,
+  "scheduled-tasks": true,
   "side-chat": true,
   device: true,
 } satisfies Record<QuickButtonId, boolean>;
@@ -33,9 +35,9 @@ describe("right panel quick buttons", () => {
   });
 
   it("keeps saved order, drops unknown and repeated ids, hides unavailable additions only", () => {
-    const saved = ["notes", "future", "diff", "notes", "device", "files"];
+    const saved = ["notes", "future", "diff", "notes", "device", "files", "kanban"];
     const available = { ...everything, notes: false, diff: false };
-    expect(visibleQuickButtons(saved, available)).toEqual(["diff", "device", "files"]);
+    expect(visibleQuickButtons(saved, available)).toEqual(["diff", "device", "files", "kanban"]);
   });
 
   it("toggles and moves while keeping ids from other app versions", () => {

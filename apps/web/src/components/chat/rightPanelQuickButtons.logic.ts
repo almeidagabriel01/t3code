@@ -6,6 +6,8 @@ const QUICK_BUTTON_IDS = [
   "pull-requests",
   "pull-request",
   "notes",
+  "kanban",
+  "scheduled-tasks",
   "side-chat",
   "device",
 ] as const;

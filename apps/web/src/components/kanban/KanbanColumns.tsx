@@ -37,11 +37,12 @@ import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import {
-  applyMoveLocally,
   dropToMove,
   isWipExceeded,
+  withOptimisticMove,
   type CardMove,
   type ColumnCards,
+  type OptimisticMove,
 } from "@t3tools/client-runtime/state/kanbanLogic";
 import { isCardNavKey, nextCardFocus } from "./boardNav";
 import { KanbanCardTile } from "./KanbanCardTile";
@@ -292,43 +293,15 @@ export interface KanbanColumnsProps {
   readonly onQuickEdit?: TileProps["onQuickEdit"];
 }
 
-interface Optimistic {
-  readonly move: CardMove;
-  readonly columnId: KanbanColumnId;
-  readonly orderKey: string;
-}
-
 export function KanbanColumns(props: KanbanColumnsProps) {
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
   const [activeCard, setActiveCard] = useState<KanbanCard | null>(null);
-  const [optimistic, setOptimistic] = useState<Optimistic | null>(null);
+  const [optimistic, setOptimistic] = useState<OptimisticMove | null>(null);
 
-  const displayed = ((): ReadonlyArray<ColumnWithCards> => {
-    if (optimistic === null) return props.columns;
-    const cards = new Map(props.columns.flatMap((entry) => entry.cards.map((c) => [c.id, c])));
-    const live = cards.get(optimistic.move.cardId);
-    if (
-      live === undefined ||
-      live.columnId !== optimistic.columnId ||
-      live.orderKey !== optimistic.orderKey
-    ) {
-      return props.columns;
-    }
-    const moved = applyMoveLocally(
-      props.columns.map((entry) => ({
-        columnId: entry.column.id,
-        cardIds: entry.cards.map((card) => card.id),
-      })),
-      optimistic.move,
-    );
-    return props.columns.map((entry, index) => ({
-      column: entry.column,
-      cards: moved[index]!.cardIds.map((id) => cards.get(id)!),
-    }));
-  })();
+  const displayed = withOptimisticMove(props.columns, optimistic);
 
   const tileProps = {
     environmentId: props.environmentId,

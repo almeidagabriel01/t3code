@@ -39,7 +39,6 @@ import {
   Files,
   Globe2,
   MessagesSquareIcon,
-  NotebookPenIcon,
   TerminalSquare,
   Volume2Icon,
   VolumeOffIcon,
@@ -49,6 +48,7 @@ import { type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 
 import type { DesktopPreviewOverlay } from "~/previewStateStore";
 import type { RightPanelSurface } from "~/rightPanelStore";
+import { RIGHT_PANEL_TOOLS } from "./chat/rightPanelTools";
 import { cn } from "~/lib/utils";
 import { AndroidIcon, AppleIcon } from "~/components/Icons";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
@@ -159,7 +159,11 @@ function SurfaceIcon({
     case "side-chat":
       return <SideChatTabIcon environmentId={environmentId} threadId={surface.threadId} />;
     case "notes":
-      return <NotebookPenIcon className="size-3 shrink-0" />;
+    case "kanban":
+    case "scheduled-tasks": {
+      const Icon = RIGHT_PANEL_TOOLS[surface.kind].icon;
+      return <Icon className="size-3 shrink-0" />;
+    }
     case "device":
       return surface.target?.platform === "ios" ? (
         <AppleIcon className="size-3 shrink-0" />

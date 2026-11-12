@@ -15,6 +15,11 @@ import { createJSONStorage, persist } from "zustand/middleware";
 
 import { useClosedViewStore } from "./closedViewStore";
 import { fixedPanelKindOf, FIXED_PANEL_KINDS, type FixedPanelKind } from "./rightPanelFixedKinds";
+import {
+  isRightPanelToolKind,
+  RIGHT_PANEL_TOOL_KINDS,
+  type RightPanelToolKind,
+} from "./rightPanelToolKinds";
 import { resolveStorage } from "./lib/storage";
 import type { ThreadPanelPresentation } from "./rightPanelLayout";
 import type { ChatFileAttachment } from "./types";
@@ -29,7 +34,7 @@ const RIGHT_PANEL_KINDS = [
   "pull-request",
   "pull-requests",
   "side-chat",
-  "notes",
+  ...RIGHT_PANEL_TOOL_KINDS,
 ] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
@@ -87,8 +92,12 @@ export type RightPanelSurface =
     }
   | { id: "pull-requests"; kind: "pull-requests" }
   | { id: `side-chat:${string}`; kind: "side-chat"; threadId: ThreadId }
-  /** The project notes beside the conversation. */
-  | { id: "notes"; kind: "notes" };
+  | ToolPanelSurface;
+
+/** Project tool panels (notes, kanban, scheduled tasks): the id is the kind. */
+export type ToolPanelSurface = {
+  [K in RightPanelToolKind]: { id: K; kind: K };
+}[RightPanelToolKind];
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 const RIGHT_PANEL_STORAGE_VERSION = 16;
@@ -236,6 +245,7 @@ const DEFAULT_THREAD_PANEL_VISIBILITY: ThreadPanelVisibility = {
 const singletonSurface = (
   kind: Exclude<RightPanelKind, "file" | "preview" | "terminal" | "pull-request" | "side-chat">,
 ): RightPanelSurface => {
+  if (isRightPanelToolKind(kind)) return { id: kind, kind } as ToolPanelSurface;
   switch (kind) {
     case "diff":
       return { id: "diff", kind };
@@ -243,8 +253,6 @@ const singletonSurface = (
       return { id: "files", kind };
     case "pull-requests":
       return { id: "pull-requests", kind };
-    case "notes":
-      return { id: "notes", kind };
     case "device":
       return { id: "device", kind };
   }

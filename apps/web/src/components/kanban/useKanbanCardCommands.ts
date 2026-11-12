@@ -1,5 +1,4 @@
 import type { KanbanBoardState } from "@t3tools/client-runtime/state/kanban";
-import { definitionOfDoneWarning } from "@t3tools/client-runtime/state/kanbanLogic";
 import type {
   EnvironmentId,
   KanbanCard,
@@ -9,8 +8,8 @@ import type {
 } from "@t3tools/contracts";
 
 import { requestConfirmDialog } from "../../confirmDialog";
-import { toastManager } from "../ui/toast";
 import { useKanbanActions } from "./useKanban";
+import { useMoveKanbanCard } from "./useKanbanBoardCommands";
 
 /** The card actions the detail sheet and the tile quick editor share. */
 export function useKanbanCardCommands(
@@ -22,17 +21,9 @@ export function useKanbanCardCommands(
   const patch = (input: Omit<KanbanCardUpdateInput, "commandId" | "actor" | "cardId">) =>
     actions.updateCard({ cardId: card.id, ...input });
 
+  const moveCard = useMoveKanbanCard(environmentId, board);
   const moveTo = async (columnId: KanbanColumnId) => {
-    const target = board.columns.find((entry) => entry.id === columnId);
-    const moved = await actions.moveCard({ cardId: card.id, columnId });
-    const warning = target === undefined ? null : definitionOfDoneWarning(board, card, target);
-    if (moved !== null && warning !== null) {
-      toastManager.add({
-        type: "warning",
-        title: "Moved without meeting the definition of done",
-        description: warning,
-      });
-    }
+    await moveCard({ cardId: card.id, columnId });
   };
 
   /** Resolves true once the card is gone. */
