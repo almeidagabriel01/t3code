@@ -34,6 +34,8 @@ export const ResourceTelemetryProcessCategory = Schema.Literals([
   "electron-utility",
   "resource-monitor",
   "unknown-t3",
+  /** A simulator or emulator this machine runs outside T3's process tree; never counted as T3. */
+  "external-device",
 ]);
 export type ResourceTelemetryProcessCategory = typeof ResourceTelemetryProcessCategory.Type;
 

@@ -128,7 +128,7 @@ export function appBreakdown(
 ): ReadonlyArray<AppGroupRow> {
   const groups = new Map<AppProcessGroup, ResourceTelemetryProcess[]>();
   for (const process of processes) {
-    if (claimed.has(process.identity.pid)) continue;
+    if (claimed.has(process.identity.pid) || process.category === "external-device") continue;
     const group = APP_GROUP_BY_CATEGORY[process.category] ?? "other";
     groups.set(group, [...(groups.get(group) ?? []), process]);
   }
@@ -201,6 +201,10 @@ export interface DeviceRow {
   readonly platform: DevicePlatform;
   /** The AVD an Android row runs; the device list names booted emulators by it. */
   readonly avd: string | null;
+  /** The simulator an iOS row runs, the id the device list gives it. */
+  readonly udid: string | null;
+  /** Runs outside T3's process tree, so the T3 total leaves it out. */
+  readonly outside: boolean;
   readonly usage: ResourceUsage;
   readonly processes: ReadonlyArray<ResourceTelemetryProcess>;
 }
@@ -261,26 +265,47 @@ const isEmulatorProcess = (process: ResourceTelemetryProcess) =>
   /emulator|qemu-system/i.test(process.name) && EMULATOR_AVD.test(process.command);
 
 const humanizeAvd = (avd: string) => avd.replaceAll("_", " ");
+const SIMULATOR_UDID = /\/CoreSimulator\/Devices\/([0-9A-F-]{36})\//i;
+const SIMULATOR_APP = "Simulator app";
+
+type DeviceRoot = Omit<DeviceRow, "usage" | "processes"> & { readonly pid: number };
+
+/** Topmost processes outside T3's tree: one per booted simulator, the Simulator app, emulators. */
+function outsideDeviceRoots(
+  processes: ReadonlyArray<ResourceTelemetryProcess>,
+): ReadonlyArray<DeviceRoot> {
+  const outside = processes.filter((process) => process.category === "external-device");
+  const children = new Set(outside.flatMap((process) => process.childPids));
+  return outside.flatMap((process): DeviceRoot[] => {
+    const pid = process.identity.pid;
+    if (children.has(pid)) return [];
+    const base = { avd: null, udid: null, outside: true, pid };
+    const udid =
+      process.name === "launchd_sim" ? SIMULATOR_UDID.exec(process.command)?.[1] : undefined;
+    if (udid !== undefined) {
+      return [
+        { ...base, key: `outside:ios:${udid}`, label: "iOS Simulator", platform: "ios", udid },
+      ];
+    }
+    if (process.name === "Simulator") {
+      return [{ ...base, key: `outside:simulator:${pid}`, label: SIMULATOR_APP, platform: "ios" }];
+    }
+    const avd = isEmulatorProcess(process) ? EMULATOR_AVD.exec(process.command)?.[1] : undefined;
+    if (avd !== undefined) {
+      const key = `outside:android:${avd}`;
+      return [{ ...base, key, label: humanizeAvd(avd), platform: "android", avd }];
+    }
+    return [];
+  });
+}
 
 /** Emulators and the iOS Simulator the device hub started, then what is left of the hub itself. */
 function deviceRoots(
   processes: ReadonlyArray<ResourceTelemetryProcess>,
   hubPids: ReadonlyArray<number>,
-): ReadonlyArray<{
-  readonly key: string;
-  readonly label: string;
-  readonly platform: DevicePlatform;
-  readonly avd: string | null;
-  readonly pid: number;
-}> {
+): ReadonlyArray<DeviceRoot> {
   const byPid = new Map(processes.map((process) => [process.identity.pid, process]));
-  const roots: Array<{
-    key: string;
-    label: string;
-    platform: DevicePlatform;
-    avd: string | null;
-    pid: number;
-  }> = [];
+  const roots: DeviceRoot[] = [];
   const seen = new Set<number>();
   for (const hubPid of hubPids) {
     const pending = [hubPid];
@@ -297,12 +322,22 @@ function deviceRoots(
           label: humanizeAvd(avd),
           platform: "android",
           avd,
+          udid: null,
+          outside: false,
           pid,
         });
         continue;
       }
       if (process.name === "Simulator") {
-        roots.push({ key: `ios:${pid}`, label: "iOS Simulator", platform: "ios", avd: null, pid });
+        roots.push({
+          key: `ios:${pid}`,
+          label: SIMULATOR_APP,
+          platform: "ios",
+          avd: null,
+          udid: null,
+          outside: false,
+          pid,
+        });
         continue;
       }
       pending.push(...process.childPids);
@@ -315,8 +350,11 @@ function deviceRoots(
       label: "Device tools",
       platform: "tools" as const,
       avd: null,
+      udid: null,
+      outside: false,
       pid,
     })),
+    ...outsideDeviceRoots(processes),
   ];
 }
 
@@ -396,11 +434,8 @@ export function buildResourceTree(input: {
   projects.sort((a, b) => compare(a.usage, b.usage, a.title, b.title));
 
   const devices = deviceList
-    .map((device): DeviceRow => ({
-      key: device.key,
-      label: device.label,
-      platform: device.platform,
-      avd: device.avd,
+    .map(({ pid: _pid, ...device }): DeviceRow => ({
+      ...device,
       usage: deviceClaim.usage.get(device.key) ?? EMPTY_USAGE,
       processes: sortedProcesses(deviceClaim, device.key),
     }))
@@ -411,11 +446,11 @@ export function buildResourceTree(input: {
 }
 
 /**
- * The booted devices a row's processes run, on hosts of this machine: an emulator by its AVD, and
- * every booted simulator for the one Simulator app that hosts them all. Tools rows shut nothing.
+ * The booted device a row's processes run, on hosts of this machine: an emulator by its AVD, a
+ * simulator by its id. The Simulator app and tools rows shut nothing.
  */
 export function deviceShutdownTargets(
-  row: Pick<DeviceRow, "platform" | "avd">,
+  row: Pick<DeviceRow, "platform" | "avd" | "udid">,
   devices: ReadonlyArray<DeviceSummary>,
   localHostIds: ReadonlySet<string>,
 ): ReadonlyArray<DeviceShutdownInput> {
@@ -426,9 +461,23 @@ export function deviceShutdownTargets(
         !device.physical &&
         localHostIds.has(device.hostId) &&
         device.platform === row.platform &&
-        (row.platform === "ios" || (row.platform === "android" && device.name === row.avd)),
+        ((row.platform === "ios" && device.id === row.udid) ||
+          (row.platform === "android" && device.name === row.avd)),
     )
     .map((device) => ({ hostId: device.hostId, deviceId: device.id, platform: device.platform }));
+}
+
+/** A simulator row takes the name this machine's device list gives it, such as "iPhone 17 Pro". */
+export function deviceRowLabel(
+  row: Pick<DeviceRow, "label" | "udid">,
+  devices: ReadonlyArray<DeviceSummary>,
+  localHostIds: ReadonlySet<string>,
+): string {
+  if (row.udid === null) return row.label;
+  return (
+    devices.find((device) => device.id === row.udid && localHostIds.has(device.hostId))?.name ??
+    row.label
+  );
 }
 
 const machineShares = new WeakMap<ResourceTelemetrySnapshot, ResourceTelemetrySnapshot>();

@@ -53,6 +53,7 @@ import { processLabel } from "./processLabel.logic";
 import {
   addUsage,
   buildResourceTree,
+  deviceRowLabel,
   deviceShutdownTargets,
   EMPTY_USAGE,
   orderResourceTree,
@@ -459,9 +460,12 @@ interface ThreadInfo {
 function DeviceGroup({
   environmentId,
   devices,
+  outside,
 }: {
   readonly environmentId: EnvironmentId;
   readonly devices: ReadonlyArray<DeviceRow>;
+  /** Devices running outside T3's process tree, which the T3 total leaves out. */
+  readonly outside: boolean;
 }) {
   const { state } = useDeviceState(environmentId);
   const { canShutDown, shutDown } = useShutDownDevice(environmentId);
@@ -471,27 +475,26 @@ function DeviceGroup({
   const total = devices.reduce((sum, device) => addUsage(sum, device.usage), EMPTY_USAGE);
   return (
     <ProjectGroup
-      title="Devices"
-      sectionId={`${environmentId}:devices`}
+      title={outside ? "Devices outside T3" : "Devices"}
+      sectionId={`${environmentId}:${outside ? "outside-devices" : "devices"}`}
       count={devices.length}
       usage={total}
     >
       {devices.map((device) => {
         const Icon = DEVICE_ICON[device.platform];
         const targets = deviceShutdownTargets(device, state.devices, localHostIds);
+        const label = deviceRowLabel(device, state.devices, localHostIds);
         return (
           <UsageRow
             key={device.key}
             icon={<Icon aria-hidden />}
-            label={device.label}
-            detail={device.label}
+            label={label}
+            detail={outside ? `${label} · runs outside T3, not counted in the T3 total` : label}
             usage={device.usage}
             processes={device.processes}
             onOpen={null}
             closeLabel="Shut down"
-            onClose={
-              canShutDown && targets.length > 0 ? () => void shutDown(targets, device.label) : null
-            }
+            onClose={canShutDown && targets.length > 0 ? () => void shutDown(targets, label) : null}
           />
         );
       })}
@@ -609,6 +612,8 @@ export function EnvironmentSection({
   });
   const order = useOrderWhileOpen(resourceTreeKeys(ranked), String, holdOrder);
   const tree = holdOrder ? orderResourceTree(ranked, order) : ranked;
+  const t3Devices = tree.devices.filter((device) => !device.outside);
+  const outsideDevices = tree.devices.filter((device) => device.outside);
   const app = snapshot === null ? null : tree.app;
   const appTotal =
     app === null ? null : app.reduce((sum, row) => addUsage(sum, row.usage), EMPTY_USAGE);
@@ -634,7 +639,7 @@ export function EnvironmentSection({
           }
         />
         <ResourceHistory environmentId={environmentId} />
-        {tree.projects.length === 0 && tree.devices.length === 0 ? (
+        {tree.projects.length === 0 && t3Devices.length === 0 ? (
           <div className="px-3 py-4 text-center text-xs text-muted-foreground">
             Nothing running right now
           </div>
@@ -705,8 +710,8 @@ export function EnvironmentSection({
             })}
           </ProjectGroup>
         ))}
-        {tree.devices.length === 0 ? null : (
-          <DeviceGroup environmentId={environmentId} devices={tree.devices} />
+        {t3Devices.length === 0 ? null : (
+          <DeviceGroup environmentId={environmentId} devices={t3Devices} outside={false} />
         )}
         <HeavyQueueGroup
           environmentId={environmentId}
@@ -746,6 +751,9 @@ export function EnvironmentSection({
               </CollapsiblePanel>
             </Collapsible>
           </div>
+        )}
+        {outsideDevices.length === 0 ? null : (
+          <DeviceGroup environmentId={environmentId} devices={outsideDevices} outside />
         )}
       </div>
     </HostCoresContext>

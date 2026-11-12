@@ -352,6 +352,82 @@ describe("resource telemetry process model", () => {
     expect(second.groups.electron.cpuTimeMs).toBe(0);
   });
 
+  it("keeps simulators and emulators outside T3's tree out of every T3 group", () => {
+    const udid = "C7ECB864-1C0B-4E4D-B0E7-0B7037305D4B";
+    const sim = (pid: number, ppid: number, command: string) =>
+      processSample({
+        pid,
+        ppid,
+        startTimeMs: pid,
+        name: command.split(" ")[0]!.split("/").at(-1)!,
+        command,
+        residentBytes: 1_000_000,
+      });
+    const result = mergeProcesses({
+      serverPid: SERVER_PID,
+      sidecarPid: Option.none(),
+      // The sidecar echoes every external root it tracks, the device roots included.
+      electronRootPids: new Set([300, 500, 600, 700]),
+      electronRootStartTimes: new Map([
+        [300, 300],
+        [500, 500],
+        [600, 600],
+        [700, 700],
+      ]),
+      fallbackSampledAtMs: BASE_TIME_MS,
+      nativeSnapshot: Option.some(
+        nativeSnapshot(BASE_TIME_MS, [
+          processSample({ pid: SERVER_PID, ppid: 300, startTimeMs: 1_000 }),
+          processSample({ pid: 300, ppid: 1, startTimeMs: 300, command: "/Applications/T3.app" }),
+          sim(400, SERVER_PID, "node device-hub.js"),
+          sim(401, 400, "/sdk/emulator/qemu/darwin-aarch64/qemu-system-aarch64 -avd Pixel_9"),
+          sim(
+            500,
+            1,
+            `launchd_sim /Users/me/Library/Developer/CoreSimulator/Devices/${udid}/data/var/run/launchd_bootstrap.plist`,
+          ),
+          sim(501, 500, "/usr/libexec/SpringBoard"),
+          sim(
+            600,
+            1,
+            "/Applications/Xcode.app/Contents/Developer/Applications/Simulator.app/Contents/MacOS/Simulator",
+          ),
+          sim(700, 42, "/Users/me/Library/Android/sdk/emulator/emulator -avd Medium_Phone"),
+          sim(
+            701,
+            700,
+            "/Users/me/Library/Android/sdk/emulator/qemu/darwin-aarch64/qemu-system-aarch64 -avd Medium_Phone",
+          ),
+        ]),
+      ),
+      desktopSnapshot: Option.none(),
+      previous: new Map(),
+      counters: emptyTelemetryCounters(),
+      updatePrevious: true,
+    });
+
+    const categories = Object.fromEntries(
+      result.processes.map((process) => [process.identity.pid, process.category]),
+    );
+    expect(categories).toEqual({
+      [SERVER_PID]: "server",
+      300: "electron-main",
+      400: "server-child",
+      401: "server-child",
+      500: "external-device",
+      501: "external-device",
+      600: "external-device",
+      700: "external-device",
+      701: "external-device",
+    });
+    expect(result.processes.find((process) => process.identity.pid === 501)?.depth).toBe(1);
+    expect(result.groups.electron.processCount).toBe(1);
+    expect(result.groups.backend.processCount).toBe(3);
+    expect(result.groups.allT3.processCount).toBe(4);
+    expect(result.groups.allT3.currentRssBytes).toBe(2_000_000 + 2 * 1_024);
+    expect(result.groups.allT3.processStarts).toBe(4);
+  });
+
   it("does not apply an explicit Electron root to a reused PID", () => {
     const first = mergeProcesses({
       serverPid: SERVER_PID,

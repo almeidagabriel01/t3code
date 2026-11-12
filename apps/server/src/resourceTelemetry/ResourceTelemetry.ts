@@ -1,6 +1,7 @@
 import type {
   DesktopHostTelemetrySnapshot,
   HostPowerSnapshot,
+  ResourceMonitorExternalProcess,
   ResourceMonitorSnapshotEvent,
   ResourceTelemetryHealth,
   ResourceTelemetryHistoryInput,
@@ -18,12 +19,14 @@ import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import * as DesktopTelemetryReceiver from "./DesktopTelemetryReceiver.ts";
+import { deviceRoots } from "./DeviceProcesses.ts";
 import {
   emptyTelemetryCounters,
   mergeProcesses,
@@ -87,6 +90,31 @@ interface LiveTelemetryState {
   readonly retainCount: number;
   readonly scope: Option.Option<Scope.Closeable>;
 }
+
+const DEVICE_SCAN_INTERVAL = "10 seconds";
+
+interface ExternalRoots {
+  readonly electron: ReadonlyArray<ResourceMonitorExternalProcess>;
+  readonly devices: ReadonlyArray<ResourceMonitorExternalProcess>;
+}
+
+const sameRoots = (
+  left: ReadonlyArray<ResourceMonitorExternalProcess>,
+  right: ReadonlyArray<ResourceMonitorExternalProcess>,
+) =>
+  left.length === right.length &&
+  left.every(
+    (root, index) =>
+      root.pid === right[index]!.pid && root.startTimeMs === right[index]!.startTimeMs,
+  );
+
+const electronRootOf = (snapshot: DesktopHostTelemetrySnapshot): ResourceMonitorExternalProcess => {
+  const root = snapshot.electronProcesses.find((process) => process.pid === snapshot.electronPid);
+  return {
+    pid: snapshot.electronPid,
+    ...(root === undefined ? {} : { startTimeMs: root.creationTimeMs }),
+  };
+};
 
 function unknownPower(updatedAt: DateTime.Utc): HostPowerSnapshot {
   return {
@@ -154,18 +182,27 @@ export const make = Effect.fn("resourceTelemetry.resourceTelemetry.make")(functi
   const desktopHealthSubscription = yield* desktopReceiver.subscribeHealth;
   const desktopSubscription = yield* desktopReceiver.subscribe;
   const initialDesktop = desktopSubscription.latest;
-  if (Option.isSome(initialDesktop)) {
-    const electronRoot = initialDesktop.value.electronProcesses.find(
-      (process) => process.pid === initialDesktop.value.electronPid,
+  const externalRoots = yield* Ref.make<ExternalRoots>({ electron: [], devices: [] });
+  const externalRootsMutex = yield* Semaphore.make(1);
+  // The sidecar replaces its whole external list on each call, so every caller sends the union.
+  const updateExternalRoots = (update: (current: ExternalRoots) => ExternalRoots) =>
+    externalRootsMutex.withPermits(1)(
+      Effect.gen(function* () {
+        const current = yield* Ref.get(externalRoots);
+        const next = update(current);
+        if (sameRoots(next.electron, current.electron) && sameRoots(next.devices, current.devices))
+          return;
+        yield* Ref.set(externalRoots, next);
+        yield* nativeClient
+          .setExternalProcesses([...next.electron, ...next.devices])
+          .pipe(Effect.ignore);
+      }),
     );
-    yield* nativeClient
-      .setExternalProcesses([
-        {
-          pid: initialDesktop.value.electronPid,
-          ...(electronRoot === undefined ? {} : { startTimeMs: electronRoot.creationTimeMs }),
-        },
-      ])
-      .pipe(Effect.ignore);
+  if (Option.isSome(initialDesktop)) {
+    yield* updateExternalRoots((current) => ({
+      ...current,
+      electron: [electronRootOf(initialDesktop.value)],
+    }));
     yield* nativeClient.setHostPowerState(initialDesktop.value.power).pipe(Effect.ignore);
   }
   const initialNativeHealth = nativeHealthSubscription.latest;
@@ -346,17 +383,10 @@ export const make = Effect.fn("resourceTelemetry.resourceTelemetry.make")(functi
   const ingestDesktop =
     /* Desktop samples arrive continuously; avoid a span per telemetry sample. */
     Effect.fnUntraced(function* (snapshot: DesktopHostTelemetrySnapshot) {
-      const electronRoot = snapshot.electronProcesses.find(
-        (process) => process.pid === snapshot.electronPid,
-      );
-      yield* nativeClient
-        .setExternalProcesses([
-          {
-            pid: snapshot.electronPid,
-            ...(electronRoot === undefined ? {} : { startTimeMs: electronRoot.creationTimeMs }),
-          },
-        ])
-        .pipe(Effect.ignore);
+      yield* updateExternalRoots((current) => ({
+        ...current,
+        electron: [electronRootOf(snapshot)],
+      }));
       yield* nativeClient.setHostPowerState(snapshot.power).pipe(Effect.ignore);
       return yield* rebuild({
         desktopSnapshot: snapshot,
@@ -393,6 +423,16 @@ export const make = Effect.fn("resourceTelemetry.resourceTelemetry.make")(functi
         yield* nativeClient.sampleNow.pipe(
           Effect.flatMap(ingestNative),
           Effect.ignore,
+          Effect.forkIn(scope),
+        );
+        // Simulators and emulators run outside T3's tree; track them only while someone watches.
+        yield* nativeClient.processTable.pipe(
+          Effect.flatMap((table) =>
+            updateExternalRoots((current) => ({ ...current, devices: deviceRoots(table) })),
+          ),
+          Effect.ignore,
+          Effect.repeat(Schedule.spaced(DEVICE_SCAN_INTERVAL)),
+          Effect.ensuring(updateExternalRoots((current) => ({ ...current, devices: [] }))),
           Effect.forkIn(scope),
         );
         yield* Ref.set(liveState, { retainCount: 1, scope: Option.some(scope) });

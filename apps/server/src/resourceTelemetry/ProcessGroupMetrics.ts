@@ -81,6 +81,7 @@ export function groupProcesses(
   };
   const totals = new Map<string, ProcessGroupTotals>();
   for (const process of processes) {
+    if (process.category === "external-device") continue;
     const group = groupOf(process);
     const total = totals.get(group) ?? { residentBytes: 0, cpuPercent: 0, count: 0 };
     totals.set(group, {

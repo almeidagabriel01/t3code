@@ -26,6 +26,16 @@ vi.mock("./useKillTarget", () => ({
   }),
   useStopHeavyCommand: () => ({ canStop: false, stop: vi.fn() }),
 }));
+const deviceState = vi.hoisted(() => ({ current: { hosts: [], devices: [] } as unknown }));
+vi.mock("../../state/device", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../state/device")>()),
+  useDeviceState: () => ({
+    state: deviceState.current,
+    loaded: true,
+    error: null,
+    refresh: () => undefined,
+  }),
+}));
 vi.mock("../../state/heavyQueue", () => ({
   useHeavyQueue: () => ({ entries: [] }),
   useHeavyCommands: () => ({ commands: [], cpuCount: 1 }),
@@ -89,13 +99,14 @@ const proc = (
   residentBytes: number,
   name = "node",
   command = name,
+  category: ResourceTelemetryProcess["category"] = "server-child",
 ) =>
   ({
     identity: { pid, startTimeMs: 0 },
     childPids,
     residentBytes,
     cpuPercent: 10,
-    category: "server-child",
+    category,
     name,
     command,
   }) as unknown as ResourceTelemetryProcess;
@@ -127,6 +138,7 @@ const terminal = {
 function setup() {
   closeTerminal.mockReset();
   hostResources.current = null;
+  deviceState.current = { hosts: [], devices: [] };
   return {
     resources: { environmentId, label: "Local", terminals: [terminal] },
     threadInfo: new Map([
@@ -172,6 +184,40 @@ describe("EnvironmentSection", () => {
       />,
     );
     await expect.element(screen.getByRole("button", { name: "Fix build · idle" })).toBeVisible();
+  });
+
+  it("lists simulators outside T3 in their own section, by the device list's name", async () => {
+    const props = setup();
+    const udid = "C7ECB864-1C0B-4E4D-B0E7-0B7037305D4B";
+    deviceState.current = {
+      hosts: [{ id: "local", kind: "local" }],
+      devices: [
+        { hostId: "local", id: udid, platform: "ios", name: "iPhone 17 Pro", booted: true },
+      ],
+    };
+    const withSimulator = {
+      ...snapshot,
+      processes: [
+        ...snapshot.processes,
+        proc(
+          70,
+          [71],
+          1_000_000,
+          "launchd_sim",
+          `launchd_sim /Users/me/Library/Developer/CoreSimulator/Devices/${udid}/data/var/run/launchd_bootstrap.plist`,
+          "external-device",
+        ),
+        proc(71, [], 9_000_000, "SpringBoard", "SpringBoard", "external-device"),
+      ],
+    } as unknown as ResourceTelemetrySnapshot;
+    await using screen = await render(
+      <EnvironmentSection {...props} snapshot={withSimulator} sort="memory" label={null} />,
+      { router: "/" },
+    );
+    await expect.element(screen.getByRole("button", { name: /^Devices outside T3/ })).toBeVisible();
+    await expect.element(screen.getByText("iPhone 17 Pro")).toBeVisible();
+    await expect.element(screen.getByRole("button", { name: /^Devices \(/ })).toBeVisible();
+    await expect.element(screen.getByText("Pixel 8")).toBeVisible();
   });
 
   it("expands a row to list its processes with usage and the full command", async () => {
