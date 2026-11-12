@@ -49,6 +49,9 @@ describe("mobile preferences parser", () => {
           homeAssistantsCollapsed: true,
           homeAgentsDoneExpanded: false,
           homeAssistantsShowAll: true,
+          // Saved by builds that had a Working shelf; still loads, and is dropped.
+          workingShelfEnabled: true,
+          threadListWorkingShelfExpanded: true,
         }),
       ).toEqual({
         homeAssistantsCollapsed: true,

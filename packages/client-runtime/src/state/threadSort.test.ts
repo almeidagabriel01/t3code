@@ -382,6 +382,10 @@ describe("sortActiveThreadsByOrderKey", () => {
       // The row shows "Decision"; ranking reads the same signals the row does.
       thread("decision", 2, { hasOpenDecision: true }),
       thread("done", 1, { latestRun: finished }),
+      thread("failed", 0, {
+        latestRun: { ...running, status: "failed", completedAt: at(51) },
+        lastVisitedAt: at(1),
+      }),
       thread("seen", 40, { latestRun: finished, lastVisitedAt: at(52) }),
       thread("working", 2, { runtime: { status: "running" } }),
       // Between runs while its subagents work, so it ranks as working.
@@ -395,6 +399,7 @@ describe("sortActiveThreadsByOrderKey", () => {
       "plan",
       "decision",
       "done",
+      "failed",
       "working",
       "waitsOnSubagent",
       "messaged",

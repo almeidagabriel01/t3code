@@ -1755,6 +1755,11 @@ describe("open thread order", () => {
       finished("never-visited", null, "2026-06-01T01:00:00.000Z"),
       finished("unseen", "2026-06-01T02:00:00.000Z", "2026-06-01T00:00:00.000Z"),
       finished("seen-newer-send", "2026-06-01T04:00:00.000Z", "2026-06-01T02:00:00.000Z"),
+      // Between runs while subagents work, the row shows "Waiting", not "Done".
+      {
+        ...finished("waiting-unseen", "2026-06-01T02:00:00.000Z", "2026-06-01T01:30:00.000Z"),
+        runtime: { ...running, status: "idle" as const },
+      },
     ];
     const layout = buildThreadListV2Items({
       threads,
@@ -1762,7 +1767,7 @@ describe("open thread order", () => {
       searchQuery: "",
       now: NOW,
     });
-    expect(ids(layout)).toEqual(["unseen", "seen-newer-send", "never-visited"]);
+    expect(ids(layout)).toEqual(["unseen", "waiting-unseen", "seen-newer-send", "never-visited"]);
     expect(
       getThreadListV2OrderedSection({
         threads,

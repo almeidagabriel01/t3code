@@ -313,9 +313,8 @@ export function getThreadListV2OrderedSection(input: {
 }
 
 /**
- * The row shows a finished run as unseen only once the thread has a visit time (null means
- * imported history read; undefined, an older server), so the order reads the same. The row
- * shows no open decisions, so they do not promote either.
+ * Ranks by what the row shows: "Done" only on a ready thread with a visit time (null means
+ * imported history read; undefined, an older server), and no open decisions at all.
  */
 function sortActiveThreadsForRows(
   threads: readonly EnvironmentThreadShell[],
@@ -324,8 +323,11 @@ function sortActiveThreadsForRows(
   if (order === "fixed") return sortActiveThreadsByOrderKey(threads, order);
   const sourceOf = new Map<object, EnvironmentThreadShell>();
   const ranked = threads.map((thread) => {
+    const rowShowsRun =
+      Boolean(thread.lastVisitedAt) &&
+      (thread.latestRun?.status === "failed" || resolveThreadListV2Status(thread) === "ready");
     const entry =
-      thread.lastVisitedAt || thread.latestRun === null
+      rowShowsRun || thread.latestRun === null
         ? thread
         : { ...thread, latestRun: { requestedAt: thread.latestRun.requestedAt } };
     sourceOf.set(entry, thread);
