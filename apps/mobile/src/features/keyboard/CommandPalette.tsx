@@ -58,8 +58,7 @@ import { useAutonomyPause } from "../../state/autonomy";
 import { useOpenAssistantEditor } from "../assistants/openAssistantEditor";
 import { useOpenAssistantTeam } from "../assistants/assistantTeamTarget";
 import { useHasKanbanEnvironments, useKanbanEnvironmentIds } from "../../state/kanban";
-import { openProjectView } from "../projectViews/openProjectView";
-import { projectViewCommands, projectViewsFor } from "../projectViews/projectViews";
+import { projectViewPaletteActions } from "../projectViews/openProjectView";
 import { useImessageEnvironmentIds } from "../../state/imessageChannel";
 import { useTelegramEnvironmentIds } from "../../state/telegramChannel";
 import { useDeviceEnvironmentIds } from "../../state/device";
@@ -562,14 +561,7 @@ export function CommandPalette(props: {
       });
     }
     if (activeThread && activeProject && hasProjectPanels(activeProject)) {
-      const boards = kanbanEnvironmentIds.includes(activeProject.environmentId);
-      actions.push(
-        ...projectViewCommands(projectViewsFor(boards), activeProject.title).map((command) => ({
-          ...command,
-          kind: "action" as const,
-          run: () => openProjectView(activeThread, command.view),
-        })),
-      );
+      actions.push(...projectViewPaletteActions(activeThread, activeProject, kanbanEnvironmentIds));
     }
     if (activeThreadRef) {
       const threadActions = [
