@@ -200,19 +200,20 @@ export function heavyItemsInProject<
 
 const QUEUE_OFF_SUMMARY = "Queue off: heavy jobs start right away";
 
-/** "2 of 3 running · Mac has room": what the queue is doing at a glance. */
 /**
- * One line for the queue: what holds the next job, in words drawn from the same reading as the
- * numbers beside them. A per-job hold reads the head's own reason, which names its need.
+ * One line for the Mac's side of the queue: what holds its next job, in words drawn from the same
+ * reading as the numbers beside them. Linux jobs and waiters have their own line.
  */
 export function queueSummary(
   state: Pick<
     HeavyQueueState,
-    "entries" | "enabled" | "paused" | "maxRunning" | "machine" | "hold" | "reasons"
+    "entries" | "enabled" | "paused" | "maxRunning" | "machine" | "hold" | "reasons" | "routes"
   >,
 ): string {
   if (!state.enabled) return QUEUE_OFF_SUMMARY;
-  const running = state.entries.filter((entry) => entry.startedAt !== null).length;
+  const running = state.entries.filter(
+    (entry) => entry.startedAt !== null && entry.runner !== "linux",
+  ).length;
   const head = `${running} of ${state.maxRunning} running`;
   const { machine, hold } = state;
   const reading =
@@ -220,7 +221,9 @@ export function queueSummary(
       ? ""
       : ` · CPU ${Math.round((machine.busyCores / Math.max(1, machine.cpuCount)) * 100)}% · ${(machine.availableMemoryBytes / 1024 ** 3).toFixed(1)} GB free`;
   if (state.paused) return `${head} · paused${reading}`;
-  const next = state.entries.find((entry) => entry.startedAt === null);
+  const next = state.entries.find(
+    (entry) => entry.startedAt === null && state.routes[entry.id] !== "linux",
+  );
   const text =
     hold === null
       ? null

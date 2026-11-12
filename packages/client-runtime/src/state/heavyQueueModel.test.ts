@@ -169,6 +169,7 @@ describe("summary and formatting", () => {
     machine: null,
     hold: null,
     reasons: {},
+    routes: {},
   };
   const machine = {
     busyCores: 0.9,
@@ -224,6 +225,21 @@ describe("summary and formatting", () => {
     expect(queueSummary({ ...base, entries: [e("r", true)], machine, hold: "pressure" })).toBe(
       `1 of 3 running · memory pressure high${reading}`,
     );
+  });
+
+  // The slots and the hold are the Mac's: Linux jobs have their own line, and a job waiting for
+  // a Linux slot is not held by the Mac's memory.
+  it("counts and explains only the Mac's side when the Runner sends work to Linux", () => {
+    const linux = { ...e("l", true), runner: "linux" as const };
+    expect(
+      queueSummary({
+        ...base,
+        entries: [e("r", true), linux, e("w")],
+        routes: { w: "linux" },
+        machine,
+        hold: "pressure",
+      }),
+    ).toBe(`1 of 3 running · memory pressure high${reading}`);
   });
 
   it("finds a rule by folder ignoring trailing slashes", () => {
