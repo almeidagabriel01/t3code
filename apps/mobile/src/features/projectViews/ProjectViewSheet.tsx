@@ -8,6 +8,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ScreenContent } from "../../components/ui/ScreenContent";
 import { SegmentedControl } from "../../components/ui/SegmentedControl";
 import { SheetHeader } from "../../components/ui/SheetHeader";
+import { useContentTopInset } from "../../components/ui/useBarInset";
 import { useProject, useThreadShell } from "../../state/entities";
 import { useKanbanEnvironmentIds } from "../../state/kanban";
 import { ProjectBoardView } from "../kanban/ProjectBoardView";
@@ -35,6 +36,7 @@ export function ProjectViewSheet({ route }: StaticScreenProps<ProjectViewTarget>
   const navigation = useNavigation();
   const leaveSheet = useLeaveSheet();
   const insets = useSafeAreaInsets();
+  const topInset = useContentTopInset();
   const environmentId = EnvironmentId.make(route.params.environmentId);
   const views = projectViewsFor(useKanbanEnvironmentIds().includes(environmentId));
   const [chosen, setChosen] = useState<string | undefined>(route.params.view);
@@ -92,7 +94,8 @@ export function ProjectViewSheet({ route }: StaticScreenProps<ProjectViewTarget>
           : {})}
       />
       <ScreenContent>
-        <View className="items-center px-4 pb-2 pt-1">
+        {/* The tabs stay pinned, so they sit below the sheet's native bar instead of scrolling under it. */}
+        <View className="items-center px-4 pb-2" style={{ paddingTop: topInset + 4 }}>
           <SegmentedControl<ProjectView>
             className="w-full max-w-[520px]"
             options={views.map((value) => ({

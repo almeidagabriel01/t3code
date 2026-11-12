@@ -33,7 +33,7 @@ export function KanbanCardTile(props: {
   readonly onPress: () => void;
   /** Set by the Android long-press menu wrapping the tile. */
   readonly onLongPress?: () => void;
-  /** Trailing control on the header line, such as an actions button. */
+  /** Trailing control over the header line, such as an actions button. */
   readonly accessory?: ReactNode;
 }) {
   const { card } = props;
@@ -44,112 +44,116 @@ export function KanbanCardTile(props: {
   const progress = checklistProgress(card.checklist);
   const overdue = isOverdue(card, props.now);
   return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={`#${card.number} ${card.title}`}
-      onPress={props.onPress}
-      onLongPress={props.onLongPress}
-      className="gap-2 rounded-2xl border border-border bg-card p-3 active:opacity-70"
-    >
-      <View className="flex-row items-center gap-2">
-        <Text textRole="caption" className="text-foreground-muted">
-          #{card.number}
-        </Text>
-        {template ? (
-          <Text textRole="caption" style={{ color: kanbanColor(template.color) }}>
-            {template.name}
+    <View>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`#${card.number} ${card.title}`}
+        onPress={props.onPress}
+        onLongPress={props.onLongPress}
+        className="gap-2 rounded-2xl border border-border bg-card p-3 active:opacity-70"
+      >
+        <View className="flex-row items-center gap-2">
+          <Text textRole="caption" className="text-foreground-muted">
+            #{card.number}
           </Text>
-        ) : null}
-        {props.projectLabel ? (
-          <Text textRole="caption" numberOfLines={1} className="shrink text-foreground-muted">
-            {props.projectLabel}
-          </Text>
-        ) : null}
-        <View className="ml-auto flex-row items-center gap-2">
-          {card.blockedBy.length > 0 ? (
-            <Text textRole="caption" className="text-foreground-muted">
-              Blocked
+          {template ? (
+            <Text textRole="caption" style={{ color: kanbanColor(template.color) }}>
+              {template.name}
             </Text>
           ) : null}
-          {card.priority !== "none" ? (
-            <Text
-              textRole="caption"
-              className={
-                card.priority === "urgent" ? "text-danger-foreground" : "text-foreground-muted"
-              }
-            >
-              {KANBAN_PRIORITY_LABELS[card.priority]}
+          {props.projectLabel ? (
+            <Text textRole="caption" numberOfLines={1} className="shrink text-foreground-muted">
+              {props.projectLabel}
             </Text>
           ) : null}
-          {props.accessory}
-        </View>
-      </View>
-      <Text textRole="body" numberOfLines={3} className="font-t3-medium text-foreground">
-        {card.title}
-      </Text>
-      {labels.length > 0 ? (
-        <View className="flex-row flex-wrap gap-1">
-          {labels.map((label) => (
-            <KanbanLabelChip key={label.id} name={label.name} color={label.color} />
-          ))}
-        </View>
-      ) : null}
-      {progress.total > 0 ||
-      card.dueAt !== null ||
-      card.attachments.length > 0 ||
-      card.linkedThreadIds.length > 0 ? (
-        <View className="flex-row items-center gap-3">
-          {progress.total > 0 ? (
-            <View className="flex-row items-center gap-1">
-              <SymbolView
-                name="checkmark.circle"
-                size={14}
-                tintColorClassName="accent-icon-muted"
-              />
+          <View className="ml-auto flex-row items-center gap-2">
+            {card.blockedBy.length > 0 ? (
               <Text textRole="caption" className="text-foreground-muted">
-                {progress.done}/{progress.total}
+                Blocked
               </Text>
-            </View>
-          ) : null}
-          {card.dueAt !== null ? (
-            <View className="flex-row items-center gap-1">
-              <SymbolView
-                name="calendar.badge.clock"
-                size={14}
-                tintColorClassName={overdue ? "accent-danger-foreground" : "accent-icon-muted"}
-              />
+            ) : null}
+            {card.priority !== "none" ? (
               <Text
                 textRole="caption"
-                className={overdue ? "text-danger-foreground" : "text-foreground-muted"}
+                className={
+                  card.priority === "urgent" ? "text-danger-foreground" : "text-foreground-muted"
+                }
               >
-                {new Date(card.dueAt).toLocaleDateString(undefined, {
-                  month: "short",
-                  day: "numeric",
-                })}
+                {KANBAN_PRIORITY_LABELS[card.priority]}
               </Text>
-            </View>
-          ) : null}
-          {card.attachments.length > 0 ? (
-            <View
-              className="flex-row items-center gap-1"
-              accessibilityLabel={`${card.attachments.length} attachments`}
-            >
-              <SymbolView name="paperclip" size={14} tintColorClassName="accent-icon-muted" />
-              <Text textRole="caption" className="text-foreground-muted">
-                {card.attachments.length}
-              </Text>
-            </View>
-          ) : null}
-          {card.linkedThreadIds.length > 0 ? (
-            <View className="ml-auto flex-row items-center gap-1">
-              <SymbolView name="robot" size={14} tintColorClassName="accent-icon-muted" />
-              <Text textRole="caption" className="text-foreground-muted">
-                {card.linkedThreadIds.length}
-              </Text>
-            </View>
-          ) : null}
+            ) : null}
+            {props.accessory ? <View className="w-7" /> : null}
+          </View>
         </View>
-      ) : null}
-    </Pressable>
+        <Text textRole="body" numberOfLines={3} className="font-t3-medium text-foreground">
+          {card.title}
+        </Text>
+        {labels.length > 0 ? (
+          <View className="flex-row flex-wrap gap-1">
+            {labels.map((label) => (
+              <KanbanLabelChip key={label.id} name={label.name} color={label.color} />
+            ))}
+          </View>
+        ) : null}
+        {progress.total > 0 ||
+        card.dueAt !== null ||
+        card.attachments.length > 0 ||
+        card.linkedThreadIds.length > 0 ? (
+          <View className="flex-row items-center gap-3">
+            {progress.total > 0 ? (
+              <View className="flex-row items-center gap-1">
+                <SymbolView
+                  name="checkmark.circle"
+                  size={14}
+                  tintColorClassName="accent-icon-muted"
+                />
+                <Text textRole="caption" className="text-foreground-muted">
+                  {progress.done}/{progress.total}
+                </Text>
+              </View>
+            ) : null}
+            {card.dueAt !== null ? (
+              <View className="flex-row items-center gap-1">
+                <SymbolView
+                  name="calendar.badge.clock"
+                  size={14}
+                  tintColorClassName={overdue ? "accent-danger-foreground" : "accent-icon-muted"}
+                />
+                <Text
+                  textRole="caption"
+                  className={overdue ? "text-danger-foreground" : "text-foreground-muted"}
+                >
+                  {new Date(card.dueAt).toLocaleDateString(undefined, {
+                    month: "short",
+                    day: "numeric",
+                  })}
+                </Text>
+              </View>
+            ) : null}
+            {card.attachments.length > 0 ? (
+              <View
+                className="flex-row items-center gap-1"
+                accessibilityLabel={`${card.attachments.length} attachments`}
+              >
+                <SymbolView name="paperclip" size={14} tintColorClassName="accent-icon-muted" />
+                <Text textRole="caption" className="text-foreground-muted">
+                  {card.attachments.length}
+                </Text>
+              </View>
+            ) : null}
+            {card.linkedThreadIds.length > 0 ? (
+              <View className="ml-auto flex-row items-center gap-1">
+                <SymbolView name="robot" size={14} tintColorClassName="accent-icon-muted" />
+                <Text textRole="caption" className="text-foreground-muted">
+                  {card.linkedThreadIds.length}
+                </Text>
+              </View>
+            ) : null}
+          </View>
+        ) : null}
+      </Pressable>
+      {/* Outside the tile's Pressable, or a tap on it also opens the card. */}
+      {props.accessory ? <View className="absolute right-3 top-2">{props.accessory}</View> : null}
+    </View>
   );
 }

@@ -96,7 +96,8 @@ export function SegmentedControl<Value extends string | number>(
               <AppText
                 textRole={withIcons ? "caption" : "footnote"}
                 numberOfLines={1}
-                className={selected ? "font-t3-bold" : "font-t3-medium"}
+                // Icon tabs keep one weight: a bolder selected label is wider and truncates in a tight row.
+                className={selected && !withIcons ? "font-t3-bold" : "font-t3-medium"}
                 style={{
                   color: selected ? selectedTextColor : mutedColor,
                 }}

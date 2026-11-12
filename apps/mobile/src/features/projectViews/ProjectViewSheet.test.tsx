@@ -20,6 +20,7 @@ vi.mock("@react-navigation/native", () => ({
   StackActions: { replace: (name: string, params: unknown) => ({ name, params }) },
 }));
 vi.mock("../../components/ui/ScreenContent", () => ({ ScreenContent: Children }));
+vi.mock("../../components/ui/useBarInset", () => ({ useContentTopInset: () => 0 }));
 vi.mock("../../components/ui/SheetHeader", () => ({
   SheetHeader: (props: {
     title: string;

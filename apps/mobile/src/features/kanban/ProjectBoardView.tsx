@@ -15,7 +15,7 @@ import { Pressable, View } from "react-native";
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import * as Dialog from "../../components/ui/Dialog";
-import { EmptyState } from "../../components/ui/EmptyState";
+import { ProjectViewMessage } from "../projectViews/ProjectViewMessage";
 import { IconButton } from "../../components/ui/IconButton";
 import { Menu } from "../../components/ui/Menu";
 import { useNowMinuteMs } from "../../lib/clock";
@@ -102,8 +102,7 @@ export function ProjectBoardView(props: {
   const body = (() => {
     if (entry === undefined) {
       return (
-        <EmptyState
-          variant="plain"
+        <ProjectViewMessage
           title="Boards are not available"
           detail="This environment does not support boards, or you cannot read them."
         />
@@ -111,33 +110,28 @@ export function ProjectBoardView(props: {
     }
     if (entry.error) {
       return (
-        <EmptyState
-          variant="plain"
+        <ProjectViewMessage
           title="Could not load the board"
           detail="The environment did not return its boards. Try again when it reconnects."
         />
       );
     }
     if (state === null) {
-      return (
-        <EmptyState variant="plain" title="Loading board…" detail="Connecting to the board." />
-      );
+      return <ProjectViewMessage title="Loading board…" detail="Connecting to the board." />;
     }
     if (board === undefined) {
       if (createsOnView) {
         return actions.canEdit ? (
-          <EmptyState variant="plain" title="Setting up the board…" detail="One moment." />
+          <ProjectViewMessage title="Setting up the board…" detail="One moment." />
         ) : (
-          <EmptyState
-            variant="plain"
+          <ProjectViewMessage
             title="No board yet"
             detail="This project has no board, and you cannot create one here."
           />
         );
       }
       return (
-        <EmptyState
-          variant="plain"
+        <ProjectViewMessage
           title="No cards without a project"
           detail="Cards you add here belong to no project."
         />
@@ -227,7 +221,7 @@ export function ProjectBoardView(props: {
                               accessibilityRole="button"
                               accessibilityLabel={`Actions for #${card.number}`}
                               hitSlop={10}
-                              className="-my-1 size-7 items-center justify-center rounded-full active:opacity-70"
+                              className="size-7 items-center justify-center rounded-full active:opacity-70"
                             >
                               <SymbolView
                                 name="ellipsis"

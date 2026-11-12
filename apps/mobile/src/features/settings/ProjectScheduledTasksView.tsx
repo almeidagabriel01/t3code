@@ -25,7 +25,7 @@ import { Pressable, View } from "react-native";
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import * as Dialog from "../../components/ui/Dialog";
-import { EmptyState } from "../../components/ui/EmptyState";
+import { ProjectViewMessage } from "../projectViews/ProjectViewMessage";
 import { IconButton } from "../../components/ui/IconButton";
 import { Menu } from "../../components/ui/Menu";
 import { useNowMinuteMs } from "../../lib/clock";
@@ -154,14 +154,11 @@ export function ProjectScheduledTasksView(props: {
 
   const body = (() => {
     if (query.error) {
-      return (
-        <EmptyState variant="plain" title="Could not load scheduled tasks" detail={query.error} />
-      );
+      return <ProjectViewMessage title="Could not load scheduled tasks" detail={query.error} />;
     }
     if (!query.data) {
       return (
-        <EmptyState
-          variant="plain"
+        <ProjectViewMessage
           title="Loading scheduled tasks…"
           detail="Connecting to the environment."
         />
@@ -169,8 +166,7 @@ export function ProjectScheduledTasksView(props: {
     }
     if (tasks.length === 0) {
       return (
-        <EmptyState
-          variant="plain"
+        <ProjectViewMessage
           title="No scheduled tasks in this project"
           detail="Create one from Manage scheduled tasks."
         />
